@@ -63,10 +63,52 @@ function induced(): InduceConjectureResult {
       claim_md: '把链式法则误解为逐层导数直接相乘。',
       knowledge_id: 'kc-chain',
       evidence_event_ids: ['attempt-1', 'attempt-2'],
+      diagnostic_spec: {
+        schema_version: 1,
+        target_error_rule_md: '把复合函数逐层求导误解为直接相乘。',
+        trigger_conditions_md: '题目要求对至少两层复合函数求导。',
+        scope_boundary_md: '不覆盖普通乘积求导。',
+        expected_wrong_answer_signature_md: '没有保留内层输入便直接相乘。',
+      },
       probe_md: '请完成一道未教学的链式求导题。',
       probe_reference_md: '应先识别外层与内层并相乘。',
       followup_probe_md: '换一个函数再做一次。',
       followup_probe_reference_md: '仍需正确应用链式法则。',
+      probe_spec: {
+        prompt_md: '请完成一道未教学的链式求导题。',
+        reference_md: '应先识别外层与内层并相乘。',
+        expected_target_error_answer_md: '把各层导数脱离原输入直接相乘。',
+        elicits_target_error_reason_md: '保留多层复合这一触发条件。',
+        context_kind: 'abstract',
+        representation_kind: 'symbolic',
+      },
+      followup_probe_spec: {
+        prompt_md: '换一个函数再做一次。',
+        reference_md: '仍需正确应用链式法则。',
+        expected_target_error_answer_md: '仍把各层导数脱离原输入直接相乘。',
+        elicits_target_error_reason_md: '以应用语境复测同一目标错误。',
+        context_kind: 'applied',
+        representation_kind: 'natural_language',
+      },
+      probe_quality: {
+        schema_version: 1,
+        passed: true,
+        attempts: [
+          {
+            attempt: 1,
+            outcome: 'passed',
+            failure_codes: [],
+            explanation_md: '范围、目标错误与双题独立性均通过。',
+            author_task_run_id: 'run-author',
+            reviewer_task_run_id: 'run-review',
+          },
+        ],
+        final_review: {
+          verdict: 'pass',
+          failure_codes: [],
+          explanation_md: '范围、目标错误与双题独立性均通过。',
+        },
+      },
       cause_category: 'conceptual',
       recurrence_count: 2,
       predicted_p: 0.4,
@@ -80,6 +122,16 @@ function induced(): InduceConjectureResult {
     task_run_ids: ['run-1', 'run-2', 'run-3'],
     cost_usd: 0.12,
     votes: { proposal: 2, abstain: 1, invalid: 0, failed: 0 },
+    probe_quality_attempts: [
+      {
+        attempt: 1,
+        outcome: 'passed',
+        failure_codes: [],
+        explanation_md: '范围、目标错误与双题独立性均通过。',
+        author_task_run_id: 'run-author',
+        reviewer_task_run_id: 'run-review',
+      },
+    ],
   };
 }
 
@@ -172,7 +224,17 @@ describe('blind review artifacts', () => {
     expect(artifacts.blind.requested_sample_count).toBe(6);
     expect(artifacts.blind.selection_sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(artifacts.blind.items[0].review.grounded_proposal).toBeNull();
+    expect(artifacts.blind.items[0].shadow_output).toMatchObject({
+      outcome: 'proposal',
+      diagnostic_spec: {
+        trigger_conditions_md: '题目要求对至少两层复合函数求导。',
+      },
+      probe_spec: {
+        expected_target_error_answer_md: '把各层导数脱离原输入直接相乘。',
+      },
+    });
     expect(artifacts.privateMap.clusters[0].task_run_ids).toEqual(['run-1', 'run-2', 'run-3']);
+    expect(artifacts.privateMap.clusters[0].probe_quality_attempts).toHaveLength(1);
   });
 
   it('fails closed with attempt lineage when effective cause data is missing', () => {

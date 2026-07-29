@@ -10,20 +10,23 @@
 //
 // D2 (CORRECTED per YUK-416 — NO heterogeneous mimo+Opus Jury; that is DEFERRED):
 //   1. Opus SELF-CONSISTENCY — run the SAME MindModelInductionTask N times on the
-//      Opus (anthropic-sub OAuth) lane; cluster samples by claim; the dominant claim
-//      wins and its agreement fraction (agreement / samples) IS the confidence.
+//      Opus (anthropic-sub OAuth) lane; cluster samples by the full hypothesis
+//      (claim + frozen DiagnosticSpec); the dominant hypothesis wins and its agreement
+//      fraction (agreement / samples) IS the confidence.
 //   2. JUDGE-ONLY-EVIDENCE CAP — if EVERY supporting evidence cell is agent-judge
 //      with no owner cause, cap confidence at JUDGE_ONLY_CONFIDENCE_CAP (the owner
 //      never corroborated it, so the team must not be loud about it).
+//   3. PROBE QUALITY GATE (YUK-821) — only after consensus, a separate author task
+//      writes a two-probe package and an independent same-model call reviews it.
+//      One whole-pair regeneration is allowed; a second quality failure abstains.
 //
 // confidence is INTERNAL calibration only — returned as a number here for
 // sorting/calibration but NEVER rendered to the owner as a number (Phase 0 rule).
 //
-// A13 (YUK-440): each sampled ConjectureDraft carries predicted_p (the claim's
-// falsifiable bet — P(owner answers the probe correctly | claim holds)) and
-// `discriminating` (does the probe isolate THIS misconception). The dominant cluster's
-// fields are aggregated deterministically before flowing to the proposal; the loop later
-// scores predicted_p against the cell's baseline_p (scoring + flip DEFERRED per ADR-0046).
+// A13 (YUK-440): predicted_p is authored only after the hypothesis is frozen. The
+// accepted package's bet is P(owner answers the primary probe correctly | claim holds);
+// `discriminating=true` now means the package passed structural and independent semantic
+// review rather than being a self-asserted induction field.
 
 import type {
   EnrichedEvidenceCell,
@@ -33,15 +36,24 @@ import {
   CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH,
   type ConjectureAbstainDraftT,
   type ConjectureAbstainReasonT,
-  ConjectureDraft,
-  type ConjectureDraftT,
+  ConjectureHypothesisDraft,
+  type ConjectureHypothesisDraftT,
+  type ConjectureHypothesisProposalDraftT,
   type ConjectureModelAbstainDraftT,
+  type ConjectureProbeQualityAttemptT,
   type ConjectureProposalDraftT,
 } from '@/core/schema/business';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
+import {
+  ConjectureProbeQualityOperationalError,
+  type ConjectureProbeQualityTaskKind,
+  type PrepareConjectureProbePairResult,
+  prepareConjectureProbePair,
+} from './probe-quality';
+import { jsonObjectCandidates, parseTaskStructuredOutput } from './structured-output';
 
 export interface InduceConjectureInput {
   /**
@@ -71,7 +83,10 @@ export interface InduceConjectureInput {
   subjectProfile?: SubjectProfile;
 }
 
-export type ConjectureInductionTaskKind = 'MindModelInductionTask' | 'ClaimGroupingTask';
+export type ConjectureInductionTaskKind =
+  | 'MindModelInductionTask'
+  | 'ConjectureGroupingTask'
+  | ConjectureProbeQualityTaskKind;
 
 /**
  * Preserves the failing orchestration stage across the nightly cell-local
@@ -103,13 +118,15 @@ interface InduceConjectureResultBase {
     invalid: number;
     failed: number;
   };
+  /** Author/reviewer quality attempts; persisted for both pass and fail-closed abstain. */
+  probe_quality_attempts: ConjectureProbeQualityAttemptT[];
 }
 
 export type InduceConjectureResult =
   | (InduceConjectureResultBase & {
       outcome: 'proposal';
       draft: ConjectureProposalDraftT;
-      /** One run that produced the winning claim/probe tuple (scalar correlation anchor). */
+      /** Probe-author run that produced the verified pair (scalar correlation anchor). */
       primary_task_run_id: string | null;
     })
   | (InduceConjectureResultBase & {
@@ -122,79 +139,21 @@ export const JUDGE_ONLY_CONFIDENCE_CAP = 0.5;
 /** A grounded proposal needs recurrence, not one isolated attempt. */
 export const MIN_GROUNDED_PROPOSAL_EVIDENCE = 2;
 
-const ConjectureStructuredOutput = z.object({
-  draft: ConjectureDraft,
+const ConjectureHypothesisStructuredOutput = z.object({
+  draft: ConjectureHypothesisDraft,
 });
 
-interface GroundedProposalSample {
-  draft: ConjectureProposalDraftT;
+interface GroundedHypothesisSample {
+  draft: ConjectureHypothesisProposalDraftT;
   task_run_id: string | undefined;
 }
 
-/** Parse balanced JSON objects, recovering after malformed prose candidates. */
-function jsonObjectCandidates(text: string): unknown[] {
-  const candidates: unknown[] = [];
-  let cursor = 0;
-  while (cursor < text.length) {
-    const start = text.indexOf('{', cursor);
-    if (start < 0) break;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    let end = -1;
-
-    for (let i = start; i < text.length; i += 1) {
-      const char = text[i];
-      if (inString) {
-        if (escaped) escaped = false;
-        else if (char === '\\') escaped = true;
-        else if (char === '"') inString = false;
-        continue;
-      }
-      if (char === '"') {
-        inString = true;
-        continue;
-      }
-      if (char === '{') depth += 1;
-      else if (char === '}') depth -= 1;
-      if (depth === 0) {
-        end = i;
-        break;
-      }
-    }
-
-    if (end < 0) {
-      // A stray/unbalanced brace in prose must not hide a later valid object.
-      cursor = start + 1;
-      continue;
-    }
-    try {
-      candidates.push(JSON.parse(text.slice(start, end + 1)));
-      cursor = end + 1;
-    } catch {
-      // Retry from the next opening brace; the failed span may wrap valid JSON.
-      cursor = start + 1;
-    }
-  }
-  return candidates;
-}
-
-function parseSampleDraft(result: TaskTextResult): ConjectureDraftT | null {
-  // Three-state dispatch (mirrors variant_verify): prefer the SDK's structured_output
-  // (Opus honours outputFormat), else char-scan the text for the JSON object.
-  if (result.structured_output !== undefined && result.structured_output !== null) {
-    const wrapped = ConjectureStructuredOutput.safeParse(result.structured_output);
-    if (wrapped.success) return wrapped.data.draft;
-    const parsed = ConjectureDraft.safeParse(result.structured_output);
-    if (parsed.success) return parsed.data;
-  }
-  for (const candidate of jsonObjectCandidates(result.text)) {
-    const wrapped = ConjectureStructuredOutput.safeParse(candidate);
-    if (wrapped.success) return wrapped.data.draft;
-    const parsed = ConjectureDraft.safeParse(candidate);
-    if (parsed.success) return parsed.data;
-  }
-  return null;
+function parseSampleDraft(result: TaskTextResult): ConjectureHypothesisDraftT | null {
+  const parsed = parseTaskStructuredOutput(result, ConjectureHypothesisDraft, 'draft');
+  if (!parsed) return null;
+  return parsed.kind === 'abstain'
+    ? { ...parsed, evidence_event_ids: parsed.evidence_event_ids ?? [] }
+    : parsed;
 }
 
 /** Normalize a claim for clustering (case + whitespace insensitive). */
@@ -220,38 +179,34 @@ function median(values: number[]): number {
   return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-/** Aggregate a winning cluster without depending on sample completion/insertion order. */
-function aggregateDominantDraft(
-  drafts: ConjectureProposalDraftT[],
-  agreement: number,
-): ConjectureProposalDraftT {
-  // claim/probe/reference/cause form one semantic sample. Select one complete draft
-  // by exact tuple vote, then lexical tie-break. Aggregating fields independently
-  // can fabricate a mismatched probe; lexical-only selection can elevate a 1-vote outlier.
-  const coupled = new Map<string, { count: number; draft: ConjectureProposalDraftT }>();
+function hypothesisKey(draft: ConjectureHypothesisProposalDraftT): string {
+  return JSON.stringify({
+    claim_md: claimKey(draft.claim_md),
+    diagnostic_spec: Object.fromEntries(
+      Object.entries(draft.diagnostic_spec).map(([key, value]) => [
+        key,
+        typeof value === 'string' ? claimKey(value) : value,
+      ]),
+    ),
+  });
+}
+
+/** Select one complete claim+DiagnosticSpec representative; no probe exists yet. */
+function aggregateDominantHypothesis(
+  drafts: ConjectureHypothesisProposalDraftT[],
+): ConjectureHypothesisProposalDraftT {
+  const coupled = new Map<string, { count: number; draft: ConjectureHypothesisProposalDraftT }>();
   for (const draft of drafts) {
-    const key = JSON.stringify([
-      draft.claim_md,
-      draft.probe_md,
-      draft.probe_reference_md,
-      draft.followup_probe_md,
-      draft.followup_probe_reference_md,
-      draft.cause_category,
-    ]);
+    const key = JSON.stringify([draft.claim_md, draft.diagnostic_spec, draft.cause_category]);
     const current = coupled.get(key);
     coupled.set(key, { count: (current?.count ?? 0) + 1, draft: current?.draft ?? draft });
   }
   const representative = [...coupled.entries()].sort(
     ([aKey, a], [bKey, b]) => b.count - a.count || compareLex(aKey, bKey),
   )[0][1].draft;
-  const discriminatingVotes = drafts.filter((draft) => draft.discriminating).length;
   return {
     ...representative,
     recurrence_count: Math.round(median(drafts.map((draft) => draft.recurrence_count))),
-    predicted_p: median(drafts.map((draft) => draft.predicted_p)),
-    // A tie is non-discriminating: the conservative, reproducible outcome.
-    discriminating: discriminatingVotes > drafts.length / 2,
-    agreement_count: agreement,
   };
 }
 
@@ -260,9 +215,9 @@ function groundedEvidenceEventIds(cell: EnrichedEvidenceCell): string[] {
 }
 
 function normalizeGroundedProposal(
-  draft: ConjectureProposalDraftT,
+  draft: ConjectureHypothesisProposalDraftT,
   cells: EnrichedEvidenceCell[],
-): ConjectureProposalDraftT | null {
+): ConjectureHypothesisProposalDraftT | null {
   const cell = cells.find(
     (candidate) =>
       candidate.knowledge_id === draft.knowledge_id &&
@@ -367,13 +322,13 @@ function baseReasonVotes(
   ];
 }
 
-// YUK-538 — GroupSchema: structural output contract for ClaimGroupingTask.
+// GroupSchema: structural output contract for ConjectureGroupingTask.
 // Local constant — not exported, not persisted.
 const GroupSchema = z.object({
   groups: z.array(z.array(z.number().int().min(0)).min(1)).min(1),
 });
 
-interface DeduplicateClaimsResult {
+interface DeduplicateHypothesesResult {
   ok: boolean;
   groups: number[][];
   cost_usd: number;
@@ -381,30 +336,32 @@ interface DeduplicateClaimsResult {
 }
 
 /**
- * Groups claim indices by semantic equivalence via a single ClaimGroupingTask call.
- * Always called when dominant.length < drafts.length (i.e., not unanimous via claimKey).
+ * Groups claim+DiagnosticSpec indices by semantic equivalence.
  *
  * Returns index groups, accumulated cost, task_run_id, and explicit health.
  * On failure the caller preserves any exact claimKey quorum already established;
  * when no exact quorum exists, grouping is load-bearing and the cell fails operationally.
  */
-async function deduplicateClaims(
-  claims: string[],
+async function deduplicateHypotheses(
+  hypotheses: Array<{
+    claim_md: string;
+    diagnostic_spec: ConjectureHypothesisProposalDraftT['diagnostic_spec'];
+  }>,
   runTaskFn: TaskTextRunFn,
-): Promise<DeduplicateClaimsResult> {
+): Promise<DeduplicateHypothesesResult> {
   const failure = (
     result: Pick<TaskTextResult, 'cost_usd' | 'task_run_id'> = {},
-  ): DeduplicateClaimsResult => ({
+  ): DeduplicateHypothesesResult => ({
     ok: false,
-    groups: claims.map((_, i) => [i]),
+    groups: hypotheses.map((_, i) => [i]),
     cost_usd: result.cost_usd ?? 0,
     task_run_id: result.task_run_id,
   });
 
-  if (claims.length <= 1) {
+  if (hypotheses.length <= 1) {
     return {
       ok: true,
-      groups: [claims.map((_, i) => i)],
+      groups: [hypotheses.map((_, i) => i)],
       cost_usd: 0,
       task_run_id: undefined,
     };
@@ -413,13 +370,16 @@ async function deduplicateClaims(
   let result: TaskTextResult;
   try {
     result = await runTaskFn(
-      'ClaimGroupingTask',
-      { claims },
+      'ConjectureGroupingTask',
+      { hypotheses },
       { outputFormat: zodToJsonSchemaOutputFormat(GroupSchema) },
     );
   } catch (err) {
     // Warn so nightly pipeline failures are observable (silent degradation masks persistent issues).
-    console.warn('[induceConjecture] ClaimGroupingTask failed, preserving exact clusters:', err);
+    console.warn(
+      '[induceConjecture] ConjectureGroupingTask failed, preserving exact clusters:',
+      err,
+    );
     return failure();
   }
 
@@ -434,7 +394,8 @@ async function deduplicateClaims(
   // (each index appears exactly once — catches duplicates, gaps, and out-of-range indices).
   // A flat-length-only check passes e.g. [[0,0],[1]] (length=3=N but index 0 duplicated).
   const flatSorted = [...parsed.data.groups.flat()].sort((a, b) => a - b);
-  const isPartition = flatSorted.length === claims.length && flatSorted.every((v, i) => v === i);
+  const isPartition =
+    flatSorted.length === hypotheses.length && flatSorted.every((v, i) => v === i);
   if (!isPartition) return failure(result);
 
   return {
@@ -488,7 +449,7 @@ export async function induceConjecture(
 
   // Run N samples on the Opus anthropic-sub lane (override; providers.ts exempts it
   // from the AI_PROVIDER_MODEL guard via ANTHROPIC_SUB_DEFAULT_MODEL).
-  const proposals: GroundedProposalSample[] = [];
+  const proposals: GroundedHypothesisSample[] = [];
   const abstains: ConjectureModelAbstainDraftT[] = [];
   const taskRunIds: string[] = [];
   const sampleErrors: string[] = [];
@@ -502,7 +463,7 @@ export async function induceConjecture(
         // Agent SDK structured output is implemented as a custom tool whose
         // input_schema must be a top-level object and rejects a top-level
         // discriminated-union anyOf. Nest the domain union under `draft`.
-        outputFormat: zodToJsonSchemaOutputFormat(ConjectureStructuredOutput),
+        outputFormat: zodToJsonSchemaOutputFormat(ConjectureHypothesisStructuredOutput),
         // YUK-786 — the prompt renders from the SubjectProfile; without this the
         // renderer falls back to `general` even when the cell's KC is tagged.
         ...(subjectProfile ? { subjectProfile } : {}),
@@ -571,13 +532,14 @@ export async function induceConjecture(
       task_run_ids: taskRunIds,
       cost_usd: costUsd,
       votes,
+      probe_quality_attempts: [],
     };
   }
 
-  // Fast path: claimKey clustering (byte-identical after normalisation).
-  const clusters = new Map<string, GroundedProposalSample[]>();
+  // Fast path: claim + DiagnosticSpec exact clustering after normalization.
+  const clusters = new Map<string, GroundedHypothesisSample[]>();
   for (const proposal of proposals) {
-    const key = claimKey(proposal.draft.claim_md);
+    const key = hypothesisKey(proposal.draft);
     const bucket = clusters.get(key) ?? [];
     bucket.push(proposal);
     clusters.set(key, bucket);
@@ -586,18 +548,22 @@ export async function induceConjecture(
     ([aKey, aDrafts], [bKey, bDrafts]) => bDrafts.length - aDrafts.length || compareLex(aKey, bKey),
   )[0][1];
 
-  // Semantic dedup: fires whenever samples are not byte-identical unanimous.
+  // Semantic grouping covers the complete hypothesis, including trigger/scope/wrong
+  // answer signature. Claim-only agreement is insufficient.
   // This is the primary post-fast-path step, not a rare fallback — at temperature > 0
   // with N=3 on Opus, all three samples will almost always produce distinct surface
   // strings, so this call fires on essentially every nightly invocation.
-  // Cost: +1 ClaimGroupingTask (mimo default, not Opus) per conjecture per run.
+  // Cost: +1 ConjectureGroupingTask (mimo default, not Opus) per conjecture per run.
   // The grouping call is non-deterministic: confidence reflects the expected value
   // of agreement, not a stable per-run signal. Downstream thresholds must treat
   // confidence as a distribution, not a point estimate.
   const requiredAgreement = samples === 1 ? 1 : Math.floor(samples / 2) + 1;
   if (dominant.length < proposals.length && proposals.length > 1) {
-    const dedup = await deduplicateClaims(
-      proposals.map((proposal) => proposal.draft.claim_md),
+    const dedup = await deduplicateHypotheses(
+      proposals.map((proposal) => ({
+        claim_md: proposal.draft.claim_md,
+        diagnostic_spec: proposal.draft.diagnostic_spec,
+      })),
       runTaskFn,
     );
     // Accumulate cost + provenance from the dedup call.
@@ -610,8 +576,8 @@ export async function induceConjecture(
       // operational, not evidence that the model claims genuinely disagree.
       if (dominant.length < requiredAgreement) {
         throw new ConjectureInductionOperationalError(
-          'ClaimGroupingTask',
-          'induceConjecture: ClaimGroupingTask failed before semantic consensus',
+          'ConjectureGroupingTask',
+          'induceConjecture: ConjectureGroupingTask failed before semantic consensus',
         );
       }
     } else {
@@ -622,7 +588,7 @@ export async function induceConjecture(
           const groupedSamples = g.map((i) => proposals[i]);
           return {
             samples: groupedSamples,
-            key: [...groupedSamples.map((sample) => claimKey(sample.draft.claim_md))].sort(
+            key: [...groupedSamples.map((sample) => hypothesisKey(sample.draft))].sort(
               compareLex,
             )[0],
           };
@@ -652,6 +618,7 @@ export async function induceConjecture(
       task_run_ids: taskRunIds,
       cost_usd: costUsd,
       votes,
+      probe_quality_attempts: [],
     };
   }
 
@@ -665,31 +632,76 @@ export async function induceConjecture(
   const confidence_capped = allJudgeOnly && confidence > JUDGE_ONLY_CONFIDENCE_CAP;
   if (confidence_capped) confidence = JUDGE_ONLY_CONFIDENCE_CAP;
 
-  const draft = aggregateDominantDraft(
-    dominant.map((sample) => sample.draft),
-    agreement,
-  );
-  const primaryTaskRunId =
-    dominant.find(
-      (sample) =>
-        sample.task_run_id !== undefined &&
-        sample.draft.claim_md === draft.claim_md &&
-        sample.draft.probe_md === draft.probe_md &&
-        sample.draft.probe_reference_md === draft.probe_reference_md &&
-        sample.draft.followup_probe_md === draft.followup_probe_md &&
-        sample.draft.followup_probe_reference_md === draft.followup_probe_reference_md &&
-        sample.draft.cause_category === draft.cause_category,
-    )?.task_run_id ?? null;
+  const hypothesis = aggregateDominantHypothesis(dominant.map((sample) => sample.draft));
+  let probeQuality: PrepareConjectureProbePairResult;
+  try {
+    probeQuality = await prepareConjectureProbePair({
+      hypothesis,
+      evidencePayload: taskPayload,
+      evidenceImages,
+      runTaskFn,
+      ...(subjectProfile ? { subjectProfile } : {}),
+    });
+  } catch (error) {
+    if (error instanceof ConjectureProbeQualityOperationalError) {
+      throw new ConjectureInductionOperationalError(error.taskKind, error.message);
+    }
+    throw error;
+  }
+  costUsd += probeQuality.cost_usd;
+  taskRunIds.push(...probeQuality.task_run_ids);
+
+  if (probeQuality.outcome === 'rejected') {
+    const failureCodes = [
+      ...new Set(probeQuality.attempts.flatMap((attempt) => attempt.failure_codes)),
+    ];
+    return {
+      outcome: 'abstain',
+      draft: {
+        kind: 'abstain',
+        reason_code: 'no_discriminating_probe',
+        explanation_md:
+          `Probe quality gate rejected both complete packages: ${failureCodes.join(', ')}`.slice(
+            0,
+            CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH,
+          ),
+        evidence_event_ids: hypothesis.evidence_event_ids,
+      },
+      confidence: 0,
+      confidence_capped,
+      samples,
+      task_run_ids: taskRunIds,
+      cost_usd: costUsd,
+      votes,
+      probe_quality_attempts: probeQuality.attempts,
+    };
+  }
+
+  const probePackage = probeQuality.package;
+  const draft: ConjectureProposalDraftT = {
+    ...hypothesis,
+    probe_md: probePackage.primary.prompt_md,
+    probe_reference_md: probePackage.primary.reference_md,
+    followup_probe_md: probePackage.followup.prompt_md,
+    followup_probe_reference_md: probePackage.followup.reference_md,
+    probe_spec: probePackage.primary,
+    followup_probe_spec: probePackage.followup,
+    probe_quality: probeQuality.audit,
+    predicted_p: probePackage.predicted_p,
+    discriminating: true,
+    agreement_count: agreement,
+  };
 
   return {
     outcome: 'proposal',
     draft,
-    primary_task_run_id: primaryTaskRunId,
+    primary_task_run_id: probeQuality.primary_task_run_id,
     confidence,
     confidence_capped,
     samples,
     task_run_ids: taskRunIds,
     cost_usd: costUsd,
     votes,
+    probe_quality_attempts: probeQuality.attempts,
   };
 }

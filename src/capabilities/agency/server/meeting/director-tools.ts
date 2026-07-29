@@ -18,6 +18,7 @@ import {
   conjectureKey,
   effectiveCauseForConjectureFailure,
 } from '@/capabilities/agency/server/conjecture/evidence';
+import { CONJECTURE_EVIDENCE_CHOICES_PER_FIELD } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
 import {
   type ConjectureHistory,
   type LoadConjectureHistoryFn,
@@ -30,10 +31,20 @@ import type {
   writeAgentNote as WriteAgentNoteReal,
 } from '@/capabilities/agency/server/notes';
 import { writeAgentNote } from '@/capabilities/agency/server/notes';
-import { ConjectureDraft } from '@/core/schema/business';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
+import {
+  ConjectureDiagnosticSpec,
+  ConjectureHypothesisProposalDraft,
+} from '@/core/schema/business';
 import { CauseCategoryId } from '@/core/schema/cause';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { UNTRUSTED_TEXT_CHAR_CAP, wrapTruncatedLearnerText } from '@/kernel/untrusted-text';
+import {
+  ConjectureProbeQualityOperationalError,
+  type PrepareConjectureProbePairResult,
+  prepareConjectureProbePair,
+} from '@/server/agency/conjecture/probe-quality';
 import {
   filterPrimaryEvidenceRefs,
   isPrimaryEvidenceRef,
@@ -45,6 +56,8 @@ import {
   GET_TRACES_TOOL_NAME,
   SPAWN_TOOL_NAME,
 } from '@/server/agency/scout/tool-names';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type FailureAttempt, getFailureAttemptById } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
@@ -75,6 +88,67 @@ export const AGENT_NOTE_TARGET_WHITELIST: readonly AgentNoteTarget[] = Object.fr
   'coach',
   'research_meeting',
 ]);
+
+function wrapTextList(values: string[] | null): string[] | null {
+  return (
+    values
+      ?.slice(0, CONJECTURE_EVIDENCE_CHOICES_PER_FIELD)
+      .map((value) => wrapTruncatedLearnerText(value, UNTRUSTED_TEXT_CHAR_CAP)) ?? null
+  );
+}
+
+/**
+ * Director evidence starts as an immutable meeting snapshot, but it still contains
+ * learner/question-authored text. Preserve the evidence shape and provenance while
+ * applying the same truncate-then-delimit boundary used by deterministic induction.
+ */
+function sanitizeFailureAttemptForProbeQuality(failure: FailureAttempt): FailureAttempt {
+  const sanitizeQuestion = (
+    question: NonNullable<NonNullable<FailureAttempt['question_snapshot']>['parent_question']>,
+  ) => ({
+    ...question,
+    prompt_md: wrapTruncatedLearnerText(question.prompt_md, UNTRUSTED_TEXT_CHAR_CAP),
+    reference_md: wrapTruncatedLearnerText(question.reference_md, UNTRUSTED_TEXT_CHAR_CAP),
+    choices_md: wrapTextList(question.choices_md),
+  });
+  const snapshot = failure.question_snapshot;
+  return {
+    ...failure,
+    answer_md: wrapTruncatedLearnerText(failure.answer_md, UNTRUSTED_TEXT_CHAR_CAP),
+    question_snapshot:
+      snapshot == null
+        ? snapshot
+        : {
+            ...snapshot,
+            question: sanitizeQuestion(snapshot.question),
+            parent_question:
+              snapshot.parent_question === null ? null : sanitizeQuestion(snapshot.parent_question),
+          },
+    judge:
+      failure.judge === undefined
+        ? undefined
+        : {
+            ...failure.judge,
+            cause: {
+              ...failure.judge.cause,
+              analysis_md: wrapTruncatedLearnerText(
+                failure.judge.cause.analysis_md,
+                UNTRUSTED_TEXT_CHAR_CAP,
+              ),
+            },
+          },
+    user_cause:
+      failure.user_cause === undefined
+        ? undefined
+        : {
+            ...failure.user_cause,
+            user_notes: wrapTruncatedLearnerText(
+              failure.user_cause.user_notes,
+              UNTRUSTED_TEXT_CHAR_CAP,
+            ),
+          },
+  };
+}
 
 // round-3 review OCR MINOR #6 — literal constants (NOT positional array destructuring of
 // DIRECTOR_WRITE_TOOL_LOCAL_NAMES): a reorder of that shared tuple in tool-names.ts would
@@ -151,12 +225,11 @@ type WriteAgentNoteFn = typeof WriteAgentNoteReal;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
 type EvidenceRefsExistFn = (db: Db, refs: string[]) => Promise<boolean>;
 
-const PRIMARY_EVIDENCE_ACTIONS = [
-  'attempt',
-  'review',
-  'experimental:probe_result',
-  'experimental:prediction_score',
-] as const;
+// The probe author/reviewer currently receives FailureAttempt projections only.
+// Keep the accepted event vocabulary exactly aligned with what that projection
+// can materialize; accepting probe_result/prediction_score here would certify a
+// proposal after silently dropping part of its cited evidence.
+const PRIMARY_EVIDENCE_ACTIONS = ['attempt', 'review'] as const;
 
 async function evidenceRefsExist(db: Db, refs: string[]): Promise<boolean> {
   if (refs.length === 0) return false;
@@ -197,6 +270,8 @@ export interface BuildDirectorServerOpts {
   writeAgentNoteFn?: WriteAgentNoteFn;
   getMasteryProjectionFn?: GetMasteryProjectionFn;
   evidenceRefsExistFn?: EvidenceRefsExistFn;
+  runTaskFn?: TaskTextRunFn;
+  resolveSubjectProfileForKnowledgeIdsFn?: typeof resolveSubjectProfileForKnowledgeIds;
   /** Same failure-attempt snapshot as the deterministic lane, read once at meeting
    * start. Only conjecture history is re-read fresh by the write handler below. */
   failureAttempts: FailureAttempt[];
@@ -209,6 +284,11 @@ export interface DirectorServer {
   server: SdkMcpServer;
   readProposalIds(): string[];
   readNoteIds(): string[];
+  /**
+   * Probe Author/Review outages are returned to the model as well-formed soft tool
+   * results, then rethrown by the outer orchestrator so the worker can retry.
+   */
+  readRetryableProbeError(): Error | null;
 }
 
 // ── Tool arg shapes (the LLM-fillable fields ONLY — server fills baseline_p /
@@ -218,17 +298,13 @@ const ProposeConjectureShape = {
   knowledge_id: z.string().min(1),
   cause_category: z.string().min(1),
   claim_md: z.string().min(1),
-  probe_md: z.string().min(1),
-  probe_reference_md: z.string().min(1),
-  followup_probe_md: z.string().trim().min(1).max(1000),
-  followup_probe_reference_md: z.string().trim().min(1).max(2000),
-  predicted_p: z.number().min(0).max(1),
-  discriminating: z.boolean(),
+  diagnostic_spec: ConjectureDiagnosticSpec,
   // A terminal identity may reopen only after the director has read and echoed the
   // owner-corrected claim supplied by get_meeting_context (or a soft rejection).
   prior_claim_md: z.string().trim().min(1).max(280).optional(),
-  // PRIMARY event ids only (attempt / review / probe / prediction_score) — agent_note ids are
-  // filtered out server-side (§7 backstop). .max(12) mirrors the scout's
+  // Materializable failed attempt/review ids only — agent_note ids are filtered
+  // out server-side (§7 backstop), and other event kinds fail closed below.
+  // .max(12) mirrors the scout's
   // report-findings.ts evidence_refs bound (round-2 review MINOR #5 — consistency + a
   // blast-radius cap on the tool-return payload). round-4 review MAJOR 0.80 —
   // .refine(...) rejects a duplicate id: repeating the SAME event id (e.g.
@@ -312,10 +388,16 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
   const writeAgentNoteFn = opts.writeAgentNoteFn ?? writeAgentNote;
   const getMasteryProjectionFn = opts.getMasteryProjectionFn ?? getMasteryProjection;
   const evidenceRefsExistFn = opts.evidenceRefsExistFn ?? evidenceRefsExist;
+  const runTaskFn = opts.runTaskFn ?? makeRunTaskFn(db);
   const loadConjectureHistoryFn = opts.loadConjectureHistoryFn ?? loadConjectureHistory;
+  const resolveSubjectProfileForKnowledgeIdsFn =
+    opts.resolveSubjectProfileForKnowledgeIdsFn ?? resolveSubjectProfileForKnowledgeIds;
 
   const proposalIds: string[] = [];
   const noteIds: string[] = [];
+  // Operational outages are identity-scoped: a successful retry of key A resolves A,
+  // but must not erase a still-unresolved outage on key B.
+  const retryableProbeErrors = new Map<string, Error>();
   // Same-run dedup: a cause×KC proposed this run is added so the director can't re-raise
   // the same cell inside one meeting (§5.2). Seeded empty; the pending base is checked
   // via knownConjectureKeys.
@@ -353,7 +435,7 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
       // reason } (soft, so the director can react) and NEVER consumes a cap slot.
       tool(
         PROPOSE_CONJECTURE_LOCAL_NAME,
-        'PROPOSE (not write) one conjecture about how the owner thinks + two distinct, untrained discriminating probes and their references. At most 3 per night; pending, active-accepted, dismiss-cooldown, and insufficiently-fresh terminal identities are refused. A reopened terminal identity must echo the owner prior_claim_md from meeting context (a rejected off-menu attempt returns the required prior). evidence_refs must be first-hand event ids (attempt / review / probe / prediction_score) — agent_note ids are stripped. You do NOT supply baseline mastery — the server snapshots it by knowledge point.',
+        'PROPOSE (not write) one conjecture about how the owner thinks plus a frozen DiagnosticSpec. Do not author probes: the server runs the shared author + independent-review quality gate before writing. At most 3 per night; pending, lifecycle, and freshness gates still apply.',
         ProposeConjectureShape,
         async (args) => {
           // round-3 review CodeRabbit Major (A2) — TOCTOU fix. Claude can emit multiple
@@ -365,7 +447,7 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
           // below), or a concurrent second call for the SAME cell could race past every
           // synchronous check seeing the SAME stale (not-yet-reserved) state. All
           // synchronous validation (cap / Zod / evidence / cause_category / dedup /
-          // recurrence floor / ConjectureDraft) runs FIRST and rejects with no
+          // recurrence floor / hypothesis contract) runs FIRST and rejects with no
           // reservation to unwind; the reservation itself sits at the very end of that
           // synchronous stretch (see below), with only the one downstream (async) reject
           // — a write failure — needing an explicit rollback (decrement / delete), so a
@@ -384,15 +466,14 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
           const a = parsed.data;
 
           // First-hand evidence only (§7 backstop): strip agent_note ids before the
-          // database existence gate below. KC-association validation is deliberately not
-          // attempted here: attempt, review, probe_result, and prediction_score events encode
-          // their KC linkage through different payload/subject paths, so a uniform check
-          // would not be safe or bounded in this handler.
+          // database existence gate below. The stronger materialization gate after
+          // hypothesis validation requires every surviving ref to be a text-only
+          // failed attempt/review present in this meeting's immutable snapshot.
           const primaryRefs = filterPrimaryEvidenceRefs(a.evidence_refs);
           if (primaryRefs.length === 0) {
             return textResult({
               ok: false,
-              reason: '需至少一条一手证据（attempt/review/probe/prediction_score 事件 id）',
+              reason: '需至少一条可物化的一手失败证据（attempt/review 事件 id）',
             });
           }
 
@@ -424,10 +505,10 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
           const matchedCell = cellByKey.get(key);
           const recurrenceCount = matchedCell?.recurrence_count ?? primaryRefs.length;
 
-          // §7 review MINOR #7 — pre-check the ConjectureDraft ≥2 recurrence floor
+          // §7 review MINOR #7 — pre-check the hypothesis ≥2 recurrence floor
           // explicitly, with a HUMAN-READABLE reason. Before this fix, an off-menu
           // proposal (no matching candidate cell) with <2 first-hand refs fell straight
-          // into ConjectureDraft.safeParse below and surfaced as an opaque raw Zod
+          // into the hypothesis schema below and surfaced as an opaque raw Zod
           // issues dump — a fixable "cite one more ref" case the director could not act
           // on from the error shape alone.
           if (recurrenceCount < 2) {
@@ -437,28 +518,57 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             });
           }
 
-          const draftCheck = ConjectureDraft.safeParse({
+          const hypothesisCheck = ConjectureHypothesisProposalDraft.safeParse({
             kind: 'proposal',
             claim_md: a.claim_md,
             knowledge_id: a.knowledge_id,
             evidence_event_ids: primaryRefs,
-            probe_md: a.probe_md,
-            probe_reference_md: a.probe_reference_md,
-            followup_probe_md: a.followup_probe_md,
-            followup_probe_reference_md: a.followup_probe_reference_md,
+            diagnostic_spec: a.diagnostic_spec,
             cause_category: causeCategory,
             recurrence_count: recurrenceCount,
-            predicted_p: a.predicted_p,
-            discriminating: a.discriminating,
-            agreement_count: 1,
           });
-          if (!draftCheck.success) {
+          if (!hypothesisCheck.success) {
             return textResult({
               ok: false,
-              reason: 'ConjectureDraft 校验失败',
-              issues: draftCheck.error.issues,
+              reason: 'Conjecture hypothesis 校验失败',
+              issues: hypothesisCheck.error.issues,
             });
           }
+
+          const referencedFailures = primaryRefs
+            .map((eventId) => failureByAttemptId.get(eventId))
+            .filter((failure): failure is FailureAttempt => failure !== undefined);
+          if (referencedFailures.length !== primaryRefs.length) {
+            return textResult({
+              ok: false,
+              reason:
+                'evidence_refs 含本次质量门无法物化的事件；只可引用会议快照中的失败 attempt/review',
+            });
+          }
+          for (const failure of referencedFailures) {
+            const snapshot = failure.question_snapshot;
+            if (snapshot == null) {
+              return textResult({
+                ok: false,
+                reason: `证据 ${failure.attempt_event_id} 缺少有效题目快照，无法送入 probe 质量门`,
+              });
+            }
+            const hasImages =
+              failure.answer_image_refs.length > 0 ||
+              snapshot.question.image_refs.length > 0 ||
+              snapshot.question.figures.length > 0 ||
+              (snapshot.parent_question?.image_refs.length ?? 0) > 0 ||
+              (snapshot.parent_question?.figures.length ?? 0) > 0;
+            if (hasImages) {
+              return textResult({
+                ok: false,
+                reason: `证据 ${failure.attempt_event_id} 含图片/图形；当前 Director 质量门尚不能完整物化，拒绝静默丢弃`,
+              });
+            }
+          }
+          const probeEvidenceFailures = referencedFailures.map(
+            sanitizeFailureAttemptForProbeQuality,
+          );
 
           // Keep the cap/dedup reservation immediately before this handler's first await.
           // Validation failures above remain free; evidence lookup failures below are
@@ -558,6 +668,52 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             });
           }
 
+          let probeQuality: PrepareConjectureProbePairResult;
+          try {
+            const subjectProfile = await resolveSubjectProfileForKnowledgeIdsFn(db, [
+              a.knowledge_id,
+            ]);
+            probeQuality = await prepareConjectureProbePair({
+              hypothesis: hypothesisCheck.data,
+              evidencePayload: {
+                evidence_refs: primaryRefs,
+                failure_attempts: probeEvidenceFailures,
+              },
+              // Image-bearing snapshots fail closed above. Unlike the deterministic
+              // nightly lane, Director currently has no asset loader, so [] means
+              // "verified text-only evidence", never silently dropped visual evidence.
+              evidenceImages: [],
+              runTaskFn,
+              subjectProfile,
+            });
+          } catch (err) {
+            releaseReservation();
+            const taskKind =
+              err instanceof ConjectureProbeQualityOperationalError ? err.taskKind : 'unknown';
+            retryableProbeErrors.set(
+              key,
+              err instanceof Error
+                ? err
+                : new Error(`probe quality gate operational failure: ${String(err)}`),
+            );
+            console.error('[director-tools] conjecture probe quality gate failed', err);
+            return textResult({
+              ok: false,
+              reason: `probe quality gate operational failure (${taskKind}); retry later`,
+            });
+          }
+          // The same identity reached a real quality conclusion, so its earlier outage
+          // (if any) is resolved. Other identities remain latched for worker recovery.
+          retryableProbeErrors.delete(key);
+          if (probeQuality.outcome === 'rejected') {
+            releaseReservation();
+            return textResult({
+              ok: false,
+              reason: '两次完整探针包均未通过质量门；本次不创建猜想提案',
+              probe_quality_attempts: probeQuality.attempts,
+            });
+          }
+
           // baseline_p auto-snapshot (§5.4): the cell's value, else the live mastery
           // projection, else the cold-start neutral 0.5 — the LLM NEVER supplies it.
           let baselineP = matchedCell?.baseline_p ?? null;
@@ -593,20 +749,34 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
                 cause_category: causeCategory,
                 confidence: DIRECTOR_FIXED_CONFIDENCE,
                 recurrence_count: recurrenceCount,
-                probe_md: a.probe_md,
-                probe_reference_md: a.probe_reference_md,
-                followup_probe_md: a.followup_probe_md,
-                followup_probe_reference_md: a.followup_probe_reference_md,
-                discriminating: a.discriminating,
+                probe_md: probeQuality.package.primary.prompt_md,
+                probe_reference_md: probeQuality.package.primary.reference_md,
+                followup_probe_md: probeQuality.package.followup.prompt_md,
+                followup_probe_reference_md: probeQuality.package.followup.reference_md,
+                diagnostic_spec: hypothesisCheck.data.diagnostic_spec,
+                probe_spec: probeQuality.package.primary,
+                followup_probe_spec: probeQuality.package.followup,
+                probe_quality: probeQuality.audit,
+                discriminating: true,
                 corrected_by_owner: false,
-                predicted_p: a.predicted_p,
+                predicted_p: probeQuality.package.predicted_p,
                 baseline_p_at_induction: baselineP,
               },
               cooldown_key: `conjecture:${key}`,
             },
             caused_by_event_id: triggerEventId,
-            task_run_id: toolContextTaskRunId,
-            cost_usd: 0, // cost rides the director run's scan event, not each proposal (§5)
+            event_override: {
+              action: 'experimental:proposal',
+              subject_kind: 'mind_model',
+              subject_id: a.knowledge_id,
+              payload: {
+                director_tool_context_task_run_id: toolContextTaskRunId,
+                probe_quality_task_run_ids: probeQuality.task_run_ids,
+                probe_quality_attempts: probeQuality.attempts,
+              },
+            },
+            task_run_id: probeQuality.primary_task_run_id ?? toolContextTaskRunId,
+            cost_usd: probeQuality.cost_usd,
           };
 
           let proposalId: string;
@@ -714,5 +884,6 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
     server,
     readProposalIds: () => proposalIds,
     readNoteIds: () => noteIds,
+    readRetryableProbeError: () => retryableProbeErrors.values().next().value ?? null,
   };
 }

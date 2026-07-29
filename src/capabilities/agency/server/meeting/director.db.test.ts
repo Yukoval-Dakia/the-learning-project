@@ -13,6 +13,7 @@ import type { WriteEventInput } from '@/kernel/events';
 import type { FailureAttempt } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import { writeAiProposal } from '@/server/proposals/writer';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -45,7 +46,11 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: vi.fn(),
 }));
 
-import { runResearchMeetingAgentNightly } from '../../jobs/research_meeting_agent_nightly';
+import {
+  RECOVERY_CLAIM_ACTION,
+  RETRYABLE_FAILURE_ACTION,
+  runResearchMeetingAgentNightly,
+} from '../../jobs/research_meeting_agent_nightly';
 import {
   EVIDENCE_SCOUT_CHARTER,
   RESEARCH_MEETING_AGENT_ACTOR,
@@ -56,6 +61,24 @@ import {
 } from './director';
 
 const NOW = new Date('2026-07-06T21:00:00.000Z'); // 05:00 BJT 2026-07-07
+
+function questionSnapshot(id: string) {
+  return {
+    schema_version: 1 as const,
+    question: {
+      question_id: `q_${id}`,
+      question_version: 1,
+      parent_question_id: null,
+      prompt_md: `判断 ${id} 中的条件 A 是否足以推出结论 B。`,
+      reference_md: 'A 不是充分条件。',
+      choices_md: null,
+      image_refs: [],
+      figures: [],
+      updated_at: NOW.toISOString(),
+    },
+    parent_question: null,
+  };
+}
 
 async function callTool(name: string, args: unknown): Promise<Record<string, unknown>> {
   const handler = mockSdk.handlers.get(name);
@@ -75,6 +98,7 @@ function failure(id: string, kc: string, category: string): FailureAttempt {
     answer_md: null,
     answer_image_refs: [],
     referenced_knowledge_ids: [kc],
+    question_snapshot: questionSnapshot(id),
     created_at: NOW,
     correction_state,
     judge: {
@@ -121,12 +145,13 @@ const validProposeArgs = {
   knowledge_id: KC,
   cause_category: CAUSE,
   claim_md: '你把必要条件当成充分条件',
-  probe_md: '给出一道只有该误解才会答错的判别题',
-  probe_reference_md: '参考答案：一个必要不充分的反例',
-  followup_probe_md: '换一个语境，再给出一道区分必要与充分的判别题',
-  followup_probe_reference_md: '参考答案：用新的反例说明充分性不成立',
-  predicted_p: 0.3,
-  discriminating: true,
+  diagnostic_spec: {
+    schema_version: 1,
+    target_error_rule_md: '把必要条件当成充分条件。',
+    trigger_conditions_md: '题目要求判断一个条件是否足以推出结论。',
+    scope_boundary_md: '不推断其它逻辑关系。',
+    expected_wrong_answer_signature_md: '把仅必要的条件判断为足够。',
+  },
   evidence_refs: ['att_1', 'att_2'],
 };
 
@@ -151,7 +176,51 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
     getMasteryProjectionFn: vi.fn(
       async () => new Map<string, MasteryProjection>([[KC, projection(0.42)]]),
     ),
+    resolveSubjectProfileForKnowledgeIdsFn: vi.fn(async () => resolveSubjectProfile('math')),
     runAgentTaskFn: proposeOnceRunner(),
+    runTaskFn: vi.fn(async (kind: string) => {
+      if (kind === 'ConjectureProbeAuthorTask') {
+        return {
+          text: '',
+          task_run_id: 'probe_author',
+          structured_output: {
+            package: {
+              primary: {
+                prompt_md: '判断条件 A 是否足以推出 B，并给出反例。',
+                reference_md: 'A 不是充分条件；存在满足 A 但不满足 B 的反例。',
+                expected_target_error_answer_md: 'A 足以推出 B。',
+                elicits_target_error_reason_md: '要求区分必要条件与充分条件。',
+                context_kind: 'abstract',
+                representation_kind: 'symbolic',
+              },
+              followup: {
+                prompt_md: '在门禁情境中判断持卡是否保证可以进入。',
+                reference_md: '持卡不是充分条件，还需权限有效。',
+                expected_target_error_answer_md: '持卡就一定可以进入。',
+                elicits_target_error_reason_md: '在应用情境中保持同一充分性判断。',
+                context_kind: 'applied',
+                representation_kind: 'natural_language',
+              },
+              predicted_p: 0.3,
+            },
+          },
+        };
+      }
+      if (kind === 'ConjectureProbeReviewTask') {
+        return {
+          text: '',
+          task_run_id: 'probe_review',
+          structured_output: {
+            review: {
+              verdict: 'pass',
+              failure_codes: [],
+              explanation_md: '目标错因、参考答案和独立性均通过。',
+            },
+          },
+        };
+      }
+      throw new Error(`unexpected task ${kind}`);
+    }),
     ...overrides,
   };
 }
@@ -181,6 +250,7 @@ beforeEach(async () => {
           answer_md: 'wrong',
           answer_image_refs: [],
           referenced_knowledge_ids: [KC],
+          question_snapshot: questionSnapshot(id),
         },
         caused_by_event_id: null,
         task_run_id: null,
@@ -205,6 +275,85 @@ describe('evidence scout charter', () => {
 });
 
 describe('runResearchMeetingDirector — pipeline', () => {
+  it('seeds write caps from durable outputs of earlier same-day director triggers', async () => {
+    const priorTriggerId = 'research_meeting_agent_prior_trigger';
+    await testDb()
+      .insert(event)
+      .values([
+        {
+          id: priorTriggerId,
+          session_id: null,
+          actor_kind: 'agent',
+          actor_ref: RESEARCH_MEETING_AGENT_ACTOR,
+          action: TRIGGER_ACTION,
+          subject_kind: 'query',
+          subject_id: priorTriggerId,
+          outcome: 'success',
+          payload: { day_key: '2026-07-07' },
+          caused_by_event_id: null,
+          task_run_id: null,
+          cost_micro_usd: null,
+          created_at: NOW,
+        },
+        ...Array.from({ length: 3 }, (_, index) => ({
+          id: `prior_proposal_${index}`,
+          session_id: null,
+          actor_kind: 'agent' as const,
+          actor_ref: RESEARCH_MEETING_AGENT_ACTOR,
+          action: 'experimental:proposal',
+          subject_kind: 'mind_model' as const,
+          subject_id: KC,
+          outcome: null,
+          payload: {},
+          caused_by_event_id: priorTriggerId,
+          task_run_id: null,
+          cost_micro_usd: null,
+          created_at: NOW,
+        })),
+        ...Array.from({ length: 2 }, (_, index) => ({
+          id: `prior_note_${index}`,
+          session_id: null,
+          actor_kind: 'agent' as const,
+          actor_ref: RESEARCH_MEETING_AGENT_ACTOR,
+          action: 'experimental:agent_note',
+          subject_kind: 'query' as const,
+          subject_id: `prior_note_${index}`,
+          outcome: null,
+          payload: {},
+          caused_by_event_id: priorTriggerId,
+          task_run_id: null,
+          cost_micro_usd: null,
+          created_at: NOW,
+        })),
+      ]);
+
+    let proposalResult: Record<string, unknown> | undefined;
+    let noteResult: Record<string, unknown> | undefined;
+    const runAgentTaskFn = vi.fn(async () => {
+      proposalResult = await callTool('propose_conjecture', validProposeArgs);
+      noteResult = await callTool('leave_agent_note', {
+        target_agents: ['dreaming'],
+        refs: [],
+        summary_md: 'recovery should not exceed the nightly note cap',
+        signal_kind: 'evidence_gap',
+      });
+      return {
+        task_run_id: 'director_recovery_caps',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.01,
+      };
+    });
+
+    const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+
+    expect(proposalResult).toMatchObject({ ok: false, reason: expect.stringContaining('上限') });
+    expect(noteResult).toMatchObject({ ok: false, reason: expect.stringContaining('上限') });
+    expect(result.proposals_created).toBe(0);
+    expect(result.notes_created).toBe(0);
+  });
+
   it('applies conjecture lifecycle history to both the agenda and write guard', async () => {
     let context: Record<string, unknown> | undefined;
     let proposeResult: Record<string, unknown> | undefined;
@@ -309,9 +458,10 @@ describe('runResearchMeetingDirector — pipeline', () => {
         subject_id: 'q_review_1',
         outcome: 'failure',
         payload: {
-          answer_md: 'still wrong',
+          user_response_md: 'still wrong',
           answer_image_refs: [],
           referenced_knowledge_ids: [KC],
+          question_snapshot: questionSnapshot('review_1'),
         },
         caused_by_event_id: null,
         task_run_id: null,
@@ -333,7 +483,16 @@ describe('runResearchMeetingDirector — pipeline', () => {
       };
     });
 
-    const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+    const result = await runResearchMeetingDirector(
+      testDb(),
+      baseDeps({
+        runAgentTaskFn,
+        getFailureAttemptsFn: vi.fn(async () => [
+          ...fixtureFailures(),
+          failure('review_1', KC, CAUSE),
+        ]),
+      }),
+    );
 
     expect(proposeResult?.ok).toBe(true);
     expect(result.proposals_created).toBe(1);
@@ -774,6 +933,58 @@ describe('runResearchMeetingDirector — pipeline', () => {
 });
 
 describe('runResearchMeetingAgentNightly — dayKey claim idempotency (real DB)', () => {
+  it('retries the same-day claim after a probe quality operational outage', async () => {
+    const outageRunner = vi.fn(async () => {
+      await callTool('propose_conjecture', validProposeArgs);
+      return {
+        task_run_id: 'director_probe_outage',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.01,
+      };
+    });
+    const outageProbe = vi.fn(async () => {
+      throw new Error('provider unavailable');
+    });
+
+    await expect(
+      runResearchMeetingAgentNightly(
+        testDb(),
+        baseDeps({ runAgentTaskFn: outageRunner, runTaskFn: outageProbe }),
+      ),
+    ).rejects.toThrow('probe author failed twice');
+
+    const scansAfterOutage = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, SCAN_ACTION));
+    expect(scansAfterOutage).toHaveLength(0);
+    expect(await conjectureProposalRows(RESEARCH_MEETING_AGENT_ACTOR)).toHaveLength(0);
+    expect(
+      await testDb().select().from(event).where(eq(event.action, RETRYABLE_FAILURE_ACTION)),
+    ).toHaveLength(1);
+
+    const retried = await runResearchMeetingAgentNightly(testDb(), baseDeps());
+    expect(retried.skipped).toBe(false);
+    expect(retried.director?.proposals_created).toBe(1);
+
+    const scansAfterRetry = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, SCAN_ACTION));
+    expect(scansAfterRetry).toHaveLength(1);
+    const recoveries = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, RECOVERY_CLAIM_ACTION));
+    expect(recoveries).toHaveLength(1);
+    expect(recoveries[0].payload).toMatchObject({
+      attempt_kind: 'recovery',
+      recovery_attempt: 1,
+    });
+  });
+
   it('runs the director once; a same-day retry skips (no re-spend, no duplicate proposal)', async () => {
     const first = await runResearchMeetingAgentNightly(testDb(), baseDeps());
     expect(first.skipped).toBe(false);

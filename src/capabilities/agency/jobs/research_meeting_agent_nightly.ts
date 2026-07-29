@@ -10,62 +10,20 @@
 //      zero spend, zero events, zero proposals. Flip = set the worker container .env +
 //      restart (single-process, one env — no AI-provider three-process wiring here).
 //
-//   2. dayKey nonce-claim idempotency — a pg-boss retry (handler threw after the director
-//      spent) must NOT re-run the director (re-burning Opus quota + re-proposing). A
-//      deterministic per-day claim event + nonce read-back gates the spend: only the
-//      writer that wins the onConflictDoNothing claim runs the director. Sequential retry
-//      (claim already exists) and concurrent redeliver (nonce mismatch) both skip.
+//   2. dayKey nonce-claim idempotency — a deterministic per-day claim event + nonce
+//      read-back gates the initial spend. Sequential/concurrent delivery skips unless
+//      the controlled one-shot recovery protocol below proves the initial run ended.
 //
-//      ORPHANED-CLAIM RECOVERY (§2 review fix, MAJOR): a claim can exist WITHOUT the run
-//      ever completing — specifically when the director's PRE-LLM reads throw
-//      (director.ts never even reaches the LLM call, let alone a scan-event write) and
-//      pg-boss retries. Without recovery, that day's claim would be permanently "won" by
-//      a run that never actually did anything, silently masking a real failure as
-//      `skipped: true` for the rest of the night. Recovery: the director ALWAYS writes a
-//      scan event on completion (success OR degraded — director.ts, its own try/catch
-//      around that write is best-effort but still attempted). So when today's claim
-//      exists, we ADDITIONALLY check whether a scan event for today also exists:
-//        - claim exists + NO scan  → the prior attempt died before ever reaching the
-//          director's own event writes (a genuine PRE-LLM segment failure — zero spend
-//          so far) → this run is allowed to retry.
-//        - claim exists + scan exists → the normal complete-prior-run case → still skips.
-//      Interaction with director.ts's §3 post-LLM best-effort persistence: if the scan
-//      event write ITSELF fails (after the LLM already ran), the SAME "claim + no scan"
-//      signal fires on the next invocation — that retry DOES re-spend tokens once (an
-//      accepted, logged trade-off; see director.ts's degrade comment), unlike the
-//      PRE-LLM-throw case above, which is a true zero-spend retry.
-//
-//      RESIDUAL RACE (round-3 review OCR MINOR, evaluated + accepted, not engineered
-//      away): the orphan-recovery branch above has NO nonce-race protection of its own
-//      (unlike the fresh-claim branch, which reads back its own write and compares
-//      nonces) — if TWO concurrent invocations both discover the SAME orphaned claim
-//      ("exists + no scan") at the same time, BOTH proceed and BOTH re-run the director,
-//      a genuine double-spend. Two facts bound how often this is reachable and why a
-//      fix was NOT added:
-//        (a) queue-timeout cross-check (A3/A4): EXPIRE_AGENT=7200s (2h, the 'agent'
-//            queue tier — see the manifest.ts A4 fix) comfortably exceeds the
-//            director's own 300s wall-clock abort. A HEALTHY run always self-aborts
-//            long before pg-boss's own queue-level expiry could ever redeliver it —
-//            so the orphan path is reachable ONLY via an ABNORMAL termination (a
-//            worker process crash/restart), not a normal in-budget timeout race.
-//        (b) a SOUND fix is not cheap here: `writeEvent` is deliberately append-only
-//            (INSERT ... ON CONFLICT DO NOTHING, first-write-wins, NEVER an UPDATE —
-//            see writeEvent's own docblock) — there is no compare-and-swap path to
-//            "reclaim" the EXISTING fixed claim id with a new nonce. A naive
-//            "write-my-own-marker-then-read-all-and-pick-first" scheme does NOT
-//            actually close the race (it just relocates the same TOCTOU to the
-//            read-after-write ordering assumption — the ORIGINAL claim's soundness
-//            comes from the DB's real uniqueness constraint on ONE fixed id, not
-//            from "read back and compare"). A genuinely sound second-tier reclaim
-//            would need its OWN fixed per-day id (a real second onConflictDoNothing
-//            race) — implementable, but then a REPEATED orphan within the same
-//            night (a reclaim-of-a-reclaim) needs the SAME treatment again,
-//            recursively — a real scope increase past a light-touch fix.
-//      Given (a) the trigger condition is already abnormal/rare (single worker +
-//      nightly cron + a crash mid-flight) and (b) the spec's own §3 already grounds
-//      the WHOLE claim scheme's soundness in the "single worker + nightly cron +
-//      single user" operational model (not a fully distributed-safe design), this
-//      residual gap is ACCEPTED and documented here rather than engineered away.
+//      CONTROLLED RECOVERY: claim + no scan is NOT sufficient by itself. Each initial
+//      claim carries a lease longer than the director's own wall-clock budget. While
+//      that lease is active, a delivery cannot spend; the production handler keeps a
+//      redelivery alive until the lease boundary instead of acknowledging it early.
+//      A caught retryable failure writes an explicit failure marker and makes the claim
+//      immediately recoverable; an unmarked hard crash becomes recoverable only after
+//      lease expiry. Recovery itself must win a SECOND fixed-id nonce claim and carries
+//      recovery_attempt=1. That marker is never reused or updated, so only one recovery
+//      can run and any concurrent/repeated redelivery skips. A scan still wins over
+//      every recovery path.
 //
 // NEVER calls reconcile (settlement single-home stays with the deterministic lane).
 
@@ -75,6 +33,7 @@ import type { Job } from 'pg-boss';
 import {
   type DirectorDeps,
   RESEARCH_MEETING_AGENT_ACTOR,
+  RESEARCH_MEETING_AGENT_WALL_CLOCK_S,
   type ResearchMeetingDirectorResult,
   SCAN_ACTION,
   runResearchMeetingDirector,
@@ -91,15 +50,21 @@ import { and, eq, sql } from 'drizzle-orm';
 export const RESEARCH_MEETING_AGENT_ENABLED_ENV = 'RESEARCH_MEETING_AGENT_ENABLED';
 /** action for the deterministic per-day claim event (generic ExperimentalEvent hatch). */
 export const CLAIM_ACTION = 'experimental:research_meeting_agent_claim';
+/** Fixed-id second-tier claim: at most one recovery attempt per day. */
+export const RECOVERY_CLAIM_ACTION = 'experimental:research_meeting_agent_recovery_claim';
+/** A caught director failure proves the initial lease is no longer actively running. */
+export const RETRYABLE_FAILURE_ACTION = 'experimental:research_meeting_agent_retryable_failure';
+/** Director timeout plus one minute of orchestration/persistence grace. */
+export const CLAIM_LEASE_MS = (RESEARCH_MEETING_AGENT_WALL_CLOCK_S + 60) * 1000;
 
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
 /** Reads back a claim event's payload (nonce compare). Null when the id does not exist. */
 type ReadEventByIdFn = (db: Db, id: string) => Promise<{ payload: unknown } | null>;
-/** §2 review fix: existence check for TODAY's scan event — distinguishes a completed
- *  prior run (claim + scan both exist → skip) from an orphaned claim (claim exists, no
- *  scan → a prior PRE-LLM segment failure; safe to retry). */
+/** A scan is authoritative completion. Its absence only opens the lease/failure-marker
+ *  checks; it never grants recovery by itself. */
 type HasScanEventForDayFn = (db: Db, dayKey: string) => Promise<boolean>;
 type RunDirectorFn = (db: Db, deps: DirectorDeps) => Promise<ResearchMeetingDirectorResult>;
+type WaitUntilFn = (retryAt: Date) => Promise<void>;
 
 export interface AgentNightlyDeps extends DirectorDeps {
   /** injectable director run (unit tests stub this; db tests let it run for real). */
@@ -108,11 +73,14 @@ export interface AgentNightlyDeps extends DirectorDeps {
   readEventByIdFn?: ReadEventByIdFn;
   /** injectable scan-existence check (default queries the event table). */
   hasScanEventForDayFn?: HasScanEventForDayFn;
+  /** injectable lease-boundary wait (production uses a timer; unit tests advance a fake clock). */
+  waitUntilFn?: WaitUntilFn;
 }
 
 export interface AgentNightlyResult {
   skipped: boolean;
   reason?: string;
+  retry_at?: string;
   day_key: string;
   director?: ResearchMeetingDirectorResult;
 }
@@ -145,16 +113,40 @@ async function defaultHasScanEventForDay(db: Db, dayKey: string): Promise<boolea
 
 interface ClaimResult {
   won: boolean;
+  attemptKind?: 'initial' | 'recovery';
+  activeLeaseUntil?: Date;
+}
+
+function recoveryClaimEventId(dayKey: string): string {
+  return `research_meeting_agent_recovery:${dayKey}`;
+}
+
+function retryableFailureEventId(dayKey: string, attemptKind: 'initial' | 'recovery'): string {
+  return `research_meeting_agent_retryable_failure:${dayKey}:${attemptKind}`;
+}
+
+function readLeaseExpiry(payload: unknown): Date | null {
+  const leaseExpiresAt =
+    typeof payload === 'object' && payload !== null && 'lease_expires_at' in payload
+      ? (payload as { lease_expires_at?: unknown }).lease_expires_at
+      : undefined;
+  if (typeof leaseExpiresAt !== 'string') return null;
+  const timestamp = Date.parse(leaseExpiresAt);
+  return Number.isFinite(timestamp) ? new Date(timestamp) : null;
+}
+
+async function defaultWaitUntil(retryAt: Date): Promise<void> {
+  const waitMs = Math.max(0, retryAt.getTime() - Date.now());
+  await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
 }
 
 /**
  * Atomically claim the day. Returns `won: true` only for the caller allowed to run the
  * director this invocation — either because it is the FIRST writer whose claim persists
  * (first-write-wins via writeEvent's onConflictDoNothing, covering the concurrent
- * redeliver window where both insert but only one nonce sticks), or because today's claim
- * already existed but is ORPHANED (no scan event yet — §2 review fix, a prior PRE-LLM
- * segment failure with zero spend so far, safe to retry). The normal sequential-retry
- * case (claim exists AND a scan event already landed) returns `won: false`.
+ * redeliver window where both insert but only one nonce sticks), or because the initial
+ * run is explicitly failed/lease-expired AND this caller wins the one fixed recovery
+ * claim. Active leases, completed scans, and an existing recovery marker return false.
  */
 async function claimDay(
   db: Db,
@@ -170,7 +162,56 @@ async function claimDay(
   const existing = await opts.readEventByIdFn(db, claimEventId);
   if (existing) {
     const scanExists = await opts.hasScanEventForDayFn(db, opts.dayKey);
-    return { won: !scanExists };
+    if (scanExists) return { won: false };
+
+    // A fixed recovery id is the recovery-attempt counter: once present, attempt #1
+    // has already been claimed and there is no attempt #2.
+    const recoveryEventId = recoveryClaimEventId(opts.dayKey);
+    const recovery = await opts.readEventByIdFn(db, recoveryEventId);
+    if (recovery) return { won: false };
+
+    // Caught failures explicitly end the active lease. A hard crash cannot write that
+    // marker, so it must wait for lease expiry. Legacy claims without lease metadata
+    // fail closed (no recovery) rather than risking duplicate spend.
+    const failure = await opts.readEventByIdFn(db, retryableFailureEventId(opts.dayKey, 'initial'));
+    if (!failure) {
+      const activeLeaseUntil = readLeaseExpiry(existing.payload);
+      if (!activeLeaseUntil) {
+        return { won: false };
+      }
+      if (opts.now.getTime() < activeLeaseUntil.getTime()) {
+        return { won: false, activeLeaseUntil };
+      }
+    }
+
+    const recoveryNonce = newId();
+    await opts.writeEventFn(db, {
+      id: recoveryEventId,
+      actor_kind: 'agent',
+      actor_ref: RESEARCH_MEETING_AGENT_ACTOR,
+      action: RECOVERY_CLAIM_ACTION,
+      subject_kind: 'query',
+      subject_id: recoveryEventId,
+      outcome: null,
+      payload: {
+        claim_nonce: recoveryNonce,
+        day_key: opts.dayKey,
+        attempt_kind: 'recovery',
+        recovery_attempt: 1,
+        lease_expires_at: new Date(opts.now.getTime() + CLAIM_LEASE_MS).toISOString(),
+      },
+      cost_micro_usd: null,
+      ingest_at: opts.now,
+      created_at: opts.now,
+    });
+    const persistedRecovery = await opts.readEventByIdFn(db, recoveryEventId);
+    const persistedRecoveryNonce = (
+      persistedRecovery?.payload as { claim_nonce?: string } | undefined
+    )?.claim_nonce;
+    return {
+      won: persistedRecoveryNonce === recoveryNonce,
+      attemptKind: persistedRecoveryNonce === recoveryNonce ? 'recovery' : undefined,
+    };
   }
 
   const claimNonce = newId();
@@ -182,7 +223,13 @@ async function claimDay(
     subject_kind: 'query',
     subject_id: claimEventId,
     outcome: null,
-    payload: { claim_nonce: claimNonce, day_key: opts.dayKey },
+    payload: {
+      claim_nonce: claimNonce,
+      day_key: opts.dayKey,
+      attempt_kind: 'initial',
+      recovery_attempt: 0,
+      lease_expires_at: new Date(opts.now.getTime() + CLAIM_LEASE_MS).toISOString(),
+    },
     cost_micro_usd: null,
     // Scheduler claim/audit metadata is not learner evidence.
     ingest_at: opts.now,
@@ -191,7 +238,10 @@ async function claimDay(
 
   const persisted = await opts.readEventByIdFn(db, claimEventId);
   const persistedNonce = (persisted?.payload as { claim_nonce?: string } | undefined)?.claim_nonce;
-  return { won: persistedNonce === claimNonce };
+  return {
+    won: persistedNonce === claimNonce,
+    attemptKind: persistedNonce === claimNonce ? 'initial' : undefined,
+  };
 }
 
 /**
@@ -217,6 +267,14 @@ export async function runResearchMeetingAgentNightly(
     hasScanEventForDayFn,
   });
   if (!claim.won) {
+    if (claim.activeLeaseUntil) {
+      return {
+        skipped: true,
+        reason: 'active_lease',
+        retry_at: claim.activeLeaseUntil.toISOString(),
+        day_key: dayKey,
+      };
+    }
     return { skipped: true, reason: 'already_claimed_today', day_key: dayKey };
   }
 
@@ -228,11 +286,43 @@ export async function runResearchMeetingAgentNightly(
     runDirectorFn: _runDirectorFn,
     readEventByIdFn: _readEventByIdFn,
     hasScanEventForDayFn: _hasScanEventForDayFn,
+    waitUntilFn: _waitUntilFn,
     ...directorDeps
   } = deps;
   // Pin `now` so the director shares the claim's timestamp (deterministic dayKey/events).
-  const director = await runDirectorFn(db, { ...directorDeps, now: () => now });
-  return { skipped: false, day_key: dayKey, director };
+  try {
+    const director = await runDirectorFn(db, { ...directorDeps, now: () => now });
+    return { skipped: false, day_key: dayKey, director };
+  } catch (err) {
+    const attemptKind = claim.attemptKind ?? 'initial';
+    try {
+      const failureId = retryableFailureEventId(dayKey, attemptKind);
+      await writeEventFn(db, {
+        id: failureId,
+        actor_kind: 'agent',
+        actor_ref: RESEARCH_MEETING_AGENT_ACTOR,
+        action: RETRYABLE_FAILURE_ACTION,
+        subject_kind: 'query',
+        subject_id: failureId,
+        outcome: 'failure',
+        payload: {
+          day_key: dayKey,
+          attempt_kind: attemptKind,
+          recovery_attempt: attemptKind === 'recovery' ? 1 : 0,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        cost_micro_usd: null,
+        ingest_at: now,
+        created_at: now,
+      });
+    } catch (markerError) {
+      console.error(
+        '[research_meeting_agent_nightly] failed to persist retryable failure marker',
+        markerError,
+      );
+    }
+    throw err;
+  }
 }
 
 export function buildResearchMeetingAgentNightlyHandler(
@@ -249,7 +339,15 @@ export function buildResearchMeetingAgentNightlyHandler(
       return;
     }
     try {
-      const result = await runResearchMeetingAgentNightly(db, deps);
+      let result = await runResearchMeetingAgentNightly(db, deps);
+      while (result.reason === 'active_lease' && result.retry_at) {
+        // The queue's normal 30s/60s retry budget ends before the 360s claim lease.
+        // A hard-crash redelivery must therefore remain active until the exact lease
+        // boundary; acknowledging here would permanently lose the only recovery chance.
+        const retryAt = new Date(result.retry_at);
+        await (deps.waitUntilFn ?? defaultWaitUntil)(retryAt);
+        result = await runResearchMeetingAgentNightly(db, deps);
+      }
       console.log('[research_meeting_agent_nightly] result', result);
     } catch (err) {
       console.error('[research_meeting_agent_nightly] failed', err);

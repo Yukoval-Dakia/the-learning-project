@@ -94,10 +94,52 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
       claim_md: `你混淆 ${cell.knowledge_id}`,
       knowledge_id: cell.knowledge_id,
       evidence_event_ids: cell.evidence_event_ids,
+      diagnostic_spec: {
+        schema_version: 1,
+        target_error_rule_md: `错误应用 ${cell.knowledge_id} 的规则`,
+        trigger_conditions_md: `题目要求使用 ${cell.knowledge_id}`,
+        scope_boundary_md: '不推断其它知识点。',
+        expected_wrong_answer_signature_md: '答案呈现目标错误规则。',
+      },
       probe_md: `probe for ${cell.knowledge_id}`,
       probe_reference_md: `reference answer for ${cell.knowledge_id}`,
       followup_probe_md: `follow-up probe for ${cell.knowledge_id}`,
       followup_probe_reference_md: `follow-up reference answer for ${cell.knowledge_id}`,
+      probe_spec: {
+        prompt_md: `probe for ${cell.knowledge_id}`,
+        reference_md: `reference answer for ${cell.knowledge_id}`,
+        expected_target_error_answer_md: `target error answer for ${cell.knowledge_id}`,
+        elicits_target_error_reason_md: 'primary trigger',
+        context_kind: 'abstract',
+        representation_kind: 'symbolic',
+      },
+      followup_probe_spec: {
+        prompt_md: `follow-up probe for ${cell.knowledge_id}`,
+        reference_md: `follow-up reference answer for ${cell.knowledge_id}`,
+        expected_target_error_answer_md: `follow-up target error answer for ${cell.knowledge_id}`,
+        elicits_target_error_reason_md: 'follow-up trigger',
+        context_kind: 'applied',
+        representation_kind: 'natural_language',
+      },
+      probe_quality: {
+        schema_version: 1,
+        passed: true,
+        attempts: [
+          {
+            attempt: 1,
+            outcome: 'passed',
+            failure_codes: [],
+            explanation_md: 'verified',
+            author_task_run_id: `tr_${cell.knowledge_id}_author`,
+            reviewer_task_run_id: `tr_${cell.knowledge_id}_review`,
+          },
+        ],
+        final_review: {
+          verdict: 'pass',
+          failure_codes: [],
+          explanation_md: 'verified',
+        },
+      },
       cause_category: cell.cause_category,
       recurrence_count: cell.recurrence_count,
       predicted_p: 0.3,
@@ -107,14 +149,26 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
     confidence: 0.66,
     confidence_capped: false,
     samples: input.samples,
-    primary_task_run_id: `tr_${cell.knowledge_id}_1`,
+    primary_task_run_id: `tr_${cell.knowledge_id}_author`,
     task_run_ids: [
       `tr_${cell.knowledge_id}_1`,
       `tr_${cell.knowledge_id}_2`,
       `tr_${cell.knowledge_id}_3`,
+      `tr_${cell.knowledge_id}_author`,
+      `tr_${cell.knowledge_id}_review`,
     ],
     cost_usd: 0.02,
     votes: { proposal: 2, abstain: 0, invalid: 0, failed: 1 },
+    probe_quality_attempts: [
+      {
+        attempt: 1,
+        outcome: 'passed',
+        failure_codes: [],
+        explanation_md: 'verified',
+        author_task_run_id: `tr_${cell.knowledge_id}_author`,
+        reviewer_task_run_id: `tr_${cell.knowledge_id}_review`,
+      },
+    ],
   };
 }
 
@@ -133,6 +187,7 @@ function fakeAbstained(input: InduceConjectureInput): InduceConjectureResult {
     task_run_ids: ['tr_abstain_1', 'tr_abstain_2', 'tr_abstain_3'],
     cost_usd: 0.015,
     votes: { proposal: 0, abstain: 3, invalid: 0, failed: 0 },
+    probe_quality_attempts: [],
   };
 }
 
@@ -477,9 +532,25 @@ describe('runResearchMeetingNightly', () => {
     expect(change.baseline_p_at_induction).toBe(0.42); // snapshot of mastery p(L)
     expect(change.corrected_by_owner).toBe(false);
     expect(change.discriminating).toBe(true);
-    expect(input.task_run_id).toBe('tr_k_a_1');
+    expect(input.task_run_id).toBe('tr_k_a_author');
     expect(input.event_override?.payload).toEqual({
-      induction_task_run_ids: ['tr_k_a_1', 'tr_k_a_2', 'tr_k_a_3'],
+      induction_task_run_ids: [
+        'tr_k_a_1',
+        'tr_k_a_2',
+        'tr_k_a_3',
+        'tr_k_a_author',
+        'tr_k_a_review',
+      ],
+      probe_quality_attempts: [
+        {
+          attempt: 1,
+          outcome: 'passed',
+          failure_codes: [],
+          explanation_md: 'verified',
+          author_task_run_id: 'tr_k_a_author',
+          reviewer_task_run_id: 'tr_k_a_review',
+        },
+      ],
     });
   });
 
@@ -931,14 +1002,14 @@ describe('runResearchMeetingNightly', () => {
     ).toBe('ok');
   });
 
-  it('attributes a load-bearing semantic-grouping failure to ClaimGroupingTask', async () => {
+  it('attributes a load-bearing semantic-grouping failure to ConjectureGroupingTask', async () => {
     const tx = { kind: 'grouping-failure-transaction' } as never;
     const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
     const deps = baseDeps({
       getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
       induceConjectureFn: vi.fn(async () => {
         throw new ConjectureInductionOperationalError(
-          'ClaimGroupingTask',
+          'ConjectureGroupingTask',
           'semantic grouping output was malformed',
         );
       }),
@@ -954,10 +1025,40 @@ describe('runResearchMeetingNightly', () => {
       conjectures_abstained: 0,
       cells_failed: 1,
     });
-    expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(tx, 'ClaimGroupingTask', {
+    expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(tx, 'ConjectureGroupingTask', {
       throwOnError: true,
     });
   });
+
+  it.each(['ConjectureProbeAuthorTask', 'ConjectureProbeReviewTask'] as const)(
+    'propagates %s operational failures so pg-boss redelivers the unfinished execution',
+    async (taskKind) => {
+      const writeAiProposalFn = vi.fn(async () => 'unexpected');
+      const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+      const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
+      const deps = baseDeps({
+        getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+        induceConjectureFn: vi.fn(async () => {
+          throw new ConjectureInductionOperationalError(taskKind, `${taskKind} output unavailable`);
+        }),
+        writeAiProposalFn,
+        writeEventFn,
+        writeRetryableAiFailureLedgerFn,
+      });
+
+      await expect(runResearchMeetingNightly({} as never, deps)).rejects.toThrow(
+        `${taskKind} output unavailable`,
+      );
+      expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(expect.anything(), taskKind);
+      expect(writeAiProposalFn).not.toHaveBeenCalled();
+      expect(writeEventFn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          action: 'experimental:research_meeting_completed',
+        }),
+      );
+    },
+  );
 
   // ── YUK-779: 静默空跑的红/绿实证 ───────────────────────────────────────────
   // 两侧必须同时成立才算修好：全败要报，空夜不能报。

@@ -8,14 +8,21 @@
 // scout (breadth cap = a PreToolUse hook that denies the 2nd Task).
 //
 // Provenance / evidence-first: the run anchors on a trigger event; the tool-call reads
-// persist to tool_call_log after the run; a scan event records the outcome + the run's
-// cost (mirrors dreaming_scan — proposals are 0-cost so the scan carries the spend once,
-// no double-count). Settlement single-home: this NEVER calls reconcile / writes FSRS.
+// persist to tool_call_log after the run; a scan event records the director main-thread
+// cost. YUK-821 adds separate author/reviewer task runs after a tool proposal: their cost
+// is attached to that proposal event and is not included in the director scan, so each
+// model call remains attributed once. Settlement single-home: this NEVER calls reconcile /
+// writes FSRS.
 //
-// Degrade (red line): a runAgentTask throw (maxTurns / 300s abort / SDK error) is caught
-// and turned into a PARTIAL scan event + a degraded result — it is NOT rethrown, so the
-// nightly job returns cleanly (already-landed proposals are kept; the dayKey claim, held
-// by the job, blocks any re-spend). POST-LLM persistence (persistToolTrace + the
+// Degrade (red line): a generic runAgentTask throw (maxTurns / 300s abort / SDK error)
+// is caught and turned into a PARTIAL scan event + a degraded result — it is NOT
+// rethrown, so the nightly job returns cleanly (already-landed proposals are kept; the
+// dayKey claim, held by the job, blocks any re-spend). One deliberate exception is a
+// probe Author/Review operational failure: the tool handler returns a well-formed soft
+// failure to the model, records the outage in its closure, and this orchestrator
+// rethrows it BEFORE writing a scan. The nightly claim+no-scan rule then lets pg-boss
+// retry instead of misclassifying an outage as a quality rejection. POST-LLM persistence
+// (persistToolTrace + the
 // scout_spawned / scan event writes) is ALSO best-effort — wrapped in its own try/catch,
 // logged, and swallowed (§3 review fix): a throw there must not propagate either, since by
 // that point the LLM has already run and a pg-boss retry driven by a rethrow would
@@ -24,8 +31,9 @@
 // scan-existence check (research_meeting_agent_nightly.ts §2 fix) treats "claim exists,
 // no scan" as an orphaned mid-run failure and allows ONE retry on the next invocation —
 // that retry DOES re-spend tokens (unlike the zero-spend PRE-LLM-throw retry case), which
-// is an accepted degrade rather than a silent black hole. Only the PRE-LLM DB reads can
-// throw a genuine, zero-spend retryable fault out of this function.
+// is an accepted degrade rather than a silent black hole. PRE-LLM DB reads are the
+// zero-spend retryable path; probe quality outages are the deliberate, possibly-spent
+// retryable path because provider failure must never count as a quality vote.
 
 import { tasks } from '@/ai/registry';
 import {
@@ -39,18 +47,22 @@ import {
 } from '@/capabilities/agency/server/conjecture/history';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
+import { event } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { buildEvidenceServer, persistToolTrace } from '@/server/agency/scout/evidence-mcp';
 import type { ToolTraceEntry } from '@/server/agency/scout/evidence-mcp';
 import { createFindingsCapture } from '@/server/agency/scout/report-findings';
 import { buildEvidenceScoutAgentDefinition } from '@/server/agency/scout/scout-agent';
 import { SPAWN_TOOL_NAME } from '@/server/agency/scout/tool-names';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import type { CanUseTool, HookCallbackMatcher } from '@anthropic-ai/claude-agent-sdk';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   type BuildDirectorServerOpts,
   DIRECTOR_ALLOWED_TOOLS,
@@ -145,10 +157,49 @@ type ListPendingConjecturesFn = (db: Db) => Promise<ProposalInboxRow[]>;
 type PersistToolTraceFn = typeof persistToolTrace;
 type WriteAiProposalFn = NonNullable<BuildDirectorServerOpts['writeAiProposalFn']>;
 type WriteAgentNoteFn = NonNullable<BuildDirectorServerOpts['writeAgentNoteFn']>;
+type ResolveSubjectProfileForKnowledgeIdsFn = NonNullable<
+  BuildDirectorServerOpts['resolveSubjectProfileForKnowledgeIdsFn']
+>;
+type DirectorOutputCounts = { proposals: number; notes: number };
+type LoadDirectorOutputCountsForDayFn = (db: Db, dayKey: string) => Promise<DirectorOutputCounts>;
+
+async function loadDirectorOutputCountsForDay(
+  db: Db,
+  dayKey: string,
+): Promise<DirectorOutputCounts> {
+  const triggerRows = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.actor_ref, RESEARCH_MEETING_AGENT_ACTOR),
+        eq(event.action, TRIGGER_ACTION),
+        sql`${event.payload}->>'day_key' = ${dayKey}`,
+      ),
+    );
+  const triggerIds = triggerRows.map((row) => row.id);
+  if (triggerIds.length === 0) return { proposals: 0, notes: 0 };
+
+  const outputRows = await db
+    .select({ action: event.action })
+    .from(event)
+    .where(
+      and(
+        eq(event.actor_ref, RESEARCH_MEETING_AGENT_ACTOR),
+        inArray(event.caused_by_event_id, triggerIds),
+        inArray(event.action, ['experimental:proposal', 'experimental:agent_note']),
+      ),
+    );
+  return {
+    proposals: outputRows.filter((row) => row.action === 'experimental:proposal').length,
+    notes: outputRows.filter((row) => row.action === 'experimental:agent_note').length,
+  };
+}
 
 export interface DirectorDeps {
   now?: () => Date;
   runAgentTaskFn?: RunAgentTaskFn;
+  runTaskFn?: TaskTextRunFn;
   writeEventFn?: WriteEventFn;
   getFailureAttemptsFn?: GetFailureAttemptsFn;
   getMasteryProjectionFn?: GetMasteryProjectionFn;
@@ -158,6 +209,8 @@ export interface DirectorDeps {
   persistToolTraceFn?: PersistToolTraceFn;
   writeAiProposalFn?: WriteAiProposalFn;
   writeAgentNoteFn?: WriteAgentNoteFn;
+  resolveSubjectProfileForKnowledgeIdsFn?: ResolveSubjectProfileForKnowledgeIdsFn;
+  loadDirectorOutputCountsForDayFn?: LoadDirectorOutputCountsForDayFn;
 }
 
 /** Excerpt cap for a pending conjecture's claim in the agenda snapshot. */
@@ -199,9 +252,13 @@ export async function runResearchMeetingDirector(
     deps.listPendingConjecturesFn ??
     ((d: Db) => listProposalInboxRows(d, { status: 'pending', kind: 'conjecture' }));
   const runAgentTaskFn = deps.runAgentTaskFn ?? runAgentTask;
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   const writeEventFn = deps.writeEventFn ?? writeEvent;
   const persistToolTraceFn = deps.persistToolTraceFn ?? persistToolTrace;
   const loadConjectureHistoryFn = deps.loadConjectureHistoryFn ?? loadConjectureHistory;
+  const loadDirectorOutputCountsForDayFn =
+    deps.loadDirectorOutputCountsForDayFn ?? loadDirectorOutputCountsForDay;
+  const dayKey = shanghaiDateKey(now);
 
   // ── PRE-LLM reads (OUTSIDE the runAgentTask try/catch — a throw here is a legit
   // retryable DB fault that propagates so the nightly job's dayKey claim can gate a
@@ -214,6 +271,10 @@ export async function runResearchMeetingDirector(
   const kcIds = [...new Set(failures.flatMap((f) => f.referenced_knowledge_ids))];
   const masteryByKnowledgeId =
     kcIds.length > 0 ? await getMasteryProjectionFn(db, kcIds) : new Map();
+  // Recovery is still the same nightly meeting. Seed closure counters from durable
+  // outputs linked to every prior trigger for this day so a second director cannot
+  // reset the 3-proposal / 2-note caps.
+  const priorOutputCounts = await loadDirectorOutputCountsForDayFn(db, dayKey);
 
   // Pending conjectures (ALL actors) → dedup base + agenda display (§0.D shadow-with-
   // suppression: the deterministic lane's just-committed proposals are in this set).
@@ -260,7 +321,6 @@ export async function runResearchMeetingDirector(
   // Anchor the run (provenance for proposals + the scan subject).
   const triggerEventId = `research_meeting_agent_${newId()}`;
   const toolContextTaskRunId = `research_meeting_agent_tool_${newId()}`;
-  const dayKey = shanghaiDateKey(now);
   await writeEventFn(db, {
     id: triggerEventId,
     actor_kind: 'agent',
@@ -283,6 +343,8 @@ export async function runResearchMeetingDirector(
 
   // ── Assemble the in-process servers + the nested scout + the spawn-cap hook ──
   const caps = createDirectorCaps();
+  caps.proposeCount = priorOutputCounts.proposals;
+  caps.noteCount = priorOutputCounts.notes;
   const capture = createFindingsCapture();
   const evidence = buildEvidenceServer({
     db,
@@ -303,6 +365,8 @@ export async function runResearchMeetingDirector(
     getMasteryProjectionFn,
     failureAttempts: failures,
     loadConjectureHistoryFn,
+    runTaskFn,
+    resolveSubjectProfileForKnowledgeIdsFn: deps.resolveSubjectProfileForKnowledgeIdsFn,
   });
   const scout = buildEvidenceScoutAgentDefinition({ prompt: EVIDENCE_SCOUT_CHARTER });
 
@@ -410,6 +474,14 @@ export async function runResearchMeetingDirector(
     degraded = true;
     degradeError = err instanceof Error ? err.message : String(err);
     console.error('[research_meeting_agent director] degraded', err);
+  }
+
+  // The inner MCP handler must return a normal tool result to keep the agent protocol
+  // valid, but an Author/Review outage is not a quality vote. Escape before the scan
+  // write so the nightly job observes claim+no-scan and pg-boss can retry the real gate.
+  const retryableProbeError = director.readRetryableProbeError();
+  if (retryableProbeError) {
+    throw retryableProbeError;
   }
 
   const proposalsCreated = director.readProposalIds().length;

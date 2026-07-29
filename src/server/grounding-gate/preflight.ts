@@ -4,7 +4,7 @@ export function validateShadowProviderEnv(env: NodeJS.ProcessEnv): void {
   );
   if (conflicting.length > 0) {
     throw new Error(
-      `shadow provider preflight failed: unset ${conflicting.join(', ')} so MindModelInductionTask stays on Opus and ClaimGroupingTask stays on Mimo`,
+      `shadow provider preflight failed: unset ${conflicting.join(', ')} so induction/author/review stay on Opus and ConjectureGroupingTask stays on Mimo`,
     );
   }
   const missing = ['CLAUDE_CODE_OAUTH_TOKEN', 'XIAOMI_API_KEY'].filter(

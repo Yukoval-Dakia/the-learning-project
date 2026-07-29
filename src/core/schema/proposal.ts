@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { ActivityRef } from './activity';
-import { QuestionKind, normalizeProbeIdentity } from './business';
+import {
+  ConjectureDiagnosticSpec,
+  ConjectureProbeQualityAudit,
+  ConjectureProbeSpec,
+  QuestionKind,
+  evaluateConjectureProbePackageStructure,
+  normalizeProbeIdentity,
+} from './business';
 import { CauseCategory } from './cause';
 import { RelationTypeSchema } from './event/blocks';
 import { SuggestionKind, type SuggestionKindT } from './event/known';
@@ -500,21 +507,26 @@ export const ConjectureProposalChange = z
     cause_category: CauseCategory,
     confidence: z.number().min(0).max(1),
     recurrence_count: z.number().int().min(2),
-    probe_md: z.string().min(1).max(2000),
-    // conjecture-wire #13 (YUK-538 ⑬) — judge gold reference (single-writer: induced
-    // once, flows to serveProbeOnce.referenceMd → question.reference_md). max 2000
-    // mirrors ConjectureDraft.probe_reference_md (business.ts) — the draft feeds this
-    // payload directly, so the caps MUST stay in lockstep (a wider draft would let a
-    // 2001-char reference pass induction then throw at this parse-barrier, swallowed +
-    // mis-logged as a retryable AI failure — same trap as claim_md, see business.ts).
-    probe_reference_md: z.string().min(1).max(2000),
+    // Keep the historical v1/v2 outer cap at 2000 so terminal rows stay readable.
+    // New v3 producers are further constrained to 1000 by nested ConjectureProbeSpec.
+    probe_md: z.string().trim().min(1).max(2000),
+    // Judge gold reference. The 2000 cap matches current v3 producer output and the
+    // historical payload contract.
+    probe_reference_md: z.string().trim().min(1).max(2000),
     // Optional only for historical payload compatibility. Every v2 producer writes
     // both fields; a well-formed old proposal keeps its terminal v1 answer rule
     // instead of inventing a follow-up or stranding an active probe.
     followup_probe_md: z.string().trim().min(1).max(2000).optional(),
-    // Like probe_reference_md above, this draft-fed cap MUST remain identical to
-    // ConjectureProposalDraft.followup_probe_reference_md in business.ts.
+    // Historical v2 outer fields keep their original caps; nested v3 specs enforce
+    // the tighter producer contract before any new proposal can be accepted.
     followup_probe_reference_md: z.string().trim().min(1).max(2000).optional(),
+    // YUK-821 v3 additions are optional only so historical v1/v2 proposal JSON
+    // remains readable. Every new automatic producer writes the complete trio,
+    // and the accept path fails closed for a newly-created proposal without it.
+    diagnostic_spec: ConjectureDiagnosticSpec.optional(),
+    probe_spec: ConjectureProbeSpec.optional(),
+    followup_probe_spec: ConjectureProbeSpec.optional(),
+    probe_quality: ConjectureProbeQualityAudit.optional(),
     discriminating: z.boolean(),
     corrected_by_owner: z.boolean().default(false),
     predicted_p: z.number().min(0).max(1),
@@ -529,6 +541,55 @@ export const ConjectureProposalChange = z
         path: hasPrompt ? ['followup_probe_reference_md'] : ['followup_probe_md'],
         message: 'follow-up probe prompt and reference must be provided together',
       });
+    }
+    const qualityFields = [
+      change.diagnostic_spec,
+      change.probe_spec,
+      change.followup_probe_spec,
+      change.probe_quality,
+    ];
+    const qualityFieldCount = qualityFields.filter((value) => value !== undefined).length;
+    if (qualityFieldCount !== 0 && qualityFieldCount !== qualityFields.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['probe_quality'],
+        message: 'diagnostic spec, both probe specs, and quality audit must be provided together',
+      });
+    }
+    if (
+      change.probe_spec !== undefined &&
+      (change.probe_spec.prompt_md !== change.probe_md ||
+        change.probe_spec.reference_md !== change.probe_reference_md)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['probe_spec'],
+        message: 'probe_spec must describe the persisted primary prompt/reference',
+      });
+    }
+    if (
+      change.followup_probe_spec !== undefined &&
+      (change.followup_probe_spec.prompt_md !== change.followup_probe_md ||
+        change.followup_probe_spec.reference_md !== change.followup_probe_reference_md)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['followup_probe_spec'],
+        message: 'followup_probe_spec must describe the persisted follow-up prompt/reference',
+      });
+    }
+    if (change.probe_spec !== undefined && change.followup_probe_spec !== undefined) {
+      for (const failureCode of evaluateConjectureProbePackageStructure({
+        primary: change.probe_spec,
+        followup: change.followup_probe_spec,
+        predicted_p: change.predicted_p,
+      })) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['probe_spec'],
+          message: `probe package failed structural quality gate: ${failureCode}`,
+        });
+      }
     }
     if (
       change.followup_probe_md !== undefined &&

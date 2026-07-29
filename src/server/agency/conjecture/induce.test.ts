@@ -6,14 +6,14 @@ import type {
   EnrichedEvidenceCell,
 } from '@/capabilities/agency/server/conjecture/evidence';
 import type { ConjectureAbstainDraftT, ConjectureProposalDraftT } from '@/core/schema/business';
-import type { TaskTextResult } from '@/server/ai/provenance';
+import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
   type ConjectureInductionOperationalError,
   type InduceConjectureResult,
-  induceConjecture,
+  induceConjecture as induceConjectureImpl,
 } from './induce';
 
 function proposal(result: InduceConjectureResult): ConjectureProposalDraftT {
@@ -32,9 +32,87 @@ function abstain(result: InduceConjectureResult): ConjectureAbstainDraftT {
   return result.draft;
 }
 
-/** Helper: produces a TaskTextResult carrying a ClaimGroupingTask structured_output. */
+/** Helper: produces a TaskTextResult carrying a ConjectureGroupingTask structured_output. */
 function groupResult(groups: number[][]): TaskTextResult {
   return { text: '', structured_output: { groups } };
+}
+
+function probePackageResult(
+  overrides: {
+    primaryPrompt?: string;
+    primaryReference?: string;
+    primaryTargetError?: string;
+    followupPrompt?: string;
+    followupReference?: string;
+    followupTargetError?: string;
+    samePresentation?: boolean;
+    taskRunId?: string;
+  } = {},
+): TaskTextResult {
+  return {
+    text: '',
+    task_run_id: overrides.taskRunId ?? 'probe-author-run',
+    structured_output: {
+      package: {
+        primary: {
+          prompt_md: overrides.primaryPrompt ?? "对 f(x)=sin(x^2)，写出 f'(x)。",
+          reference_md: overrides.primaryReference ?? "f'(x)=2x·cos(x^2)",
+          expected_target_error_answer_md: overrides.primaryTargetError ?? "f'(x)=cos(x^2)+2x",
+          elicits_target_error_reason_md: '必须决定外层与内层导数如何组合。',
+          context_kind: 'abstract',
+          representation_kind: 'symbolic',
+        },
+        followup: {
+          prompt_md:
+            overrides.followupPrompt ?? '某变化率由 h(t)=cos(t³) 给出，用文字说明其瞬时变化率。',
+          reference_md: overrides.followupReference ?? "h'(t)=-3t²·sin(t³)，内外层导数相乘。",
+          expected_target_error_answer_md: overrides.followupTargetError ?? "h'(t)=-sin(t³)+3t²",
+          elicits_target_error_reason_md: '在应用语境中再次要求组合两层导数。',
+          context_kind: overrides.samePresentation ? 'abstract' : 'applied',
+          representation_kind: overrides.samePresentation ? 'symbolic' : 'natural_language',
+        },
+        predicted_p: 0.3,
+      },
+    },
+  };
+}
+
+function probeReviewResult(
+  verdict: 'pass' | 'fail' = 'pass',
+  failureCodes: string[] = [],
+  taskRunId = 'probe-review-run',
+): TaskTextResult {
+  return {
+    text: '',
+    task_run_id: taskRunId,
+    structured_output: {
+      review: {
+        verdict,
+        failure_codes: failureCodes,
+        explanation_md:
+          verdict === 'pass'
+            ? '两题保持同一目标错因，同时改变情境与表征。'
+            : '探针没有稳定复现冻结的目标错因。',
+      },
+    },
+  };
+}
+
+function withPassingProbeQuality(runTaskFn: TaskTextRunFn): TaskTextRunFn {
+  return async (kind, input, ctx) => {
+    if (kind === 'ConjectureProbeAuthorTask') return probePackageResult();
+    if (kind === 'ConjectureProbeReviewTask') return probeReviewResult();
+    return runTaskFn(kind, input, ctx);
+  };
+}
+
+async function induceConjecture(
+  input: Parameters<typeof induceConjectureImpl>[0],
+): Promise<InduceConjectureResult> {
+  return induceConjectureImpl({
+    ...input,
+    runTaskFn: withPassingProbeQuality(input.runTaskFn),
+  });
 }
 
 /** YUK-786 — one first-hand evidence sample, already wrapped by the enrich step. */
@@ -97,6 +175,8 @@ function sample(
     probe_reference_md?: string;
     followup_probe_md?: string;
     followup_probe_reference_md?: string;
+    trigger_conditions_md?: string;
+    scope_boundary_md?: string;
   } = {},
 ): TaskTextResult {
   return {
@@ -105,20 +185,15 @@ function sample(
       claim_md: claim,
       knowledge_id: 'k_chain_rule',
       evidence_event_ids: ['e_a', 'e_b'],
-      probe_md: extra.probe_md ?? "对 f(x)=sin(x^2)，写出 f'(x) 并说明用到链式法则的哪一层。",
-      // conjecture-wire #13 — judge gold reference (single-writer, produced with probe).
-      probe_reference_md:
-        extra.probe_reference_md ??
-        "f'(x)=2x·cos(x^2)；外层 cos·内层 2x（链式法则：外导 × 内导）。",
-      followup_probe_md:
-        extra.followup_probe_md ?? "对 g(x)=cos(x^3)，写出 g'(x) 并说明链式法则的内层导数。",
-      followup_probe_reference_md:
-        extra.followup_probe_reference_md ?? "g'(x)=-3x^2·sin(x^3)；内层导数为 3x²。",
+      diagnostic_spec: {
+        schema_version: 1,
+        target_error_rule_md: '把复合函数的外层导数和内层导数相加。',
+        trigger_conditions_md: extra.trigger_conditions_md ?? '题目要求对复合函数求导。',
+        scope_boundary_md: extra.scope_boundary_md ?? '只覆盖层间组合方式，不推断其它求导法则。',
+        expected_wrong_answer_signature_md: '答案把外层导数与内层导数用加号连接。',
+      },
       cause_category: 'concept_confusion',
       recurrence_count: 3,
-      predicted_p: extra.predicted_p ?? 0.3,
-      discriminating: extra.discriminating ?? true,
-      agreement_count: 1,
     })}`,
   };
 }
@@ -489,10 +564,10 @@ describe('induceConjecture self-consistency', () => {
         'anthropic-sub',
       );
     }
-    // Call 4 is ClaimGroupingTask — no anthropic-sub override (mimo default).
+    // Call 4 is ConjectureGroupingTask — no anthropic-sub override (mimo default).
     expect(runTaskFn).toHaveBeenCalledTimes(4);
     const dedupCall = runTaskFn.mock.calls[3];
-    expect(dedupCall[0]).toBe('ClaimGroupingTask');
+    expect(dedupCall[0]).toBe('ConjectureGroupingTask');
     expect((dedupCall[2] as { override?: unknown }).override).toBeUndefined();
   });
 
@@ -537,21 +612,21 @@ describe('induceConjecture self-consistency', () => {
           claim_md: '你从单一例题过度泛化',
           knowledge_id: 'k_chain_rule',
           evidence_event_ids: ['e_a', 'e_b'],
-          probe_md: '这是例题没覆盖的新情形，请预测。',
-          probe_reference_md: '对新情形应用原例题的泛化规则，给出预测值与依据。',
-          followup_probe_md: '换一个未见过的情形，再次预测并说明依据。',
-          followup_probe_reference_md: '在第二个新情形中应用同一泛化规则，给出预测值与依据。',
+          diagnostic_spec: {
+            schema_version: 1,
+            target_error_rule_md: '把一个例题里的局部规则用于所有相似题。',
+            trigger_conditions_md: '题面表面结构与原例题相似，但关键条件不同。',
+            scope_boundary_md: '不推断所有迁移任务都失败。',
+            expected_wrong_answer_signature_md: '答案照搬原例题规则，忽略改变的条件。',
+          },
           cause_category: 'concept_confusion',
           recurrence_count: 2,
-          predicted_p: 0.4,
-          discriminating: false,
-          agreement_count: 1,
         },
       });
 
     const result = await induceConjecture({ cells: [cell()], samples: 1, runTaskFn });
     expect(proposal(result).claim_md).toBe('你从单一例题过度泛化');
-    expect(proposal(result).discriminating).toBe(false);
+    expect(proposal(result).discriminating).toBe(true);
     expect(proposal(result).agreement_count).toBe(1);
   });
 
@@ -656,9 +731,9 @@ describe('induceConjecture self-consistency', () => {
     expect(proposal(result).agreement_count).toBe(2);
     expect(result.confidence).toBeCloseTo(2 / 3, 5);
     expect(result.samples).toBe(3);
-    expect(result.task_run_ids).toEqual(['run_2', 'run_3']);
+    expect(result.task_run_ids).toEqual(['run_2', 'run_3', 'probe-author-run', 'probe-review-run']);
     if (result.outcome !== 'proposal') throw new Error('expected proposal');
-    expect(result.primary_task_run_id).toBe('run_2');
+    expect(result.primary_task_run_id).toBe('probe-author-run');
     expect(result.cost_usd).toBeCloseTo(0.5, 5);
     expect(runTaskFn).toHaveBeenCalledTimes(3);
     expect(warnSpy).toHaveBeenCalledWith(
@@ -686,8 +761,14 @@ describe('induceConjecture self-consistency', () => {
 
     expect(result.outcome).toBe('proposal');
     if (result.outcome !== 'proposal') throw new Error('expected proposal');
-    expect(result.primary_task_run_id).toBe('run_winner_1');
-    expect(result.task_run_ids).toEqual(['run_abstain', 'run_winner_1', 'run_winner_2']);
+    expect(result.primary_task_run_id).toBe('probe-author-run');
+    expect(result.task_run_ids).toEqual([
+      'run_abstain',
+      'run_winner_1',
+      'run_winner_2',
+      'probe-author-run',
+      'probe-review-run',
+    ]);
   });
 
   it('still fails closed when every induction sample throws', async () => {
@@ -709,7 +790,7 @@ describe('induceConjecture self-consistency', () => {
     ).toHaveLength(2);
   });
 
-  // YUK-538 — new tests for semantic dedup (ClaimGroupingTask)
+  // YUK-538 — new tests for semantic dedup (ConjectureGroupingTask)
 
   it('dedup: three paraphrase claims → confidence 1.0, agreement_count 3', async () => {
     const runTaskFn = vi
@@ -741,11 +822,11 @@ describe('induceConjecture self-consistency', () => {
         'anthropic-sub',
       );
     }
-    // Call 4: ClaimGroupingTask — no anthropic-sub override (mimo default).
+    // Call 4: ConjectureGroupingTask — no anthropic-sub override (mimo default).
     const dedupCall = runTaskFn.mock.calls[3];
-    expect(dedupCall[0]).toBe('ClaimGroupingTask');
+    expect(dedupCall[0]).toBe('ConjectureGroupingTask');
     expect((dedupCall[2] as { override?: unknown }).override).toBeUndefined();
-    expect((dedupCall[1] as { claims: string[] }).claims).toHaveLength(3);
+    expect((dedupCall[1] as { hypotheses: unknown[] }).hypotheses).toHaveLength(3);
   });
 
   it('dedup: 2-of-3 semantic agreement → confidence 0.667, agreement_count 2', async () => {
@@ -763,7 +844,7 @@ describe('induceConjecture self-consistency', () => {
     expect(runTaskFn).toHaveBeenCalledTimes(4);
   });
 
-  it('uses lexical cluster tie-breaks and aggregates winning fields deterministically', async () => {
+  it('uses a deterministic representative only for claim/spec, then authors probes separately', async () => {
     const runTaskFn = vi
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
       .mockResolvedValueOnce(
@@ -787,13 +868,13 @@ describe('induceConjecture self-consistency', () => {
     const result = await induceConjecture({ cells: [cell()], samples: 2, runTaskFn });
 
     expect(proposal(result).claim_md).toBe('alpha claim');
-    expect(proposal(result).probe_md).toBe('a probe');
-    expect(proposal(result).probe_reference_md).toBe('a reference');
-    expect(proposal(result).predicted_p).toBe(0.5);
-    expect(proposal(result).discriminating).toBe(false);
+    expect(proposal(result).probe_md).toBe("对 f(x)=sin(x^2)，写出 f'(x)。");
+    expect(proposal(result).probe_md).not.toBe('a probe');
+    expect(proposal(result).predicted_p).toBe(0.3);
+    expect(proposal(result).discriminating).toBe(true);
   });
 
-  it('keeps coupled text fields from one deterministic representative sample', async () => {
+  it('never selects a probe tuple from a semantic claim cluster', async () => {
     const pairs = [
       ['a probe', 'x reference'],
       ['a probe', 'y reference'],
@@ -830,22 +911,12 @@ describe('induceConjecture self-consistency', () => {
 
     const result = await induceConjecture({ cells: [cell()], samples: 4, runTaskFn });
 
-    const resultTuple = [
-      proposal(result).claim_md,
-      proposal(result).probe_md,
-      proposal(result).probe_reference_md,
-    ];
-    const sourceTuples = [
-      ['same semantic claim one', ...pairs[0]],
-      ['same semantic claim two', ...pairs[1]],
-      ['same semantic claim three', ...pairs[2]],
-      ['same semantic claim four', ...pairs[3]],
-    ];
-    expect(resultTuple).toEqual(sourceTuples[3]);
-    expect(sourceTuples).toContainEqual(resultTuple);
+    expect(proposal(result).claim_md).toBe('same semantic claim four');
+    expect(pairs.flat()).not.toContain(proposal(result).probe_md);
+    expect(proposal(result).probe_quality.passed).toBe(true);
   });
 
-  it('chooses the majority coupled tuple over a lexical outlier in one semantic group', async () => {
+  it('chooses the majority claim/spec but not its old probe tuple', async () => {
     const majority = {
       probe_md: 'z majority probe',
       probe_reference_md: 'z majority reference',
@@ -865,8 +936,8 @@ describe('induceConjecture self-consistency', () => {
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
     expect(proposal(result).claim_md).toBe('z majority claim');
-    expect(proposal(result).probe_md).toBe(majority.probe_md);
-    expect(proposal(result).probe_reference_md).toBe(majority.probe_reference_md);
+    expect(proposal(result).probe_md).not.toBe(majority.probe_md);
+    expect(proposal(result).probe_md).toBe("对 f(x)=sin(x^2)，写出 f'(x)。");
     expect(proposal(result).agreement_count).toBe(3);
   });
 
@@ -897,7 +968,7 @@ describe('induceConjecture self-consistency', () => {
     expect(result.confidence).toBeCloseTo(1.0, 5);
   });
 
-  it('preserves an exact 2-of-3 quorum when ClaimGroupingTask is unparseable', async () => {
+  it('preserves an exact 2-of-3 quorum when ConjectureGroupingTask is unparseable', async () => {
     const exact = '你把链式法则当成导数相乘';
     const runTaskFn = vi
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
@@ -926,8 +997,8 @@ describe('induceConjecture self-consistency', () => {
       induceConjecture({ cells: [cell()], samples: 3, runTaskFn }),
     ).rejects.toMatchObject({
       name: 'ConjectureInductionOperationalError',
-      taskKind: 'ClaimGroupingTask',
-      message: expect.stringContaining('ClaimGroupingTask failed before semantic consensus'),
+      taskKind: 'ConjectureGroupingTask',
+      message: expect.stringContaining('ConjectureGroupingTask failed before semantic consensus'),
     } satisfies Partial<ConjectureInductionOperationalError>);
     expect(runTaskFn).toHaveBeenCalledTimes(4);
   });
@@ -966,7 +1037,7 @@ describe('induceConjecture self-consistency', () => {
     expect(result.confidence).toBeCloseTo(2 / 3, 5);
     expect(runTaskFn).toHaveBeenCalledTimes(4);
     const dedupCall = runTaskFn.mock.calls[3];
-    expect((dedupCall[1] as { claims: string[] }).claims).toHaveLength(2);
+    expect((dedupCall[1] as { hypotheses: unknown[] }).hypotheses).toHaveLength(2);
   });
 
   it('dedup fails operationally when LLM returns extra indices (flat count > N)', async () => {
@@ -983,7 +1054,7 @@ describe('induceConjecture self-consistency', () => {
       ); // flat count=5 ≠ N=3 → partition invalid
 
     await expect(induceConjecture({ cells: [cell()], samples: 3, runTaskFn })).rejects.toThrow(
-      'ClaimGroupingTask failed before semantic consensus',
+      'ConjectureGroupingTask failed before semantic consensus',
     );
   });
 
@@ -998,8 +1069,145 @@ describe('induceConjecture self-consistency', () => {
       .mockResolvedValueOnce(groupResult([[0, 0], [1]])); // flat=[0,0,1], length=3=N but 0 duplicated, 2 missing
 
     await expect(induceConjecture({ cells: [cell()], samples: 3, runTaskFn })).rejects.toThrow(
-      'ClaimGroupingTask failed before semantic consensus',
+      'ConjectureGroupingTask failed before semantic consensus',
     );
     expect(runTaskFn).toHaveBeenCalledTimes(4); // 3 induction + 1 dedup
+  });
+
+  it('requires semantic consensus on the frozen DiagnosticSpec, not claim text alone', async () => {
+    const claim = '你在速率换算时没有完成分母时间单位转换';
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(
+        sample(claim, { trigger_conditions_md: '目标分母时间单位与源单位不同。' }),
+      )
+      .mockResolvedValueOnce(sample(claim, { trigger_conditions_md: '任何复合单位换算。' }))
+      .mockResolvedValueOnce(groupResult([[0], [1]]));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 2, runTaskFn });
+
+    expect(abstain(result).reason_code).toBe('no_semantic_consensus');
+    expect(runTaskFn.mock.calls[2][0]).toBe('ConjectureGroupingTask');
+  });
+
+  it('regenerates the whole pair once after an independent review failure, then persists audit', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(sample('你把复合函数各层导数相加'))
+      .mockResolvedValueOnce(probePackageResult({ taskRunId: 'author_1' }))
+      .mockResolvedValueOnce(probeReviewResult('fail', ['probe_not_targeting'], 'review_1'))
+      .mockResolvedValueOnce(
+        probePackageResult({
+          primaryPrompt: '对 y=sin(x³) 求导。',
+          followupPrompt: '速度由 cos(t²) 给出，用文字说明瞬时变化率。',
+          taskRunId: 'author_2',
+        }),
+      )
+      .mockResolvedValueOnce(probeReviewResult('pass', [], 'review_2'));
+
+    const result = await induceConjectureImpl({
+      cells: [cell()],
+      samples: 1,
+      runTaskFn,
+    });
+
+    const draft = proposal(result);
+    expect(draft.probe_md).toBe('对 y=sin(x³) 求导。');
+    expect(draft.probe_quality.attempts).toMatchObject([
+      {
+        attempt: 1,
+        outcome: 'review_failed',
+        failure_codes: ['probe_not_targeting'],
+        author_task_run_id: 'author_1',
+        reviewer_task_run_id: 'review_1',
+      },
+      {
+        attempt: 2,
+        outcome: 'passed',
+        failure_codes: [],
+        author_task_run_id: 'author_2',
+        reviewer_task_run_id: 'review_2',
+      },
+    ]);
+    expect(result.outcome).toBe('proposal');
+    if (result.outcome !== 'proposal') throw new Error('expected proposal');
+    expect(result.primary_task_run_id).toBe('author_2');
+    expect(
+      runTaskFn.mock.calls
+        .slice(1)
+        .map(([kind, , ctx]) => [
+          kind,
+          (ctx as { override?: { provider?: string } }).override?.provider,
+        ]),
+    ).toEqual([
+      ['ConjectureProbeAuthorTask', 'anthropic-sub'],
+      ['ConjectureProbeReviewTask', 'anthropic-sub'],
+      ['ConjectureProbeAuthorTask', 'anthropic-sub'],
+      ['ConjectureProbeReviewTask', 'anthropic-sub'],
+    ]);
+  });
+
+  it('fails closed after two structurally non-independent pairs without invoking reviewer', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(sample('你把复合函数各层导数相加'))
+      .mockResolvedValueOnce(probePackageResult({ samePresentation: true, taskRunId: 'author_1' }))
+      .mockResolvedValueOnce(probePackageResult({ samePresentation: true, taskRunId: 'author_2' }));
+
+    const result = await induceConjectureImpl({
+      cells: [cell()],
+      samples: 1,
+      runTaskFn,
+    });
+
+    expect(abstain(result).reason_code).toBe('no_discriminating_probe');
+    expect(result.probe_quality_attempts).toHaveLength(2);
+    expect(
+      result.probe_quality_attempts.every((attempt) =>
+        attempt.outcome === 'structure_failed'
+          ? attempt.failure_codes.includes('probe_pair_not_independent')
+          : false,
+      ),
+    ).toBe(true);
+    expect(runTaskFn.mock.calls.map(([kind]) => kind)).toEqual([
+      'MindModelInductionTask',
+      'ConjectureProbeAuthorTask',
+      'ConjectureProbeAuthorTask',
+    ]);
+  });
+
+  it('keeps a repeated reviewer outage operational instead of converting it to evidence', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(sample('你把复合函数各层导数相加'))
+      .mockResolvedValueOnce(probePackageResult({ taskRunId: 'author_1' }))
+      .mockRejectedValueOnce(new Error('review timeout'))
+      .mockResolvedValueOnce(probePackageResult({ taskRunId: 'author_2' }))
+      .mockRejectedValueOnce(new Error('review timeout'));
+
+    await expect(
+      induceConjectureImpl({ cells: [cell()], samples: 1, runTaskFn }),
+    ).rejects.toMatchObject({
+      name: 'ConjectureInductionOperationalError',
+      taskKind: 'ConjectureProbeReviewTask',
+    });
+  });
+
+  it('does not count a reviewer outage plus one semantic failure as two quality votes', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(sample('你把复合函数各层导数相加'))
+      .mockResolvedValueOnce(probePackageResult({ taskRunId: 'author_1' }))
+      .mockRejectedValueOnce(new Error('review timeout'))
+      .mockResolvedValueOnce(probePackageResult({ taskRunId: 'author_2' }))
+      .mockResolvedValueOnce(probeReviewResult('fail', ['probe_not_targeting'], 'review_2'));
+
+    await expect(
+      induceConjectureImpl({ cells: [cell()], samples: 1, runTaskFn }),
+    ).rejects.toMatchObject({
+      name: 'ConjectureInductionOperationalError',
+      taskKind: 'ConjectureProbeReviewTask',
+      message: expect.stringContaining('operational failure'),
+    });
   });
 });

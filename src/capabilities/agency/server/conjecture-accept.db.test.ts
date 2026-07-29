@@ -4,7 +4,10 @@
 // semantics (accept = calibration anchor / edit → mem0 CORE / reject → digest),
 // idempotency, and the ND-5 red line: NO FSRS / review row is ever written.
 
-import { PROBE_SLOTS_FULL_CODE } from '@/capabilities/agency/server/conjecture-accept';
+import {
+  CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
+  PROBE_SLOTS_FULL_CODE,
+} from '@/capabilities/agency/server/conjecture-accept';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_QUESTION_SOURCE,
@@ -52,6 +55,50 @@ function baseConjecture() {
       probe_md: 'd/dx sin(x^2) = ?',
       probe_reference_md:
         '2x·cos(x^2) — outer cos × inner 2x (chain rule: outer-deriv × inner-deriv).',
+      followup_probe_md: 'A changing area follows cos(t^3); explain its instantaneous rate.',
+      followup_probe_reference_md: '-3t²·sin(t³), with outer and inner derivatives multiplied.',
+      diagnostic_spec: {
+        schema_version: 1 as const,
+        target_error_rule_md: 'Adds outer and inner derivatives instead of multiplying them.',
+        trigger_conditions_md: 'A composite function must be differentiated.',
+        scope_boundary_md: 'Does not claim other differentiation rules are misunderstood.',
+        expected_wrong_answer_signature_md: 'Outer derivative + inner derivative.',
+      },
+      probe_spec: {
+        prompt_md: 'd/dx sin(x^2) = ?',
+        reference_md: '2x·cos(x^2) — outer cos × inner 2x (chain rule: outer-deriv × inner-deriv).',
+        expected_target_error_answer_md: 'cos(x²) + 2x',
+        elicits_target_error_reason_md: 'Requires composing the two derivative layers.',
+        context_kind: 'abstract' as const,
+        representation_kind: 'symbolic' as const,
+      },
+      followup_probe_spec: {
+        prompt_md: 'A changing area follows cos(t^3); explain its instantaneous rate.',
+        reference_md: '-3t²·sin(t³), with outer and inner derivatives multiplied.',
+        expected_target_error_answer_md: '-sin(t³) + 3t²',
+        elicits_target_error_reason_md: 'Retains the same layer-composition decision in context.',
+        context_kind: 'applied' as const,
+        representation_kind: 'natural_language' as const,
+      },
+      probe_quality: {
+        schema_version: 1 as const,
+        passed: true as const,
+        attempts: [
+          {
+            attempt: 1,
+            outcome: 'passed' as const,
+            failure_codes: [],
+            explanation_md: 'verified',
+            author_task_run_id: 'author_run',
+            reviewer_task_run_id: 'review_run',
+          },
+        ],
+        final_review: {
+          verdict: 'pass' as const,
+          failure_codes: [],
+          explanation_md: 'verified',
+        },
+      },
       discriminating: true,
       predicted_p: 0.3,
       baseline_p_at_induction: 0.6,
@@ -116,6 +163,11 @@ async function fillProbeSlots(n: number): Promise<string[]> {
           ...payload.proposed_change,
           probe_md: `filler probe ${i}`,
           probe_reference_md: 'ref',
+          probe_spec: {
+            ...payload.proposed_change.probe_spec,
+            prompt_md: `filler probe ${i}`,
+            reference_md: 'ref',
+          },
         },
       },
     });
@@ -187,6 +239,56 @@ describe('acceptConjectureProposal lifecycle', () => {
 
     // Accept is durably projected from this rate event by the worker outbox.
     expect(await fsrsRowCount()).toBe(0);
+  });
+
+  it('fails closed for an unaccepted historical proposal without the v3 probe-quality packet', async () => {
+    const db = testDb();
+    const payload = baseConjecture();
+    const proposalId = await writeAiProposal(db, {
+      actor_ref: 'research_meeting',
+      payload: {
+        ...payload,
+        proposed_change: {
+          ...payload.proposed_change,
+          diagnostic_spec: undefined,
+          probe_spec: undefined,
+          followup_probe_spec: undefined,
+          probe_quality: undefined,
+        },
+      },
+    });
+
+    await expect(acceptAiProposal(db, proposalId)).rejects.toMatchObject({
+      code: CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
+      status: 409,
+      message: expect.stringMatching(
+        /diagnostic_spec_invalid.*primary_probe_spec_invalid.*followup_probe_spec_invalid.*probe_quality_audit_invalid.*reprepare/,
+      ),
+    });
+    expect(await rateEvents(proposalId)).toHaveLength(0);
+    expect(await probeQuestionsFor(proposalId)).toHaveLength(0);
+  });
+
+  it('does not accept a self-declared non-discriminating package even when an audit is present', async () => {
+    const db = testDb();
+    const payload = baseConjecture();
+    const proposalId = await writeAiProposal(db, {
+      actor_ref: 'research_meeting',
+      payload: {
+        ...payload,
+        proposed_change: {
+          ...payload.proposed_change,
+          discriminating: false,
+        },
+      },
+    });
+
+    await expect(acceptAiProposal(db, proposalId)).rejects.toMatchObject({
+      code: CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
+      status: 409,
+      message: expect.stringContaining('not_discriminating'),
+    });
+    expect(await rateEvents(proposalId)).toHaveLength(0);
   });
 
   it('edit persists the owner version on the durable rate event, not confirmed, no FSRS', async () => {

@@ -353,92 +353,57 @@ export const VariantVerificationResult = z.object({
 });
 export type VariantVerificationResultT = z.infer<typeof VariantVerificationResult>;
 
-// ---------- ConjectureDraft (YUK-406 / YUK-440 / YUK-799 Grounding v2) ----------
+// ---------- Conjecture v3: grounded hypothesis → authored probes → independent review ----------
 //
-// The small structured record ONE induction run emits (the nightly 教研例会 job's
-// LLM step). Large reasoning stays as the run's markdown text; ONLY this bounded
-// record is schema-constrained (mirrors the VariantVerificationResult precedent).
+// YUK-821 separates two responsibilities that used to be conflated in one model sample:
+// 1. MindModelInductionTask emits ONLY a claim plus a frozen DiagnosticSpec.
+// 2. ConjectureProbeAuthorTask authors a pair against that frozen spec.
+// 3. ConjectureProbeReviewTask independently reviews the complete pair.
 //
-// Grounding v2 makes unsupported output representable instead of forcing the model
-// to invent a claim/probe. `proposal` is the only branch that can be persisted as a
-// conjecture; `abstain` is a first-class, observable non-proposal.
-//
-// Proposal:
-// - claim_md: a 2nd-person belief about how the owner THINKS ("你把链式法则当成导数
-//   相乘"), NOT a statement about a single question's right/wrong.
-// - knowledge_id / evidence_event_ids: explicit grounding anchors. The orchestrator
-//   rejects a sample unless these point into the deterministic input cell.
-// - probe_md / followup_probe_md: TWO distinct, untested discriminating probes.
-//   The first matching result is only `evidence_for`; the follow-up supplies the
-//   production recurrence path required before `confirmed`.
-// - cause_category: one of the cause categories present in the input evidence cells
-//   (shared lowercase-id cause vocabulary).
-// - recurrence_count: >= 2 — a conjecture requires >= 2 distinct attempts of evidence
-//   (the deterministic 取证 floor; the model echoes the supporting cell's count).
-// - predicted_p (A13 / YUK-440): the claim's FALSIFIABLE prediction — the probability
-//   the owner answers `probe_md` CORRECTLY if the claim holds. This is the qualitative
-//   track's bet; the loop later scores it against baseline_p_at_induction (scoring +
-//   flip DEFERRED per ADR-0046 — MVP only snapshots the prediction).
-// - discriminating (A13 / YUK-440): true iff the probe isolates THIS misconception
-//   (only this claim would produce the wrong answer). Gate for writing a
-//   confused-with-X typed state later (PR-2); the induction self-reports it.
-// - agreement_count: how many of the N self-consistency samples agreed on this claim.
-//   The LLM fills 1 per single sample; induceConjecture() overwrites it with the tally.
-//
-// Abstain:
-// - reason_code: a bounded machine-readable reason;
-// - explanation_md / evidence_event_ids: optional audit context, never a hidden claim.
-//
-// confidence itself is NOT in this schema: it is internal calibration only, NEVER
-// rendered as a number (Phase 0 anti-number rule), so it lives on the orchestrator's
-// return type, not the model-facing record.
+// This prevents a semantically agreed claim from inheriting an arbitrary probe tuple,
+// and makes the target error's trigger/scope/wrong-answer signature durable data rather
+// than prompt-only reasoning.
 /** Reasons the model itself is allowed to return in structured output. */
 export const ConjectureModelAbstainReason = z.enum([
   'insufficient_evidence',
   'conflicting_evidence',
   'no_grounded_claim',
-  'no_discriminating_probe',
 ]);
 export type ConjectureModelAbstainReasonT = z.infer<typeof ConjectureModelAbstainReason>;
 
 /** Model reasons plus conditions assigned only by the self-consistency orchestrator. */
 export const ConjectureAbstainReason = z.enum([
   ...ConjectureModelAbstainReason.options,
+  'no_discriminating_probe',
   'no_semantic_consensus',
   'invalid_output',
   'sample_failure',
 ]);
 export type ConjectureAbstainReasonT = z.infer<typeof ConjectureAbstainReason>;
 
-export const ConjectureProposalDraft = z.object({
-  kind: z.literal('proposal'),
-  // max 280 MUST match ConjectureProposalChange.claim_md (proposal.ts) — the draft
-  // feeds straight into the proposal payload (research_meeting_nightly), and it is
-  // the outputFormat handed to Opus, so the model is told the REAL 280 cap. A wider
-  // draft would let a 281–500-char claim pass induction then throw at the proposal
-  // parse-barrier → silently swallowed + mis-logged as a retryable AI failure.
+export const ConjectureDiagnosticSpec = z.object({
+  schema_version: z.literal(1),
+  target_error_rule_md: z.string().trim().min(1).max(1000),
+  trigger_conditions_md: z.string().trim().min(1).max(1000),
+  scope_boundary_md: z.string().trim().min(1).max(1000),
+  expected_wrong_answer_signature_md: z.string().trim().min(1).max(1000),
+});
+export type ConjectureDiagnosticSpecT = z.infer<typeof ConjectureDiagnosticSpec>;
+
+const ConjectureHypothesisFields = {
+  // max 280 MUST match ConjectureProposalChange.claim_md (proposal.ts).
   claim_md: z.string().trim().min(1).max(280),
   knowledge_id: z.string().trim().min(1).max(200),
-  // Schema accepts one cited primary event for the agent-led director path, whose
-  // matched deterministic cell owns recurrence_count>=2. The automatic induction
-  // orchestrator applies the stricter >=2-subset grounding gate before voting.
   evidence_event_ids: z.array(z.string().trim().min(1).max(200)).min(1).max(50),
-  probe_md: z.string().trim().min(1).max(1000),
-  // conjecture-wire #13 (YUK-538 ⑬) — single-writer judge gold reference, produced
-  // once at induction by the same Opus sample that produces claim+probe (no runtime
-  // LLM regen). Flows draft → ConjectureProposalChange → serveProbeOnce.referenceMd →
-  // question.reference_md, where the answer route's judge run() reads it as the gold.
-  // max 2000 (looser than probe_md's 1000): a reference answer carries rationale /
-  // worked steps the probe prompt itself doesn't. Mirrors reference_md cap on the
-  // question table.
-  probe_reference_md: z.string().trim().min(1).max(2000),
-  followup_probe_md: z.string().trim().min(1).max(1000),
-  followup_probe_reference_md: z.string().trim().min(1).max(2000),
+  diagnostic_spec: ConjectureDiagnosticSpec,
   cause_category: z.string().min(1).max(120),
   recurrence_count: z.number().int().min(2),
-  predicted_p: z.number().min(0).max(1),
-  discriminating: z.boolean(),
-  agreement_count: z.number().int().min(1).default(1),
+} as const;
+
+/** One self-consistency sample. It deliberately contains no probe fields. */
+export const ConjectureHypothesisProposalDraft = z.object({
+  kind: z.literal('proposal'),
+  ...ConjectureHypothesisFields,
 });
 
 export const CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH = 500;
@@ -457,6 +422,219 @@ export function normalizeProbeIdentity(value: string): string {
     .replace(/\p{P}/gu, (character) => ('-/:'.includes(character) ? character : ''));
 }
 
+export const ConjectureProbeContextKind = z.enum([
+  'abstract',
+  'applied',
+  'narrative',
+  'document',
+  'visual',
+  'data',
+  'code',
+  'other',
+]);
+export const ConjectureProbeRepresentationKind = z.enum([
+  'symbolic',
+  'natural_language',
+  'multiple_choice',
+  'table',
+  'diagram',
+  'graph',
+  'image',
+  'code',
+  'mixed',
+  'other',
+]);
+
+export const ConjectureProbeSpec = z.object({
+  prompt_md: z.string().trim().min(1).max(1000),
+  reference_md: z.string().trim().min(1).max(2000),
+  expected_target_error_answer_md: z.string().trim().min(1).max(2000),
+  elicits_target_error_reason_md: z.string().trim().min(1).max(1000),
+  context_kind: ConjectureProbeContextKind,
+  representation_kind: ConjectureProbeRepresentationKind,
+});
+export type ConjectureProbeSpecT = z.infer<typeof ConjectureProbeSpec>;
+
+export const ConjectureProbePackage = z.object({
+  primary: ConjectureProbeSpec,
+  followup: ConjectureProbeSpec,
+  predicted_p: z.number().min(0).max(1),
+});
+export type ConjectureProbePackageT = z.infer<typeof ConjectureProbePackage>;
+
+export const ConjectureProbeReviewFailureCode = z.enum([
+  'claim_scope_expansion',
+  'probe_not_targeting',
+  'probe_pair_not_independent',
+  'reference_incorrect',
+  'target_error_answer_not_distinct',
+]);
+export type ConjectureProbeReviewFailureCodeT = z.infer<typeof ConjectureProbeReviewFailureCode>;
+
+/** Codes proven by the subject-neutral deterministic structure guard. */
+export const ConjectureProbeStructureFailureCode = z.enum([
+  'probe_pair_not_independent',
+  'target_error_answer_not_distinct',
+]);
+export type ConjectureProbeStructureFailureCodeT = z.infer<
+  typeof ConjectureProbeStructureFailureCode
+>;
+
+/** Provider/transport/parser failures are operational, never quality votes. */
+export const ConjectureProbeOperationalFailureCode = z.enum([
+  'author_output_invalid',
+  'review_output_invalid',
+  'author_operational_failure',
+  'review_operational_failure',
+]);
+export type ConjectureProbeOperationalFailureCodeT = z.infer<
+  typeof ConjectureProbeOperationalFailureCode
+>;
+
+/**
+ * Subject-neutral structural guard. Subject-specific mathematics/language checks are
+ * intentionally a later P1 capability contribution, not a central switch.
+ */
+export function evaluateConjectureProbePackageStructure(
+  probePackage: ConjectureProbePackageT,
+): ConjectureProbeStructureFailureCodeT[] {
+  const failureCodes = new Set<ConjectureProbeStructureFailureCodeT>();
+  if (
+    normalizeProbeIdentity(probePackage.primary.prompt_md) ===
+    normalizeProbeIdentity(probePackage.followup.prompt_md)
+  ) {
+    failureCodes.add('probe_pair_not_independent');
+  }
+  if (
+    probePackage.primary.context_kind === probePackage.followup.context_kind ||
+    probePackage.primary.representation_kind === probePackage.followup.representation_kind
+  ) {
+    failureCodes.add('probe_pair_not_independent');
+  }
+  for (const probe of [probePackage.primary, probePackage.followup]) {
+    if (
+      normalizeProbeIdentity(probe.reference_md) ===
+      normalizeProbeIdentity(probe.expected_target_error_answer_md)
+    ) {
+      failureCodes.add('target_error_answer_not_distinct');
+    }
+  }
+  return [...failureCodes];
+}
+
+export const ConjectureProbeReview = z
+  .object({
+    verdict: z.enum(['pass', 'fail']),
+    failure_codes: z.array(ConjectureProbeReviewFailureCode).max(5),
+    explanation_md: z.string().trim().min(1).max(1000),
+  })
+  .superRefine((review, ctx) => {
+    const uniqueCodes = new Set(review.failure_codes);
+    if (uniqueCodes.size !== review.failure_codes.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['failure_codes'],
+        message: 'failure_codes must be unique',
+      });
+    }
+    if (review.verdict === 'pass' && review.failure_codes.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['failure_codes'],
+        message: 'a passing review cannot contain failure codes',
+      });
+    }
+    if (review.verdict === 'fail' && review.failure_codes.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['failure_codes'],
+        message: 'a failing review must contain at least one failure code',
+      });
+    }
+  });
+export type ConjectureProbeReviewT = z.infer<typeof ConjectureProbeReview>;
+
+const ConjectureProbeQualityAttemptBase = {
+  attempt: z.number().int().min(1).max(2),
+  explanation_md: z.string().trim().min(1).max(1000),
+  author_task_run_id: z.string().trim().min(1).nullable(),
+  reviewer_task_run_id: z.string().trim().min(1).nullable(),
+} as const;
+
+function uniqueProbeFailureCodes<T extends z.ZodTypeAny>(code: T, max: number) {
+  return z
+    .array(code)
+    .min(1)
+    .max(max)
+    .refine((codes) => new Set(codes).size === codes.length, {
+      message: 'failure_codes must be unique',
+    });
+}
+
+/**
+ * The discriminant also constrains the code vocabulary. This prevents an operational
+ * outage from being persisted as a semantic quality vote (and vice versa).
+ */
+export const ConjectureProbeQualityAttempt = z.discriminatedUnion('outcome', [
+  z.object({
+    ...ConjectureProbeQualityAttemptBase,
+    outcome: z.literal('structure_failed'),
+    failure_codes: uniqueProbeFailureCodes(ConjectureProbeStructureFailureCode, 2),
+  }),
+  z.object({
+    ...ConjectureProbeQualityAttemptBase,
+    outcome: z.literal('review_failed'),
+    failure_codes: uniqueProbeFailureCodes(ConjectureProbeReviewFailureCode, 5),
+  }),
+  z.object({
+    ...ConjectureProbeQualityAttemptBase,
+    outcome: z.literal('operational_failed'),
+    failure_codes: uniqueProbeFailureCodes(ConjectureProbeOperationalFailureCode, 2),
+  }),
+  z.object({
+    ...ConjectureProbeQualityAttemptBase,
+    outcome: z.literal('passed'),
+    failure_codes: z.array(z.never()).max(0),
+  }),
+]);
+export type ConjectureProbeQualityAttemptT = z.infer<typeof ConjectureProbeQualityAttempt>;
+
+export const ConjectureProbeQualityAudit = z
+  .object({
+    schema_version: z.literal(1),
+    passed: z.literal(true),
+    attempts: z.array(ConjectureProbeQualityAttempt).min(1).max(2),
+    final_review: ConjectureProbeReview.refine((review) => review.verdict === 'pass', {
+      message: 'final_review must pass',
+    }),
+  })
+  .superRefine((audit, ctx) => {
+    audit.attempts.forEach((attempt, index) => {
+      if (attempt.attempt !== index + 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['attempts', index, 'attempt'],
+          message: 'attempt numbers must be sequential from 1',
+        });
+      }
+      if (index < audit.attempts.length - 1 && attempt.outcome === 'passed') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['attempts', index, 'outcome'],
+          message: 'only the final attempt may pass',
+        });
+      }
+    });
+    if (audit.attempts.at(-1)?.outcome !== 'passed') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['attempts'],
+        message: 'a passing audit must end with a passed attempt',
+      });
+    }
+  });
+export type ConjectureProbeQualityAuditT = z.infer<typeof ConjectureProbeQualityAudit>;
+
 export const ConjectureModelAbstainDraft = z.object({
   kind: z.literal('abstain'),
   reason_code: ConjectureModelAbstainReason,
@@ -474,17 +652,75 @@ export const ConjectureAbstainDraft = ConjectureModelAbstainDraft.extend({
   reason_code: ConjectureAbstainReason,
 });
 
+export const ConjectureHypothesisDraft = z.discriminatedUnion('kind', [
+  ConjectureHypothesisProposalDraft,
+  ConjectureModelAbstainDraft,
+]);
+export type ConjectureHypothesisProposalDraftT = z.infer<typeof ConjectureHypothesisProposalDraft>;
+export type ConjectureHypothesisDraftT = z.infer<typeof ConjectureHypothesisDraft>;
+
+/**
+ * Final proposal assembled by the orchestrator after independent review.
+ * Flat prompt/reference fields stay for the existing serving path; the nested specs
+ * make the diagnostic intent and expected target-error response auditable.
+ */
+export const ConjectureProposalDraft = z.object({
+  kind: z.literal('proposal'),
+  ...ConjectureHypothesisFields,
+  probe_md: z.string().trim().min(1).max(1000),
+  probe_reference_md: z.string().trim().min(1).max(2000),
+  followup_probe_md: z.string().trim().min(1).max(1000),
+  followup_probe_reference_md: z.string().trim().min(1).max(2000),
+  probe_spec: ConjectureProbeSpec,
+  followup_probe_spec: ConjectureProbeSpec,
+  probe_quality: ConjectureProbeQualityAudit,
+  predicted_p: z.number().min(0).max(1),
+  discriminating: z.literal(true),
+  agreement_count: z.number().int().min(1).default(1),
+});
+
 export const ConjectureDraft = z
   .discriminatedUnion('kind', [ConjectureProposalDraft, ConjectureModelAbstainDraft])
   .superRefine((draft, ctx) => {
+    if (draft.kind !== 'proposal') return;
     if (
-      draft.kind === 'proposal' &&
       normalizeProbeIdentity(draft.followup_probe_md) === normalizeProbeIdentity(draft.probe_md)
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['followup_probe_md'],
         message: 'followup_probe_md must be distinct from probe_md',
+      });
+    }
+    if (
+      draft.probe_md !== draft.probe_spec.prompt_md ||
+      draft.probe_reference_md !== draft.probe_spec.reference_md
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['probe_spec'],
+        message: 'probe_spec must describe the persisted primary prompt/reference',
+      });
+    }
+    if (
+      draft.followup_probe_md !== draft.followup_probe_spec.prompt_md ||
+      draft.followup_probe_reference_md !== draft.followup_probe_spec.reference_md
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['followup_probe_spec'],
+        message: 'followup_probe_spec must describe the persisted follow-up prompt/reference',
+      });
+    }
+    for (const failureCode of evaluateConjectureProbePackageStructure({
+      primary: draft.probe_spec,
+      followup: draft.followup_probe_spec,
+      predicted_p: draft.predicted_p,
+    })) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['probe_spec'],
+        message: `probe package failed structural quality gate: ${failureCode}`,
       });
     }
   });
