@@ -3,37 +3,33 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-30
-> **【更新 2026-07-30 · YUK-821 P0 输出回归驱动第二轮收口】**
-> Owner 裁决：质量评测只 mock 输入，输出必须走真实模型/生产链；相对固定旧基线有
-> 净改善即可关闭开发 gate。真实 owner 数据只决定是否扩大自动干预。P1 学科确定性
-> validator 本轮不实现。
+> **【更新 2026-07-30 · YUK-796 教学法审议设计收口】**
+> YUK-821 / PR #1114 已合并；固定 mock-input / real-output 回归从 6/8 改善到
+> 7/8，开发继续。当前唯一 active lane 转为 YUK-796：选定 Agency 同波次内部审议，
+> 不建独立 Planning Panel，不新增 agent 席位。
 
 ## NOW
 
-- **唯一 active implementation lane：YUK-821 / PR #1114。**
-  - audit v2 已绑定 reviewer 实际看过的 frozen hypothesis、完整题包和非空
-    author/reviewer task-run lineage；0083 在 v2 producer 启动前退出全部 pre-binding
-    pending conjecture，避免在 SQL 中复制易漂移的 Zod 子集。
-  - accept 对 audit、最终 claim/DiagnosticSpec/evidence/题包做一致性校验；完整结构比较
-    对未来 schema 字段 fail closed，不再依赖会漂移的手写字段表。
-  - 固定 8-case 首轮 Xiaomi/Mimo fallback 复测仅 grounded 5/8；按真实失败增强 prompt
-    后，第二轮达到 **7/8**（旧基线 6/8），严重事实错误/学科幻觉维持 0，开发 gate
-    按 owner 口径通过。
-  - P0 author/reviewer prompt 已按真实失败增强：单选逐项独立求解、必须恰好一个正确；
-    reference 自承认多解或条件/步骤/结论矛盾一律 `reference_incorrect`。这不是 P1
-    学科确定性 validator。
-  - 文言簇仍有 1 个“错误规则导致无法选/随机选，expected answer 不可唯一判定”尾项；
-    已捕获为 **YUK-827**，不阻塞已达成的净改善 gate，也不冒充绝对 5/5。
-- **开发/发布闸门**
-  - 本地只跑变更相关 unit/DB/migration/typecheck/Biome；完整 gate 只监听 GitHub CI Gate。
-  - PR #1114 后续 exact head `bcb29a0f` CI Gate 全绿；连续 review 证明逐字段 SQL
-    validator 会不断漂移，最终收敛为部署序保证的 pre-binding 全量 cutover。
+- **唯一 active lane：YUK-796（设计票，无生产实现）。**
+  - 文档：`docs/design/2026-07-30-yuk-796-pedagogy-deliberation.md`。
+  - 推荐：`prepare_intervention(intervention_id)` 内部串行完成 deterministic shortlist →
+    recommendation → YUK-791 QuestionAuthor → 同模型第二次独立自审 → 原子激活。
+  - 复用现有 8 法 palette/policy 作为合法候选边界；最终推荐不能恢复被排除方法。
+  - 真实消费者是同 wave 的 intervention-scoped QuestionAuthor；recommendation 不能单独
+    成为新的 dead rail。
+  - Planning 控制区放进 Teaching Brief projection，不建独立系统。
+  - anti-swarm：不新增 agent seat，不恢复 planner/critic/judge fan-out。
+- **P0/发布现实**
+  - YUK-821 Done：PR #1114 merge `f3159ae5`，exact-head GitHub CI Gate 全绿。
+  - 固定 8-case 为 7/8；YUK-827 保留唯一 P0 tail，所以不声称绝对 5/5。
+  - YUK-814 严格 Gate A/B/C 仍未全过；开发继续，但 auto-intervention expansion 保持 OFF。
 
 ## NEXT
 
-1. 提交最终 pre-binding cutover batch，回复/清零 review threads，监听新的 exact-head CI。
-2. CI 全绿后 squash merge PR #1114；更新 YUK-821 为 Done，并把 7/8 结果同步 YUK-814。
-3. 按 mesh 依赖选择下一条 ready phase issue，进入下一阶段开发；YUK-827 保持独立 backlog。
+1. 提交 YUK-796 design + ADR/cockpit batch，开 PR。
+2. 只监听 GitHub CI Gate；独立 review/thread 清零后 squash merge并把 YUK-796 置 Done。
+3. 下一 implementation lane 为 YUK-791：先做 Agency intervention contracts/persistence，
+   再做 recommendation 与 intervention-scoped QuestionAuthor；UI 另做 pre-flight。
 
 ## PARKED
 
