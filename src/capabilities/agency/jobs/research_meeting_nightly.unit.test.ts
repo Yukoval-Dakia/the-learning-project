@@ -613,6 +613,53 @@ describe('runResearchMeetingNightly', () => {
     });
   });
 
+  it('revalidates the terminal reopen floor after enrichment removes fresh evidence', async () => {
+    const oldA = failure('old_a', ['k_reopen'], 'concept_confusion');
+    const oldB = failure('old_b', ['k_reopen'], 'concept_confusion');
+    const freshA = failure('fresh_a', ['k_reopen'], 'concept_confusion');
+    const freshB = failure('fresh_b', ['k_reopen'], 'concept_confusion');
+    oldA.created_at = new Date('2026-06-23T00:00:00Z');
+    oldB.created_at = new Date('2026-06-23T01:00:00Z');
+    freshA.created_at = new Date('2026-06-25T00:00:00Z');
+    freshB.created_at = new Date('2026-06-25T01:00:00Z');
+    const failures = [oldA, oldB, freshA, freshB];
+    const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failures)),
+      loadConjectureHistoryFn: vi.fn(async () => {
+        const acceptedAt = new Date('2026-06-22T00:00:00Z');
+        return new Map([
+          [
+            conjectureKey('concept_confusion', 'k_reopen'),
+            {
+              latest_decision: 'accept' as const,
+              latest_decision_at: acceptedAt,
+              latest_accept_at: acceptedAt,
+              latest_terminal_at: new Date('2026-06-24T00:00:00Z'),
+              prior_claim_md: 'owner corrected claim',
+            },
+          ],
+        ]);
+      }),
+      enrichEvidenceCellsFn: vi.fn(async (db, input) => {
+        const enriched = await fakeEnrich(db, input);
+        return enriched.map((cell) => ({
+          ...cell,
+          evidence_event_ids: ['old_a', 'old_b'],
+          samples: cell.samples.filter((sample) =>
+            ['old_a', 'old_b'].includes(sample.attempt_event_id),
+          ),
+        }));
+      }),
+      induceConjectureFn,
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(result.considered).toBe(0);
+    expect(induceConjectureFn).not.toHaveBeenCalled();
+  });
+
   it('persists abstain observability without proposal or retryable AI failure', async () => {
     const writeAiProposalFn = vi.fn(async () => 'unexpected');
     const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);

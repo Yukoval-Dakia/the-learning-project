@@ -17,7 +17,8 @@
 2. 同 `(cause_category × knowledge_id)` 的 dismiss 冷却 30 天；accepted 但未 terminal
    的 conjecture 视为 active，不重复归纳。
 3. confirmed/retired terminal 后只有至少两条 `created_at > terminal_at` 的有效
-   failure attempt 才能 reopen；单条新失败继续 fail closed。
+   failure attempt 才能 reopen；enrichment 删除缺失/变异证据后会以可复现 ids
+   再验 fresh floor，不能用旧的 pre-terminal attempt 补足。
 4. reopen 必须携带最近一次 accept/edit 后的 owner claim；edit 的
    `corrected_claim_md` 优先于原 proposal claim，并接入已有 `priorClaimMd`。
 5. proposal/rate/result 查询仅覆盖今晚 candidate KC 并按 500 分块；terminal 活性复用
@@ -28,10 +29,11 @@
 ## 验证与远端
 
 - YUK-788 已提交并推送为 PR #1102；实现 commit `7049cb07`。
-- 定向 unit `research_meeting_nightly.unit.test.ts` 43/43 通过。
+- 定向 unit `research_meeting_nightly.unit.test.ts` 44/44 通过。
 - closed-loop DB `research_meeting_closed_loop.db.test.ts` 16/16 通过，覆盖：
   dismiss cooldown、terminal 不重复归纳、两条新失败重开、owner rewrite 进入真实 prompt、
-  stale accept 不压过新 dismiss、corrected rate 不再参与 fold。
+  stale accept 不压过新 dismiss、corrected rate 不再参与 fold、enrichment 不得以
+  pre-terminal evidence 冒充 fresh reopen floor。
 - `pnpm typecheck`、改动文件 Biome、`git diff --check` 已通过。
 - main 新增 CI 并行 lanes：static/audits、unit、DB、migration、build、usability；
   aggregate 保留 required-check 名称并 fail closed。

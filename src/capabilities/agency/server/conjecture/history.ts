@@ -297,8 +297,11 @@ export function applyConjectureHistoryGate<T extends EvidenceCell>(
     ) {
       return false;
     }
-    priorClaimMdByKey.set(cell.key, history.prior_claim_md);
     return true;
   });
+  for (const cell of eligible) {
+    const priorClaimMd = historyByKey.get(cell.key)?.prior_claim_md;
+    if (priorClaimMd) priorClaimMdByKey.set(cell.key, priorClaimMd);
+  }
   return { cells: eligible, priorClaimMdByKey };
 }

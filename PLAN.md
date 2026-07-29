@@ -3,10 +3,11 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-29
-> **【更新 2026-07-29 · YUK-788 owner 决策回流实施完成，待远端验收】**
+> **【更新 2026-07-29 · YUK-788 owner 决策回流 review 缺口已修，重跑远端验收】**
 > YUK-795 已随 PR #1101 合入 main；当前已把 pending、dismiss cooldown、active accept
 > 与 terminal reopen 统一接入 nightly identity gate，并让重开的归纳读取 owner 最近一次
-> accept/edit claim。定向 unit/DB 与 typecheck 已通过，下一步提交 PR 走 Actions/OCR。
+> accept/edit claim。定向 unit/DB 与 typecheck 已通过；首轮远端全绿后发现的 review
+> 缺口均已补回归，当前等待新 head 的 Actions/OCR。
 
 ## NOW
 
@@ -18,11 +19,13 @@
     history 在同 capability 内作为第二层 gate。
   - dismiss 同 cell 冷却 30 天；accepted 但未 terminal 的 active conjecture 不重复归纳。
   - confirmed/retired terminal 后必须出现至少两条更晚的有效 failure attempt 才能 reopen；
-    重开时把最近 accept/edit 的 owner claim 注入 `prior_claim_md`，无 claim fail closed。
+    enrichment 后会用可复现 evidence 再验一次 fresh floor；重开时把最近 accept/edit 的
+    owner claim 注入 `prior_claim_md`，无 claim fail closed。
   - terminal 读取复用 correction-aware probe evidence reader；proposal/rate/result 查询按
     candidate KC 限域并分块，不新建事件流。
-  - 定向 unit 43/43、closed-loop DB 16/16、typecheck、Biome、diff check 已通过；
-    review 指出的 stale accept 与 corrected rate 两条缺口已补回归。
+  - 定向 unit 44/44、closed-loop DB 16/16、typecheck、Biome、diff check 已通过；
+    review 指出的 stale accept、corrected rate、enrichment 后 fresh floor 三条缺口均已
+    补回归；history filter 的 map side effect 也已移除。
 - **CI 提速已并入**
   - main 已拆 static/audits、unit、DB、migration、build、usability 并行 lanes；
     DB reset 合批并拆为两路 shard，末端 aggregate 保留 required-check 名称并
@@ -36,7 +39,7 @@
 
 ## NEXT
 
-1. 监听 PR #1102 的 GitHub Actions/OCR；处理阻塞项后合并并对齐 Done。
+1. 监听 PR #1102 最新 head 的 GitHub Actions/OCR；处理阻塞项后合并并对齐 Done。
 2. 证据化收口已在 YUK-785 落地但 Linear 仍 Backlog 的 YUK-803：edit archive soft、
    hard 不变；只在代码/测试与 issue 验收逐项一致后关闭。
 3. 通过真实 owner 数据闸门 YUK-814 后，才进入 intervention snapshot、pedagogy、

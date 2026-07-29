@@ -932,34 +932,49 @@ async function runResearchMeetingNightlyClaimed(
       failures,
       reasoningTraceByAttemptId,
     });
+    const reproducibleCells: EnrichedEvidenceCell[] = [];
+    for (const cell of enriched) {
+      // Recurrence is a claim about reproducible historical context, not the raw attempt tally.
+      // Enrichment validates every attempt and keeps all reproducible ids even though prompt
+      // text samples are capped. Filtered mutable/missing contexts count toward neither the
+      // threshold nor provenance, while a 4+ recurrence is not truncated back to the quote cap.
+      const evidenceEventIds = [...new Set(cell.evidence_event_ids)];
+      if (evidenceEventIds.length < CONJECTURE_RECURRENCE_FLOOR) continue;
+      reproducibleCells.push({
+        ...cell,
+        recurrence_count: evidenceEventIds.length,
+        evidence_event_ids: evidenceEventIds,
+      });
+    }
+    // A terminal conjecture may clear the raw two-fresh-failures gate before
+    // enrichment removes a missing/mutated attempt. Re-run the same lifecycle
+    // gate over only reproducible ids so older pre-terminal evidence cannot
+    // substitute for the required post-terminal failures.
+    const reproducibleHistoryGate = applyConjectureHistoryGate(
+      reproducibleCells,
+      failures,
+      historyByKey,
+      now,
+    );
     const preparedBatch = await Promise.all(
-      enriched.map(async (cell): Promise<PreparedConjectureCell | null> => {
-        // Recurrence is a claim about reproducible historical context, not the raw attempt tally.
-        // Enrichment validates every attempt and keeps all reproducible ids even though prompt
-        // text samples are capped. Filtered mutable/missing contexts count toward neither the
-        // threshold nor provenance, while a 4+ recurrence is not truncated back to the quote cap.
-        const evidenceEventIds = [...new Set(cell.evidence_event_ids)];
-        if (evidenceEventIds.length < CONJECTURE_RECURRENCE_FLOOR) return null;
-        const reproducibleCell: EnrichedEvidenceCell = {
-          ...cell,
-          recurrence_count: evidenceEventIds.length,
-          evidence_event_ids: evidenceEventIds,
-        };
-        try {
-          const imageRefs = collectConjectureEvidenceAssetRefs(reproducibleCell);
-          const evidenceImages = await loadEvidenceImagesFn(db, imageRefs);
-          return { cell: reproducibleCell, evidenceImages };
-        } catch (err) {
-          // A deterministic bad/missing asset must not occupy one of the permanent top-K slots.
-          // Continue in salience order so a lower candidate can still be inducted tonight.
-          console.error(
-            '[research_meeting_nightly] excluding candidate with unloadable evidence images',
-            reproducibleCell.key,
-            err,
-          );
-          return null;
-        }
-      }),
+      reproducibleHistoryGate.cells.map(
+        async (reproducibleCell): Promise<PreparedConjectureCell | null> => {
+          try {
+            const imageRefs = collectConjectureEvidenceAssetRefs(reproducibleCell);
+            const evidenceImages = await loadEvidenceImagesFn(db, imageRefs);
+            return { cell: reproducibleCell, evidenceImages };
+          } catch (err) {
+            // A deterministic bad/missing asset must not occupy one of the permanent top-K slots.
+            // Continue in salience order so a lower candidate can still be inducted tonight.
+            console.error(
+              '[research_meeting_nightly] excluding candidate with unloadable evidence images',
+              reproducibleCell.key,
+              err,
+            );
+            return null;
+          }
+        },
+      ),
     );
     preparedCandidates.push(
       ...preparedBatch.filter(
