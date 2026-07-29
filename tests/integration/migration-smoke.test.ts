@@ -1106,6 +1106,13 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
     `;
     expect(corrections).toEqual([
       {
+        subject_id: 'prebinding_already_retracted',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
         subject_id: 'prebinding_v1_pending',
         actor_kind: 'agent',
         actor_ref: 'yuk821_audit_binding_migration',

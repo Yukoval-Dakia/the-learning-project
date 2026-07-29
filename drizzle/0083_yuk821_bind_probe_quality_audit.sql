@@ -56,20 +56,9 @@ WHERE proposal."action" = 'experimental:proposal'
     WHERE decision."caused_by_event_id" = proposal."id"
       AND decision."action" = 'rate'
   )
-  -- A latest terminal correction is already out of the pending set. A missing
-  -- correction or latest restore remains active and is retired by this cutover.
-  AND COALESCE(
-    (
-      SELECT correction."payload" ->> 'correction_kind'
-      FROM "event" AS correction
-      WHERE correction."action" = 'correct'
-        AND correction."subject_kind" = 'event'
-        AND correction."subject_id" = proposal."id"
-      ORDER BY correction."created_at" DESC, correction."id" DESC
-      LIMIT 1
-    ),
-    'restore'
-  ) = 'restore'
+  -- Do not reproduce CorrectEvent parsing in SQL. An existing valid retraction
+  -- may receive this deterministic cutover retraction again; that is harmless
+  -- and safer than trusting a malformed raw correction that runtime ignores.
   AND NOT COALESCE((
     jsonb_typeof(proposal."payload" -> 'rubric_verdict') = 'object'
     AND proposal."payload" #>> '{rubric_verdict,ok}' = 'false'
