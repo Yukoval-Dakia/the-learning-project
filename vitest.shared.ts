@@ -303,6 +303,10 @@ export const fastTestInclude = [
   // intentionally remains in the DB partition.
   'src/server/conjectures/accountability.unit.test.ts',
   'src/server/agency/conjecture/**/*.test.ts',
+  // YUK-814 — pure artifact schemas, deterministic sampling, blind/canary scoring.
+  // The sibling candidates.db.test.ts restores the real correction/lifecycle reader chain
+  // and intentionally falls through to the DB partition.
+  'src/server/grounding-gate/**/*.unit.test.ts',
   // YUK-572 — shared scout primitives. CONVENTION glob: every *.unit.test.ts under
   // src/server/agency/scout/ runs no-DB (pure schema / AgentDefinition assembly /
   // delimiter helpers importing only Zod + the SDK types). The evidence-mcp.db.test.ts

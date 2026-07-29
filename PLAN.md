@@ -3,20 +3,24 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-29
-> **【更新 2026-07-29 · 猜想证据收口，串行到达真实 owner 数据闸门】**
-> YUK-788 已随 PR #1102 合并，YUK-803 已按现有代码/DB 测试证据化关闭；
-> 两项目联合计划现已严格串行到 YUK-814。模型运行环境 pre-flight 通过，当前唯一
-> 事实阻塞是缺少可供盲评的 6–10 个真实 owner 失败簇；不以 synthetic/mock 冒充。
+> **【更新 2026-07-29 · YUK-814 离线闸门 harness 已构建，真实执行仍等数据】**
+> 严格串行已进入 YUK-814；只读 backup→一次性 DB→生产 evidence chain→shadow/blind
+> →score/canary harness 已完成本地全量 gate。真实 shadow/blind/canary 尚未执行；
+> 当前唯一事实阻塞仍是 6–10 个真实 owner 失败簇，不以 synthetic/mock 冒充。
 
 ## NOW
 
-- **当前无代码 active lane；YUK-814 保持 Backlog，等待真实数据输入**
-  - Node、pnpm、Docker daemon、Claude Agent SDK、`DATABASE_URL` 与
-    anthropic-sub OAuth token 均已做不泄密 pre-flight；凭据不是 blocker。
-  - 仓内不存在 YUK-814 专属盲评数据集/评分 artifact；配置 DB 指向本地
-    `127.0.0.1:5433`，且没有既有 compose volume。试启时只创建了全新空库，已立即
-    删除容器、network 与 volume，未留下假数据或运行中服务。
-  - 因此本轮不启动 shadow、blind review 或 canary；继续只能造 mock，违反发布闸门。
+- **唯一 active 线：YUK-814 离线真实数据闸门 harness**
+  - Branch：`codex/yuk-814-grounding-gate`；worktree：
+    `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-814-grounding-gate`。
+  - `pnpm grounding:gate` 已提供 inspect、shadow、score-blind、init-canary、
+    score-canary；backup 只恢复进自动清理的一次性 pgvector Testcontainer。
+  - 资格链复用生产 correction/history/accountability/evidence-enrichment/image gates，
+    额外排除 `payload.__synthetic=true` 与 `synthetic:*`；shadow 不写产品 proposal/event。
+  - blind packet 与 private lineage 分离；6–10 簇、grounding ≥80%、三项红线为 0；
+    canary 必须同一 owner/cohort、10 个 distinct intervention、监控 refs 与停机演练齐备。
+  - synthetic smoke 仅验证 harness：12 failures → 6 eligible；`gate_passed=false`。
+    本地 pre-PR 全量：unit 5,824、DB 4,263、migration 26，typecheck/lint/audits/build 全绿。
 - **YUK-788 已收口**
   - PR #1102 merge commit：`ff681b0c`；Linear Done。
   - pending、30 天 dismiss cooldown、active accepted 与 terminal reopen 共用
@@ -35,11 +39,11 @@
 
 ## NEXT
 
-1. 为 YUK-814 提供/导出 6–10 个真实 owner 失败簇，保留题面、作答、Judge/错因、
-   subject/KC 与可复现 evidence refs；禁止 synthetic/mock 代替。
-2. 数据到位后才把 YUK-814 置 In Progress：先 shadow run，再 owner gold blind review；
-   grounding ≥80%，学科幻觉、claim/probe 错配、严重事实错误均为 0。
-3. 只有 YUK-814 通过，才依次启动 intervention snapshot、pedagogy、
+1. 提交 YUK-814 harness PR，处理独立 review；CI Gate 全绿后合并，但 issue 不提前 Done。
+2. 从生产 backup endpoint 导出真实 owner 数据；有图片的簇必须 `include_assets=1`。
+3. 运行 inspect；至少 6 个 fully reproducible/image-ready cluster 后执行 shadow 与 owner
+   gold blind review。grounding ≥80%，学科幻觉、claim/probe 错配、严重事实错误均为 0。
+4. 只有 blind gate 通过，才依次启动 intervention snapshot、pedagogy、
    QuestionAuthor/Verify、隔离 FSRS、结算、Brief/Copilot/profile。
 
 ## PARKED
@@ -54,7 +58,7 @@
 
 ## BLOCKED-ON
 
-- **YUK-814 shadow/blind gate** ← 6–10 个真实 owner 失败簇的数据来源/导出；
-  anthropic-sub 与本机工具链 pre-flight 已通过。
+- **YUK-814 真实执行** ← 生产 backup ZIP / 6–10 个合格真实 owner 失败簇；
+  harness、anthropic-sub 与本机工具链已就绪。
 - **干预实现** ← YUK-814 grounding blind review 通过；不得先写产品状态机绕过门。
 - **auto-intervention 扩大** ← 单 owner/cohort 10 次 canary 全部事后审阅，红线为 0。
