@@ -1308,6 +1308,17 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
       kind: 'event',
       id: 'attempt_1',
     });
+    await seedProposal('audit_v2_out_of_range_probability', {
+      ...v2Change,
+      predicted_p: 1.5,
+      probe_quality: {
+        ...v2Change.probe_quality,
+        reviewed_package: {
+          ...v2Change.probe_quality.reviewed_package,
+          predicted_p: 1.5,
+        },
+      },
+    });
     await seedProposal('audit_v1_decided', {
       ...v2Change,
       probe_quality: { ...v1Audit, schema_version: 1 },
@@ -1477,6 +1488,13 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         affected_scopes: [],
         already_ingested: true,
       },
+      {
+        subject_id: 'audit_v2_out_of_range_probability',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
     ]);
 
     const ownerDismissals = await client<{ count: string }[]>`
@@ -1500,6 +1518,7 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
           'audit_v2_mismatch',
           'audit_v2_missing_lineage',
           'audit_v2_non_array_evidence_refs',
+          'audit_v2_out_of_range_probability',
           'audit_v2_outer_followup_prompt_mismatch',
           'audit_v2_outer_followup_reference_mismatch',
           'audit_v2_outer_primary_prompt_mismatch',

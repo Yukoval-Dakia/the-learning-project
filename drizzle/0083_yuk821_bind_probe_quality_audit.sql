@@ -76,7 +76,15 @@ WHERE proposal."action" = 'experimental:proposal'
       )
     ) BETWEEN 1 AND 1000
     AND proposal."payload" #>> '{ai_proposal,proposed_change,discriminating}' = 'true'
-    AND jsonb_typeof(proposal."payload" #> '{ai_proposal,proposed_change,predicted_p}') = 'number'
+    AND CASE
+      WHEN jsonb_typeof(
+        proposal."payload" #> '{ai_proposal,proposed_change,predicted_p}'
+      ) = 'number'
+        THEN (
+          proposal."payload" #>> '{ai_proposal,proposed_change,predicted_p}'
+        )::numeric BETWEEN 0 AND 1
+      ELSE false
+    END
     AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,kind}'
       = 'proposal'
     AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,claim_md}'
