@@ -112,10 +112,13 @@ export async function beginTestTransaction(): Promise<void> {
     _transactionClient = reserved;
     _transactionDb = transactionDb;
   } catch (error) {
-    await reserved.unsafe('ROLLBACK').catch((rollbackError) => {
-      console.error('beginTestTransaction: cleanup ROLLBACK failed', rollbackError);
-    });
-    reserved.release();
+    try {
+      await reserved.unsafe('ROLLBACK').catch((rollbackError) => {
+        console.error('beginTestTransaction: cleanup ROLLBACK failed', rollbackError);
+      });
+    } finally {
+      reserved.release();
+    }
     throw error;
   }
 }
