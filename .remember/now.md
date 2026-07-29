@@ -6,7 +6,7 @@
 - YUK-787 / YUK-795 已随 PR #1098 / #1101 合并并在 Linear Done；最终
   CI Gate / OCR / CodeQL 全绿。
 - 当前唯一 active 线是 YUK-788：
-  `codex/yuk-788-owner-feedback-loop`，PR 待创建，基于 `origin/main@41fa2a07`。
+  `codex/yuk-788-owner-feedback-loop`，PR #1102，基于 `origin/main@41fa2a07`。
 - 已合入 GitHub CI 并行化及 DB/unit 长尾提速；不在本地
   重复跑 CI gate。
 
@@ -27,7 +27,7 @@
 
 ## 验证与远端
 
-- YUK-788 当前未提交；隔离 worktree 干净基线为 `origin/main@41fa2a07`。
+- YUK-788 已提交并推送为 PR #1102；实现 commit `7049cb07`。
 - 定向 unit `research_meeting_nightly.unit.test.ts` 43/43 通过。
 - closed-loop DB `research_meeting_closed_loop.db.test.ts` 14/14 通过，覆盖：
   dismiss cooldown、terminal 不重复归纳、两条新失败重开、owner rewrite 进入真实 prompt。
@@ -39,7 +39,7 @@
 
 ## 下一步
 
-1. 提交/推送 YUK-788，创建 PR 并只监听 GitHub Actions/OCR；处理远端失败或 review。
+1. 只监听 PR #1102 的 GitHub Actions/OCR；处理远端失败或 review。
 2. 全绿后合并，Linear YUK-788 对齐 Done。
 3. 严格串行证据化收口 YUK-803（实现已在 YUK-785 落地，Linear 仍 Backlog）。
 4. YUK-814 真实 owner 数据 shadow/blind gate 必须单独执行；mock 不能代替。

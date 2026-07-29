@@ -11,7 +11,7 @@
 ## NOW
 
 - **唯一 active 线：Grounding · 猜想证据 YUK-788**
-  - Branch：`codex/yuk-788-owner-feedback-loop`；PR 待创建。
+  - Branch：`codex/yuk-788-owner-feedback-loop`；PR #1102。
   - Worktree：
     `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-788-owner-feedback-loop`。
   - pending proposal 仍由 inbox projection 第一层去重；owner decision / probe terminal
@@ -35,7 +35,7 @@
 
 ## NEXT
 
-1. 提交并创建 YUK-788 PR，监听 GitHub Actions/OCR；处理阻塞项后合并并对齐 Done。
+1. 监听 PR #1102 的 GitHub Actions/OCR；处理阻塞项后合并并对齐 Done。
 2. 证据化收口已在 YUK-785 落地但 Linear 仍 Backlog 的 YUK-803：edit archive soft、
    hard 不变；只在代码/测试与 issue 验收逐项一致后关闭。
 3. 通过真实 owner 数据闸门 YUK-814 后，才进入 intervention snapshot、pedagogy、
