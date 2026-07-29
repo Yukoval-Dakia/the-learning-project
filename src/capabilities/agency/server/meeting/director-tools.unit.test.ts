@@ -6,6 +6,7 @@
 
 import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
 import type { WriteAgentNoteInput } from '@/capabilities/agency/server/notes';
+import type { FailureAttempt } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -120,6 +121,8 @@ function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
     caps,
     triggerEventId: 'trigger_1',
     toolContextTaskRunId: 'toolrun_1',
+    failureAttempts: [],
+    loadConjectureHistoryFn: async () => new Map(),
     writeAiProposalFn: async (_db, input) => {
       proposals.push(input);
       return `prop_${proposals.length}`;
@@ -238,6 +241,70 @@ describe('propose_conjecture — server-enforced single writer', () => {
     expect(first.ok).toBe(true);
     const second = await callTool('propose_conjecture', validProposeArgs());
     expect(second.ok).toBe(false);
+    expect(h.proposals).toHaveLength(1);
+  });
+
+  it('blocks an active accepted identity at the write guard', async () => {
+    const acceptedAt = new Date(NOW.getTime() - 1_000);
+    const h = build({
+      loadConjectureHistoryFn: async () =>
+        new Map([
+          [
+            conjectureKey('concept_confusion', 'k_a'),
+            {
+              latest_decision: 'accept' as const,
+              latest_decision_at: acceptedAt,
+              latest_accept_at: acceptedAt,
+              latest_terminal_at: null,
+              prior_claim_md: 'owner prior',
+            },
+          ],
+        ]),
+    });
+
+    const result = await callTool('propose_conjecture', validProposeArgs());
+
+    expect(result.ok).toBe(false);
+    expect(String(result.reason)).toMatch(/lifecycle|owner decision/);
+    expect(h.proposals).toHaveLength(0);
+    expect(h.caps.proposeCount).toBe(0);
+  });
+
+  it('requires the owner prior claim when reopening a terminal identity', async () => {
+    const terminalAt = new Date(NOW.getTime() - 1_000);
+    const ownerPrior = '你会把必要条件当成充分条件。';
+    const failures = ['att_1', 'att_2'].map(
+      (attempt_event_id) =>
+        ({
+          attempt_event_id,
+          created_at: NOW,
+        }) as FailureAttempt,
+    );
+    const history = new Map([
+      [
+        conjectureKey('concept_confusion', 'k_a'),
+        {
+          latest_decision: 'accept' as const,
+          latest_decision_at: new Date(terminalAt.getTime() - 1_000),
+          latest_accept_at: new Date(terminalAt.getTime() - 1_000),
+          latest_terminal_at: terminalAt,
+          prior_claim_md: ownerPrior,
+        },
+      ],
+    ]);
+    const h = build({
+      failureAttempts: failures,
+      loadConjectureHistoryFn: async () => history,
+    });
+
+    const missingPrior = await callTool('propose_conjecture', validProposeArgs());
+    const withPrior = await callTool(
+      'propose_conjecture',
+      validProposeArgs({ prior_claim_md: ownerPrior }),
+    );
+
+    expect(missingPrior).toMatchObject({ ok: false, prior_claim_md: ownerPrior });
+    expect(withPrior.ok).toBe(true);
     expect(h.proposals).toHaveLength(1);
   });
 

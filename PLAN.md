@@ -24,9 +24,13 @@
   - lifecycle fold 按每个 proposal 的最新 rate 取 identity 最新决定；rollback 会撤销旧
     accept，terminal 只结算到 identity 当前最新 accepted proposal，不能由旧 proposal
     的更晚 terminal 错放仍在测试中的新 proposal。
+  - 默认关闭的 agent-led shadow lane 复用同一 history gate：agenda 先滤 active /
+    cooldown / terminal fresh floor，write guard 再读一次；terminal reopen 必须原样回传
+    agenda/软拒绝给出的 owner `prior_claim_md`，不能绕过 deterministic lane。
   - terminal 读取复用 correction-aware probe evidence reader；proposal/rate/result 查询按
     candidate KC 限域并分块，不新建事件流。
-  - 定向 unit 44/44、closed-loop DB 18/18、typecheck、Biome、diff check 已通过；
+  - 定向 unit 79/79（nightly 44 + director tools 35）、定向 DB 36/36
+    （closed-loop 18 + director 18）、typecheck、Biome、diff check 已通过；
     review 指出的 stale accept、corrected rate、enrichment 后 fresh floor 三条缺口均已
     补回归；latest accepted proposal/rollback fold 反例也已覆盖，history filter 的 map
     side effect 已移除。

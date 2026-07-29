@@ -4,6 +4,7 @@ import {
   getEffectiveProbeResultStatuses,
 } from '@/capabilities/agency/server/conjecture/probe-evidence';
 import { PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
+import { RateEvent } from '@/core/schema/event/known';
 import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
@@ -205,13 +206,17 @@ export async function loadConjectureHistory(
     if (!proposalId) continue;
     const proposal = proposalById.get(proposalId);
     if (!proposal) continue;
-    const rating = toPlainRecord(row.payload).rating;
-    if (rating !== 'accept' && rating !== 'dismiss' && rating !== 'rollback') continue;
+    const parsedRatePayload = RateEvent.shape.payload.safeParse(row.payload);
+    if (!parsedRatePayload.success) continue;
+    const rating = parsedRatePayload.data.rating;
     const history = historyByKey.get(proposal.key) ?? emptyConjectureHistory();
     if (history.latest_decision === null) {
       history.latest_decision = rating;
       history.latest_decision_at = row.created_at;
       if (rating === 'accept') {
+        // conjecture-accept.ts persists corrected_claim_md as an intentional raw
+        // RateEvent payload extension. The shared schema strips that extra key, so
+        // owner wording must be read from the unparsed row after rating validation.
         const correctedClaim = toPlainRecord(row.payload).corrected_claim_md;
         history.latest_accept_at = row.created_at;
         history.prior_claim_md =
@@ -239,6 +244,8 @@ export async function loadConjectureHistory(
       effectiveTerminalStatuses.set(id, status);
     }
   }
+  // Sort only after status validation has consumed bounded insertion-order chunks;
+  // this pass needs newest-first so the first matching terminal wins.
   terminalRows.sort(compareNewest);
   for (const row of terminalRows) {
     if (effectiveTerminalStatuses.get(row.id) !== 'active') continue;
@@ -255,7 +262,9 @@ export async function loadConjectureHistory(
   return historyByKey;
 }
 
-export function applyConjectureHistoryGate<T extends EvidenceCell>(
+export function applyConjectureHistoryGate<
+  T extends Pick<EvidenceCell, 'key' | 'evidence_event_ids'>,
+>(
   cells: readonly T[],
   failures: readonly FailureAttempt[],
   historyByKey: ReadonlyMap<string, ConjectureHistory>,

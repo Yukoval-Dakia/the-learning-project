@@ -32,6 +32,11 @@ import {
   conjectureKey,
   gatherConjectureEvidence,
 } from '@/capabilities/agency/server/conjecture/evidence';
+import {
+  type LoadConjectureHistoryFn,
+  applyConjectureHistoryGate,
+  loadConjectureHistory,
+} from '@/capabilities/agency/server/conjecture/history';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
@@ -149,6 +154,7 @@ export interface DirectorDeps {
   getMasteryProjectionFn?: GetMasteryProjectionFn;
   /** default reads the real inbox pending conjectures (dedup base + agenda display). */
   listPendingConjecturesFn?: ListPendingConjecturesFn;
+  loadConjectureHistoryFn?: LoadConjectureHistoryFn;
   persistToolTraceFn?: PersistToolTraceFn;
   writeAiProposalFn?: WriteAiProposalFn;
   writeAgentNoteFn?: WriteAgentNoteFn;
@@ -195,6 +201,7 @@ export async function runResearchMeetingDirector(
   const runAgentTaskFn = deps.runAgentTaskFn ?? runAgentTask;
   const writeEventFn = deps.writeEventFn ?? writeEvent;
   const persistToolTraceFn = deps.persistToolTraceFn ?? persistToolTrace;
+  const loadConjectureHistoryFn = deps.loadConjectureHistoryFn ?? loadConjectureHistory;
 
   // ── PRE-LLM reads (OUTSIDE the runAgentTask try/catch — a throw here is a legit
   // retryable DB fault that propagates so the nightly job's dayKey claim can gate a
@@ -226,8 +233,15 @@ export async function runResearchMeetingDirector(
 
   // Deterministic 取证 → salience-sorted cells (same math as the control lane; the
   // director gets it as MATERIAL, not the top-3 forced-induce slice).
-  const cells = gatherConjectureEvidence({ failures, masteryByKnowledgeId, knownConjectureKeys });
-  const candidateCells: MeetingCandidateCell[] = cells
+  const gatheredCells = gatherConjectureEvidence({
+    failures,
+    masteryByKnowledgeId,
+    knownConjectureKeys,
+  });
+  const historyByKey =
+    gatheredCells.length > 0 ? await loadConjectureHistoryFn(db, gatheredCells) : new Map();
+  const historyGate = applyConjectureHistoryGate(gatheredCells, failures, historyByKey, now);
+  const candidateCells: MeetingCandidateCell[] = historyGate.cells
     .slice(0, RESEARCH_MEETING_AGENT_MAX_CELLS)
     .map((c) => ({
       knowledge_id: c.knowledge_id,
@@ -237,6 +251,9 @@ export async function runResearchMeetingDirector(
       theta_precision: c.theta_precision,
       probe_here: c.probe_here,
       evidence_event_ids: c.evidence_event_ids,
+      ...(historyGate.priorClaimMdByKey.has(c.key)
+        ? { prior_claim_md: historyGate.priorClaimMdByKey.get(c.key) }
+        : {}),
     }));
   const meetingContext = buildMeetingContext(failures, candidateCells, pendingConjectures);
 
@@ -284,6 +301,8 @@ export async function runResearchMeetingDirector(
     writeAiProposalFn: deps.writeAiProposalFn,
     writeAgentNoteFn: deps.writeAgentNoteFn,
     getMasteryProjectionFn,
+    failureAttempts: failures,
+    loadConjectureHistoryFn,
   });
   const scout = buildEvidenceScoutAgentDefinition({ prompt: EVIDENCE_SCOUT_CHARTER });
 

@@ -26,7 +26,9 @@
 6. identity 最新决定只消费每个 proposal 的最新 rate；rollback 撤销旧 accept，且
    terminal 必须属于 identity 当前最新 accepted proposal，旧 proposal 的较晚结算不能
    错放仍 active 的新 proposal。
-7. 没有新事件流、schema 或跨 capability 深层导入；nightly 只消费已有 proposal、
+7. `RESEARCH_MEETING_AGENT_ENABLED` shadow lane 的 agenda 与 write guard 复用同一
+   history gate；terminal reopen 必须回传 owner `prior_claim_md`，off-menu 也不能绕过。
+8. 没有新事件流、schema 或跨 capability 深层导入；nightly 只消费已有 proposal、
    rate、probe_result 与 attempt facts。
 
 ## 验证与远端
@@ -38,6 +40,8 @@
   stale accept 不压过新 dismiss、corrected rate 不再参与 fold、enrichment 不得以
   pre-terminal evidence 冒充 fresh reopen floor、旧 proposal terminal 不得结算新 accept、
   rollback 必须撤销旧 accept。
+- director tools + nightly unit 79/79、director + closed-loop DB 36/36 通过；agent
+  shadow lane 覆盖 agenda 与 write guard 双层阻断、terminal reopen owner prior 回传。
 - `pnpm typecheck`、改动文件 Biome、`git diff --check` 已通过。
 - main 新增 CI 并行 lanes：static/audits、unit、DB、migration、build、usability；
   aggregate 保留 required-check 名称并 fail closed。

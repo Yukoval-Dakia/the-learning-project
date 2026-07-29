@@ -15,6 +15,12 @@
 // does not go through the registry (§0.B).
 
 import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
+import {
+  type ConjectureHistory,
+  type LoadConjectureHistoryFn,
+  applyConjectureHistoryGate,
+  loadConjectureHistory,
+} from '@/capabilities/agency/server/conjecture/history';
 import type {
   AgentNoteTarget,
   WriteAgentNoteInput,
@@ -36,7 +42,7 @@ import {
   GET_TRACES_TOOL_NAME,
   SPAWN_TOOL_NAME,
 } from '@/server/agency/scout/tool-names';
-import { getFailureAttemptById } from '@/server/events/queries';
+import { type FailureAttempt, getFailureAttemptById } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -112,6 +118,8 @@ export interface MeetingCandidateCell {
   theta_precision: number | null;
   probe_here: boolean;
   evidence_event_ids: string[];
+  /** Required owner wording for a terminal identity that cleared the fresh-evidence floor. */
+  prior_claim_md?: string;
 }
 
 /** The pre-computed agenda snapshot returned by get_meeting_context (§5). */
@@ -186,6 +194,9 @@ export interface BuildDirectorServerOpts {
   writeAgentNoteFn?: WriteAgentNoteFn;
   getMasteryProjectionFn?: GetMasteryProjectionFn;
   evidenceRefsExistFn?: EvidenceRefsExistFn;
+  /** Same lifecycle facts/gate as the deterministic lane; re-read at write time. */
+  failureAttempts: FailureAttempt[];
+  loadConjectureHistoryFn?: LoadConjectureHistoryFn;
 }
 
 export type SdkMcpServer = ReturnType<typeof createSdkMcpServer>;
@@ -209,6 +220,9 @@ const ProposeConjectureShape = {
   followup_probe_reference_md: z.string().trim().min(1).max(2000),
   predicted_p: z.number().min(0).max(1),
   discriminating: z.boolean(),
+  // A terminal identity may reopen only after the director has read and echoed the
+  // owner-corrected claim supplied by get_meeting_context (or a soft rejection).
+  prior_claim_md: z.string().trim().min(1).max(280).optional(),
   // PRIMARY event ids only (attempt / review / probe / prediction_score) — agent_note ids are
   // filtered out server-side (§7 backstop). .max(12) mirrors the scout's
   // report-findings.ts evidence_refs bound (round-2 review MINOR #5 — consistency + a
@@ -288,11 +302,13 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
     caps,
     triggerEventId,
     toolContextTaskRunId,
+    failureAttempts,
   } = opts;
   const writeAiProposalFn = opts.writeAiProposalFn ?? writeAiProposal;
   const writeAgentNoteFn = opts.writeAgentNoteFn ?? writeAgentNote;
   const getMasteryProjectionFn = opts.getMasteryProjectionFn ?? getMasteryProjection;
   const evidenceRefsExistFn = opts.evidenceRefsExistFn ?? evidenceRefsExist;
+  const loadConjectureHistoryFn = opts.loadConjectureHistoryFn ?? loadConjectureHistory;
 
   const proposalIds: string[] = [];
   const noteIds: string[] = [];
@@ -330,7 +346,7 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
       // reason } (soft, so the director can react) and NEVER consumes a cap slot.
       tool(
         PROPOSE_CONJECTURE_LOCAL_NAME,
-        'PROPOSE (not write) one conjecture about how the owner thinks + two distinct, untrained discriminating probes and their references. At most 3 per night; a cause×KC that already has a pending conjecture is refused. evidence_refs must be first-hand event ids (attempt / review / probe / prediction_score) — agent_note ids are stripped. You do NOT supply baseline mastery — the server snapshots it by knowledge point.',
+        'PROPOSE (not write) one conjecture about how the owner thinks + two distinct, untrained discriminating probes and their references. At most 3 per night; pending, active-accepted, dismiss-cooldown, and insufficiently-fresh terminal identities are refused. A reopened terminal identity must echo the owner prior_claim_md from meeting context (a rejected off-menu attempt returns the required prior). evidence_refs must be first-hand event ids (attempt / review / probe / prediction_score) — agent_note ids are stripped. You do NOT supply baseline mastery — the server snapshots it by knowledge point.',
         ProposeConjectureShape,
         async (args) => {
           // round-3 review CodeRabbit Major (A2) — TOCTOU fix. Claude can emit multiple
@@ -442,22 +458,64 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
           // rolled back just like write-time failures.
           caps.proposeCount += 1;
           proposedThisRun.add(key);
-
-          try {
-            if (!(await evidenceRefsExistFn(db, primaryRefs))) {
-              caps.proposeCount -= 1;
-              proposedThisRun.delete(key);
-              return textResult({
-                ok: false,
-                reason: 'evidence_refs 含不存在或非一手证据类型的事件 id',
-              });
-            }
-          } catch (err) {
+          const releaseReservation = () => {
             caps.proposeCount -= 1;
             proposedThisRun.delete(key);
+          };
+
+          let refsExist: boolean;
+          let historyByKey: Map<string, ConjectureHistory>;
+          try {
+            [refsExist, historyByKey] = await Promise.all([
+              evidenceRefsExistFn(db, primaryRefs),
+              loadConjectureHistoryFn(db, [
+                {
+                  key,
+                  cause_category: causeCategory,
+                  knowledge_id: a.knowledge_id,
+                },
+              ]),
+            ]);
+          } catch (err) {
+            releaseReservation();
             return textResult({
               ok: false,
-              reason: `evidence_refs 事件校验失败: ${err instanceof Error ? err.message : String(err)}`,
+              reason: `证据或 conjecture history 校验失败: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            });
+          }
+          if (!refsExist) {
+            releaseReservation();
+            return textResult({
+              ok: false,
+              reason: 'evidence_refs 含不存在或非一手证据类型的事件 id',
+            });
+          }
+
+          const historyGate = applyConjectureHistoryGate(
+            [{ key, evidence_event_ids: primaryRefs }],
+            failureAttempts,
+            historyByKey,
+            now,
+          );
+          if (historyGate.cells.length === 0) {
+            releaseReservation();
+            return textResult({
+              ok: false,
+              reason: '该错因×知识点受 owner decision / conjecture lifecycle gate 阻断',
+            });
+          }
+          const requiredPriorClaimMd = historyGate.priorClaimMdByKey.get(key);
+          if (
+            requiredPriorClaimMd !== undefined &&
+            a.prior_claim_md?.trim() !== requiredPriorClaimMd
+          ) {
+            releaseReservation();
+            return textResult({
+              ok: false,
+              reason: '该 terminal 猜想重开前必须读取并原样回传 owner prior_claim_md',
+              prior_claim_md: requiredPriorClaimMd,
             });
           }
 
@@ -519,8 +577,7 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             // A CauseCategory / payload parse failure (writeAiProposal → parseAiProposalPayload)
             // is a validation reject, not a run-fatal error — return it so the director can
             // fix. Roll back the reservation (A2 fix): a write-time rejection is retryable.
-            caps.proposeCount -= 1;
-            proposedThisRun.delete(key);
+            releaseReservation();
             return textResult({
               ok: false,
               reason: `提案写入被拒（校验）: ${err instanceof Error ? err.message : String(err)}`,
