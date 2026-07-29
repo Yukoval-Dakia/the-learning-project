@@ -14,6 +14,8 @@ export const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
 
 /** The score-free terminal recurrence projection appended by reconciliation. */
 export const PROBE_RESULT_PROJECTED_ACTION = 'experimental:probe_result_projected' as const;
+/** The calibrated sequence-1 score fact appended by reconciliation. */
+export const PREDICTION_SCORE_ACTION = 'experimental:prediction_score' as const;
 
 /**
  * Persisted conjecture-survival decisions derived from a graded probe outcome.

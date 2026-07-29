@@ -26,14 +26,15 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
-import { PROBE_RESULT_ACTION, PROBE_RESULT_PROJECTED_ACTION } from '@/core/schema/conjecture';
+import {
+  PREDICTION_SCORE_ACTION,
+  PROBE_RESULT_ACTION,
+  PROBE_RESULT_PROJECTED_ACTION,
+} from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { scorePrediction } from '@/server/conjectures/scoring';
-
-/** The canonical score fact the reconcile loop appends (reconcile.ts). */
-const PREDICTION_SCORE_ACTION = 'experimental:prediction_score' as const;
 
 // ── Tier-1 knobs (NAMED consts + owner-tunable — never learner-fitted) ───────────────
 
@@ -617,9 +618,11 @@ export async function gatherDissociationRecordsByIdentity(
   const rows: Array<{ id: string; action: string; payload: unknown; created_at: Date }> =
     scoreChunks.flat();
   rows.sort((a, b) => a.created_at.getTime() - b.created_at.getTime() || a.id.localeCompare(b.id));
-  const anchorCorrectionStatuses = await getCorrectionStatuses(
-    db,
-    rows.map((row) => row.id),
+  const anchorCorrectionChunks = await Promise.all(
+    boundedChunks(rows.map((row) => row.id)).map((chunk) => getCorrectionStatuses(db, chunk)),
+  );
+  const anchorCorrectionStatuses = new Map(
+    anchorCorrectionChunks.flatMap((statusMap) => [...statusMap.entries()]),
   );
   const probeResultEventIds = [
     ...new Set(
