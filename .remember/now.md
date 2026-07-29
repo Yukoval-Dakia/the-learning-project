@@ -2,10 +2,8 @@
 
 ## Active line
 
-- 当前代码 active 线是 YUK-820：Ready PR #1103
-  （`codex/yuk-820-incremental-gate`）已实现到 Phase 2 affected unit required。
-- 正在把 `origin/main@b5bdbe2a` 合入 PR 分支；main 新增 YUK-788/#1102 与
-  YUK-803 cockpit 收口，冲突只在 `PLAN.md` / `.remember/now.md`。
+- 当前无代码 active 线。YUK-820 已随 PR #1103 squash merge 为 `7dd15a8e`，
+  Phase 2 affected unit required 已切换并通过 main full canary。
 - 产品线严格停在 YUK-814 的真实 owner 数据输入闸门；YUK-814 仍为 Backlog，
   不能用 synthetic/mock 代替真实盲评数据。
 
@@ -22,8 +20,9 @@
    main push、global trigger、unknown/base/diff error 同样 full canary。
 5. 证据见 `docs/audit/2026-07-29-unit-selector-backfill.md`；final-green backfill 的
    故障注入边界已明示，comparator 负控由 unit tests 固定。
-6. 手动 full Gate run `30428189107` 全绿；其 `unit-selector-report` 确认
-   `required_mode=full`、退出码 0。当前 head 合并 main 后仍需 PR-attached CI。
+6. 精确 PR head full Gate `30431860540` 全绿；合并后 main full canary
+   `30432387630` 全绿，其 artifact 确认 requested/effective/required 均为
+   `full`、unit 退出码 0。
 
 ## Grounding 收口与阻塞
 
@@ -36,14 +35,11 @@
 
 ## 下一步
 
-1. 完成 merge commit，跑 focused tests、typecheck、targeted Biome、YAML parse、
-   partition audit 后推送。
-2. 等 PR #1103 当前 head full-trigger CI；检查 selector artifact 与 review threads。
-3. CI/review 全绿后合并，检查 main full canary，并将 YUK-820/Linear/cockpit 收口。
-4. YUK-814 数据到位后才启动 shadow/blind gate；任一红线失败即停。
+1. 等待/导出 YUK-814 所需的 6–10 个真实 owner 失败簇。
+2. 数据到位后才启动 shadow/blind gate；任一红线失败即停。
 
 ## Worktree / workflow 状态
 
 - 当前 worktree：`/Users/yuqi/.codex/worktrees/9a32/the-learning-project`，
-  branch `codex/yuk-820-incremental-gate`。
+  branch `codex/yuk-820-closeout`，只提交 cockpit 收口。
 - owner 主工作树及其既存改动不在本轮修改作用域。

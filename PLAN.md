@@ -3,15 +3,16 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-29
-> **【更新 2026-07-29 · YUK-820 affected required + Grounding 等待真实数据】**
-> 20 个历史 PR backfill 已支持把 affected unit selector 切为 required；同时，
-> Grounding 产品线仍严格停在 YUK-814 的真实 owner 数据闸门，不以 mock 代替。
+> **【更新 2026-07-29 · YUK-820 已切换并验证 + Grounding 等待真实数据】**
+> PR #1103 已合并，20 个历史 PR backfill、PR head 全量 Gate 与 main full canary
+> 均通过；Grounding 产品线仍严格停在 YUK-814 的真实 owner 数据闸门。
 
 ## NOW
 
-- **当前代码 active 线：CI/perf · YUK-820**
-  - Ready PR #1103：`codex/yuk-820-incremental-gate` 正在合并
-    `origin/main@b5bdbe2a`；手动 full Gate run `30428189107` 已全绿。
+- **当前无代码 active 线；CI/perf · YUK-820 已收口**
+  - PR #1103 已 squash merge 为 `7dd15a8e`；精确 PR head full Gate
+    `30431860540` 与合并后 main full canary `30432387630` 均全绿。
+  - main canary artifact 确认 requested/effective/required 均为 `full`，unit exit 0。
   - PR 的 unit-test-only / DB-test-only / UI / server 改动按 lane 选择；schema、
     migration、kernel/core、manifest、依赖、workflow/selector、测试配置和未知路径全量。
   - 20 个历史真实 affected PR：20/20 affected、0 fallback、20 个直接改动 unit test
@@ -35,13 +36,9 @@
 
 ## NEXT
 
-1. 完成 PR #1103 与最新 main 的合并，推送后核对当前 head 的 full-trigger CI、
-   selector artifact 与 aggregate fail-closed。
-2. 检查并处理 active review threads；当前 head CI/review 全绿后合并，随后检查
-   main full canary，并将 YUK-820 与 cockpit/Linear 对齐收口。
-3. 为 YUK-814 提供/导出 6–10 个真实 owner 失败簇；数据到位后先 shadow run，
+1. 为 YUK-814 提供/导出 6–10 个真实 owner 失败簇；数据到位后先 shadow run，
    再做 owner gold blind review。
-4. 只有 YUK-814 达到 grounding ≥80%，且学科幻觉、claim/probe 错配、严重事实错误
+2. 只有 YUK-814 达到 grounding ≥80%，且学科幻觉、claim/probe 错配、严重事实错误
    均为 0，才依次启动 intervention snapshot、pedagogy、QuestionAuthor/Verify、
    隔离 FSRS、结算、Brief/Copilot/profile。
 
