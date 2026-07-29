@@ -205,6 +205,35 @@ async function withRestoredBackup<T>(
   ensureDockerHost();
   const container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
   let client: ReturnType<typeof postgres> | null = null;
+  let cleanupPromise: Promise<void> | null = null;
+  const cleanup = (): Promise<void> => {
+    if (!cleanupPromise) {
+      cleanupPromise = (async () => {
+        try {
+          if (client) await client.end({ timeout: 5 });
+        } finally {
+          await container.stop();
+        }
+      })();
+    }
+    return cleanupPromise;
+  };
+  let terminatingSignal: NodeJS.Signals | null = null;
+  const handleSignal = (signal: NodeJS.Signals): void => {
+    if (terminatingSignal) return;
+    terminatingSignal = signal;
+    void cleanup()
+      .catch(() => {})
+      .finally(() => {
+        process.removeListener('SIGINT', onSigint);
+        process.removeListener('SIGTERM', onSigterm);
+        process.kill(process.pid, signal);
+      });
+  };
+  const onSigint = (): void => handleSignal('SIGINT');
+  const onSigterm = (): void => handleSignal('SIGTERM');
+  process.once('SIGINT', onSigint);
+  process.once('SIGTERM', onSigterm);
   try {
     const databaseUrl = container.getConnectionUri();
     const migration = spawnSync('pnpm', ['db:migrate'], {
@@ -224,9 +253,10 @@ async function withRestoredBackup<T>(
     return await run({ db, r2 });
   } finally {
     try {
-      if (client) await client.end({ timeout: 5 });
+      await cleanup();
     } finally {
-      await container.stop();
+      process.removeListener('SIGINT', onSigint);
+      process.removeListener('SIGTERM', onSigterm);
     }
   }
 }
@@ -364,11 +394,13 @@ async function writeCandidateImages(
     string,
     Array<{ file: string; source: ConjectureEvidenceImageSource }>
   >();
+  if (candidate.evidence_images.length > 0) {
+    await mkdir(join(outDir, 'blind', 'images'), { recursive: true });
+  }
   for (let index = 0; index < candidate.evidence_images.length; index += 1) {
     const image = candidate.evidence_images[index];
     const name = `${clusterId}-image-${String(index + 1).padStart(2, '0')}.${mediaExtension(image.mediaType)}`;
     const relativePath = join('images', name);
-    await mkdir(join(outDir, 'blind', 'images'), { recursive: true });
     await writeFile(join(outDir, 'blind', relativePath), Buffer.from(image.data, 'base64'));
     for (const occurrence of image.occurrences) {
       const images = byAttemptId.get(occurrence.attempt_event_id) ?? [];

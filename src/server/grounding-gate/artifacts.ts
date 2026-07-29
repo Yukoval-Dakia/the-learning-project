@@ -14,6 +14,8 @@ export const GROUNDING_GATE_CANARY_RUNS = 10;
 const NullableReviewBoolean = z.boolean().nullable();
 const GateIdSchema = z.string().min(1);
 const ClusterIdSchema = z.string().regex(/^cluster-\d{2}$/);
+const GROUNDING_GATE_BLIND_INSTRUCTIONS =
+  '逐簇核对证据与 shadow 输出。grounded_proposal 只有在 claim、两道 probe 及 reference 均由证据支持且可用于教学验证时填 true；abstain 填 false。其余三项任一 true 都是红线。不要查看 private-lineage.json 后再评分。';
 
 export const GroundingBlindReviewSchema = z.object({
   grounded_proposal: NullableReviewBoolean,
@@ -117,15 +119,9 @@ function blindSelectionSha256(packet: BlindSelectionLockInput): string {
     generated_at: packet.generated_at,
     instructions: packet.instructions,
     requested_sample_count: packet.requested_sample_count,
-    items: packet.items,
+    items: packet.items.map(({ review: _review, ...item }) => item),
   };
-  return createHash('sha256')
-    .update(
-      JSON.stringify(payload, (key, value) => {
-        return key === 'review' ? undefined : value;
-      }),
-    )
-    .digest('hex');
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
 
 export const GroundingPrivateMapSchema = z.object({
@@ -276,8 +272,7 @@ export function buildGroundingReviewArtifacts(input: BuildGroundingReviewArtifac
     gate_id: input.gateId,
     source_backup_sha256: input.sourceBackupSha256,
     generated_at: input.generatedAt.toISOString(),
-    instructions:
-      '逐簇核对证据与 shadow 输出。grounded_proposal 只有在 claim、两道 probe 及 reference 均由证据支持且可用于教学验证时填 true；abstain 填 false。其余三项任一 true 都是红线。不要查看 private-lineage.json 后再评分。',
+    instructions: GROUNDING_GATE_BLIND_INSTRUCTIONS,
     requested_sample_count: input.results.length,
     items: input.results.map(({ selected, induced, imagesByAttemptId }) => ({
       cluster_id: selected.cluster_id,
@@ -388,6 +383,16 @@ function reviewComplete(review: GroundingBlindReview): boolean {
   );
 }
 
+function blindGateStatus(input: {
+  selectionIntegrityPreserved: boolean;
+  allItemsReviewed: boolean;
+  pass: boolean;
+}): GroundingBlindScore['status'] {
+  if (!input.selectionIntegrityPreserved) return 'fail';
+  if (!input.allItemsReviewed) return 'incomplete';
+  return input.pass ? 'pass' : 'fail';
+}
+
 export function scoreGroundingBlindPacket(packet: GroundingBlindPacket): GroundingBlindScore {
   const parsed = GroundingBlindPacketSchema.parse(packet);
   const sampleCount = parsed.items.length;
@@ -419,13 +424,7 @@ export function scoreGroundingBlindPacket(packet: GroundingBlindPacket): Groundi
   return GroundingBlindScoreSchema.parse({
     schema_version: GROUNDING_GATE_SCHEMA_VERSION,
     gate_id: parsed.gate_id,
-    status: !selectionIntegrityPreserved
-      ? 'fail'
-      : !allItemsReviewed
-        ? 'incomplete'
-        : pass
-          ? 'pass'
-          : 'fail',
+    status: blindGateStatus({ selectionIntegrityPreserved, allItemsReviewed, pass }),
     expansion_allowed: pass,
     sample_count: sampleCount,
     requested_sample_count: parsed.requested_sample_count,
@@ -508,6 +507,14 @@ function canaryReviewComplete(review: z.infer<typeof CanaryReviewSchema>): boole
   );
 }
 
+function canaryGateStatus(input: {
+  complete: boolean;
+  pass: boolean;
+}): GroundingCanaryScore['status'] {
+  if (!input.complete) return 'incomplete';
+  return input.pass ? 'pass' : 'fail';
+}
+
 export function scoreGroundingCanaryPacket(packet: GroundingCanaryPacket): GroundingCanaryScore {
   const parsed = GroundingCanaryPacketSchema.parse(packet);
   const reviewed = parsed.runs.filter((run) => canaryReviewComplete(run.review));
@@ -555,7 +562,7 @@ export function scoreGroundingCanaryPacket(packet: GroundingCanaryPacket): Groun
   return GroundingCanaryScoreSchema.parse({
     schema_version: GROUNDING_GATE_SCHEMA_VERSION,
     gate_id: parsed.gate_id,
-    status: !complete ? 'incomplete' : pass ? 'pass' : 'fail',
+    status: canaryGateStatus({ complete, pass }),
     expansion_allowed: pass,
     auto_intervention_should_be_disabled: !zeroRedlines,
     run_count: parsed.runs.length,
