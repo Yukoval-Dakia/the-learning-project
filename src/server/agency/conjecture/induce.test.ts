@@ -1151,6 +1151,10 @@ describe('induceConjecture self-consistency', () => {
     ]);
     expect(result.outcome).toBe('proposal');
     if (result.outcome !== 'proposal') throw new Error('expected proposal');
+    expect(result.probe_quality_attempts).not.toBe(draft.probe_quality.attempts);
+    expect(result.probe_quality_attempts[0]?.failure_codes).not.toBe(
+      draft.probe_quality.attempts[0]?.failure_codes,
+    );
     expect(result.primary_task_run_id).toBe('author_2');
     expect(
       runTaskFn.mock.calls

@@ -1102,14 +1102,18 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
       discriminating: true,
       predicted_p: 0.3,
     };
-    const seedProposal = async (id: string, proposedChange: Record<string, JSONValue>) => {
+    const seedProposal = async (
+      id: string,
+      proposedChange: Record<string, JSONValue>,
+      evidenceRefs: JSONValue = [
+        { kind: 'event', id: 'attempt_1' },
+        { kind: 'event', id: 'attempt_2' },
+      ],
+    ) => {
       const payload = {
         ai_proposal: {
           kind: 'conjecture',
-          evidence_refs: [
-            { kind: 'event', id: 'attempt_1' },
-            { kind: 'event', id: 'attempt_2' },
-          ],
+          evidence_refs: evidenceRefs,
           proposed_change: proposedChange,
         },
       };
@@ -1183,6 +1187,10 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
       ...v2Change,
       probe_reference_md: 'unreviewed primary reference',
     });
+    await seedProposal('audit_v2_non_array_evidence_refs', v2Change, {
+      kind: 'event',
+      id: 'attempt_1',
+    });
     await seedProposal('audit_v1_decided', {
       ...v2Change,
       probe_quality: { ...v1Audit, schema_version: 1 },
@@ -1248,6 +1256,13 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         already_ingested: true,
       },
       {
+        subject_id: 'audit_v2_non_array_evidence_refs',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
         subject_id: 'audit_v2_outer_followup_prompt_mismatch',
         actor_kind: 'agent',
         actor_ref: 'yuk821_audit_binding_migration',
@@ -1287,6 +1302,7 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
           'audit_v2_hypothesis_mismatch',
           'audit_v2_mismatch',
           'audit_v2_missing_lineage',
+          'audit_v2_non_array_evidence_refs',
           'audit_v2_outer_followup_prompt_mismatch',
           'audit_v2_outer_followup_reference_mismatch',
           'audit_v2_outer_primary_prompt_mismatch',

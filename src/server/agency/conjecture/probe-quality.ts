@@ -302,7 +302,7 @@ export async function prepareConjectureProbePair(
       reviewer_task_run_id: reviewResult.task_run_id,
     };
     attempts.push(passedAttempt);
-    const auditAttempts = attempts.map((qualityAttempt) => ({ ...qualityAttempt }));
+    const auditAttempts = structuredClone(attempts);
     return {
       outcome: 'passed',
       package: probePackage,
@@ -315,7 +315,7 @@ export async function prepareConjectureProbePair(
         reviewed_package: structuredClone(probePackage),
       },
       primary_task_run_id: authorResult.task_run_id,
-      attempts: auditAttempts,
+      attempts: structuredClone(auditAttempts),
       task_run_ids: taskRunIds,
       cost_usd: costUsd,
     };

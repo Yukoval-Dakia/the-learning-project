@@ -74,12 +74,16 @@ WHERE proposal."action" = 'experimental:proposal'
     -- same deduplicated draft.evidence_event_ids array.
     AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,evidence_event_ids}'
       = COALESCE(
-        (
-          SELECT jsonb_agg(evidence.ref -> 'id' ORDER BY evidence.ordinality)
-          FROM jsonb_array_elements(proposal."payload" #> '{ai_proposal,evidence_refs}')
-            WITH ORDINALITY AS evidence(ref, ordinality)
-          WHERE evidence.ref ->> 'kind' = 'event'
-        ),
+        CASE
+          WHEN jsonb_typeof(proposal."payload" #> '{ai_proposal,evidence_refs}') = 'array'
+            THEN (
+              SELECT jsonb_agg(evidence.ref -> 'id' ORDER BY evidence.ordinality)
+              FROM jsonb_array_elements(proposal."payload" #> '{ai_proposal,evidence_refs}')
+                WITH ORDINALITY AS evidence(ref, ordinality)
+              WHERE evidence.ref ->> 'kind' = 'event'
+            )
+          ELSE '[]'::jsonb
+        END,
         '[]'::jsonb
       )
     AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_md}'
