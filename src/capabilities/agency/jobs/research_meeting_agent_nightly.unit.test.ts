@@ -13,7 +13,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AgentNightlyDeps,
   CLAIM_ACTION,
+  RECOVERY_CLAIM_ACTION,
   RESEARCH_MEETING_AGENT_ENABLED_ENV,
+  RETRYABLE_FAILURE_ACTION,
   buildResearchMeetingAgentNightlyHandler,
   runResearchMeetingAgentNightly,
 } from './research_meeting_agent_nightly';
@@ -72,7 +74,10 @@ function deps(overrides: Partial<AgentNightlyDeps> = {}): AgentNightlyDeps {
 
 /** Seed a pre-existing claim event directly into a store (simulating a PRIOR run that
  *  already won today's claim, without going through claimDay itself). */
-async function seedClaim(store: ReturnType<typeof memoryEventStore>): Promise<void> {
+async function seedClaim(
+  store: ReturnType<typeof memoryEventStore>,
+  leaseExpiresAt = '2026-07-06T20:59:00.000Z',
+): Promise<void> {
   await store.writeEventFn({} as never, {
     id: CLAIM_EVENT_ID,
     actor_kind: 'agent',
@@ -81,7 +86,13 @@ async function seedClaim(store: ReturnType<typeof memoryEventStore>): Promise<vo
     subject_kind: 'query',
     subject_id: CLAIM_EVENT_ID,
     outcome: null,
-    payload: { claim_nonce: 'stale-nonce-from-a-prior-run', day_key: DAY_KEY },
+    payload: {
+      claim_nonce: 'stale-nonce-from-a-prior-run',
+      day_key: DAY_KEY,
+      attempt_kind: 'initial',
+      recovery_attempt: 0,
+      lease_expires_at: leaseExpiresAt,
+    },
     cost_micro_usd: null,
   });
 }
@@ -184,12 +195,10 @@ describe('runResearchMeetingAgentNightly — dayKey claim idempotency', () => {
 });
 
 describe('runResearchMeetingAgentNightly — orphaned-claim recovery (§2 review fix, MAJOR)', () => {
-  it('re-runs the director when a claim exists but NO scan event landed (prior PRE-LLM segment failure — zero spend so far, safe to retry)', async () => {
+  it('re-runs the director once when an unmarked claim lease expired without a scan', async () => {
     const store = memoryEventStore();
-    // Pre-seed a claim as if a PRIOR invocation won it, then threw during its PRE-LLM
-    // reads (director.ts) — BEFORE ever reaching the director's own trigger/scan event
-    // writes. Zero spend occurred on that attempt; this run must be allowed to retry
-    // rather than permanently masking the failure as `skipped: true`.
+    // The seeded lease expired one minute before NOW, modeling a hard crash that could
+    // not write a failure marker.
     await seedClaim(store);
     const runDirectorFn = vi.fn(async () => directorResult());
     const result = await runResearchMeetingAgentNightly({} as never, {
@@ -201,6 +210,77 @@ describe('runResearchMeetingAgentNightly — orphaned-claim recovery (§2 review
     });
     expect(result.skipped).toBe(false);
     expect(runDirectorFn).toHaveBeenCalledTimes(1);
+    const recoveryClaims = [...store.store.values()].filter(
+      (row) => row.action === RECOVERY_CLAIM_ACTION,
+    );
+    expect(recoveryClaims).toHaveLength(1);
+    expect(recoveryClaims[0].payload).toMatchObject({
+      attempt_kind: 'recovery',
+      recovery_attempt: 1,
+    });
+  });
+
+  it('skips claim+no-scan while the initial lease is still active', async () => {
+    const store = memoryEventStore();
+    await seedClaim(store, '2026-07-06T21:06:00.000Z');
+    const runDirectorFn = vi.fn(async () => directorResult());
+
+    const result = await runResearchMeetingAgentNightly({} as never, {
+      now: () => new Date('2026-07-06T21:00:00Z'),
+      writeEventFn: store.writeEventFn,
+      readEventByIdFn: store.readEventByIdFn,
+      hasScanEventForDayFn: store.hasScanEventForDayFn,
+      runDirectorFn,
+    });
+
+    expect(result).toMatchObject({ skipped: true, reason: 'already_claimed_today' });
+    expect(runDirectorFn).not.toHaveBeenCalled();
+    expect(
+      [...store.store.values()].filter((row) => row.action === RECOVERY_CLAIM_ACTION),
+    ).toHaveLength(0);
+  });
+
+  it('writes a failure marker and allows one immediate controlled recovery', async () => {
+    const store = memoryEventStore();
+    const failingDirector = vi.fn(async () => {
+      throw new Error('probe provider unavailable');
+    });
+    const shared = {
+      now: () => new Date('2026-07-06T21:00:00Z'),
+      writeEventFn: store.writeEventFn,
+      readEventByIdFn: store.readEventByIdFn,
+      hasScanEventForDayFn: store.hasScanEventForDayFn,
+    };
+
+    await expect(
+      runResearchMeetingAgentNightly({} as never, {
+        ...shared,
+        runDirectorFn: failingDirector,
+      }),
+    ).rejects.toThrow('probe provider unavailable');
+    expect(
+      [...store.store.values()].filter((row) => row.action === RETRYABLE_FAILURE_ACTION),
+    ).toHaveLength(1);
+
+    const recoveryDirector = vi.fn(async () => directorResult());
+    const recovered = await runResearchMeetingAgentNightly({} as never, {
+      ...shared,
+      runDirectorFn: recoveryDirector,
+    });
+    expect(recovered.skipped).toBe(false);
+    expect(recoveryDirector).toHaveBeenCalledTimes(1);
+
+    // Even without a scan from the stub, the fixed recovery claim prevents attempt #2.
+    const thirdDirector = vi.fn(async () => directorResult());
+    const exhausted = await runResearchMeetingAgentNightly({} as never, {
+      ...shared,
+      runDirectorFn: thirdDirector,
+    });
+    expect(exhausted).toMatchObject({ skipped: true, reason: 'already_claimed_today' });
+    expect(thirdDirector).not.toHaveBeenCalled();
+    expect(
+      [...store.store.values()].filter((row) => row.action === RECOVERY_CLAIM_ACTION),
+    ).toHaveLength(1);
   });
 
   it('skips when a claim exists AND a scan event for today already landed (complete prior run)', async () => {
@@ -300,7 +380,7 @@ describe('buildResearchMeetingAgentNightlyHandler — kill switch', () => {
     expect(runDirectorFn).toHaveBeenCalledTimes(1);
   });
 
-  it('rethrows a director failure so pg-boss retries (dayKey claim guards the re-run)', async () => {
+  it('rethrows a director failure so pg-boss can claim the one controlled recovery', async () => {
     process.env[RESEARCH_MEETING_AGENT_ENABLED_ENV] = '1';
     const runDirectorFn = vi.fn(async () => {
       throw new Error('pre-LLM read blew up');

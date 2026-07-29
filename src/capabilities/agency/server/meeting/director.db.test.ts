@@ -46,7 +46,11 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: vi.fn(),
 }));
 
-import { runResearchMeetingAgentNightly } from '../../jobs/research_meeting_agent_nightly';
+import {
+  RECOVERY_CLAIM_ACTION,
+  RETRYABLE_FAILURE_ACTION,
+  runResearchMeetingAgentNightly,
+} from '../../jobs/research_meeting_agent_nightly';
 import {
   EVIDENCE_SCOUT_CHARTER,
   RESEARCH_MEETING_AGENT_ACTOR,
@@ -878,6 +882,9 @@ describe('runResearchMeetingAgentNightly — dayKey claim idempotency (real DB)'
       .where(eq(event.action, SCAN_ACTION));
     expect(scansAfterOutage).toHaveLength(0);
     expect(await conjectureProposalRows(RESEARCH_MEETING_AGENT_ACTOR)).toHaveLength(0);
+    expect(
+      await testDb().select().from(event).where(eq(event.action, RETRYABLE_FAILURE_ACTION)),
+    ).toHaveLength(1);
 
     const retried = await runResearchMeetingAgentNightly(testDb(), baseDeps());
     expect(retried.skipped).toBe(false);
@@ -888,6 +895,15 @@ describe('runResearchMeetingAgentNightly — dayKey claim idempotency (real DB)'
       .from(event)
       .where(eq(event.action, SCAN_ACTION));
     expect(scansAfterRetry).toHaveLength(1);
+    const recoveries = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, RECOVERY_CLAIM_ACTION));
+    expect(recoveries).toHaveLength(1);
+    expect(recoveries[0].payload).toMatchObject({
+      attempt_kind: 'recovery',
+      recovery_attempt: 1,
+    });
   });
 
   it('runs the director once; a same-day retry skips (no re-spend, no duplicate proposal)', async () => {

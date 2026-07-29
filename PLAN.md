@@ -39,6 +39,10 @@
     MCP 仍返回合法软失败，但外层在写 scan 前重新抛出 probe outage，使 day claim 保持
     `claim + no scan` 并由 pg-boss 同日重试。增量 unit 1 file / 42 passed、DB 1 file /
     19 passed、typecheck、changed-file Biome、diff check 通过。
+  - 合并 main 后 exact-head `7c73c8c4` 的 CI Gate `30463050514` 全绿。CodeRabbit 随后指出
+    `claim + no scan` 仍可并发/无限重试；已改为“360 秒 lease + 显式失败 marker +
+    fixed-id recovery claim”，活跃执行跳过、硬崩溃等 lease 过期、最多恢复 1 次。增量 unit
+    2 files / 56 passed、DB 1 file / 19 passed、typecheck、Biome 通过。
   - 20:47 用 mock 输入启动 canonical Opus real-output 复评；第一簇的 3 个独立
     induction call 均收到 429 weekly limit，按 operational stop condition 立即停止，
     没有把 fallback 或空输出记成质量结果。
@@ -48,8 +52,8 @@
 
 ## NEXT
 
-1. PR #1110 两条新 review findings 已提交、推送、回复并清零 threads；当前正合并最新
-   main，之后只监听新 exact head 的 GitHub CI Gate，不在本地跑全 gate。
+1. PR #1110 最新受控恢复 review finding 已在工作树修复；提交、推送、回复并清零 thread
+   后，只监听新 exact head 的 GitHub CI Gate，不在本地跑全 gate。
 2. 修复 head CI 全绿后合并 P0；再用固定 mock evidence packets 跑 canonical Opus real-output
    质量评测。YUK-821 在 8 簇输出门通过前保持 In Progress，输出不合格就继续改模型合同，
    不伪造 pass。
@@ -75,7 +79,8 @@
 
 ## BLOCKED-ON
 
-- **本次 P0 代码：无产品数据 blocker**；只剩 main 冲突同步与 exact-head GitHub CI Gate。
+- **本次 P0 代码：无产品数据 blocker**；只剩最新 review 修复提交与 exact-head GitHub
+  CI Gate。
 - **canonical Opus 输出质量结论**：2026-07-29 20:47 实测被 429 weekly limit 阻断；
   配额故障只记 operational，不能用 Mimo fallback 的结果冒充 canonical pass。
 - **auto-intervention 扩大使用**：仍需真实 owner/cohort shadow/blind/canary 证据；这是发布
