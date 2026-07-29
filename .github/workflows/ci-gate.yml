@@ -6,6 +6,7 @@ name: CI Gate
 
 on:
   pull_request:
+  workflow_dispatch:
   push:
     branches: [main]
 
