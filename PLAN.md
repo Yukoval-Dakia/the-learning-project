@@ -3,23 +3,13 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-29
-> **【更新 2026-07-29 · YUK-823：TypeScript 7 GA 性能收口待 PR live cache 验收】**
+> **【更新 2026-07-29 · YUK-823：TypeScript 7 GA 性能收口已合并】**
 > main 已是 TS7 native compiler；本线补齐官方 TS7 + TS6 side-by-side、native watch
-> 与跨 CI run 的增量 buildinfo。实测默认 4 checkers 最优，不盲目加核。
+> 与跨 CI run 的增量 buildinfo。PR #1112 已合并；CI cache hit 后 Typecheck
+> 11→2s（-82%），实测默认 4 checkers 最优，不盲目加核。
 
 ## NOW
 
-- **YUK-823 active：实现与本地 full gate 已通过，等待 PR CI cache 冷/热对照**
-  - TS7 full median 5.73s，TS6 fallback 33.41s（5.83x）；TS7 cold buildinfo 5.32s，
-    warm median 0.584s（9.12x）。
-  - `@typescript/native` 提供 TS7 `tsc`；`typescript` 官方 alias 到
-    `@typescript/typescript6`，`typecheck:legacy` 现为真实 `tsc6` 且不污染 TS7 cache。
-  - `typecheck:watch` 已接 TS7 native watcher；CI static lane 以 compiler/config +
-    commit key 缓存 `tsconfig.tsbuildinfo`，可从最新兼容状态增量恢复。
-  - 默认/1/2/4/6/8/10 checkers 三轮实测中，固定 4 最快；维持 TS7 默认值，避免高核
-    配置在本机和小型 CI runner 上增加重复工作与内存。
-  - full pre-PR：TS7/TS6 typecheck、lint、standalone audits、5,891 unit tests、
-    4,263 DB tests、26 migration tests 与 build 全绿。
 - **YUK-820 保持 In Progress：实现已合并，等待首条普通 server/API PR live acceptance**
   - PR #1109 / squash `1df65fd7` 已合并；final head CI Gate `30452431101` 全绿，
     13 个 review threads 已清零。
@@ -40,15 +30,15 @@
   - Harness 已随 PR #1105 / merge commit `ae02e020` 落到 main；真实 shadow/blind/canary
     尚未执行，仍需 production backup ZIP / 6–10 个合格真实 owner 失败簇。
 - **近期已收口**
+  - YUK-823 已随 PR #1112 / `c4c26c76` 合并并 Done；TS7 full 比 TS6 fallback
+    快 5.83x，CI cache-hit Typecheck 11→2s；OCR review 0 comments / 0 threads。
   - YUK-788 已随 PR #1102 / `ff681b0c` 合并并 Done；YUK-817/818/819 已 Done。
 
 ## NEXT
 
-1. YUK-823 开 PR；记录首次 cold cache miss 与同一 head rerun cache hit 的 Typecheck
-   step timing，确认 cache restore/save 后再 merge。
-2. 下一条普通 server/API PR 读取 DB selector artifacts 与 GitHub job timing，验收真实
+1. 下一条普通 server/API PR 读取 DB selector artifacts 与 GitHub job timing，验收真实
    wall-clock；本 selector PR 与 main canary 因触及 CI 自身必须 full，不能冒充 affected 样本。
-3. YUK-814 获得 production backup 后按 inspect → shadow → blind → score 执行；不足 6 个
+2. YUK-814 获得 production backup 后按 inspect → shadow → blind → score 执行；不足 6 个
    eligible failure clusters 就继续积累，不用 synthetic/mock 代替。
 
 ## PARKED

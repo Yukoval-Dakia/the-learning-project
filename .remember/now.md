@@ -2,8 +2,8 @@
 
 ## Active line
 
-- YUK-823 正在收口 TypeScript 7 GA 性能：实现与本地 full pre-PR gate 已完成，下一步
-  是 PR CI 首跑/同 head rerun 的 buildinfo cache 冷热对照、review 与 merge。
+- YUK-823 已随 PR #1112 / squash `c4c26c76` 合并并 Done；required CI 全绿，
+  OCR independent review 0 comments，GraphQL review threads = 0。
 - YUK-820 已从 closeout 重新进入 In Progress：owner 指出 CI wall-clock 几乎未缩短，
   真实同代码对照确认 unit affected 生效但 DB 仍是关键路径；本 TS7 PR 触及 workflow，
   会按设计 full，不能充当 affected acceptance。
@@ -23,6 +23,11 @@
    8=4.96s、10=4.66s；默认等价 4 且最优，不固定更高值。
 4. 正常代码 TS7/TS6 均零诊断；注入错误均为同一
    `zz-ts7-diagnostic-smoke.ts(1,7) TS2322`；TS7 watch 首轮 0 errors。
+5. PR CI run `30458238641`：首次 cache miss 保存 primary key，Typecheck 11s /
+   static job 74s；同 head/job rerun exact key hit，恢复 165 KB，Typecheck 2s /
+   static job 56s。Typecheck step -82%。
+6. cache 正确性补证：TS7 从 stale buildinfo 仍捕获新增 TS2322；TS6
+   `--incremental false` 面对 corrupt TS7 buildinfo 仍绿且不读写该文件。
 
 ## YUK-823 实现
 
@@ -68,15 +73,13 @@
 
 ## 下一步
 
-1. YUK-823 PR 首跑记录 Typecheck cold step；成功保存 cache 后 rerun 同一 head，记录
-   cache hit 与 warm step，再完成 review/merge。
-2. 下一条普通 server/API PR 用 DB selector artifacts + GitHub job timing 验收真实 wall；
+1. 下一条普通 server/API PR 用 DB selector artifacts + GitHub job timing 验收真实 wall；
    至少核对 requested/effective/required mode、selected files、两个 shard test time。
 
 ## Worktree / workflow 状态
 
 - 当前 worktree：`/Users/yuqi/.codex/worktrees/9a32/the-learning-project`。
-- 当前 branch：`codex/yuk-823-ts7-performance`（base `origin/main@de60be05`）。
+- 当前 closeout branch：`codex/yuk-823-closeout`（base `origin/main@c4c26c76`）。
 - owner 主工作树仍在 `codex/yuk-812-agent-control-plane` 且有既存改动；本轮未触碰。
 - `.ykv` 本地检索 cache 因 16.1 MiB chunks 文件会触发 Biome 1 MiB 上限，已移到
   `/tmp/yuk-823-ykv-cache` 后执行 lint；该目录由 Git info/exclude 排除，不进提交。
