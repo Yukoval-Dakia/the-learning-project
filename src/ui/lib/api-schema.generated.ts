@@ -21658,13 +21658,147 @@ export interface operations {
                       confidence: number;
                       /** @default false */
                       corrected_by_owner: boolean;
+                      diagnostic_spec?: {
+                        expected_wrong_answer_signature_md: string;
+                        /** @enum {number} */
+                        schema_version: 1;
+                        scope_boundary_md: string;
+                        target_error_rule_md: string;
+                        trigger_conditions_md: string;
+                      };
                       discriminating: boolean;
                       followup_probe_md?: string;
                       followup_probe_reference_md?: string;
+                      followup_probe_spec?: {
+                        /** @enum {string} */
+                        context_kind:
+                          | 'abstract'
+                          | 'applied'
+                          | 'narrative'
+                          | 'document'
+                          | 'visual'
+                          | 'data'
+                          | 'code'
+                          | 'other';
+                        elicits_target_error_reason_md: string;
+                        expected_target_error_answer_md: string;
+                        prompt_md: string;
+                        reference_md: string;
+                        /** @enum {string} */
+                        representation_kind:
+                          | 'symbolic'
+                          | 'natural_language'
+                          | 'multiple_choice'
+                          | 'table'
+                          | 'diagram'
+                          | 'graph'
+                          | 'image'
+                          | 'code'
+                          | 'mixed'
+                          | 'other';
+                      };
                       knowledge_id: string;
                       predicted_p: number;
                       probe_md: string;
+                      probe_quality?: {
+                        attempts: (
+                          | {
+                              attempt: number;
+                              author_task_run_id: string | null;
+                              explanation_md: string;
+                              failure_codes: (
+                                | 'probe_pair_not_independent'
+                                | 'target_error_answer_not_distinct'
+                              )[];
+                              /** @enum {string} */
+                              outcome: 'structure_failed';
+                              reviewer_task_run_id: string | null;
+                            }
+                          | {
+                              attempt: number;
+                              author_task_run_id: string | null;
+                              explanation_md: string;
+                              failure_codes: (
+                                | 'claim_scope_expansion'
+                                | 'probe_not_targeting'
+                                | 'probe_pair_not_independent'
+                                | 'reference_incorrect'
+                                | 'target_error_answer_not_distinct'
+                              )[];
+                              /** @enum {string} */
+                              outcome: 'review_failed';
+                              reviewer_task_run_id: string | null;
+                            }
+                          | {
+                              attempt: number;
+                              author_task_run_id: string | null;
+                              explanation_md: string;
+                              failure_codes: (
+                                | 'author_output_invalid'
+                                | 'review_output_invalid'
+                                | 'author_operational_failure'
+                                | 'review_operational_failure'
+                              )[];
+                              /** @enum {string} */
+                              outcome: 'operational_failed';
+                              reviewer_task_run_id: string | null;
+                            }
+                          | {
+                              attempt: number;
+                              author_task_run_id: string | null;
+                              explanation_md: string;
+                              failure_codes: unknown[];
+                              /** @enum {string} */
+                              outcome: 'passed';
+                              reviewer_task_run_id: string | null;
+                            }
+                        )[];
+                        final_review: {
+                          explanation_md: string;
+                          failure_codes: (
+                            | 'claim_scope_expansion'
+                            | 'probe_not_targeting'
+                            | 'probe_pair_not_independent'
+                            | 'reference_incorrect'
+                            | 'target_error_answer_not_distinct'
+                          )[];
+                          /** @enum {string} */
+                          verdict: 'pass' | 'fail';
+                        };
+                        /** @enum {boolean} */
+                        passed: true;
+                        /** @enum {number} */
+                        schema_version: 1;
+                      };
                       probe_reference_md: string;
+                      probe_spec?: {
+                        /** @enum {string} */
+                        context_kind:
+                          | 'abstract'
+                          | 'applied'
+                          | 'narrative'
+                          | 'document'
+                          | 'visual'
+                          | 'data'
+                          | 'code'
+                          | 'other';
+                        elicits_target_error_reason_md: string;
+                        expected_target_error_answer_md: string;
+                        prompt_md: string;
+                        reference_md: string;
+                        /** @enum {string} */
+                        representation_kind:
+                          | 'symbolic'
+                          | 'natural_language'
+                          | 'multiple_choice'
+                          | 'table'
+                          | 'diagram'
+                          | 'graph'
+                          | 'image'
+                          | 'code'
+                          | 'mixed'
+                          | 'other';
+                      };
                       recurrence_count: number;
                     };
                     reason_md: string;
@@ -22308,13 +22442,147 @@ export interface operations {
                       confidence: number;
                       /** @default false */
                       corrected_by_owner: boolean;
+                      diagnostic_spec?: {
+                        expected_wrong_answer_signature_md: string;
+                        /** @enum {number} */
+                        schema_version: 1;
+                        scope_boundary_md: string;
+                        target_error_rule_md: string;
+                        trigger_conditions_md: string;
+                      };
                       discriminating: boolean;
                       followup_probe_md?: string;
                       followup_probe_reference_md?: string;
+                      followup_probe_spec?: {
+                        /** @enum {string} */
+                        context_kind:
+                          | 'abstract'
+                          | 'applied'
+                          | 'narrative'
+                          | 'document'
+                          | 'visual'
+                          | 'data'
+                          | 'code'
+                          | 'other';
+                        elicits_target_error_reason_md: string;
+                        expected_target_error_answer_md: string;
+                        prompt_md: string;
+                        reference_md: string;
+                        /** @enum {string} */
+                        representation_kind:
+                          | 'symbolic'
+                          | 'natural_language'
+                          | 'multiple_choice'
+                          | 'table'
+                          | 'diagram'
+                          | 'graph'
+                          | 'image'
+                          | 'code'
+                          | 'mixed'
+                          | 'other';
+                      };
                       knowledge_id: string;
                       predicted_p: number;
                       probe_md: string;
+                      probe_quality?: {
+                        attempts: (
+                          | {
+                              attempt: number;
+                              author_task_run_id: string | null;
+                              explanation_md: string;
+                              failure_codes: (
+                                | 'probe_pair_not_independent'
+                                | 'target_error_answer_not_distinct'
+                              )[];
+                              /** @enum {string} */
+                              outcome: 'structure_failed';
+                              reviewer_task_run_id: string | null;
+                            }
+                          | {
+                              attempt: number;
+                              author_task_run_id: string | null;
+                              explanation_md: string;
+                              failure_codes: (
+                                | 'claim_scope_expansion'
+                                | 'probe_not_targeting'
+                                | 'probe_pair_not_independent'
+                                | 'reference_incorrect'
+                                | 'target_error_answer_not_distinct'
+                              )[];
+                              /** @enum {string} */
+                              outcome: 'review_failed';
+                              reviewer_task_run_id: string | null;
+                            }
+                          | {
+                              attempt: number;
+                              author_task_run_id: string | null;
+                              explanation_md: string;
+                              failure_codes: (
+                                | 'author_output_invalid'
+                                | 'review_output_invalid'
+                                | 'author_operational_failure'
+                                | 'review_operational_failure'
+                              )[];
+                              /** @enum {string} */
+                              outcome: 'operational_failed';
+                              reviewer_task_run_id: string | null;
+                            }
+                          | {
+                              attempt: number;
+                              author_task_run_id: string | null;
+                              explanation_md: string;
+                              failure_codes: unknown[];
+                              /** @enum {string} */
+                              outcome: 'passed';
+                              reviewer_task_run_id: string | null;
+                            }
+                        )[];
+                        final_review: {
+                          explanation_md: string;
+                          failure_codes: (
+                            | 'claim_scope_expansion'
+                            | 'probe_not_targeting'
+                            | 'probe_pair_not_independent'
+                            | 'reference_incorrect'
+                            | 'target_error_answer_not_distinct'
+                          )[];
+                          /** @enum {string} */
+                          verdict: 'pass' | 'fail';
+                        };
+                        /** @enum {boolean} */
+                        passed: true;
+                        /** @enum {number} */
+                        schema_version: 1;
+                      };
                       probe_reference_md: string;
+                      probe_spec?: {
+                        /** @enum {string} */
+                        context_kind:
+                          | 'abstract'
+                          | 'applied'
+                          | 'narrative'
+                          | 'document'
+                          | 'visual'
+                          | 'data'
+                          | 'code'
+                          | 'other';
+                        elicits_target_error_reason_md: string;
+                        expected_target_error_answer_md: string;
+                        prompt_md: string;
+                        reference_md: string;
+                        /** @enum {string} */
+                        representation_kind:
+                          | 'symbolic'
+                          | 'natural_language'
+                          | 'multiple_choice'
+                          | 'table'
+                          | 'diagram'
+                          | 'graph'
+                          | 'image'
+                          | 'code'
+                          | 'mixed'
+                          | 'other';
+                      };
                       recurrence_count: number;
                     };
                     reason_md: string;
