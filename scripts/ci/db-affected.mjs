@@ -13,6 +13,7 @@ import { pathToFileURL } from 'node:url';
 
 const SELECTOR_TIMEOUT_MS = 120_000;
 const DB_RUN_TIMEOUT_MS = 30 * 60_000;
+const MAX_AFFECTED_CLI_BYTES = 64 * 1024;
 const SOURCE_SCANNING_TEST_PATTERN =
   /(?:node:(?:fs(?:\/promises)?|child_process)|\b(?:readFileSync|readdirSync|globSync|execFileSync|execSync)\b)/;
 const DYNAMIC_IMPORT_TEST_PATTERN =
@@ -48,22 +49,39 @@ function inventoryFiles(entries, root) {
   );
 }
 
-export function findSourceScanningDbTests({ dbFiles, root }) {
-  return sortedUnique(
-    dbFiles.filter((file) => {
-      const source = readFileSync(path.join(root, file), 'utf8');
-      return SOURCE_SCANNING_TEST_PATTERN.test(source);
-    }),
+function isSafeRepoTestFile(file) {
+  return (
+    typeof file === 'string' &&
+    !path.isAbsolute(file) &&
+    !file.startsWith('-') &&
+    !file.split('/').includes('..') &&
+    /\.test\.tsx?$/.test(file)
   );
 }
 
+export function scanDbTestSources({ dbFiles, root }) {
+  const sourceScanningDbTests = [];
+  const dynamicImportDbTests = [];
+  for (const file of dbFiles) {
+    if (!isSafeRepoTestFile(file)) {
+      throw new Error(`unsafe DB test inventory path: ${file}`);
+    }
+    const source = readFileSync(path.join(root, file), 'utf8');
+    if (SOURCE_SCANNING_TEST_PATTERN.test(source)) sourceScanningDbTests.push(file);
+    if (DYNAMIC_IMPORT_TEST_PATTERN.test(source)) dynamicImportDbTests.push(file);
+  }
+  return {
+    sourceScanningDbTests: sortedUnique(sourceScanningDbTests),
+    dynamicImportDbTests: sortedUnique(dynamicImportDbTests),
+  };
+}
+
+export function findSourceScanningDbTests({ dbFiles, root }) {
+  return scanDbTestSources({ dbFiles, root }).sourceScanningDbTests;
+}
+
 export function findDynamicImportDbTests({ dbFiles, root }) {
-  return sortedUnique(
-    dbFiles.filter((file) => {
-      const source = readFileSync(path.join(root, file), 'utf8');
-      return DYNAMIC_IMPORT_TEST_PATTERN.test(source);
-    }),
-  );
+  return scanDbTestSources({ dbFiles, root }).dynamicImportDbTests;
 }
 
 export function mergeDbPredictedFiles({
@@ -74,6 +92,9 @@ export function mergeDbPredictedFiles({
 }) {
   const dbInventory = new Set(dbFiles);
   const failureSentinelTests = DB_FAILURE_SENTINEL_TESTS.filter((file) => dbInventory.has(file));
+  const missingFailureSentinelTests = DB_FAILURE_SENTINEL_TESTS.filter(
+    (file) => !dbInventory.has(file),
+  );
   return {
     predictedFiles: sortedUnique([
       ...graphPredictedFiles,
@@ -82,6 +103,7 @@ export function mergeDbPredictedFiles({
       ...failureSentinelTests,
     ]),
     failureSentinelTests,
+    missingFailureSentinelTests,
   };
 }
 
@@ -107,18 +129,19 @@ export function resolveRequiredDbFiles(selection) {
     selection.base.length === 0 ||
     !Array.isArray(selection.predicted_files) ||
     selection.predicted_files.length === 0 ||
-    selection.predicted_files.some(
-      (file) =>
-        typeof file !== 'string' ||
-        path.isAbsolute(file) ||
-        file.startsWith('-') ||
-        file.split('/').includes('..') ||
-        !/\.test\.tsx?$/.test(file),
-    )
+    selection.predicted_files.some((file) => !isSafeRepoTestFile(file))
   ) {
     return null;
   }
   return sortedUnique(selection.predicted_files);
+}
+
+export function affectedCliBytes(selectedFiles) {
+  return selectedFiles.reduce((total, file) => total + Buffer.byteLength(file) + 1, 0);
+}
+
+export function affectedFilesFitCli(selectedFiles) {
+  return affectedCliBytes(selectedFiles) <= MAX_AFFECTED_CLI_BYTES;
 }
 
 export function parseShard(value) {
@@ -301,14 +324,25 @@ export function selectAffectedDbTests({ root, base, requestedMode, output }) {
     }
 
     const dbFiles = inventoryFiles(JSON.parse(readFileSync(fullInventoryOutput, 'utf8')), root);
-    const sourceScanningDbTests = findSourceScanningDbTests({ dbFiles, root });
-    const dynamicImportDbTests = findDynamicImportDbTests({ dbFiles, root });
-    const { predictedFiles, failureSentinelTests } = mergeDbPredictedFiles({
-      graphPredictedFiles,
-      sourceScanningDbTests,
-      dynamicImportDbTests,
-      dbFiles,
-    });
+    const { sourceScanningDbTests, dynamicImportDbTests } = scanDbTestSources({ dbFiles, root });
+    const { predictedFiles, failureSentinelTests, missingFailureSentinelTests } =
+      mergeDbPredictedFiles({
+        graphPredictedFiles,
+        sourceScanningDbTests,
+        dynamicImportDbTests,
+        dbFiles,
+      });
+    if (missingFailureSentinelTests.length) {
+      const selection = fullFallbackSelection({
+        requestedMode,
+        base,
+        changedFiles,
+        reason: `failure-sentinel-missing:${missingFailureSentinelTests.join(',').slice(0, 1_000)}`,
+      });
+      selection.missing_failure_sentinel_db_tests = missingFailureSentinelTests;
+      writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
+      return selection;
+    }
     const directGuard = findDirectChangedDbTestMisses({
       changedFiles,
       predictedFiles,
@@ -419,10 +453,15 @@ function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) 
   if (!shard) throw new Error(`invalid --shard value: ${shardValue ?? '(missing)'}`);
 
   const selectedFiles = resolveRequiredDbFiles(selection);
-  const requiredMode = selectedFiles ? 'affected' : 'full';
+  const selectedCliBytes = selectedFiles ? affectedCliBytes(selectedFiles) : null;
+  const selectedFilesFitCli = selectedFiles !== null && affectedFilesFitCli(selectedFiles);
+  const runnableFiles = selectedFilesFitCli ? selectedFiles : null;
+  const requiredMode = runnableFiles ? 'affected' : 'full';
+  const argvFallbackReason =
+    selectedFiles !== null && !selectedFilesFitCli ? 'affected-argv-too-large' : undefined;
   const startedAt = Date.now();
   const skippedEmptyShard =
-    selectedFiles !== null && shouldSkipAffectedShard(selectedFiles.length, shard);
+    runnableFiles !== null && shouldSkipAffectedShard(runnableFiles.length, shard);
   let result = { status: 0, signal: null, error: undefined };
 
   if (!skippedEmptyShard) {
@@ -433,7 +472,7 @@ function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) 
       '--config',
       'vitest.db.config.ts',
       `--shard=${shard.value}`,
-      ...(selectedFiles ? ['--passWithNoTests', ...selectedFiles] : []),
+      ...(runnableFiles ? ['--passWithNoTests', ...runnableFiles] : []),
     ];
     result = spawnSync(process.execPath, args, {
       cwd: root,
@@ -448,12 +487,13 @@ function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) 
     required_mode: requiredMode,
     requested_mode: selection?.requested_mode ?? 'full',
     effective_mode: selection?.effective_mode ?? 'full',
-    fallback_reason: selection?.fallback_reason ?? selectionReadError,
+    fallback_reason: selection?.fallback_reason ?? selectionReadError ?? argvFallbackReason,
     base: selection?.base ?? '',
     shard: shard.value,
     skipped_empty_shard: skippedEmptyShard,
     selector_duration_ms: selection?.selector_duration_ms,
     selected_files: selectedFiles?.length ?? null,
+    selected_cli_bytes: selectedCliBytes,
     test_duration_ms: Date.now() - startedAt,
     exit_code: result.status ?? 1,
     signal: result.signal ?? null,

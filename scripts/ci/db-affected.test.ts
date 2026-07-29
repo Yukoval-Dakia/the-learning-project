@@ -5,12 +5,15 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   DB_FAILURE_SENTINEL_TESTS,
+  affectedCliBytes,
+  affectedFilesFitCli,
   findDirectChangedDbTestMisses,
   findDynamicImportDbTests,
   findSourceScanningDbTests,
   mergeDbPredictedFiles,
   parseShard,
   resolveRequiredDbFiles,
+  scanDbTestSources,
   shouldSkipAffectedShard,
 } from './db-affected.mjs';
 
@@ -41,6 +44,20 @@ describe('DB affected-test selector', () => {
         'src/server/boss/handlers/quiz_gen.test.ts',
       ],
       failureSentinelTests: DB_FAILURE_SENTINEL_TESTS,
+      missingFailureSentinelTests: [],
+    });
+  });
+
+  it('reports a missing failure sentinel instead of silently dropping the guard', () => {
+    expect(
+      mergeDbPredictedFiles({
+        graphPredictedFiles: ['src/feature.db.test.ts'],
+        sourceScanningDbTests: [],
+        dynamicImportDbTests: [],
+        dbFiles: ['src/feature.db.test.ts'],
+      }),
+    ).toMatchObject({
+      missingFailureSentinelTests: DB_FAILURE_SENTINEL_TESTS,
     });
   });
 
@@ -84,6 +101,38 @@ describe('DB affected-test selector', () => {
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
+  });
+
+  it('scans each DB test source once for both out-of-graph patterns', () => {
+    const repo = mkdtempSync(path.join(tmpdir(), 'db-source-sentinels-'));
+    try {
+      mkdirSync(path.join(repo, 'src'));
+      writeFileSync(
+        path.join(repo, 'src', 'both.db.test.ts'),
+        "import { readFileSync } from 'node:fs';\nawait import('./feature');\n",
+      );
+
+      expect(
+        scanDbTestSources({
+          root: repo,
+          dbFiles: ['src/both.db.test.ts'],
+        }),
+      ).toEqual({
+        sourceScanningDbTests: ['src/both.db.test.ts'],
+        dynamicImportDbTests: ['src/both.db.test.ts'],
+      });
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects unsafe DB inventory paths before reading source', () => {
+    expect(() =>
+      scanDbTestSources({
+        root: tmpdir(),
+        dbFiles: ['../outside.db.test.ts'],
+      }),
+    ).toThrow('unsafe DB test inventory path');
   });
 
   it('returns a sorted affected DB file list only for a valid DB selection', () => {
@@ -153,6 +202,16 @@ describe('DB affected-test selector', () => {
     expect(shouldSkipAffectedShard(1, { index: 1, count: 2, value: '1/2' })).toBe(false);
     expect(shouldSkipAffectedShard(1, { index: 2, count: 2, value: '2/2' })).toBe(true);
     expect(shouldSkipAffectedShard(2, { index: 2, count: 2, value: '2/2' })).toBe(false);
+  });
+
+  it('accounts for selected file argument bytes before spawning Vitest', () => {
+    expect(affectedCliBytes(['src/a.db.test.ts', 'src/二.db.test.ts'])).toBe(
+      Buffer.byteLength('src/a.db.test.ts') + 1 + Buffer.byteLength('src/二.db.test.ts') + 1,
+    );
+    expect(affectedFilesFitCli(['src/a.db.test.ts'])).toBe(true);
+    expect(
+      affectedFilesFitCli(Array.from({ length: 5_000 }, (_, index) => `src/${index}.test.ts`)),
+    ).toBe(false);
   });
 
   it('fails closed explicitly when the merge base is empty', () => {

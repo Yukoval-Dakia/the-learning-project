@@ -24,7 +24,8 @@
 - `scripts/ci/db-affected.mjs` 用历史 merge-base 执行 `vitest list --config vitest.db.config.ts --changed=<base> --filesOnly --staticParse`，再与当时完整 DB inventory 交叉验证。
 - 直接改动但未被 import graph 选中的 DB test 会立即回退 full。
 - 自动并入 source-scanning 与 dynamic-import DB tests；真实失败回放暴露的 out-of-graph failures 固化为显式 failure sentinels。
-- selector 缺失、坏 JSON、unsafe base、diff/list 失败、空 affected set 均由 required runner 回退 full。
+- failure sentinel 从 DB inventory 消失、selector 缺失、坏 JSON、unsafe path/base、diff/list 失败、空 affected set 均回退 full。
+- affected 文件参数超过保守的 64 KiB CLI budget 时回退 full，避免随 suite 增长撞到 runner 的 argv 上限。
 - affected 文件仍在两个 DB jobs 中分 shard；文件少于 shard 数时只跳真正为空的 shard；每个 shard 上传 selection/execution artifact。
 
 ## 真实 DB 失败 head 回放

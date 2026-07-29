@@ -18,18 +18,28 @@ export function findDynamicImportDbTests(input: {
   dbFiles: string[];
   root: string;
 }): string[];
+export function scanDbTestSources(input: {
+  dbFiles: string[];
+  root: string;
+}): { sourceScanningDbTests: string[]; dynamicImportDbTests: string[] };
 export function mergeDbPredictedFiles(input: {
   graphPredictedFiles: string[];
   sourceScanningDbTests: string[];
   dynamicImportDbTests: string[];
   dbFiles: string[];
-}): { predictedFiles: string[]; failureSentinelTests: string[] };
+}): {
+  predictedFiles: string[];
+  failureSentinelTests: string[];
+  missingFailureSentinelTests: string[];
+};
 export function findDirectChangedDbTestMisses(input: {
   changedFiles: string[];
   predictedFiles: string[];
   dbFiles: string[];
 }): { directChangedDbTests: string[]; misses: string[] };
 export function resolveRequiredDbFiles(selection: unknown): string[] | null;
+export function affectedCliBytes(selectedFiles: string[]): number;
+export function affectedFilesFitCli(selectedFiles: string[]): boolean;
 export function parseShard(
   value: string | undefined,
 ): { index: number; count: number; value: string } | null;
