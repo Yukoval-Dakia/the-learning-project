@@ -27,7 +27,8 @@
     在证据被静默丢弃后签发 pass。
   - 定向验证当前：unit 6 files / 212 passed；DB 4 files / 70 passed；typecheck、
     changed-file Biome、diff check 通过；审查修复增量 unit 2 files / 61 passed、DB 2 files /
-    29 passed。完整 gate 不在本地跑，交给 GitHub CI Gate。
+    29 passed；migration 定向 1 passed / 26 skipped。完整 gate 不在本地跑，交给
+    GitHub CI Gate。
   - 20:47 用 mock 输入启动 canonical Opus real-output 复评；第一簇的 3 个独立
     induction call 均收到 429 weekly limit，按 operational stop condition 立即停止，
     没有把 fallback 或空输出记成质量结果。

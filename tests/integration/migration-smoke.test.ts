@@ -924,19 +924,19 @@ describe('migration smoke — YUK-821 legacy conjecture retirement', () => {
       predicted_p: 0.3,
     };
     const seedProposal = async (id: string, proposedChange: Record<string, unknown>) => {
-      const payload = JSON.stringify({
+      const payload = {
         ai_proposal: {
           kind: 'conjecture',
           proposed_change: proposedChange,
         },
-      });
+      };
       await client`
         INSERT INTO event (
           id, actor_kind, actor_ref, action, subject_kind, subject_id,
           outcome, payload, affected_scopes, created_at
         ) VALUES (
           ${id}, 'agent', 'research_meeting', 'experimental:proposal',
-          'mind_model', ${id}, 'partial', ${payload}::jsonb,
+          'mind_model', ${id}, 'partial', ${client.json(payload)},
           ARRAY['topic:test']::text[], '2026-07-01T00:00:00Z'::timestamptz
         )
       `;
