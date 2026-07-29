@@ -17,7 +17,8 @@
     "build:native:wasm": "cd crates/calibration-native && pnpm install --ignore-workspace --prefer-offline && pnpm --package=@napi-rs/cli@3.7.2 dlx napi build --release --target wasm32-wasip1-threads --platform && rm -f calibration-native.wasm32-wasi.debug.wasm",
     "start": "node dist/server.cjs",
     "typecheck": "tsc --noEmit",
-    "typecheck:legacy": "tsc --noEmit",
+    "typecheck:watch": "tsc --noEmit --watch",
+    "typecheck:legacy": "tsc6 --noEmit --incremental false --stableTypeOrdering",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "pnpm audit:api-contracts && pnpm audit:api-client && pnpm audit:api-client-usage && pnpm audit:capability-boundaries && pnpm audit:profile && pnpm audit:learner-copy && pnpm audit:no-learning-styles && pnpm audit:structured-judge && pnpm audit:draft-status && pnpm audit:draft-status-reads --strict && pnpm audit:hub-sync-writers && pnpm test:unit && pnpm test:db && pnpm test:migration",
@@ -152,6 +153,7 @@
     "@types/pg": "^8.20.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.0.0",
+    "@typescript/native": "npm:typescript@7.0.2",
     "@vitejs/plugin-react": "^6.0.3",
     "@vitest/coverage-v8": "^4.1.10",
     "dotenv": "^17.4.2",
@@ -161,7 +163,7 @@
     "tailwindcss": "^4.3.3",
     "testcontainers": "^12.0.4",
     "tsx": "^4.23.1",
-    "typescript": "7.0.2",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
     "vite": "^8.1.5",
     "vitest": "^4.1.10"
   }

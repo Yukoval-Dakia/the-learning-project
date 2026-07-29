@@ -48,8 +48,8 @@
 
 ## NEXT
 
-1. PR #1110 两条新 review findings 已在工作树修复。提交、推送、回复并清零 threads，
-   合并最新 main 后，只监听新 exact head 的 GitHub CI Gate，不在本地跑全 gate。
+1. PR #1110 两条新 review findings 已提交、推送、回复并清零 threads；当前正合并最新
+   main，之后只监听新 exact head 的 GitHub CI Gate，不在本地跑全 gate。
 2. 修复 head CI 全绿后合并 P0；再用固定 mock evidence packets 跑 canonical Opus real-output
    质量评测。YUK-821 在 8 簇输出门通过前保持 In Progress，输出不合格就继续改模型合同，
    不伪造 pass。
@@ -68,11 +68,14 @@
   以 GitHub timing/coverage 为证据，不在本机猜测。
 - **YUK-820 live timing**：DB affected selector 已随 main 合并并完成 20/20 failed-head
   回放；仍等待下一条不触及 schema/migration/CI 自身的普通 server/API PR 验收 wall-clock。
+- **YUK-823 已 Done**：PR #1112 / `c4c26c76` 已把 TS7 native compiler、TS6 fallback、
+  native watch 与跨 CI run buildinfo 合入 main；PR #1113 / `766351a5` 完成看板收口。
+- **YUK-824 本地 lint 假红**：只处理 sanctioned `.ykv/**` code-index cache 的精确忽略，
+  不扩大 Biome `files.maxSize`，不混入 YUK-821。
 
 ## BLOCKED-ON
 
-- **本次 P0 代码：无产品数据 blocker**；只剩新 review 修复的提交、thread 清零、
-  main 冲突同步与 exact-head GitHub CI Gate。
+- **本次 P0 代码：无产品数据 blocker**；只剩 main 冲突同步与 exact-head GitHub CI Gate。
 - **canonical Opus 输出质量结论**：2026-07-29 20:47 实测被 429 weekly limit 阻断；
   配额故障只记 operational，不能用 Mimo fallback 的结果冒充 canonical pass。
 - **auto-intervention 扩大使用**：仍需真实 owner/cohort shadow/blind/canary 证据；这是发布
