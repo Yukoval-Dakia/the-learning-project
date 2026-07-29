@@ -30,6 +30,8 @@
 - `scripts/ci/db-affected.mjs`：Vitest changed graph + full historical inventory、direct-test
   guard、source-scanning/dynamic-import tests、failure sentinels、unsafe/empty/error full fallback、safe argv、
   empty-shard skip、per-shard execution artifacts。
+- selector 在独立前置 job 只计算一次，两个 DB shards 下载同一 artifact；selector 进程
+  失败时共享 full fallback，避免两个分片因模式分歧留下覆盖空洞。
 - main push、schema/migration/config/workflow/kernel/core/unknown 与 selector 自身改动继续 full。
 - 证据文档：
   - `docs/audit/2026-07-29-unit-selector-backfill.md`
@@ -46,4 +48,4 @@
 - owner 主工作树仍在 `codex/yuk-812-agent-control-plane` 且有既存改动；本轮未触碰。
 - 临时 replay worktrees 已清理；Testcontainers 已退出。
 - full pre-PR：390 DB files / 4,263 tests、migration 26/26、build、lint、typecheck、
-  focused 36/36 全通过；independent `codex review --uncommitted` 无 finding。
+  focused 40/40 全通过；两轮 independent Codex review 均无 finding。

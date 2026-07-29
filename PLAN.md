@@ -20,9 +20,10 @@
     91+90 files、2,349 tests 全绿；新增 dynamic-import sentinels 由 full suite 覆盖；
     本机并发容器时间不冒充 GitHub runner 节省值。
   - planner 输出 `db_selection`，selector/direct guard/source scan/dynamic import/failure
-    sentinels/full fallback/empty-shard skip/artifacts 均已接入。
+    sentinels/full fallback/empty-shard skip/artifacts 均已接入；两个 DB shards 共用前置
+    job 生成的同一份 selection，杜绝瞬时 selector 分歧造成覆盖空洞。
   - full pre-PR：390 DB files / 4,263 tests 通过（另 9 skipped、1 todo）；migration
-    26/26、build、lint、typecheck、focused 36/36 均通过；独立 review 无 finding。
+    26/26、build、lint、typecheck、focused 40/40 均通过；独立 review 无 finding。
 - **YUK-814 保持 In Progress，停在真实数据输入闸门**
   - Harness 已随 PR #1105 / merge commit `ae02e020` 落到 main；真实 shadow/blind/canary
     尚未执行，仍需 production backup ZIP / 6–10 个合格真实 owner 失败簇。

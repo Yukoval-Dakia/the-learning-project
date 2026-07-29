@@ -157,19 +157,15 @@ jobs:
             .cache/ci/unit-execution.json
           if-no-files-found: warn
 
-  db:
-    name: DB tests (${{ matrix.shard }}/2)
+  db_selection:
+    name: select DB tests
     needs: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2]
+    timeout-minutes: 10
     steps:
-      - name: DB lane skipped
+      - name: DB selection skipped
         if: needs.changes.outputs.db_changed != 'true'
-        run: echo "DB lane not selected — lane is green."
+        run: echo "DB lane not selected — selector is green."
       - uses: actions/checkout@v4
         if: needs.changes.outputs.db_changed == 'true'
         with:
@@ -186,7 +182,7 @@ jobs:
       - name: Install dependencies
         if: needs.changes.outputs.db_changed == 'true'
         run: pnpm install --frozen-lockfile
-      - name: Select required DB tests
+      - name: Select DB tests once for every shard
         id: db_select
         if: needs.changes.outputs.db_changed == 'true'
         continue-on-error: true
@@ -202,6 +198,56 @@ jobs:
       - name: Warn on DB selector process failure
         if: steps.db_select.outcome == 'failure'
         run: echo "::warning title=DB selector failed::Falling back to the full DB suite; investigate the selector process failure."
+      - name: Materialize shared full fallback
+        if: steps.db_select.outcome == 'failure'
+        env:
+          DB_SELECTION_BASE: ${{ needs.changes.outputs.merge_base }}
+        run: |
+          node scripts/ci/db-affected.mjs select \
+            --base "$DB_SELECTION_BASE" \
+            --mode full \
+            --output .cache/ci/db-selection.json
+      - name: Upload shared DB selection
+        if: needs.changes.outputs.db_changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-selector-selection
+          path: .cache/ci/db-selection.json
+          if-no-files-found: error
+
+  db:
+    name: DB tests (${{ matrix.shard }}/2)
+    needs: [changes, db_selection]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - name: DB lane skipped
+        if: needs.changes.outputs.db_changed != 'true'
+        run: echo "DB lane not selected — lane is green."
+      - uses: actions/checkout@v4
+        if: needs.changes.outputs.db_changed == 'true'
+      - uses: pnpm/action-setup@v4
+        if: needs.changes.outputs.db_changed == 'true'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: needs.changes.outputs.db_changed == 'true'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: needs.changes.outputs.db_changed == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Download shared DB selection
+        if: needs.changes.outputs.db_changed == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: db-selector-selection
+          path: .cache/ci
       - name: DB tests (affected on PR, full on canary/fallback)
         if: needs.changes.outputs.db_changed == 'true'
         run: |
@@ -357,7 +403,7 @@ jobs:
   gate:
     name: typecheck · lint · audits · test · build
     if: always()
-    needs: [changes, static, unit, db, migration, build, usability]
+    needs: [changes, static, unit, db_selection, db, migration, build, usability]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -366,6 +412,7 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           STATIC_RESULT: ${{ needs.static.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
+          DB_SELECTION_RESULT: ${{ needs.db_selection.result }}
           DB_RESULT: ${{ needs.db.result }}
           MIGRATION_RESULT: ${{ needs.migration.result }}
           BUILD_RESULT: ${{ needs.build.result }}
@@ -373,7 +420,7 @@ jobs:
         run: |
           set -euo pipefail
           failed=0
-          for lane in CHANGES STATIC UNIT DB MIGRATION BUILD USABILITY; do
+          for lane in CHANGES STATIC UNIT DB_SELECTION DB MIGRATION BUILD USABILITY; do
             result_var="${lane}_RESULT"
             result="${!result_var}"
             printf '%-12s %s\n' "$lane" "$result"

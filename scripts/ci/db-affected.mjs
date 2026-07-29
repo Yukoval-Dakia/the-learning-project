@@ -165,6 +165,7 @@ function readChangedFiles(base, root) {
       cwd: root,
       encoding: 'buffer',
       stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: SELECTOR_TIMEOUT_MS,
     },
   );
   return sortedUnique(
