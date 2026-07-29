@@ -281,7 +281,11 @@ describe('gatherDissociationEvidence', () => {
       causeCategory: 'concept',
     });
     expect(ev.hasDiscriminatingContext).toBe(false);
-    expect(ev.crucialConfirmedCount).toBe(0);
+    // The authoritative proposal still says these probes separate prediction
+    // from baseline, so they are crucial prediction evidence. Without a
+    // source-Judge target-error match they are not held-M diagnostic and the
+    // compound confirmation gate remains dark.
+    expect(ev.crucialConfirmedCount).toBe(3);
 
     // Even with the flag ON + a rival probe + fresh confirm, un-tagged data ⇒ INSUFFICIENT.
     expect(

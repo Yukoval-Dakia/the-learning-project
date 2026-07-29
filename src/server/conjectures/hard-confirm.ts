@@ -322,6 +322,7 @@ function predictionScoreToRecord(
   createdAt: Date,
   payload: Record<string, unknown> | null,
   source: ProbeResultSource,
+  authoritativeDiscriminating: boolean,
 ): DissociationRecord | null {
   if (!payload) return null;
   const predictedP = payload.predicted_p;
@@ -375,7 +376,10 @@ function predictionScoreToRecord(
     baselineP,
     predictedP,
     outcome,
-    discriminating: payload.discriminating === true,
+    // The proposal owns this diagnostic-spec fact. Legacy score anchors may
+    // omit its redundant copy; a present conflicting copy is rejected before
+    // this mapper runs.
+    discriminating: authoritativeDiscriminating,
     mDiagnostic: sourcePayload?.m_diagnostic === true,
     resolution,
     scoredAt: createdAt,
@@ -558,6 +562,9 @@ export async function gatherDissociationRecordsByIdentity(
   db: Db,
   targets: readonly ConjectureIdentityTarget[],
 ): Promise<Map<string, DissociationRecord[]>> {
+  // Total-map contract: every requested key remains present. Invalid duplicate
+  // aliases get an empty evidence bucket (plus a warning), so callers can
+  // distinguish "requested but inadmissible" from "not requested".
   const out = new Map<string, DissociationRecord[]>();
   const targetKeyByIdentity = new Map<string, string>();
   const identityByTargetKey = new Map<string, string>();
@@ -697,10 +704,13 @@ export async function gatherDissociationRecordsByIdentity(
     if (anchorCorrectionStatuses.get(r.id)?.state !== 'active') continue;
     const payload = r.payload as Record<string, unknown> | null;
     const probeResultEventId = payload?.probe_result_event_id;
+    const source =
+      typeof probeResultEventId === 'string' ? sourceById.get(probeResultEventId) : undefined;
     if (
       typeof probeResultEventId !== 'string' ||
+      !source ||
       scoreStatuses.get(probeResultEventId) !== 'active' ||
-      !anchorMatchesProbeResult(payload, sourceById.get(probeResultEventId)) ||
+      !anchorMatchesProbeResult(payload, source) ||
       payload?.resolution !== 'confirmed'
     ) {
       continue;
@@ -724,7 +734,7 @@ export async function gatherDissociationRecordsByIdentity(
       (id): id is string => typeof id === 'string' && id.length > 0,
     );
     if (new Set(validIds).size < 2) continue;
-    const confirmationTime = sourceById.get(probeResultEventId)?.createdAt ?? r.created_at;
+    const confirmationTime = source.createdAt;
     const confirmationTimes =
       confirmationTimeByConjectureAndQuestion.get(conjectureEventId) ?? new Map<string, Date>();
     for (const questionId of validIds) {
@@ -785,6 +795,7 @@ export async function gatherDissociationRecordsByIdentity(
       source.createdAt,
       payload,
       source,
+      identity.discriminating,
     );
     if (parsed) {
       const confirmationTime =
