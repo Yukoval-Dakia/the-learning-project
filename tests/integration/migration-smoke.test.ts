@@ -1176,6 +1176,16 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         final_review: { verdict: 'pass' },
       },
     });
+    await seedProposal('audit_v2_non_string_final_review_explanation', {
+      ...v2Change,
+      probe_quality: {
+        ...v2Change.probe_quality,
+        final_review: {
+          ...v2Change.probe_quality.final_review,
+          explanation_md: 123,
+        },
+      },
+    });
     await seedProposal('audit_v2_attempt_two_only', {
       ...v2Change,
       probe_quality: {
@@ -1479,6 +1489,13 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         already_ingested: true,
       },
       {
+        subject_id: 'audit_v2_non_string_final_review_explanation',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
         subject_id: 'audit_v2_outer_followup_prompt_mismatch',
         actor_kind: 'agent',
         actor_ref: 'yuk821_audit_binding_migration',
@@ -1557,6 +1574,7 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
           'audit_v2_mismatch',
           'audit_v2_missing_lineage',
           'audit_v2_non_array_evidence_refs',
+          'audit_v2_non_string_final_review_explanation',
           'audit_v2_out_of_range_probability',
           'audit_v2_string_discriminating',
           'audit_v2_string_passed',

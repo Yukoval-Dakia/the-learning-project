@@ -70,6 +70,9 @@ WHERE proposal."action" = 'experimental:proposal'
         ) = 0
       ELSE false
     END
+    AND jsonb_typeof(
+      proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,final_review,explanation_md}'
+    ) = 'string'
     AND char_length(
       btrim(
         proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,final_review,explanation_md}'
