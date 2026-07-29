@@ -15,23 +15,24 @@
     author/reviewer task-run lineage；0083 迁移退出 pending 的旧/错配记录。
   - accept 对 audit、最终 claim/DiagnosticSpec/evidence/题包做一致性校验；完整结构比较
     对未来 schema 字段 fail closed，不再依赖会漂移的手写字段表。
-  - 固定 8-case 的首轮 Xiaomi/Mimo fallback 复测没有通过：严格 grounded 5/8；
-    `unlike-denominator-addition` 正确 abstain，但 reviewer 错放了链式法则 B/C 同时正确、
-    文言 A/C 同时正确的两道不可判定单选题。
+  - 固定 8-case 首轮 Xiaomi/Mimo fallback 复测仅 grounded 5/8；按真实失败增强 prompt
+    后，第二轮达到 **7/8**（旧基线 6/8），严重事实错误/学科幻觉维持 0，开发 gate
+    按 owner 口径通过。
   - P0 author/reviewer prompt 已按真实失败增强：单选逐项独立求解、必须恰好一个正确；
     reference 自承认多解或条件/步骤/结论矛盾一律 `reference_incorrect`。这不是 P1
     学科确定性 validator。
+  - 文言簇仍有 1 个“错误规则导致无法选/随机选，expected answer 不可唯一判定”尾项；
+    已捕获为 **YUK-827**，不阻塞已达成的净改善 gate，也不冒充绝对 5/5。
 - **开发/发布闸门**
   - 本地只跑变更相关 unit/DB/migration/typecheck/Biome；完整 gate 只监听 GitHub CI Gate。
-  - PR #1114 正在同步已合入 main 的 YUK-825 DB 测试隔离改动；不 rebase、不 force push。
+  - PR #1114 exact head `1a9df7c6` CI/OCR 全绿；最终 review 又抓到 0083 漏校验 outer
+    probe text 的永久 409 风险，当前同批补迁移、四种 mismatch 回归与两条 minor。
 
 ## NEXT
 
-1. 完成 main merge conflict 收口、推送合并提交，清零 review threads 并监听 exact-head CI。
-2. CI 通过后仍用同一 8 个 mock 输入、Xiaomi/Mimo fallback 和真实生产输出链复测。
-3. 只有相对旧基线 grounded 6/8、mismatch 1 有净改善且不新增严重事实/学科幻觉红线，
-   才合并、关闭 YUK-821 开发 gate。
-4. 通过后对齐 Linear，并按 mesh 依赖选择下一条 ready phase issue 开发。
+1. 提交最终 review batch，回复/清零 4 个 review threads，监听新的 exact-head CI。
+2. CI 全绿后 squash merge PR #1114；更新 YUK-821 为 Done，并把 7/8 结果同步 YUK-814。
+3. 按 mesh 依赖选择下一条 ready phase issue，进入下一阶段开发；YUK-827 保持独立 backlog。
 
 ## PARKED
 

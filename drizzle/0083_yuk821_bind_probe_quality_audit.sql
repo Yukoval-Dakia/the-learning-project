@@ -69,6 +69,9 @@ WHERE proposal."action" = 'experimental:proposal'
       = proposal."payload" #> '{ai_proposal,proposed_change,recurrence_count}'
     AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,diagnostic_spec}'
       = proposal."payload" #> '{ai_proposal,proposed_change,diagnostic_spec}'
+    -- Ordering invariant: reviewed_hypothesis.evidence_event_ids and
+    -- evidence_refs[kind=event].id both preserve the first-seen order from the
+    -- same deduplicated draft.evidence_event_ids array.
     AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,evidence_event_ids}'
       = COALESCE(
         (
@@ -79,6 +82,14 @@ WHERE proposal."action" = 'experimental:proposal'
         ),
         '[]'::jsonb
       )
+    AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_md}'
+      = proposal."payload" #>> '{ai_proposal,proposed_change,probe_spec,prompt_md}'
+    AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_reference_md}'
+      = proposal."payload" #>> '{ai_proposal,proposed_change,probe_spec,reference_md}'
+    AND proposal."payload" #>> '{ai_proposal,proposed_change,followup_probe_md}'
+      = proposal."payload" #>> '{ai_proposal,proposed_change,followup_probe_spec,prompt_md}'
+    AND proposal."payload" #>> '{ai_proposal,proposed_change,followup_probe_reference_md}'
+      = proposal."payload" #>> '{ai_proposal,proposed_change,followup_probe_spec,reference_md}'
     AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_package,primary}'
       = proposal."payload" #> '{ai_proposal,proposed_change,probe_spec}'
     AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_package,followup}'

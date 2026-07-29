@@ -1167,6 +1167,22 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         },
       },
     });
+    await seedProposal('audit_v2_outer_followup_prompt_mismatch', {
+      ...v2Change,
+      followup_probe_md: 'unreviewed follow-up prompt',
+    });
+    await seedProposal('audit_v2_outer_followup_reference_mismatch', {
+      ...v2Change,
+      followup_probe_reference_md: 'unreviewed follow-up reference',
+    });
+    await seedProposal('audit_v2_outer_primary_prompt_mismatch', {
+      ...v2Change,
+      probe_md: 'unreviewed primary prompt',
+    });
+    await seedProposal('audit_v2_outer_primary_reference_mismatch', {
+      ...v2Change,
+      probe_reference_md: 'unreviewed primary reference',
+    });
     await seedProposal('audit_v1_decided', {
       ...v2Change,
       probe_quality: { ...v1Audit, schema_version: 1 },
@@ -1231,6 +1247,34 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         affected_scopes: [],
         already_ingested: true,
       },
+      {
+        subject_id: 'audit_v2_outer_followup_prompt_mismatch',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'audit_v2_outer_followup_reference_mismatch',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'audit_v2_outer_primary_prompt_mismatch',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'audit_v2_outer_primary_reference_mismatch',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
     ]);
 
     const ownerDismissals = await client<{ count: string }[]>`
@@ -1242,7 +1286,11 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
           'audit_v1_pending',
           'audit_v2_hypothesis_mismatch',
           'audit_v2_mismatch',
-          'audit_v2_missing_lineage'
+          'audit_v2_missing_lineage',
+          'audit_v2_outer_followup_prompt_mismatch',
+          'audit_v2_outer_followup_reference_mismatch',
+          'audit_v2_outer_primary_prompt_mismatch',
+          'audit_v2_outer_primary_reference_mismatch'
         )
     `;
     expect(ownerDismissals[0]?.count).toBe('0');

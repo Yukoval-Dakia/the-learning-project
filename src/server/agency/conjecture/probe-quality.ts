@@ -315,7 +315,7 @@ export async function prepareConjectureProbePair(
         reviewed_package: structuredClone(probePackage),
       },
       primary_task_run_id: authorResult.task_run_id,
-      attempts: attempts.map((qualityAttempt) => ({ ...qualityAttempt })),
+      attempts: auditAttempts,
       task_run_ids: taskRunIds,
       cost_usd: costUsd,
     };

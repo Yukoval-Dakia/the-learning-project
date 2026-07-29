@@ -81,6 +81,16 @@ P0 因此明确要求 author 逐项解答并保证单选唯一，reviewer 必须
 若零个或多个正确选项（包括 reference 自己承认多个正确）一律报
 `reference_incorrect`。这仍是模型语义闸门，不冒充 P1 的学科确定性证明。
 
+### 固定 8-case 回归结果
+
+- 旧基线：grounded 6/8，claim/probe mismatch 1，严重事实错误 0，学科幻觉 0。
+- prompt 增强前：grounded 5/8；reviewer 错放两道多正确选项的单选题，因此不通过。
+- prompt 增强后：grounded **7/8**，claim/probe mismatch 1，严重事实错误 0，学科幻觉 0；
+  按 owner“相对旧基线有净改善即过开发 gate”的口径通过。
+- 剩余 1 项不是学科答案错误，而是 expected target response 不可唯一判定：错误规则令
+  文言 primary 无法选择或只能随机选，不能稳定映射回目标误区。此尾项已拆为
+  **YUK-827**；开发 gate 通过不表示 P0 已达到绝对 5/5。
+
 例如：
 
 - 它能要求单位换算两题使用不同情境和表征，但不能仅靠通用字符串规则证明分母时间单位确实从 hour 变成 second；

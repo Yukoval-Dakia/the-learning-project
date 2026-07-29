@@ -46,6 +46,20 @@
 - 因此没有宣告 gate 通过。commit `888ec2ee` 已增强 P0 author/reviewer：单选逐项解答、
   恰好一个正确；reference 自承认多解或内部矛盾一律 `reference_incorrect`。仍不冒充 P1。
 
+## 固定 8-case 第二轮结果
+
+- exact head `1a9df7c6`、同一 8 输入、同一 Xiaomi/Mimo fallback 与 production
+  `induce → author → independent review` 链完成。
+- 严格 grounded **7/8**，高于旧基线 6/8；claim/probe mismatch 仍为 1；严重事实错误 0，
+  学科幻觉 0。按 owner“有净改善即过开发 gate”的口径，YUK-821 开发 gate PASS。
+- 新 reviewer 正确拒绝并重生成了：
+  - 移项题中目标错误答案不在选项、reference 自相矛盾的包；
+  - 比的顺序题超出 scope 去要求化简的包；
+  - 文言首包 context/representation 不独立。
+- 唯一未 grounded 的文言最终 primary：目标错误会让四个选项看起来同类，输出却写
+  “A/B/D 任一或随机选”，不是 Judge 可稳定识别的具体响应。已捕获 **YUK-827**；
+  gate 通过不等于 P0 绝对 5/5。
+
 ## 当前定向验证
 
 - unit：6 files / 204 passed。
@@ -53,13 +67,14 @@
 - migration：0083 case 1 passed / 27 skipped。
 - `pnpm typecheck`、changed-file Biome、`git diff --check` 通过。
 - OCR 三个 review threads（strict null、完整结构比较）已修复并回复/resolve。
-- 完整 gate 未在本地跑，按 owner 决策留给 GitHub Actions。
+- exact head `1a9df7c6` GitHub CI Gate 与 OCR 已全绿。
+- 后续 review 抓到 0083 漏校验 outer `probe_md`/reference 与 nested spec 一致，会留下
+  永久 409 pending 卡片；已补四种 mismatch migration 回归。另记录 evidence order
+  invariant，并复用同一 audit attempts copy。最终新 head 仍需 GitHub CI。
 
 ## 下一步
 
-1. 解决 PLAN/.remember 的 main merge 冲突，保留 YUK-821 active 与 YUK-825 已合入事实；
-   完成 merge commit 并推送。
-2. 监听 exact-head GitHub CI Gate；清零新 review threads。
-3. 用同一 8-case/Mimo fallback 复测 prompt 增强版。相对旧基线有净改善且红线不新增，
-   才合并 PR #1114、关闭 YUK-821 开发 gate。
-4. 通过后对齐 Linear 并进入 mesh 中下一条 ready phase issue。
+1. 提交/推送最终 review batch，回复并 resolve 4 个新 review threads。
+2. 监听新 exact-head GitHub CI Gate；全绿后 squash merge PR #1114。
+3. YUK-821 Done、YUK-814 记录 7/8 mock-input 开发 gate；YUK-827 保持 backlog。
+4. 按 mesh 选择下一条 ready issue，进入下一阶段开发。
