@@ -3,49 +3,54 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-29
-> **【更新 2026-07-29 · 猜想证据收口，串行到达真实 owner 数据闸门】**
-> YUK-788 已随 PR #1102 合并，YUK-803 已按现有代码/DB 测试证据化关闭；
-> 两项目联合计划现已严格串行到 YUK-814。模型运行环境 pre-flight 通过，当前唯一
-> 事实阻塞是缺少可供盲评的 6–10 个真实 owner 失败簇；不以 synthetic/mock 冒充。
+> **【更新 2026-07-29 · YUK-820 affected required + Grounding 等待真实数据】**
+> 20 个历史 PR backfill 已支持把 affected unit selector 切为 required；同时，
+> Grounding 产品线仍严格停在 YUK-814 的真实 owner 数据闸门，不以 mock 代替。
 
 ## NOW
 
-- **当前无代码 active lane；YUK-814 保持 Backlog，等待真实数据输入**
-  - Node、pnpm、Docker daemon、Claude Agent SDK、`DATABASE_URL` 与
-    anthropic-sub OAuth token 均已做不泄密 pre-flight；凭据不是 blocker。
-  - 仓内不存在 YUK-814 专属盲评数据集/评分 artifact；配置 DB 指向本地
-    `127.0.0.1:5433`，且没有既有 compose volume。试启时只创建了全新空库，已立即
-    删除容器、network 与 volume，未留下假数据或运行中服务。
-  - 因此本轮不启动 shadow、blind review 或 canary；继续只能造 mock，违反发布闸门。
-- **YUK-788 已收口**
-  - PR #1102 merge commit：`ff681b0c`；Linear Done。
-  - pending、30 天 dismiss cooldown、active accepted 与 terminal reopen 共用
-    identity history gate；terminal 后仅同 cause×KC 的两条更新 failure 可重开。
-  - owner accept/edit claim 已回流 deterministic 与 agent-led shadow lane；correction、
-    rollback、旧 proposal terminal、新 proposal active 等反例均有回归。
-  - exact head `83b857b0` 的 CI Gate 全绿、已产出 review thread 清零。按 owner 规则，
-    review 收敛到 P2/minor 后不等待下一轮 OCR，直接听全绿 gate 合并。
-- **YUK-803 已证据化收口**
-  - 选项 (a) 已在 PR #1080 / merge commit `a1fe8ab8` 落到 main：edit 归档同
-    cause×KC 的 soft misconception 与 live edges，hard 节点不动，plain accept 不变。
-  - `conjecture-accept.db.test.ts` 本轮实跑 21/21；Linear 已由 Backlog 对齐 Done。
-- **CI 提速后续保持独立**
-  - main 已有 parallel static/unit/DB/migration/build/usability lanes 与 fail-closed
-    aggregate；YUK-817/818 继续收满 5 次非 docs-only timing，不在 Grounding 线扩张。
+- **当前代码 active 线：CI/perf · YUK-820**
+  - Ready PR #1103：`codex/yuk-820-incremental-gate` 正在合并
+    `origin/main@b5bdbe2a`；手动 full Gate run `30428189107` 已全绿。
+  - PR 的 unit-test-only / DB-test-only / UI / server 改动按 lane 选择；schema、
+    migration、kernel/core、manifest、依赖、workflow/selector、测试配置和未知路径全量。
+  - 20 个历史真实 affected PR：20/20 affected、0 fallback、20 个直接改动 unit test
+    files 0 漏选，selected/full 累计 1,120/9,639（11.62%）；全部 final PR full gate
+    success；#1059 额外验证空 import graph 会 fail closed 到 full。
+  - affected unit 使用 Vitest changed graph + 自动发现的源码扫描 tests，并直接成为
+    PR required；
+    selection 缺失/无效/空集、base/diff/classifier 异常或 direct-test guard 失败均回退 full。
+  - main push 永远 full canary；artifact 保存 selection 与 required execution 元数据。
+- **产品线：YUK-814 保持 Backlog，等待真实数据输入**
+  - Node、pnpm、Docker、Claude Agent SDK、`DATABASE_URL` 与 anthropic-sub OAuth token
+    已做不泄密 pre-flight；凭据不是 blocker。
+  - 仓内没有 YUK-814 专属盲评数据集/评分 artifact；需要 6–10 个真实 owner 失败簇，
+    不能用 synthetic/mock 冒充。
+- **已收口**
+  - YUK-788 随 PR #1102 / `ff681b0c` 合并并 Done；identity history gate、terminal
+    reopen 约束与 owner feedback 回流均有回归证据。
+  - YUK-803 的 soft archive/hard 不变已在 PR #1080 / `a1fe8ab8` 落地，
+    `conjecture-accept.db.test.ts` 21/21，Linear Done。
+  - YUK-817/818/819 均已 Done；DB shard、unit 长尾与 JYEOO hard timeout 修复已在 main。
 
 ## NEXT
 
-1. 为 YUK-814 提供/导出 6–10 个真实 owner 失败簇，保留题面、作答、Judge/错因、
-   subject/KC 与可复现 evidence refs；禁止 synthetic/mock 代替。
-2. 数据到位后才把 YUK-814 置 In Progress：先 shadow run，再 owner gold blind review；
-   grounding ≥80%，学科幻觉、claim/probe 错配、严重事实错误均为 0。
-3. 只有 YUK-814 通过，才依次启动 intervention snapshot、pedagogy、
-   QuestionAuthor/Verify、隔离 FSRS、结算、Brief/Copilot/profile。
+1. 完成 PR #1103 与最新 main 的合并，推送后核对当前 head 的 full-trigger CI、
+   selector artifact 与 aggregate fail-closed。
+2. 检查并处理 active review threads；当前 head CI/review 全绿后合并，随后检查
+   main full canary，并将 YUK-820 与 cockpit/Linear 对齐收口。
+3. 为 YUK-814 提供/导出 6–10 个真实 owner 失败簇；数据到位后先 shadow run，
+   再做 owner gold blind review。
+4. 只有 YUK-814 达到 grounding ≥80%，且学科幻觉、claim/probe 错配、严重事实错误
+   均为 0，才依次启动 intervention snapshot、pedagogy、QuestionAuthor/Verify、
+   隔离 FSRS、结算、Brief/Copilot/profile。
 
 ## PARKED
 
-- **CI 后续调参**：只在 5 次非 docs-only GitHub timing 证明仍有必要时评估
-  usability artifact 复用、DB 4-way shard 或 fork 数；不做 path-aware 测试跳过。
+- **CI selector drift**：main full canary 或 direct-test guard 任一发现漏选，立即回退
+  full required；不靠漂亮 selection ratio 压掉证据。
+- **CI 后续调参**：usability artifact 复用、DB weighted shard / fork 数继续以
+  GitHub timing 决定，不用删覆盖换漂亮指标。
 - **干预准备**：YUK-791/796；Planning Panel 仅为 Teaching Brief 控制区。
 - **验证结算**：YUK-792；猜想与干预使用隔离 FSRS 状态，普通 KC/FSRS 不变。
 - **协作与档案**：YUK-815 Brief/Copilot public reader；YUK-816 intervention history。

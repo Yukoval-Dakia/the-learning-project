@@ -1,8 +1,8 @@
 # CI 提速研究：先缩短关键路径，不削覆盖
 
 **日期**：2026-07-28
-**状态**：Phase 1 已实现；等待 GitHub Actions 首轮实测
-**范围**：`.github/workflows/ci-gate.yml` 的 required gate 与 usability job
+**状态**：并行/lane 增量已合入 PR #1103；20-PR backfill 通过，affected unit 已切 required
+**范围**：`.github/workflows/ci-gate.yml`、`scripts/ci/*` 的 required gate 与 selector
 
 ## 结论
 
@@ -15,8 +15,17 @@
    最后用一个恒定名称的汇总 job 维持 branch protection。
 2. 用 GitHub Actions 新结构自然产生的 step/job timing 评估后续优化，不再要求本地跑 CI。
 
-这条路不删测试、不做基于路径的测试选择，也不改变 `pnpm test` 的本地 pre-PR 契约。
-它只把远端今天的串行关键路径从近似
+2026-07-29 owner 追加授权 YUK-820：
+
+3. PR gate 先按改动类型选择 lane；unknown/global trigger 仍 fail closed 全量，main push
+   永远作为 full canary。
+4. unit affected-test selector 先进入 shadow；随后用 20 个历史真实 PR backfill，
+   0 fallback、0 direct-test miss 后切为 PR required。main/global/fallback 仍 full。
+
+原 Phase 1 不删测试、不做基于路径的测试选择，也不改变 `pnpm test` 的本地 pre-PR
+契约；YUK-820 先 shadow，再以
+`docs/audit/2026-07-29-unit-selector-backfill.md` 的固定样本完成切换。
+并行化把远端原来的串行关键路径从近似
 `static + unit + db + migration + build` 改成近似这些 lane 的最大值。
 
 ## 代码现状
@@ -58,11 +67,17 @@ usability 串到 build 后面。
 因此第一刀不应为了“去重”贸然给 usability 加 `needs: build`。先测 build 与
 Playwright lane 的时间，再决定是否复用 artifact。
 
-### 4. docs-only 快路径已经存在
+### 4. docs-only 快路径已扩为 lane-level incremental
 
-两个 job 都能对纯 `docs/**`、`.remember/**`、`*.md` 变更跳过重 gate。这个机制
-已经覆盖最安全、收益最大的 path-aware case。继续把源代码路径映射到测试子集，会引入
-跨 capability、schema、generated client、bundle 边界漏测风险，不适合作为首轮提速。
+纯 `docs/**`、`.remember/**`、根目录 Markdown 与嵌套的
+`AGENTS/CLAUDE/CONTEXT/README.md` 继续跳过重 gate；`src/subjects/**/SKILL.md`、
+judge prompt、test fixture 等运行时/测试 Markdown 不得误判为 docs-only。YUK-820 在此
+基础上只先做 lane 选择：unit-test-only 不启 Testcontainers，DB-test-only 不跑
+unit/build，UI-only 不跑 DB/migration。schema、migration、kernel/core、
+capability manifest、依赖/测试配置、未知路径均全量。
+
+测试文件级选择风险更高，因此不直接 hard switch；先由 Vitest `--changed=<merge-base>`
+生成预测清单，再与同一 run 的 full JSON reporter 对账。
 
 ## 推荐目标拓扑
 
@@ -87,7 +102,7 @@ ci-gate (always())             # 汇总上述 required lanes；名称稳定供 b
 | lane | 命令 |
 | --- | --- |
 | static-and-audits | `pnpm typecheck`、`pnpm lint`、全部现有 audit（各只跑一次） |
-| unit | `pnpm test:unit` |
+| unit | PR affected set required；main/global/selector fallback 跑 full unit |
 | db | `pnpm test:db` |
 | migration | `pnpm test:migration` |
 | build | `pnpm build` |
@@ -138,7 +153,33 @@ timing 或复跑 DB/migration。实施前应在 GitHub 上取得基线，而不�
 3. 增加稳定名称的 aggregate gate，使用 `always()` 验证所有 required results。
 4. 在 feature branch 连跑 10 次（可用空 commit/re-run），再替换 branch protection。
 
-### Phase 2：按数据选做
+### Phase 2：affected unit selector shadow → required（YUK-820）
+
+1. `changes` 输出 `unit_selection=skip|affected|full` 与 merge base。
+2. `affected` 时运行 `vitest list --changed=<merge-base> --filesOnly --staticParse`，
+   再从完整 unit inventory 自动发现并并入直接使用 `node:fs` / `node:child_process`
+   的源码扫描 tests；原始 affected graph 为空则回退 full。
+3. shadow 阶段 full unit 使用 default + JSON 双 reporter，测试只执行一次。
+4. shadow 对账观察：
+   - full 失败但 selector 未选中的 test file；
+   - 直接改动但 selector 未选中的 unit test；
+   - selector failure 是否安全 fallback 到 full。
+5. compact JSON 作为 Actions artifact，摘要写入 step summary；shadow 不改 required full。
+6. 回放 20 个历史真实 PR head/base：20/20 affected、0 fallback、20 个直接改动 unit
+   test file 全部命中，selected/full 累计 11.62%，且每个 final PR full gate 均为
+   success；另以 #1059 固定空 import graph → full 的负控。
+7. 切换后 PR 直接执行 affected set；selection 缺失/无效、空集、global trigger 与 main
+   push 均 fail closed 到 full，required run 的 exit code仍决定 aggregate gate。
+8. direct test edit 对明确 unit/db/migration convention 直接分类；plain-name
+   allowlist 归属不能仅凭路径判断时同时跑 unit + DB，避免任一 config exclude 后漏测。
+   selector inventory 各有 120 秒上限，required unit process 有 15 分钟上限。
+
+Backfill 的限制必须明确：final-green 样本不能证明故障注入完备；它证明历史真实 diff
+可稳定选择、直接 test 不漏且完整套件当时全绿。Comparator 的漏失败/fallback 负控由
+unit test 固定。因此 main push 保留 full canary，动态 import、manifest、源码扫描、
+migration/raw SQL 继续由显式 full trigger / sentinel 保护。
+
+### 后续：按数据选做
 
 - **若 build 明显拖慢 usability**：由 build lane 上传 `dist/**` 与 `web/dist/**`，验证 artifact
   完整性后再比较“等待共享 artifact”与“独立并行 build”的 wall-clock；只在前者更快时切换。
@@ -150,7 +191,7 @@ timing 或复跑 DB/migration。实施前应在 GitHub 上取得基线，而不�
 ## 明确不做
 
 - 不删 DB/migration/usability 覆盖来换速度；
-- 不按改动路径跳 unit/DB/build；
+- 不在 backfill/负控失败时把 affected unit set 保持为 required；
 - 不把 production dependency audit 改为非阻塞；
 - 不在没有 timing 的情况下调整 DB fork 数；
 - 不用自托管 runner 或新 SaaS 解决一个尚未量化的问题。
@@ -167,7 +208,7 @@ timing 或复跑 DB/migration。实施前应在 GitHub 上取得基线，而不�
 
 ## 决策建议
 
-**Phase 1 已落到 `.github/workflows/ci-gate.yml`**：docs-only 判定集中到 `changes`，
-static/audits、unit、DB、migration、build、usability 六条 lane 并行；末端 `gate` 使用
-`if: always()` 并逐条要求 `success`，同时保留原 required-check 名称。没有引入任何本地 CI
-要求。Phase 2 的 artifact 复用、fork 调参、path-aware selection 继续等待 GitHub timing 证据。
+**并行 Phase 1 已落到 `.github/workflows/ci-gate.yml`**。YUK-820 在不改变 required
+check 名称的前提下加入 fail-closed lane planner；main push、unknown path/base 与全局
+trigger 仍全量。Phase 2 经 20-PR backfill 后已切 affected required，证据与边界见
+`docs/audit/2026-07-29-unit-selector-backfill.md`。
