@@ -3,29 +3,25 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-29
-> **【更新 2026-07-29 · YUK-795 terminal confirmation review fix 待远端验收】**
-> YUK-787 已随 PR #1098 合入 main；当前把 prediction_score 接入同一 owner 的
-> conjecture identity 生存排序，并让 hard-confirm Tier-1 verdict 进入真实消费者；
-> 最新 review 已补齐真实 v2 score-free terminal projection → 首题 score 的确认折叠；
-> 定向验证已完成，下一步只走 GitHub Actions/OCR gate。
+> **【更新 2026-07-29 · YUK-788 owner 决策回流实施完成，待远端验收】**
+> YUK-795 已随 PR #1101 合入 main；当前已把 pending、dismiss cooldown、active accept
+> 与 terminal reopen 统一接入 nightly identity gate，并让重开的归纳读取 owner 最近一次
+> accept/edit claim。定向 unit/DB 与 typecheck 已通过，下一步提交 PR 走 Actions/OCR。
 
 ## NOW
 
-- **唯一 active 线：Grounding · 猜想证据 YUK-795**
-  - Branch：`codex/yuk-795-accountability-loop`；PR #1101。
+- **唯一 active 线：Grounding · 猜想证据 YUK-788**
+  - Branch：`codex/yuk-788-owner-feedback-loop`；PR 待创建。
   - Worktree：
-    `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-795-accountability-loop`。
-  - 规则已钉死：score point `>0`=hit、`<0`=miss、`=0`=neutral；连续一条不改变排序；
-    连续两条 miss → 0.25×，连续两条 hit → 1.15×；hard flag 开启且 Tier-1
-    `EMERGING` → 1.25×。
-  - 聚合在同一 owner 的 `(cause_category × knowledge_id)` 身份，跨再归纳保留责任；
-    correction 后的失效 probe 不计入 streak。
-  - hard-confirm 进入同一 live reader/ranker；hard flag 仍默认 OFF，因为当前 Judge
-    尚无诚实 `target_error_match`，且 soft→hard 永远需要 owner 当刻新确认。
-  - sequence-2 不伪造 score；projection 保留独立题目 lineage，terminal confirmation
-    在依赖有效时只折回同一 conjecture 的 sequence-1 score。
-  - 纯 fold、correction-aware DB reader、nightly top-K 前排序和 flag-on/fresh-owner
-    fail-closed 路径均已有 unit/DB regression。
+    `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-788-owner-feedback-loop`。
+  - pending proposal 仍由 inbox projection 第一层去重；owner decision / probe terminal
+    history 在同 capability 内作为第二层 gate。
+  - dismiss 同 cell 冷却 30 天；accepted 但未 terminal 的 active conjecture 不重复归纳。
+  - confirmed/retired terminal 后必须出现至少两条更晚的有效 failure attempt 才能 reopen；
+    重开时把最近 accept/edit 的 owner claim 注入 `prior_claim_md`，无 claim fail closed。
+  - terminal 读取复用 correction-aware probe evidence reader；proposal/rate/result 查询按
+    candidate KC 限域并分块，不新建事件流。
+  - 定向 unit 43/43、closed-loop DB 14/14、typecheck、Biome、diff check 已通过。
 - **CI 提速已并入**
   - main 已拆 static/audits、unit、DB、migration、build、usability 并行 lanes；
     DB reset 合批并拆为两路 shard，末端 aggregate 保留 required-check 名称并
@@ -33,16 +29,16 @@
   - #1100 首次样本 DB shard 为 6m15s / 5m11s；5 次 median 验收仍由
     YUK-817/818 继续收数，不在本产品线扩张。
   - 按 owner 指示，不在本地重复跑 CI gate；只监听 GitHub Actions。
-- **YUK-787 已收口**
-  - PR #1098 于 2026-07-29 合并；GitHub CI Gate、OCR 与 CodeQL 全绿，Linear Done。
-  - 当前分支基于合并后的 `main@876a501a`。
+- **YUK-787 / YUK-795 已收口**
+  - PR #1098 / #1101 已合并；CI Gate、OCR 与 CodeQL 全绿，Linear 均 Done。
+  - 当前分支基于 `origin/main@41fa2a07`。
 
 ## NEXT
 
-1. 监听 PR #1101 的 GitHub Actions/OCR；不在本地重复完整 CI gate。
-2. 处理远端失败或 review；全绿后合并并将 YUK-795 对齐 Done。
-3. 再推进 YUK-788/803：dismiss/reopen/cooldown、prior claim、soft archive/hard 不变。
-4. 通过真实 owner 数据闸门 YUK-814 后，才进入 intervention snapshot、pedagogy、
+1. 提交并创建 YUK-788 PR，监听 GitHub Actions/OCR；处理阻塞项后合并并对齐 Done。
+2. 证据化收口已在 YUK-785 落地但 Linear 仍 Backlog 的 YUK-803：edit archive soft、
+   hard 不变；只在代码/测试与 issue 验收逐项一致后关闭。
+3. 通过真实 owner 数据闸门 YUK-814 后，才进入 intervention snapshot、pedagogy、
    QuestionAuthor/Verify、隔离 FSRS、结算、Brief/Copilot/profile。
 
 ## PARKED

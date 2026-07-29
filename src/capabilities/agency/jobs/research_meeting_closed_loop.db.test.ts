@@ -183,13 +183,21 @@ async function seedKnowledge(): Promise<void> {
  * fans out over the ATTEMPT payload's referenced_knowledge_ids, so they must live there.
  * Three distinct attempts ⇒ recurrence_count 3 (floor is 2).
  */
-async function seedRecurringFailures(count = 3): Promise<string[]> {
+async function seedRecurringFailures(
+  count = 3,
+  options: {
+    prefix?: string;
+    createdAt?: (index: number) => Date;
+  } = {},
+): Promise<string[]> {
   const db = testDb();
   const attemptIds: string[] = [];
+  const prefix = options.prefix ?? 'wy';
   for (let i = 0; i < count; i += 1) {
-    const attemptId = `att_wy_${i}`;
-    const questionId = `q_wy_${i}`;
-    const createdAt = new Date(Date.now() - (i + 1) * 24 * 60 * 60 * 1000);
+    const attemptId = `att_${prefix}_${i}`;
+    const questionId = `q_${prefix}_${i}`;
+    const createdAt =
+      options.createdAt?.(i) ?? new Date(Date.now() - (i + 1) * 24 * 60 * 60 * 1000);
     attemptIds.push(attemptId);
     await db.insert(question).values({
       id: questionId,
@@ -270,8 +278,55 @@ async function answerProbeViaRoute(probeQuestionId: string, answerMd: string): P
   return apiRequest(`/api/conjecture/probe/${probeQuestionId}/answer`, { answer_md: answerMd });
 }
 
-async function acceptViaRoute(proposalId: string): Promise<Response> {
-  return apiRequest(`/api/proposals/${proposalId}/decisions`, { decision: 'accept' });
+async function acceptViaRoute(proposalId: string, correctedClaim?: string): Promise<Response> {
+  return apiRequest(`/api/proposals/${proposalId}/decisions`, {
+    decision: 'accept',
+    ...(correctedClaim ? { corrected_payload: { claim_md: correctedClaim } } : {}),
+  });
+}
+
+async function dismissViaRoute(proposalId: string): Promise<Response> {
+  return apiRequest(`/api/proposals/${proposalId}/decisions`, {
+    decision: 'dismiss',
+    user_note: '这个判断不成立。',
+  });
+}
+
+async function answerBothProbes(proposalId: string): Promise<typeof event.$inferSelect> {
+  const db = testDb();
+  const firstProbe = (await db.select().from(question)).find(
+    (row) =>
+      row.source_ref === proposalId &&
+      ((row.metadata as Record<string, unknown>).probe_sequence ?? 1) === 1,
+  );
+  if (!firstProbe) throw new Error('expected first probe');
+  expect((await answerProbeViaRoute(firstProbe.id, '使动')).status).toBe(200);
+
+  const followup = (await db.select().from(question)).find(
+    (row) =>
+      row.source_ref === proposalId &&
+      (row.metadata as Record<string, unknown>).probe_sequence === 2,
+  );
+  if (!followup) throw new Error('expected follow-up probe');
+  const terminalResponse = await answerProbeViaRoute(followup.id, '还是使动');
+  expect(terminalResponse.status).toBe(200);
+  await expect(terminalResponse.json()).resolves.toMatchObject({
+    status: 'confirmed',
+    resolution: 'confirmed',
+  });
+
+  const [terminal] = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, PROBE_RESULT_ACTION),
+        eq(event.caused_by_event_id, proposalId),
+        sql`${event.payload}->>'resolution' = 'confirmed'`,
+      ),
+    );
+  if (!terminal) throw new Error('expected terminal probe result');
+  return terminal;
 }
 
 describe('closed loop: nightly → proposal → accept → probe → real judge → reconcile (YUK-789)', () => {
@@ -439,6 +494,84 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
       .where(eq(kc_typed_state.subject_id, KC_ID));
     expect(cell, 'reconcile must advance the typed ledger').toBeTruthy();
     expect(cell.evidence_event_ids).toEqual(expect.arrayContaining([proposalId, probeResult.id]));
+  });
+
+  it('keeps a dismissed conjecture identity out of nightly induction for the 30-day cooldown', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+    await runResearchMeetingNightly(db);
+    const [proposal] = await listProposalInboxRows(db, {
+      status: 'pending',
+      kind: 'conjecture',
+    });
+    expect((await dismissViaRoute(proposal.id)).status).toBe(201);
+    const inductionCallsBefore = (await taskKindCounts()).MindModelInductionTask;
+
+    const rerun = await runResearchMeetingNightly(db);
+
+    expect(rerun).toMatchObject({
+      considered: 0,
+      conjectures_created: 0,
+      conjectures_abstained: 0,
+    });
+    expect((await taskKindCounts()).MindModelInductionTask).toBe(inductionCallsBefore);
+    expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
+      0,
+    );
+  });
+
+  it('reopens a terminal conjecture only after two fresh failures and injects the owner rewrite', async () => {
+    const db = testDb();
+    const ownerRewrite = '你会在叙事视角切换时把意动误判成使动。';
+    await seedRecurringFailures(3);
+    await runResearchMeetingNightly(db);
+    const [proposal] = await listProposalInboxRows(db, {
+      status: 'pending',
+      kind: 'conjecture',
+    });
+    expect((await acceptViaRoute(proposal.id, ownerRewrite)).status).toBe(201);
+    const terminal = await answerBothProbes(proposal.id);
+    const inductionCallsBefore = (await taskKindCounts()).MindModelInductionTask;
+
+    const settledRerun = await runResearchMeetingNightly(db, {
+      now: () => new Date(terminal.created_at.getTime() + 1_000),
+    });
+    expect(settledRerun.considered).toBe(0);
+    expect((await taskKindCounts()).MindModelInductionTask).toBe(inductionCallsBefore);
+
+    await seedRecurringFailures(2, {
+      prefix: 'reopen',
+      createdAt: (index) => new Date(terminal.created_at.getTime() + (index + 1) * 1_000),
+    });
+    sdk.prompts.length = 0;
+    sdk.respond = (prompt) => {
+      if (prompt.includes('"evidence_cells"')) {
+        return sdkSuccess({
+          kind: 'abstain',
+          reason_code: 'insufficient_evidence',
+          explanation_md: '新证据允许重开，但尚不足以形成新提案。',
+          evidence_event_ids: [],
+        });
+      }
+      throw new Error(`unexpected task after reopen: ${prompt.slice(0, 120)}`);
+    };
+
+    const reopened = await runResearchMeetingNightly(db, {
+      now: () => new Date(terminal.created_at.getTime() + 10_000),
+    });
+
+    expect(reopened).toMatchObject({
+      considered: 1,
+      conjectures_created: 0,
+      conjectures_abstained: 1,
+    });
+    const reopenedInductionPrompts = sdk.prompts.filter((prompt) =>
+      prompt.includes('"evidence_cells"'),
+    );
+    expect(reopenedInductionPrompts).toHaveLength(RESEARCH_MEETING_SAMPLES);
+    for (const prompt of reopenedInductionPrompts) {
+      expect(prompt).toContain(`"prior_claim_md":"${ownerRewrite}"`);
+    }
   });
 
   it('re-running reconcile is idempotent — no second prediction_score for the same probe', async () => {

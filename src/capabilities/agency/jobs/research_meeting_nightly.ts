@@ -12,16 +12,18 @@
 // Per run:
 //   1. (PRE-LLM, retryable) read recent failures (with their YUK-562 reasoning
 //      traces) + per-KC mastery projection + the set of cause×KC keys that
-//      already have a PENDING conjecture (dedup);
-//   2. deterministic 取证 (gatherConjectureEvidence) → prediction-accountability
-//      re-rank (repeated within-owner misses downweight; repeated hits boost);
+//      already have a PENDING conjecture (first dedup);
+//   2. deterministic 取证 (gatherConjectureEvidence) → owner-decision/terminal
+//      history gate (30-day dismiss cooldown; terminal reopen needs two fresh
+//      failures) → prediction-accountability re-rank;
 //   3. (PRE-LLM, retryable) GROUND cells in salience-order batches until K usable
 //      cells are found or candidates are exhausted (enrichEvidenceCells, YUK-786):
 //      KC name + subject identity + the first-hand attempt evidence (question,
 //      the owner's wrong answer, their reasoning trace, the attribution). Without
 //      this the LLM sees 7 opaque scalars and can only invent the domain;
-//   4. for each grounded top-K cell: induceConjecture (Opus N=3 self-consistency on the anthropic-sub
-//      OAuth lane) → one ConjectureDraft + A13 fields → writeAiProposal (propose-only).
+//   4. for each grounded top-K cell: induceConjecture (Opus N=3 self-consistency on
+//      the anthropic-sub OAuth lane, with the latest owner claim on a valid reopen)
+//      → one ConjectureDraft + A13 fields → writeAiProposal (propose-only).
 //
 // Failure asymmetry (D7 / F-1): shared PRE-LLM reads run OUTSIDE the per-cell swallow —
 // a throw there is a legit retryable DB fault that propagates to the builder's
@@ -53,6 +55,12 @@ import type {
   LoadedConjectureEvidenceImage,
 } from '@/capabilities/agency/server/conjecture/evidence';
 import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
+import {
+  type ConjectureHistory,
+  type LoadConjectureHistoryFn,
+  applyConjectureHistoryGate,
+  loadConjectureHistory,
+} from '@/capabilities/agency/server/conjecture/history';
 import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
@@ -391,8 +399,10 @@ export interface ResearchMeetingDeps {
   getMasteryProjectionFn?: GetMasteryProjectionFn;
   /** YUK-786: PRE-LLM grounding read (KC name + subject + first-hand samples). */
   enrichEvidenceCellsFn?: EnrichEvidenceCellsFn;
-  /** dedup base: cause×KC keys with a PENDING conjecture (default reads the inbox). */
+  /** First dedup base: cause×KC keys with a PENDING conjecture. */
   loadKnownConjectureKeysFn?: (db: Db) => Promise<Set<string>>;
+  /** YUK-788: owner decisions + terminal lifecycle for tonight's candidate identities. */
+  loadConjectureHistoryFn?: LoadConjectureHistoryFn;
   /** YUK-795: correction-aware score history folded by cause×KC identity. */
   loadPredictionAccountabilityFn?: LoadPredictionAccountabilityFn;
   /** injected runner — defaults to the real db-bound runTask. */
@@ -418,12 +428,7 @@ export interface ResearchMeetingDeps {
   reconcileFn?: (db: Db) => Promise<ReconcileResult>;
 }
 
-/**
- * Pending-conjecture dedup: cause×KC keys that already carry a PENDING conjecture
- * proposal, so the same belief is not re-raised while one is still open. Uses the
- * inbox status derivation (listProposalInboxRows) — a dismissed/accepted conjecture
- * drops out of `pending`, so its evidence can be re-raised if it recurs.
- */
+/** Pending-conjecture dedup before the owner-decision/terminal history gate. */
 async function defaultLoadKnownConjectureKeys(db: Db): Promise<Set<string>> {
   const rows = await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' });
   const keys = new Set<string>();
@@ -790,6 +795,7 @@ async function runResearchMeetingNightlyClaimed(
   const enrichEvidenceCellsFn = deps.enrichEvidenceCellsFn ?? enrichEvidenceCells;
   const loadKnownConjectureKeysFn =
     deps.loadKnownConjectureKeysFn ?? defaultLoadKnownConjectureKeys;
+  const loadConjectureHistoryFn = deps.loadConjectureHistoryFn ?? loadConjectureHistory;
   const loadPredictionAccountabilityFn =
     deps.loadPredictionAccountabilityFn ?? loadPredictionAccountabilityByKey;
   const induceConjectureFn = deps.induceConjectureFn ?? induceConjecture;
@@ -873,16 +879,22 @@ async function runResearchMeetingNightlyClaimed(
     masteryByKnowledgeId,
     knownConjectureKeys,
   });
-  const accountabilityByKey =
+  const historyByKey =
     gatheredCells.length > 0
-      ? await loadPredictionAccountabilityFn(db, gatheredCells)
+      ? await loadConjectureHistoryFn(db, gatheredCells)
+      : new Map<string, ConjectureHistory>();
+  const historyGate = applyConjectureHistoryGate(gatheredCells, failures, historyByKey, now);
+  const accountabilityByKey =
+    historyGate.cells.length > 0
+      ? await loadPredictionAccountabilityFn(db, historyGate.cells)
       : new Map<string, PredictionAccountability>();
-  const cells = rankEvidenceCellsByAccountability(gatheredCells, accountabilityByKey);
+  const cells = rankEvidenceCellsByAccountability(historyGate.cells, accountabilityByKey);
 
   // Empty-night early return (YUK-377 复审 §3.5): zero cells (no recurring failure
-  // evidence, or every cell deduped by a pending conjecture) means the propose half has
-  // nothing to anchor. Skip trigger + scan events; persist only the execution completion
-  // guard so a same-job redelivery cannot reconcile or discover new work twice.
+  // evidence, or every cell deduped/gated by conjecture lifecycle history) means the
+  // propose half has nothing to anchor. Skip trigger + scan events; persist only the
+  // execution completion guard so a same-job redelivery cannot reconcile or discover
+  // new work twice.
   // MUST stay AFTER the reconcile call above:
   // the deterministic settlement half is never skipped. Zero external consumers of these
   // events exist (grep-verified 2026-07-06), so skipping them changes no downstream reader.
@@ -1024,12 +1036,14 @@ async function runResearchMeetingNightlyClaimed(
         cost_usd: number;
       }> => {
         let induced: InduceConjectureResult;
+        const priorClaimMd = historyGate.priorClaimMdByKey.get(cell.key);
         try {
           induced = await induceConjectureFn({
             cells: [cell],
             evidenceImages,
             samples: RESEARCH_MEETING_SAMPLES,
             runTaskFn,
+            ...(priorClaimMd ? { priorClaimMd } : {}),
             // YUK-786: render the prompt in the cell's OWN subject voice. An
             // untagged KC (subject_id null) stays on the neutral `general`
             // profile — inheriting a concrete subject would re-introduce exactly
