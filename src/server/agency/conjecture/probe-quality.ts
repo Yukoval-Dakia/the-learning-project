@@ -145,11 +145,7 @@ export async function prepareConjectureProbePair(
 
     if (authorResult.task_run_id) taskRunIds.push(authorResult.task_run_id);
     costUsd += authorResult.cost_usd ?? 0;
-    const probePackage = parseTaskStructuredOutput(
-      authorResult,
-      ConjectureProbePackage,
-      'package',
-    );
+    const probePackage = parseTaskStructuredOutput(authorResult, ConjectureProbePackage, 'package');
     if (!probePackage) {
       operationalFailureSeen = true;
       lastOperationalTaskKind = 'ConjectureProbeAuthorTask';
@@ -176,8 +172,7 @@ export async function prepareConjectureProbePair(
         attempt,
         outcome: 'structure_failed',
         failure_codes: structuralFailures,
-        explanation_md:
-          'The pair failed subject-neutral structure checks before semantic review.',
+        explanation_md: 'The pair failed subject-neutral structure checks before semantic review.',
         author_task_run_id: authorResult.task_run_id ?? null,
         reviewer_task_run_id: null,
       });
@@ -235,8 +230,7 @@ export async function prepareConjectureProbePair(
           attempt,
           outcome: 'operational_failed',
           failure_codes: ['review_output_invalid'],
-          explanation_md:
-            'Independent review output was invalid; the whole pair was regenerated.',
+          explanation_md: 'Independent review output was invalid; the whole pair was regenerated.',
           author_task_run_id: authorResult.task_run_id ?? null,
           reviewer_task_run_id: reviewResult.task_run_id ?? null,
         });

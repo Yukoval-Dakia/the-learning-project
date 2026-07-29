@@ -1,5 +1,5 @@
 import type { TaskTextResult } from '@/server/ai/provenance';
-import { z } from 'zod';
+import type { z } from 'zod';
 
 /** Parse balanced JSON objects while recovering after malformed prose candidates. */
 export function jsonObjectCandidates(text: string): unknown[] {
@@ -57,10 +57,9 @@ export function parseTaskStructuredOutput<T>(
   schema: z.ZodType<T>,
   envelopeKey: string,
 ): T | null {
-  const candidates = [
-    result.structured_output,
-    ...jsonObjectCandidates(result.text),
-  ].filter((candidate) => candidate !== undefined && candidate !== null);
+  const candidates = [result.structured_output, ...jsonObjectCandidates(result.text)].filter(
+    (candidate) => candidate !== undefined && candidate !== null,
+  );
   for (const candidate of candidates) {
     if (typeof candidate === 'object' && candidate !== null && envelopeKey in candidate) {
       const wrapped = schema.safeParse((candidate as Record<string, unknown>)[envelopeKey]);
