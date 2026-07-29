@@ -3,14 +3,16 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-29
-> **【更新 2026-07-29 · YUK-820 继续：DB affected gate 已通过本地全量验证】**
+> **【更新 2026-07-29 · YUK-820：DB affected gate 已合并，等待 live timing】**
 > 真实 failed-head 回放确认 unit 21/21 捕获；同代码 PR/main 对照确认 unit 已降时但
 > DB 仍是 354–355 秒关键路径。DB selector 已完成 20 个真实失败 run backfill，
-> 初版 2 miss 已固化为 failure sentinels，最终 20/20 捕获；full pre-PR 与独立 review 已通过。
+> 初版 2 miss 已固化为 failure sentinels，最终 20/20 捕获；PR #1109 已合并。
 
 ## NOW
 
-- **YUK-820 active：把 DB required gate 切到 fail-closed affected selection**
+- **YUK-820 active：实现已合并，等待首条普通 server/API PR live acceptance**
+  - PR #1109 / squash `1df65fd7` 已合并；final head CI Gate `30452431101` 全绿，
+    13 个 review threads 已清零。
   - unit 真实失败 head：21/21 捕获，覆盖 18 PR；此前 3 个表面 miss 均为 DB partition。
   - #1108 PR/main 同代码对照：unit step 132→41s，但 DB job 仍约 355s，wall 394/404s；
     所以 owner 看到“没变短多少”属实，根因是 DB critical path 未增量。
@@ -19,11 +21,11 @@
   - exact #1108 tree：最终 selector 195/390 DB files；其 181-file 前序集合两 shard
     91+90 files、2,349 tests 全绿；新增 dynamic-import sentinels 由 full suite 覆盖；
     本机并发容器时间不冒充 GitHub runner 节省值。
-  - planner 输出 `db_selection`，selector/direct guard/source scan/dynamic import/failure
+  - main 已有 `db_selection`，selector/direct guard/source scan/dynamic import/failure
     sentinels/full fallback/empty-shard skip/artifacts 均已接入；两个 DB shards 共用前置
     job 生成的同一份 selection，杜绝瞬时 selector 分歧造成覆盖空洞。
-  - full pre-PR：390 DB files / 4,263 tests 通过（另 9 skipped、1 todo）；migration
-    26/26、build、lint、typecheck、focused 40/40 均通过；独立 review 无 finding。
+  - #1109 因触及 CI 自身按设计 full：DB shard 测试 323.9s / 904.8s；第二 shard 是
+    相对同代码历史约 326s 的极端长尾，不能冒充 affected 提速证据，也不归因于 selector。
 - **YUK-814 保持 In Progress，停在真实数据输入闸门**
   - Harness 已随 PR #1105 / merge commit `ae02e020` 落到 main；真实 shadow/blind/canary
     尚未执行，仍需 production backup ZIP / 6–10 个合格真实 owner 失败簇。
@@ -32,10 +34,9 @@
 
 ## NEXT
 
-1. 交付 YUK-820 PR；该 PR 与 main canary 因触及 CI 自身必须 full。
-2. 下一条普通 server/API PR 读取 DB selector artifacts 与 GitHub job timing，验收真实
+1. 下一条普通 server/API PR 读取 DB selector artifacts 与 GitHub job timing，验收真实
    wall-clock；本 selector PR 与 main canary 因触及 CI 自身必须 full，不能冒充 affected 样本。
-3. YUK-814 获得 production backup 后按 inspect → shadow → blind → score 执行；不足 6 个
+2. YUK-814 获得 production backup 后按 inspect → shadow → blind → score 执行；不足 6 个
    eligible failure clusters 就继续积累，不用 synthetic/mock 代替。
 
 ## PARKED
