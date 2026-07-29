@@ -470,14 +470,26 @@ export const ConjectureProbeReviewFailureCode = z.enum([
   'target_error_answer_not_distinct',
 ]);
 export type ConjectureProbeReviewFailureCodeT = z.infer<typeof ConjectureProbeReviewFailureCode>;
-export const ConjectureProbeQualityFailureCode = z.enum([
-  ...ConjectureProbeReviewFailureCode.options,
+
+/** Codes proven by the subject-neutral deterministic structure guard. */
+export const ConjectureProbeStructureFailureCode = z.enum([
+  'probe_pair_not_independent',
+  'target_error_answer_not_distinct',
+]);
+export type ConjectureProbeStructureFailureCodeT = z.infer<
+  typeof ConjectureProbeStructureFailureCode
+>;
+
+/** Provider/transport/parser failures are operational, never quality votes. */
+export const ConjectureProbeOperationalFailureCode = z.enum([
   'author_output_invalid',
   'review_output_invalid',
   'author_operational_failure',
   'review_operational_failure',
 ]);
-export type ConjectureProbeQualityFailureCodeT = z.infer<typeof ConjectureProbeQualityFailureCode>;
+export type ConjectureProbeOperationalFailureCodeT = z.infer<
+  typeof ConjectureProbeOperationalFailureCode
+>;
 
 /**
  * Subject-neutral structural guard. Subject-specific mathematics/language checks are
@@ -485,8 +497,8 @@ export type ConjectureProbeQualityFailureCodeT = z.infer<typeof ConjectureProbeQ
  */
 export function evaluateConjectureProbePackageStructure(
   probePackage: ConjectureProbePackageT,
-): ConjectureProbeReviewFailureCodeT[] {
-  const failureCodes = new Set<ConjectureProbeReviewFailureCodeT>();
+): ConjectureProbeStructureFailureCodeT[] {
+  const failureCodes = new Set<ConjectureProbeStructureFailureCodeT>();
   if (
     normalizeProbeIdentity(probePackage.primary.prompt_md) ===
     normalizeProbeIdentity(probePackage.followup.prompt_md)
@@ -542,38 +554,49 @@ export const ConjectureProbeReview = z
   });
 export type ConjectureProbeReviewT = z.infer<typeof ConjectureProbeReview>;
 
-export const ConjectureProbeQualityAttempt = z
-  .object({
-    attempt: z.number().int().min(1).max(2),
-    outcome: z.enum(['structure_failed', 'review_failed', 'operational_failed', 'passed']),
-    failure_codes: z.array(ConjectureProbeQualityFailureCode).max(7),
-    explanation_md: z.string().trim().min(1).max(1000),
-    author_task_run_id: z.string().trim().min(1).nullable(),
-    reviewer_task_run_id: z.string().trim().min(1).nullable(),
-  })
-  .superRefine((attempt, ctx) => {
-    if (new Set(attempt.failure_codes).size !== attempt.failure_codes.length) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['failure_codes'],
-        message: 'failure_codes must be unique',
-      });
-    }
-    if (attempt.outcome === 'passed' && attempt.failure_codes.length > 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['failure_codes'],
-        message: 'a passed attempt cannot contain failure codes',
-      });
-    }
-    if (attempt.outcome !== 'passed' && attempt.failure_codes.length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['failure_codes'],
-        message: 'a failed attempt must contain at least one failure code',
-      });
-    }
-  });
+const ConjectureProbeQualityAttemptBase = {
+  attempt: z.number().int().min(1).max(2),
+  explanation_md: z.string().trim().min(1).max(1000),
+  author_task_run_id: z.string().trim().min(1).nullable(),
+  reviewer_task_run_id: z.string().trim().min(1).nullable(),
+} as const;
+
+function uniqueProbeFailureCodes<T extends z.ZodTypeAny>(code: T, max: number) {
+  return z
+    .array(code)
+    .min(1)
+    .max(max)
+    .refine((codes) => new Set(codes).size === codes.length, {
+      message: 'failure_codes must be unique',
+    });
+}
+
+/**
+ * The discriminant also constrains the code vocabulary. This prevents an operational
+ * outage from being persisted as a semantic quality vote (and vice versa).
+ */
+export const ConjectureProbeQualityAttempt = z.discriminatedUnion('outcome', [
+  z.object({
+    ...ConjectureProbeQualityAttemptBase,
+    outcome: z.literal('structure_failed'),
+    failure_codes: uniqueProbeFailureCodes(ConjectureProbeStructureFailureCode, 2),
+  }),
+  z.object({
+    ...ConjectureProbeQualityAttemptBase,
+    outcome: z.literal('review_failed'),
+    failure_codes: uniqueProbeFailureCodes(ConjectureProbeReviewFailureCode, 5),
+  }),
+  z.object({
+    ...ConjectureProbeQualityAttemptBase,
+    outcome: z.literal('operational_failed'),
+    failure_codes: uniqueProbeFailureCodes(ConjectureProbeOperationalFailureCode, 2),
+  }),
+  z.object({
+    ...ConjectureProbeQualityAttemptBase,
+    outcome: z.literal('passed'),
+    failure_codes: z.array(z.never()).max(0),
+  }),
+]);
 export type ConjectureProbeQualityAttemptT = z.infer<typeof ConjectureProbeQualityAttempt>;
 
 export const ConjectureProbeQualityAudit = z

@@ -7,6 +7,7 @@ import {
   ConjectureDraft,
   ConjectureHypothesisDraft,
   ConjectureProbePackage,
+  ConjectureProbeQualityAttempt,
   LearningItemOpenStatus,
   LearningItemStatus,
   evaluateConjectureProbePackageStructure,
@@ -244,6 +245,43 @@ describe('ConjectureDraft', () => {
             },
           ],
         },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('keeps structure, review, and operational attempt codes in separate vocabularies', () => {
+    const base = {
+      attempt: 1,
+      explanation_md: '失败原因。',
+      author_task_run_id: 'run_author',
+      reviewer_task_run_id: null,
+    };
+    expect(
+      ConjectureProbeQualityAttempt.safeParse({
+        ...base,
+        outcome: 'structure_failed',
+        failure_codes: ['probe_pair_not_independent'],
+      }).success,
+    ).toBe(true);
+    expect(
+      ConjectureProbeQualityAttempt.safeParse({
+        ...base,
+        outcome: 'structure_failed',
+        failure_codes: ['author_operational_failure'],
+      }).success,
+    ).toBe(false);
+    expect(
+      ConjectureProbeQualityAttempt.safeParse({
+        ...base,
+        outcome: 'operational_failed',
+        failure_codes: ['author_operational_failure'],
+      }).success,
+    ).toBe(true);
+    expect(
+      ConjectureProbeQualityAttempt.safeParse({
+        ...base,
+        outcome: 'operational_failed',
+        failure_codes: ['probe_not_targeting'],
       }).success,
     ).toBe(false);
   });

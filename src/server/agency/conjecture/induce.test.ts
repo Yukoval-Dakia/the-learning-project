@@ -1164,7 +1164,9 @@ describe('induceConjecture self-consistency', () => {
     expect(result.probe_quality_attempts).toHaveLength(2);
     expect(
       result.probe_quality_attempts.every((attempt) =>
-        attempt.failure_codes.includes('probe_pair_not_independent'),
+        attempt.outcome === 'structure_failed'
+          ? attempt.failure_codes.includes('probe_pair_not_independent')
+          : false,
       ),
     ).toBe(true);
     expect(runTaskFn.mock.calls.map(([kind]) => kind)).toEqual([
