@@ -23,17 +23,21 @@
    `corrected_claim_md` 优先于原 proposal claim，并接入已有 `priorClaimMd`。
 5. proposal/rate/result 查询仅覆盖今晚 candidate KC 并按 500 分块；terminal 活性复用
    correction-aware `getEffectiveProbeResultStatuses(..., validateDirectChain=true)`。
-6. 没有新事件流、schema 或跨 capability 深层导入；nightly 只消费已有 proposal、
+6. identity 最新决定只消费每个 proposal 的最新 rate；rollback 撤销旧 accept，且
+   terminal 必须属于 identity 当前最新 accepted proposal，旧 proposal 的较晚结算不能
+   错放仍 active 的新 proposal。
+7. 没有新事件流、schema 或跨 capability 深层导入；nightly 只消费已有 proposal、
    rate、probe_result 与 attempt facts。
 
 ## 验证与远端
 
 - YUK-788 已提交并推送为 PR #1102；实现 commit `7049cb07`。
 - 定向 unit `research_meeting_nightly.unit.test.ts` 44/44 通过。
-- closed-loop DB `research_meeting_closed_loop.db.test.ts` 16/16 通过，覆盖：
+- closed-loop DB `research_meeting_closed_loop.db.test.ts` 18/18 通过，覆盖：
   dismiss cooldown、terminal 不重复归纳、两条新失败重开、owner rewrite 进入真实 prompt、
   stale accept 不压过新 dismiss、corrected rate 不再参与 fold、enrichment 不得以
-  pre-terminal evidence 冒充 fresh reopen floor。
+  pre-terminal evidence 冒充 fresh reopen floor、旧 proposal terminal 不得结算新 accept、
+  rollback 必须撤销旧 accept。
 - `pnpm typecheck`、改动文件 Biome、`git diff --check` 已通过。
 - main 新增 CI 并行 lanes：static/audits、unit、DB、migration、build、usability；
   aggregate 保留 required-check 名称并 fail closed。

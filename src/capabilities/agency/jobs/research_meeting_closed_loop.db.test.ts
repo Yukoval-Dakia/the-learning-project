@@ -661,6 +661,77 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     }
   });
 
+  it('keeps the latest accepted proposal active when an older proposal settles later', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+    await runResearchMeetingNightly(db);
+    const [olderProposal] = await listProposalInboxRows(db, {
+      status: 'pending',
+      kind: 'conjecture',
+    });
+    expect((await acceptViaRoute(olderProposal.id)).status).toBe(201);
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const newerProposalId = await writeAiProposal(db, {
+      actor_ref: 'research_meeting',
+      payload: olderProposal.payload,
+    });
+    expect((await acceptViaRoute(newerProposalId)).status).toBe(201);
+
+    const olderTerminal = await answerBothProbes(olderProposal.id);
+    await seedRecurringFailures(2, {
+      prefix: 'after_older_terminal',
+      createdAt: (index) => new Date(olderTerminal.created_at.getTime() + (index + 1) * 1_000),
+    });
+    const inductionCallsBefore = (await taskKindCounts()).MindModelInductionTask;
+
+    const rerun = await runResearchMeetingNightly(db, {
+      now: () => new Date(olderTerminal.created_at.getTime() + 10_000),
+    });
+
+    expect(rerun).toMatchObject({
+      considered: 0,
+      conjectures_created: 0,
+    });
+    expect((await taskKindCounts()).MindModelInductionTask).toBe(inductionCallsBefore);
+  });
+
+  it('treats a newer rollback rate as reversing an older accept decision', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+    await runResearchMeetingNightly(db);
+    const [proposal] = await listProposalInboxRows(db, {
+      status: 'pending',
+      kind: 'conjecture',
+    });
+    expect((await acceptViaRoute(proposal.id)).status).toBe(201);
+    const [acceptRate] = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposal.id)));
+    await writeEvent(db, {
+      id: `rollback_${acceptRate.id}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: proposal.id,
+      outcome: 'success',
+      payload: { rating: 'rollback' },
+      caused_by_event_id: proposal.id,
+      created_at: new Date(acceptRate.created_at.getTime() + 1),
+    });
+
+    const rerun = await runResearchMeetingNightly(db, {
+      now: () => new Date(acceptRate.created_at.getTime() + 2),
+    });
+
+    expect(rerun).toMatchObject({
+      considered: 1,
+      conjectures_created: 1,
+    });
+  });
+
   it('re-running reconcile is idempotent — no second prediction_score for the same probe', async () => {
     const db = testDb();
     await seedRecurringFailures(3);

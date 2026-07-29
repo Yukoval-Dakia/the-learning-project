@@ -21,11 +21,15 @@
   - confirmed/retired terminal 后必须出现至少两条更晚的有效 failure attempt 才能 reopen；
     enrichment 后会用可复现 evidence 再验一次 fresh floor；重开时把最近 accept/edit 的
     owner claim 注入 `prior_claim_md`，无 claim fail closed。
+  - lifecycle fold 按每个 proposal 的最新 rate 取 identity 最新决定；rollback 会撤销旧
+    accept，terminal 只结算到 identity 当前最新 accepted proposal，不能由旧 proposal
+    的更晚 terminal 错放仍在测试中的新 proposal。
   - terminal 读取复用 correction-aware probe evidence reader；proposal/rate/result 查询按
     candidate KC 限域并分块，不新建事件流。
-  - 定向 unit 44/44、closed-loop DB 16/16、typecheck、Biome、diff check 已通过；
+  - 定向 unit 44/44、closed-loop DB 18/18、typecheck、Biome、diff check 已通过；
     review 指出的 stale accept、corrected rate、enrichment 后 fresh floor 三条缺口均已
-    补回归；history filter 的 map side effect 也已移除。
+    补回归；latest accepted proposal/rollback fold 反例也已覆盖，history filter 的 map
+    side effect 已移除。
 - **CI 提速已并入**
   - main 已拆 static/audits、unit、DB、migration、build、usability 并行 lanes；
     DB reset 合批并拆为两路 shard，末端 aggregate 保留 required-check 名称并

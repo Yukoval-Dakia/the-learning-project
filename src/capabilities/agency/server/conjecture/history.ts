@@ -17,7 +17,7 @@ export const CONJECTURE_REOPEN_FAILURE_FLOOR = 2;
 type ConjectureHistoryCandidate = Pick<EvidenceCell, 'key' | 'cause_category' | 'knowledge_id'>;
 
 export interface ConjectureHistory {
-  latest_decision: 'accept' | 'dismiss' | null;
+  latest_decision: 'accept' | 'dismiss' | 'rollback' | null;
   latest_decision_at: Date | null;
   latest_accept_at: Date | null;
   latest_terminal_at: Date | null;
@@ -190,27 +190,36 @@ export async function loadConjectureHistory(
     .filter((row) => rateCorrectionStatuses.get(row.id)?.state === 'active')
     .sort(compareNewest);
   const latestRateByProposal = new Map<string, (typeof rateRows)[number]>();
-  const historyByKey = new Map<string, ConjectureHistory>();
   for (const row of activeRateRows) {
+    const proposalId = row.caused_by_event_id;
+    if (!proposalId || !proposalById.has(proposalId) || latestRateByProposal.has(proposalId)) {
+      continue;
+    }
+    latestRateByProposal.set(proposalId, row);
+  }
+
+  const historyByKey = new Map<string, ConjectureHistory>();
+  const latestAcceptedProposalIdByKey = new Map<string, string>();
+  for (const row of latestRateByProposal.values()) {
     const proposalId = row.caused_by_event_id;
     if (!proposalId) continue;
     const proposal = proposalById.get(proposalId);
     if (!proposal) continue;
-    if (!latestRateByProposal.has(proposalId)) latestRateByProposal.set(proposalId, row);
     const rating = toPlainRecord(row.payload).rating;
-    if (rating !== 'accept' && rating !== 'dismiss') continue;
+    if (rating !== 'accept' && rating !== 'dismiss' && rating !== 'rollback') continue;
     const history = historyByKey.get(proposal.key) ?? emptyConjectureHistory();
     if (history.latest_decision === null) {
       history.latest_decision = rating;
       history.latest_decision_at = row.created_at;
-    }
-    if (rating === 'accept' && history.latest_accept_at === null) {
-      const correctedClaim = toPlainRecord(row.payload).corrected_claim_md;
-      history.latest_accept_at = row.created_at;
-      history.prior_claim_md =
-        typeof correctedClaim === 'string' && correctedClaim.trim().length > 0
-          ? correctedClaim.trim()
-          : proposal.claim_md;
+      if (rating === 'accept') {
+        const correctedClaim = toPlainRecord(row.payload).corrected_claim_md;
+        history.latest_accept_at = row.created_at;
+        history.prior_claim_md =
+          typeof correctedClaim === 'string' && correctedClaim.trim().length > 0
+            ? correctedClaim.trim()
+            : proposal.claim_md;
+        latestAcceptedProposalIdByKey.set(proposal.key, proposalId);
+      }
     }
     historyByKey.set(proposal.key, history);
   }
@@ -236,8 +245,7 @@ export async function loadConjectureHistory(
     const proposalId = toPlainRecord(row.payload).conjecture_event_id;
     if (typeof proposalId !== 'string') continue;
     const proposal = proposalById.get(proposalId);
-    const latestRate = latestRateByProposal.get(proposalId);
-    if (!proposal || !latestRate || toPlainRecord(latestRate.payload).rating !== 'accept') {
+    if (!proposal || latestAcceptedProposalIdByKey.get(proposal.key) !== proposalId) {
       continue;
     }
     const history = historyByKey.get(proposal.key) ?? emptyConjectureHistory();
@@ -284,14 +292,16 @@ export function applyConjectureHistoryGate<T extends EvidenceCell>(
     if (history.latest_terminal_at === null) return true;
     const terminalAt = history.latest_terminal_at;
 
-    const freshFailureCount = new Set(
-      cell.evidence_event_ids.filter((eventId) => {
-        const createdAt = failureCreatedAtById.get(eventId);
-        return createdAt !== undefined && createdAt > terminalAt;
-      }),
-    ).size;
+    const countedFreshFailureIds = new Set<string>();
+    for (const eventId of cell.evidence_event_ids) {
+      if (countedFreshFailureIds.has(eventId)) continue;
+      const createdAt = failureCreatedAtById.get(eventId);
+      if (createdAt === undefined || createdAt <= terminalAt) continue;
+      countedFreshFailureIds.add(eventId);
+      if (countedFreshFailureIds.size >= CONJECTURE_REOPEN_FAILURE_FLOOR) break;
+    }
     if (
-      freshFailureCount < CONJECTURE_REOPEN_FAILURE_FLOOR ||
+      countedFreshFailureIds.size < CONJECTURE_REOPEN_FAILURE_FLOOR ||
       history.prior_claim_md === null ||
       history.prior_claim_md.length === 0
     ) {

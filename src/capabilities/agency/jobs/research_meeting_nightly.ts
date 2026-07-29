@@ -922,6 +922,7 @@ async function runResearchMeetingNightlyClaimed(
   // final top-K cut. Stop early only when no unprocessed raw upper bound can enter
   // the validated top-K.
   const preparedCandidates: PreparedConjectureCell[] = [];
+  const reproduciblePriorClaimMdByKey = new Map<string, string>();
   let cellOffset = 0;
   while (cellOffset < cells.length) {
     const batchSize = Math.min(RESEARCH_MEETING_MAX_CONJECTURES, cells.length - cellOffset);
@@ -956,6 +957,9 @@ async function runResearchMeetingNightlyClaimed(
       historyByKey,
       now,
     );
+    for (const [key, priorClaimMd] of reproducibleHistoryGate.priorClaimMdByKey) {
+      reproduciblePriorClaimMdByKey.set(key, priorClaimMd);
+    }
     const preparedBatch = await Promise.all(
       reproducibleHistoryGate.cells.map(
         async (reproducibleCell): Promise<PreparedConjectureCell | null> => {
@@ -1051,7 +1055,7 @@ async function runResearchMeetingNightlyClaimed(
         cost_usd: number;
       }> => {
         let induced: InduceConjectureResult;
-        const priorClaimMd = historyGate.priorClaimMdByKey.get(cell.key);
+        const priorClaimMd = reproduciblePriorClaimMdByKey.get(cell.key);
         try {
           induced = await induceConjectureFn({
             cells: [cell],
