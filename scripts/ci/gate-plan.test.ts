@@ -87,6 +87,39 @@ describe('CI gate lane planner', () => {
     );
   });
 
+  it.each([
+    'web/src/some-feature/widget.test.tsx',
+    'src/capabilities/practice/ui/PfPaper.test.tsx',
+  ])('routes a plain non-unit UI test through its real DB partition: %s', (file) => {
+    expect(classifyChangedFiles([file])).toMatchObject({
+      unit_selection: 'skip',
+      reasons: ['db-partition-test'],
+      lanes: {
+        static: true,
+        unit: false,
+        db: true,
+        migration: false,
+        build: false,
+        usability: false,
+      },
+    });
+  });
+
+  it('keeps allowlisted src/ui plain tests in the unit partition', () => {
+    expect(classifyChangedFiles(['src/ui/components/VisionTab.test.tsx'])).toMatchObject({
+      unit_selection: 'affected',
+      reasons: ['unit-test'],
+      lanes: {
+        static: true,
+        unit: true,
+        db: false,
+        migration: false,
+        build: false,
+        usability: false,
+      },
+    });
+  });
+
   it('runs the UI surface lanes without starting Postgres or migration smoke', () => {
     expect(classifyChangedFiles(['src/capabilities/practice/ui/PfPaper.tsx'])).toMatchObject({
       unit_selection: 'affected',
@@ -148,6 +181,23 @@ describe('CI gate lane planner', () => {
     expect(plan.unit_selection).toBe('full');
     expect(Object.values(plan.lanes).every(Boolean)).toBe(true);
     expect(plan.reasons).toContain('base-unreachable');
+  });
+
+  it('fails closed before git when BASE_SHA is option-like or malformed', () => {
+    const output = execFileSync(process.execPath, [path.resolve('scripts/ci/gate-plan.mjs')], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        CI_EVENT_NAME: 'pull_request',
+        BASE_SHA: '--output=/tmp/not-allowed',
+      },
+    });
+    expect(JSON.parse(output)).toMatchObject({
+      unit_selection: 'full',
+      reasons: ['base-invalid'],
+      merge_base: '',
+    });
   });
 
   it('decodes raw NUL-delimited non-ASCII and newline paths', () => {

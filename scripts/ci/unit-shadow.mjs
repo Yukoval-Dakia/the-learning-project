@@ -19,6 +19,9 @@ export const SHADOW_SENTINEL_TESTS = [
   'tests/integration/step9-invariant-audit.test.ts',
 ];
 
+const SELECTOR_TIMEOUT_MS = 120_000;
+const UNIT_RUN_TIMEOUT_MS = 15 * 60_000;
+
 function normalizeRepoFile(file, root) {
   const normalized = path.isAbsolute(file) ? path.relative(root, file) : file;
   return normalized
@@ -193,17 +196,21 @@ function selectAffectedTests({ root, base, requestedMode, output }) {
         `--json=${rawOutput}`,
         '--staticParse',
       ],
-      { cwd: root, encoding: 'utf8' },
+      { cwd: root, encoding: 'utf8', timeout: SELECTOR_TIMEOUT_MS },
     );
 
     if (result.status !== 0 || !existsSync(rawOutput)) {
+      const timedOut = result.error?.code === 'ETIMEDOUT';
       const selection = fullFallbackSelection({
         requestedMode,
         base,
         changedFiles,
-        reason: `vitest-list-failed:${result.status ?? 'signal'}`,
+        reason: timedOut
+          ? 'vitest-list-timeout'
+          : `vitest-list-failed:${result.status ?? 'signal'}`,
       });
       selection.selector_stderr = result.stderr?.trim().slice(0, 2_000) || undefined;
+      selection.selector_error = result.error?.message?.slice(0, 2_000) || undefined;
       writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
       return selection;
     }
@@ -232,15 +239,20 @@ function selectAffectedTests({ root, base, requestedMode, output }) {
         `--json=${fullInventoryOutput}`,
         '--staticParse',
       ],
-      { cwd: root, encoding: 'utf8' },
+      { cwd: root, encoding: 'utf8', timeout: SELECTOR_TIMEOUT_MS },
     );
     if (fullInventoryResult.status !== 0 || !existsSync(fullInventoryOutput)) {
+      const timedOut = fullInventoryResult.error?.code === 'ETIMEDOUT';
       const selection = fullFallbackSelection({
         requestedMode,
         base,
         changedFiles,
-        reason: `vitest-full-list-failed:${fullInventoryResult.status ?? 'signal'}`,
+        reason: timedOut
+          ? 'vitest-full-list-timeout'
+          : `vitest-full-list-failed:${fullInventoryResult.status ?? 'signal'}`,
       });
+      selection.selector_stderr = fullInventoryResult.stderr?.trim().slice(0, 2_000) || undefined;
+      selection.selector_error = fullInventoryResult.error?.message?.slice(0, 2_000) || undefined;
       writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
       return selection;
     }
@@ -474,7 +486,11 @@ function runRequiredUnitTests({ root, selectionPath, resultsPath, executionPath 
     ...(selectedFiles ?? []),
   ];
   const startedAt = Date.now();
-  const result = spawnSync(process.execPath, args, { cwd: root, stdio: 'inherit' });
+  const result = spawnSync(process.execPath, args, {
+    cwd: root,
+    stdio: 'inherit',
+    timeout: UNIT_RUN_TIMEOUT_MS,
+  });
   const execution = {
     schema_version: 1,
     required_mode: requiredMode,
@@ -487,6 +503,7 @@ function runRequiredUnitTests({ root, selectionPath, resultsPath, executionPath 
     test_duration_ms: Date.now() - startedAt,
     exit_code: result.status ?? 1,
     signal: result.signal ?? null,
+    timed_out: result.error?.code === 'ETIMEDOUT',
     github: {
       run_id: process.env.GITHUB_RUN_ID,
       run_attempt: process.env.GITHUB_RUN_ATTEMPT,

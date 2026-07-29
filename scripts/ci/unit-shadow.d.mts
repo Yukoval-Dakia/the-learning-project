@@ -5,6 +5,8 @@ export interface UnitShadowSelection {
   requested_mode: 'skip' | 'affected' | 'full';
   effective_mode: 'affected' | 'full';
   fallback_reason?: string;
+  selector_stderr?: string;
+  selector_error?: string;
   base: string;
   changed_files: string[];
   predicted_files: string[] | null;

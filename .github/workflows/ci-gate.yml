@@ -124,6 +124,7 @@ jobs:
         if: needs.changes.outputs.unit_changed == 'true'
         run: pnpm install --frozen-lockfile
       - name: Select required unit tests
+        id: unit_select
         if: needs.changes.outputs.unit_changed == 'true'
         continue-on-error: true
         env:
@@ -135,6 +136,9 @@ jobs:
             --base "$UNIT_SELECTION_BASE" \
             --mode "$UNIT_SELECTION_MODE" \
             --output .cache/ci/unit-selection.json
+      - name: Warn on selector process failure
+        if: steps.unit_select.outcome == 'failure'
+        run: echo "::warning title=Unit selector failed::Falling back to the full unit suite; investigate the selector process failure."
       - name: Unit tests (affected on PR, full on canary/fallback)
         if: needs.changes.outputs.unit_changed == 'true'
         run: |

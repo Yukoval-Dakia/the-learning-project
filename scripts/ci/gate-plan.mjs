@@ -36,7 +36,9 @@ function isUnitConventionTest(file) {
   if (file.startsWith('src/__tests__/') && isTestFile(file)) return true;
   if (file.startsWith('src/ai/') && isTestFile(file)) return true;
   if (file.startsWith('src/core/') && isTestFile(file)) return true;
+  if (file.startsWith('src/ui/') && isTestFile(file)) return true;
   if (file.startsWith('src/server/ai/judges/') && isTestFile(file)) return true;
+  if (/^tests\/(?:core|schema|subjects)\//.test(file) && isTestFile(file)) return true;
   return false;
 }
 
@@ -107,6 +109,16 @@ function filePlan(file) {
       lanes: { ...emptyLanes(), static: true, unit: true },
       unitSelection: 'affected',
       reason: 'unit-test',
+    };
+  }
+  // allTestInclude is broader than fastTestInclude: a plain *.test.ts(x) that
+  // is not on the no-DB allowlist falls through to vitest.db.config.ts.
+  // Classify it before UI/server directory rules so its actual partition runs.
+  if (isTestFile(file)) {
+    return {
+      lanes: { ...emptyLanes(), static: true, db: true },
+      unitSelection: 'skip',
+      reason: 'db-partition-test',
     };
   }
 
@@ -254,6 +266,10 @@ function git(args) {
   return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
+function isSafeGitSha(value) {
+  return /^[0-9a-f]{7,64}$/i.test(value);
+}
+
 export function parseNulDelimitedPaths(output) {
   const decoded = Buffer.isBuffer(output) ? output.toString('utf8') : String(output);
   return decoded.split('\0').filter(Boolean).map(normalizePath);
@@ -281,9 +297,11 @@ function computePlanFromGit() {
   }
 
   const base = process.env.BASE_SHA?.trim();
-  if (!base || /^0+$/.test(base)) {
+  if (!base || /^0+$/.test(base) || !isSafeGitSha(base)) {
     return {
-      plan: classifyChangedFiles([], { forceFullReason: 'base-unknown' }),
+      plan: classifyChangedFiles([], {
+        forceFullReason: base ? 'base-invalid' : 'base-unknown',
+      }),
       mergeBase: '',
     };
   }
@@ -322,6 +340,10 @@ function markdownText(value) {
 function writeSummary(plan, mergeBase) {
   const summary = process.env.GITHUB_STEP_SUMMARY;
   if (!summary) return;
+  const displayedFiles = plan.changed_files.slice(0, 200).map(markdownText);
+  if (plan.changed_files.length > displayedFiles.length) {
+    displayedFiles.push(`... ${plan.changed_files.length - displayedFiles.length} more`);
+  }
   const lines = [
     '## CI gate plan',
     '',
@@ -336,14 +358,19 @@ function writeSummary(plan, mergeBase) {
     '<details><summary>Changed files</summary>',
     '',
     '```text',
-    ...(plan.changed_files.length
-      ? plan.changed_files.map(markdownText)
-      : ['(none or unavailable)']),
+    ...(displayedFiles.length ? displayedFiles : ['(none or unavailable)']),
     '```',
     '</details>',
     '',
   ];
-  appendFileSync(summary, `${lines.join('\n')}\n`);
+  try {
+    appendFileSync(summary, `${lines.join('\n')}\n`);
+  } catch (error) {
+    console.error(
+      '[gate-plan] summary write failed:',
+      error instanceof Error ? error.message : error,
+    );
+  }
 }
 
 function main() {
