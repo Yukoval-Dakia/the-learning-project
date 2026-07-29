@@ -3,54 +3,43 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-29
-> **【更新 2026-07-29 · YUK-788 owner 决策回流 review 缺口已修，重跑远端验收】**
-> YUK-795 已随 PR #1101 合入 main；当前已把 pending、dismiss cooldown、active accept
-> 与 terminal reopen 统一接入 nightly identity gate，并让重开的归纳读取 owner 最近一次
-> accept/edit claim。定向 unit/DB 与 typecheck 已通过；首轮远端全绿后发现的 review
-> 缺口均已补回归，当前等待新 head 的 Actions/OCR。
+> **【更新 2026-07-29 · 猜想证据收口，串行到达真实 owner 数据闸门】**
+> YUK-788 已随 PR #1102 合并，YUK-803 已按现有代码/DB 测试证据化关闭；
+> 两项目联合计划现已严格串行到 YUK-814。模型运行环境 pre-flight 通过，当前唯一
+> 事实阻塞是缺少可供盲评的 6–10 个真实 owner 失败簇；不以 synthetic/mock 冒充。
 
 ## NOW
 
-- **唯一 active 线：Grounding · 猜想证据 YUK-788**
-  - Branch：`codex/yuk-788-owner-feedback-loop`；PR #1102。
-  - Worktree：
-    `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-788-owner-feedback-loop`。
-  - pending proposal 仍由 inbox projection 第一层去重；owner decision / probe terminal
-    history 在同 capability 内作为第二层 gate。
-  - dismiss 同 cell 冷却 30 天；accepted 但未 terminal 的 active conjecture 不重复归纳。
-  - confirmed/retired terminal 后必须出现至少两条更晚的有效 failure attempt 才能 reopen；
-    enrichment 后会用可复现 evidence 再验一次 fresh floor；重开时把最近 accept/edit 的
-    owner claim 注入 `prior_claim_md`，无 claim fail closed。
-  - lifecycle fold 按每个 proposal 的最新 rate 取 identity 最新决定；rollback 会撤销旧
-    accept，terminal 只结算到 identity 当前最新 accepted proposal，不能由旧 proposal
-    的更晚 terminal 错放仍在测试中的新 proposal。
-  - 默认关闭的 agent-led shadow lane 复用同一 history gate：agenda 先滤 active /
-    cooldown / terminal fresh floor，write guard 再读一次；terminal reopen 必须原样回传
-    agenda/软拒绝给出的 owner `prior_claim_md`，不能绕过 deterministic lane。
-  - terminal 读取复用 correction-aware probe evidence reader；proposal/rate/result 查询按
-    candidate KC 限域并分块，不新建事件流。
-  - 定向 unit 79/79（nightly 44 + director tools 35）、定向 DB 36/36
-    （closed-loop 18 + director 18）、typecheck、Biome、diff check 已通过；
-    review 指出的 stale accept、corrected rate、enrichment 后 fresh floor 三条缺口均已
-    补回归；latest accepted proposal/rollback fold 反例也已覆盖，history filter 的 map
-    side effect 已移除。
-- **CI 提速已并入**
-  - main 已拆 static/audits、unit、DB、migration、build、usability 并行 lanes；
-    DB reset 合批并拆为两路 shard，末端 aggregate 保留 required-check 名称并
-    fail closed。
-  - #1100 首次样本 DB shard 为 6m15s / 5m11s；5 次 median 验收仍由
-    YUK-817/818 继续收数，不在本产品线扩张。
-  - 按 owner 指示，不在本地重复跑 CI gate；只监听 GitHub Actions。
-- **YUK-787 / YUK-795 已收口**
-  - PR #1098 / #1101 已合并；CI Gate、OCR 与 CodeQL 全绿，Linear 均 Done。
-  - 当前分支基于 `origin/main@41fa2a07`。
+- **当前无代码 active lane；YUK-814 保持 Backlog，等待真实数据输入**
+  - Node、pnpm、Docker daemon、Claude Agent SDK、`DATABASE_URL` 与
+    anthropic-sub OAuth token 均已做不泄密 pre-flight；凭据不是 blocker。
+  - 仓内不存在 YUK-814 专属盲评数据集/评分 artifact；配置 DB 指向本地
+    `127.0.0.1:5433`，且没有既有 compose volume。试启时只创建了全新空库，已立即
+    删除容器、network 与 volume，未留下假数据或运行中服务。
+  - 因此本轮不启动 shadow、blind review 或 canary；继续只能造 mock，违反发布闸门。
+- **YUK-788 已收口**
+  - PR #1102 merge commit：`ff681b0c`；Linear Done。
+  - pending、30 天 dismiss cooldown、active accepted 与 terminal reopen 共用
+    identity history gate；terminal 后仅同 cause×KC 的两条更新 failure 可重开。
+  - owner accept/edit claim 已回流 deterministic 与 agent-led shadow lane；correction、
+    rollback、旧 proposal terminal、新 proposal active 等反例均有回归。
+  - exact head `83b857b0` 的 CI Gate 全绿、已产出 review thread 清零。按 owner 规则，
+    review 收敛到 P2/minor 后不等待下一轮 OCR，直接听全绿 gate 合并。
+- **YUK-803 已证据化收口**
+  - 选项 (a) 已在 PR #1080 / merge commit `a1fe8ab8` 落到 main：edit 归档同
+    cause×KC 的 soft misconception 与 live edges，hard 节点不动，plain accept 不变。
+  - `conjecture-accept.db.test.ts` 本轮实跑 21/21；Linear 已由 Backlog 对齐 Done。
+- **CI 提速后续保持独立**
+  - main 已有 parallel static/unit/DB/migration/build/usability lanes 与 fail-closed
+    aggregate；YUK-817/818 继续收满 5 次非 docs-only timing，不在 Grounding 线扩张。
 
 ## NEXT
 
-1. 监听 PR #1102 最新 head 的 GitHub Actions/OCR；处理阻塞项后合并并对齐 Done。
-2. 证据化收口已在 YUK-785 落地但 Linear 仍 Backlog 的 YUK-803：edit archive soft、
-   hard 不变；只在代码/测试与 issue 验收逐项一致后关闭。
-3. 通过真实 owner 数据闸门 YUK-814 后，才进入 intervention snapshot、pedagogy、
+1. 为 YUK-814 提供/导出 6–10 个真实 owner 失败簇，保留题面、作答、Judge/错因、
+   subject/KC 与可复现 evidence refs；禁止 synthetic/mock 代替。
+2. 数据到位后才把 YUK-814 置 In Progress：先 shadow run，再 owner gold blind review；
+   grounding ≥80%，学科幻觉、claim/probe 错配、严重事实错误均为 0。
+3. 只有 YUK-814 通过，才依次启动 intervention snapshot、pedagogy、
    QuestionAuthor/Verify、隔离 FSRS、结算、Brief/Copilot/profile。
 
 ## PARKED
@@ -60,13 +49,12 @@
 - **干预准备**：YUK-791/796；Planning Panel 仅为 Teaching Brief 控制区。
 - **验证结算**：YUK-792；猜想与干预使用隔离 FSRS 状态，普通 KC/FSRS 不变。
 - **协作与档案**：YUK-815 Brief/Copilot public reader；YUK-816 intervention history。
-- **发布**：owner shadow/blind review；单 cohort 10-run canary；任一红线失败关闭
+- **发布**：YUK-814 通过后才做单 owner/cohort 10-run canary；任一红线失败关闭
   auto-intervention flag。
 
 ## BLOCKED-ON
 
-- **干预实现** ← 猜想/probe/Judge 的 v2 证据状态机与 owner 数据门通过。
-- **真实数据扩大使用** ← 6–10 失败簇盲评：grounding ≥80%，学科幻觉、
-  claim/probe 错配、严重事实错误均为 0。
+- **YUK-814 shadow/blind gate** ← 6–10 个真实 owner 失败簇的数据来源/导出；
+  anthropic-sub 与本机工具链 pre-flight 已通过。
+- **干预实现** ← YUK-814 grounding blind review 通过；不得先写产品状态机绕过门。
 - **auto-intervention 扩大** ← 单 owner/cohort 10 次 canary 全部事后审阅，红线为 0。
-- **真实模型验收** ← owner 数据与 anthropic-sub 运行凭据；不得用 mock 代替。

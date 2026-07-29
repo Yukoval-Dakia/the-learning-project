@@ -2,77 +2,46 @@
 
 ## Active line
 
-- Architecture exit、Grounding 首切、YUK-804 均已合并。
-- YUK-787 / YUK-795 已随 PR #1098 / #1101 合并并在 Linear Done；最终
-  CI Gate / OCR / CodeQL 全绿。
-- 当前唯一 active 线是 YUK-788：
-  `codex/yuk-788-owner-feedback-loop`，PR #1102，基于 `origin/main@41fa2a07`。
-- 已合入 GitHub CI 并行化及 DB/unit 长尾提速；不在本地
-  重复跑 CI gate。
+- Architecture exit 与 Grounding 猜想证据阶段已经收口。
+- 当前没有代码 active lane；严格串行停在 YUK-814 的真实 owner 数据输入闸门。
+- YUK-814 仍是 Backlog，不能用 synthetic/mock 代替真实盲评数据。
 
-## 当前实现
+## 本轮完成
 
-1. nightly 保留 pending proposal 第一层去重；YUK-788 新增同 capability 内的
-   owner decision / terminal history 第二层 gate。
-2. 同 `(cause_category × knowledge_id)` 的 dismiss 冷却 30 天；accepted 但未 terminal
-   的 conjecture 视为 active，不重复归纳。
-3. confirmed/retired terminal 后只有至少两条 `created_at > terminal_at` 的有效
-   failure attempt 才能 reopen；enrichment 删除缺失/变异证据后会以可复现 ids
-   再验 fresh floor，不能用旧的 pre-terminal attempt 补足。
-4. reopen 必须携带最近一次 accept/edit 后的 owner claim；edit 的
-   `corrected_claim_md` 优先于原 proposal claim，并接入已有 `priorClaimMd`。
-5. proposal/rate/result 查询仅覆盖今晚 candidate KC 并按 500 分块；terminal 活性复用
-   correction-aware `getEffectiveProbeResultStatuses(..., validateDirectChain=true)`。
-6. identity 最新决定只消费每个 proposal 的最新 rate；rollback 撤销旧 accept，且
-   terminal 必须属于 identity 当前最新 accepted proposal，旧 proposal 的较晚结算不能
-   错放仍 active 的新 proposal。
-7. `RESEARCH_MEETING_AGENT_ENABLED` shadow lane 的 agenda 与 write guard 复用同一
-   history gate；terminal reopen 必须回传 owner `prior_claim_md`，off-menu 也不能绕过。
-8. 没有新事件流、schema 或跨 capability 深层导入；nightly 只消费已有 proposal、
-   rate、probe_result 与 attempt facts。
+1. YUK-788 随 PR #1102 合并，merge commit `ff681b0c`，Linear Done。
+   - pending / dismiss cooldown / active accepted / terminal reopen 统一进入 identity history gate；
+   - terminal 后只允许同 `cause_category × knowledge_id` 的两条更新 failure 重开；
+   - owner accept/edit claim 回流 deterministic 与 agent-led shadow lane；
+   - correction、rollback、旧 proposal terminal、新 proposal active 均有反例回归；
+   - exact head `83b857b0` 的 CI Gate 全绿、已产出 review thread 清零；review 已收敛到
+     P2/minor，按 owner 规则不等待下一轮 OCR。
+2. YUK-803 证据化关闭，Linear Backlog → Done。
+   - 实现已在 PR #1080 / `a1fe8ab8`：edit archive soft node + live edges，hard 不动；
+   - 当前基线实跑 `conjecture-accept.db.test.ts` 21/21。
+3. Linear YUK-788、YUK-803、YUK-814 均已写入本轮实证；没有新建重复 follow-up。
 
-## 验证与远端
+## YUK-814 pre-flight 与阻塞
 
-- YUK-788 已提交并推送为 PR #1102；实现 commit `7049cb07`。
-- 定向 unit `research_meeting_nightly.unit.test.ts` 44/44 通过。
-- closed-loop DB `research_meeting_closed_loop.db.test.ts` 18/18 通过，覆盖：
-  dismiss cooldown、terminal 不重复归纳、两条新失败重开、owner rewrite 进入真实 prompt、
-  stale accept 不压过新 dismiss、corrected rate 不再参与 fold、enrichment 不得以
-  pre-terminal evidence 冒充 fresh reopen floor、旧 proposal terminal 不得结算新 accept、
-  rollback 必须撤销旧 accept。
-- director tools + nightly unit 79/79、director + closed-loop DB 36/36 通过；agent
-  shadow lane 覆盖 agenda 与 write guard 双层阻断、terminal reopen owner prior 回传。
-- `pnpm typecheck`、改动文件 Biome、`git diff --check` 已通过。
-- main 新增 CI 并行 lanes：static/audits、unit、DB、migration、build、usability；
-  aggregate 保留 required-check 名称并 fail closed。
-- 只在本地跑改动范围的定向测试/格式检查；完整 gate 只监听 GitHub Actions/OCR。
-- CI 方案说明：`docs/research/2026-07-28-ci-speedup.md`。
+- PASS：Node、pnpm、Docker daemon、Claude Agent SDK、owner 主工作树中的
+  `DATABASE_URL`、`CLAUDE_CODE_OAUTH_TOKEN`；未打印任何凭据值。
+- FAIL：仓内没有 YUK-814 专属 blind-review dataset / scoring artifact。
+- 配置 DB 指向 `127.0.0.1:5433`，当时无服务、无既有 compose volume；试启只创建
+  全新空库。临时容器、network、volume 已全部删除，没有留下外部运行状态。
+- 事实 blocker 是 6–10 个真实 owner 失败簇的数据来源/导出，不是 provider 凭据。
 
 ## 下一步
 
-1. 只监听 PR #1102 的 GitHub Actions/OCR；处理远端失败或 review。
-2. 全绿后合并，Linear YUK-788 对齐 Done。
-3. 严格串行证据化收口 YUK-803（实现已在 YUK-785 落地，Linear 仍 Backlog）。
-4. YUK-814 真实 owner 数据 shadow/blind gate 必须单独执行；mock 不能代替。
+1. 数据到位后，从真实失败簇构造可复现 shadow packet，并将 YUK-814 置 In Progress。
+2. 执行 owner-gold blind review：grounding ≥80%，学科幻觉、claim/probe 错配、
+   严重事实错误均为 0；任一红线失败即停。
+3. 只有 gate 通过后才启动干预实现与后续 10-run canary。
 
-## CI 测试长尾二次提速（2026-07-29）
+## Worktree / workflow 状态
 
-- 分支：`codex/yuk-817-ci-test-speedups`（基于 `origin/main@13c2b858`）。
-- PR：#1100；GitHub run `30378606905` 全绿，独立 OCR review 的 clean-exit
-  timeout classification 发现已修复并 resolve。
-- YUK-817：`resetDb()` 的 54 条逐表 TRUNCATE 合为一条 multi-table TRUNCATE；
-  CI DB lane 使用 Vitest `--shard=1/2`、`--shard=2/2` matrix，aggregate 仍 fail closed。
-- YUK-818：Step9 invariant suite 对 `src/app/scripts` 建一次 immutable source snapshot；
-  PfPaper autosave 测试只把 production 800ms timer 映射为 10ms，必须保持 pending
-  窗口的 exit/pagehide 用例映射为 100ms；覆盖/断言不减。cold tsx CLI 测试在 full
-  suite 的 scheduler contention 下放宽到 20s，隔离运行仍约 2–3s。
-- YUK-819：JYEOO 在 POSIX 以独立 process group 启动，timeout kill 整组；新增
-  grandchild 与 wrapper 已退出但后代仍持 stdio 的回归用例。Windows 保留 direct-child
-  fail-safe。
-- 验证：两 DB shards 覆盖 388 files（4,204 passed / 9 skipped / 1 todo）；unit
-  509 files（5,781 passed / 33 skipped）；migration 26/26；typecheck、tracked lint、
-  schema/dependency/partition/API/profile/copy/draft/hub-sync audits、build 全绿。
-- GitHub 首个完整样本：DB shard 6m15s / 5m11s，对比旧 critical path 13m12s；
-  unit 2m42s，前一轮 2m14s，对比旧基线 2m16s，未证明 20% median 改善。
-- YUK-817/818 必须继续收满 5 次非 docs-only GitHub timing；YUK-819 在 #1100
-  合并且 Linux gate 保持绿色后可 Done，当前不虚报 median 提速百分比。
+- 当前 closeout worktree：
+  `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-788-owner-feedback-loop`，
+  已切到 `codex/yuk-803-evidence-closeout`，只用于提交 cockpit 收口。
+- owner 主工作树 `/Users/yuqi/yukoval-projects/the-learning-project` 在
+  `codex/yuk-812-agent-control-plane` 且有既存未提交改动；本轮只做只读 env pre-flight，
+  未修改这些文件。
+- YUK-817/818 的 5-run CI timing 收数仍是独立后续，不并入 Grounding active lane。
