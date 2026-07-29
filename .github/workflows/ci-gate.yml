@@ -40,7 +40,7 @@ jobs:
           node-version-file: '.node-version'
 
       # Fail closed: unknown paths/bases and main pushes run the full gate. Pull requests use
-      # lane-level classification; the unit affected-test selector remains shadow-only.
+      # lane-level classification and the backfill-validated affected unit selector.
       - name: Plan incremental gate
         id: filter
         env:
@@ -122,7 +122,7 @@ jobs:
       - name: Install dependencies
         if: needs.changes.outputs.unit_changed == 'true'
         run: pnpm install --frozen-lockfile
-      - name: Select affected unit tests (shadow only)
+      - name: Select required unit tests
         if: needs.changes.outputs.unit_changed == 'true'
         continue-on-error: true
         run: |
@@ -131,27 +131,21 @@ jobs:
             --base '${{ needs.changes.outputs.merge_base }}' \
             --mode '${{ needs.changes.outputs.unit_selection }}' \
             --output .cache/ci/unit-selection.json
-      - name: Unit tests (full required suite)
+      - name: Unit tests (affected on PR, full on canary/fallback)
         if: needs.changes.outputs.unit_changed == 'true'
         run: |
-          pnpm vitest run --config vitest.unit.config.ts \
-            --reporter=default \
-            --reporter=json \
-            --outputFile.json=.cache/ci/unit-full.json
-      - name: Compare affected selector with full suite
-        if: always() && needs.changes.outputs.unit_changed == 'true'
-        continue-on-error: true
-        run: |
-          node scripts/ci/unit-shadow.mjs compare \
+          node scripts/ci/unit-shadow.mjs run \
             --selection .cache/ci/unit-selection.json \
-            --results .cache/ci/unit-full.json \
-            --output .cache/ci/unit-shadow.json
-      - name: Upload unit selector shadow report
+            --results .cache/ci/unit-results.json \
+            --execution .cache/ci/unit-execution.json
+      - name: Upload unit selector report
         if: always() && needs.changes.outputs.unit_changed == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: unit-selector-shadow
-          path: .cache/ci/unit-shadow.json
+          name: unit-selector-report
+          path: |
+            .cache/ci/unit-selection.json
+            .cache/ci/unit-execution.json
           if-no-files-found: warn
 
   db:

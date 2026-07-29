@@ -31,6 +31,41 @@ export function mergePredictedFiles(entries, root) {
   return sortedUnique([...predicted, ...SHADOW_SENTINEL_TESTS]);
 }
 
+export function resolveRequiredUnitFiles(selection) {
+  if (
+    selection?.schema_version !== 1 ||
+    selection?.requested_mode !== 'affected' ||
+    selection?.effective_mode !== 'affected' ||
+    typeof selection.base !== 'string' ||
+    selection.base.length === 0 ||
+    !Array.isArray(selection.predicted_files) ||
+    selection.predicted_files.length === 0 ||
+    selection.predicted_files.some(
+      (file) =>
+        typeof file !== 'string' ||
+        path.isAbsolute(file) ||
+        file.startsWith('-') ||
+        file.split('/').includes('..') ||
+        !/\.test\.tsx?$/.test(file),
+    )
+  ) {
+    return null;
+  }
+  return sortedUnique(selection.predicted_files);
+}
+
+export function findDirectChangedUnitTestMisses({ changedFiles, predictedFiles, unitFiles }) {
+  const predicted = new Set(predictedFiles);
+  const unit = new Set(unitFiles);
+  const directChangedUnitTests = sortedUnique(
+    changedFiles.filter((file) => /\.test\.tsx?$/.test(file) && unit.has(file)),
+  );
+  return {
+    directChangedUnitTests,
+    misses: directChangedUnitTests.filter((file) => !predicted.has(file)),
+  };
+}
+
 function readChangedFiles(base, root) {
   const output = execFileSync('git', ['diff', '--name-only', base, 'HEAD'], {
     cwd: root,
@@ -112,13 +147,65 @@ function selectAffectedTests({ root, base, requestedMode, output }) {
 
   try {
     const entries = JSON.parse(readFileSync(rawOutput, 'utf8'));
+    const predictedFiles = mergePredictedFiles(entries, root);
+    const fullInventoryOutput = path.join(path.dirname(output), 'unit-full-inventory.json');
+    const fullInventoryResult = spawnSync(
+      process.execPath,
+      [
+        vitestEntry,
+        'list',
+        '--config',
+        'vitest.unit.config.ts',
+        '--filesOnly',
+        `--json=${fullInventoryOutput}`,
+        '--staticParse',
+      ],
+      { cwd: root, encoding: 'utf8' },
+    );
+    if (fullInventoryResult.status !== 0 || !existsSync(fullInventoryOutput)) {
+      const selection = fullFallbackSelection({
+        requestedMode,
+        base,
+        changedFiles,
+        reason: `vitest-full-list-failed:${fullInventoryResult.status ?? 'signal'}`,
+      });
+      writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
+      return selection;
+    }
+    const fullInventoryEntries = JSON.parse(readFileSync(fullInventoryOutput, 'utf8'));
+    const unitFiles = sortedUnique(
+      fullInventoryEntries
+        .map((entry) => (typeof entry === 'string' ? entry : entry?.file))
+        .filter((file) => typeof file === 'string')
+        .map((file) => normalizeRepoFile(file, root)),
+    );
+    const directGuard = findDirectChangedUnitTestMisses({
+      changedFiles,
+      predictedFiles,
+      unitFiles,
+    });
+    if (directGuard.misses.length) {
+      const selection = fullFallbackSelection({
+        requestedMode,
+        base,
+        changedFiles,
+        reason: `direct-unit-test-missed:${directGuard.misses.join(',').slice(0, 1_000)}`,
+      });
+      selection.direct_changed_unit_tests = directGuard.directChangedUnitTests;
+      selection.direct_changed_tests_missed = directGuard.misses;
+      writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
+      return selection;
+    }
     const selection = {
       schema_version: 1,
       requested_mode: requestedMode,
       effective_mode: 'affected',
       base,
       changed_files: changedFiles,
-      predicted_files: mergePredictedFiles(entries, root),
+      predicted_files: predictedFiles,
+      unit_inventory_files: unitFiles.length,
+      direct_changed_unit_tests: directGuard.directChangedUnitTests,
+      direct_changed_tests_missed: [],
       selector_duration_ms: Date.now() - startedAt,
     };
     writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
@@ -232,6 +319,75 @@ function ensureParent(file) {
   mkdirSync(path.dirname(file), { recursive: true });
 }
 
+function runRequiredUnitTests({ root, selectionPath, resultsPath, executionPath }) {
+  let selection;
+  let selectionReadError;
+  try {
+    selection = JSON.parse(readFileSync(selectionPath, 'utf8'));
+  } catch {
+    selectionReadError = 'selection-missing-or-invalid';
+  }
+
+  const selectedFiles = resolveRequiredUnitFiles(selection);
+  const requiredMode = selectedFiles ? 'affected' : 'full';
+  const vitestEntry = path.join(root, 'node_modules', 'vitest', 'vitest.mjs');
+  const args = [
+    vitestEntry,
+    'run',
+    '--config',
+    'vitest.unit.config.ts',
+    ...(selectedFiles ?? []),
+    '--reporter=default',
+    '--reporter=json',
+    `--outputFile.json=${resultsPath}`,
+  ];
+  const startedAt = Date.now();
+  const result = spawnSync(process.execPath, args, { cwd: root, stdio: 'inherit' });
+  const execution = {
+    schema_version: 1,
+    required_mode: requiredMode,
+    requested_mode: selection?.requested_mode ?? 'full',
+    effective_mode: selection?.effective_mode ?? 'full',
+    fallback_reason: selection?.fallback_reason ?? selectionReadError,
+    base: selection?.base ?? '',
+    selector_duration_ms: selection?.selector_duration_ms,
+    selected_files: selectedFiles?.length ?? null,
+    test_duration_ms: Date.now() - startedAt,
+    exit_code: result.status ?? 1,
+    signal: result.signal ?? null,
+    github: {
+      run_id: process.env.GITHUB_RUN_ID,
+      run_attempt: process.env.GITHUB_RUN_ATTEMPT,
+      sha: process.env.GITHUB_SHA,
+      ref: process.env.GITHUB_REF,
+      event_name: process.env.GITHUB_EVENT_NAME,
+    },
+    created_at: new Date().toISOString(),
+  };
+  writeFileSync(executionPath, `${JSON.stringify(execution, null, 2)}\n`);
+
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(
+      process.env.GITHUB_STEP_SUMMARY,
+      [
+        '## Required unit selection',
+        '',
+        `- required mode: \`${requiredMode}\``,
+        `- requested/effective: \`${execution.requested_mode}\` → \`${execution.effective_mode}\``,
+        `- selected files: ${selectedFiles?.length ?? 'full suite'}`,
+        `- selector time: ${execution.selector_duration_ms ?? 'n/a'} ms`,
+        `- test time: ${execution.test_duration_ms} ms`,
+        `- exit code: \`${execution.exit_code}\``,
+        execution.fallback_reason ? `- fallback: \`${execution.fallback_reason}\`` : null,
+        '',
+      ]
+        .filter((line) => line !== null)
+        .join('\n'),
+    );
+  }
+  return execution;
+}
+
 function main() {
   const { command, options } = parseArgs(process.argv.slice(2));
   const root = process.cwd();
@@ -299,7 +455,23 @@ function main() {
     return;
   }
 
-  throw new Error('usage: unit-shadow.mjs <select|compare> [--key value]');
+  if (command === 'run') {
+    const selectionPath = path.resolve(options.selection ?? '.cache/ci-unit-selection.json');
+    const resultsPath = path.resolve(options.results ?? '.cache/ci-unit-results.json');
+    const executionPath = path.resolve(options.execution ?? '.cache/ci-unit-execution.json');
+    ensureParent(resultsPath);
+    ensureParent(executionPath);
+    const execution = runRequiredUnitTests({
+      root,
+      selectionPath,
+      resultsPath,
+      executionPath,
+    });
+    process.exitCode = execution.exit_code;
+    return;
+  }
+
+  throw new Error('usage: unit-shadow.mjs <select|run|compare> [--key value]');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

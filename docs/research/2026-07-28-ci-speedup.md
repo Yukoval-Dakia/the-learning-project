@@ -1,7 +1,7 @@
 # CI 提速研究：先缩短关键路径，不削覆盖
 
 **日期**：2026-07-28
-**状态**：并行 gate 与 DB shard 已合入；YUK-820 正在实现 lane 增量 + unit selector shadow
+**状态**：并行/lane 增量已合入 PR #1103；20-PR backfill 通过，affected unit 已切 required
 **范围**：`.github/workflows/ci-gate.yml`、`scripts/ci/*` 的 required gate 与 selector
 
 ## 结论
@@ -19,11 +19,12 @@
 
 3. PR gate 先按改动类型选择 lane；unknown/global trigger 仍 fail closed 全量，main push
    永远作为 full canary。
-4. unit affected-test selector 先进入 shadow：required unit 仍全量，只对比 selector
-   预测与 full JSON 结果，不在本阶段减少 unit 覆盖。
+4. unit affected-test selector 先进入 shadow；随后用 20 个历史真实 PR backfill，
+   0 fallback、0 direct-test miss 后切为 PR required。main/global/fallback 仍 full。
 
 原 Phase 1 不删测试、不做基于路径的测试选择，也不改变 `pnpm test` 的本地 pre-PR
-契约；YUK-820 只先做 lane 选择，unit 文件级选择仍为 shadow、required 仍 full。
+契约；YUK-820 先 shadow，再以
+`docs/audit/2026-07-29-unit-selector-backfill.md` 的固定样本完成切换。
 并行化把远端原来的串行关键路径从近似
 `static + unit + db + migration + build` 改成近似这些 lane 的最大值。
 
@@ -101,7 +102,7 @@ ci-gate (always())             # 汇总上述 required lanes；名称稳定供 b
 | lane | 命令 |
 | --- | --- |
 | static-and-audits | `pnpm typecheck`、`pnpm lint`、全部现有 audit（各只跑一次） |
-| unit | required 仍跑 full unit；另生成 affected selector shadow report |
+| unit | PR affected set required；main/global/selector fallback 跑 full unit |
 | db | `pnpm test:db` |
 | migration | `pnpm test:migration` |
 | build | `pnpm build` |
@@ -152,22 +153,25 @@ timing 或复跑 DB/migration。实施前应在 GitHub 上取得基线，而不�
 3. 增加稳定名称的 aggregate gate，使用 `always()` 验证所有 required results。
 4. 在 feature branch 连跑 10 次（可用空 commit/re-run），再替换 branch protection。
 
-### Phase 2：affected unit selector shadow（YUK-820）
+### Phase 2：affected unit selector shadow → required（YUK-820）
 
 1. `changes` 输出 `unit_selection=skip|affected|full` 与 merge base。
 2. `affected` 时运行 `vitest list --changed=<merge-base> --filesOnly --staticParse`，
    再并入不依赖 import graph 的源码扫描 sentinel tests。
-3. full unit 使用 default + JSON 双 reporter，测试只执行一次。
-4. 对账只观察：
+3. shadow 阶段 full unit 使用 default + JSON 双 reporter，测试只执行一次。
+4. shadow 对账观察：
    - full 失败但 selector 未选中的 test file；
    - 直接改动但 selector 未选中的 unit test；
    - selector failure 是否安全 fallback 到 full。
-5. compact JSON 作为 Actions artifact，摘要写入 step summary。Shadow miss 先 warning，
-   required full unit 的原始 exit code仍决定 gate。
-6. 至少 20 个混合 PR 零漏选后，另行决定是否把 affected set 升为 required；本阶段不切。
+5. compact JSON 作为 Actions artifact，摘要写入 step summary；shadow 不改 required full。
+6. 回放 20 个历史真实 PR head/base：20/20 affected、0 fallback、19 个直接改动 unit
+   test file 全部命中，selected/full 累计 4.91%，且每个 final PR full gate 均为 success。
+7. 切换后 PR 直接执行 affected set；selection 缺失/无效、空集、global trigger 与 main
+   push 均 fail closed 到 full，required run 的 exit code仍决定 aggregate gate。
 
-Shadow 的限制必须明确：一次全绿只能证明“本次 full 没发现 selector 漏掉的失败”，不能证明
-import graph 完备。因此 main push 保留 full canary，动态 import、manifest、源码扫描、
+Backfill 的限制必须明确：final-green 样本不能证明故障注入完备；它证明历史真实 diff
+可稳定选择、直接 test 不漏且完整套件当时全绿。Comparator 的漏失败/fallback 负控由
+unit test 固定。因此 main push 保留 full canary，动态 import、manifest、源码扫描、
 migration/raw SQL 继续由显式 full trigger / sentinel 保护。
 
 ### 后续：按数据选做
@@ -182,7 +186,7 @@ migration/raw SQL 继续由显式 full trigger / sentinel 保护。
 ## 明确不做
 
 - 不删 DB/migration/usability 覆盖来换速度；
-- 不在 shadow 证据通过前把 affected unit set 升为 required；
+- 不在 backfill/负控失败时把 affected unit set 保持为 required；
 - 不把 production dependency audit 改为非阻塞；
 - 不在没有 timing 的情况下调整 DB fork 数；
 - 不用自托管 runner 或新 SaaS 解决一个尚未量化的问题。
@@ -201,5 +205,5 @@ migration/raw SQL 继续由显式 full trigger / sentinel 保护。
 
 **并行 Phase 1 已落到 `.github/workflows/ci-gate.yml`**。YUK-820 在不改变 required
 check 名称的前提下加入 fail-closed lane planner；main push、unknown path/base 与全局
-trigger 仍全量。Phase 2 只启用 unit selector shadow，required unit 继续 full，等 20 个
-混合 PR 的报告再决定是否硬切。
+trigger 仍全量。Phase 2 经 20-PR backfill 后已切 affected required，证据与边界见
+`docs/audit/2026-07-29-unit-selector-backfill.md`。
