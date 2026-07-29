@@ -81,7 +81,19 @@ async function writeScore(
   const questionId = `question_${id}`;
   const resolution = options.resolution ?? (outcome === 0 ? 'evidence_for' : 'retired');
   await writeProbeQuestion(questionId, conjectureId, cellValue.knowledge_id, 1, minute);
-  await writeProbeResult(probeResultId, conjectureId, questionId, minute, resolution, outcome);
+  await writeProbeResult(
+    probeResultId,
+    conjectureId,
+    questionId,
+    minute,
+    resolution,
+    outcome,
+    undefined,
+    {
+      mDiagnostic: options.mDiagnostic,
+      context: options.context,
+    },
+  );
   await testDb()
     .insert(event)
     .values({
@@ -148,6 +160,12 @@ async function writeProbeResult(
   resolution: 'evidence_for' | 'confirmed' | 'retired' = 'evidence_for',
   outcome: 0 | 1 = resolution === 'retired' ? 1 : 0,
   independentProbeQuestionIds?: readonly string[],
+  dissociation?: {
+    mDiagnostic?: boolean;
+    context?: string;
+    sessionWindow?: string;
+    judgeRunId?: string;
+  },
 ): Promise<void> {
   await testDb()
     .insert(event)
@@ -162,6 +180,16 @@ async function writeProbeResult(
         conjecture_event_id: conjectureId,
         outcome,
         resolution,
+        ...(dissociation?.mDiagnostic === undefined
+          ? {}
+          : { m_diagnostic: dissociation.mDiagnostic }),
+        ...(dissociation?.context === undefined ? {} : { context: dissociation.context }),
+        ...(dissociation?.sessionWindow === undefined
+          ? {}
+          : { session_window: dissociation.sessionWindow }),
+        ...(dissociation?.judgeRunId === undefined
+          ? {}
+          : { judge_run_id: dissociation.judgeRunId }),
         ...(independentProbeQuestionIds
           ? {
               resolution_rule_version: PROBE_RESOLUTION_RULE_VERSION,

@@ -311,17 +311,17 @@ function utcDayWindow(d: Date): string {
 /**
  * Map ONE `experimental:prediction_score` payload → a DissociationRecord, or null (fail-closed)
  * if the load-bearing scoring facts are unsound. The scoring facts (predicted_p / baseline_p /
- * outcome / resolution) are already written by the reconcile loop. The DISCRIMINATION facts
- * (`discriminating` / `m_diagnostic` / `context` / `session_window` / `judge_run_id`) are read
- * DEFENSIVELY with conservative defaults. Reconcile stamps the facts it genuinely owns;
- * `m_diagnostic` stays false unless an upstream Judge explicitly supplied it. A plain wrong
- * answer is never promoted into target-error evidence by inference.
+ * outcome / resolution) are already written by the reconcile loop. Score anchors are derived
+ * copies, so the DISCRIMINATION facts (`m_diagnostic` / `context` / `session_window` /
+ * `judge_run_id`) come only from the authoritative probe-result/Judge event. Missing facts use
+ * conservative defaults. A malformed legacy anchor therefore cannot manufacture target-error,
+ * context-spread, or independence evidence.
  */
 function predictionScoreToRecord(
   eventId: string,
   createdAt: Date,
   payload: Record<string, unknown> | null,
-  sourceQuestionId?: string,
+  source: ProbeResultSource,
 ): DissociationRecord | null {
   if (!payload) return null;
   const predictedP = payload.predicted_p;
@@ -348,23 +348,21 @@ function predictionScoreToRecord(
   const conjectureEventId = payload.conjecture_event_id;
   if (typeof probeResultId !== 'string' || probeResultId.length === 0) return null;
   if (typeof conjectureEventId !== 'string' || conjectureEventId.length === 0) return null;
-  const questionId =
-    typeof payload.probe_question_id === 'string' && payload.probe_question_id.length > 0
-      ? payload.probe_question_id
-      : (sourceQuestionId ?? probeResultId);
-  const contextRaw = payload.context;
+  const questionId = source.questionId;
+  const sourcePayload = source.payload;
+  const contextRaw = sourcePayload?.context;
   const knowledgeId = payload.knowledge_id;
   const contextKey =
     typeof contextRaw === 'string' && contextRaw.length > 0
       ? contextRaw
       : typeof knowledgeId === 'string' && knowledgeId.length > 0
         ? knowledgeId
-        : questionId;
-  const sessionRaw = payload.session_window;
+        : probeResultId;
+  const sessionRaw = sourcePayload?.session_window;
   const sessionWindow =
     typeof sessionRaw === 'string' && sessionRaw.length > 0 ? sessionRaw : utcDayWindow(createdAt);
-  const judgeRaw = payload.judge_run_id;
-  const judgeRunId = typeof judgeRaw === 'string' && judgeRaw.length > 0 ? judgeRaw : eventId;
+  const judgeRaw = sourcePayload?.judge_run_id;
+  const judgeRunId = typeof judgeRaw === 'string' && judgeRaw.length > 0 ? judgeRaw : probeResultId;
 
   return {
     scoreEventId: eventId,
@@ -378,7 +376,7 @@ function predictionScoreToRecord(
     predictedP,
     outcome,
     discriminating: payload.discriminating === true,
-    mDiagnostic: payload.m_diagnostic === true,
+    mDiagnostic: sourcePayload?.m_diagnostic === true,
     resolution,
     scoredAt: createdAt,
     judgedAt: createdAt,
@@ -777,14 +775,16 @@ export async function gatherDissociationRecordsByIdentity(
       conjectureIdentityKey(identity.cause_category, identity.knowledge_id),
     );
     if (!targetKey) continue;
+    const source = sourceById.get(probeResultEventId);
+    if (!source) continue;
     const parsed = predictionScoreToRecord(
       r.id,
       // Legacy score anchors used the nightly batch time. Always prefer the
       // backing probe-result timestamp so old and new histories share the same
       // evidence chronology without rewriting immutable events.
-      sourceById.get(probeResultEventId)?.createdAt ?? r.created_at,
+      source.createdAt,
       payload,
-      sourceById.get(probeResultEventId)?.questionId,
+      source,
     );
     if (parsed) {
       const confirmationTime =

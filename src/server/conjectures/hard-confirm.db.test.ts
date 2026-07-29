@@ -81,7 +81,11 @@ async function writeConjecture(
 }
 
 let seq = 0;
-async function writeScore(payload: ScorePayload, createdAt: Date): Promise<void> {
+async function writeScore(
+  payload: ScorePayload,
+  createdAt: Date,
+  options: { copyDissociationToSource?: boolean } = {},
+): Promise<void> {
   const db = testDb();
   seq += 1;
   if (payload.conjecture_event_id) {
@@ -122,6 +126,20 @@ async function writeScore(payload: ScorePayload, createdAt: Date): Promise<void>
           conjecture_event_id: payload.conjecture_event_id,
           outcome: payload.outcome,
           resolution: payload.resolution,
+          ...(options.copyDissociationToSource === false
+            ? {}
+            : {
+                ...(payload.m_diagnostic === undefined
+                  ? {}
+                  : { m_diagnostic: payload.m_diagnostic }),
+                ...(payload.context === undefined ? {} : { context: payload.context }),
+                ...(payload.session_window === undefined
+                  ? {}
+                  : { session_window: payload.session_window }),
+                ...(payload.judge_run_id === undefined
+                  ? {}
+                  : { judge_run_id: payload.judge_run_id }),
+              }),
         },
         caused_by_event_id: payload.conjecture_event_id,
         created_at: createdAt,
@@ -266,6 +284,46 @@ describe('gatherDissociationEvidence', () => {
     expect(ev.crucialConfirmedCount).toBe(0);
 
     // Even with the flag ON + a rival probe + fresh confirm, un-tagged data ⇒ INSUFFICIENT.
+    expect(
+      decideDissociation(ev, {
+        hardConfirmEnabled: true,
+        hasRivalProbe: true,
+        ownerFreshlyConfirmed: true,
+      }),
+    ).toBe('INSUFFICIENT');
+  });
+
+  it('does not trust anchor-only dissociation tags without probe-result/Judge provenance', async () => {
+    const db = testDb();
+    await writeConjecture('cj_chain', 'concept', 'kn_chain_rule');
+    for (const [index, context] of ['symbolic', 'real_world'].entries()) {
+      await writeScore(
+        {
+          knowledge_id: 'kn_chain_rule',
+          conjecture_event_id: 'cj_chain',
+          predicted_p: 0.2,
+          baseline_p: 0.8,
+          outcome: 0,
+          resolution: 'confirmed',
+          probe_result_event_id: `pr_forged_${index}`,
+          discriminating: true,
+          m_diagnostic: true,
+          context,
+          session_window: `2026-07-0${index + 1}`,
+          judge_run_id: `forged_run_${index}`,
+        },
+        new Date(`2026-07-0${index + 1}T00:00:00Z`),
+        { copyDissociationToSource: false },
+      );
+    }
+
+    const ev = await gatherDissociationEvidence(db, {
+      knowledgeId: 'kn_chain_rule',
+      causeCategory: 'concept',
+    });
+
+    expect(ev.hasDiscriminatingContext).toBe(false);
+    expect(ev.contextSpread).toBe(0);
     expect(
       decideDissociation(ev, {
         hardConfirmEnabled: true,
