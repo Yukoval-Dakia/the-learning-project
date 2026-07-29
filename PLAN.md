@@ -3,45 +3,40 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-29
-> **【更新 2026-07-29 · YUK-814 harness 已合并，真实 gate 等 owner 数据】**
-> backup→一次性 DB→生产 evidence chain→shadow/blind→score/canary harness 已随
-> PR #1105 落到 main。真实 shadow/blind/canary 尚未执行；唯一产品事实阻塞仍是
-> 6–10 个真实 owner 失败簇，不以 synthetic/mock 冒充。
+> **【更新 2026-07-29 · YUK-820 继续：DB affected gate 已通过本地全量验证】**
+> 真实 failed-head 回放确认 unit 21/21 捕获；同代码 PR/main 对照确认 unit 已降时但
+> DB 仍是 354–355 秒关键路径。DB selector 已完成 20 个真实失败 run backfill，
+> 初版 2 miss 已固化为 failure sentinels，最终 20/20 捕获；full pre-PR 与独立 review 已通过。
 
 ## NOW
 
-- **当前无代码 active 线；YUK-814 保持 In Progress，停在真实数据输入闸门**
-  - Harness 已随 PR #1105 / merge commit `ae02e020` 落到 main；exact final head
-    `7a39429a` 的 CI Gate run `30433913656` 全绿，actionable review threads 已清零。
-  - `pnpm grounding:gate` 已提供 inspect、shadow、score-blind、init-canary、
-    score-canary；backup 只恢复进自动清理的一次性 pgvector Testcontainer。
-  - 资格链复用生产 correction/history/accountability/evidence-enrichment/image gates，
-    额外排除 `payload.__synthetic=true` 与 `synthetic:*`；shadow 不写产品 proposal/event。
-  - deterministic selection 已锁 requested count + selection SHA-256；provider global
-    overrides 与 dirty worktree 均 fail closed；blind/private lineage 分离。
-  - blind gate 要求 6–10 簇、grounding ≥80%、三项红线为 0；canary 必须同一
-    owner/cohort、10 个 distinct intervention、监控 refs 与停机演练齐备。
-  - synthetic smoke 只证明 harness：12 failures → 6 eligible、`gate_passed=false`；
-    不构成 YUK-814 真实 gate 证据。
+- **YUK-820 active：把 DB required gate 切到 fail-closed affected selection**
+  - unit 真实失败 head：21/21 捕获，覆盖 18 PR；此前 3 个表面 miss 均为 DB partition。
+  - #1108 PR/main 同代码对照：unit step 132→41s，但 DB job 仍约 355s，wall 394/404s；
+    所以 owner 看到“没变短多少”属实，根因是 DB critical path 未增量。
+  - DB 真实失败 head：20/20 捕获，覆盖 15 PR；纯 graph 初版 18/20，`quiz_gen.test.ts`
+    与 `propose_edge.db.test.ts` 两个 out-of-graph reds 已成为 required sentinels。
+  - exact #1108 tree：最终 selector 195/390 DB files；其 181-file 前序集合两 shard
+    91+90 files、2,349 tests 全绿；新增 dynamic-import sentinels 由 full suite 覆盖；
+    本机并发容器时间不冒充 GitHub runner 节省值。
+  - planner 输出 `db_selection`，selector/direct guard/source scan/dynamic import/failure
+    sentinels/full fallback/empty-shard skip/artifacts 均已接入；两个 DB shards 共用前置
+    job 生成的同一份 selection，杜绝瞬时 selector 分歧造成覆盖空洞。
+  - full pre-PR：390 DB files / 4,263 tests 通过（另 9 skipped、1 todo）；migration
+    26/26、build、lint、typecheck、focused 40/40 均通过；独立 review 无 finding。
+- **YUK-814 保持 In Progress，停在真实数据输入闸门**
+  - Harness 已随 PR #1105 / merge commit `ae02e020` 落到 main；真实 shadow/blind/canary
+    尚未执行，仍需 production backup ZIP / 6–10 个合格真实 owner 失败簇。
 - **近期已收口**
-  - YUK-820 已随 PR #1103 / `7dd15a8e` 落到 main：affected unit required、
-    direct-test guard 与 fail-closed fallback 已有 20 个历史 PR backfill 证据；
-    PR head full Gate `30431860540` 与 main full canary `30432387630` 均全绿，
-    main artifact 的 requested/effective/required 均为 `full`。
-  - YUK-788 已随 PR #1102 / `ff681b0c` 合并并 Done；identity history gate、terminal
-    reopen 约束与 owner feedback 回流均有回归证据。
-  - YUK-803 的 soft archive/hard 不变已在 PR #1080 / `a1fe8ab8` 落地，
-    `conjecture-accept.db.test.ts` 21/21，Linear Done。
-  - YUK-817/818/819 已 Done；DB shard、unit 长尾与 JYEOO hard timeout 修复在 main。
+  - YUK-788 已随 PR #1102 / `ff681b0c` 合并并 Done；YUK-817/818/819 已 Done。
 
 ## NEXT
 
-1. 从 production `/api/_/export?include_assets=1` 获取真实 backup，先跑 inspect；
-   eligibility 不足 6 就继续积累真实使用，不制造错误。
-2. eligibility 满足后 shadow → owner blind review → score；grounding ≥80%，学科幻觉、
-   claim/probe 错配、严重事实错误均为 0，任一红线失败即停。
-3. 只有 blind PASS 后才依次启动 intervention snapshot、pedagogy、
-   QuestionAuthor/Verify、隔离 FSRS、结算、Brief/Copilot/profile 与 10-run canary。
+1. 交付 YUK-820 PR；该 PR 与 main canary 因触及 CI 自身必须 full。
+2. 下一条普通 server/API PR 读取 DB selector artifacts 与 GitHub job timing，验收真实
+   wall-clock；本 selector PR 与 main canary 因触及 CI 自身必须 full，不能冒充 affected 样本。
+3. YUK-814 获得 production backup 后按 inspect → shadow → blind → score 执行；不足 6 个
+   eligible failure clusters 就继续积累，不用 synthetic/mock 代替。
 
 ## PARKED
 
