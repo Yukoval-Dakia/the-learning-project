@@ -4,8 +4,8 @@
 
 - YUK-820 已从 closeout 重新进入 In Progress：owner 指出 CI wall-clock 几乎未缩短，
   真实同代码对照确认 unit affected 生效但 DB 仍是关键路径。
-- 当前 branch `codex/yuk-820-failure-backfill` 已实现 fail-closed DB affected selector，
-  full pre-PR 与独立 review 已通过，待 PR/CI/merge。
+- fail-closed DB affected selector 已随 PR #1109 / squash `1df65fd7` 合并；YUK-820
+  保持 In Progress，只等待下一条普通 server/API PR 的 live timing 验收。
 - YUK-814 harness 已随 PR #1105 落到 main；真实 shadow/blind/canary 仍停在 production
   backup / 6–10 个合格真实 owner 失败簇输入闸门，不用 synthetic/mock 代替。
 
@@ -23,6 +23,9 @@
    1,219+1,130 tests 全绿（另 3+6 skipped）；新增 dynamic-import sentinels 由 full suite 覆盖。
    本机并发 Testcontainers wall 不冒充
    GitHub runner 的节省值。
+5. #1109 final head CI Gate `30452431101` 全绿且共享 selection artifact 为 full；DB shard
+   test time 323.9s / 904.8s。第二 shard 相对同代码历史约 326s 是极端长尾，因此这条
+   CI 只证明 full canary 正确，不用于宣称 affected wall-clock 改善。
 
 ## 实现
 
@@ -39,12 +42,13 @@
 
 ## 下一步
 
-1. PR required CI 全绿后 merge；本 PR 和 main canary 都因触及 CI 自身必须 full。
-2. 下一条普通 server/API PR 用 DB selector artifacts + GitHub job timing 验收真实 wall。
+1. 下一条普通 server/API PR 用 DB selector artifacts + GitHub job timing 验收真实 wall；
+   至少核对 requested/effective/required mode、selected files、两个 shard test time。
 
 ## Worktree / workflow 状态
 
 - 当前 worktree：`/Users/yuqi/.codex/worktrees/9a32/the-learning-project`。
+- 当前 closeout branch：`codex/yuk-820-db-selector-closeout`。
 - owner 主工作树仍在 `codex/yuk-812-agent-control-plane` 且有既存改动；本轮未触碰。
 - 临时 replay worktrees 已清理；Testcontainers 已退出。
 - full pre-PR：390 DB files / 4,263 tests、migration 26/26、build、lint、typecheck、
