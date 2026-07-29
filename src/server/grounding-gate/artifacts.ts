@@ -4,6 +4,7 @@ import {
   ConjectureDiagnosticSpec,
   ConjectureProbeQualityAttempt,
   ConjectureProbeSpec,
+  type ConjectureProbeSpecT,
 } from '@/core/schema/business';
 import type { InduceConjectureResult } from '@/server/agency/conjecture/induce';
 import type { GroundingGateCandidate } from '@/server/grounding-gate/candidates';
@@ -241,6 +242,13 @@ export interface BuildGroundingReviewArtifactsInput {
   }>;
 }
 
+function stripProbePromptAndReference(
+  spec: ConjectureProbeSpecT,
+): Omit<ConjectureProbeSpecT, 'prompt_md' | 'reference_md'> {
+  const { prompt_md: _prompt, reference_md: _reference, ...blindSpec } = spec;
+  return blindSpec;
+}
+
 function blindShadowOutput(induced: InduceConjectureResult) {
   if (induced.outcome === 'proposal') {
     return {
@@ -251,20 +259,8 @@ function blindShadowOutput(induced: InduceConjectureResult) {
       probe_reference_md: induced.draft.probe_reference_md,
       followup_probe_md: induced.draft.followup_probe_md,
       followup_probe_reference_md: induced.draft.followup_probe_reference_md,
-      probe_spec: {
-        expected_target_error_answer_md: induced.draft.probe_spec.expected_target_error_answer_md,
-        elicits_target_error_reason_md: induced.draft.probe_spec.elicits_target_error_reason_md,
-        context_kind: induced.draft.probe_spec.context_kind,
-        representation_kind: induced.draft.probe_spec.representation_kind,
-      },
-      followup_probe_spec: {
-        expected_target_error_answer_md:
-          induced.draft.followup_probe_spec.expected_target_error_answer_md,
-        elicits_target_error_reason_md:
-          induced.draft.followup_probe_spec.elicits_target_error_reason_md,
-        context_kind: induced.draft.followup_probe_spec.context_kind,
-        representation_kind: induced.draft.followup_probe_spec.representation_kind,
-      },
+      probe_spec: stripProbePromptAndReference(induced.draft.probe_spec),
+      followup_probe_spec: stripProbePromptAndReference(induced.draft.followup_probe_spec),
     };
   }
   return {

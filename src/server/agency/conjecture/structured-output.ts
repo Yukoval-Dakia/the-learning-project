@@ -41,6 +41,7 @@ export function jsonObjectCandidates(text: string): unknown[] {
       candidates.push(JSON.parse(text.slice(start, end + 1)));
       cursor = end + 1;
     } catch {
+      // Retry from the next opening brace; the failed span may wrap valid JSON.
       cursor = start + 1;
     }
   }
@@ -61,7 +62,12 @@ export function parseTaskStructuredOutput<T>(
     (candidate) => candidate !== undefined && candidate !== null,
   );
   for (const candidate of candidates) {
-    if (typeof candidate === 'object' && candidate !== null && envelopeKey in candidate) {
+    if (
+      typeof candidate === 'object' &&
+      candidate !== null &&
+      !Array.isArray(candidate) &&
+      envelopeKey in candidate
+    ) {
       const wrapped = schema.safeParse((candidate as Record<string, unknown>)[envelopeKey]);
       if (wrapped.success) return wrapped.data;
     }

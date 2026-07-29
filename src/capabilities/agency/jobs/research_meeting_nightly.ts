@@ -29,9 +29,11 @@
 // Failure asymmetry (D7 / F-1): shared PRE-LLM reads run OUTSIDE the per-cell swallow —
 // a throw there is a legit retryable DB fault that propagates to the builder's
 // rethrow so pg-boss retries. Candidate-local grounding/image failures refill from
-// lower salience; per-cell induction failures are swallow-safe (one cell's failure
-// logs a retryable AI ledger row and continues; partial progress is fine), while
-// durable write failures escape as job-level infrastructure faults.
+// lower salience; ordinary per-cell induction failures are swallow-safe (one cell's
+// failure logs a retryable AI ledger row and continues; partial progress is fine).
+// Probe author/reviewer operational failures are different: completing the execution
+// would make the idempotency guard suppress the promised retry, so those escape to
+// pg-boss after recording health. Durable write failures also escape.
 //
 // ND-5: this job NEVER writes FSRS state. The conjecture is propose-only — the owner
 // accepts/edits/rejects in the inbox. The proposal snapshots predicted_p (the
@@ -1060,6 +1062,7 @@ async function runResearchMeetingNightlyClaimed(
         abstained: number;
         failed: number;
         failed_task_kind: ConjectureInductionTaskKind | null;
+        retry_job_error: ConjectureInductionOperationalError | null;
         cost_usd: number;
       }> => {
         let induced: InduceConjectureResult;
@@ -1079,6 +1082,25 @@ async function runResearchMeetingNightlyClaimed(
           });
         } catch (err) {
           console.error('[research_meeting_nightly] conjecture cell failed', cell.key, err);
+          if (
+            err instanceof ConjectureInductionOperationalError &&
+            (err.taskKind === 'ConjectureProbeAuthorTask' ||
+              err.taskKind === 'ConjectureProbeReviewTask')
+          ) {
+            // Do not persist this execution's completion marker. pg-boss redelivery
+            // must revisit the cell after an author/reviewer outage or invalid output.
+            await writeRetryableAiFailureLedgerFn(db, err.taskKind);
+            return {
+              cell,
+              induced: null,
+              created: 0,
+              abstained: 0,
+              failed: 1,
+              failed_task_kind: err.taskKind,
+              retry_job_error: err,
+              cost_usd: 0,
+            };
+          }
           // YUK-779: keep swallowing (one bad cell must not fail the batch) but COUNT it,
           // so the handler can tell "no evidence tonight" from "every cell blew up".
           // Partial sample spend is retained in per-call cost_ledger rows, but the
@@ -1093,6 +1115,7 @@ async function runResearchMeetingNightlyClaimed(
               err instanceof ConjectureInductionOperationalError
                 ? err.taskKind
                 : 'MindModelInductionTask',
+            retry_job_error: null,
             cost_usd: 0,
           };
         }
@@ -1108,11 +1131,18 @@ async function runResearchMeetingNightlyClaimed(
           abstained: induced.outcome === 'abstain' && !operationalFailure ? 1 : 0,
           failed: operationalFailure ? 1 : 0,
           failed_task_kind: operationalFailure ? 'MindModelInductionTask' : null,
+          retry_job_error: null,
           cost_usd: induced.cost_usd,
         };
       },
     ),
   );
+  const retryJobError = cellResults.find((result) => result.retry_job_error)?.retry_job_error;
+  if (retryJobError) {
+    // Promise.all has now waited for every sibling cell to settle, but no proposal,
+    // scan, or completion fact has been committed for this execution.
+    throw retryJobError;
+  }
   const created = cellResults.reduce((sum, result) => sum + result.created, 0);
   const abstained = cellResults.reduce((sum, result) => sum + result.abstained, 0);
   const cellsFailed = cellResults.reduce((sum, result) => sum + result.failed, 0);

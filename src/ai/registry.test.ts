@@ -589,8 +589,9 @@ describe('ResearchMeetingDirectorTask registry entry', () => {
 
   it('charter permits review events as primary evidence', () => {
     const p = getTaskSystemPrompt('ResearchMeetingDirectorTask');
-    expect(p).toContain('attempt/review/probe/prediction_score');
-    expect(p).not.toContain('evidence_refs 只能是 attempt/probe/prediction_score');
+    expect(p).toContain('失败 attempt/review 事件 id');
+    expect(p).toContain('不得引用 probe、prediction_score 或 agent_note id');
+    expect(p).not.toContain('attempt/review/probe/prediction_score');
   });
 
   it('charter names the spawn + write tools the orchestrator injects', () => {

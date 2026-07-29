@@ -261,7 +261,9 @@ describe('acceptConjectureProposal lifecycle', () => {
     await expect(acceptAiProposal(db, proposalId)).rejects.toMatchObject({
       code: CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
       status: 409,
-      message: expect.stringContaining('reprepare'),
+      message: expect.stringMatching(
+        /diagnostic_spec_invalid.*primary_probe_spec_invalid.*followup_probe_spec_invalid.*probe_quality_audit_invalid.*reprepare/,
+      ),
     });
     expect(await rateEvents(proposalId)).toHaveLength(0);
     expect(await probeQuestionsFor(proposalId)).toHaveLength(0);
@@ -284,6 +286,7 @@ describe('acceptConjectureProposal lifecycle', () => {
     await expect(acceptAiProposal(db, proposalId)).rejects.toMatchObject({
       code: CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
       status: 409,
+      message: expect.stringContaining('not_discriminating'),
     });
     expect(await rateEvents(proposalId)).toHaveLength(0);
   });

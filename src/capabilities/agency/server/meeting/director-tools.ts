@@ -18,6 +18,7 @@ import {
   conjectureKey,
   effectiveCauseForConjectureFailure,
 } from '@/capabilities/agency/server/conjecture/evidence';
+import { CONJECTURE_EVIDENCE_CHOICES_PER_FIELD } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
 import {
   type ConjectureHistory,
   type LoadConjectureHistoryFn,
@@ -37,6 +38,7 @@ import {
 import { CauseCategoryId } from '@/core/schema/cause';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { UNTRUSTED_TEXT_CHAR_CAP, wrapTruncatedLearnerText } from '@/kernel/untrusted-text';
 import {
   ConjectureProbeQualityOperationalError,
   type PrepareConjectureProbePairResult,
@@ -85,6 +87,67 @@ export const AGENT_NOTE_TARGET_WHITELIST: readonly AgentNoteTarget[] = Object.fr
   'coach',
   'research_meeting',
 ]);
+
+function wrapTextList(values: string[] | null): string[] | null {
+  return (
+    values
+      ?.slice(0, CONJECTURE_EVIDENCE_CHOICES_PER_FIELD)
+      .map((value) => wrapTruncatedLearnerText(value, UNTRUSTED_TEXT_CHAR_CAP)) ?? null
+  );
+}
+
+/**
+ * Director evidence starts as an immutable meeting snapshot, but it still contains
+ * learner/question-authored text. Preserve the evidence shape and provenance while
+ * applying the same truncate-then-delimit boundary used by deterministic induction.
+ */
+function sanitizeFailureAttemptForProbeQuality(failure: FailureAttempt): FailureAttempt {
+  const sanitizeQuestion = (
+    question: NonNullable<NonNullable<FailureAttempt['question_snapshot']>['parent_question']>,
+  ) => ({
+    ...question,
+    prompt_md: wrapTruncatedLearnerText(question.prompt_md, UNTRUSTED_TEXT_CHAR_CAP),
+    reference_md: wrapTruncatedLearnerText(question.reference_md, UNTRUSTED_TEXT_CHAR_CAP),
+    choices_md: wrapTextList(question.choices_md),
+  });
+  const snapshot = failure.question_snapshot;
+  return {
+    ...failure,
+    answer_md: wrapTruncatedLearnerText(failure.answer_md, UNTRUSTED_TEXT_CHAR_CAP),
+    question_snapshot:
+      snapshot == null
+        ? snapshot
+        : {
+            ...snapshot,
+            question: sanitizeQuestion(snapshot.question),
+            parent_question:
+              snapshot.parent_question === null ? null : sanitizeQuestion(snapshot.parent_question),
+          },
+    judge:
+      failure.judge === undefined
+        ? undefined
+        : {
+            ...failure.judge,
+            cause: {
+              ...failure.judge.cause,
+              analysis_md: wrapTruncatedLearnerText(
+                failure.judge.cause.analysis_md,
+                UNTRUSTED_TEXT_CHAR_CAP,
+              ),
+            },
+          },
+    user_cause:
+      failure.user_cause === undefined
+        ? undefined
+        : {
+            ...failure.user_cause,
+            user_notes: wrapTruncatedLearnerText(
+              failure.user_cause.user_notes,
+              UNTRUSTED_TEXT_CHAR_CAP,
+            ),
+          },
+  };
+}
 
 // round-3 review OCR MINOR #6 — literal constants (NOT positional array destructuring of
 // DIRECTOR_WRITE_TOOL_LOCAL_NAMES): a reorder of that shared tuple in tool-names.ts would
@@ -491,6 +554,9 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
               });
             }
           }
+          const probeEvidenceFailures = referencedFailures.map(
+            sanitizeFailureAttemptForProbeQuality,
+          );
 
           // Keep the cap/dedup reservation immediately before this handler's first await.
           // Validation failures above remain free; evidence lookup failures below are
@@ -596,8 +662,11 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
               hypothesis: hypothesisCheck.data,
               evidencePayload: {
                 evidence_refs: primaryRefs,
-                failure_attempts: referencedFailures,
+                failure_attempts: probeEvidenceFailures,
               },
+              // Image-bearing snapshots fail closed above. Unlike the deterministic
+              // nightly lane, Director currently has no asset loader, so [] means
+              // "verified text-only evidence", never silently dropped visual evidence.
               evidenceImages: [],
               runTaskFn,
             });

@@ -1030,6 +1030,36 @@ describe('runResearchMeetingNightly', () => {
     });
   });
 
+  it.each(['ConjectureProbeAuthorTask', 'ConjectureProbeReviewTask'] as const)(
+    'propagates %s operational failures so pg-boss redelivers the unfinished execution',
+    async (taskKind) => {
+      const writeAiProposalFn = vi.fn(async () => 'unexpected');
+      const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+      const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
+      const deps = baseDeps({
+        getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+        induceConjectureFn: vi.fn(async () => {
+          throw new ConjectureInductionOperationalError(taskKind, `${taskKind} output unavailable`);
+        }),
+        writeAiProposalFn,
+        writeEventFn,
+        writeRetryableAiFailureLedgerFn,
+      });
+
+      await expect(runResearchMeetingNightly({} as never, deps)).rejects.toThrow(
+        `${taskKind} output unavailable`,
+      );
+      expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(expect.anything(), taskKind);
+      expect(writeAiProposalFn).not.toHaveBeenCalled();
+      expect(writeEventFn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          action: 'experimental:research_meeting_completed',
+        }),
+      );
+    },
+  );
+
   // ── YUK-779: 静默空跑的红/绿实证 ───────────────────────────────────────────
   // 两侧必须同时成立才算修好：全败要报，空夜不能报。
 

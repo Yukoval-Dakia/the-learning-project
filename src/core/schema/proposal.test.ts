@@ -41,6 +41,65 @@ describe('ConjectureProposalChange', () => {
     );
   });
 
+  it('normalizes v3 outer probe text before comparing it with the nested specs', () => {
+    const primary = {
+      prompt_md: '判断条件关系。',
+      reference_md: '必要不等于充分。',
+      expected_target_error_answer_md: '必要条件一定充分。',
+      elicits_target_error_reason_md: '复测必要与充分的混淆。',
+      context_kind: 'abstract' as const,
+      representation_kind: 'symbolic' as const,
+    };
+    const followup = {
+      prompt_md: '换一个情境再次判断条件关系。',
+      reference_md: '用新的反例说明必要仍不等于充分。',
+      expected_target_error_answer_md: '有门票就一定能进入。',
+      elicits_target_error_reason_md: '在应用情境复测同一目标错误。',
+      context_kind: 'applied' as const,
+      representation_kind: 'natural_language' as const,
+    };
+    const parsed = ConjectureProposalChange.parse({
+      ...valid,
+      probe_md: `  ${primary.prompt_md}  `,
+      probe_reference_md: `  ${primary.reference_md}  `,
+      followup_probe_md: `  ${followup.prompt_md}  `,
+      followup_probe_reference_md: `  ${followup.reference_md}  `,
+      diagnostic_spec: {
+        schema_version: 1,
+        target_error_rule_md: '把必要条件当成充分条件。',
+        trigger_conditions_md: '判断条件是否足以推出结论。',
+        scope_boundary_md: '不扩展到其它逻辑关系。',
+        expected_wrong_answer_signature_md: '把仅必要判断成充分。',
+      },
+      probe_spec: primary,
+      followup_probe_spec: followup,
+      probe_quality: {
+        schema_version: 1,
+        passed: true,
+        attempts: [
+          {
+            attempt: 1,
+            outcome: 'passed',
+            failure_codes: [],
+            explanation_md: '通过。',
+            author_task_run_id: 'author',
+            reviewer_task_run_id: 'review',
+          },
+        ],
+        final_review: {
+          verdict: 'pass',
+          failure_codes: [],
+          explanation_md: '通过。',
+        },
+      },
+    });
+
+    expect(parsed.probe_md).toBe(primary.prompt_md);
+    expect(parsed.probe_reference_md).toBe(primary.reference_md);
+    expect(parsed.followup_probe_md).toBe(followup.prompt_md);
+    expect(parsed.followup_probe_reference_md).toBe(followup.reference_md);
+  });
+
   it('accepts historical no-follow-up payloads but rejects partial or duplicate v2 follow-ups', () => {
     const {
       followup_probe_md: _followupPrompt,
@@ -48,6 +107,12 @@ describe('ConjectureProposalChange', () => {
       ...historical
     } = valid;
     expect(ConjectureProposalChange.safeParse(historical).success).toBe(true);
+    expect(
+      ConjectureProposalChange.safeParse({
+        ...historical,
+        probe_md: 'x'.repeat(1500),
+      }).success,
+    ).toBe(true);
     expect(
       ConjectureProposalChange.safeParse({
         ...historical,

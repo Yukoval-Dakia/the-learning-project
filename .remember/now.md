@@ -7,8 +7,8 @@
   `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-821-probe-quality`
 ；branch `codex/yuk-821-probe-quality`。
 - PR **#1110**：`https://github.com/Yukoval-Dakia/the-learning-project/pull/1110`；
-  pre-merge head `5e8a800f` 的 GitHub CI Gate `30456960741` 全绿；已合入最新
-  `origin/main`，merge head 尚需新的 exact CI。
+  merge head `a0fd6428` 的 GitHub CI Gate `30458027007` 全绿；随后新一轮 review
+  findings 已在工作树修复，尚需提交、推送并跑新的 exact CI。
 - owner 主工作树已有既存未提交改动；本轮没有修改主工作树。
 - Owner 决策：质量评测只 mock 输入，输出必须来自真实生产链/真实模型；真实 owner
   数据只控制扩大使用，不阻塞开发。
@@ -50,7 +50,12 @@
   stop condition 停止。没有用 Mimo fallback 或空输出来伪造 pass。
 - YUK-821 在 canonical 8 簇真实输出满足 grounding ≥80%、mismatch=0、
   severe factual error=0 前保持 In Progress。
-- PR 两条 review threads 已回复并 resolve，当前 unresolved=0。
+- 先前两条 review threads 已回复并 resolve；merge 后的新一轮 11 条线程已逐项验证并修复：
+  Director 不可信文本边界/证据类型、probe operational 重试、proposal 规范化、accept
+  可诊断失败码、structured output、防 blind schema drift 及说明性注释。
+- 新一轮增量验证：unit 5 files / 171 passed；DB 1 file / 23 passed；typecheck 与 changed-file
+  Biome 通过。一次误用无 config 的 `vitest` 导致 4 个 alias import suite 启动失败，
+  随后用 `vitest.unit.config.ts` 正确重跑并全绿；这不是代码失败。
 
 ## 合入 main 的并行事实
 
@@ -69,7 +74,7 @@
 
 ## 下一步
 
-1. 完成 origin/main merge commit 并推送。
-2. 只监听 PR #1110 merge head 的 GitHub Actions `CI Gate`。
+1. 提交并推送新 review 修复，逐条回复并 resolve threads。
+2. 只监听 PR #1110 新 exact head 的 GitHub Actions `CI Gate`。
 3. CI 与 review 全绿后合并 P0，但保持 YUK-821 In Progress。
 4. canonical Opus 配额恢复后重跑固定 8 簇；只有输出门通过才关闭 YUK-821。

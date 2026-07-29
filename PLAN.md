@@ -30,6 +30,10 @@
     29 passed；远端 DB lane 暴露旧 Director fixtures 缺快照后，定向 DB 1 file /
     18 passed；migration 定向 1 passed / 26 skipped。完整 gate 不在本地跑，交给
     GitHub CI Gate。
+  - merge-head 审查新增问题已收口：Director 证据先截断并标为不可信文本；运行 charter
+    只允许可物化的 attempt/review；probe author/reviewer operational failure 重新抛给
+    pg-boss；proposal 规范化、accept 失败码、blind artifact 与 structured-output
+    守卫补齐。增量 unit 5 files / 171 passed、DB 1 file / 23 passed、typecheck 通过。
   - 20:47 用 mock 输入启动 canonical Opus real-output 复评；第一簇的 3 个独立
     induction call 均收到 429 weekly limit，按 operational stop condition 立即停止，
     没有把 fallback 或空输出记成质量结果。
@@ -39,10 +43,10 @@
 
 ## NEXT
 
-1. PR #1110 两条 review finding 已修复并清零；pre-merge head `5e8a800f` 的远端
-   CI Gate `30456960741` 全绿。已合入最新 `origin/main` 解决 PLAN/handoff 冲突，
-   merge head 必须再跑 exact GitHub CI Gate，不在本地跑全 gate。
-2. merge head CI 全绿后合并 P0；再用固定 mock evidence packets 跑 canonical Opus real-output
+1. PR #1110 merge head `a0fd6428` 的远端 CI Gate `30458027007` 全绿；随后新一轮
+   review findings 已在工作树修复。提交、推送、回复并清零 threads 后，只监听新 exact
+   head 的 GitHub CI Gate，不在本地跑全 gate。
+2. 修复 head CI 全绿后合并 P0；再用固定 mock evidence packets 跑 canonical Opus real-output
    质量评测。YUK-821 在 8 簇输出门通过前保持 In Progress，输出不合格就继续改模型合同，
    不伪造 pass。
 3. 真实 owner shadow/blind/canary 留作扩大 auto-intervention 的发布证据，不阻塞后续功能实现。
@@ -63,7 +67,8 @@
 
 ## BLOCKED-ON
 
-- **本次 P0 代码：无产品数据 blocker**；review 已清零，只剩 merge head 的 GitHub CI Gate。
+- **本次 P0 代码：无产品数据 blocker**；只剩新 review 修复的提交、thread 清零与 exact-head
+  GitHub CI Gate。
 - **canonical Opus 输出质量结论**：2026-07-29 20:47 实测被 429 weekly limit 阻断；
   配额故障只记 operational，不能用 Mimo fallback 的结果冒充 canonical pass。
 - **auto-intervention 扩大使用**：仍需真实 owner/cohort shadow/blind/canary 证据；这是发布

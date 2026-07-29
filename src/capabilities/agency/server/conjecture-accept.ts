@@ -134,29 +134,41 @@ export async function acceptConjectureProposal(
     typeof change.followup_probe_reference_md === 'string'
       ? change.followup_probe_reference_md.trim()
       : '';
-  const structuralFailureCount =
+  const structuralFailures =
     primaryProbeSpec.success && followupProbeSpec.success && typeof change.predicted_p === 'number'
       ? evaluateConjectureProbePackageStructure({
           primary: primaryProbeSpec.data,
           followup: followupProbeSpec.data,
           predicted_p: change.predicted_p,
-        }).length
-      : 1;
-  const qualityVerified =
-    diagnosticSpec.success &&
-    primaryProbeSpec.success &&
-    followupProbeSpec.success &&
-    qualityAudit.success &&
-    change.discriminating === true &&
-    structuralFailureCount === 0 &&
-    primaryProbeSpec.data.prompt_md === persistedProbeMd &&
-    primaryProbeSpec.data.reference_md === persistedProbeReferenceMd &&
-    followupProbeSpec.data.prompt_md === persistedFollowupMd &&
-    followupProbeSpec.data.reference_md === persistedFollowupReferenceMd;
-  if (!qualityVerified) {
+        })
+      : [];
+  const failureReasons: string[] = [];
+  if (!diagnosticSpec.success) failureReasons.push('diagnostic_spec_invalid');
+  if (!primaryProbeSpec.success) failureReasons.push('primary_probe_spec_invalid');
+  if (!followupProbeSpec.success) failureReasons.push('followup_probe_spec_invalid');
+  if (!qualityAudit.success) failureReasons.push('probe_quality_audit_invalid');
+  if (change.discriminating !== true) failureReasons.push('not_discriminating');
+  failureReasons.push(...structuralFailures.map((code) => `structural:${code}`));
+  if (primaryProbeSpec.success) {
+    if (primaryProbeSpec.data.prompt_md !== persistedProbeMd) {
+      failureReasons.push('primary_prompt_mismatch');
+    }
+    if (primaryProbeSpec.data.reference_md !== persistedProbeReferenceMd) {
+      failureReasons.push('primary_reference_mismatch');
+    }
+  }
+  if (followupProbeSpec.success) {
+    if (followupProbeSpec.data.prompt_md !== persistedFollowupMd) {
+      failureReasons.push('followup_prompt_mismatch');
+    }
+    if (followupProbeSpec.data.reference_md !== persistedFollowupReferenceMd) {
+      failureReasons.push('followup_reference_mismatch');
+    }
+  }
+  if (failureReasons.length > 0) {
     throw new ApiError(
       CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
-      'cannot accept: this conjecture has no verified v3 diagnostic/probe package; reprepare it before accepting',
+      `cannot accept: verified v3 diagnostic/probe package failed [${failureReasons.join(', ')}]; reprepare it before accepting`,
       409,
     );
   }
