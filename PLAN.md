@@ -2,95 +2,51 @@
 
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
-> 更新于：2026-07-29
-> **【更新 2026-07-29 · YUK-821 P0 实施中；真实数据不再阻塞开发】**
-> Owner 裁决：质量评测只 mock 输入，输出必须走真实模型/真实生产链；mock-input 的
-> real-output 评测可以关闭开发验收。真实 owner 数据仅用于决定是否扩大自动干预，
-> 不再阻塞 P0/P1 代码实施。本轮实施全部 P0；P1 学科确定性 validator 只写计划。
+> 更新于：2026-07-30
+> **【更新 2026-07-30 · YUK-825 混合 DB 测试隔离已实现，待 PR/CI】**
+> 事务安全测试改用单连接 `BEGIN/ROLLBACK`；并发、独立连接、pg-boss、advisory lock
+> 与跨连接 commit visibility 继续使用全量 `TRUNCATE`，不做危险的一刀切。
 
 ## NOW
 
-- **YUK-821：修复两个失败输出暴露的 claim/probe 错配（P0）**
-  - `MindModelInductionTask` 只产 claim + 冻结 `DiagnosticSpec`，不再同时出题。
-  - 自洽共识覆盖完整 DiagnosticSpec；claim 相似但 trigger/scope/wrong-answer
-    signature 不同不算同票。
-  - 新增独立 `ConjectureProbeAuthorTask` / `ConjectureProbeReviewTask`；通用结构门先查
-    双题独立性和正确/目标错误答案差异，再由同模型第二次独立调用审查学科语义。
-  - 第一次质量失败整包重生成；第二次质量失败 `abstain(no_discriminating_probe)`；
-    provider/结构化输出故障保持 operational，不能凑成质量反对票。
-  - nightly 与 agent director 共用质量门；proposal 保存 spec、双题 metadata、task run、
-    failure code 和 audit；accept 缺 v3 包或发现持久化不一致时 409 fail closed。
-  - 升级迁移用 agent-authored `correct(retract)` 收口旧 v1/v2 pending 猜想，不伪造
-    owner dismiss，不再让旧 Teaching Brief 卡在“永远 409 但仍 pending”。
-  - Director 只接受本次会议快照中可完整物化的文本 failure attempt/review；缺题目快照、
-    图片/图形、probe_result/prediction_score 一律失败关闭，不再让 author/reviewer
-    在证据被静默丢弃后签发 pass。
-  - 定向验证当前：unit 6 files / 212 passed；DB 4 files / 70 passed；typecheck、
-    changed-file Biome、diff check 通过；审查修复增量 unit 2 files / 61 passed、DB 2 files /
-    29 passed；远端 DB lane 暴露旧 Director fixtures 缺快照后，定向 DB 1 file /
-    18 passed；migration 定向 1 passed / 26 skipped。完整 gate 不在本地跑，交给
-    GitHub CI Gate。
-  - merge-head 审查新增问题已收口：Director 证据先截断并标为不可信文本；运行 charter
-    只允许可物化的 attempt/review；probe author/reviewer operational failure 重新抛给
-    pg-boss；proposal 规范化、accept 失败码、blind artifact 与 structured-output
-    守卫补齐。增量 unit 5 files / 171 passed、DB 1 file / 23 passed、typecheck 通过。
-  - exact-head `2d754dc5` 的远端 CI Gate `30460326628` 全绿。随后两条新 review 已修：
-    Director 按 KC 从 Knowledge public port 解析并向 Author/Reviewer 传递 SubjectProfile；
-    MCP 仍返回合法软失败，但外层在写 scan 前重新抛出 probe outage，使 day claim 保持
-    `claim + no scan` 并由 pg-boss 同日重试。增量 unit 1 file / 42 passed、DB 1 file /
-    19 passed、typecheck、changed-file Biome、diff check 通过。
-  - 合并 main 后 exact-head `7c73c8c4` 的 CI Gate `30463050514` 全绿。CodeRabbit 随后指出
-    `claim + no scan` 仍可并发/无限重试；已改为“360 秒 lease + 显式失败 marker +
-    fixed-id recovery claim”，活跃执行跳过、硬崩溃等 lease 过期、最多恢复 1 次。增量 unit
-    2 files / 56 passed、DB 1 file / 19 passed、typecheck、Biome 通过。
-  - exact-head `ae6845c6` 的 CI Gate `30464284808` 全绿。随后两条 review 已修：恢复运行
-    会从同日所有 durable trigger 的 proposal/note 输出重建计数，整晚仍只允许 3/2；
-    probe outage 改为按 cause×KC identity 记录，同 identity 后续拿到真实质量结论才清除，
-    不会因别的 identity 成功而误清。增量 unit 43 passed、DB 20 passed、typecheck、
-    Biome 通过。
-  - exact-head `41fd682c` 的 CI Gate `30465338781` 全绿。最后一批 review 修复一并收口：
-    active lease 的 hard-crash redelivery 不再提前 ACK，而是在 handler 内保留到 lease
-    边界再争抢唯一 recovery；升级 correction 写入时清空 scopes 并预置 `ingest_at`，
-    不进入 memory outbox。增量 unit 15 passed、migration 1 passed / 26 skipped、
-    typecheck、changed-file Biome、diff check 通过。
-  - 20:47 用 mock 输入启动 canonical Opus real-output 复评；第一簇的 3 个独立
-    induction call 均收到 429 weekly limit，按 operational stop condition 立即停止，
-    没有把 fallback 或空输出记成质量结果。
-- **YUK-814 闸门口径已按 owner 新决策修正**
-  - 现有 harness 可继续用于真实 owner 观察数据，但它是扩大使用闸门，不是产品实施闸门。
-  - synthetic/mock 仍不能冒充真实用户效果；但“mock 输入 + 真实模型输出”是合法的开发质量测试。
+- **YUK-825：DB tests 混合隔离第一波**
+  - `tests/helpers/db.ts` 新增 opt-in `beginTestTransaction()` /
+    `rollbackTestTransaction()`；postgres-js reserved connection 持有外层事务，应用内
+    `db.transaction()` 映射为 savepoint。
+  - fail closed：活跃事务内禁止 `resetDb()`，重复 begin 报错；helper 契约与不适用边界
+    已写入 `AGENTS.md` / `CLAUDE.md`。
+  - 首批迁移 `proposal-tools.test.ts` 全文件，以及 `orchestrator.db.test.ts` 中两个无并发
+    describe；catch-up/concurrent logging 等并发语义仍保留 TRUNCATE。
+  - 基线（proposal + orchestrator，95 tests）：48.94s / 56.55s；优化后连同新增 helper
+    测试共 99 tests：25.16s / 26.27s / 27.38s，墙钟下降约 44%–55%。
+  - shuffle seed 825/826 全绿；完整 pre-PR gate 全绿：unit 5917、DB 4271、migration 27，
+    lint/audits/typecheck/build 通过。完整本地 DB 受另一 worktree 同时跑 DB 竞争影响为
+    1305s，不作为性能对比样本。
 
 ## NEXT
 
-1. PR #1110 最后一批 review findings 已批量修复；一次提交/推送、回复并清零 threads 后，
-   只监听新 exact head 的 GitHub CI Gate，不在本地跑全 gate。
-2. 修复 head CI 全绿后合并 P0；再用固定 mock evidence packets 跑 canonical Opus real-output
-   质量评测。YUK-821 在 8 簇输出门通过前保持 In Progress，输出不合格就继续改模型合同，
-   不伪造 pass。
-3. 真实 owner shadow/blind/canary 留作扩大 auto-intervention 的发布证据，不阻塞后续功能实现。
+1. 提交并推送 `codex/yuk-825-db-rollback`，创建 ready PR（Closes YUK-825）。
+2. 检查独立 review、未解决 review threads 与 exact-head GitHub CI Gate；有 finding 就修复
+   并重新验证。
+3. CI/review 全绿后 squash merge，Linear YUK-825 → Done，并记录真实 CI shard timing。
 
 ## PARKED
 
-- **YUK-822：P1 学科确定性验证器（本次不写代码）**
-  - 详细通俗计划：`docs/planning/2026-07-29-yuk-821-conjecture-probe-quality.md`。
-  - 第一批仅做数学的复合单位分母变换与异分母分数相加；subject-owned registry，
-    不在 Agency 写中央学科 switch；parser 不可判定时 fail closed。
-  - P1 需要版本化 validator provenance、mutation tests、shadow→blocking 切换与 kill switch。
-- **干预准备/结算/协作档案**：YUK-791/796、YUK-792、YUK-815、YUK-816；不再被
-  “必须先有真实 owner 数据”整体阻塞，但仍须按 mesh 依赖顺序推进。
-- **CI selector drift**：main full canary 或 direct-test guard 发现漏选即回退 full required；
-  以 GitHub timing/coverage 为证据，不在本机猜测。
-- **YUK-820 live timing**：DB affected selector 已随 main 合并并完成 20/20 failed-head
-  回放；仍等待下一条不触及 schema/migration/CI 自身的普通 server/API PR 验收 wall-clock。
-- **YUK-823 已 Done**：PR #1112 / `c4c26c76` 已把 TS7 native compiler、TS6 fallback、
-  native watch 与跨 CI run buildinfo 合入 main；PR #1113 / `766351a5` 完成看板收口。
-- **YUK-824 本地 lint 假红**：只处理 sanctioned `.ykv/**` code-index cache 的精确忽略，
-  不扩大 Biome `files.maxSize`，不混入 YUK-821。
+- **YUK-820 live timing**：DB affected selector 已合入 main、failed-head 回放 20/20；继续以
+  普通 server/API PR 的 GitHub timing 验收 selector wall-clock。
+- **YUK-821 代码已合并**：PR #1110 / `770936e0` 已进 main；canonical Opus 8 簇真实输出
+  质量门仍未关闭，因此 Linear 保持 In Progress，不把代码合并冒充真实输出验收。
+- **YUK-822：P1 学科确定性验证器**：设计在
+  `docs/planning/2026-07-29-yuk-821-conjecture-probe-quality.md`；待后续单独实施。
+- **干预准备/结算/协作档案**：YUK-791/796、YUK-792、YUK-815、YUK-816；按 mesh
+  依赖顺序推进。
+- **YUK-824 本地 lint 假红**：sanctioned `.ykv/**` code-index cache 的精确忽略仍是独立线；
+  本轮 pre-PR 前仅删除当前 worktree 的本地索引产物，没有改 Biome 范围。
 
 ## BLOCKED-ON
 
-- **本次 P0 代码：无产品数据 blocker**；只剩最终批次 exact-head GitHub CI Gate 与合并。
-- **canonical Opus 输出质量结论**：2026-07-29 20:47 实测被 429 weekly limit 阻断；
-  配额故障只记 operational，不能用 Mimo fallback 的结果冒充 canonical pass。
+- **YUK-825：无 blocker**；只待 PR review/CI/merge。
+- **YUK-821 canonical Opus 输出质量**：2026-07-29 实测被 429 weekly limit 阻断；配额故障
+  只记 operational，不能用 fallback 或空输出冒充 canonical pass。
 - **auto-intervention 扩大使用**：仍需真实 owner/cohort shadow/blind/canary 证据；这是发布
   和扩量条件，不是继续实现功能的前置条件。
