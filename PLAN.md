@@ -10,7 +10,8 @@
 ## NOW
 
 - **唯一 active 线：CI/perf · YUK-820**
-  - Branch：`codex/yuk-820-incremental-gate`，基于 `main@41fa2a07`。
+  - Draft PR #1103：`codex/yuk-820-incremental-gate` → `main@41fa2a07`；
+    等 GitHub full-trigger gate 与 shadow artifact。
   - PR 的 unit-test-only / DB-test-only / UI / server 改动按 lane 选择；schema、
     migration、kernel/core、manifest、依赖/测试配置和未知路径全量。
   - main push 永远 full canary；base/diff/classifier 异常同样 fail closed 全量。
@@ -26,8 +27,8 @@
 
 ## NEXT
 
-1. 提交 YUK-820 并在 GitHub 验证 planner 的 full-trigger run、shadow artifact 与
-   aggregate fail-closed；本 PR 因修改 workflow/selector 自身必然全量。
+1. 等待 PR #1103 的 full-trigger run，核对 shadow artifact 与 aggregate
+   fail-closed；本 PR 因修改 workflow/selector 自身必然全量。
 2. 后续混合 PR 收集至少 20 份 shadow report；零漏选前不把 affected set 升为 required。
 3. 再推进 YUK-788/803：dismiss/reopen/cooldown、prior claim、soft archive/hard 不变。
 4. 通过真实 owner 数据闸门 YUK-814 后，才进入 intervention snapshot、pedagogy、
