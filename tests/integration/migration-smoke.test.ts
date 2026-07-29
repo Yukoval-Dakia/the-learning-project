@@ -1087,7 +1087,11 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
             reviewer_task_run_id: 'review_run',
           },
         ],
-        final_review: { verdict: 'pass' },
+        final_review: {
+          verdict: 'pass',
+          failure_codes: [],
+          explanation_md: 'the independently reviewed pair is valid',
+        },
         reviewed_hypothesis: {
           kind: 'proposal',
           claim_md: 'you apply the wrong rule',
@@ -1159,6 +1163,13 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
           ...v2Change.probe_quality.reviewed_package,
           predicted_p: 0.4,
         },
+      },
+    });
+    await seedProposal('audit_v2_incomplete_final_review', {
+      ...v2Change,
+      probe_quality: {
+        ...v2Change.probe_quality,
+        final_review: { verdict: 'pass' },
       },
     });
     await seedProposal('audit_v2_hypothesis_mismatch', {
@@ -1242,6 +1253,13 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         already_ingested: true,
       },
       {
+        subject_id: 'audit_v2_incomplete_final_review',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
         subject_id: 'audit_v2_mismatch',
         actor_kind: 'agent',
         actor_ref: 'yuk821_audit_binding_migration',
@@ -1300,6 +1318,7 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         AND caused_by_event_id IN (
           'audit_v1_pending',
           'audit_v2_hypothesis_mismatch',
+          'audit_v2_incomplete_final_review',
           'audit_v2_mismatch',
           'audit_v2_missing_lineage',
           'audit_v2_non_array_evidence_refs',

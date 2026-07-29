@@ -54,7 +54,24 @@ WHERE proposal."action" = 'experimental:proposal'
     AND jsonb_typeof(proposal."payload" #> '{ai_proposal,proposed_change,probe_quality}') = 'object'
     AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,schema_version}' = '2'
     AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,passed}' = 'true'
+    AND jsonb_typeof(
+      proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,final_review}'
+    ) = 'object'
     AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,final_review,verdict}' = 'pass'
+    AND CASE
+      WHEN jsonb_typeof(
+        proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,final_review,failure_codes}'
+      ) = 'array'
+        THEN jsonb_array_length(
+          proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,final_review,failure_codes}'
+        ) = 0
+      ELSE false
+    END
+    AND char_length(
+      btrim(
+        proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,final_review,explanation_md}'
+      )
+    ) BETWEEN 1 AND 1000
     AND proposal."payload" #>> '{ai_proposal,proposed_change,discriminating}' = 'true'
     AND jsonb_typeof(proposal."payload" #> '{ai_proposal,proposed_change,predicted_p}') = 'number'
     AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,kind}'
