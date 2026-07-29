@@ -475,7 +475,6 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
               loadConjectureHistoryFn(db, [
                 {
                   key,
-                  cause_category: causeCategory,
                   knowledge_id: a.knowledge_id,
                 },
               ]),
@@ -497,29 +496,39 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             });
           }
 
-          const historyGate = applyConjectureHistoryGate(
-            [{ key, evidence_event_ids: primaryRefs }],
-            failureAttempts,
-            historyByKey,
-            now,
-          );
-          if (historyGate.cells.length === 0) {
+          try {
+            const historyGate = applyConjectureHistoryGate(
+              [{ key, evidence_event_ids: primaryRefs }],
+              failureAttempts,
+              historyByKey,
+              now,
+            );
+            if (historyGate.cells.length === 0) {
+              releaseReservation();
+              return textResult({
+                ok: false,
+                reason: '该错因×知识点受 owner decision / conjecture lifecycle gate 阻断',
+              });
+            }
+            const requiredPriorClaimMd = historyGate.priorClaimMdByKey.get(key);
+            if (
+              requiredPriorClaimMd !== undefined &&
+              a.prior_claim_md?.trim() !== requiredPriorClaimMd
+            ) {
+              releaseReservation();
+              return textResult({
+                ok: false,
+                reason: '该 terminal 猜想重开前必须读取并原样回传 owner prior_claim_md',
+                prior_claim_md: requiredPriorClaimMd,
+              });
+            }
+          } catch (err) {
             releaseReservation();
             return textResult({
               ok: false,
-              reason: '该错因×知识点受 owner decision / conjecture lifecycle gate 阻断',
-            });
-          }
-          const requiredPriorClaimMd = historyGate.priorClaimMdByKey.get(key);
-          if (
-            requiredPriorClaimMd !== undefined &&
-            a.prior_claim_md?.trim() !== requiredPriorClaimMd
-          ) {
-            releaseReservation();
-            return textResult({
-              ok: false,
-              reason: '该 terminal 猜想重开前必须读取并原样回传 owner prior_claim_md',
-              prior_claim_md: requiredPriorClaimMd,
+              reason: `conjecture history gate 校验失败: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
             });
           }
 

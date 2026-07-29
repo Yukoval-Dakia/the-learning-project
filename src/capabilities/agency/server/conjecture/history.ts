@@ -15,7 +15,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 export const CONJECTURE_DISMISS_COOLDOWN_DAYS = 30;
 export const CONJECTURE_REOPEN_FAILURE_FLOOR = 2;
 
-type ConjectureHistoryCandidate = Pick<EvidenceCell, 'key' | 'cause_category' | 'knowledge_id'>;
+type ConjectureHistoryCandidate = Pick<EvidenceCell, 'key' | 'knowledge_id'>;
 
 export interface ConjectureHistory {
   latest_decision: 'accept' | 'dismiss' | 'rollback' | null;
@@ -298,6 +298,8 @@ export function applyConjectureHistoryGate<
     ) {
       return false;
     }
+    // A rollback reverses the prior proposal decision. With no active accepted
+    // proposal (and therefore no matching terminal below), the identity is eligible again.
     if (history.latest_terminal_at === null) return true;
     const terminalAt = history.latest_terminal_at;
 
