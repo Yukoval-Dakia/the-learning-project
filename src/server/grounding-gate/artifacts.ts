@@ -78,6 +78,12 @@ export const GroundingBlindPacketSchema = z
     source_backup_sha256: z.string().regex(/^[a-f0-9]{64}$/),
     generated_at: z.string().datetime(),
     instructions: z.string().min(1),
+    requested_sample_count: z
+      .number()
+      .int()
+      .min(GROUNDING_GATE_MIN_CLUSTERS)
+      .max(GROUNDING_GATE_MAX_CLUSTERS),
+    selection_sha256: z.string().regex(/^[a-f0-9]{64}$/),
     items: z.array(GroundingBlindItemSchema),
   })
   .superRefine((packet, ctx) => {
@@ -91,6 +97,36 @@ export const GroundingBlindPacketSchema = z
     }
   });
 export type GroundingBlindPacket = z.infer<typeof GroundingBlindPacketSchema>;
+
+type BlindSelectionLockInput = Pick<
+  GroundingBlindPacket,
+  | 'schema_version'
+  | 'gate_id'
+  | 'source_backup_sha256'
+  | 'generated_at'
+  | 'instructions'
+  | 'requested_sample_count'
+  | 'items'
+>;
+
+function blindSelectionSha256(packet: BlindSelectionLockInput): string {
+  const payload = {
+    schema_version: packet.schema_version,
+    gate_id: packet.gate_id,
+    source_backup_sha256: packet.source_backup_sha256,
+    generated_at: packet.generated_at,
+    instructions: packet.instructions,
+    requested_sample_count: packet.requested_sample_count,
+    items: packet.items,
+  };
+  return createHash('sha256')
+    .update(
+      JSON.stringify(payload, (key, value) => {
+        return key === 'review' ? undefined : value;
+      }),
+    )
+    .digest('hex');
+}
 
 export const GroundingPrivateMapSchema = z.object({
   schema_version: z.literal(GROUNDING_GATE_SCHEMA_VERSION),
@@ -224,17 +260,25 @@ function blindCauseSource(
   );
 }
 
+function requireBlindEvidenceField<T>(value: T | null, field: string, attemptEventId: string): T {
+  if (value !== null) return value;
+  throw new Error(
+    `grounding blind artifact cannot represent attempt ${attemptEventId} without ${field}`,
+  );
+}
+
 export function buildGroundingReviewArtifacts(input: BuildGroundingReviewArtifactsInput): {
   blind: GroundingBlindPacket;
   privateMap: GroundingPrivateMap;
 } {
-  const blind = GroundingBlindPacketSchema.parse({
+  const blindBase: BlindSelectionLockInput = {
     schema_version: GROUNDING_GATE_SCHEMA_VERSION,
     gate_id: input.gateId,
     source_backup_sha256: input.sourceBackupSha256,
     generated_at: input.generatedAt.toISOString(),
     instructions:
       '逐簇核对证据与 shadow 输出。grounded_proposal 只有在 claim、两道 probe 及 reference 均由证据支持且可用于教学验证时填 true；abstain 填 false。其余三项任一 true 都是红线。不要查看 private-lineage.json 后再评分。',
+    requested_sample_count: input.results.length,
     items: input.results.map(({ selected, induced, imagesByAttemptId }) => ({
       cluster_id: selected.cluster_id,
       subject_display_name: selected.candidate.cell.subject_display_name,
@@ -242,7 +286,11 @@ export function buildGroundingReviewArtifacts(input: BuildGroundingReviewArtifac
       cause_category: selected.candidate.cell.cause_category,
       recurrence_count: selected.candidate.cell.recurrence_count,
       evidence_samples: selected.candidate.cell.samples.map((sample) => ({
-        question_prompt_md: sample.question_prompt_md,
+        question_prompt_md: requireBlindEvidenceField(
+          sample.question_prompt_md,
+          'question_prompt_md',
+          sample.attempt_event_id,
+        ),
         question_reference_md: sample.question_reference_md,
         question_choices_md: sample.question_choices_md,
         parent_question_prompt_md: sample.parent_question_prompt_md,
@@ -250,13 +298,11 @@ export function buildGroundingReviewArtifacts(input: BuildGroundingReviewArtifac
         parent_question_choices_md: sample.parent_question_choices_md,
         owner_answer_md: sample.answer_md,
         owner_reasoning_trace: sample.reasoning_trace,
-        cause_category:
-          sample.cause_category ??
-          (() => {
-            throw new Error(
-              `grounding blind artifact cannot represent attempt ${sample.attempt_event_id} without an effective cause_category`,
-            );
-          })(),
+        cause_category: requireBlindEvidenceField(
+          sample.cause_category,
+          'an effective cause_category',
+          sample.attempt_event_id,
+        ),
         cause_source: blindCauseSource(sample.cause_source, sample.attempt_event_id),
         cause_attribution_md: sample.cause_attribution_md,
         images: imagesByAttemptId.get(sample.attempt_event_id) ?? [],
@@ -270,6 +316,10 @@ export function buildGroundingReviewArtifacts(input: BuildGroundingReviewArtifac
         notes: '',
       },
     })),
+  };
+  const blind = GroundingBlindPacketSchema.parse({
+    ...blindBase,
+    selection_sha256: blindSelectionSha256(blindBase),
   });
   const privateMap = GroundingPrivateMapSchema.parse({
     schema_version: GROUNDING_GATE_SCHEMA_VERSION,
@@ -309,6 +359,7 @@ export const GroundingBlindScoreSchema = z.object({
   status: z.enum(['pass', 'fail', 'incomplete']),
   expansion_allowed: z.boolean(),
   sample_count: z.number().int().nonnegative(),
+  requested_sample_count: z.number().int().nonnegative(),
   reviewed_count: z.number().int().nonnegative(),
   grounded_count: z.number().int().nonnegative(),
   grounding_rate: z.number().min(0).max(1).nullable(),
@@ -319,6 +370,8 @@ export const GroundingBlindScoreSchema = z.object({
   }),
   requirements: z.object({
     sample_size_6_to_10: z.boolean(),
+    original_sample_count_preserved: z.boolean(),
+    selection_digest_preserved: z.boolean(),
     all_items_reviewed: z.boolean(),
     grounding_at_least_80_percent: z.boolean(),
     zero_redlines: z.boolean(),
@@ -338,10 +391,16 @@ function reviewComplete(review: GroundingBlindReview): boolean {
 export function scoreGroundingBlindPacket(packet: GroundingBlindPacket): GroundingBlindScore {
   const parsed = GroundingBlindPacketSchema.parse(packet);
   const sampleCount = parsed.items.length;
+  const originalSampleCountPreserved = sampleCount === parsed.requested_sample_count;
+  const selectionDigestPreserved = blindSelectionSha256(parsed) === parsed.selection_sha256;
+  const selectionIntegrityPreserved = originalSampleCountPreserved && selectionDigestPreserved;
   const reviewed = parsed.items.filter((item) => reviewComplete(item.review));
   const allItemsReviewed = reviewed.length === sampleCount;
   const groundedCount = reviewed.filter((item) => item.review.grounded_proposal === true).length;
-  const groundingRate = allItemsReviewed && sampleCount > 0 ? groundedCount / sampleCount : null;
+  const groundingRate =
+    selectionIntegrityPreserved && allItemsReviewed && sampleCount > 0
+      ? groundedCount / sampleCount
+      : null;
   const redlines = {
     discipline_hallucination: parsed.items.filter(
       (item) => item.review.discipline_hallucination === true,
@@ -355,19 +414,29 @@ export function scoreGroundingBlindPacket(packet: GroundingBlindPacket): Groundi
     sampleCount >= GROUNDING_GATE_MIN_CLUSTERS && sampleCount <= GROUNDING_GATE_MAX_CLUSTERS;
   const groundingOk = groundingRate !== null && groundingRate >= GROUNDING_GATE_MIN_GROUNDING_RATE;
   const zeroRedlines = Object.values(redlines).every((count) => count === 0);
-  const pass = sampleSizeOk && allItemsReviewed && groundingOk && zeroRedlines;
+  const pass =
+    selectionIntegrityPreserved && sampleSizeOk && allItemsReviewed && groundingOk && zeroRedlines;
   return GroundingBlindScoreSchema.parse({
     schema_version: GROUNDING_GATE_SCHEMA_VERSION,
     gate_id: parsed.gate_id,
-    status: !allItemsReviewed ? 'incomplete' : pass ? 'pass' : 'fail',
+    status: !selectionIntegrityPreserved
+      ? 'fail'
+      : !allItemsReviewed
+        ? 'incomplete'
+        : pass
+          ? 'pass'
+          : 'fail',
     expansion_allowed: pass,
     sample_count: sampleCount,
+    requested_sample_count: parsed.requested_sample_count,
     reviewed_count: reviewed.length,
     grounded_count: groundedCount,
     grounding_rate: groundingRate,
     redlines,
     requirements: {
       sample_size_6_to_10: sampleSizeOk,
+      original_sample_count_preserved: originalSampleCountPreserved,
+      selection_digest_preserved: selectionDigestPreserved,
       all_items_reviewed: allItemsReviewed,
       grounding_at_least_80_percent: groundingOk,
       zero_redlines: zeroRedlines,

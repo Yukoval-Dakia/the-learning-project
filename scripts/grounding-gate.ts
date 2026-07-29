@@ -33,6 +33,7 @@ import {
   type GroundingGateCandidateReport,
   collectGroundingGateCandidates,
 } from '@/server/grounding-gate/candidates';
+import { validateShadowProviderEnv } from '@/server/grounding-gate/preflight';
 import type { R2Client } from '@/server/r2';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
@@ -179,6 +180,16 @@ function ensureDockerHost(): void {
 }
 
 function currentRevision(): string {
+  const status = spawnSync('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (status.status !== 0) throw new Error('cannot inspect current git worktree status');
+  if (status.stdout.trim().length > 0) {
+    throw new Error(
+      'grounding gate requires a clean git worktree so code_revision identifies the executed code',
+    );
+  }
   const result = spawnSync('git', ['rev-parse', 'HEAD'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -310,6 +321,7 @@ function eligibilityArtifact(input: {
 }
 
 async function runInspect(options: Map<string, string>): Promise<number> {
+  const codeRevision = currentRevision();
   const backupPath = resolve(requiredOption(options, '--backup'));
   const backupBytes = new Uint8Array(await readFile(backupPath));
   const backupHash = sha256(backupBytes);
@@ -322,7 +334,7 @@ async function runInspect(options: Map<string, string>): Promise<number> {
       report,
       backupHash,
       backupManifest: manifest,
-      codeRevision: currentRevision(),
+      codeRevision,
       sampleSize,
     });
     await writeJson(join(outDir, 'private', 'eligibility.json'), artifact);
@@ -374,18 +386,12 @@ async function writeCandidateImages(
 function loadShadowEnv(options: Map<string, string>): void {
   const envFile = options.get('--env-file');
   loadDotenv({ path: envFile ? resolve(envFile) : resolve('.env'), override: false, quiet: true });
-  const missing = ['CLAUDE_CODE_OAUTH_TOKEN', 'XIAOMI_API_KEY'].filter(
-    (name) => !process.env[name],
-  );
-  if (missing.length > 0) {
-    throw new Error(
-      `shadow provider preflight failed: missing ${missing.join(', ')} (values were not printed)`,
-    );
-  }
+  validateShadowProviderEnv(process.env);
 }
 
 async function runShadow(options: Map<string, string>): Promise<number> {
   loadShadowEnv(options);
+  const codeRevision = currentRevision();
   const backupPath = resolve(requiredOption(options, '--backup'));
   const backupBytes = new Uint8Array(await readFile(backupPath));
   const backupHash = sha256(backupBytes);
@@ -408,7 +414,7 @@ async function runShadow(options: Map<string, string>): Promise<number> {
       report,
       backupHash,
       backupManifest: manifest,
-      codeRevision: currentRevision(),
+      codeRevision,
       sampleSize,
     });
     await writeJson(join(outDir, 'private', 'eligibility.json'), eligibility);
@@ -428,11 +434,15 @@ async function runShadow(options: Map<string, string>): Promise<number> {
       const imagesByAttemptId = await writeCandidateImages(outDir, item.cluster_id, item.candidate);
       results.push({ selected: item, induced, imagesByAttemptId });
     }
+    const finalRevision = currentRevision();
+    if (finalRevision !== codeRevision) {
+      throw new Error('git revision changed during the shadow run; refusing to seal artifacts');
+    }
     const artifacts = buildGroundingReviewArtifacts({
       gateId,
       sourceBackupSha256: backupHash,
       generatedAt: new Date(),
-      codeRevision: currentRevision(),
+      codeRevision,
       selectionSeed: backupHash,
       window: { from: report.since, to: report.now },
       eligibleCount: report.eligible_count,

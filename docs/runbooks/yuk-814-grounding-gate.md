@@ -78,6 +78,9 @@ Shadow induction needs both production task lanes:
   agree.
 
 The harness checks only presence and never prints values.
+It refuses non-empty `AI_PROVIDER_OVERRIDE` or `AI_PROVIDER_MODEL` so the three
+induction samples cannot inherit a global model/provider switch and semantic
+claim grouping cannot leave its Mimo lane.
 
 ```bash
 pnpm grounding:gate shadow \
@@ -114,6 +117,8 @@ pnpm grounding:gate score-blind \
 Exit codes: `0=pass`, `1=fail`, `2=incomplete`. Pass requires:
 
 - 6–10 reviewed clusters;
+- the original requested count and sealed selection digest still match (removing
+  or editing a selected item fails closed);
 - grounded proposals / all clusters ≥ 80%;
 - all three redline counts = 0.
 

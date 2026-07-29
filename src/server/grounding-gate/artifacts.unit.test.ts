@@ -169,6 +169,8 @@ describe('blind review artifacts', () => {
     expect(blindText).not.toContain('task_run');
     expect(blindText).not.toContain('attempt_event_ids');
     expect(blindText).not.toContain('knowledge_id');
+    expect(artifacts.blind.requested_sample_count).toBe(6);
+    expect(artifacts.blind.selection_sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(artifacts.blind.items[0].review.grounded_proposal).toBeNull();
     expect(artifacts.privateMap.clusters[0].task_run_ids).toEqual(['run-1', 'run-2', 'run-3']);
   });
@@ -259,6 +261,35 @@ describe('scoreGroundingBlindPacket', () => {
     expect(score.status).toBe('incomplete');
     expect(score.redlines.severe_factual_error).toBe(1);
     expect(score.requirements.zero_redlines).toBe(false);
+  });
+
+  it('fails when an operator prunes an item from the sealed blind selection', () => {
+    const packet = blindPacket(8);
+    for (const item of packet.items) {
+      item.review = {
+        grounded_proposal: true,
+        discipline_hallucination: false,
+        claim_probe_mismatch: false,
+        severe_factual_error: false,
+        notes: '',
+      };
+    }
+    packet.items.pop();
+    const score = scoreGroundingBlindPacket(packet);
+    expect(score.status).toBe('fail');
+    expect(score.expansion_allowed).toBe(false);
+    expect(score.grounding_rate).toBeNull();
+    expect(score.requirements.original_sample_count_preserved).toBe(false);
+    expect(score.requirements.selection_digest_preserved).toBe(false);
+  });
+
+  it('fails when sealed blind evidence changes without changing the item count', () => {
+    const packet = blindPacket(8);
+    packet.items[0].evidence_samples[0].question_prompt_md = 'tampered prompt';
+    const score = scoreGroundingBlindPacket(packet);
+    expect(score.status).toBe('fail');
+    expect(score.requirements.original_sample_count_preserved).toBe(true);
+    expect(score.requirements.selection_digest_preserved).toBe(false);
   });
 });
 
