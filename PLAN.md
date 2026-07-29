@@ -3,16 +3,16 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-29
-> **【更新 2026-07-29 · YUK-814 harness 收口中，真实执行仍等 owner 数据】**
-> backup→一次性 DB→生产 evidence chain→shadow/blind→score/canary harness 已构建；
-> PR #1105 已修完 P1/major review，正在吸收最新 main。真实 shadow/blind/canary 尚未
-> 执行；唯一产品事实阻塞仍是 6–10 个真实 owner 失败簇，不以 synthetic/mock 冒充。
+> **【更新 2026-07-29 · YUK-814 harness 已合并，真实 gate 等 owner 数据】**
+> backup→一次性 DB→生产 evidence chain→shadow/blind→score/canary harness 已随
+> PR #1105 落到 main。真实 shadow/blind/canary 尚未执行；唯一产品事实阻塞仍是
+> 6–10 个真实 owner 失败簇，不以 synthetic/mock 冒充。
 
 ## NOW
 
-- **唯一 active 线：YUK-814 离线真实数据闸门 harness（PR #1105）**
-  - Branch：`codex/yuk-814-grounding-gate`；worktree：
-    `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-814-grounding-gate`。
+- **当前无代码 active 线；YUK-814 保持 In Progress，停在真实数据输入闸门**
+  - Harness 已随 PR #1105 / merge commit `ae02e020` 落到 main；exact final head
+    `7a39429a` 的 CI Gate run `30433913656` 全绿，actionable review threads 已清零。
   - `pnpm grounding:gate` 已提供 inspect、shadow、score-blind、init-canary、
     score-canary；backup 只恢复进自动清理的一次性 pgvector Testcontainer。
   - 资格链复用生产 correction/history/accountability/evidence-enrichment/image gates，
@@ -36,13 +36,11 @@
 
 ## NEXT
 
-1. 完成 PR #1105 与最新 main 的冲突收口；当前 head 的 CI Gate 全绿且 active review
-   threads 为 0 后合并。合并只代表 harness ready，YUK-814 不提前 Done。
-2. 从 production `/api/_/export?include_assets=1` 获取真实 backup，先跑 inspect；
+1. 从 production `/api/_/export?include_assets=1` 获取真实 backup，先跑 inspect；
    eligibility 不足 6 就继续积累真实使用，不制造错误。
-3. eligibility 满足后 shadow → owner blind review → score；grounding ≥80%，学科幻觉、
+2. eligibility 满足后 shadow → owner blind review → score；grounding ≥80%，学科幻觉、
    claim/probe 错配、严重事实错误均为 0，任一红线失败即停。
-4. 只有 blind PASS 后才依次启动 intervention snapshot、pedagogy、
+3. 只有 blind PASS 后才依次启动 intervention snapshot、pedagogy、
    QuestionAuthor/Verify、隔离 FSRS、结算、Brief/Copilot/profile 与 10-run canary。
 
 ## PARKED
