@@ -61,12 +61,51 @@ PR head 上求值。20 个样本覆盖 server/API/job、UI、AI prompt/registry�
 作为 fail-closed 负控：Vitest import graph 返回空 affected set，当前 selector 明确输出
 `vitest-affected-empty` 并执行 full unit，而不是只靠 sentinel 制造一个看似非空的选择集。
 
+## 真实失败 head 回放（补充）
+
+随后不再只看最终 green head，而是从失败 CI Gate 的 annotations 反查真实失败测试，
+在对应失败 head 与 merge-base 上重放 selector。结果：**21/21 失败 run 被捕获**，
+覆盖 **18 个 PR**；20 次进入 affected，1 次因 import graph 为空 fail-closed 到 full。
+
+| failed run | PR | 失败 unit 文件 | mode | selected / full | 捕获 |
+| --- | ---: | --- | --- | ---: | --- |
+| [30198413876](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/30198413876) | #1080 | `src/capabilities/shell/ui/TeachingBrief.interaction.unit.test.tsx` | `affected` | 247 / 503 | yes |
+| [30112370038](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/30112370038) | #1063 | `src/server/ai/retry-optin.test.ts` | `affected` | 91 / 493 | yes |
+| [30084945249](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/30084945249) | #1051 | `src/server/ai/runner-fn.unit.test.ts` | `affected` | 202 / 491 | yes |
+| [30073732421](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/30073732421) | #1044 | `src/server/event-subscriptions/dispatch-mount.unit.test.ts` | `affected` | 157 / 485 | yes |
+| [30010374097](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/30010374097) | #1040 | `src/server/export/constants.test.ts` | `affected` | 162 / 482 | yes |
+| [29837688009](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/29837688009) | #1018 | `src/capabilities/notes/jobs/hub-sync-wake.unit.test.ts` | `affected` | 475 / 475 | yes |
+| [29743148302](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/29743148302) | #1007 | `src/capabilities/notes/server/note-refine-triggers.unit.test.ts` | `affected` | 48 / 471 | yes |
+| [29692705393](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/29692705393) | #948 | `src/capabilities/shell/ui/InboxPage.progressive.unit.test.tsx` | `affected` | 67 / 449 | yes |
+| [29692553743](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/29692553743) | #939 | `scripts/audit-draft-status.test.ts` | `affected` | 161 / 450 | yes |
+| [29691113368](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/29691113368) | #943 | `tests/integration/audit-docs-invariant.test.ts` | `affected` | 168 / 450 | yes |
+| [29689572402](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/29689572402) | #939 | `scripts/audit-draft-status.test.ts` | `affected` | 161 / 449 | yes |
+| [29685670055](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/29685670055) | #938 | `scripts/audit-draft-status.test.ts` | `affected` | 46 / 446 | yes |
+| [29682019270](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/29682019270) | #929 | `src/server/ai/runner.seam.test.ts` | `affected` | 74 / 438 | yes |
+| [29680191467](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/29680191467) | #919 | `src/core/schema/schema.test.ts` | `affected` | 126 / 430 | yes |
+| [29679581087](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/29679581087) | #919 | `src/core/schema/schema.test.ts` | `affected` | 126 / 430 | yes |
+| [29678354960](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/29678354960) | #919 | `src/core/schema/schema.test.ts` | `affected` | 123 / 423 | yes |
+| [29577461338](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/29577461338) | #836 | `tests/core/today/proposal-kpi.test.ts` | `affected` | 51 / 390 | yes |
+| [29130862350](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/29130862350) | #764 | `src/capabilities/observability/api/admin-subjects.unit.test.ts` | `affected` | 30 / 338 | yes |
+| [28848162764](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/28848162764) | #730 | `src/capabilities/composition.unit.test.ts` | `affected` | 71 / 323 | yes |
+| [28743916796](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/28743916796) | #708 | `tests/integration/audit-docs-invariant.test.ts` | `full` | 0 / 306 | yes |
+| [28436896575](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/28436896575) | #686 | `tests/integration/step9-invariant-audit.test.ts` | `affected` | 90 / 295 | yes |
+
+最初按文件名初筛时出现 3 个“unit miss”，但历史 `vitest.unit.config.ts` inventory 证明它们
+均不属于 unit partition，而是 plain-name DB tests：
+
+- run [30059492833](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/30059492833) / PR #1041: `src/server/boss/handlers/quiz_gen.test.ts`
+- run [30058806384](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/30058806384) / PR #1046: `src/server/boss/handlers/quiz_gen.test.ts`
+- run [30038936493](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/30038936493) / PR #1044: `src/server/ai/tools/proposal-tools.test.ts`
+
+因此它们是 annotation 分类假阳性，不是 unit selector 漏选；也正是 DB selector 要覆盖的失败样本。
+
 ## 证据边界与切换护栏
 
-这些最终 PR head 都是 full-green，因此不能把“0 个 missed failing files”冒充故障注入
-证明。它们证明的是：历史真实 diff 可稳定求值、直接改动 test 不漏、selected set 远小于
-full，并且当时完整套件全绿。Comparator 的 missed-failure / fallback 行为另由
-`scripts/ci/unit-shadow.test.ts` 的负控固定。
+前 20 个最终 PR head 样本仍只证明真实 diff 可稳定求值、直接改动 test 不漏、selected set
+远小于 full；不能把它们冒充故障注入。补充的 21 个真实失败 run 才证明：在 annotations
+记录的实际 unit failure 上，selector 20 次直接选中、1 次 fail-closed full，漏选为 0。
+Comparator 的 missed-failure / fallback 行为另由 `scripts/ci/unit-shadow.test.ts` 的负控固定。
 
 基于 owner 允许历史 backfill 代替等待 20 个未来 PR，切换仍保留：
 

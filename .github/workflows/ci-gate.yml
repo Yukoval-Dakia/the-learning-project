@@ -31,6 +31,7 @@ jobs:
       build_changed: ${{ steps.filter.outputs.build_changed }}
       usability_changed: ${{ steps.filter.outputs.usability_changed }}
       unit_selection: ${{ steps.filter.outputs.unit_selection }}
+      db_selection: ${{ steps.filter.outputs.db_selection }}
       merge_base: ${{ steps.filter.outputs.merge_base }}
     steps:
       - uses: actions/checkout@v4
@@ -171,6 +172,8 @@ jobs:
         run: echo "DB lane not selected — lane is green."
       - uses: actions/checkout@v4
         if: needs.changes.outputs.db_changed == 'true'
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
         if: needs.changes.outputs.db_changed == 'true'
         with:
@@ -183,9 +186,38 @@ jobs:
       - name: Install dependencies
         if: needs.changes.outputs.db_changed == 'true'
         run: pnpm install --frozen-lockfile
-      - name: DB tests
+      - name: Select required DB tests
+        id: db_select
         if: needs.changes.outputs.db_changed == 'true'
-        run: pnpm test:db --shard=${{ matrix.shard }}/2
+        continue-on-error: true
+        env:
+          DB_SELECTION_BASE: ${{ needs.changes.outputs.merge_base }}
+          DB_SELECTION_MODE: ${{ needs.changes.outputs.db_selection }}
+        run: |
+          mkdir -p .cache/ci
+          node scripts/ci/db-affected.mjs select \
+            --base "$DB_SELECTION_BASE" \
+            --mode "$DB_SELECTION_MODE" \
+            --output .cache/ci/db-selection.json
+      - name: Warn on DB selector process failure
+        if: steps.db_select.outcome == 'failure'
+        run: echo "::warning title=DB selector failed::Falling back to the full DB suite; investigate the selector process failure."
+      - name: DB tests (affected on PR, full on canary/fallback)
+        if: needs.changes.outputs.db_changed == 'true'
+        run: |
+          node scripts/ci/db-affected.mjs run \
+            --selection .cache/ci/db-selection.json \
+            --shard "${{ matrix.shard }}/2" \
+            --execution ".cache/ci/db-execution-${{ matrix.shard }}.json"
+      - name: Upload DB selector report
+        if: always() && needs.changes.outputs.db_changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-selector-report-shard-${{ matrix.shard }}
+          path: |
+            .cache/ci/db-selection.json
+            .cache/ci/db-execution-${{ matrix.shard }}.json
+          if-no-files-found: warn
 
   migration:
     name: migration smoke

@@ -234,6 +234,7 @@ export function classifyChangedFiles(inputFiles, options = {}) {
       changed_files: files,
       lanes: fullLanes(),
       unit_selection: 'full',
+      db_selection: 'full',
       reasons: [options.forceFullReason],
     };
   }
@@ -241,6 +242,7 @@ export function classifyChangedFiles(inputFiles, options = {}) {
   const lanes = emptyLanes();
   const reasons = new Set();
   let unitSelection = 'skip';
+  let dbSelection = 'skip';
   for (const file of files) {
     const planned = filePlan(file);
     for (const lane of LANE_NAMES) lanes[lane] ||= planned.lanes[lane];
@@ -248,17 +250,23 @@ export function classifyChangedFiles(inputFiles, options = {}) {
     else if (planned.unitSelection === 'affected' && unitSelection === 'skip') {
       unitSelection = 'affected';
     }
+    if (planned.lanes.db) {
+      if (planned.unitSelection === 'full') dbSelection = 'full';
+      else if (dbSelection === 'skip') dbSelection = 'affected';
+    }
     if (planned.reason !== 'docs') reasons.add(planned.reason);
   }
 
   const codeChanged = Object.values(lanes).some(Boolean);
   if (!lanes.unit) unitSelection = 'skip';
+  if (!lanes.db) dbSelection = 'skip';
   return {
     schema_version: 1,
     code_changed: codeChanged,
     changed_files: files,
     lanes,
     unit_selection: unitSelection,
+    db_selection: dbSelection,
     reasons: [...reasons].sort((a, b) => a.localeCompare(b)),
   };
 }
@@ -350,6 +358,7 @@ function writeSummary(plan, mergeBase) {
     '',
     `- merge base: \`${markdownText(mergeBase || 'unavailable')}\``,
     `- unit selector: \`${plan.unit_selection}\``,
+    `- DB selector: \`${plan.db_selection}\``,
     `- reasons: ${plan.reasons.length ? plan.reasons.map((reason) => `\`${markdownText(reason)}\``).join(', ') : 'docs-only / empty diff'}`,
     '',
     '| lane | run |',
@@ -379,6 +388,7 @@ function main() {
   appendOutput('code_changed', plan.code_changed);
   for (const lane of LANE_NAMES) appendOutput(`${lane}_changed`, plan.lanes[lane]);
   appendOutput('unit_selection', plan.unit_selection);
+  appendOutput('db_selection', plan.db_selection);
   appendOutput('merge_base', mergeBase);
   appendOutput('plan_json', JSON.stringify(plan));
   writeSummary(plan, mergeBase);
