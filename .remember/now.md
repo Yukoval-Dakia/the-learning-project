@@ -5,7 +5,9 @@
 - 当前唯一 active lane 是 **YUK-821 P0：Conjecture probe pair 质量守卫**。
 - 隔离 worktree：
   `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-821-probe-quality`
- ；branch `codex/yuk-821-probe-quality`。
+；branch `codex/yuk-821-probe-quality`。
+- PR **#1110**：`https://github.com/Yukoval-Dakia/the-learning-project/pull/1110`；
+  exact head 将以本 handoff 更新后的 commit 为准。
 - owner 主工作树已有既存未提交改动；本轮没有修改主工作树。
 - Owner 决策：质量评测只 mock 输入，输出必须来自真实生产链/真实模型；真实 owner
   数据只控制扩大使用，不阻塞开发。
@@ -51,7 +53,6 @@
 
 ## 下一步
 
-1. 提交、推送并创建 YUK-821 PR。
-2. 只监听 GitHub Actions `CI Gate`，处理真实 review finding。
-3. CI 与 review 全绿后合并 P0，但保持 YUK-821 In Progress。
-4. canonical Opus 配额恢复后重跑固定 8 簇；只有输出门通过才关闭 YUK-821。
+1. 只监听 PR #1110 的 GitHub Actions `CI Gate`，处理真实 review finding。
+2. CI 与 review 全绿后合并 P0，但保持 YUK-821 In Progress。
+3. canonical Opus 配额恢复后重跑固定 8 簇；只有输出门通过才关闭 YUK-821。

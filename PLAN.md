@@ -31,12 +31,12 @@
 
 ## NEXT
 
-1. 完成本次 P0 文档、cockpit 和 Linear 对齐，提交 `codex/yuk-821-probe-quality`。
-2. 创建 PR，只监听 GitHub Actions 的 CI Gate；处理真实 review finding，不在本地重跑全 gate。
-3. CI/评审通过后合并 P0；再用固定 mock evidence packets 跑 canonical Opus real-output
+1. PR #1110 已创建；只监听 GitHub Actions 的 CI Gate，处理真实 review finding，
+   不在本地重跑全 gate。
+2. CI/评审通过后合并 P0；再用固定 mock evidence packets 跑 canonical Opus real-output
    质量评测。YUK-821 在 8 簇输出门通过前保持 In Progress，输出不合格就继续改模型合同，
    不伪造 pass。
-4. 真实 owner shadow/blind/canary 留作扩大 auto-intervention 的发布证据，不阻塞后续功能实现。
+3. 真实 owner shadow/blind/canary 留作扩大 auto-intervention 的发布证据，不阻塞后续功能实现。
 
 ## PARKED
 
