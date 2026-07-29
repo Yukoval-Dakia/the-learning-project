@@ -7,6 +7,7 @@
 import {
   CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
   PROBE_SLOTS_FULL_CODE,
+  acceptConjectureProposal,
 } from '@/capabilities/agency/server/conjecture-accept';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
@@ -37,6 +38,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 function baseConjecture() {
+  const primaryProbeSpec = {
+    prompt_md: 'd/dx sin(x^2) = ?',
+    reference_md: '2x·cos(x^2) — outer cos × inner 2x (chain rule: outer-deriv × inner-deriv).',
+    expected_target_error_answer_md: 'cos(x²) + 2x',
+    elicits_target_error_reason_md: 'Requires composing the two derivative layers.',
+    context_kind: 'abstract' as const,
+    representation_kind: 'symbolic' as const,
+  };
+  const followupProbeSpec = {
+    prompt_md: 'A changing area follows cos(t^3); explain its instantaneous rate.',
+    reference_md: '-3t²·sin(t³), with outer and inner derivatives multiplied.',
+    expected_target_error_answer_md: '-sin(t³) + 3t²',
+    elicits_target_error_reason_md: 'Retains the same layer-composition decision in context.',
+    context_kind: 'applied' as const,
+    representation_kind: 'natural_language' as const,
+  };
   return {
     kind: 'conjecture' as const,
     target: { subject_kind: 'mind_model' as const, subject_id: 'kn_chain_rule' },
@@ -64,24 +81,10 @@ function baseConjecture() {
         scope_boundary_md: 'Does not claim other differentiation rules are misunderstood.',
         expected_wrong_answer_signature_md: 'Outer derivative + inner derivative.',
       },
-      probe_spec: {
-        prompt_md: 'd/dx sin(x^2) = ?',
-        reference_md: '2x·cos(x^2) — outer cos × inner 2x (chain rule: outer-deriv × inner-deriv).',
-        expected_target_error_answer_md: 'cos(x²) + 2x',
-        elicits_target_error_reason_md: 'Requires composing the two derivative layers.',
-        context_kind: 'abstract' as const,
-        representation_kind: 'symbolic' as const,
-      },
-      followup_probe_spec: {
-        prompt_md: 'A changing area follows cos(t^3); explain its instantaneous rate.',
-        reference_md: '-3t²·sin(t³), with outer and inner derivatives multiplied.',
-        expected_target_error_answer_md: '-sin(t³) + 3t²',
-        elicits_target_error_reason_md: 'Retains the same layer-composition decision in context.',
-        context_kind: 'applied' as const,
-        representation_kind: 'natural_language' as const,
-      },
+      probe_spec: primaryProbeSpec,
+      followup_probe_spec: followupProbeSpec,
       probe_quality: {
-        schema_version: 1 as const,
+        schema_version: 2 as const,
         passed: true as const,
         attempts: [
           {
@@ -97,6 +100,11 @@ function baseConjecture() {
           verdict: 'pass' as const,
           failure_codes: [],
           explanation_md: 'verified',
+        },
+        reviewed_package: {
+          primary: primaryProbeSpec,
+          followup: followupProbeSpec,
+          predicted_p: 0.3,
         },
       },
       discriminating: true,
@@ -142,7 +150,7 @@ async function allProbeQuestions() {
 }
 
 /**
- * Fill N active mind_probe slots from well-formed historical v1 conjectures. The cap
+ * Fill N active mind_probe slots from well-formed package-bound conjectures. The cap
  * counts unanswered questions, while answerProbe also verifies the proposal provenance;
  * seeding the proposal keeps the fixture representative instead of relying on an orphan.
  * Returns the served probe question ids so a test can answer one to free a slot.
@@ -167,6 +175,17 @@ async function fillProbeSlots(n: number): Promise<string[]> {
             ...payload.proposed_change.probe_spec,
             prompt_md: `filler probe ${i}`,
             reference_md: 'ref',
+          },
+          probe_quality: {
+            ...payload.proposed_change.probe_quality,
+            reviewed_package: {
+              ...payload.proposed_change.probe_quality.reviewed_package,
+              primary: {
+                ...payload.proposed_change.probe_spec,
+                prompt_md: `filler probe ${i}`,
+                reference_md: 'ref',
+              },
+            },
           },
         },
       },
@@ -267,6 +286,51 @@ describe('acceptConjectureProposal lifecycle', () => {
     });
     expect(await rateEvents(proposalId)).toHaveLength(0);
     expect(await probeQuestionsFor(proposalId)).toHaveLength(0);
+  });
+
+  it('keeps a v1 audit readable but refuses to use it for a new accept decision', async () => {
+    const db = testDb();
+    const payload = baseConjecture();
+    const { reviewed_package: _reviewedPackage, ...historicalAudit } =
+      payload.proposed_change.probe_quality;
+    const proposalId = await writeAiProposal(db, {
+      actor_ref: 'research_meeting',
+      payload: {
+        ...payload,
+        proposed_change: {
+          ...payload.proposed_change,
+          probe_quality: {
+            ...historicalAudit,
+            schema_version: 1,
+          },
+        },
+      },
+    });
+
+    await expect(acceptAiProposal(db, proposalId)).rejects.toMatchObject({
+      code: CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
+      status: 409,
+      message: expect.stringContaining('probe_quality_audit_unbound'),
+    });
+    expect(await rateEvents(proposalId)).toHaveLength(0);
+  });
+
+  it('rejects a passing audit copied from a different probe package', async () => {
+    const payload = baseConjecture();
+    const tampered = structuredClone(payload);
+    tampered.proposed_change.probe_quality.reviewed_package.predicted_p = 0.4;
+
+    await expect(
+      acceptConjectureProposal(testDb(), 'tampered_probe_quality', {
+        id: 'tampered_probe_quality',
+        payload: tampered,
+      } as never),
+    ).rejects.toMatchObject({
+      code: CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
+      status: 409,
+      message: expect.stringContaining('probe_quality_package_mismatch'),
+    });
+    expect(await rateEvents('tampered_probe_quality')).toHaveLength(0);
   });
 
   it('does not accept a self-declared non-discriminating package even when an audit is present', async () => {

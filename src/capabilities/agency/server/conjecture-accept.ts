@@ -39,6 +39,7 @@ import {
   ConjectureDiagnosticSpec,
   ConjectureProbeQualityAudit,
   ConjectureProbeSpec,
+  conjectureProbePackagesEqual,
   evaluateConjectureProbePackageStructure,
 } from '@/core/schema/business';
 import type { Db } from '@/db/client';
@@ -147,6 +148,9 @@ export async function acceptConjectureProposal(
   if (!primaryProbeSpec.success) failureReasons.push('primary_probe_spec_invalid');
   if (!followupProbeSpec.success) failureReasons.push('followup_probe_spec_invalid');
   if (!qualityAudit.success) failureReasons.push('probe_quality_audit_invalid');
+  if (qualityAudit.success && qualityAudit.data.schema_version !== 2) {
+    failureReasons.push('probe_quality_audit_unbound');
+  }
   if (change.discriminating !== true) failureReasons.push('not_discriminating');
   failureReasons.push(...structuralFailures.map((code) => `structural:${code}`));
   if (primaryProbeSpec.success) {
@@ -164,6 +168,20 @@ export async function acceptConjectureProposal(
     if (followupProbeSpec.data.reference_md !== persistedFollowupReferenceMd) {
       failureReasons.push('followup_reference_mismatch');
     }
+  }
+  if (
+    qualityAudit.success &&
+    qualityAudit.data.schema_version === 2 &&
+    primaryProbeSpec.success &&
+    followupProbeSpec.success &&
+    typeof change.predicted_p === 'number' &&
+    !conjectureProbePackagesEqual(qualityAudit.data.reviewed_package, {
+      primary: primaryProbeSpec.data,
+      followup: followupProbeSpec.data,
+      predicted_p: change.predicted_p,
+    })
+  ) {
+    failureReasons.push('probe_quality_package_mismatch');
   }
   if (failureReasons.length > 0) {
     throw new ApiError(

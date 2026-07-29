@@ -122,7 +122,7 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
         representation_kind: 'natural_language',
       },
       probe_quality: {
-        schema_version: 1,
+        schema_version: 2,
         passed: true,
         attempts: [
           {
@@ -138,6 +138,25 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
           verdict: 'pass',
           failure_codes: [],
           explanation_md: 'verified',
+        },
+        reviewed_package: {
+          primary: {
+            prompt_md: `probe for ${cell.knowledge_id}`,
+            reference_md: `reference answer for ${cell.knowledge_id}`,
+            expected_target_error_answer_md: `target error answer for ${cell.knowledge_id}`,
+            elicits_target_error_reason_md: 'primary trigger',
+            context_kind: 'abstract',
+            representation_kind: 'symbolic',
+          },
+          followup: {
+            prompt_md: `follow-up probe for ${cell.knowledge_id}`,
+            reference_md: `follow-up reference answer for ${cell.knowledge_id}`,
+            expected_target_error_answer_md: `follow-up target error answer for ${cell.knowledge_id}`,
+            elicits_target_error_reason_md: 'follow-up trigger',
+            context_kind: 'applied',
+            representation_kind: 'natural_language',
+          },
+          predicted_p: 0.3,
         },
       },
       cause_category: cell.cause_category,

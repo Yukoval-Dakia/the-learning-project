@@ -10,64 +10,27 @@
 
 ## NOW
 
-- **YUK-821：修复两个失败输出暴露的 claim/probe 错配（P0）**
-  - `MindModelInductionTask` 只产 claim + 冻结 `DiagnosticSpec`，不再同时出题。
-  - 自洽共识覆盖完整 DiagnosticSpec；claim 相似但 trigger/scope/wrong-answer
-    signature 不同不算同票。
-  - 新增独立 `ConjectureProbeAuthorTask` / `ConjectureProbeReviewTask`；通用结构门先查
-    双题独立性和正确/目标错误答案差异，再由同模型第二次独立调用审查学科语义。
-  - 第一次质量失败整包重生成；第二次质量失败 `abstain(no_discriminating_probe)`；
-    provider/结构化输出故障保持 operational，不能凑成质量反对票。
-  - nightly 与 agent director 共用质量门；proposal 保存 spec、双题 metadata、task run、
-    failure code 和 audit；accept 缺 v3 包或发现持久化不一致时 409 fail closed。
-  - 升级迁移用 agent-authored `correct(retract)` 收口旧 v1/v2 pending 猜想，不伪造
-    owner dismiss，不再让旧 Teaching Brief 卡在“永远 409 但仍 pending”。
-  - Director 只接受本次会议快照中可完整物化的文本 failure attempt/review；缺题目快照、
-    图片/图形、probe_result/prediction_score 一律失败关闭，不再让 author/reviewer
-    在证据被静默丢弃后签发 pass。
-  - 定向验证当前：unit 6 files / 212 passed；DB 4 files / 70 passed；typecheck、
-    changed-file Biome、diff check 通过；审查修复增量 unit 2 files / 61 passed、DB 2 files /
-    29 passed；远端 DB lane 暴露旧 Director fixtures 缺快照后，定向 DB 1 file /
-    18 passed；migration 定向 1 passed / 26 skipped。完整 gate 不在本地跑，交给
-    GitHub CI Gate。
-  - merge-head 审查新增问题已收口：Director 证据先截断并标为不可信文本；运行 charter
-    只允许可物化的 attempt/review；probe author/reviewer operational failure 重新抛给
-    pg-boss；proposal 规范化、accept 失败码、blind artifact 与 structured-output
-    守卫补齐。增量 unit 5 files / 171 passed、DB 1 file / 23 passed、typecheck 通过。
-  - exact-head `2d754dc5` 的远端 CI Gate `30460326628` 全绿。随后两条新 review 已修：
-    Director 按 KC 从 Knowledge public port 解析并向 Author/Reviewer 传递 SubjectProfile；
-    MCP 仍返回合法软失败，但外层在写 scan 前重新抛出 probe outage，使 day claim 保持
-    `claim + no scan` 并由 pg-boss 同日重试。增量 unit 1 file / 42 passed、DB 1 file /
-    19 passed、typecheck、changed-file Biome、diff check 通过。
-  - 合并 main 后 exact-head `7c73c8c4` 的 CI Gate `30463050514` 全绿。CodeRabbit 随后指出
-    `claim + no scan` 仍可并发/无限重试；已改为“360 秒 lease + 显式失败 marker +
-    fixed-id recovery claim”，活跃执行跳过、硬崩溃等 lease 过期、最多恢复 1 次。增量 unit
-    2 files / 56 passed、DB 1 file / 19 passed、typecheck、Biome 通过。
-  - exact-head `ae6845c6` 的 CI Gate `30464284808` 全绿。随后两条 review 已修：恢复运行
-    会从同日所有 durable trigger 的 proposal/note 输出重建计数，整晚仍只允许 3/2；
-    probe outage 改为按 cause×KC identity 记录，同 identity 后续拿到真实质量结论才清除，
-    不会因别的 identity 成功而误清。增量 unit 43 passed、DB 20 passed、typecheck、
-    Biome 通过。
-  - exact-head `41fd682c` 的 CI Gate `30465338781` 全绿。最后一批 review 修复一并收口：
-    active lease 的 hard-crash redelivery 不再提前 ACK，而是在 handler 内保留到 lease
-    边界再争抢唯一 recovery；升级 correction 写入时清空 scopes 并预置 `ingest_at`，
-    不进入 memory outbox。增量 unit 15 passed、migration 1 passed / 26 skipped、
-    typecheck、changed-file Biome、diff check 通过。
-  - 20:47 用 mock 输入启动 canonical Opus real-output 复评；第一簇的 3 个独立
-    induction call 均收到 429 weekly limit，按 operational stop condition 立即停止，
-    没有把 fallback 或空输出记成质量结果。
-- **YUK-814 闸门口径已按 owner 新决策修正**
-  - 现有 harness 可继续用于真实 owner 观察数据，但它是扩大使用闸门，不是产品实施闸门。
-  - synthetic/mock 仍不能冒充真实用户效果；但“mock 输入 + 真实模型输出”是合法的开发质量测试。
+- **YUK-821：P0 严格收口，不再把“主链已合并”误报成“全部完成”**
+  - PR #1110 已把 claim + DiagnosticSpec 共识、独立 Author/Reviewer、整包重生成、
+    nightly/director 共用质量门及 fail-closed accept 合入 main。
+  - 复审发现两个真实缺口：旧 `passed=true` audit 未绑定 reviewer 实际看过的题包；
+    成功 audit 仍允许 author/reviewer task-run id 为空。因此 P0 在本轮开始时并未全收。
+  - 当前补 `probe_quality` v2：保存独立 `reviewed_package` 快照；成功尝试强制完整
+    author/reviewer lineage；proposal schema 与 accept 同时校验 audit 和最终落库题包一致。
+  - 新迁移 0083 用 agent-authored correction 退出 pending 的 v1、缺 lineage 或题包错配
+    记录；不伪造 owner dismiss、不写 memory outbox、不留下永久 409 卡片。
+  - P1 学科确定性 validator 仍只保留详细计划，未写代码。
+- **开发/发布闸门**
+  - 只 mock 输入，输出必须走真实模型与生产任务链；真实 owner 数据不阻塞开发，
+    只决定是否扩大 auto-intervention。
+  - 本地只跑变更相关 unit/DB/migration/typecheck/Biome；完整 gate 只监听 GitHub CI Gate。
 
 ## NEXT
 
-1. PR #1110 最后一批 review findings 已批量修复；一次提交/推送、回复并清零 threads 后，
-   只监听新 exact head 的 GitHub CI Gate，不在本地跑全 gate。
-2. 修复 head CI 全绿后合并 P0；再用固定 mock evidence packets 跑 canonical Opus real-output
-   质量评测。YUK-821 在 8 簇输出门通过前保持 In Progress，输出不合格就继续改模型合同，
-   不伪造 pass。
-3. 真实 owner shadow/blind/canary 留作扩大 auto-intervention 的发布证据，不阻塞后续功能实现。
+1. 完成 audit v2、0083 迁移、生成 API contract 与定向验证；批量一次提交/PR。
+2. 只监听 exact-head GitHub CI Gate，清零 review threads 后合并。
+3. 在合并 main 上重跑固定 8-case mock-input/真实-output；相对旧基线有改善即通过开发 gate。
+4. 通过后对齐 YUK-821，并按 mesh 依赖选择下一条 ready phase issue 开发。
 
 ## PARKED
 

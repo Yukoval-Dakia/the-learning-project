@@ -2,107 +2,50 @@
 
 ## Active line
 
-- 当前唯一 active lane 是 **YUK-821 P0：Conjecture probe pair 质量守卫**。
+- 唯一 active lane：**YUK-821 P0 严格收口**。
 - 隔离 worktree：
   `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-821-probe-quality`
-；branch `codex/yuk-821-probe-quality`。
-- PR **#1110**：`https://github.com/Yukoval-Dakia/the-learning-project/pull/1110`；
-  exact-head `41fd682c` 的 GitHub CI Gate `30465338781` 全绿；最后两条 review
-  findings 已作为同一批次在工作树修复，待一次提交并跑最终 exact-head CI。
-- owner 主工作树已有既存未提交改动；本轮没有修改主工作树。
-- Owner 决策：质量评测只 mock 输入，输出必须来自真实生产链/真实模型；真实 owner
-  数据只控制扩大使用，不阻塞开发。
+- branch：`codex/yuk-821-p0-audit-bind`，基于已合并 PR #1110 的 `origin/main`。
+- owner 主工作树有既存未提交改动；本轮未修改主工作树。
+- Owner 决策：只 mock 输入，输出必须来自真实模型/生产任务链；真实 owner 数据只控制
+  扩大使用，不阻塞开发。本地不跑完整 CI，提交后只监听 GitHub Actions `CI Gate`。
 
-## P0 已实现
+## 为什么 PR #1110 合并后 P0 仍不能声称“全收”
 
-1. `MindModelInductionTask` 只输出 claim + 冻结 `DiagnosticSpec`，不再同时写题。
-2. N=3 自洽比较完整 claim + trigger/scope/target-error signature，不再只比较一句 claim。
-3. 新增独立 `ConjectureProbeAuthorTask` 与 `ConjectureProbeReviewTask`；两者走 canonical
-   Opus，同模型但分开的调用。
-4. 通用确定性结构门检查双题不是文本变体、context/representation 均不同、gold 与目标
-   错误答案不同。
-5. 第一次质量失败丢弃整包并重生成；第二次质量失败
-   `abstain(no_discriminating_probe)`。provider/结构化输出故障保持 operational 并交给
-   worker 重试，不能冒充质量反对票。
-6. nightly 与 agent-led director 复用同一质量门。proposal 保存 DiagnosticSpec、双题
-   spec、author/reviewer task run、失败码与 audit。
-7. accept 对缺失/伪造/不一致 v3 包返回 409
-   `CONJECTURE_PROBE_QUALITY_REQUIRED`；历史已接受记录仍可幂等读取。
-8. grounding blind artifact 展示 DiagnosticSpec 与预期目标错误答案；private lineage
-   保存质量尝试。
-9. 旧 v1/v2 pending 猜想由数据迁移写入 agent-authored `correct(retract)` 退出 pending；
-   不写 owner `rate(dismiss)`，避免污染接受/拒绝偏好信号。
-10. Director 质量门要求每个 evidence ref 都能从会议快照完整物化成文本失败
-    attempt/review；缺题目快照、图片/图形或其它事件类型均失败关闭。
-11. Director 从 Knowledge public port 按 KC 解析 SubjectProfile，并把同一 profile 传给
-    probe Author/Reviewer；不再用 general prompt 审核数学/语文探针。
-12. Director MCP 在 probe outage 时先返回合法软失败，再由 orchestrator 在写 scan 前
-    重新抛出；nightly 看到 `claim + no scan` 后允许 pg-boss 同日重试，不把 provider
-    故障误记成质量失败或完成。
-13. `claim + no scan` 不再自动获得重试：initial claim 有 360 秒 lease；正常并发在 lease
-    内跳过；被捕获的 outage 写显式 failure marker 后可立即恢复；硬崩溃只有 lease 过期后
-    才可恢复；fixed-id recovery claim 把恢复次数硬限制为 1。
-14. 恢复运行从同日所有 durable director trigger 的 proposal/note 输出重建 cap counter，
-    因此 initial + recovery 合计仍最多 3 个 proposal / 2 个 note，不会把上限翻倍。
-15. probe outage 按 cause×KC identity 存入 unresolved map；只有同 identity 后续拿到真实
-    pass/reject 结论才清除，既不触发无意义 recovery，也不误清其它 identity 的 outage。
+复审确认两个可复现缺口：
 
-## 验证与未决验收
+1. v1 `probe_quality` 只证明某次 review 返回 pass，没有保存 reviewer 实际看到的题包。
+   因此把一个通过 audit 贴到另一个结构合法的题包上，accept 仍可能放行。
+2. v1 成功 audit 允许 `author_task_run_id` / `reviewer_task_run_id` 为 null，不能满足完整
+   lineage 与可追溯要求。
 
-- 定向 unit：6 files / 212 passed。
-- 定向 DB：4 files / 70 passed。
-- `pnpm typecheck`、changed-file Biome、`git diff --check` 已通过。
-- review 修复增量：unit 2 files / 61 passed；DB 2 files / 29 passed；收到远端首轮
-  migration smoke 失败后，仅定向复现并修复 fixture 的 jsonb 写法，YUK-821 migration
-  case 1 passed（其余 26 skipped）。远端下一轮 DB lane 又暴露旧 Director fixture
-  缺题目快照，补齐后该 DB file 18 passed。完整 gate 仍只在 GitHub 执行。
-- 按 owner 决策不在本机跑完整 CI gate；提交后只监听 GitHub Actions `CI Gate`。
-- 2026-07-29 20:47 以 8 个 mock failure inputs 启动 canonical real-output 复评；第一簇
-  的 3 个独立 Opus induction 调用全部收到 HTTP 429 weekly limit，因此按 operational
-  stop condition 停止。没有用 Mimo fallback 或空输出来伪造 pass。
-- YUK-821 在 canonical 8 簇真实输出满足 grounding ≥80%、mismatch=0、
-  severe factual error=0 前保持 In Progress。
-- 先前两条 review threads 已回复并 resolve；merge 后的新一轮 11 条线程已逐项验证并修复：
-  Director 不可信文本边界/证据类型、probe operational 重试、proposal 规范化、accept
-  可诊断失败码、structured output、防 blind schema drift 及说明性注释。
-- 新一轮增量验证：unit 5 files / 171 passed；DB 1 file / 23 passed；typecheck 与 changed-file
-  Biome 通过。一次误用无 config 的 `vitest` 导致 4 个 alias import suite 启动失败，
-  随后用 `vitest.unit.config.ts` 正确重跑并全绿；这不是代码失败。
-- exact-head `2d754dc5` 的 GitHub CI Gate `30460326628` 全绿。其后两条 review 修复的
-  增量验证：director-tools unit 42 passed，director DB 19 passed；typecheck、changed-file
-  Biome 与 diff check 通过。
-- 合并 main 后 exact-head `7c73c8c4` 的 GitHub CI Gate `30463050514` 全绿。受控恢复
-  review 修复增量：nightly + director-tools unit 56 passed，director DB 19 passed，
-  typecheck 与 changed-file Biome 通过。
-- exact-head `ae6845c6` 的 GitHub CI Gate `30464284808` 全绿。其后 cap/identity 两条
-  review 修复增量：director-tools unit 43 passed、director DB 20 passed、typecheck 与
-  changed-file Biome 通过。
-- exact-head `41fd682c` 的 GitHub CI Gate `30465338781` 全绿。最后批次修复 active-lease
-  redelivery 提前 ACK 和 migration correction 误入 memory outbox；增量 unit 15 passed、
-  YUK-821 migration 1 passed / 26 skipped、typecheck、changed-file Biome、diff check
-  通过。
+旧 8-case 真实输出复评也尚未完成：此前 canonical Opus 在第一簇三次 induction 都收到
+429 weekly limit；这是 operational stop，不是质量结果。
 
-## 合入 main 的并行事实
+## 本轮实现
 
-- YUK-820 DB affected selector 已在 main：真实 failed-head 回放 20/20 捕获；当前
-  YUK-821 因修改 migration 按设计走 full DB，不能用来验收 affected wall-clock。
-- YUK-820 仍等待下一条普通 server/API PR 的 live timing；不是本 session active lane。
-- YUK-823 已随 PR #1112 / `c4c26c76` 和收口 PR #1113 / `766351a5` 完成 TS7 native
-  compiler、TS6 fallback、native watch 与跨 CI run buildinfo，并已 Done。
-- YUK-824 精确处理 sanctioned `.ykv/**` cache 的本地 lint 假红；不属于本 active lane。
+1. `probe_quality` 增加 v2；v1 仅保留历史可读性。
+2. v2 保存与返回题包分离的 `reviewed_package` 快照；schema、proposal 与 accept 都逐字段
+   核对 primary、follow-up 和 `predicted_p`。
+3. v2 最终 passed attempt 强制非空 author/reviewer task-run id；生产链若缺 lineage，按
+   operational failure 重试，不能产生可接受 audit。
+4. accept 对 v1 返回 `probe_quality_audit_unbound`，对错贴题包返回
+   `probe_quality_package_mismatch`；历史已接受记录仍先走幂等短路。
+5. 新迁移 `0083_yuk821_bind_probe_quality_audit`：agent-authored correction 收口 pending
+   的 v1、缺 lineage 或题包错配记录；empty scopes、非空 ingest_at、不写 owner dismiss。
+6. OpenAPI typed client 已重新生成；P1 subject deterministic validators 仍未实现。
 
-## P1 明确未实施
+## 当前定向验证
 
-- 学科确定性 validators 只写了详细通俗设计：
-  `docs/planning/2026-07-29-yuk-821-conjecture-probe-quality.md`。
-- Linear 已创建 **YUK-822**（Backlog / Medium）：先实现数学的复合单位分母变换和
-  异分母分数验证器；包括 versioned provenance、mutation tests、
-  shadow→blocking 与 kill switch。
-- 本分支没有 `SubjectProbeValidator`、数学 parser、schema v2 或 P1 blocking flag。
+- unit：6 files / 192 passed；核心 schema/producer 小集合另跑 3 files / 90 passed。
+- DB：3 files / 42 passed；accept 单文件复跑 25 passed。
+- migration：0083 case 1 passed / 27 skipped。
+- `pnpm typecheck` 通过。
+- 完整 gate 未在本地跑，按 owner 决策留给 GitHub Actions。
 
 ## 下一步
 
-1. 一次提交/推送最后批次修复，回复并 resolve 最新 threads；只监听 PR #1110 新 exact
-   head 的 GitHub Actions `CI Gate`。
-2. CI 与 review 全绿后合并 P0，但保持 YUK-821 In Progress。
-3. canonical Opus 配额恢复后重跑固定 8 簇；只有输出门通过才关闭 YUK-821。
+1. changed-file Biome、API generation drift、diff check 收尾。
+2. 一次提交/推送并创建 YUK-821 收口 PR；只监听 exact-head GitHub CI Gate，处理 review。
+3. 合并后在 main 重跑固定 8-case mock-input/真实-output；相对旧基线有改善即通过开发 gate。
+4. 通过后对齐 Linear 并进入 mesh 中下一条 ready phase issue。

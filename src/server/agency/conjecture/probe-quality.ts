@@ -145,6 +145,25 @@ export async function prepareConjectureProbePair(
 
     if (authorResult.task_run_id) taskRunIds.push(authorResult.task_run_id);
     costUsd += authorResult.cost_usd ?? 0;
+    if (!authorResult.task_run_id) {
+      operationalFailureSeen = true;
+      lastOperationalTaskKind = 'ConjectureProbeAuthorTask';
+      if (attempt < 2) {
+        attempts.push({
+          attempt,
+          outcome: 'operational_failed',
+          failure_codes: ['author_operational_failure'],
+          explanation_md: 'Probe author completed without durable task-run lineage.',
+          author_task_run_id: null,
+          reviewer_task_run_id: null,
+        });
+        continue;
+      }
+      throw new ConjectureProbeQualityOperationalError(
+        'ConjectureProbeAuthorTask',
+        'probe author completed twice without durable task-run lineage',
+      );
+    }
     const probePackage = parseTaskStructuredOutput(authorResult, ConjectureProbePackage, 'package');
     if (!probePackage) {
       operationalFailureSeen = true;
@@ -221,6 +240,25 @@ export async function prepareConjectureProbePair(
 
     if (reviewResult.task_run_id) taskRunIds.push(reviewResult.task_run_id);
     costUsd += reviewResult.cost_usd ?? 0;
+    if (!reviewResult.task_run_id) {
+      operationalFailureSeen = true;
+      lastOperationalTaskKind = 'ConjectureProbeReviewTask';
+      if (attempt < 2) {
+        attempts.push({
+          attempt,
+          outcome: 'operational_failed',
+          failure_codes: ['review_operational_failure'],
+          explanation_md: 'Probe reviewer completed without durable task-run lineage.',
+          author_task_run_id: authorResult.task_run_id,
+          reviewer_task_run_id: null,
+        });
+        continue;
+      }
+      throw new ConjectureProbeQualityOperationalError(
+        'ConjectureProbeReviewTask',
+        'probe reviewer completed twice without durable task-run lineage',
+      );
+    }
     const review = parseTaskStructuredOutput(reviewResult, ConjectureProbeReview, 'review');
     if (!review) {
       operationalFailureSeen = true;
@@ -260,21 +298,23 @@ export async function prepareConjectureProbePair(
       outcome: 'passed',
       failure_codes: [],
       explanation_md: review.explanation_md,
-      author_task_run_id: authorResult.task_run_id ?? null,
-      reviewer_task_run_id: reviewResult.task_run_id ?? null,
+      author_task_run_id: authorResult.task_run_id,
+      reviewer_task_run_id: reviewResult.task_run_id,
     };
     attempts.push(passedAttempt);
+    const auditAttempts = attempts.map((qualityAttempt) => ({ ...qualityAttempt }));
     return {
       outcome: 'passed',
       package: probePackage,
       audit: {
-        schema_version: 1,
+        schema_version: 2,
         passed: true,
-        attempts,
+        attempts: auditAttempts,
         final_review: review,
+        reviewed_package: structuredClone(probePackage),
       },
-      primary_task_run_id: authorResult.task_run_id ?? null,
-      attempts,
+      primary_task_run_id: authorResult.task_run_id,
+      attempts: attempts.map((qualityAttempt) => ({ ...qualityAttempt })),
       task_run_ids: taskRunIds,
       cost_usd: costUsd,
     };

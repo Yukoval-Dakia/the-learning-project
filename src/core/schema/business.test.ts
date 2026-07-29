@@ -8,6 +8,7 @@ import {
   ConjectureHypothesisDraft,
   ConjectureProbePackage,
   ConjectureProbeQualityAttempt,
+  ConjectureProbeQualityAudit,
   LearningItemOpenStatus,
   LearningItemStatus,
   evaluateConjectureProbePackageStructure,
@@ -57,7 +58,7 @@ describe('ConjectureDraft', () => {
       representation_kind: 'natural_language' as const,
     },
     probe_quality: {
-      schema_version: 1 as const,
+      schema_version: 2 as const,
       passed: true as const,
       attempts: [
         {
@@ -73,6 +74,25 @@ describe('ConjectureDraft', () => {
         verdict: 'pass' as const,
         failure_codes: [],
         explanation_md: '题目、参考答案与目标错误签名相互一致。',
+      },
+      reviewed_package: {
+        primary: {
+          prompt_md: "对 f(x)=sin(x^2)，写出 f'(x) 并说明用到链式法则的哪一层。",
+          reference_md: "f'(x)=2x·cos(x^2)；外层 cos·内层 2x（链式：外导 × 内导）。",
+          expected_target_error_answer_md: "f'(x)=cos(x^2)+2x",
+          elicits_target_error_reason_md: '必须决定外导与内导的组合方式。',
+          context_kind: 'abstract' as const,
+          representation_kind: 'symbolic' as const,
+        },
+        followup: {
+          prompt_md: "对 g(x)=cos(x^3)，写出 g'(x) 并标出内层导数。",
+          reference_md: "g'(x)=-3x^2·sin(x^3)；内层导数是 3x²。",
+          expected_target_error_answer_md: "g'(x)=-sin(x^3)+3x²",
+          elicits_target_error_reason_md: '在文字说明中再次要求组合两层导数。',
+          context_kind: 'applied' as const,
+          representation_kind: 'natural_language' as const,
+        },
+        predicted_p: 0.35,
       },
     },
     cause_category: 'concept_confusion',
@@ -171,6 +191,17 @@ describe('ConjectureDraft', () => {
         ...valid.followup_probe_spec,
         prompt_md: '解方程 2x-3=7',
       },
+      probe_quality: {
+        ...valid.probe_quality,
+        reviewed_package: {
+          ...valid.probe_quality.reviewed_package,
+          primary: { ...valid.probe_spec, prompt_md: '解方程 2x+3=7' },
+          followup: {
+            ...valid.followup_probe_spec,
+            prompt_md: '解方程 2x-3=7',
+          },
+        },
+      },
     };
     expect(ConjectureDraft.safeParse(plusMinus).success).toBe(true);
     const quotientProduct = {
@@ -181,6 +212,17 @@ describe('ConjectureDraft', () => {
       followup_probe_spec: {
         ...valid.followup_probe_spec,
         prompt_md: '判断 xy 的定义域',
+      },
+      probe_quality: {
+        ...valid.probe_quality,
+        reviewed_package: {
+          ...valid.probe_quality.reviewed_package,
+          primary: { ...valid.probe_spec, prompt_md: '判断 x/y 的定义域' },
+          followup: {
+            ...valid.followup_probe_spec,
+            prompt_md: '判断 xy 的定义域',
+          },
+        },
       },
     };
     expect(ConjectureDraft.safeParse(quotientProduct).success).toBe(true);
@@ -245,6 +287,47 @@ describe('ConjectureDraft', () => {
             },
           ],
         },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('binds a v2 audit to the exact persisted package and requires complete pass lineage', () => {
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        probe_quality: {
+          ...valid.probe_quality,
+          reviewed_package: {
+            ...valid.probe_quality.reviewed_package,
+            predicted_p: 0.36,
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        probe_quality: {
+          ...valid.probe_quality,
+          attempts: [
+            {
+              ...valid.probe_quality.attempts[0],
+              reviewer_task_run_id: null,
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('keeps v1 audit history readable but rejects it as a new conjecture draft', () => {
+    const { reviewed_package: _reviewedPackage, ...historicalAudit } = valid.probe_quality;
+    const v1Audit = { ...historicalAudit, schema_version: 1 as const };
+    expect(ConjectureProbeQualityAudit.safeParse(v1Audit).success).toBe(true);
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        probe_quality: v1Audit,
       }).success,
     ).toBe(false);
   });

@@ -74,7 +74,7 @@ describe('ConjectureProposalChange', () => {
       probe_spec: primary,
       followup_probe_spec: followup,
       probe_quality: {
-        schema_version: 1,
+        schema_version: 2,
         passed: true,
         attempts: [
           {
@@ -91,6 +91,11 @@ describe('ConjectureProposalChange', () => {
           failure_codes: [],
           explanation_md: '通过。',
         },
+        reviewed_package: {
+          primary,
+          followup,
+          predicted_p: valid.predicted_p,
+        },
       },
     });
 
@@ -98,6 +103,34 @@ describe('ConjectureProposalChange', () => {
     expect(parsed.probe_reference_md).toBe(primary.reference_md);
     expect(parsed.followup_probe_md).toBe(followup.prompt_md);
     expect(parsed.followup_probe_reference_md).toBe(followup.reference_md);
+    if (parsed.probe_quality?.schema_version !== 2) {
+      throw new Error('expected package-bound v2 audit');
+    }
+
+    expect(
+      ConjectureProposalChange.safeParse({
+        ...parsed,
+        probe_quality: {
+          ...parsed.probe_quality,
+          reviewed_package: {
+            primary,
+            followup,
+            predicted_p: 0.4,
+          },
+        },
+      }).success,
+    ).toBe(false);
+
+    const { reviewed_package: _reviewedPackage, ...historicalAudit } = parsed.probe_quality;
+    expect(
+      ConjectureProposalChange.safeParse({
+        ...parsed,
+        probe_quality: {
+          ...historicalAudit,
+          schema_version: 1,
+        },
+      }).success,
+    ).toBe(true);
   });
 
   it('accepts historical no-follow-up payloads but rejects partial or duplicate v2 follow-ups', () => {

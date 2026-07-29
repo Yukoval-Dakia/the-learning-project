@@ -1012,3 +1012,213 @@ describe('migration smoke — YUK-821 legacy conjecture retirement', () => {
     expect(ownerDismissals[0]?.count).toBe('0');
   });
 });
+
+describe('migration smoke — YUK-821 probe-quality audit binding', () => {
+  const BASELINE_TAG = '0082_yuk821_retire_legacy_pending_conjectures';
+  const MIGRATION_TAG = '0083_yuk821_bind_probe_quality_audit';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  function orderedMigrations(): { tag: string; sql: string }[] {
+    const journal = JSON.parse(
+      readFileSync(join(process.cwd(), 'drizzle/meta/_journal.json'), 'utf8'),
+    ) as { entries: { idx: number; tag: string }[] };
+    return [...journal.entries]
+      .sort((a, b) => a.idx - b.idx)
+      .map((entry) => ({
+        tag: entry.tag,
+        sql: readFileSync(join(process.cwd(), 'drizzle', `${entry.tag}.sql`), 'utf8'),
+      }));
+  }
+
+  async function applyMigrationFile(fileSql: string) {
+    for (const chunk of fileSql.split('--> statement-breakpoint')) {
+      const statement = chunk.trim();
+      if (statement.length > 0) await client.unsafe(statement);
+    }
+  }
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    let reachedBaseline = false;
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(migration.sql);
+      if (migration.tag === BASELINE_TAG) {
+        reachedBaseline = true;
+        break;
+      }
+    }
+    if (!reachedBaseline) throw new Error(`baseline migration ${BASELINE_TAG} not found`);
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('retires only pending unbound or lineage-incomplete audits and is idempotent', async () => {
+    const primary = {
+      prompt_md: 'primary',
+      reference_md: 'primary reference',
+      expected_target_error_answer_md: 'primary target error',
+      elicits_target_error_reason_md: 'elicits the target error',
+      context_kind: 'abstract',
+      representation_kind: 'symbolic',
+    };
+    const followup = {
+      prompt_md: 'follow-up',
+      reference_md: 'follow-up reference',
+      expected_target_error_answer_md: 'follow-up target error',
+      elicits_target_error_reason_md: 'retests the target error independently',
+      context_kind: 'applied',
+      representation_kind: 'natural_language',
+    };
+    const v2Change = {
+      probe_md: primary.prompt_md,
+      probe_reference_md: primary.reference_md,
+      followup_probe_md: followup.prompt_md,
+      followup_probe_reference_md: followup.reference_md,
+      diagnostic_spec: { schema_version: 1 },
+      probe_spec: primary,
+      followup_probe_spec: followup,
+      probe_quality: {
+        schema_version: 2,
+        passed: true,
+        attempts: [
+          {
+            attempt: 1,
+            outcome: 'passed',
+            failure_codes: [],
+            explanation_md: 'verified',
+            author_task_run_id: 'author_run',
+            reviewer_task_run_id: 'review_run',
+          },
+        ],
+        final_review: { verdict: 'pass' },
+        reviewed_package: { primary, followup, predicted_p: 0.3 },
+      },
+      discriminating: true,
+      predicted_p: 0.3,
+    };
+    const seedProposal = async (id: string, proposedChange: Record<string, JSONValue>) => {
+      const payload = {
+        ai_proposal: {
+          kind: 'conjecture',
+          proposed_change: proposedChange,
+        },
+      };
+      await client`
+        INSERT INTO event (
+          id, actor_kind, actor_ref, action, subject_kind, subject_id,
+          outcome, payload, affected_scopes, created_at
+        ) VALUES (
+          ${id}, 'agent', 'research_meeting', 'experimental:proposal',
+          'mind_model', ${id}, 'partial', ${client.json(payload)},
+          ARRAY['topic:test']::text[], '2026-07-03T00:00:00Z'::timestamptz
+        )
+      `;
+    };
+
+    const { reviewed_package: _reviewedPackage, ...v1Audit } = v2Change.probe_quality;
+    await seedProposal('audit_v1_pending', {
+      ...v2Change,
+      probe_quality: { ...v1Audit, schema_version: 1 },
+    });
+    await seedProposal('audit_v2_valid', v2Change);
+    await seedProposal('audit_v2_missing_lineage', {
+      ...v2Change,
+      probe_quality: {
+        ...v2Change.probe_quality,
+        attempts: [
+          {
+            ...v2Change.probe_quality.attempts[0],
+            reviewer_task_run_id: null,
+          },
+        ],
+      },
+    });
+    await seedProposal('audit_v2_mismatch', {
+      ...v2Change,
+      probe_quality: {
+        ...v2Change.probe_quality,
+        reviewed_package: {
+          ...v2Change.probe_quality.reviewed_package,
+          predicted_p: 0.4,
+        },
+      },
+    });
+    await seedProposal('audit_v1_decided', {
+      ...v2Change,
+      probe_quality: { ...v1Audit, schema_version: 1 },
+    });
+    await client`
+      INSERT INTO event (
+        id, actor_kind, actor_ref, action, subject_kind, subject_id,
+        outcome, payload, caused_by_event_id, affected_scopes, created_at
+      ) VALUES (
+        'audit_v1_decision', 'user', 'self', 'rate', 'event', 'audit_v1_decided',
+        'success', '{"rating":"accept"}'::jsonb, 'audit_v1_decided',
+        ARRAY[]::text[], '2026-07-04T00:00:00Z'::timestamptz
+      )
+    `;
+
+    const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
+    if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
+    await applyMigrationFile(migration.sql);
+    await applyMigrationFile(migration.sql);
+
+    const corrections = await client<
+      {
+        subject_id: string;
+        actor_kind: string;
+        actor_ref: string;
+        affected_scopes: string[];
+        already_ingested: boolean;
+      }[]
+    >`
+      SELECT subject_id, actor_kind, actor_ref, affected_scopes,
+             ingest_at IS NOT NULL AS already_ingested
+      FROM event
+      WHERE actor_ref = 'yuk821_audit_binding_migration'
+      ORDER BY subject_id
+    `;
+    expect(corrections).toEqual([
+      {
+        subject_id: 'audit_v1_pending',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'audit_v2_mismatch',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'audit_v2_missing_lineage',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+    ]);
+
+    const ownerDismissals = await client<{ count: string }[]>`
+      SELECT count(*)::text AS count
+      FROM event
+      WHERE action = 'rate'
+        AND payload ->> 'rating' = 'dismiss'
+        AND caused_by_event_id IN (
+          'audit_v1_pending',
+          'audit_v2_mismatch',
+          'audit_v2_missing_lineage'
+        )
+    `;
+    expect(ownerDismissals[0]?.count).toBe('0');
+  });
+});

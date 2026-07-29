@@ -1,4 +1,4 @@
-# YUK-821：猜想与诊断题质量收口（P0 已实施，P1 仅计划）
+# YUK-821：猜想与诊断题质量收口（P0 合同已实施，输出 gate 待复评；P1 仅计划）
 
 ## 1. 为什么原来的两项会失败
 
@@ -20,7 +20,7 @@
 
 共同根因不是模型不够聪明，而是系统把“模型自己说这题有区分度”当成了事实，也没有把触发条件、适用边界和目标错误答案固定下来。
 
-## 2. P0 已实施：系统现在怎样阻止这两类失败
+## 2. P0 合同已实施：系统现在怎样阻止这两类失败
 
 ### 2.1 先冻结诊断合同，再出题
 
@@ -67,7 +67,9 @@
 
 ### 2.6 可追溯、可接受、可拒绝
 
-新 proposal 保存：冻结合同、两道题的完整 spec、每次 author/reviewer task run id、失败码、解释和最终通过记录。新的 accept 路径缺任一字段、嵌套题与实际持久化题不一致、结构门失败或最终 audit 未通过时，返回 409 `CONJECTURE_PROBE_QUALITY_REQUIRED`，要求重新准备；已经接受的历史记录仍可幂等读取。
+新 proposal 保存：冻结合同、两道题的完整 spec、每次 author/reviewer task run id、失败码、解释和最终通过记录。`probe_quality` v2 还保存 reviewer 实际看过的不可变 `reviewed_package`。只有最后一次通过尝试同时有 author 和 reviewer 的 durable task-run id，且 `reviewed_package` 与 proposal 最终落库的两道题及 `predicted_p` 完全一致，才允许 accept。不能再把别的题包的 `passed=true` 审计贴到当前题包上。
+
+新的 accept 路径缺任一字段、使用未绑定的 v1 audit、嵌套题与实际持久化题不一致、结构门失败或最终 audit 未通过时，返回 409 `CONJECTURE_PROBE_QUALITY_REQUIRED`，要求重新准备；已经接受的历史记录仍可幂等读取。升级迁移会用 agent-authored correction 退出仍 pending 的 v1、缺 lineage 或题包不一致记录，不伪造 owner dismiss，也不留下永远 409 的死卡片。
 
 自动 nightly 和 agent-led director 共用同一质量门，不存在一个入口严格、另一个入口仍可绕过的双轨。
 
@@ -145,7 +147,7 @@ P0 可以识别“题目范围/结构明显不匹配”，也让独立模型审�
 
 ### 4.5 schema 与迁移策略
 
-1. `probe_quality.schema_version` 升级，新增 `policy_version` 与 `subject_validator_results`；
+1. 在 P0 audit v2 之上把 `probe_quality.schema_version` 升到 v3，新增 `policy_version` 与 `subject_validator_results`；
 2. 新生产的、被 math validator 判定为 applicable 的 proposal 必须保存对应版本的 pass 结果；
 3. 历史已接受记录保持可读和幂等；历史 pending 记录不能用旧 audit 接受。只有在
    reprepare command 已真实上线时才自动重新准备，否则像 P0 v1/v2 升级一样，用
@@ -182,10 +184,13 @@ P0 可以识别“题目范围/结构明显不匹配”，也让独立模型审�
 - author/reviewer 独立、同模型、同证据；
 - 一次整包重生成；两次质量失败 abstain；operational 不冒充质量反对票；
 - nightly/director/accept 三个入口均不能绕过；
-- proposal 保存完整 lineage 与审计；
+- proposal 保存完整 lineage、reviewed package 与审计；v1 只可读，不能用于新 accept；
+- 升级迁移收口 pending 的未绑定 audit、缺失 lineage 与题包不一致记录；
 - 定向 unit、DB、typecheck、Biome 通过，完整 gate 由 GitHub Actions 执行。
+- 固定 8-case mock-input/真实模型-output 回归相对旧基线有改善后，通过开发 gate；
+  真实 owner 数据只决定是否扩大自动干预。
 
 ### P1（未实施）
 
-以上数学确定性验证器、schema v2、shadow/blocking 发布步骤均只在本文件中规划；本次代码不包含它们。
+以上数学确定性验证器、schema v3、shadow/blocking 发布步骤均只在本文件中规划；本次代码不包含它们。
 后续实施由 `YUK-822` 跟踪。

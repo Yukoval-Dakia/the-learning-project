@@ -462,6 +462,31 @@ export const ConjectureProbePackage = z.object({
 });
 export type ConjectureProbePackageT = z.infer<typeof ConjectureProbePackage>;
 
+/** Exact identity of the package that the independent reviewer saw. */
+export function conjectureProbePackagesEqual(
+  left: ConjectureProbePackageT,
+  right: ConjectureProbePackageT,
+): boolean {
+  return (
+    left.predicted_p === right.predicted_p &&
+    left.primary.prompt_md === right.primary.prompt_md &&
+    left.primary.reference_md === right.primary.reference_md &&
+    left.primary.expected_target_error_answer_md ===
+      right.primary.expected_target_error_answer_md &&
+    left.primary.elicits_target_error_reason_md === right.primary.elicits_target_error_reason_md &&
+    left.primary.context_kind === right.primary.context_kind &&
+    left.primary.representation_kind === right.primary.representation_kind &&
+    left.followup.prompt_md === right.followup.prompt_md &&
+    left.followup.reference_md === right.followup.reference_md &&
+    left.followup.expected_target_error_answer_md ===
+      right.followup.expected_target_error_answer_md &&
+    left.followup.elicits_target_error_reason_md ===
+      right.followup.elicits_target_error_reason_md &&
+    left.followup.context_kind === right.followup.context_kind &&
+    left.followup.representation_kind === right.followup.representation_kind
+  );
+}
+
 export const ConjectureProbeReviewFailureCode = z.enum([
   'claim_scope_expansion',
   'probe_not_targeting',
@@ -599,15 +624,30 @@ export const ConjectureProbeQualityAttempt = z.discriminatedUnion('outcome', [
 ]);
 export type ConjectureProbeQualityAttemptT = z.infer<typeof ConjectureProbeQualityAttempt>;
 
+const ConjectureProbeQualityAuditFields = {
+  passed: z.literal(true),
+  attempts: z.array(ConjectureProbeQualityAttempt).min(1).max(2),
+  final_review: ConjectureProbeReview.refine((review) => review.verdict === 'pass', {
+    message: 'final_review must pass',
+  }),
+} as const;
+
+/**
+ * v1 remains readable for terminal history. Only v2 is bound to the exact reviewed
+ * package and is therefore eligible for a new accept decision.
+ */
 export const ConjectureProbeQualityAudit = z
-  .object({
-    schema_version: z.literal(1),
-    passed: z.literal(true),
-    attempts: z.array(ConjectureProbeQualityAttempt).min(1).max(2),
-    final_review: ConjectureProbeReview.refine((review) => review.verdict === 'pass', {
-      message: 'final_review must pass',
+  .discriminatedUnion('schema_version', [
+    z.object({
+      schema_version: z.literal(1),
+      ...ConjectureProbeQualityAuditFields,
     }),
-  })
+    z.object({
+      schema_version: z.literal(2),
+      ...ConjectureProbeQualityAuditFields,
+      reviewed_package: ConjectureProbePackage,
+    }),
+  ])
   .superRefine((audit, ctx) => {
     audit.attempts.forEach((attempt, index) => {
       if (attempt.attempt !== index + 1) {
@@ -631,6 +671,23 @@ export const ConjectureProbeQualityAudit = z
         path: ['attempts'],
         message: 'a passing audit must end with a passed attempt',
       });
+    }
+    if (audit.schema_version === 2) {
+      const finalAttempt = audit.attempts.at(-1);
+      if (finalAttempt?.author_task_run_id == null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['attempts', audit.attempts.length - 1, 'author_task_run_id'],
+          message: 'a v2 passing audit requires author task-run lineage',
+        });
+      }
+      if (finalAttempt?.reviewer_task_run_id == null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['attempts', audit.attempts.length - 1, 'reviewer_task_run_id'],
+          message: 'a v2 passing audit requires reviewer task-run lineage',
+        });
+      }
     }
   });
 export type ConjectureProbeQualityAuditT = z.infer<typeof ConjectureProbeQualityAudit>;
@@ -683,6 +740,13 @@ export const ConjectureDraft = z
   .discriminatedUnion('kind', [ConjectureProposalDraft, ConjectureModelAbstainDraft])
   .superRefine((draft, ctx) => {
     if (draft.kind !== 'proposal') return;
+    if (draft.probe_quality.schema_version !== 2) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['probe_quality', 'schema_version'],
+        message: 'new conjecture drafts require a package-bound v2 quality audit',
+      });
+    }
     if (
       normalizeProbeIdentity(draft.followup_probe_md) === normalizeProbeIdentity(draft.probe_md)
     ) {
@@ -721,6 +785,20 @@ export const ConjectureDraft = z
         code: z.ZodIssueCode.custom,
         path: ['probe_spec'],
         message: `probe package failed structural quality gate: ${failureCode}`,
+      });
+    }
+    if (
+      draft.probe_quality.schema_version === 2 &&
+      !conjectureProbePackagesEqual(draft.probe_quality.reviewed_package, {
+        primary: draft.probe_spec,
+        followup: draft.followup_probe_spec,
+        predicted_p: draft.predicted_p,
+      })
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['probe_quality', 'reviewed_package'],
+        message: 'probe_quality must be bound to the persisted probe package',
       });
     }
   });

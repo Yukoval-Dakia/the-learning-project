@@ -106,7 +106,7 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
           representation_kind: 'natural_language',
         },
         probe_quality: {
-          schema_version: 1,
+          schema_version: 2,
           passed: true,
           attempts: [
             {
@@ -122,6 +122,25 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
             verdict: 'pass',
             failure_codes: [],
             explanation_md: 'verified',
+          },
+          reviewed_package: {
+            primary: {
+              prompt_md: '请解释这一步。',
+              reference_md: '参考解释',
+              expected_target_error_answer_md: '错误解释',
+              elicits_target_error_reason_md: '要求区分必要与充分。',
+              context_kind: 'abstract',
+              representation_kind: 'symbolic',
+            },
+            followup: {
+              prompt_md: '换一个情境解释同一步。',
+              reference_md: '第二个情境中的参考解释',
+              expected_target_error_answer_md: '第二个情境中的错误解释',
+              elicits_target_error_reason_md: '在应用情境中保持同一判断。',
+              context_kind: 'applied',
+              representation_kind: 'natural_language',
+            },
+            predicted_p: 0.3,
           },
         },
         discriminating: true,

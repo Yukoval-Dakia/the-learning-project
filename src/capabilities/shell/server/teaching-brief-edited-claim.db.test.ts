@@ -83,7 +83,7 @@ function conjecturePayload() {
         representation_kind: 'natural_language' as const,
       },
       probe_quality: {
-        schema_version: 1 as const,
+        schema_version: 2 as const,
         passed: true as const,
         attempts: [
           {
@@ -99,6 +99,25 @@ function conjecturePayload() {
           verdict: 'pass' as const,
           failure_codes: [],
           explanation_md: '主探针与复验探针都能区分目标错误，且情境与表征独立。',
+        },
+        reviewed_package: {
+          primary: {
+            prompt_md: PROBE_MD,
+            reference_md: PROBE_REFERENCE_MD,
+            expected_target_error_answer_md: 'cos(x^2) + 2x',
+            elicits_target_error_reason_md: '必须明确组合外层导数与内层导数。',
+            context_kind: 'abstract' as const,
+            representation_kind: 'symbolic' as const,
+          },
+          followup: {
+            prompt_md: 'd/dx cos(x^3) = ?',
+            reference_md: '-3x^2·sin(x^3)',
+            expected_target_error_answer_md: '-sin(x^3) + 3x^2',
+            elicits_target_error_reason_md: '换一个复合函数复验同一两层组合判断。',
+            context_kind: 'applied' as const,
+            representation_kind: 'natural_language' as const,
+          },
+          predicted_p: 0.3,
         },
       },
       discriminating: true,
