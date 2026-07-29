@@ -38,7 +38,9 @@ function installTransactionShim(reserved: postgres.ReservedSql): void {
       await reserved
         .unsafe(`ROLLBACK TO SAVEPOINT "${name}"`)
         .then(() => reserved.unsafe(`RELEASE SAVEPOINT "${name}"`))
-        .catch(() => undefined);
+        .catch((cleanupError) => {
+          console.error('Test transaction savepoint cleanup failed', cleanupError);
+        });
       throw error;
     }
   };
@@ -110,7 +112,9 @@ export async function beginTestTransaction(): Promise<void> {
     _transactionClient = reserved;
     _transactionDb = transactionDb;
   } catch (error) {
-    await reserved.unsafe('ROLLBACK').catch(() => undefined);
+    await reserved.unsafe('ROLLBACK').catch((rollbackError) => {
+      console.error('beginTestTransaction: cleanup ROLLBACK failed', rollbackError);
+    });
     reserved.release();
     throw error;
   }
