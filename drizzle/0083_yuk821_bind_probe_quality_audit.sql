@@ -49,19 +49,32 @@ FROM "event" AS proposal
 WHERE proposal."action" = 'experimental:proposal'
   AND proposal."subject_kind" = 'mind_model'
   AND proposal."payload" #>> '{ai_proposal,kind}' = 'conjecture'
-  -- Decided rows retain their historical meaning.
-  AND NOT EXISTS (
-    SELECT 1
+  -- Keep rows terminal only when the latest rate is one the inbox recognizes.
+  -- A malformed newer rate leaves the proposal pending at runtime and must not
+  -- strand it behind the v2 accept gate.
+  AND NOT COALESCE((
+    SELECT (
+      jsonb_typeof(decision."payload" -> 'rating') = 'string'
+      AND decision."payload" ->> 'rating' IN (
+        'accept',
+        'reverse',
+        'change_type',
+        'dismiss',
+        'rollback'
+      )
+    )
     FROM "event" AS decision
     WHERE decision."caused_by_event_id" = proposal."id"
       AND decision."action" = 'rate'
-  )
+    ORDER BY decision."created_at" DESC, decision."id" DESC
+    LIMIT 1
+  ), false)
   -- Do not reproduce CorrectEvent parsing in SQL. An existing valid retraction
   -- may receive this deterministic cutover retraction again; that is harmless
   -- and safer than trusting a malformed raw correction that runtime ignores.
   AND NOT COALESCE((
     jsonb_typeof(proposal."payload" -> 'rubric_verdict') = 'object'
-    AND proposal."payload" #>> '{rubric_verdict,ok}' = 'false'
+    AND proposal."payload" #> '{rubric_verdict,ok}' = 'false'::jsonb
   ), false)
   AND NOT COALESCE((
     jsonb_typeof(proposal."payload" -> 'topology_verdict') = 'object'

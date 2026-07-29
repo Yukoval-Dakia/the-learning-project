@@ -1039,13 +1039,18 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
   });
 
   it('retires the complete pre-binding pending set and is idempotent', async () => {
-    const seedProposal = async (id: string, probeQuality: Record<string, JSONValue>) => {
+    const seedProposal = async (
+      id: string,
+      probeQuality: Record<string, JSONValue>,
+      extraPayload: Record<string, JSONValue> = {},
+    ) => {
       const payload = {
         ai_proposal: {
           kind: 'conjecture',
           evidence_refs: [{ kind: 'event', id: `${id}_attempt` }],
           proposed_change: { probe_quality: probeQuality },
         },
+        ...extraPayload,
       };
       await client`
         INSERT INTO event (
@@ -1065,6 +1070,20 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
     await seedProposal('prebinding_v2_shaped_pending', { schema_version: 2, passed: true });
     await seedProposal('prebinding_decided', { schema_version: 1, passed: true });
     await seedProposal('prebinding_already_retracted', { schema_version: 1, passed: true });
+    await seedProposal('prebinding_malformed_latest_rate', {
+      schema_version: 1,
+      passed: true,
+    });
+    await seedProposal(
+      'prebinding_string_false_rubric',
+      { schema_version: 1, passed: true },
+      { rubric_verdict: { ok: 'false' } },
+    );
+    await seedProposal(
+      'prebinding_rubric_rejected',
+      { schema_version: 1, passed: true },
+      { rubric_verdict: { ok: false } },
+    );
 
     await client`
       INSERT INTO event (
@@ -1081,6 +1100,18 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         'event', 'prebinding_already_retracted', 'success',
         '{"correction_kind":"retract"}'::jsonb, 'prebinding_already_retracted',
         ARRAY[]::text[], '2026-07-04T00:00:00Z'::timestamptz
+      ),
+      (
+        'prebinding_old_valid_rate', 'user', 'self', 'rate', 'event',
+        'prebinding_malformed_latest_rate', 'success',
+        '{"rating":"accept"}'::jsonb, 'prebinding_malformed_latest_rate',
+        ARRAY[]::text[], '2026-07-04T00:00:00Z'::timestamptz
+      ),
+      (
+        'prebinding_new_malformed_rate', 'user', 'self', 'rate', 'event',
+        'prebinding_malformed_latest_rate', 'success',
+        '{"rating":"unknown"}'::jsonb, 'prebinding_malformed_latest_rate',
+        ARRAY[]::text[], '2026-07-05T00:00:00Z'::timestamptz
       )
     `;
 
@@ -1107,6 +1138,20 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
     expect(corrections).toEqual([
       {
         subject_id: 'prebinding_already_retracted',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'prebinding_malformed_latest_rate',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'prebinding_string_false_rubric',
         actor_kind: 'agent',
         actor_ref: 'yuk821_audit_binding_migration',
         affected_scopes: [],
