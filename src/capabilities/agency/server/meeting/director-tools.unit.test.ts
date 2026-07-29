@@ -673,6 +673,63 @@ describe('propose_conjecture — server-enforced single writer', () => {
     expect(h.director.readRetryableProbeError()?.message).toContain('probe author failed twice');
   });
 
+  it('clears the same identity outage after an in-run tool retry reaches a quality result', async () => {
+    let authorCalls = 0;
+    const h = build({
+      runTaskFn: vi.fn(async (kind: string) => {
+        if (kind === 'ConjectureProbeAuthorTask') {
+          authorCalls += 1;
+          if (authorCalls <= 2) throw new Error('temporary provider outage');
+          return {
+            text: '',
+            task_run_id: 'probe_author_recovered',
+            structured_output: {
+              package: {
+                primary: {
+                  prompt_md: '判断条件 A 是否足以推出 B，并给出反例。',
+                  reference_md: 'A 不是充分条件；存在满足 A 但不满足 B 的反例。',
+                  expected_target_error_answer_md: 'A 足以推出 B。',
+                  elicits_target_error_reason_md: '要求区分必要条件与充分条件。',
+                  context_kind: 'abstract',
+                  representation_kind: 'symbolic',
+                },
+                followup: {
+                  prompt_md: '在门禁情境中判断持卡是否保证可以进入。',
+                  reference_md: '持卡不是充分条件，还需权限有效。',
+                  expected_target_error_answer_md: '持卡就一定可以进入。',
+                  elicits_target_error_reason_md: '在应用情境中保持同一充分性判断。',
+                  context_kind: 'applied',
+                  representation_kind: 'natural_language',
+                },
+                predicted_p: 0.3,
+              },
+            },
+          };
+        }
+        return {
+          text: '',
+          task_run_id: 'probe_review_recovered',
+          structured_output: {
+            review: {
+              verdict: 'pass',
+              failure_codes: [],
+              explanation_md: '恢复后的独立审查通过。',
+            },
+          },
+        };
+      }),
+    });
+
+    const outage = await callTool('propose_conjecture', validProposeArgs());
+    expect(outage.ok).toBe(false);
+    expect(h.director.readRetryableProbeError()).not.toBeNull();
+
+    const recovered = await callTool('propose_conjecture', validProposeArgs());
+    expect(recovered.ok).toBe(true);
+    expect(h.proposals).toHaveLength(1);
+    expect(h.director.readRetryableProbeError()).toBeNull();
+  });
+
   it('soft-rejects when a surviving evidence_ref does not resolve to a real event', async () => {
     const h = build({
       ...({

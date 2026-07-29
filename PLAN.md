@@ -43,6 +43,11 @@
     `claim + no scan` 仍可并发/无限重试；已改为“360 秒 lease + 显式失败 marker +
     fixed-id recovery claim”，活跃执行跳过、硬崩溃等 lease 过期、最多恢复 1 次。增量 unit
     2 files / 56 passed、DB 1 file / 19 passed、typecheck、Biome 通过。
+  - exact-head `ae6845c6` 的 CI Gate `30464284808` 全绿。随后两条 review 已修：恢复运行
+    会从同日所有 durable trigger 的 proposal/note 输出重建计数，整晚仍只允许 3/2；
+    probe outage 改为按 cause×KC identity 记录，同 identity 后续拿到真实质量结论才清除，
+    不会因别的 identity 成功而误清。增量 unit 43 passed、DB 20 passed、typecheck、
+    Biome 通过。
   - 20:47 用 mock 输入启动 canonical Opus real-output 复评；第一簇的 3 个独立
     induction call 均收到 429 weekly limit，按 operational stop condition 立即停止，
     没有把 fallback 或空输出记成质量结果。
@@ -52,8 +57,8 @@
 
 ## NEXT
 
-1. PR #1110 最新受控恢复 review finding 已在工作树修复；提交、推送、回复并清零 thread
-   后，只监听新 exact head 的 GitHub CI Gate，不在本地跑全 gate。
+1. PR #1110 最新两条 recovery review findings 已在工作树修复；提交、推送、回复并清零
+   threads 后，只监听新 exact head 的 GitHub CI Gate，不在本地跑全 gate。
 2. 修复 head CI 全绿后合并 P0；再用固定 mock evidence packets 跑 canonical Opus real-output
    质量评测。YUK-821 在 8 簇输出门通过前保持 In Progress，输出不合格就继续改模型合同，
    不伪造 pass。

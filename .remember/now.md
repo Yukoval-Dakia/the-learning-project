@@ -7,8 +7,8 @@
   `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-821-probe-quality`
 ；branch `codex/yuk-821-probe-quality`。
 - PR **#1110**：`https://github.com/Yukoval-Dakia/the-learning-project/pull/1110`；
-  合并 main 后 exact-head `7c73c8c4` 的 GitHub CI Gate `30463050514` 全绿；随后
-  CodeRabbit 提出的 recovery 并发/无限重试问题已在工作树修复，待提交并跑新 exact CI。
+  exact-head `ae6845c6` 的 GitHub CI Gate `30464284808` 全绿；随后两条 recovery
+  findings 已在工作树修复，待提交并跑新 exact CI。
 - owner 主工作树已有既存未提交改动；本轮没有修改主工作树。
 - Owner 决策：质量评测只 mock 输入，输出必须来自真实生产链/真实模型；真实 owner
   数据只控制扩大使用，不阻塞开发。
@@ -42,6 +42,10 @@
 13. `claim + no scan` 不再自动获得重试：initial claim 有 360 秒 lease；正常并发在 lease
     内跳过；被捕获的 outage 写显式 failure marker 后可立即恢复；硬崩溃只有 lease 过期后
     才可恢复；fixed-id recovery claim 把恢复次数硬限制为 1。
+14. 恢复运行从同日所有 durable director trigger 的 proposal/note 输出重建 cap counter，
+    因此 initial + recovery 合计仍最多 3 个 proposal / 2 个 note，不会把上限翻倍。
+15. probe outage 按 cause×KC identity 存入 unresolved map；只有同 identity 后续拿到真实
+    pass/reject 结论才清除，既不触发无意义 recovery，也不误清其它 identity 的 outage。
 
 ## 验证与未决验收
 
@@ -70,6 +74,9 @@
 - 合并 main 后 exact-head `7c73c8c4` 的 GitHub CI Gate `30463050514` 全绿。受控恢复
   review 修复增量：nightly + director-tools unit 56 passed，director DB 19 passed，
   typecheck 与 changed-file Biome 通过。
+- exact-head `ae6845c6` 的 GitHub CI Gate `30464284808` 全绿。其后 cap/identity 两条
+  review 修复增量：director-tools unit 43 passed、director DB 20 passed、typecheck 与
+  changed-file Biome 通过。
 
 ## 合入 main 的并行事实
 
@@ -91,7 +98,7 @@
 
 ## 下一步
 
-1. 提交/推送受控恢复修复，回复并 resolve 最新 thread；只监听 PR #1110 新 exact head
-   的 GitHub Actions `CI Gate`。
+1. 提交/推送 cap/identity 两条修复，回复并 resolve 最新 threads；只监听 PR #1110 新
+   exact head 的 GitHub Actions `CI Gate`。
 2. CI 与 review 全绿后合并 P0，但保持 YUK-821 In Progress。
 3. canonical Opus 配额恢复后重跑固定 8 簇；只有输出门通过才关闭 YUK-821。

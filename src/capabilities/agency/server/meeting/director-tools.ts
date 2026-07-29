@@ -395,7 +395,9 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
 
   const proposalIds: string[] = [];
   const noteIds: string[] = [];
-  let retryableProbeError: Error | null = null;
+  // Operational outages are identity-scoped: a successful retry of key A resolves A,
+  // but must not erase a still-unresolved outage on key B.
+  const retryableProbeErrors = new Map<string, Error>();
   // Same-run dedup: a cause×KC proposed this run is added so the director can't re-raise
   // the same cell inside one meeting (§5.2). Seeded empty; the pending base is checked
   // via knownConjectureKeys.
@@ -688,16 +690,21 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             releaseReservation();
             const taskKind =
               err instanceof ConjectureProbeQualityOperationalError ? err.taskKind : 'unknown';
-            retryableProbeError =
+            retryableProbeErrors.set(
+              key,
               err instanceof Error
                 ? err
-                : new Error(`probe quality gate operational failure: ${String(err)}`);
+                : new Error(`probe quality gate operational failure: ${String(err)}`),
+            );
             console.error('[director-tools] conjecture probe quality gate failed', err);
             return textResult({
               ok: false,
               reason: `probe quality gate operational failure (${taskKind}); retry later`,
             });
           }
+          // The same identity reached a real quality conclusion, so its earlier outage
+          // (if any) is resolved. Other identities remain latched for worker recovery.
+          retryableProbeErrors.delete(key);
           if (probeQuality.outcome === 'rejected') {
             releaseReservation();
             return textResult({
@@ -877,6 +884,6 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
     server,
     readProposalIds: () => proposalIds,
     readNoteIds: () => noteIds,
-    readRetryableProbeError: () => retryableProbeError,
+    readRetryableProbeError: () => retryableProbeErrors.values().next().value ?? null,
   };
 }

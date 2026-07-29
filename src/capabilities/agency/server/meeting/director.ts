@@ -47,6 +47,7 @@ import {
 } from '@/capabilities/agency/server/conjecture/history';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
+import { event } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { buildEvidenceServer, persistToolTrace } from '@/server/agency/scout/evidence-mcp';
 import type { ToolTraceEntry } from '@/server/agency/scout/evidence-mcp';
@@ -61,6 +62,7 @@ import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import type { CanUseTool, HookCallbackMatcher } from '@anthropic-ai/claude-agent-sdk';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   type BuildDirectorServerOpts,
   DIRECTOR_ALLOWED_TOOLS,
@@ -158,6 +160,41 @@ type WriteAgentNoteFn = NonNullable<BuildDirectorServerOpts['writeAgentNoteFn']>
 type ResolveSubjectProfileForKnowledgeIdsFn = NonNullable<
   BuildDirectorServerOpts['resolveSubjectProfileForKnowledgeIdsFn']
 >;
+type DirectorOutputCounts = { proposals: number; notes: number };
+type LoadDirectorOutputCountsForDayFn = (db: Db, dayKey: string) => Promise<DirectorOutputCounts>;
+
+async function loadDirectorOutputCountsForDay(
+  db: Db,
+  dayKey: string,
+): Promise<DirectorOutputCounts> {
+  const triggerRows = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.actor_ref, RESEARCH_MEETING_AGENT_ACTOR),
+        eq(event.action, TRIGGER_ACTION),
+        sql`${event.payload}->>'day_key' = ${dayKey}`,
+      ),
+    );
+  const triggerIds = triggerRows.map((row) => row.id);
+  if (triggerIds.length === 0) return { proposals: 0, notes: 0 };
+
+  const outputRows = await db
+    .select({ action: event.action })
+    .from(event)
+    .where(
+      and(
+        eq(event.actor_ref, RESEARCH_MEETING_AGENT_ACTOR),
+        inArray(event.caused_by_event_id, triggerIds),
+        inArray(event.action, ['experimental:proposal', 'experimental:agent_note']),
+      ),
+    );
+  return {
+    proposals: outputRows.filter((row) => row.action === 'experimental:proposal').length,
+    notes: outputRows.filter((row) => row.action === 'experimental:agent_note').length,
+  };
+}
 
 export interface DirectorDeps {
   now?: () => Date;
@@ -173,6 +210,7 @@ export interface DirectorDeps {
   writeAiProposalFn?: WriteAiProposalFn;
   writeAgentNoteFn?: WriteAgentNoteFn;
   resolveSubjectProfileForKnowledgeIdsFn?: ResolveSubjectProfileForKnowledgeIdsFn;
+  loadDirectorOutputCountsForDayFn?: LoadDirectorOutputCountsForDayFn;
 }
 
 /** Excerpt cap for a pending conjecture's claim in the agenda snapshot. */
@@ -218,6 +256,9 @@ export async function runResearchMeetingDirector(
   const writeEventFn = deps.writeEventFn ?? writeEvent;
   const persistToolTraceFn = deps.persistToolTraceFn ?? persistToolTrace;
   const loadConjectureHistoryFn = deps.loadConjectureHistoryFn ?? loadConjectureHistory;
+  const loadDirectorOutputCountsForDayFn =
+    deps.loadDirectorOutputCountsForDayFn ?? loadDirectorOutputCountsForDay;
+  const dayKey = shanghaiDateKey(now);
 
   // ── PRE-LLM reads (OUTSIDE the runAgentTask try/catch — a throw here is a legit
   // retryable DB fault that propagates so the nightly job's dayKey claim can gate a
@@ -230,6 +271,10 @@ export async function runResearchMeetingDirector(
   const kcIds = [...new Set(failures.flatMap((f) => f.referenced_knowledge_ids))];
   const masteryByKnowledgeId =
     kcIds.length > 0 ? await getMasteryProjectionFn(db, kcIds) : new Map();
+  // Recovery is still the same nightly meeting. Seed closure counters from durable
+  // outputs linked to every prior trigger for this day so a second director cannot
+  // reset the 3-proposal / 2-note caps.
+  const priorOutputCounts = await loadDirectorOutputCountsForDayFn(db, dayKey);
 
   // Pending conjectures (ALL actors) → dedup base + agenda display (§0.D shadow-with-
   // suppression: the deterministic lane's just-committed proposals are in this set).
@@ -276,7 +321,6 @@ export async function runResearchMeetingDirector(
   // Anchor the run (provenance for proposals + the scan subject).
   const triggerEventId = `research_meeting_agent_${newId()}`;
   const toolContextTaskRunId = `research_meeting_agent_tool_${newId()}`;
-  const dayKey = shanghaiDateKey(now);
   await writeEventFn(db, {
     id: triggerEventId,
     actor_kind: 'agent',
@@ -299,6 +343,8 @@ export async function runResearchMeetingDirector(
 
   // ── Assemble the in-process servers + the nested scout + the spawn-cap hook ──
   const caps = createDirectorCaps();
+  caps.proposeCount = priorOutputCounts.proposals;
+  caps.noteCount = priorOutputCounts.notes;
   const capture = createFindingsCapture();
   const evidence = buildEvidenceServer({
     db,

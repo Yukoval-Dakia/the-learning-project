@@ -275,6 +275,85 @@ describe('evidence scout charter', () => {
 });
 
 describe('runResearchMeetingDirector — pipeline', () => {
+  it('seeds write caps from durable outputs of earlier same-day director triggers', async () => {
+    const priorTriggerId = 'research_meeting_agent_prior_trigger';
+    await testDb()
+      .insert(event)
+      .values([
+        {
+          id: priorTriggerId,
+          session_id: null,
+          actor_kind: 'agent',
+          actor_ref: RESEARCH_MEETING_AGENT_ACTOR,
+          action: TRIGGER_ACTION,
+          subject_kind: 'query',
+          subject_id: priorTriggerId,
+          outcome: 'success',
+          payload: { day_key: '2026-07-07' },
+          caused_by_event_id: null,
+          task_run_id: null,
+          cost_micro_usd: null,
+          created_at: NOW,
+        },
+        ...Array.from({ length: 3 }, (_, index) => ({
+          id: `prior_proposal_${index}`,
+          session_id: null,
+          actor_kind: 'agent' as const,
+          actor_ref: RESEARCH_MEETING_AGENT_ACTOR,
+          action: 'experimental:proposal',
+          subject_kind: 'mind_model' as const,
+          subject_id: KC,
+          outcome: null,
+          payload: {},
+          caused_by_event_id: priorTriggerId,
+          task_run_id: null,
+          cost_micro_usd: null,
+          created_at: NOW,
+        })),
+        ...Array.from({ length: 2 }, (_, index) => ({
+          id: `prior_note_${index}`,
+          session_id: null,
+          actor_kind: 'agent' as const,
+          actor_ref: RESEARCH_MEETING_AGENT_ACTOR,
+          action: 'experimental:agent_note',
+          subject_kind: 'query' as const,
+          subject_id: `prior_note_${index}`,
+          outcome: null,
+          payload: {},
+          caused_by_event_id: priorTriggerId,
+          task_run_id: null,
+          cost_micro_usd: null,
+          created_at: NOW,
+        })),
+      ]);
+
+    let proposalResult: Record<string, unknown> | undefined;
+    let noteResult: Record<string, unknown> | undefined;
+    const runAgentTaskFn = vi.fn(async () => {
+      proposalResult = await callTool('propose_conjecture', validProposeArgs);
+      noteResult = await callTool('leave_agent_note', {
+        target_agents: ['dreaming'],
+        refs: [],
+        summary_md: 'recovery should not exceed the nightly note cap',
+        signal_kind: 'evidence_gap',
+      });
+      return {
+        task_run_id: 'director_recovery_caps',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.01,
+      };
+    });
+
+    const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+
+    expect(proposalResult).toMatchObject({ ok: false, reason: expect.stringContaining('上限') });
+    expect(noteResult).toMatchObject({ ok: false, reason: expect.stringContaining('上限') });
+    expect(result.proposals_created).toBe(0);
+    expect(result.notes_created).toBe(0);
+  });
+
   it('applies conjecture lifecycle history to both the agenda and write guard', async () => {
     let context: Record<string, unknown> | undefined;
     let proposeResult: Record<string, unknown> | undefined;
