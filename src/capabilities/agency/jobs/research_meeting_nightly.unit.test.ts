@@ -220,6 +220,7 @@ function baseDeps(overrides: Partial<ResearchMeetingDeps> = {}): ResearchMeeting
     getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a', 'k_b']))),
     getMasteryProjectionFn: vi.fn(async () => new Map<string, MasteryProjection>()),
     loadKnownConjectureKeysFn: vi.fn(async () => new Set<string>()),
+    loadConjectureHistoryFn: vi.fn(async () => new Map()),
     loadPredictionAccountabilityFn: vi.fn(async () => new Map()),
     induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => fakeInduced(input)),
     writeAiProposalFn: vi.fn(async () => 'prop_1'),
@@ -544,6 +545,119 @@ describe('runResearchMeetingNightly', () => {
     expect(result.pending_before).toBe(1);
     expect(result.considered).toBe(1); // k_a deduped, only k_b survives
     expect(writeAiProposalFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('gates active/cooldown/terminal identities and passes owner prior on a valid reopen', async () => {
+    const failures = failuresForKcs(['k_active', 'k_cooldown', 'k_settled', 'k_reopen']);
+    const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
+    const key = (knowledgeId: string) => conjectureKey('concept_confusion', knowledgeId);
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failures)),
+      loadConjectureHistoryFn: vi.fn(async () => {
+        const activeAt = new Date('2026-06-25T12:00:00Z');
+        const terminalAt = new Date('2026-06-25T12:00:00Z');
+        const reopenedTerminalAt = new Date('2026-06-24T00:00:00Z');
+        return new Map([
+          [
+            key('k_active'),
+            {
+              latest_decision: 'accept' as const,
+              latest_decision_at: activeAt,
+              latest_accept_at: activeAt,
+              latest_terminal_at: null,
+              prior_claim_md: 'active claim',
+            },
+          ],
+          [
+            key('k_cooldown'),
+            {
+              latest_decision: 'dismiss' as const,
+              latest_decision_at: new Date('2026-06-10T00:00:00Z'),
+              latest_accept_at: null,
+              latest_terminal_at: null,
+              prior_claim_md: null,
+            },
+          ],
+          [
+            key('k_settled'),
+            {
+              latest_decision: 'accept' as const,
+              latest_decision_at: new Date('2026-06-24T00:00:00Z'),
+              latest_accept_at: new Date('2026-06-24T00:00:00Z'),
+              latest_terminal_at: terminalAt,
+              prior_claim_md: 'settled claim',
+            },
+          ],
+          [
+            key('k_reopen'),
+            {
+              latest_decision: 'accept' as const,
+              latest_decision_at: new Date('2026-06-23T00:00:00Z'),
+              latest_accept_at: new Date('2026-06-23T00:00:00Z'),
+              latest_terminal_at: reopenedTerminalAt,
+              prior_claim_md: 'owner corrected claim',
+            },
+          ],
+        ]);
+      }),
+      induceConjectureFn,
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(result.considered).toBe(1);
+    expect(induceConjectureFn).toHaveBeenCalledTimes(1);
+    expect(induceConjectureFn.mock.calls[0][0]).toMatchObject({
+      cells: [expect.objectContaining({ knowledge_id: 'k_reopen' })],
+      priorClaimMd: 'owner corrected claim',
+    });
+  });
+
+  it('revalidates the terminal reopen floor after enrichment removes fresh evidence', async () => {
+    const oldA = failure('old_a', ['k_reopen'], 'concept_confusion');
+    const oldB = failure('old_b', ['k_reopen'], 'concept_confusion');
+    const freshA = failure('fresh_a', ['k_reopen'], 'concept_confusion');
+    const freshB = failure('fresh_b', ['k_reopen'], 'concept_confusion');
+    oldA.created_at = new Date('2026-06-23T00:00:00Z');
+    oldB.created_at = new Date('2026-06-23T01:00:00Z');
+    freshA.created_at = new Date('2026-06-25T00:00:00Z');
+    freshB.created_at = new Date('2026-06-25T01:00:00Z');
+    const failures = [oldA, oldB, freshA, freshB];
+    const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failures)),
+      loadConjectureHistoryFn: vi.fn(async () => {
+        const acceptedAt = new Date('2026-06-22T00:00:00Z');
+        return new Map([
+          [
+            conjectureKey('concept_confusion', 'k_reopen'),
+            {
+              latest_decision: 'accept' as const,
+              latest_decision_at: acceptedAt,
+              latest_accept_at: acceptedAt,
+              latest_terminal_at: new Date('2026-06-24T00:00:00Z'),
+              prior_claim_md: 'owner corrected claim',
+            },
+          ],
+        ]);
+      }),
+      enrichEvidenceCellsFn: vi.fn(async (db, input) => {
+        const enriched = await fakeEnrich(db, input);
+        return enriched.map((cell) => ({
+          ...cell,
+          evidence_event_ids: ['old_a', 'old_b'],
+          samples: cell.samples.filter((sample) =>
+            ['old_a', 'old_b'].includes(sample.attempt_event_id),
+          ),
+        }));
+      }),
+      induceConjectureFn,
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(result.considered).toBe(0);
+    expect(induceConjectureFn).not.toHaveBeenCalled();
   });
 
   it('persists abstain observability without proposal or retryable AI failure', async () => {
