@@ -458,7 +458,10 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
           // rolled back just like write-time failures.
           caps.proposeCount += 1;
           proposedThisRun.add(key);
+          let reservationReleased = false;
           const releaseReservation = () => {
+            if (reservationReleased) return;
+            reservationReleased = true;
             caps.proposeCount -= 1;
             proposedThisRun.delete(key);
           };
