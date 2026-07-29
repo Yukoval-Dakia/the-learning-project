@@ -9,6 +9,7 @@ export interface UnitShadowSelection {
   changed_files: string[];
   predicted_files: string[] | null;
   unit_inventory_files?: number;
+  source_scanning_unit_tests?: string[];
   direct_changed_unit_tests?: string[];
   direct_changed_tests_missed?: string[];
   selector_duration_ms?: number;
@@ -50,7 +51,13 @@ export interface UnitShadowReport {
 export function mergePredictedFiles(
   entries: Array<string | { file?: string }>,
   root: string,
+  additionalFiles?: string[],
 ): string[];
+
+export function findSourceScanningUnitTests(input: {
+  unitFiles: string[];
+  root: string;
+}): string[];
 
 export function resolveRequiredUnitFiles(selection?: UnitShadowSelection): string[] | null;
 

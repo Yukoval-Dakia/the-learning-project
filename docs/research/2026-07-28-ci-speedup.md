@@ -157,15 +157,17 @@ timing 或复跑 DB/migration。实施前应在 GitHub 上取得基线，而不�
 
 1. `changes` 输出 `unit_selection=skip|affected|full` 与 merge base。
 2. `affected` 时运行 `vitest list --changed=<merge-base> --filesOnly --staticParse`，
-   再并入不依赖 import graph 的源码扫描 sentinel tests。
+   再从完整 unit inventory 自动发现并并入直接使用 `node:fs` / `node:child_process`
+   的源码扫描 tests；原始 affected graph 为空则回退 full。
 3. shadow 阶段 full unit 使用 default + JSON 双 reporter，测试只执行一次。
 4. shadow 对账观察：
    - full 失败但 selector 未选中的 test file；
    - 直接改动但 selector 未选中的 unit test；
    - selector failure 是否安全 fallback 到 full。
 5. compact JSON 作为 Actions artifact，摘要写入 step summary；shadow 不改 required full。
-6. 回放 20 个历史真实 PR head/base：20/20 affected、0 fallback、19 个直接改动 unit
-   test file 全部命中，selected/full 累计 4.91%，且每个 final PR full gate 均为 success。
+6. 回放 20 个历史真实 PR head/base：20/20 affected、0 fallback、20 个直接改动 unit
+   test file 全部命中，selected/full 累计 11.62%，且每个 final PR full gate 均为
+   success；另以 #1059 固定空 import graph → full 的负控。
 7. 切换后 PR 直接执行 affected set；selection 缺失/无效、空集、global trigger 与 main
    push 均 fail closed 到 full，required run 的 exit code仍决定 aggregate gate。
 

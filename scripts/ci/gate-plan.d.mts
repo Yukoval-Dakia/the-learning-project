@@ -13,3 +13,7 @@ export function classifyChangedFiles(
   inputFiles: string[],
   options?: { forceFullReason?: string },
 ): GatePlan;
+
+export function parseNulDelimitedPaths(output: string | Buffer): string[];
+
+export function readGitChangedFiles(mergeBase: string, head?: string, root?: string): string[];

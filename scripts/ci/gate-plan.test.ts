@@ -1,5 +1,9 @@
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { classifyChangedFiles } from './gate-plan.mjs';
+import { classifyChangedFiles, parseNulDelimitedPaths, readGitChangedFiles } from './gate-plan.mjs';
 
 describe('CI gate lane planner', () => {
   it('skips every heavyweight lane for docs-only changes', () => {
@@ -30,6 +34,22 @@ describe('CI gate lane planner', () => {
         migration: false,
         build: true,
         usability: true,
+      },
+    });
+  });
+
+  it('runs only the static lane for agent tooling and configuration', () => {
+    expect(classifyChangedFiles(['.claude/hooks/git-guard.mjs'])).toMatchObject({
+      code_changed: true,
+      unit_selection: 'skip',
+      reasons: ['agent-tooling'],
+      lanes: {
+        static: true,
+        unit: false,
+        db: false,
+        migration: false,
+        build: false,
+        usability: false,
       },
     });
   });
@@ -128,5 +148,40 @@ describe('CI gate lane planner', () => {
     expect(plan.unit_selection).toBe('full');
     expect(Object.values(plan.lanes).every(Boolean)).toBe(true);
     expect(plan.reasons).toContain('base-unreachable');
+  });
+
+  it('decodes raw NUL-delimited non-ASCII and newline paths', () => {
+    expect(
+      parseNulDelimitedPaths(Buffer.from('docs/成效趋势面.html\0odd\nname.ts\0', 'utf8')),
+    ).toEqual(['docs/成效趋势面.html', 'odd\nname.ts']);
+  });
+
+  it('classifies both sides of a runtime-to-docs rename', () => {
+    const repo = mkdtempSync(path.join(tmpdir(), 'gate-plan-rename-'));
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: repo });
+      execFileSync('git', ['config', 'user.name', 'CI Gate Test'], { cwd: repo });
+      execFileSync('git', ['config', 'user.email', 'ci-gate@example.invalid'], { cwd: repo });
+      mkdirSync(path.join(repo, 'src'));
+      writeFileSync(path.join(repo, 'src', 'runtime.ts'), 'export const live = true;\n');
+      execFileSync('git', ['add', '.'], { cwd: repo });
+      execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+      const base = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: repo,
+        encoding: 'utf8',
+      }).trim();
+
+      mkdirSync(path.join(repo, 'docs'));
+      execFileSync('git', ['mv', 'src/runtime.ts', 'docs/runtime.ts'], { cwd: repo });
+      execFileSync('git', ['commit', '-qm', 'rename'], { cwd: repo });
+
+      const changed = readGitChangedFiles(base, 'HEAD', repo);
+      expect(changed).toEqual(['docs/runtime.ts', 'src/runtime.ts']);
+      const plan = classifyChangedFiles(changed);
+      expect(plan.code_changed).toBe(true);
+      expect(Object.values(plan.lanes).every(Boolean)).toBe(true);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });

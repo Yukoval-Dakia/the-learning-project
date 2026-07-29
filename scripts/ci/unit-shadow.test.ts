@@ -1,9 +1,13 @@
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   SHADOW_SENTINEL_TESTS,
   buildShadowReport,
   findDirectChangedUnitTestMisses,
+  findSourceScanningUnitTests,
   mergePredictedFiles,
   resolveRequiredUnitFiles,
 } from './unit-shadow.mjs';
@@ -20,6 +24,29 @@ describe('unit affected-test shadow', () => {
     ).toEqual(
       [...SHADOW_SENTINEL_TESTS, 'src/core/theta.test.ts'].sort((a, b) => a.localeCompare(b)),
     );
+  });
+
+  it('automatically preserves every unit test that scans source files', () => {
+    const repo = mkdtempSync(path.join(tmpdir(), 'unit-source-scan-'));
+    try {
+      mkdirSync(path.join(repo, 'src'));
+      writeFileSync(
+        path.join(repo, 'src', 'scanner.test.ts'),
+        "import { readFileSync } from 'node:fs';\nreadFileSync('web/src/globals.css', 'utf8');\n",
+      );
+      writeFileSync(path.join(repo, 'src', 'ordinary.test.ts'), "import './feature';\n");
+
+      expect(
+        findSourceScanningUnitTests({
+          root: repo,
+          unitFiles: ['src/scanner.test.ts', 'src/ordinary.test.ts'],
+        }),
+      ).toEqual(
+        [...SHADOW_SENTINEL_TESTS, 'src/scanner.test.ts'].sort((a, b) => a.localeCompare(b)),
+      );
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   it('returns the affected file list for the required unit run', () => {
@@ -63,6 +90,33 @@ describe('unit affected-test shadow', () => {
     },
   ])('fails closed to the full unit suite for unusable selection %#', (selection) => {
     expect(resolveRequiredUnitFiles(selection)).toBeNull();
+  });
+
+  it('fails closed explicitly when the merge base is empty', () => {
+    const repo = mkdtempSync(path.join(tmpdir(), 'unit-base-empty-'));
+    const output = path.join(repo, 'selection.json');
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          path.resolve('scripts/ci/unit-shadow.mjs'),
+          'select',
+          '--base',
+          '',
+          '--mode',
+          'affected',
+          '--output',
+          output,
+        ],
+        { cwd: repo },
+      );
+      expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
+        effective_mode: 'full',
+        fallback_reason: 'base-empty',
+      });
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   it('finds directly changed unit tests omitted by an affected selector', () => {
@@ -123,6 +177,27 @@ describe('unit affected-test shadow', () => {
     expect(report.status).toBe('warning');
   });
 
+  it('treats a malformed changed_files field as empty in a shadow report', () => {
+    const report = buildShadowReport({
+      root,
+      selection: {
+        schema_version: 1,
+        requested_mode: 'affected',
+        effective_mode: 'affected',
+        base: 'abc',
+        changed_files: undefined as unknown as string[],
+        predicted_files: ['src/feature.test.ts'],
+      },
+      fullResults: {
+        success: true,
+        testResults: [{ name: path.join(root, 'src/feature.test.ts'), status: 'passed' }],
+      },
+    });
+
+    expect(report.changed_files).toEqual([]);
+    expect(report.changed_tests_missed).toEqual([]);
+  });
+
   it('treats a selector fallback as full without inventing misses', () => {
     const report = buildShadowReport({
       root,
@@ -168,5 +243,36 @@ describe('unit affected-test shadow', () => {
 
     expect(report.predicted_not_in_full).toEqual(['src/deleted.test.ts']);
     expect(report.status).toBe('ok');
+  });
+
+  it('writes an unavailable report instead of crashing on malformed compare JSON', () => {
+    const repo = mkdtempSync(path.join(tmpdir(), 'unit-compare-json-'));
+    const selection = path.join(repo, 'selection.json');
+    const results = path.join(repo, 'results.json');
+    const output = path.join(repo, 'report.json');
+    try {
+      writeFileSync(selection, '{');
+      writeFileSync(results, JSON.stringify({ success: true, testResults: [] }));
+      execFileSync(
+        process.execPath,
+        [
+          path.resolve('scripts/ci/unit-shadow.mjs'),
+          'compare',
+          '--selection',
+          selection,
+          '--results',
+          results,
+          '--output',
+          output,
+        ],
+        { cwd: repo },
+      );
+      expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
+        status: 'unavailable',
+        reason: 'json-parse-failed',
+      });
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });

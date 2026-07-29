@@ -14,9 +14,11 @@
     `origin/main@b5bdbe2a`；手动 full Gate run `30428189107` 已全绿。
   - PR 的 unit-test-only / DB-test-only / UI / server 改动按 lane 选择；schema、
     migration、kernel/core、manifest、依赖、workflow/selector、测试配置和未知路径全量。
-  - 20 个历史真实 affected PR：20/20 affected、0 fallback、19 个直接改动 unit test
-    files 0 漏选，selected/full 累计 474/9,661（4.91%）；全部 final PR full gate success。
-  - affected unit 使用 Vitest changed graph + 源码扫描 sentinels 并直接成为 PR required；
+  - 20 个历史真实 affected PR：20/20 affected、0 fallback、20 个直接改动 unit test
+    files 0 漏选，selected/full 累计 1,120/9,639（11.62%）；全部 final PR full gate
+    success；#1059 额外验证空 import graph 会 fail closed 到 full。
+  - affected unit 使用 Vitest changed graph + 自动发现的源码扫描 tests，并直接成为
+    PR required；
     selection 缺失/无效/空集、base/diff/classifier 异常或 direct-test guard 失败均回退 full。
   - main push 永远 full canary；artifact 保存 selection 与 required execution 元数据。
 - **产品线：YUK-814 保持 Backlog，等待真实数据输入**

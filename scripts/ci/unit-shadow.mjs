@@ -1,5 +1,13 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -23,12 +31,25 @@ function sortedUnique(values) {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 }
 
-export function mergePredictedFiles(entries, root) {
+export function mergePredictedFiles(entries, root, additionalFiles = SHADOW_SENTINEL_TESTS) {
   const predicted = entries
     .map((entry) => (typeof entry === 'string' ? entry : entry?.file))
     .filter((file) => typeof file === 'string')
     .map((file) => normalizeRepoFile(file, root));
-  return sortedUnique([...predicted, ...SHADOW_SENTINEL_TESTS]);
+  return sortedUnique([...predicted, ...additionalFiles]);
+}
+
+const SOURCE_SCANNING_TEST_PATTERN =
+  /(?:node:(?:fs(?:\/promises)?|child_process)|\b(?:readFileSync|readdirSync|globSync|execFileSync|execSync)\b)/;
+
+export function findSourceScanningUnitTests({ unitFiles, root }) {
+  return sortedUnique([
+    ...SHADOW_SENTINEL_TESTS,
+    ...unitFiles.filter((file) => {
+      const source = readFileSync(path.join(root, file), 'utf8');
+      return SOURCE_SCANNING_TEST_PATTERN.test(source);
+    }),
+  ]);
 }
 
 export function resolveRequiredUnitFiles(selection) {
@@ -67,14 +88,18 @@ export function findDirectChangedUnitTestMisses({ changedFiles, predictedFiles, 
 }
 
 function readChangedFiles(base, root) {
-  const output = execFileSync('git', ['diff', '--name-only', base, 'HEAD'], {
+  const output = execFileSync('git', ['diff', '--name-only', '--no-renames', '-z', base, 'HEAD'], {
     cwd: root,
-    encoding: 'utf8',
+    encoding: 'buffer',
     stdio: ['ignore', 'pipe', 'pipe'],
-  }).trim();
-  return output
-    ? sortedUnique(output.split('\n').map((file) => normalizeRepoFile(file, root)))
-    : [];
+  });
+  return sortedUnique(
+    output
+      .toString('utf8')
+      .split('\0')
+      .filter(Boolean)
+      .map((file) => normalizeRepoFile(file, root)),
+  );
 }
 
 function fullFallbackSelection({ requestedMode, base, changedFiles, reason }) {
@@ -90,10 +115,36 @@ function fullFallbackSelection({ requestedMode, base, changedFiles, reason }) {
 }
 
 function selectAffectedTests({ root, base, requestedMode, output }) {
+  if (requestedMode !== 'affected') {
+    const selection = fullFallbackSelection({
+      requestedMode,
+      base,
+      changedFiles: [],
+      reason: requestedMode === 'full' ? 'gate-plan-full-trigger' : 'selector-not-requested',
+    });
+    writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
+    return selection;
+  }
+
+  if (!base) {
+    const selection = fullFallbackSelection({
+      requestedMode,
+      base,
+      changedFiles: [],
+      reason: 'base-empty',
+    });
+    writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
+    return selection;
+  }
+
   let changedFiles = [];
   try {
     changedFiles = readChangedFiles(base, root);
-  } catch {
+  } catch (error) {
+    console.error(
+      '[unit-shadow] changed-file diff failed:',
+      error instanceof Error ? error.message : error,
+    );
     const selection = fullFallbackSelection({
       requestedMode,
       base,
@@ -104,51 +155,53 @@ function selectAffectedTests({ root, base, requestedMode, output }) {
     return selection;
   }
 
-  if (requestedMode !== 'affected') {
-    const selection = fullFallbackSelection({
-      requestedMode,
-      base,
-      changedFiles,
-      reason: requestedMode === 'full' ? 'gate-plan-full-trigger' : 'selector-not-requested',
-    });
-    writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
-    return selection;
-  }
-
-  const rawOutput = path.join(path.dirname(output), 'unit-affected-vitest.json');
+  const token = randomUUID();
+  const rawOutput = path.join(path.dirname(output), `unit-affected-vitest-${token}.json`);
+  const fullInventoryOutput = path.join(path.dirname(output), `unit-full-inventory-${token}.json`);
   const vitestEntry = path.join(root, 'node_modules', 'vitest', 'vitest.mjs');
   const startedAt = Date.now();
-  const result = spawnSync(
-    process.execPath,
-    [
-      vitestEntry,
-      'list',
-      '--config',
-      'vitest.unit.config.ts',
-      `--changed=${base}`,
-      '--filesOnly',
-      `--json=${rawOutput}`,
-      '--staticParse',
-    ],
-    { cwd: root, encoding: 'utf8' },
-  );
-
-  if (result.status !== 0 || !existsSync(rawOutput)) {
-    const selection = fullFallbackSelection({
-      requestedMode,
-      base,
-      changedFiles,
-      reason: `vitest-list-failed:${result.status ?? 'signal'}`,
-    });
-    selection.selector_stderr = result.stderr?.trim().slice(0, 2_000) || undefined;
-    writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
-    return selection;
-  }
 
   try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        vitestEntry,
+        'list',
+        '--config',
+        'vitest.unit.config.ts',
+        `--changed=${base}`,
+        '--filesOnly',
+        `--json=${rawOutput}`,
+        '--staticParse',
+      ],
+      { cwd: root, encoding: 'utf8' },
+    );
+
+    if (result.status !== 0 || !existsSync(rawOutput)) {
+      const selection = fullFallbackSelection({
+        requestedMode,
+        base,
+        changedFiles,
+        reason: `vitest-list-failed:${result.status ?? 'signal'}`,
+      });
+      selection.selector_stderr = result.stderr?.trim().slice(0, 2_000) || undefined;
+      writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
+      return selection;
+    }
+
     const entries = JSON.parse(readFileSync(rawOutput, 'utf8'));
-    const predictedFiles = mergePredictedFiles(entries, root);
-    const fullInventoryOutput = path.join(path.dirname(output), 'unit-full-inventory.json');
+    const graphPredictedFiles = mergePredictedFiles(entries, root, []);
+    if (graphPredictedFiles.length === 0) {
+      const selection = fullFallbackSelection({
+        requestedMode,
+        base,
+        changedFiles,
+        reason: 'vitest-affected-empty',
+      });
+      writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
+      return selection;
+    }
+
     const fullInventoryResult = spawnSync(
       process.execPath,
       [
@@ -179,6 +232,8 @@ function selectAffectedTests({ root, base, requestedMode, output }) {
         .filter((file) => typeof file === 'string')
         .map((file) => normalizeRepoFile(file, root)),
     );
+    const sourceScanningUnitTests = findSourceScanningUnitTests({ unitFiles, root });
+    const predictedFiles = mergePredictedFiles(entries, root, sourceScanningUnitTests);
     const directGuard = findDirectChangedUnitTestMisses({
       changedFiles,
       predictedFiles,
@@ -204,13 +259,18 @@ function selectAffectedTests({ root, base, requestedMode, output }) {
       changed_files: changedFiles,
       predicted_files: predictedFiles,
       unit_inventory_files: unitFiles.length,
+      source_scanning_unit_tests: sourceScanningUnitTests,
       direct_changed_unit_tests: directGuard.directChangedUnitTests,
       direct_changed_tests_missed: [],
       selector_duration_ms: Date.now() - startedAt,
     };
     writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
     return selection;
-  } catch {
+  } catch (error) {
+    console.error(
+      '[unit-shadow] affected-test inventory failed:',
+      error instanceof Error ? error.message : error,
+    );
     const selection = fullFallbackSelection({
       requestedMode,
       base,
@@ -219,6 +279,19 @@ function selectAffectedTests({ root, base, requestedMode, output }) {
     });
     writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
     return selection;
+  } finally {
+    for (const temporaryFile of [rawOutput, fullInventoryOutput]) {
+      try {
+        unlinkSync(temporaryFile);
+      } catch (error) {
+        if (existsSync(temporaryFile)) {
+          console.error(
+            `[unit-shadow] failed to remove ${temporaryFile}:`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+      }
+    }
   }
 }
 
@@ -243,7 +316,8 @@ export function buildShadowReport({ root, selection, fullResults }) {
       .map((result) => normalizeRepoFile(result.name, root)),
   );
   const missedFailures = failed.filter((file) => !selectedSet.has(file));
-  const changedTests = selection.changed_files.filter(
+  const changedFiles = Array.isArray(selection.changed_files) ? selection.changed_files : [];
+  const changedTests = changedFiles.filter(
     (file) => /\.test\.tsx?$/.test(file) && fullSet.has(file),
   );
   const changedTestsMissed = changedTests.filter((file) => !selectedSet.has(file));
@@ -264,7 +338,7 @@ export function buildShadowReport({ root, selection, fullResults }) {
     base: selection.base,
     selector_duration_ms: selection.selector_duration_ms,
     full_success: Boolean(fullResults.success),
-    changed_files: selection.changed_files,
+    changed_files: changedFiles,
     full_files: full.length,
     selected_files: selected.length,
     selection_ratio: full.length === 0 ? 1 : Number((selected.length / full.length).toFixed(4)),
@@ -274,6 +348,16 @@ export function buildShadowReport({ root, selection, fullResults }) {
     predicted_not_in_full: predictedNotInFull,
     selected_file_list: selected,
   };
+}
+
+function markdownText(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('`', '&#96;')
+    .replaceAll('\r', '\\r')
+    .replaceAll('\n', '\\n');
 }
 
 function markdownReport(report) {
@@ -288,19 +372,40 @@ function markdownReport(report) {
     `- missed failing files: **${report.missed_failures.length}**`,
     `- directly changed tests missed: **${report.changed_tests_missed.length}**`,
   ];
-  if (report.fallback_reason) rows.push(`- fallback: \`${report.fallback_reason}\``);
+  if (report.fallback_reason) rows.push(`- fallback: \`${markdownText(report.fallback_reason)}\``);
   if (report.missed_failures.length) {
-    rows.push('', '### Missed failures', ...report.missed_failures.map((file) => `- \`${file}\``));
+    rows.push(
+      '',
+      '### Missed failures',
+      ...report.missed_failures.map((file) => `- \`${markdownText(file)}\``),
+    );
   }
   if (report.changed_tests_missed.length) {
     rows.push(
       '',
       '### Direct test misses',
-      ...report.changed_tests_missed.map((file) => `- \`${file}\``),
+      ...report.changed_tests_missed.map((file) => `- \`${markdownText(file)}\``),
     );
   }
   rows.push('');
   return `${rows.join('\n')}\n`;
+}
+
+function writeUnavailableShadowReport({ output, reason, detail }) {
+  const unavailable = {
+    schema_version: 1,
+    status: 'unavailable',
+    reason,
+    ...(detail ? { detail: String(detail).slice(0, 500) } : {}),
+  };
+  writeFileSync(output, `${JSON.stringify(unavailable, null, 2)}\n`);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(
+      process.env.GITHUB_STEP_SUMMARY,
+      `## Unit affected-test shadow\n\n- status: \`unavailable\`\n- reason: \`${markdownText(reason)}\`\n\n`,
+    );
+  }
+  console.log(`::warning title=Unit selector shadow unavailable::${reason}`);
 }
 
 function parseArgs(argv) {
@@ -373,12 +478,14 @@ function runRequiredUnitTests({ root, selectionPath, resultsPath, executionPath 
         '## Required unit selection',
         '',
         `- required mode: \`${requiredMode}\``,
-        `- requested/effective: \`${execution.requested_mode}\` → \`${execution.effective_mode}\``,
+        `- requested/effective: \`${markdownText(execution.requested_mode)}\` → \`${markdownText(execution.effective_mode)}\``,
         `- selected files: ${selectedFiles?.length ?? 'full suite'}`,
         `- selector time: ${execution.selector_duration_ms ?? 'n/a'} ms`,
         `- test time: ${execution.test_duration_ms} ms`,
         `- exit code: \`${execution.exit_code}\``,
-        execution.fallback_reason ? `- fallback: \`${execution.fallback_reason}\`` : null,
+        execution.fallback_reason
+          ? `- fallback: \`${markdownText(execution.fallback_reason)}\``
+          : null,
         '',
       ]
         .filter((line) => line !== null)
@@ -411,24 +518,26 @@ function main() {
     ensureParent(output);
 
     if (!existsSync(selectionPath) || !existsSync(resultsPath)) {
-      const unavailable = {
-        schema_version: 1,
-        status: 'unavailable',
+      writeUnavailableShadowReport({
+        output,
         reason: !existsSync(selectionPath) ? 'selection-missing' : 'full-results-missing',
-      };
-      writeFileSync(output, `${JSON.stringify(unavailable, null, 2)}\n`);
-      if (process.env.GITHUB_STEP_SUMMARY) {
-        appendFileSync(
-          process.env.GITHUB_STEP_SUMMARY,
-          `## Unit affected-test shadow\n\n- status: \`unavailable\`\n- reason: \`${unavailable.reason}\`\n\n`,
-        );
-      }
-      console.log(`::warning title=Unit selector shadow unavailable::${unavailable.reason}`);
+      });
       return;
     }
 
-    const selection = JSON.parse(readFileSync(selectionPath, 'utf8'));
-    const fullResults = JSON.parse(readFileSync(resultsPath, 'utf8'));
+    let selection;
+    let fullResults;
+    try {
+      selection = JSON.parse(readFileSync(selectionPath, 'utf8'));
+      fullResults = JSON.parse(readFileSync(resultsPath, 'utf8'));
+    } catch (error) {
+      writeUnavailableShadowReport({
+        output,
+        reason: 'json-parse-failed',
+        detail: error instanceof Error ? error.message : error,
+      });
+      return;
+    }
     const report = buildShadowReport({ root, selection, fullResults });
     report.github = {
       run_id: process.env.GITHUB_RUN_ID,

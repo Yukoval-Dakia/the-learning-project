@@ -13,10 +13,11 @@
 
 1. `scripts/ci/gate-plan.mjs` 输出六条 lane boolean；unit-test-only、DB-test-only、
    UI、server 可跳无关 lane，global/unknown/base error 与 main push 全量。
-2. 20 个历史真实 PR backfill：20/20 affected、0 fallback、19 个直接改动 unit
-   test files 0 miss，474/9,661（4.91%），全部 final PR full gate success。
-3. `scripts/ci/unit-shadow.mjs` 用 Vitest changed graph + source-scanning sentinels；
-   PR 直接执行 affected required，selection 缺失/无效/空集安全 fallback full。
+2. 20 个历史真实 PR backfill：20/20 affected、0 fallback、20 个直接改动 unit
+   test files 0 miss，1,120/9,639（11.62%），全部 final PR full gate success；
+   #1059 额外固定空 import graph → full 的 fail-closed 负控。
+3. `scripts/ci/unit-shadow.mjs` 用 Vitest changed graph + 自动发现的 source-scanning
+   tests；PR 直接执行 affected required，selection 缺失/无效/空集安全 fallback full。
 4. direct-test inventory guard 会在直接改动的 unit test 未入选时强制 full；
    main push、global trigger、unknown/base/diff error 同样 full canary。
 5. 证据见 `docs/audit/2026-07-29-unit-selector-backfill.md`；final-green backfill 的

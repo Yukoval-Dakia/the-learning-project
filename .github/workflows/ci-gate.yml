@@ -126,11 +126,14 @@ jobs:
       - name: Select required unit tests
         if: needs.changes.outputs.unit_changed == 'true'
         continue-on-error: true
+        env:
+          UNIT_SELECTION_BASE: ${{ needs.changes.outputs.merge_base }}
+          UNIT_SELECTION_MODE: ${{ needs.changes.outputs.unit_selection }}
         run: |
           mkdir -p .cache/ci
           node scripts/ci/unit-shadow.mjs select \
-            --base '${{ needs.changes.outputs.merge_base }}' \
-            --mode '${{ needs.changes.outputs.unit_selection }}' \
+            --base "$UNIT_SELECTION_BASE" \
+            --mode "$UNIT_SELECTION_MODE" \
             --output .cache/ci/unit-selection.json
       - name: Unit tests (affected on PR, full on canary/fallback)
         if: needs.changes.outputs.unit_changed == 'true'
