@@ -3,53 +3,52 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-29
-> **【更新 2026-07-29 · YUK-814 离线闸门 harness 已构建，真实执行仍等数据】**
-> 严格串行已进入 YUK-814；只读 backup→一次性 DB→生产 evidence chain→shadow/blind
-> →score/canary harness 已完成本地全量 gate。真实 shadow/blind/canary 尚未执行；
-> 当前唯一事实阻塞仍是 6–10 个真实 owner 失败簇，不以 synthetic/mock 冒充。
+> **【更新 2026-07-29 · YUK-814 harness 收口中，真实执行仍等 owner 数据】**
+> backup→一次性 DB→生产 evidence chain→shadow/blind→score/canary harness 已构建；
+> PR #1105 已修完 P1/major review，正在吸收最新 main。真实 shadow/blind/canary 尚未
+> 执行；唯一产品事实阻塞仍是 6–10 个真实 owner 失败簇，不以 synthetic/mock 冒充。
 
 ## NOW
 
-- **唯一 active 线：YUK-814 离线真实数据闸门 harness**
+- **唯一 active 线：YUK-814 离线真实数据闸门 harness（PR #1105）**
   - Branch：`codex/yuk-814-grounding-gate`；worktree：
     `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-814-grounding-gate`。
   - `pnpm grounding:gate` 已提供 inspect、shadow、score-blind、init-canary、
     score-canary；backup 只恢复进自动清理的一次性 pgvector Testcontainer。
   - 资格链复用生产 correction/history/accountability/evidence-enrichment/image gates，
     额外排除 `payload.__synthetic=true` 与 `synthetic:*`；shadow 不写产品 proposal/event。
-  - blind packet 与 private lineage 分离；6–10 簇、grounding ≥80%、三项红线为 0；
-    canary 必须同一 owner/cohort、10 个 distinct intervention、监控 refs 与停机演练齐备。
-  - synthetic smoke 仅验证 harness：12 failures → 6 eligible；`gate_passed=false`。
-    本地 pre-PR 全量：unit 5,824、DB 4,263、migration 26，typecheck/lint/audits/build 全绿。
-- **YUK-788 已收口**
-  - PR #1102 merge commit：`ff681b0c`；Linear Done。
-  - pending、30 天 dismiss cooldown、active accepted 与 terminal reopen 共用
-    identity history gate；terminal 后仅同 cause×KC 的两条更新 failure 可重开。
-  - owner accept/edit claim 已回流 deterministic 与 agent-led shadow lane；correction、
-    rollback、旧 proposal terminal、新 proposal active 等反例均有回归。
-  - exact head `83b857b0` 的 CI Gate 全绿、已产出 review thread 清零。按 owner 规则，
-    review 收敛到 P2/minor 后不等待下一轮 OCR，直接听全绿 gate 合并。
-- **YUK-803 已证据化收口**
-  - 选项 (a) 已在 PR #1080 / merge commit `a1fe8ab8` 落到 main：edit 归档同
-    cause×KC 的 soft misconception 与 live edges，hard 节点不动，plain accept 不变。
-  - `conjecture-accept.db.test.ts` 本轮实跑 21/21；Linear 已由 Backlog 对齐 Done。
-- **CI 提速后续保持独立**
-  - main 已有 parallel static/unit/DB/migration/build/usability lanes 与 fail-closed
-    aggregate；YUK-817/818 继续收满 5 次非 docs-only timing，不在 Grounding 线扩张。
+  - deterministic selection 已锁 requested count + selection SHA-256；provider global
+    overrides 与 dirty worktree 均 fail closed；blind/private lineage 分离。
+  - blind gate 要求 6–10 簇、grounding ≥80%、三项红线为 0；canary 必须同一
+    owner/cohort、10 个 distinct intervention、监控 refs 与停机演练齐备。
+  - synthetic smoke 只证明 harness：12 failures → 6 eligible、`gate_passed=false`；
+    不构成 YUK-814 真实 gate 证据。
+- **近期已收口**
+  - YUK-820 已随 PR #1103 / `7dd15a8e` 落到 main：affected unit required、
+    direct-test guard 与 fail-closed fallback 已有 20 个历史 PR backfill 证据。
+  - YUK-788 已随 PR #1102 / `ff681b0c` 合并并 Done；identity history gate、terminal
+    reopen 约束与 owner feedback 回流均有回归证据。
+  - YUK-803 的 soft archive/hard 不变已在 PR #1080 / `a1fe8ab8` 落地，
+    `conjecture-accept.db.test.ts` 21/21，Linear Done。
+  - YUK-817/818/819 已 Done；DB shard、unit 长尾与 JYEOO hard timeout 修复在 main。
 
 ## NEXT
 
-1. 提交 YUK-814 harness PR，处理独立 review；CI Gate 全绿后合并，但 issue 不提前 Done。
-2. 从生产 backup endpoint 导出真实 owner 数据；有图片的簇必须 `include_assets=1`。
-3. 运行 inspect；至少 6 个 fully reproducible/image-ready cluster 后执行 shadow 与 owner
-   gold blind review。grounding ≥80%，学科幻觉、claim/probe 错配、严重事实错误均为 0。
-4. 只有 blind gate 通过，才依次启动 intervention snapshot、pedagogy、
-   QuestionAuthor/Verify、隔离 FSRS、结算、Brief/Copilot/profile。
+1. 完成 PR #1105 与最新 main 的冲突收口；当前 head 的 CI Gate 全绿且 active review
+   threads 为 0 后合并。合并只代表 harness ready，YUK-814 不提前 Done。
+2. 从 production `/api/_/export?include_assets=1` 获取真实 backup，先跑 inspect；
+   eligibility 不足 6 就继续积累真实使用，不制造错误。
+3. eligibility 满足后 shadow → owner blind review → score；grounding ≥80%，学科幻觉、
+   claim/probe 错配、严重事实错误均为 0，任一红线失败即停。
+4. 只有 blind PASS 后才依次启动 intervention snapshot、pedagogy、
+   QuestionAuthor/Verify、隔离 FSRS、结算、Brief/Copilot/profile 与 10-run canary。
 
 ## PARKED
 
-- **CI 后续调参**：只在 5 次非 docs-only GitHub timing 证明仍有必要时评估
-  usability artifact 复用、DB 4-way shard 或 fork 数；不做 path-aware 测试跳过。
+- **CI selector drift**：main full canary 或 direct-test guard 任一发现漏选，立即回退
+  full required；不靠漂亮 selection ratio 压掉证据。
+- **CI 后续调参**：usability artifact 复用、DB weighted shard / fork 数继续以
+  GitHub timing 决定，不用删覆盖换漂亮指标。
 - **干预准备**：YUK-791/796；Planning Panel 仅为 Teaching Brief 控制区。
 - **验证结算**：YUK-792；猜想与干预使用隔离 FSRS 状态，普通 KC/FSRS 不变。
 - **协作与档案**：YUK-815 Brief/Copilot public reader；YUK-816 intervention history。
@@ -58,7 +57,7 @@
 
 ## BLOCKED-ON
 
-- **YUK-814 真实执行** ← 生产 backup ZIP / 6–10 个合格真实 owner 失败簇；
+- **YUK-814 真实执行** ← production backup ZIP / 6–10 个合格真实 owner 失败簇；
   harness、anthropic-sub 与本机工具链已就绪。
 - **干预实现** ← YUK-814 grounding blind review 通过；不得先写产品状态机绕过门。
 - **auto-intervention 扩大** ← 单 owner/cohort 10 次 canary 全部事后审阅，红线为 0。
