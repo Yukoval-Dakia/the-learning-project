@@ -3,6 +3,7 @@ import {
   type EffectiveProbeResultStatus,
   getEffectiveProbeResultStatuses,
 } from '@/capabilities/agency/server/conjecture/probe-evidence';
+import { PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
 import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
@@ -29,7 +30,6 @@ export type LoadConjectureHistoryFn = (
 ) => Promise<Map<string, ConjectureHistory>>;
 
 const CONJECTURE_HISTORY_QUERY_CHUNK_SIZE = 500;
-const PROBE_RESULT_ACTION = 'experimental:probe_result';
 
 function toPlainRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -152,8 +152,8 @@ export async function loadConjectureHistory(
   }> = [];
   for (let offset = 0; offset < proposalIds.length; offset += CONJECTURE_HISTORY_QUERY_CHUNK_SIZE) {
     const chunk = proposalIds.slice(offset, offset + CONJECTURE_HISTORY_QUERY_CHUNK_SIZE);
-    rateRows.push(
-      ...(await db
+    const [rateChunk, terminalChunk] = await Promise.all([
+      db
         .select({
           id: event.id,
           caused_by_event_id: event.caused_by_event_id,
@@ -161,10 +161,8 @@ export async function loadConjectureHistory(
           created_at: event.created_at,
         })
         .from(event)
-        .where(and(eq(event.action, 'rate'), inArray(event.caused_by_event_id, chunk)))),
-    );
-    terminalRows.push(
-      ...(await db
+        .where(and(eq(event.action, 'rate'), inArray(event.caused_by_event_id, chunk))),
+      db
         .select({
           id: event.id,
           payload: event.payload,
@@ -178,14 +176,22 @@ export async function loadConjectureHistory(
             inArray(sql<string>`${event.payload}->>'conjecture_event_id'`, chunk),
             inArray(sql<string>`${event.payload}->>'resolution'`, ['confirmed', 'retired']),
           ),
-        )),
-    );
+        ),
+    ]);
+    rateRows.push(...rateChunk);
+    terminalRows.push(...terminalChunk);
   }
 
-  rateRows.sort(compareNewest);
+  const rateCorrectionStatuses = await loadCorrectionStatusesChunked(
+    db,
+    rateRows.map((row) => row.id),
+  );
+  const activeRateRows = rateRows
+    .filter((row) => rateCorrectionStatuses.get(row.id)?.state === 'active')
+    .sort(compareNewest);
   const latestRateByProposal = new Map<string, (typeof rateRows)[number]>();
   const historyByKey = new Map<string, ConjectureHistory>();
-  for (const row of rateRows) {
+  for (const row of activeRateRows) {
     const proposalId = row.caused_by_event_id;
     if (!proposalId) continue;
     const proposal = proposalById.get(proposalId);
@@ -269,6 +275,7 @@ export function applyConjectureHistoryGate<T extends EvidenceCell>(
     // An accepted conjecture with no terminal result is still being tested. A newer
     // accept after an older terminal likewise represents an active reopened version.
     if (
+      history.latest_decision === 'accept' &&
       history.latest_accept_at !== null &&
       (history.latest_terminal_at === null || history.latest_accept_at > history.latest_terminal_at)
     ) {

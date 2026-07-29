@@ -21,7 +21,8 @@
     重开时把最近 accept/edit 的 owner claim 注入 `prior_claim_md`，无 claim fail closed。
   - terminal 读取复用 correction-aware probe evidence reader；proposal/rate/result 查询按
     candidate KC 限域并分块，不新建事件流。
-  - 定向 unit 43/43、closed-loop DB 14/14、typecheck、Biome、diff check 已通过。
+  - 定向 unit 43/43、closed-loop DB 16/16、typecheck、Biome、diff check 已通过；
+    review 指出的 stale accept 与 corrected rate 两条缺口已补回归。
 - **CI 提速已并入**
   - main 已拆 static/audits、unit、DB、migration、build、usability 并行 lanes；
     DB reset 合批并拆为两路 shard，末端 aggregate 保留 required-check 名称并

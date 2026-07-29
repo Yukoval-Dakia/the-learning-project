@@ -29,8 +29,9 @@
 
 - YUK-788 已提交并推送为 PR #1102；实现 commit `7049cb07`。
 - 定向 unit `research_meeting_nightly.unit.test.ts` 43/43 通过。
-- closed-loop DB `research_meeting_closed_loop.db.test.ts` 14/14 通过，覆盖：
-  dismiss cooldown、terminal 不重复归纳、两条新失败重开、owner rewrite 进入真实 prompt。
+- closed-loop DB `research_meeting_closed_loop.db.test.ts` 16/16 通过，覆盖：
+  dismiss cooldown、terminal 不重复归纳、两条新失败重开、owner rewrite 进入真实 prompt、
+  stale accept 不压过新 dismiss、corrected rate 不再参与 fold。
 - `pnpm typecheck`、改动文件 Biome、`git diff --check` 已通过。
 - main 新增 CI 并行 lanes：static/audits、unit、DB、migration、build、usability；
   aggregate 保留 required-check 名称并 fail closed。

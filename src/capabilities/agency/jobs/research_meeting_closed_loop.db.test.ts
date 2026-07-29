@@ -87,6 +87,7 @@ import {
 } from '@/server/conjectures/reconcile';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
+import { writeAiProposal } from '@/server/proposals/writer';
 import { buildHonoApp } from '../../../../server/app';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { RESEARCH_MEETING_SAMPLES, runResearchMeetingNightly } from './research_meeting_nightly';
@@ -518,6 +519,92 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
       0,
     );
+  });
+
+  it('allows induction after cooldown when a newer dismiss supersedes an older active accept', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+    await runResearchMeetingNightly(db);
+    const [acceptedProposal] = await listProposalInboxRows(db, {
+      status: 'pending',
+      kind: 'conjecture',
+    });
+    expect((await acceptViaRoute(acceptedProposal.id)).status).toBe(201);
+
+    const dismissedProposalId = await writeAiProposal(db, {
+      actor_ref: 'research_meeting',
+      payload: acceptedProposal.payload,
+    });
+    expect((await dismissViaRoute(dismissedProposalId)).status).toBe(201);
+    const [dismissRate] = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, dismissedProposalId)));
+    const afterCooldown = new Date(dismissRate.created_at.getTime() + 31 * 24 * 60 * 60 * 1000);
+    await seedRecurringFailures(2, {
+      prefix: 'after_cooldown',
+      createdAt: (index) => new Date(afterCooldown.getTime() - (index + 1) * 1_000),
+    });
+    sdk.prompts.length = 0;
+    sdk.respond = (prompt) => {
+      if (prompt.includes('"evidence_cells"')) {
+        return sdkSuccess({
+          kind: 'abstain',
+          reason_code: 'insufficient_evidence',
+          explanation_md: '冷却已结束，但当前证据尚不足以形成新猜想。',
+          evidence_event_ids: [],
+        });
+      }
+      throw new Error(`unexpected post-cooldown task: ${prompt.slice(0, 120)}`);
+    };
+
+    const rerun = await runResearchMeetingNightly(db, {
+      now: () => new Date(afterCooldown.getTime() + 1_000),
+    });
+
+    expect(rerun).toMatchObject({
+      considered: 1,
+      conjectures_abstained: 1,
+    });
+  });
+
+  it('ignores a corrected dismiss rate instead of enforcing its cooldown', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+    await runResearchMeetingNightly(db);
+    const [proposal] = await listProposalInboxRows(db, {
+      status: 'pending',
+      kind: 'conjecture',
+    });
+    expect((await dismissViaRoute(proposal.id)).status).toBe(201);
+    const [dismissRate] = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposal.id)));
+    await writeEvent(db, {
+      id: `correct_${dismissRate.id}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: dismissRate.id,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: '这次 dismiss 操作记录有误。',
+        affected_refs: [{ kind: 'open_inquiry', id: dismissRate.id }],
+      },
+      created_at: new Date(dismissRate.created_at.getTime() + 1),
+    });
+
+    const rerun = await runResearchMeetingNightly(db, {
+      now: () => new Date(dismissRate.created_at.getTime() + 2),
+    });
+
+    expect(rerun).toMatchObject({
+      considered: 1,
+      conjectures_created: 1,
+    });
   });
 
   it('reopens a terminal conjecture only after two fresh failures and injects the owner rewrite', async () => {
