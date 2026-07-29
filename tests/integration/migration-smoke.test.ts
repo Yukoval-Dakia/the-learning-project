@@ -1132,6 +1132,10 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         )
       `;
     };
+    const { attempt: _missingAttemptNumber, ...attemptWithoutNumber } =
+      v2Change.probe_quality.attempts[0];
+    const { explanation_md: _missingAttemptExplanation, ...attemptWithoutExplanation } =
+      v2Change.probe_quality.attempts[0];
 
     const {
       reviewed_hypothesis: _reviewedHypothesis,
@@ -1208,6 +1212,20 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
           v2Change.probe_quality.attempts[0],
           { ...v2Change.probe_quality.attempts[0], attempt: 2 },
         ],
+      },
+    });
+    await seedProposal('audit_v2_attempt_missing_explanation', {
+      ...v2Change,
+      probe_quality: {
+        ...v2Change.probe_quality,
+        attempts: [attemptWithoutExplanation],
+      },
+    });
+    await seedProposal('audit_v2_attempt_missing_number', {
+      ...v2Change,
+      probe_quality: {
+        ...v2Change.probe_quality,
+        attempts: [attemptWithoutNumber],
       },
     });
     await seedProposal('audit_v2_attempt_nonempty_pass_codes', {
@@ -1355,6 +1373,20 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         already_ingested: true,
       },
       {
+        subject_id: 'audit_v2_attempt_missing_explanation',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'audit_v2_attempt_missing_number',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
         subject_id: 'audit_v2_attempt_nonempty_pass_codes',
         actor_kind: 'agent',
         actor_ref: 'yuk821_audit_binding_migration',
@@ -1457,6 +1489,8 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
           'audit_v2_attempt_bad_code',
           'audit_v2_attempt_blank_explanation',
           'audit_v2_attempt_early_pass',
+          'audit_v2_attempt_missing_explanation',
+          'audit_v2_attempt_missing_number',
           'audit_v2_attempt_nonempty_pass_codes',
           'audit_v2_attempt_three_entries',
           'audit_v2_attempt_two_only',

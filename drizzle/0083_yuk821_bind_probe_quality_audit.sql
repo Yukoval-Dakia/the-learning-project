@@ -134,9 +134,12 @@ WHERE proposal."action" = 'experimental:proposal'
         END
       ) WITH ORDINALITY AS attempt(entry, ordinality)
       WHERE jsonb_typeof(attempt.entry) <> 'object'
-        OR attempt.entry -> 'attempt' <> to_jsonb(attempt.ordinality)
-        OR jsonb_typeof(attempt.entry -> 'explanation_md') <> 'string'
-        OR char_length(btrim(attempt.entry ->> 'explanation_md')) NOT BETWEEN 1 AND 1000
+        OR attempt.entry -> 'attempt' IS DISTINCT FROM to_jsonb(attempt.ordinality)
+        OR COALESCE(jsonb_typeof(attempt.entry -> 'explanation_md'), '') <> 'string'
+        OR COALESCE(
+          char_length(btrim(attempt.entry ->> 'explanation_md')),
+          0
+        ) NOT BETWEEN 1 AND 1000
         OR NOT CASE jsonb_typeof(attempt.entry -> 'author_task_run_id')
           WHEN 'null' THEN true
           WHEN 'string' THEN char_length(btrim(attempt.entry ->> 'author_task_run_id')) >= 1
