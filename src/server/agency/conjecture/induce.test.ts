@@ -1113,6 +1113,26 @@ describe('induceConjecture self-consistency', () => {
 
     const draft = proposal(result);
     expect(draft.probe_md).toBe('对 y=sin(x³) 求导。');
+    expect(draft.probe_quality.schema_version).toBe(2);
+    expect(draft.probe_quality).toMatchObject({
+      reviewed_hypothesis: {
+        kind: 'proposal',
+        claim_md: draft.claim_md,
+        knowledge_id: draft.knowledge_id,
+        evidence_event_ids: draft.evidence_event_ids,
+        diagnostic_spec: draft.diagnostic_spec,
+        cause_category: draft.cause_category,
+        recurrence_count: draft.recurrence_count,
+      },
+      reviewed_package: {
+        primary: draft.probe_spec,
+        followup: draft.followup_probe_spec,
+        predicted_p: draft.predicted_p,
+      },
+    });
+    if (draft.probe_quality.schema_version !== 2) throw new Error('expected v2 audit');
+    expect(draft.probe_quality.reviewed_hypothesis).not.toBe(draft);
+    expect(draft.probe_quality.reviewed_package.primary).not.toBe(draft.probe_spec);
     expect(draft.probe_quality.attempts).toMatchObject([
       {
         attempt: 1,
@@ -1131,6 +1151,10 @@ describe('induceConjecture self-consistency', () => {
     ]);
     expect(result.outcome).toBe('proposal');
     if (result.outcome !== 'proposal') throw new Error('expected proposal');
+    expect(result.probe_quality_attempts).not.toBe(draft.probe_quality.attempts);
+    expect(result.probe_quality_attempts[0]?.failure_codes).not.toBe(
+      draft.probe_quality.attempts[0]?.failure_codes,
+    );
     expect(result.primary_task_run_id).toBe('author_2');
     expect(
       runTaskFn.mock.calls
@@ -1191,6 +1215,31 @@ describe('induceConjecture self-consistency', () => {
       name: 'ConjectureInductionOperationalError',
       taskKind: 'ConjectureProbeReviewTask',
     });
+  });
+
+  it('treats missing author task-run lineage as an operational failure', async () => {
+    const authorWithoutLineage = {
+      ...probePackageResult(),
+      task_run_id: undefined,
+    };
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(sample('你把复合函数各层导数相加'))
+      .mockResolvedValueOnce(authorWithoutLineage)
+      .mockResolvedValueOnce(authorWithoutLineage);
+
+    await expect(
+      induceConjectureImpl({ cells: [cell()], samples: 1, runTaskFn }),
+    ).rejects.toMatchObject({
+      name: 'ConjectureInductionOperationalError',
+      taskKind: 'ConjectureProbeAuthorTask',
+      message: expect.stringContaining('task-run lineage'),
+    });
+    expect(runTaskFn.mock.calls.map(([kind]) => kind)).toEqual([
+      'MindModelInductionTask',
+      'ConjectureProbeAuthorTask',
+      'ConjectureProbeAuthorTask',
+    ]);
   });
 
   it('does not count a reviewer outage plus one semantic failure as two quality votes', async () => {

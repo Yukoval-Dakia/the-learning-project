@@ -381,13 +381,15 @@ export const ConjectureAbstainReason = z.enum([
 ]);
 export type ConjectureAbstainReasonT = z.infer<typeof ConjectureAbstainReason>;
 
-export const ConjectureDiagnosticSpec = z.object({
-  schema_version: z.literal(1),
-  target_error_rule_md: z.string().trim().min(1).max(1000),
-  trigger_conditions_md: z.string().trim().min(1).max(1000),
-  scope_boundary_md: z.string().trim().min(1).max(1000),
-  expected_wrong_answer_signature_md: z.string().trim().min(1).max(1000),
-});
+export const ConjectureDiagnosticSpec = z
+  .object({
+    schema_version: z.literal(1),
+    target_error_rule_md: z.string().trim().min(1).max(1000),
+    trigger_conditions_md: z.string().trim().min(1).max(1000),
+    scope_boundary_md: z.string().trim().min(1).max(1000),
+    expected_wrong_answer_signature_md: z.string().trim().min(1).max(1000),
+  })
+  .strict();
 export type ConjectureDiagnosticSpecT = z.infer<typeof ConjectureDiagnosticSpec>;
 
 const ConjectureHypothesisFields = {
@@ -401,10 +403,66 @@ const ConjectureHypothesisFields = {
 } as const;
 
 /** One self-consistency sample. It deliberately contains no probe fields. */
-export const ConjectureHypothesisProposalDraft = z.object({
-  kind: z.literal('proposal'),
-  ...ConjectureHypothesisFields,
-});
+export const ConjectureHypothesisProposalDraft = z
+  .object({
+    kind: z.literal('proposal'),
+    ...ConjectureHypothesisFields,
+  })
+  .strict();
+export type ConjectureHypothesisProposalDraftT = z.infer<typeof ConjectureHypothesisProposalDraft>;
+
+export type ConjectureHypothesisCoreT = Omit<
+  ConjectureHypothesisProposalDraftT,
+  'kind' | 'evidence_event_ids'
+>;
+
+/**
+ * Exact comparison for JSON-shaped schema values. Object key order is ignored,
+ * array order is preserved, and fields unknown to today's schema still
+ * participate. The latter makes audit binding fail closed when a schema grows
+ * before a caller or persisted counterpart has been upgraded.
+ */
+function exactJsonValueEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') {
+    return false;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => exactJsonValueEqual(value, right[index]))
+    );
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord).sort();
+  const rightKeys = Object.keys(rightRecord).sort();
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key, index) =>
+        key === rightKeys[index] && exactJsonValueEqual(leftRecord[key], rightRecord[key]),
+    )
+  );
+}
+
+export function conjectureHypothesisCoreMatches(
+  left: ConjectureHypothesisProposalDraftT,
+  right: ConjectureHypothesisCoreT,
+): boolean {
+  const { kind: _kind, evidence_event_ids: _evidenceEventIds, ...leftCore } = left;
+  return exactJsonValueEqual(leftCore, right);
+}
+
+/** Exact identity of the frozen hypothesis supplied to probe author and reviewer. */
+export function conjectureHypothesesEqual(
+  left: ConjectureHypothesisProposalDraftT,
+  right: ConjectureHypothesisProposalDraftT,
+): boolean {
+  return exactJsonValueEqual(left, right);
+}
 
 export const CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH = 500;
 
@@ -445,22 +503,34 @@ export const ConjectureProbeRepresentationKind = z.enum([
   'other',
 ]);
 
-export const ConjectureProbeSpec = z.object({
-  prompt_md: z.string().trim().min(1).max(1000),
-  reference_md: z.string().trim().min(1).max(2000),
-  expected_target_error_answer_md: z.string().trim().min(1).max(2000),
-  elicits_target_error_reason_md: z.string().trim().min(1).max(1000),
-  context_kind: ConjectureProbeContextKind,
-  representation_kind: ConjectureProbeRepresentationKind,
-});
+export const ConjectureProbeSpec = z
+  .object({
+    prompt_md: z.string().trim().min(1).max(1000),
+    reference_md: z.string().trim().min(1).max(2000),
+    expected_target_error_answer_md: z.string().trim().min(1).max(2000),
+    elicits_target_error_reason_md: z.string().trim().min(1).max(1000),
+    context_kind: ConjectureProbeContextKind,
+    representation_kind: ConjectureProbeRepresentationKind,
+  })
+  .strict();
 export type ConjectureProbeSpecT = z.infer<typeof ConjectureProbeSpec>;
 
-export const ConjectureProbePackage = z.object({
-  primary: ConjectureProbeSpec,
-  followup: ConjectureProbeSpec,
-  predicted_p: z.number().min(0).max(1),
-});
+export const ConjectureProbePackage = z
+  .object({
+    primary: ConjectureProbeSpec,
+    followup: ConjectureProbeSpec,
+    predicted_p: z.number().min(0).max(1),
+  })
+  .strict();
 export type ConjectureProbePackageT = z.infer<typeof ConjectureProbePackage>;
+
+/** Exact identity of the package that the independent reviewer saw. */
+export function conjectureProbePackagesEqual(
+  left: ConjectureProbePackageT,
+  right: ConjectureProbePackageT,
+): boolean {
+  return exactJsonValueEqual(left, right);
+}
 
 export const ConjectureProbeReviewFailureCode = z.enum([
   'claim_scope_expansion',
@@ -528,6 +598,7 @@ export const ConjectureProbeReview = z
     failure_codes: z.array(ConjectureProbeReviewFailureCode).max(5),
     explanation_md: z.string().trim().min(1).max(1000),
   })
+  .strict()
   .superRefine((review, ctx) => {
     const uniqueCodes = new Set(review.failure_codes);
     if (uniqueCodes.size !== review.failure_codes.length) {
@@ -576,38 +647,64 @@ function uniqueProbeFailureCodes<T extends z.ZodTypeAny>(code: T, max: number) {
  * outage from being persisted as a semantic quality vote (and vice versa).
  */
 export const ConjectureProbeQualityAttempt = z.discriminatedUnion('outcome', [
-  z.object({
-    ...ConjectureProbeQualityAttemptBase,
-    outcome: z.literal('structure_failed'),
-    failure_codes: uniqueProbeFailureCodes(ConjectureProbeStructureFailureCode, 2),
-  }),
-  z.object({
-    ...ConjectureProbeQualityAttemptBase,
-    outcome: z.literal('review_failed'),
-    failure_codes: uniqueProbeFailureCodes(ConjectureProbeReviewFailureCode, 5),
-  }),
-  z.object({
-    ...ConjectureProbeQualityAttemptBase,
-    outcome: z.literal('operational_failed'),
-    failure_codes: uniqueProbeFailureCodes(ConjectureProbeOperationalFailureCode, 2),
-  }),
-  z.object({
-    ...ConjectureProbeQualityAttemptBase,
-    outcome: z.literal('passed'),
-    failure_codes: z.array(z.never()).max(0),
-  }),
+  z
+    .object({
+      ...ConjectureProbeQualityAttemptBase,
+      outcome: z.literal('structure_failed'),
+      failure_codes: uniqueProbeFailureCodes(ConjectureProbeStructureFailureCode, 2),
+    })
+    .strict(),
+  z
+    .object({
+      ...ConjectureProbeQualityAttemptBase,
+      outcome: z.literal('review_failed'),
+      failure_codes: uniqueProbeFailureCodes(ConjectureProbeReviewFailureCode, 5),
+    })
+    .strict(),
+  z
+    .object({
+      ...ConjectureProbeQualityAttemptBase,
+      outcome: z.literal('operational_failed'),
+      failure_codes: uniqueProbeFailureCodes(ConjectureProbeOperationalFailureCode, 2),
+    })
+    .strict(),
+  z
+    .object({
+      ...ConjectureProbeQualityAttemptBase,
+      outcome: z.literal('passed'),
+      failure_codes: z.array(z.never()).max(0),
+    })
+    .strict(),
 ]);
 export type ConjectureProbeQualityAttemptT = z.infer<typeof ConjectureProbeQualityAttempt>;
 
+const ConjectureProbeQualityAuditFields = {
+  passed: z.literal(true),
+  attempts: z.array(ConjectureProbeQualityAttempt).min(1).max(2),
+  final_review: ConjectureProbeReview.refine((review) => review.verdict === 'pass', {
+    message: 'final_review must pass',
+  }),
+} as const;
+
+/**
+ * v1 remains readable for terminal history. Only v2 is bound to the exact reviewed
+ * package and is therefore eligible for a new accept decision.
+ */
 export const ConjectureProbeQualityAudit = z
-  .object({
-    schema_version: z.literal(1),
-    passed: z.literal(true),
-    attempts: z.array(ConjectureProbeQualityAttempt).min(1).max(2),
-    final_review: ConjectureProbeReview.refine((review) => review.verdict === 'pass', {
-      message: 'final_review must pass',
+  .discriminatedUnion('schema_version', [
+    z.object({
+      schema_version: z.literal(1),
+      ...ConjectureProbeQualityAuditFields,
     }),
-  })
+    z
+      .object({
+        schema_version: z.literal(2),
+        ...ConjectureProbeQualityAuditFields,
+        reviewed_hypothesis: ConjectureHypothesisProposalDraft,
+        reviewed_package: ConjectureProbePackage,
+      })
+      .strict(),
+  ])
   .superRefine((audit, ctx) => {
     audit.attempts.forEach((attempt, index) => {
       if (attempt.attempt !== index + 1) {
@@ -631,6 +728,23 @@ export const ConjectureProbeQualityAudit = z
         path: ['attempts'],
         message: 'a passing audit must end with a passed attempt',
       });
+    }
+    if (audit.schema_version === 2) {
+      const finalAttempt = audit.attempts.at(-1);
+      if (!finalAttempt || finalAttempt.author_task_run_id === null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['attempts', audit.attempts.length - 1, 'author_task_run_id'],
+          message: 'a v2 passing audit requires author task-run lineage',
+        });
+      }
+      if (!finalAttempt || finalAttempt.reviewer_task_run_id === null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['attempts', audit.attempts.length - 1, 'reviewer_task_run_id'],
+          message: 'a v2 passing audit requires reviewer task-run lineage',
+        });
+      }
     }
   });
 export type ConjectureProbeQualityAuditT = z.infer<typeof ConjectureProbeQualityAudit>;
@@ -656,7 +770,6 @@ export const ConjectureHypothesisDraft = z.discriminatedUnion('kind', [
   ConjectureHypothesisProposalDraft,
   ConjectureModelAbstainDraft,
 ]);
-export type ConjectureHypothesisProposalDraftT = z.infer<typeof ConjectureHypothesisProposalDraft>;
 export type ConjectureHypothesisDraftT = z.infer<typeof ConjectureHypothesisDraft>;
 
 /**
@@ -683,6 +796,13 @@ export const ConjectureDraft = z
   .discriminatedUnion('kind', [ConjectureProposalDraft, ConjectureModelAbstainDraft])
   .superRefine((draft, ctx) => {
     if (draft.kind !== 'proposal') return;
+    if (draft.probe_quality.schema_version !== 2) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['probe_quality', 'schema_version'],
+        message: 'new conjecture drafts require a package-bound v2 quality audit',
+      });
+    }
     if (
       normalizeProbeIdentity(draft.followup_probe_md) === normalizeProbeIdentity(draft.probe_md)
     ) {
@@ -721,6 +841,38 @@ export const ConjectureDraft = z
         code: z.ZodIssueCode.custom,
         path: ['probe_spec'],
         message: `probe package failed structural quality gate: ${failureCode}`,
+      });
+    }
+    if (
+      draft.probe_quality.schema_version === 2 &&
+      !conjectureHypothesesEqual(draft.probe_quality.reviewed_hypothesis, {
+        kind: 'proposal',
+        claim_md: draft.claim_md,
+        knowledge_id: draft.knowledge_id,
+        evidence_event_ids: draft.evidence_event_ids,
+        diagnostic_spec: draft.diagnostic_spec,
+        cause_category: draft.cause_category,
+        recurrence_count: draft.recurrence_count,
+      })
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['probe_quality', 'reviewed_hypothesis'],
+        message: 'probe_quality must be bound to the persisted frozen hypothesis',
+      });
+    }
+    if (
+      draft.probe_quality.schema_version === 2 &&
+      !conjectureProbePackagesEqual(draft.probe_quality.reviewed_package, {
+        primary: draft.probe_spec,
+        followup: draft.followup_probe_spec,
+        predicted_p: draft.predicted_p,
+      })
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['probe_quality', 'reviewed_package'],
+        message: 'probe_quality must be bound to the persisted probe package',
       });
     }
   });

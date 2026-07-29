@@ -1,4 +1,4 @@
-# YUK-821：猜想与诊断题质量收口（P0 已实施，P1 仅计划）
+# YUK-821：猜想与诊断题质量收口（P0 合同已实施，输出 gate 待复评；P1 仅计划）
 
 ## 1. 为什么原来的两项会失败
 
@@ -20,7 +20,7 @@
 
 共同根因不是模型不够聪明，而是系统把“模型自己说这题有区分度”当成了事实，也没有把触发条件、适用边界和目标错误答案固定下来。
 
-## 2. P0 已实施：系统现在怎样阻止这两类失败
+## 2. P0 合同已实施：系统现在怎样阻止这两类失败
 
 ### 2.1 先冻结诊断合同，再出题
 
@@ -67,13 +67,29 @@
 
 ### 2.6 可追溯、可接受、可拒绝
 
-新 proposal 保存：冻结合同、两道题的完整 spec、每次 author/reviewer task run id、失败码、解释和最终通过记录。新的 accept 路径缺任一字段、嵌套题与实际持久化题不一致、结构门失败或最终 audit 未通过时，返回 409 `CONJECTURE_PROBE_QUALITY_REQUIRED`，要求重新准备；已经接受的历史记录仍可幂等读取。
+新 proposal 保存：冻结合同、两道题的完整 spec、每次 author/reviewer task run id、失败码、解释和最终通过记录。`probe_quality` v2 还分别保存 reviewer 实际看过的不可变 `reviewed_hypothesis` 与 `reviewed_package`。只有最后一次通过尝试同时有 author 和 reviewer 的 durable task-run id，且两个快照与 proposal 最终落库的 claim、DiagnosticSpec、证据事件、错因/KC、两道题及 `predicted_p` 完全一致，才允许 accept。不能再把别的 claim 或题包的 `passed=true` 审计贴到当前 proposal 上。
+
+新的 accept 路径缺任一字段、使用未绑定的 v1 audit、审过的 hypothesis/题包与实际持久化内容不一致、结构门失败或最终 audit 未通过时，返回 409 `CONJECTURE_PROBE_QUALITY_REQUIRED`，要求重新准备；已经接受的历史记录仍可幂等读取。升级迁移会用 agent-authored correction 退出迁移快照内全部 pre-binding pending conjecture，不伪造 owner dismiss，也不在 SQL 中复制整套 Zod。v2 producer 与迁移同镜像发布，且 app/worker 必须等待 migrate init container 成功后才启动，因此新 v2 proposal 不会进入这次 cutover 集合。
 
 自动 nightly 和 agent-led director 共用同一质量门，不存在一个入口严格、另一个入口仍可绕过的双轨。
 
 ## 3. P0 的边界
 
 P0 可以识别“题目范围/结构明显不匹配”，也让独立模型审查学科语义；它还不能用确定性代码证明某个数学答案一定正确。
+同一 8 例回归曾暴露 reviewer 把“题干要求单选、实际两个选项都正确”的题包判为 pass；
+P0 因此明确要求 author 逐项解答并保证单选唯一，reviewer 必须先独立解题、逐项判断，
+若零个或多个正确选项（包括 reference 自己承认多个正确）一律报
+`reference_incorrect`。这仍是模型语义闸门，不冒充 P1 的学科确定性证明。
+
+### 固定 8-case 回归结果
+
+- 旧基线：grounded 6/8，claim/probe mismatch 1，严重事实错误 0，学科幻觉 0。
+- prompt 增强前：grounded 5/8；reviewer 错放两道多正确选项的单选题，因此不通过。
+- prompt 增强后：grounded **7/8**，claim/probe mismatch 1，严重事实错误 0，学科幻觉 0；
+  按 owner“相对旧基线有净改善即过开发 gate”的口径通过。
+- 剩余 1 项不是学科答案错误，而是 expected target response 不可唯一判定：错误规则令
+  文言 primary 无法选择或只能随机选，不能稳定映射回目标误区。此尾项已拆为
+  **YUK-827**；开发 gate 通过不表示 P0 已达到绝对 5/5。
 
 例如：
 
@@ -145,7 +161,7 @@ P0 可以识别“题目范围/结构明显不匹配”，也让独立模型审�
 
 ### 4.5 schema 与迁移策略
 
-1. `probe_quality.schema_version` 升级，新增 `policy_version` 与 `subject_validator_results`；
+1. 在 P0 audit v2 之上把 `probe_quality.schema_version` 升到 v3，新增 `policy_version` 与 `subject_validator_results`；
 2. 新生产的、被 math validator 判定为 applicable 的 proposal 必须保存对应版本的 pass 结果；
 3. 历史已接受记录保持可读和幂等；历史 pending 记录不能用旧 audit 接受。只有在
    reprepare command 已真实上线时才自动重新准备，否则像 P0 v1/v2 升级一样，用
@@ -182,10 +198,14 @@ P0 可以识别“题目范围/结构明显不匹配”，也让独立模型审�
 - author/reviewer 独立、同模型、同证据；
 - 一次整包重生成；两次质量失败 abstain；operational 不冒充质量反对票；
 - nightly/director/accept 三个入口均不能绕过；
-- proposal 保存完整 lineage 与审计；
+- proposal 保存完整 lineage、reviewed hypothesis、reviewed package 与审计；v1 只可读，不能用于新 accept；
+- 升级迁移在 v2 producer 启动前收口全部 pre-binding pending conjecture；运行时 Zod
+  是迁移后唯一 v2 合法性真相源，不在 SQL 中维护第二套易漂移 schema；
 - 定向 unit、DB、typecheck、Biome 通过，完整 gate 由 GitHub Actions 执行。
+- 固定 8-case mock-input/真实模型-output 回归相对旧基线有改善后，通过开发 gate；
+  真实 owner 数据只决定是否扩大自动干预。
 
 ### P1（未实施）
 
-以上数学确定性验证器、schema v2、shadow/blocking 发布步骤均只在本文件中规划；本次代码不包含它们。
+以上数学确定性验证器、schema v3、shadow/blocking 发布步骤均只在本文件中规划；本次代码不包含它们。
 后续实施由 `YUK-822` 跟踪。

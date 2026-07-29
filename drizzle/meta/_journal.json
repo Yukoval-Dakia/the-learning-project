@@ -582,6 +582,13 @@
       "when": 1785330600000,
       "tag": "0082_yuk821_retire_legacy_pending_conjectures",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1785341347000,
+      "tag": "0083_yuk821_bind_probe_quality_audit",
+      "breakpoints": true
     }
   ]
 }

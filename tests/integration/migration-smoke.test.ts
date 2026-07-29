@@ -31,6 +31,28 @@ function ensureDockerHost() {
   }
 }
 
+function orderedMigrations(): { tag: string; sql: string }[] {
+  const journal = JSON.parse(
+    readFileSync(join(process.cwd(), 'drizzle/meta/_journal.json'), 'utf8'),
+  ) as { entries: { idx: number; tag: string }[] };
+  return [...journal.entries]
+    .sort((a, b) => a.idx - b.idx)
+    .map((entry) => ({
+      tag: entry.tag,
+      sql: readFileSync(join(process.cwd(), 'drizzle', `${entry.tag}.sql`), 'utf8'),
+    }));
+}
+
+// Apply one migration file the way drizzle's migrator does: split on the
+// statement-breakpoint marker while leaving plpgsql bodies intact.
+async function applyMigrationFile(client: ReturnType<typeof postgres>, fileSql: string) {
+  for (const chunk of fileSql.split('--> statement-breakpoint')) {
+    const statement = chunk.trim();
+    if (statement.length === 0) continue;
+    await client.unsafe(statement);
+  }
+}
+
 describe('migration smoke — drizzle migrate from empty DB', () => {
   let container: StartedPostgreSqlContainer;
   let client: ReturnType<typeof postgres>;
@@ -607,29 +629,6 @@ describe('migration smoke — YUK-384 durable hub sync backfill', () => {
   let container: StartedPostgreSqlContainer;
   let oldSchemaSql: ReturnType<typeof postgres>;
 
-  function orderedMigrations(): { tag: string; sql: string }[] {
-    const journal = JSON.parse(
-      readFileSync(join(process.cwd(), 'drizzle/meta/_journal.json'), 'utf8'),
-    ) as { entries: { idx: number; tag: string }[] };
-    return [...journal.entries]
-      .sort((a, b) => a.idx - b.idx)
-      .map((entry) => ({
-        tag: entry.tag,
-        sql: readFileSync(join(process.cwd(), 'drizzle', `${entry.tag}.sql`), 'utf8'),
-      }));
-  }
-
-  // Apply one migration file the way drizzle's migrator does: split on the
-  // statement-breakpoint marker and run each top-level statement on its own
-  // (plpgsql `$$` bodies never contain the marker, so they stay intact).
-  async function applyMigrationFile(client: ReturnType<typeof postgres>, fileSql: string) {
-    for (const chunk of fileSql.split('--> statement-breakpoint')) {
-      const statement = chunk.trim();
-      if (statement.length === 0) continue;
-      await client.unsafe(statement);
-    }
-  }
-
   // Applies every migration AFTER the frozen baseline. During RED (before 0071
   // exists) this is a no-op, so the later `hub_sync_reconciliation` query fails
   // with "relation does not exist"; once 0071 lands it installs the durable
@@ -1008,6 +1007,178 @@ describe('migration smoke — YUK-821 legacy conjecture retirement', () => {
       WHERE action = 'rate'
         AND payload ->> 'rating' = 'dismiss'
         AND caused_by_event_id = 'legacy_pending'
+    `;
+    expect(ownerDismissals[0]?.count).toBe('0');
+  });
+});
+
+describe('migration smoke — YUK-821 probe-quality audit binding', () => {
+  const BASELINE_TAG = '0082_yuk821_retire_legacy_pending_conjectures';
+  const MIGRATION_TAG = '0083_yuk821_bind_probe_quality_audit';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    let reachedBaseline = false;
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(client, migration.sql);
+      if (migration.tag === BASELINE_TAG) {
+        reachedBaseline = true;
+        break;
+      }
+    }
+    if (!reachedBaseline) throw new Error(`baseline migration ${BASELINE_TAG} not found`);
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('retires the complete pre-binding pending set and is idempotent', async () => {
+    const seedProposal = async (
+      id: string,
+      probeQuality: Record<string, JSONValue>,
+      extraPayload: Record<string, JSONValue> = {},
+    ) => {
+      const payload = {
+        ai_proposal: {
+          kind: 'conjecture',
+          evidence_refs: [{ kind: 'event', id: `${id}_attempt` }],
+          proposed_change: { probe_quality: probeQuality },
+        },
+        ...extraPayload,
+      };
+      await client`
+        INSERT INTO event (
+          id, actor_kind, actor_ref, action, subject_kind, subject_id,
+          outcome, payload, affected_scopes, created_at
+        ) VALUES (
+          ${id}, 'agent', 'research_meeting', 'experimental:proposal',
+          'mind_model', ${id}, 'partial', ${client.json(payload)},
+          ARRAY['topic:test']::text[], '2026-07-03T00:00:00Z'::timestamptz
+        )
+      `;
+    };
+
+    await seedProposal('prebinding_v1_pending', { schema_version: 1, passed: true });
+    // Even a v2-shaped row visible before this migration is conservatively retired:
+    // the v2 producer cannot start until the migrate init container succeeds.
+    await seedProposal('prebinding_v2_shaped_pending', { schema_version: 2, passed: true });
+    await seedProposal('prebinding_decided', { schema_version: 1, passed: true });
+    await seedProposal('prebinding_already_retracted', { schema_version: 1, passed: true });
+    await seedProposal('prebinding_malformed_latest_rate', {
+      schema_version: 1,
+      passed: true,
+    });
+    await seedProposal(
+      'prebinding_string_false_rubric',
+      { schema_version: 1, passed: true },
+      { rubric_verdict: { ok: 'false' } },
+    );
+    await seedProposal(
+      'prebinding_rubric_rejected',
+      { schema_version: 1, passed: true },
+      { rubric_verdict: { ok: false } },
+    );
+
+    await client`
+      INSERT INTO event (
+        id, actor_kind, actor_ref, action, subject_kind, subject_id,
+        outcome, payload, caused_by_event_id, affected_scopes, created_at
+      ) VALUES
+      (
+        'prebinding_decision', 'user', 'self', 'rate', 'event', 'prebinding_decided',
+        'success', '{"rating":"accept"}'::jsonb, 'prebinding_decided',
+        ARRAY[]::text[], '2026-07-04T00:00:00Z'::timestamptz
+      ),
+      (
+        'prebinding_existing_retraction', 'agent', 'prior_migration', 'correct',
+        'event', 'prebinding_already_retracted', 'success',
+        '{"correction_kind":"retract"}'::jsonb, 'prebinding_already_retracted',
+        ARRAY[]::text[], '2026-07-04T00:00:00Z'::timestamptz
+      ),
+      (
+        'prebinding_old_valid_rate', 'user', 'self', 'rate', 'event',
+        'prebinding_malformed_latest_rate', 'success',
+        '{"rating":"accept"}'::jsonb, 'prebinding_malformed_latest_rate',
+        ARRAY[]::text[], '2026-07-04T00:00:00Z'::timestamptz
+      ),
+      (
+        'prebinding_new_malformed_rate', 'user', 'self', 'rate', 'event',
+        'prebinding_malformed_latest_rate', 'success',
+        '{"rating":"unknown"}'::jsonb, 'prebinding_malformed_latest_rate',
+        ARRAY[]::text[], '2026-07-05T00:00:00Z'::timestamptz
+      )
+    `;
+
+    const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
+    if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
+    await applyMigrationFile(client, migration.sql);
+    await applyMigrationFile(client, migration.sql);
+
+    const corrections = await client<
+      {
+        subject_id: string;
+        actor_kind: string;
+        actor_ref: string;
+        affected_scopes: string[];
+        already_ingested: boolean;
+      }[]
+    >`
+      SELECT subject_id, actor_kind, actor_ref, affected_scopes,
+             ingest_at IS NOT NULL AS already_ingested
+      FROM event
+      WHERE actor_ref = 'yuk821_audit_binding_migration'
+      ORDER BY subject_id
+    `;
+    expect(corrections).toEqual([
+      {
+        subject_id: 'prebinding_already_retracted',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'prebinding_malformed_latest_rate',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'prebinding_string_false_rubric',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'prebinding_v1_pending',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'prebinding_v2_shaped_pending',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+    ]);
+
+    const ownerDismissals = await client<{ count: string }[]>`
+      SELECT count(*)::text AS count
+      FROM event
+      WHERE action = 'rate'
+        AND payload ->> 'rating' = 'dismiss'
+        AND caused_by_event_id IN ('prebinding_v1_pending', 'prebinding_v2_shaped_pending')
     `;
     expect(ownerDismissals[0]?.count).toBe('0');
   });

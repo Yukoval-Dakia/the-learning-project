@@ -38,7 +38,7 @@ async function seedEdgeProposal(id = 'edge_p1'): Promise<void> {
       kind: 'knowledge_edge',
       target: { subject_kind: 'knowledge_edge', subject_id: null },
       reason_md: 'k1 unlocks k2',
-      evidence_refs: [],
+      evidence_refs: [{ kind: 'event', id: 'evt_1' }],
       proposed_change: {
         from_knowledge_id: 'k1',
         to_knowledge_id: 'k2',
@@ -71,7 +71,7 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
       kind: 'conjecture',
       target: { subject_kind: 'mind_model', subject_id: 'k1' },
       reason_md: 'recurrent evidence',
-      evidence_refs: [],
+      evidence_refs: [{ kind: 'event', id: 'evt_1' }],
       proposed_change: {
         claim_md: '原判断',
         knowledge_id: 'k1',
@@ -106,7 +106,7 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
           representation_kind: 'natural_language',
         },
         probe_quality: {
-          schema_version: 1,
+          schema_version: 2,
           passed: true,
           attempts: [
             {
@@ -122,6 +122,40 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
             verdict: 'pass',
             failure_codes: [],
             explanation_md: 'verified',
+          },
+          reviewed_hypothesis: {
+            kind: 'proposal',
+            claim_md: '原判断',
+            knowledge_id: 'k1',
+            evidence_event_ids: ['evt_1'],
+            diagnostic_spec: {
+              schema_version: 1,
+              target_error_rule_md: '把必要条件当作充分条件。',
+              trigger_conditions_md: '需要判断条件能否推出结论。',
+              scope_boundary_md: '不涉及其它逻辑关系。',
+              expected_wrong_answer_signature_md: '仅有必要条件时仍判断可以推出。',
+            },
+            cause_category: 'concept_misunderstanding',
+            recurrence_count: 2,
+          },
+          reviewed_package: {
+            primary: {
+              prompt_md: '请解释这一步。',
+              reference_md: '参考解释',
+              expected_target_error_answer_md: '错误解释',
+              elicits_target_error_reason_md: '要求区分必要与充分。',
+              context_kind: 'abstract',
+              representation_kind: 'symbolic',
+            },
+            followup: {
+              prompt_md: '换一个情境解释同一步。',
+              reference_md: '第二个情境中的参考解释',
+              expected_target_error_answer_md: '第二个情境中的错误解释',
+              elicits_target_error_reason_md: '在应用情境中保持同一判断。',
+              context_kind: 'applied',
+              representation_kind: 'natural_language',
+            },
+            predicted_p: 0.3,
           },
         },
         discriminating: true,

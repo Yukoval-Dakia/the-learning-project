@@ -37,8 +37,11 @@ import {
 import { newId } from '@/core/ids';
 import {
   ConjectureDiagnosticSpec,
+  ConjectureHypothesisProposalDraft,
   ConjectureProbeQualityAudit,
   ConjectureProbeSpec,
+  conjectureHypothesesEqual,
+  conjectureProbePackagesEqual,
   evaluateConjectureProbePackageStructure,
 } from '@/core/schema/business';
 import type { Db } from '@/db/client';
@@ -142,11 +145,41 @@ export async function acceptConjectureProposal(
           predicted_p: change.predicted_p,
         })
       : [];
+  const evidenceEventIds = proposal.payload.evidence_refs
+    .filter((ref) => ref.kind === 'event')
+    .map((ref) => ref.id);
+  const boundV2Audit =
+    qualityAudit.success && qualityAudit.data.schema_version === 2 ? qualityAudit.data : null;
+  const persistedHypothesis =
+    diagnosticSpec.success && boundV2Audit
+      ? ConjectureHypothesisProposalDraft.safeParse({
+          kind: 'proposal',
+          claim_md: change.claim_md,
+          knowledge_id: change.knowledge_id,
+          evidence_event_ids: evidenceEventIds,
+          diagnostic_spec: diagnosticSpec.data,
+          cause_category: change.cause_category,
+          recurrence_count: change.recurrence_count,
+        })
+      : null;
   const failureReasons: string[] = [];
   if (!diagnosticSpec.success) failureReasons.push('diagnostic_spec_invalid');
   if (!primaryProbeSpec.success) failureReasons.push('primary_probe_spec_invalid');
   if (!followupProbeSpec.success) failureReasons.push('followup_probe_spec_invalid');
   if (!qualityAudit.success) failureReasons.push('probe_quality_audit_invalid');
+  if (qualityAudit.success && !boundV2Audit) {
+    failureReasons.push('probe_quality_audit_unbound');
+  }
+  if (persistedHypothesis && !persistedHypothesis.success) {
+    failureReasons.push('persisted_hypothesis_invalid');
+  }
+  if (
+    persistedHypothesis?.success &&
+    boundV2Audit &&
+    !conjectureHypothesesEqual(boundV2Audit.reviewed_hypothesis, persistedHypothesis.data)
+  ) {
+    failureReasons.push('probe_quality_hypothesis_mismatch');
+  }
   if (change.discriminating !== true) failureReasons.push('not_discriminating');
   failureReasons.push(...structuralFailures.map((code) => `structural:${code}`));
   if (primaryProbeSpec.success) {
@@ -164,6 +197,19 @@ export async function acceptConjectureProposal(
     if (followupProbeSpec.data.reference_md !== persistedFollowupReferenceMd) {
       failureReasons.push('followup_reference_mismatch');
     }
+  }
+  if (
+    boundV2Audit &&
+    primaryProbeSpec.success &&
+    followupProbeSpec.success &&
+    typeof change.predicted_p === 'number' &&
+    !conjectureProbePackagesEqual(boundV2Audit.reviewed_package, {
+      primary: primaryProbeSpec.data,
+      followup: followupProbeSpec.data,
+      predicted_p: change.predicted_p,
+    })
+  ) {
+    failureReasons.push('probe_quality_package_mismatch');
   }
   if (failureReasons.length > 0) {
     throw new ApiError(
@@ -261,9 +307,6 @@ export async function acceptConjectureProposal(
     }
 
     if (!isEdit && promotionEnabled && Number(change.recurrence_count) >= K_PROMOTE) {
-      const evidenceEventIds = proposal.payload.evidence_refs
-        .filter((ref) => ref.kind === 'event')
-        .map((ref) => ref.id);
       await promoteConjectureToMisconception(tx, {
         conjectureId,
         knowledgeId,

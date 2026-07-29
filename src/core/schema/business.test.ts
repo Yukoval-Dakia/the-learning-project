@@ -8,8 +8,12 @@ import {
   ConjectureHypothesisDraft,
   ConjectureProbePackage,
   ConjectureProbeQualityAttempt,
+  ConjectureProbeQualityAudit,
   LearningItemOpenStatus,
   LearningItemStatus,
+  conjectureHypothesesEqual,
+  conjectureHypothesisCoreMatches,
+  conjectureProbePackagesEqual,
   evaluateConjectureProbePackageStructure,
 } from './business';
 
@@ -57,7 +61,7 @@ describe('ConjectureDraft', () => {
       representation_kind: 'natural_language' as const,
     },
     probe_quality: {
-      schema_version: 1 as const,
+      schema_version: 2 as const,
       passed: true as const,
       attempts: [
         {
@@ -73,6 +77,40 @@ describe('ConjectureDraft', () => {
         verdict: 'pass' as const,
         failure_codes: [],
         explanation_md: '题目、参考答案与目标错误签名相互一致。',
+      },
+      reviewed_hypothesis: {
+        kind: 'proposal' as const,
+        claim_md: '你把链式法则当成「导数相乘」，忽略内层函数的代入。',
+        knowledge_id: 'k_chain_rule',
+        evidence_event_ids: ['attempt_1', 'attempt_2'],
+        diagnostic_spec: {
+          schema_version: 1 as const,
+          target_error_rule_md: '把链式法则的层间组合误作相加。',
+          trigger_conditions_md: '题目要求对复合函数求导。',
+          scope_boundary_md: '只覆盖层间组合方式，不推断幂法则掌握情况。',
+          expected_wrong_answer_signature_md: '把外层导数与内层导数相加。',
+        },
+        cause_category: 'concept_confusion',
+        recurrence_count: 3,
+      },
+      reviewed_package: {
+        primary: {
+          prompt_md: "对 f(x)=sin(x^2)，写出 f'(x) 并说明用到链式法则的哪一层。",
+          reference_md: "f'(x)=2x·cos(x^2)；外层 cos·内层 2x（链式：外导 × 内导）。",
+          expected_target_error_answer_md: "f'(x)=cos(x^2)+2x",
+          elicits_target_error_reason_md: '必须决定外导与内导的组合方式。',
+          context_kind: 'abstract' as const,
+          representation_kind: 'symbolic' as const,
+        },
+        followup: {
+          prompt_md: "对 g(x)=cos(x^3)，写出 g'(x) 并标出内层导数。",
+          reference_md: "g'(x)=-3x^2·sin(x^3)；内层导数是 3x²。",
+          expected_target_error_answer_md: "g'(x)=-sin(x^3)+3x²",
+          elicits_target_error_reason_md: '在文字说明中再次要求组合两层导数。',
+          context_kind: 'applied' as const,
+          representation_kind: 'natural_language' as const,
+        },
+        predicted_p: 0.35,
       },
     },
     cause_category: 'concept_confusion',
@@ -171,6 +209,17 @@ describe('ConjectureDraft', () => {
         ...valid.followup_probe_spec,
         prompt_md: '解方程 2x-3=7',
       },
+      probe_quality: {
+        ...valid.probe_quality,
+        reviewed_package: {
+          ...valid.probe_quality.reviewed_package,
+          primary: { ...valid.probe_spec, prompt_md: '解方程 2x+3=7' },
+          followup: {
+            ...valid.followup_probe_spec,
+            prompt_md: '解方程 2x-3=7',
+          },
+        },
+      },
     };
     expect(ConjectureDraft.safeParse(plusMinus).success).toBe(true);
     const quotientProduct = {
@@ -181,6 +230,17 @@ describe('ConjectureDraft', () => {
       followup_probe_spec: {
         ...valid.followup_probe_spec,
         prompt_md: '判断 xy 的定义域',
+      },
+      probe_quality: {
+        ...valid.probe_quality,
+        reviewed_package: {
+          ...valid.probe_quality.reviewed_package,
+          primary: { ...valid.probe_spec, prompt_md: '判断 x/y 的定义域' },
+          followup: {
+            ...valid.followup_probe_spec,
+            prompt_md: '判断 xy 的定义域',
+          },
+        },
       },
     };
     expect(ConjectureDraft.safeParse(quotientProduct).success).toBe(true);
@@ -249,6 +309,87 @@ describe('ConjectureDraft', () => {
     ).toBe(false);
   });
 
+  it('binds a v2 audit to the exact persisted package and requires complete pass lineage', () => {
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        probe_quality: {
+          ...valid.probe_quality,
+          reviewed_package: {
+            ...valid.probe_quality.reviewed_package,
+            predicted_p: 0.36,
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        probe_quality: {
+          ...valid.probe_quality,
+          attempts: [
+            {
+              ...valid.probe_quality.attempts[0],
+              reviewer_task_run_id: null,
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('binds a v2 audit to the exact frozen hypothesis reviewed by the model', () => {
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        claim_md: '你只是忘了写内层导数。',
+      }).success,
+    ).toBe(false);
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        diagnostic_spec: {
+          ...valid.diagnostic_spec,
+          scope_boundary_md: '扩展到所有求导规则。',
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('fails closed when future hypothesis or package fields are present on only one side', () => {
+    const hypothesis = valid.probe_quality.reviewed_hypothesis;
+    const { kind: _kind, evidence_event_ids: _evidenceIds, ...hypothesisCore } = hypothesis;
+    const hypothesisWithFutureField = {
+      ...hypothesis,
+      future_binding_field: 'tampered',
+    } as Parameters<typeof conjectureHypothesesEqual>[0];
+    expect(conjectureHypothesesEqual(hypothesisWithFutureField, hypothesis)).toBe(false);
+    expect(conjectureHypothesisCoreMatches(hypothesisWithFutureField, hypothesisCore)).toBe(false);
+
+    const probePackage = valid.probe_quality.reviewed_package;
+    const packageWithFutureField = {
+      ...probePackage,
+      future_binding_field: 'tampered',
+    } as Parameters<typeof conjectureProbePackagesEqual>[0];
+    expect(conjectureProbePackagesEqual(packageWithFutureField, probePackage)).toBe(false);
+  });
+
+  it('keeps v1 audit history readable but rejects it as a new conjecture draft', () => {
+    const {
+      reviewed_hypothesis: _reviewedHypothesis,
+      reviewed_package: _reviewedPackage,
+      ...historicalAudit
+    } = valid.probe_quality;
+    const v1Audit = { ...historicalAudit, schema_version: 1 as const };
+    expect(ConjectureProbeQualityAudit.safeParse(v1Audit).success).toBe(true);
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        probe_quality: v1Audit,
+      }).success,
+    ).toBe(false);
+  });
+
   it('keeps structure, review, and operational attempt codes in separate vocabularies', () => {
     const base = {
       attempt: 1,
@@ -295,6 +436,36 @@ describe('ConjectureDraft', () => {
     ).toBe(false);
   });
 
+  it('rejects unknown fields inside v2 bound snapshots instead of stripping them', () => {
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        probe_quality: {
+          ...valid.probe_quality,
+          reviewed_hypothesis: {
+            ...valid.probe_quality.reviewed_hypothesis,
+            future_hypothesis_field: 'must fail closed',
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        probe_quality: {
+          ...valid.probe_quality,
+          reviewed_package: {
+            ...valid.probe_quality.reviewed_package,
+            primary: {
+              ...valid.probe_quality.reviewed_package.primary,
+              future_probe_field: 'must fail closed',
+            },
+          },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it('structurally rejects non-independent pairs and target-error answers equal to gold', () => {
     const probePackage = ConjectureProbePackage.parse({
       primary: valid.probe_spec,
@@ -313,7 +484,17 @@ describe('ConjectureDraft', () => {
   });
 
   it('trims producer claims and rejects whitespace-only input', () => {
-    const parsed = ConjectureDraft.parse({ ...valid, claim_md: '  有效判断  ' });
+    const parsed = ConjectureDraft.parse({
+      ...valid,
+      claim_md: '  有效判断  ',
+      probe_quality: {
+        ...valid.probe_quality,
+        reviewed_hypothesis: {
+          ...valid.probe_quality.reviewed_hypothesis,
+          claim_md: '有效判断',
+        },
+      },
+    });
     if (parsed.kind !== 'proposal') throw new Error('expected proposal');
     expect(parsed.claim_md).toBe('有效判断');
     expect(ConjectureDraft.safeParse({ ...valid, claim_md: ' \n\t ' }).success).toBe(false);
@@ -325,7 +506,19 @@ describe('ConjectureDraft', () => {
   // pass induction then throw at the proposal parse-barrier (silently swallowed +
   // mis-logged as a retryable AI failure).
   it('caps claim_md at 280 to match the downstream proposal schema', () => {
-    expect(ConjectureDraft.safeParse({ ...valid, claim_md: 'x'.repeat(280) }).success).toBe(true);
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        claim_md: 'x'.repeat(280),
+        probe_quality: {
+          ...valid.probe_quality,
+          reviewed_hypothesis: {
+            ...valid.probe_quality.reviewed_hypothesis,
+            claim_md: 'x'.repeat(280),
+          },
+        },
+      }).success,
+    ).toBe(true);
     expect(ConjectureDraft.safeParse({ ...valid, claim_md: 'x'.repeat(281) }).success).toBe(false);
   });
 });

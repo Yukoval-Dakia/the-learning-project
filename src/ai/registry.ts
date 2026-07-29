@@ -353,6 +353,10 @@ function buildConjectureProbeAuthorPrompt(profile: SubjectProfile): string {
 - 两题的 context_kind 与 representation_kind 都必须不同；不能只换数字。
 - 不照抄 evidence 原题，不教学、不提示正确规则。
 - 只使用输入证据中的科目、知识点和术语，不引入无来源题材。
+- 若使用单选题，必须先独立解完每个选项，确保恰好一个正确选项；化简后等价、语义上
+  同样成立的选项也算多个正确选项，必须重写，不能在 reference 里把它们解释成“都对”。
+- reference 必须与题干的作答口径一致：题干说“哪一个/正确的一项”时，reference 只能
+  给一个答案；题干条件、计算过程和结论不得互相矛盾。
 - predicted_p 是“若猜想成立，owner 答对 primary 的概率”，取 0..1。
 
 context_kind 只能是 abstract/applied/narrative/document/visual/data/code/other。
@@ -373,6 +377,14 @@ function buildConjectureProbeReviewPrompt(profile: SubjectProfile): string {
 3. probe_pair_not_independent：两题是否只是换数字，或情境/表征没有真正改变。
 4. reference_incorrect：题目是否不可判定，reference 是否错误、不唯一或不配套。
 5. target_error_answer_not_distinct：预期目标错误答案是否与正确答案相同。
+
+执行第 4 项时必须先独立解题，再看 reference：
+- 单选措辞（“哪一个”“正确的一项”“选择正确答案”等）必须逐项判断每个选项，且恰好
+  一个正确；零个或多个正确选项一律 reference_incorrect。
+- 代数化简后等价、或语义上同时成立的选项仍算多个正确选项。即使 reference 自己承认
+  多个选项正确，也不能 pass，因为题干要求唯一答案。
+- reference 的条件、步骤、算术、选项判定或最终结论只要互相矛盾，就必须 fail，不能
+  因为其中某一句正确而放过整题。
 
 全部通过才 verdict=pass 且 failure_codes=[]；任一失败则 verdict=fail，列出所有适用代码。只输出 JSON：
 {"review":{"verdict":"pass|fail","failure_codes":["..."],"explanation_md":"..."}}`;

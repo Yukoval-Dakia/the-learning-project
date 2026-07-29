@@ -122,7 +122,7 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
         representation_kind: 'natural_language',
       },
       probe_quality: {
-        schema_version: 1,
+        schema_version: 2,
         passed: true,
         attempts: [
           {
@@ -138,6 +138,40 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
           verdict: 'pass',
           failure_codes: [],
           explanation_md: 'verified',
+        },
+        reviewed_hypothesis: {
+          kind: 'proposal',
+          claim_md: `你混淆 ${cell.knowledge_id}`,
+          knowledge_id: cell.knowledge_id,
+          evidence_event_ids: cell.evidence_event_ids,
+          diagnostic_spec: {
+            schema_version: 1,
+            target_error_rule_md: `错误应用 ${cell.knowledge_id} 的规则`,
+            trigger_conditions_md: `题目要求使用 ${cell.knowledge_id}`,
+            scope_boundary_md: '不推断其它知识点。',
+            expected_wrong_answer_signature_md: '答案呈现目标错误规则。',
+          },
+          cause_category: cell.cause_category,
+          recurrence_count: cell.recurrence_count,
+        },
+        reviewed_package: {
+          primary: {
+            prompt_md: `probe for ${cell.knowledge_id}`,
+            reference_md: `reference answer for ${cell.knowledge_id}`,
+            expected_target_error_answer_md: `target error answer for ${cell.knowledge_id}`,
+            elicits_target_error_reason_md: 'primary trigger',
+            context_kind: 'abstract',
+            representation_kind: 'symbolic',
+          },
+          followup: {
+            prompt_md: `follow-up probe for ${cell.knowledge_id}`,
+            reference_md: `follow-up reference answer for ${cell.knowledge_id}`,
+            expected_target_error_answer_md: `follow-up target error answer for ${cell.knowledge_id}`,
+            elicits_target_error_reason_md: 'follow-up trigger',
+            context_kind: 'applied',
+            representation_kind: 'natural_language',
+          },
+          predicted_p: 0.3,
         },
       },
       cause_category: cell.cause_category,

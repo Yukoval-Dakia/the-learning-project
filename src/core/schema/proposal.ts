@@ -5,6 +5,8 @@ import {
   ConjectureProbeQualityAudit,
   ConjectureProbeSpec,
   QuestionKind,
+  conjectureHypothesisCoreMatches,
+  conjectureProbePackagesEqual,
   evaluateConjectureProbePackageStructure,
   normalizeProbeIdentity,
 } from './business';
@@ -579,15 +581,43 @@ export const ConjectureProposalChange = z
       });
     }
     if (change.probe_spec !== undefined && change.followup_probe_spec !== undefined) {
-      for (const failureCode of evaluateConjectureProbePackageStructure({
+      const persistedPackage = {
         primary: change.probe_spec,
         followup: change.followup_probe_spec,
         predicted_p: change.predicted_p,
-      })) {
+      };
+      for (const failureCode of evaluateConjectureProbePackageStructure(persistedPackage)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['probe_spec'],
           message: `probe package failed structural quality gate: ${failureCode}`,
+        });
+      }
+      if (
+        change.probe_quality?.schema_version === 2 &&
+        change.diagnostic_spec !== undefined &&
+        !conjectureHypothesisCoreMatches(change.probe_quality.reviewed_hypothesis, {
+          claim_md: change.claim_md,
+          knowledge_id: change.knowledge_id,
+          diagnostic_spec: change.diagnostic_spec,
+          cause_category: change.cause_category,
+          recurrence_count: change.recurrence_count,
+        })
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['probe_quality', 'reviewed_hypothesis'],
+          message: 'probe_quality must be bound to the persisted frozen hypothesis',
+        });
+      }
+      if (
+        change.probe_quality?.schema_version === 2 &&
+        !conjectureProbePackagesEqual(change.probe_quality.reviewed_package, persistedPackage)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['probe_quality', 'reviewed_package'],
+          message: 'probe_quality must be bound to the persisted probe package',
         });
       }
     }
