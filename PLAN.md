@@ -3,14 +3,24 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-29
-> **【更新 2026-07-29 · YUK-820：DB affected gate 已合并，等待 live timing】**
-> 真实 failed-head 回放确认 unit 21/21 捕获；同代码 PR/main 对照确认 unit 已降时但
-> DB 仍是 354–355 秒关键路径。DB selector 已完成 20 个真实失败 run backfill，
-> 初版 2 miss 已固化为 failure sentinels，最终 20/20 捕获；PR #1109 已合并。
+> **【更新 2026-07-29 · YUK-823：TypeScript 7 GA 性能收口待 PR live cache 验收】**
+> main 已是 TS7 native compiler；本线补齐官方 TS7 + TS6 side-by-side、native watch
+> 与跨 CI run 的增量 buildinfo。实测默认 4 checkers 最优，不盲目加核。
 
 ## NOW
 
-- **YUK-820 active：实现已合并，等待首条普通 server/API PR live acceptance**
+- **YUK-823 active：实现与本地 full gate 已通过，等待 PR CI cache 冷/热对照**
+  - TS7 full median 5.73s，TS6 fallback 33.41s（5.83x）；TS7 cold buildinfo 5.32s，
+    warm median 0.584s（9.12x）。
+  - `@typescript/native` 提供 TS7 `tsc`；`typescript` 官方 alias 到
+    `@typescript/typescript6`，`typecheck:legacy` 现为真实 `tsc6` 且不污染 TS7 cache。
+  - `typecheck:watch` 已接 TS7 native watcher；CI static lane 以 compiler/config +
+    commit key 缓存 `tsconfig.tsbuildinfo`，可从最新兼容状态增量恢复。
+  - 默认/1/2/4/6/8/10 checkers 三轮实测中，固定 4 最快；维持 TS7 默认值，避免高核
+    配置在本机和小型 CI runner 上增加重复工作与内存。
+  - full pre-PR：TS7/TS6 typecheck、lint、standalone audits、5,891 unit tests、
+    4,263 DB tests、26 migration tests 与 build 全绿。
+- **YUK-820 保持 In Progress：实现已合并，等待首条普通 server/API PR live acceptance**
   - PR #1109 / squash `1df65fd7` 已合并；final head CI Gate `30452431101` 全绿，
     13 个 review threads 已清零。
   - unit 真实失败 head：21/21 捕获，覆盖 18 PR；此前 3 个表面 miss 均为 DB partition。
@@ -34,13 +44,17 @@
 
 ## NEXT
 
-1. 下一条普通 server/API PR 读取 DB selector artifacts 与 GitHub job timing，验收真实
+1. YUK-823 开 PR；记录首次 cold cache miss 与同一 head rerun cache hit 的 Typecheck
+   step timing，确认 cache restore/save 后再 merge。
+2. 下一条普通 server/API PR 读取 DB selector artifacts 与 GitHub job timing，验收真实
    wall-clock；本 selector PR 与 main canary 因触及 CI 自身必须 full，不能冒充 affected 样本。
-2. YUK-814 获得 production backup 后按 inspect → shadow → blind → score 执行；不足 6 个
+3. YUK-814 获得 production backup 后按 inspect → shadow → blind → score 执行；不足 6 个
    eligible failure clusters 就继续积累，不用 synthetic/mock 代替。
 
 ## PARKED
 
+- **YUK-824 本地 lint 假红**：Biome 精确忽略 sanctioned `.ykv/**` code-index cache；
+  不扩大 `files.maxSize`，不混入 YUK-823。
 - **CI selector drift**：main full canary 或 direct-test guard 任一发现漏选，立即回退
   full required；不靠漂亮 selection ratio 压掉证据。
 - **CI 后续调参**：usability artifact 复用、DB weighted shard / fork 数继续以
