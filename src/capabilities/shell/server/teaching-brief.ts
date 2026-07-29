@@ -12,6 +12,7 @@ import {
   PROBE_RESOLUTION_RULE_VERSION,
   PROBE_RESULT_ACTION,
   type ProbeResolution,
+  TERMINAL_PROBE_RESOLUTIONS,
 } from '@/core/schema/conjecture';
 import { AiProposalPayload, type ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
@@ -796,7 +797,7 @@ export async function loadOutcomeBrief(
           sql`${event.payload}->>'resolution_rule_version' =
               ${PROBE_RESOLUTION_RULE_VERSION}`,
           canonicalProbeResolutionOutcomeSql(),
-          sql`${event.payload}->>'resolution' IN ('confirmed', 'retired')`,
+          inArray(sql<string>`${event.payload}->>'resolution'`, [...TERMINAL_PROBE_RESOLUTIONS]),
         ),
       )
       .orderBy(desc(event.created_at), desc(event.id))

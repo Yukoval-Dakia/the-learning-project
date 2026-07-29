@@ -27,6 +27,11 @@ export const PREDICTION_SCORE_ACTION = 'experimental:prediction_score' as const;
  */
 export const PROBE_RESOLUTIONS = ['evidence_for', 'confirmed', 'retired'] as const;
 export type ProbeResolution = (typeof PROBE_RESOLUTIONS)[number];
+/** Resolutions that permanently settle one accepted conjecture version. */
+export const TERMINAL_PROBE_RESOLUTIONS = [
+  'confirmed',
+  'retired',
+] as const satisfies readonly ProbeResolution[];
 export function isProbeResolution(value: unknown): value is ProbeResolution {
   return typeof value === 'string' && (PROBE_RESOLUTIONS as readonly string[]).includes(value);
 }

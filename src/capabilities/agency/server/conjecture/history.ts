@@ -3,7 +3,7 @@ import {
   type EffectiveProbeResultStatus,
   getEffectiveProbeResultStatuses,
 } from '@/capabilities/agency/server/conjecture/probe-evidence';
-import { PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
+import { PROBE_RESULT_ACTION, TERMINAL_PROBE_RESOLUTIONS } from '@/core/schema/conjecture';
 import { RateEvent } from '@/core/schema/event/known';
 import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
@@ -175,7 +175,7 @@ export async function loadConjectureHistory(
             eq(event.action, PROBE_RESULT_ACTION),
             eq(event.subject_kind, 'question'),
             inArray(sql<string>`${event.payload}->>'conjecture_event_id'`, chunk),
-            inArray(sql<string>`${event.payload}->>'resolution'`, ['confirmed', 'retired']),
+            inArray(sql<string>`${event.payload}->>'resolution'`, [...TERMINAL_PROBE_RESOLUTIONS]),
           ),
         ),
     ]);

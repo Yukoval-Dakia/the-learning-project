@@ -14,7 +14,10 @@
 // runs through buildMcpServer.beforeExecute, hosted here bespoke because the write face
 // does not go through the registry (§0.B).
 
-import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
+import {
+  conjectureKey,
+  effectiveCauseForConjectureFailure,
+} from '@/capabilities/agency/server/conjecture/evidence';
 import {
   type ConjectureHistory,
   type LoadConjectureHistoryFn,
@@ -317,6 +320,9 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
   // the same cell inside one meeting (§5.2). Seeded empty; the pending base is checked
   // via knownConjectureKeys.
   const proposedThisRun = new Set<string>();
+  const failureByAttemptId = new Map(
+    failureAttempts.map((failure) => [failure.attempt_event_id, failure] as const),
+  );
   // Cheap lookup for the server-owned recurrence_count / baseline_p snapshot.
   // round-3 review OCR MINOR #5 — no cast needed here at all: CauseCategoryId is
   // `z.string().regex(...)`, whose inferred TS type (CauseCategoryT) is plain `string`
@@ -468,22 +474,13 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
           };
 
           let refsExist: boolean;
-          let historyByKey: Map<string, ConjectureHistory>;
           try {
-            [refsExist, historyByKey] = await Promise.all([
-              evidenceRefsExistFn(db, primaryRefs),
-              loadConjectureHistoryFn(db, [
-                {
-                  key,
-                  knowledge_id: a.knowledge_id,
-                },
-              ]),
-            ]);
+            refsExist = await evidenceRefsExistFn(db, primaryRefs);
           } catch (err) {
             releaseReservation();
             return textResult({
               ok: false,
-              reason: `证据或 conjecture history 校验失败: ${
+              reason: `evidence_refs 事件校验失败: ${
                 err instanceof Error ? err.message : String(err)
               }`,
             });
@@ -496,9 +493,38 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             });
           }
 
+          let historyByKey: Map<string, ConjectureHistory>;
           try {
+            historyByKey = await loadConjectureHistoryFn(db, [
+              {
+                key,
+                knowledge_id: a.knowledge_id,
+              },
+            ]);
+          } catch (err) {
+            releaseReservation();
+            return textResult({
+              ok: false,
+              reason: `conjecture history 加载失败: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            });
+          }
+
+          try {
+            // Fresh terminal-reopen evidence is identity-scoped, not merely meeting-scoped:
+            // only cited failures attributed to this exact cause × KC may satisfy the floor.
+            const identityFailureRefs = primaryRefs.filter((eventId) => {
+              const failure = failureByAttemptId.get(eventId);
+              if (!failure || !failure.referenced_knowledge_ids.includes(a.knowledge_id)) {
+                return false;
+              }
+              return (
+                effectiveCauseForConjectureFailure(failure)?.primary_category === causeCategory
+              );
+            });
             const historyGate = applyConjectureHistoryGate(
-              [{ key, evidence_event_ids: primaryRefs }],
+              [{ key, evidence_event_ids: identityFailureRefs }],
               failureAttempts,
               historyByKey,
               now,
