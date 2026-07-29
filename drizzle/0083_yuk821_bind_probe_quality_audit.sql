@@ -55,8 +55,8 @@ WHERE proposal."action" = 'experimental:proposal'
     AND jsonb_typeof(proposal."payload" #> '{ai_proposal,proposed_change,probe_spec}') = 'object'
     AND jsonb_typeof(proposal."payload" #> '{ai_proposal,proposed_change,followup_probe_spec}') = 'object'
     AND jsonb_typeof(proposal."payload" #> '{ai_proposal,proposed_change,probe_quality}') = 'object'
-    AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,schema_version}' = '2'
-    AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,passed}' = 'true'
+    AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,schema_version}' = '2'::jsonb
+    AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,passed}' = 'true'::jsonb
     AND jsonb_typeof(
       proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,final_review}'
     ) = 'object'
@@ -75,7 +75,7 @@ WHERE proposal."action" = 'experimental:proposal'
         proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,final_review,explanation_md}'
       )
     ) BETWEEN 1 AND 1000
-    AND proposal."payload" #>> '{ai_proposal,proposed_change,discriminating}' = 'true'
+    AND proposal."payload" #> '{ai_proposal,proposed_change,discriminating}' = 'true'::jsonb
     AND CASE
       WHEN jsonb_typeof(
         proposal."payload" #> '{ai_proposal,proposed_change,predicted_p}'
