@@ -73,7 +73,8 @@ full，并且当时完整套件全绿。Comparator 的 missed-failure / fallback
 - unknown/global/base/diff error → full；
 - selector 缺失、无效、fallback 或空 affected set → full；
 - main push → full canary；
-- direct test edits 先按真实 Vitest partition 分流；plain UI test 不会被误当 unit-only；
+- direct test edits 对明确 convention 分流；plain-name allowlist 归属不明时保守同时跑
+  unit + DB，避免任一 partition 排除后漏测；
 - 自动发现的 source-scanning invariant tests 永远并入 affected set；
 - Vitest 原始 affected graph 为空时，即使存在 source-scanning tests 也回退 full；
 - 两次 selector inventory 各有 120 秒上限；required unit process 有 15 分钟上限；

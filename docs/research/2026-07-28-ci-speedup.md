@@ -170,9 +170,9 @@ timing 或复跑 DB/migration。实施前应在 GitHub 上取得基线，而不�
    success；另以 #1059 固定空 import graph → full 的负控。
 7. 切换后 PR 直接执行 affected set；selection 缺失/无效、空集、global trigger 与 main
    push 均 fail closed 到 full，required run 的 exit code仍决定 aggregate gate。
-8. direct test edit 先按 unit/db/migration 的真实 Vitest partition 分类，避免 plain
-   `web/**` / capability `ui/**` test 被 UI source rule 吞掉；selector inventory 各有
-   120 秒上限，required unit process 有 15 分钟上限。
+8. direct test edit 对明确 unit/db/migration convention 直接分类；plain-name
+   allowlist 归属不能仅凭路径判断时同时跑 unit + DB，避免任一 config exclude 后漏测。
+   selector inventory 各有 120 秒上限，required unit process 有 15 分钟上限。
 
 Backfill 的限制必须明确：final-green 样本不能证明故障注入完备；它证明历史真实 diff
 可稳定选择、直接 test 不漏且完整套件当时全绿。Comparator 的漏失败/fallback 负控由

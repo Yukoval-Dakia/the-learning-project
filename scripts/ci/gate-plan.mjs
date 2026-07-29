@@ -111,14 +111,15 @@ function filePlan(file) {
       reason: 'unit-test',
     };
   }
-  // allTestInclude is broader than fastTestInclude: a plain *.test.ts(x) that
-  // is not on the no-DB allowlist falls through to vitest.db.config.ts.
-  // Classify it before UI/server directory rules so its actual partition runs.
+  // allTestInclude is broader than fastTestInclude, and the latter contains
+  // explicit plain-named allowlist entries that cannot be inferred from the
+  // filename alone. Run both partitions for an otherwise ambiguous direct test
+  // edit so the test executes whichever config owns it.
   if (isTestFile(file)) {
     return {
-      lanes: { ...emptyLanes(), static: true, db: true },
-      unitSelection: 'skip',
-      reason: 'db-partition-test',
+      lanes: { ...emptyLanes(), static: true, unit: true, db: true },
+      unitSelection: 'affected',
+      reason: 'ambiguous-test-partition',
     };
   }
 

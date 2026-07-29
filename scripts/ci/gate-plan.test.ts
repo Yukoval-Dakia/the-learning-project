@@ -90,20 +90,41 @@ describe('CI gate lane planner', () => {
   it.each([
     'web/src/some-feature/widget.test.tsx',
     'src/capabilities/practice/ui/PfPaper.test.tsx',
-  ])('routes a plain non-unit UI test through its real DB partition: %s', (file) => {
-    expect(classifyChangedFiles([file])).toMatchObject({
-      unit_selection: 'skip',
-      reasons: ['db-partition-test'],
-      lanes: {
-        static: true,
-        unit: false,
-        db: true,
-        migration: false,
-        build: false,
-        usability: false,
-      },
-    });
-  });
+  ])(
+    'runs both partitions for a plain UI test whose allowlist ownership is ambiguous: %s',
+    (file) => {
+      expect(classifyChangedFiles([file])).toMatchObject({
+        unit_selection: 'affected',
+        reasons: ['ambiguous-test-partition'],
+        lanes: {
+          static: true,
+          unit: true,
+          db: true,
+          migration: false,
+          build: false,
+          usability: false,
+        },
+      });
+    },
+  );
+
+  it.each(['src/server/ai/providers.test.ts', 'src/db/client.test.ts'])(
+    'cannot skip an explicitly allowlisted plain-named unit test: %s',
+    (file) => {
+      expect(classifyChangedFiles([file])).toMatchObject({
+        unit_selection: 'affected',
+        reasons: ['ambiguous-test-partition'],
+        lanes: {
+          static: true,
+          unit: true,
+          db: true,
+          migration: false,
+          build: false,
+          usability: false,
+        },
+      });
+    },
+  );
 
   it('keeps allowlisted src/ui plain tests in the unit partition', () => {
     expect(classifyChangedFiles(['src/ui/components/VisionTab.test.tsx'])).toMatchObject({
