@@ -555,6 +555,32 @@ describe('induceConjecture self-consistency', () => {
     expect(proposal(result).agreement_count).toBe(1);
   });
 
+  it('uses an SDK-compatible object root and unwraps its draft', async () => {
+    const generated = sample('你把复合函数各层导数相加');
+    const draft = JSON.parse(generated.text.slice(generated.text.indexOf('{'))) as unknown;
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, ctx: unknown) => {
+      const schema = (
+        ctx as {
+          outputFormat: {
+            schema: {
+              type?: string;
+              anyOf?: unknown;
+              properties?: { draft?: { anyOf?: unknown } };
+            };
+          };
+        }
+      ).outputFormat.schema;
+      expect(schema.type).toBe('object');
+      expect(schema.anyOf).toBeUndefined();
+      expect(schema.properties?.draft?.anyOf).toBeDefined();
+      return { text: '', structured_output: { draft } };
+    });
+
+    const result = await induceConjecture({ cells: [cell()], samples: 1, runTaskFn });
+
+    expect(proposal(result).claim_md).toBe('你把复合函数各层导数相加');
+  });
+
   it('finds the valid JSON object after unrelated mathematical braces', async () => {
     const valid = sample('你混淆了集合与元素').text;
     const runTaskFn = vi.fn(async () => ({

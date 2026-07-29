@@ -122,6 +122,10 @@ export const JUDGE_ONLY_CONFIDENCE_CAP = 0.5;
 /** A grounded proposal needs recurrence, not one isolated attempt. */
 export const MIN_GROUNDED_PROPOSAL_EVIDENCE = 2;
 
+const ConjectureStructuredOutput = z.object({
+  draft: ConjectureDraft,
+});
+
 interface GroundedProposalSample {
   draft: ConjectureProposalDraftT;
   task_run_id: string | undefined;
@@ -179,6 +183,8 @@ function parseSampleDraft(result: TaskTextResult): ConjectureDraftT | null {
   // Three-state dispatch (mirrors variant_verify): prefer the SDK's structured_output
   // (Opus honours outputFormat), else char-scan the text for the JSON object.
   if (result.structured_output !== undefined && result.structured_output !== null) {
+    const wrapped = ConjectureStructuredOutput.safeParse(result.structured_output);
+    if (wrapped.success) return wrapped.data.draft;
     const parsed = ConjectureDraft.safeParse(result.structured_output);
     if (parsed.success) return parsed.data;
   }
@@ -491,7 +497,10 @@ export async function induceConjecture(
     Array.from({ length: samples }, () =>
       runTaskFn('MindModelInductionTask', taskInput, {
         override: { provider: 'anthropic-sub' as const },
-        outputFormat: zodToJsonSchemaOutputFormat(ConjectureDraft),
+        // Agent SDK structured output is implemented as a custom tool whose
+        // input_schema must be a top-level object and rejects a top-level
+        // discriminated-union anyOf. Nest the domain union under `draft`.
+        outputFormat: zodToJsonSchemaOutputFormat(ConjectureStructuredOutput),
         // YUK-786 — the prompt renders from the SubjectProfile; without this the
         // renderer falls back to `general` even when the cell's KC is tagged.
         ...(subjectProfile ? { subjectProfile } : {}),
