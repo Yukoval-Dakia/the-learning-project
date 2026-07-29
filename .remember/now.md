@@ -29,12 +29,18 @@
    `CONJECTURE_PROBE_QUALITY_REQUIRED`；历史已接受记录仍可幂等读取。
 8. grounding blind artifact 展示 DiagnosticSpec 与预期目标错误答案；private lineage
    保存质量尝试。
+9. 旧 v1/v2 pending 猜想由数据迁移写入 agent-authored `correct(retract)` 退出 pending；
+   不写 owner `rate(dismiss)`，避免污染接受/拒绝偏好信号。
+10. Director 质量门要求每个 evidence ref 都能从会议快照完整物化成文本失败
+    attempt/review；缺题目快照、图片/图形或其它事件类型均失败关闭。
 
 ## 验证与未决验收
 
 - 定向 unit：6 files / 212 passed。
 - 定向 DB：4 files / 70 passed。
 - `pnpm typecheck`、changed-file Biome、`git diff --check` 已通过。
+- review 修复增量：unit 2 files / 61 passed；DB 2 files / 29 passed。新增的迁移数据
+  回填场景只交给 GitHub migration smoke 执行，不在本机跑完整 migration gate。
 - 按 owner 决策不在本机跑完整 CI gate；提交后只监听 GitHub Actions `CI Gate`。
 - 2026-07-29 20:47 以 8 个 mock failure inputs 启动 canonical real-output 复评；第一簇
   的 3 个独立 Opus induction 调用全部收到 HTTP 429 weekly limit，因此按 operational
@@ -53,6 +59,7 @@
 
 ## 下一步
 
-1. 只监听 PR #1110 的 GitHub Actions `CI Gate`，处理真实 review finding。
-2. CI 与 review 全绿后合并 P0，但保持 YUK-821 In Progress。
-3. canonical Opus 配额恢复后重跑固定 8 簇；只有输出门通过才关闭 YUK-821。
+1. 提交并推送两条 review finding 的修复，回复并 resolve 对应 threads。
+2. 只监听 PR #1110 最新 exact head 的 GitHub Actions `CI Gate`。
+3. CI 与 review 全绿后合并 P0，但保持 YUK-821 In Progress。
+4. canonical Opus 配额恢复后重跑固定 8 簇；只有输出门通过才关闭 YUK-821。

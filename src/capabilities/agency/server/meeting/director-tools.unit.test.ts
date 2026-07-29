@@ -6,6 +6,7 @@
 
 import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
 import type { WriteAgentNoteInput } from '@/capabilities/agency/server/notes';
+import { activeEffectiveTruth } from '@/capabilities/practice/server/effective-truth';
 import type { FailureAttempt } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
@@ -102,6 +103,38 @@ function validProposeArgs(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function failureAttempt(
+  attemptEventId: string,
+  overrides: Partial<FailureAttempt> = {},
+): FailureAttempt {
+  const questionId = `q_${attemptEventId}`;
+  return {
+    attempt_event_id: attemptEventId,
+    question_id: questionId,
+    answer_md: 'A 足以推出 B。',
+    answer_image_refs: [],
+    referenced_knowledge_ids: ['k_a'],
+    question_snapshot: {
+      schema_version: 1,
+      question: {
+        question_id: questionId,
+        question_version: 1,
+        parent_question_id: null,
+        prompt_md: `判断 ${attemptEventId} 中的条件 A 是否足以推出结论 B。`,
+        reference_md: 'A 不是充分条件。',
+        choices_md: null,
+        image_refs: [],
+        figures: [],
+        updated_at: NOW.toISOString(),
+      },
+      parent_question: null,
+    },
+    created_at: NOW,
+    correction_state: activeEffectiveTruth(attemptEventId),
+    ...overrides,
+  };
+}
+
 interface Harness {
   proposals: WriteAiProposalInput[];
   notes: WriteAgentNoteInput[];
@@ -122,7 +155,10 @@ function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
     caps,
     triggerEventId: 'trigger_1',
     toolContextTaskRunId: 'toolrun_1',
-    failureAttempts: [],
+    failureAttempts: [
+      ...Array.from({ length: 13 }, (_, index) => failureAttempt(`att_${index}`)),
+      failureAttempt('att_only_one'),
+    ],
     loadConjectureHistoryFn: async () => new Map(),
     writeAiProposalFn: async (_db, input) => {
       proposals.push(input);
@@ -364,18 +400,17 @@ describe('propose_conjecture — server-enforced single writer', () => {
   it('requires the owner prior claim when reopening a terminal identity', async () => {
     const terminalAt = new Date(NOW.getTime() - 1_000);
     const ownerPrior = '你会把必要条件当成充分条件。';
-    const failures = ['att_1', 'att_2'].map(
-      (attempt_event_id) =>
-        ({
-          attempt_event_id,
-          referenced_knowledge_ids: ['k_a'],
+    const failures = ['att_1', 'att_2'].map((attemptEventId) =>
+      failureAttempt(attemptEventId, {
+        referenced_knowledge_ids: ['k_a'],
+        user_cause: {
+          user_cause_event_id: `cause_${attemptEventId}`,
+          primary_category: 'concept_confusion',
+          user_notes: null,
           created_at: NOW,
-          user_cause: {
-            primary_category: 'concept_confusion',
-            user_notes: null,
-            created_at: NOW,
-          },
-        }) as FailureAttempt,
+          correction_state: activeEffectiveTruth(`cause_${attemptEventId}`),
+        },
+      }),
     );
     const history = new Map([
       [
@@ -409,27 +444,27 @@ describe('propose_conjecture — server-enforced single writer', () => {
     const terminalAt = new Date(NOW.getTime() - 1_000);
     const ownerPrior = '你会把必要条件当成充分条件。';
     const failures = [
-      {
-        attempt_event_id: 'att_1',
+      failureAttempt('att_1', {
         referenced_knowledge_ids: ['k_other'],
-        created_at: NOW,
         user_cause: {
+          user_cause_event_id: 'cause_att_1',
           primary_category: 'concept_confusion',
           user_notes: null,
           created_at: NOW,
+          correction_state: activeEffectiveTruth('cause_att_1'),
         },
-      },
-      {
-        attempt_event_id: 'att_2',
+      }),
+      failureAttempt('att_2', {
         referenced_knowledge_ids: ['k_a'],
-        created_at: NOW,
         user_cause: {
+          user_cause_event_id: 'cause_att_2',
           primary_category: 'calculation_error',
           user_notes: null,
           created_at: NOW,
+          correction_state: activeEffectiveTruth('cause_att_2'),
         },
-      },
-    ] as FailureAttempt[];
+      }),
+    ];
     const history = new Map([
       [
         conjectureKey('concept_confusion', 'k_a'),
@@ -495,8 +530,100 @@ describe('propose_conjecture — server-enforced single writer', () => {
       validProposeArgs({ evidence_refs: ['agent_note_abc', 'agent_note_def'] }),
     );
     expect(res.ok).toBe(false);
-    expect(String(res.reason)).toContain('attempt/review/probe/prediction_score');
+    expect(String(res.reason)).toContain('attempt/review');
     expect(h.proposals).toHaveLength(0);
+  });
+
+  it('rejects a cited event kind that the probe quality gate cannot materialize', async () => {
+    const h = build();
+    const res = await callTool(
+      'propose_conjecture',
+      validProposeArgs({ evidence_refs: ['att_1', 'probe_result_1'] }),
+    );
+
+    expect(res).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('无法物化'),
+    });
+    expect(h.proposals).toHaveLength(0);
+    expect(h.caps.proposeCount).toBe(0);
+  });
+
+  it('rejects image-bearing evidence instead of silently omitting the images', async () => {
+    const h = build({
+      failureAttempts: [
+        failureAttempt('att_1', { answer_image_refs: ['r2://answer-image'] }),
+        failureAttempt('att_2'),
+      ],
+    });
+    const res = await callTool('propose_conjecture', validProposeArgs());
+
+    expect(res).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('拒绝静默丢弃'),
+    });
+    expect(h.proposals).toHaveLength(0);
+    expect(h.caps.proposeCount).toBe(0);
+  });
+
+  it('passes every cited text failure to both quality tasks', async () => {
+    const seenEvidenceRefs: string[][] = [];
+    const runTaskFn = vi.fn(async (kind: string, input: { text: string }) => {
+      const payload = JSON.parse(input.text) as {
+        evidence: { failure_attempts: FailureAttempt[] };
+      };
+      seenEvidenceRefs.push(
+        payload.evidence.failure_attempts.map((failure) => failure.attempt_event_id),
+      );
+      if (kind === 'ConjectureProbeAuthorTask') {
+        return {
+          text: '',
+          task_run_id: 'probe_author',
+          structured_output: {
+            package: {
+              primary: {
+                prompt_md: '判断条件 A 是否足以推出结论 B，并给出反例。',
+                reference_md: 'A 不是充分条件；反例满足 A 但不满足 B。',
+                expected_target_error_answer_md: 'A 足以推出 B。',
+                elicits_target_error_reason_md: '要求区分必要与充分。',
+                context_kind: 'abstract',
+                representation_kind: 'symbolic',
+              },
+              followup: {
+                prompt_md: '在门禁规则情境中判断持卡是否保证可以进入。',
+                reference_md: '持卡只是必要条件，还需权限有效，因此不能保证进入。',
+                expected_target_error_answer_md: '持卡就一定可以进入。',
+                elicits_target_error_reason_md: '在应用语境中保持同一充分性判断。',
+                context_kind: 'applied',
+                representation_kind: 'natural_language',
+              },
+              predicted_p: 0.3,
+            },
+          },
+        };
+      }
+      return {
+        text: '',
+        task_run_id: 'probe_review',
+        structured_output: {
+          review: {
+            verdict: 'pass',
+            failure_codes: [],
+            explanation_md: '证据与两道探针全部可见且对齐。',
+          },
+        },
+      };
+    });
+    const h = build({ runTaskFn: runTaskFn as BuildDirectorServerOpts['runTaskFn'] });
+
+    const res = await callTool('propose_conjecture', validProposeArgs());
+
+    expect(res.ok).toBe(true);
+    expect(seenEvidenceRefs).toEqual([
+      ['att_1', 'att_2'],
+      ['att_1', 'att_2'],
+    ]);
+    expect(h.proposals).toHaveLength(1);
   });
 
   it('soft-rejects when a surviving evidence_ref does not resolve to a real event', async () => {

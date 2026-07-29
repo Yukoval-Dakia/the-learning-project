@@ -20,8 +20,14 @@
     provider/结构化输出故障保持 operational，不能凑成质量反对票。
   - nightly 与 agent director 共用质量门；proposal 保存 spec、双题 metadata、task run、
     failure code 和 audit；accept 缺 v3 包或发现持久化不一致时 409 fail closed。
+  - 升级迁移用 agent-authored `correct(retract)` 收口旧 v1/v2 pending 猜想，不伪造
+    owner dismiss，不再让旧 Teaching Brief 卡在“永远 409 但仍 pending”。
+  - Director 只接受本次会议快照中可完整物化的文本 failure attempt/review；缺题目快照、
+    图片/图形、probe_result/prediction_score 一律失败关闭，不再让 author/reviewer
+    在证据被静默丢弃后签发 pass。
   - 定向验证当前：unit 6 files / 212 passed；DB 4 files / 70 passed；typecheck、
-    changed-file Biome、diff check 通过。完整 gate 不在本地跑，交给 GitHub CI Gate。
+    changed-file Biome、diff check 通过；审查修复增量 unit 2 files / 61 passed、DB 2 files /
+    29 passed。完整 gate 不在本地跑，交给 GitHub CI Gate。
   - 20:47 用 mock 输入启动 canonical Opus real-output 复评；第一簇的 3 个独立
     induction call 均收到 429 weekly limit，按 operational stop condition 立即停止，
     没有把 fallback 或空输出记成质量结果。
@@ -31,8 +37,8 @@
 
 ## NEXT
 
-1. PR #1110 已创建；只监听 GitHub Actions 的 CI Gate，处理真实 review finding，
-   不在本地重跑全 gate。
+1. PR #1110 已创建；两条 review finding 已在本分支修复，推送后只监听 GitHub Actions
+   的 CI Gate 并关闭对应 review threads，不在本地重跑全 gate。
 2. CI/评审通过后合并 P0；再用固定 mock evidence packets 跑 canonical Opus real-output
    质量评测。YUK-821 在 8 簇输出门通过前保持 In Progress，输出不合格就继续改模型合同，
    不伪造 pass。

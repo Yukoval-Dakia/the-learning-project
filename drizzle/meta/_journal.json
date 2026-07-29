@@ -575,6 +575,13 @@
       "when": 1784949651728,
       "tag": "0081_illegal_queen_noir",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1785330600000,
+      "tag": "0082_yuk821_retire_legacy_pending_conjectures",
+      "breakpoints": true
     }
   ]
 }

@@ -854,3 +854,151 @@ describe('migration smoke — YUK-751 populated event backfill', () => {
     expect(inserted[0]?.dispatch_seq).toBe('4');
   });
 });
+
+// YUK-821 — prove the v3 accept gate does not strand already-pending v1/v2
+// Teaching Briefs during upgrade. The migration must retire only incomplete
+// pending conjectures, preserve complete v3/decided rows, and stay idempotent.
+describe('migration smoke — YUK-821 legacy conjecture retirement', () => {
+  const BASELINE_TAG = '0081_illegal_queen_noir';
+  const MIGRATION_TAG = '0082_yuk821_retire_legacy_pending_conjectures';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  function orderedMigrations(): { tag: string; sql: string }[] {
+    const journal = JSON.parse(
+      readFileSync(join(process.cwd(), 'drizzle/meta/_journal.json'), 'utf8'),
+    ) as { entries: { idx: number; tag: string }[] };
+    return [...journal.entries]
+      .sort((a, b) => a.idx - b.idx)
+      .map((entry) => ({
+        tag: entry.tag,
+        sql: readFileSync(join(process.cwd(), 'drizzle', `${entry.tag}.sql`), 'utf8'),
+      }));
+  }
+
+  async function applyMigrationFile(fileSql: string) {
+    for (const chunk of fileSql.split('--> statement-breakpoint')) {
+      const statement = chunk.trim();
+      if (statement.length > 0) await client.unsafe(statement);
+    }
+  }
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    let reachedBaseline = false;
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(migration.sql);
+      if (migration.tag === BASELINE_TAG) {
+        reachedBaseline = true;
+        break;
+      }
+    }
+    if (!reachedBaseline) throw new Error(`baseline migration ${BASELINE_TAG} not found`);
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('retracts only incomplete pending rows without minting an owner dismissal', async () => {
+    const v3Change = {
+      probe_md: 'primary',
+      probe_reference_md: 'primary reference',
+      followup_probe_md: 'follow-up',
+      followup_probe_reference_md: 'follow-up reference',
+      diagnostic_spec: { schema_version: 1 },
+      probe_spec: { prompt_md: 'primary', reference_md: 'primary reference' },
+      followup_probe_spec: {
+        prompt_md: 'follow-up',
+        reference_md: 'follow-up reference',
+      },
+      probe_quality: {
+        schema_version: 1,
+        passed: true,
+        final_review: { verdict: 'pass' },
+      },
+      discriminating: true,
+      predicted_p: 0.3,
+    };
+    const seedProposal = async (id: string, proposedChange: Record<string, unknown>) => {
+      const payload = JSON.stringify({
+        ai_proposal: {
+          kind: 'conjecture',
+          proposed_change: proposedChange,
+        },
+      });
+      await client`
+        INSERT INTO event (
+          id, actor_kind, actor_ref, action, subject_kind, subject_id,
+          outcome, payload, affected_scopes, created_at
+        ) VALUES (
+          ${id}, 'agent', 'research_meeting', 'experimental:proposal',
+          'mind_model', ${id}, 'partial', ${payload}::jsonb,
+          ARRAY['topic:test']::text[], '2026-07-01T00:00:00Z'::timestamptz
+        )
+      `;
+    };
+
+    await seedProposal('legacy_pending', {
+      probe_md: 'legacy',
+      probe_reference_md: 'legacy reference',
+      discriminating: true,
+      predicted_p: 0.3,
+    });
+    await seedProposal('legacy_decided', {
+      probe_md: 'legacy',
+      probe_reference_md: 'legacy reference',
+      discriminating: true,
+      predicted_p: 0.3,
+    });
+    await seedProposal('v3_pending', v3Change);
+    await client`
+      INSERT INTO event (
+        id, actor_kind, actor_ref, action, subject_kind, subject_id,
+        outcome, payload, caused_by_event_id, affected_scopes, created_at
+      ) VALUES (
+        'legacy_decision', 'user', 'self', 'rate', 'event', 'legacy_decided',
+        'success', '{"rating":"accept"}'::jsonb, 'legacy_decided',
+        ARRAY[]::text[], '2026-07-02T00:00:00Z'::timestamptz
+      )
+    `;
+
+    const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
+    if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
+    await applyMigrationFile(migration.sql);
+    await applyMigrationFile(migration.sql);
+
+    const corrections = await client<
+      { subject_id: string; actor_kind: string; actor_ref: string; payload: unknown }[]
+    >`
+      SELECT subject_id, actor_kind, actor_ref, payload
+      FROM event
+      WHERE actor_ref = 'yuk821_legacy_migration'
+      ORDER BY subject_id
+    `;
+    expect(corrections).toEqual([
+      {
+        subject_id: 'legacy_pending',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_legacy_migration',
+        payload: {
+          correction_kind: 'retract',
+          reason_md: 'Legacy conjecture retired: no YUK-821 verified diagnostic/probe package.',
+          affected_refs: [{ kind: 'open_inquiry', id: 'legacy_pending' }],
+        },
+      },
+    ]);
+
+    const ownerDismissals = await client<{ count: string }[]>`
+      SELECT count(*)::text AS count
+      FROM event
+      WHERE action = 'rate'
+        AND payload ->> 'rating' = 'dismiss'
+        AND caused_by_event_id = 'legacy_pending'
+    `;
+    expect(ownerDismissals[0]?.count).toBe('0');
+  });
+});

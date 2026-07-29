@@ -161,12 +161,11 @@ type WriteAgentNoteFn = typeof WriteAgentNoteReal;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
 type EvidenceRefsExistFn = (db: Db, refs: string[]) => Promise<boolean>;
 
-const PRIMARY_EVIDENCE_ACTIONS = [
-  'attempt',
-  'review',
-  'experimental:probe_result',
-  'experimental:prediction_score',
-] as const;
+// The probe author/reviewer currently receives FailureAttempt projections only.
+// Keep the accepted event vocabulary exactly aligned with what that projection
+// can materialize; accepting probe_result/prediction_score here would certify a
+// proposal after silently dropping part of its cited evidence.
+const PRIMARY_EVIDENCE_ACTIONS = ['attempt', 'review'] as const;
 
 async function evidenceRefsExist(db: Db, refs: string[]): Promise<boolean> {
   if (refs.length === 0) return false;
@@ -233,8 +232,9 @@ const ProposeConjectureShape = {
   // A terminal identity may reopen only after the director has read and echoed the
   // owner-corrected claim supplied by get_meeting_context (or a soft rejection).
   prior_claim_md: z.string().trim().min(1).max(280).optional(),
-  // PRIMARY event ids only (attempt / review / probe / prediction_score) — agent_note ids are
-  // filtered out server-side (§7 backstop). .max(12) mirrors the scout's
+  // Materializable failed attempt/review ids only — agent_note ids are filtered
+  // out server-side (§7 backstop), and other event kinds fail closed below.
+  // .max(12) mirrors the scout's
   // report-findings.ts evidence_refs bound (round-2 review MINOR #5 — consistency + a
   // blast-radius cap on the tool-return payload). round-4 review MAJOR 0.80 —
   // .refine(...) rejects a duplicate id: repeating the SAME event id (e.g.
@@ -391,15 +391,14 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
           const a = parsed.data;
 
           // First-hand evidence only (§7 backstop): strip agent_note ids before the
-          // database existence gate below. KC-association validation is deliberately not
-          // attempted here: attempt, review, probe_result, and prediction_score events encode
-          // their KC linkage through different payload/subject paths, so a uniform check
-          // would not be safe or bounded in this handler.
+          // database existence gate below. The stronger materialization gate after
+          // hypothesis validation requires every surviving ref to be a text-only
+          // failed attempt/review present in this meeting's immutable snapshot.
           const primaryRefs = filterPrimaryEvidenceRefs(a.evidence_refs);
           if (primaryRefs.length === 0) {
             return textResult({
               ok: false,
-              reason: '需至少一条一手证据（attempt/review/probe/prediction_score 事件 id）',
+              reason: '需至少一条可物化的一手失败证据（attempt/review 事件 id）',
             });
           }
 
@@ -459,6 +458,38 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
               reason: 'Conjecture hypothesis 校验失败',
               issues: hypothesisCheck.error.issues,
             });
+          }
+
+          const referencedFailures = primaryRefs
+            .map((eventId) => failureByAttemptId.get(eventId))
+            .filter((failure): failure is FailureAttempt => failure !== undefined);
+          if (referencedFailures.length !== primaryRefs.length) {
+            return textResult({
+              ok: false,
+              reason:
+                'evidence_refs 含本次质量门无法物化的事件；只可引用会议快照中的失败 attempt/review',
+            });
+          }
+          for (const failure of referencedFailures) {
+            const snapshot = failure.question_snapshot;
+            if (snapshot == null) {
+              return textResult({
+                ok: false,
+                reason: `证据 ${failure.attempt_event_id} 缺少有效题目快照，无法送入 probe 质量门`,
+              });
+            }
+            const hasImages =
+              failure.answer_image_refs.length > 0 ||
+              snapshot.question.image_refs.length > 0 ||
+              snapshot.question.figures.length > 0 ||
+              (snapshot.parent_question?.image_refs.length ?? 0) > 0 ||
+              (snapshot.parent_question?.figures.length ?? 0) > 0;
+            if (hasImages) {
+              return textResult({
+                ok: false,
+                reason: `证据 ${failure.attempt_event_id} 含图片/图形；当前 Director 质量门尚不能完整物化，拒绝静默丢弃`,
+              });
+            }
           }
 
           // Keep the cap/dedup reservation immediately before this handler's first await.
@@ -565,9 +596,7 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
               hypothesis: hypothesisCheck.data,
               evidencePayload: {
                 evidence_refs: primaryRefs,
-                failure_attempts: primaryRefs
-                  .map((eventId) => failureByAttemptId.get(eventId))
-                  .filter((failure): failure is FailureAttempt => failure !== undefined),
+                failure_attempts: referencedFailures,
               },
               evidenceImages: [],
               runTaskFn,

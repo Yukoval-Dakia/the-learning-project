@@ -147,7 +147,10 @@ P0 可以识别“题目范围/结构明显不匹配”，也让独立模型审�
 
 1. `probe_quality.schema_version` 升级，新增 `policy_version` 与 `subject_validator_results`；
 2. 新生产的、被 math validator 判定为 applicable 的 proposal 必须保存对应版本的 pass 结果；
-3. 历史已接受记录保持可读和幂等；历史 pending 记录不能用旧 audit 接受，必须 reprepare；
+3. 历史已接受记录保持可读和幂等；历史 pending 记录不能用旧 audit 接受。只有在
+   reprepare command 已真实上线时才自动重新准备，否则像 P0 v1/v2 升级一样，用
+   agent-authored correction 退出 pending，等待新证据生成新 proposal，绝不能留下
+   永远 409 的死卡片；
 4. validator 版本变化产生新准备版本，不能覆盖旧题与旧审计。
 
 ### 4.6 测试矩阵
