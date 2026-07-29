@@ -972,9 +972,17 @@ describe('migration smoke — YUK-821 legacy conjecture retirement', () => {
     await applyMigrationFile(migration.sql);
 
     const corrections = await client<
-      { subject_id: string; actor_kind: string; actor_ref: string; payload: unknown }[]
+      {
+        subject_id: string;
+        actor_kind: string;
+        actor_ref: string;
+        payload: unknown;
+        affected_scopes: string[];
+        already_ingested: boolean;
+      }[]
     >`
-      SELECT subject_id, actor_kind, actor_ref, payload
+      SELECT subject_id, actor_kind, actor_ref, payload, affected_scopes,
+             ingest_at IS NOT NULL AS already_ingested
       FROM event
       WHERE actor_ref = 'yuk821_legacy_migration'
       ORDER BY subject_id
@@ -984,6 +992,8 @@ describe('migration smoke — YUK-821 legacy conjecture retirement', () => {
         subject_id: 'legacy_pending',
         actor_kind: 'agent',
         actor_ref: 'yuk821_legacy_migration',
+        affected_scopes: [],
+        already_ingested: true,
         payload: {
           correction_kind: 'retract',
           reason_md: 'Legacy conjecture retired: no YUK-821 verified diagnostic/probe package.',

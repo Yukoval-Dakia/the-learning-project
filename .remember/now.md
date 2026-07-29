@@ -7,8 +7,8 @@
   `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-821-probe-quality`
 ；branch `codex/yuk-821-probe-quality`。
 - PR **#1110**：`https://github.com/Yukoval-Dakia/the-learning-project/pull/1110`；
-  exact-head `ae6845c6` 的 GitHub CI Gate `30464284808` 全绿；随后两条 recovery
-  findings 已在工作树修复，待提交并跑新 exact CI。
+  exact-head `41fd682c` 的 GitHub CI Gate `30465338781` 全绿；最后两条 review
+  findings 已作为同一批次在工作树修复，待一次提交并跑最终 exact-head CI。
 - owner 主工作树已有既存未提交改动；本轮没有修改主工作树。
 - Owner 决策：质量评测只 mock 输入，输出必须来自真实生产链/真实模型；真实 owner
   数据只控制扩大使用，不阻塞开发。
@@ -77,6 +77,10 @@
 - exact-head `ae6845c6` 的 GitHub CI Gate `30464284808` 全绿。其后 cap/identity 两条
   review 修复增量：director-tools unit 43 passed、director DB 20 passed、typecheck 与
   changed-file Biome 通过。
+- exact-head `41fd682c` 的 GitHub CI Gate `30465338781` 全绿。最后批次修复 active-lease
+  redelivery 提前 ACK 和 migration correction 误入 memory outbox；增量 unit 15 passed、
+  YUK-821 migration 1 passed / 26 skipped、typecheck、changed-file Biome、diff check
+  通过。
 
 ## 合入 main 的并行事实
 
@@ -98,7 +102,7 @@
 
 ## 下一步
 
-1. 提交/推送 cap/identity 两条修复，回复并 resolve 最新 threads；只监听 PR #1110 新
-   exact head 的 GitHub Actions `CI Gate`。
+1. 一次提交/推送最后批次修复，回复并 resolve 最新 threads；只监听 PR #1110 新 exact
+   head 的 GitHub Actions `CI Gate`。
 2. CI 与 review 全绿后合并 P0，但保持 YUK-821 In Progress。
 3. canonical Opus 配额恢复后重跑固定 8 簇；只有输出门通过才关闭 YUK-821。

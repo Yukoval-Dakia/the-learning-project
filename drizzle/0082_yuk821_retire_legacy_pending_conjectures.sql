@@ -10,6 +10,8 @@
 -- rate(dismiss) is an owner preference signal and would corrupt acceptance
 -- calibration. A correction(retract) accurately says the legacy artifact is no
 -- longer actionable without pretending that the owner rejected its claim.
+-- These internal upgrade ledgers are already ingested and carry no affected scopes:
+-- they must not enter the learner-memory outbox or regenerate Teaching Briefs.
 --
 -- The event id is deterministic and the anti-join makes this safe to replay.
 INSERT INTO "event" (
@@ -23,6 +25,7 @@ INSERT INTO "event" (
   "payload",
   "caused_by_event_id",
   "affected_scopes",
+  "ingest_at",
   "created_at"
 )
 SELECT
@@ -41,7 +44,8 @@ SELECT
     )
   ),
   proposal."id",
-  proposal."affected_scopes",
+  ARRAY[]::text[],
+  GREATEST(now(), proposal."created_at" + interval '1 microsecond'),
   GREATEST(now(), proposal."created_at" + interval '1 microsecond')
 FROM "event" AS proposal
 WHERE proposal."action" = 'experimental:proposal'

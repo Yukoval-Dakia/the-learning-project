@@ -48,6 +48,11 @@
     probe outage 改为按 cause×KC identity 记录，同 identity 后续拿到真实质量结论才清除，
     不会因别的 identity 成功而误清。增量 unit 43 passed、DB 20 passed、typecheck、
     Biome 通过。
+  - exact-head `41fd682c` 的 CI Gate `30465338781` 全绿。最后一批 review 修复一并收口：
+    active lease 的 hard-crash redelivery 不再提前 ACK，而是在 handler 内保留到 lease
+    边界再争抢唯一 recovery；升级 correction 写入时清空 scopes 并预置 `ingest_at`，
+    不进入 memory outbox。增量 unit 15 passed、migration 1 passed / 26 skipped、
+    typecheck、changed-file Biome、diff check 通过。
   - 20:47 用 mock 输入启动 canonical Opus real-output 复评；第一簇的 3 个独立
     induction call 均收到 429 weekly limit，按 operational stop condition 立即停止，
     没有把 fallback 或空输出记成质量结果。
@@ -57,8 +62,8 @@
 
 ## NEXT
 
-1. PR #1110 最新两条 recovery review findings 已在工作树修复；提交、推送、回复并清零
-   threads 后，只监听新 exact head 的 GitHub CI Gate，不在本地跑全 gate。
+1. PR #1110 最后一批 review findings 已批量修复；一次提交/推送、回复并清零 threads 后，
+   只监听新 exact head 的 GitHub CI Gate，不在本地跑全 gate。
 2. 修复 head CI 全绿后合并 P0；再用固定 mock evidence packets 跑 canonical Opus real-output
    质量评测。YUK-821 在 8 簇输出门通过前保持 In Progress，输出不合格就继续改模型合同，
    不伪造 pass。
@@ -84,8 +89,7 @@
 
 ## BLOCKED-ON
 
-- **本次 P0 代码：无产品数据 blocker**；只剩最新 review 修复提交与 exact-head GitHub
-  CI Gate。
+- **本次 P0 代码：无产品数据 blocker**；只剩最终批次 exact-head GitHub CI Gate 与合并。
 - **canonical Opus 输出质量结论**：2026-07-29 20:47 实测被 429 weekly limit 阻断；
   配额故障只记 operational，不能用 Mimo fallback 的结果冒充 canonical pass。
 - **auto-intervention 扩大使用**：仍需真实 owner/cohort shadow/blind/canary 证据；这是发布

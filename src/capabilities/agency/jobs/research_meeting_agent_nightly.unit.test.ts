@@ -220,7 +220,7 @@ describe('runResearchMeetingAgentNightly — orphaned-claim recovery (§2 review
     });
   });
 
-  it('skips claim+no-scan while the initial lease is still active', async () => {
+  it('returns the lease boundary without spending while the initial lease is still active', async () => {
     const store = memoryEventStore();
     await seedClaim(store, '2026-07-06T21:06:00.000Z');
     const runDirectorFn = vi.fn(async () => directorResult());
@@ -233,7 +233,11 @@ describe('runResearchMeetingAgentNightly — orphaned-claim recovery (§2 review
       runDirectorFn,
     });
 
-    expect(result).toMatchObject({ skipped: true, reason: 'already_claimed_today' });
+    expect(result).toMatchObject({
+      skipped: true,
+      reason: 'active_lease',
+      retry_at: '2026-07-06T21:06:00.000Z',
+    });
     expect(runDirectorFn).not.toHaveBeenCalled();
     expect(
       [...store.store.values()].filter((row) => row.action === RECOVERY_CLAIM_ACTION),
@@ -302,7 +306,7 @@ describe('runResearchMeetingAgentNightly — orphaned-claim recovery (§2 review
 });
 
 describe('runResearchMeetingAgentNightly — director deps hygiene (§8 review fix)', () => {
-  it('does not leak job-only fields (runDirectorFn / readEventByIdFn / hasScanEventForDayFn) into the director deps', async () => {
+  it('does not leak job-only fields into the director deps', async () => {
     let seenDeps: AgentNightlyDeps | undefined;
     const runDirectorFn = vi.fn(async (_db: unknown, injected: AgentNightlyDeps) => {
       seenDeps = injected;
@@ -313,6 +317,7 @@ describe('runResearchMeetingAgentNightly — director deps hygiene (§8 review f
     expect(seenDeps).not.toHaveProperty('runDirectorFn');
     expect(seenDeps).not.toHaveProperty('readEventByIdFn');
     expect(seenDeps).not.toHaveProperty('hasScanEventForDayFn');
+    expect(seenDeps).not.toHaveProperty('waitUntilFn');
   });
 });
 
@@ -393,5 +398,33 @@ describe('buildResearchMeetingAgentNightlyHandler — kill switch', () => {
       runDirectorFn,
     });
     await expect(handler([])).rejects.toThrow('pre-LLM read blew up');
+  });
+
+  it('keeps a hard-crash redelivery alive until the lease boundary, then recovers once', async () => {
+    process.env[RESEARCH_MEETING_AGENT_ENABLED_ENV] = '1';
+    const store = memoryEventStore();
+    await seedClaim(store, '2026-07-06T21:06:00.000Z');
+    let currentNow = new Date('2026-07-06T21:00:00.000Z');
+    const waitUntilFn = vi.fn(async (retryAt: Date) => {
+      currentNow = retryAt;
+    });
+    const runDirectorFn = vi.fn(async () => directorResult());
+    const handler = buildResearchMeetingAgentNightlyHandler({} as never, {
+      now: () => currentNow,
+      writeEventFn: store.writeEventFn,
+      readEventByIdFn: store.readEventByIdFn,
+      hasScanEventForDayFn: store.hasScanEventForDayFn,
+      waitUntilFn,
+      runDirectorFn,
+    });
+
+    await handler([]);
+
+    expect(waitUntilFn).toHaveBeenCalledOnce();
+    expect(waitUntilFn).toHaveBeenCalledWith(new Date('2026-07-06T21:06:00.000Z'));
+    expect(runDirectorFn).toHaveBeenCalledOnce();
+    expect(
+      [...store.store.values()].filter((row) => row.action === RECOVERY_CLAIM_ACTION),
+    ).toHaveLength(1);
   });
 });

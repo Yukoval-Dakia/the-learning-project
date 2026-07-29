@@ -16,12 +16,14 @@
 //
 //      CONTROLLED RECOVERY: claim + no scan is NOT sufficient by itself. Each initial
 //      claim carries a lease longer than the director's own wall-clock budget. While
-//      that lease is active, concurrent delivery skips. A caught retryable failure
-//      writes an explicit failure marker and makes the claim immediately recoverable;
-//      an unmarked hard crash becomes recoverable only after lease expiry. Recovery
-//      itself must win a SECOND fixed-id nonce claim and carries recovery_attempt=1.
-//      That marker is never reused or updated, so only one recovery can run and any
-//      concurrent/repeated redelivery skips. A scan still wins over every recovery path.
+//      that lease is active, a delivery cannot spend; the production handler keeps a
+//      redelivery alive until the lease boundary instead of acknowledging it early.
+//      A caught retryable failure writes an explicit failure marker and makes the claim
+//      immediately recoverable; an unmarked hard crash becomes recoverable only after
+//      lease expiry. Recovery itself must win a SECOND fixed-id nonce claim and carries
+//      recovery_attempt=1. That marker is never reused or updated, so only one recovery
+//      can run and any concurrent/repeated redelivery skips. A scan still wins over
+//      every recovery path.
 //
 // NEVER calls reconcile (settlement single-home stays with the deterministic lane).
 
@@ -62,6 +64,7 @@ type ReadEventByIdFn = (db: Db, id: string) => Promise<{ payload: unknown } | nu
  *  checks; it never grants recovery by itself. */
 type HasScanEventForDayFn = (db: Db, dayKey: string) => Promise<boolean>;
 type RunDirectorFn = (db: Db, deps: DirectorDeps) => Promise<ResearchMeetingDirectorResult>;
+type WaitUntilFn = (retryAt: Date) => Promise<void>;
 
 export interface AgentNightlyDeps extends DirectorDeps {
   /** injectable director run (unit tests stub this; db tests let it run for real). */
@@ -70,11 +73,14 @@ export interface AgentNightlyDeps extends DirectorDeps {
   readEventByIdFn?: ReadEventByIdFn;
   /** injectable scan-existence check (default queries the event table). */
   hasScanEventForDayFn?: HasScanEventForDayFn;
+  /** injectable lease-boundary wait (production uses a timer; unit tests advance a fake clock). */
+  waitUntilFn?: WaitUntilFn;
 }
 
 export interface AgentNightlyResult {
   skipped: boolean;
   reason?: string;
+  retry_at?: string;
   day_key: string;
   director?: ResearchMeetingDirectorResult;
 }
@@ -108,6 +114,7 @@ async function defaultHasScanEventForDay(db: Db, dayKey: string): Promise<boolea
 interface ClaimResult {
   won: boolean;
   attemptKind?: 'initial' | 'recovery';
+  activeLeaseUntil?: Date;
 }
 
 function recoveryClaimEventId(dayKey: string): string {
@@ -118,14 +125,19 @@ function retryableFailureEventId(dayKey: string, attemptKind: 'initial' | 'recov
   return `research_meeting_agent_retryable_failure:${dayKey}:${attemptKind}`;
 }
 
-function leaseExpired(payload: unknown, now: Date): boolean {
+function readLeaseExpiry(payload: unknown): Date | null {
   const leaseExpiresAt =
     typeof payload === 'object' && payload !== null && 'lease_expires_at' in payload
       ? (payload as { lease_expires_at?: unknown }).lease_expires_at
       : undefined;
-  if (typeof leaseExpiresAt !== 'string') return false;
+  if (typeof leaseExpiresAt !== 'string') return null;
   const timestamp = Date.parse(leaseExpiresAt);
-  return Number.isFinite(timestamp) && now.getTime() >= timestamp;
+  return Number.isFinite(timestamp) ? new Date(timestamp) : null;
+}
+
+async function defaultWaitUntil(retryAt: Date): Promise<void> {
+  const waitMs = Math.max(0, retryAt.getTime() - Date.now());
+  await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
 }
 
 /**
@@ -162,8 +174,14 @@ async function claimDay(
     // marker, so it must wait for lease expiry. Legacy claims without lease metadata
     // fail closed (no recovery) rather than risking duplicate spend.
     const failure = await opts.readEventByIdFn(db, retryableFailureEventId(opts.dayKey, 'initial'));
-    if (!failure && !leaseExpired(existing.payload, opts.now)) {
-      return { won: false };
+    if (!failure) {
+      const activeLeaseUntil = readLeaseExpiry(existing.payload);
+      if (!activeLeaseUntil) {
+        return { won: false };
+      }
+      if (opts.now.getTime() < activeLeaseUntil.getTime()) {
+        return { won: false, activeLeaseUntil };
+      }
     }
 
     const recoveryNonce = newId();
@@ -249,6 +267,14 @@ export async function runResearchMeetingAgentNightly(
     hasScanEventForDayFn,
   });
   if (!claim.won) {
+    if (claim.activeLeaseUntil) {
+      return {
+        skipped: true,
+        reason: 'active_lease',
+        retry_at: claim.activeLeaseUntil.toISOString(),
+        day_key: dayKey,
+      };
+    }
     return { skipped: true, reason: 'already_claimed_today', day_key: dayKey };
   }
 
@@ -260,6 +286,7 @@ export async function runResearchMeetingAgentNightly(
     runDirectorFn: _runDirectorFn,
     readEventByIdFn: _readEventByIdFn,
     hasScanEventForDayFn: _hasScanEventForDayFn,
+    waitUntilFn: _waitUntilFn,
     ...directorDeps
   } = deps;
   // Pin `now` so the director shares the claim's timestamp (deterministic dayKey/events).
@@ -312,7 +339,15 @@ export function buildResearchMeetingAgentNightlyHandler(
       return;
     }
     try {
-      const result = await runResearchMeetingAgentNightly(db, deps);
+      let result = await runResearchMeetingAgentNightly(db, deps);
+      while (result.reason === 'active_lease' && result.retry_at) {
+        // The queue's normal 30s/60s retry budget ends before the 360s claim lease.
+        // A hard-crash redelivery must therefore remain active until the exact lease
+        // boundary; acknowledging here would permanently lose the only recovery chance.
+        const retryAt = new Date(result.retry_at);
+        await (deps.waitUntilFn ?? defaultWaitUntil)(retryAt);
+        result = await runResearchMeetingAgentNightly(db, deps);
+      }
       console.log('[research_meeting_agent_nightly] result', result);
     } catch (err) {
       console.error('[research_meeting_agent_nightly] failed', err);
