@@ -98,13 +98,37 @@ describe('collectGroundingGateCandidates', () => {
       createdAt: new Date('2026-07-28T03:00:00.000Z'),
       synthetic: true,
     });
+    // Keep the real evidence older than the default reader cap. The grounding
+    // gate must request an unbounded read before excluding synthetic fixtures,
+    // otherwise 100 newer synthetic rows can hide the real cluster.
+    await testDb()
+      .insert(event)
+      .values(
+        Array.from({ length: 100 }, (_, index) => ({
+          id: `attempt_synthetic_over_cap_${String(index).padStart(3, '0')}`,
+          actor_kind: 'user' as const,
+          actor_ref: 'self',
+          action: 'attempt' as const,
+          subject_kind: 'question' as const,
+          subject_id: QUESTION_ID,
+          outcome: 'failure' as const,
+          payload: {
+            answer_md: 'synthetic fixture',
+            answer_image_refs: [],
+            referenced_knowledge_ids: [KC_ID],
+            reasoning_trace: 'synthetic fixture',
+            __synthetic: true,
+          },
+          created_at: new Date(`2026-07-28T04:${String(index % 60).padStart(2, '0')}:00.000Z`),
+        })),
+      );
     const loadEvidenceImages = vi.fn(async () => []);
     const report = await collectGroundingGateCandidates(testDb(), {
       now: NOW,
       loadEvidenceImages,
     });
     expect(report.recent_failure_count).toBe(2);
-    expect(report.synthetic_failure_count).toBe(1);
+    expect(report.synthetic_failure_count).toBe(101);
     expect(report.eligible_count).toBe(1);
     expect(report.candidates[0].cell).toMatchObject({
       key: `concept_confusion::${KC_ID}`,

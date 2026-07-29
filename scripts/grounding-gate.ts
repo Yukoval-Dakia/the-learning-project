@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { defaultLoadEvidenceImages } from '@/capabilities/agency/jobs/research_meeting_nightly';
 import type { ConjectureEvidenceImageSource } from '@/capabilities/agency/server/conjecture/evidence';
 import type { Db } from '@/db/client';
@@ -28,6 +29,7 @@ import {
   selectGroundingCandidates,
 } from '@/server/grounding-gate/artifacts';
 import {
+  GROUNDING_GATE_WINDOW_DAYS,
   type GroundingGateCandidateReport,
   collectGroundingGateCandidates,
 } from '@/server/grounding-gate/candidates';
@@ -210,8 +212,11 @@ async function withRestoredBackup<T>(
     }
     return await run({ db, r2 });
   } finally {
-    if (client) await client.end({ timeout: 5 });
-    await container.stop();
+    try {
+      if (client) await client.end({ timeout: 5 });
+    } finally {
+      await container.stop();
+    }
   }
 }
 
@@ -280,7 +285,7 @@ function eligibilityArtifact(input: {
     window: {
       from: input.report.since.toISOString(),
       to: input.report.now.toISOString(),
-      days: 14,
+      days: GROUNDING_GATE_WINDOW_DAYS,
     },
     requested_sample_size: input.sampleSize,
     ready_for_shadow: input.report.eligible_count >= input.sampleSize,
@@ -506,7 +511,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<nu
   return runScoreCanary(options);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runCli()
     .then((code) => {
       process.exitCode = code;

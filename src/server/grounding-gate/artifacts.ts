@@ -12,6 +12,8 @@ export const GROUNDING_GATE_MIN_GROUNDING_RATE = 0.8;
 export const GROUNDING_GATE_CANARY_RUNS = 10;
 
 const NullableReviewBoolean = z.boolean().nullable();
+const GateIdSchema = z.string().min(1);
+const ClusterIdSchema = z.string().regex(/^cluster-\d{2}$/);
 
 export const GroundingBlindReviewSchema = z.object({
   grounded_proposal: NullableReviewBoolean,
@@ -59,7 +61,7 @@ const BlindShadowOutputSchema = z.discriminatedUnion('outcome', [
 ]);
 
 export const GroundingBlindItemSchema = z.object({
-  cluster_id: z.string().regex(/^cluster-\d{2}$/),
+  cluster_id: ClusterIdSchema,
   subject_display_name: z.string().nullable(),
   knowledge_name: z.string().nullable(),
   cause_category: z.string(),
@@ -72,7 +74,7 @@ export const GroundingBlindItemSchema = z.object({
 export const GroundingBlindPacketSchema = z
   .object({
     schema_version: z.literal(GROUNDING_GATE_SCHEMA_VERSION),
-    gate_id: z.string().min(1),
+    gate_id: GateIdSchema,
     source_backup_sha256: z.string().regex(/^[a-f0-9]{64}$/),
     generated_at: z.string().datetime(),
     instructions: z.string().min(1),
@@ -92,7 +94,7 @@ export type GroundingBlindPacket = z.infer<typeof GroundingBlindPacketSchema>;
 
 export const GroundingPrivateMapSchema = z.object({
   schema_version: z.literal(GROUNDING_GATE_SCHEMA_VERSION),
-  gate_id: z.string().min(1),
+  gate_id: GateIdSchema,
   source_backup_sha256: z.string().regex(/^[a-f0-9]{64}$/),
   code_revision: z.string().min(1),
   window: z.object({
@@ -103,7 +105,7 @@ export const GroundingPrivateMapSchema = z.object({
   eligible_count: z.number().int().nonnegative(),
   clusters: z.array(
     z.object({
-      cluster_id: z.string(),
+      cluster_id: ClusterIdSchema,
       conjecture_key: z.string(),
       knowledge_id: z.string(),
       attempt_event_ids: z.array(z.string()),
@@ -129,6 +131,10 @@ export type GroundingPrivateMap = z.infer<typeof GroundingPrivateMapSchema>;
 export interface SelectedGroundingCandidate {
   cluster_id: string;
   candidate: GroundingGateCandidate;
+}
+
+function compareAscii(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 export function selectGroundingCandidates(
@@ -161,8 +167,8 @@ export function selectGroundingCandidates(
     }))
     .sort(
       (left, right) =>
-        left.digest.localeCompare(right.digest) ||
-        left.candidate.cell.key.localeCompare(right.candidate.cell.key),
+        compareAscii(left.digest, right.digest) ||
+        compareAscii(left.candidate.cell.key, right.candidate.cell.key),
     )
     .slice(0, sampleSize);
   return selected.map(({ candidate }, index) => ({
@@ -207,10 +213,15 @@ function blindShadowOutput(induced: InduceConjectureResult) {
   };
 }
 
-function blindCauseSource(source: 'user' | 'agent' | null): 'owner' | 'judge' {
+function blindCauseSource(
+  source: 'user' | 'agent' | null,
+  attemptEventId: string,
+): 'owner' | 'judge' {
   if (source === 'user') return 'owner';
   if (source === 'agent') return 'judge';
-  throw new Error('grounding blind artifact cannot represent evidence without an effective cause');
+  throw new Error(
+    `grounding blind artifact cannot represent attempt ${attemptEventId} without an effective cause_source`,
+  );
 }
 
 export function buildGroundingReviewArtifacts(input: BuildGroundingReviewArtifactsInput): {
@@ -239,8 +250,14 @@ export function buildGroundingReviewArtifacts(input: BuildGroundingReviewArtifac
         parent_question_choices_md: sample.parent_question_choices_md,
         owner_answer_md: sample.answer_md,
         owner_reasoning_trace: sample.reasoning_trace,
-        cause_category: sample.cause_category,
-        cause_source: blindCauseSource(sample.cause_source),
+        cause_category:
+          sample.cause_category ??
+          (() => {
+            throw new Error(
+              `grounding blind artifact cannot represent attempt ${sample.attempt_event_id} without an effective cause_category`,
+            );
+          })(),
+        cause_source: blindCauseSource(sample.cause_source, sample.attempt_event_id),
         cause_attribution_md: sample.cause_attribution_md,
         images: imagesByAttemptId.get(sample.attempt_event_id) ?? [],
       })),
@@ -288,7 +305,7 @@ export function buildGroundingReviewArtifacts(input: BuildGroundingReviewArtifac
 
 export const GroundingBlindScoreSchema = z.object({
   schema_version: z.literal(GROUNDING_GATE_SCHEMA_VERSION),
-  gate_id: z.string(),
+  gate_id: GateIdSchema,
   status: z.enum(['pass', 'fail', 'incomplete']),
   expansion_allowed: z.boolean(),
   sample_count: z.number().int().nonnegative(),
@@ -326,12 +343,12 @@ export function scoreGroundingBlindPacket(packet: GroundingBlindPacket): Groundi
   const groundedCount = reviewed.filter((item) => item.review.grounded_proposal === true).length;
   const groundingRate = allItemsReviewed && sampleCount > 0 ? groundedCount / sampleCount : null;
   const redlines = {
-    discipline_hallucination: reviewed.filter(
+    discipline_hallucination: parsed.items.filter(
       (item) => item.review.discipline_hallucination === true,
     ).length,
-    claim_probe_mismatch: reviewed.filter((item) => item.review.claim_probe_mismatch === true)
+    claim_probe_mismatch: parsed.items.filter((item) => item.review.claim_probe_mismatch === true)
       .length,
-    severe_factual_error: reviewed.filter((item) => item.review.severe_factual_error === true)
+    severe_factual_error: parsed.items.filter((item) => item.review.severe_factual_error === true)
       .length,
   };
   const sampleSizeOk =
@@ -369,7 +386,7 @@ const CanaryReviewSchema = z.object({
 
 export const GroundingCanaryPacketSchema = z.object({
   schema_version: z.literal(GROUNDING_GATE_SCHEMA_VERSION),
-  gate_id: z.string(),
+  gate_id: GateIdSchema,
   blind_score_sha256: z.string().regex(/^[a-f0-9]{64}$/),
   owner_cohort_ref: z.string().nullable(),
   runs: z.array(
@@ -390,7 +407,7 @@ export type GroundingCanaryPacket = z.infer<typeof GroundingCanaryPacketSchema>;
 
 export const GroundingCanaryScoreSchema = z.object({
   schema_version: z.literal(GROUNDING_GATE_SCHEMA_VERSION),
-  gate_id: z.string(),
+  gate_id: GateIdSchema,
   status: z.enum(['pass', 'fail', 'incomplete']),
   expansion_allowed: z.boolean(),
   auto_intervention_should_be_disabled: z.boolean(),
@@ -426,10 +443,13 @@ export function scoreGroundingCanaryPacket(packet: GroundingCanaryPacket): Groun
   const parsed = GroundingCanaryPacketSchema.parse(packet);
   const reviewed = parsed.runs.filter((run) => canaryReviewComplete(run.review));
   const redlines = {
-    discipline_hallucination: reviewed.filter((run) => run.review.discipline_hallucination === true)
+    discipline_hallucination: parsed.runs.filter(
+      (run) => run.review.discipline_hallucination === true,
+    ).length,
+    claim_probe_mismatch: parsed.runs.filter((run) => run.review.claim_probe_mismatch === true)
       .length,
-    claim_probe_mismatch: reviewed.filter((run) => run.review.claim_probe_mismatch === true).length,
-    severe_factual_error: reviewed.filter((run) => run.review.severe_factual_error === true).length,
+    severe_factual_error: parsed.runs.filter((run) => run.review.severe_factual_error === true)
+      .length,
   };
   const exactly10Runs = parsed.runs.length === GROUNDING_GATE_CANARY_RUNS;
   const ownerCohortScoped =

@@ -172,6 +172,32 @@ describe('blind review artifacts', () => {
     expect(artifacts.blind.items[0].review.grounded_proposal).toBeNull();
     expect(artifacts.privateMap.clusters[0].task_run_ids).toEqual(['run-1', 'run-2', 'run-3']);
   });
+
+  it('fails closed with attempt lineage when effective cause data is missing', () => {
+    const invalid = candidate('conceptual::kc-invalid');
+    invalid.cell.samples[0].cause_source = null;
+    expect(() =>
+      buildGroundingReviewArtifacts({
+        gateId: 'gate-1',
+        sourceBackupSha256: 'b'.repeat(64),
+        generatedAt: new Date('2026-07-29T00:00:00.000Z'),
+        codeRevision: 'abc123',
+        selectionSeed: 'seed',
+        window: {
+          from: new Date('2026-07-15T00:00:00.000Z'),
+          to: new Date('2026-07-29T00:00:00.000Z'),
+        },
+        eligibleCount: 1,
+        results: [
+          {
+            selected: { cluster_id: 'cluster-01', candidate: invalid },
+            induced: induced(),
+            imagesByAttemptId: new Map(),
+          },
+        ],
+      }),
+    ).toThrow('conceptual::kc-invalid:attempt:1');
+  });
 });
 
 describe('scoreGroundingBlindPacket', () => {
@@ -224,6 +250,15 @@ describe('scoreGroundingBlindPacket', () => {
     const score = scoreGroundingBlindPacket(packet);
     expect(score.status).toBe('incomplete');
     expect(score.grounding_rate).toBeNull();
+  });
+
+  it('reports a known blind redline even while other labels are incomplete', () => {
+    const packet = blindPacket(8);
+    packet.items[0].review.severe_factual_error = true;
+    const score = scoreGroundingBlindPacket(packet);
+    expect(score.status).toBe('incomplete');
+    expect(score.redlines.severe_factual_error).toBe(1);
+    expect(score.requirements.zero_redlines).toBe(false);
   });
 });
 
@@ -284,5 +319,17 @@ describe('canary gate', () => {
     expect(score.status).toBe('fail');
     expect(score.auto_intervention_should_be_disabled).toBe(true);
     expect(score.expansion_allowed).toBe(false);
+  });
+
+  it('requests disable for a known redline even while other canary labels are incomplete', () => {
+    const packet = createGroundingCanaryTemplate({
+      gateId: 'gate-1',
+      blindScoreSha256: 'e'.repeat(64),
+    });
+    packet.runs[0].review.severe_factual_error = true;
+    const score = scoreGroundingCanaryPacket(packet);
+    expect(score.status).toBe('incomplete');
+    expect(score.redlines.severe_factual_error).toBe(1);
+    expect(score.auto_intervention_should_be_disabled).toBe(true);
   });
 });

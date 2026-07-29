@@ -30,7 +30,9 @@
 - DB：390 files / 4,263 passed / 9 skipped / 1 todo；新增生产读链 test 1/1。
 - migration 26/26；typecheck、lint、schema/partition/profile/draft、完整 `pnpm test`、
   Vite + server/worker/migrate build 全绿。
-- 所有 Testcontainer 已退出；仓内没有 raw backup、shadow packet 或真实 owner 数据。
+- 所有 Testcontainer 已退出；raw backup、shadow packet 与真实 owner 数据均未提交到版本库。
+  本轮收尾时已明确检查本 worktree 的 `.tmp/yuk-814/`，当时目录为空；后续运行产生的
+  gitignored 本地制品仍须按 runbook 单独核查与清理，不能从 git 状态推断不存在。
 
 ## 下一步
 

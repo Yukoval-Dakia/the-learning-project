@@ -42,6 +42,7 @@ export interface GroundingGateExclusion {
   key: string;
   reason:
     | 'non_reproducible_evidence'
+    | 'invalid_evidence_packet'
     | 'lifecycle_gate_after_enrichment'
     | 'evidence_image_unavailable';
   detail?: string;
@@ -124,6 +125,22 @@ function withReproducibleEvidence(cell: EnrichedEvidenceCell): EnrichedEvidenceC
   };
 }
 
+function invalidEvidencePacketDetail(cell: EnrichedEvidenceCell): string | null {
+  if (cell.samples.length === 0) return 'enrichment produced no reviewable evidence samples';
+  for (const sample of cell.samples) {
+    if (sample.question_prompt_md === null) {
+      return `attempt ${sample.attempt_event_id} is missing question_prompt_md`;
+    }
+    if (sample.cause_category === null) {
+      return `attempt ${sample.attempt_event_id} is missing an effective cause_category`;
+    }
+    if (sample.cause_source === null) {
+      return `attempt ${sample.attempt_event_id} is missing an effective cause_source`;
+    }
+  }
+  return null;
+}
+
 function asErrorDetail(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.slice(0, 500);
@@ -146,6 +163,7 @@ export async function collectGroundingGateCandidates(
   const loadedRows = await getFailureAttemptsWithReasoningTrace(db, {
     includeReviewFailures: true,
     since,
+    limit: null,
   });
   const { realRows, syntheticCount } = await filterSyntheticFailures(db, loadedRows);
   const failures: FailureAttempt[] = realRows.map((row) => row.failure);
@@ -182,6 +200,9 @@ export async function collectGroundingGateCandidates(
   let reproducibleCellCount = 0;
   for (let offset = 0; offset < rankedCells.length; offset += GROUNDING_GATE_ENRICH_BATCH_SIZE) {
     const batch = rankedCells.slice(offset, offset + GROUNDING_GATE_ENRICH_BATCH_SIZE);
+    // Enrichment DB failures are operational failures for the whole run. Silently
+    // dropping a batch would bias the sampled population, so only deterministic
+    // cell-local evidence/image defects become exclusions below.
     const enriched = await enrichEvidenceCells(db, {
       cells: batch,
       failures,
@@ -191,7 +212,16 @@ export async function collectGroundingGateCandidates(
     for (const cell of enriched) {
       const normalized = withReproducibleEvidence(cell);
       if (normalized) {
-        reproducible.push(normalized);
+        const invalidDetail = invalidEvidencePacketDetail(normalized);
+        if (invalidDetail) {
+          exclusions.push({
+            key: cell.key,
+            reason: 'invalid_evidence_packet',
+            detail: invalidDetail,
+          });
+        } else {
+          reproducible.push(normalized);
+        }
       } else {
         exclusions.push({ key: cell.key, reason: 'non_reproducible_evidence' });
       }
@@ -205,20 +235,27 @@ export async function collectGroundingGateCandidates(
         exclusions.push({ key: cell.key, reason: 'lifecycle_gate_after_enrichment' });
       }
     }
-    for (const cell of secondHistoryGate.cells) {
-      try {
+    const imageResults = await Promise.allSettled(
+      secondHistoryGate.cells.map(async (cell) => {
         const refs = collectConjectureEvidenceAssetRefs(cell);
         const evidenceImages = await loadEvidenceImages(db, refs);
+        return { cell, evidenceImages };
+      }),
+    );
+    for (const [index, result] of imageResults.entries()) {
+      const cell = secondHistoryGate.cells[index];
+      if (!cell) throw new Error(`grounding gate image result missing cell at index ${index}`);
+      if (result.status === 'fulfilled') {
         candidates.push({
           cell,
-          evidence_images: evidenceImages,
+          evidence_images: result.value.evidenceImages,
           prior_claim_md: secondHistoryGate.priorClaimMdByKey.get(cell.key) ?? null,
         });
-      } catch (error) {
+      } else {
         exclusions.push({
           key: cell.key,
           reason: 'evidence_image_unavailable',
-          detail: asErrorDetail(error),
+          detail: asErrorDetail(result.reason),
         });
       }
     }

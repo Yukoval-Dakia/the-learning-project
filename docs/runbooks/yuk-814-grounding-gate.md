@@ -24,11 +24,23 @@ Use the authenticated backup endpoint:
 ```bash
 umask 077
 mkdir -p .tmp/yuk-814
-curl -fsS \
+: "${INTERNAL_TOKEN:?INTERNAL_TOKEN is required}"
+: "${LOOM_BASE_URL:?LOOM_BASE_URL is required}"
+: "${LOOM_EXPECTED_HOST:?copy the exact production hostname from the Cloudflare Tunnel}"
+case "${LOOM_BASE_URL%/}" in
+  "https://${LOOM_EXPECTED_HOST}") ;;
+  *) echo "LOOM_BASE_URL must be the pinned HTTPS production origin" >&2; exit 2 ;;
+esac
+curl --proto '=https' --tlsv1.2 -fsS \
   -H "x-internal-token: ${INTERNAL_TOKEN}" \
   "${LOOM_BASE_URL%/}/api/_/export?include_assets=1" \
   -o .tmp/yuk-814/loom-backup.zip
 ```
+
+Set `LOOM_EXPECTED_HOST` independently from the Cloudflare Tunnel's production
+Public Hostname (hostname only, no scheme or path). The guard refuses missing
+credentials, plaintext HTTP, alternate hosts, ports, paths, or userinfo before
+`curl` can send the token.
 
 `include_assets=1` is the fidelity-preserving default. A text-only export
 (`include_assets=0`) remains usable only when enough eligible clusters have no
