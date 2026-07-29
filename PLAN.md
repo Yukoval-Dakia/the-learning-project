@@ -3,52 +3,42 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-29
-> **【更新 2026-07-29 · YUK-795 terminal confirmation review fix 待远端验收】**
-> YUK-787 已随 PR #1098 合入 main；当前把 prediction_score 接入同一 owner 的
-> conjecture identity 生存排序，并让 hard-confirm Tier-1 verdict 进入真实消费者；
-> 最新 review 已补齐真实 v2 score-free terminal projection → 首题 score 的确认折叠；
-> 定向验证已完成，下一步只走 GitHub Actions/OCR gate。
+> **【更新 2026-07-29 · YUK-820 增量 gate + unit selector shadow】**
+> PR gate 已从 docs-only 一位开关扩为 fail-closed lane planner；affected unit
+> selector 已接入 shadow，对账 full JSON 但 required unit 仍保持全量。
 
 ## NOW
 
-- **唯一 active 线：Grounding · 猜想证据 YUK-795**
-  - Branch：`codex/yuk-795-accountability-loop`；PR #1101。
-  - Worktree：
-    `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-795-accountability-loop`。
-  - 规则已钉死：score point `>0`=hit、`<0`=miss、`=0`=neutral；连续一条不改变排序；
-    连续两条 miss → 0.25×，连续两条 hit → 1.15×；hard flag 开启且 Tier-1
-    `EMERGING` → 1.25×。
-  - 聚合在同一 owner 的 `(cause_category × knowledge_id)` 身份，跨再归纳保留责任；
-    correction 后的失效 probe 不计入 streak。
-  - hard-confirm 进入同一 live reader/ranker；hard flag 仍默认 OFF，因为当前 Judge
-    尚无诚实 `target_error_match`，且 soft→hard 永远需要 owner 当刻新确认。
-  - sequence-2 不伪造 score；projection 保留独立题目 lineage，terminal confirmation
-    在依赖有效时只折回同一 conjecture 的 sequence-1 score。
-  - 纯 fold、correction-aware DB reader、nightly top-K 前排序和 flag-on/fresh-owner
-    fail-closed 路径均已有 unit/DB regression。
-- **CI 提速已并入**
-  - main 已拆 static/audits、unit、DB、migration、build、usability 并行 lanes；
-    DB reset 合批并拆为两路 shard，末端 aggregate 保留 required-check 名称并
-    fail closed。
-  - #1100 首次样本 DB shard 为 6m15s / 5m11s；5 次 median 验收仍由
-    YUK-817/818 继续收数，不在本产品线扩张。
-  - 按 owner 指示，不在本地重复跑 CI gate；只监听 GitHub Actions。
-- **YUK-787 已收口**
-  - PR #1098 于 2026-07-29 合并；GitHub CI Gate、OCR 与 CodeQL 全绿，Linear Done。
-  - 当前分支基于合并后的 `main@876a501a`。
+- **唯一 active 线：CI/perf · YUK-820**
+  - Branch：`codex/yuk-820-incremental-gate`，基于 `main@41fa2a07`。
+  - PR 的 unit-test-only / DB-test-only / UI / server 改动按 lane 选择；schema、
+    migration、kernel/core、manifest、依赖/测试配置和未知路径全量。
+  - main push 永远 full canary；base/diff/classifier 异常同样 fail closed 全量。
+  - affected unit 使用 `vitest list --changed=<merge-base>` + 源码扫描 sentinels；
+    full suite 只执行一次并用 JSON reporter 对账 missed failures / direct test misses。
+  - selector 与 comparator 均 nonblocking；原 full unit exit code 仍是 required gate。
+  - 本地 21 条 planner/shadow unit、typecheck、partition/dependency audit、workflow
+    YAML parse、定向 Biome 全绿；完整 gate 留 GitHub Actions。
+- **已收口**
+  - YUK-795 / PR #1101 已合入 `main@41fa2a07`，Linear Done。
+  - YUK-817/818/819 均已 Done；#1100 的 DB shard、unit 长尾和 JYEOO hard timeout
+    修复已在 main。
 
 ## NEXT
 
-1. 监听 PR #1101 的 GitHub Actions/OCR；不在本地重复完整 CI gate。
-2. 处理远端失败或 review；全绿后合并并将 YUK-795 对齐 Done。
+1. 提交 YUK-820 并在 GitHub 验证 planner 的 full-trigger run、shadow artifact 与
+   aggregate fail-closed；本 PR 因修改 workflow/selector 自身必然全量。
+2. 后续混合 PR 收集至少 20 份 shadow report；零漏选前不把 affected set 升为 required。
 3. 再推进 YUK-788/803：dismiss/reopen/cooldown、prior claim、soft archive/hard 不变。
 4. 通过真实 owner 数据闸门 YUK-814 后，才进入 intervention snapshot、pedagogy、
    QuestionAuthor/Verify、隔离 FSRS、结算、Brief/Copilot/profile。
 
 ## PARKED
 
-- **CI 后续调参**：只在 5 次非 docs-only GitHub timing 证明仍有必要时评估
-  usability artifact 复用、DB 4-way shard 或 fork 数；不做 path-aware 测试跳过。
+- **CI hard switch**：affected unit selector 只 shadow；至少 20 个混合 PR 零漏选，
+  且 sentinel/global-trigger 审查通过后再单独决定是否 required。
+- **CI 后续调参**：usability artifact 复用、DB weighted shard / fork 数继续以
+  GitHub timing 决定，不用删覆盖换漂亮指标。
 - **干预准备**：YUK-791/796；Planning Panel 仅为 Teaching Brief 控制区。
 - **验证结算**：YUK-792；猜想与干预使用隔离 FSRS 状态，普通 KC/FSRS 不变。
 - **协作与档案**：YUK-815 Brief/Copilot public reader；YUK-816 intervention history。
