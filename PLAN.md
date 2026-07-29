@@ -25,7 +25,9 @@
     不构成 YUK-814 真实 gate 证据。
 - **近期已收口**
   - YUK-820 已随 PR #1103 / `7dd15a8e` 落到 main：affected unit required、
-    direct-test guard 与 fail-closed fallback 已有 20 个历史 PR backfill 证据。
+    direct-test guard 与 fail-closed fallback 已有 20 个历史 PR backfill 证据；
+    PR head full Gate `30431860540` 与 main full canary `30432387630` 均全绿，
+    main artifact 的 requested/effective/required 均为 `full`。
   - YUK-788 已随 PR #1102 / `ff681b0c` 合并并 Done；identity history gate、terminal
     reopen 约束与 owner feedback 回流均有回归证据。
   - YUK-803 的 soft archive/hard 不变已在 PR #1080 / `a1fe8ab8` 落地，

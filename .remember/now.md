@@ -7,7 +7,8 @@
   `codex/yuk-814-grounding-gate`。
 - YUK-814 已是 In Progress；真实 shadow/blind/canary 仍停在 owner 数据输入闸门，
   不能用 synthetic/mock 代替。
-- YUK-820 已随 PR #1103 / `7dd15a8e` 落到 main，不再是 active lane。
+- YUK-820 已随 PR #1103 / `7dd15a8e` 落到 main，不再是 active lane；PR head
+  full Gate `30431860540` 与 main full canary `30432387630` 均全绿。
 
 ## YUK-814 已构建
 
