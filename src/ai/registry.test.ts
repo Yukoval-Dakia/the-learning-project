@@ -539,6 +539,9 @@ describe('Conjecture probe author/reviewer registry entries', () => {
     expect(p).toContain('context_kind');
     expect(p).toContain('representation_kind');
     expect(p).toContain('不能只换数字');
+    expect(p).toContain('单选题');
+    expect(p).toContain('恰好一个正确选项');
+    expect(p).toContain('化简后等价');
   });
 
   it('reviewer is independent, does not repair, and emits bounded failure codes', () => {
@@ -549,6 +552,11 @@ describe('Conjecture probe author/reviewer registry entries', () => {
     expect(p).toContain('probe_not_targeting');
     expect(p).toContain('probe_pair_not_independent');
     expect(p).toContain('reference_incorrect');
+    expect(p).toContain('先独立解题');
+    expect(p).toContain('逐项判断每个选项');
+    expect(p).toContain('零个或多个正确选项');
+    expect(p).toContain('reference 自己承认');
+    expect(p).toContain('多个选项正确');
   });
 });
 

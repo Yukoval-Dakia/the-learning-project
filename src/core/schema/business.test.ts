@@ -11,6 +11,9 @@ import {
   ConjectureProbeQualityAudit,
   LearningItemOpenStatus,
   LearningItemStatus,
+  conjectureHypothesesEqual,
+  conjectureHypothesisCoreMatches,
+  conjectureProbePackagesEqual,
   evaluateConjectureProbePackageStructure,
 } from './business';
 
@@ -351,6 +354,24 @@ describe('ConjectureDraft', () => {
         },
       }).success,
     ).toBe(false);
+  });
+
+  it('fails closed when future hypothesis or package fields are present on only one side', () => {
+    const hypothesis = valid.probe_quality.reviewed_hypothesis;
+    const { kind: _kind, evidence_event_ids: _evidenceIds, ...hypothesisCore } = hypothesis;
+    const hypothesisWithFutureField = {
+      ...hypothesis,
+      future_binding_field: 'tampered',
+    } as Parameters<typeof conjectureHypothesesEqual>[0];
+    expect(conjectureHypothesesEqual(hypothesisWithFutureField, hypothesis)).toBe(false);
+    expect(conjectureHypothesisCoreMatches(hypothesisWithFutureField, hypothesisCore)).toBe(false);
+
+    const probePackage = valid.probe_quality.reviewed_package;
+    const packageWithFutureField = {
+      ...probePackage,
+      future_binding_field: 'tampered',
+    } as Parameters<typeof conjectureProbePackagesEqual>[0];
+    expect(conjectureProbePackagesEqual(packageWithFutureField, probePackage)).toBe(false);
   });
 
   it('keeps v1 audit history readable but rejects it as a new conjecture draft', () => {

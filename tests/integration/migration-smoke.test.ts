@@ -31,6 +31,28 @@ function ensureDockerHost() {
   }
 }
 
+function orderedMigrations(): { tag: string; sql: string }[] {
+  const journal = JSON.parse(
+    readFileSync(join(process.cwd(), 'drizzle/meta/_journal.json'), 'utf8'),
+  ) as { entries: { idx: number; tag: string }[] };
+  return [...journal.entries]
+    .sort((a, b) => a.idx - b.idx)
+    .map((entry) => ({
+      tag: entry.tag,
+      sql: readFileSync(join(process.cwd(), 'drizzle', `${entry.tag}.sql`), 'utf8'),
+    }));
+}
+
+// Apply one migration file the way drizzle's migrator does: split on the
+// statement-breakpoint marker while leaving plpgsql bodies intact.
+async function applyMigrationFile(client: ReturnType<typeof postgres>, fileSql: string) {
+  for (const chunk of fileSql.split('--> statement-breakpoint')) {
+    const statement = chunk.trim();
+    if (statement.length === 0) continue;
+    await client.unsafe(statement);
+  }
+}
+
 describe('migration smoke — drizzle migrate from empty DB', () => {
   let container: StartedPostgreSqlContainer;
   let client: ReturnType<typeof postgres>;
@@ -607,29 +629,6 @@ describe('migration smoke — YUK-384 durable hub sync backfill', () => {
   let container: StartedPostgreSqlContainer;
   let oldSchemaSql: ReturnType<typeof postgres>;
 
-  function orderedMigrations(): { tag: string; sql: string }[] {
-    const journal = JSON.parse(
-      readFileSync(join(process.cwd(), 'drizzle/meta/_journal.json'), 'utf8'),
-    ) as { entries: { idx: number; tag: string }[] };
-    return [...journal.entries]
-      .sort((a, b) => a.idx - b.idx)
-      .map((entry) => ({
-        tag: entry.tag,
-        sql: readFileSync(join(process.cwd(), 'drizzle', `${entry.tag}.sql`), 'utf8'),
-      }));
-  }
-
-  // Apply one migration file the way drizzle's migrator does: split on the
-  // statement-breakpoint marker and run each top-level statement on its own
-  // (plpgsql `$$` bodies never contain the marker, so they stay intact).
-  async function applyMigrationFile(client: ReturnType<typeof postgres>, fileSql: string) {
-    for (const chunk of fileSql.split('--> statement-breakpoint')) {
-      const statement = chunk.trim();
-      if (statement.length === 0) continue;
-      await client.unsafe(statement);
-    }
-  }
-
   // Applies every migration AFTER the frozen baseline. During RED (before 0071
   // exists) this is a no-op, so the later `hub_sync_reconciliation` query fails
   // with "relation does not exist"; once 0071 lands it installs the durable
@@ -1019,32 +1018,13 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
   let container: StartedPostgreSqlContainer;
   let client: ReturnType<typeof postgres>;
 
-  function orderedMigrations(): { tag: string; sql: string }[] {
-    const journal = JSON.parse(
-      readFileSync(join(process.cwd(), 'drizzle/meta/_journal.json'), 'utf8'),
-    ) as { entries: { idx: number; tag: string }[] };
-    return [...journal.entries]
-      .sort((a, b) => a.idx - b.idx)
-      .map((entry) => ({
-        tag: entry.tag,
-        sql: readFileSync(join(process.cwd(), 'drizzle', `${entry.tag}.sql`), 'utf8'),
-      }));
-  }
-
-  async function applyMigrationFile(fileSql: string) {
-    for (const chunk of fileSql.split('--> statement-breakpoint')) {
-      const statement = chunk.trim();
-      if (statement.length > 0) await client.unsafe(statement);
-    }
-  }
-
   beforeAll(async () => {
     ensureDockerHost();
     container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     let reachedBaseline = false;
     for (const migration of orderedMigrations()) {
-      await applyMigrationFile(migration.sql);
+      await applyMigrationFile(client, migration.sql);
       if (migration.tag === BASELINE_TAG) {
         reachedBaseline = true;
         break;
@@ -1204,8 +1184,8 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
 
     const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
     if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
-    await applyMigrationFile(migration.sql);
-    await applyMigrationFile(migration.sql);
+    await applyMigrationFile(client, migration.sql);
+    await applyMigrationFile(client, migration.sql);
 
     const corrections = await client<
       {

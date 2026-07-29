@@ -412,22 +412,44 @@ export type ConjectureHypothesisCoreT = Omit<
   'kind' | 'evidence_event_ids'
 >;
 
+/**
+ * Exact comparison for JSON-shaped schema values. Object key order is ignored,
+ * array order is preserved, and fields unknown to today's schema still
+ * participate. The latter makes audit binding fail closed when a schema grows
+ * before a caller or persisted counterpart has been upgraded.
+ */
+function exactJsonValueEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') {
+    return false;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => exactJsonValueEqual(value, right[index]))
+    );
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord).sort();
+  const rightKeys = Object.keys(rightRecord).sort();
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key, index) =>
+        key === rightKeys[index] && exactJsonValueEqual(leftRecord[key], rightRecord[key]),
+    )
+  );
+}
+
 export function conjectureHypothesisCoreMatches(
   left: ConjectureHypothesisProposalDraftT,
   right: ConjectureHypothesisCoreT,
 ): boolean {
-  return (
-    left.claim_md === right.claim_md &&
-    left.knowledge_id === right.knowledge_id &&
-    left.cause_category === right.cause_category &&
-    left.recurrence_count === right.recurrence_count &&
-    left.diagnostic_spec.schema_version === right.diagnostic_spec.schema_version &&
-    left.diagnostic_spec.target_error_rule_md === right.diagnostic_spec.target_error_rule_md &&
-    left.diagnostic_spec.trigger_conditions_md === right.diagnostic_spec.trigger_conditions_md &&
-    left.diagnostic_spec.scope_boundary_md === right.diagnostic_spec.scope_boundary_md &&
-    left.diagnostic_spec.expected_wrong_answer_signature_md ===
-      right.diagnostic_spec.expected_wrong_answer_signature_md
-  );
+  const { kind: _kind, evidence_event_ids: _evidenceEventIds, ...leftCore } = left;
+  return exactJsonValueEqual(leftCore, right);
 }
 
 /** Exact identity of the frozen hypothesis supplied to probe author and reviewer. */
@@ -435,11 +457,7 @@ export function conjectureHypothesesEqual(
   left: ConjectureHypothesisProposalDraftT,
   right: ConjectureHypothesisProposalDraftT,
 ): boolean {
-  return (
-    conjectureHypothesisCoreMatches(left, right) &&
-    left.evidence_event_ids.length === right.evidence_event_ids.length &&
-    left.evidence_event_ids.every((id, index) => id === right.evidence_event_ids[index])
-  );
+  return exactJsonValueEqual(left, right);
 }
 
 export const CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH = 500;
@@ -503,24 +521,7 @@ export function conjectureProbePackagesEqual(
   left: ConjectureProbePackageT,
   right: ConjectureProbePackageT,
 ): boolean {
-  return (
-    left.predicted_p === right.predicted_p &&
-    left.primary.prompt_md === right.primary.prompt_md &&
-    left.primary.reference_md === right.primary.reference_md &&
-    left.primary.expected_target_error_answer_md ===
-      right.primary.expected_target_error_answer_md &&
-    left.primary.elicits_target_error_reason_md === right.primary.elicits_target_error_reason_md &&
-    left.primary.context_kind === right.primary.context_kind &&
-    left.primary.representation_kind === right.primary.representation_kind &&
-    left.followup.prompt_md === right.followup.prompt_md &&
-    left.followup.reference_md === right.followup.reference_md &&
-    left.followup.expected_target_error_answer_md ===
-      right.followup.expected_target_error_answer_md &&
-    left.followup.elicits_target_error_reason_md ===
-      right.followup.elicits_target_error_reason_md &&
-    left.followup.context_kind === right.followup.context_kind &&
-    left.followup.representation_kind === right.followup.representation_kind
-  );
+  return exactJsonValueEqual(left, right);
 }
 
 export const ConjectureProbeReviewFailureCode = z.enum([
@@ -711,14 +712,14 @@ export const ConjectureProbeQualityAudit = z
     }
     if (audit.schema_version === 2) {
       const finalAttempt = audit.attempts.at(-1);
-      if (finalAttempt?.author_task_run_id == null) {
+      if (!finalAttempt || finalAttempt.author_task_run_id === null) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['attempts', audit.attempts.length - 1, 'author_task_run_id'],
           message: 'a v2 passing audit requires author task-run lineage',
         });
       }
-      if (finalAttempt?.reviewer_task_run_id == null) {
+      if (!finalAttempt || finalAttempt.reviewer_task_run_id === null) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['attempts', audit.attempts.length - 1, 'reviewer_task_run_id'],

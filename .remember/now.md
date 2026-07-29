@@ -32,8 +32,9 @@
    `predicted_p`。
 3. v2 最终 passed attempt 强制非空 author/reviewer task-run id；生产链若缺 lineage，按
    operational failure 重试，不能产生可接受 audit。
-4. accept 对 v1 返回 `probe_quality_audit_unbound`，对错贴题包返回
-   `probe_quality_package_mismatch`；历史已接受记录仍先走幂等短路。
+4. accept 外层统一返回 409 `CONJECTURE_PROBE_QUALITY_REQUIRED`；v1 的
+   `probe_quality_audit_unbound`、错贴题包的 `probe_quality_package_mismatch` 等只作为
+   message 中的细分子原因；历史已接受记录仍先走幂等短路。
 5. 新迁移 `0083_yuk821_bind_probe_quality_audit`：agent-authored correction 收口 pending
    的 v1、缺 lineage、hypothesis 或题包错配记录；empty scopes、非空 ingest_at、不写
    owner dismiss。
