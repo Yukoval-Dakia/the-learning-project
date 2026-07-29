@@ -262,7 +262,7 @@ export function parseNulDelimitedPaths(output) {
 export function readGitChangedFiles(mergeBase, head = 'HEAD', root = process.cwd()) {
   const output = execFileSync(
     'git',
-    ['diff', '--name-only', '--no-renames', '-z', mergeBase, head],
+    ['diff', '--name-only', '--no-renames', '-z', mergeBase, head, '--'],
     {
       cwd: root,
       encoding: 'buffer',

@@ -119,6 +119,33 @@ describe('unit affected-test shadow', () => {
     }
   });
 
+  it('rejects option-like or non-SHA merge bases before git and Vitest', () => {
+    const repo = mkdtempSync(path.join(tmpdir(), 'unit-base-invalid-'));
+    const output = path.join(repo, 'selection.json');
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          path.resolve('scripts/ci/unit-shadow.mjs'),
+          'select',
+          '--base',
+          'refs/heads/main',
+          '--mode',
+          'affected',
+          '--output',
+          output,
+        ],
+        { cwd: repo },
+      );
+      expect(JSON.parse(readFileSync(output, 'utf8'))).toMatchObject({
+        effective_mode: 'full',
+        fallback_reason: 'base-invalid',
+      });
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it('finds directly changed unit tests omitted by an affected selector', () => {
     expect(
       findDirectChangedUnitTestMisses({

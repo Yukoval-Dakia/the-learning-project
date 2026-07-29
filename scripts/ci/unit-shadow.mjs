@@ -88,11 +88,15 @@ export function findDirectChangedUnitTestMisses({ changedFiles, predictedFiles, 
 }
 
 function readChangedFiles(base, root) {
-  const output = execFileSync('git', ['diff', '--name-only', '--no-renames', '-z', base, 'HEAD'], {
-    cwd: root,
-    encoding: 'buffer',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const output = execFileSync(
+    'git',
+    ['diff', '--name-only', '--no-renames', '-z', base, 'HEAD', '--'],
+    {
+      cwd: root,
+      encoding: 'buffer',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
   return sortedUnique(
     output
       .toString('utf8')
@@ -114,6 +118,10 @@ function fullFallbackSelection({ requestedMode, base, changedFiles, reason }) {
   };
 }
 
+function isSafeMergeBase(base) {
+  return /^[0-9a-f]{7,64}$/i.test(base);
+}
+
 function selectAffectedTests({ root, base, requestedMode, output }) {
   if (requestedMode !== 'affected') {
     const selection = fullFallbackSelection({
@@ -132,6 +140,17 @@ function selectAffectedTests({ root, base, requestedMode, output }) {
       base,
       changedFiles: [],
       reason: 'base-empty',
+    });
+    writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
+    return selection;
+  }
+
+  if (!isSafeMergeBase(base)) {
+    const selection = fullFallbackSelection({
+      requestedMode,
+      base,
+      changedFiles: [],
+      reason: 'base-invalid',
     });
     writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
     return selection;
@@ -414,7 +433,9 @@ function parseArgs(argv) {
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
     if (!arg.startsWith('--')) continue;
-    options[arg.slice(2)] = rest[index + 1];
+    const value = rest[index + 1];
+    if (value === undefined || value.startsWith('--')) continue;
+    options[arg.slice(2)] = value;
     index += 1;
   }
   return { command, options };
@@ -429,7 +450,11 @@ function runRequiredUnitTests({ root, selectionPath, resultsPath, executionPath 
   let selectionReadError;
   try {
     selection = JSON.parse(readFileSync(selectionPath, 'utf8'));
-  } catch {
+  } catch (error) {
+    console.error(
+      '[unit-shadow] selection read failed:',
+      error instanceof Error ? error.message : error,
+    );
     selectionReadError = 'selection-missing-or-invalid';
   }
 
@@ -441,10 +466,12 @@ function runRequiredUnitTests({ root, selectionPath, resultsPath, executionPath 
     'run',
     '--config',
     'vitest.unit.config.ts',
-    ...(selectedFiles ?? []),
     '--reporter=default',
     '--reporter=json',
     `--outputFile.json=${resultsPath}`,
+    // Vitest ignores file filters after a bare `--` and runs the full suite.
+    // resolveRequiredUnitFiles rejects option-like and unsafe paths before they reach argv.
+    ...(selectedFiles ?? []),
   ];
   const startedAt = Date.now();
   const result = spawnSync(process.execPath, args, { cwd: root, stdio: 'inherit' });
