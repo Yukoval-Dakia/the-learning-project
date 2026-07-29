@@ -12,8 +12,13 @@ import { dag_orchestration_node, dag_orchestration_run } from '@/db/schema';
 import { type JobDagMemberInput, buildJobDag } from '@/kernel/job-dag';
 import { reportJobYield } from '@/server/boss/job-yield';
 import { and, eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  beginTestTransaction,
+  resetDb,
+  rollbackTestTransaction,
+  testDb,
+} from '../../../tests/helpers/db';
 import { ORCHESTRATOR_QUEUE } from './constants';
 import {
   MINUTES_PER_DAY,
@@ -26,7 +31,7 @@ import {
 } from './orchestrator';
 import { finishRun, updateNodeStatus } from './store';
 
-const db = testDb();
+let db = testDb();
 const RUN_DATE = '2026-07-25';
 const NOW = new Date('2026-07-25T02:30:00+08:00');
 
@@ -263,8 +268,16 @@ async function completeMemberWithYield(
 }
 
 describe('orchestrator trigger semantics', () => {
+  beforeAll(resetDb);
+
   beforeEach(async () => {
-    await resetDb();
+    await beginTestTransaction();
+    db = testDb();
+  });
+
+  afterEach(async () => {
+    await rollbackTestTransaction();
+    db = testDb();
   });
 
   it('① start creates a run, inserts all nodes, enqueues only roots', async () => {
@@ -1425,8 +1438,16 @@ describe('YUK-781 B — cancelling in-flight jobs of an abandoned run', () => {
   const YESTERDAY = '2026-07-24';
   const LAST_NIGHT = new Date('2026-07-24T02:30:00+08:00');
 
+  beforeAll(resetDb);
+
   beforeEach(async () => {
-    await resetDb();
+    await beginTestTransaction();
+    db = testDb();
+  });
+
+  afterEach(async () => {
+    await rollbackTestTransaction();
+    db = testDb();
   });
 
   /** 起一条"昨夜"的 run（根已 enqueue、下游仍 pending），模拟 worker 中途挂掉的残留。 */

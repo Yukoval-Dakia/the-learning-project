@@ -6,8 +6,71 @@ import postgres from 'postgres';
 
 let _client: ReturnType<typeof postgres> | undefined;
 let _db: Db | undefined;
+let _transactionClient: postgres.ReservedSql | undefined;
+let _transactionDb: Db | undefined;
+let _savepointId = 0;
+
+type ScopedTransactionCallback = (client: postgres.TransactionSql) => unknown | Promise<unknown>;
+
+function installTransactionShim(reserved: postgres.ReservedSql): void {
+  const shim = reserved as unknown as {
+    begin: (
+      optionsOrCallback: string | ScopedTransactionCallback,
+      callback?: ScopedTransactionCallback,
+    ) => Promise<unknown>;
+    savepoint: (
+      nameOrCallback: string | ScopedTransactionCallback,
+      callback?: ScopedTransactionCallback,
+    ) => Promise<unknown>;
+  };
+
+  const withSavepoint = async (callback: ScopedTransactionCallback): Promise<unknown> => {
+    const name = `vitest_test_tx_${++_savepointId}`;
+    await reserved.unsafe(`SAVEPOINT "${name}"`);
+    try {
+      const result = await callback(reserved as unknown as postgres.TransactionSql);
+      await reserved.unsafe(`RELEASE SAVEPOINT "${name}"`);
+      return result;
+    } catch (error) {
+      // Preserve the application error if savepoint cleanup itself fails. The
+      // outer afterEach ROLLBACK remains the authoritative cleanup and will
+      // surface a broken/lost connection separately.
+      await reserved
+        .unsafe(`ROLLBACK TO SAVEPOINT "${name}"`)
+        .then(() => reserved.unsafe(`RELEASE SAVEPOINT "${name}"`))
+        .catch((cleanupError) => {
+          console.error('Test transaction savepoint cleanup failed', cleanupError);
+        });
+      throw error;
+    }
+  };
+
+  const resolveCallback = (
+    first: string | ScopedTransactionCallback,
+    second?: ScopedTransactionCallback,
+  ): ScopedTransactionCallback => {
+    const callback = typeof first === 'function' ? first : second;
+    if (!callback) throw new Error('Test transaction callback is required');
+    return callback;
+  };
+
+  // A Drizzle db built directly on a ReservedSql sees a top-level session and
+  // calls client.begin() for db.transaction(). The reserved runtime client does
+  // not expose begin/savepoint, so map both to savepoints inside the test's
+  // already-open outer transaction.
+  shim.begin = (first, second) => {
+    if (typeof first === 'string') {
+      return Promise.reject(
+        new Error('Test transaction savepoints do not support postgres-js begin options'),
+      );
+    }
+    return withSavepoint(resolveCallback(first, second));
+  };
+  shim.savepoint = (first, second) => withSavepoint(resolveCallback(first, second));
+}
 
 export function testDb(): Db {
+  if (_transactionDb) return _transactionDb;
   if (_db) return _db;
   const url = process.env.TEST_DATABASE_URL;
   if (!url) throw new Error('TEST_DATABASE_URL not set — globalSetup did not run');
@@ -16,7 +79,67 @@ export function testDb(): Db {
   return _db;
 }
 
-// Truncate all known tables, used in beforeEach for hermetic tests.
+/**
+ * Opt-in fast isolation for DB tests whose queries all flow through testDb().
+ *
+ * Do not use this for tests that need committed state to be visible from another
+ * connection (routes importing the production db singleton, pg-boss, advisory
+ * locks, raw postgres clients, or explicit concurrency tests). Those tests must
+ * keep resetDb() isolation. PostgreSQL sequences are non-transactional, so tests
+ * that assert RESTART IDENTITY values must also keep resetDb().
+ */
+export async function beginTestTransaction(): Promise<void> {
+  if (_transactionClient) {
+    throw new Error('A test transaction is already active in this Vitest worker');
+  }
+
+  // Initialize the shared pool before reserving one of its physical connections.
+  testDb();
+  const client = _client;
+  if (!client) throw new Error('Test database pool was not initialized');
+  const reserved = await client.reserve();
+
+  try {
+    await reserved.unsafe('BEGIN');
+    // postgres-js' ReservedSql runtime object omits `options` even though its
+    // public type extends Sql. Drizzle reads parser/serializer options while
+    // constructing the session, so expose the owning pool's options here. Each
+    // reserve() call creates a fresh Sql(handler) wrapper, so these wrapper
+    // properties do not survive release() or mutate the physical pool connection.
+    reserved.options = client.options;
+    installTransactionShim(reserved);
+    const transactionDb = drizzle(reserved, { schema }) as unknown as Db;
+    _transactionClient = reserved;
+    _transactionDb = transactionDb;
+  } catch (error) {
+    try {
+      await reserved.unsafe('ROLLBACK').catch((rollbackError) => {
+        console.error('beginTestTransaction: cleanup ROLLBACK failed', rollbackError);
+      });
+    } finally {
+      reserved.release();
+    }
+    throw error;
+  }
+}
+
+export async function rollbackTestTransaction(): Promise<void> {
+  const reserved = _transactionClient;
+  if (!reserved) return;
+
+  // Clear the routing pointers before releasing the connection so a cleanup
+  // failure cannot leave later tests bound to a released client.
+  _transactionClient = undefined;
+  _transactionDb = undefined;
+
+  try {
+    await reserved.unsafe('ROLLBACK');
+  } finally {
+    reserved.release();
+  }
+}
+
+// Truncate all known tables, used for full-reset hermetic isolation.
 // CASCADE handles FK dependencies; whitelist of identifiers (not user input).
 // Phase 1c.1 Step 9.J: mistake / review_event / dreaming_proposal /
 // ingestion_session DROPped — removed from this list. Step 1.4: judgment +
@@ -111,6 +234,9 @@ const ALL_TABLES = [
 ] as const;
 
 export async function resetDb() {
+  if (_transactionClient) {
+    throw new Error('resetDb() cannot run inside an active test transaction');
+  }
   const db = testDb();
   // One statement preserves the same whitelist + RESTART IDENTITY semantics while
   // avoiding one network round-trip (and one cascade-NOTICE burst) per table. Every
