@@ -7,7 +7,8 @@
   `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-821-probe-quality`
 ；branch `codex/yuk-821-probe-quality`。
 - PR **#1110**：`https://github.com/Yukoval-Dakia/the-learning-project/pull/1110`；
-  exact head 将以本 handoff 更新后的 commit 为准。
+  pre-merge head `5e8a800f` 的 GitHub CI Gate `30456960741` 全绿；已合入最新
+  `origin/main`，merge head 尚需新的 exact CI。
 - owner 主工作树已有既存未提交改动；本轮没有修改主工作树。
 - Owner 决策：质量评测只 mock 输入，输出必须来自真实生产链/真实模型；真实 owner
   数据只控制扩大使用，不阻塞开发。
@@ -49,6 +50,13 @@
   stop condition 停止。没有用 Mimo fallback 或空输出来伪造 pass。
 - YUK-821 在 canonical 8 簇真实输出满足 grounding ≥80%、mismatch=0、
   severe factual error=0 前保持 In Progress。
+- PR 两条 review threads 已回复并 resolve，当前 unresolved=0。
+
+## 合入 main 的并行事实
+
+- YUK-820 DB affected selector 已在 main：真实 failed-head 回放 20/20 捕获；当前
+  YUK-821 因修改 migration 按设计走 full DB，不能用来验收 affected wall-clock。
+- YUK-820 仍等待下一条普通 server/API PR 的 live timing；不是本 session active lane。
 
 ## P1 明确未实施
 
@@ -61,7 +69,7 @@
 
 ## 下一步
 
-1. 提交并推送两条 review finding 的修复，回复并 resolve 对应 threads。
-2. 只监听 PR #1110 最新 exact head 的 GitHub Actions `CI Gate`。
+1. 完成 origin/main merge commit 并推送。
+2. 只监听 PR #1110 merge head 的 GitHub Actions `CI Gate`。
 3. CI 与 review 全绿后合并 P0，但保持 YUK-821 In Progress。
 4. canonical Opus 配额恢复后重跑固定 8 簇；只有输出门通过才关闭 YUK-821。

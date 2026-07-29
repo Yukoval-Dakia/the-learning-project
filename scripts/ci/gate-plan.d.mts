@@ -6,6 +6,7 @@ export interface GatePlan {
   changed_files: string[];
   lanes: Record<GateLane, boolean>;
   unit_selection: 'skip' | 'affected' | 'full';
+  db_selection: 'skip' | 'affected' | 'full';
   reasons: string[];
 }
 

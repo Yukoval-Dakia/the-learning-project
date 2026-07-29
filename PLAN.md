@@ -39,9 +39,10 @@
 
 ## NEXT
 
-1. PR #1110 已创建；两条 review finding 已在本分支修复，推送后只监听 GitHub Actions
-   的 CI Gate 并关闭对应 review threads，不在本地重跑全 gate。
-2. CI/评审通过后合并 P0；再用固定 mock evidence packets 跑 canonical Opus real-output
+1. PR #1110 两条 review finding 已修复并清零；pre-merge head `5e8a800f` 的远端
+   CI Gate `30456960741` 全绿。已合入最新 `origin/main` 解决 PLAN/handoff 冲突，
+   merge head 必须再跑 exact GitHub CI Gate，不在本地跑全 gate。
+2. merge head CI 全绿后合并 P0；再用固定 mock evidence packets 跑 canonical Opus real-output
    质量评测。YUK-821 在 8 簇输出门通过前保持 In Progress，输出不合格就继续改模型合同，
    不伪造 pass。
 3. 真实 owner shadow/blind/canary 留作扩大 auto-intervention 的发布证据，不阻塞后续功能实现。
@@ -57,10 +58,12 @@
   “必须先有真实 owner 数据”整体阻塞，但仍须按 mesh 依赖顺序推进。
 - **CI selector drift**：main full canary 或 direct-test guard 发现漏选即回退 full required；
   以 GitHub timing/coverage 为证据，不在本机猜测。
+- **YUK-820 live timing**：DB affected selector 已随 main 合并并完成 20/20 failed-head
+  回放；仍等待下一条不触及 schema/migration/CI 自身的普通 server/API PR 验收 wall-clock。
 
 ## BLOCKED-ON
 
-- **本次 P0 代码：无产品数据 blocker**；只剩 GitHub CI Gate 与 review。
+- **本次 P0 代码：无产品数据 blocker**；review 已清零，只剩 merge head 的 GitHub CI Gate。
 - **canonical Opus 输出质量结论**：2026-07-29 20:47 实测被 429 weekly limit 阻断；
   配额故障只记 operational，不能用 Mimo fallback 的结果冒充 canonical pass。
 - **auto-intervention 扩大使用**：仍需真实 owner/cohort shadow/blind/canary 证据；这是发布

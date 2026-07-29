@@ -12,6 +12,7 @@ describe('CI gate lane planner', () => {
     ).toMatchObject({
       code_changed: false,
       unit_selection: 'skip',
+      db_selection: 'skip',
       lanes: {
         static: false,
         unit: false,
@@ -75,6 +76,7 @@ describe('CI gate lane planner', () => {
     expect(classifyChangedFiles(['src/capabilities/practice/api/submit.db.test.ts'])).toMatchObject(
       {
         unit_selection: 'skip',
+        db_selection: 'affected',
         lanes: {
           static: true,
           unit: false,
@@ -158,6 +160,7 @@ describe('CI gate lane planner', () => {
   it('runs server validation lanes but not migration smoke for an API implementation', () => {
     expect(classifyChangedFiles(['src/capabilities/practice/api/submit.ts'])).toMatchObject({
       unit_selection: 'affected',
+      db_selection: 'affected',
       lanes: {
         static: true,
         unit: true,
@@ -180,12 +183,14 @@ describe('CI gate lane planner', () => {
   ])('fails closed to every lane for global trigger %s', (file) => {
     const plan = classifyChangedFiles([file]);
     expect(plan.unit_selection).toBe('full');
+    expect(plan.db_selection).toBe('full');
     expect(Object.values(plan.lanes).every(Boolean)).toBe(true);
   });
 
   it('fails closed for an unclassified code path', () => {
     const plan = classifyChangedFiles(['postman/api-endpoints.json']);
     expect(plan.unit_selection).toBe('full');
+    expect(plan.db_selection).toBe('full');
     expect(Object.values(plan.lanes).every(Boolean)).toBe(true);
     expect(plan.reasons).toContain('unclassified:postman/api-endpoints.json');
   });
@@ -200,6 +205,7 @@ describe('CI gate lane planner', () => {
   it('fails closed when the caller cannot establish a trustworthy diff', () => {
     const plan = classifyChangedFiles([], { forceFullReason: 'base-unreachable' });
     expect(plan.unit_selection).toBe('full');
+    expect(plan.db_selection).toBe('full');
     expect(Object.values(plan.lanes).every(Boolean)).toBe(true);
     expect(plan.reasons).toContain('base-unreachable');
   });
