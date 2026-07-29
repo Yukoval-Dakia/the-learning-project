@@ -381,13 +381,15 @@ export const ConjectureAbstainReason = z.enum([
 ]);
 export type ConjectureAbstainReasonT = z.infer<typeof ConjectureAbstainReason>;
 
-export const ConjectureDiagnosticSpec = z.object({
-  schema_version: z.literal(1),
-  target_error_rule_md: z.string().trim().min(1).max(1000),
-  trigger_conditions_md: z.string().trim().min(1).max(1000),
-  scope_boundary_md: z.string().trim().min(1).max(1000),
-  expected_wrong_answer_signature_md: z.string().trim().min(1).max(1000),
-});
+export const ConjectureDiagnosticSpec = z
+  .object({
+    schema_version: z.literal(1),
+    target_error_rule_md: z.string().trim().min(1).max(1000),
+    trigger_conditions_md: z.string().trim().min(1).max(1000),
+    scope_boundary_md: z.string().trim().min(1).max(1000),
+    expected_wrong_answer_signature_md: z.string().trim().min(1).max(1000),
+  })
+  .strict();
 export type ConjectureDiagnosticSpecT = z.infer<typeof ConjectureDiagnosticSpec>;
 
 const ConjectureHypothesisFields = {
@@ -401,10 +403,12 @@ const ConjectureHypothesisFields = {
 } as const;
 
 /** One self-consistency sample. It deliberately contains no probe fields. */
-export const ConjectureHypothesisProposalDraft = z.object({
-  kind: z.literal('proposal'),
-  ...ConjectureHypothesisFields,
-});
+export const ConjectureHypothesisProposalDraft = z
+  .object({
+    kind: z.literal('proposal'),
+    ...ConjectureHypothesisFields,
+  })
+  .strict();
 export type ConjectureHypothesisProposalDraftT = z.infer<typeof ConjectureHypothesisProposalDraft>;
 
 export type ConjectureHypothesisCoreT = Omit<
@@ -499,21 +503,25 @@ export const ConjectureProbeRepresentationKind = z.enum([
   'other',
 ]);
 
-export const ConjectureProbeSpec = z.object({
-  prompt_md: z.string().trim().min(1).max(1000),
-  reference_md: z.string().trim().min(1).max(2000),
-  expected_target_error_answer_md: z.string().trim().min(1).max(2000),
-  elicits_target_error_reason_md: z.string().trim().min(1).max(1000),
-  context_kind: ConjectureProbeContextKind,
-  representation_kind: ConjectureProbeRepresentationKind,
-});
+export const ConjectureProbeSpec = z
+  .object({
+    prompt_md: z.string().trim().min(1).max(1000),
+    reference_md: z.string().trim().min(1).max(2000),
+    expected_target_error_answer_md: z.string().trim().min(1).max(2000),
+    elicits_target_error_reason_md: z.string().trim().min(1).max(1000),
+    context_kind: ConjectureProbeContextKind,
+    representation_kind: ConjectureProbeRepresentationKind,
+  })
+  .strict();
 export type ConjectureProbeSpecT = z.infer<typeof ConjectureProbeSpec>;
 
-export const ConjectureProbePackage = z.object({
-  primary: ConjectureProbeSpec,
-  followup: ConjectureProbeSpec,
-  predicted_p: z.number().min(0).max(1),
-});
+export const ConjectureProbePackage = z
+  .object({
+    primary: ConjectureProbeSpec,
+    followup: ConjectureProbeSpec,
+    predicted_p: z.number().min(0).max(1),
+  })
+  .strict();
 export type ConjectureProbePackageT = z.infer<typeof ConjectureProbePackage>;
 
 /** Exact identity of the package that the independent reviewer saw. */
@@ -590,6 +598,7 @@ export const ConjectureProbeReview = z
     failure_codes: z.array(ConjectureProbeReviewFailureCode).max(5),
     explanation_md: z.string().trim().min(1).max(1000),
   })
+  .strict()
   .superRefine((review, ctx) => {
     const uniqueCodes = new Set(review.failure_codes);
     if (uniqueCodes.size !== review.failure_codes.length) {
@@ -638,26 +647,34 @@ function uniqueProbeFailureCodes<T extends z.ZodTypeAny>(code: T, max: number) {
  * outage from being persisted as a semantic quality vote (and vice versa).
  */
 export const ConjectureProbeQualityAttempt = z.discriminatedUnion('outcome', [
-  z.object({
-    ...ConjectureProbeQualityAttemptBase,
-    outcome: z.literal('structure_failed'),
-    failure_codes: uniqueProbeFailureCodes(ConjectureProbeStructureFailureCode, 2),
-  }),
-  z.object({
-    ...ConjectureProbeQualityAttemptBase,
-    outcome: z.literal('review_failed'),
-    failure_codes: uniqueProbeFailureCodes(ConjectureProbeReviewFailureCode, 5),
-  }),
-  z.object({
-    ...ConjectureProbeQualityAttemptBase,
-    outcome: z.literal('operational_failed'),
-    failure_codes: uniqueProbeFailureCodes(ConjectureProbeOperationalFailureCode, 2),
-  }),
-  z.object({
-    ...ConjectureProbeQualityAttemptBase,
-    outcome: z.literal('passed'),
-    failure_codes: z.array(z.never()).max(0),
-  }),
+  z
+    .object({
+      ...ConjectureProbeQualityAttemptBase,
+      outcome: z.literal('structure_failed'),
+      failure_codes: uniqueProbeFailureCodes(ConjectureProbeStructureFailureCode, 2),
+    })
+    .strict(),
+  z
+    .object({
+      ...ConjectureProbeQualityAttemptBase,
+      outcome: z.literal('review_failed'),
+      failure_codes: uniqueProbeFailureCodes(ConjectureProbeReviewFailureCode, 5),
+    })
+    .strict(),
+  z
+    .object({
+      ...ConjectureProbeQualityAttemptBase,
+      outcome: z.literal('operational_failed'),
+      failure_codes: uniqueProbeFailureCodes(ConjectureProbeOperationalFailureCode, 2),
+    })
+    .strict(),
+  z
+    .object({
+      ...ConjectureProbeQualityAttemptBase,
+      outcome: z.literal('passed'),
+      failure_codes: z.array(z.never()).max(0),
+    })
+    .strict(),
 ]);
 export type ConjectureProbeQualityAttemptT = z.infer<typeof ConjectureProbeQualityAttempt>;
 
@@ -679,12 +696,14 @@ export const ConjectureProbeQualityAudit = z
       schema_version: z.literal(1),
       ...ConjectureProbeQualityAuditFields,
     }),
-    z.object({
-      schema_version: z.literal(2),
-      ...ConjectureProbeQualityAuditFields,
-      reviewed_hypothesis: ConjectureHypothesisProposalDraft,
-      reviewed_package: ConjectureProbePackage,
-    }),
+    z
+      .object({
+        schema_version: z.literal(2),
+        ...ConjectureProbeQualityAuditFields,
+        reviewed_hypothesis: ConjectureHypothesisProposalDraft,
+        reviewed_package: ConjectureProbePackage,
+      })
+      .strict(),
   ])
   .superRefine((audit, ctx) => {
     audit.attempts.forEach((attempt, index) => {

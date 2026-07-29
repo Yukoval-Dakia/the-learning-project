@@ -436,6 +436,36 @@ describe('ConjectureDraft', () => {
     ).toBe(false);
   });
 
+  it('rejects unknown fields inside v2 bound snapshots instead of stripping them', () => {
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        probe_quality: {
+          ...valid.probe_quality,
+          reviewed_hypothesis: {
+            ...valid.probe_quality.reviewed_hypothesis,
+            future_hypothesis_field: 'must fail closed',
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        probe_quality: {
+          ...valid.probe_quality,
+          reviewed_package: {
+            ...valid.probe_quality.reviewed_package,
+            primary: {
+              ...valid.probe_quality.reviewed_package.primary,
+              future_probe_field: 'must fail closed',
+            },
+          },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it('structurally rejects non-independent pairs and target-error answers equal to gold', () => {
     const probePackage = ConjectureProbePackage.parse({
       primary: valid.probe_spec,
