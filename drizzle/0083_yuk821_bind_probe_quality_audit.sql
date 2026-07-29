@@ -44,6 +44,9 @@ SELECT
   GREATEST(now(), proposal."created_at" + interval '1 microsecond'),
   GREATEST(now(), proposal."created_at" + interval '1 microsecond')
 FROM "event" AS proposal
+CROSS JOIN LATERAL (
+  SELECT proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,attempts}' AS attempts
+) AS audit
 WHERE proposal."action" = 'experimental:proposal'
   AND proposal."subject_kind" = 'mind_model'
   AND proposal."payload" #>> '{ai_proposal,kind}' = 'conjecture'
@@ -117,16 +120,96 @@ WHERE proposal."action" = 'experimental:proposal'
       = proposal."payload" #> '{ai_proposal,proposed_change,followup_probe_spec}'
     AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_package,predicted_p}'
       = proposal."payload" #> '{ai_proposal,proposed_change,predicted_p}'
-    AND jsonb_path_exists(
-      proposal."payload",
-      '$.ai_proposal.proposed_change.probe_quality.attempts[last] ? (
-        @.outcome == "passed"
-        && @.author_task_run_id.type() == "string"
-        && @.author_task_run_id != ""
-        && @.reviewer_task_run_id.type() == "string"
-        && @.reviewer_task_run_id != ""
-      )'
+    AND CASE
+      WHEN jsonb_typeof(audit.attempts) = 'array'
+        THEN jsonb_array_length(audit.attempts) BETWEEN 1 AND 2
+      ELSE false
+    END
+    AND NOT EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(
+        CASE
+          WHEN jsonb_typeof(audit.attempts) = 'array' THEN audit.attempts
+          ELSE '[]'::jsonb
+        END
+      ) WITH ORDINALITY AS attempt(entry, ordinality)
+      WHERE jsonb_typeof(attempt.entry) <> 'object'
+        OR attempt.entry -> 'attempt' <> to_jsonb(attempt.ordinality)
+        OR jsonb_typeof(attempt.entry -> 'explanation_md') <> 'string'
+        OR char_length(btrim(attempt.entry ->> 'explanation_md')) NOT BETWEEN 1 AND 1000
+        OR NOT CASE jsonb_typeof(attempt.entry -> 'author_task_run_id')
+          WHEN 'null' THEN true
+          WHEN 'string' THEN char_length(btrim(attempt.entry ->> 'author_task_run_id')) >= 1
+          ELSE false
+        END
+        OR NOT CASE jsonb_typeof(attempt.entry -> 'reviewer_task_run_id')
+          WHEN 'null' THEN true
+          WHEN 'string' THEN char_length(btrim(attempt.entry ->> 'reviewer_task_run_id')) >= 1
+          ELSE false
+        END
+        OR NOT CASE
+          WHEN jsonb_typeof(attempt.entry -> 'failure_codes') = 'array' THEN
+            CASE attempt.entry ->> 'outcome'
+              WHEN 'passed' THEN jsonb_array_length(attempt.entry -> 'failure_codes') = 0
+              WHEN 'structure_failed' THEN
+                jsonb_array_length(attempt.entry -> 'failure_codes') BETWEEN 1 AND 2
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements_text(attempt.entry -> 'failure_codes') AS code(value)
+                  WHERE code.value NOT IN (
+                    'probe_pair_not_independent',
+                    'target_error_answer_not_distinct'
+                  )
+                )
+                AND jsonb_array_length(attempt.entry -> 'failure_codes') = (
+                  SELECT count(DISTINCT code.value)
+                  FROM jsonb_array_elements_text(attempt.entry -> 'failure_codes') AS code(value)
+                )
+              WHEN 'review_failed' THEN
+                jsonb_array_length(attempt.entry -> 'failure_codes') BETWEEN 1 AND 5
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements_text(attempt.entry -> 'failure_codes') AS code(value)
+                  WHERE code.value NOT IN (
+                    'claim_scope_expansion',
+                    'probe_not_targeting',
+                    'probe_pair_not_independent',
+                    'reference_incorrect',
+                    'target_error_answer_not_distinct'
+                  )
+                )
+                AND jsonb_array_length(attempt.entry -> 'failure_codes') = (
+                  SELECT count(DISTINCT code.value)
+                  FROM jsonb_array_elements_text(attempt.entry -> 'failure_codes') AS code(value)
+                )
+              WHEN 'operational_failed' THEN
+                jsonb_array_length(attempt.entry -> 'failure_codes') BETWEEN 1 AND 2
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements_text(attempt.entry -> 'failure_codes') AS code(value)
+                  WHERE code.value NOT IN (
+                    'author_output_invalid',
+                    'review_output_invalid',
+                    'author_operational_failure',
+                    'review_operational_failure'
+                  )
+                )
+                AND jsonb_array_length(attempt.entry -> 'failure_codes') = (
+                  SELECT count(DISTINCT code.value)
+                  FROM jsonb_array_elements_text(attempt.entry -> 'failure_codes') AS code(value)
+                )
+              ELSE false
+            END
+          ELSE false
+        END
+        OR (
+          attempt.ordinality < jsonb_array_length(audit.attempts)
+          AND attempt.entry ->> 'outcome' = 'passed'
+        )
     )
+    AND audit.attempts -> -1 ->> 'outcome' = 'passed'
+    AND char_length(btrim(audit.attempts -> -1 ->> 'author_task_run_id')) >= 1
+    AND char_length(btrim(audit.attempts -> -1 ->> 'reviewer_task_run_id')) >= 1
   ), false)
   -- Only active pending rows are retired. Decided or already-terminal rows keep
   -- their historical meaning and stay readable through the v1 schema.

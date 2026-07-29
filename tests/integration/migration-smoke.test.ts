@@ -1172,6 +1172,94 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         final_review: { verdict: 'pass' },
       },
     });
+    await seedProposal('audit_v2_attempt_two_only', {
+      ...v2Change,
+      probe_quality: {
+        ...v2Change.probe_quality,
+        attempts: [{ ...v2Change.probe_quality.attempts[0], attempt: 2 }],
+      },
+    });
+    await seedProposal('audit_v2_attempt_three_entries', {
+      ...v2Change,
+      probe_quality: {
+        ...v2Change.probe_quality,
+        attempts: [
+          {
+            ...v2Change.probe_quality.attempts[0],
+            outcome: 'review_failed',
+            failure_codes: ['probe_not_targeting'],
+          },
+          {
+            ...v2Change.probe_quality.attempts[0],
+            attempt: 2,
+            outcome: 'operational_failed',
+            failure_codes: ['author_output_invalid'],
+            reviewer_task_run_id: null,
+          },
+          { ...v2Change.probe_quality.attempts[0], attempt: 3 },
+        ],
+      },
+    });
+    await seedProposal('audit_v2_attempt_early_pass', {
+      ...v2Change,
+      probe_quality: {
+        ...v2Change.probe_quality,
+        attempts: [
+          v2Change.probe_quality.attempts[0],
+          { ...v2Change.probe_quality.attempts[0], attempt: 2 },
+        ],
+      },
+    });
+    await seedProposal('audit_v2_attempt_nonempty_pass_codes', {
+      ...v2Change,
+      probe_quality: {
+        ...v2Change.probe_quality,
+        attempts: [
+          {
+            ...v2Change.probe_quality.attempts[0],
+            failure_codes: ['probe_not_targeting'],
+          },
+        ],
+      },
+    });
+    await seedProposal('audit_v2_attempt_whitespace_lineage', {
+      ...v2Change,
+      probe_quality: {
+        ...v2Change.probe_quality,
+        attempts: [
+          {
+            ...v2Change.probe_quality.attempts[0],
+            author_task_run_id: '   ',
+          },
+        ],
+      },
+    });
+    await seedProposal('audit_v2_attempt_bad_code', {
+      ...v2Change,
+      probe_quality: {
+        ...v2Change.probe_quality,
+        attempts: [
+          {
+            ...v2Change.probe_quality.attempts[0],
+            outcome: 'review_failed',
+            failure_codes: ['author_output_invalid'],
+          },
+          { ...v2Change.probe_quality.attempts[0], attempt: 2 },
+        ],
+      },
+    });
+    await seedProposal('audit_v2_attempt_blank_explanation', {
+      ...v2Change,
+      probe_quality: {
+        ...v2Change.probe_quality,
+        attempts: [
+          {
+            ...v2Change.probe_quality.attempts[0],
+            explanation_md: ' ',
+          },
+        ],
+      },
+    });
     await seedProposal('audit_v2_hypothesis_mismatch', {
       ...v2Change,
       probe_quality: {
@@ -1240,6 +1328,55 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
     expect(corrections).toEqual([
       {
         subject_id: 'audit_v1_pending',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'audit_v2_attempt_bad_code',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'audit_v2_attempt_blank_explanation',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'audit_v2_attempt_early_pass',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'audit_v2_attempt_nonempty_pass_codes',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'audit_v2_attempt_three_entries',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'audit_v2_attempt_two_only',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'audit_v2_attempt_whitespace_lineage',
         actor_kind: 'agent',
         actor_ref: 'yuk821_audit_binding_migration',
         affected_scopes: [],
@@ -1317,6 +1454,13 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         AND payload ->> 'rating' = 'dismiss'
         AND caused_by_event_id IN (
           'audit_v1_pending',
+          'audit_v2_attempt_bad_code',
+          'audit_v2_attempt_blank_explanation',
+          'audit_v2_attempt_early_pass',
+          'audit_v2_attempt_nonempty_pass_codes',
+          'audit_v2_attempt_three_entries',
+          'audit_v2_attempt_two_only',
+          'audit_v2_attempt_whitespace_lineage',
           'audit_v2_hypothesis_mismatch',
           'audit_v2_incomplete_final_review',
           'audit_v2_mismatch',

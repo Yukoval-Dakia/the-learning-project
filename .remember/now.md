@@ -3,8 +3,7 @@
 ## Active line
 
 - 唯一 active lane：**YUK-821 P0 严格收口**，PR #1114。
-- worktree：
-  `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-821-probe-quality`
+- 隔离 worktree：`yuk-821-probe-quality`（仓库外同级目录）。
 - branch：`codex/yuk-821-p0-audit-bind`。
 - owner 主工作树有既存未提交改动；本轮未修改主工作树。
 - Owner 决策：只 mock 输入，输出必须来自真实模型/生产任务链；真实 owner 数据只控制
@@ -67,14 +66,15 @@
 - migration：0083 case 1 passed / 27 skipped。
 - `pnpm typecheck`、changed-file Biome、`git diff --check` 通过。
 - OCR 三个 review threads（strict null、完整结构比较）已修复并回复/resolve。
-- exact head `1a9df7c6` GitHub CI Gate 与 OCR 已全绿。
+- 后续 exact head `dbccfb48` GitHub CI Gate 与 OCR 已全绿。
 - 后续 review 抓到 0083 漏校验 outer `probe_md`/reference 与 nested spec 一致，会留下
-  永久 409 pending 卡片；已补四种 mismatch migration 回归。另记录 evidence order
-  invariant，并复用同一 audit attempts copy。最终新 head 仍需 GitHub CI。
+  永久 409 pending 卡片；已补四种 mismatch migration 回归。再一轮 review 抓到
+  incomplete final review / attempt ledger 仍可能留下永久 409；当前同批补齐完整
+  ledger 形状、顺序、failure-code vocabulary、trimmed lineage 与反例回归。
 
 ## 下一步
 
-1. 提交/推送最终 review batch，回复并 resolve 4 个新 review threads。
+1. 提交/推送最终 audit-ledger review batch，回复并 resolve 新 review threads。
 2. 监听新 exact-head GitHub CI Gate；全绿后 squash merge PR #1114。
 3. YUK-821 Done、YUK-814 记录 7/8 mock-input 开发 gate；YUK-827 保持 backlog。
 4. 按 mesh 选择下一条 ready issue，进入下一阶段开发。

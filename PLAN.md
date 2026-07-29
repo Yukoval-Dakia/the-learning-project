@@ -25,12 +25,13 @@
     已捕获为 **YUK-827**，不阻塞已达成的净改善 gate，也不冒充绝对 5/5。
 - **开发/发布闸门**
   - 本地只跑变更相关 unit/DB/migration/typecheck/Biome；完整 gate 只监听 GitHub CI Gate。
-  - PR #1114 exact head `1a9df7c6` CI/OCR 全绿；最终 review 又抓到 0083 漏校验 outer
-    probe text 的永久 409 风险，当前同批补迁移、四种 mismatch 回归与两条 minor。
+  - PR #1114 后续 exact head `dbccfb48` CI/OCR 全绿；最新 review 又抓到 0083 对
+    final review / attempt ledger 校验不完整的永久 409 风险，当前同批补完整 ledger
+    约束、反例回归与审计可读性修正。
 
 ## NEXT
 
-1. 提交最终 review batch，回复/清零 4 个 review threads，监听新的 exact-head CI。
+1. 提交最终 audit-ledger review batch，回复/清零 review threads，监听新的 exact-head CI。
 2. CI 全绿后 squash merge PR #1114；更新 YUK-821 为 Done，并把 7/8 结果同步 YUK-814。
 3. 按 mesh 依赖选择下一条 ready phase issue，进入下一阶段开发；YUK-827 保持独立 backlog。
 
