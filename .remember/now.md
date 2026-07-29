@@ -7,8 +7,8 @@
   `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-821-probe-quality`
 ；branch `codex/yuk-821-probe-quality`。
 - PR **#1110**：`https://github.com/Yukoval-Dakia/the-learning-project/pull/1110`；
-  merge head `a0fd6428` 的 GitHub CI Gate `30458027007` 全绿；随后新一轮 review
-  findings 已在工作树修复，尚需提交、推送并跑新的 exact CI。
+  exact-head `2d754dc5` 的 GitHub CI Gate `30460326628` 全绿；随后两条新 review
+  findings 已在工作树修复，尚需提交、推送、同步 main 并跑新的 exact CI。
 - owner 主工作树已有既存未提交改动；本轮没有修改主工作树。
 - Owner 决策：质量评测只 mock 输入，输出必须来自真实生产链/真实模型；真实 owner
   数据只控制扩大使用，不阻塞开发。
@@ -34,6 +34,11 @@
    不写 owner `rate(dismiss)`，避免污染接受/拒绝偏好信号。
 10. Director 质量门要求每个 evidence ref 都能从会议快照完整物化成文本失败
     attempt/review；缺题目快照、图片/图形或其它事件类型均失败关闭。
+11. Director 从 Knowledge public port 按 KC 解析 SubjectProfile，并把同一 profile 传给
+    probe Author/Reviewer；不再用 general prompt 审核数学/语文探针。
+12. Director MCP 在 probe outage 时先返回合法软失败，再由 orchestrator 在写 scan 前
+    重新抛出；nightly 看到 `claim + no scan` 后允许 pg-boss 同日重试，不把 provider
+    故障误记成质量失败或完成。
 
 ## 验证与未决验收
 
@@ -56,6 +61,9 @@
 - 新一轮增量验证：unit 5 files / 171 passed；DB 1 file / 23 passed；typecheck 与 changed-file
   Biome 通过。一次误用无 config 的 `vitest` 导致 4 个 alias import suite 启动失败，
   随后用 `vitest.unit.config.ts` 正确重跑并全绿；这不是代码失败。
+- exact-head `2d754dc5` 的 GitHub CI Gate `30460326628` 全绿。其后两条 review 修复的
+  增量验证：director-tools unit 42 passed，director DB 19 passed；typecheck、changed-file
+  Biome 与 diff check 通过。
 
 ## 合入 main 的并行事实
 
@@ -74,7 +82,8 @@
 
 ## 下一步
 
-1. 提交并推送新 review 修复，逐条回复并 resolve threads。
-2. 只监听 PR #1110 新 exact head 的 GitHub Actions `CI Gate`。
+1. 提交并推送两条新 review 修复，逐条回复并 resolve threads。
+2. 合并最新 main 解决 PR conflict，再只监听 PR #1110 新 exact head 的 GitHub Actions
+   `CI Gate`。
 3. CI 与 review 全绿后合并 P0，但保持 YUK-821 In Progress。
 4. canonical Opus 配额恢复后重跑固定 8 簇；只有输出门通过才关闭 YUK-821。

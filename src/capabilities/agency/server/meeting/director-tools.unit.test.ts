@@ -10,6 +10,7 @@ import { activeEffectiveTruth } from '@/capabilities/practice/server/effective-t
 import type { FailureAttempt } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Capture the registered tool handlers via a mocked SDK (same shape as evidence-mcp.db.test).
@@ -139,6 +140,7 @@ interface Harness {
   proposals: WriteAiProposalInput[];
   notes: WriteAgentNoteInput[];
   caps: ReturnType<typeof createDirectorCaps>;
+  director: ReturnType<typeof buildDirectorServer>;
 }
 
 function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
@@ -147,7 +149,7 @@ function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
   const proposals: WriteAiProposalInput[] = [];
   const notes: WriteAgentNoteInput[] = [];
   const caps = createDirectorCaps();
-  buildDirectorServer({
+  const director = buildDirectorServer({
     db: {} as never,
     now: NOW,
     meetingContext: meetingContext(),
@@ -170,6 +172,7 @@ function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
     },
     getMasteryProjectionFn: async () => new Map<string, MasteryProjection>(),
     evidenceRefsExistFn: async () => true,
+    resolveSubjectProfileForKnowledgeIdsFn: async () => resolveSubjectProfile('general'),
     runTaskFn: async (kind) => {
       if (kind === 'ConjectureProbeAuthorTask') {
         return {
@@ -215,7 +218,7 @@ function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
     },
     ...opts,
   });
-  return { proposals, notes, caps };
+  return { proposals, notes, caps, director };
 }
 
 beforeEach(() => {
@@ -569,10 +572,14 @@ describe('propose_conjecture — server-enforced single writer', () => {
   it('passes every cited text failure to both quality tasks', async () => {
     const seenEvidenceRefs: string[][] = [];
     const seenFailures: FailureAttempt[][] = [];
-    const runTaskFn = vi.fn(async (kind: string, input: { text: string }) => {
+    const seenSubjectIds: string[] = [];
+    const runTaskFn = vi.fn(async (kind: string, input: { text: string }, ctx: unknown) => {
       const payload = JSON.parse(input.text) as {
         evidence: { failure_attempts: FailureAttempt[] };
       };
+      seenSubjectIds.push(
+        (ctx as { subjectProfile?: { id?: string } }).subjectProfile?.id ?? 'missing',
+      );
       seenFailures.push(payload.evidence.failure_attempts);
       seenEvidenceRefs.push(
         payload.evidence.failure_attempts.map((failure) => failure.attempt_event_id),
@@ -623,6 +630,10 @@ describe('propose_conjecture — server-enforced single writer', () => {
     const h = build({
       failureAttempts: [poisoned, failureAttempt('att_2')],
       runTaskFn: runTaskFn as BuildDirectorServerOpts['runTaskFn'],
+      resolveSubjectProfileForKnowledgeIdsFn: async (_db, knowledgeIds) => {
+        expect(knowledgeIds).toEqual(['k_a']);
+        return resolveSubjectProfile('math');
+      },
     });
 
     const res = await callTool('propose_conjecture', validProposeArgs());
@@ -632,6 +643,7 @@ describe('propose_conjecture — server-enforced single writer', () => {
       ['att_1', 'att_2'],
       ['att_1', 'att_2'],
     ]);
+    expect(seenSubjectIds).toEqual(['math', 'math']);
     for (const failures of seenFailures) {
       expect(failures[0].answer_md).toMatch(
         /^<untrusted_learner_text>x{2000}<\/untrusted_learner_text>$/,
@@ -641,6 +653,24 @@ describe('propose_conjecture — server-enforced single writer', () => {
       );
     }
     expect(h.proposals).toHaveLength(1);
+  });
+
+  it('records probe quality outages for the outer worker retry path', async () => {
+    const h = build({
+      runTaskFn: vi.fn(async () => {
+        throw new Error('provider unavailable');
+      }),
+    });
+
+    const res = await callTool('propose_conjecture', validProposeArgs());
+
+    expect(res).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('operational failure'),
+    });
+    expect(h.proposals).toHaveLength(0);
+    expect(h.caps.proposeCount).toBe(0);
+    expect(h.director.readRetryableProbeError()?.message).toContain('probe author failed twice');
   });
 
   it('soft-rejects when a surviving evidence_ref does not resolve to a real event', async () => {

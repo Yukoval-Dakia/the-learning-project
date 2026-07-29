@@ -17,23 +17,26 @@
 //      (claim already exists) and concurrent redeliver (nonce mismatch) both skip.
 //
 //      ORPHANED-CLAIM RECOVERY (§2 review fix, MAJOR): a claim can exist WITHOUT the run
-//      ever completing — specifically when the director's PRE-LLM reads throw
-//      (director.ts never even reaches the LLM call, let alone a scan-event write) and
-//      pg-boss retries. Without recovery, that day's claim would be permanently "won" by
-//      a run that never actually did anything, silently masking a real failure as
+//      ever completing — specifically when the director's PRE-LLM reads throw OR its
+//      probe Author/Review quality gate has an operational outage. The latter may have
+//      spent model calls, but deliberately exits before a scan because an outage is not
+//      evidence against probe quality. pg-boss then retries. Without recovery, that
+//      day's claim would be permanently "won" by
+//      a run that never produced a valid completion, silently masking a real failure as
 //      `skipped: true` for the rest of the night. Recovery: the director ALWAYS writes a
 //      scan event on completion (success OR degraded — director.ts, its own try/catch
 //      around that write is best-effort but still attempted). So when today's claim
 //      exists, we ADDITIONALLY check whether a scan event for today also exists:
-//        - claim exists + NO scan  → the prior attempt died before ever reaching the
-//          director's own event writes (a genuine PRE-LLM segment failure — zero spend
-//          so far) → this run is allowed to retry.
+//        - claim exists + NO scan  → the prior attempt hit a retryable pre-scan failure
+//          (PRE-LLM DB fault or probe-quality operational outage) → this run is allowed
+//          to retry.
 //        - claim exists + scan exists → the normal complete-prior-run case → still skips.
 //      Interaction with director.ts's §3 post-LLM best-effort persistence: if the scan
 //      event write ITSELF fails (after the LLM already ran), the SAME "claim + no scan"
 //      signal fires on the next invocation — that retry DOES re-spend tokens once (an
-//      accepted, logged trade-off; see director.ts's degrade comment), unlike the
-//      PRE-LLM-throw case above, which is a true zero-spend retry.
+//      accepted, logged trade-off; see director.ts's degrade comment). A probe outage
+//      can likewise re-spend its failed Author/Review calls; only the PRE-LLM-throw case
+//      above is a true zero-spend retry.
 //
 //      RESIDUAL RACE (round-3 review OCR MINOR, evaluated + accepted, not engineered
 //      away): the orphan-recovery branch above has NO nonce-race protection of its own
@@ -97,7 +100,7 @@ type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
 type ReadEventByIdFn = (db: Db, id: string) => Promise<{ payload: unknown } | null>;
 /** §2 review fix: existence check for TODAY's scan event — distinguishes a completed
  *  prior run (claim + scan both exist → skip) from an orphaned claim (claim exists, no
- *  scan → a prior PRE-LLM segment failure; safe to retry). */
+ *  scan → a retryable pre-scan failure; safe to retry). */
 type HasScanEventForDayFn = (db: Db, dayKey: string) => Promise<boolean>;
 type RunDirectorFn = (db: Db, deps: DirectorDeps) => Promise<ResearchMeetingDirectorResult>;
 
@@ -152,8 +155,8 @@ interface ClaimResult {
  * director this invocation — either because it is the FIRST writer whose claim persists
  * (first-write-wins via writeEvent's onConflictDoNothing, covering the concurrent
  * redeliver window where both insert but only one nonce sticks), or because today's claim
- * already existed but is ORPHANED (no scan event yet — §2 review fix, a prior PRE-LLM
- * segment failure with zero spend so far, safe to retry). The normal sequential-retry
+ * already existed but is ORPHANED (no scan event yet — §2 review fix, a prior
+ * retryable pre-scan failure, safe to retry). The normal sequential-retry
  * case (claim exists AND a scan event already landed) returns `won: false`.
  */
 async function claimDay(

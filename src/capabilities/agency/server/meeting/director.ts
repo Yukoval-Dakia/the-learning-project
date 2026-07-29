@@ -14,10 +14,15 @@
 // model call remains attributed once. Settlement single-home: this NEVER calls reconcile /
 // writes FSRS.
 //
-// Degrade (red line): a runAgentTask throw (maxTurns / 300s abort / SDK error) is caught
-// and turned into a PARTIAL scan event + a degraded result — it is NOT rethrown, so the
-// nightly job returns cleanly (already-landed proposals are kept; the dayKey claim, held
-// by the job, blocks any re-spend). POST-LLM persistence (persistToolTrace + the
+// Degrade (red line): a generic runAgentTask throw (maxTurns / 300s abort / SDK error)
+// is caught and turned into a PARTIAL scan event + a degraded result — it is NOT
+// rethrown, so the nightly job returns cleanly (already-landed proposals are kept; the
+// dayKey claim, held by the job, blocks any re-spend). One deliberate exception is a
+// probe Author/Review operational failure: the tool handler returns a well-formed soft
+// failure to the model, records the outage in its closure, and this orchestrator
+// rethrows it BEFORE writing a scan. The nightly claim+no-scan rule then lets pg-boss
+// retry instead of misclassifying an outage as a quality rejection. POST-LLM persistence
+// (persistToolTrace + the
 // scout_spawned / scan event writes) is ALSO best-effort — wrapped in its own try/catch,
 // logged, and swallowed (§3 review fix): a throw there must not propagate either, since by
 // that point the LLM has already run and a pg-boss retry driven by a rethrow would
@@ -26,8 +31,9 @@
 // scan-existence check (research_meeting_agent_nightly.ts §2 fix) treats "claim exists,
 // no scan" as an orphaned mid-run failure and allows ONE retry on the next invocation —
 // that retry DOES re-spend tokens (unlike the zero-spend PRE-LLM-throw retry case), which
-// is an accepted degrade rather than a silent black hole. Only the PRE-LLM DB reads can
-// throw a genuine, zero-spend retryable fault out of this function.
+// is an accepted degrade rather than a silent black hole. PRE-LLM DB reads are the
+// zero-spend retryable path; probe quality outages are the deliberate, possibly-spent
+// retryable path because provider failure must never count as a quality vote.
 
 import { tasks } from '@/ai/registry';
 import {
@@ -149,6 +155,9 @@ type ListPendingConjecturesFn = (db: Db) => Promise<ProposalInboxRow[]>;
 type PersistToolTraceFn = typeof persistToolTrace;
 type WriteAiProposalFn = NonNullable<BuildDirectorServerOpts['writeAiProposalFn']>;
 type WriteAgentNoteFn = NonNullable<BuildDirectorServerOpts['writeAgentNoteFn']>;
+type ResolveSubjectProfileForKnowledgeIdsFn = NonNullable<
+  BuildDirectorServerOpts['resolveSubjectProfileForKnowledgeIdsFn']
+>;
 
 export interface DirectorDeps {
   now?: () => Date;
@@ -163,6 +172,7 @@ export interface DirectorDeps {
   persistToolTraceFn?: PersistToolTraceFn;
   writeAiProposalFn?: WriteAiProposalFn;
   writeAgentNoteFn?: WriteAgentNoteFn;
+  resolveSubjectProfileForKnowledgeIdsFn?: ResolveSubjectProfileForKnowledgeIdsFn;
 }
 
 /** Excerpt cap for a pending conjecture's claim in the agenda snapshot. */
@@ -310,6 +320,7 @@ export async function runResearchMeetingDirector(
     failureAttempts: failures,
     loadConjectureHistoryFn,
     runTaskFn,
+    resolveSubjectProfileForKnowledgeIdsFn: deps.resolveSubjectProfileForKnowledgeIdsFn,
   });
   const scout = buildEvidenceScoutAgentDefinition({ prompt: EVIDENCE_SCOUT_CHARTER });
 
@@ -417,6 +428,14 @@ export async function runResearchMeetingDirector(
     degraded = true;
     degradeError = err instanceof Error ? err.message : String(err);
     console.error('[research_meeting_agent director] degraded', err);
+  }
+
+  // The inner MCP handler must return a normal tool result to keep the agent protocol
+  // valid, but an Author/Review outage is not a quality vote. Escape before the scan
+  // write so the nightly job observes claim+no-scan and pg-boss can retry the real gate.
+  const retryableProbeError = director.readRetryableProbeError();
+  if (retryableProbeError) {
+    throw retryableProbeError;
   }
 
   const proposalsCreated = director.readProposalIds().length;

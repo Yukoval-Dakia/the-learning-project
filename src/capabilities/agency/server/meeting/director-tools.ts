@@ -31,6 +31,7 @@ import type {
   writeAgentNote as WriteAgentNoteReal,
 } from '@/capabilities/agency/server/notes';
 import { writeAgentNote } from '@/capabilities/agency/server/notes';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import {
   ConjectureDiagnosticSpec,
   ConjectureHypothesisProposalDraft,
@@ -270,6 +271,7 @@ export interface BuildDirectorServerOpts {
   getMasteryProjectionFn?: GetMasteryProjectionFn;
   evidenceRefsExistFn?: EvidenceRefsExistFn;
   runTaskFn?: TaskTextRunFn;
+  resolveSubjectProfileForKnowledgeIdsFn?: typeof resolveSubjectProfileForKnowledgeIds;
   /** Same failure-attempt snapshot as the deterministic lane, read once at meeting
    * start. Only conjecture history is re-read fresh by the write handler below. */
   failureAttempts: FailureAttempt[];
@@ -282,6 +284,11 @@ export interface DirectorServer {
   server: SdkMcpServer;
   readProposalIds(): string[];
   readNoteIds(): string[];
+  /**
+   * Probe Author/Review outages are returned to the model as well-formed soft tool
+   * results, then rethrown by the outer orchestrator so the worker can retry.
+   */
+  readRetryableProbeError(): Error | null;
 }
 
 // ── Tool arg shapes (the LLM-fillable fields ONLY — server fills baseline_p /
@@ -383,9 +390,12 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
   const evidenceRefsExistFn = opts.evidenceRefsExistFn ?? evidenceRefsExist;
   const runTaskFn = opts.runTaskFn ?? makeRunTaskFn(db);
   const loadConjectureHistoryFn = opts.loadConjectureHistoryFn ?? loadConjectureHistory;
+  const resolveSubjectProfileForKnowledgeIdsFn =
+    opts.resolveSubjectProfileForKnowledgeIdsFn ?? resolveSubjectProfileForKnowledgeIds;
 
   const proposalIds: string[] = [];
   const noteIds: string[] = [];
+  let retryableProbeError: Error | null = null;
   // Same-run dedup: a cause×KC proposed this run is added so the director can't re-raise
   // the same cell inside one meeting (§5.2). Seeded empty; the pending base is checked
   // via knownConjectureKeys.
@@ -658,6 +668,9 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
 
           let probeQuality: PrepareConjectureProbePairResult;
           try {
+            const subjectProfile = await resolveSubjectProfileForKnowledgeIdsFn(db, [
+              a.knowledge_id,
+            ]);
             probeQuality = await prepareConjectureProbePair({
               hypothesis: hypothesisCheck.data,
               evidencePayload: {
@@ -669,11 +682,16 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
               // "verified text-only evidence", never silently dropped visual evidence.
               evidenceImages: [],
               runTaskFn,
+              subjectProfile,
             });
           } catch (err) {
             releaseReservation();
             const taskKind =
               err instanceof ConjectureProbeQualityOperationalError ? err.taskKind : 'unknown';
+            retryableProbeError =
+              err instanceof Error
+                ? err
+                : new Error(`probe quality gate operational failure: ${String(err)}`);
             console.error('[director-tools] conjecture probe quality gate failed', err);
             return textResult({
               ok: false,
@@ -859,5 +877,6 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
     server,
     readProposalIds: () => proposalIds,
     readNoteIds: () => noteIds,
+    readRetryableProbeError: () => retryableProbeError,
   };
 }

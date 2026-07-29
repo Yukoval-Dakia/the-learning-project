@@ -13,6 +13,7 @@ import type { WriteEventInput } from '@/kernel/events';
 import type { FailureAttempt } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import { writeAiProposal } from '@/server/proposals/writer';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -171,6 +172,7 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
     getMasteryProjectionFn: vi.fn(
       async () => new Map<string, MasteryProjection>([[KC, projection(0.42)]]),
     ),
+    resolveSubjectProfileForKnowledgeIdsFn: vi.fn(async () => resolveSubjectProfile('math')),
     runAgentTaskFn: proposeOnceRunner(),
     runTaskFn: vi.fn(async (kind: string) => {
       if (kind === 'ConjectureProbeAuthorTask') {
@@ -848,6 +850,46 @@ describe('runResearchMeetingDirector — pipeline', () => {
 });
 
 describe('runResearchMeetingAgentNightly — dayKey claim idempotency (real DB)', () => {
+  it('retries the same-day claim after a probe quality operational outage', async () => {
+    const outageRunner = vi.fn(async () => {
+      await callTool('propose_conjecture', validProposeArgs);
+      return {
+        task_run_id: 'director_probe_outage',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.01,
+      };
+    });
+    const outageProbe = vi.fn(async () => {
+      throw new Error('provider unavailable');
+    });
+
+    await expect(
+      runResearchMeetingAgentNightly(
+        testDb(),
+        baseDeps({ runAgentTaskFn: outageRunner, runTaskFn: outageProbe }),
+      ),
+    ).rejects.toThrow('probe author failed twice');
+
+    const scansAfterOutage = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, SCAN_ACTION));
+    expect(scansAfterOutage).toHaveLength(0);
+    expect(await conjectureProposalRows(RESEARCH_MEETING_AGENT_ACTOR)).toHaveLength(0);
+
+    const retried = await runResearchMeetingAgentNightly(testDb(), baseDeps());
+    expect(retried.skipped).toBe(false);
+    expect(retried.director?.proposals_created).toBe(1);
+
+    const scansAfterRetry = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, SCAN_ACTION));
+    expect(scansAfterRetry).toHaveLength(1);
+  });
+
   it('runs the director once; a same-day retry skips (no re-spend, no duplicate proposal)', async () => {
     const first = await runResearchMeetingAgentNightly(testDb(), baseDeps());
     expect(first.skipped).toBe(false);
