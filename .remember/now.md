@@ -29,8 +29,9 @@
    重试，不能形成可接受 audit。
 4. accept 外层统一 409 `CONJECTURE_PROBE_QUALITY_REQUIRED`；
    `probe_quality_audit_unbound`、`probe_quality_package_mismatch` 等只在 message 里细分。
-5. 0083 migration 用 agent-authored correction 退出 pending 的 v1、缺 lineage、hypothesis
-   或题包错配；empty scopes、非空 ingest_at、不伪造 owner dismiss。
+5. 0083 migration 在 v2 producer 启动前，用 agent-authored correction 退出迁移快照内
+   全部 pre-binding pending conjecture；app/worker 依赖 migrate 成功后才启动。这样不在
+   SQL 中复制整套 Zod，也不会留下“SQL 放过、运行时永远 409”的死卡片。
 6. typed API 已生成；P1 subject deterministic validators 未实现。
 
 ## 固定 8-case 首轮新版本结果
@@ -67,14 +68,13 @@
 - `pnpm typecheck`、changed-file Biome、`git diff --check` 通过。
 - OCR 三个 review threads（strict null、完整结构比较）已修复并回复/resolve。
 - 后续 exact head `dbccfb48` GitHub CI Gate 与 OCR 已全绿。
-- 后续 review 抓到 0083 漏校验 outer `probe_md`/reference 与 nested spec 一致，会留下
-  永久 409 pending 卡片；已补四种 mismatch migration 回归。再一轮 review 抓到
-  incomplete final review / attempt ledger 仍可能留下永久 409；当前同批补齐完整
-  ledger 形状、顺序、failure-code vocabulary、trimmed lineage 与反例回归。
+- 多轮 review 证明“在 SQL 里手写一份 Zod 子集”会持续出现三值逻辑、类型、范围和
+  新字段漂移。最终改为部署序保证的完整 pre-binding cutover：迁移只识别 pending
+  lifecycle，不再猜 packet 是否“看起来有效”；迁移后由运行时 Zod 单一裁决。
 
 ## 下一步
 
-1. 提交/推送最终 audit-ledger review batch，回复并 resolve 新 review threads。
+1. 提交/推送最终 pre-binding cutover batch，回复并 resolve 新 review threads。
 2. 监听新 exact-head GitHub CI Gate；全绿后 squash merge PR #1114。
 3. YUK-821 Done、YUK-814 记录 7/8 mock-input 开发 gate；YUK-827 保持 backlog。
 4. 按 mesh 选择下一条 ready issue，进入下一阶段开发。

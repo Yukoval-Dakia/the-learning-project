@@ -1,14 +1,16 @@
--- YUK-821 P0 closeout: retire still-pending conjectures whose passing review is
--- not bound to the exact frozen hypothesis + persisted probe package or lacks
--- durable task-run lineage.
+-- YUK-821 P0 cutover: retire every conjecture proposal that is still pending
+-- before the audit-bound v2 producer can start.
 --
--- 0082 retired incomplete pre-v3 packets, but its v1 audit predicate could not
--- prove which hypothesis/package the reviewer actually saw. A v2 audit carries
--- immutable reviewed_hypothesis + reviewed_package snapshots and requires author +
--- reviewer task-run ids on the passing attempt. New accepts fail closed on the same
--- contract.
+-- This migration ships in the same image that first produces probe_quality v2.
+-- Production starts the one-shot migrate container before app and worker
+-- (docker-compose.yml depends_on migrate: service_completed_successfully), so a
+-- proposal visible to this statement cannot have been produced by the new v2
+-- runtime. Trying to recognize a "valid enough" packet here would duplicate the
+-- Zod contract in SQL and inevitably leave malformed rows stranded behind a 409.
+-- The safe cutover is therefore to retire the complete pre-binding pending set;
+-- after migrate succeeds, runtime Zod is the single authoritative v2 gate.
 --
--- Keep the upgrade correction agent-authored and already ingested. It is artifact
+-- Keep the correction agent-authored and already ingested. This is artifact
 -- retirement, not an owner rejection or learner-memory signal.
 INSERT INTO "event" (
   "id",
@@ -34,7 +36,7 @@ SELECT
   'success',
   jsonb_build_object(
     'correction_kind', 'retract',
-    'reason_md', 'Conjecture retired: probe-quality review is not bound to its persisted package.',
+    'reason_md', 'Conjecture retired at the YUK-821 audit-binding cutover; regenerate under v2.',
     'affected_refs', jsonb_build_array(
       jsonb_build_object('kind', 'open_inquiry', 'id', proposal."id")
     )
@@ -44,195 +46,18 @@ SELECT
   GREATEST(now(), proposal."created_at" + interval '1 microsecond'),
   GREATEST(now(), proposal."created_at" + interval '1 microsecond')
 FROM "event" AS proposal
-CROSS JOIN LATERAL (
-  SELECT proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,attempts}' AS attempts
-) AS audit
 WHERE proposal."action" = 'experimental:proposal'
   AND proposal."subject_kind" = 'mind_model'
   AND proposal."payload" #>> '{ai_proposal,kind}' = 'conjecture'
-  AND NOT COALESCE((
-    jsonb_typeof(proposal."payload" #> '{ai_proposal,proposed_change,diagnostic_spec}') = 'object'
-    AND jsonb_typeof(proposal."payload" #> '{ai_proposal,proposed_change,probe_spec}') = 'object'
-    AND jsonb_typeof(proposal."payload" #> '{ai_proposal,proposed_change,followup_probe_spec}') = 'object'
-    AND jsonb_typeof(proposal."payload" #> '{ai_proposal,proposed_change,probe_quality}') = 'object'
-    AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,schema_version}' = '2'::jsonb
-    AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,passed}' = 'true'::jsonb
-    AND jsonb_typeof(
-      proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,final_review}'
-    ) = 'object'
-    AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,final_review,verdict}' = 'pass'
-    AND CASE
-      WHEN jsonb_typeof(
-        proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,final_review,failure_codes}'
-      ) = 'array'
-        THEN jsonb_array_length(
-          proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,final_review,failure_codes}'
-        ) = 0
-      ELSE false
-    END
-    AND jsonb_typeof(
-      proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,final_review,explanation_md}'
-    ) = 'string'
-    AND char_length(
-      btrim(
-        proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,final_review,explanation_md}'
-      )
-    ) BETWEEN 1 AND 1000
-    AND proposal."payload" #> '{ai_proposal,proposed_change,discriminating}' = 'true'::jsonb
-    AND CASE
-      WHEN jsonb_typeof(
-        proposal."payload" #> '{ai_proposal,proposed_change,predicted_p}'
-      ) = 'number'
-        THEN (
-          proposal."payload" #>> '{ai_proposal,proposed_change,predicted_p}'
-        )::numeric BETWEEN 0 AND 1
-      ELSE false
-    END
-    AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,kind}'
-      = 'proposal'
-    AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,claim_md}'
-      = proposal."payload" #>> '{ai_proposal,proposed_change,claim_md}'
-    AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,knowledge_id}'
-      = proposal."payload" #>> '{ai_proposal,proposed_change,knowledge_id}'
-    AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,cause_category}'
-      = proposal."payload" #>> '{ai_proposal,proposed_change,cause_category}'
-    AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,recurrence_count}'
-      = proposal."payload" #> '{ai_proposal,proposed_change,recurrence_count}'
-    AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,diagnostic_spec}'
-      = proposal."payload" #> '{ai_proposal,proposed_change,diagnostic_spec}'
-    -- Ordering invariant: reviewed_hypothesis.evidence_event_ids and
-    -- evidence_refs[kind=event].id both preserve the first-seen order from the
-    -- same deduplicated draft.evidence_event_ids array.
-    AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,evidence_event_ids}'
-      = COALESCE(
-        CASE
-          WHEN jsonb_typeof(proposal."payload" #> '{ai_proposal,evidence_refs}') = 'array'
-            THEN (
-              SELECT jsonb_agg(evidence.ref -> 'id' ORDER BY evidence.ordinality)
-              FROM jsonb_array_elements(proposal."payload" #> '{ai_proposal,evidence_refs}')
-                WITH ORDINALITY AS evidence(ref, ordinality)
-              WHERE evidence.ref ->> 'kind' = 'event'
-            )
-          ELSE '[]'::jsonb
-        END,
-        '[]'::jsonb
-      )
-    AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_md}'
-      = proposal."payload" #>> '{ai_proposal,proposed_change,probe_spec,prompt_md}'
-    AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_reference_md}'
-      = proposal."payload" #>> '{ai_proposal,proposed_change,probe_spec,reference_md}'
-    AND proposal."payload" #>> '{ai_proposal,proposed_change,followup_probe_md}'
-      = proposal."payload" #>> '{ai_proposal,proposed_change,followup_probe_spec,prompt_md}'
-    AND proposal."payload" #>> '{ai_proposal,proposed_change,followup_probe_reference_md}'
-      = proposal."payload" #>> '{ai_proposal,proposed_change,followup_probe_spec,reference_md}'
-    AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_package,primary}'
-      = proposal."payload" #> '{ai_proposal,proposed_change,probe_spec}'
-    AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_package,followup}'
-      = proposal."payload" #> '{ai_proposal,proposed_change,followup_probe_spec}'
-    AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_package,predicted_p}'
-      = proposal."payload" #> '{ai_proposal,proposed_change,predicted_p}'
-    AND CASE
-      WHEN jsonb_typeof(audit.attempts) = 'array'
-        THEN jsonb_array_length(audit.attempts) BETWEEN 1 AND 2
-      ELSE false
-    END
-    AND NOT EXISTS (
-      SELECT 1
-      FROM jsonb_array_elements(
-        CASE
-          WHEN jsonb_typeof(audit.attempts) = 'array' THEN audit.attempts
-          ELSE '[]'::jsonb
-        END
-      ) WITH ORDINALITY AS attempt(entry, ordinality)
-      WHERE jsonb_typeof(attempt.entry) <> 'object'
-        OR attempt.entry -> 'attempt' IS DISTINCT FROM to_jsonb(attempt.ordinality)
-        OR COALESCE(jsonb_typeof(attempt.entry -> 'explanation_md'), '') <> 'string'
-        OR COALESCE(
-          char_length(btrim(attempt.entry ->> 'explanation_md')),
-          0
-        ) NOT BETWEEN 1 AND 1000
-        OR NOT CASE jsonb_typeof(attempt.entry -> 'author_task_run_id')
-          WHEN 'null' THEN true
-          WHEN 'string' THEN char_length(btrim(attempt.entry ->> 'author_task_run_id')) >= 1
-          ELSE false
-        END
-        OR NOT CASE jsonb_typeof(attempt.entry -> 'reviewer_task_run_id')
-          WHEN 'null' THEN true
-          WHEN 'string' THEN char_length(btrim(attempt.entry ->> 'reviewer_task_run_id')) >= 1
-          ELSE false
-        END
-        OR NOT CASE
-          WHEN jsonb_typeof(attempt.entry -> 'failure_codes') = 'array' THEN
-            CASE attempt.entry ->> 'outcome'
-              WHEN 'passed' THEN jsonb_array_length(attempt.entry -> 'failure_codes') = 0
-              WHEN 'structure_failed' THEN
-                jsonb_array_length(attempt.entry -> 'failure_codes') BETWEEN 1 AND 2
-                AND NOT EXISTS (
-                  SELECT 1
-                  FROM jsonb_array_elements_text(attempt.entry -> 'failure_codes') AS code(value)
-                  WHERE code.value NOT IN (
-                    'probe_pair_not_independent',
-                    'target_error_answer_not_distinct'
-                  )
-                )
-                AND jsonb_array_length(attempt.entry -> 'failure_codes') = (
-                  SELECT count(DISTINCT code.value)
-                  FROM jsonb_array_elements_text(attempt.entry -> 'failure_codes') AS code(value)
-                )
-              WHEN 'review_failed' THEN
-                jsonb_array_length(attempt.entry -> 'failure_codes') BETWEEN 1 AND 5
-                AND NOT EXISTS (
-                  SELECT 1
-                  FROM jsonb_array_elements_text(attempt.entry -> 'failure_codes') AS code(value)
-                  WHERE code.value NOT IN (
-                    'claim_scope_expansion',
-                    'probe_not_targeting',
-                    'probe_pair_not_independent',
-                    'reference_incorrect',
-                    'target_error_answer_not_distinct'
-                  )
-                )
-                AND jsonb_array_length(attempt.entry -> 'failure_codes') = (
-                  SELECT count(DISTINCT code.value)
-                  FROM jsonb_array_elements_text(attempt.entry -> 'failure_codes') AS code(value)
-                )
-              WHEN 'operational_failed' THEN
-                jsonb_array_length(attempt.entry -> 'failure_codes') BETWEEN 1 AND 2
-                AND NOT EXISTS (
-                  SELECT 1
-                  FROM jsonb_array_elements_text(attempt.entry -> 'failure_codes') AS code(value)
-                  WHERE code.value NOT IN (
-                    'author_output_invalid',
-                    'review_output_invalid',
-                    'author_operational_failure',
-                    'review_operational_failure'
-                  )
-                )
-                AND jsonb_array_length(attempt.entry -> 'failure_codes') = (
-                  SELECT count(DISTINCT code.value)
-                  FROM jsonb_array_elements_text(attempt.entry -> 'failure_codes') AS code(value)
-                )
-              ELSE false
-            END
-          ELSE false
-        END
-        OR (
-          attempt.ordinality < jsonb_array_length(audit.attempts)
-          AND attempt.entry ->> 'outcome' = 'passed'
-        )
-    )
-    AND audit.attempts -> -1 ->> 'outcome' = 'passed'
-    AND char_length(btrim(audit.attempts -> -1 ->> 'author_task_run_id')) >= 1
-    AND char_length(btrim(audit.attempts -> -1 ->> 'reviewer_task_run_id')) >= 1
-  ), false)
-  -- Only active pending rows are retired. Decided or already-terminal rows keep
-  -- their historical meaning and stay readable through the v1 schema.
+  -- Decided rows retain their historical meaning.
   AND NOT EXISTS (
     SELECT 1
     FROM "event" AS decision
     WHERE decision."caused_by_event_id" = proposal."id"
       AND decision."action" = 'rate'
   )
+  -- A latest terminal correction is already out of the pending set. A missing
+  -- correction or latest restore remains active and is retired by this cutover.
   AND COALESCE(
     (
       SELECT correction."payload" ->> 'correction_kind'

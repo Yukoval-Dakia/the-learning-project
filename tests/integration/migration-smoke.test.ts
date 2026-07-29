@@ -1038,87 +1038,13 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
     await container?.stop();
   });
 
-  it('retires only pending unbound or lineage-incomplete audits and is idempotent', async () => {
-    const primary = {
-      prompt_md: 'primary',
-      reference_md: 'primary reference',
-      expected_target_error_answer_md: 'primary target error',
-      elicits_target_error_reason_md: 'elicits the target error',
-      context_kind: 'abstract',
-      representation_kind: 'symbolic',
-    };
-    const followup = {
-      prompt_md: 'follow-up',
-      reference_md: 'follow-up reference',
-      expected_target_error_answer_md: 'follow-up target error',
-      elicits_target_error_reason_md: 'retests the target error independently',
-      context_kind: 'applied',
-      representation_kind: 'natural_language',
-    };
-    const diagnostic = {
-      schema_version: 1,
-      target_error_rule_md: 'applies the wrong rule',
-      trigger_conditions_md: 'the target concept is required',
-      scope_boundary_md: 'does not generalize beyond this concept',
-      expected_wrong_answer_signature_md: 'answer follows the wrong rule',
-    };
-    const v2Change = {
-      claim_md: 'you apply the wrong rule',
-      knowledge_id: 'k_test',
-      cause_category: 'concept_confusion',
-      recurrence_count: 2,
-      probe_md: primary.prompt_md,
-      probe_reference_md: primary.reference_md,
-      followup_probe_md: followup.prompt_md,
-      followup_probe_reference_md: followup.reference_md,
-      diagnostic_spec: diagnostic,
-      probe_spec: primary,
-      followup_probe_spec: followup,
-      probe_quality: {
-        schema_version: 2,
-        passed: true,
-        attempts: [
-          {
-            attempt: 1,
-            outcome: 'passed',
-            failure_codes: [],
-            explanation_md: 'verified',
-            author_task_run_id: 'author_run',
-            reviewer_task_run_id: 'review_run',
-          },
-        ],
-        final_review: {
-          verdict: 'pass',
-          failure_codes: [],
-          explanation_md: 'the independently reviewed pair is valid',
-        },
-        reviewed_hypothesis: {
-          kind: 'proposal',
-          claim_md: 'you apply the wrong rule',
-          knowledge_id: 'k_test',
-          evidence_event_ids: ['attempt_1', 'attempt_2'],
-          diagnostic_spec: diagnostic,
-          cause_category: 'concept_confusion',
-          recurrence_count: 2,
-        },
-        reviewed_package: { primary, followup, predicted_p: 0.3 },
-      },
-      discriminating: true,
-      predicted_p: 0.3,
-    };
-    const seedProposal = async (
-      id: string,
-      proposedChange: Record<string, JSONValue>,
-      evidenceRefs: JSONValue = [
-        { kind: 'event', id: 'attempt_1' },
-        { kind: 'event', id: 'attempt_2' },
-      ],
-    ) => {
+  it('retires the complete pre-binding pending set and is idempotent', async () => {
+    const seedProposal = async (id: string, probeQuality: Record<string, JSONValue>) => {
       const payload = {
         ai_proposal: {
           kind: 'conjecture',
-          evidence_refs: evidenceRefs,
-          proposed_change: proposedChange,
+          evidence_refs: [{ kind: 'event', id: `${id}_attempt` }],
+          proposed_change: { probe_quality: probeQuality },
         },
       };
       await client`
@@ -1132,232 +1058,28 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         )
       `;
     };
-    const { attempt: _missingAttemptNumber, ...attemptWithoutNumber } =
-      v2Change.probe_quality.attempts[0];
-    const { explanation_md: _missingAttemptExplanation, ...attemptWithoutExplanation } =
-      v2Change.probe_quality.attempts[0];
 
-    const {
-      reviewed_hypothesis: _reviewedHypothesis,
-      reviewed_package: _reviewedPackage,
-      ...v1Audit
-    } = v2Change.probe_quality;
-    await seedProposal('audit_v1_pending', {
-      ...v2Change,
-      probe_quality: { ...v1Audit, schema_version: 1 },
-    });
-    await seedProposal('audit_v2_valid', v2Change);
-    await seedProposal('audit_v2_missing_lineage', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        attempts: [
-          {
-            ...v2Change.probe_quality.attempts[0],
-            reviewer_task_run_id: null,
-          },
-        ],
-      },
-    });
-    await seedProposal('audit_v2_mismatch', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        reviewed_package: {
-          ...v2Change.probe_quality.reviewed_package,
-          predicted_p: 0.4,
-        },
-      },
-    });
-    await seedProposal('audit_v2_incomplete_final_review', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        final_review: { verdict: 'pass' },
-      },
-    });
-    await seedProposal('audit_v2_non_string_final_review_explanation', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        final_review: {
-          ...v2Change.probe_quality.final_review,
-          explanation_md: 123,
-        },
-      },
-    });
-    await seedProposal('audit_v2_attempt_two_only', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        attempts: [{ ...v2Change.probe_quality.attempts[0], attempt: 2 }],
-      },
-    });
-    await seedProposal('audit_v2_attempt_three_entries', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        attempts: [
-          {
-            ...v2Change.probe_quality.attempts[0],
-            outcome: 'review_failed',
-            failure_codes: ['probe_not_targeting'],
-          },
-          {
-            ...v2Change.probe_quality.attempts[0],
-            attempt: 2,
-            outcome: 'operational_failed',
-            failure_codes: ['author_output_invalid'],
-            reviewer_task_run_id: null,
-          },
-          { ...v2Change.probe_quality.attempts[0], attempt: 3 },
-        ],
-      },
-    });
-    await seedProposal('audit_v2_attempt_early_pass', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        attempts: [
-          v2Change.probe_quality.attempts[0],
-          { ...v2Change.probe_quality.attempts[0], attempt: 2 },
-        ],
-      },
-    });
-    await seedProposal('audit_v2_attempt_missing_explanation', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        attempts: [attemptWithoutExplanation],
-      },
-    });
-    await seedProposal('audit_v2_attempt_missing_number', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        attempts: [attemptWithoutNumber],
-      },
-    });
-    await seedProposal('audit_v2_attempt_nonempty_pass_codes', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        attempts: [
-          {
-            ...v2Change.probe_quality.attempts[0],
-            failure_codes: ['probe_not_targeting'],
-          },
-        ],
-      },
-    });
-    await seedProposal('audit_v2_attempt_whitespace_lineage', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        attempts: [
-          {
-            ...v2Change.probe_quality.attempts[0],
-            author_task_run_id: '   ',
-          },
-        ],
-      },
-    });
-    await seedProposal('audit_v2_attempt_bad_code', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        attempts: [
-          {
-            ...v2Change.probe_quality.attempts[0],
-            outcome: 'review_failed',
-            failure_codes: ['author_output_invalid'],
-          },
-          { ...v2Change.probe_quality.attempts[0], attempt: 2 },
-        ],
-      },
-    });
-    await seedProposal('audit_v2_attempt_blank_explanation', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        attempts: [
-          {
-            ...v2Change.probe_quality.attempts[0],
-            explanation_md: ' ',
-          },
-        ],
-      },
-    });
-    await seedProposal('audit_v2_hypothesis_mismatch', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        reviewed_hypothesis: {
-          ...v2Change.probe_quality.reviewed_hypothesis,
-          claim_md: 'a different unreviewed claim',
-        },
-      },
-    });
-    await seedProposal('audit_v2_outer_followup_prompt_mismatch', {
-      ...v2Change,
-      followup_probe_md: 'unreviewed follow-up prompt',
-    });
-    await seedProposal('audit_v2_outer_followup_reference_mismatch', {
-      ...v2Change,
-      followup_probe_reference_md: 'unreviewed follow-up reference',
-    });
-    await seedProposal('audit_v2_outer_primary_prompt_mismatch', {
-      ...v2Change,
-      probe_md: 'unreviewed primary prompt',
-    });
-    await seedProposal('audit_v2_outer_primary_reference_mismatch', {
-      ...v2Change,
-      probe_reference_md: 'unreviewed primary reference',
-    });
-    await seedProposal('audit_v2_non_array_evidence_refs', v2Change, {
-      kind: 'event',
-      id: 'attempt_1',
-    });
-    await seedProposal('audit_v2_out_of_range_probability', {
-      ...v2Change,
-      predicted_p: 1.5,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        reviewed_package: {
-          ...v2Change.probe_quality.reviewed_package,
-          predicted_p: 1.5,
-        },
-      },
-    });
-    await seedProposal('audit_v2_string_discriminating', {
-      ...v2Change,
-      discriminating: 'true',
-    });
-    await seedProposal('audit_v2_string_passed', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        passed: 'true',
-      },
-    });
-    await seedProposal('audit_v2_string_schema_version', {
-      ...v2Change,
-      probe_quality: {
-        ...v2Change.probe_quality,
-        schema_version: '2',
-      },
-    });
-    await seedProposal('audit_v1_decided', {
-      ...v2Change,
-      probe_quality: { ...v1Audit, schema_version: 1 },
-    });
+    await seedProposal('prebinding_v1_pending', { schema_version: 1, passed: true });
+    // Even a v2-shaped row visible before this migration is conservatively retired:
+    // the v2 producer cannot start until the migrate init container succeeds.
+    await seedProposal('prebinding_v2_shaped_pending', { schema_version: 2, passed: true });
+    await seedProposal('prebinding_decided', { schema_version: 1, passed: true });
+    await seedProposal('prebinding_already_retracted', { schema_version: 1, passed: true });
+
     await client`
       INSERT INTO event (
         id, actor_kind, actor_ref, action, subject_kind, subject_id,
         outcome, payload, caused_by_event_id, affected_scopes, created_at
-      ) VALUES (
-        'audit_v1_decision', 'user', 'self', 'rate', 'event', 'audit_v1_decided',
-        'success', '{"rating":"accept"}'::jsonb, 'audit_v1_decided',
+      ) VALUES
+      (
+        'prebinding_decision', 'user', 'self', 'rate', 'event', 'prebinding_decided',
+        'success', '{"rating":"accept"}'::jsonb, 'prebinding_decided',
+        ARRAY[]::text[], '2026-07-04T00:00:00Z'::timestamptz
+      ),
+      (
+        'prebinding_existing_retraction', 'agent', 'prior_migration', 'correct',
+        'event', 'prebinding_already_retracted', 'success',
+        '{"correction_kind":"retract"}'::jsonb, 'prebinding_already_retracted',
         ARRAY[]::text[], '2026-07-04T00:00:00Z'::timestamptz
       )
     `;
@@ -1384,168 +1106,14 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
     `;
     expect(corrections).toEqual([
       {
-        subject_id: 'audit_v1_pending',
+        subject_id: 'prebinding_v1_pending',
         actor_kind: 'agent',
         actor_ref: 'yuk821_audit_binding_migration',
         affected_scopes: [],
         already_ingested: true,
       },
       {
-        subject_id: 'audit_v2_attempt_bad_code',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_attempt_blank_explanation',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_attempt_early_pass',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_attempt_missing_explanation',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_attempt_missing_number',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_attempt_nonempty_pass_codes',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_attempt_three_entries',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_attempt_two_only',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_attempt_whitespace_lineage',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_hypothesis_mismatch',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_incomplete_final_review',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_mismatch',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_missing_lineage',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_non_array_evidence_refs',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_non_string_final_review_explanation',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_outer_followup_prompt_mismatch',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_outer_followup_reference_mismatch',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_outer_primary_prompt_mismatch',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_outer_primary_reference_mismatch',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_out_of_range_probability',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_string_discriminating',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_string_passed',
-        actor_kind: 'agent',
-        actor_ref: 'yuk821_audit_binding_migration',
-        affected_scopes: [],
-        already_ingested: true,
-      },
-      {
-        subject_id: 'audit_v2_string_schema_version',
+        subject_id: 'prebinding_v2_shaped_pending',
         actor_kind: 'agent',
         actor_ref: 'yuk821_audit_binding_migration',
         affected_scopes: [],
@@ -1558,32 +1126,7 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
       FROM event
       WHERE action = 'rate'
         AND payload ->> 'rating' = 'dismiss'
-        AND caused_by_event_id IN (
-          'audit_v1_pending',
-          'audit_v2_attempt_bad_code',
-          'audit_v2_attempt_blank_explanation',
-          'audit_v2_attempt_early_pass',
-          'audit_v2_attempt_missing_explanation',
-          'audit_v2_attempt_missing_number',
-          'audit_v2_attempt_nonempty_pass_codes',
-          'audit_v2_attempt_three_entries',
-          'audit_v2_attempt_two_only',
-          'audit_v2_attempt_whitespace_lineage',
-          'audit_v2_hypothesis_mismatch',
-          'audit_v2_incomplete_final_review',
-          'audit_v2_mismatch',
-          'audit_v2_missing_lineage',
-          'audit_v2_non_array_evidence_refs',
-          'audit_v2_non_string_final_review_explanation',
-          'audit_v2_out_of_range_probability',
-          'audit_v2_string_discriminating',
-          'audit_v2_string_passed',
-          'audit_v2_string_schema_version',
-          'audit_v2_outer_followup_prompt_mismatch',
-          'audit_v2_outer_followup_reference_mismatch',
-          'audit_v2_outer_primary_prompt_mismatch',
-          'audit_v2_outer_primary_reference_mismatch'
-        )
+        AND caused_by_event_id IN ('prebinding_v1_pending', 'prebinding_v2_shaped_pending')
     `;
     expect(ownerDismissals[0]?.count).toBe('0');
   });
