@@ -189,6 +189,8 @@ function parseSampleDraft(result: TaskTextResult): ConjectureDraftT | null {
     if (parsed.success) return parsed.data;
   }
   for (const candidate of jsonObjectCandidates(result.text)) {
+    const wrapped = ConjectureStructuredOutput.safeParse(candidate);
+    if (wrapped.success) return wrapped.data.draft;
     const parsed = ConjectureDraft.safeParse(candidate);
     if (parsed.success) return parsed.data;
   }

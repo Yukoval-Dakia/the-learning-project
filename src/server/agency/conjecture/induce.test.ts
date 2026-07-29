@@ -581,6 +581,19 @@ describe('induceConjecture self-consistency', () => {
     expect(proposal(result).claim_md).toBe('你把复合函数各层导数相加');
   });
 
+  it('unwraps the same draft envelope from the text fallback', async () => {
+    const generated = sample('你在文本降级路径中把各层导数相加');
+    const draft = JSON.parse(generated.text.slice(generated.text.indexOf('{'))) as unknown;
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({ draft }),
+      structured_output: undefined,
+    }));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 1, runTaskFn });
+
+    expect(proposal(result).claim_md).toBe('你在文本降级路径中把各层导数相加');
+  });
+
   it('finds the valid JSON object after unrelated mathematical braces', async () => {
     const valid = sample('你混淆了集合与元素').text;
     const runTaskFn = vi.fn(async () => ({

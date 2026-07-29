@@ -336,9 +336,9 @@ function buildMindModelInductionPrompt(profile: SubjectProfile): string {
 - discriminating：布尔。true 仅当两道 probe 都能把该误解和别的错因分开；任一道答错也可能来自别的原因时填 false。
 - 若不能安全 proposal，输出 abstain。reason_code 只能是 insufficient_evidence / conflicting_evidence / no_grounded_claim / no_discriminating_probe；explanation_md 可省略；evidence_event_ids 只能引用输入。
 
-【输出格式】优先在**同一条回复**里完成推理与 JSON；运行预算允许第二轮只用于把被截断的 JSON 说完，不能借此引入新证据。先用**不超过 200 字**的 markdown 点名用了哪些 evidence_samples 字段，紧接着严格输出以下二者之一（不带 markdown 代码块）：
-1. {"kind":"proposal","claim_md":"...","knowledge_id":"...","evidence_event_ids":["...","..."],"probe_md":"...","probe_reference_md":"...","followup_probe_md":"...","followup_probe_reference_md":"...","cause_category":"...","recurrence_count":<int≥2>,"predicted_p":<0..1>,"discriminating":<bool>,"agreement_count":1}
-2. {"kind":"abstain","reason_code":"insufficient_evidence|conflicting_evidence|no_grounded_claim|no_discriminating_probe","explanation_md":"...","evidence_event_ids":["..."]}
+【输出格式】内部完成证据核对与推理，不输出推理过程、markdown 或代码块。最终只输出一个顶层 JSON 对象，唯一字段是 draft；draft 严格为以下二者之一：
+1. {"draft":{"kind":"proposal","claim_md":"...","knowledge_id":"...","evidence_event_ids":["...","..."],"probe_md":"...","probe_reference_md":"...","followup_probe_md":"...","followup_probe_reference_md":"...","cause_category":"...","recurrence_count":<int≥2>,"predicted_p":<0..1>,"discriminating":<bool>,"agreement_count":1}}
+2. {"draft":{"kind":"abstain","reason_code":"insufficient_evidence|conflicting_evidence|no_grounded_claim|no_discriminating_probe","explanation_md":"...","evidence_event_ids":["..."]}}
 proposal 的 agreement_count 恒填 1（多样本一致性由调用方统计）。`;
 }
 
