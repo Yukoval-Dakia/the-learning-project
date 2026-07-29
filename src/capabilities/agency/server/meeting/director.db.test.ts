@@ -6,6 +6,7 @@
 // dayKey claim gate. Asserts: proposal landing + actor + baseline snapshot + cost-bearing
 // scan, cross-actor dedup, degrade, shadow isolation, and claim idempotency.
 
+import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { WriteEventInput } from '@/kernel/events';
@@ -204,6 +205,47 @@ describe('evidence scout charter', () => {
 });
 
 describe('runResearchMeetingDirector — pipeline', () => {
+  it('applies conjecture lifecycle history to both the agenda and write guard', async () => {
+    let context: Record<string, unknown> | undefined;
+    let proposeResult: Record<string, unknown> | undefined;
+    const acceptedAt = new Date(NOW.getTime() - 1_000);
+    const loadConjectureHistoryFn = vi.fn(async () => {
+      return new Map([
+        [
+          conjectureKey(CAUSE, KC),
+          {
+            latest_decision: 'accept' as const,
+            latest_decision_at: acceptedAt,
+            latest_accept_at: acceptedAt,
+            latest_terminal_at: null,
+            prior_claim_md: 'owner prior',
+          },
+        ],
+      ]);
+    });
+    const runAgentTaskFn = vi.fn(async () => {
+      context = await callTool('get_meeting_context', {});
+      proposeResult = await callTool('propose_conjecture', validProposeArgs);
+      return {
+        task_run_id: 'director_history_gate',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.01,
+      };
+    });
+
+    const result = await runResearchMeetingDirector(
+      testDb(),
+      baseDeps({ loadConjectureHistoryFn, runAgentTaskFn }),
+    );
+
+    expect(context?.candidate_cells).toEqual([]);
+    expect(proposeResult?.ok).toBe(false);
+    expect(String(proposeResult?.reason)).toMatch(/lifecycle|owner decision/);
+    expect(result.proposals_created).toBe(0);
+  });
+
   it('rejects a proposal when an evidence_ref does not resolve to a real event', async () => {
     let proposeResult: Record<string, unknown> | undefined;
     const runAgentTaskFn = vi.fn(async () => {

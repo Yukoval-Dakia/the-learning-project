@@ -3,37 +3,46 @@
 ## Active line
 
 - Architecture exit、Grounding 首切、YUK-804 均已合并。
-- YUK-787 已随 PR #1098 合并并在 Linear Done；最终 CI Gate / OCR / CodeQL 全绿。
-- 当前唯一 active 线是 YUK-795：
-  `codex/yuk-795-accountability-loop`，PR #1101，基于 `origin/main@876a501a`。
+- YUK-787 / YUK-795 已随 PR #1098 / #1101 合并并在 Linear Done；最终
+  CI Gate / OCR / CodeQL 全绿。
+- 当前唯一 active 线是 YUK-788：
+  `codex/yuk-788-owner-feedback-loop`，PR #1102，基于 `origin/main@41fa2a07`。
 - 已合入 GitHub CI 并行化及 DB/unit 长尾提速；不在本地
   重复跑 CI gate。
 
 ## 当前实现
 
-1. YUK-795 的 deterministic rule 已在 Linear 开工评论中锁定：
-   `skill_score_point >0`=hit、`<0`=miss、`=0`=neutral。
-2. 同一 owner、同一 `(cause_category × knowledge_id)` 的有效 score 按时间折叠；
-   单次 miss 不动排序，连续两次 miss → 0.25×，连续两次 hit → 1.15×。
-3. hard flag 开启且 Tier-1 dissociation 到 `EMERGING` 时，持续命中提升到 1.25×；
-   mixed/neutral/不足两条保持 1.0×。后续相反 streak 可逆转。
-4. 接线目标是 research meeting 在 top-K 截断前重排 evidence cells；correction
-   后的 probe_result 不进入 fold。
-5. `MISCONCEPTION_HARD_CONFIRM_ENABLED` 仍默认 OFF：当前 Judge 没有
-   `target_error_match`，不得把普通答错冒充 M-diagnostic；soft→hard 仍需 fresh owner
-   confirmation。本票只把现有 hard-confirm verdict 接入 live consumer，不伪造 hard。
-6. 最新 OCR P2 已补齐真实 v2 terminal chain：sequence-2 projection 保留
-   `independent_probe_question_ids`，仅把 terminal `confirmed` 折回首题已校准 score；
-   sequence-2 仍不产生伪造 score。
+1. nightly 保留 pending proposal 第一层去重；YUK-788 新增同 capability 内的
+   owner decision / terminal history 第二层 gate。
+2. 同 `(cause_category × knowledge_id)` 的 dismiss 冷却 30 天；accepted 但未 terminal
+   的 conjecture 视为 active，不重复归纳。
+3. confirmed/retired terminal 后只有至少两条 `created_at > terminal_at` 的有效
+   failure attempt 才能 reopen；enrichment 删除缺失/变异证据后会以可复现 ids
+   再验 fresh floor，不能用旧的 pre-terminal attempt 补足。
+4. reopen 必须携带最近一次 accept/edit 后的 owner claim；edit 的
+   `corrected_claim_md` 优先于原 proposal claim，并接入已有 `priorClaimMd`。
+5. proposal/rate/result 查询仅覆盖今晚 candidate KC 并按 500 分块；terminal 活性复用
+   correction-aware `getEffectiveProbeResultStatuses(..., validateDirectChain=true)`。
+6. identity 最新决定只消费每个 proposal 的最新 rate；rollback 撤销旧 accept，且
+   terminal 必须属于 identity 当前最新 accepted proposal，旧 proposal 的较晚结算不能
+   错放仍 active 的新 proposal。
+7. `RESEARCH_MEETING_AGENT_ENABLED` shadow lane 的 agenda 与 write guard 复用同一
+   history gate；terminal reopen 必须回传 owner `prior_claim_md`，off-menu 也不能绕过。
+8. 没有新事件流、schema 或跨 capability 深层导入；nightly 只消费已有 proposal、
+   rate、probe_result 与 attempt facts。
 
 ## 验证与远端
 
-- YUK-795 已提交并推送为 PR #1101。
-- 最新定向 unit：accountability + reconcile 20/20；定向 DB：accountability +
-  reconcile 18/18；改动文件 Biome 与 `git diff --check` 已通过。此前关联
-  hard-confirm/nightly 定向测试也已通过。
-- commit `72080e41` 的 GitHub CI Gate / OCR / CodeQL 已全绿；terminal confirmation
-  review fix 推送后需重新监听完整远端 gate。
+- YUK-788 已提交并推送为 PR #1102；实现 commit `7049cb07`。
+- 定向 unit `research_meeting_nightly.unit.test.ts` 44/44 通过。
+- closed-loop DB `research_meeting_closed_loop.db.test.ts` 18/18 通过，覆盖：
+  dismiss cooldown、terminal 不重复归纳、两条新失败重开、owner rewrite 进入真实 prompt、
+  stale accept 不压过新 dismiss、corrected rate 不再参与 fold、enrichment 不得以
+  pre-terminal evidence 冒充 fresh reopen floor、旧 proposal terminal 不得结算新 accept、
+  rollback 必须撤销旧 accept。
+- director tools + nightly unit 79/79、director + closed-loop DB 36/36 通过；agent
+  shadow lane 覆盖 agenda 与 write guard 双层阻断、terminal reopen owner prior 回传。
+- `pnpm typecheck`、改动文件 Biome、`git diff --check` 已通过。
 - main 新增 CI 并行 lanes：static/audits、unit、DB、migration、build、usability；
   aggregate 保留 required-check 名称并 fail closed。
 - 只在本地跑改动范围的定向测试/格式检查；完整 gate 只监听 GitHub Actions/OCR。
@@ -41,10 +50,10 @@
 
 ## 下一步
 
-1. 只监听 PR #1101 的 GitHub Actions/OCR，处理远端失败或 review；不在本地重复
-   完整 CI gate。
-2. 全绿后合并，Linear YUK-795 对齐 Done。
-3. YUK-814 真实 owner 数据 shadow/blind gate 必须单独执行；mock 不能代替。
+1. 只监听 PR #1102 的 GitHub Actions/OCR；处理远端失败或 review。
+2. 全绿后合并，Linear YUK-788 对齐 Done。
+3. 严格串行证据化收口 YUK-803（实现已在 YUK-785 落地，Linear 仍 Backlog）。
+4. YUK-814 真实 owner 数据 shadow/blind gate 必须单独执行；mock 不能代替。
 
 ## CI 测试长尾二次提速（2026-07-29）
 

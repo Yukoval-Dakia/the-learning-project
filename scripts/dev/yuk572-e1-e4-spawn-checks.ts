@@ -217,6 +217,7 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
       recent_failure_summary: { window_days: 14, total_failures: 2, distinct_kcs: 1 },
     },
     knownConjectureKeys: new Set<string>(),
+    failureAttempts: [],
     caps: createDirectorCaps(),
     triggerEventId: `e_check_trigger_${now.getTime()}`,
     toolContextTaskRunId: `e_check_tool_${now.getTime()}`,

@@ -6,6 +6,7 @@
 
 import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
 import type { WriteAgentNoteInput } from '@/capabilities/agency/server/notes';
+import type { FailureAttempt } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -120,6 +121,8 @@ function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
     caps,
     triggerEventId: 'trigger_1',
     toolContextTaskRunId: 'toolrun_1',
+    failureAttempts: [],
+    loadConjectureHistoryFn: async () => new Map(),
     writeAiProposalFn: async (_db, input) => {
       proposals.push(input);
       return `prop_${proposals.length}`;
@@ -241,6 +244,129 @@ describe('propose_conjecture — server-enforced single writer', () => {
     expect(h.proposals).toHaveLength(1);
   });
 
+  it('blocks an active accepted identity at the write guard', async () => {
+    const acceptedAt = new Date(NOW.getTime() - 1_000);
+    const h = build({
+      loadConjectureHistoryFn: async () =>
+        new Map([
+          [
+            conjectureKey('concept_confusion', 'k_a'),
+            {
+              latest_decision: 'accept' as const,
+              latest_decision_at: acceptedAt,
+              latest_accept_at: acceptedAt,
+              latest_terminal_at: null,
+              prior_claim_md: 'owner prior',
+            },
+          ],
+        ]),
+    });
+
+    const result = await callTool('propose_conjecture', validProposeArgs());
+
+    expect(result.ok).toBe(false);
+    expect(String(result.reason)).toMatch(/lifecycle|owner decision/);
+    expect(h.proposals).toHaveLength(0);
+    expect(h.caps.proposeCount).toBe(0);
+  });
+
+  it('requires the owner prior claim when reopening a terminal identity', async () => {
+    const terminalAt = new Date(NOW.getTime() - 1_000);
+    const ownerPrior = '你会把必要条件当成充分条件。';
+    const failures = ['att_1', 'att_2'].map(
+      (attempt_event_id) =>
+        ({
+          attempt_event_id,
+          referenced_knowledge_ids: ['k_a'],
+          created_at: NOW,
+          user_cause: {
+            primary_category: 'concept_confusion',
+            user_notes: null,
+            created_at: NOW,
+          },
+        }) as FailureAttempt,
+    );
+    const history = new Map([
+      [
+        conjectureKey('concept_confusion', 'k_a'),
+        {
+          latest_decision: 'accept' as const,
+          latest_decision_at: new Date(terminalAt.getTime() - 1_000),
+          latest_accept_at: new Date(terminalAt.getTime() - 1_000),
+          latest_terminal_at: terminalAt,
+          prior_claim_md: ownerPrior,
+        },
+      ],
+    ]);
+    const h = build({
+      failureAttempts: failures,
+      loadConjectureHistoryFn: async () => history,
+    });
+
+    const missingPrior = await callTool('propose_conjecture', validProposeArgs());
+    const withPrior = await callTool(
+      'propose_conjecture',
+      validProposeArgs({ prior_claim_md: ownerPrior }),
+    );
+
+    expect(missingPrior).toMatchObject({ ok: false, prior_claim_md: ownerPrior });
+    expect(withPrior.ok).toBe(true);
+    expect(h.proposals).toHaveLength(1);
+  });
+
+  it('does not reopen a terminal identity with fresh failures from another cause or KC', async () => {
+    const terminalAt = new Date(NOW.getTime() - 1_000);
+    const ownerPrior = '你会把必要条件当成充分条件。';
+    const failures = [
+      {
+        attempt_event_id: 'att_1',
+        referenced_knowledge_ids: ['k_other'],
+        created_at: NOW,
+        user_cause: {
+          primary_category: 'concept_confusion',
+          user_notes: null,
+          created_at: NOW,
+        },
+      },
+      {
+        attempt_event_id: 'att_2',
+        referenced_knowledge_ids: ['k_a'],
+        created_at: NOW,
+        user_cause: {
+          primary_category: 'calculation_error',
+          user_notes: null,
+          created_at: NOW,
+        },
+      },
+    ] as FailureAttempt[];
+    const history = new Map([
+      [
+        conjectureKey('concept_confusion', 'k_a'),
+        {
+          latest_decision: 'accept' as const,
+          latest_decision_at: new Date(terminalAt.getTime() - 1_000),
+          latest_accept_at: new Date(terminalAt.getTime() - 1_000),
+          latest_terminal_at: terminalAt,
+          prior_claim_md: ownerPrior,
+        },
+      ],
+    ]);
+    const h = build({
+      failureAttempts: failures,
+      loadConjectureHistoryFn: async () => history,
+    });
+
+    const result = await callTool(
+      'propose_conjecture',
+      validProposeArgs({ prior_claim_md: ownerPrior }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(String(result.reason)).toMatch(/lifecycle|owner decision/);
+    expect(h.proposals).toHaveLength(0);
+    expect(h.caps.proposeCount).toBe(0);
+  });
+
   it('rejects (does not consume the cap) when claim_md exceeds the 280-char ConjectureDraft cap', async () => {
     const h = build();
     const res = await callTool(
@@ -318,6 +444,26 @@ describe('propose_conjecture — server-enforced single writer', () => {
     });
     expect(retried.ok).toBe(true);
     expect(evidenceRefsExistFn).toHaveBeenCalledTimes(2);
+    expect(h.proposals).toHaveLength(1);
+    expect(h.caps.proposeCount).toBe(1);
+  });
+
+  it('identifies a history-loader failure and releases the reservation for retry', async () => {
+    const loadConjectureHistoryFn = vi
+      .fn<NonNullable<BuildDirectorServerOpts['loadConjectureHistoryFn']>>()
+      .mockRejectedValueOnce(new Error('history unavailable'))
+      .mockResolvedValueOnce(new Map());
+    const h = build({ loadConjectureHistoryFn });
+
+    const rejected = await callTool('propose_conjecture', validProposeArgs());
+    const retried = await callTool('propose_conjecture', validProposeArgs());
+
+    expect(rejected).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/conjecture history 加载失败.*history unavailable/),
+    });
+    expect(retried.ok).toBe(true);
+    expect(loadConjectureHistoryFn).toHaveBeenCalledTimes(2);
     expect(h.proposals).toHaveLength(1);
     expect(h.caps.proposeCount).toBe(1);
   });
