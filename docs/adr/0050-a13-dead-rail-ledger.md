@@ -126,44 +126,54 @@ M-diagnostic，也不得把后台 job 冒充 owner 确认。flag ledger 已同�
 
 `src/core/pedagogy/method-library.ts` + `policy.ts` + `index.ts`：全仓命中**只在模块内 + 两个 unit test**，零外部 importer（`grep "core/pedagogy"` 在 `src/ server/ scripts/ web/` 下除自身目录外零命中）。单 commit `37a37aeb` 自陈 wiring deferred。归属 issue：**YUK-506**。
 
-### 裁定：**DEFERRED（knowingly-deferred）——owner 2026-07-25 维持本票判断。**
+### 裁定：**DESIGN SELECTED，尚未通电——owner 2026-07-30 选定复用。**
 
-四条里唯一未被推翻的一条。与 (a)(b) 的区别很清楚：(a)(b) 是**已建回路的断口**（补上就闭合），(c) 是一个**还没有消费者的候选 palette**——它的消费者形态本身还没定。
+2026-07-25 时它仍是四条里唯一未被推翻的 deferred rail。YUK-796 现已完成形态选择：
+保留 8 法闭集、state guard 与 `selectPedagogyCandidates`，把它作为**确定性合法候选边界**；
+它不独立承担最终推荐，也不学习“方法×人”的因果排名。最终选择由 Agency
+`prepare_intervention(intervention_id)` 同一波次中的单次 recommendation task 完成，
+真实消费者是同 wave 的 intervention-scoped QuestionAuthor（YUK-791）。
 
-**指向 YUK-796**：palette 的去留不由本 ADR 终裁。YUK-796（审议能力重新立项，设计先行）会连带重新评估它的**复用 / 重构 / 废弃**——「教学法选择」正是该设计票的题面之一。在 YUK-796 出设计前，palette 保持原样、不接线、不删除。
+本 PR 仍是设计票，生产 caller 仍为零；“已选复用”不得写成“已经通电”。完整接口、状态、
+失败关闭与文件图见 `docs/design/2026-07-30-yuk-796-pedagogy-deliberation.md`。
 
-**明确不注册 `*_ENABLED` flag**——理由是机制性的，不是偷懒：`audit:flags` 的对账是**双向**的，ledger 每条都要求其 `file` 里存在该 flag 名的**活 token**（`scripts/audit-flags.ts` `reconcileFlags` → STALE `name-missing`）。palette 里没有任何 runtime 判定点可以承载这个 token；硬塞一个只为登记而存在的 flag 会**立刻**制造一条 STALE 发现，即「为了让审计变绿而弄脏审计」。palette 是纯数据 + 纯函数，没有可 gate 的运行时路径——**它的台账就是本 ADR 本条 + 模块头注释**。等 YUK-796 定了消费者形态、真接线时，再按 A5 dark-ship 纪律在**真正的消费点**登记闸门 flag。
+**明确不注册 `*_ENABLED` flag**——理由是机制性的，不是偷懒：`audit:flags` 的对账是**双向**的，ledger 每条都要求其 `file` 里存在该 flag 名的**活 token**（`scripts/audit-flags.ts` `reconcileFlags` → STALE `name-missing`）。palette 里没有任何 runtime 判定点可以承载这个 token；硬塞一个只为登记而存在的 flag 会**立刻**制造一条 STALE 发现，即「为了让审计变绿而弄脏审计」。palette 是纯数据 + 纯函数，没有可 gate 的运行时路径——**它的台账就是本 ADR 本条 + 模块头注释**。等 YUK-791 真接线时，再按 A5 dark-ship 纪律在**真正的消费点**登记闸门 flag。
 
 ---
 
 ## (d) Planning Panel 审计线
 
 - 全仓零代码命中（`planning_panel` / `planning-panel` 仅出现在 design/planning/audit **文档**里）。
-- 运行时拓扑是**既决约束**：single-director + 至多一名条件性侦察兵（anti-swarm）。约束点：`docs/design/2026-07-06-yuk572-agent-meeting-lane-spec.md` §0.C（深度封顶为真结构性）、`src/ai/registry.ts:1706` director prompt 内「【anti-swarm】你是单一决策者 + 至多一名条件性侦察兵」、`src/server/agency/scout/scout-agent.unit.test.ts`（AgentDefinition 结构性 pin：scout 无 `Task`）。
+- 运行时拓扑是**既决约束**：single-director + 至多一名条件性侦察兵（anti-swarm）。约束点：`docs/design/2026-07-06-yuk572-agent-meeting-lane-spec.md` §0.C（深度封顶为真结构性）、`src/ai/registry.ts:1853` director prompt 内「【anti-swarm】你是单一决策者 + 至多一名条件性侦察兵」、`src/server/agency/scout/scout-agent.unit.test.ts`（AgentDefinition 结构性 pin：scout 无 `Task`）。
 - 2026-06-18 的 fan-out panel 规格（`docs/superpowers/specs/2026-06-18-jiaoyantuan-deliberative-panel-design.md`）与之冲突；`docs/audit/2026-07-16-drift.md` 已记该冲突。
 
-### 裁定：**owner 2026-07-25 — 要审议能力。形态待设计，执行见 YUK-796（设计先行，不是实现票）。**
+### 裁定：**owner 2026-07-30 — 要审议能力，但不建独立 Planning Panel。**
 
 （本票初稿建议「审计线 CLOSED，不新建」，被推翻。差别很实：CLOSED 意味着「这条路封了」，而 owner 的意思是「**这条路要走，但不能用 2026-06-18 那个会破 anti-swarm 的走法**」。）
 
-两条约束同时成立，YUK-796 的设计必须同时满足：
+YUK-796 已选定：审议是 Agency `prepare_intervention` 内部的串行阶段，不新增 agent
+席位；Teaching Brief 内展示证据、方法、材料、验证日程与取消/重新准备控制。旧
+planner/critic/judge fan-out 不恢复。
 
-1. **不破 single-director anti-swarm 契约**——2026-06-18 的 A/B planner + critic + judge fan-out 形态作为**运行时方案**不可直接采用。
-2. **不越 P0 Stop Signal**——在 grounding 修复与盲评通过前，不把教学法脑接到该输入上。所以 YUK-796 是设计票，出设计后才谈实现。
+两条约束继续成立：
 
-既有设计文档保留作历史留档，不删除。roadmap 中 YUK-505 行同步改写为「重新立项，设计先行（YUK-796）」。
+1. **不破 single-director anti-swarm 契约**——2026-06-18 的 A/B planner + critic + judge fan-out 形态作为**运行时方案**不可采用。
+2. **分离开发门与发布门**——固定 mock-input / real-output 回归净改善后允许继续实现；
+   real-observation 与 canary 仍阻塞无人值守 auto-intervention expansion。
+
+既有设计文档保留作历史留档，不删除。YUK-796 设计已定，生产通电由 YUK-791 及后继票实施。
 
 ---
 
 ## 台账速查
 
-| 条目 | 裁定（owner 2026-07-25） | 承接票 | 台账位置 |
+| 条目 | 最新裁定 | 承接票 | 台账位置 |
 |------|--------------------------|--------|----------|
 | (a) `typed_state='confused-with-X'` | **要通电**（推翻初稿 DEFERRED） | **YUK-794** | 本 ADR §(a)（含门槛四面分析）+ 各文件头注释 + 面板「本轨待通电」标注 |
 | (b1) `prediction_score` | **现在接** FLIP 消费者，不等 Rust 节奏（推翻初稿 DEFERRED） | **YUK-795** | 本 ADR §(b1) |
 | (b2) hard-confirm 轨 | **同上，并入 YUK-795**（推翻初稿 knowingly-deferred） | **YUK-795** | 本 ADR §(b2) + `scripts/audit-flags-ledger.json` → `MISCONCEPTION_HARD_CONFIRM_ENABLED.notes` |
-| (c) pedagogy 8 法 palette | **DEFERRED**（维持本票判断）；**刻意不注册 flag**（会造 STALE）；去留由 YUK-796 设计重评 | YUK-506 → 重评于 **YUK-796** | 本 ADR §(c) + `method-library.ts` 头注释 |
-| (d) Planning Panel | **要审议能力**，形态待设计（推翻初稿 CLOSED） | **YUK-796** | 本 ADR §(d) + `docs/audit/2026-07-16-drift.md` + roadmap YUK-505 行 |
+| (c) pedagogy 8 法 palette | **复用已选、尚未通电**；作为 deterministic shortlist，不承担最终推荐 | **YUK-796 → YUK-791** | 本 ADR §(c) + YUK-796 design |
+| (d) Planning Panel | **要审议能力，不建独立 Panel**；Agency 同波次内部审议 + Teaching Brief 控制区 | **YUK-796 → YUK-791** | 本 ADR §(d) + YUK-796 design |
 
 ## 通电前的文案纪律（本 ADR 一并落地，与裁定方向一致）
 

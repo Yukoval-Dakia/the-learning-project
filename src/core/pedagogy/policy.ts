@@ -24,8 +24,9 @@ export interface PedagogyPolicyResult {
 }
 
 /**
- * Deterministically narrows the closed palette. A later panel may select one of
- * these candidates, but it cannot restore a method excluded by this boundary.
+ * Deterministically narrows the closed palette. The YUK-796 recommendation
+ * stage may select one of these candidates, but it cannot restore a method
+ * excluded by this boundary.
  */
 export function selectPedagogyCandidates(input: PedagogyStateT): PedagogyPolicyResult {
   const state = PedagogyState.parse(input);
