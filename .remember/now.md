@@ -41,7 +41,8 @@
 - `pnpm typecheck`、changed-file Biome、`git diff --check` 已通过。
 - review 修复增量：unit 2 files / 61 passed；DB 2 files / 29 passed；收到远端首轮
   migration smoke 失败后，仅定向复现并修复 fixture 的 jsonb 写法，YUK-821 migration
-  case 1 passed（其余 26 skipped）。完整 migration gate 仍只在 GitHub 执行。
+  case 1 passed（其余 26 skipped）。远端下一轮 DB lane 又暴露旧 Director fixture
+  缺题目快照，补齐后该 DB file 18 passed。完整 gate 仍只在 GitHub 执行。
 - 按 owner 决策不在本机跑完整 CI gate；提交后只监听 GitHub Actions `CI Gate`。
 - 2026-07-29 20:47 以 8 个 mock failure inputs 启动 canonical real-output 复评；第一簇
   的 3 个独立 Opus induction 调用全部收到 HTTP 429 weekly limit，因此按 operational

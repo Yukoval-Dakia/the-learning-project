@@ -57,6 +57,24 @@ import {
 
 const NOW = new Date('2026-07-06T21:00:00.000Z'); // 05:00 BJT 2026-07-07
 
+function questionSnapshot(id: string) {
+  return {
+    schema_version: 1 as const,
+    question: {
+      question_id: `q_${id}`,
+      question_version: 1,
+      parent_question_id: null,
+      prompt_md: `判断 ${id} 中的条件 A 是否足以推出结论 B。`,
+      reference_md: 'A 不是充分条件。',
+      choices_md: null,
+      image_refs: [],
+      figures: [],
+      updated_at: NOW.toISOString(),
+    },
+    parent_question: null,
+  };
+}
+
 async function callTool(name: string, args: unknown): Promise<Record<string, unknown>> {
   const handler = mockSdk.handlers.get(name);
   if (!handler) throw new Error(`no registered handler for ${name}`);
@@ -75,6 +93,7 @@ function failure(id: string, kc: string, category: string): FailureAttempt {
     answer_md: null,
     answer_image_refs: [],
     referenced_knowledge_ids: [kc],
+    question_snapshot: questionSnapshot(id),
     created_at: NOW,
     correction_state,
     judge: {
@@ -225,6 +244,7 @@ beforeEach(async () => {
           answer_md: 'wrong',
           answer_image_refs: [],
           referenced_knowledge_ids: [KC],
+          question_snapshot: questionSnapshot(id),
         },
         caused_by_event_id: null,
         task_run_id: null,
@@ -353,9 +373,10 @@ describe('runResearchMeetingDirector — pipeline', () => {
         subject_id: 'q_review_1',
         outcome: 'failure',
         payload: {
-          answer_md: 'still wrong',
+          user_response_md: 'still wrong',
           answer_image_refs: [],
           referenced_knowledge_ids: [KC],
+          question_snapshot: questionSnapshot('review_1'),
         },
         caused_by_event_id: null,
         task_run_id: null,
@@ -377,7 +398,16 @@ describe('runResearchMeetingDirector — pipeline', () => {
       };
     });
 
-    const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+    const result = await runResearchMeetingDirector(
+      testDb(),
+      baseDeps({
+        runAgentTaskFn,
+        getFailureAttemptsFn: vi.fn(async () => [
+          ...fixtureFailures(),
+          failure('review_1', KC, CAUSE),
+        ]),
+      }),
+    );
 
     expect(proposeResult?.ok).toBe(true);
     expect(result.proposals_created).toBe(1);
