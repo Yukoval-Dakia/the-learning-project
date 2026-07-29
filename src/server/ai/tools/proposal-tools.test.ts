@@ -16,8 +16,13 @@ import {
 import { writeEvent } from '@/kernel/events';
 import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  beginTestTransaction,
+  resetDb,
+  rollbackTestTransaction,
+  testDb,
+} from '../../../../tests/helpers/db';
 import { buildMcpServerFromRegistry } from './mcp-bridge';
 import {
   attributeMistakeTool,
@@ -265,11 +270,15 @@ async function seedRecordTargets(): Promise<void> {
 }
 
 describe('Wave 3 proposal/action DomainTools', () => {
+  beforeAll(resetDb);
+
   beforeEach(async () => {
-    await resetDb();
+    await beginTestTransaction();
     __resetRegistryForTests();
     mockRunner.runTask.mockReset();
   });
+
+  afterEach(rollbackTestTransaction);
 
   it('capability manifests expose Wave 3 proposal and write tools', async () => {
     await registerCapabilityTools(capabilities);
@@ -949,12 +958,16 @@ describe('Wave 3 proposal/action DomainTools', () => {
 
 // P5.4 / YUK-143 — proposal quality rubric enforcement (Layer 1).
 describe('P5.4 rubric enforcement — propose_knowledge_edge', () => {
+  beforeAll(resetDb);
+
   beforeEach(async () => {
-    await resetDb();
+    await beginTestTransaction();
     __resetRegistryForTests();
     mockRunner.runTask.mockReset();
     mockSdk.toolDefs = [];
   });
+
+  afterEach(rollbackTestTransaction);
 
   it('rejects an evidence-free agent edge and folds it as a rubric_rejected propose event (RB-6)', async () => {
     const db = testDb();
@@ -1130,12 +1143,16 @@ describe('P5.4 rubric enforcement — propose_knowledge_edge', () => {
 // soft-fail/result_count coercion (that mechanism is dropped, §2) — the only way
 // a propose-tool proposal becomes corrective is the model setting the arg.
 describe('P5.6 suggestion_kind on propose tools (YUK-178)', () => {
+  beforeAll(resetDb);
+
   beforeEach(async () => {
-    await resetDb();
+    await beginTestTransaction();
     __resetRegistryForTests();
     mockRunner.runTask.mockReset();
     mockSdk.toolDefs = [];
   });
+
+  afterEach(rollbackTestTransaction);
 
   function aiProposalKind(payload: unknown): string | undefined {
     return (payload as { ai_proposal?: { suggestion_kind?: string } }).ai_proposal?.suggestion_kind;
