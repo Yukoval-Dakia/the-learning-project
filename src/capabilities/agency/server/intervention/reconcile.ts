@@ -121,7 +121,10 @@ export async function recoverEligibleInterventionDiagnostics(
             package: current.package,
             settlement: current.settlement,
             snapshot: current.snapshot,
-            now: current.activated_at ?? now,
+            // Recovery may be materializing a pre-deploy eligible row for the
+            // first time. Place its immediate delivery in today's stream while
+            // preserving the immutable due times already frozen in settlement.
+            now,
           });
           return 'ensured' as const;
         });

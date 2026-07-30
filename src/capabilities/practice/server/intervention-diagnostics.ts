@@ -15,9 +15,12 @@ import type { Db, Tx } from '@/db/client';
 import { event, practice_stream_item, question } from '@/db/schema';
 import { getEventById } from '@/kernel/events';
 import { enrollFsrsStateIfAbsent, retireQuestionFsrsState } from '@/server/fsrs/state';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lte, notExists, sql } from 'drizzle-orm';
 import { initialFsrsState } from './fsrs';
+import { JUDGE_PENDING_ATTEMPT_ACTION } from './judge-run-dispatch';
 import { streamLocalDate } from './stream-store';
+
+export const INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS = 10 * 60 * 1000;
 
 function diagnosticMetadata(input: {
   interventionId: string;
@@ -302,9 +305,39 @@ export async function materializeInterventionDiagnostics(
     )
     .onConflictDoNothing();
 
+  const ids = kinds.map((kind) => settlement.diagnostics[kind].question_id);
+  // A synchronous process can die after the active→draft one-shot claim but
+  // before its review transaction commits. Recovery revisits active eligible
+  // interventions every two minutes, so reclaim an expired draft that has no
+  // immutable review and no durable pending-attempt evidence. Fresh claims and
+  // accepted async submissions remain fenced.
+  const staleClaimBefore = new Date(input.now.getTime() - INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS);
+  await tx
+    .update(question)
+    .set({ draft_status: 'active', updated_at: input.now })
+    .where(
+      and(
+        inArray(question.id, ids),
+        eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
+        eq(question.draft_status, 'draft'),
+        lte(question.updated_at, staleClaimBefore),
+        notExists(
+          tx
+            .select({ id: event.id })
+            .from(event)
+            .where(
+              and(
+                eq(event.subject_kind, 'question'),
+                eq(event.subject_id, question.id),
+                inArray(event.action, ['review', JUDGE_PENDING_ATTEMPT_ACTION]),
+              ),
+            ),
+        ),
+      ),
+    );
+
   // A deterministic id collision must never silently bind an intervention to
   // unrelated content. Re-read and prove exact lineage before enrolling cards.
-  const ids = kinds.map((kind) => settlement.diagnostics[kind].question_id);
   const rows = await tx
     .select({
       id: question.id,

@@ -1,4 +1,8 @@
-import { authorInterventionPackage, handleReviewDue } from '@/capabilities/practice/public';
+import {
+  INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
+  authorInterventionPackage,
+  handleReviewDue,
+} from '@/capabilities/practice/public';
 import { PEDAGOGY_METHOD_LIBRARY } from '@/core/pedagogy';
 import { PROBE_QUESTION_KIND, PROBE_QUESTION_SOURCE } from '@/core/schema/conjecture';
 import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture-probe-response';
@@ -731,7 +735,53 @@ describe('YUK-791 intervention preparation closed loop', () => {
       active.settlement.diagnostics.immediate.question_id,
     ]);
 
+    const staleClaimedAt = new Date(
+      activationNow.getTime() - INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS - 1,
+    );
+    await db
+      .update(question)
+      .set({ draft_status: 'draft', updated_at: staleClaimedAt })
+      .where(eq(question.id, active.settlement.diagnostics.immediate.question_id));
+    await expect(recoverEligibleInterventionDiagnostics(db, activationNow)).resolves.toEqual({
+      scanned: 1,
+      ensured: 1,
+      raced: 0,
+      failed: 0,
+    });
+    const [reclaimedSynchronousCrash] = await db
+      .select({ draft_status: question.draft_status })
+      .from(question)
+      .where(eq(question.id, active.settlement.diagnostics.immediate.question_id));
+    expect(reclaimedSynchronousCrash?.draft_status).toBe('active');
+
     const delayed = active.settlement.diagnostics.delayed;
+    await db
+      .update(question)
+      .set({ draft_status: 'draft', updated_at: staleClaimedAt })
+      .where(eq(question.id, delayed.question_id));
+    await db.insert(event).values({
+      id: 'pending_durable_diagnostic_guard',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:judge_pending_attempt',
+      subject_kind: 'question',
+      subject_id: delayed.question_id,
+      outcome: null,
+      payload: {},
+      created_at: staleClaimedAt,
+    });
+    await recoverEligibleInterventionDiagnostics(db, activationNow);
+    const [durableClaimStillFenced] = await db
+      .select({ draft_status: question.draft_status })
+      .from(question)
+      .where(eq(question.id, delayed.question_id));
+    expect(durableClaimStillFenced?.draft_status).toBe('draft');
+    await db.delete(event).where(eq(event.id, 'pending_durable_diagnostic_guard'));
+    await db
+      .update(question)
+      .set({ draft_status: 'active', updated_at: activationNow })
+      .where(eq(question.id, delayed.question_id));
+
     const [delayedCard] = await db
       .select({ state: material_fsrs_state.state })
       .from(material_fsrs_state)
@@ -1085,8 +1135,24 @@ describe('YUK-791 intervention preparation closed loop', () => {
     await db.insert(intervention).values(cloneInterventions);
     await db.delete(material_fsrs_state).where(eq(material_fsrs_state.subject_kind, 'question'));
     await db.delete(question).where(eq(question.source, 'intervention_diagnostic'));
+    const recoveryNow = new Date(activatedAt.getTime() + 24 * 60 * 60 * 1000);
+    const recoveryDate = recoveryNow.toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+    await db.insert(practice_stream_item).values({
+      id: 'recovery_day_existing_stream',
+      date: recoveryDate,
+      position: 1,
+      item_kind: 'question',
+      ref_id: 'recovery_day_existing_question',
+      source: 'decay',
+      status: 'pending',
+      reasoning: 'recovery date anchor',
+      added_by: 'composer_live',
+      signals: {},
+      created_at: recoveryNow,
+      updated_at: recoveryNow,
+    });
 
-    await expect(recoverEligibleInterventionDiagnostics(db)).resolves.toEqual({
+    await expect(recoverEligibleInterventionDiagnostics(db, recoveryNow)).resolves.toEqual({
       scanned: 101,
       ensured: 101,
       raced: 0,
@@ -1102,6 +1168,14 @@ describe('YUK-791 intervention preparation closed loop', () => {
       .where(eq(material_fsrs_state.subject_kind, 'question'));
     expect(recoveredQuestions[0]?.value).toBe(303);
     expect(recoveredCards[0]?.value).toBe(303);
+    const [recoveredImmediateStreamRow] = await db
+      .select({ date: practice_stream_item.date, source: practice_stream_item.source })
+      .from(practice_stream_item)
+      .where(eq(practice_stream_item.ref_id, active.settlement.diagnostics.immediate.question_id));
+    expect(recoveredImmediateStreamRow).toEqual({
+      date: recoveryDate,
+      source: 'intervention',
+    });
   });
 
   it('retries the whole package once then fails closed without a partial package', async () => {
