@@ -2,6 +2,7 @@ import { PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
 import {
   INTERVENTION_ACTIVATED_ACTION,
   INTERVENTION_PREPARATION_FAILED_ACTION,
+  INTERVENTION_SETTLED_ACTION,
 } from '@/core/schema/intervention';
 import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
@@ -28,6 +29,7 @@ export const agencyCapability = defineCapability({
       PROBE_RESULT_ACTION,
       INTERVENTION_ACTIVATED_ACTION,
       INTERVENTION_PREPARATION_FAILED_ACTION,
+      INTERVENTION_SETTLED_ACTION,
     ],
   },
   subscriptions: {
@@ -39,6 +41,18 @@ export const agencyCapability = defineCapability({
         load: () =>
           import('./server/intervention/probe-result-subscription').then(
             (m) => m.buildProbeResultInterventionSubscriber,
+          ),
+      },
+      {
+        // YUK-792 — each learner review of a materialized intervention
+        // diagnostic advances the Agency-owned settlement aggregate. The first
+        // immutable review per immediate/delayed/transfer question wins.
+        id: 'agency.intervention-diagnostic-review-settlement',
+        version: 1,
+        actions: ['review'],
+        load: () =>
+          import('./server/intervention/settlement-subscription').then(
+            (m) => m.buildInterventionDiagnosticReviewSubscriber,
           ),
       },
     ],

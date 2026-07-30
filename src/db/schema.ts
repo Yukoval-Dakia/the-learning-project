@@ -1559,6 +1559,7 @@ export const intervention = pgTable(
     snapshot_json: jsonb('snapshot_json').$type<JsonObject>().notNull(),
     recommendation_json: jsonb('recommendation_json').$type<JsonObject>(),
     package_json: jsonb('package_json').$type<JsonObject>(),
+    settlement_json: jsonb('settlement_json').$type<JsonObject>(),
     preparation_attempts_json: jsonb('preparation_attempts_json')
       .$type<JsonObject[]>()
       .notNull()
@@ -1609,8 +1610,18 @@ export const intervention = pgTable(
         AND ${t.recommendation_json}->>'kind' = 'recommendation'
         AND ${t.package_json} IS NOT NULL
         AND jsonb_typeof(${t.package_json}) = 'object'
+        AND ${t.settlement_json} IS NOT NULL
+        AND jsonb_typeof(${t.settlement_json}) = 'object'
         AND ${t.failure_code} IS NULL
         AND ${t.activated_at} IS NOT NULL
+      )`,
+    ),
+    check(
+      'intervention_settled_shape_ck',
+      sql`${t.status} <> 'settled' OR (
+        ${t.outcome} IS NOT NULL
+        AND ${t.settlement_json} IS NOT NULL
+        AND ${t.settlement_json}->>'completed_at' IS NOT NULL
       )`,
     ),
     check(

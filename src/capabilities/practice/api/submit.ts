@@ -40,6 +40,10 @@ import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 // YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the per-subject snapshot `before`.
 import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
+import {
+  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+  InterventionDiagnosticQuestionMetadata,
+} from '@/core/schema/intervention';
 import { type Tx, db } from '@/db/client';
 import { learning_session, mastery_state, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -147,6 +151,25 @@ async function validateSubmit(req: Request): Promise<ValidatedSubmit> {
   const q = qRows[0];
   if (!q) {
     throw new ApiError('not_found', `question ${questionId} not found`, 404);
+  }
+  if (q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+    const diagnostic = InterventionDiagnosticQuestionMetadata.safeParse(
+      q.metadata?.intervention_diagnostic,
+    );
+    if (!diagnostic.success) {
+      throw new ApiError(
+        'corrupt_state',
+        `intervention diagnostic ${questionId} has invalid scheduling metadata`,
+        500,
+      );
+    }
+    if (now.getTime() < new Date(diagnostic.data.due_at).getTime()) {
+      throw new ApiError(
+        'conflict',
+        `intervention diagnostic ${questionId} is not due until ${diagnostic.data.due_at}`,
+        409,
+      );
+    }
   }
 
   return { body, now, questionId, activityRef: identity.activity_ref, q };

@@ -112,6 +112,10 @@ export const practiceCapability = defineCapability({
   // 每次 run 一行（mass-skip 自曝面）。写者只有 judge_calibration_sample job。
   events: {
     actions: [
+      // Canonical learner review publisher (api/submit.ts). Declaring its
+      // ownership lets other capabilities consume reviews through the durable
+      // event-subscription kernel instead of polling Practice internals.
+      'review',
       'experimental:judge_calibration_sample',
       'experimental:judge_calibration_run_summary',
       'experimental:hint_request',

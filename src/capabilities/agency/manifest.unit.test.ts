@@ -28,3 +28,15 @@ describe('agency scheduled jobs', () => {
     ]);
   });
 });
+
+describe('agency event subscriptions', () => {
+  it('settles intervention diagnostics from the canonical review event', () => {
+    const handlers = agencyCapability.subscriptions?.handlers ?? [];
+    expect(
+      handlers.find((handler) => handler.id === 'agency.intervention-diagnostic-review-settlement'),
+    ).toMatchObject({
+      version: 1,
+      actions: ['review'],
+    });
+  });
+});

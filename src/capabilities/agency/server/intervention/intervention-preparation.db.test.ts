@@ -1,12 +1,21 @@
-import { authorInterventionPackage } from '@/capabilities/practice/public';
+import { authorInterventionPackage, handleReviewDue } from '@/capabilities/practice/public';
 import { PEDAGOGY_METHOD_LIBRARY } from '@/core/pedagogy';
 import { PROBE_QUESTION_KIND, PROBE_QUESTION_SOURCE } from '@/core/schema/conjecture';
+import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture-probe-response';
 import {
   INTERVENTION_CONTRACT_VERSION,
   InterventionPackage,
   PEDAGOGY_METHOD_DEFINITION_VERSION,
+  buildInterventionSettlement,
 } from '@/core/schema/intervention';
-import { event, intervention, knowledge, mastery_state, question } from '@/db/schema';
+import {
+  event,
+  intervention,
+  knowledge,
+  mastery_state,
+  material_fsrs_state,
+  question,
+} from '@/db/schema';
 import { eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
 import type { EventSubscriptionDelivery } from '@/kernel/manifest';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
@@ -14,9 +23,11 @@ import { writeAiProposal } from '@/server/proposals/writer';
 import { and, count, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { answerProbe } from '../conjecture/probe-lifecycle';
 import { prepareInterventionWave } from './prepare';
 import { handleProbeResultInterventionDelivery } from './probe-result-subscription';
-import { recoverPreparingInterventions } from './reconcile';
+import { recoverEligibleInterventionDiagnostics, recoverPreparingInterventions } from './reconcile';
+import { handleInterventionDiagnosticReviewDelivery } from './settlement-subscription';
 import { activateIntervention, loadInterventionVersion, saveRecommendation } from './store';
 
 const CLAIM = '你把复合函数求导中的外层导数和内层导数相加，而不是相乘。';
@@ -137,7 +148,6 @@ async function seedEvidenceFor(
   const now = new Date(`2026-07-${suffix === 'a' ? '20' : '21'}T10:00:00.000Z`);
   const knowledgeId = `kc_chain_${suffix}`;
   const conjectureId = `conjecture_${suffix}`;
-  const probeResultId = `probe_result_${suffix}`;
   await db.insert(knowledge).values({
     id: knowledgeId,
     name: '复合函数链式法则',
@@ -193,42 +203,67 @@ async function seedEvidenceFor(
     created_at: now,
     updated_at: now,
   });
-  await writeEvent(db, {
-    id: probeResultId,
-    actor_kind: 'system',
-    actor_ref: 'mind_probe',
-    action: 'experimental:probe_result',
-    subject_kind: 'question',
-    subject_id: `probe_${suffix}`,
-    payload: {
-      conjecture_event_id: conjectureId,
-      outcome: 0,
-      resolution: 'evidence_for',
-      answer_md: '把两层导数相加',
-      ...(options.includeResponseJudgement === false
-        ? {}
-        : {
-            response_judgement: {
-              rule_version: 'conjecture_probe_response_signature_v1',
-              answer_result: 'incorrect',
-              target_error_match: 'matched',
-              gradable: true,
-              reason_code: 'target_error_signature_matched',
-              signature_match_explanation_md: '学习者作答与冻结的目标错误签名语义一致。',
-              evidence_refs: [
-                'learner_response',
-                'gold_response_signature',
-                'target_error_response_signature',
-                'correctness_judge',
-              ],
-            },
-          }),
-    },
-    caused_by_event_id: conjectureId,
-    ingest_at: now,
-    created_at: new Date(now.getTime() + 2_000),
+  const responseJudgement: ConjectureProbeResponseJudgementT = {
+    rule_version: 'conjecture_probe_response_signature_v1' as const,
+    answer_result: 'incorrect' as const,
+    target_error_match: 'matched' as const,
+    gradable: true,
+    reason_code: 'target_error_signature_matched' as const,
+    signature_match_explanation_md: '学习者作答与冻结的目标错误签名语义一致。',
+    evidence_refs: [
+      'learner_response',
+      'gold_response_signature',
+      'target_error_response_signature',
+      'correctness_judge',
+    ],
+  };
+  if (options.includeResponseJudgement === false) {
+    const probeResultId = `probe_result_${suffix}`;
+    await writeEvent(db, {
+      id: probeResultId,
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: 'experimental:probe_result',
+      subject_kind: 'question',
+      subject_id: `probe_${suffix}`,
+      payload: {
+        conjecture_event_id: conjectureId,
+        outcome: 0,
+        resolution: 'evidence_for',
+        answer_md: '把两层导数相加',
+      },
+      caused_by_event_id: conjectureId,
+      ingest_at: now,
+      created_at: new Date(now.getTime() + 2_000),
+    });
+    return {
+      probeResultId,
+      probeResolution: 'evidence_for' as const,
+      conjectureId,
+      knowledgeId,
+      now,
+    };
+  }
+
+  // Use the real conjecture lifecycle writer for the normal fixture. Under the
+  // post-YUK-787 evidence-strength contract, the first matched target error is
+  // `evidence_for` (not the historical overclaim `confirmed`) and is the live
+  // YUK-791 intervention trigger.
+  const answered = await answerProbe({
+    db,
+    probeQuestionId: `probe_${suffix}`,
+    outcome: 0,
+    answer_md: '把两层导数相加',
+    response_judgement: responseJudgement,
+    now: new Date(now.getTime() + 2_000),
   });
-  return { probeResultId, conjectureId, knowledgeId, now };
+  return {
+    probeResultId: answered.probe_result_event_id,
+    probeResolution: answered.status,
+    conjectureId,
+    knowledgeId,
+    now,
+  };
 }
 
 function delivery(sourceEventId: string): EventSubscriptionDelivery {
@@ -406,7 +441,11 @@ describe('YUK-791 intervention preparation closed loop', () => {
         idempotencyKey: opened.idempotency_key,
         preparationJobId: preparationJobIdOf(opened),
       },
-      { runTaskFn: fn, authorPackageFn: authorInterventionPackage },
+      {
+        runTaskFn: fn,
+        authorPackageFn: authorInterventionPackage,
+        now: () => seeded.now,
+      },
     );
     expect(result).toMatchObject({ status: 'active', delivery_mode: 'shadow', idempotent: false });
     expect(calls).toEqual([
@@ -437,7 +476,42 @@ describe('YUK-791 intervention preparation closed loop', () => {
       intervention_version: 1,
       author_task_run_id: 'author_run_1',
     });
+    expect(active.settlement_json).toMatchObject({
+      diagnostics: {
+        immediate: {
+          status: 'scheduled',
+          due_at: '2026-07-20T10:00:00.000Z',
+        },
+        delayed: {
+          status: 'scheduled',
+          due_at: '2026-07-27T10:00:00.000Z',
+        },
+        transfer: {
+          status: 'scheduled',
+          due_at: '2026-08-10T10:00:00.000Z',
+        },
+      },
+    });
     expect(active.preparation_attempts_json).toHaveLength(1);
+    const diagnosticQuestions = await db
+      .select({
+        id: question.id,
+        source: question.source,
+        judge_kind_override: question.judge_kind_override,
+        metadata: question.metadata,
+      })
+      .from(question)
+      .where(eq(question.source, 'intervention_diagnostic'));
+    expect(diagnosticQuestions).toHaveLength(0);
+    const diagnosticCards = await db
+      .select({
+        subject_id: material_fsrs_state.subject_id,
+        subject_kind: material_fsrs_state.subject_kind,
+        due_at: material_fsrs_state.due_at,
+      })
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_kind, 'question'));
+    expect(diagnosticCards).toHaveLength(0);
 
     const replay = await prepareInterventionWave(
       db,
@@ -467,6 +541,306 @@ describe('YUK-791 intervention preparation closed loop', () => {
         ),
       );
     expect(activated[0]?.value).toBe(1);
+  });
+
+  it('consumes one real review per window, retires one-shot cards, and settles deterministically', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('settlement');
+    expect(seeded.probeResolution).toBe('evidence_for');
+    const [sourceProbeResult] = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.id, seeded.probeResultId));
+    expect(sourceProbeResult?.payload).toMatchObject({
+      resolution: 'evidence_for',
+      response_judgement: {
+        answer_result: 'incorrect',
+        target_error_match: 'matched',
+        gradable: true,
+      },
+    });
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: { AUTO_INTERVENTION_EXPANSION_ENABLED: 'true' },
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn } = successfulRunTask();
+    await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: fn, authorPackageFn: authorInterventionPackage },
+    );
+    const active = await loadInterventionVersion(db, opened.id, opened.version);
+    expect(active?.status).toBe('active');
+    expect(active?.delivery_mode).toBe('eligible');
+    if (!active?.settlement) throw new Error('active intervention has no settlement schedule');
+    const diagnosticQuestions = await db
+      .select({
+        id: question.id,
+        source: question.source,
+        judge_kind_override: question.judge_kind_override,
+        metadata: question.metadata,
+      })
+      .from(question)
+      .where(eq(question.source, 'intervention_diagnostic'));
+    expect(diagnosticQuestions).toHaveLength(3);
+    expect(diagnosticQuestions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'intervention_diagnostic',
+          judge_kind_override: 'multimodal_direct',
+          metadata: expect.objectContaining({
+            intervention_diagnostic: expect.objectContaining({
+              intervention_id: active.id,
+            }),
+            probe_spec: expect.any(Object),
+          }),
+        }),
+      ]),
+    );
+    const dueResponse = await handleReviewDue(
+      new Request('http://localhost/api/review/due?limit=20'),
+      { listActiveGoalsFn: async () => [] },
+    );
+    expect(dueResponse.status).toBe(200);
+    const dueBody = (await dueResponse.json()) as {
+      rows: Array<{ question_id: string }>;
+    };
+    expect(dueBody.rows.map((row) => row.question_id)).toEqual([
+      active.settlement.diagnostics.immediate.question_id,
+    ]);
+
+    const delayed = active.settlement.diagnostics.delayed;
+    const [delayedCard] = await db
+      .select({ state: material_fsrs_state.state })
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_id, delayed.question_id));
+    if (!delayedCard) throw new Error('missing delayed diagnostic card');
+    await writeEvent(db, {
+      id: 'review_settlement_delayed_too_early',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'review',
+      subject_kind: 'question',
+      subject_id: delayed.question_id,
+      outcome: 'success',
+      payload: {
+        fsrs_rating: 'good',
+        fsrs_state_after: delayedCard.state,
+        user_response_md: '提前直连作答',
+        referenced_knowledge_ids: [],
+      },
+      created_at: new Date(active.settlement.diagnostics.immediate.due_at),
+    });
+    await expect(
+      handleInterventionDiagnosticReviewDelivery(db, {
+        subscriberId: 'agency.intervention-diagnostic-review-settlement',
+        subscriberVersion: 1,
+        deliverySeq: 'pre-due',
+        sourceEventId: 'review_settlement_delayed_too_early',
+      }),
+    ).resolves.toMatchObject({ status: 'skipped', reason: 'diagnostic_not_due' });
+    await expect(loadInterventionVersion(db, opened.id, opened.version)).resolves.toMatchObject({
+      status: 'active',
+      settlement: { diagnostics: { delayed: { status: 'scheduled', review_event_id: null } } },
+    });
+
+    const outcomes = {
+      immediate: 'success',
+      delayed: 'failure',
+      transfer: 'success',
+    } as const;
+    let lastDelivery: EventSubscriptionDelivery | null = null;
+    for (const kind of ['immediate', 'delayed', 'transfer'] as const) {
+      const reviewEventId = `review_settlement_${kind}`;
+      const [cardBeforeReview] = await db
+        .select({ state: material_fsrs_state.state })
+        .from(material_fsrs_state)
+        .where(eq(material_fsrs_state.subject_id, active.settlement.diagnostics[kind].question_id))
+        .limit(1);
+      if (!cardBeforeReview) throw new Error(`missing ${kind} diagnostic card`);
+      await writeEvent(db, {
+        id: reviewEventId,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'review',
+        subject_kind: 'question',
+        subject_id: active.settlement.diagnostics[kind].question_id,
+        outcome: outcomes[kind],
+        payload: {
+          fsrs_rating: outcomes[kind] === 'success' ? 'good' : 'again',
+          fsrs_state_after: cardBeforeReview.state,
+          user_response_md: outcomes[kind] === 'success' ? '作答正确' : '作答错误',
+          referenced_knowledge_ids: [],
+        },
+        created_at: new Date(active.settlement.diagnostics[kind].due_at.replace('.000Z', '.500Z')),
+      });
+      lastDelivery = {
+        subscriberId: 'agency.intervention-diagnostic-review-settlement',
+        subscriberVersion: 1,
+        deliverySeq: String(kind === 'immediate' ? 1 : kind === 'delayed' ? 2 : 3),
+        sourceEventId: reviewEventId,
+      };
+      const result = await handleInterventionDiagnosticReviewDelivery(db, lastDelivery);
+      expect(result.status).toBe('succeeded');
+      if (kind === 'immediate') {
+        expect(await recoverEligibleInterventionDiagnostics(db)).toEqual({
+          scanned: 1,
+          ensured: 1,
+          raced: 0,
+          failed: 0,
+        });
+      }
+      const card = await db
+        .select({ id: material_fsrs_state.id })
+        .from(material_fsrs_state)
+        .where(eq(material_fsrs_state.subject_id, active.settlement.diagnostics[kind].question_id));
+      expect(card).toHaveLength(0);
+    }
+
+    const settled = await loadInterventionVersion(db, opened.id, opened.version);
+    expect(settled).toMatchObject({
+      status: 'settled',
+      outcome: 'inconclusive',
+      settlement: {
+        diagnostics: {
+          immediate: { status: 'passed', review_event_id: 'review_settlement_immediate' },
+          delayed: { status: 'failed', review_event_id: 'review_settlement_delayed' },
+          transfer: { status: 'passed', review_event_id: 'review_settlement_transfer' },
+        },
+      },
+    });
+    const settledEvents = await db
+      .select({ value: count() })
+      .from(event)
+      .where(eq(event.action, 'experimental:intervention_settled'));
+    expect(settledEvents[0]?.value).toBe(1);
+
+    if (!lastDelivery) throw new Error('missing replay delivery');
+    const replay = await handleInterventionDiagnosticReviewDelivery(db, lastDelivery);
+    expect(replay).toMatchObject({
+      status: 'succeeded',
+      detail: { idempotent: true, intervention_status: 'settled' },
+    });
+  });
+
+  it('keyset-recovers every eligible row beyond the 100-row batch boundary', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('recovery-page');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: { AUTO_INTERVENTION_EXPANSION_ENABLED: 'true' },
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn } = successfulRunTask();
+    await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: fn, authorPackageFn: authorInterventionPackage },
+    );
+    const active = await loadInterventionVersion(db, opened.id, opened.version);
+    if (
+      !active ||
+      !active.package ||
+      !active.recommendation ||
+      !active.settlement ||
+      !active.activated_at
+    ) {
+      throw new Error('eligible recovery fixture did not activate');
+    }
+    const activatedAt = active.activated_at;
+
+    const cloneCount = 100;
+    const cloneIds = Array.from({ length: cloneCount }, (_, index) => `recovery_clone_${index}`);
+    const cloneEvents: Array<typeof event.$inferInsert> = cloneIds.map((id, index) => ({
+      id: `probe_result_${id}`,
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: 'experimental:probe_result',
+      subject_kind: 'question',
+      subject_id: `probe_recovery_${index}`,
+      payload: {
+        conjecture_event_id: active.conjecture_event_id,
+        outcome: 0,
+        resolution: 'evidence_for',
+        response_judgement: {
+          rule_version: 'conjecture_probe_response_signature_v1',
+          answer_result: 'incorrect',
+          target_error_match: 'matched',
+          gradable: true,
+          reason_code: 'target_error_signature_matched',
+          signature_match_explanation_md: 'recovery pagination fixture',
+          evidence_refs: ['learner_response'],
+        },
+      },
+      caused_by_event_id: active.conjecture_event_id,
+      created_at: activatedAt,
+    }));
+    await db.insert(event).values(cloneEvents);
+    const cloneInterventions: Array<typeof intervention.$inferInsert> = cloneIds.map((id) => ({
+      id,
+      version: 1,
+      revision: 1,
+      source_probe_result_event_id: `probe_result_${id}`,
+      conjecture_event_id: active.conjecture_event_id,
+      status: 'active',
+      delivery_mode: 'eligible',
+      outcome: null,
+      idempotency_key: `recovery_key_${id}`,
+      preparation_job_id: null,
+      snapshot_json: {
+        ...active.snapshot,
+        intervention_id: id,
+        intervention_version: 1,
+        source_probe_result_event_id: `probe_result_${id}`,
+      },
+      recommendation_json: active.recommendation,
+      package_json: {
+        ...active.package,
+        intervention_id: id,
+        intervention_version: 1,
+      },
+      settlement_json: buildInterventionSettlement({
+        interventionId: id,
+        version: 1,
+        activatedAt,
+      }),
+      preparation_attempts_json: active.preparation_attempts,
+      failure_code: null,
+      created_at: activatedAt,
+      updated_at: activatedAt,
+      activated_at: activatedAt,
+    }));
+    await db.insert(intervention).values(cloneInterventions);
+    await db.delete(material_fsrs_state).where(eq(material_fsrs_state.subject_kind, 'question'));
+    await db.delete(question).where(eq(question.source, 'intervention_diagnostic'));
+
+    await expect(recoverEligibleInterventionDiagnostics(db)).resolves.toEqual({
+      scanned: 101,
+      ensured: 101,
+      raced: 0,
+      failed: 0,
+    });
+    const recoveredQuestions = await db
+      .select({ value: count() })
+      .from(question)
+      .where(eq(question.source, 'intervention_diagnostic'));
+    const recoveredCards = await db
+      .select({ value: count() })
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_kind, 'question'));
+    expect(recoveredQuestions[0]?.value).toBe(303);
+    expect(recoveredCards[0]?.value).toBe(303);
   });
 
   it('retries the whole package once then fails closed without a partial package', async () => {

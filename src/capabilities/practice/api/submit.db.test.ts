@@ -18,6 +18,10 @@ import { MASTERY_PROGRESS_ACTION } from '@/capabilities/practice/server/mastery-
 import { recordSelectionObservation } from '@/capabilities/practice/server/selection-observations';
 import { newId } from '@/core/ids';
 import {
+  INTERVENTION_CONTRACT_VERSION,
+  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+} from '@/core/schema/intervention';
+import {
   ai_task_runs,
   difficulty_calibration_label,
   event,
@@ -134,6 +138,40 @@ describe('POST /api/review/submit', () => {
     );
 
     expect(response.status).toBe(400);
+  });
+
+  it('rejects a fixed-window intervention diagnostic before its due time', async () => {
+    const dueAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    await seedQuestion('q_intervention_future', {
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      knowledge_ids: [],
+      metadata: {
+        intervention_diagnostic: {
+          schema_version: INTERVENTION_CONTRACT_VERSION,
+          intervention_id: 'int_future',
+          intervention_version: 1,
+          diagnostic_kind: 'delayed',
+          knowledge_id: 'kc_future',
+          due_at: dueAt,
+        },
+      },
+    });
+
+    const response = await POST(
+      submitReq({
+        question_id: 'q_intervention_future',
+        rating: 'good',
+        response_md: '提前作答',
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: 'conflict' });
+    const reviews = await testDb()
+      .select({ id: event.id })
+      .from(event)
+      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_intervention_future')));
+    expect(reviews).toHaveLength(0);
   });
 
   it('canonical attempt creation returns 201 with the review event Location', async () => {

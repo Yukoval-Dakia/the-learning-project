@@ -53,7 +53,7 @@ export function bucketMfi(score: number | undefined): SignalBand {
 }
 
 /**
- * 把一个 0-1 的归一化信号（examRelevance / misconceptionRecurrence / transferGap）
+ * 把一个 0-1 的归一化信号（examRelevance / misconceptionRecurrence）
  * 分到 high/mid/low 三档（边界 1/3、2/3）。undefined（无 cheap reader，Step A 一律
  * undefined）→ 'n/a'。
  */
@@ -101,7 +101,6 @@ function projectCandidate(sig: CollectedSignal): string {
   // 后自动有 band）。仍投影出来，保证 prompt 形态在数据到位时无需改格式。
   parts.push(`exam_relevance=${bucketUnit(sig.examRelevance)}`);
   parts.push(`misconception_recurrence=${bucketUnit(sig.misconceptionRecurrence)}`);
-  parts.push(`transfer_gap=${bucketUnit(sig.transferGap)}`);
   return parts.join(' | ');
 }
 

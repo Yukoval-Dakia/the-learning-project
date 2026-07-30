@@ -23,3 +23,7 @@ export {
   validateInterventionPackageDeterministically,
 } from './server/intervention-author';
 export type { InterventionAuthorDeps } from './server/intervention-author';
+export {
+  materializeInterventionDiagnostics,
+  retireInterventionDiagnosticQuestion,
+} from './server/intervention-diagnostics';

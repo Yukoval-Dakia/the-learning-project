@@ -415,7 +415,6 @@ describe('collectCandidateSignals — question candidates', () => {
     // for the Step C scorer (MFI-only degradation vs treating signal as a hard zero).
     expect(sig.examRelevance).toBeUndefined();
     expect(sig.misconceptionRecurrence).toBeUndefined();
-    expect(sig.transferGap).toBeUndefined();
     expect(sig.examRelevance).not.toBe(0);
   });
 

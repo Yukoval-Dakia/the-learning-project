@@ -47,12 +47,13 @@ export interface SelectionCandidateSignal {
 
   // ───────────────────────────────────────────────────────────────────────────
   // #52 / ADR-0042 编排档2 amendment（GPT 研究稿 §9.2）——选题不止 MFI 中心。
-  // 三个 first-class 信号。computation 状态（不再全部 deferred）：
+  // Runtime 中只保留有真实 reader 契约或已明确建模的数据：
   //   - examRelevance：仍 deferred（无 cheap reader——无考纲映射数据源）。
   //   - misconceptionRecurrence：**已实现**（P2 D2 / A8）——由 candidate-signals.ts
   //     aggregateMisconceptionRecurrence 按错题家族复发频次算，flag-gated
   //     （MISCONCEPTION_RECURRENCE_ENABLED，默认 OFF → undefined）。见下方字段注。
-  //   - transferGap：仍 deferred（无 cheap reader——mastery_state 无 per-kind 粒度）。
+  // transferGap 暂不进入 type/prompt：无 per-(KC,context) reader 时，永久 undefined
+  // 字段只会诱导 LLM 从虚构信号推理（YUK-792）。
   // 值均由候选收集层计算（candidate-signals.ts）；本文件仅定义 type/schema。
   // ───────────────────────────────────────────────────────────────────────────
   /** 考纲相关度 0-1（考点权重）。computation-deferred：仍无 cheap reader（无考纲映射源）。 */
@@ -66,8 +67,6 @@ export interface SelectionCandidateSignal {
    * prompt，绝不进 θ̂/p(L)/FSRS。无数据 → undefined（NEVER zero-fill）。
    */
   misconceptionRecurrence?: number;
-  /** 迁移缺口 0-1（跨情境迁移诊断）。computation-deferred：仍无 cheap reader（无 per-kind 掌握度）。 */
-  transferGap?: number;
 }
 
 /**

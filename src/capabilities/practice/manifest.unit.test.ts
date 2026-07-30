@@ -59,6 +59,12 @@ describe('practice manifest jobs', () => {
   });
 });
 
+describe('practice manifest events', () => {
+  it('owns the canonical review action for durable cross-capability consumers', () => {
+    expect(practiceCapability.events?.actions).toContain('review');
+  });
+});
+
 describe('practice manifest API resources', () => {
   it('declares canonical paper and review-session resources alongside legacy aliases', () => {
     const routes = practiceCapability.api?.routes ?? [];

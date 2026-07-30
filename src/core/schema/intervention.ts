@@ -18,6 +18,11 @@ export const PEDAGOGY_METHOD_DEFINITION_VERSION = 'pedagogy_method_library_v1' a
 export const INTERVENTION_ACTIVATED_ACTION = 'experimental:intervention_activated' as const;
 export const INTERVENTION_PREPARATION_FAILED_ACTION =
   'experimental:intervention_preparation_failed' as const;
+export const INTERVENTION_SETTLED_ACTION = 'experimental:intervention_settled' as const;
+
+export const INTERVENTION_DELAYED_DIAGNOSTIC_DAYS = 7 as const;
+export const INTERVENTION_TRANSFER_DIAGNOSTIC_DAYS = 21 as const;
+export const INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE = 'intervention_diagnostic' as const;
 
 export const InterventionStatus = z.enum([
   'preparing',
@@ -175,6 +180,127 @@ export type PedagogyRecommendationT = z.infer<typeof PedagogyRecommendation>;
 
 export const InterventionDiagnosticKind = z.enum(['immediate', 'delayed', 'transfer']);
 export type InterventionDiagnosticKindT = z.infer<typeof InterventionDiagnosticKind>;
+
+/** Canonical lineage contract stored on each materialized diagnostic question. */
+export const InterventionDiagnosticQuestionMetadata = z
+  .object({
+    schema_version: z.literal(INTERVENTION_CONTRACT_VERSION),
+    intervention_id: z.string().trim().min(1).max(240),
+    intervention_version: z.number().int().positive(),
+    diagnostic_kind: InterventionDiagnosticKind,
+    knowledge_id: z.string().trim().min(1).max(240),
+    due_at: z.string().datetime(),
+  })
+  .strict();
+export type InterventionDiagnosticQuestionMetadataT = z.infer<
+  typeof InterventionDiagnosticQuestionMetadata
+>;
+
+export const InterventionDiagnosticStatus = z.enum(['scheduled', 'passed', 'failed']);
+export type InterventionDiagnosticStatusT = z.infer<typeof InterventionDiagnosticStatus>;
+
+const InterventionScheduledDiagnostic = z
+  .object({
+    kind: InterventionDiagnosticKind,
+    question_id: z.string().trim().min(1).max(500),
+    due_at: z.string().datetime(),
+    status: InterventionDiagnosticStatus,
+    review_event_id: z.string().trim().min(1).max(240).nullable(),
+    completed_at: z.string().datetime().nullable(),
+  })
+  .strict();
+export type InterventionScheduledDiagnosticT = z.infer<typeof InterventionScheduledDiagnostic>;
+
+export const InterventionSettlement = z
+  .object({
+    schema_version: z.literal(INTERVENTION_CONTRACT_VERSION),
+    diagnostics: z
+      .object({
+        immediate: InterventionScheduledDiagnostic.extend({ kind: z.literal('immediate') }),
+        delayed: InterventionScheduledDiagnostic.extend({ kind: z.literal('delayed') }),
+        transfer: InterventionScheduledDiagnostic.extend({ kind: z.literal('transfer') }),
+      })
+      .strict(),
+    scheduled_at: z.string().datetime(),
+    completed_at: z.string().datetime().nullable(),
+  })
+  .strict();
+export type InterventionSettlementT = z.infer<typeof InterventionSettlement>;
+
+function addUtcDays(value: Date, days: number): string {
+  return new Date(value.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+export function interventionDiagnosticQuestionId(
+  interventionId: string,
+  version: number,
+  kind: InterventionDiagnosticKindT,
+): string {
+  return `intervention:${interventionId}:v${version}:${kind}`;
+}
+
+/**
+ * Fixed first-pass schedule for the atomic intervention package.
+ *
+ * Immediate checks are due at activation, delayed checks after seven days, and
+ * transfer checks after twenty-one days. These are product policy constants,
+ * not model-authored timing, so retries/replays cannot silently move a gate.
+ */
+export function buildInterventionSettlement(input: {
+  interventionId: string;
+  version: number;
+  activatedAt: Date;
+}): InterventionSettlementT {
+  const diagnostic = (kind: InterventionDiagnosticKindT, dueAt: string) => ({
+    kind,
+    question_id: interventionDiagnosticQuestionId(input.interventionId, input.version, kind),
+    due_at: dueAt,
+    status: 'scheduled' as const,
+    review_event_id: null,
+    completed_at: null,
+  });
+  return InterventionSettlement.parse({
+    schema_version: INTERVENTION_CONTRACT_VERSION,
+    diagnostics: {
+      immediate: diagnostic('immediate', input.activatedAt.toISOString()),
+      delayed: diagnostic(
+        'delayed',
+        addUtcDays(input.activatedAt, INTERVENTION_DELAYED_DIAGNOSTIC_DAYS),
+      ),
+      transfer: diagnostic(
+        'transfer',
+        addUtcDays(input.activatedAt, INTERVENTION_TRANSFER_DIAGNOSTIC_DAYS),
+      ),
+    },
+    scheduled_at: input.activatedAt.toISOString(),
+    completed_at: null,
+  });
+}
+
+/**
+ * A durable effect requires both retention and transfer. Mixed results are
+ * intentionally inconclusive rather than being averaged into a false win.
+ */
+export function interventionOutcomeFromSettlement(
+  settlement: InterventionSettlementT,
+): InterventionOutcomeT | null {
+  const diagnostics = Object.values(settlement.diagnostics);
+  if (diagnostics.some((entry) => entry.status === 'scheduled')) return null;
+  if (
+    settlement.diagnostics.immediate.status === 'passed' &&
+    settlement.diagnostics.delayed.status === 'passed' &&
+    settlement.diagnostics.transfer.status === 'passed'
+  ) {
+    return 'effective';
+  }
+  if (
+    settlement.diagnostics.delayed.status === 'failed' &&
+    settlement.diagnostics.transfer.status === 'failed'
+  ) {
+    return 'ineffective';
+  }
+  return 'inconclusive';
+}
 
 const InterventionDiagnosticDraft = z
   .object({
