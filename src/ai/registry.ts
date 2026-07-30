@@ -1647,8 +1647,12 @@ export const tasks = {
     // YUK-576 — transientRetries: 1, same rationale + boundaries as
     // StepsJudgeTask above (synchronous-route sensor, no durable backstop;
     // cross-provider fallback = owner decision via env lever).
-    // vision call latency: mirror StepsJudgeTask budget (single call, 90s ceiling).
-    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000, transientRetries: 1 },
+    // YUK-792 deployed canary: mimo can use the first SDK turn to satisfy the
+    // native outputFormat envelope, then needs one terminal turn. A ceiling of
+    // one returned error_max_turns before any judge result, leaving every
+    // response-aware probe unanswerable. This is still one paid judge request;
+    // maxIterations only bounds the Agent SDK turn protocol.
+    budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 90_000, transientRetries: 1 },
     needsToolCall: false,
     isMultimodal: true,
     // invocation omitted (defaults to 'auto'): called from question-contract.ts

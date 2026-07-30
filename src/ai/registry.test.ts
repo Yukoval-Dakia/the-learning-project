@@ -280,14 +280,14 @@ describe('UnitDimensionFallback registry entry', () => {
 });
 
 describe('MultimodalDirectJudgeTask registry entry', () => {
-  it('is a single-call multimodal vision task (YUK-201)', () => {
+  it('is a single-call multimodal vision task with room for outputFormat finalization (YUK-201/YUK-792)', () => {
     expect(tasks.MultimodalDirectJudgeTask.kind).toBe('MultimodalDirectJudgeTask');
     expect(tasks.MultimodalDirectJudgeTask.defaultProvider).toBe('xiaomi');
     expect(tasks.MultimodalDirectJudgeTask.defaultModel).toBe('mimo-v2.5');
     expect(tasks.MultimodalDirectJudgeTask.isMultimodal).toBe(true);
     expect(tasks.MultimodalDirectJudgeTask.needsToolCall).toBe(false);
     expect(tasks.MultimodalDirectJudgeTask.allowedTools).toEqual([]);
-    expect(tasks.MultimodalDirectJudgeTask.budget.maxIterations).toBe(1);
+    expect(tasks.MultimodalDirectJudgeTask.budget.maxIterations).toBe(2);
     expect(tasks.MultimodalDirectJudgeTask.budget.timeout).toBe(90_000);
     // invocation defaults to 'auto' (graded via the multimodal_direct route, not a
     // manual rescue). The entry omits the optional field.
