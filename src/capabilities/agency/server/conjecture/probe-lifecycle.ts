@@ -48,7 +48,7 @@
 // the proposalId. conjecture_event_id === conjectureProposalId.
 
 import { newId } from '@/core/ids';
-import { ConjectureProbeSpecV2, type ConjectureProbeSpecT } from '@/core/schema/business';
+import { type ConjectureProbeSpecT, ConjectureProbeSpecV2 } from '@/core/schema/business';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_NON_EVIDENCE_RESOLUTION,

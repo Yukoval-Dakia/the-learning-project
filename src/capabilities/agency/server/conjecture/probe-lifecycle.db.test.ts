@@ -27,8 +27,8 @@ import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/server/proposals/writer';
-import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../../tests/helpers/conjecture-probe-fixtures';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 
 const KC_ID = 'kn_chain_rule';
 const PROBE_RESULT_ACTION = 'experimental:probe_result';

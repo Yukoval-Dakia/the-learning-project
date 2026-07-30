@@ -21,6 +21,7 @@
 import { answerProbe } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { TeachingBriefResponseSchema } from '@/capabilities/shell/api/contracts';
 import { loadTeachingBrief } from '@/capabilities/shell/server/teaching-brief';
+import { classifyConjectureProbeResponseFromJudgeMatch } from '@/core/schema/conjecture-probe-response';
 import { event, question } from '@/db/schema';
 import { acceptAiProposal } from '@/server/proposals/actions';
 import { writeAiProposal } from '@/server/proposals/writer';
@@ -35,6 +36,14 @@ const ORIGINAL_CLAIM = '你把链式法则当成两个导数相乘。';
 const OWNER_REWRITE = '你其实是把链式法则的内外层顺序记反了。';
 const PROBE_MD = 'd/dx sin(x^2) = ?';
 const PROBE_REFERENCE_MD = '2x·cos(x^2)：外层导数 × 内层导数。';
+const TARGET_ERROR_RESPONSE_JUDGEMENT = classifyConjectureProbeResponseFromJudgeMatch('incorrect', {
+  match: 'target_error',
+  explanation_md: 'matches the immutable target-error response signature',
+});
+const GOLD_RESPONSE_JUDGEMENT = classifyConjectureProbeResponseFromJudgeMatch('correct', {
+  match: 'gold',
+  explanation_md: 'matches the immutable gold response signature',
+});
 
 /** The sentence that mis-attributed A's probe evidence to the owner's rewrite. */
 const UNQUALIFIED_SUPPORT_COPY = '这条判断得到这次探针的支持';
@@ -211,6 +220,7 @@ describe('YUK-785 — an owner rewrite must not inherit the original claim’s p
       db: testDb(),
       probeQuestionId,
       outcome: 0,
+      response_judgement: TARGET_ERROR_RESPONSE_JUDGEMENT,
     });
 
     const response = await loadTeachingBrief(testDb(), new Date(Date.now() + 1000));
@@ -238,7 +248,12 @@ describe('YUK-785 — an owner rewrite must not inherit the original claim’s p
 
   it('a retired outcome likewise credits the pre-edit claim', async () => {
     const { probeQuestionId } = await acceptWithRewrite();
-    await answerProbe({ db: testDb(), probeQuestionId, outcome: 1 });
+    await answerProbe({
+      db: testDb(),
+      probeQuestionId,
+      outcome: 1,
+      response_judgement: GOLD_RESPONSE_JUDGEMENT,
+    });
 
     const { brief } = await loadTeachingBrief(testDb(), new Date(Date.now() + 1000));
     expect(brief).toMatchObject({
@@ -303,6 +318,7 @@ describe('YUK-785 — an owner rewrite must not inherit the original claim’s p
       db,
       probeQuestionId: probe.id,
       outcome: 0,
+      response_judgement: TARGET_ERROR_RESPONSE_JUDGEMENT,
     });
 
     const response = await loadTeachingBrief(db, new Date(Date.now() + 1000));
