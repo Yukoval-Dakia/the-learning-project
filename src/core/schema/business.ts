@@ -706,6 +706,74 @@ export type ConjectureProbeOperationalFailureCodeT = z.infer<
 >;
 
 /**
+ * Subject-neutral response contract guard for one probe. This is shared by
+ * conjecture diagnostics and intervention verification questions so a later
+ * producer cannot regress to "some wrong answer" as evidence of the target error.
+ */
+export function evaluateConjectureProbeResponseStructure(
+  probe: ConjectureProbeSpecT,
+): ConjectureProbeStructureFailureCodeT[] {
+  const failureCodes = new Set<ConjectureProbeStructureFailureCodeT>();
+  if (
+    normalizeProbeResponseSignatureText(probe.reference_md) ===
+    normalizeProbeResponseSignatureText(probe.expected_target_error_answer_md)
+  ) {
+    failureCodes.add('target_error_answer_not_distinct');
+  }
+  const responseAwareProbe = ConjectureProbeSpecV2.safeParse(probe);
+  if (!responseAwareProbe.success) return [...failureCodes];
+
+  const {
+    gold_response_signature: gold,
+    target_error_response_signature: target,
+    response_mode: responseMode,
+  } = responseAwareProbe.data;
+  const expectedKind = responseSignatureKindForMode(responseMode);
+  const singleChoiceIsGradable =
+    responseMode !== 'single_choice' ||
+    (gold.kind === 'choice' &&
+      gold.option_ids.length === 1 &&
+      target.kind === 'choice' &&
+      target.option_ids.length === 1);
+  if (gold.kind !== expectedKind || target.kind !== expectedKind || !singleChoiceIsGradable) {
+    failureCodes.add('response_signature_ungradable');
+  }
+  const normalizedSignature = (signature: ConjectureProbeResponseSignatureT) => {
+    if (signature.kind === 'choice') {
+      return {
+        ...signature,
+        option_ids: signature.option_ids.map(normalizeProbeResponseSignatureText).sort(),
+      };
+    }
+    if (signature.kind === 'answer_with_reason') {
+      return {
+        ...signature,
+        answer_md: normalizeProbeResponseSignatureText(signature.answer_md),
+        required_reason_features_md: signature.required_reason_features_md
+          .map(normalizeProbeResponseSignatureText)
+          .sort(),
+      };
+    }
+    if (signature.kind === 'rubric') {
+      return {
+        ...signature,
+        required_features_md: signature.required_features_md
+          .map(normalizeProbeResponseSignatureText)
+          .sort(),
+      };
+    }
+    return {
+      ...signature,
+      response_md: normalizeProbeResponseSignatureText(signature.response_md),
+    };
+  };
+  if (exactJsonValueEqual(normalizedSignature(gold), normalizedSignature(target))) {
+    failureCodes.add('target_error_answer_not_distinct');
+  }
+  return [...failureCodes];
+}
+
+/**
  * Subject-neutral structural guard. Subject-specific mathematics/language checks are
  * intentionally a later P1 capability contribution, not a central switch.
  */
@@ -726,61 +794,8 @@ export function evaluateConjectureProbePackageStructure(
     failureCodes.add('probe_pair_not_independent');
   }
   for (const probe of [probePackage.primary, probePackage.followup]) {
-    if (
-      normalizeProbeResponseSignatureText(probe.reference_md) ===
-      normalizeProbeResponseSignatureText(probe.expected_target_error_answer_md)
-    ) {
-      failureCodes.add('target_error_answer_not_distinct');
-    }
-    const responseAwareProbe = ConjectureProbeSpecV2.safeParse(probe);
-    if (responseAwareProbe.success) {
-      const {
-        gold_response_signature: gold,
-        target_error_response_signature: target,
-        response_mode: responseMode,
-      } = responseAwareProbe.data;
-      const expectedKind = responseSignatureKindForMode(responseMode);
-      const singleChoiceIsGradable =
-        responseMode !== 'single_choice' ||
-        (gold.kind === 'choice' &&
-          gold.option_ids.length === 1 &&
-          target.kind === 'choice' &&
-          target.option_ids.length === 1);
-      if (gold.kind !== expectedKind || target.kind !== expectedKind || !singleChoiceIsGradable) {
-        failureCodes.add('response_signature_ungradable');
-      }
-      const normalizedSignature = (signature: ConjectureProbeResponseSignatureT) => {
-        if (signature.kind === 'choice') {
-          return {
-            ...signature,
-            option_ids: signature.option_ids.map(normalizeProbeResponseSignatureText).sort(),
-          };
-        }
-        if (signature.kind === 'answer_with_reason') {
-          return {
-            ...signature,
-            answer_md: normalizeProbeResponseSignatureText(signature.answer_md),
-            required_reason_features_md: signature.required_reason_features_md
-              .map(normalizeProbeResponseSignatureText)
-              .sort(),
-          };
-        }
-        if (signature.kind === 'rubric') {
-          return {
-            ...signature,
-            required_features_md: signature.required_features_md
-              .map(normalizeProbeResponseSignatureText)
-              .sort(),
-          };
-        }
-        return {
-          ...signature,
-          response_md: normalizeProbeResponseSignatureText(signature.response_md),
-        };
-      };
-      if (exactJsonValueEqual(normalizedSignature(gold), normalizedSignature(target))) {
-        failureCodes.add('target_error_answer_not_distinct');
-      }
+    for (const code of evaluateConjectureProbeResponseStructure(probe)) {
+      failureCodes.add(code);
     }
   }
   return [...failureCodes];

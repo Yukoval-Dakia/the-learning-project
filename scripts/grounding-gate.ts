@@ -246,7 +246,12 @@ async function withRestoredBackup<T>(
     client = postgres(databaseUrl, { max: 4, onnotice: () => {} });
     const db = drizzle(client, { schema }) as unknown as Db;
     const r2 = new MemoryR2();
-    const restored = await restoreFromArchive({ db, r2, bytes: backupBytes });
+    const restored = await restoreFromArchive({
+      db,
+      r2,
+      bytes: backupBytes,
+      operationalRestoreTarget: 'fresh_disposable',
+    });
     if (restored.status !== 200) {
       throw new Error(`backup restore rejected: ${JSON.stringify(restored.body)}`);
     }

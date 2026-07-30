@@ -15,6 +15,11 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { VariantVerificationResult } from '@/core/schema/business';
+import {
+  InterventionPackageReviewStructuredOutput,
+  InterventionPackageStructuredOutput,
+  PedagogyRecommendationStructuredOutput,
+} from '@/core/schema/intervention';
 import { zodToJsonSchemaOutputFormat } from './output-format';
 
 // Recursively collect every object key in a JSON-Schema value, so we can assert
@@ -106,5 +111,16 @@ describe('zodToJsonSchemaOutputFormat', () => {
     const out = zodToJsonSchemaOutputFormat(nested);
     expect(collectKeys(out.schema).has('$ref')).toBe(false);
     expect(out.type).toBe('json_schema');
+  });
+
+  it.each([
+    ['recommendation', PedagogyRecommendationStructuredOutput],
+    ['package author', InterventionPackageStructuredOutput],
+    ['package review', InterventionPackageReviewStructuredOutput],
+  ])('keeps the intervention %s schema in mimo-compatible object form', (_label, input) => {
+    const out = zodToJsonSchemaOutputFormat(input);
+    expect((out.schema as { type?: string }).type).toBe('object');
+    expect(collectKeys(out.schema).has('anyOf')).toBe(false);
+    expect(collectKeys(out.schema).has('oneOf')).toBe(false);
   });
 });

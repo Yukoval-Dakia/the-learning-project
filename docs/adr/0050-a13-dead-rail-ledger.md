@@ -122,11 +122,14 @@ M-diagnostic，也不得把后台 job 冒充 owner 确认。flag ledger 已同�
 
 ---
 
-## (c) 教学法 8 法 palette — 零 caller
+## (c) 教学法 8 法 palette — YUK-791 已通电
 
-`src/core/pedagogy/method-library.ts` + `policy.ts` + `index.ts`：全仓命中**只在模块内 + 两个 unit test**，零外部 importer（`grep "core/pedagogy"` 在 `src/ server/ scripts/ web/` 下除自身目录外零命中）。单 commit `37a37aeb` 自陈 wiring deferred。归属 issue：**YUK-506**。
+`src/core/pedagogy/method-library.ts` + `policy.ts` + `index.ts` 曾只有模块内和 unit test；
+YUK-791 现在由 `src/capabilities/agency/server/intervention/recommend.ts` 真实调用
+`selectPedagogyCandidates`，并把结果在同一 `prepare_intervention` wave 交给 Practice
+QuestionAuthor。归属 issue：**YUK-506 / YUK-791**。
 
-### 裁定：**DESIGN SELECTED，尚未通电——owner 2026-07-30 选定复用。**
+### 裁定：**LIVE——确定性 shortlist 已有同波次真实消费者。**
 
 2026-07-25 时它仍是四条里唯一未被推翻的 deferred rail。YUK-796 现已完成形态选择：
 保留 8 法闭集、state guard 与 `selectPedagogyCandidates`，把它作为**确定性合法候选边界**；
@@ -134,10 +137,16 @@ M-diagnostic，也不得把后台 job 冒充 owner 确认。flag ledger 已同�
 `prepare_intervention(intervention_id)` 同一波次中的单次 recommendation task 完成，
 真实消费者是同 wave 的 intervention-scoped QuestionAuthor（YUK-791）。
 
-本 PR 仍是设计票，生产 caller 仍为零；“已选复用”不得写成“已经通电”。完整接口、状态、
-失败关闭与文件图见 `docs/design/2026-07-30-yuk-796-pedagogy-deliberation.md`。
+YUK-791 落地后，recommendation 不能单独成功：无合法方法时 abstain +
+`preparation_failed`；有推荐时立即调用 intervention-scoped QuestionAuthor，整包与独立
+self-review 都通过才原子激活。完整接口、状态、失败关闭与文件图见
+`docs/design/2026-07-30-yuk-796-pedagogy-deliberation.md`。
 
-**明确不注册 `*_ENABLED` flag**——理由是机制性的，不是偷懒：`audit:flags` 的对账是**双向**的，ledger 每条都要求其 `file` 里存在该 flag 名的**活 token**（`scripts/audit-flags.ts` `reconcileFlags` → STALE `name-missing`）。palette 里没有任何 runtime 判定点可以承载这个 token；硬塞一个只为登记而存在的 flag 会**立刻**制造一条 STALE 发现，即「为了让审计变绿而弄脏审计」。palette 是纯数据 + 纯函数，没有可 gate 的运行时路径——**它的台账就是本 ADR 本条 + 模块头注释**。等 YUK-791 真接线时，再按 A5 dark-ship 纪律在**真正的消费点**登记闸门 flag。
+palette 仍不注册自己的假 `*_ENABLED` flag；它是纯数据 + 纯函数。真正的发布闸门
+`AUTO_INTERVENTION_EXPANSION_ENABLED` 登记在
+`src/capabilities/agency/server/intervention/snapshot.ts`：默认 OFF 时仍生成可审计 shadow
+package，但 `delivery_mode='shadow'`，后继 Today/B3 不能交付。只有 YUK-814
+real-observation/canary gate 通过后才允许 flip。
 
 ---
 
@@ -172,7 +181,7 @@ planner/critic/judge fan-out 不恢复。
 | (a) `typed_state='confused-with-X'` | **要通电**（推翻初稿 DEFERRED） | **YUK-794** | 本 ADR §(a)（含门槛四面分析）+ 各文件头注释 + 面板「本轨待通电」标注 |
 | (b1) `prediction_score` | **现在接** FLIP 消费者，不等 Rust 节奏（推翻初稿 DEFERRED） | **YUK-795** | 本 ADR §(b1) |
 | (b2) hard-confirm 轨 | **同上，并入 YUK-795**（推翻初稿 knowingly-deferred） | **YUK-795** | 本 ADR §(b2) + `scripts/audit-flags-ledger.json` → `MISCONCEPTION_HARD_CONFIRM_ENABLED.notes` |
-| (c) pedagogy 8 法 palette | **复用已选、尚未通电**；作为 deterministic shortlist，不承担最终推荐 | **YUK-796 → YUK-791** | 本 ADR §(c) + YUK-796 design |
+| (c) pedagogy 8 法 palette | **LIVE**；作为 deterministic shortlist，由同波次 recommendation + QuestionAuthor 真实消费，不承担最终推荐 | **YUK-796 → YUK-791** | 本 ADR §(c) + YUK-796 design |
 | (d) Planning Panel | **要审议能力，不建独立 Panel**；Agency 同波次内部审议 + Teaching Brief 控制区 | **YUK-796 → YUK-791** | 本 ADR §(d) + YUK-796 design |
 
 ## 通电前的文案纪律（本 ADR 一并落地，与裁定方向一致）

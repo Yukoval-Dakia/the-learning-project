@@ -1342,3 +1342,159 @@ describe('migration smoke — YUK-827 response-signature cutover', () => {
     expect(ownerDismissals[0]?.count).toBe('0');
   });
 });
+describe('migration smoke — YUK-791 intervention preparation', () => {
+  const BASELINE_TAG = '0084_yuk827_response_signature_cutover';
+  const MIGRATION_TAG = '0085_yuk791_intervention_preparation';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    let reachedBaseline = false;
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(client, migration.sql);
+      if (migration.tag === BASELINE_TAG) {
+        reachedBaseline = true;
+        break;
+      }
+    }
+    if (!reachedBaseline) throw new Error(`baseline migration ${BASELINE_TAG} not found`);
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('creates the versioned aggregate and enforces fail-closed terminal shapes', async () => {
+    const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
+    if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
+    await applyMigrationFile(client, migration.sql);
+
+    await client`
+      INSERT INTO event (
+        id, actor_kind, actor_ref, action, subject_kind, subject_id,
+        outcome, payload, affected_scopes
+      )
+      SELECT id, 'system', 'yuk791_migration_smoke', 'experimental:yuk791_fixture',
+             'event', id, 'success', '{}'::jsonb, ARRAY[]::text[]
+      FROM unnest(ARRAY[
+        'probe_result_a', 'probe_result_b', 'probe_result_bad',
+        'conjecture_a', 'conjecture_bad'
+      ]::text[]) AS ids(id)
+    `;
+
+    await client`
+      INSERT INTO intervention (
+        id, version, source_probe_result_event_id, conjecture_event_id,
+        status, delivery_mode, idempotency_key, snapshot_json
+      ) VALUES (
+        'int_a', 1, 'probe_result_a', 'conjecture_a',
+        'preparing', 'shadow', 'idem_a', '{}'::jsonb
+      )
+    `;
+
+    await expect(
+      client`
+        INSERT INTO intervention (
+          id, version, source_probe_result_event_id, conjecture_event_id,
+          status, delivery_mode, idempotency_key, snapshot_json
+        ) VALUES (
+          'int_dangling_source', 1, 'missing_probe_result', 'conjecture_a',
+          'preparing', 'shadow', 'idem_dangling_source', '{}'::jsonb
+        )
+      `,
+    ).rejects.toMatchObject({
+      code: '23503',
+      constraint_name: 'intervention_source_probe_result_event_fk',
+    });
+
+    await expect(
+      client`
+        INSERT INTO intervention (
+          id, version, source_probe_result_event_id, conjecture_event_id,
+          status, delivery_mode, idempotency_key, snapshot_json
+        ) VALUES (
+          'int_dangling_conjecture', 1, 'probe_result_b', 'missing_conjecture',
+          'preparing', 'shadow', 'idem_dangling_conjecture', '{}'::jsonb
+        )
+      `,
+    ).rejects.toMatchObject({
+      code: '23503',
+      constraint_name: 'intervention_conjecture_event_fk',
+    });
+
+    await expect(
+      client`
+        INSERT INTO intervention (
+          id, version, source_probe_result_event_id, conjecture_event_id,
+          status, delivery_mode, idempotency_key, snapshot_json
+        ) VALUES (
+          'int_a', 2, 'probe_result_b', 'conjecture_a',
+          'preparing', 'shadow', 'idem_b', '{}'::jsonb
+        )
+      `,
+    ).rejects.toMatchObject({
+      code: '23505',
+      constraint_name: 'intervention_one_preparing_version_uq',
+    });
+
+    await expect(
+      client`
+        INSERT INTO intervention (
+          id, version, source_probe_result_event_id, conjecture_event_id,
+          status, delivery_mode, idempotency_key, snapshot_json, activated_at
+        ) VALUES (
+          'int_bad_active', 1, 'probe_result_bad', 'conjecture_bad',
+          'active', 'shadow', 'idem_bad', '{}'::jsonb, now()
+        )
+      `,
+    ).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'intervention_active_shape_ck',
+    });
+
+    await client`
+      UPDATE intervention
+      SET status = 'active',
+          recommendation_json = '{"kind":"recommendation"}'::jsonb,
+          package_json = '{}'::jsonb,
+          activated_at = now()
+      WHERE id = 'int_a' AND version = 1
+    `;
+    await client`
+      INSERT INTO intervention (
+        id, version, source_probe_result_event_id, conjecture_event_id,
+        status, delivery_mode, idempotency_key, snapshot_json
+      ) VALUES (
+        'int_a', 2, 'probe_result_b', 'conjecture_a',
+        'preparing', 'shadow', 'idem_b', '{}'::jsonb
+      )
+    `;
+
+    await expect(
+      client`
+        UPDATE intervention
+        SET status = 'preparation_failed', failure_code = NULL
+        WHERE id = 'int_a' AND version = 2
+      `,
+    ).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'intervention_failed_shape_ck',
+    });
+
+    const rows = await client<
+      { id: string; version: number; status: string; delivery_mode: string }[]
+    >`
+      SELECT id, version, status, delivery_mode
+      FROM intervention
+      ORDER BY id, version
+    `;
+    expect(rows).toEqual([
+      { id: 'int_a', version: 1, status: 'active', delivery_mode: 'shadow' },
+      { id: 'int_a', version: 2, status: 'preparing', delivery_mode: 'shadow' },
+    ]);
+  });
+});

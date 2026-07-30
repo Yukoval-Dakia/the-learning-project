@@ -31,13 +31,13 @@ describe('copilot task dispatch declarations', () => {
       expect(task.copilot.intentSchema.safeParse).toBeTypeOf('function');
       expect(task.copilot.prepare).toBeTypeOf('function');
     }
-    expect(Object.keys(tasks)).toHaveLength(45);
+    expect(Object.keys(tasks)).toHaveLength(48);
   });
 });
 
 describe('task prompt definitions', () => {
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(45);
+    expect(Object.keys(tasks)).toHaveLength(48);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -83,7 +83,10 @@ describe('task prompt definitions', () => {
           task === 'ConjectureProbeAuthorTask' ||
           task === 'ConjectureProbeReviewTask' ||
           task === 'ResearchMeetingDirectorTask' ||
-          task === 'MultimodalDirectJudgeTask'
+          task === 'MultimodalDirectJudgeTask' ||
+          task === 'InterventionRecommendationTask' ||
+          task === 'InterventionPackageAuthorTask' ||
+          task === 'InterventionPackageReviewTask'
         ) {
           continue;
         }
@@ -118,6 +121,49 @@ describe('task prompt definitions', () => {
     for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
       const profile = resolveSubjectProfile(profileId);
       for (const task of ['ConjectureProbeAuthorTask', 'ConjectureProbeReviewTask'] as const) {
+        const key = `${profileId}:${task}` as keyof typeof expected;
+        const actualHash = createHash('sha256')
+          .update(getTaskSystemPrompt(task, profile), 'utf8')
+          .digest('hex');
+        expect(actualHash, key).toBe(expected[key]);
+      }
+    }
+  });
+
+  it('pins the response-aware intervention preparation prompts for every profile', () => {
+    const expected = {
+      'general:InterventionRecommendationTask':
+        'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
+      'general:InterventionPackageAuthorTask':
+        '60c55bb06557f2815b7ffe7d5835dd8a5561cbe8a23849a596eb45692c73146e',
+      'general:InterventionPackageReviewTask':
+        '8eb2e4205a3483045d39f6bff0d1148a13237ac2811ab24af43dce5b28b86258',
+      'math:InterventionRecommendationTask':
+        'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
+      'math:InterventionPackageAuthorTask':
+        '5748f5259952696212c4504f5a97953ecaa3415c573245d02c499bde99806bc7',
+      'math:InterventionPackageReviewTask':
+        'b90170f492ab6402007db5d300163df32fd2e1bdd23e7619b9a5b8a418852c29',
+      'physics:InterventionRecommendationTask':
+        'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
+      'physics:InterventionPackageAuthorTask':
+        '5f85c39d955878b0c293f07fd271ce6ff8509f9a9b8fe19045aea4696f956cdb',
+      'physics:InterventionPackageReviewTask':
+        '1a2c78a47667da020dd72dbaebf613b21423848eccd6cb5fb7aed0b919480057',
+      'yuwen:InterventionRecommendationTask':
+        'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
+      'yuwen:InterventionPackageAuthorTask':
+        'c46426ca2c07e712a5e90d6b6962d377df7aff4955cc036c200eac62ea08ce02',
+      'yuwen:InterventionPackageReviewTask':
+        '39bacc1cce60012763914b523050be9976746fc783624f7b41d7f068478dfabe',
+    } as const;
+    for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
+      const profile = resolveSubjectProfile(profileId);
+      for (const task of [
+        'InterventionRecommendationTask',
+        'InterventionPackageAuthorTask',
+        'InterventionPackageReviewTask',
+      ] as const) {
         const key = `${profileId}:${task}` as keyof typeof expected;
         const actualHash = createHash('sha256')
           .update(getTaskSystemPrompt(task, profile), 'utf8')

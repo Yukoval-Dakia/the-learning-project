@@ -26,6 +26,15 @@
     "file": "src/capabilities/agency/server/misconception-promote.ts",
     "notes": "gates misconception hard-confirm. Opt-in/default OFF; parsed via shared parseFlag. LIVE reader: YUK-795 loadPredictionAccountabilityByKey calls the Tier-1 dissociation decision and consumes INSUFFICIENT/EMERGING in nightly conjecture ranking. The background caller always passes ownerFreshlyConfirmed=false, so it is structurally unable to mutate source soft->hard. The flag remains default OFF because the current Judge has no honest target_error_match fact and a protected hard flip still requires a dedicated fresh owner confirmation command. See ADR-0050 §(b2)."
   },
+  "AUTO_INTERVENTION_EXPANSION_ENABLED": {
+    "kind": "env",
+    "literals": ["true", "1"],
+    "case_insensitive": true,
+    "polarity": "opt-in",
+    "reader_marker": "parseFlag(env[AUTO_INTERVENTION_EXPANSION_ENABLED], { defaultValue: false })",
+    "file": "src/capabilities/agency/server/intervention/snapshot.ts",
+    "notes": "YUK-791 dark-ship delivery gate. Default OFF: preparation still creates auditable shadow packages, but Today/B3 delivery must reject delivery_mode=shadow. Flip only after YUK-814 real-observation and canary gates."
+  },
   "RESEARCH_MEETING_AGENT_ENABLED": {
     "kind": "env",
     "literals": ["true", "1"],

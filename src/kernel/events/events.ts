@@ -4,7 +4,8 @@
 import { type EventT, parseEvent } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { and, desc, eq, gte, ne } from 'drizzle-orm';
+import { and, desc, eq, gte, ne, sql } from 'drizzle-orm';
+import { eventCorrectionLockKey, eventCorrectionsGlobalLockKey } from './correction-lock';
 import {
   type CorrectionStatus,
   activeCorrectionStatus,
@@ -263,7 +264,33 @@ function prepareEventInsert(input: WriteEventInput): typeof event.$inferInsert {
 export async function writeEvents(db: DbLike, inputs: WriteEventInput[]): Promise<string[]> {
   if (inputs.length === 0) return [];
   const rows = inputs.map(prepareEventInsert);
-  await db.insert(event).values(rows).onConflictDoNothing({ target: event.id });
+  const correctionTargetIds = [
+    ...new Set(
+      inputs
+        .filter((input) => input.action === 'correct' && input.subject_kind === 'event')
+        .map((input) => input.subject_id),
+    ),
+  ].sort();
+
+  if (correctionTargetIds.length === 0) {
+    await db.insert(event).values(rows).onConflictDoNothing({ target: event.id });
+  } else {
+    // A correction and any activation decision about its target must serialize.
+    // Db and Tx both expose transaction(); on Tx this is a nested savepoint, and
+    // pg_advisory_xact_lock remains held until the caller's outer transaction
+    // ends. Sort multi-target batches to keep lock acquisition deadlock-free.
+    await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
+      );
+      for (const targetId of correctionTargetIds) {
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionLockKey(targetId)}, 0))`,
+        );
+      }
+      await tx.insert(event).values(rows).onConflictDoNothing({ target: event.id });
+    });
+  }
 
   return inputs.map((input) => input.id);
 }

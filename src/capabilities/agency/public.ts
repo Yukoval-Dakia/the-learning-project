@@ -16,3 +16,10 @@ export type {
 export { getEffectiveProbeResultStatuses } from './server/conjecture/probe-evidence';
 export type { EffectiveProbeResultStatus } from './server/conjecture/probe-evidence';
 export { misconceptionHardConfirmEnabled } from './server/misconception-promote';
+export {
+  guardInterventionPreparationStage,
+  loadInterventionAuthoringContext,
+} from './server/intervention/store';
+export type { InterventionPreparationStageGuard } from './server/intervention/store';
+export { retireInterventionPreparationJobs } from './server/intervention/retire-jobs';
+export type { InterventionAuthoringContextT } from './server/intervention/contracts';

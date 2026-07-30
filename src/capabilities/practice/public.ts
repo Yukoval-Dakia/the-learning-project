@@ -18,3 +18,8 @@ export type {
   QuestionEditAcceptResult,
   VariantQuestionAcceptResult,
 } from './server/proposal-appliers';
+export {
+  authorInterventionPackage,
+  validateInterventionPackageDeterministically,
+} from './server/intervention-author';
+export type { InterventionAuthorDeps } from './server/intervention-author';

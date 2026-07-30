@@ -12,3 +12,4 @@ export {
   getCorrectionStatuses,
 } from './corrections';
 export type { CorrectionStatus } from './corrections';
+export { eventCorrectionLockKey, eventCorrectionsGlobalLockKey } from './correction-lock';

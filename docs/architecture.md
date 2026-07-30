@@ -103,7 +103,7 @@ Question (统一题库，single source of truth)
 
 ### 5.1 Task 注册
 
-> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-07-29）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 45 个 task）。
+> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-07-30）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 48 个 task）。
 
 **当前 registry**（runner + registry 都通；实际触发看 route / pg-boss handler）：
 
@@ -142,6 +142,9 @@ Question (统一题库，single source of truth)
 | `ConjectureGroupingTask` | mimo-v2.5-pro | `induceConjecture`（per conjecture post-fast-path，YUK-821） | 否 | — | 语义去重：将 MindModelInductionTask N 个样本按 claim + 完整 DiagnosticSpec 等价分组，避免 claim 相似但触发条件或范围不同的结果被误判为共识 |
 | `ConjectureProbeAuthorTask` | Opus（per-call override） | `induceConjecture` / research meeting director（共识后，YUK-821） | 否 | 输入 | 只根据冻结的 claim + DiagnosticSpec 生成完整双 probe 包；最多允许一次整包重生成 |
 | `ConjectureProbeReviewTask` | Opus（per-call override） | `induceConjecture` / research meeting director（每个候选 probe 包，YUK-821） | 否 | 输入 | 独立复核范围、目标错误、双题独立性、正确答案与错误答案签名；失败关闭，不自行修题 |
+| `InterventionRecommendationTask` | mimo-v2.5-pro | pg-boss `prepare_intervention`（YUK-791） | 否 | — | 只从确定性 pedagogy shortlist 选择一个方法或 abstain；不能恢复被禁用/排除的方法，不宣称因果排名 |
+| `InterventionPackageAuthorTask` | mimo-v2.5-pro | 同一 `prepare_intervention` wave（YUK-791） | 否 | — | 从冻结 intervention snapshot + recommendation 原子生成 1 份材料及 immediate/delayed/transfer 三道 response-aware 诊断题 |
+| `InterventionPackageReviewTask` | mimo-v2.5-pro | package author 后的独立同模型调用（YUK-791） | 否 | — | 独立复核 grounding、方法落实、tested claim、response signature、可判定性与迁移情境；只 pass/fail，不修包 |
 | `ResearchMeetingDirectorTask` | mimo-v2.5-pro（Opus anthropic-sub per-call override） | pg-boss `research_meeting_agent_nightly` (YUK-572, dark-ship) | 是 | — | agent-led 教研例会 director（shadow lane）：charter agent 只提 claim + DiagnosticSpec；服务器复用 author/reviewer 质量门生成 probe；可派 1 名 evidence-scout、留 agent note，从不结算 / 不碰 FSRS |
 | `ProfileCriticTask` | mimo-v2.5-pro | compile CLI `--critic` (YUK-203 U7) | 否 | — | draft SubjectProfile 评审 + patch 建议（proposal-only）|
 | `DreamingTask` | mimo-v2.5-pro | pg-boss nightly (Foundation D) | 是 | — | 夜间学习信号 → inbox proposals（DomainTools）|

@@ -1,5 +1,13 @@
 {
   "_comment": "Schema fields with no INSERT/UPDATE write path. Each entry MUST have reason + resolves_when. When the resolving milestone lands, remove from this allowlist.",
+  "intervention.outcome": {
+    "reason": "YUK-791 creates and activates the versioned preparation aggregate; YUK-792 owns delayed/transfer verification settlement and is the first writer of the terminal outcome.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-792 intervention verification settlement writes outcome",
+      "expected_by": "2026-10-31"
+    }
+  },
   "knowledge.delete_reason": {
     "reason": "Soft-delete metadata; Sub 1 maintenance lane (ADR-0004) will write it | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {

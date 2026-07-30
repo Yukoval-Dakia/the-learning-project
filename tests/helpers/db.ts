@@ -153,6 +153,8 @@ const ALL_TABLES = [
   'event_subscription_effect',
   'event_subscription_delivery',
   'event_subscription_checkpoint',
+  // YUK-791 — versioned intervention state is loose-ref only, so reset explicitly.
+  'intervention',
   'event',
   'proposal_signals',
   'material_fsrs_state',

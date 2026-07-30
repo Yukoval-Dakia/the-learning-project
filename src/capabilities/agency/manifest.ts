@@ -1,3 +1,8 @@
+import { PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
+import {
+  INTERVENTION_ACTIVATED_ACTION,
+  INTERVENTION_PREPARATION_FAILED_ACTION,
+} from '@/core/schema/intervention';
 import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
@@ -17,7 +22,27 @@ export const agencyCapability = defineCapability({
   description:
     '能动编排：夜间链路（dreaming / coach / maintenance 路径维护）+ goal scope 提议 + ' +
     'AI 内部协调信道 agent-notes（hints not facts，用户侧只读观察窗）。',
-  events: { actions: ['experimental:agent_note'] },
+  events: {
+    actions: [
+      'experimental:agent_note',
+      PROBE_RESULT_ACTION,
+      INTERVENTION_ACTIVATED_ACTION,
+      INTERVENTION_PREPARATION_FAILED_ACTION,
+    ],
+  },
+  subscriptions: {
+    handlers: [
+      {
+        id: 'agency.probe-evidence-intervention-prepare',
+        version: 1,
+        actions: [PROBE_RESULT_ACTION],
+        load: () =>
+          import('./server/intervention/probe-result-subscription').then(
+            (m) => m.buildProbeResultInterventionSubscriber,
+          ),
+      },
+    ],
+  },
   api: {
     routes: [
       {
@@ -116,6 +141,28 @@ export const agencyCapability = defineCapability({
         schedule: { cron: '30 4 * * 0', tz: 'Asia/Shanghai' },
         queue: 'llm',
         load: () => import('./jobs/coach_weekly').then((m) => m.buildCoachWeeklyHandler),
+      },
+      {
+        // YUK-791 — on-demand, intervention-scoped preparation wave. One
+        // recommendation is immediately consumed by QuestionAuthor, then a
+        // separate same-model review gates atomic activation. No cron and no
+        // ordinary KC fallback.
+        name: 'prepare_intervention',
+        queue: 'llm',
+        load: () =>
+          import('./jobs/prepare_intervention').then((m) => m.buildPrepareInterventionHandler),
+      },
+      {
+        // Restored `preparing` aggregates are durable business state, while
+        // pg-boss rows are operational and are not in the archive. Reconcile
+        // within two minutes and replace missing/terminal job ids transactionally.
+        name: 'intervention_prepare_recovery',
+        schedule: { cron: '1-59/2 * * * *', tz: 'Asia/Shanghai' },
+        queue: 'fast',
+        load: () =>
+          import('./server/intervention/reconcile').then(
+            (m) => m.buildInterventionPrepareRecoveryHandler,
+          ),
       },
       {
         // YUK-758 DAG 成员（根）：propose-only 生产者，读 tree/goals 产 goal_scope 提议入人审
