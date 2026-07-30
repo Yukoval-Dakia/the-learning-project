@@ -1,17 +1,23 @@
 import { authorInterventionPackage } from '@/capabilities/practice/public';
 import { PEDAGOGY_METHOD_LIBRARY } from '@/core/pedagogy';
 import { PROBE_QUESTION_KIND, PROBE_QUESTION_SOURCE } from '@/core/schema/conjecture';
+import {
+  INTERVENTION_CONTRACT_VERSION,
+  InterventionPackage,
+  PEDAGOGY_METHOD_DEFINITION_VERSION,
+} from '@/core/schema/intervention';
 import { event, intervention, knowledge, mastery_state, question } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+import { eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
 import type { EventSubscriptionDelivery } from '@/kernel/manifest';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { writeAiProposal } from '@/server/proposals/writer';
-import { and, count, eq } from 'drizzle-orm';
+import { and, count, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { prepareInterventionWave } from './prepare';
 import { handleProbeResultInterventionDelivery } from './probe-result-subscription';
 import { recoverPreparingInterventions } from './reconcile';
+import { activateIntervention, loadInterventionVersion, saveRecommendation } from './store';
 
 const CLAIM = '你把复合函数求导中的外层导数和内层导数相加，而不是相乘。';
 const TARGET_ERROR = '把外层导数与内层导数相加，而不是按链式法则相乘。';
@@ -1035,6 +1041,84 @@ describe('YUK-791 intervention preparation closed loop', () => {
     expect(activated[0]?.value).toBe(0);
   });
 
+  it('serializes activation with a concurrent source correction and fails closed', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('r');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const [opened] = await db.select().from(intervention);
+    const record = await loadInterventionVersion(db, opened.id, opened.version);
+    if (!record) throw new Error('intervention disappeared');
+    const recommended = await saveRecommendation(db, record, {
+      kind: 'recommendation',
+      recommendation_version: INTERVENTION_CONTRACT_VERSION,
+      method_id: 'worked_example',
+      method_definition_version: PEDAGOGY_METHOD_DEFINITION_VERSION,
+      rationale_md: '先用完整示范显式区分内外层。',
+      safety_constraints: ['不得把一次表现写成能力定论'],
+      candidate_ids: ['worked_example'],
+      excluded: [],
+      model_run_id: 'activation_race_recommendation_run',
+    });
+    const packageValue = InterventionPackage.parse({
+      ...authorOutput(1),
+      intervention_id: recommended.id,
+      intervention_version: recommended.version,
+      package_version: INTERVENTION_CONTRACT_VERSION,
+      method_id: 'worked_example',
+      method_definition_version: PEDAGOGY_METHOD_DEFINITION_VERSION,
+      author_task_run_id: 'activation_race_author_run',
+    });
+
+    let activation: ReturnType<typeof activateIntervention> | undefined;
+    await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
+      );
+      activation = activateIntervention(db, {
+        interventionId: recommended.id,
+        version: recommended.version,
+        preparationJobId: preparationJobIdOf(opened),
+        package: packageValue,
+      });
+      const state = await Promise.race([
+        activation.then(() => 'settled' as const),
+        new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50)),
+      ]);
+      expect(state).toBe('blocked');
+      await writeEvent(tx, {
+        id: 'correct_probe_result_r_before_activation_commit',
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'correct',
+        subject_kind: 'event',
+        subject_id: seeded.probeResultId,
+        outcome: 'success',
+        payload: {
+          correction_kind: 'mark_wrong',
+          reason_md: 'activation 等待提交时，owner 判定原目标错误匹配无效。',
+          affected_refs: [{ kind: 'question', id: 'probe_r' }],
+        },
+        created_at: new Date(seeded.now.getTime() + 4_000),
+      });
+    });
+    if (!activation) throw new Error('activation was not started');
+    const result = await activation;
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      failure_code: 'source_evidence_inactive',
+      package: null,
+      activated_at: null,
+    });
+    const activated = await db
+      .select({ value: count() })
+      .from(event)
+      .where(eq(event.action, 'experimental:intervention_activated'));
+    expect(activated[0]?.value).toBe(0);
+  });
+
   it('recreates a missing operational job for a restored preparing aggregate exactly once', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('i');
@@ -1124,6 +1208,45 @@ describe('YUK-791 intervention preparation closed loop', () => {
       failure_code: 'preparation_job_failed',
       package_json: null,
       activated_at: null,
+    });
+  });
+
+  it('does not terminalize a replacement job from a stale terminal recovery scan', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('q');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const [opened] = await db.select().from(intervention);
+    const scannedJobId = preparationJobIdOf(opened);
+
+    const report = await recoverPreparingInterventions(db, {
+      getJobById: async () => {
+        await db
+          .update(intervention)
+          .set({ preparation_job_id: 'replacement-after-terminal-scan' })
+          .where(eq(intervention.id, opened.id));
+        return { state: 'failed' };
+      },
+      send: async () => {
+        throw new Error('terminal scan must not enqueue');
+      },
+    });
+
+    expect(scannedJobId).not.toBe('replacement-after-terminal-scan');
+    expect(report).toEqual({
+      scanned: 1,
+      live: 0,
+      reenqueued: 0,
+      terminalized: 0,
+      raced: 1,
+      failed: 0,
+    });
+    const [current] = await db.select().from(intervention);
+    expect(current).toMatchObject({
+      status: 'preparing',
+      preparation_job_id: 'replacement-after-terminal-scan',
+      failure_code: null,
     });
   });
 

@@ -20,8 +20,8 @@ import {
   type PedagogyRecommendationT,
 } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
-import { intervention } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+import { event, intervention } from '@/db/schema';
+import { eventCorrectionLockKey, eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
@@ -353,6 +353,27 @@ export async function activateIntervention(
     if (current.preparation_job_id !== input.preparationJobId) return current;
     if (!current.recommendation || current.recommendation.kind !== 'recommendation') {
       throw new Error('intervention cannot activate without a concrete recommendation');
+    }
+    // Correction writers take this same transaction-level lock before INSERT.
+    // The evidence read and activation write therefore observe one serialized
+    // source truth, closing the READ COMMITTED read→update race.
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
+    );
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionLockKey(current.source_probe_result_event_id)}, 0))`,
+    );
+    const [source] = await tx
+      .select({ question_id: event.subject_id })
+      .from(event)
+      .where(eq(event.id, current.source_probe_result_event_id))
+      .limit(1);
+    if (source) {
+      // Question edits take a row-level UPDATE lock. Holding FOR SHARE until
+      // commit makes the direct-chain question snapshot and activation atomic.
+      await tx.execute(
+        sql`SELECT "id" FROM "question" WHERE "id" = ${source.question_id} FOR SHARE`,
+      );
     }
     const effective = await getEffectiveProbeResultStatuses(
       tx,

@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/server/conjecture/probe-evidence';
 import type { Db, Tx } from '@/db/client';
-import { getEventById } from '@/kernel/events';
+import {
+  eventCorrectionLockKey,
+  eventCorrectionsGlobalLockKey,
+  getEventById,
+} from '@/kernel/events';
 import type {
   EventSubscriptionDelivery,
   EventSubscriptionHandlerFactory,
@@ -108,7 +112,10 @@ export async function handleProbeResultInterventionDelivery(
 
   const record = await db.transaction(async (tx) => {
     await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intervention:source:${delivery.sourceEventId}`}, 0))`,
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
+    );
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionLockKey(delivery.sourceEventId)}, 0))`,
     );
     const existing = await loadInterventionBySourceProbeResult(tx, delivery.sourceEventId);
     if (existing) {

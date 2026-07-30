@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Db } from '@/db/client';
 import { intervention } from '@/db/schema';
+import { eventCorrectionLockKey, eventCorrectionsGlobalLockKey } from '@/kernel/events';
 import { getRunningBoss } from '@/server/boss/client';
 import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import { asc, eq, sql } from 'drizzle-orm';
@@ -83,20 +84,28 @@ export async function recoverPreparingInterventions(
         continue;
       }
       if (existingJob) {
-        await failInterventionPreparation(db, {
+        if (!row.preparation_job_id) {
+          throw new Error('terminal preparation job lookup had no aggregate job id');
+        }
+        const failed = await failInterventionPreparation(db, {
           interventionId: row.id,
           version: row.version,
+          expectedPreparationJobId: row.preparation_job_id,
           failureCode: `preparation_job_${existingJob.state}`,
           now,
         });
-        report.terminalized += 1;
+        if (failed.status === 'preparation_failed') report.terminalized += 1;
+        else report.raced += 1;
         continue;
       }
 
       const replacementJobId = randomUUID();
       const outcome = await db.transaction(async (tx) => {
         await tx.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intervention:source:${row.source_probe_result_event_id}`}, 0))`,
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
+        );
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionLockKey(row.source_probe_result_event_id)}, 0))`,
         );
         const current = await loadInterventionVersion(tx, row.id, row.version);
         if (

@@ -43,14 +43,17 @@
     registry-derived `outputFormat`。共享 canonical JSON SHA-256 消除 digest 键序漂移。
 14. intervention 的两个 event provenance 建硬 FK，active CHECK 关闭 SQL NULL 三值漏洞；
     review 缺 run id 作为整包 attempt failure 重试，idempotent terminal replay 记 idle。
+15. event correction 单一写入口与 intervention activation 共用 source transaction
+    advisory lock，关闭 READ COMMITTED 的 read→correction→activate 竞态；recovery
+    terminalization 携带扫描到的 expected job id，restore/replay 换 id 后旧 scan 只记 raced。
 
 ## 验证证据
 
 - 最新 review diff targeted unit：5 files / 101 tests PASS；此前 broader cockpit
   8 files / 153 tests PASS。
-- targeted DB：2 files / 18 tests PASS，新增覆盖付费前/author 后 evidence 失效、
-  restore job 取消与 job-id fencing、跨库/同库 recovery、operational retry exhaustion、
-  review run provenance 缺失。
+- targeted DB：4 files / 54 tests PASS，新增覆盖付费前/author 后 evidence 失效、
+  correction/activation 串行化、stale terminal scan、restore job 取消与 job-id fencing、
+  跨库/同库 recovery、operational retry exhaustion、review run provenance 缺失。
 - YUK-791 migration smoke：1 PASS / 29 skipped。
 - `pnpm typecheck` PASS。
 - scoped Biome PASS；capability boundary audit 0。

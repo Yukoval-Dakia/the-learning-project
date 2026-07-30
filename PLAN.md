@@ -32,6 +32,10 @@
   - recommendation、author、review 每次付费调用前分别验证当前 job id 与 source
     probe/result/proposal/question direct chain；激活事务再验一次。enqueue 后或任一生成
     阶段 evidence 被纠正/provenance 漂移都立即停止后续付费并原子失败。
+  - 所有 event correction 写入与 activation 共用 source transaction advisory lock；
+    READ COMMITTED 下不存在“activation 已读、correction 后提交、activation 仍成功”的窗口。
+    recovery 将扫描到的 terminal job id 作为 terminalization fence，restore/replay 换 id
+    后旧 scan 只能记 raced，不能误杀新 job。
   - recommendation/author/review 的 provider-facing schema（含 author 内层 response
     signature）均为扁平 object、无 `anyOf`；返回后仍由 canonical discriminated reader
     严格校验，三个生产调用都显式传 registry-derived `outputFormat`。package review
@@ -41,8 +45,8 @@
   - `AUTO_INTERVENTION_EXPANSION_ENABLED` 默认 OFF；当前只产生 `delivery_mode=shadow`，
     不等同于交付或扩量。
 - **针对性开发验证已过**
-  - 最新 review diff 定向 unit：5 files / 101 tests；DB：2 files / 18 tests；此前 broader
-    unit cockpit 8 files / 153 tests；migration smoke：1 pass。
+  - 最新 review diff 定向 unit：5 files / 101 tests；DB：4 files / 54 tests；此前
+    broader unit cockpit 8 files / 153 tests；migration smoke：1 pass。
   - `pnpm typecheck`、Biome scoped check、capability boundary audit（0）通过。
   - schema audit 无 unallowed stub；flag reader/ledger 对齐。全仓 strict flag audit 仍报告
     基线已有的 `NOTES_MASTERY_SUBSCRIPTION_ENABLED` 未登记，本 lane 未改其行为。
