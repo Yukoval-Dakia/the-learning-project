@@ -42,10 +42,12 @@ export interface TimeBudgetResult<T> {
 }
 
 /**
- * 按分钟预算选出今日流：先给最早到期题占位，再按原意图序填非到期题/卷。
+ * 按分钟预算选出今日流：先保留产品已批准的干预交付，再给最早到期题占位，
+ * 最后按原意图序填非到期题/卷。
  *
  * 这是确定性「保底/延后」规则：到期题超预算时，保留输入顺序中能装下的前缀，其余延后；
- * 非到期项只使用剩余预算。最终输出恢复原意图序，所以 legacy 的 variant 穿插仍保持。
+ * 非到期项只使用剩余预算。干预交付是承重产品动作，即使使当天流超过自述预算也不可
+ * 静默丢弃。最终输出恢复原意图序，所以 legacy 的 variant 穿插仍保持。
  */
 export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
   items: readonly T[],
@@ -71,6 +73,12 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
   const selectedIndexes = new Set<number>();
 
   for (const [index, item] of items.entries()) {
+    if (item.source !== 'intervention') continue;
+    selectedIndexes.add(index);
+    remaining = Math.max(0, remaining - estimateStreamItemMinutes(item.item_kind));
+  }
+
+  for (const [index, item] of items.entries()) {
     if (item.source !== 'decay') continue;
     const cost = estimateStreamItemMinutes(item.item_kind);
     if (cost <= remaining) {
@@ -82,7 +90,7 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
   }
 
   for (const [index, item] of items.entries()) {
-    if (item.source === 'decay') continue;
+    if (item.source === 'decay' || item.source === 'intervention') continue;
     const cost = estimateStreamItemMinutes(item.item_kind);
     if (cost <= remaining) {
       selectedIndexes.add(index);
@@ -93,7 +101,10 @@ export function fitStreamToTimeBudget<T extends BudgetableStreamItem>(
   const kept = items.filter((_, index) => selectedIndexes.has(index));
   return {
     kept,
-    estimatedMinutes: budgetMinutes - remaining,
+    estimatedMinutes: kept.reduce(
+      (sum, item) => sum + estimateStreamItemMinutes(item.item_kind),
+      0,
+    ),
     deferredDueCount,
     truncated: kept.length < items.length,
   };

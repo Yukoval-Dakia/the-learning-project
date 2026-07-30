@@ -4,6 +4,7 @@
 // LLM **永不命中 live endpoint**——全程注入 mock runTaskFn（composeDeps.runTaskFn）。
 // 增量重排走纯统计 sampler（不调 LLM），rng 注入 seeded 确定化 Poisson 抽样。
 
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import {
   artifact,
   event,
@@ -48,6 +49,7 @@ async function insertQuestion(opts: {
   difficulty?: number;
   /** YUK-350 draft 排除回归：传 'draft' 模拟 container-only（embedded/teaching）题。 */
   draftStatus?: string | null;
+  source?: string;
 }): Promise<string> {
   const qid = opts.id ?? createId();
   const now = new Date();
@@ -60,7 +62,7 @@ async function insertQuestion(opts: {
       reference_md: 'B',
       knowledge_ids: opts.knowledgeIds ?? [],
       difficulty: opts.difficulty ?? 3,
-      source: 'manual',
+      source: opts.source ?? 'manual',
       draft_status: opts.draftStatus ?? null,
       variant_depth: 0,
       figures: [],
@@ -74,8 +76,10 @@ async function insertQuestion(opts: {
   return qid;
 }
 
-async function seedDueQuestion(opts: { dueOffsetMs?: number } = {}): Promise<string> {
-  const qid = await insertQuestion({ kind: 'choice' });
+async function seedDueQuestion(
+  opts: { dueOffsetMs?: number; source?: string } = {},
+): Promise<string> {
+  const qid = await insertQuestion({ kind: 'choice', source: opts.source });
   const now = new Date();
   const offset = opts.dueOffsetMs ?? 3600_000;
   await testDb()
@@ -373,6 +377,84 @@ describe('YUK-336 StreamView structured item metadata', () => {
   });
 });
 
+describe('YUK-792 intervention delivery transitions', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('rejects skipping a learner-visible intervention diagnostic', async () => {
+    const streamItemId = createId();
+    await testDb().insert(practice_stream_item).values({
+      id: streamItemId,
+      date: TODAY,
+      position: 1,
+      item_kind: 'question',
+      ref_id: createId(),
+      source: 'intervention',
+      status: 'pending',
+      reasoning: '先阅读材料，再完成检验。',
+      added_by: 'composer_live',
+      signals: {},
+    });
+
+    await expect(advanceStreamItem(testDb(), streamItemId, 'skipped')).rejects.toMatchObject({
+      code: 'conflict',
+      status: 409,
+    });
+
+    const [stored] = await testDb()
+      .select({ status: practice_stream_item.status })
+      .from(practice_stream_item)
+      .where(eq(practice_stream_item.id, streamItemId));
+    expect(stored?.status).toBe('pending');
+  });
+
+  it('rejects done without an exact attempt, then permits the post-attempt transition', async () => {
+    const streamItemId = createId();
+    const questionId = createId();
+    const createdAt = new Date(Date.now() - 1_000);
+    await testDb().insert(practice_stream_item).values({
+      id: streamItemId,
+      date: TODAY,
+      position: 1,
+      item_kind: 'question',
+      ref_id: questionId,
+      source: 'intervention',
+      status: 'in_progress',
+      reasoning: '先阅读材料，再完成检验。',
+      added_by: 'composer_live',
+      signals: {},
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+
+    await expect(advanceStreamItem(testDb(), streamItemId, 'done')).rejects.toMatchObject({
+      code: 'conflict',
+      status: 409,
+    });
+
+    await testDb()
+      .insert(event)
+      .values({
+        id: createId(),
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'review',
+        subject_kind: 'question',
+        subject_id: questionId,
+        outcome: 'success',
+        payload: { fsrs_rating: 'good', stream_item_id: streamItemId },
+        created_at: new Date(),
+      });
+
+    await expect(advanceStreamItem(testDb(), streamItemId, 'done')).resolves.toMatchObject({
+      id: streamItemId,
+      status: 'done',
+    });
+  });
+});
+
 describe('streamLocalDate — 用户本地日（Asia/Shanghai）单一真相源（FINDING 4，Codex）', () => {
   it('UTC 容器边界：21:30 UTC = 次日 05:30 Asia/Shanghai → 返回**次日**（不是 UTC 当日）', () => {
     // 模拟夜间 cron `'30 5 * * *', tz: 'Asia/Shanghai'` 在 UTC 容器里触发的瞬间：
@@ -473,7 +555,7 @@ describe('Task 9 夜间预产 composeNightly（YUK-361 Phase 4）', () => {
     expect(view.progress.estimated_total_minutes).toBeLessThanOrEqual(view.budget.minutes);
   });
 
-  it('today read immediately trims a pre-fix over-budget pending tail but preserves in-progress', async () => {
+  it('today read trims an over-budget tail but preserves in-progress and intervention delivery', async () => {
     await testDb()
       .insert(practice_stream_item)
       .values(
@@ -483,7 +565,7 @@ describe('Task 9 夜间预产 composeNightly（YUK-361 Phase 4）', () => {
           position: index + 1,
           item_kind: 'question' as const,
           ref_id: `legacy-over-budget-${index}`,
-          source: 'decay' as const,
+          source: index === 14 ? ('intervention' as const) : ('decay' as const),
           status: index === 0 ? ('in_progress' as const) : ('pending' as const),
           reasoning: 'legacy fixture',
           added_by: 'composer_nightly' as const,
@@ -496,7 +578,87 @@ describe('Task 9 夜间预产 composeNightly（YUK-361 Phase 4）', () => {
     expect(view.items).toHaveLength(10);
     expect(view.items[0].status).toBe('in_progress');
     expect(view.items.filter((item) => item.status === 'pending')).toHaveLength(9);
+    expect(view.items.map((item) => item.ref_id)).toContain('legacy-over-budget-14');
+    expect(view.items.find((item) => item.ref_id === 'legacy-over-budget-14')?.source).toBe(
+      'intervention',
+    );
     expect(view.progress.estimated_total_minutes).toBe(20);
+  });
+
+  it('normal composition keeps a due intervention as a protected first-class source', async () => {
+    const diagnosticId = await seedDueQuestion({
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+    });
+
+    await composeNightly(testDb(), TODAY, { policy: { policy: 'legacy' } });
+    const view = await getStream(testDb(), TODAY);
+
+    expect(view.items.find((item) => item.ref_id === diagnosticId)).toMatchObject({
+      source: 'intervention',
+      reasoning: expect.stringContaining('材料已经准备好'),
+    });
+  });
+
+  it('collects a due intervention even when 200 older ordinary cards fill the generic page', async () => {
+    const genericDueLimit = 200;
+    const now = new Date();
+    const ordinaryQuestions = Array.from({ length: genericDueLimit + 1 }, (_, index) => ({
+      id: createId(),
+      kind: 'choice',
+      prompt_md: `普通到期题 ${index}`,
+      reference_md: 'B',
+      knowledge_ids: [] as string[],
+      difficulty: 3,
+      source: 'manual',
+      draft_status: null,
+      variant_depth: 0,
+      figures: [],
+      image_refs: [],
+      structured: null,
+      metadata: {},
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    }));
+    await testDb().insert(question).values(ordinaryQuestions);
+    await testDb()
+      .insert(material_fsrs_state)
+      .values(
+        ordinaryQuestions.map((ordinaryQuestion, index) => ({
+          id: createId(),
+          subject_kind: 'question',
+          subject_id: ordinaryQuestion.id,
+          state: {
+            due: now,
+            stability: 1,
+            difficulty: 5,
+            scheduled_days: 1,
+            learning_steps: 0,
+            reps: 1,
+            lapses: 0,
+            state: 'review' as const,
+            last_review: now,
+          },
+          // Every ordinary card is older than the intervention below, so the
+          // generic 200-row page cannot contain that intervention.
+          due_at: new Date(now.getTime() - 60_000 - index),
+          last_review_event_id: null,
+          updated_at: now,
+        })),
+      );
+    const diagnosticId = await seedDueQuestion({
+      dueOffsetMs: 1_000,
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+    });
+
+    const inputs = await collectComposerInputs(testDb(), TODAY);
+
+    expect(inputs.dueItems).toHaveLength(genericDueLimit + 1);
+    expect(inputs.dueItems[0]).toMatchObject({
+      questionId: diagnosticId,
+      source: 'intervention',
+    });
+    expect(inputs.dueItems.filter((item) => item.questionId === diagnosticId)).toHaveLength(1);
   });
 
   it('幂等：composeNightly 跑两次不 double-compose（第二次 no-op，added=0、行数不变）', async () => {

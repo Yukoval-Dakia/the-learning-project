@@ -4,7 +4,7 @@ import { intervention } from '@/db/schema';
 import { eventCorrectionLockKey, eventCorrectionsGlobalLockKey } from '@/kernel/events';
 import { getRunningBoss } from '@/server/boss/client';
 import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
-import { asc, eq, sql } from 'drizzle-orm';
+import { type SQL, and, asc, eq, gt, or, sql } from 'drizzle-orm';
 import type { Job, JobWithMetadata } from 'pg-boss';
 import {
   PREPARE_INTERVENTION_JOB,
@@ -38,6 +38,112 @@ export interface InterventionPrepareRecoveryReport {
   terminalized: number;
   raced: number;
   failed: number;
+}
+
+export interface InterventionSettlementRecoveryReport {
+  scanned: number;
+  ensured: number;
+  raced: number;
+  failed: number;
+}
+
+/**
+ * Recreate eligible diagnostic questions/FSRS cards after restoring an archive
+ * created before or during YUK-792. Completed one-shot diagnostics are retained
+ * as immutable questions but are not re-enrolled.
+ */
+export async function recoverEligibleInterventionDiagnostics(
+  db: Db,
+  now = new Date(),
+): Promise<InterventionSettlementRecoveryReport> {
+  const report: InterventionSettlementRecoveryReport = {
+    scanned: 0,
+    ensured: 0,
+    raced: 0,
+    failed: 0,
+  };
+  let cursor: { updatedAt: Date; id: string; version: number } | null = null;
+  let materializeInterventionDiagnostics:
+    | typeof import('@/capabilities/practice/public')['materializeInterventionDiagnostics']
+    | null = null;
+
+  while (true) {
+    const activeEligible = and(
+      eq(intervention.status, 'active'),
+      eq(intervention.delivery_mode, 'eligible'),
+    );
+    const afterCursor: SQL<unknown> | undefined =
+      cursor === null
+        ? undefined
+        : or(
+            gt(intervention.updated_at, cursor.updatedAt),
+            and(eq(intervention.updated_at, cursor.updatedAt), gt(intervention.id, cursor.id)),
+            and(
+              eq(intervention.updated_at, cursor.updatedAt),
+              eq(intervention.id, cursor.id),
+              gt(intervention.version, cursor.version),
+            ),
+          );
+    const rows: Array<{ id: string; version: number; updatedAt: Date }> = await db
+      .select({
+        id: intervention.id,
+        version: intervention.version,
+        updatedAt: intervention.updated_at,
+      })
+      .from(intervention)
+      .where(afterCursor ? and(activeEligible, afterCursor) : activeEligible)
+      .orderBy(asc(intervention.updated_at), asc(intervention.id), asc(intervention.version))
+      .limit(RECOVERY_SCAN_LIMIT);
+    if (rows.length === 0) break;
+    report.scanned += rows.length;
+    if (!materializeInterventionDiagnostics) {
+      ({ materializeInterventionDiagnostics } = await import('@/capabilities/practice/public'));
+    }
+    const materialize = materializeInterventionDiagnostics;
+
+    for (const row of rows) {
+      try {
+        const outcome = await db.transaction(async (tx) => {
+          await tx.execute(
+            sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intervention:${row.id}:${row.version}`}, 0))`,
+          );
+          const current = await loadInterventionVersion(tx, row.id, row.version);
+          if (
+            !current ||
+            current.status !== 'active' ||
+            current.delivery_mode !== 'eligible' ||
+            !current.package ||
+            !current.settlement
+          ) {
+            return 'raced' as const;
+          }
+          await materialize(tx, {
+            package: current.package,
+            settlement: current.settlement,
+            snapshot: current.snapshot,
+            // Recovery may be materializing a pre-deploy eligible row for the
+            // first time. Place its immediate delivery in today's stream while
+            // preserving the immutable due times already frozen in settlement.
+            now,
+          });
+          return 'ensured' as const;
+        });
+        report[outcome] += 1;
+      } catch (error) {
+        report.failed += 1;
+        console.warn('[intervention_settlement_recovery] row failed', {
+          intervention_id: row.id,
+          version: row.version,
+          error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+        });
+      }
+    }
+
+    const last = rows.at(-1);
+    if (!last || rows.length < RECOVERY_SCAN_LIMIT) break;
+    cursor = { updatedAt: last.updatedAt, id: last.id, version: last.version };
+  }
+  return report;
 }
 
 /**
@@ -161,6 +267,12 @@ export function buildInterventionPrepareRecoveryHandler(
   return async () => {
     const boss = getRunningBoss();
     if (!boss) throw new Error('intervention prepare recovery requires the running pg-boss');
-    return recoverPreparingInterventions(db, boss as InterventionPrepareRecoveryBoss);
+    const preparation = await recoverPreparingInterventions(
+      db,
+      boss as InterventionPrepareRecoveryBoss,
+    );
+    const settlement = await recoverEligibleInterventionDiagnostics(db);
+    console.log('[intervention_prepare_recovery] settlement', settlement);
+    return preparation;
   };
 }

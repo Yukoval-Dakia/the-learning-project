@@ -28,3 +28,15 @@ describe('agency scheduled jobs', () => {
     ]);
   });
 });
+
+describe('agency event subscriptions', () => {
+  it('settles intervention diagnostics from canonical trusted judge events', () => {
+    const handlers = agencyCapability.subscriptions?.handlers ?? [];
+    expect(
+      handlers.find((handler) => handler.id === 'agency.intervention-diagnostic-review-settlement'),
+    ).toMatchObject({
+      version: 2,
+      actions: ['judge'],
+    });
+  });
+});

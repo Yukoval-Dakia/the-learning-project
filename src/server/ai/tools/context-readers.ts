@@ -4,6 +4,7 @@
 // items, and Dreaming-maintained memory briefs.
 
 import { QuestionKind } from '@/core/schema/business';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { deriveSourceTier } from '@/core/schema/provenance';
 // ADR-0032 D6-R6 / D6-draftread — addressable-structure projection (read≡write
 // coordinate fix). Pure tree-clip; shared by get_question_context(include:
@@ -612,6 +613,22 @@ async function executeGetQuestionContext(
     .from(question)
     .where(eq(question.id, input.questionId))
     .limit(1);
+  if (q?.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+    return GetQuestionContextOutputSchema.parse({
+      question: null,
+      lifecycle: {
+        first_attempted_at: null,
+        last_attempted_at: null,
+        attempt_counts: { success: 0, partial: 0, failure: 0 },
+        first_reviewed_at: null,
+        last_reviewed_at: null,
+        review_count: 0,
+        due_at: null,
+        last_review_event_id: null,
+        linked_record_ids: [],
+      },
+    });
+  }
   const records = include.has('records')
     ? await ctx.db
         .select()

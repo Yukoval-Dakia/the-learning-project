@@ -3,7 +3,7 @@ import { REASONING_TRACE_MAX_LEN } from '../../limits';
 import { ActivityRef } from '../activity';
 import { AttemptPayload } from '../attempt-payload';
 import { JudgeKind, LearningItemStatus } from '../business';
-import { CapabilityRef } from '../capability';
+import { CapabilityRef, JudgeResultV2 } from '../capability';
 import { AttemptQuestionSnapshot } from '../question-evidence-snapshot';
 import { CauseSchema, FsrsStateSchema, RelationTypeSchema } from './blocks';
 
@@ -279,6 +279,9 @@ export const ReviewOnQuestion = z
       // 历史 review 恒缺省 → 既有读路径逐字不变（byte-identical 回归锚）。engagement 红线
       // （零强制）= 字段 optional。
       self_confidence: z.number().int().min(1).max(5).optional(),
+      // Diagnostic settlement uses judge correctness rather than the
+      // learner-controlled FSRS rating/outcome.
+      judge: JudgeResultV2.optional(),
     }),
     ...baseOptionalFields,
   })

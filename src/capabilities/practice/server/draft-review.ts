@@ -27,6 +27,7 @@ import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/capabilities/knowledge/public';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
@@ -269,6 +270,10 @@ export async function listDraftReview(
 
   const conditions = [
     eq(question.draft_status, 'draft'),
+    // Product-owned one-shot diagnostics are retired with draft_status='draft'
+    // after settlement. They are not moderation drafts, and this surface exposes
+    // reference_md, so admitting them would leak the gold answer before +7/+21.
+    sql`${question.source} IS DISTINCT FROM ${INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE}`,
     // exclude soft-archived (deleted) drafts: metadata.archived_at IS NULL/absent.
     sql`(${question.metadata} -> 'archived_at') IS NULL`,
   ];
@@ -402,6 +407,7 @@ export async function getDraftReviewDetail(
       and(
         eq(question.id, id),
         eq(question.draft_status, 'draft'),
+        sql`${question.source} IS DISTINCT FROM ${INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE}`,
         // exclude soft-archived (deleted) drafts (mirror the list filter).
         sql`(${question.metadata} -> 'archived_at') IS NULL`,
       ),

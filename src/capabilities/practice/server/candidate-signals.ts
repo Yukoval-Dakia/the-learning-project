@@ -224,7 +224,7 @@ async function resolveBAnchor(
 // P2 D2 / A8 — misconceptionRecurrence（错误观念复发度）选题信号。
 //
 // 填补 candidate-signals.ts §9.2 三 first-class 信号里 `misconceptionRecurrence` 这一格
-// （examRelevance / transferGap 仍无 cheap reader，留 undefined）。
+// （examRelevance 仍无 cheap reader，留 undefined）。
 //
 // 权威 spec：
 //   - ADR-0042 编排档2 amendment（GPT 研究稿 §9.2）——选题不止 MFI 中心。
@@ -450,14 +450,12 @@ async function collectQuestionSignal(
     //     prompt byte-identical）。ON 时 aggregateMisconceptionRecurrence 算 per-learner
     //     SELF-STATE 错因家族跨 attempt 复发频次（KC-based linkage），归一化到 0-1（owner-fixed
     //     RECURRENCE_NORM）。无数据 → undefined（见该函数文档）。
-    //   - transferGap（迁移缺口）：仍无 cheap reader——mastery_state 按 (subject_kind,
-    //     subject_id) 即 per-KC 建键，**无 kind 维度**——同 KC 跨题型掌握差无法从现表 cheap
-    //     读出。需先有 per-(KC,kind) 粒度的掌握度（或 family-level calibration）才能算。
-    // 不为剩余两个信号自建子系统/查询（缺数据留 undefined + scope discipline）。
+    // transferGap 不再投影为永久 undefined：无 per-(KC,context) reader 时，字段与 prompt
+    // 都不存在；等真实 reader + red-capable tests 一起落地后再恢复（YUK-792）。
+    // 不为剩余信号自建子系统/查询（缺数据留 undefined + scope discipline）。
     // ─────────────────────────────────────────────────────────────────────────
     examRelevance: undefined,
     misconceptionRecurrence,
-    transferGap: undefined,
   };
 }
 

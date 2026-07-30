@@ -92,6 +92,14 @@ describe('PfSrcBadge (source badge — YUK-551)', () => {
     expect(warnSpy).not.toHaveBeenCalled(); // 已知源绝不触发未知源 warn。
   });
 
+  it('renders intervention delivery as a first-class source rather than decay', () => {
+    const html = renderToString(<PfSrcBadge source="intervention" />);
+    expect(html).toContain('干预检验');
+    expect(html).toContain('tone-info');
+    expect(html).toContain(TARGET_ICON_FRAGMENT);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
   it('(b) unknown/未同步 source → fallback（其它来源/neutral/doc icon）+ dev warn 恰一次', () => {
     // The failure mode YUK-551 hardens: a backend-produced source the FE union does not know.
     // renderToString 本身即「不 throw」断言（异常会直接 fail）——不裹 .not.toThrow()。

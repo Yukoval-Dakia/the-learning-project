@@ -270,8 +270,11 @@ export async function composeSoftmaxStream(
   const allDueDrafts: Omit<StreamPlanItem, 'position'>[] = dueItems.map((d) => ({
     item_kind: 'question',
     ref_id: d.questionId,
-    source: 'decay',
-    reasoning: dueReasoning(d.knowledgeLabel),
+    source: d.source ?? 'decay',
+    reasoning:
+      d.source === 'intervention'
+        ? '这份针对当前薄弱点的材料已经准备好；先阅读，再完成检验。'
+        : dueReasoning(d.knowledgeLabel),
     // 到期项不带选题信号（它们不经 sampler/MFI）——signals 缺省 {}（materialize 兜底）。
   }));
   // YUK-622：时间预算优先保留最早到期前缀，超预算到期题确定性延后。没有 budget 的显式

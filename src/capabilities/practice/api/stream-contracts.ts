@@ -29,6 +29,7 @@ const PracticeStreamItemSourceSchema = z.enum([
   'on_demand',
   'import',
   'frontier',
+  'intervention',
 ]);
 
 const PracticeStreamViewItemSchema = z.object({

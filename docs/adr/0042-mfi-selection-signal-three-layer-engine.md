@@ -57,6 +57,18 @@ owner 2026-06-15 拍「让 LLM 强一些」（承 copilot 全能 + 成本无所�
 
 **4 条不可让铁律（最小集，其余全给 LLM）**：① 不写 b（difficulty 单写者只读，三轴正交）；② 到期 presence（所有今日到期项必在流）；③ recall 不换题（ADR-0030）；④ 容量 + draft 排除 + dedup。**注意「到期相对序」不在铁律里**——本 amendment 取档2（LLM 排非到期 + 加权，到期序仍 L1 确定性保序）；**档3**（LLM 连到期 intra-day 顺序也排，L3 守 presence + bounded-delay cap，FSRS 仍拥有「哪一天」）是 owner 随时可开的更强档，本 amendment 暂不取。
 
+### 2026-07-30 Reconciliation — `transfer_gap` 必须等真实 reader（YUK-792）
+
+2026-06-15 决定保留 `transfer_gap` 方向，但现有 `mastery_state` 只有 per-KC 粒度，没有
+per-(KC,context) 或可等价证明跨情境差异的 reader。此前 runtime 把它永久投影成
+`transfer_gap=n/a` 并写进 LLM prompt；这不是证据，只是一个无消费者/无生产者的占位。
+
+本修订删除 runtime type、候选投影与 prompt 中的 `transfer_gap`。YUK-792 的
+intervention transfer diagnostic 会形成逐次、可审计的 settlement 事实，但在有跨
+intervention 聚合定义、真实 reader 和 red-capable tests 前，不把单次结果冒充通用选题
+信号。未来恢复该字段时，producer、reader、分桶测试和 prompt 必须同一 change 落地。
+方向未取消；无数据时不向 LLM 暗示存在该维度。
+
 ### 2026-07-18 Reconciliation — 反舒适 floor 与 fatigue 的 L3 归属（YUK-673）
 
 上面的「4 条不可让铁律」是**会破坏事实、调度或统计资产的 hard-safety 最小集**，不是

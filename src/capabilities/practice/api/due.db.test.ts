@@ -5,6 +5,7 @@
 // with no FSRS state row but at least one failure attempt also surface (never-
 // reviewed slice).
 
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { event, material_fsrs_state, question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -251,6 +252,29 @@ describe('GET /api/review/due', () => {
       id: 'evt_attempt_q_due',
       correction_state: expect.objectContaining({ state: 'active' }),
     });
+  });
+
+  it('omits the reference answer from a due intervention diagnostic row', async () => {
+    const dueAt = new Date(Date.now() - 60_000);
+    await seedQuestion('q_due_diagnostic', {
+      reference_md: 'secret diagnostic answer',
+      knowledge_ids: [],
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      draft_status: 'active',
+    });
+    await seedFsrsState({
+      question_id: 'q_due_diagnostic',
+      due_at: dueAt,
+      state: makeFsrsState({ due: dueAt.toISOString() }),
+    });
+
+    const res = await getReview();
+    expect(res.status).toBe(200);
+    const body = ReviewDueResponseSchema.parse(await res.json());
+    const diagnostic = body.rows.find((row) => row.question_id === 'q_due_diagnostic');
+    expect(diagnostic).toBeDefined();
+    expect(diagnostic?.prompt_md).toBe('P q_due_diagnostic');
+    expect(diagnostic?.reference_md).toBeNull();
   });
 
   it('surfaces a due knowledge FSRS state by choosing a linked question', async () => {

@@ -92,6 +92,23 @@ describe('composeDailyStream — 混排规则', () => {
     expect(warnedPlan.warned).toBe(true);
   });
 
+  it('容量裁剪先保留干预交付，再用剩余槽位选择普通题', () => {
+    const plan = composeDailyStream(
+      inputs({
+        dueItems: [
+          { questionId: 'q_decay' },
+          { questionId: 'q_intervention', source: 'intervention' },
+        ],
+        capacity: { warn: 12, max: 1 },
+      }),
+    );
+
+    expect(plan.items).toEqual([
+      expect.objectContaining({ ref_id: 'q_intervention', source: 'intervention' }),
+    ]);
+    expect(plan.truncated).toBe(true);
+  });
+
   it('R6 position 从 1 起连续；R7 reasoning 非空', () => {
     const plan = composeDailyStream(
       inputs({

@@ -23,11 +23,74 @@
 import { describe, expect, it } from 'vitest';
 import {
   appealEntryAvailable,
+  feedbackFromCommittedAttempt,
+  feedbackFromCommittedDiagnosticAttempt,
+  isInterventionDiagnosticSource,
   isObjectiveQuestion,
   shouldMarkSlotDoneOnBack,
   toSubmittedJudgeResult,
 } from './PfSolo';
-import type { JudgePreview } from './practice-api';
+import type { JudgePreview, QuestionFullDetail, SubmitResult } from './practice-api';
+
+describe('intervention diagnostic one-shot UI gate (YUK-792)', () => {
+  it('routes only the product-owned diagnostic source around repeatable advice', () => {
+    expect(isInterventionDiagnosticSource('intervention_diagnostic')).toBe(true);
+    expect(isInterventionDiagnosticSource('manual')).toBe(false);
+    expect(isInterventionDiagnosticSource('quiz_gen')).toBe(false);
+  });
+
+  it('renders the committed server verdict and falls back to the persisted final rating', () => {
+    const result = {
+      review_event: { rating: 'good' },
+      judge: {
+        route: 'multimodal_direct',
+        coarse_outcome: 'correct',
+        confidence: 0.91,
+        feedback_md: 'The transfer applies.',
+        suggested_rating: null,
+      },
+    } as SubmitResult;
+
+    expect(feedbackFromCommittedAttempt(result)).toEqual({
+      route: 'multimodal_direct',
+      coarse_outcome: 'correct',
+      confidence: 0.91,
+      feedback_md: 'The transfer applies.',
+      suggested_rating: 'good',
+    });
+  });
+
+  it('fails loudly instead of presenting an unjudged diagnostic as settled', () => {
+    const result = {
+      review_event: { rating: 'hard' },
+      judge: null,
+    } as SubmitResult;
+
+    expect(() => feedbackFromCommittedAttempt(result)).toThrow('诊断提交没有返回服务端判分');
+  });
+
+  it('restores the persisted canonical verdict after refresh or duplicate 409', () => {
+    const committed = {
+      review_event: { id: 'review_committed', rating: 'hard' },
+      judge: {
+        route: 'multimodal_direct',
+        coarse_outcome: 'partial',
+        confidence: 0.84,
+        feedback_md: 'The relation is right but the justification is incomplete.',
+        suggested_rating: 'hard',
+        judge_event_id: 'judge_committed',
+      },
+    } satisfies NonNullable<QuestionFullDetail['committed_attempt']>;
+
+    expect(feedbackFromCommittedDiagnosticAttempt(committed)).toEqual({
+      route: 'multimodal_direct',
+      coarse_outcome: 'partial',
+      confidence: 0.84,
+      feedback_md: 'The relation is right but the justification is incomplete.',
+      suggested_rating: 'hard',
+    });
+  });
+});
 
 describe('isObjectiveQuestion — PfSolo 客观题 auto-commit gate (YUK-432)', () => {
   it('(a) choice/true_false 题（route exact）→ 客观（auto-rate）', () => {

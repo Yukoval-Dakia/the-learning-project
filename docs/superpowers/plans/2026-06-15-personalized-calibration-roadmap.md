@@ -11,6 +11,11 @@
 > **Amendment（2026-06-15，owner 复核）**：
 > - **Phase 3 选题信号扩充**：L1 信号向量补 `exam_relevance` / `misconception_recurrence` / `transfer_gap`（GPT 研究稿 §9.2 复习推荐公式；选题不止 MFI 中心）。Task 4 `SelectionCandidateSignal` + Phase 1 signals 列纳入。详见 ADR-0042 编排档2 amendment「L1 信号集扩充」。
 > - **Phase 6 b_anchor 框定纠正**：feature→b 锚 = 当前 ItemPriorTask（LLM in-context feature→b，`source='llm_prior'` 低置信）的**训练升级版**，**不是 vs 1-5 proxy**。spike（`docs/design/2026-06-15-b-anchor-feasibility-spike.md`）裁决「仅 scale 锚可行」；**真 blocker = 数据**（无中文全科 b 标签），**非经济性**（owner「无所谓经济性」→ Phase 6 **不加经济闸**，只留数据可行性 PoC）。更轻近路 = LLaSA 学生模拟 prompt 升级 ItemPriorTask（零数据）。承重 = active-PPI firm-up，非冷启先验。详见 ADR-0043「b_anchor 来源」节。
+>
+> **Reconciliation（2026-07-30，YUK-792）**：`transfer_gap` 方向保留，但 runtime
+> type/prompt 暂时删除；没有 per-(KC,context) 真实 reader 时不得投影永久 `n/a` 占位。
+> 恢复条件是 producer + live reader + red-capable tests 同步落地。详见 ADR-0042
+> 2026-07-30 reconciliation。
 
 ---
 
@@ -545,13 +550,16 @@ Do not compute MFI for recall-locked variants. Mark `mfi_eligible: false`.
 填 `SelectionCandidateSignal` 在 Phase 1 留的 type-only 字段（ADR-0042 编排档2 L1 信号集扩充）：
 - `examRelevance` ∈ [0,1]：据考纲/考点权重映射（subject profile 的考纲数据）。
 - `misconceptionRecurrence` ∈ [0,1]：据该题关联错误观念家族的复发频次（mistake/cause 数据）。
-- `transferGap` ∈ [0,1]：据跨情境迁移缺口诊断（同 KC 不同题型/情境的掌握差）。
 
-缺数据时留 `undefined`（评分层按 MFI-only 退化，不强行兜 0）。这三个信号进 L2 LLM 编排器的候选画像 + 落 `signals` 快照，使选题脱离纯 MFI 中心。
+缺数据时留 `undefined`（评分层按 MFI-only 退化，不强行兜 0）。已具备真实
+producer/reader 的信号进入 L2 LLM 编排器候选画像并落 `signals` 快照，使选题脱离纯
+MFI 中心。`transferGap` 不在本 Task 实现：只有 producer、per-(KC,context) live reader
+与 red-capable tests 同步落地后才恢复，期间不得加入 runtime type/prompt 或永久 `n/a`
+占位。
 
 - [ ] **Step 5: Add DB tests**
 
-Seed two knowledge states and one multi-KC question. Assert selected theta snapshot uses the lower `theta_hat`. 另断言 §9.2 信号在有数据时被填、缺数据时留 `undefined`（不污染为 0）。
+Seed two knowledge states and one multi-KC question. Assert selected theta snapshot uses the lower `theta_hat`. 另断言已落地的 §9.2 信号在有数据时被填、缺数据时留 `undefined`（不污染为 0）；`transferGap` 仅在上述恢复条件满足时增加对应红测。
 
 ### Task 8: Randomized MFI Selection in Non-Due Slots
 

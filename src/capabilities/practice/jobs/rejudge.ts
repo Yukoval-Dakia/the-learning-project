@@ -21,7 +21,9 @@
 // deferred marker 喂第二实例重投影引擎（全历史重投影仍属投影引擎契约，独立 issue）。
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
+import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
 import { newId } from '@/core/ids';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -115,10 +117,13 @@ export async function handleRejudge(
       ? ((appeal.payload as Record<string, unknown>).reason_md as string)
       : '';
 
-  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
+  const judgeKnowledgeIds = questionKnowledgeIdsForJudge(q);
+  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, judgeKnowledgeIds);
+  const rejudgeRoute =
+    q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE ? 'multimodal_direct' : 'semantic';
   const invoked: JudgeAnswerResult = await judgeFn({
     db,
-    question: { ...q, judge_kind_override: 'semantic' },
+    question: { ...q, judge_kind_override: rejudgeRoute },
     answer_md: answerMd,
     subjectProfile,
     appeal_context: { prior_outcome: priorOutcome, user_reason_md: reasonMd },
@@ -220,7 +225,7 @@ export async function handleRejudge(
           analysis_md: '<rejudge, attribution deferred>',
           confidence: invoked.result.confidence,
         },
-        referenced_knowledge_ids: q.knowledge_ids,
+        referenced_knowledge_ids: judgeKnowledgeIds,
         profile_version: invoked.result.capability_ref.version,
         capability_ref: invoked.result.capability_ref,
         judge_route: invoked.route,
