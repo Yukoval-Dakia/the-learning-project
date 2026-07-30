@@ -1,13 +1,13 @@
 // conjecture-wire #13 (YUK-538 ⑬ / spec §6 S3) — probe answer route DB test.
 //
 // Asserts the route's three contracts:
-//   1. HAPPY (YUK-787 outcome→resolution split): judge 'incorrect' → outcome=0 →
-//      first-hit `evidence_for`; judge 'correct' → outcome=1 → 'retired'.
+//   1. HAPPY (YUK-787/YUK-827 split): historical probes retain coarse mapping;
+//      response-aware probes require gold/target semantic signature agreement.
 //   2. IDEMPOTENCY: re-answer short-circuits via `peekExistingProbeResult` BEFORE
 //      invoking the judge (LLM cost guard) — judge NOT called, recorded values
 //      returned with coarse_outcome: null.
-//   3. FAIL-CLOSED: judge 'unsupported' / 'partial' → 422, NO probe_result written,
-//      probe stays active (served-but-unanswered slot not consumed).
+//   3. FAIL-CLOSED: unsupported/partial, ordinary wrong answers, ambiguous or
+//      missing signature matches, and snapshot drift write NO probe_result.
 // Plus the gating errors: 400 (bad body), 404 (no question), 409 (not a mind_probe).
 //
 // The judge invoker is mocked (`createDefaultJudgeInvoker` → `invoke`) so the test
@@ -25,6 +25,7 @@ import {
   serveProbeOnce,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { newId } from '@/core/ids';
+import { ConjectureProbeSpecV2 } from '@/core/schema/business';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
@@ -49,14 +50,22 @@ vi.mock('@/server/judge/invoker', () => ({
 const KC_ID = 'kn_chain_rule';
 const PROBE_RESULT_ACTION = 'experimental:probe_result';
 
-function judgeResult(coarse_outcome: 'correct' | 'incorrect' | 'partial' | 'unsupported') {
+function judgeResult(
+  coarse_outcome: 'correct' | 'incorrect' | 'partial' | 'unsupported',
+  probe_signature_match?: {
+    match: 'gold' | 'target_error' | 'neither' | 'ambiguous';
+    explanation_md: string;
+  },
+) {
   // Minimal JudgeResultV2T shape — the route only reads coarse_outcome.
   const base = {
     score_meaning: 'percentage' as const,
     confidence: 0.9,
     capability_ref: { id: 'mock', version: 'mock_v1' },
     feedback_md: 'mock',
-    evidence_json: {} as Record<string, unknown>,
+    evidence_json: {
+      ...(probe_signature_match ? { probe_signature_match } : {}),
+    } as Record<string, unknown>,
   };
   if (coarse_outcome === 'correct') return { ...base, coarse_outcome, score: 0.95 };
   if (coarse_outcome === 'partial') return { ...base, coarse_outcome, score: 0.5 };
@@ -65,8 +74,17 @@ function judgeResult(coarse_outcome: 'correct' | 'incorrect' | 'partial' | 'unsu
 }
 
 // Invoker returns `{ result, telemetry }` — only `result` is read by the route.
-function invokeResult(coarse_outcome: 'correct' | 'incorrect' | 'partial' | 'unsupported') {
-  return { result: judgeResult(coarse_outcome), telemetry: { route: 'semantic' } };
+function invokeResult(
+  coarse_outcome: 'correct' | 'incorrect' | 'partial' | 'unsupported',
+  probe_signature_match?: {
+    match: 'gold' | 'target_error' | 'neither' | 'ambiguous';
+    explanation_md: string;
+  },
+) {
+  return {
+    result: judgeResult(coarse_outcome, probe_signature_match),
+    telemetry: { route: 'semantic' },
+  };
 }
 
 async function seedKnowledge(): Promise<void> {
@@ -129,6 +147,35 @@ async function serveProbe(): Promise<string> {
     knowledgeId: KC_ID,
     probeMd: 'd/dx sin(x^2) = ?',
     referenceMd: '2x·cos(x^2)',
+  });
+  if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
+  return served.probe_question_id;
+}
+
+async function serveResponseAwareProbe(): Promise<string> {
+  const proposalId = await seedConjecture();
+  const probeSpec = ConjectureProbeSpecV2.parse({
+    schema_version: 2,
+    prompt_md: 'd/dx sin(x^2) = ?',
+    reference_md: '2x·cos(x^2)',
+    expected_target_error_answer_md: 'cos(x^2)+2x',
+    elicits_target_error_reason_md: '区分两层导数相乘与相加。',
+    context_kind: 'abstract',
+    representation_kind: 'symbolic',
+    response_mode: 'short_answer',
+    gold_response_signature: { kind: 'text', response_md: '2x·cos(x^2)' },
+    target_error_response_signature: {
+      kind: 'text',
+      response_md: 'cos(x^2)+2x',
+    },
+  });
+  const served = await serveProbeOnce({
+    db: testDb(),
+    conjectureProposalId: proposalId,
+    knowledgeId: KC_ID,
+    probeMd: probeSpec.prompt_md,
+    referenceMd: probeSpec.reference_md,
+    probeSpec,
   });
   if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
   return served.probe_question_id;
@@ -274,6 +321,172 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
         answer_md: 'cos(x^2)',
       }),
     );
+  });
+
+  it('response-aware probe records target-error evidence only when the declared signature matches', async () => {
+    const probeId = await serveResponseAwareProbe();
+    mockInvoke.mockResolvedValue(
+      invokeResult('incorrect', {
+        match: 'target_error',
+        explanation_md:
+          'The response semantically matches the declared addition-not-composition error.',
+      }),
+    );
+
+    const response = await answer(probeId, 'cos(x^2)+2x');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: 'evidence_for',
+      outcome: 0,
+      answer_result: 'incorrect',
+      target_error_match: 'matched',
+      gradable: true,
+      response_reason_code: 'target_error_signature_matched',
+      signature_match_explanation_md: expect.stringContaining('declared addition-not-composition'),
+    });
+    const [persisted] = await probeResultEvents(probeId);
+    expect(persisted.payload).toMatchObject({
+      response_judgement: {
+        rule_version: 'conjecture_probe_response_signature_v1',
+        answer_result: 'incorrect',
+        target_error_match: 'matched',
+        gradable: true,
+        signature_match_explanation_md: expect.stringContaining(
+          'declared addition-not-composition',
+        ),
+      },
+    });
+
+    const replay = await answer(probeId, '2x·cos(x^2)');
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject({
+      status: 'evidence_for',
+      outcome: 0,
+      answer_result: 'incorrect',
+      target_error_match: 'matched',
+      gradable: true,
+      idempotent: true,
+    });
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('response-aware probe fails closed when an ordinary wrong answer matches neither signature', async () => {
+    const probeId = await serveResponseAwareProbe();
+    mockInvoke.mockResolvedValue(
+      invokeResult('incorrect', {
+        match: 'neither',
+        explanation_md: 'The response is wrong for an unrelated differentiation error.',
+      }),
+    );
+
+    const response = await answer(probeId, '2x+cos(x)');
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'probe_response_not_target_error',
+    });
+    expect(await probeResultEvents(probeId)).toHaveLength(0);
+  });
+
+  it('response-aware probe retires only when correctness and the gold signature agree', async () => {
+    const probeId = await serveResponseAwareProbe();
+    mockInvoke.mockResolvedValue(
+      invokeResult('correct', {
+        match: 'gold',
+        explanation_md: 'The response semantically matches the declared correct signature.',
+      }),
+    );
+
+    const response = await answer(probeId, '2x·cos(x^2)');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: 'retired',
+      outcome: 1,
+      answer_result: 'correct',
+      target_error_match: 'not_matched',
+      gradable: true,
+    });
+  });
+
+  it('response-aware probe fails closed when the judge omits or cannot distinguish the signature match', async () => {
+    const missingProbeId = await serveResponseAwareProbe();
+    mockInvoke.mockResolvedValue(invokeResult('incorrect'));
+
+    const missing = await answer(missingProbeId, 'cos(x^2)+2x');
+    expect(missing.status).toBe(422);
+    await expect(missing.json()).resolves.toMatchObject({
+      error: 'probe_response_ungradable',
+    });
+    expect(await probeResultEvents(missingProbeId)).toHaveLength(0);
+
+    const ambiguousProbeId = await serveResponseAwareProbe();
+    mockInvoke.mockResolvedValue(
+      invokeResult('incorrect', {
+        match: 'ambiguous',
+        explanation_md: 'The answer is too terse to distinguish the rules.',
+      }),
+    );
+    const ambiguous = await answer(ambiguousProbeId, 'cos(x^2)+2x');
+    expect(ambiguous.status).toBe(422);
+    await expect(ambiguous.json()).resolves.toMatchObject({
+      error: 'probe_response_ungradable',
+    });
+    expect(await probeResultEvents(ambiguousProbeId)).toHaveLength(0);
+  });
+
+  it('response-aware probe refuses an edited question before paying the judge', async () => {
+    const probeId = await serveResponseAwareProbe();
+    await testDb()
+      .update(question)
+      .set({
+        prompt_md: 'edited after authoring',
+        version: 1,
+        updated_at: new Date(),
+      })
+      .where(eq(question.id, probeId));
+    mockInvoke.mockResolvedValue(
+      invokeResult('incorrect', {
+        match: 'target_error',
+        explanation_md: 'This must never be consumed for an edited probe.',
+      }),
+    );
+
+    const response = await answer(probeId, 'cos(x^2)+2x');
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'probe_snapshot_changed',
+    });
+    expect(mockInvoke).not.toHaveBeenCalled();
+    expect(await probeResultEvents(probeId)).toHaveLength(0);
+  });
+
+  it('fails closed when a persisted probe snapshot is malformed', async () => {
+    const probeId = await serveResponseAwareProbe();
+    const [probe] = await testDb().select().from(question).where(eq(question.id, probeId)).limit(1);
+    if (!probe) throw new Error('expected response-aware probe');
+    await testDb()
+      .update(question)
+      .set({
+        metadata: {
+          ...(probe.metadata as Record<string, unknown>),
+          probe_spec: { schema_version: 2, prompt_md: 'missing required fields' },
+        },
+        updated_at: new Date(),
+      })
+      .where(eq(question.id, probeId));
+    mockInvoke.mockResolvedValue(invokeResult('incorrect'));
+
+    const response = await answer(probeId, 'cos(x^2)+2x');
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'probe_snapshot_invalid',
+    });
+    expect(mockInvoke).not.toHaveBeenCalled();
+    expect(await probeResultEvents(probeId)).toHaveLength(0);
   });
 
   it('settles a historical sequence-1 probe without a follow-up via the terminal legacy rule', async () => {

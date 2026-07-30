@@ -1,3 +1,4 @@
+import { ConjectureProbeResponseJudgement } from '@/core/schema/conjecture-probe-response';
 import { PROBE_RESOLUTIONS } from '@/kernel/capability-contract-schemas';
 import { z } from 'zod';
 
@@ -96,5 +97,13 @@ export const ProbeAnswerResponseSchema = z.object({
   outcome: z.union([z.literal(0), z.literal(1)]),
   probe_result_event_id: z.string(),
   coarse_outcome: z.enum(['correct', 'incorrect']).nullable(),
+  answer_result: z.enum(['correct', 'incorrect', 'ungradable']).nullable(),
+  target_error_match: z.enum(['matched', 'not_matched', 'ambiguous']).nullable(),
+  gradable: z.boolean().nullable(),
+  response_reason_code: ConjectureProbeResponseJudgement.shape.reason_code.nullable(),
+  response_evidence_refs: ConjectureProbeResponseJudgement.shape.evidence_refs.nullable(),
+  signature_match_explanation_md:
+    ConjectureProbeResponseJudgement.shape.signature_match_explanation_md,
+  degradation_reason: z.literal('legacy_probe_result_without_response_judgement').optional(),
   idempotent: z.boolean(),
 });

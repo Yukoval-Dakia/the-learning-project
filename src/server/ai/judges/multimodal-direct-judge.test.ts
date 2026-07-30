@@ -13,6 +13,7 @@ function makeRow(opts: {
   prompt_md?: string;
   reference_md?: string | null;
   image_refs?: string[];
+  metadata?: Record<string, unknown> | null;
 }): JudgeQuestionRow {
   return {
     id: 'q-mm',
@@ -23,6 +24,7 @@ function makeRow(opts: {
     choices_md: null,
     judge_kind_override: null,
     image_refs: opts.image_refs ?? ['prompt-figure-1'],
+    metadata: opts.metadata ?? null,
   };
 }
 
@@ -30,6 +32,10 @@ function llmResponse(
   coarse: 'correct' | 'partial' | 'incorrect',
   score: number,
   extra?: Partial<{ observed_md: string; matched_points: string[]; missing_points: string[] }>,
+  probeSignatureMatch?: {
+    match: 'gold' | 'target_error' | 'neither' | 'ambiguous';
+    explanation_md: string;
+  },
 ) {
   return {
     text: JSON.stringify({
@@ -42,9 +48,31 @@ function llmResponse(
         missing_points: extra?.missing_points ?? [],
       },
       confidence: 0.8,
+      ...(probeSignatureMatch ? { probe_signature_match: probeSignatureMatch } : {}),
     }),
   };
 }
+
+const responseAwareProbeSpec = {
+  schema_version: 2,
+  prompt_md: '解释“奇其才”中“奇”的活用类型和理由。',
+  reference_md: '意动用法，表达主语的主观评价。',
+  expected_target_error_answer_md: '使动用法，因为后面有宾语。',
+  elicits_target_error_reason_md: '理由能够区分意动与使动。',
+  context_kind: 'document',
+  representation_kind: 'natural_language',
+  response_mode: 'answer_with_reason',
+  gold_response_signature: {
+    kind: 'answer_with_reason',
+    answer_md: '意动用法',
+    required_reason_features_md: ['表达主语的主观评价'],
+  },
+  target_error_response_signature: {
+    kind: 'answer_with_reason',
+    answer_md: '使动用法',
+    required_reason_features_md: ['把宾语误当作使动标志'],
+  },
+};
 
 describe('runMultimodalDirectJudge — score composition / clamping', () => {
   it('correct outcome → score clamped into [0.85, 1]', async () => {
@@ -228,6 +256,58 @@ describe('runMultimodalDirectJudge — manifest / payload parse', () => {
     });
     const payload = JSON.parse((taskInput as { text: string }).text);
     expect(payload.reference_md).toBeNull();
+  });
+
+  it('adds a v2 probe response contract to the same judge call and preserves its semantic match', async () => {
+    let taskInput: unknown;
+    const result = await runMultimodalDirectJudge({
+      db: mockDb,
+      question: makeRow({
+        metadata: { probe_spec: responseAwareProbeSpec },
+      }),
+      answer_md: '这是使动，因为“其才”是宾语，所以“奇”让他变得有才能。',
+      subjectProfile: physicsProfile,
+      runTaskFn: async (_k, input) => {
+        taskInput = input;
+        return llmResponse('incorrect', 0, undefined, {
+          match: 'target_error',
+          explanation_md:
+            'The explanation uses the declared mistaken object-implies-causative rule.',
+        });
+      },
+      imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
+    });
+
+    const payload = JSON.parse((taskInput as { text: string }).text);
+    expect(payload.probe_response_contract).toEqual({
+      response_mode: 'answer_with_reason',
+      gold_response_signature: responseAwareProbeSpec.gold_response_signature,
+      target_error_response_signature: responseAwareProbeSpec.target_error_response_signature,
+    });
+    expect(result.evidence_json).toMatchObject({
+      probe_signature_match: {
+        match: 'target_error',
+        explanation_md: expect.stringContaining('declared mistaken'),
+      },
+    });
+  });
+
+  it('omits the probe response contract for ordinary questions', async () => {
+    let taskInput: unknown;
+    await runMultimodalDirectJudge({
+      db: mockDb,
+      question: makeRow({ metadata: null }),
+      answer_md: '5 N',
+      subjectProfile: physicsProfile,
+      runTaskFn: async (_k, input) => {
+        taskInput = input;
+        return llmResponse('correct', 0.9);
+      },
+      imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
+    });
+
+    const payload = JSON.parse((taskInput as { text: string }).text);
+    expect(payload).not.toHaveProperty('probe_response_contract');
   });
 });
 

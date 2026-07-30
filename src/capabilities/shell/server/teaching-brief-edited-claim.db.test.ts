@@ -29,6 +29,16 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 /** The research team's original judgement — the claim the induced probe discriminates. */
+const RESPONSE_AWARE_PROBE_FIELDS = {
+  schema_version: 2 as const,
+  response_mode: 'short_answer' as const,
+  gold_response_signature: { kind: 'text' as const, response_md: 'gold response' },
+  target_error_response_signature: {
+    kind: 'text' as const,
+    response_md: 'target-error response',
+  },
+} as const;
+
 const ORIGINAL_CLAIM = '你把链式法则当成两个导数相乘。';
 /** The owner's rewrite. Same KC, materially different mechanism — no probe tests it. */
 const OWNER_REWRITE = '你其实是把链式法则的内外层顺序记反了。';
@@ -67,6 +77,7 @@ function conjecturePayload() {
         expected_wrong_answer_signature_md: '答案缺少内层导数因子，或把两层导数相加。',
       },
       probe_spec: {
+        ...RESPONSE_AWARE_PROBE_FIELDS,
         prompt_md: PROBE_MD,
         reference_md: PROBE_REFERENCE_MD,
         expected_target_error_answer_md: 'cos(x^2) + 2x',
@@ -75,6 +86,7 @@ function conjecturePayload() {
         representation_kind: 'symbolic' as const,
       },
       followup_probe_spec: {
+        ...RESPONSE_AWARE_PROBE_FIELDS,
         prompt_md: 'd/dx cos(x^3) = ?',
         reference_md: '-3x^2·sin(x^3)',
         expected_target_error_answer_md: '-sin(x^3) + 3x^2',
@@ -83,7 +95,7 @@ function conjecturePayload() {
         representation_kind: 'natural_language' as const,
       },
       probe_quality: {
-        schema_version: 2 as const,
+        schema_version: 3 as const,
         passed: true as const,
         attempts: [
           {
@@ -117,6 +129,7 @@ function conjecturePayload() {
         },
         reviewed_package: {
           primary: {
+            ...RESPONSE_AWARE_PROBE_FIELDS,
             prompt_md: PROBE_MD,
             reference_md: PROBE_REFERENCE_MD,
             expected_target_error_answer_md: 'cos(x^2) + 2x',
@@ -125,6 +138,7 @@ function conjecturePayload() {
             representation_kind: 'symbolic' as const,
           },
           followup: {
+            ...RESPONSE_AWARE_PROBE_FIELDS,
             prompt_md: 'd/dx cos(x^3) = ?',
             reference_md: '-3x^2·sin(x^3)',
             expected_target_error_answer_md: '-sin(x^3) + 3x^2',

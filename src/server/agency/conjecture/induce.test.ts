@@ -46,6 +46,7 @@ function probePackageResult(
     followupReference?: string;
     followupTargetError?: string;
     samePresentation?: boolean;
+    bareAmbiguousSingleChoice?: boolean;
     taskRunId?: string;
   } = {},
 ): TaskTextResult {
@@ -55,14 +56,33 @@ function probePackageResult(
     structured_output: {
       package: {
         primary: {
+          schema_version: 2,
           prompt_md: overrides.primaryPrompt ?? "对 f(x)=sin(x^2)，写出 f'(x)。",
           reference_md: overrides.primaryReference ?? "f'(x)=2x·cos(x^2)",
           expected_target_error_answer_md: overrides.primaryTargetError ?? "f'(x)=cos(x^2)+2x",
           elicits_target_error_reason_md: '必须决定外层与内层导数如何组合。',
           context_kind: 'abstract',
           representation_kind: 'symbolic',
+          response_mode: overrides.bareAmbiguousSingleChoice
+            ? 'single_choice'
+            : 'answer_with_reason',
+          gold_response_signature: overrides.bareAmbiguousSingleChoice
+            ? { kind: 'choice', option_ids: ['C'] }
+            : {
+                kind: 'answer_with_reason',
+                answer_md: overrides.primaryReference ?? "f'(x)=2x·cos(x^2)",
+                required_reason_features_md: ['外层导数乘以内层导数'],
+              },
+          target_error_response_signature: overrides.bareAmbiguousSingleChoice
+            ? { kind: 'choice', option_ids: ['A', 'B', 'D'] }
+            : {
+                kind: 'answer_with_reason',
+                answer_md: overrides.primaryTargetError ?? "f'(x)=cos(x^2)+2x",
+                required_reason_features_md: ['把两层导数相加'],
+              },
         },
         followup: {
+          schema_version: 2,
           prompt_md:
             overrides.followupPrompt ?? '某变化率由 h(t)=cos(t³) 给出，用文字说明其瞬时变化率。',
           reference_md: overrides.followupReference ?? "h'(t)=-3t²·sin(t³)，内外层导数相乘。",
@@ -70,6 +90,17 @@ function probePackageResult(
           elicits_target_error_reason_md: '在应用语境中再次要求组合两层导数。',
           context_kind: overrides.samePresentation ? 'abstract' : 'applied',
           representation_kind: overrides.samePresentation ? 'symbolic' : 'natural_language',
+          response_mode: 'answer_with_reason',
+          gold_response_signature: {
+            kind: 'answer_with_reason',
+            answer_md: overrides.followupReference ?? "h'(t)=-3t²·sin(t³)，内外层导数相乘。",
+            required_reason_features_md: ['外层导数乘以内层导数'],
+          },
+          target_error_response_signature: {
+            kind: 'answer_with_reason',
+            answer_md: overrides.followupTargetError ?? "h'(t)=-sin(t³)+3t²",
+            required_reason_features_md: ['把两层导数相加'],
+          },
         },
         predicted_p: 0.3,
       },
@@ -1113,7 +1144,7 @@ describe('induceConjecture self-consistency', () => {
 
     const draft = proposal(result);
     expect(draft.probe_md).toBe('对 y=sin(x³) 求导。');
-    expect(draft.probe_quality.schema_version).toBe(2);
+    expect(draft.probe_quality.schema_version).toBe(3);
     expect(draft.probe_quality).toMatchObject({
       reviewed_hypothesis: {
         kind: 'proposal',
@@ -1130,7 +1161,7 @@ describe('induceConjecture self-consistency', () => {
         predicted_p: draft.predicted_p,
       },
     });
-    if (draft.probe_quality.schema_version !== 2) throw new Error('expected v2 audit');
+    if (draft.probe_quality.schema_version !== 3) throw new Error('expected v3 audit');
     expect(draft.probe_quality.reviewed_hypothesis).not.toBe(draft);
     expect(draft.probe_quality.reviewed_package.primary).not.toBe(draft.probe_spec);
     expect(draft.probe_quality.attempts).toMatchObject([
@@ -1198,6 +1229,38 @@ describe('induceConjecture self-consistency', () => {
       'ConjectureProbeAuthorTask',
       'ConjectureProbeAuthorTask',
     ]);
+  });
+
+  it('regenerates a bare single-choice probe whose target rule only forces a random guess', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(sample('你把使动与意动的判据混为一谈'))
+      .mockResolvedValueOnce(
+        probePackageResult({ bareAmbiguousSingleChoice: true, taskRunId: 'author_1' }),
+      )
+      .mockResolvedValueOnce(probePackageResult({ taskRunId: 'author_2' }))
+      .mockResolvedValueOnce(probeReviewResult('pass', [], 'review_2'));
+
+    const result = await induceConjectureImpl({
+      cells: [cell({ subject_id: 'yuwen', subject_display_name: '语文' })],
+      samples: 1,
+      runTaskFn,
+    });
+
+    const draft = proposal(result);
+    expect(draft.probe_quality.attempts[0]).toMatchObject({
+      attempt: 1,
+      outcome: 'structure_failed',
+      failure_codes: ['response_signature_ungradable'],
+      author_task_run_id: 'author_1',
+      reviewer_task_run_id: null,
+    });
+    expect(draft.probe_quality.attempts[1]).toMatchObject({
+      attempt: 2,
+      outcome: 'passed',
+      author_task_run_id: 'author_2',
+      reviewer_task_run_id: 'review_2',
+    });
   });
 
   it('keeps a repeated reviewer outage operational instead of converting it to evidence', async () => {

@@ -1183,3 +1183,118 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
     expect(ownerDismissals[0]?.count).toBe('0');
   });
 });
+
+describe('migration smoke — YUK-827 response-signature cutover', () => {
+  const BASELINE_TAG = '0083_yuk821_bind_probe_quality_audit';
+  const MIGRATION_TAG = '0084_yuk827_response_signature_cutover';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    let reachedBaseline = false;
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(client, migration.sql);
+      if (migration.tag === BASELINE_TAG) {
+        reachedBaseline = true;
+        break;
+      }
+    }
+    if (!reachedBaseline) throw new Error(`baseline migration ${BASELINE_TAG} not found`);
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('retires all pre-cutover pending conjectures without creating an owner dismissal', async () => {
+    const seedProposal = async (id: string, schemaVersion: number) => {
+      await client`
+        INSERT INTO event (
+          id, actor_kind, actor_ref, action, subject_kind, subject_id,
+          outcome, payload, affected_scopes, created_at
+        ) VALUES (
+          ${id}, 'agent', 'research_meeting', 'experimental:proposal',
+          'mind_model', ${id}, 'partial',
+          ${client.json({
+            ai_proposal: {
+              kind: 'conjecture',
+              evidence_refs: [{ kind: 'event', id: `${id}_attempt` }],
+              proposed_change: {
+                probe_quality: { schema_version: schemaVersion, passed: true },
+              },
+            },
+          })},
+          ARRAY['topic:test']::text[], '2026-07-29T00:00:00Z'::timestamptz
+        )
+      `;
+    };
+
+    await seedProposal('response_signature_v2_pending', 2);
+    await seedProposal('response_signature_v3_shaped_pending', 3);
+    await seedProposal('response_signature_decided', 2);
+    await client`
+      INSERT INTO event (
+        id, actor_kind, actor_ref, action, subject_kind, subject_id,
+        outcome, payload, caused_by_event_id, affected_scopes, created_at
+      ) VALUES (
+        'response_signature_decision', 'user', 'self', 'rate', 'event',
+        'response_signature_decided', 'success', '{"rating":"accept"}'::jsonb,
+        'response_signature_decided', ARRAY[]::text[],
+        '2026-07-29T01:00:00Z'::timestamptz
+      )
+    `;
+
+    const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
+    if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
+    await applyMigrationFile(client, migration.sql);
+    await applyMigrationFile(client, migration.sql);
+
+    const corrections = await client<
+      {
+        subject_id: string;
+        actor_kind: string;
+        actor_ref: string;
+        affected_scopes: string[];
+        already_ingested: boolean;
+      }[]
+    >`
+      SELECT subject_id, actor_kind, actor_ref, affected_scopes,
+             ingest_at IS NOT NULL AS already_ingested
+      FROM event
+      WHERE actor_ref = 'yuk827_response_signature_migration'
+      ORDER BY subject_id
+    `;
+    expect(corrections).toEqual([
+      {
+        subject_id: 'response_signature_v2_pending',
+        actor_kind: 'agent',
+        actor_ref: 'yuk827_response_signature_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
+        subject_id: 'response_signature_v3_shaped_pending',
+        actor_kind: 'agent',
+        actor_ref: 'yuk827_response_signature_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+    ]);
+
+    const ownerDismissals = await client<{ count: string }[]>`
+      SELECT count(*)::text AS count
+      FROM event
+      WHERE action = 'rate'
+        AND payload ->> 'rating' = 'dismiss'
+        AND caused_by_event_id IN (
+          'response_signature_v2_pending',
+          'response_signature_v3_shaped_pending'
+        )
+    `;
+    expect(ownerDismissals[0]?.count).toBe('0');
+  });
+});

@@ -3,6 +3,7 @@ import {
   MultimodalDirectLlmOutput,
   type MultimodalDirectLlmOutputT,
 } from '@/core/capability/judges/multimodal_direct';
+import { ConjectureProbeSpecV2 } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
@@ -106,6 +107,9 @@ function composeJudgeResult(
     missing_points: output.evidence.missing_points,
     prompt_image_count: refs.prompt_image_count,
     student_image_count: refs.student_image_count,
+    ...(output.probe_signature_match
+      ? { probe_signature_match: output.probe_signature_match }
+      : {}),
   };
 
   if (output.coarse_outcome === 'correct') {
@@ -178,6 +182,14 @@ export async function runMultimodalDirectJudge(
   // Concat order: prompt figures first, then student answer photos (matches the
   // text payload field order so the LLM can align images to their description).
   const images = [...promptImages, ...studentImages];
+  const probeSpec = ConjectureProbeSpecV2.safeParse(params.question.metadata?.probe_spec);
+  const probeResponseContract = probeSpec.success
+    ? {
+        response_mode: probeSpec.data.response_mode,
+        gold_response_signature: probeSpec.data.gold_response_signature,
+        target_error_response_signature: probeSpec.data.target_error_response_signature,
+      }
+    : undefined;
 
   const llmTextPayload = JSON.stringify({
     prompt_md: params.question.prompt_md,
@@ -188,6 +200,7 @@ export async function runMultimodalDirectJudge(
     image_present: images.length > 0,
     prompt_image_count: promptImages.length,
     student_image_count: studentImages.length,
+    ...(probeResponseContract ? { probe_response_contract: probeResponseContract } : {}),
   });
 
   const runTaskFn = params.runTaskFn ?? defaultStructuredRunTaskFn;

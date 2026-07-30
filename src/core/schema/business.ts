@@ -503,7 +503,7 @@ export const ConjectureProbeRepresentationKind = z.enum([
   'other',
 ]);
 
-export const ConjectureProbeSpec = z
+export const ConjectureProbeSpecV1 = z
   .object({
     prompt_md: z.string().trim().min(1).max(1000),
     reference_md: z.string().trim().min(1).max(2000),
@@ -513,15 +513,112 @@ export const ConjectureProbeSpec = z
     representation_kind: ConjectureProbeRepresentationKind,
   })
   .strict();
+export type ConjectureProbeSpecV1T = z.infer<typeof ConjectureProbeSpecV1>;
+
+export const ConjectureProbeResponseMode = z.enum([
+  'single_choice',
+  'multiple_select',
+  'short_answer',
+  'answer_with_reason',
+  'constructed_response',
+]);
+export type ConjectureProbeResponseModeT = z.infer<typeof ConjectureProbeResponseMode>;
+
+const ConjectureProbeChoiceResponseSignature = z
+  .object({
+    kind: z.literal('choice'),
+    option_ids: z
+      .array(z.string().trim().min(1).max(100))
+      .min(1)
+      .max(20)
+      .refine((optionIds) => new Set(optionIds).size === optionIds.length, {
+        message: 'option_ids must be unique',
+      }),
+  })
+  .strict();
+
+const ConjectureProbeTextResponseSignature = z
+  .object({
+    kind: z.literal('text'),
+    response_md: z.string().trim().min(1).max(2000),
+  })
+  .strict();
+
+const ConjectureProbeAnswerWithReasonResponseSignature = z
+  .object({
+    kind: z.literal('answer_with_reason'),
+    answer_md: z.string().trim().min(1).max(2000),
+    required_reason_features_md: z
+      .array(z.string().trim().min(1).max(500))
+      .min(1)
+      .max(10)
+      .refine((features) => new Set(features).size === features.length, {
+        message: 'required_reason_features_md must be unique',
+      }),
+  })
+  .strict();
+
+const ConjectureProbeRubricResponseSignature = z
+  .object({
+    kind: z.literal('rubric'),
+    required_features_md: z
+      .array(z.string().trim().min(1).max(500))
+      .min(1)
+      .max(10)
+      .refine((features) => new Set(features).size === features.length, {
+        message: 'required_features_md must be unique',
+      }),
+  })
+  .strict();
+
+export const ConjectureProbeResponseSignature = z.discriminatedUnion('kind', [
+  ConjectureProbeChoiceResponseSignature,
+  ConjectureProbeTextResponseSignature,
+  ConjectureProbeAnswerWithReasonResponseSignature,
+  ConjectureProbeRubricResponseSignature,
+]);
+export type ConjectureProbeResponseSignatureT = z.infer<typeof ConjectureProbeResponseSignature>;
+
+export const ConjectureProbeSpecV2 = z
+  .object({
+    schema_version: z.literal(2),
+    prompt_md: z.string().trim().min(1).max(1000),
+    reference_md: z.string().trim().min(1).max(2000),
+    expected_target_error_answer_md: z.string().trim().min(1).max(2000),
+    elicits_target_error_reason_md: z.string().trim().min(1).max(1000),
+    context_kind: ConjectureProbeContextKind,
+    representation_kind: ConjectureProbeRepresentationKind,
+    response_mode: ConjectureProbeResponseMode,
+    gold_response_signature: ConjectureProbeResponseSignature,
+    target_error_response_signature: ConjectureProbeResponseSignature,
+  })
+  .strict();
+export type ConjectureProbeSpecV2T = z.infer<typeof ConjectureProbeSpecV2>;
+
+/** Historical v1 probe specs remain readable; new producers and accepts use v2 explicitly. */
+export const ConjectureProbeSpec = z.union([ConjectureProbeSpecV2, ConjectureProbeSpecV1]);
 export type ConjectureProbeSpecT = z.infer<typeof ConjectureProbeSpec>;
 
-export const ConjectureProbePackage = z
+export const ConjectureProbePackageV1 = z
   .object({
-    primary: ConjectureProbeSpec,
-    followup: ConjectureProbeSpec,
+    primary: ConjectureProbeSpecV1,
+    followup: ConjectureProbeSpecV1,
     predicted_p: z.number().min(0).max(1),
   })
   .strict();
+export type ConjectureProbePackageV1T = z.infer<typeof ConjectureProbePackageV1>;
+
+export const ConjectureProbePackageV2 = z
+  .object({
+    primary: ConjectureProbeSpecV2,
+    followup: ConjectureProbeSpecV2,
+    predicted_p: z.number().min(0).max(1),
+  })
+  .strict();
+export type ConjectureProbePackageV2T = z.infer<typeof ConjectureProbePackageV2>;
+
+/** Mixed-version packages are rejected so a review always covers one coherent contract. */
+export const ConjectureProbePackage = z.union([ConjectureProbePackageV2, ConjectureProbePackageV1]);
 export type ConjectureProbePackageT = z.infer<typeof ConjectureProbePackage>;
 
 /** Exact identity of the package that the independent reviewer saw. */
@@ -544,6 +641,7 @@ export type ConjectureProbeReviewFailureCodeT = z.infer<typeof ConjectureProbeRe
 /** Codes proven by the subject-neutral deterministic structure guard. */
 export const ConjectureProbeStructureFailureCode = z.enum([
   'probe_pair_not_independent',
+  'response_signature_ungradable',
   'target_error_answer_not_distinct',
 ]);
 export type ConjectureProbeStructureFailureCodeT = z.infer<
@@ -582,7 +680,61 @@ export function evaluateConjectureProbePackageStructure(
     failureCodes.add('probe_pair_not_independent');
   }
   for (const probe of [probePackage.primary, probePackage.followup]) {
-    if (
+    const responseAwareProbe = ConjectureProbeSpecV2.safeParse(probe);
+    if (responseAwareProbe.success) {
+      const {
+        gold_response_signature: gold,
+        target_error_response_signature: target,
+        response_mode: responseMode,
+      } = responseAwareProbe.data;
+      const expectedKind =
+        responseMode === 'single_choice' || responseMode === 'multiple_select'
+          ? 'choice'
+          : responseMode === 'short_answer'
+            ? 'text'
+            : responseMode === 'answer_with_reason'
+              ? 'answer_with_reason'
+              : 'rubric';
+      const singleChoiceIsGradable =
+        responseMode !== 'single_choice' ||
+        (gold.kind === 'choice' &&
+          gold.option_ids.length === 1 &&
+          target.kind === 'choice' &&
+          target.option_ids.length === 1);
+      if (gold.kind !== expectedKind || target.kind !== expectedKind || !singleChoiceIsGradable) {
+        failureCodes.add('response_signature_ungradable');
+      }
+      const normalizedSignature = (signature: ConjectureProbeResponseSignatureT) => {
+        if (signature.kind === 'choice') {
+          return {
+            ...signature,
+            option_ids: signature.option_ids.map(normalizeProbeIdentity).sort(),
+          };
+        }
+        if (signature.kind === 'answer_with_reason') {
+          return {
+            ...signature,
+            answer_md: normalizeProbeIdentity(signature.answer_md),
+            required_reason_features_md: signature.required_reason_features_md
+              .map(normalizeProbeIdentity)
+              .sort(),
+          };
+        }
+        if (signature.kind === 'rubric') {
+          return {
+            ...signature,
+            required_features_md: signature.required_features_md.map(normalizeProbeIdentity).sort(),
+          };
+        }
+        return {
+          ...signature,
+          response_md: normalizeProbeIdentity(signature.response_md),
+        };
+      };
+      if (exactJsonValueEqual(normalizedSignature(gold), normalizedSignature(target))) {
+        failureCodes.add('target_error_answer_not_distinct');
+      }
+    } else if (
       normalizeProbeIdentity(probe.reference_md) ===
       normalizeProbeIdentity(probe.expected_target_error_answer_md)
     ) {
@@ -651,7 +803,7 @@ export const ConjectureProbeQualityAttempt = z.discriminatedUnion('outcome', [
     .object({
       ...ConjectureProbeQualityAttemptBase,
       outcome: z.literal('structure_failed'),
-      failure_codes: uniqueProbeFailureCodes(ConjectureProbeStructureFailureCode, 2),
+      failure_codes: uniqueProbeFailureCodes(ConjectureProbeStructureFailureCode, 3),
     })
     .strict(),
   z
@@ -687,8 +839,8 @@ const ConjectureProbeQualityAuditFields = {
 } as const;
 
 /**
- * v1 remains readable for terminal history. Only v2 is bound to the exact reviewed
- * package and is therefore eligible for a new accept decision.
+ * v1/v2 remain readable for terminal history. v3 binds the response-aware package
+ * and is the only audit eligible for a new accept decision.
  */
 export const ConjectureProbeQualityAudit = z
   .discriminatedUnion('schema_version', [
@@ -701,7 +853,15 @@ export const ConjectureProbeQualityAudit = z
         schema_version: z.literal(2),
         ...ConjectureProbeQualityAuditFields,
         reviewed_hypothesis: ConjectureHypothesisProposalDraft,
-        reviewed_package: ConjectureProbePackage,
+        reviewed_package: ConjectureProbePackageV1,
+      })
+      .strict(),
+    z
+      .object({
+        schema_version: z.literal(3),
+        ...ConjectureProbeQualityAuditFields,
+        reviewed_hypothesis: ConjectureHypothesisProposalDraft,
+        reviewed_package: ConjectureProbePackageV2,
       })
       .strict(),
   ])
@@ -729,20 +889,20 @@ export const ConjectureProbeQualityAudit = z
         message: 'a passing audit must end with a passed attempt',
       });
     }
-    if (audit.schema_version === 2) {
+    if (audit.schema_version >= 2) {
       const finalAttempt = audit.attempts.at(-1);
       if (!finalAttempt || finalAttempt.author_task_run_id === null) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['attempts', audit.attempts.length - 1, 'author_task_run_id'],
-          message: 'a v2 passing audit requires author task-run lineage',
+          message: 'a package-bound passing audit requires author task-run lineage',
         });
       }
       if (!finalAttempt || finalAttempt.reviewer_task_run_id === null) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['attempts', audit.attempts.length - 1, 'reviewer_task_run_id'],
-          message: 'a v2 passing audit requires reviewer task-run lineage',
+          message: 'a package-bound passing audit requires reviewer task-run lineage',
         });
       }
     }
@@ -784,8 +944,8 @@ export const ConjectureProposalDraft = z.object({
   probe_reference_md: z.string().trim().min(1).max(2000),
   followup_probe_md: z.string().trim().min(1).max(1000),
   followup_probe_reference_md: z.string().trim().min(1).max(2000),
-  probe_spec: ConjectureProbeSpec,
-  followup_probe_spec: ConjectureProbeSpec,
+  probe_spec: ConjectureProbeSpecV2,
+  followup_probe_spec: ConjectureProbeSpecV2,
   probe_quality: ConjectureProbeQualityAudit,
   predicted_p: z.number().min(0).max(1),
   discriminating: z.literal(true),
@@ -796,11 +956,11 @@ export const ConjectureDraft = z
   .discriminatedUnion('kind', [ConjectureProposalDraft, ConjectureModelAbstainDraft])
   .superRefine((draft, ctx) => {
     if (draft.kind !== 'proposal') return;
-    if (draft.probe_quality.schema_version !== 2) {
+    if (draft.probe_quality.schema_version !== 3) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['probe_quality', 'schema_version'],
-        message: 'new conjecture drafts require a package-bound v2 quality audit',
+        message: 'new conjecture drafts require a response-aware v3 quality audit',
       });
     }
     if (
@@ -844,7 +1004,7 @@ export const ConjectureDraft = z
       });
     }
     if (
-      draft.probe_quality.schema_version === 2 &&
+      draft.probe_quality.schema_version === 3 &&
       !conjectureHypothesesEqual(draft.probe_quality.reviewed_hypothesis, {
         kind: 'proposal',
         claim_md: draft.claim_md,
@@ -862,7 +1022,7 @@ export const ConjectureDraft = z
       });
     }
     if (
-      draft.probe_quality.schema_version === 2 &&
+      draft.probe_quality.schema_version === 3 &&
       !conjectureProbePackagesEqual(draft.probe_quality.reviewed_package, {
         primary: draft.probe_spec,
         followup: draft.followup_probe_spec,

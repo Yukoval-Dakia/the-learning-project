@@ -21,12 +21,15 @@
 //     free-text probe fail-closed 422 and no probe_result was ever written. The
 //     invoker path is the ONLY path that actually evaluates free-text.
 //
-// YUK-787 outcome→resolution split:
-//   judge coarse_outcome 'incorrect' → outcome=0. The lifecycle then reads the
-//     immutable history for the same conjecture: the first independent hit is
-//     `evidence_for`; only a later independent hit is `confirmed`.
-//   judge coarse_outcome 'correct'   → outcome=1 → resolution='retired'
-//     (the learner answered correctly → the conjecture is FALSIFIED; retire).
+// YUK-787/YUK-827 outcome→resolution split:
+//   - Historical probes without a response contract retain the coarse outcome
+//     mapping for compatibility.
+//   - Response-aware probes advance outcome=0 only when the same judge call
+//     classifies the learner response as the declared target-error signature.
+//     A generic wrong answer, missing match, ambiguity, snapshot drift, or a
+//     correctness/signature conflict writes no evidence.
+//   - A correctness verdict that also matches the gold signature maps to
+//     outcome=1 → resolution='retired' (the conjecture is falsified).
 //
 // Fail-closed (spec §6 S3): judge 'unsupported' (reference missing / kind
 // mismatch) OR 'partial' (ambiguous on a discriminating probe) → 422, NO
@@ -42,8 +45,18 @@
 // `probe_result_corrupt` 500 (never papered over).
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
-import { JudgeKind, QuestionKind } from '@/core/schema/business';
+import {
+  ConjectureProbeSpec,
+  ConjectureProbeSpecV2,
+  JudgeKind,
+  QuestionKind,
+} from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
+import { PROBE_QUESTION_INITIAL_VERSION } from '@/core/schema/conjecture';
+import {
+  ConjectureProbeSignatureMatch,
+  classifyConjectureProbeResponseFromJudgeMatch,
+} from '@/core/schema/conjecture-probe-response';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
@@ -136,6 +149,14 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         outcome: existing.outcome,
         probe_result_event_id: existing.probe_result_event_id,
         coarse_outcome: null,
+        answer_result: existing.response_judgement?.answer_result ?? null,
+        target_error_match: existing.response_judgement?.target_error_match ?? null,
+        gradable: existing.response_judgement?.gradable ?? null,
+        response_reason_code: existing.response_judgement?.reason_code ?? null,
+        response_evidence_refs: existing.response_judgement?.evidence_refs ?? null,
+        signature_match_explanation_md:
+          existing.response_judgement?.signature_match_explanation_md ?? null,
+        ...(existing.degradation_reason ? { degradation_reason: existing.degradation_reason } : {}),
         idempotent: true,
       });
     }
@@ -171,6 +192,36 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     // Well-formed v1 proposals remain answerable under answerProbe's terminal legacy
     // rule, while v2 proposals continue through the recurrence gate.
     await assertProbeJudgeReady(db, probeQuestionId);
+    const metadata =
+      probe.metadata !== null &&
+      typeof probe.metadata === 'object' &&
+      !Array.isArray(probe.metadata)
+        ? (probe.metadata as Record<string, unknown>)
+        : {};
+    const authoredProbeSpec =
+      metadata.probe_spec === undefined ? null : ConjectureProbeSpec.safeParse(metadata.probe_spec);
+    if (authoredProbeSpec !== null && !authoredProbeSpec.success) {
+      throw new ApiError(
+        'probe_snapshot_invalid',
+        `probe ${probeQuestionId} has an invalid authored snapshot; no conjecture evidence was written`,
+        409,
+      );
+    }
+    const responseAwareProbeSpec = ConjectureProbeSpecV2.safeParse(
+      authoredProbeSpec?.success ? authoredProbeSpec.data : undefined,
+    );
+    if (
+      authoredProbeSpec?.success &&
+      (probe.version !== PROBE_QUESTION_INITIAL_VERSION ||
+        probe.prompt_md !== authoredProbeSpec.data.prompt_md ||
+        probe.reference_md !== authoredProbeSpec.data.reference_md)
+    ) {
+      throw new ApiError(
+        'probe_snapshot_changed',
+        `probe ${probeQuestionId} no longer matches its immutable authored snapshot; no conjecture evidence was written`,
+        409,
+      );
+    }
 
     // Judge via the standard invoker chokepoint (same path submit.ts uses).
     // `resolveSubjectProfileForKnowledgeIds` always returns a profile (falls back
@@ -210,6 +261,16 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         outcome: claimedResult.outcome,
         probe_result_event_id: claimedResult.probe_result_event_id,
         coarse_outcome: null,
+        answer_result: claimedResult.response_judgement?.answer_result ?? null,
+        target_error_match: claimedResult.response_judgement?.target_error_match ?? null,
+        gradable: claimedResult.response_judgement?.gradable ?? null,
+        response_reason_code: claimedResult.response_judgement?.reason_code ?? null,
+        response_evidence_refs: claimedResult.response_judgement?.evidence_refs ?? null,
+        signature_match_explanation_md:
+          claimedResult.response_judgement?.signature_match_explanation_md ?? null,
+        ...(claimedResult.degradation_reason
+          ? { degradation_reason: claimedResult.degradation_reason }
+          : {}),
         idempotent: true,
       });
     }
@@ -225,7 +286,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       });
       const judgeResult = invoked.result;
 
-      const outcome = mapGradingOutcome(judgeResult.coarse_outcome);
+      let outcome = mapGradingOutcome(judgeResult.coarse_outcome);
       if (outcome === null) {
         // Fail-closed: NO probe_result written. The probe stays served-but-unanswered
         // (its slot is not consumed) so the owner can re-answer or resolve via admin.
@@ -235,6 +296,35 @@ export async function POST(req: Request, params: Record<string, string>): Promis
           422,
         );
       }
+      const signatureMatch = ConjectureProbeSignatureMatch.safeParse(
+        judgeResult.evidence_json.probe_signature_match,
+      );
+      const responseJudgement = responseAwareProbeSpec.success
+        ? classifyConjectureProbeResponseFromJudgeMatch(
+            judgeResult.coarse_outcome,
+            signatureMatch.success ? signatureMatch.data : undefined,
+          )
+        : null;
+      if (responseJudgement && !responseJudgement.gradable) {
+        throw new ApiError(
+          'probe_response_ungradable',
+          `probe ${probeQuestionId} response could not be reconciled with its declared signatures (${responseJudgement.reason_code}); no conjecture evidence was written`,
+          422,
+        );
+      }
+      if (
+        responseJudgement?.answer_result === 'incorrect' &&
+        responseJudgement.target_error_match !== 'matched'
+      ) {
+        throw new ApiError(
+          'probe_response_not_target_error',
+          `probe ${probeQuestionId} was answered incorrectly but did not match the declared target-error signature; no conjecture evidence was written`,
+          422,
+        );
+      }
+      if (responseJudgement) {
+        outcome = responseJudgement.answer_result === 'correct' ? 1 : 0;
+      }
 
       const result = await answerProbe({
         db,
@@ -242,6 +332,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         outcome,
         answer_md: answerMd,
         answer_image_refs: answerImageRefs,
+        response_judgement: responseJudgement,
       });
 
       // The response reports the RECORDED outcome/resolution (from answerProbe).
@@ -253,6 +344,14 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         outcome: result.outcome,
         probe_result_event_id: result.probe_result_event_id,
         coarse_outcome: judgeResult.coarse_outcome,
+        answer_result: result.response_judgement?.answer_result ?? null,
+        target_error_match: result.response_judgement?.target_error_match ?? null,
+        gradable: result.response_judgement?.gradable ?? null,
+        response_reason_code: result.response_judgement?.reason_code ?? null,
+        response_evidence_refs: result.response_judgement?.evidence_refs ?? null,
+        signature_match_explanation_md:
+          result.response_judgement?.signature_match_explanation_md ?? null,
+        ...(result.degradation_reason ? { degradation_reason: result.degradation_reason } : {}),
         idempotent: result.idempotent ?? false,
       });
     } catch (err) {

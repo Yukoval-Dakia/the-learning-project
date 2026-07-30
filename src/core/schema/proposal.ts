@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ActivityRef } from './activity';
 import {
   ConjectureDiagnosticSpec,
+  ConjectureProbePackage,
   ConjectureProbeQualityAudit,
   ConjectureProbeSpec,
   QuestionKind,
@@ -586,15 +587,25 @@ export const ConjectureProposalChange = z
         followup: change.followup_probe_spec,
         predicted_p: change.predicted_p,
       };
-      for (const failureCode of evaluateConjectureProbePackageStructure(persistedPackage)) {
+      const coherentPackage = ConjectureProbePackage.safeParse(persistedPackage);
+      if (!coherentPackage.success) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['probe_spec'],
-          message: `probe package failed structural quality gate: ${failureCode}`,
+          message: 'primary and follow-up probe specs must use one coherent schema version',
         });
+      } else {
+        for (const failureCode of evaluateConjectureProbePackageStructure(coherentPackage.data)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['probe_spec'],
+            message: `probe package failed structural quality gate: ${failureCode}`,
+          });
+        }
       }
       if (
-        change.probe_quality?.schema_version === 2 &&
+        change.probe_quality !== undefined &&
+        'reviewed_hypothesis' in change.probe_quality &&
         change.diagnostic_spec !== undefined &&
         !conjectureHypothesisCoreMatches(change.probe_quality.reviewed_hypothesis, {
           claim_md: change.claim_md,
@@ -611,8 +622,10 @@ export const ConjectureProposalChange = z
         });
       }
       if (
-        change.probe_quality?.schema_version === 2 &&
-        !conjectureProbePackagesEqual(change.probe_quality.reviewed_package, persistedPackage)
+        change.probe_quality !== undefined &&
+        'reviewed_package' in change.probe_quality &&
+        coherentPackage.success &&
+        !conjectureProbePackagesEqual(change.probe_quality.reviewed_package, coherentPackage.data)
       ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

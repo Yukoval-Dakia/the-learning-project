@@ -6,6 +6,16 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET as getEventDetail } from '../../observability/api/event-detail';
 import { POST } from './proposal-decisions';
 
+const RESPONSE_AWARE_PROBE_FIELDS = {
+  schema_version: 2 as const,
+  response_mode: 'short_answer' as const,
+  gold_response_signature: { kind: 'text' as const, response_md: 'gold response' },
+  target_error_response_signature: {
+    kind: 'text' as const,
+    response_md: 'target-error response',
+  },
+} as const;
+
 const KNOWLEDGE_BASE = {
   domain: 'yuwen',
   parent_id: null,
@@ -90,6 +100,7 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
           expected_wrong_answer_signature_md: '仅有必要条件时仍判断可以推出。',
         },
         probe_spec: {
+          ...RESPONSE_AWARE_PROBE_FIELDS,
           prompt_md: '请解释这一步。',
           reference_md: '参考解释',
           expected_target_error_answer_md: '错误解释',
@@ -98,6 +109,7 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
           representation_kind: 'symbolic',
         },
         followup_probe_spec: {
+          ...RESPONSE_AWARE_PROBE_FIELDS,
           prompt_md: '换一个情境解释同一步。',
           reference_md: '第二个情境中的参考解释',
           expected_target_error_answer_md: '第二个情境中的错误解释',
@@ -106,7 +118,7 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
           representation_kind: 'natural_language',
         },
         probe_quality: {
-          schema_version: 2,
+          schema_version: 3,
           passed: true,
           attempts: [
             {
@@ -140,6 +152,7 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
           },
           reviewed_package: {
             primary: {
+              ...RESPONSE_AWARE_PROBE_FIELDS,
               prompt_md: '请解释这一步。',
               reference_md: '参考解释',
               expected_target_error_answer_md: '错误解释',
@@ -148,6 +161,7 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
               representation_kind: 'symbolic',
             },
             followup: {
+              ...RESPONSE_AWARE_PROBE_FIELDS,
               prompt_md: '换一个情境解释同一步。',
               reference_md: '第二个情境中的参考解释',
               expected_target_error_answer_md: '第二个情境中的错误解释',

@@ -48,6 +48,7 @@
 // the proposalId. conjecture_event_id === conjectureProposalId.
 
 import { newId } from '@/core/ids';
+import type { ConjectureProbeSpecT } from '@/core/schema/business';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_QUESTION_INITIAL_VERSION,
@@ -57,6 +58,10 @@ import {
   PROBE_RESULT_ACTION,
   type ProbeResolution,
 } from '@/core/schema/conjecture';
+import {
+  ConjectureProbeResponseJudgement,
+  type ConjectureProbeResponseJudgementT,
+} from '@/core/schema/conjecture-probe-response';
 import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
@@ -126,6 +131,8 @@ export interface ServeProbeOnceParams {
   probeMd: string;
   /** Optional expected/reference answer. */
   referenceMd?: string | null;
+  /** Immutable authored response contract used by target-aware judging and audit replay. */
+  probeSpec?: ConjectureProbeSpecT;
   /** Question kind; neutral default. */
   kind?: string;
   /** Neutral default difficulty (3). */
@@ -235,6 +242,7 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
         metadata: {
           conjecture_proposal_id: conjectureProposalId,
           probe_sequence: probeSequence,
+          ...(params.probeSpec ? { probe_spec: structuredClone(params.probeSpec) } : {}),
         },
         created_at: now,
         updated_at: now,
@@ -264,6 +272,8 @@ export interface AnswerProbeParams {
   answer_md?: string | null;
   /** Provenance — the answer image refs (asset ids) that were graded (photo answers). */
   answer_image_refs?: string[];
+  /** Response-signature verdict for v2 probes; absent only on historical probes. */
+  response_judgement?: ConjectureProbeResponseJudgementT | null;
   now?: Date;
 }
 
@@ -272,6 +282,8 @@ export interface AnswerProbeResult {
   /** The recorded 0|1 outcome (faithfully reported on BOTH fresh + idempotent paths). */
   outcome: 0 | 1;
   probe_result_event_id: string;
+  response_judgement: ConjectureProbeResponseJudgementT | null;
+  degradation_reason?: 'legacy_probe_result_without_response_judgement';
   idempotent?: boolean;
 }
 
@@ -279,6 +291,7 @@ interface FollowupProbeSpec {
   knowledgeId: string;
   promptMd: string;
   referenceMd: string;
+  probeSpec?: ConjectureProbeSpecT;
 }
 
 type ProbeConjectureLoadResult =
@@ -331,6 +344,9 @@ async function loadProbeConjectureState(
       knowledgeId: change.knowledge_id,
       promptMd: change.followup_probe_md,
       referenceMd: change.followup_probe_reference_md,
+      ...(change.followup_probe_spec
+        ? { probeSpec: structuredClone(change.followup_probe_spec) }
+        : {}),
     },
   };
 }
@@ -399,6 +415,8 @@ function parseProbeResultEvent(
   // contract violation, so fail closed rather than replaying contradictory evidence.
   const recordedResolution = (existing.payload as { resolution?: unknown }).resolution;
   const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
+  const recordedJudgement = (existing.payload as { response_judgement?: unknown })
+    .response_judgement;
   if (recordedOutcome !== 0 && recordedOutcome !== 1) return null;
   if (
     !(
@@ -409,10 +427,19 @@ function parseProbeResultEvent(
   ) {
     return null;
   }
+  const parsedJudgement =
+    recordedJudgement === undefined
+      ? null
+      : ConjectureProbeResponseJudgement.safeParse(recordedJudgement);
+  if (parsedJudgement !== null && !parsedJudgement.success) return null;
   return {
     status: recordedResolution,
     outcome: recordedOutcome,
     probe_result_event_id: existing.id,
+    response_judgement: parsedJudgement?.data ?? null,
+    ...(parsedJudgement === null
+      ? { degradation_reason: 'legacy_probe_result_without_response_judgement' as const }
+      : {}),
     idempotent: true,
   };
 }
@@ -555,6 +582,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
   const retrievabilityAtJudge = params.retrievabilityAtJudge ?? null;
   const answerMd = params.answer_md ?? null;
   const answerImageRefs = params.answer_image_refs ?? [];
+  const responseJudgement = params.response_judgement ?? null;
 
   return db.transaction(async (tx) => {
     // Serialize concurrent answers on the SAME probe so the check-existing + write is
@@ -730,6 +758,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
           : {}),
         retrievability_at_judge: retrievabilityAtJudge,
         answer_md: answerMd,
+        ...(responseJudgement ? { response_judgement: structuredClone(responseJudgement) } : {}),
         // Provenance for a photo answer: the team can later see WHAT was submitted for
         // a confirmed probe ("教研团据此备练"), not just the text (evidence-first).
         answer_image_refs: answerImageRefs,
@@ -756,6 +785,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         knowledgeId: followup.spec.knowledgeId,
         probeMd: followup.spec.promptMd,
         referenceMd: followup.spec.referenceMd,
+        probeSpec: followup.spec.probeSpec,
         probeSequence: 2,
         now,
       });
@@ -771,7 +801,15 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       }
     }
 
-    return { status: resolution, outcome, probe_result_event_id: probeResultEventId };
+    return {
+      status: resolution,
+      outcome,
+      probe_result_event_id: probeResultEventId,
+      response_judgement: responseJudgement,
+      ...(responseJudgement
+        ? {}
+        : { degradation_reason: 'legacy_probe_result_without_response_judgement' as const }),
+    };
   });
 }
 

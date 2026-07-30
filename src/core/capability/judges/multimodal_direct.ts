@@ -1,4 +1,5 @@
 import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
+import { ConjectureProbeSignatureMatch } from '@/core/schema/conjecture-probe-response';
 import { z } from 'zod';
 import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
 
@@ -42,6 +43,10 @@ export const MultimodalDirectLlmOutput = z.object({
     missing_points: z.array(z.string()).default([]),
   }),
   confidence: z.number().min(0).max(1),
+  // Present only when the input carries a v2 conjecture-probe response
+  // contract. It is produced by the same judge call as correctness so no
+  // second paid model call or divergent interpretation is introduced.
+  probe_signature_match: ConjectureProbeSignatureMatch.optional(),
 });
 export type MultimodalDirectLlmOutputT = z.infer<typeof MultimodalDirectLlmOutput>;
 
