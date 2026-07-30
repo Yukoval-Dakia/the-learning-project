@@ -23,10 +23,12 @@ import {
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { handleReviewDue } from '@/capabilities/practice/server/due-list';
 import { newId } from '@/core/ids';
+import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture-probe-response';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../../tests/helpers/conjecture-probe-fixtures';
 
 const KC_ID = 'kn_chain_rule';
 const PROBE_RESULT_ACTION = 'experimental:probe_result';
@@ -95,6 +97,48 @@ async function serve(proposalId: string) {
     referenceMd: '2x·cos(x^2)',
   });
 }
+
+async function serveResponseAware(proposalId: string) {
+  return serveProbeOnce({
+    db: testDb(),
+    conjectureProposalId: proposalId,
+    knowledgeId: KC_ID,
+    probeMd: 'd/dx sin(x^2) = ?',
+    referenceMd: '2x·cos(x^2)',
+    probeSpec: {
+      ...RESPONSE_AWARE_PROBE_FIELDS,
+      prompt_md: 'd/dx sin(x^2) = ?',
+      reference_md: '2x·cos(x^2)',
+      expected_target_error_answer_md: 'cos(x^2)+2x',
+      elicits_target_error_reason_md: 'Distinguishes composition from addition.',
+      context_kind: 'abstract',
+      representation_kind: 'symbolic',
+    },
+  });
+}
+
+const GOLD_RESPONSE_JUDGEMENT = {
+  rule_version: 'conjecture_probe_response_signature_v1',
+  answer_result: 'correct',
+  target_error_match: 'not_matched',
+  gradable: true,
+  reason_code: 'gold_signature_matched',
+  signature_match_explanation_md: 'matches the gold response signature',
+  evidence_refs: [
+    'learner_response',
+    'gold_response_signature',
+    'target_error_response_signature',
+    'correctness_judge',
+  ],
+} satisfies ConjectureProbeResponseJudgementT;
+
+const TARGET_ERROR_RESPONSE_JUDGEMENT = {
+  ...GOLD_RESPONSE_JUDGEMENT,
+  answer_result: 'incorrect',
+  target_error_match: 'matched',
+  reason_code: 'target_error_signature_matched',
+  signature_match_explanation_md: 'matches the target-error response signature',
+} satisfies ConjectureProbeResponseJudgementT;
 
 async function probeResultEvents(probeQuestionId: string) {
   const db = testDb();
@@ -270,6 +314,43 @@ describe('probe one-shot lifecycle (U3)', () => {
       reference_md: '-3x^2·sin(x^3) — outer -sin × inner 3x².',
       draft_status: 'draft',
     });
+  });
+
+  it.each([
+    {
+      label: 'missing judgement with target-error outcome',
+      outcome: 0 as const,
+      response_judgement: null,
+    },
+    {
+      label: 'gold judgement with target-error outcome',
+      outcome: 0 as const,
+      response_judgement: GOLD_RESPONSE_JUDGEMENT,
+    },
+    {
+      label: 'target-error judgement with correct outcome',
+      outcome: 1 as const,
+      response_judgement: TARGET_ERROR_RESPONSE_JUDGEMENT,
+    },
+    {
+      label: 'target-error judgement with non-evidence outcome',
+      outcome: null,
+      response_judgement: TARGET_ERROR_RESPONSE_JUDGEMENT,
+    },
+  ])('rejects a fresh v2 persistence bypass: $label', async ({ outcome, response_judgement }) => {
+    const proposalId = await seedConjecture();
+    const served = await serveResponseAware(proposalId);
+    if (served.status !== 'served') throw new Error('expected served response-aware probe');
+
+    await expect(
+      answerProbe({
+        db: testDb(),
+        probeQuestionId: served.probe_question_id,
+        outcome,
+        response_judgement,
+      }),
+    ).rejects.toMatchObject({ code: 'probe_response_judgement_mismatch', status: 409 });
+    await expect(probeResultEvents(served.probe_question_id)).resolves.toHaveLength(0);
   });
 
   it('production follow-up path makes the second independent incorrect probe confirmed', async () => {

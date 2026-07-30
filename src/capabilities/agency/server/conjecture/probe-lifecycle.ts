@@ -48,7 +48,7 @@
 // the proposalId. conjecture_event_id === conjectureProposalId.
 
 import { newId } from '@/core/ids';
-import type { ConjectureProbeSpecT } from '@/core/schema/business';
+import { ConjectureProbeSpecV2, type ConjectureProbeSpecT } from '@/core/schema/business';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_NON_EVIDENCE_RESOLUTION,
@@ -293,6 +293,62 @@ export interface AnswerProbeResult {
     | 'legacy_probe_result_without_response_judgement'
     | 'probe_without_response_contract';
   idempotent?: boolean;
+}
+
+function assertFreshProbeResponseJudgement(params: {
+  probeQuestionId: string;
+  probeSpec: unknown;
+  outcome: 0 | 1 | null;
+  responseJudgement: ConjectureProbeResponseJudgementT | null;
+}): void {
+  const { probeQuestionId, probeSpec, outcome, responseJudgement } = params;
+  const probeSpecRecord = toRecord(probeSpec);
+  if (probeSpecRecord.schema_version !== 2) {
+    if (
+      outcome === null &&
+      (!responseJudgement ||
+        responseJudgement.answer_result !== 'incorrect' ||
+        responseJudgement.target_error_match !== 'not_matched' ||
+        !responseJudgement.gradable)
+    ) {
+      throw new ApiError(
+        'probe_non_evidence_judgement_invalid',
+        `probe ${probeQuestionId} cannot be closed without a gradable non-target-error judgement`,
+        409,
+      );
+    }
+    return;
+  }
+
+  if (!ConjectureProbeSpecV2.safeParse(probeSpec).success) {
+    throw new ApiError(
+      'probe_response_contract_invalid',
+      `probe ${probeQuestionId} has an invalid v2 response contract`,
+      409,
+    );
+  }
+
+  const judgementMatchesOutcome =
+    responseJudgement?.gradable === true &&
+    ((outcome === 1 &&
+      responseJudgement.answer_result === 'correct' &&
+      responseJudgement.target_error_match === 'not_matched' &&
+      responseJudgement.reason_code === 'gold_signature_matched') ||
+      (outcome === 0 &&
+        responseJudgement.answer_result === 'incorrect' &&
+        responseJudgement.target_error_match === 'matched' &&
+        responseJudgement.reason_code === 'target_error_signature_matched') ||
+      (outcome === null &&
+        responseJudgement.answer_result === 'incorrect' &&
+        responseJudgement.target_error_match === 'not_matched' &&
+        responseJudgement.reason_code === 'response_matches_neither_signature'));
+  if (!judgementMatchesOutcome) {
+    throw new ApiError(
+      'probe_response_judgement_mismatch',
+      `probe ${probeQuestionId} outcome does not match its v2 response judgement`,
+      409,
+    );
+  }
 }
 
 interface FollowupProbeSpec {
@@ -600,19 +656,6 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
   const answerMd = params.answer_md ?? null;
   const answerImageRefs = params.answer_image_refs ?? [];
   const responseJudgement = params.response_judgement ?? null;
-  if (
-    outcome === null &&
-    (!responseJudgement ||
-      responseJudgement.answer_result !== 'incorrect' ||
-      responseJudgement.target_error_match !== 'not_matched' ||
-      !responseJudgement.gradable)
-  ) {
-    throw new ApiError(
-      'probe_non_evidence_judgement_invalid',
-      `probe ${probeQuestionId} cannot be closed without a gradable non-target-error judgement`,
-      409,
-    );
-  }
 
   return db.transaction(async (tx) => {
     // Serialize concurrent answers on the SAME probe so the check-existing + write is
@@ -679,6 +722,13 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       }
       return parsed;
     }
+
+    assertFreshProbeResponseJudgement({
+      probeQuestionId,
+      probeSpec: probeMetadata.probe_spec,
+      outcome,
+      responseJudgement,
+    });
 
     // Serialize the evidence-strength fold per conjecture, not only per question.
     // Without this second lock, two different probes answered concurrently could

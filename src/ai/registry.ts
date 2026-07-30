@@ -729,9 +729,10 @@ function buildMultimodalDirectJudgePrompt(profile: SubjectProfile): string {
    answer_with_reason / rubric 中的 features 是语义判据，不要求学生逐字复述。不得仅因 coarse_outcome=incorrect 就判 target_error；必须从学生实际答案或理由中识别声明的错误规则。
 
 严格 JSON 输出（不带 markdown 代码块包裹），shape 名 MultimodalDirectLlmOutput：
+不含 probe_response_contract 时：
 {"coarse_outcome":"correct|partial|incorrect","score":0.0-1.0,"feedback_md":"...","evidence":{"observed_md":"...","matched_points":["..."],"missing_points":["..."]},"confidence":0.0-1.0}
-仅当输入含 probe_response_contract 时，在上述对象额外加入：
-"probe_signature_match":{"match":"gold|target_error|neither|ambiguous","explanation_md":"..."}
+含 probe_response_contract 时：
+{"coarse_outcome":"correct|partial|incorrect","score":0.0-1.0,"feedback_md":"...","evidence":{"observed_md":"...","matched_points":["..."],"missing_points":["..."]},"confidence":0.0-1.0,"probe_signature_match":{"match":"gold|target_error|neither|ambiguous","explanation_md":"..."}}
 
 要点：
 - coarse_outcome 三选一；score 与 coarse_outcome 大致一致（caller 会按 coarse_outcome 把分数夹到 correct≥0.85 / partial 0.01..0.84 / incorrect 0）。

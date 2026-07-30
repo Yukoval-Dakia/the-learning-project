@@ -50,6 +50,7 @@ import { z } from 'zod';
 
 import {
   PREDICTION_SCORE_ACTION,
+  PROBE_NON_EVIDENCE_RESOLUTION,
   PROBE_RESULT_PROJECTED_ACTION,
   type ProbeResolution,
   isProbeResolution,
@@ -340,6 +341,10 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
     .where(
       and(
         eq(event.action, PROBE_RESULT_ACTION),
+        // A gradable ordinary wrong answer is terminal but deliberately carries
+        // no 0|1 prediction outcome. It must never enter the score/projection
+        // reader or be re-logged as malformed on every nightly reconciliation.
+        sql`${event.payload}->>'resolution' IS DISTINCT FROM ${PROBE_NON_EVIDENCE_RESOLUTION}`,
         sql`NOT EXISTS (
           SELECT 1 FROM ${event} anchor
           WHERE anchor.action IN (${PREDICTION_SCORE_ACTION}, ${PROBE_RESULT_PROJECTED_ACTION})
