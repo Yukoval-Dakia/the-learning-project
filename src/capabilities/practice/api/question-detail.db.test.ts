@@ -82,7 +82,7 @@ describe('GET /api/questions/[id]', () => {
       source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
       prompt_md: 'Explain why the transfer applies.',
       reference_md: 'future diagnostic answer',
-      rubric_json: { answer: 'future diagnostic answer' },
+      rubric_json: { criteria: [], acceptable_answers: ['future diagnostic answer'] },
       source_ref: 'private-author-run',
     });
 
