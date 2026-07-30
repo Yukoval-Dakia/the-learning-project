@@ -632,6 +632,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
     const diagnosticQuestions = await db
       .select({
         id: question.id,
+        prompt_md: question.prompt_md,
         source: question.source,
         judge_kind_override: question.judge_kind_override,
         metadata: question.metadata,
@@ -639,6 +640,18 @@ describe('YUK-791 intervention preparation closed loop', () => {
       .from(question)
       .where(eq(question.source, 'intervention_diagnostic'));
     expect(diagnosticQuestions).toHaveLength(3);
+    const immediateQuestion = diagnosticQuestions.find(
+      (row) => row.id === active.settlement?.diagnostics.immediate.question_id,
+    );
+    expect(immediateQuestion?.prompt_md).toBe(
+      [
+        '# 链式法则：外层导数乘以内层导数',
+        '先识别外层 sin(u)，再求 cos(u)；随后对 u=x² 求 2x，最后把两者相乘。',
+        '---',
+        '## 立即检验',
+        '求 y=exp(x²+1) 的导数。',
+      ].join('\n\n'),
+    );
     expect(diagnosticQuestions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

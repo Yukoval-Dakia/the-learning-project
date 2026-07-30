@@ -38,6 +38,26 @@ function diagnosticMetadata(input: {
   };
 }
 
+export function learnerFacingInterventionDiagnosticPrompt(
+  packageValue: InterventionPackageT,
+  kind: 'immediate' | 'delayed' | 'transfer',
+): string {
+  const probePrompt = packageValue.diagnostics[kind].probe_spec.prompt_md;
+  if (kind !== 'immediate') return probePrompt;
+
+  // The intervention must exist on a learner-visible surface before an outcome
+  // can be attributed to it. Its immediate one-shot is that delivery surface:
+  // approved material renders first, then the response-aware check. Later cards
+  // stay probe-only so they measure retention/transfer instead of re-teaching.
+  return [
+    `# ${packageValue.material.title_md}`,
+    packageValue.material.body_md,
+    '---',
+    '## 立即检验',
+    probePrompt,
+  ].join('\n\n');
+}
+
 export function questionKnowledgeIdsForJudge(input: {
   source: string | null;
   metadata: Record<string, unknown> | null;
@@ -81,7 +101,7 @@ export async function materializeInterventionDiagnostics(
         return {
           id: scheduled.question_id,
           kind: 'short_answer',
-          prompt_md: diagnostic.probe_spec.prompt_md,
+          prompt_md: learnerFacingInterventionDiagnosticPrompt(packageValue, kind),
           reference_md: diagnostic.probe_spec.reference_md,
           judge_kind_override: 'multimodal_direct',
           knowledge_ids: [],

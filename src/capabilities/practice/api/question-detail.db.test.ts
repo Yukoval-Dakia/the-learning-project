@@ -31,6 +31,19 @@ async function seedQuestion(
     });
 }
 
+function interventionDiagnosticMetadata(dueAt: string) {
+  return {
+    intervention_diagnostic: {
+      schema_version: 1,
+      intervention_id: 'intervention_detail_test',
+      intervention_version: 1,
+      diagnostic_kind: 'immediate',
+      knowledge_id: 'kc_detail_test',
+      due_at: dueAt,
+    },
+  };
+}
+
 function mkReq(id: string, query = ''): Request {
   return new Request(`http://localhost/api/questions/${id}${query}`);
 }
@@ -84,6 +97,7 @@ describe('GET /api/questions/[id]', () => {
       reference_md: 'future diagnostic answer',
       rubric_json: { criteria: [], acceptable_answers: ['future diagnostic answer'] },
       source_ref: 'private-author-run',
+      metadata: interventionDiagnosticMetadata('2026-06-07T00:00:00.000Z'),
     });
 
     const res = await GET(mkReq(id, '?surface=practice'), { id });
@@ -100,6 +114,34 @@ describe('GET /api/questions/[id]', () => {
       backlinks_by_intent_source: {},
       timeline: [],
     });
+  });
+
+  it('404s a future diagnostic on the client-controlled Practice surface', async () => {
+    const id = newId();
+    await seedQuestion(id, {
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      prompt_md: 'future transfer prompt',
+      reference_md: 'future transfer answer',
+      draft_status: 'active',
+      metadata: interventionDiagnosticMetadata('2099-01-01T00:00:00.000Z'),
+    });
+
+    const res = await GET(mkReq(id, '?surface=practice'), { id });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('404s a retired diagnostic on the Practice surface', async () => {
+    const id = newId();
+    await seedQuestion(id, {
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      draft_status: 'draft',
+      metadata: interventionDiagnosticMetadata('2026-06-07T00:00:00.000Z'),
+    });
+
+    const res = await GET(mkReq(id, '?surface=practice'), { id });
+
+    expect(res.status).toBe(404);
   });
 
   it('rejects unknown question surfaces', async () => {

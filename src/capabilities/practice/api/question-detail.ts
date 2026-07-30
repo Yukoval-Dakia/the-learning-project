@@ -16,8 +16,12 @@
 // the sibling notes/learning-items routes (zod, 404 on missing, errorResponse).
 
 import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/public';
-import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
+import {
+  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+  InterventionDiagnosticQuestionMetadata,
+} from '@/core/schema/intervention';
 import { db } from '@/db/client';
+import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { loadQuestionDetail } from '@/server/questions/detail';
 import {
@@ -27,6 +31,7 @@ import {
   editQuestion,
   hasAnyAssociation,
 } from '@/server/questions/write';
+import { eq } from 'drizzle-orm';
 import { QuestionParamsSchema, UpdateQuestionBodySchema } from './question-solve-contracts';
 
 // Distinct, friendlier error when a bloodline field is the offender.
@@ -80,6 +85,24 @@ export async function GET(req: Request, params: Record<string, string>): Promise
       throw new ApiError('not_found', `question ${parsed.data.id} not found`, 404);
     }
     if (detail.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+      const [diagnosticRow] = await db
+        .select({ metadata: question.metadata })
+        .from(question)
+        .where(eq(question.id, detail.id))
+        .limit(1);
+      const schedule = InterventionDiagnosticQuestionMetadata.safeParse(
+        diagnosticRow?.metadata?.intervention_diagnostic,
+      );
+      // `surface=practice` is client-controlled, so it is not a fence by itself.
+      // Only the current active one-shot may be read, and only after its immutable
+      // due time. Derived future IDs therefore reveal neither prompt nor timing.
+      if (
+        detail.draft_status === 'draft' ||
+        !schedule.success ||
+        Date.now() < new Date(schedule.data.due_at).getTime()
+      ) {
+        throw new ApiError('not_found', `question ${parsed.data.id} not found`, 404);
+      }
       // The Practice face needs the prompt/options/labels to render the scheduled
       // one-shot, but must not receive any answer-bearing material before the
       // canonical /api/attempts submission has been judged. Keep the question-bank
