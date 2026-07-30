@@ -17,7 +17,8 @@
   - QuestionAuthor/Reviewer 使用最多两轮整包生成、独立求解和 fail-closed 结构校验；
     历史 V1 可读，新 proposal 只能写 V2。
   - 单题 Judge 在同一次真实 Judge 调用中同时判断答题结果与目标误区匹配；普通答错
-    不再推进 conjecture。V2 快照缺失、漂移或不可判定时拒绝写事件。
+    记为终止性的 `inconclusive`，消费本题但不推进 conjecture，也不允许反复作答挑结果。
+    V2 快照缺失、漂移或不可判定时拒绝写事件。
   - cutover migration 只退休迁移前仍 pending 的 agent conjecture；owner dismissal
     语义不被改写。
 - **开发 gate 已过**
@@ -25,7 +26,8 @@
   - 入选结果为 7/8 grounded（87.5%），严重事实错误 0，claim/probe 错配 0；
     余下 chain case 因无语义共识安全 abstain。
   - 当前代码重新解析 7 个入选 proposal 全部通过 V2 schema/structure。
-  - targeted unit 273、DB 103、migration 1、typecheck 与 prompt snapshot audit 全绿。
+  - targeted unit 273、DB 103、migration 1、typecheck 与 prompt snapshot audit 全绿；
+    review 修正另有 unit 61、DB 41 与 migration 1 全绿。
   - 完整 gate 不在本地跑；提交后只监听 exact-head GitHub Actions `CI Gate`。
 
 ## NEXT

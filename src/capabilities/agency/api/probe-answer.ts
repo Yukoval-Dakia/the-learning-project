@@ -286,7 +286,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       });
       const judgeResult = invoked.result;
 
-      let outcome = mapGradingOutcome(judgeResult.coarse_outcome);
+      let outcome: 0 | 1 | null = mapGradingOutcome(judgeResult.coarse_outcome);
       if (outcome === null) {
         // Fail-closed: NO probe_result written. The probe stays served-but-unanswered
         // (its slot is not consumed) so the owner can re-answer or resolve via admin.
@@ -312,18 +312,13 @@ export async function POST(req: Request, params: Record<string, string>): Promis
           422,
         );
       }
-      if (
-        responseJudgement?.answer_result === 'incorrect' &&
-        responseJudgement.target_error_match !== 'matched'
-      ) {
-        throw new ApiError(
-          'probe_response_not_target_error',
-          `probe ${probeQuestionId} was answered incorrectly but did not match the declared target-error signature; no conjecture evidence was written`,
-          422,
-        );
-      }
       if (responseJudgement) {
-        outcome = responseJudgement.answer_result === 'correct' ? 1 : 0;
+        outcome =
+          responseJudgement.answer_result === 'correct'
+            ? 1
+            : responseJudgement.target_error_match === 'matched'
+              ? 0
+              : null;
       }
 
       const result = await answerProbe({

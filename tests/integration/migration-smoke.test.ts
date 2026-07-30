@@ -1211,13 +1211,17 @@ describe('migration smoke — YUK-827 response-signature cutover', () => {
   });
 
   it('retires all pre-cutover pending conjectures without creating an owner dismissal', async () => {
-    const seedProposal = async (id: string, schemaVersion: number) => {
+    const seedProposal = async (
+      id: string,
+      schemaVersion: number,
+      actorKind: 'agent' | 'user' = 'agent',
+    ) => {
       await client`
         INSERT INTO event (
           id, actor_kind, actor_ref, action, subject_kind, subject_id,
           outcome, payload, affected_scopes, created_at
         ) VALUES (
-          ${id}, 'agent', 'research_meeting', 'experimental:proposal',
+          ${id}, ${actorKind}, 'research_meeting', 'experimental:proposal',
           'mind_model', ${id}, 'partial',
           ${client.json({
             ai_proposal: {
@@ -1236,15 +1240,48 @@ describe('migration smoke — YUK-827 response-signature cutover', () => {
     await seedProposal('response_signature_v2_pending', 2);
     await seedProposal('response_signature_v3_shaped_pending', 3);
     await seedProposal('response_signature_decided', 2);
+    await seedProposal('response_signature_owner_pending', 2, 'user');
+    await seedProposal('response_signature_retracted', 2);
+    await seedProposal('response_signature_superseded', 2);
+    await seedProposal('response_signature_restored', 2);
     await client`
       INSERT INTO event (
         id, actor_kind, actor_ref, action, subject_kind, subject_id,
         outcome, payload, caused_by_event_id, affected_scopes, created_at
-      ) VALUES (
+      ) VALUES
+      (
         'response_signature_decision', 'user', 'self', 'rate', 'event',
         'response_signature_decided', 'success', '{"rating":"accept"}'::jsonb,
         'response_signature_decided', ARRAY[]::text[],
         '2026-07-29T01:00:00Z'::timestamptz
+      ),
+      (
+        'response_signature_existing_retract', 'user', 'self', 'correct', 'event',
+        'response_signature_retracted', 'success',
+        '{"correction_kind":"retract"}'::jsonb,
+        'response_signature_retracted', ARRAY[]::text[],
+        '2026-07-29T01:00:00Z'::timestamptz
+      ),
+      (
+        'response_signature_existing_supersede', 'agent', 'research_meeting',
+        'correct', 'event', 'response_signature_superseded', 'success',
+        '{"correction_kind":"supersede","replacement_event_id":"replacement"}'::jsonb,
+        'response_signature_superseded', ARRAY[]::text[],
+        '2026-07-29T01:00:00Z'::timestamptz
+      ),
+      (
+        'response_signature_old_retract', 'agent', 'research_meeting', 'correct',
+        'event', 'response_signature_restored', 'success',
+        '{"correction_kind":"retract"}'::jsonb,
+        'response_signature_restored', ARRAY[]::text[],
+        '2026-07-29T01:00:00Z'::timestamptz
+      ),
+      (
+        'response_signature_latest_restore', 'user', 'self', 'correct', 'event',
+        'response_signature_restored', 'success',
+        '{"correction_kind":"restore"}'::jsonb,
+        'response_signature_restored', ARRAY[]::text[],
+        '2026-07-29T02:00:00Z'::timestamptz
       )
     `;
 
@@ -1269,6 +1306,13 @@ describe('migration smoke — YUK-827 response-signature cutover', () => {
       ORDER BY subject_id
     `;
     expect(corrections).toEqual([
+      {
+        subject_id: 'response_signature_restored',
+        actor_kind: 'agent',
+        actor_ref: 'yuk827_response_signature_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
       {
         subject_id: 'response_signature_v2_pending',
         actor_kind: 'agent',

@@ -22,11 +22,13 @@
 5. immutable `probe_spec` 随 question snapshot 持久化；V2 快照缺失、被编辑或版本漂移，
    在付费 Judge 前 409 fail closed。
 6. `MultimodalDirectJudgeTask` 同一次调用同时输出 `answer_result` 和
-   `gold | target_error | neither | ambiguous`；普通答错不等价于命中目标误区。
+   `gold | target_error | neither | ambiguous`；普通答错不等价于命中目标误区，并记为
+   终止性 `inconclusive`，消费本题但不改变猜想证据。
 7. lifecycle 持久化/replay response judgement；旧事件无 judgement 时返回明确降级原因。
-8. migration `0084_yuk827_response_signature_cutover.sql` 退休迁移前 pending 的 agent
-   conjecture，不改写 owner dismissal。暂停的 YUK-791 分支合并前必须 rebase 并重新编号
-   其冲突的 `0084`。
+8. migration `0084_yuk827_response_signature_cutover.sql` 只退休迁移前仍 active/pending
+   的 agent conjecture，不改写 owner proposal、rate、retract、mark_wrong 或 supersede；
+   latest restore 仍按 active 处理。暂停的 YUK-791 分支合并前必须 rebase 并重新编号其
+   冲突的 `0084`。
 9. typed client、API response、grounding artifact、prompt audit snapshot 与相关 fixtures
    已同步。
 
@@ -46,6 +48,7 @@
 - YUK-827 migration smoke：1 PASS / 28 skipped。
 - `pnpm typecheck` PASS。
 - prompt audit：12 snapshots CLEAN。
+- review/CI 修正定向验证：unit 61、DB 41、migration 1、typecheck PASS。
 - API client 与 Postman collection 已重新生成。
 
 ## 边界

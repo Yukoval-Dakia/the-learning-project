@@ -12,7 +12,11 @@ export {
 } from '@/core/schema/business';
 export { ActivityRef } from '@/core/schema/activity';
 export { CoarseOutcome, JudgeResultV2, ScoreMeaning } from '@/core/schema/capability';
-export { PROBE_RESOLUTIONS } from '@/core/schema/conjecture';
+export {
+  PROBE_NON_EVIDENCE_RESOLUTION,
+  PROBE_RESOLUTIONS,
+} from '@/core/schema/conjecture';
+export { ConjectureProbeResponseJudgement } from '@/core/schema/conjecture-probe-response';
 export { CorrectArtifactEvent } from '@/core/schema/event';
 export { NudgeKind } from '@/core/schema/event/nudge-events';
 export { SuggestionKind } from '@/core/schema/event/known';

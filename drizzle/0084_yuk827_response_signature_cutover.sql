@@ -43,7 +43,8 @@ SELECT
   GREATEST(now(), proposal."created_at" + interval '1 microsecond'),
   GREATEST(now(), proposal."created_at" + interval '1 microsecond')
 FROM "event" AS proposal
-WHERE proposal."action" = 'experimental:proposal'
+WHERE proposal."actor_kind" = 'agent'
+  AND proposal."action" = 'experimental:proposal'
   AND proposal."subject_kind" = 'mind_model'
   AND proposal."payload" #>> '{ai_proposal,kind}' = 'conjecture'
   AND NOT COALESCE((
@@ -63,6 +64,21 @@ WHERE proposal."action" = 'experimental:proposal'
     ORDER BY decision."created_at" DESC, decision."id" DESC
     LIMIT 1
   ), false)
+  -- Preserve any prior owner/agent correction. Latest-write-wins matches the
+  -- runtime fold: no correction or a latest restore is active; retract,
+  -- mark_wrong, and supersede are already terminal and must keep their lineage.
+  AND COALESCE(
+    (
+      SELECT correction."payload" ->> 'correction_kind'
+      FROM "event" AS correction
+      WHERE correction."action" = 'correct'
+        AND correction."subject_kind" = 'event'
+        AND correction."subject_id" = proposal."id"
+      ORDER BY correction."created_at" DESC, correction."id" DESC
+      LIMIT 1
+    ),
+    'restore'
+  ) = 'restore'
   AND NOT COALESCE((
     jsonb_typeof(proposal."payload" -> 'rubric_verdict') = 'object'
     AND proposal."payload" #> '{rubric_verdict,ok}' = 'false'::jsonb

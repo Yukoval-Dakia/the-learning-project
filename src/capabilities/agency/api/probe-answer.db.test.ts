@@ -6,8 +6,10 @@
 //   2. IDEMPOTENCY: re-answer short-circuits via `peekExistingProbeResult` BEFORE
 //      invoking the judge (LLM cost guard) — judge NOT called, recorded values
 //      returned with coarse_outcome: null.
-//   3. FAIL-CLOSED: unsupported/partial, ordinary wrong answers, ambiguous or
-//      missing signature matches, and snapshot drift write NO probe_result.
+//   3. FAIL-CLOSED: unsupported/partial, ambiguous or missing signature matches,
+//      and snapshot drift write NO probe_result. A gradable ordinary wrong answer
+//      is terminal non-evidence, so it consumes the probe without strengthening
+//      or falsifying the conjecture.
 // Plus the gating errors: 400 (bad body), 404 (no question), 409 (not a mind_probe).
 //
 // The judge invoker is mocked (`createDefaultJudgeInvoker` → `invoke`) so the test
@@ -22,6 +24,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   PROBE_JUDGE_RELEASED_ACTION,
   PROBE_JUDGE_STARTED_ACTION,
+  countActiveProbes,
   serveProbeOnce,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { newId } from '@/core/ids';
@@ -371,7 +374,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
 
-  it('response-aware probe fails closed when an ordinary wrong answer matches neither signature', async () => {
+  it('response-aware probe consumes an ordinary wrong answer without writing conjecture evidence', async () => {
     const probeId = await serveResponseAwareProbe();
     mockInvoke.mockResolvedValue(
       invokeResult('incorrect', {
@@ -382,11 +385,36 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
 
     const response = await answer(probeId, '2x+cos(x)');
 
-    expect(response.status).toBe(422);
+    expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      error: 'probe_response_not_target_error',
+      status: 'inconclusive',
+      resolution: 'inconclusive',
+      outcome: null,
+      answer_result: 'incorrect',
+      target_error_match: 'not_matched',
+      gradable: true,
+      response_reason_code: 'response_matches_neither_signature',
     });
-    expect(await probeResultEvents(probeId)).toHaveLength(0);
+    const [persisted] = await probeResultEvents(probeId);
+    expect(persisted.payload).toMatchObject({
+      outcome: null,
+      resolution: 'inconclusive',
+      response_judgement: {
+        answer_result: 'incorrect',
+        target_error_match: 'not_matched',
+        gradable: true,
+      },
+    });
+    expect(await countActiveProbes(testDb())).toBe(0);
+
+    const replay = await answer(probeId, 'try to change the diagnosis');
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject({
+      resolution: 'inconclusive',
+      outcome: null,
+      idempotent: true,
+    });
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
 
   it('response-aware probe retires only when correctness and the gold signature agree', async () => {

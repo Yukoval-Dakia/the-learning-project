@@ -1,5 +1,8 @@
-import { ConjectureProbeResponseJudgement } from '@/core/schema/conjecture-probe-response';
-import { PROBE_RESOLUTIONS } from '@/kernel/capability-contract-schemas';
+import {
+  ConjectureProbeResponseJudgement,
+  PROBE_NON_EVIDENCE_RESOLUTION,
+  PROBE_RESOLUTIONS,
+} from '@/kernel/capability-contract-schemas';
 import { z } from 'zod';
 
 export const CreateLearningIntentBodySchema = z
@@ -92,13 +95,13 @@ export const ProbeAnswerBodySchema = z
   });
 
 export const ProbeAnswerResponseSchema = z.object({
-  status: z.enum(PROBE_RESOLUTIONS),
-  resolution: z.enum(PROBE_RESOLUTIONS),
-  outcome: z.union([z.literal(0), z.literal(1)]),
+  status: z.union([z.enum(PROBE_RESOLUTIONS), z.literal(PROBE_NON_EVIDENCE_RESOLUTION)]),
+  resolution: z.union([z.enum(PROBE_RESOLUTIONS), z.literal(PROBE_NON_EVIDENCE_RESOLUTION)]),
+  outcome: z.union([z.literal(0), z.literal(1), z.null()]),
   probe_result_event_id: z.string(),
   coarse_outcome: z.enum(['correct', 'incorrect']).nullable(),
-  answer_result: z.enum(['correct', 'incorrect', 'ungradable']).nullable(),
-  target_error_match: z.enum(['matched', 'not_matched', 'ambiguous']).nullable(),
+  answer_result: ConjectureProbeResponseJudgement.shape.answer_result.nullable(),
+  target_error_match: ConjectureProbeResponseJudgement.shape.target_error_match.nullable(),
   gradable: z.boolean().nullable(),
   response_reason_code: ConjectureProbeResponseJudgement.shape.reason_code.nullable(),
   response_evidence_refs: ConjectureProbeResponseJudgement.shape.evidence_refs.nullable(),

@@ -9305,10 +9305,9 @@ export interface operations {
             degradation_reason?: 'legacy_probe_result_without_response_judgement';
             gradable: boolean | null;
             idempotent: boolean;
-            outcome: 0 | 1;
+            outcome: 0 | 1 | ('null' | null);
             probe_result_event_id: string;
-            /** @enum {string} */
-            resolution: 'evidence_for' | 'confirmed' | 'retired';
+            resolution: ('evidence_for' | 'confirmed' | 'retired') | 'inconclusive';
             response_evidence_refs:
               | (
                   | 'learner_response'
@@ -9328,8 +9327,7 @@ export interface operations {
               | 'signature_judgement_missing'
               | null;
             signature_match_explanation_md: string | null;
-            /** @enum {string} */
-            status: 'evidence_for' | 'confirmed' | 'retired';
+            status: ('evidence_for' | 'confirmed' | 'retired') | 'inconclusive';
             /** @enum {string|null} */
             target_error_match: 'matched' | 'not_matched' | 'ambiguous' | null;
           };

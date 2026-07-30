@@ -96,6 +96,37 @@ describe('task prompt definitions', () => {
     }
   });
 
+  it('pins the response-aware conjecture probe author/reviewer prompts for every profile', () => {
+    const expected = {
+      'general:ConjectureProbeAuthorTask':
+        '1337f632a207767ad1408723f07d9cc9281220828074ba2dc2c6f65da6d87969',
+      'general:ConjectureProbeReviewTask':
+        '6cf0b4bdf41429476075d579014b17acf2a1809da3b17d6897502e34f3f5f404',
+      'math:ConjectureProbeAuthorTask':
+        'bc9ad647833de7e13227a98a7776f76c78c5c3964e88b0ba128202ad555bf6b2',
+      'math:ConjectureProbeReviewTask':
+        'e9b108a1511d127b33c399d23fced583ac871fff460cd9fff1f65ca16e351729',
+      'physics:ConjectureProbeAuthorTask':
+        '44ceec14112bf53e0e197b3e9be813c57d4f056a1c909900c772061a3f9f5694',
+      'physics:ConjectureProbeReviewTask':
+        '5de7d2abe9e2986bb74c61582034e1adc1eb30d285cf5635525cc59de3c12c0e',
+      'yuwen:ConjectureProbeAuthorTask':
+        '5c890570f0dbca25f1661556a4dabecaa0161223643d467b9f6ce6c7931c7d5f',
+      'yuwen:ConjectureProbeReviewTask':
+        '0adbee2e2bb1b47d19897e5b450d960ccd4ad9f26dc9e2cff4642cbfbeb6fcfa',
+    } as const;
+    for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
+      const profile = resolveSubjectProfile(profileId);
+      for (const task of ['ConjectureProbeAuthorTask', 'ConjectureProbeReviewTask'] as const) {
+        const key = `${profileId}:${task}` as keyof typeof expected;
+        const actualHash = createHash('sha256')
+          .update(getTaskSystemPrompt(task, profile), 'utf8')
+          .digest('hex');
+        expect(actualHash, key).toBe(expected[key]);
+      }
+    }
+  });
+
   it('keeps inline prompts profile-independent', () => {
     for (const [kind, task] of Object.entries(tasks)) {
       if (task.prompt.kind !== 'inline') continue;

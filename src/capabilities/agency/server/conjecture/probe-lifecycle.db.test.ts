@@ -610,6 +610,39 @@ describe('probe one-shot lifecycle (U3)', () => {
     });
   });
 
+  it('treats an explicit null response_judgement as legacy missing metadata', async () => {
+    const proposalId = await seedConjecture();
+    const served = await serve(proposalId);
+    if (served.status !== 'served') throw new Error('expected served');
+    const resultId = newId();
+    await writeEvent(testDb(), {
+      id: resultId,
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: PROBE_RESULT_ACTION,
+      subject_kind: 'question',
+      subject_id: served.probe_question_id,
+      payload: {
+        conjecture_event_id: proposalId,
+        outcome: 0,
+        resolution: 'confirmed',
+        response_judgement: null,
+      },
+      caused_by_event_id: proposalId,
+      created_at: new Date(),
+    });
+
+    await expect(
+      peekExistingProbeResult(testDb(), served.probe_question_id),
+    ).resolves.toMatchObject({
+      status: 'confirmed',
+      outcome: 0,
+      response_judgement: null,
+      degradation_reason: 'legacy_probe_result_without_response_judgement',
+      idempotent: true,
+    });
+  });
+
   it('answer rejects an unknown question id with 404 probe_not_found', async () => {
     await expect(
       answerProbe({ db: testDb(), probeQuestionId: 'q_nope', outcome: 0 }),
