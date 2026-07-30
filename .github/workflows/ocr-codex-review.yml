@@ -2,7 +2,15 @@ name: OCR PR Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, closed]
+    # Review once when a PR first becomes reviewable. Do not review every push:
+    # that turns advisory findings into a review -> fix -> push -> review loop.
+    types: [opened, reopened, ready_for_review, closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review manually
+        required: true
+        type: number
 
 permissions:
   contents: read
@@ -10,17 +18,18 @@ permissions:
 concurrency:
   # Separate close-collection runs from review runs so merging a PR never
   # cancels an in-flight review of the same PR (and vice versa).
-  group: ocr-codex-review-${{ github.event.pull_request.number }}-${{ github.event.action == 'closed' && 'close' || 'review' }}
+  group: ocr-codex-review-${{ inputs.pr_number || github.event.pull_request.number }}-${{ github.event.action == 'closed' && 'close' || 'review' }}
   cancel-in-progress: true
 
 jobs:
   review:
-    name: OCR review
+    name: OCR review (advisory)
     if: >
-      github.event.action != 'closed' &&
-      github.event.pull_request.draft == false &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.user.login != 'dependabot[bot]'
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.action != 'closed' &&
+       github.event.pull_request.draft == false &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.pull_request.user.login != 'dependabot[bot]')
     runs-on: [self-hosted, ocr-codex-review]
     # Backstop: a stalled step (e.g. artifact upload hanging against GitHub's
     # blob storage) must not pin the job to the 6h default. Review itself is
@@ -36,10 +45,42 @@ jobs:
       OCR_MAX_TOOLS: ${{ vars.OCR_MAX_TOOLS }}
       OCR_TIMEOUT_MINUTES: ${{ vars.OCR_TIMEOUT_MINUTES }}
     steps:
+      - name: Resolve pull request context
+        id: pr_context
+        uses: actions/github-script@v7
+        env:
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+        with:
+          script: |
+            const prNumber = Number(process.env.INPUT_PR_NUMBER || process.env.EVENT_PR_NUMBER);
+            if (!Number.isInteger(prNumber) || prNumber < 1) {
+              throw new Error(`Invalid pull request number: ${prNumber}`);
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            });
+            if (pr.draft) {
+              throw new Error(`PR #${prNumber} is still a draft.`);
+            }
+            if (pr.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+              throw new Error(`PR #${prNumber} is from a fork; advisory review is disabled.`);
+            }
+            if (pr.user?.login === 'dependabot[bot]') {
+              throw new Error(`PR #${prNumber} is authored by Dependabot; advisory review is disabled.`);
+            }
+
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('base_sha', pr.base.sha);
+            core.setOutput('head_sha', pr.head.sha);
+
       - name: Checkout pull request merge
         uses: actions/checkout@v4
         with:
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          ref: refs/pull/${{ steps.pr_context.outputs.pr_number }}/merge
           fetch-depth: 0
           # The repository is private, so the explicit PR-head fetch below needs
           # checkout's token (contents: read). That step removes it before OCR runs.
@@ -77,9 +118,9 @@ jobs:
       - name: Fetch pull request refs
         shell: bash
         env:
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ steps.pr_context.outputs.base_ref }}
+          BASE_SHA: ${{ steps.pr_context.outputs.base_sha }}
+          PR_NUMBER: ${{ steps.pr_context.outputs.pr_number }}
         run: |
           set -euo pipefail
 
@@ -103,7 +144,7 @@ jobs:
         continue-on-error: true
         uses: actions/github-script@v7
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ steps.pr_context.outputs.pr_number }}
         with:
           script: |
             const fs = require('fs');
@@ -230,8 +271,8 @@ jobs:
         id: run_ocr_review
         shell: bash
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ steps.pr_context.outputs.base_sha }}
+          PR_NUMBER: ${{ steps.pr_context.outputs.pr_number }}
         run: |
           set -euo pipefail
 
@@ -254,6 +295,9 @@ jobs:
 
       - name: Upsert PR review comment
         uses: actions/github-script@v7
+        env:
+          HEAD_SHA: ${{ steps.pr_context.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.pr_context.outputs.pr_number }}
         with:
           script: |
             const fs = require('fs');
@@ -281,8 +325,8 @@ jobs:
             };
 
             const { owner, repo } = context.repo;
-            const issue_number = context.payload.pull_request.number;
-            const commit_id = context.payload.pull_request.head.sha;
+            const issue_number = Number(process.env.PR_NUMBER);
+            const commit_id = process.env.HEAD_SHA;
 
             const headerLines = [
               REVIEW_TAG,
@@ -841,7 +885,7 @@ jobs:
         timeout-minutes: 5
         uses: actions/upload-artifact@v4
         with:
-          name: ocr-codex-review-${{ github.event.pull_request.number }}
+          name: ocr-codex-review-${{ steps.pr_context.outputs.pr_number }}
           path: ocr-review.json
           if-no-files-found: error
           retention-days: 7
@@ -852,7 +896,7 @@ jobs:
         timeout-minutes: 5
         uses: actions/upload-artifact@v4
         with:
-          name: ocr-codex-review-${{ github.event.pull_request.number }}
+          name: ocr-codex-review-${{ steps.pr_context.outputs.pr_number }}
           path: ocr-review.json
           if-no-files-found: error
           retention-days: 7

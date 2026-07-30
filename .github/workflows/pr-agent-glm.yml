@@ -2,11 +2,12 @@ name: PR-Agent (GLM-5.2)
 
 # Runs alongside the existing OCR review so the two can be compared on the same
 # PRs (precision / recall / signal-to-noise). Uses your GLM Coding Plan via
-# BigModel's Anthropic-compatible endpoint.
+# BigModel's Anthropic-compatible endpoint. This is advisory: it runs once when
+# a PR first becomes reviewable, not again after every fix push.
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -17,7 +18,7 @@ concurrency:
 
 jobs:
   pr_agent:
-    name: PR-Agent review (GLM-5.2)
+    name: PR-Agent review (GLM-5.2, advisory)
     # Same guards as ocr-codex-review.yml: skip drafts, fork PRs, and bots.
     # (GitHub also withholds secrets from fork-PR `pull_request` runs, so the
     # same-repo guard keeps the GLM key out of contexts where it isn't passed.)
