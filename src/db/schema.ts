@@ -2273,7 +2273,16 @@ export const practice_stream_item = pgTable(
     source: text('source')
       // B3 (YUK-349 #3) — 'frontier' added: TYPE-ONLY widen of this free-text column
       // (no DB enum, no migration). practice_stream_item.source is plain `text`.
-      .$type<'decay' | 'variant' | 'new_check' | 'paper' | 'on_demand' | 'import' | 'frontier'>()
+      .$type<
+        | 'decay'
+        | 'variant'
+        | 'new_check'
+        | 'paper'
+        | 'on_demand'
+        | 'import'
+        | 'frontier'
+        | 'intervention'
+      >()
       .notNull(),
     status: text('status')
       .$type<'pending' | 'in_progress' | 'done' | 'skipped'>()

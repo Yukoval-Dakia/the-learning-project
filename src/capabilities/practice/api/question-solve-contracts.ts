@@ -211,6 +211,28 @@ export const QuestionDetailResponseSchema = z
         fsrs_rating: z.enum(['again', 'hard', 'good']).optional(),
       }),
     ),
+    committed_attempt: z
+      .object({
+        review_event: z
+          .object({
+            id: z.string(),
+            rating: z.enum(['again', 'hard', 'good']),
+          })
+          .strict(),
+        judge: z
+          .object({
+            route: z.literal('multimodal_direct'),
+            coarse_outcome: z.enum(['correct', 'partial', 'incorrect']),
+            confidence: z.number().min(0).max(1),
+            feedback_md: z.string(),
+            suggested_rating: z.enum(['again', 'hard', 'good']),
+            judge_event_id: z.string(),
+          })
+          .strict(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
     metadata: z.record(z.string(), z.unknown()).nullable(),
     created_at_sec: z.number(),
     updated_at_sec: z.number(),

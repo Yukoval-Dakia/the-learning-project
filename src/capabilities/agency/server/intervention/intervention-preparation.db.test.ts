@@ -693,6 +693,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       .select({
         ref_id: practice_stream_item.ref_id,
         position: practice_stream_item.position,
+        source: practice_stream_item.source,
         signals: practice_stream_item.signals,
       })
       .from(practice_stream_item)
@@ -707,6 +708,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
         expect.objectContaining({
           ref_id: active.settlement.diagnostics.immediate.question_id,
           position: 2,
+          source: 'intervention',
           signals: expect.objectContaining({
             interventionDelivery: expect.objectContaining({
               interventionId: active.id,

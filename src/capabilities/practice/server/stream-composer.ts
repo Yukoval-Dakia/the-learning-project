@@ -30,7 +30,12 @@ export interface ComposerInputs {
   date: string;
   /** FSRS 到期投影（due-list rows 的最小投影；已跨学科平衡） */
   dueItems: Array<
-    { questionId: string; knowledgeLabel?: string; dueAt?: string } & ComposerQuestionMetadata
+    {
+      questionId: string;
+      knowledgeLabel?: string;
+      dueAt?: string;
+      source?: 'decay' | 'intervention';
+    } & ComposerQuestionMetadata
   >;
   /** 错题变式（近期失败题的变体轮换选题） */
   variantItems: Array<
@@ -68,7 +73,15 @@ export interface StreamPlanItem {
   position: number;
   item_kind: 'question' | 'paper';
   ref_id: string;
-  source: 'decay' | 'variant' | 'new_check' | 'paper' | 'on_demand' | 'import' | 'frontier';
+  source:
+    | 'decay'
+    | 'variant'
+    | 'new_check'
+    | 'paper'
+    | 'on_demand'
+    | 'import'
+    | 'frontier'
+    | 'intervention';
   reasoning: string;
   // YUK-361 Phase 1（观测先行）— 选题信号快照（SelectionCandidateSignal 形态）。
   // **零行为变更**：本 lane 不计算、不据此排序，materializeStream 落库时缺省 {}；
@@ -118,8 +131,11 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
     solo.push({
       item_kind: 'question',
       ref_id: d.questionId,
-      source: 'decay',
-      reasoning: `我看了你的曲线：${kpSuffix(d.knowledgeLabel)}到了复习边缘，先把它咬住。`,
+      source: d.source ?? 'decay',
+      reasoning:
+        d.source === 'intervention'
+          ? '这份针对当前薄弱点的材料已经准备好；先阅读，再完成检验。'
+          : `我看了你的曲线：${kpSuffix(d.knowledgeLabel)}到了复习边缘，先把它咬住。`,
     });
     if ((i + 1) % 2 === 0 && vi < vars.length) {
       const v = vars[vi++];

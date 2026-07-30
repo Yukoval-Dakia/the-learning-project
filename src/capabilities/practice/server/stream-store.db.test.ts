@@ -4,6 +4,7 @@
 // LLM **永不命中 live endpoint**——全程注入 mock runTaskFn（composeDeps.runTaskFn）。
 // 增量重排走纯统计 sampler（不调 LLM），rng 注入 seeded 确定化 Poisson 抽样。
 
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import {
   artifact,
   event,
@@ -48,6 +49,7 @@ async function insertQuestion(opts: {
   difficulty?: number;
   /** YUK-350 draft 排除回归：传 'draft' 模拟 container-only（embedded/teaching）题。 */
   draftStatus?: string | null;
+  source?: string;
 }): Promise<string> {
   const qid = opts.id ?? createId();
   const now = new Date();
@@ -60,7 +62,7 @@ async function insertQuestion(opts: {
       reference_md: 'B',
       knowledge_ids: opts.knowledgeIds ?? [],
       difficulty: opts.difficulty ?? 3,
-      source: 'manual',
+      source: opts.source ?? 'manual',
       draft_status: opts.draftStatus ?? null,
       variant_depth: 0,
       figures: [],
@@ -74,8 +76,10 @@ async function insertQuestion(opts: {
   return qid;
 }
 
-async function seedDueQuestion(opts: { dueOffsetMs?: number } = {}): Promise<string> {
-  const qid = await insertQuestion({ kind: 'choice' });
+async function seedDueQuestion(
+  opts: { dueOffsetMs?: number; source?: string } = {},
+): Promise<string> {
+  const qid = await insertQuestion({ kind: 'choice', source: opts.source });
   const now = new Date();
   const offset = opts.dueOffsetMs ?? 3600_000;
   await testDb()
@@ -473,7 +477,7 @@ describe('Task 9 夜间预产 composeNightly（YUK-361 Phase 4）', () => {
     expect(view.progress.estimated_total_minutes).toBeLessThanOrEqual(view.budget.minutes);
   });
 
-  it('today read immediately trims a pre-fix over-budget pending tail but preserves in-progress', async () => {
+  it('today read trims an over-budget tail but preserves in-progress and intervention delivery', async () => {
     await testDb()
       .insert(practice_stream_item)
       .values(
@@ -483,7 +487,7 @@ describe('Task 9 夜间预产 composeNightly（YUK-361 Phase 4）', () => {
           position: index + 1,
           item_kind: 'question' as const,
           ref_id: `legacy-over-budget-${index}`,
-          source: 'decay' as const,
+          source: index === 14 ? ('intervention' as const) : ('decay' as const),
           status: index === 0 ? ('in_progress' as const) : ('pending' as const),
           reasoning: 'legacy fixture',
           added_by: 'composer_nightly' as const,
@@ -496,7 +500,25 @@ describe('Task 9 夜间预产 composeNightly（YUK-361 Phase 4）', () => {
     expect(view.items).toHaveLength(10);
     expect(view.items[0].status).toBe('in_progress');
     expect(view.items.filter((item) => item.status === 'pending')).toHaveLength(9);
+    expect(view.items.map((item) => item.ref_id)).toContain('legacy-over-budget-14');
+    expect(view.items.find((item) => item.ref_id === 'legacy-over-budget-14')?.source).toBe(
+      'intervention',
+    );
     expect(view.progress.estimated_total_minutes).toBe(20);
+  });
+
+  it('normal composition keeps a due intervention as a protected first-class source', async () => {
+    const diagnosticId = await seedDueQuestion({
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+    });
+
+    await composeNightly(testDb(), TODAY, { policy: { policy: 'legacy' } });
+    const view = await getStream(testDb(), TODAY);
+
+    expect(view.items.find((item) => item.ref_id === diagnosticId)).toMatchObject({
+      source: 'intervention',
+      reasoning: expect.stringContaining('材料已经准备好'),
+    });
   });
 
   it('幂等：composeNightly 跑两次不 double-compose（第二次 no-op，added=0、行数不变）', async () => {

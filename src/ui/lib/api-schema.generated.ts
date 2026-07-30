@@ -19664,7 +19664,8 @@ export interface operations {
                 | 'paper'
                 | 'on_demand'
                 | 'import'
-                | 'frontier';
+                | 'frontier'
+                | 'intervention';
               /** @enum {string} */
               status: 'pending' | 'in_progress' | 'done' | 'skipped';
               total_slots: number | null;
@@ -19842,7 +19843,8 @@ export interface operations {
                 | 'paper'
                 | 'on_demand'
                 | 'import'
-                | 'frontier';
+                | 'frontier'
+                | 'intervention';
               /** @enum {string} */
               status: 'pending' | 'in_progress' | 'done' | 'skipped';
               total_slots: number | null;
@@ -20003,7 +20005,8 @@ export interface operations {
                 | 'paper'
                 | 'on_demand'
                 | 'import'
-                | 'frontier';
+                | 'frontier'
+                | 'intervention';
               /** @enum {string} */
               status: 'pending' | 'in_progress' | 'done' | 'skipped';
               total_slots: number | null;
@@ -24958,6 +24961,24 @@ export interface operations {
               }[];
             };
             choices_md: string[] | null;
+            committed_attempt?: {
+              judge: {
+                /** @enum {string} */
+                coarse_outcome: 'correct' | 'partial' | 'incorrect';
+                confidence: number;
+                feedback_md: string;
+                judge_event_id: string;
+                /** @enum {string} */
+                route: 'multimodal_direct';
+                /** @enum {string} */
+                suggested_rating: 'again' | 'hard' | 'good';
+              };
+              review_event: {
+                id: string;
+                /** @enum {string} */
+                rating: 'again' | 'hard' | 'good';
+              };
+            } | null;
             computed_at_sec: number;
             created_at_sec: number;
             difficulty: number;

@@ -1,4 +1,5 @@
 import { newId } from '@/core/ids';
+import { JudgeOnEvent, ReviewOnQuestion } from '@/core/schema/event/known';
 import {
   INTERVENTION_CONTRACT_VERSION,
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
@@ -10,10 +11,11 @@ import {
   InterventionSnapshot,
   type InterventionSnapshotT,
 } from '@/core/schema/intervention';
-import type { Tx } from '@/db/client';
-import { practice_stream_item, question } from '@/db/schema';
+import type { Db, Tx } from '@/db/client';
+import { event, practice_stream_item, question } from '@/db/schema';
+import { getEventById } from '@/kernel/events';
 import { enrollFsrsStateIfAbsent, retireQuestionFsrsState } from '@/server/fsrs/state';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { initialFsrsState } from './fsrs';
 import { streamLocalDate } from './stream-store';
 
@@ -74,6 +76,121 @@ export function questionKnowledgeIdsForJudge(input: {
   return [diagnostic.knowledge_id];
 }
 
+export async function loadLatestTrustedInterventionDiagnosticVerdict(
+  db: Db,
+  reviewEventId: string,
+) {
+  const candidates = await db
+    .select({ id: event.id, payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'judge'),
+        eq(event.subject_kind, 'event'),
+        eq(event.subject_id, reviewEventId),
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(50);
+
+  for (const candidate of candidates) {
+    const enveloped = await getEventById(db, candidate.id);
+    if (!enveloped || enveloped.correction_status.state !== 'active') continue;
+    const parsed = JudgeOnEvent.safeParse(enveloped);
+    if (!parsed.success || parsed.data.payload.judge_route !== 'multimodal_direct') continue;
+    const verdict = parsed.data.payload.coarse_outcome;
+    if (verdict !== 'correct' && verdict !== 'partial' && verdict !== 'incorrect') continue;
+    const provenance = parsed.data.payload.execution_provenance;
+    if (provenance?.kind !== 'invoked' && provenance?.kind !== 'supplied_verified') continue;
+    const rawPayload =
+      candidate.payload && typeof candidate.payload === 'object'
+        ? (candidate.payload as Record<string, unknown>)
+        : {};
+    return {
+      event: enveloped,
+      verdict,
+      confidence: parsed.data.payload.cause.confidence,
+      feedbackMd:
+        typeof rawPayload.feedback_md === 'string' && rawPayload.feedback_md.trim()
+          ? rawPayload.feedback_md
+          : null,
+    };
+  }
+  return null;
+}
+
+export interface CommittedInterventionDiagnosticAttempt {
+  review_event: {
+    id: string;
+    rating: 'again' | 'hard' | 'good';
+  };
+  judge: {
+    route: 'multimodal_direct';
+    coarse_outcome: 'correct' | 'partial' | 'incorrect';
+    confidence: number;
+    feedback_md: string;
+    suggested_rating: 'again' | 'hard' | 'good';
+    judge_event_id: string;
+  };
+}
+
+/**
+ * Recover the canonical one-shot result after refresh, response loss, or a
+ * concurrent duplicate submission. The active trusted judge event is the
+ * verdict authority; the immutable review supplies the rating and a fallback
+ * feedback string for historical rows whose judge payload omitted feedback_md.
+ */
+export async function loadCommittedInterventionDiagnosticAttempt(
+  db: Db,
+  questionId: string,
+): Promise<CommittedInterventionDiagnosticAttempt | null> {
+  const candidates = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'review'),
+        eq(event.subject_kind, 'question'),
+        eq(event.subject_id, questionId),
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(50);
+
+  for (const candidate of candidates) {
+    const review = await getEventById(db, candidate.id);
+    if (!review || review.correction_status.state !== 'active') continue;
+    const parsedReview = ReviewOnQuestion.safeParse(review);
+    if (!parsedReview.success) continue;
+    const effective = await loadLatestTrustedInterventionDiagnosticVerdict(db, review.id);
+    if (!effective) continue;
+    const suggestedRating =
+      effective.verdict === 'correct' ? 'good' : effective.verdict === 'partial' ? 'hard' : 'again';
+    return {
+      review_event: {
+        id: review.id,
+        rating: parsedReview.data.payload.fsrs_rating,
+      },
+      judge: {
+        route: 'multimodal_direct',
+        coarse_outcome: effective.verdict,
+        confidence: effective.confidence,
+        feedback_md:
+          effective.feedbackMd ??
+          parsedReview.data.payload.judge?.feedback_md ??
+          (effective.verdict === 'correct'
+            ? '回答正确。'
+            : effective.verdict === 'partial'
+              ? '回答部分正确。'
+              : '回答不正确。'),
+        suggested_rating: suggestedRating,
+        judge_event_id: effective.event.id,
+      },
+    };
+  }
+  return null;
+}
+
 async function appendImmediateDiagnosticToLiveStream(
   tx: Tx,
   input: {
@@ -88,7 +205,12 @@ async function appendImmediateDiagnosticToLiveStream(
   // leave it empty: the first normal composition will pick this newly-due FSRS
   // card. If today's stream already exists, append atomically so its "stream is
   // non-empty" fast path cannot strand the intervention until tomorrow.
+  // Do not let a busy stream writer stall the activation worker forever.
+  // A timeout aborts this transaction for the normal job retry; after acquiring
+  // the shared lock, restore the transaction default for unrelated writes.
+  await tx.execute(sql.raw("SET LOCAL lock_timeout = '5s'"));
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
+  await tx.execute(sql.raw("SET LOCAL lock_timeout = '0'"));
   const [current] = await tx
     .select({
       count: sql<number>`count(*)::int`,
@@ -107,7 +229,7 @@ async function appendImmediateDiagnosticToLiveStream(
       position: current.maxPosition + 1,
       item_kind: 'question',
       ref_id: input.questionId,
-      source: 'decay',
+      source: 'intervention',
       status: 'pending',
       reasoning: '这份针对当前薄弱点的材料已准备好；先阅读，再完成一次即时检验。',
       added_by: 'composer_live',

@@ -19,6 +19,7 @@
 // 见 src/kernel/limits.ts 头注释的实测表。
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { AttemptTimeline } from '@/ui/components/AttemptTimeline';
+import { ApiError } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { IconBtn } from '@/ui/primitives/IconBtn';
@@ -35,6 +36,7 @@ import { toAttemptTimelineEvents } from './attempt-timeline-adapter';
 import {
   type JudgePreview,
   type QuestionDetail,
+  type QuestionFullDetail,
   type StreamItem,
   type SubmitResult,
   type SubmitReviewInput,
@@ -69,6 +71,18 @@ export function feedbackFromCommittedAttempt(result: SubmitResult): JudgeFeedbac
     // auto_rate 的正常回执恒带 suggested_rating；旧/滚动部署响应若漏掉，
     // review_event.rating 仍是服务端最终实际采用的评级，不能在 UI 侧猜。
     suggested_rating: result.judge.suggested_rating ?? result.review_event.rating,
+  };
+}
+
+export function feedbackFromCommittedDiagnosticAttempt(
+  result: NonNullable<QuestionFullDetail['committed_attempt']>,
+): JudgeFeedback {
+  return {
+    route: result.judge.route,
+    coarse_outcome: result.judge.coarse_outcome,
+    confidence: result.judge.confidence,
+    feedback_md: result.judge.feedback_md,
+    suggested_rating: result.judge.suggested_rating,
   };
 }
 
@@ -317,6 +331,19 @@ export function PfSolo({
     if (q?.id) questionShownAtRef.current = Date.now();
   }, [q?.id]);
 
+  // A successful one-shot is already retired server-side. Restore its
+  // canonical review/judge projection on mount so refresh or a lost response
+  // returns to the settled feedback card rather than a dead loading state.
+  useEffect(() => {
+    const committed = q?.committed_attempt;
+    if (!isInterventionDiagnostic || !committed) return;
+    const feedback = feedbackFromCommittedDiagnosticAttempt(committed);
+    setCommittedPreview(feedback);
+    setRating(feedback.suggested_rating);
+    setAutoCommitted(true);
+    setAutoCommitJudgeEventId(committed.judge.judge_event_id);
+  }, [isInterventionDiagnostic, q?.committed_attempt]);
+
   // commit 接受显式 rating + autoRate：客观题自动流不依赖手动 `rating` state（直接用 judge 的
   // suggested_rating + auto_rate:true）；手动流（开放题/申诉）走 body.rating + auto_rate 缺省 false。
   // previewOverride：客观题自动 commit 在 setPreview 同一 tick 内触发，闭包里的 `preview` 仍是旧的
@@ -457,6 +484,18 @@ export function PfSolo({
         });
       }
     } catch (e) {
+      if (isInterventionDiagnostic && e instanceof ApiError && e.status === 409) {
+        const restored = await qQ.refetch();
+        const committed = restored.data?.committed_attempt;
+        if (committed) {
+          const feedback = feedbackFromCommittedDiagnosticAttempt(committed);
+          setCommittedPreview(feedback);
+          setRating(feedback.suggested_rating);
+          setAutoCommitted(true);
+          setAutoCommitJudgeEventId(committed.judge.judge_event_id);
+          return;
+        }
+      }
       addToast(`判分失败：${(e as Error).message}`, 'info', 'alert');
     } finally {
       setJudging(false);

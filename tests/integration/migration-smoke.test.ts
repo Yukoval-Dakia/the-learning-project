@@ -1526,7 +1526,7 @@ describe('migration smoke — YUK-792 intervention settlement backfill', () => {
     await container?.stop();
   });
 
-  it('serializes every backfilled settlement clock as UTC regardless of session timezone', async () => {
+  it('rebases eligible delivery clocks while preserving shadow audit clocks in UTC', async () => {
     await client`SET TIME ZONE 'Asia/Shanghai'`;
     await client`
       INSERT INTO event (
@@ -1549,27 +1549,57 @@ describe('migration smoke — YUK-792 intervention settlement backfill', () => {
         id, version, source_probe_result_event_id, conjecture_event_id,
         status, delivery_mode, idempotency_key, snapshot_json,
         recommendation_json, package_json, activated_at
-      ) VALUES (
-        'int_yuk792_tz', 1, 'yuk792_probe', 'yuk792_conjecture',
-        'active', 'eligible', 'idem_yuk792_tz', '{}'::jsonb,
-        '{"kind":"recommendation"}'::jsonb, '{}'::jsonb,
-        '2026-07-01 10:20:30.123+08'::timestamptz
-      )
+      ) VALUES
+        (
+          'int_yuk792_eligible', 1, 'yuk792_probe', 'yuk792_conjecture',
+          'active', 'eligible', 'idem_yuk792_eligible', '{}'::jsonb,
+          '{"kind":"recommendation"}'::jsonb, '{}'::jsonb,
+          '2026-07-01 10:20:30.123+08'::timestamptz
+        ),
+        (
+          'int_yuk792_shadow', 1, 'yuk792_probe', 'yuk792_conjecture',
+          'active', 'shadow', 'idem_yuk792_shadow', '{}'::jsonb,
+          '{"kind":"recommendation"}'::jsonb, '{}'::jsonb,
+          '2026-07-01 10:20:30.123+08'::timestamptz
+        )
     `;
 
     const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
     if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
-    await applyMigrationFile(client, migration.sql);
-
-    const rows = await client<{ settlement_json: unknown }[]>`
-      SELECT settlement_json
-      FROM intervention
-      WHERE id = 'int_yuk792_tz' AND version = 1
+    const [before] = await client<{ now_ms: number }[]>`
+      SELECT (extract(epoch FROM clock_timestamp()) * 1000)::double precision AS now_ms
     `;
-    const settlement = InterventionSettlement.parse(rows[0]?.settlement_json);
-    expect(settlement.scheduled_at).toBe('2026-07-01T02:20:30.123Z');
-    expect(settlement.diagnostics.immediate.due_at).toBe('2026-07-01T02:20:30.123Z');
-    expect(settlement.diagnostics.delayed.due_at).toBe('2026-07-08T02:20:30.123Z');
-    expect(settlement.diagnostics.transfer.due_at).toBe('2026-07-22T02:20:30.123Z');
+    await applyMigrationFile(client, migration.sql);
+    const [after] = await client<{ now_ms: number }[]>`
+      SELECT (extract(epoch FROM clock_timestamp()) * 1000)::double precision AS now_ms
+    `;
+
+    const rows = await client<{ id: string; settlement_json: unknown }[]>`
+      SELECT id, settlement_json
+      FROM intervention
+      WHERE id IN ('int_yuk792_eligible', 'int_yuk792_shadow') AND version = 1
+      ORDER BY id
+    `;
+    const eligible = InterventionSettlement.parse(
+      rows.find((row) => row.id === 'int_yuk792_eligible')?.settlement_json,
+    );
+    const eligibleAnchor = new Date(eligible.scheduled_at).getTime();
+    expect(eligibleAnchor).toBeGreaterThanOrEqual((before?.now_ms ?? 0) - 1);
+    expect(eligibleAnchor).toBeLessThanOrEqual((after?.now_ms ?? Number.POSITIVE_INFINITY) + 1);
+    expect(eligible.diagnostics.immediate.due_at).toBe(eligible.scheduled_at);
+    expect(new Date(eligible.diagnostics.delayed.due_at).getTime() - eligibleAnchor).toBe(
+      7 * 24 * 60 * 60 * 1000,
+    );
+    expect(new Date(eligible.diagnostics.transfer.due_at).getTime() - eligibleAnchor).toBe(
+      21 * 24 * 60 * 60 * 1000,
+    );
+
+    const shadow = InterventionSettlement.parse(
+      rows.find((row) => row.id === 'int_yuk792_shadow')?.settlement_json,
+    );
+    expect(shadow.scheduled_at).toBe('2026-07-01T02:20:30.123Z');
+    expect(shadow.diagnostics.immediate.due_at).toBe('2026-07-01T02:20:30.123Z');
+    expect(shadow.diagnostics.delayed.due_at).toBe('2026-07-08T02:20:30.123Z');
+    expect(shadow.diagnostics.transfer.due_at).toBe('2026-07-22T02:20:30.123Z');
   });
 });

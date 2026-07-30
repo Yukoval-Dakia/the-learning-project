@@ -24,12 +24,13 @@ import { describe, expect, it } from 'vitest';
 import {
   appealEntryAvailable,
   feedbackFromCommittedAttempt,
+  feedbackFromCommittedDiagnosticAttempt,
   isInterventionDiagnosticSource,
   isObjectiveQuestion,
   shouldMarkSlotDoneOnBack,
   toSubmittedJudgeResult,
 } from './PfSolo';
-import type { JudgePreview, SubmitResult } from './practice-api';
+import type { JudgePreview, QuestionFullDetail, SubmitResult } from './practice-api';
 
 describe('intervention diagnostic one-shot UI gate (YUK-792)', () => {
   it('routes only the product-owned diagnostic source around repeatable advice', () => {
@@ -66,6 +67,28 @@ describe('intervention diagnostic one-shot UI gate (YUK-792)', () => {
     } as SubmitResult;
 
     expect(() => feedbackFromCommittedAttempt(result)).toThrow('诊断提交没有返回服务端判分');
+  });
+
+  it('restores the persisted canonical verdict after refresh or duplicate 409', () => {
+    const committed = {
+      review_event: { id: 'review_committed', rating: 'hard' },
+      judge: {
+        route: 'multimodal_direct',
+        coarse_outcome: 'partial',
+        confidence: 0.84,
+        feedback_md: 'The relation is right but the justification is incomplete.',
+        suggested_rating: 'hard',
+        judge_event_id: 'judge_committed',
+      },
+    } satisfies NonNullable<QuestionFullDetail['committed_attempt']>;
+
+    expect(feedbackFromCommittedDiagnosticAttempt(committed)).toEqual({
+      route: 'multimodal_direct',
+      coarse_outcome: 'partial',
+      confidence: 0.84,
+      feedback_md: 'The relation is right but the justification is incomplete.',
+      suggested_rating: 'hard',
+    });
   });
 });
 

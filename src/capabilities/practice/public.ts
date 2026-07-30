@@ -24,6 +24,9 @@ export {
 } from './server/intervention-author';
 export type { InterventionAuthorDeps } from './server/intervention-author';
 export {
+  loadCommittedInterventionDiagnosticAttempt,
+  loadLatestTrustedInterventionDiagnosticVerdict,
   materializeInterventionDiagnostics,
   retireInterventionDiagnosticQuestion,
 } from './server/intervention-diagnostics';
+export type { CommittedInterventionDiagnosticAttempt } from './server/intervention-diagnostics';

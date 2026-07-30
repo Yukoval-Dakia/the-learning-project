@@ -1,10 +1,11 @@
 ALTER TABLE "intervention"
   ADD COLUMN "settlement_json" jsonb;
 
--- Existing YUK-791 active rows predate settlement materialization. Preserve
--- their original activation clock and let intervention_prepare_recovery
--- idempotently create the three question/FSRS rows for eligible rows after
--- deploy. Shadow rows keep only this audit ledger and remain invisible.
+-- Existing YUK-791 active rows predate settlement materialization. Eligible
+-- rows have not actually delivered learner-visible material, so anchor their
+-- diagnostic clock at deploy rather than making delayed/transfer probes
+-- immediately overdue. Shadow rows preserve the historical activation clock
+-- in their audit-only ledger and remain invisible.
 UPDATE "intervention"
 SET "settlement_json" = jsonb_build_object(
   'schema_version', 1,
@@ -13,7 +14,10 @@ SET "settlement_json" = jsonb_build_object(
       'kind', 'immediate',
       'question_id', 'intervention:' || "id" || ':v' || "version"::text || ':immediate',
       'due_at', to_char(
-        "activated_at" AT TIME ZONE 'UTC',
+        (CASE
+          WHEN "delivery_mode" = 'eligible' THEN CURRENT_TIMESTAMP
+          ELSE "activated_at"
+        END) AT TIME ZONE 'UTC',
         'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
       ),
       'status', 'scheduled',
@@ -25,7 +29,10 @@ SET "settlement_json" = jsonb_build_object(
       'kind', 'delayed',
       'question_id', 'intervention:' || "id" || ':v' || "version"::text || ':delayed',
       'due_at', to_char(
-        ("activated_at" + interval '7 days') AT TIME ZONE 'UTC',
+        ((CASE
+          WHEN "delivery_mode" = 'eligible' THEN CURRENT_TIMESTAMP
+          ELSE "activated_at"
+        END) + interval '7 days') AT TIME ZONE 'UTC',
         'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
       ),
       'status', 'scheduled',
@@ -37,7 +44,10 @@ SET "settlement_json" = jsonb_build_object(
       'kind', 'transfer',
       'question_id', 'intervention:' || "id" || ':v' || "version"::text || ':transfer',
       'due_at', to_char(
-        ("activated_at" + interval '21 days') AT TIME ZONE 'UTC',
+        ((CASE
+          WHEN "delivery_mode" = 'eligible' THEN CURRENT_TIMESTAMP
+          ELSE "activated_at"
+        END) + interval '21 days') AT TIME ZONE 'UTC',
         'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
       ),
       'status', 'scheduled',
@@ -47,7 +57,10 @@ SET "settlement_json" = jsonb_build_object(
     )
   ),
   'scheduled_at', to_char(
-    "activated_at" AT TIME ZONE 'UTC',
+    (CASE
+      WHEN "delivery_mode" = 'eligible' THEN CURRENT_TIMESTAMP
+      ELSE "activated_at"
+    END) AT TIME ZONE 'UTC',
     'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
   ),
   'completed_at', NULL

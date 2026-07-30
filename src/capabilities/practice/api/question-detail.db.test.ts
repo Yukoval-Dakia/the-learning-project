@@ -6,8 +6,10 @@
 import { newId } from '@/core/ids';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { initialFsrsState } from '../server/fsrs';
 import { GET } from './question-detail';
 
 const NOW = new Date('2026-06-07T00:00:00Z');
@@ -138,6 +140,8 @@ describe('GET /api/questions/[id]', () => {
       backlinks_by_intent_source: {},
       timeline: [],
     });
+    expect(body.metadata).toEqual({});
+    expect(body.backlinks_by_intent_source).toEqual({});
     expect(JSON.stringify(body)).not.toContain('private reference answer');
     expect(JSON.stringify(body)).not.toContain('private target-error answer');
     expect(JSON.stringify(body)).not.toContain('private gold signature');
@@ -170,6 +174,98 @@ describe('GET /api/questions/[id]', () => {
     const res = await GET(mkReq(id, '?surface=practice'), { id });
 
     expect(res.status).toBe(404);
+  });
+
+  it('recovers a retired diagnostic canonical verdict without reopening its one-shot', async () => {
+    const id = newId();
+    await seedQuestion(id, {
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      prompt_md: 'Explain why the transfer applies.',
+      reference_md: 'private committed answer',
+      draft_status: 'draft',
+      metadata: interventionDiagnosticMetadata('2026-06-07T00:00:00.000Z', true),
+    });
+    const reviewId = newId();
+    const judgeId = newId();
+    await writeEvent(testDb(), {
+      id: reviewId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'review',
+      subject_kind: 'question',
+      subject_id: id,
+      outcome: 'success',
+      payload: {
+        fsrs_rating: 'good',
+        fsrs_state_after: initialFsrsState(NOW).state,
+        user_response_md: 'The transfer applies.',
+        referenced_knowledge_ids: ['kc_detail_test'],
+        judge: {
+          score_meaning: 'correctness',
+          coarse_outcome: 'correct',
+          score: 1,
+          confidence: 0.93,
+          capability_ref: { id: 'multimodal_direct', version: '1.0.0' },
+          feedback_md: 'Canonical committed feedback.',
+          evidence_json: {},
+        },
+      },
+      created_at: new Date(NOW.getTime() + 1),
+    });
+    await writeEvent(testDb(), {
+      id: judgeId,
+      actor_kind: 'agent',
+      actor_ref: 'review_judge',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: reviewId,
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: 'other',
+          secondary_categories: [],
+          analysis_md: '<diagnostic judge>',
+          confidence: 0.93,
+        },
+        referenced_knowledge_ids: ['kc_detail_test'],
+        profile_version: '1.0.0',
+        capability_ref: { id: 'multimodal_direct', version: '1.0.0' },
+        judge_route: 'multimodal_direct',
+        execution_provenance: {
+          version: 1,
+          kind: 'invoked',
+          prompt_fingerprint: 'a'.repeat(64),
+          prompt_template_revision: '1',
+          task_run_id: 'question_detail_recovery',
+          provider: 'test',
+          model: 'test',
+        },
+        coarse_outcome: 'correct',
+        score: 1,
+        feedback_md: 'Canonical committed feedback.',
+        attribution_pending: true,
+      },
+      caused_by_event_id: reviewId,
+      created_at: new Date(NOW.getTime() + 2),
+    });
+
+    const res = await GET(mkReq(id, '?surface=practice'), { id });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.committed_attempt).toEqual({
+      review_event: { id: reviewId, rating: 'good' },
+      judge: {
+        route: 'multimodal_direct',
+        coarse_outcome: 'correct',
+        confidence: 0.93,
+        feedback_md: 'Canonical committed feedback.',
+        suggested_rating: 'good',
+        judge_event_id: judgeId,
+      },
+    });
+    expect(body.metadata).toEqual({});
+    expect(JSON.stringify(body)).not.toContain('private committed answer');
   });
 
   it('rejects unknown question surfaces', async () => {

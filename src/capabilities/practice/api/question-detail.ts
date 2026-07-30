@@ -32,6 +32,7 @@ import {
   hasAnyAssociation,
 } from '@/server/questions/write';
 import { eq } from 'drizzle-orm';
+import { loadCommittedInterventionDiagnosticAttempt } from '../server/intervention-diagnostics';
 import { QuestionParamsSchema, UpdateQuestionBodySchema } from './question-solve-contracts';
 
 // Distinct, friendlier error when a bloodline field is the offender.
@@ -96,13 +97,17 @@ export async function GET(req: Request, params: Record<string, string>): Promise
       const schedule = InterventionDiagnosticQuestionMetadata.safeParse(
         diagnosticRow?.metadata?.intervention_diagnostic,
       );
+      const committedAttempt = await loadCommittedInterventionDiagnosticAttempt(db, detail.id);
       // `surface=practice` is client-controlled, so it is not a fence by itself.
-      // Only the current active one-shot may be read, and only after its immutable
-      // due time. Derived future IDs therefore reveal neither prompt nor timing.
+      // Only the current active one-shot may be read after its immutable due
+      // time. A retired one-shot is readable only when its canonical committed
+      // result exists, allowing refresh/response-loss recovery without reopening
+      // the submission gate. Derived future IDs reveal neither prompt nor timing.
       if (
-        diagnosticRow?.draft_status === 'draft' ||
         !schedule.success ||
-        Date.now() < new Date(schedule.data.due_at).getTime()
+        (diagnosticRow?.draft_status === 'draft' && committedAttempt === null) ||
+        (diagnosticRow?.draft_status !== 'draft' &&
+          Date.now() < new Date(schedule.data.due_at).getTime())
       ) {
         throw new ApiError('not_found', `question ${parsed.data.id} not found`, 404);
       }
@@ -123,6 +128,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
         backlinks: [],
         backlinks_by_intent_source: {},
         timeline: [],
+        committed_attempt: committedAttempt,
       });
     }
     return Response.json(detail);
