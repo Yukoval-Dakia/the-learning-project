@@ -1,3 +1,4 @@
+import { tasks } from '@/ai/registry';
 import { PEDAGOGY_METHOD_LIBRARY, selectPedagogyCandidates } from '@/core/pedagogy';
 import {
   INTERVENTION_CONTRACT_VERSION,
@@ -9,6 +10,7 @@ import {
   type PedagogyRecommendationT,
 } from '@/core/schema/intervention';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
+import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 
@@ -17,6 +19,11 @@ export interface RecommendPedagogyInput {
   runTaskFn: TaskTextRunFn;
   subjectProfile: SubjectProfile;
 }
+
+const recommendationOutputSchema = tasks.InterventionRecommendationTask.structuredOutputSchema;
+const RECOMMENDATION_OUTPUT_FORMAT = recommendationOutputSchema
+  ? zodToJsonSchemaOutputFormat(recommendationOutputSchema)
+  : undefined;
 
 function parseRecommendationModelOutput(
   result: TaskTextResult,
@@ -72,7 +79,10 @@ export async function recommendPedagogy(
         method_definition_version: PEDAGOGY_METHOD_DEFINITION_VERSION,
       },
     },
-    { subjectProfile: input.subjectProfile },
+    {
+      subjectProfile: input.subjectProfile,
+      ...(RECOMMENDATION_OUTPUT_FORMAT ? { outputFormat: RECOMMENDATION_OUTPUT_FORMAT } : {}),
+    },
   );
 
   let model: PedagogyRecommendationModelOutputT;

@@ -1,3 +1,4 @@
+import { tasks } from '@/ai/registry';
 import {
   type InterventionAuthoringContextT,
   loadInterventionAuthoringContext,
@@ -20,6 +21,7 @@ import {
 import type { Db } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
+import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 
@@ -27,6 +29,15 @@ export interface InterventionAuthorDeps {
   runTaskFn?: TaskTextRunFn;
   attempt?: 1 | 2;
 }
+
+const authorOutputSchema = tasks.InterventionPackageAuthorTask.structuredOutputSchema;
+const AUTHOR_OUTPUT_FORMAT = authorOutputSchema
+  ? zodToJsonSchemaOutputFormat(authorOutputSchema)
+  : undefined;
+const reviewOutputSchema = tasks.InterventionPackageReviewTask.structuredOutputSchema;
+const REVIEW_OUTPUT_FORMAT = reviewOutputSchema
+  ? zodToJsonSchemaOutputFormat(reviewOutputSchema)
+  : undefined;
 
 function parseTaskOutput<T>(
   result: TaskTextResult,
@@ -124,7 +135,10 @@ async function runPackageAuthor(
         target_error_rule_md: context.snapshot.conjecture.target_error_rule_md,
       },
     },
-    { subjectProfile },
+    {
+      subjectProfile,
+      ...(AUTHOR_OUTPUT_FORMAT ? { outputFormat: AUTHOR_OUTPUT_FORMAT } : {}),
+    },
   );
   if (!result.task_run_id) {
     return { status: 'invalid', failureCode: 'author_task_run_id_missing' };
@@ -172,7 +186,10 @@ async function runPackageReview(
       recommendation: context.recommendation,
       package: packageValue,
     },
-    { subjectProfile },
+    {
+      subjectProfile,
+      ...(REVIEW_OUTPUT_FORMAT ? { outputFormat: REVIEW_OUTPUT_FORMAT } : {}),
+    },
   );
   if (!result.task_run_id) {
     return { status: 'invalid', failureCode: 'review_task_run_id_missing' };

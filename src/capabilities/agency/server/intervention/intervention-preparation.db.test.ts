@@ -306,10 +306,16 @@ function authorOutput(attempt: number) {
 
 function successfulRunTask(
   packageOutput: (attempt: number) => ReturnType<typeof authorOutput> = authorOutput,
-): { fn: TaskTextRunFn; calls: string[] } {
+): {
+  fn: TaskTextRunFn;
+  calls: string[];
+  contexts: Array<{ kind: string; ctx: Parameters<TaskTextRunFn>[2] }>;
+} {
   const calls: string[] = [];
-  const fn: TaskTextRunFn = async (kind) => {
+  const contexts: Array<{ kind: string; ctx: Parameters<TaskTextRunFn>[2] }> = [];
+  const fn: TaskTextRunFn = async (kind, _input, ctx) => {
     calls.push(kind);
+    contexts.push({ kind, ctx });
     if (kind === 'InterventionRecommendationTask') {
       return {
         text: '',
@@ -344,7 +350,7 @@ function successfulRunTask(
     }
     throw new Error(`unexpected task ${kind}`);
   };
-  return { fn, calls };
+  return { fn, calls, contexts };
 }
 
 describe('YUK-791 intervention preparation closed loop', () => {
@@ -380,7 +386,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       source_probe_result_event_id: seeded.probeResultId,
       preparation_job_id: expect.any(String),
     });
-    const { fn, calls } = successfulRunTask();
+    const { fn, calls, contexts } = successfulRunTask();
     const result = await prepareInterventionWave(
       db,
       {
@@ -395,6 +401,16 @@ describe('YUK-791 intervention preparation closed loop', () => {
       'InterventionRecommendationTask',
       'InterventionPackageAuthorTask',
       'InterventionPackageReviewTask',
+    ]);
+    expect(
+      contexts.map(({ kind, ctx }) => ({
+        kind,
+        outputFormatType: ctx?.outputFormat?.type,
+      })),
+    ).toEqual([
+      { kind: 'InterventionRecommendationTask', outputFormatType: 'json_schema' },
+      { kind: 'InterventionPackageAuthorTask', outputFormatType: 'json_schema' },
+      { kind: 'InterventionPackageReviewTask', outputFormatType: 'json_schema' },
     ]);
 
     const [active] = await db.select().from(intervention);
@@ -898,5 +914,33 @@ describe('YUK-791 intervention preparation closed loop', () => {
       package_json: null,
       activated_at: null,
     });
+  });
+
+  it('rechecks liveness under the shared source lock before enqueueing recovery', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('l');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    let livenessReads = 0;
+    const report = await recoverPreparingInterventions(db, {
+      getJobById: async () => {
+        livenessReads += 1;
+        return livenessReads === 1 ? null : { state: 'active' };
+      },
+      send: async () => {
+        throw new Error('stale pre-lock read must not enqueue a second paid job');
+      },
+    });
+
+    expect(report).toEqual({
+      scanned: 1,
+      live: 1,
+      reenqueued: 0,
+      terminalized: 0,
+      raced: 0,
+      failed: 0,
+    });
+    expect(livenessReads).toBe(2);
   });
 });

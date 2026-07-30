@@ -58,6 +58,7 @@ export async function recoverPreparingInterventions(
       version: intervention.version,
       idempotency_key: intervention.idempotency_key,
       preparation_job_id: intervention.preparation_job_id,
+      source_probe_result_event_id: intervention.source_probe_result_event_id,
     })
     .from(intervention)
     .where(eq(intervention.status, 'preparing'))
@@ -95,7 +96,7 @@ export async function recoverPreparingInterventions(
       const replacementJobId = randomUUID();
       const outcome = await db.transaction(async (tx) => {
         await tx.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intervention:${row.id}:${row.version}`}, 0))`,
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intervention:source:${row.source_probe_result_event_id}`}, 0))`,
         );
         const current = await loadInterventionVersion(tx, row.id, row.version);
         if (
@@ -104,6 +105,15 @@ export async function recoverPreparingInterventions(
           current.preparation_job_id !== row.preparation_job_id
         ) {
           return 'raced' as const;
+        }
+        // The subscription replay uses the same source lock. Re-check after
+        // acquiring it because the pre-lock liveness read may be stale: replay
+        // can recreate the archived UUID while recovery is waiting.
+        const jobAfterLock = current.preparation_job_id
+          ? await boss.getJobById(PREPARE_INTERVENTION_JOB, current.preparation_job_id)
+          : null;
+        if (jobAfterLock) {
+          return LIVE_JOB_STATES.has(jobAfterLock.state) ? ('live' as const) : ('raced' as const);
         }
         const sent = await boss.send(
           PREPARE_INTERVENTION_JOB,
