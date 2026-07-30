@@ -143,6 +143,33 @@ describe('POST /api/review/advice', () => {
     );
   });
 
+  it('rejects advice for a diagnostic before its fixed due time', async () => {
+    await seedQuestion('q_advice_intervention_future', {
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      knowledge_ids: [],
+      metadata: {
+        intervention_diagnostic: {
+          schema_version: INTERVENTION_CONTRACT_VERSION,
+          intervention_id: 'int_advice_future',
+          intervention_version: 1,
+          diagnostic_kind: 'delayed',
+          knowledge_id: 'kc_math',
+          due_at: new Date(Date.now() + 86_400_000).toISOString(),
+        },
+      },
+    });
+
+    const res = await POST(
+      adviceReq({
+        activity_ref: { kind: 'question', id: 'q_advice_intervention_future' },
+        response_md: '试探答案',
+      }),
+    );
+
+    expect(res.status).toBe(409);
+    expect(resolveSubjectProfileForKnowledgeIds).not.toHaveBeenCalled();
+  });
+
   it('returns partial keyword advice as hard before final user rating', async () => {
     await seedQuestion('q_advice_keyword', {
       kind: 'fill_blank',

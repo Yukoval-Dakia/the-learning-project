@@ -542,8 +542,9 @@ export type RecordInterventionDiagnosticReviewResult =
     };
 
 /**
- * Consume the first immutable review for one scheduled diagnostic and settle
- * the intervention only after all three windows have real outcomes.
+ * Apply the newest trusted judge verdict for one immutable diagnostic review.
+ * A later rejudge can replace that verdict; the intervention is recomputed from
+ * all three current window outcomes under the same aggregate lock.
  */
 export async function recordInterventionDiagnosticReview(
   db: Db,
@@ -553,7 +554,9 @@ export async function recordInterventionDiagnosticReview(
     diagnosticKind: InterventionDiagnosticKindT;
     questionId: string;
     reviewEventId: string;
+    verdictEventId: string;
     passed: boolean;
+    reviewedAt: Date;
     now?: Date;
   },
 ): Promise<RecordInterventionDiagnosticReviewResult> {
@@ -564,18 +567,7 @@ export async function recordInterventionDiagnosticReview(
     );
     const current = await loadInterventionVersion(tx, input.interventionId, input.version);
     if (!current) return { status: 'skipped', reason: 'intervention_not_found' };
-    if (current.status === 'settled') {
-      const existing = current.settlement?.diagnostics[input.diagnosticKind];
-      if (existing?.review_event_id === input.reviewEventId) {
-        return {
-          status: 'already_recorded',
-          intervention: current,
-          diagnostic_kind: input.diagnosticKind,
-        };
-      }
-      return { status: 'skipped', reason: 'intervention_not_active' };
-    }
-    if (current.status !== 'active') {
+    if (current.status !== 'active' && current.status !== 'settled') {
       return { status: 'skipped', reason: 'intervention_not_active' };
     }
     if (!current.settlement) return { status: 'skipped', reason: 'settlement_missing' };
@@ -583,15 +575,24 @@ export async function recordInterventionDiagnosticReview(
     if (diagnostic.question_id !== input.questionId) {
       return { status: 'skipped', reason: 'question_mismatch' };
     }
-    if (now.getTime() < new Date(diagnostic.due_at).getTime()) {
+    if (input.reviewedAt.getTime() < new Date(diagnostic.due_at).getTime()) {
       return { status: 'skipped', reason: 'diagnostic_not_due' };
     }
     if (diagnostic.status !== 'scheduled') {
-      return {
-        status: 'already_recorded',
-        intervention: current,
-        diagnostic_kind: input.diagnosticKind,
-      };
+      if (diagnostic.review_event_id !== input.reviewEventId) {
+        return {
+          status: 'already_recorded',
+          intervention: current,
+          diagnostic_kind: input.diagnosticKind,
+        };
+      }
+      if (diagnostic.verdict_event_id === input.verdictEventId) {
+        return {
+          status: 'already_recorded',
+          intervention: current,
+          diagnostic_kind: input.diagnosticKind,
+        };
+      }
     }
 
     const nextSettlement = InterventionSettlement.parse({
@@ -601,23 +602,23 @@ export async function recordInterventionDiagnosticReview(
         [input.diagnosticKind]: {
           ...diagnostic,
           status: input.passed ? 'passed' : 'failed',
-          review_event_id: input.reviewEventId,
-          completed_at: now.toISOString(),
+          review_event_id: diagnostic.review_event_id ?? input.reviewEventId,
+          verdict_event_id: input.verdictEventId,
+          completed_at: diagnostic.completed_at ?? input.reviewedAt.toISOString(),
         },
       },
     });
     const outcome = interventionOutcomeFromSettlement(nextSettlement);
-    const terminalSettlement = outcome
-      ? InterventionSettlement.parse({
-          ...nextSettlement,
-          completed_at: now.toISOString(),
-        })
-      : nextSettlement;
+    const terminalSettlement = InterventionSettlement.parse({
+      ...nextSettlement,
+      completed_at: outcome ? now.toISOString() : null,
+    });
     const [updated] = await tx
       .update(intervention)
       .set({
         settlement_json: terminalSettlement,
-        ...(outcome ? { status: 'settled' as const, outcome } : {}),
+        status: outcome ? ('settled' as const) : ('active' as const),
+        outcome,
         revision: current.revision + 1,
         updated_at: now,
       })
@@ -625,12 +626,16 @@ export async function recordInterventionDiagnosticReview(
         and(
           eq(intervention.id, current.id),
           eq(intervention.version, current.version),
-          eq(intervention.status, 'active'),
+          eq(intervention.status, current.status),
           eq(intervention.revision, current.revision),
         ),
       )
       .returning();
-    if (!updated) throw new Error('intervention diagnostic review lost its serialized state');
+    if (!updated) {
+      throw new Error(
+        `intervention ${input.interventionId}@${input.version} diagnostic ${input.diagnosticKind} lost its serialized state`,
+      );
+    }
 
     const { retireInterventionDiagnosticQuestion } = await import('@/capabilities/practice/public');
     await retireInterventionDiagnosticQuestion(tx, input.questionId, now);
@@ -654,10 +659,11 @@ export async function recordInterventionDiagnosticReview(
             kind: entry.kind,
             question_id: entry.question_id,
             review_event_id: entry.review_event_id,
+            verdict_event_id: entry.verdict_event_id,
             status: entry.status,
           })),
         },
-        caused_by_event_id: input.reviewEventId,
+        caused_by_event_id: input.verdictEventId,
         affected_scopes: [
           `knowledge:${current.snapshot.conjecture.knowledge_id}`,
           `mind_model:${current.conjecture_event_id}`,

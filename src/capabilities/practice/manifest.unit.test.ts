@@ -62,6 +62,7 @@ describe('practice manifest jobs', () => {
 describe('practice manifest events', () => {
   it('owns the canonical review action for durable cross-capability consumers', () => {
     expect(practiceCapability.events?.actions).toContain('review');
+    expect(practiceCapability.events?.actions).toContain('judge');
   });
 });
 

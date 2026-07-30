@@ -116,6 +116,9 @@ export const practiceCapability = defineCapability({
       // ownership lets other capabilities consume reviews through the durable
       // event-subscription kernel instead of polling Practice internals.
       'review',
+      // Canonical judge publisher (submit + rejudge); Agency consumes trusted
+      // verdicts for intervention settlement.
+      'judge',
       'experimental:judge_calibration_sample',
       'experimental:judge_calibration_run_summary',
       'experimental:hint_request',

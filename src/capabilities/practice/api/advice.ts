@@ -17,6 +17,10 @@ import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/server/ca
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/server/rating-advisor';
+import {
+  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+  InterventionDiagnosticQuestionMetadata,
+} from '@/core/schema/intervention';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
@@ -56,6 +60,25 @@ export async function POST(req: Request): Promise<Response> {
     const q = qRows[0];
     if (!q) {
       throw new ApiError('not_found', `question ${questionId} not found`, 404);
+    }
+    if (q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+      const diagnostic = InterventionDiagnosticQuestionMetadata.safeParse(
+        q.metadata?.intervention_diagnostic,
+      );
+      if (!diagnostic.success) {
+        throw new ApiError(
+          'corrupt_state',
+          `intervention diagnostic ${questionId} has invalid scheduling metadata`,
+          500,
+        );
+      }
+      if (Date.now() < new Date(diagnostic.data.due_at).getTime()) {
+        throw new ApiError(
+          'conflict',
+          `intervention diagnostic ${questionId} is not due until ${diagnostic.data.due_at}`,
+          409,
+        );
+      }
     }
 
     const subjectProfile = await resolveSubjectProfileForKnowledgeIds(

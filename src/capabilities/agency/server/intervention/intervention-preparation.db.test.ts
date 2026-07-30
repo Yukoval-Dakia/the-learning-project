@@ -27,7 +27,7 @@ import { answerProbe } from '../conjecture/probe-lifecycle';
 import { prepareInterventionWave } from './prepare';
 import { handleProbeResultInterventionDelivery } from './probe-result-subscription';
 import { recoverEligibleInterventionDiagnostics, recoverPreparingInterventions } from './reconcile';
-import { handleInterventionDiagnosticReviewDelivery } from './settlement-subscription';
+import { handleInterventionDiagnosticJudgeDelivery } from './settlement-subscription';
 import { activateIntervention, loadInterventionVersion, saveRecommendation } from './store';
 
 const CLAIM = '你把复合函数求导中的外层导数和内层导数相加，而不是相乘。';
@@ -87,6 +87,44 @@ function diagnosticJudgeVerdict(coarseOutcome: 'correct' | 'partial' | 'incorrec
     capability_ref: { id: 'multimodal_direct', version: '1.0.0' },
     feedback_md: coarseOutcome,
     evidence_json: {},
+  };
+}
+
+function diagnosticJudgeEventPayload(
+  coarseOutcome: 'correct' | 'partial' | 'incorrect',
+  provenance: 'invoked' | 'supplied_unverified' = 'invoked',
+) {
+  return {
+    cause: {
+      primary_category: 'other',
+      secondary_categories: [],
+      analysis_md: '<diagnostic judge>',
+      confidence: 0.9,
+    },
+    referenced_knowledge_ids: [],
+    profile_version: '1.0.0',
+    capability_ref: { id: 'multimodal_direct', version: '1.0.0' },
+    judge_route: 'multimodal_direct',
+    execution_provenance:
+      provenance === 'invoked'
+        ? {
+            version: 1,
+            kind: 'invoked',
+            prompt_fingerprint: 'a'.repeat(64),
+            prompt_template_revision: '1',
+            task_run_id: 'task_diagnostic_judge',
+            provider: 'test',
+            model: 'test',
+          }
+        : {
+            version: 1,
+            kind: 'supplied_unverified',
+            prompt_fingerprint: 'b'.repeat(64),
+            prompt_template_revision: '1',
+          },
+    coarse_outcome: coarseOutcome,
+    score: coarseOutcome === 'correct' ? 1 : coarseOutcome === 'partial' ? 0.5 : 0,
+    attribution_pending: true,
   };
 }
 
@@ -650,12 +688,24 @@ describe('YUK-791 intervention preparation closed loop', () => {
       },
       created_at: new Date(active.settlement.diagnostics.immediate.due_at),
     });
+    await writeEvent(db, {
+      id: 'judge_settlement_delayed_too_early',
+      actor_kind: 'agent',
+      actor_ref: 'review_judge',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: 'review_settlement_delayed_too_early',
+      outcome: 'success',
+      payload: diagnosticJudgeEventPayload('correct'),
+      caused_by_event_id: 'review_settlement_delayed_too_early',
+      created_at: new Date(active.settlement.diagnostics.immediate.due_at),
+    });
     await expect(
-      handleInterventionDiagnosticReviewDelivery(db, {
+      handleInterventionDiagnosticJudgeDelivery(db, {
         subscriberId: 'agency.intervention-diagnostic-review-settlement',
-        subscriberVersion: 1,
+        subscriberVersion: 2,
         deliverySeq: 'pre-due',
-        sourceEventId: 'review_settlement_delayed_too_early',
+        sourceEventId: 'judge_settlement_delayed_too_early',
       }),
     ).resolves.toMatchObject({ status: 'skipped', reason: 'diagnostic_not_due' });
     await expect(loadInterventionVersion(db, opened.id, opened.version)).resolves.toMatchObject({
@@ -673,6 +723,9 @@ describe('YUK-791 intervention preparation closed loop', () => {
     let lastDelivery: EventSubscriptionDelivery | null = null;
     for (const kind of ['immediate', 'delayed', 'transfer'] as const) {
       const reviewEventId = `review_settlement_${kind}`;
+      const reviewedAt = new Date(
+        active.settlement.diagnostics[kind].due_at.replace('.000Z', '.500Z'),
+      );
       const [cardBeforeReview] = await db
         .select({ state: material_fsrs_state.state })
         .from(material_fsrs_state)
@@ -694,15 +747,53 @@ describe('YUK-791 intervention preparation closed loop', () => {
           referenced_knowledge_ids: [],
           judge: diagnosticJudgeVerdict(verdicts[kind].judge),
         },
-        created_at: new Date(active.settlement.diagnostics[kind].due_at.replace('.000Z', '.500Z')),
+        created_at: reviewedAt,
+      });
+      if (kind === 'immediate') {
+        await writeEvent(db, {
+          id: 'judge_settlement_immediate_unverified',
+          actor_kind: 'agent',
+          actor_ref: 'review_judge',
+          action: 'judge',
+          subject_kind: 'event',
+          subject_id: reviewEventId,
+          outcome: 'success',
+          payload: diagnosticJudgeEventPayload('correct', 'supplied_unverified'),
+          caused_by_event_id: reviewEventId,
+          created_at: new Date(reviewedAt.getTime() + 1),
+        });
+        await expect(
+          handleInterventionDiagnosticJudgeDelivery(db, {
+            subscriberId: 'agency.intervention-diagnostic-review-settlement',
+            subscriberVersion: 2,
+            deliverySeq: 'unverified',
+            sourceEventId: 'judge_settlement_immediate_unverified',
+          }),
+        ).resolves.toMatchObject({
+          status: 'skipped',
+          reason: 'diagnostic has no active trusted judge verdict',
+        });
+      }
+      const verdictEventId = `judge_settlement_${kind}`;
+      await writeEvent(db, {
+        id: verdictEventId,
+        actor_kind: 'agent',
+        actor_ref: 'review_judge',
+        action: 'judge',
+        subject_kind: 'event',
+        subject_id: reviewEventId,
+        outcome: 'success',
+        payload: diagnosticJudgeEventPayload(verdicts[kind].judge),
+        caused_by_event_id: reviewEventId,
+        created_at: new Date(reviewedAt.getTime() + 2),
       });
       lastDelivery = {
         subscriberId: 'agency.intervention-diagnostic-review-settlement',
-        subscriberVersion: 1,
+        subscriberVersion: 2,
         deliverySeq: String(kind === 'immediate' ? 1 : kind === 'delayed' ? 2 : 3),
-        sourceEventId: reviewEventId,
+        sourceEventId: verdictEventId,
       };
-      const result = await handleInterventionDiagnosticReviewDelivery(db, lastDelivery);
+      const result = await handleInterventionDiagnosticJudgeDelivery(db, lastDelivery);
       expect(result.status).toBe('succeeded');
       if (kind === 'immediate') {
         expect(await recoverEligibleInterventionDiagnostics(db)).toEqual({
@@ -711,6 +802,65 @@ describe('YUK-791 intervention preparation closed loop', () => {
           raced: 0,
           failed: 0,
         });
+      }
+      if (kind === 'delayed') {
+        const rejudgeEventId = 'judge_settlement_delayed_rejudge';
+        await writeEvent(db, {
+          id: rejudgeEventId,
+          actor_kind: 'agent',
+          actor_ref: 'rejudge',
+          action: 'judge',
+          subject_kind: 'event',
+          subject_id: reviewEventId,
+          outcome: 'success',
+          payload: diagnosticJudgeEventPayload('correct'),
+          caused_by_event_id: reviewEventId,
+          created_at: new Date(reviewedAt.getTime() + 3),
+        });
+        await writeEvent(db, {
+          id: 'correct_settlement_delayed_judge',
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'correct',
+          subject_kind: 'event',
+          subject_id: verdictEventId,
+          outcome: 'success',
+          payload: {
+            correction_kind: 'supersede',
+            replacement_event_id: rejudgeEventId,
+            reason_md: '申诉重判改为正确。',
+            affected_refs: [
+              { kind: 'question', id: active.settlement.diagnostics[kind].question_id },
+            ],
+          },
+          caused_by_event_id: rejudgeEventId,
+          created_at: new Date(reviewedAt.getTime() + 4),
+        });
+        await expect(
+          handleInterventionDiagnosticJudgeDelivery(db, {
+            subscriberId: 'agency.intervention-diagnostic-review-settlement',
+            subscriberVersion: 2,
+            deliverySeq: 'rejudge-delayed',
+            sourceEventId: rejudgeEventId,
+          }),
+        ).resolves.toMatchObject({
+          status: 'succeeded',
+          detail: { idempotent: false, verdict_event_id: rejudgeEventId },
+        });
+        await expect(loadInterventionVersion(db, opened.id, opened.version)).resolves.toMatchObject(
+          {
+            status: 'active',
+            settlement: {
+              diagnostics: {
+                delayed: {
+                  status: 'passed',
+                  review_event_id: reviewEventId,
+                  verdict_event_id: rejudgeEventId,
+                },
+              },
+            },
+          },
+        );
       }
       const card = await db
         .select({ id: material_fsrs_state.id })
@@ -727,12 +877,24 @@ describe('YUK-791 intervention preparation closed loop', () => {
     const settled = await loadInterventionVersion(db, opened.id, opened.version);
     expect(settled).toMatchObject({
       status: 'settled',
-      outcome: 'inconclusive',
+      outcome: 'effective',
       settlement: {
         diagnostics: {
-          immediate: { status: 'passed', review_event_id: 'review_settlement_immediate' },
-          delayed: { status: 'failed', review_event_id: 'review_settlement_delayed' },
-          transfer: { status: 'passed', review_event_id: 'review_settlement_transfer' },
+          immediate: {
+            status: 'passed',
+            review_event_id: 'review_settlement_immediate',
+            verdict_event_id: 'judge_settlement_immediate',
+          },
+          delayed: {
+            status: 'passed',
+            review_event_id: 'review_settlement_delayed',
+            verdict_event_id: 'judge_settlement_delayed_rejudge',
+          },
+          transfer: {
+            status: 'passed',
+            review_event_id: 'review_settlement_transfer',
+            verdict_event_id: 'judge_settlement_transfer',
+          },
         },
       },
     });
@@ -755,7 +917,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
     }
 
     if (!lastDelivery) throw new Error('missing replay delivery');
-    const replay = await handleInterventionDiagnosticReviewDelivery(db, lastDelivery);
+    const replay = await handleInterventionDiagnosticJudgeDelivery(db, lastDelivery);
     expect(replay).toMatchObject({
       status: 'succeeded',
       detail: { idempotent: true, intervention_status: 'settled' },

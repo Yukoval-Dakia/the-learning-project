@@ -44,15 +44,14 @@ export const agencyCapability = defineCapability({
           ),
       },
       {
-        // YUK-792 — each learner review of a materialized intervention
-        // diagnostic advances the Agency-owned settlement aggregate. The first
-        // immutable review per immediate/delayed/transfer question wins.
+        // YUK-792 — trusted canonical judge events advance the Agency-owned
+        // settlement aggregate. Rejudge events recompute the same diagnostic.
         id: 'agency.intervention-diagnostic-review-settlement',
-        version: 1,
-        actions: ['review'],
+        version: 2,
+        actions: ['judge'],
         load: () =>
           import('./server/intervention/settlement-subscription').then(
-            (m) => m.buildInterventionDiagnosticReviewSubscriber,
+            (m) => m.buildInterventionDiagnosticJudgeSubscriber,
           ),
       },
     ],

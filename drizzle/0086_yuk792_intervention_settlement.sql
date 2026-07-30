@@ -18,6 +18,7 @@ SET "settlement_json" = jsonb_build_object(
       ),
       'status', 'scheduled',
       'review_event_id', NULL,
+      'verdict_event_id', NULL,
       'completed_at', NULL
     ),
     'delayed', jsonb_build_object(
@@ -29,6 +30,7 @@ SET "settlement_json" = jsonb_build_object(
       ),
       'status', 'scheduled',
       'review_event_id', NULL,
+      'verdict_event_id', NULL,
       'completed_at', NULL
     ),
     'transfer', jsonb_build_object(
@@ -40,6 +42,7 @@ SET "settlement_json" = jsonb_build_object(
       ),
       'status', 'scheduled',
       'review_event_id', NULL,
+      'verdict_event_id', NULL,
       'completed_at', NULL
     )
   ),

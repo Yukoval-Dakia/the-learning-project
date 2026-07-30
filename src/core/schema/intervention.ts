@@ -206,6 +206,7 @@ const InterventionScheduledDiagnostic = z
     due_at: z.string().datetime(),
     status: InterventionDiagnosticStatus,
     review_event_id: z.string().trim().min(1).max(240).nullable(),
+    verdict_event_id: z.string().trim().min(1).max(240).nullable(),
     completed_at: z.string().datetime().nullable(),
   })
   .strict();
@@ -257,6 +258,7 @@ export function buildInterventionSettlement(input: {
     due_at: dueAt,
     status: 'scheduled' as const,
     review_event_id: null,
+    verdict_event_id: null,
     completed_at: null,
   });
   return InterventionSettlement.parse({

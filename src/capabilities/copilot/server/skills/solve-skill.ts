@@ -28,6 +28,7 @@ import { eq } from 'drizzle-orm';
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { SolveError, buildSolveHintInput, parseHintTurn } from '@/capabilities/practice/public';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
@@ -82,11 +83,14 @@ export async function runSolveSkill(
       prompt_md: question.prompt_md,
       reference_md: question.reference_md,
       knowledge_ids: question.knowledge_ids,
+      source: question.source,
     })
     .from(question)
     .where(eq(question.id, questionId))
     .limit(1);
-  if (!q) throw new SolveError('question_not_found', `question ${questionId} not found`);
+  if (!q || q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+    throw new SolveError('question_not_found', `question ${questionId} not found`);
+  }
 
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
 
