@@ -491,6 +491,41 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(await probeResultEvents(probeId)).toHaveLength(0);
   });
 
+  it('rechecks the immutable question snapshot after the paid judge returns', async () => {
+    const probeId = await serveResponseAwareProbe();
+    let releaseJudge: ((value: ReturnType<typeof invokeResult>) => void) | undefined;
+    mockInvoke.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseJudge = resolve;
+        }),
+    );
+
+    const pendingResponse = answer(probeId, 'cos(x^2)+2x');
+    await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(1));
+    await testDb()
+      .update(question)
+      .set({
+        prompt_md: 'edited while the semantic judge was running',
+        version: 1,
+        updated_at: new Date(),
+      })
+      .where(eq(question.id, probeId));
+    releaseJudge?.(
+      invokeResult('incorrect', {
+        match: 'target_error',
+        explanation_md: 'Matches the authored target-error response signature.',
+      }),
+    );
+
+    const response = await pendingResponse;
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'probe_snapshot_changed',
+    });
+    expect(await probeResultEvents(probeId)).toHaveLength(0);
+  });
+
   it('fails closed when a persisted probe snapshot is malformed', async () => {
     const probeId = await serveResponseAwareProbe();
     const [probe] = await testDb().select().from(question).where(eq(question.id, probeId)).limit(1);

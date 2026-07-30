@@ -13,6 +13,8 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
+import { loadConjectureHistory } from '@/capabilities/agency/server/conjecture/history';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_QUESTION_SOURCE,
@@ -99,16 +101,17 @@ async function serve(proposalId: string) {
 }
 
 async function serveResponseAware(proposalId: string) {
+  const referenceMd = '2x·cos(x^2) — outer cos × inner 2x (chain rule).';
   return serveProbeOnce({
     db: testDb(),
     conjectureProposalId: proposalId,
     knowledgeId: KC_ID,
     probeMd: 'd/dx sin(x^2) = ?',
-    referenceMd: '2x·cos(x^2)',
+    referenceMd,
     probeSpec: {
       ...RESPONSE_AWARE_PROBE_FIELDS,
       prompt_md: 'd/dx sin(x^2) = ?',
-      reference_md: '2x·cos(x^2)',
+      reference_md: referenceMd,
       expected_target_error_answer_md: 'cos(x^2)+2x',
       elicits_target_error_reason_md: 'Distinguishes composition from addition.',
       context_kind: 'abstract',
@@ -138,6 +141,14 @@ const TARGET_ERROR_RESPONSE_JUDGEMENT = {
   target_error_match: 'matched',
   reason_code: 'target_error_signature_matched',
   signature_match_explanation_md: 'matches the target-error response signature',
+} satisfies ConjectureProbeResponseJudgementT;
+
+const ORDINARY_WRONG_RESPONSE_JUDGEMENT = {
+  ...GOLD_RESPONSE_JUDGEMENT,
+  answer_result: 'incorrect',
+  target_error_match: 'not_matched',
+  reason_code: 'response_matches_neither_signature',
+  signature_match_explanation_md: 'matches neither authored response signature',
 } satisfies ConjectureProbeResponseJudgementT;
 
 async function probeResultEvents(probeQuestionId: string) {
@@ -351,6 +362,31 @@ describe('probe one-shot lifecycle (U3)', () => {
       }),
     ).rejects.toMatchObject({ code: 'probe_response_judgement_mismatch', status: 409 });
     await expect(probeResultEvents(served.probe_question_id)).resolves.toHaveLength(0);
+  });
+
+  it('folds an ordinary wrong answer as terminal lifecycle history without treating it as evidence', async () => {
+    const proposalId = await seedConjecture();
+    const served = await serveResponseAware(proposalId);
+    if (served.status !== 'served') throw new Error('expected served response-aware probe');
+    const answeredAt = new Date('2026-07-29T00:00:00.000Z');
+
+    const answered = await answerProbe({
+      db: testDb(),
+      probeQuestionId: served.probe_question_id,
+      outcome: null,
+      response_judgement: ORDINARY_WRONG_RESPONSE_JUDGEMENT,
+      now: answeredAt,
+    });
+
+    expect(answered.status).toBe('inconclusive');
+    expect(answered.outcome).toBeNull();
+    const key = conjectureKey('concept_misunderstanding', KC_ID);
+    const history = await loadConjectureHistory(testDb(), [{ key, knowledge_id: KC_ID }]);
+    expect(history.get(key)).toMatchObject({
+      latest_decision: 'accept',
+      latest_terminal_at: answeredAt,
+      prior_claim_md: 'you treat the chain rule as multiplying derivatives',
+    });
   });
 
   it('production follow-up path makes the second independent incorrect probe confirmed', async () => {

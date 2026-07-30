@@ -3,7 +3,11 @@ import {
   type EffectiveProbeResultStatus,
   getEffectiveProbeResultStatuses,
 } from '@/capabilities/agency/server/conjecture/probe-evidence';
-import { PROBE_RESULT_ACTION, TERMINAL_PROBE_RESOLUTIONS } from '@/core/schema/conjecture';
+import {
+  PROBE_NON_EVIDENCE_RESOLUTION,
+  PROBE_RESULT_ACTION,
+  TERMINAL_PROBE_RESOLUTIONS,
+} from '@/core/schema/conjecture';
 import { RateEvent } from '@/core/schema/event/known';
 import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
@@ -31,6 +35,15 @@ export type LoadConjectureHistoryFn = (
 ) => Promise<Map<string, ConjectureHistory>>;
 
 const CONJECTURE_HISTORY_QUERY_CHUNK_SIZE = 500;
+// A gradable answer that matches neither signature closes this particular probe
+// without becoming conjecture evidence. It is nevertheless terminal for lifecycle
+// history: otherwise the accepted conjecture would appear active forever and block
+// a later evidence-backed reopen. Keep this history-only vocabulary separate from
+// TERMINAL_PROBE_RESOLUTIONS so evidence readers never treat inconclusive as proof.
+const CONJECTURE_HISTORY_TERMINAL_RESOLUTIONS = [
+  ...TERMINAL_PROBE_RESOLUTIONS,
+  PROBE_NON_EVIDENCE_RESOLUTION,
+] as const;
 
 function toPlainRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -175,7 +188,9 @@ export async function loadConjectureHistory(
             eq(event.action, PROBE_RESULT_ACTION),
             eq(event.subject_kind, 'question'),
             inArray(sql<string>`${event.payload}->>'conjecture_event_id'`, chunk),
-            inArray(sql<string>`${event.payload}->>'resolution'`, [...TERMINAL_PROBE_RESOLUTIONS]),
+            inArray(sql<string>`${event.payload}->>'resolution'`, [
+              ...CONJECTURE_HISTORY_TERMINAL_RESOLUTIONS,
+            ]),
           ),
         ),
     ]);

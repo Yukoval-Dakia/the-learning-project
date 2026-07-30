@@ -48,7 +48,11 @@
 // the proposalId. conjecture_event_id === conjectureProposalId.
 
 import { newId } from '@/core/ids';
-import { type ConjectureProbeSpecT, ConjectureProbeSpecV2 } from '@/core/schema/business';
+import {
+  ConjectureProbeSpec,
+  type ConjectureProbeSpecT,
+  ConjectureProbeSpecV2,
+} from '@/core/schema/business';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_NON_EVIDENCE_RESOLUTION,
@@ -666,9 +670,16 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
 
     // Read the probe question back to recover its conjecture provenance.
     const [probe] = await tx
-      .select({ source: question.source, metadata: question.metadata })
+      .select({
+        source: question.source,
+        metadata: question.metadata,
+        version: question.version,
+        prompt_md: question.prompt_md,
+        reference_md: question.reference_md,
+      })
       .from(question)
       .where(eq(question.id, probeQuestionId))
+      .for('update')
       .limit(1);
     if (!probe) {
       throw new ApiError('probe_not_found', `no probe question ${probeQuestionId}`, 404);
@@ -721,6 +732,30 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         );
       }
       return parsed;
+    }
+
+    const authoredProbeSpec =
+      probeMetadata.probe_spec === undefined
+        ? null
+        : ConjectureProbeSpec.safeParse(probeMetadata.probe_spec);
+    if (authoredProbeSpec !== null && !authoredProbeSpec.success) {
+      throw new ApiError(
+        'probe_snapshot_invalid',
+        `probe ${probeQuestionId} has an invalid authored snapshot; no conjecture evidence was written`,
+        409,
+      );
+    }
+    if (
+      authoredProbeSpec?.success &&
+      (probe.version !== PROBE_QUESTION_INITIAL_VERSION ||
+        probe.prompt_md !== authoredProbeSpec.data.prompt_md ||
+        probe.reference_md !== authoredProbeSpec.data.reference_md)
+    ) {
+      throw new ApiError(
+        'probe_snapshot_changed',
+        `probe ${probeQuestionId} no longer matches its immutable authored snapshot; no conjecture evidence was written`,
+        409,
+      );
     }
 
     assertFreshProbeResponseJudgement({
