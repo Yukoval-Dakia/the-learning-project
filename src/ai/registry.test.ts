@@ -763,6 +763,11 @@ describe('ResearchMeetingDirectorTask registry entry', () => {
 // judges opt in (they are synchronous-route sensors whose catch swallows into
 // 'unsupported' — pg-boss never sees a throw, so no durable backstop exists).
 describe('budget.transientRetries (YUK-576)', () => {
+  it('both SDK outputFormat vision judges have a terminal turn after the envelope turn', () => {
+    expect(tasks.StepsJudgeTask.budget.maxIterations).toBe(2);
+    expect(tasks.MultimodalDirectJudgeTask.budget.maxIterations).toBe(2);
+  });
+
   it('the two vision judges get exactly 1 same-target transient retry', () => {
     expect(tasks.StepsJudgeTask.budget.transientRetries).toBe(1);
     expect(tasks.MultimodalDirectJudgeTask.budget.transientRetries).toBe(1);
