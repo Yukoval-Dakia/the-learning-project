@@ -4,7 +4,7 @@ on:
   pull_request:
     # Review once when a PR first becomes reviewable. Do not review every push:
     # that turns advisory findings into a review -> fix -> push -> review loop.
-    types: [opened, reopened, ready_for_review, closed]
+    types: [opened, ready_for_review, closed]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -72,12 +72,31 @@ jobs:
               throw new Error(`PR #${prNumber} is authored by Dependabot; advisory review is disabled.`);
             }
 
+            if (context.eventName !== 'workflow_dispatch') {
+              const reviews = await github.paginate(github.rest.pulls.listReviews, {
+                ...context.repo,
+                pull_number: prNumber,
+                per_page: 100,
+              });
+              const alreadyReviewed = reviews.some((review) =>
+                review.user?.login === 'github-actions[bot]' &&
+                String(review.body || '').includes('<!-- ocr-codex-review run=')
+              );
+              if (alreadyReviewed) {
+                core.notice(`PR #${prNumber} already has an initial OCR review; skipping this lifecycle event.`);
+                core.setOutput('should_review', 'false');
+                return;
+              }
+            }
+
+            core.setOutput('should_review', 'true');
             core.setOutput('pr_number', String(prNumber));
             core.setOutput('base_ref', pr.base.ref);
             core.setOutput('base_sha', pr.base.sha);
             core.setOutput('head_sha', pr.head.sha);
 
       - name: Checkout pull request merge
+        if: steps.pr_context.outputs.should_review == 'true'
         uses: actions/checkout@v4
         with:
           ref: refs/pull/${{ steps.pr_context.outputs.pr_number }}/merge
@@ -87,6 +106,7 @@ jobs:
           persist-credentials: true
 
       - name: Resolve OCR binary
+        if: steps.pr_context.outputs.should_review == 'true'
         id: ocr_bin
         shell: bash
         run: |
@@ -116,6 +136,7 @@ jobs:
           exit 1
 
       - name: Fetch pull request refs
+        if: steps.pr_context.outputs.should_review == 'true'
         shell: bash
         env:
           BASE_REF: ${{ steps.pr_context.outputs.base_ref }}
@@ -140,7 +161,7 @@ jobs:
           git cat-file -e "refs/remotes/pull/${PR_NUMBER}/head^{commit}"
 
       - name: Collect prior-comment feedback (learnings)
-        if: ${{ vars.OCR_LEARNINGS != 'off' }}
+        if: ${{ steps.pr_context.outputs.should_review == 'true' && vars.OCR_LEARNINGS != 'off' }}
         continue-on-error: true
         uses: actions/github-script@v7
         env:
@@ -268,6 +289,7 @@ jobs:
             }
 
       - name: Run OCR review
+        if: steps.pr_context.outputs.should_review == 'true'
         id: run_ocr_review
         shell: bash
         env:
@@ -294,6 +316,7 @@ jobs:
           test -s ocr-review.json
 
       - name: Upsert PR review comment
+        if: steps.pr_context.outputs.should_review == 'true'
         uses: actions/github-script@v7
         env:
           HEAD_SHA: ${{ steps.pr_context.outputs.head_sha }}

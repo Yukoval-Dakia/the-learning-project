@@ -12,8 +12,10 @@
 - **唯一 active lane：YUK-828 自动 review advisory 化。**
   - branch：`codex/yuk-828-review-budget`。
   - worktree：`.codex/worktrees/9d89/the-learning-project`。
-  - OCR 与 PR-Agent 不再监听 `pull_request.synchronize`；只在 opened / reopened /
+  - OCR 与 PR-Agent 不再监听 `pull_request.synchronize`；只在 opened /
     ready_for_review 初审。OCR 保留带 `pr_number` 的 `workflow_dispatch` 手动验证入口。
+  - 首轮 review 发现 lifecycle 事件仍可重复初审；现已移除 reopened，并在 OCR review
+    与 PR-Agent guide 写入后做跨事件幂等检查。只有显式 OCR manual dispatch 绕过初审锁。
   - 两个 review job 名称显式标注 advisory；OCR 手动入口统一从 GitHub API 解析并验证
     当前 PR/base/head，拒绝 draft、fork 与 Dependabot。
   - agent/Claude PR policy 统一为最多一轮初审 + 一轮 P0/P1 修复后的验证审；push 后新 bot
@@ -25,6 +27,7 @@
 - **本地静态验证已过**
   - Ruby YAML parser：2 个 workflow PASS。
   - workflow trigger/advisory/manual-input 专项断言 PASS；`git diff --check` PASS。
+  - lifecycle 幂等修正后的 workflow 专项断言 PASS。
   - `tests/integration/audit-docs-invariant.test.ts`：6/6 PASS。
   - Biome 不处理本次 Markdown/YAML 文件；其 0-file 输出不计作有效验证。
 

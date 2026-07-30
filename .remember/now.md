@@ -16,15 +16,19 @@
    base/head，并拒绝 draft、fork、Dependabot。
 3. `.github/workflows/pr-agent-glm.yml` 同样移除 `synchronize`，两个 review job 名称明确
    标注 advisory。
-4. `AGENTS.md`、`CLAUDE.md` 与两份 PR skill 统一 review budget：一轮初审 + 最多一轮
+4. 首轮独立 review 发现 reopened/ready lifecycle 可重复初审；现已移除 reopened，并为
+   OCR review 与 PR-Agent guide 增加已完成初审的跨事件幂等检查。只有显式 OCR manual
+   dispatch 可绕过初审锁。
+5. `AGENTS.md`、`CLAUDE.md` 与两份 PR skill 统一 review budget：一轮初审 + 最多一轮
    P0/P1 修复验证；P2/minor/nit 默认不阻塞、不触发新 push。
-5. exact-head `CI Gate` 明确为自动硬 gate；无未裁决 P0/P1 时不等待 advisory review
+6. exact-head `CI Gate` 明确为自动硬 gate；无未裁决 P0/P1 时不等待 advisory review
    pending/failure/cancel/timeout。
 
 ## 验证证据
 
 - Ruby YAML parser：OCR / PR-Agent workflow 均 PASS。
 - trigger/advisory/manual-input 专项静态断言 PASS。
+- lifecycle 初审幂等专项断言 PASS。
 - `git diff --check` PASS。
 - docs invariant：1 file / 6 tests PASS。
 - Biome 对本次 Markdown/YAML 处理 0 files，因此不计作有效验证。
