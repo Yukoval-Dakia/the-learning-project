@@ -1539,6 +1539,11 @@ describe('migration smoke — YUK-792 intervention settlement backfill', () => {
           'success', '{}'::jsonb, ARRAY[]::text[]
         ),
         (
+          'yuk792_probe_shadow', 'system', 'yuk792_migration_smoke',
+          'experimental:yuk792_fixture', 'question', 'yuk792_question_shadow',
+          'success', '{}'::jsonb, ARRAY[]::text[]
+        ),
+        (
           'yuk792_conjecture', 'system', 'yuk792_migration_smoke',
           'experimental:yuk792_fixture', 'knowledge', 'yuk792_kc',
           'success', '{}'::jsonb, ARRAY[]::text[]
@@ -1557,7 +1562,7 @@ describe('migration smoke — YUK-792 intervention settlement backfill', () => {
           '2026-07-01 10:20:30.123+08'::timestamptz
         ),
         (
-          'int_yuk792_shadow', 1, 'yuk792_probe', 'yuk792_conjecture',
+          'int_yuk792_shadow', 1, 'yuk792_probe_shadow', 'yuk792_conjecture',
           'active', 'shadow', 'idem_yuk792_shadow', '{}'::jsonb,
           '{"kind":"recommendation"}'::jsonb, '{}'::jsonb,
           '2026-07-01 10:20:30.123+08'::timestamptz

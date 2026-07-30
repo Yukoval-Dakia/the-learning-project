@@ -114,7 +114,7 @@ export async function loadLatestTrustedInterventionDiagnosticVerdict(
         typeof rawPayload.feedback_md === 'string' && rawPayload.feedback_md.trim()
           ? rawPayload.feedback_md
           : null,
-    };
+    } as const;
   }
   return null;
 }
