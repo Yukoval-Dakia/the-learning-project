@@ -131,6 +131,13 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
         400,
       );
     }
+    if (result.status === 'protected') {
+      throw new ApiError(
+        'immutable_question',
+        'intervention diagnostic questions cannot be edited through the question bank',
+        409,
+      );
+    }
     if (result.status === 'conflict') {
       throw new ApiError('conflict', `question ${id} concurrently modified`, 409);
     }
@@ -216,6 +223,13 @@ export async function DELETE(req: Request, params: Record<string, string>): Prom
     const result = await archiveQuestion(db, id, version, 'self');
     if (result.status === 'not_found') {
       throw new ApiError('not_found', `question ${id} not found`, 404);
+    }
+    if (result.status === 'protected') {
+      throw new ApiError(
+        'immutable_question',
+        'intervention diagnostic questions cannot be archived through the question bank',
+        409,
+      );
     }
     if (result.status === 'conflict') {
       throw new ApiError('conflict', `question ${id} concurrently modified`, 409);

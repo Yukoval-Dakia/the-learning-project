@@ -7,6 +7,7 @@
 // audit events.
 
 import { newId } from '@/core/ids';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { artifact, event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -33,6 +34,7 @@ async function seedQuestion(opts: {
   knowledge_ids?: string[];
   draft_status?: string | null;
   parent_question_id?: string | null;
+  source?: string;
   version?: number;
 }): Promise<string> {
   const id = opts.id ?? newId();
@@ -46,7 +48,7 @@ async function seedQuestion(opts: {
       choices_md: null,
       knowledge_ids: opts.knowledge_ids ?? [],
       difficulty: 3,
-      source: 'manual',
+      source: opts.source ?? 'manual',
       draft_status: opts.draft_status ?? 'active',
       parent_question_id: opts.parent_question_id ?? null,
       created_at: NOW,
@@ -218,6 +220,20 @@ describe('PATCH /api/questions/[id]', () => {
     expect(res.status).toBe(409);
   });
 
+  it('rejects edits to product-owned intervention diagnostics', async () => {
+    const id = await seedQuestion({ source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE });
+
+    const res = await PATCH(mkPatchReq(id, { version: 0, prompt_md: 'mutated prompt' }), { id });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ error: 'immutable_question' });
+    expect(await loadRow(id)).toMatchObject({
+      prompt_md: 'original prompt',
+      draft_status: 'active',
+      version: 0,
+    });
+  });
+
   it('400s on unknown knowledge_ids', async () => {
     const id = await seedQuestion({});
     const res = await PATCH(mkPatchReq(id, { version: 0, knowledge_ids: ['k_missing'] }), { id });
@@ -352,6 +368,23 @@ describe('DELETE /api/questions/[id]', () => {
     expect(meta?.archived_reason).toBe('user');
     expect(meta?.archived_previous_draft_status).toBe('active');
     expect(typeof meta?.archived_at).toBe('number');
+  });
+
+  it('rejects archival of product-owned intervention diagnostics', async () => {
+    const id = await seedQuestion({ source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE });
+    await seedQuestionFsrs(id);
+
+    const res = await DELETE(mkDeleteReq(id, '?version=0&confirm=true'), { id });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ error: 'immutable_question' });
+    expect(await loadRow(id)).toMatchObject({ draft_status: 'active', version: 0 });
+    expect(
+      await testDb()
+        .select()
+        .from(material_fsrs_state)
+        .where(eq(material_fsrs_state.subject_id, id)),
+    ).toHaveLength(1);
   });
 
   it('fails closed when a legacy client confirms a parent without acknowledging children', async () => {
