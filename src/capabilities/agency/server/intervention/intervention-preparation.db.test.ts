@@ -616,10 +616,13 @@ describe('YUK-791 intervention preparation closed loop', () => {
     });
     const [opened] = await db.select().from(intervention);
     const { fn } = successfulRunTask();
-    const activationNow = new Date('2026-07-22T10:00:00.000Z');
+    const activationNow = new Date(Math.floor(Date.now() / 1000) * 1000);
+    const activationDate = activationNow.toLocaleDateString('sv-SE', {
+      timeZone: 'Asia/Shanghai',
+    });
     await db.insert(practice_stream_item).values({
       id: 'stream_existing_before_intervention',
-      date: '2026-07-22',
+      date: activationDate,
       position: 1,
       item_kind: 'question',
       ref_id: 'probe_settlement',
@@ -695,7 +698,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       .from(practice_stream_item)
       .where(
         and(
-          eq(practice_stream_item.date, '2026-07-22'),
+          eq(practice_stream_item.date, activationDate),
           sql`${practice_stream_item.session_id} IS NULL`,
         ),
       );
