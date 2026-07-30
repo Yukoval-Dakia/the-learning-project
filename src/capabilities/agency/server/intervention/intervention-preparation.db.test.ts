@@ -14,6 +14,7 @@ import {
   knowledge,
   mastery_state,
   material_fsrs_state,
+  practice_stream_item,
   question,
 } from '@/db/schema';
 import { eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
@@ -615,6 +616,21 @@ describe('YUK-791 intervention preparation closed loop', () => {
     });
     const [opened] = await db.select().from(intervention);
     const { fn } = successfulRunTask();
+    const activationNow = new Date('2026-07-22T10:00:00.000Z');
+    await db.insert(practice_stream_item).values({
+      id: 'stream_existing_before_intervention',
+      date: '2026-07-22',
+      position: 1,
+      item_kind: 'question',
+      ref_id: 'probe_settlement',
+      source: 'decay',
+      status: 'pending',
+      reasoning: 'existing daily item',
+      added_by: 'composer_live',
+      signals: {},
+      created_at: activationNow,
+      updated_at: activationNow,
+    });
     await prepareInterventionWave(
       db,
       {
@@ -623,7 +639,11 @@ describe('YUK-791 intervention preparation closed loop', () => {
         idempotencyKey: opened.idempotency_key,
         preparationJobId: preparationJobIdOf(opened),
       },
-      { runTaskFn: fn, authorPackageFn: authorInterventionPackage },
+      {
+        runTaskFn: fn,
+        authorPackageFn: authorInterventionPackage,
+        now: () => activationNow,
+      },
     );
     const active = await loadInterventionVersion(db, opened.id, opened.version);
     expect(active?.status).toBe('active');
@@ -662,6 +682,34 @@ describe('YUK-791 intervention preparation closed loop', () => {
               intervention_id: active.id,
             }),
             probe_spec: expect.any(Object),
+          }),
+        }),
+      ]),
+    );
+    const liveStream = await db
+      .select({
+        ref_id: practice_stream_item.ref_id,
+        position: practice_stream_item.position,
+        signals: practice_stream_item.signals,
+      })
+      .from(practice_stream_item)
+      .where(
+        and(
+          eq(practice_stream_item.date, '2026-07-22'),
+          sql`${practice_stream_item.session_id} IS NULL`,
+        ),
+      );
+    expect(liveStream).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ref_id: active.settlement.diagnostics.immediate.question_id,
+          position: 2,
+          signals: expect.objectContaining({
+            interventionDelivery: expect.objectContaining({
+              interventionId: active.id,
+              interventionVersion: active.version,
+              diagnosticKind: 'immediate',
+            }),
           }),
         }),
       ]),

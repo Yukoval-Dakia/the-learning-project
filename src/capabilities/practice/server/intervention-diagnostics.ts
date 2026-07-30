@@ -1,3 +1,4 @@
+import { newId } from '@/core/ids';
 import {
   INTERVENTION_CONTRACT_VERSION,
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
@@ -10,10 +11,11 @@ import {
   type InterventionSnapshotT,
 } from '@/core/schema/intervention';
 import type { Tx } from '@/db/client';
-import { question } from '@/db/schema';
+import { practice_stream_item, question } from '@/db/schema';
 import { enrollFsrsStateIfAbsent, retireQuestionFsrsState } from '@/server/fsrs/state';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { initialFsrsState } from './fsrs';
+import { streamLocalDate } from './stream-store';
 
 function diagnosticMetadata(input: {
   interventionId: string;
@@ -70,6 +72,56 @@ export function questionKnowledgeIdsForJudge(input: {
     input.metadata?.intervention_diagnostic,
   );
   return [diagnostic.knowledge_id];
+}
+
+async function appendImmediateDiagnosticToLiveStream(
+  tx: Tx,
+  input: {
+    questionId: string;
+    interventionId: string;
+    interventionVersion: number;
+    now: Date;
+  },
+): Promise<void> {
+  const date = streamLocalDate(input.now);
+  // Serialize with lazy/nightly/recompose writers. If no stream exists yet,
+  // leave it empty: the first normal composition will pick this newly-due FSRS
+  // card. If today's stream already exists, append atomically so its "stream is
+  // non-empty" fast path cannot strand the intervention until tomorrow.
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
+  const [current] = await tx
+    .select({
+      count: sql<number>`count(*)::int`,
+      maxPosition: sql<number>`coalesce(max(${practice_stream_item.position}), 0)::int`,
+    })
+    .from(practice_stream_item)
+    .where(and(eq(practice_stream_item.date, date), isNull(practice_stream_item.session_id)));
+  if (!current || current.count === 0) return;
+
+  await tx
+    .insert(practice_stream_item)
+    .values({
+      id: newId(),
+      date,
+      session_id: null,
+      position: current.maxPosition + 1,
+      item_kind: 'question',
+      ref_id: input.questionId,
+      source: 'decay',
+      status: 'pending',
+      reasoning: '这份针对当前薄弱点的材料已准备好；先阅读，再完成一次即时检验。',
+      added_by: 'composer_live',
+      signals: {
+        interventionDelivery: {
+          interventionId: input.interventionId,
+          interventionVersion: input.interventionVersion,
+          diagnosticKind: 'immediate',
+        },
+      },
+      created_at: input.now,
+      updated_at: input.now,
+    })
+    .onConflictDoNothing();
 }
 
 /**
@@ -171,6 +223,13 @@ export async function materializeInterventionDiagnostics(
       });
     }
   }
+
+  await appendImmediateDiagnosticToLiveStream(tx, {
+    questionId: settlement.diagnostics.immediate.question_id,
+    interventionId: snapshot.intervention_id,
+    interventionVersion: snapshot.intervention_version,
+    now: input.now,
+  });
 }
 
 /** Practice-owned port for retiring a completed one-shot diagnostic card. */

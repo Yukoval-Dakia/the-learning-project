@@ -115,6 +115,11 @@ export async function GET(req: Request, params: Record<string, string>): Promise
         reference_md: null,
         rubric_json: null,
         source_ref: null,
+        // Diagnostic metadata contains the response-aware judge contract
+        // (`probe_spec`), including gold and target-error signatures. The
+        // learner surface needs none of it; expose no metadata rather than
+        // attempting an answer-field denylist that can drift with the schema.
+        metadata: {},
         backlinks: [],
         backlinks_by_intent_source: {},
         timeline: [],

@@ -31,7 +31,7 @@ async function seedQuestion(
     });
 }
 
-function interventionDiagnosticMetadata(dueAt: string) {
+function interventionDiagnosticMetadata(dueAt: string, includeJudgeContract = false) {
   return {
     intervention_diagnostic: {
       schema_version: 1,
@@ -41,6 +41,28 @@ function interventionDiagnosticMetadata(dueAt: string) {
       knowledge_id: 'kc_detail_test',
       due_at: dueAt,
     },
+    ...(includeJudgeContract
+      ? {
+          probe_spec: {
+            schema_version: 2,
+            prompt_md: 'Explain why the transfer applies.',
+            reference_md: 'private reference answer',
+            expected_target_error_answer_md: 'private target-error answer',
+            elicits_target_error_reason_md: 'private grading rationale',
+            context_kind: 'abstract',
+            representation_kind: 'natural_language',
+            response_mode: 'short_answer',
+            gold_response_signature: {
+              kind: 'text',
+              response_md: 'private gold signature',
+            },
+            target_error_response_signature: {
+              kind: 'text',
+              response_md: 'private target signature',
+            },
+          },
+        }
+      : {}),
   };
 }
 
@@ -97,23 +119,29 @@ describe('GET /api/questions/[id]', () => {
       reference_md: 'future diagnostic answer',
       rubric_json: { criteria: [], acceptable_answers: ['future diagnostic answer'] },
       source_ref: 'private-author-run',
-      metadata: interventionDiagnosticMetadata('2026-06-07T00:00:00.000Z'),
+      metadata: interventionDiagnosticMetadata('2026-06-07T00:00:00.000Z', true),
     });
 
     const res = await GET(mkReq(id, '?surface=practice'), { id });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({
+    const body = await res.json();
+    expect(body).toMatchObject({
       id,
       source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
       prompt_md: 'Explain why the transfer applies.',
       reference_md: null,
       rubric_json: null,
       source_ref: null,
+      metadata: {},
       backlinks: [],
       backlinks_by_intent_source: {},
       timeline: [],
     });
+    expect(JSON.stringify(body)).not.toContain('private reference answer');
+    expect(JSON.stringify(body)).not.toContain('private target-error answer');
+    expect(JSON.stringify(body)).not.toContain('private gold signature');
+    expect(JSON.stringify(body)).not.toContain('private target signature');
   });
 
   it('404s a future diagnostic on the client-controlled Practice surface', async () => {
