@@ -23,6 +23,7 @@
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
 import { newId } from '@/core/ids';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -118,9 +119,11 @@ export async function handleRejudge(
 
   const judgeKnowledgeIds = questionKnowledgeIdsForJudge(q);
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, judgeKnowledgeIds);
+  const rejudgeRoute =
+    q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE ? 'multimodal_direct' : 'semantic';
   const invoked: JudgeAnswerResult = await judgeFn({
     db,
-    question: { ...q, judge_kind_override: 'semantic' },
+    question: { ...q, judge_kind_override: rejudgeRoute },
     answer_md: answerMd,
     subjectProfile,
     appeal_context: { prior_outcome: priorOutcome, user_reason_md: reasonMd },

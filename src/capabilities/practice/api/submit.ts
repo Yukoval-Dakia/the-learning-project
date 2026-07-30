@@ -171,9 +171,56 @@ async function validateSubmit(req: Request): Promise<ValidatedSubmit> {
         409,
       );
     }
+    if ((body.response_md?.trim().length ?? 0) === 0 && body.answer_image_refs.length === 0) {
+      throw new ApiError(
+        'validation_error',
+        `intervention diagnostic ${questionId} requires an answer`,
+        400,
+      );
+    }
   }
 
   return { body, now, questionId, activityRef: identity.activity_ref, q };
+}
+
+async function claimInterventionDiagnosticSubmission(validated: ValidatedSubmit): Promise<boolean> {
+  if (validated.q.source !== INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) return false;
+
+  const [claimed] = await db
+    .update(question)
+    .set({ draft_status: 'draft', updated_at: validated.now })
+    .where(
+      and(
+        eq(question.id, validated.questionId),
+        eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
+        eq(question.draft_status, 'active'),
+      ),
+    )
+    .returning({ id: question.id });
+  if (!claimed) {
+    throw new ApiError(
+      'conflict',
+      `intervention diagnostic ${validated.questionId} has already been submitted`,
+      409,
+    );
+  }
+  return true;
+}
+
+async function releaseInterventionDiagnosticSubmissionClaim(
+  validated: ValidatedSubmit,
+): Promise<void> {
+  await db
+    .update(question)
+    .set({ draft_status: 'active', updated_at: new Date() })
+    .where(
+      and(
+        eq(question.id, validated.questionId),
+        eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
+        eq(question.draft_status, 'draft'),
+        eq(question.updated_at, validated.now),
+      ),
+    );
 }
 
 // ============================================================================
@@ -1664,8 +1711,13 @@ export async function enqueueDurableJudge(
 // ============================================================================
 
 export async function createAttempt(req: Request): Promise<Response> {
+  let claimedDiagnostic: ValidatedSubmit | null = null;
+  let retainDiagnosticClaim = false;
   try {
     const validated = await validateSubmit(req);
+    if (await claimInterventionDiagnosticSubmission(validated)) {
+      claimedDiagnostic = validated;
+    }
     // YUK-594 (W2) — async-main divert (dark-ship). When JUDGE_DURABLE_ENABLED is on
     // AND this submit would spend a synchronous server-side judge call, move the judge
     // to the durable `judge_run` lane and return 202-pending; the verdict + FSRS land
@@ -1680,7 +1732,9 @@ export async function createAttempt(req: Request): Promise<Response> {
     if (judgeDurableEnabled() && shouldEnqueueBackgroundJobs()) {
       const gate = await resolveDurableDivert(validated);
       if (gate.divert && gate.subjectProfile !== null) {
-        return await enqueueDurableJudge(validated, gate.subjectProfile);
+        const pending = await enqueueDurableJudge(validated, gate.subjectProfile);
+        retainDiagnosticClaim = true;
+        return pending;
       }
       reusedProfile = gate.subjectProfile;
     }
@@ -1688,7 +1742,19 @@ export async function createAttempt(req: Request): Promise<Response> {
       validated,
       reusedProfile ? { subjectProfile: reusedProfile } : {},
     );
+    if (
+      validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE &&
+      (judged.executionProvenance?.kind === 'supplied_unverified' ||
+        judged.executionProvenance?.kind === 'historical_unknown')
+    ) {
+      throw new ApiError(
+        'unsupported_judge_route',
+        `intervention diagnostic ${validated.questionId} requires a verified judge execution`,
+        422,
+      );
+    }
     const persisted = await persistSubmit(validated, judged);
+    retainDiagnosticClaim = true;
     const { body, now, questionId, activityRef } = validated;
     const { judgeResult, judgeRoute, judgeTelemetry, suggestedRating, finalRating } = judged;
     const { eventId, fsrsSubjectKind, fsrsSubjectIds, finalResult, finalFsrsStateAfter } =
@@ -1739,6 +1805,16 @@ export async function createAttempt(req: Request): Promise<Response> {
       judge: judgeResponse,
     });
   } catch (err) {
+    if (claimedDiagnostic !== null && !retainDiagnosticClaim) {
+      await releaseInterventionDiagnosticSubmissionClaim(claimedDiagnostic).catch(
+        (releaseError) => {
+          console.error(
+            `failed to release intervention diagnostic submission claim for ${claimedDiagnostic?.questionId}:`,
+            releaseError,
+          );
+        },
+      );
+    }
     return errorResponse(err);
   }
 }

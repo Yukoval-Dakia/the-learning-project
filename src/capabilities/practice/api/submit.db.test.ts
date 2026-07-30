@@ -180,6 +180,7 @@ describe('POST /api/review/submit', () => {
       kind: 'fill_blank',
       reference_md: '答案',
       source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      draft_status: 'active',
       knowledge_ids: [],
       metadata: {
         intervention_diagnostic: {
@@ -207,6 +208,103 @@ describe('POST /api/review/submit', () => {
       expect.anything(),
       ['kc_math'],
     );
+  });
+
+  it('atomically accepts only one submission for a one-shot intervention diagnostic', async () => {
+    await seedQuestion('q_intervention_one_shot', {
+      kind: 'fill_blank',
+      reference_md: '答案',
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      draft_status: 'active',
+      knowledge_ids: [],
+      metadata: {
+        intervention_diagnostic: {
+          schema_version: INTERVENTION_CONTRACT_VERSION,
+          intervention_id: 'int_one_shot',
+          intervention_version: 1,
+          diagnostic_kind: 'immediate',
+          knowledge_id: 'kc_math',
+          due_at: '2026-07-01T00:00:00.000Z',
+        },
+      },
+    });
+
+    const responses = await Promise.all([
+      POST(
+        submitReq({
+          question_id: 'q_intervention_one_shot',
+          rating: 'good',
+          response_md: '答案',
+          auto_rate: true,
+        }),
+      ),
+      POST(
+        submitReq({
+          question_id: 'q_intervention_one_shot',
+          rating: 'good',
+          response_md: '答案',
+          auto_rate: true,
+        }),
+      ),
+    ]);
+
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    const reviews = await testDb()
+      .select({ id: event.id })
+      .from(event)
+      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_intervention_one_shot')));
+    expect(reviews).toHaveLength(1);
+  });
+
+  it('releases the one-shot claim when a supplied diagnostic verdict is unverified', async () => {
+    await seedQuestion('q_intervention_unverified', {
+      kind: 'short_answer',
+      reference_md: '答案',
+      judge_kind_override: 'multimodal_direct',
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      draft_status: 'active',
+      knowledge_ids: [],
+      metadata: {
+        intervention_diagnostic: {
+          schema_version: INTERVENTION_CONTRACT_VERSION,
+          intervention_id: 'int_unverified',
+          intervention_version: 1,
+          diagnostic_kind: 'immediate',
+          knowledge_id: 'kc_math',
+          due_at: '2026-07-01T00:00:00.000Z',
+        },
+      },
+    });
+
+    const response = await POST(
+      submitReq({
+        question_id: 'q_intervention_unverified',
+        rating: 'good',
+        response_md: '答案',
+        auto_rate: true,
+        judge_result_v2: {
+          coarse_outcome: 'correct',
+          score: 1,
+          score_meaning: 'correctness',
+          confidence: 0.9,
+          feedback_md: 'looks right',
+          evidence_json: {},
+          capability_ref: { id: 'multimodal_direct', version: '1' },
+        },
+      }),
+    );
+
+    expect(response.status).toBe(422);
+    const [row] = await testDb()
+      .select({ draftStatus: question.draft_status })
+      .from(question)
+      .where(eq(question.id, 'q_intervention_unverified'));
+    expect(row.draftStatus).toBe('active');
+    const reviews = await testDb()
+      .select({ id: event.id })
+      .from(event)
+      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_intervention_unverified')));
+    expect(reviews).toHaveLength(0);
   });
 
   it('canonical attempt creation returns 201 with the review event Location', async () => {

@@ -416,7 +416,7 @@ describe('rejudge job (D15 申诉自动重判)', () => {
     expect(truth.effective_event_id).toBe(judgeEventId);
   });
 
-  it('resolves a diagnostic rejudge profile from canonical intervention metadata', async () => {
+  it('preserves the diagnostic profile and response-aware judge contract during rejudge', async () => {
     const db = testDb();
     const { questionId, appealEventId } = await seedAppealedJudge();
     const now = new Date();
@@ -431,6 +431,7 @@ describe('rejudge job (D15 申诉自动重判)', () => {
       .update(question)
       .set({
         source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+        judge_kind_override: 'multimodal_direct',
         knowledge_ids: [],
         metadata: {
           intervention_diagnostic: {
@@ -441,21 +442,54 @@ describe('rejudge job (D15 申诉自动重判)', () => {
             knowledge_id: 'kc_rejudge_math',
             due_at: now.toISOString(),
           },
+          probe_spec: {
+            schema_version: 2,
+            prompt_md: 'd/dx sin(x²) = ?',
+            reference_md: '2x·cos(x²)',
+            expected_target_error_answer_md: 'cos(x²) + 2x',
+            elicits_target_error_reason_md: 'Requires composing both derivative layers.',
+            context_kind: 'abstract',
+            representation_kind: 'symbolic',
+            response_mode: 'answer_with_reason',
+            gold_response_signature: {
+              kind: 'answer_with_reason',
+              answer_md: '2x·cos(x²)',
+              required_reason_features_md: ['multiply outer and inner derivatives'],
+            },
+            target_error_response_signature: {
+              kind: 'answer_with_reason',
+              answer_md: 'cos(x²) + 2x',
+              required_reason_features_md: ['adds derivative layers'],
+            },
+          },
         },
       })
       .where(eq(question.id, questionId));
 
     let resolvedSubjectId: string | null = null;
+    let resolvedJudgeRoute: string | null = null;
+    let resolvedProbeSpec: unknown = null;
     const delegate = mockJudge('partial', '原判维持。');
     const judgeFn: NonNullable<RejudgeDeps['judgeFn']> = async (input) => {
       resolvedSubjectId = input.subjectProfile.id;
-      return delegate();
+      resolvedJudgeRoute = input.question.judge_kind_override;
+      resolvedProbeSpec = input.question.metadata?.probe_spec;
+      return { ...(await delegate()), route: 'multimodal_direct' };
     };
 
     const outcome = await handleRejudge(db, { appeal_event_id: appealEventId }, { judgeFn });
 
     expect(outcome.status).toBe('upheld');
     expect(resolvedSubjectId).toBe('math');
+    expect(resolvedJudgeRoute).toBe('multimodal_direct');
+    expect(resolvedProbeSpec).toEqual(
+      expect.objectContaining({
+        gold_response_signature: expect.objectContaining({ answer_md: '2x·cos(x²)' }),
+        target_error_response_signature: expect.objectContaining({
+          answer_md: 'cos(x²) + 2x',
+        }),
+      }),
+    );
   });
 
   it('幂等：同一申诉第二次执行跳过（already_resolved）', async () => {
