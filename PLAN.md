@@ -26,7 +26,9 @@
   - pg-boss 使用聚合体持久化的 UUID job id；重复投递返回 null 视为已存在，不制造
     第二个 aggregate。restore 在同一事务先取消 archived created/retry/active job，再清掉
     job id；缺失 operational job 最迟两分钟重建。旧 active handler 还必须在每个付费阶段
-    匹配当前 job id，不能把 restore 前结果写回。当前 wave 耗尽 durable retry 的终态 job
+    及最终 activation UPDATE 匹配当前 job id，不能把 restore 前结果写回。fresh disposable
+    grounding DB 由调用方显式声明，不要求取消不存在的旧 runtime job。当前 wave 耗尽
+    durable retry 的终态 job
     转为可审计 `preparation_failed`，不无限付费重排。recovery 与 subscription replay
     共用 source advisory lock，并在持锁后重查 liveness，不能产生两个付费 wave。
   - recommendation、author、review 每次付费调用前分别验证当前 job id 与 source
@@ -45,7 +47,7 @@
   - `AUTO_INTERVENTION_EXPANSION_ENABLED` 默认 OFF；当前只产生 `delivery_mode=shadow`，
     不等同于交付或扩量。
 - **针对性开发验证已过**
-  - 最新 review diff 定向 unit：5 files / 101 tests；DB：4 files / 54 tests；此前
+  - 最新 review diff 定向 unit：5 files / 101 tests；DB：4 files / 55 tests；此前
     broader unit cockpit 8 files / 153 tests；migration smoke：1 pass。
   - `pnpm typecheck`、Biome scoped check、capability boundary audit（0）通过。
   - schema audit 无 unallowed stub；flag reader/ledger 对齐。全仓 strict flag audit 仍报告

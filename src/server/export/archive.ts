@@ -331,9 +331,14 @@ export interface RestoreFromArchiveOpts {
   bytes: Uint8Array;
   /**
    * Provider-owned operational fence for archived preparation jobs. Required
-   * only when the archive contains a non-null preparation_job_id.
+   * on a live restore when the archive contains a non-null preparation_job_id.
    */
   retireInterventionPreparationJobs?: (tx: Tx, jobIds: string[]) => Promise<void>;
+  /**
+   * Explicit escape hatch for a newly-created disposable DB whose pg-boss
+   * schema cannot contain jobs from the archived runtime.
+   */
+  operationalRestoreTarget?: 'live' | 'fresh_disposable';
 }
 
 function restoreValue(table: TableName, column: string, value: unknown) {
@@ -376,6 +381,7 @@ export async function restoreFromArchive({
   r2,
   bytes,
   retireInterventionPreparationJobs,
+  operationalRestoreTarget = 'live',
 }: RestoreFromArchiveOpts): Promise<{ status: number; body: RestoreResult }> {
   if (bytes.byteLength === 0) {
     return {
@@ -643,12 +649,13 @@ export async function restoreFromArchive({
     // collection roll back cleanly too. All mutations use `tx`, never the outer `db`.
     await db.transaction(async (tx) => {
       if (archivedInterventionPreparationJobIds.length > 0) {
-        if (!retireInterventionPreparationJobs) {
+        if (retireInterventionPreparationJobs) {
+          await retireInterventionPreparationJobs(tx, archivedInterventionPreparationJobIds);
+        } else if (operationalRestoreTarget !== 'fresh_disposable') {
           throw new Error(
             'restore contains intervention preparation job ids but no operational job retirer was provided',
           );
         }
-        await retireInterventionPreparationJobs(tx, archivedInterventionPreparationJobIds);
       }
 
       // YUK-751 (codex P1): wipe the operational subscription tables FIRST. They are excluded from

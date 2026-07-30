@@ -1119,6 +1119,74 @@ describe('YUK-791 intervention preparation closed loop', () => {
     expect(activated[0]?.value).toBe(0);
   });
 
+  it('does not let an old active handler activate a replacement job after restore', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('s');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const [opened] = await db.select().from(intervention);
+    const oldJobId = preparationJobIdOf(opened);
+    const record = await loadInterventionVersion(db, opened.id, opened.version);
+    if (!record) throw new Error('intervention disappeared');
+    const recommended = await saveRecommendation(db, record, {
+      kind: 'recommendation',
+      recommendation_version: INTERVENTION_CONTRACT_VERSION,
+      method_id: 'worked_example',
+      method_definition_version: PEDAGOGY_METHOD_DEFINITION_VERSION,
+      rationale_md: '先用完整示范显式区分内外层。',
+      safety_constraints: ['不得把一次表现写成能力定论'],
+      candidate_ids: ['worked_example'],
+      excluded: [],
+      model_run_id: 'activation_job_race_recommendation_run',
+    });
+    const packageValue = InterventionPackage.parse({
+      ...authorOutput(1),
+      intervention_id: recommended.id,
+      intervention_version: recommended.version,
+      package_version: INTERVENTION_CONTRACT_VERSION,
+      method_id: 'worked_example',
+      method_definition_version: PEDAGOGY_METHOD_DEFINITION_VERSION,
+      author_task_run_id: 'activation_job_race_author_run',
+    });
+
+    let activation: ReturnType<typeof activateIntervention> | undefined;
+    await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
+      );
+      activation = activateIntervention(db, {
+        interventionId: recommended.id,
+        version: recommended.version,
+        preparationJobId: oldJobId,
+        package: packageValue,
+      });
+      const state = await Promise.race([
+        activation.then(() => 'settled' as const),
+        new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50)),
+      ]);
+      expect(state).toBe('blocked');
+      await tx
+        .update(intervention)
+        .set({ preparation_job_id: 'replacement-during-activation' })
+        .where(eq(intervention.id, recommended.id));
+    });
+    if (!activation) throw new Error('activation was not started');
+    const result = await activation;
+
+    expect(result).toMatchObject({
+      status: 'preparing',
+      preparation_job_id: 'replacement-during-activation',
+      package: null,
+      activated_at: null,
+    });
+    const activated = await db
+      .select({ value: count() })
+      .from(event)
+      .where(eq(event.action, 'experimental:intervention_activated'));
+    expect(activated[0]?.value).toBe(0);
+  });
+
   it('recreates a missing operational job for a restored preparing aggregate exactly once', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('i');

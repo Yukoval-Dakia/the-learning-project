@@ -55,11 +55,12 @@ describe('intervention backup operational reset', () => {
       snapshot_json: {},
     });
 
+    const bytes = await buildZipBytes();
     const retired: string[][] = [];
     const restored = await restoreFromArchive({
       db,
       r2: memR2(),
-      bytes: await buildZipBytes(),
+      bytes,
       retireInterventionPreparationJobs: async (tx, jobIds) => {
         const [stillCurrent] = await tx
           .select({ preparation_job_id: intervention.preparation_job_id })
@@ -77,5 +78,16 @@ describe('intervention backup operational reset', () => {
       .from(intervention)
       .where(eq(intervention.id, 'restore_intervention'));
     expect(row?.preparation_job_id).toBeNull();
+
+    // Grounding inspect/shadow restores into a newly-created disposable DB,
+    // where archived-runtime pg-boss rows cannot exist. That caller must opt in
+    // explicitly rather than supplying a fake live-database cancellation.
+    const disposable = await restoreFromArchive({
+      db,
+      r2: memR2(),
+      bytes,
+      operationalRestoreTarget: 'fresh_disposable',
+    });
+    expect(disposable.status).toBe(200);
   });
 });

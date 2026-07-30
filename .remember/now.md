@@ -46,12 +46,15 @@
 15. event correction 单一写入口与 intervention activation 共用 source transaction
     advisory lock，关闭 READ COMMITTED 的 read→correction→activate 竞态；recovery
     terminalization 携带扫描到的 expected job id，restore/replay 换 id 后旧 scan 只记 raced。
+16. activation 的最终 UPDATE 同样带 expected job id；restore 在初检后换 id 时旧 handler
+    只能返回 current preparing。grounding harness 对新建 disposable DB 显式声明
+    `fresh_disposable`，不会因不存在可取消的旧 pg-boss 行而拒绝 restore。
 
 ## 验证证据
 
 - 最新 review diff targeted unit：5 files / 101 tests PASS；此前 broader cockpit
   8 files / 153 tests PASS。
-- targeted DB：4 files / 54 tests PASS，新增覆盖付费前/author 后 evidence 失效、
+- targeted DB：4 files / 55 tests PASS，新增覆盖付费前/author 后 evidence 失效、
   correction/activation 串行化、stale terminal scan、restore job 取消与 job-id fencing、
   跨库/同库 recovery、operational retry exhaustion、review run provenance 缺失。
 - YUK-791 migration smoke：1 PASS / 29 skipped。

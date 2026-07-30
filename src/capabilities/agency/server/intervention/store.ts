@@ -445,10 +445,15 @@ export async function activateIntervention(
           eq(intervention.version, current.version),
           eq(intervention.status, 'preparing'),
           eq(intervention.revision, current.revision),
+          eq(intervention.preparation_job_id, input.preparationJobId),
         ),
       )
       .returning();
-    if (!updated) throw new Error('intervention activation lost its serialized state');
+    if (!updated) {
+      const latest = await loadInterventionVersion(tx, current.id, current.version);
+      if (latest && latest.preparation_job_id !== input.preparationJobId) return latest;
+      throw new Error('intervention activation lost its serialized state');
+    }
 
     await writeEvent(tx, {
       id: newId(),
