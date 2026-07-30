@@ -1,7 +1,7 @@
 import { tasks } from '@/ai/registry';
 import {
   type InterventionAuthoringContextT,
-  loadInterventionAuthoringContext,
+  guardInterventionPreparationStage,
 } from '@/capabilities/agency/public';
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { evaluateConjectureProbeResponseStructure } from '@/core/schema/business';
@@ -28,6 +28,7 @@ import { makeRunTaskFn } from '@/server/ai/runner-fn';
 export interface InterventionAuthorDeps {
   runTaskFn?: TaskTextRunFn;
   attempt?: 1 | 2;
+  preparationJobId: string;
 }
 
 const authorOutputSchema = tasks.InterventionPackageAuthorTask.structuredOutputSchema;
@@ -228,10 +229,22 @@ async function runPackageReview(
 export async function authorInterventionPackage(
   db: Db,
   interventionId: string,
-  deps: InterventionAuthorDeps = {},
+  deps: InterventionAuthorDeps,
 ): Promise<InterventionPreparationAttemptT> {
   const attempt = deps.attempt ?? 1;
-  const context = await loadInterventionAuthoringContext(db, interventionId);
+  const authorGuard = await guardInterventionPreparationStage(
+    db,
+    interventionId,
+    deps.preparationJobId,
+  );
+  if (authorGuard.status !== 'ready') {
+    return InterventionPreparationAttempt.parse({
+      kind: 'author_failed',
+      attempt,
+      failure_code: authorGuard.status,
+    });
+  }
+  const context = authorGuard.context;
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, [
     context.snapshot.conjecture.knowledge_id,
   ]);
@@ -247,9 +260,28 @@ export async function authorInterventionPackage(
     });
   }
 
+  const reviewGuard = await guardInterventionPreparationStage(
+    db,
+    interventionId,
+    deps.preparationJobId,
+  );
+  if (reviewGuard.status !== 'ready') {
+    return InterventionPreparationAttempt.parse({
+      kind: 'author_failed',
+      attempt,
+      author_task_run_id: authored.package.author_task_run_id,
+      failure_code: reviewGuard.status,
+    });
+  }
+
   // Same provider/model route as the author task, but a separate task invocation
   // and task_run_id: this is the owner-selected independent same-model self-review.
-  const reviewed = await runPackageReview(runTaskFn, context, authored.package, subjectProfile);
+  const reviewed = await runPackageReview(
+    runTaskFn,
+    reviewGuard.context,
+    authored.package,
+    subjectProfile,
+  );
   if (reviewed.status === 'invalid') {
     return InterventionPreparationAttempt.parse({
       kind: 'author_failed',

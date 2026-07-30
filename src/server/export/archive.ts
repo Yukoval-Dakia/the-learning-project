@@ -329,6 +329,11 @@ export interface RestoreFromArchiveOpts {
   db: Db;
   r2: R2Client;
   bytes: Uint8Array;
+  /**
+   * Provider-owned operational fence for archived preparation jobs. Required
+   * only when the archive contains a non-null preparation_job_id.
+   */
+  retireInterventionPreparationJobs?: (tx: Tx, jobIds: string[]) => Promise<void>;
 }
 
 function restoreValue(table: TableName, column: string, value: unknown) {
@@ -370,6 +375,7 @@ export async function restoreFromArchive({
   db,
   r2,
   bytes,
+  retireInterventionPreparationJobs,
 }: RestoreFromArchiveOpts): Promise<{ status: number; body: RestoreResult }> {
   if (bytes.byteLength === 0) {
     return {
@@ -519,9 +525,18 @@ export async function restoreFromArchive({
       row.ingest_at = null;
     }
   }
+  const archivedInterventionPreparationJobIds = [
+    ...new Set(
+      (data.intervention ?? [])
+        .map((row) => row.preparation_job_id)
+        .filter((value): value is string => typeof value === 'string' && value.length > 0),
+    ),
+  ];
   // YUK-791: pg-boss rows are operational and deliberately absent from the
-  // archive. A same-database restore may still retain an old terminal row with
-  // the archived UUID, so never restore that correlation id as current truth.
+  // archive. A same-database restore may still retain an old live or terminal
+  // row with the archived UUID, so never restore that correlation id as current
+  // truth. Live ids are retired transactionally below before these null ids are
+  // inserted; the handler also checks its own id at every paid stage.
   // Preparing aggregates are picked up by intervention_prepare_recovery with a
   // fresh job UUID; terminal aggregates do not need an operational job id.
   for (const row of data.intervention ?? []) {
@@ -627,6 +642,15 @@ export async function restoreFromArchive({
     // transactional DDL, so the create-extension/create-table for an absent mem0
     // collection roll back cleanly too. All mutations use `tx`, never the outer `db`.
     await db.transaction(async (tx) => {
+      if (archivedInterventionPreparationJobIds.length > 0) {
+        if (!retireInterventionPreparationJobs) {
+          throw new Error(
+            'restore contains intervention preparation job ids but no operational job retirer was provided',
+          );
+        }
+        await retireInterventionPreparationJobs(tx, archivedInterventionPreparationJobIds);
+      }
+
       // YUK-751 (codex P1): wipe the operational subscription tables FIRST. They are excluded from
       // the archive (not restored), but their ON DELETE no action FKs into event/artifact would
       // otherwise block the FK_ORDER parent wipe below. Child→parent order among themselves

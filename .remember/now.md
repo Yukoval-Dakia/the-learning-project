@@ -30,12 +30,14 @@
    原子 `active` 并写 lifecycle event。provider/transport error 抛给 pg-boss retry。
 10. `AUTO_INTERVENTION_EXPANSION_ENABLED` 默认 OFF；当前 aggregate 可 active 但
     `delivery_mode=shadow`，不代表 Today/B3 可以交付。
-11. 任何付费调用前先验证 source direct chain，激活事务再验一次；enqueue 后或生成期间
-    证据被纠正/provenance 漂移会原子写 `source_evidence_inactive`。
-12. backup 保留 aggregate 但不保留 pg-boss 行；restore 会清掉 archived job id，避免同库
-    残留的旧 terminal 行被误判成当前 retry exhaustion。两分钟 recovery 为 missing job
-    换新 UUID 并同事务持久化；它与 subscription replay 共用 source lock，持锁后再查
-    liveness，避免并发生成两个付费 wave。当前 job 耗尽 retry 才转为可审计失败。
+11. recommendation、author、review 每次付费调用前分别验证 source direct chain 与当前
+    preparation job id，激活事务再验一次；证据在任一生成阶段被纠正/provenance 漂移时
+    立即停止后续付费并原子写 `source_evidence_inactive`。
+12. backup 保留 aggregate 但不保留 pg-boss 行；restore 在同一事务先取消 archived
+    created/retry/active job，再清空 job id。旧 active handler 即使已经领走，也因每阶段
+    job-id fence 不能继续付费或写回。两分钟 recovery 为 missing job 换新 UUID 并同事务
+    持久化；它与 subscription replay 共用 source lock，持锁后再查 liveness，避免并发
+    生成两个付费 wave。当前 job 耗尽 retry 才转为可审计失败。
 13. recommendation/author/review（含 author 内层 response signature）都使用无 `anyOf`
     的扁平 provider schema，canonical reader 仍严格校验分支；三次生产调用都显式传
     registry-derived `outputFormat`。共享 canonical JSON SHA-256 消除 digest 键序漂移。
@@ -44,9 +46,11 @@
 
 ## 验证证据
 
-- targeted unit：8 files / 153 tests PASS。
-- targeted DB：2 files / 15 tests PASS，新增覆盖付费前/生成期间 evidence 失效、跨库/同库 restore
-  job recovery、operational retry exhaustion、review run provenance 缺失。
+- 最新 review diff targeted unit：5 files / 101 tests PASS；此前 broader cockpit
+  8 files / 153 tests PASS。
+- targeted DB：2 files / 18 tests PASS，新增覆盖付费前/author 后 evidence 失效、
+  restore job 取消与 job-id fencing、跨库/同库 recovery、operational retry exhaustion、
+  review run provenance 缺失。
 - YUK-791 migration smoke：1 PASS / 29 skipped。
 - `pnpm typecheck` PASS。
 - scoped Biome PASS；capability boundary audit 0。

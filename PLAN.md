@@ -24,12 +24,14 @@
     gold/target signature 必须可评分且彼此可区分。独立同模型自审后才激活，最多整包
     重生成一次；仍失败则 `preparation_failed`，不保存部分 package。
   - pg-boss 使用聚合体持久化的 UUID job id；重复投递返回 null 视为已存在，不制造
-    第二个 aggregate。restore 会清掉 archived job id（包括同库仍残留的旧 terminal 行）；
-    缺失的 operational job 最迟两分钟重建。当前 wave 耗尽 durable retry 的终态 job
+    第二个 aggregate。restore 在同一事务先取消 archived created/retry/active job，再清掉
+    job id；缺失 operational job 最迟两分钟重建。旧 active handler 还必须在每个付费阶段
+    匹配当前 job id，不能把 restore 前结果写回。当前 wave 耗尽 durable retry 的终态 job
     转为可审计 `preparation_failed`，不无限付费重排。recovery 与 subscription replay
     共用 source advisory lock，并在持锁后重查 liveness，不能产生两个付费 wave。
-  - 任何付费调用前先验证 source probe/result/proposal/question direct chain；激活事务再验
-    一次。enqueue 后或生成期间 evidence 被纠正/provenance 漂移都原子失败。
+  - recommendation、author、review 每次付费调用前分别验证当前 job id 与 source
+    probe/result/proposal/question direct chain；激活事务再验一次。enqueue 后或任一生成
+    阶段 evidence 被纠正/provenance 漂移都立即停止后续付费并原子失败。
   - recommendation/author/review 的 provider-facing schema（含 author 内层 response
     signature）均为扁平 object、无 `anyOf`；返回后仍由 canonical discriminated reader
     严格校验，三个生产调用都显式传 registry-derived `outputFormat`。package review
@@ -39,7 +41,8 @@
   - `AUTO_INTERVENTION_EXPANSION_ENABLED` 默认 OFF；当前只产生 `delivery_mode=shadow`，
     不等同于交付或扩量。
 - **针对性开发验证已过**
-  - unit：8 files / 153 tests；DB：2 files / 15 targeted tests；migration smoke：1 pass。
+  - 最新 review diff 定向 unit：5 files / 101 tests；DB：2 files / 18 tests；此前 broader
+    unit cockpit 8 files / 153 tests；migration smoke：1 pass。
   - `pnpm typecheck`、Biome scoped check、capability boundary audit（0）通过。
   - schema audit 无 unallowed stub；flag reader/ledger 对齐。全仓 strict flag audit 仍报告
     基线已有的 `NOTES_MASTERY_SUBSCRIPTION_ENABLED` 未登记，本 lane 未改其行为。

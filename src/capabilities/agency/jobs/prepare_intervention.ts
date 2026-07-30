@@ -17,6 +17,7 @@ const PrepareInterventionJobDataSchema = z
 export async function runPrepareInterventionJob(
   db: Db,
   raw: unknown,
+  preparationJobId: string,
 ): Promise<ReturnType<typeof prepareInterventionWave>> {
   const data = PrepareInterventionJobDataSchema.parse(raw);
   return prepareInterventionWave(
@@ -25,6 +26,7 @@ export async function runPrepareInterventionJob(
       interventionId: data.intervention_id,
       version: data.version,
       idempotencyKey: data.idempotency_key,
+      preparationJobId,
     },
     { authorPackageFn: authorInterventionPackage },
   );
@@ -36,7 +38,7 @@ export function buildPrepareInterventionHandler(
   return async (jobs) => {
     const job = jobs[0];
     if (!job) throw new Error('prepare_intervention handler received no job');
-    const result = await runPrepareInterventionJob(db, job.data);
+    const result = await runPrepareInterventionJob(db, job.data, job.id);
     console.log('[prepare_intervention] result', {
       status: result.status,
       intervention_id: result.intervention_id,

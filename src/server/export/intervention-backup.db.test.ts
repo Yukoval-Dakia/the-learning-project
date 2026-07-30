@@ -20,6 +20,7 @@ describe('intervention backup operational reset', () => {
 
   it('clears archived job ids so same-database restore re-enqueues fresh work', async () => {
     const db = testDb();
+    const archivedJobId = '79100000-0000-4000-8000-000000000001';
     await db.insert(event).values([
       {
         id: 'restore_probe_result',
@@ -50,12 +51,26 @@ describe('intervention backup operational reset', () => {
       status: 'preparing',
       delivery_mode: 'shadow',
       idempotency_key: 'restore_intervention_v1',
-      preparation_job_id: 'archived-terminal-job-id',
+      preparation_job_id: archivedJobId,
       snapshot_json: {},
     });
 
-    const restored = await restoreFromArchive({ db, r2: memR2(), bytes: await buildZipBytes() });
+    const retired: string[][] = [];
+    const restored = await restoreFromArchive({
+      db,
+      r2: memR2(),
+      bytes: await buildZipBytes(),
+      retireInterventionPreparationJobs: async (tx, jobIds) => {
+        const [stillCurrent] = await tx
+          .select({ preparation_job_id: intervention.preparation_job_id })
+          .from(intervention)
+          .where(eq(intervention.id, 'restore_intervention'));
+        expect(stillCurrent?.preparation_job_id).toBe(archivedJobId);
+        retired.push(jobIds);
+      },
+    });
     expect(restored.status).toBe(200);
+    expect(retired).toEqual([[archivedJobId]]);
 
     const [row] = await db
       .select({ preparation_job_id: intervention.preparation_job_id })

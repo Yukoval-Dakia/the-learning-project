@@ -234,6 +234,11 @@ function delivery(sourceEventId: string): EventSubscriptionDelivery {
   };
 }
 
+function preparationJobIdOf(record: { preparation_job_id: string | null }): string {
+  if (!record.preparation_job_id) throw new Error('intervention has no preparation job id');
+  return record.preparation_job_id;
+}
+
 function authorOutput(attempt: number) {
   const probeSpec = (
     prompt_md: string,
@@ -393,6 +398,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
         interventionId: opened.id,
         version: 1,
         idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
       },
       { runTaskFn: fn, authorPackageFn: authorInterventionPackage },
     );
@@ -433,6 +439,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
         interventionId: active.id,
         version: 1,
         idempotencyKey: active.idempotency_key,
+        preparationJobId: preparationJobIdOf(active),
       },
       {
         runTaskFn: async () => {
@@ -487,6 +494,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
         interventionId: opened.id,
         version: opened.version,
         idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
       },
       { runTaskFn: failingRun, authorPackageFn: authorInterventionPackage },
     );
@@ -536,6 +544,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
         interventionId: opened.id,
         version: opened.version,
         idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
       },
       { runTaskFn: missingReviewRun, authorPackageFn: authorInterventionPackage },
     );
@@ -604,6 +613,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
         interventionId: opened.id,
         version: opened.version,
         idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
       },
       {
         runTaskFn: async () => {
@@ -713,6 +723,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
         interventionId: opened.id,
         version: opened.version,
         idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
       },
       {
         runTaskFn: async () => {
@@ -737,6 +748,150 @@ describe('YUK-791 intervention preparation closed loop', () => {
     });
   });
 
+  it('skips a restored/superseded pg-boss job before any paid model call', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('n');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const [opened] = await db.select().from(intervention);
+    const archivedJobId = preparationJobIdOf(opened);
+    await db
+      .update(intervention)
+      .set({ preparation_job_id: 'replacement-job-after-restore' })
+      .where(eq(intervention.id, opened.id));
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: archivedJobId,
+      },
+      {
+        runTaskFn: async () => {
+          throw new Error('superseded job must not call the model');
+        },
+        authorPackageFn: async () => {
+          throw new Error('superseded job must not call QuestionAuthor');
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'skipped',
+      terminal_status: 'preparation_job_superseded',
+    });
+    const [current] = await db.select().from(intervention);
+    expect(current).toMatchObject({
+      status: 'preparing',
+      preparation_job_id: 'replacement-job-after-restore',
+      recommendation_json: null,
+      preparation_attempts_json: [],
+    });
+  });
+
+  it('does not persist recommendation output when restore supersedes an active job mid-call', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('o');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const [opened] = await db.select().from(intervention);
+    const archivedJobId = preparationJobIdOf(opened);
+    const { fn, calls } = successfulRunTask();
+    const supersedingRun: TaskTextRunFn = async (kind, input, context) => {
+      const output = await fn(kind, input, context);
+      if (kind === 'InterventionRecommendationTask') {
+        await db
+          .update(intervention)
+          .set({ preparation_job_id: 'replacement-job-during-recommendation' })
+          .where(eq(intervention.id, opened.id));
+      }
+      return output;
+    };
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: archivedJobId,
+      },
+      { runTaskFn: supersedingRun, authorPackageFn: authorInterventionPackage },
+    );
+
+    expect(result).toMatchObject({
+      status: 'skipped',
+      terminal_status: 'preparation_job_superseded',
+    });
+    expect(calls).toEqual(['InterventionRecommendationTask']);
+    const [current] = await db.select().from(intervention);
+    expect(current).toMatchObject({
+      status: 'preparing',
+      preparation_job_id: 'replacement-job-during-recommendation',
+      recommendation_json: null,
+      preparation_attempts_json: [],
+    });
+  });
+
+  it('revalidates corrected evidence after author and does not start paid review', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('p');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn, calls } = successfulRunTask();
+    const correctingRun: TaskTextRunFn = async (kind, input, context) => {
+      const output = await fn(kind, input, context);
+      if (kind === 'InterventionPackageAuthorTask') {
+        await writeEvent(db, {
+          id: 'correct_probe_result_p_after_author',
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'correct',
+          subject_kind: 'event',
+          subject_id: seeded.probeResultId,
+          outcome: 'success',
+          payload: {
+            correction_kind: 'mark_wrong',
+            reason_md: 'author 完成后，owner 判定原目标错误匹配无效。',
+            affected_refs: [{ kind: 'question', id: 'probe_p' }],
+          },
+          created_at: new Date(seeded.now.getTime() + 4_000),
+        });
+      }
+      return output;
+    };
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: correctingRun, authorPackageFn: authorInterventionPackage },
+    );
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      reason_code: 'source_evidence_inactive',
+    });
+    expect(calls).toEqual(['InterventionRecommendationTask', 'InterventionPackageAuthorTask']);
+    const [failed] = await db.select().from(intervention);
+    expect(failed).toMatchObject({
+      status: 'preparation_failed',
+      package_json: null,
+      preparation_attempts_json: [],
+      failure_code: 'source_evidence_inactive',
+    });
+  });
+
   it('rejects colliding gold and target-error response signatures even when self-review passes', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('f');
@@ -758,6 +913,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
         interventionId: opened.id,
         version: opened.version,
         idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
       },
       { runTaskFn: fn, authorPackageFn: authorInterventionPackage },
     );
@@ -788,6 +944,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
           interventionId: opened.id,
           version: opened.version,
           idempotencyKey: opened.idempotency_key,
+          preparationJobId: preparationJobIdOf(opened),
         },
         {
           runTaskFn: async () => {
@@ -831,6 +988,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
         interventionId: opened.id,
         version: opened.version,
         idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
       },
       {
         runTaskFn: fn,

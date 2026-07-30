@@ -22,7 +22,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { intervention } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 type InterventionRow = typeof intervention.$inferSelect;
@@ -200,6 +200,9 @@ export async function saveRecommendation(
         eq(intervention.version, record.version),
         eq(intervention.status, 'preparing'),
         eq(intervention.revision, record.revision),
+        record.preparation_job_id === null
+          ? isNull(intervention.preparation_job_id)
+          : eq(intervention.preparation_job_id, record.preparation_job_id),
         sql`${intervention.recommendation_json} IS NULL`,
       ),
     )
@@ -237,6 +240,9 @@ export async function appendPreparationAttempt(
         eq(intervention.version, record.version),
         eq(intervention.status, 'preparing'),
         eq(intervention.revision, record.revision),
+        record.preparation_job_id === null
+          ? isNull(intervention.preparation_job_id)
+          : eq(intervention.preparation_job_id, record.preparation_job_id),
       ),
     )
     .returning();
@@ -265,11 +271,64 @@ export async function loadInterventionAuthoringContext(
   };
 }
 
+export type InterventionPreparationStageGuard =
+  | {
+      status: 'ready';
+      context: InterventionAuthoringContextT;
+    }
+  | {
+      status:
+        | 'intervention_not_found'
+        | 'intervention_not_preparing'
+        | 'preparation_job_superseded'
+        | 'recommendation_unavailable'
+        | 'source_evidence_inactive';
+    };
+
+/**
+ * Read-only paid-stage fence used by Practice through Agency's public port.
+ *
+ * The expected pg-boss id is execution metadata, not authoring context. Keeping
+ * it out of `InterventionAuthoringContext` prevents it from leaking into model
+ * prompts while still making every paid stage reject a restored/superseded job.
+ */
+export async function guardInterventionPreparationStage(
+  db: DbLike,
+  interventionId: string,
+  expectedPreparationJobId: string,
+): Promise<InterventionPreparationStageGuard> {
+  const current = await loadLatestInterventionVersion(db, interventionId);
+  if (!current) return { status: 'intervention_not_found' };
+  if (current.status !== 'preparing') return { status: 'intervention_not_preparing' };
+  if (current.preparation_job_id !== expectedPreparationJobId) {
+    return { status: 'preparation_job_superseded' };
+  }
+  if (!current.recommendation || current.recommendation.kind !== 'recommendation') {
+    return { status: 'recommendation_unavailable' };
+  }
+  const effective = await getEffectiveProbeResultStatuses(
+    db,
+    [current.source_probe_result_event_id],
+    { validateDirectChain: true },
+  );
+  if (effective.get(current.source_probe_result_event_id) !== 'active') {
+    return { status: 'source_evidence_inactive' };
+  }
+  return {
+    status: 'ready',
+    context: {
+      snapshot: current.snapshot,
+      recommendation: current.recommendation,
+    },
+  };
+}
+
 export async function activateIntervention(
   db: Db,
   input: {
     interventionId: string;
     version: number;
+    preparationJobId: string;
     package: InterventionPackageT;
     now?: Date;
   },
@@ -291,6 +350,7 @@ export async function activateIntervention(
         `intervention ${input.interventionId}@${input.version} cannot activate from ${current.status}`,
       );
     }
+    if (current.preparation_job_id !== input.preparationJobId) return current;
     if (!current.recommendation || current.recommendation.kind !== 'recommendation') {
       throw new Error('intervention cannot activate without a concrete recommendation');
     }
@@ -317,6 +377,7 @@ export async function activateIntervention(
             eq(intervention.version, current.version),
             eq(intervention.status, 'preparing'),
             eq(intervention.revision, current.revision),
+            eq(intervention.preparation_job_id, input.preparationJobId),
           ),
         )
         .returning();
@@ -404,6 +465,7 @@ export async function failInterventionPreparation(
   input: {
     interventionId: string;
     version: number;
+    expectedPreparationJobId?: string;
     failureCode: string;
     now?: Date;
   },
@@ -426,6 +488,12 @@ export async function failInterventionPreparation(
         `intervention ${input.interventionId}@${input.version} cannot fail from ${current.status}`,
       );
     }
+    if (
+      input.expectedPreparationJobId !== undefined &&
+      current.preparation_job_id !== input.expectedPreparationJobId
+    ) {
+      return current;
+    }
 
     const [updated] = await tx
       .update(intervention)
@@ -443,6 +511,9 @@ export async function failInterventionPreparation(
           eq(intervention.version, current.version),
           eq(intervention.status, 'preparing'),
           eq(intervention.revision, current.revision),
+          ...(input.expectedPreparationJobId !== undefined
+            ? [eq(intervention.preparation_job_id, input.expectedPreparationJobId)]
+            : []),
         ),
       )
       .returning();
