@@ -86,7 +86,10 @@ export async function GET(req: Request, params: Record<string, string>): Promise
     }
     if (detail.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
       const [diagnosticRow] = await db
-        .select({ metadata: question.metadata })
+        .select({
+          draft_status: question.draft_status,
+          metadata: question.metadata,
+        })
         .from(question)
         .where(eq(question.id, detail.id))
         .limit(1);
@@ -97,7 +100,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
       // Only the current active one-shot may be read, and only after its immutable
       // due time. Derived future IDs therefore reveal neither prompt nor timing.
       if (
-        detail.draft_status === 'draft' ||
+        diagnosticRow?.draft_status === 'draft' ||
         !schedule.success ||
         Date.now() < new Date(schedule.data.due_at).getTime()
       ) {
