@@ -7,6 +7,7 @@
 // at the judgeSubmit seam (no LLM call); the REAL persistSubmit runs the backfill tx.
 
 import { newId } from '@/core/ids';
+import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
 import {
   INTERVENTION_CONTRACT_VERSION,
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
@@ -52,7 +53,7 @@ const JUDGED_GOOD = {
   judgeResult: CORRECT_VERDICT,
   judgeRoute: 'semantic',
   judgeTelemetry: null,
-  executionProvenance: null,
+  executionProvenance: null as JudgeExecutionProvenanceT | null,
   suggestedRating: 'good' as const,
   finalRating: 'good' as const,
   adviceCauseCategory: null,
