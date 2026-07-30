@@ -145,6 +145,7 @@ describe('POST /api/review/submit', () => {
     const dueAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     await seedQuestion('q_intervention_future', {
       source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      judge_kind_override: 'multimodal_direct',
       knowledge_ids: [],
       metadata: {
         intervention_diagnostic: {
