@@ -188,8 +188,19 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
 
   const all = [...solo, ...papers, ...tail, ...frontierTail];
   const budgeted = fitStreamToTimeBudget(all, inputs.dailyBudgetMinutes);
-  const overItemMax = budgeted.kept.length > max;
-  const kept = overItemMax ? budgeted.kept.slice(0, max) : budgeted.kept;
+  const protectedIndexes = budgeted.kept.flatMap((item, index) =>
+    item.source === 'intervention' ? [index] : [],
+  );
+  const optionalSlots = Math.max(0, max - protectedIndexes.length);
+  const optionalIndexes = budgeted.kept.flatMap((item, index) =>
+    item.source !== 'intervention' ? [index] : [],
+  );
+  const retainedIndexes = new Set([
+    ...protectedIndexes,
+    ...optionalIndexes.slice(0, optionalSlots),
+  ]);
+  const kept = budgeted.kept.filter((_, index) => retainedIndexes.has(index));
+  const overItemMax = kept.length < budgeted.kept.length;
 
   const plan: StreamPlan = {
     date: inputs.date,

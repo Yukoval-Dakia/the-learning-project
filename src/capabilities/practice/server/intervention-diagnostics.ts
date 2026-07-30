@@ -12,12 +12,14 @@ import {
   type InterventionSnapshotT,
 } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
-import { event, practice_stream_item, question } from '@/db/schema';
+import { event, job_events, practice_stream_item, question } from '@/db/schema';
 import { getEventById } from '@/kernel/events';
 import { enrollFsrsStateIfAbsent, retireQuestionFsrsState } from '@/server/fsrs/state';
-import { and, desc, eq, inArray, isNull, lte, notExists, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, lte, notExists, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { initialFsrsState } from './fsrs';
 import { JUDGE_PENDING_ATTEMPT_ACTION } from './judge-run-dispatch';
+import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './judge-run-status';
 import { streamLocalDate } from './stream-store';
 
 export const INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS = 10 * 60 * 1000;
@@ -325,9 +327,12 @@ export async function materializeInterventionDiagnostics(
   // A synchronous process can die after the active→draft one-shot claim but
   // before its review transaction commits. Recovery revisits active eligible
   // interventions every two minutes, so reclaim an expired draft that has no
-  // immutable review and no durable pending-attempt evidence. Fresh claims and
-  // accepted async submissions remain fenced.
+  // immutable review and no live durable pending-attempt evidence. A terminal
+  // FAILED attempt is permanent audit evidence, not an eternal claim fence; a
+  // later REQUEUED marker reopens that same run and protects it again.
   const staleClaimBefore = new Date(input.now.getTime() - INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS);
+  const terminalRun = alias(job_events, 'terminal_intervention_diagnostic_run');
+  const reopenedRun = alias(job_events, 'reopened_intervention_diagnostic_run');
   await tx
     .update(question)
     .set({ draft_status: 'active', updated_at: input.now })
@@ -345,7 +350,44 @@ export async function materializeInterventionDiagnostics(
               and(
                 eq(event.subject_kind, 'question'),
                 eq(event.subject_id, question.id),
-                inArray(event.action, ['review', JUDGE_PENDING_ATTEMPT_ACTION]),
+                eq(event.action, 'review'),
+              ),
+            ),
+        ),
+        notExists(
+          tx
+            .select({ id: event.id })
+            .from(event)
+            .where(
+              and(
+                eq(event.subject_kind, 'question'),
+                eq(event.subject_id, question.id),
+                eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION),
+                notExists(
+                  tx
+                    .select({ id: terminalRun.id })
+                    .from(terminalRun)
+                    .where(
+                      and(
+                        eq(terminalRun.business_table, JUDGE_RUN_TABLE),
+                        eq(terminalRun.business_id, sql`${event.payload}->>'run_id'`),
+                        eq(terminalRun.event_type, JUDGE_RUN_EVENTS.FAILED),
+                        notExists(
+                          tx
+                            .select({ id: reopenedRun.id })
+                            .from(reopenedRun)
+                            .where(
+                              and(
+                                eq(reopenedRun.business_table, JUDGE_RUN_TABLE),
+                                eq(reopenedRun.business_id, terminalRun.business_id),
+                                eq(reopenedRun.event_type, JUDGE_RUN_EVENTS.REQUEUED),
+                                gt(reopenedRun.id, terminalRun.id),
+                              ),
+                            ),
+                        ),
+                      ),
+                    ),
+                ),
               ),
             ),
         ),

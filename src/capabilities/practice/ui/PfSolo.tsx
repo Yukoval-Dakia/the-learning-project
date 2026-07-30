@@ -305,6 +305,7 @@ export function PfSolo({
 
   const q = qQ.data ?? null;
   const isInterventionDiagnostic = isInterventionDiagnosticSource(q?.source ?? '');
+  const committedDiagnosticQuestionId = q?.id;
   // YUK-617 W1 — 本题 attempt·review 历史，从题面聚合 data.timeline 直接派生（同一份请求，无二次取）。
   // 取自题面加载那刻 → 恒是本次作答**之前**的历史（不含刚提交的这次，客观题自动 commit 也不竞态），
   // 正合「卡在同一误区」信号意图。反馈卡里 length>0 才渲染。
@@ -336,13 +337,18 @@ export function PfSolo({
   // returns to the settled feedback card rather than a dead loading state.
   useEffect(() => {
     const committed = q?.committed_attempt;
-    if (!isInterventionDiagnostic || !committed) return;
+    if (!committedDiagnosticQuestionId || !isInterventionDiagnostic || !committed) {
+      setCommittedPreview(null);
+      setAutoCommitted(false);
+      setAutoCommitJudgeEventId(null);
+      return;
+    }
     const feedback = feedbackFromCommittedDiagnosticAttempt(committed);
     setCommittedPreview(feedback);
     setRating(feedback.suggested_rating);
     setAutoCommitted(true);
     setAutoCommitJudgeEventId(committed.judge.judge_event_id);
-  }, [isInterventionDiagnostic, q?.committed_attempt]);
+  }, [committedDiagnosticQuestionId, isInterventionDiagnostic, q?.committed_attempt]);
 
   // commit 接受显式 rating + autoRate：客观题自动流不依赖手动 `rating` state（直接用 judge 的
   // suggested_rating + auto_rate:true）；手动流（开放题/申诉）走 body.rating + auto_rate 缺省 false。

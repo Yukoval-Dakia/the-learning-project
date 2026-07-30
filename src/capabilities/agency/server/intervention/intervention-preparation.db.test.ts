@@ -3,6 +3,7 @@ import {
   authorInterventionPackage,
   handleReviewDue,
 } from '@/capabilities/practice/public';
+import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '@/capabilities/practice/server/judge-run-status';
 import { PEDAGOGY_METHOD_LIBRARY } from '@/core/pedagogy';
 import { PROBE_QUESTION_KIND, PROBE_QUESTION_SOURCE } from '@/core/schema/conjecture';
 import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture-probe-response';
@@ -15,6 +16,7 @@ import {
 import {
   event,
   intervention,
+  job_events,
   knowledge,
   mastery_state,
   material_fsrs_state,
@@ -767,7 +769,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       subject_kind: 'question',
       subject_id: delayed.question_id,
       outcome: null,
-      payload: {},
+      payload: { run_id: 'pending_durable_diagnostic_run' },
       created_at: staleClaimedAt,
     });
     await recoverEligibleInterventionDiagnostics(db, activationNow);
@@ -776,6 +778,37 @@ describe('YUK-791 intervention preparation closed loop', () => {
       .from(question)
       .where(eq(question.id, delayed.question_id));
     expect(durableClaimStillFenced?.draft_status).toBe('draft');
+    await db.insert(job_events).values({
+      business_table: JUDGE_RUN_TABLE,
+      business_id: 'pending_durable_diagnostic_run',
+      event_type: JUDGE_RUN_EVENTS.FAILED,
+      payload: { reason: 'retries_exhausted' },
+    });
+    await recoverEligibleInterventionDiagnostics(db, activationNow);
+    const [terminalAttemptReleased] = await db
+      .select({ draft_status: question.draft_status })
+      .from(question)
+      .where(eq(question.id, delayed.question_id));
+    expect(terminalAttemptReleased?.draft_status).toBe('active');
+
+    await db
+      .update(question)
+      .set({ draft_status: 'draft', updated_at: staleClaimedAt })
+      .where(eq(question.id, delayed.question_id));
+    await db.insert(job_events).values({
+      business_table: JUDGE_RUN_TABLE,
+      business_id: 'pending_durable_diagnostic_run',
+      event_type: JUDGE_RUN_EVENTS.REQUEUED,
+      payload: { delivery_id: 'pending_durable_diagnostic_recovery' },
+    });
+    await recoverEligibleInterventionDiagnostics(db, activationNow);
+    const [reopenedAttemptStillFenced] = await db
+      .select({ draft_status: question.draft_status })
+      .from(question)
+      .where(eq(question.id, delayed.question_id));
+    expect(reopenedAttemptStillFenced?.draft_status).toBe('draft');
+
+    await db.delete(job_events).where(eq(job_events.business_id, 'pending_durable_diagnostic_run'));
     await db.delete(event).where(eq(event.id, 'pending_durable_diagnostic_guard'));
     await db
       .update(question)

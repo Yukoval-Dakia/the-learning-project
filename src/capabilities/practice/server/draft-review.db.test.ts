@@ -123,6 +123,20 @@ describe('listDraftReview', () => {
     expect(page.rows.map((r) => r.id)).toEqual([live]);
   });
 
+  it('excludes retired intervention diagnostics from list and answer-bearing detail', async () => {
+    const diagnostic = await seedQuestion({
+      source: 'intervention_diagnostic',
+      draft_status: 'draft',
+      reference_md: 'gold answer that must stay sealed',
+    });
+
+    await expect(listDraftReview(testDb(), {})).resolves.toMatchObject({
+      total: 0,
+      rows: [],
+    });
+    await expect(getDraftReviewDetail(testDb(), diagnostic)).resolves.toBeNull();
+  });
+
   it('derives verify status = unverified when no verify event exists', async () => {
     const q = await seedQuestion({ draft_status: 'draft' });
     const page = await listDraftReview(testDb(), {});
