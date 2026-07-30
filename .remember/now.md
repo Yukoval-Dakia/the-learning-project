@@ -2,77 +2,47 @@
 
 ## Active line
 
-- 唯一 active lane：**YUK-791 干预准备通电**。
-- branch：`codex/yuk-791-intervention-prepare`。
-- 隔离 worktree：`the-learning-project-worktrees/yuk-791-intervention-prepare`。
-- 基线：`origin/main@abc62490`，已包含 YUK-827 / PR #1118。
-- owner 主工作树有既存未提交改动；本轮没有修改主工作树。
-- 完整 gate 只监听 GitHub Actions `CI Gate`，不在本地重跑。
+- 唯一 active lane：**YUK-828 自动 review advisory 化与轮次预算**。
+- branch：`codex/yuk-828-review-budget`。
+- worktree：`.codex/worktrees/9d89/the-learning-project`。
+- 基线：`origin/main@a36e122d`，已包含 YUK-791 / PR #1119。
+- Linear YUK-828：In Progress。
 
 ## 本轮实现
 
-1. 新增 Agency-owned、versioned `intervention` aggregate，冻结 snapshot、推荐、整包、
-   两轮审计、terminal failure 与 delivery mode；进入 backup/restore 并有 migration smoke。
-2. durable probe-result subscriber 只接受 `evidence_for + outcome=0` 且 response judgement
-   明确为 gradable target-error match；再验证 proposal/question/result direct chain 仍有效。
-3. 被纠正结果、legacy 无 judgement、普通错误或 question/provenance 漂移均不 enqueue。
-4. subscriber 与 pg-boss enqueue 共事务，使用确定性 aggregate identity + 持久 UUID job id；
-   重复 id 返回 null 视为已有 job，重复 delivery 不产生第二个 aggregate。
-5. Agency 用冻结 learner/KC/conjecture snapshot 调用确定性 8 法 shortlist；owner 禁用后无
-   安全方法时不调用模型，直接 `recommendation:no_safe_method` fail closed。
-6. recommendation 在同一 `prepare_intervention` wave 交给 Practice QuestionAuthor；后者公共
-   输入只有 `intervention_id`，经 Agency public reader 取得权威 snapshot/recommendation。
-7. 每个 package 原子包含材料、immediate/delayed/transfer；三题复用 response-aware Probe
-   V2，支持多种响应形式且必须有可区分的 gold/target-error signature。
-8. author 与 reviewer 是同模型路由的两次独立调用；确定性 validator 再检查 lineage、
-   method、claim、target error、重复题面、答案泄露和 response signature collision。
-9. 最多一次整包重生成；两次仍失败写 `preparation_failed`，package 保持 null；通过才
-   原子 `active` 并写 lifecycle event。provider/transport error 抛给 pg-boss retry。
-10. `AUTO_INTERVENTION_EXPANSION_ENABLED` 默认 OFF；当前 aggregate 可 active 但
-    `delivery_mode=shadow`，不代表 Today/B3 可以交付。
-11. recommendation、author、review 每次付费调用前分别验证 source direct chain 与当前
-    preparation job id，激活事务再验一次；证据在任一生成阶段被纠正/provenance 漂移时
-    立即停止后续付费并原子写 `source_evidence_inactive`。
-12. backup 保留 aggregate 但不保留 pg-boss 行；restore 在同一事务先取消 archived
-    created/retry/active job，再清空 job id。旧 active handler 即使已经领走，也因每阶段
-    job-id fence 不能继续付费或写回。两分钟 recovery 为 missing job 换新 UUID 并同事务
-    持久化；它与 subscription replay 共用 source lock，持锁后再查 liveness，避免并发
-    生成两个付费 wave。当前 job 耗尽 retry 才转为可审计失败。
-13. recommendation/author/review（含 author 内层 response signature）都使用无 `anyOf`
-    的扁平 provider schema，canonical reader 仍严格校验分支；三次生产调用都显式传
-    registry-derived `outputFormat`。共享 canonical JSON SHA-256 消除 digest 键序漂移。
-14. intervention 的两个 event provenance 建硬 FK，active CHECK 关闭 SQL NULL 三值漏洞；
-    review 缺 run id 作为整包 attempt failure 重试，idempotent terminal replay 记 idle。
-15. event correction 单一写入口与 intervention activation 共用 source transaction
-    advisory lock，关闭 READ COMMITTED 的 read→correction→activate 竞态；recovery
-    terminalization 携带扫描到的 expected job id，restore/replay 换 id 后旧 scan 只记 raced。
-16. activation 的最终 UPDATE 同样带 expected job id；restore 在初检后换 id 时旧 handler
-    只能返回 current preparing。grounding harness 对新建 disposable DB 显式声明
-    `fresh_disposable`，不会因不存在可取消的旧 pg-boss 行而拒绝 restore。
+1. `.github/workflows/ocr-codex-review.yml` 移除 `synchronize` 自动触发，仅保留 PR 首次
+   可审事件与 merge learnings 收集。
+2. OCR 增加 `workflow_dispatch.pr_number` 手动验证入口；统一通过 GitHub API 获取当前
+   base/head，并拒绝 draft、fork、Dependabot。
+3. `.github/workflows/pr-agent-glm.yml` 同样移除 `synchronize`，两个 review job 名称明确
+   标注 advisory。
+4. 首轮独立 review 发现 reopened/ready lifecycle 可重复初审；现已移除 reopened，并为
+   OCR review 与 PR-Agent guide 增加已完成初审的跨事件幂等检查。只有显式 OCR manual
+   dispatch 可绕过初审锁。
+5. 唯一验证轮发现 OCR summary-only 路径只写 issue comment；OCR 幂等检查现同时识别
+   tagged pull-request review 与 tagged issue summary。按预算不再启动第三轮 review。
+6. 最终 push 后的迟到 Major 指出 manual dispatch 仍可无限触发；入口现要求初审已完成、
+   `kind=verification` 尚不存在。后续复审必须显式 `owner_override=true`，并在 review/
+   summary tag 中留下 owner_override 类型。
+7. 后续 P1 指出 OCR 正文可包含 `kind=verification` 字样；现只从 HTML marker 解析类型，
+   并要求 PR 仍 open、override actor 等于 repository owner。此后不再启动 review 修复轮。
+8. `AGENTS.md`、`CLAUDE.md` 与两份 PR skill 统一 review budget：一轮初审 + 最多一轮
+   P0/P1 修复验证；P2/minor/nit 默认不阻塞、不触发新 push。
+9. exact-head `CI Gate` 明确为自动硬 gate；无未裁决 P0/P1 时不等待 advisory review
+   pending/failure/cancel/timeout。
 
 ## 验证证据
 
-- 最新 review diff targeted unit：5 files / 101 tests PASS；此前 broader cockpit
-  8 files / 153 tests PASS。
-- targeted DB：4 files / 55 tests PASS，新增覆盖付费前/author 后 evidence 失效、
-  correction/activation 串行化、stale terminal scan、restore job 取消与 job-id fencing、
-  跨库/同库 recovery、operational retry exhaustion、review run provenance 缺失。
-- YUK-791 migration smoke：1 PASS / 29 skipped。
-- `pnpm typecheck` PASS。
-- scoped Biome PASS；capability boundary audit 0。
-- schema audit：unallowed stub 0；`intervention.outcome` 明确 allowlist 到 YUK-792。
-- flag audit：本 lane 的 reader marker/ledger 无 drift；全仓 strict 模式仍有基线已有的
-  `NOTES_MASTERY_SUBSCRIPTION_ENABLED` 未登记警告，不属于本 lane 行为改动。
-
-## 边界
-
-- YUK-791 是 shadow preparation backbone，不关闭 YUK-814 发布/扩量 gate。
-- YUK-814 Gate A/B/C 仍开放；auto-intervention expansion 保持 OFF。
-- YUK-822 是 P1，owner 明确只保留解释和计划，不写实现。
-- YUK-792 scheduler/settlement、Today/Brief UI、Copilot、Growth projection 不在本 PR。
+- Ruby YAML parser：OCR / PR-Agent workflow 均 PASS。
+- trigger/advisory/manual-input 专项静态断言 PASS。
+- lifecycle 初审幂等专项断言 PASS。
+- `git diff --check` PASS。
+- docs invariant：1 file / 6 tests PASS。
+- Biome 对本次 Markdown/YAML 处理 0 files，因此不计作有效验证。
 
 ## 下一步
 
-1. 将 PR #1119 的集中 review hardening commit + push。
-2. 仅监听新 head 的 GitHub Actions `CI Gate`，回复/resolve review threads 并复查新增反馈。
-3. CI/review 全绿后 squash merge并对齐 Linear YUK-791。
+1. commit/push 并创建 YUK-828 ready PR。
+2. 只消费一轮自动初审；P2/minor 回复 rationale 后 resolve，不 push。
+3. 如修复 P0/P1，最多手动 OCR 验证一次；同时等 exact-head `CI Gate`。
+4. gate 通过后 squash merge并把 YUK-828 更新为 Done。

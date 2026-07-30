@@ -3,70 +3,53 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-30
-> **【更新 2026-07-30 · YUK-791 干预准备通电】**
-> YUK-827 / PR #1118 已合并。当前唯一 active lane 是 YUK-791：从真实、仍有效的
-> target-error probe 结果创建 shadow intervention，并在同一 durable wave 完成方法推荐、
-> 整包 QuestionAuthor、独立同模型自审与原子激活。
+> **【更新 2026-07-30 · YUK-828 review budget 止损】**
+> YUK-791 / PR #1119 已合并。当前唯一 active lane 是 YUK-828：自动 review 降为
+> advisory，只在 PR 首次可审时运行；P2/minor 不再驱动 review→push→review 循环。
 
 ## NOW
 
-- **唯一 active lane：YUK-791 干预准备闭环。**
-  - branch：`codex/yuk-791-intervention-prepare`。
-  - worktree：`the-learning-project-worktrees/yuk-791-intervention-prepare`。
-  - Agency 持有 versioned intervention aggregate、不可变 snapshot、状态与所有写入；
-    Practice 的公共 QuestionAuthor 只接受 `intervention_id`，经 Agency public reader 水合。
-  - durable `experimental:probe_result` subscriber 只接受当前仍有效、可追溯到冻结 V2
-    question 的 `evidence_for`，且 response judgement 必须明确命中 target-error signature；
-    legacy、普通错答、被纠正或 provenance 漂移的结果 fail closed。
-  - 8 法 palette 作为确定性 shortlist 真正通电；无安全方法直接 abstain。推荐必须在
-    同一 prepare wave 被消费，不存在 dead recommendation 成功态。
-  - 每包包含 1 份材料及 immediate/delayed/transfer 各 1 道 response-aware diagnostic；
-    gold/target signature 必须可评分且彼此可区分。独立同模型自审后才激活，最多整包
-    重生成一次；仍失败则 `preparation_failed`，不保存部分 package。
-  - pg-boss 使用聚合体持久化的 UUID job id；重复投递返回 null 视为已存在，不制造
-    第二个 aggregate。restore 在同一事务先取消 archived created/retry/active job，再清掉
-    job id；缺失 operational job 最迟两分钟重建。旧 active handler 还必须在每个付费阶段
-    及最终 activation UPDATE 匹配当前 job id，不能把 restore 前结果写回。fresh disposable
-    grounding DB 由调用方显式声明，不要求取消不存在的旧 runtime job。当前 wave 耗尽
-    durable retry 的终态 job
-    转为可审计 `preparation_failed`，不无限付费重排。recovery 与 subscription replay
-    共用 source advisory lock，并在持锁后重查 liveness，不能产生两个付费 wave。
-  - recommendation、author、review 每次付费调用前分别验证当前 job id 与 source
-    probe/result/proposal/question direct chain；激活事务再验一次。enqueue 后或任一生成
-    阶段 evidence 被纠正/provenance 漂移都立即停止后续付费并原子失败。
-  - 所有 event correction 写入与 activation 共用 source transaction advisory lock；
-    READ COMMITTED 下不存在“activation 已读、correction 后提交、activation 仍成功”的窗口。
-    recovery 将扫描到的 terminal job id 作为 terminalization fence，restore/replay 换 id
-    后旧 scan 只能记 raced，不能误杀新 job。
-  - recommendation/author/review 的 provider-facing schema（含 author 内层 response
-    signature）均为扁平 object、无 `anyOf`；返回后仍由 canonical discriminated reader
-    严格校验，三个生产调用都显式传 registry-derived `outputFormat`。package review
-    digest 使用共享 canonical JSON SHA-256。
-  - intervention source/conjecture 使用真实 event FK；active shape 显式拒绝 NULL
-    recommendation/package。缺失 review run provenance 进入整包重试，不抛成无结构 job crash。
-  - `AUTO_INTERVENTION_EXPANSION_ENABLED` 默认 OFF；当前只产生 `delivery_mode=shadow`，
-    不等同于交付或扩量。
-- **针对性开发验证已过**
-  - 最新 review diff 定向 unit：5 files / 101 tests；DB：4 files / 55 tests；此前
-    broader unit cockpit 8 files / 153 tests；migration smoke：1 pass。
-  - `pnpm typecheck`、Biome scoped check、capability boundary audit（0）通过。
-  - schema audit 无 unallowed stub；flag reader/ledger 对齐。全仓 strict flag audit 仍报告
-    基线已有的 `NOTES_MASTERY_SUBSCRIPTION_ENABLED` 未登记，本 lane 未改其行为。
-  - 完整 gate 不在本地跑；提交后只监听 exact-head GitHub Actions `CI Gate`。
+- **唯一 active lane：YUK-828 自动 review advisory 化。**
+  - branch：`codex/yuk-828-review-budget`。
+  - worktree：`.codex/worktrees/9d89/the-learning-project`。
+  - OCR 与 PR-Agent 不再监听 `pull_request.synchronize`；只在 opened /
+    ready_for_review 初审。OCR 保留带 `pr_number` 的 `workflow_dispatch` 手动验证入口。
+  - 首轮 review 发现 lifecycle 事件仍可重复初审；现已移除 reopened，并在 OCR review
+    与 PR-Agent guide 写入后做跨事件幂等检查。只有显式 OCR manual dispatch 绕过初审锁。
+  - 唯一验证轮发现 OCR summary-only 路径不创建 pull-request review；幂等检查现同时
+    识别 tagged review 与 tagged issue summary，关闭该漏口。按预算不再启动第三轮 review。
+  - 最终 push 后的迟到 Major 指出 manual dispatch 可无限触发；入口现要求已有初审且尚无
+    `kind=verification`，后续复审只有显式 `owner_override=true` 才允许，并在产物 tag 留痕。
+  - 后续 P1 指出正文 substring 可能伪造 verification；现只解析 OCR HTML marker，并要求
+    PR 仍 open、`owner_override` actor 等于 repository owner。此后不再启动 review 修复轮。
+  - 两个 review job 名称显式标注 advisory；OCR 手动入口统一从 GitHub API 解析并验证
+    当前 PR/base/head，拒绝 draft、fork 与 Dependabot。
+  - agent/Claude PR policy 统一为最多一轮初审 + 一轮 P0/P1 修复后的验证审；push 后新 bot
+    review 不重置预算，除非 owner 明确要求，不开第三轮。
+  - 只修 security / data loss / correctness / release blocker 等已验证 P0/P1；P2/minor/nit
+    默认回复 rationale 后 resolve，只有实质且可执行的去重 follow-up 才进 Linear。
+  - exact-head `CI Gate` 是自动硬 gate；没有未裁决 P0/P1 时，不等待或重跑 advisory review
+    的 pending / failed / cancelled / timeout。
+- **本地静态验证已过**
+  - Ruby YAML parser：2 个 workflow PASS。
+  - workflow trigger/advisory/manual-input 专项断言 PASS；`git diff --check` PASS。
+  - lifecycle / summary-only / single-verification budget 修正后的 workflow 专项断言 PASS。
+  - `tests/integration/audit-docs-invariant.test.ts`：6/6 PASS。
+  - Biome 不处理本次 Markdown/YAML 文件；其 0-file 输出不计作有效验证。
 
 ## NEXT
 
-1. 提交并 push PR #1119 的集中 review-hardening diff。
-2. 只监听新 head 的 GitHub Actions `CI Gate`；回复/resolve 已验证 review threads，并复查新增反馈。
-3. exact-head CI 与独立 review 全绿后 squash merge，Linear YUK-791 对齐 Done。
-4. 按 mesh 依赖进入下一 lane；不提前做 YUK-792 scheduler/settlement 或产品 UI。
+1. commit/push YUK-828，创建 ready PR。
+2. 只消费一轮自动初审；修复已验证 P0/P1，P2/minor 回复理由后 resolve，不 push。
+3. 如确有 P0/P1 修复，最多手动触发一次 OCR 验证；同时监听 exact-head `CI Gate`。
+4. CI 绿色且无未裁决 P0/P1 后 squash merge，Linear YUK-828 对齐 Done。
 
 ## PARKED
 
 - **YUK-822：P1 学科确定性验证器（owner 明确本轮不实现）**
   - 只保留详细通俗解释与计划：
     `docs/planning/2026-07-29-yuk-821-conjecture-probe-quality.md`。
-- **YUK-792：延迟/迁移 scheduler 与 intervention outcome settlement**；不混入 YUK-791。
+- **YUK-792：延迟/迁移 scheduler 与 intervention outcome settlement**；不混入 YUK-828。
 - **YUK-815 / YUK-816：Copilot/Brief 协作与 Growth intervention projection**；等待
   准备链及验证结算链先成为可读真相源。
 - **YUK-826 第二波 DB 测试事务迁移**：Backlog；收益需多次 GitHub CI 数据验证。
@@ -76,7 +59,7 @@
 
 - **YUK-814 真实 owner 发布闸门**：Gate A/B/C 仍未全过；mock 输入/真实模型输出只证明
   开发回归质量，不能替代真实 owner/cohort shadow、blind 与 canary。
-- **auto-intervention 扩大使用**：保持 OFF；YUK-791 可合并 shadow backbone，但未获得
+- **auto-intervention 扩大使用**：保持 OFF；YUK-791 已合并 shadow backbone，但未获得
   真实发布证据前不得把 `delivery_mode=eligible` 交付给 Today/B3。
 - **canonical Opus 输出质量**：OAuth 周额度仍可能 429；429 只记 operational，
   不冒充质量 pass/fail。

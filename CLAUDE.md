@@ -233,7 +233,10 @@ Single-context layout with CONTEXT.md and docs/adr/ at repo root. See `docs/agen
 ## Code Review Workflow
 
 - When spawning review subagents, ensure each agent has Bash access (or dump the diff to disk and feed it) so it can fetch the PR diff.
-- After addressing review findings on a PR, **resolve the corresponding review threads** (CodeRabbit / OCR github-actions / codex / Cursor bots), after the fix is committed + pushed. See the `pr` skill for the exact GitHub API mechanics (thread IDs, resolve/reply calls). Resolving threads is cleanup only — it never authorizes a merge by itself. **Merge policy（owner 2026-07-07 拍板成文，取代旧句 "PRs are owner-merged, never auto-merged"）**：全量 pre-PR gate + 独立 review + CI 全绿后，PR 可自主 merge 并按 2026-07-03 部署授权自主部署；owner 可随时点名要求任一 PR 人工合。
+- **Review budget（owner 2026-07-30 拍板）**：自动 review 是 advisory，不是 CI correctness gate。每个 PR 最多一轮初审 + 一轮 P0/P1 修复后的验证审；push 后出现的新 bot review 不重置预算，除非 owner 明确要求，不得启动第三轮。
+- 只在当前 PR 修复经验证的 P0/P1：security、data loss、correctness failure、release blocker。P2/minor/nit/hygiene/refactor/performance 默认不阻塞：回复 skip rationale 后 resolve；只有实质且可执行的 follow-up 才在去重后进 Linear，不得一条 nit 开一个 issue，也不得把跳过写成已修复。
+- exact-head `CI Gate` 绿色且没有未裁决的 P0/P1 后，不等待、不重跑 pending / failed / cancelled / timed-out 的 OCR、PR-Agent、Codex、CodeRabbit 等 advisory review check。
+- After addressing review findings on a PR, **resolve the corresponding review threads** (CodeRabbit / OCR github-actions / codex / Cursor bots), after the fix is committed + pushed. Skipped non-blocking findings may be replied to and resolved without another code push. See the `pr` skill for the exact GitHub API mechanics (thread IDs, resolve/reply calls). Resolving threads is cleanup only — it never authorizes a merge by itself. **Merge policy（owner 2026-07-07 拍板成文，取代旧句 "PRs are owner-merged, never auto-merged"）**：全量 pre-PR gate + 独立 review + CI 全绿后，PR 可自主 merge 并按 2026-07-03 部署授权自主部署；owner 可随时点名要求任一 PR 人工合。
 
 ## Shell / Environment
 
