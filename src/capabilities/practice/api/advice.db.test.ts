@@ -111,7 +111,7 @@ describe('POST /api/review/advice', () => {
     expect(stateRows).toHaveLength(0);
   });
 
-  it('resolves a diagnostic judge profile from canonical intervention metadata', async () => {
+  it('rejects diagnostic advice even after the fixed due time', async () => {
     await seedQuestion('q_advice_intervention', {
       kind: 'fill_blank',
       reference_md: '答案',
@@ -136,11 +136,8 @@ describe('POST /api/review/advice', () => {
       }),
     );
 
-    expect(res.status).toBe(200);
-    expect(vi.mocked(resolveSubjectProfileForKnowledgeIds)).toHaveBeenCalledWith(
-      expect.anything(),
-      ['kc_math'],
-    );
+    expect(res.status).toBe(409);
+    expect(resolveSubjectProfileForKnowledgeIds).not.toHaveBeenCalled();
   });
 
   it('rejects advice for a diagnostic before its fixed due time', async () => {

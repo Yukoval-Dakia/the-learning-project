@@ -76,6 +76,41 @@ describe('GET /api/questions/[id]', () => {
     expect(res.status).toBe(404);
   });
 
+  it('returns an answer-safe intervention diagnostic projection to the canonical Practice face', async () => {
+    const id = newId();
+    await seedQuestion(id, {
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      prompt_md: 'Explain why the transfer applies.',
+      reference_md: 'future diagnostic answer',
+      rubric_json: { answer: 'future diagnostic answer' },
+      source_ref: 'private-author-run',
+    });
+
+    const res = await GET(mkReq(id, '?surface=practice'), { id });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      id,
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      prompt_md: 'Explain why the transfer applies.',
+      reference_md: null,
+      rubric_json: null,
+      source_ref: null,
+      backlinks: [],
+      backlinks_by_intent_source: {},
+      timeline: [],
+    });
+  });
+
+  it('rejects unknown question surfaces', async () => {
+    const id = newId();
+    await seedQuestion(id);
+
+    const res = await GET(mkReq(id, '?surface=question-bank'), { id });
+
+    expect(res.status).toBe(400);
+  });
+
   it('rejects an invalid timeline_limit with 400', async () => {
     const id = newId();
     await seedQuestion(id);

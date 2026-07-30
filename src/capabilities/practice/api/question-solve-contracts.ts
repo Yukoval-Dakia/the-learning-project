@@ -103,6 +103,10 @@ export const QuestionListResponseSchema = z.object({
 export const QuestionDetailQuerySchema = z.object({
   // The detail reader accepts larger values and clamps them to 50.
   timeline_limit: z.coerce.number().int().min(1).optional(),
+  // Product-owned intervention diagnostics stay absent from the question-bank
+  // surface. The canonical Practice face may request a learner-safe projection
+  // so the due one-shot can still be answered through the existing PfSolo flow.
+  surface: z.literal('practice').optional(),
 });
 
 export const QuestionDetailResponseSchema = z

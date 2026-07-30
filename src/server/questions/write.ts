@@ -371,6 +371,20 @@ export async function archiveQuestion(
     if (row.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
       return { status: 'protected' };
     }
+    const [protectedChild] = await tx
+      .select({ id: question.id })
+      .from(question)
+      .where(
+        and(
+          eq(question.parent_question_id, questionId),
+          eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
+          notDraftPredicate(question.draft_status),
+        ),
+      )
+      .limit(1);
+    if (protectedChild) {
+      return { status: 'protected' };
+    }
 
     const now = new Date();
     const archivedAtSec = Math.floor(now.getTime() / 1000);

@@ -451,6 +451,26 @@ describe('DELETE /api/questions/[id]', () => {
     expect((await loadRow(otherPart))?.draft_status).toBe('active');
   });
 
+  it('rejects parent archival when an active intervention diagnostic child is protected', async () => {
+    const parentId = await seedQuestion({ kind: 'reading', draft_status: 'active' });
+    const diagnosticPart = await seedQuestion({
+      kind: 'fill_blank',
+      draft_status: 'active',
+      parent_question_id: parentId,
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+    });
+
+    const res = await DELETE(
+      mkDeleteReq(parentId, '?version=0&confirm=true&confirm_children=true'),
+      { id: parentId },
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ error: 'immutable_question' });
+    expect((await loadRow(parentId))?.draft_status).toBe('active');
+    expect((await loadRow(diagnosticPart))?.draft_status).toBe('active');
+  });
+
   // YUK-388 Step 1 regression — part-ness is derived from the `parent_question_id`
   // FK, NOT the `kind='question_part'` sentinel. A part linked via the FK but
   // carrying a NON-sentinel kind (the post-Step-3 shape, or any future vocabulary)

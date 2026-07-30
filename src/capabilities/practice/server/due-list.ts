@@ -39,6 +39,7 @@ import {
 } from '@/capabilities/practice/server/variant-rotation';
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { type Db, db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { material_fsrs_state, question } from '@/db/schema';
@@ -517,7 +518,12 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
           fsrs_subject_kind: r.fsrs_subject_kind,
           fsrs_subject_id: r.fsrs_subject_id,
           prompt_md: r.prompt_md.slice(0, 1000),
-          reference_md: r.reference_md ? r.reference_md.slice(0, 1000) : null,
+          reference_md:
+            r.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE
+              ? null
+              : r.reference_md
+                ? r.reference_md.slice(0, 1000)
+                : null,
           knowledge_ids: (r.knowledge_ids as string[]) ?? [],
           cause: latestFailure?.cause ?? null,
           fsrs_state: r.state ?? null,

@@ -67,10 +67,32 @@ export async function GET(req: Request, params: Record<string, string>): Promise
     }
     const url = new URL(req.url);
     const timelineLimit = parseTimelineLimit(url.searchParams.get('timeline_limit'));
+    const surface = url.searchParams.get('surface');
+    if (surface !== null && surface !== 'practice') {
+      throw new ApiError('validation_error', `invalid question surface '${surface}'`, 400);
+    }
 
     const detail = await loadQuestionDetail(db, parsed.data.id, timelineLimit);
-    if (!detail || detail.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+    if (
+      !detail ||
+      (detail.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE && surface !== 'practice')
+    ) {
       throw new ApiError('not_found', `question ${parsed.data.id} not found`, 404);
+    }
+    if (detail.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+      // The Practice face needs the prompt/options/labels to render the scheduled
+      // one-shot, but must not receive any answer-bearing material before the
+      // canonical /api/attempts submission has been judged. Keep the question-bank
+      // GET behavior above (404) and expose only this explicit learner-safe view.
+      return Response.json({
+        ...detail,
+        reference_md: null,
+        rubric_json: null,
+        source_ref: null,
+        backlinks: [],
+        backlinks_by_intent_source: {},
+        timeline: [],
+      });
     }
     return Response.json(detail);
   } catch (err) {

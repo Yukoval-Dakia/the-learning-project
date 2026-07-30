@@ -130,9 +130,17 @@ export type QFullPerKnowledge = QuestionFullDetail['scheduling']['per_knowledge'
 export type QFullBacklink = QuestionFullDetail['backlinks'][number];
 export type QFullTimelineEntry = QuestionFullDetail['timeline'][number];
 
-export const getQuestionFull = (id: string): Promise<QuestionFullDetail> =>
+export function buildQuestionDetailUrl(id: string, surface?: 'practice'): string {
+  const base = `/api/questions/${encodeURIComponent(id)}`;
+  return surface ? `${base}?surface=${surface}` : base;
+}
+
+export const getQuestionFull = (
+  id: string,
+  opts: { surface?: 'practice' } = {},
+): Promise<QuestionFullDetail> =>
   apiOperationJson('getQuestion', {
-    url: `/api/questions/${encodeURIComponent(id)}`,
+    url: buildQuestionDetailUrl(id, opts.surface),
     method: 'GET',
   });
 
