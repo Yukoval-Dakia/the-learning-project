@@ -3,53 +3,43 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-30
-> **【更新 2026-07-30 · YUK-828 review budget 止损】**
-> YUK-791 / PR #1119 已合并。当前唯一 active lane 是 YUK-828：自动 review 降为
-> advisory，只在 PR 首次可审时运行；P2/minor 不再驱动 review→push→review 循环。
+> **【更新 2026-07-30 · YUK-828 review budget 已交付】**
+> YUK-828 / PR #1120 已合并，PR exact-head 与 main merge commit 的 `CI Gate` 均全绿。
+> 当前没有 active implementation lane；等待 owner 选择下一条独立工作线。
 
 ## NOW
 
-- **唯一 active lane：YUK-828 自动 review advisory 化。**
-  - branch：`codex/yuk-828-review-budget`。
-  - worktree：`.codex/worktrees/9d89/the-learning-project`。
-  - OCR 与 PR-Agent 不再监听 `pull_request.synchronize`；只在 opened /
-    ready_for_review 初审。OCR 保留带 `pr_number` 的 `workflow_dispatch` 手动验证入口。
-  - 首轮 review 发现 lifecycle 事件仍可重复初审；现已移除 reopened，并在 OCR review
-    与 PR-Agent guide 写入后做跨事件幂等检查。只有显式 OCR manual dispatch 绕过初审锁。
-  - 唯一验证轮发现 OCR summary-only 路径不创建 pull-request review；幂等检查现同时
-    识别 tagged review 与 tagged issue summary，关闭该漏口。按预算不再启动第三轮 review。
-  - 最终 push 后的迟到 Major 指出 manual dispatch 可无限触发；入口现要求已有初审且尚无
-    `kind=verification`，后续复审只有显式 `owner_override=true` 才允许，并在产物 tag 留痕。
-  - 后续 P1 指出正文 substring 可能伪造 verification；现只解析 OCR HTML marker，并要求
-    PR 仍 open、`owner_override` actor 等于 repository owner。此后不再启动 review 修复轮。
-  - 两个 review job 名称显式标注 advisory；OCR 手动入口统一从 GitHub API 解析并验证
-    当前 PR/base/head，拒绝 draft、fork 与 Dependabot。
-  - agent/Claude PR policy 统一为最多一轮初审 + 一轮 P0/P1 修复后的验证审；push 后新 bot
-    review 不重置预算，除非 owner 明确要求，不开第三轮。
-  - 只修 security / data loss / correctness / release blocker 等已验证 P0/P1；P2/minor/nit
-    默认回复 rationale 后 resolve，只有实质且可执行的去重 follow-up 才进 Linear。
-  - exact-head `CI Gate` 是自动硬 gate；没有未裁决 P0/P1 时，不等待或重跑 advisory review
-    的 pending / failed / cancelled / timeout。
-- **本地静态验证已过**
-  - Ruby YAML parser：2 个 workflow PASS。
-  - workflow trigger/advisory/manual-input 专项断言 PASS；`git diff --check` PASS。
-  - lifecycle / summary-only / single-verification budget 修正后的 workflow 专项断言 PASS。
+- **YUK-828 已完成并对齐 Done。**
+  - merge：`52c08b8e`（PR #1120）。
+  - OCR 与 PR-Agent 不再监听 `pull_request.synchronize`；只在 opened / ready_for_review
+    首次可审时运行，并显式标注 advisory。
+  - OCR / PR-Agent 的初审跨 lifecycle 幂等；OCR 同时识别 tagged review 与 summary-only
+    issue comment，只有显式 manual dispatch 可进入验证。
+  - manual OCR 要求已有初审且尚无 `kind=verification`；额外轮次必须 repository owner
+    显式 `owner_override=true`，review/summary tag 留下类型。verification 只从 HTML marker
+    解析，正文不能伪造；closed PR 或非 owner override 被拒绝。
+  - agent/Claude PR policy 为最多一轮初审 + 一轮 P0/P1 修复后的验证审；P2/minor/nit
+    默认不阻塞，不触发新 push。exact-head `CI Gate` 是自动硬 gate。
+  - 本 PR 的已验证 P1 全部修复并 resolve；最终 P2 marker-anchor hardening 明确回复不修并
+    resolve，没有再 push，实际执行了新的 stop policy。
+- **验证证据**
+  - Ruby YAML parse、review lifecycle/manual-budget 专项断言、`git diff --check` 通过。
   - `tests/integration/audit-docs-invariant.test.ts`：6/6 PASS。
-  - Biome 不处理本次 Markdown/YAML 文件；其 0-file 输出不计作有效验证。
+  - PR exact-head `66f02435`：CI Gate run `30556817265` 全绿。
+  - main `52c08b8e`：CI Gate run `30557755509` 全绿。
 
 ## NEXT
 
-1. commit/push YUK-828，创建 ready PR。
-2. 只消费一轮自动初审；修复已验证 P0/P1，P2/minor 回复理由后 resolve，不 push。
-3. 如确有 P0/P1 修复，最多手动触发一次 OCR 验证；同时监听 exact-head `CI Gate`。
-4. CI 绿色且无未裁决 P0/P1 后 squash merge，Linear YUK-828 对齐 Done。
+1. owner 选择下一条独立 issue/lane 后，再将其标为唯一 active lane。
+2. 后续 PR 直接执行 YUK-828 policy；不得因 P2/minor 或 advisory check 状态重启修复循环。
+3. 若 owner 需要超过一次验证审，必须显式授权并使用可审计 override。
 
 ## PARKED
 
 - **YUK-822：P1 学科确定性验证器（owner 明确本轮不实现）**
   - 只保留详细通俗解释与计划：
     `docs/planning/2026-07-29-yuk-821-conjecture-probe-quality.md`。
-- **YUK-792：延迟/迁移 scheduler 与 intervention outcome settlement**；不混入 YUK-828。
+- **YUK-792：延迟/迁移 scheduler 与 intervention outcome settlement**。
 - **YUK-815 / YUK-816：Copilot/Brief 协作与 Growth intervention projection**；等待
   准备链及验证结算链先成为可读真相源。
 - **YUK-826 第二波 DB 测试事务迁移**：Backlog；收益需多次 GitHub CI 数据验证。
