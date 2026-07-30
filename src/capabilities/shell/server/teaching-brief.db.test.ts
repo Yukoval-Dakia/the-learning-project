@@ -1308,4 +1308,35 @@ describe('loadTeachingBrief', () => {
     );
     warn.mockRestore();
   });
+
+  it('keeps an intentional inconclusive non-evidence result quiet and non-displayable', async () => {
+    await writeEvent(testDb(), {
+      id: 'r_inconclusive_non_evidence',
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: 'experimental:probe_result',
+      subject_kind: 'question',
+      subject_id: 'q_inconclusive_non_evidence',
+      payload: {
+        conjecture_event_id: 'p_inconclusive_non_evidence',
+        outcome: null,
+        resolution: 'inconclusive',
+      },
+      caused_by_event_id: 'p_inconclusive_non_evidence',
+      created_at: new Date(NOW.getTime() - 10 * 60 * 1000),
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await loadTeachingBrief(testDb(), NOW);
+
+    expect(result).toEqual({ brief: null });
+    expect(warn).not.toHaveBeenCalledWith(
+      '[teaching-brief] skipped candidate',
+      expect.objectContaining({
+        candidate_id: 'r_inconclusive_non_evidence',
+        reason: 'outcome_resolution_mismatch',
+      }),
+    );
+    warn.mockRestore();
+  });
 });

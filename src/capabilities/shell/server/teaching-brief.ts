@@ -8,6 +8,7 @@ import {
 import type { CauseCategoryT } from '@/core/schema/cause';
 import {
   BRIEF_ACK_ACTION,
+  PROBE_NON_EVIDENCE_RESOLUTION,
   PROBE_QUESTION_SOURCE,
   PROBE_RESOLUTION_RULE_VERSION,
   PROBE_RESULT_ACTION,
@@ -267,6 +268,16 @@ function canonicalProbeResolutionOutcomeSql() {
       AND ${event.payload}->>'outcome' = '0')
     OR (${event.payload}->>'resolution' = 'retired'
       AND ${event.payload}->>'outcome' = '1'))`;
+}
+
+/**
+ * A gradable answer that matches neither authored signature is an intentional
+ * terminal non-evidence disposition. It stays outside the displayable/acknowledgeable
+ * matrix above, but is not corrupt and therefore must stay out of diagnostic warnings.
+ */
+function terminalNonEvidenceProbeResolutionOutcomeSql() {
+  return sql`(${event.payload}->>'resolution' = ${PROBE_NON_EVIDENCE_RESOLUTION}
+    AND ${event.payload}->'outcome' = 'null'::jsonb)`;
 }
 
 /**
@@ -1117,10 +1128,11 @@ async function logNonCanonicalCandidates(db: Db, now: Date): Promise<void> {
         eq(event.action, PROBE_RESULT_ACTION),
         gt(event.created_at, lowerBound),
         lte(event.created_at, now),
-        // Inverse of validateCanonicalProbeResult's resolution/outcome pair matrix;
-        // keep both sites aligned when the canonical contract changes.
+        // Warn only on invalid result pairs: displayable canonical outcomes and the
+        // intentional terminal non-evidence disposition are both legitimate rows.
         sql`NOT (${event.subject_kind} = 'question'
-          AND ${canonicalProbeResolutionOutcomeSql()})`,
+          AND (${canonicalProbeResolutionOutcomeSql()}
+            OR ${terminalNonEvidenceProbeResolutionOutcomeSql()}))`,
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))
