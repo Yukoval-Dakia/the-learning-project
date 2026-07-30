@@ -480,6 +480,19 @@ export function normalizeProbeIdentity(value: string): string {
     .replace(/\p{P}/gu, (character) => ('-/:'.includes(character) ? character : ''));
 }
 
+/**
+ * Response signatures carry answer semantics, so internal punctuation must not
+ * be erased: `1.2`, `12`, `a/b`, and `a-b` are potentially different answers.
+ * Only case, whitespace, and trailing sentence punctuation are cosmetic here.
+ */
+function normalizeProbeResponseSignatureText(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/\s+/gu, '')
+    .replace(/[。！？!?.,，；;]+$/gu, '');
+}
+
 export const ConjectureProbeContextKind = z.enum([
   'abstract',
   'applied',
@@ -714,8 +727,8 @@ export function evaluateConjectureProbePackageStructure(
   }
   for (const probe of [probePackage.primary, probePackage.followup]) {
     if (
-      normalizeProbeIdentity(probe.reference_md) ===
-      normalizeProbeIdentity(probe.expected_target_error_answer_md)
+      normalizeProbeResponseSignatureText(probe.reference_md) ===
+      normalizeProbeResponseSignatureText(probe.expected_target_error_answer_md)
     ) {
       failureCodes.add('target_error_answer_not_distinct');
     }
@@ -740,27 +753,29 @@ export function evaluateConjectureProbePackageStructure(
         if (signature.kind === 'choice') {
           return {
             ...signature,
-            option_ids: signature.option_ids.map(normalizeProbeIdentity).sort(),
+            option_ids: signature.option_ids.map(normalizeProbeResponseSignatureText).sort(),
           };
         }
         if (signature.kind === 'answer_with_reason') {
           return {
             ...signature,
-            answer_md: normalizeProbeIdentity(signature.answer_md),
+            answer_md: normalizeProbeResponseSignatureText(signature.answer_md),
             required_reason_features_md: signature.required_reason_features_md
-              .map(normalizeProbeIdentity)
+              .map(normalizeProbeResponseSignatureText)
               .sort(),
           };
         }
         if (signature.kind === 'rubric') {
           return {
             ...signature,
-            required_features_md: signature.required_features_md.map(normalizeProbeIdentity).sort(),
+            required_features_md: signature.required_features_md
+              .map(normalizeProbeResponseSignatureText)
+              .sort(),
           };
         }
         return {
           ...signature,
-          response_md: normalizeProbeIdentity(signature.response_md),
+          response_md: normalizeProbeResponseSignatureText(signature.response_md),
         };
       };
       if (exactJsonValueEqual(normalizedSignature(gold), normalizedSignature(target))) {

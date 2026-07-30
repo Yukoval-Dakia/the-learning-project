@@ -181,6 +181,34 @@ describe('Conjecture probe response signatures', () => {
     ).toContain('target_error_answer_not_distinct');
   });
 
+  it('preserves decimal separators when comparing response signatures', () => {
+    const primary = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      reference_md: '1.2',
+      expected_target_error_answer_md: '12',
+      context_kind: 'data',
+      representation_kind: 'symbolic',
+      response_mode: 'short_answer',
+      gold_response_signature: { kind: 'text', response_md: '1.2' },
+      target_error_response_signature: { kind: 'text', response_md: '12' },
+    });
+    const followup = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      prompt_md: '计算另一组数据中的对应结果。',
+      reference_md: '0.6',
+      expected_target_error_answer_md: '6',
+      context_kind: 'narrative',
+      representation_kind: 'natural_language',
+      response_mode: 'short_answer',
+      gold_response_signature: { kind: 'text', response_md: '0.6' },
+      target_error_response_signature: { kind: 'text', response_md: '6' },
+    });
+
+    expect(
+      evaluateConjectureProbePackageStructure({ primary, followup, predicted_p: 0.8 }),
+    ).toEqual([]);
+  });
+
   it('keeps v1 history readable but rejects mixed-version probe packages', () => {
     const legacy = {
       prompt_md: responseAwareProbeBase.prompt_md,
