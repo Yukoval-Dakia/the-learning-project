@@ -53,6 +53,11 @@
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/codex-stop-edit-check.mjs\"",
             "statusMessage": "Checking dirty JSON files"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/linear-closeout-reminder.sh\"",
+            "statusMessage": "Checking Linear closeout gate"
           }
         ]
       }

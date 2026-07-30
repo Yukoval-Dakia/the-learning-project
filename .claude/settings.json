@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/json-edit-guard.mjs"
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/json-edit-guard.mjs\""
           }
         ]
       },
@@ -15,11 +15,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/git-guard.mjs"
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/git-guard.mjs\""
           },
           {
             "type": "command",
-            "command": "node .claude/hooks/linear-guard.mjs"
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/linear-guard.mjs\""
           }
         ]
       }
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "f=$(jq -r '.tool_input.file_path // empty'); [ -z \"$f\" ] && exit 0; case \"$f\" in *.json) jq . \"$f\" >/dev/null 2>&1 || echo 'JSON invalid: '\"$f\" >&2 ;; *.ts|*.tsx|*.js|*.jsx|*.mjs) pnpm exec biome check --no-errors-on-unmatched \"$f\" 2>&1 | head -40 ;; esac"
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/post-edit-check.mjs\""
           }
         ]
       },
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/post-fetch-divergence.sh"
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/post-fetch-divergence.sh\""
           }
         ]
       }
@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/linear-closeout-reminder.sh"
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/linear-closeout-reminder.sh\""
           }
         ]
       }

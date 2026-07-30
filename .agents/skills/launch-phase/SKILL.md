@@ -58,13 +58,9 @@ Lane 切分标准：一条 lane = 一个 PR = 一个 worktree branch；文件不
 1. Worktree：用 `superpowers:using-git-worktrees` 建独立 worktree。Guard：subagent prompt 必须显式约束所有 bash 操作只能在 worktree 路径内（见下方模板）。
 2. Plan：用 `superpowers:writing-plans` 把 lane spec + acceptance test 转成可执行 plan。
 3. Impl：用 `superpowers:subagent-driven-development` 跑 impl -> 自审 -> spec review -> fix -> quality review -> fix。不要并行 dispatch implementation subagent；superpowers 明确反对这种会互相冲突的做法。
-4. Pre-merge gate：用 `superpowers:verification-before-completion` 配项目 PR gate：
-
-   ```bash
-   pnpm typecheck && pnpm lint && pnpm audit:schema && pnpm audit:partition && pnpm test
-   ```
-
-   任一失败，回 step 3，不进 step 5。
+4. Pre-merge gate：用 `superpowers:verification-before-completion` 执行
+   `docs/agents/development-workflow.md` 的 **Pre-PR gate**。该文档是命令清单唯一真相源；
+   不在 skill 内复制另一份易漂移的命令。任一失败，回 step 3，不进 step 5。
 
 5. 标 lane `completed`，但不删 worktree、不删 branch；chain-merge 阶段统一清理。
 

@@ -49,13 +49,9 @@ description: 启动 phase 多 lane 实施 —— 把 phase spec 拆成独立 lan
 1. **Worktree**：`superpowers:using-git-worktrees` 建独立 worktree。**Guard**：subagent prompt 必须显式约束所有 bash 操作只能在 worktree 路径内（见下方模板）。
 2. **Plan**：`superpowers:writing-plans` 把 lane spec + acceptance test 转成可执行 plan。
 3. **Impl**：`superpowers:subagent-driven-development` 跑 impl → 自审 → spec review → fix → quality review → fix。**不并行 dispatch implementation subagent**（superpowers 明确反对，会冲突）。
-4. **Pre-merge gate**：`superpowers:verification-before-completion` 配项目 PR gate：
-
-   ```bash
-   pnpm typecheck && pnpm lint && pnpm audit:schema && pnpm audit:partition && pnpm audit:profile && pnpm test && pnpm build
-   ```
-
-   任一失败 → 回 step 3，**不进 step 5**。`pnpm build` (= `next build`) catches Next.js route export validation + production-only checks that `tsc --noEmit` / biome / vitest all bypass (per YUK-67); also `pnpm audit:profile` 同步加入避免与 CLAUDE.md 的 pre-PR gate 漂移。
+4. **Pre-merge gate**：`superpowers:verification-before-completion` 执行
+   `docs/agents/development-workflow.md` 的 **Pre-PR gate**。该文档是命令清单唯一真相源；
+   不在 skill 内复制另一份易漂移的命令。任一失败 → 回 step 3，**不进 step 5**。
 5. **TaskUpdate** 标 lane `completed`，**不删 worktree 不删 branch**（chain-merge 阶段统一清理）。
 
 ### 3. 顺序 chain-merge
