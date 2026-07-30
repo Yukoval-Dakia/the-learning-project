@@ -212,8 +212,24 @@ async function appendImmediateDiagnosticToLiveStream(
   // A timeout aborts this transaction for the normal job retry; after acquiring
   // the shared lock, restore the transaction default for unrelated writes.
   await tx.execute(sql.raw("SET LOCAL lock_timeout = '5s'"));
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext(${`intervention:deliver:${input.questionId}`}))`,
+  );
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
   await tx.execute(sql.raw("SET LOCAL lock_timeout = '0'"));
+  const [existingDelivery] = await tx
+    .select({ id: practice_stream_item.id })
+    .from(practice_stream_item)
+    .where(
+      and(
+        eq(practice_stream_item.item_kind, 'question'),
+        eq(practice_stream_item.ref_id, input.questionId),
+        isNull(practice_stream_item.session_id),
+      ),
+    )
+    .limit(1);
+  if (existingDelivery) return;
+
   const [current] = await tx
     .select({
       count: sql<number>`count(*)::int`,
@@ -379,12 +395,14 @@ export async function materializeInterventionDiagnostics(
     }
   }
 
-  await appendImmediateDiagnosticToLiveStream(tx, {
-    questionId: settlement.diagnostics.immediate.question_id,
-    interventionId: snapshot.intervention_id,
-    interventionVersion: snapshot.intervention_version,
-    now: input.now,
-  });
+  if (settlement.diagnostics.immediate.status === 'scheduled') {
+    await appendImmediateDiagnosticToLiveStream(tx, {
+      questionId: settlement.diagnostics.immediate.question_id,
+      interventionId: snapshot.intervention_id,
+      interventionVersion: snapshot.intervention_version,
+      now: input.now,
+    });
+  }
 }
 
 /** Practice-owned port for retiring a completed one-shot diagnostic card. */

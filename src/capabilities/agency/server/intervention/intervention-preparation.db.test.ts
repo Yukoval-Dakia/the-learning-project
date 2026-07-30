@@ -912,12 +912,38 @@ describe('YUK-791 intervention preparation closed loop', () => {
       const result = await handleInterventionDiagnosticJudgeDelivery(db, lastDelivery);
       expect(result.status).toBe('succeeded');
       if (kind === 'immediate') {
-        expect(await recoverEligibleInterventionDiagnostics(db)).toEqual({
+        const nextDay = new Date(activationNow.getTime() + 24 * 60 * 60 * 1000);
+        const nextDate = nextDay.toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+        await db.insert(practice_stream_item).values({
+          id: 'stream_existing_after_immediate_completion',
+          date: nextDate,
+          position: 1,
+          item_kind: 'question',
+          ref_id: delayed.question_id,
+          source: 'decay',
+          status: 'pending',
+          reasoning: 'next-day stream anchor',
+          added_by: 'composer_live',
+          signals: {},
+          created_at: nextDay,
+          updated_at: nextDay,
+        });
+        expect(await recoverEligibleInterventionDiagnostics(db, nextDay)).toEqual({
           scanned: 1,
           ensured: 1,
           raced: 0,
           failed: 0,
         });
+        const immediateDeliveries = await db
+          .select({ date: practice_stream_item.date })
+          .from(practice_stream_item)
+          .where(
+            and(
+              eq(practice_stream_item.ref_id, active.settlement.diagnostics.immediate.question_id),
+              eq(practice_stream_item.source, 'intervention'),
+            ),
+          );
+        expect(immediateDeliveries).toEqual([{ date: activationDate }]);
       }
       if (kind === 'delayed') {
         const rejudgeEventId = 'judge_settlement_delayed_rejudge';
