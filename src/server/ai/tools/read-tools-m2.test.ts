@@ -1,4 +1,5 @@
 import { capabilities } from '@/capabilities';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import {
   artifact,
   completion_evidence,
@@ -439,6 +440,29 @@ describe('Foundation D M2 read tools', () => {
     expect(questionContext.question?.id).toBe('q_new');
     expect(questionContext.lifecycle.attempt_counts.failure).toBe(1);
     expect(questionContext.records?.[0].record_id).toBe('rec_mistake');
+  });
+
+  it('hides intervention diagnostic prompts and answers from generic Copilot context reads', async () => {
+    await seedAll();
+    await testDb()
+      .update(question)
+      .set({ source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE })
+      .where(eq(question.id, 'q_new'));
+
+    const questionContext = await getQuestionContextTool.execute(ctx(), {
+      questionId: 'q_new',
+      include: ['attempts', 'records', 'knowledge_context', 'assets', 'structure'],
+    });
+
+    expect(questionContext.question).toBeNull();
+    expect(questionContext.lifecycle).toMatchObject({
+      attempt_counts: { success: 0, partial: 0, failure: 0 },
+      review_count: 0,
+      due_at: null,
+      linked_record_ids: [],
+    });
+    expect(questionContext.records).toBeUndefined();
+    expect(JSON.stringify(questionContext)).not.toContain('reference');
   });
 
   // ADR-0032 D6-R6 — get_question_context(include:['structure']) projects the

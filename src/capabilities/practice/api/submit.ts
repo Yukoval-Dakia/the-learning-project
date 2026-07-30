@@ -45,7 +45,7 @@ import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   InterventionDiagnosticQuestionMetadata,
 } from '@/core/schema/intervention';
-import { type Tx, db } from '@/db/client';
+import { type Db, type Tx, db } from '@/db/client';
 import { learning_session, mastery_state, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import {
@@ -214,20 +214,40 @@ async function claimInterventionDiagnosticSubmission(validated: ValidatedSubmit)
   return true;
 }
 
-async function releaseInterventionDiagnosticSubmissionClaim(
-  validated: ValidatedSubmit,
+export async function releaseInterventionDiagnosticSubmissionClaim(
+  input: { questionId: string; claimedAt: Date },
+  database: Db = db,
 ): Promise<void> {
-  await db
+  await database
     .update(question)
     .set({ draft_status: 'active', updated_at: new Date() })
     .where(
       and(
-        eq(question.id, validated.questionId),
+        eq(question.id, input.questionId),
         eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
         eq(question.draft_status, 'draft'),
-        eq(question.updated_at, validated.now),
+        eq(question.updated_at, input.claimedAt),
       ),
     );
+}
+
+export function assertTrustedInterventionDiagnosticJudgment(
+  q: QuestionRow,
+  judged: Pick<JudgedSubmit, 'judgeResult' | 'judgeRoute' | 'executionProvenance'>,
+): void {
+  if (q.source !== INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) return;
+  if (
+    judged.judgeResult === null ||
+    judged.judgeRoute !== 'multimodal_direct' ||
+    (judged.executionProvenance?.kind !== 'invoked' &&
+      judged.executionProvenance?.kind !== 'supplied_verified')
+  ) {
+    throw new ApiError(
+      'unsupported_judge_route',
+      `intervention diagnostic ${q.id} requires a verified judge execution`,
+      422,
+    );
+  }
 }
 
 // ============================================================================
@@ -1740,6 +1760,13 @@ export async function createAttempt(req: Request): Promise<Response> {
       const gate = await resolveDurableDivert(validated);
       if (gate.divert && gate.subjectProfile !== null) {
         const pending = await enqueueDurableJudge(validated, gate.subjectProfile);
+        if (pending.status !== 202 && claimedDiagnostic !== null) {
+          await releaseInterventionDiagnosticSubmissionClaim({
+            questionId: claimedDiagnostic.questionId,
+            claimedAt: claimedDiagnostic.now,
+          });
+          claimedDiagnostic = null;
+        }
         retainDiagnosticClaim = true;
         return pending;
       }
@@ -1749,19 +1776,7 @@ export async function createAttempt(req: Request): Promise<Response> {
       validated,
       reusedProfile ? { subjectProfile: reusedProfile } : {},
     );
-    if (
-      validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE &&
-      (judged.judgeResult === null ||
-        judged.judgeRoute !== 'multimodal_direct' ||
-        (judged.executionProvenance?.kind !== 'invoked' &&
-          judged.executionProvenance?.kind !== 'supplied_verified'))
-    ) {
-      throw new ApiError(
-        'unsupported_judge_route',
-        `intervention diagnostic ${validated.questionId} requires a verified judge execution`,
-        422,
-      );
-    }
+    assertTrustedInterventionDiagnosticJudgment(validated.q, judged);
     const persisted = await persistSubmit(validated, judged);
     retainDiagnosticClaim = true;
     const { body, now, questionId, activityRef } = validated;
@@ -1815,14 +1830,15 @@ export async function createAttempt(req: Request): Promise<Response> {
     });
   } catch (err) {
     if (claimedDiagnostic !== null && !retainDiagnosticClaim) {
-      await releaseInterventionDiagnosticSubmissionClaim(claimedDiagnostic).catch(
-        (releaseError) => {
-          console.error(
-            `failed to release intervention diagnostic submission claim for ${claimedDiagnostic?.questionId}:`,
-            releaseError,
-          );
-        },
-      );
+      await releaseInterventionDiagnosticSubmissionClaim({
+        questionId: claimedDiagnostic.questionId,
+        claimedAt: claimedDiagnostic.now,
+      }).catch((releaseError) => {
+        console.error(
+          `failed to release intervention diagnostic submission claim for ${claimedDiagnostic?.questionId}:`,
+          releaseError,
+        );
+      });
     }
     return errorResponse(err);
   }

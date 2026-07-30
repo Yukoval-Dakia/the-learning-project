@@ -109,8 +109,9 @@ export async function runJudgeRun(
       throw new NonRetryableJudgeRunError(`unsupported judge_run caller '${data.caller}'`);
     }
 
-    const judgeSubmit = deps.judgeSubmitFn ?? (await import('../api/submit')).judgeSubmit;
-    const persistSubmit = deps.persistSubmitFn ?? (await import('../api/submit')).persistSubmit;
+    const submitModule = await import('../api/submit');
+    const judgeSubmit = deps.judgeSubmitFn ?? submitModule.judgeSubmit;
+    const persistSubmit = deps.persistSubmitFn ?? submitModule.persistSubmit;
 
     // 重建 ValidatedSubmit（body 复校、profile 用冻结值 D5、题面用冻结快照 #2、
     // now=作答时刻）。冻结面从「只钉 profile」扩到「profile + 题面」——见下方 #2。
@@ -187,6 +188,7 @@ export async function runJudgeRun(
       skipRateLimit: true,
       durable: { ...(providerOverride ? { providerOverride } : {}) },
     });
+    submitModule.assertTrustedInterventionDiagnosticJudgment(q, judged);
 
     // 回填事务（复用同步面 persistSubmit：review event(id=run_id) + judge event +
     // FSRS/θ̂/snapshot/family/calibration 原子 tx + post-commit 信号）。attemptEventId=
@@ -321,6 +323,16 @@ export async function runJudgeRun(
       })`,
       err,
     );
+
+    if (!willRetry) {
+      const claimedAt = new Date(data.submit.submitted_at);
+      if (!Number.isNaN(claimedAt.getTime())) {
+        await (await import('../api/submit')).releaseInterventionDiagnosticSubmissionClaim(
+          { questionId: data.submit.question_id, claimedAt },
+          db,
+        );
+      }
+    }
 
     if (willRetry) {
       // NON-terminal trace: evidence that this delivery failed, without judging the run dead.
