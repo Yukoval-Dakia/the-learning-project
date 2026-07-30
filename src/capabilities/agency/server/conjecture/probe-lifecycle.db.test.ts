@@ -604,6 +604,8 @@ describe('probe one-shot lifecycle (U3)', () => {
       status: 'confirmed',
       outcome: 0,
       probe_result_event_id: resultId,
+      response_judgement: null,
+      degradation_reason: 'legacy_probe_result_without_response_judgement',
       idempotent: true,
     });
   });
