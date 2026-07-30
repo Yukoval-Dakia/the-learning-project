@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { buildInterventionSettlement, interventionOutcomeFromSettlement } from './intervention';
+import {
+  buildInterventionSettlement,
+  interventionOutcomeFromSettlement,
+  reanchorInterventionFollowupDiagnostics,
+} from './intervention';
 
 describe('intervention settlement policy', () => {
   const activatedAt = new Date('2026-07-30T08:00:00.000Z');
 
-  it('pins immediate, delayed, and transfer windows to activation', () => {
+  it('keeps provisional windows deterministic, then anchors follow-ups to confirmed exposure', () => {
     const settlement = buildInterventionSettlement({
       interventionId: 'int_a',
       version: 2,
@@ -31,6 +35,23 @@ describe('intervention settlement policy', () => {
         status: 'scheduled',
       }),
     });
+
+    const exposed = reanchorInterventionFollowupDiagnostics({
+      ...settlement,
+      diagnostics: {
+        ...settlement.diagnostics,
+        immediate: {
+          ...settlement.diagnostics.immediate,
+          status: 'passed',
+          review_event_id: 'review_immediate',
+          verdict_event_id: 'judge_immediate',
+          completed_at: '2026-08-02T12:34:56.000Z',
+        },
+      },
+    });
+    expect(exposed.diagnostics.delayed.due_at).toBe('2026-08-09T12:34:56.000Z');
+    expect(exposed.diagnostics.transfer.due_at).toBe('2026-08-23T12:34:56.000Z');
+    expect(reanchorInterventionFollowupDiagnostics(exposed)).toEqual(exposed);
   });
 
   it('requires every window for effective and both durable windows for ineffective', () => {

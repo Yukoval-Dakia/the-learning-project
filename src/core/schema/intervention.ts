@@ -243,9 +243,10 @@ export function interventionDiagnosticQuestionId(
 /**
  * Fixed first-pass schedule for the atomic intervention package.
  *
- * Immediate checks are due at activation, delayed checks after seven days, and
- * transfer checks after twenty-one days. These are product policy constants,
- * not model-authored timing, so retries/replays cannot silently move a gate.
+ * The immediate check is due at activation. The durable windows initially carry
+ * deterministic provisional dates but are not exposed to the learner until the
+ * immediate review proves delivery; {@link reanchorInterventionFollowupDiagnostics}
+ * then moves them to exactly +7/+21 days from that immutable review timestamp.
  */
 export function buildInterventionSettlement(input: {
   interventionId: string;
@@ -276,6 +277,42 @@ export function buildInterventionSettlement(input: {
     },
     scheduled_at: input.activatedAt.toISOString(),
     completed_at: null,
+  });
+}
+
+/**
+ * Anchor retention/transfer to confirmed learner exposure.
+ *
+ * The immediate review is the first immutable fact proving the combined
+ * material + immediate-check surface was opened and completed. Preserve that
+ * first completion timestamp across rejudges and deterministically derive every
+ * still-scheduled follow-up from it.
+ */
+export function reanchorInterventionFollowupDiagnostics(
+  settlement: InterventionSettlementT,
+): InterventionSettlementT {
+  const exposedAt = settlement.diagnostics.immediate.completed_at;
+  if (!exposedAt) return settlement;
+  const anchor = new Date(exposedAt);
+  return InterventionSettlement.parse({
+    ...settlement,
+    diagnostics: {
+      ...settlement.diagnostics,
+      delayed:
+        settlement.diagnostics.delayed.status === 'scheduled'
+          ? {
+              ...settlement.diagnostics.delayed,
+              due_at: addUtcDays(anchor, INTERVENTION_DELAYED_DIAGNOSTIC_DAYS),
+            }
+          : settlement.diagnostics.delayed,
+      transfer:
+        settlement.diagnostics.transfer.status === 'scheduled'
+          ? {
+              ...settlement.diagnostics.transfer,
+              due_at: addUtcDays(anchor, INTERVENTION_TRANSFER_DIAGNOSTIC_DAYS),
+            }
+          : settlement.diagnostics.transfer,
+    },
   });
 }
 

@@ -27,7 +27,7 @@ import { eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
 import type { EventSubscriptionDelivery } from '@/kernel/manifest';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { writeAiProposal } from '@/server/proposals/writer';
-import { and, count, eq, sql } from 'drizzle-orm';
+import { and, count, eq, inArray, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { answerProbe } from '../conjecture/probe-lifecycle';
@@ -555,6 +555,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
         id: question.id,
         source: question.source,
         judge_kind_override: question.judge_kind_override,
+        draft_status: question.draft_status,
         metadata: question.metadata,
       })
       .from(question)
@@ -664,6 +665,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
         prompt_md: question.prompt_md,
         source: question.source,
         judge_kind_override: question.judge_kind_override,
+        draft_status: question.draft_status,
         metadata: question.metadata,
       })
       .from(question)
@@ -695,6 +697,11 @@ describe('YUK-791 intervention preparation closed loop', () => {
         }),
       ]),
     );
+    expect(
+      diagnosticQuestions
+        .filter((row) => row.id !== active.settlement?.diagnostics.immediate.question_id)
+        .map((row) => row.draft_status),
+    ).toEqual(['draft', 'draft']);
     const liveStream = await db
       .select({
         ref_id: practice_stream_item.ref_id,
@@ -725,6 +732,16 @@ describe('YUK-791 intervention preparation closed loop', () => {
         }),
       ]),
     );
+    await db
+      .update(practice_stream_item)
+      .set({ status: 'skipped', updated_at: activationNow })
+      .where(eq(practice_stream_item.ref_id, active.settlement.diagnostics.immediate.question_id));
+    await recoverEligibleInterventionDiagnostics(db, activationNow);
+    const [repairedDelivery] = await db
+      .select({ status: practice_stream_item.status })
+      .from(practice_stream_item)
+      .where(eq(practice_stream_item.ref_id, active.settlement.diagnostics.immediate.question_id));
+    expect(repairedDelivery?.status).toBe('pending');
     const dueResponse = await handleReviewDue(
       new Request('http://localhost/api/review/due?limit=20'),
       { listActiveGoalsFn: async () => [] },
@@ -756,18 +773,19 @@ describe('YUK-791 intervention preparation closed loop', () => {
       .where(eq(question.id, active.settlement.diagnostics.immediate.question_id));
     expect(reclaimedSynchronousCrash?.draft_status).toBe('active');
 
+    const immediate = active.settlement.diagnostics.immediate;
     const delayed = active.settlement.diagnostics.delayed;
     await db
       .update(question)
       .set({ draft_status: 'draft', updated_at: staleClaimedAt })
-      .where(eq(question.id, delayed.question_id));
+      .where(eq(question.id, immediate.question_id));
     await db.insert(event).values({
       id: 'pending_durable_diagnostic_guard',
       actor_kind: 'user',
       actor_ref: 'self',
       action: 'experimental:judge_pending_attempt',
       subject_kind: 'question',
-      subject_id: delayed.question_id,
+      subject_id: immediate.question_id,
       outcome: null,
       payload: { run_id: 'pending_durable_diagnostic_run' },
       created_at: staleClaimedAt,
@@ -776,7 +794,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
     const [durableClaimStillFenced] = await db
       .select({ draft_status: question.draft_status })
       .from(question)
-      .where(eq(question.id, delayed.question_id));
+      .where(eq(question.id, immediate.question_id));
     expect(durableClaimStillFenced?.draft_status).toBe('draft');
     await db.insert(job_events).values({
       business_table: JUDGE_RUN_TABLE,
@@ -788,13 +806,13 @@ describe('YUK-791 intervention preparation closed loop', () => {
     const [terminalAttemptReleased] = await db
       .select({ draft_status: question.draft_status })
       .from(question)
-      .where(eq(question.id, delayed.question_id));
+      .where(eq(question.id, immediate.question_id));
     expect(terminalAttemptReleased?.draft_status).toBe('active');
 
     await db
       .update(question)
       .set({ draft_status: 'draft', updated_at: staleClaimedAt })
-      .where(eq(question.id, delayed.question_id));
+      .where(eq(question.id, immediate.question_id));
     await db.insert(job_events).values({
       business_table: JUDGE_RUN_TABLE,
       business_id: 'pending_durable_diagnostic_run',
@@ -805,7 +823,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
     const [reopenedAttemptStillFenced] = await db
       .select({ draft_status: question.draft_status })
       .from(question)
-      .where(eq(question.id, delayed.question_id));
+      .where(eq(question.id, immediate.question_id));
     expect(reopenedAttemptStillFenced?.draft_status).toBe('draft');
 
     await db.delete(job_events).where(eq(job_events.business_id, 'pending_durable_diagnostic_run'));
@@ -813,13 +831,21 @@ describe('YUK-791 intervention preparation closed loop', () => {
     await db
       .update(question)
       .set({ draft_status: 'active', updated_at: activationNow })
-      .where(eq(question.id, delayed.question_id));
+      .where(eq(question.id, immediate.question_id));
 
     const [delayedCard] = await db
       .select({ state: material_fsrs_state.state })
       .from(material_fsrs_state)
       .where(eq(material_fsrs_state.subject_id, delayed.question_id));
-    if (!delayedCard) throw new Error('missing delayed diagnostic card');
+    expect(delayedCard).toBeUndefined();
+    const [immediateCard] = await db
+      .select({ state: material_fsrs_state.state })
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_id, immediate.question_id));
+    if (!immediateCard) throw new Error('missing immediate diagnostic card');
+    const preExposureAfterProvisionalDue = new Date(
+      activationNow.getTime() + 8 * 24 * 60 * 60 * 1000,
+    );
     await writeEvent(db, {
       id: 'review_settlement_delayed_too_early',
       actor_kind: 'user',
@@ -830,12 +856,12 @@ describe('YUK-791 intervention preparation closed loop', () => {
       outcome: 'success',
       payload: {
         fsrs_rating: 'good',
-        fsrs_state_after: delayedCard.state,
+        fsrs_state_after: immediateCard.state,
         user_response_md: '提前直连作答',
         referenced_knowledge_ids: [],
         judge: diagnosticJudgeVerdict('correct'),
       },
-      created_at: new Date(active.settlement.diagnostics.immediate.due_at),
+      created_at: preExposureAfterProvisionalDue,
     });
     await writeEvent(db, {
       id: 'judge_settlement_delayed_too_early',
@@ -847,7 +873,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       outcome: 'success',
       payload: diagnosticJudgeEventPayload('correct'),
       caused_by_event_id: 'review_settlement_delayed_too_early',
-      created_at: new Date(active.settlement.diagnostics.immediate.due_at),
+      created_at: preExposureAfterProvisionalDue,
     });
     await expect(
       handleInterventionDiagnosticJudgeDelivery(db, {
@@ -856,7 +882,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
         deliverySeq: 'pre-due',
         sourceEventId: 'judge_settlement_delayed_too_early',
       }),
-    ).resolves.toMatchObject({ status: 'skipped', reason: 'diagnostic_not_due' });
+    ).resolves.toMatchObject({ status: 'skipped', reason: 'intervention_not_exposed' });
     await expect(loadInterventionVersion(db, opened.id, opened.version)).resolves.toMatchObject({
       status: 'active',
       settlement: { diagnostics: { delayed: { status: 'scheduled', review_event_id: null } } },
@@ -871,14 +897,18 @@ describe('YUK-791 intervention preparation closed loop', () => {
     } as const;
     let lastDelivery: EventSubscriptionDelivery | null = null;
     for (const kind of ['immediate', 'delayed', 'transfer'] as const) {
+      const beforeReview = await loadInterventionVersion(db, opened.id, opened.version);
+      if (!beforeReview?.settlement) throw new Error('intervention settlement disappeared');
+      const scheduled = beforeReview.settlement.diagnostics[kind];
       const reviewEventId = `review_settlement_${kind}`;
-      const reviewedAt = new Date(
-        active.settlement.diagnostics[kind].due_at.replace('.000Z', '.500Z'),
-      );
+      const reviewedAt =
+        kind === 'immediate'
+          ? new Date(activationNow.getTime() + 10 * 24 * 60 * 60 * 1000 + 500)
+          : new Date(scheduled.due_at.replace('.000Z', '.500Z'));
       const [cardBeforeReview] = await db
         .select({ state: material_fsrs_state.state })
         .from(material_fsrs_state)
-        .where(eq(material_fsrs_state.subject_id, active.settlement.diagnostics[kind].question_id))
+        .where(eq(material_fsrs_state.subject_id, scheduled.question_id))
         .limit(1);
       if (!cardBeforeReview) throw new Error(`missing ${kind} diagnostic card`);
       await writeEvent(db, {
@@ -887,7 +917,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
         actor_ref: 'self',
         action: 'review',
         subject_kind: 'question',
-        subject_id: active.settlement.diagnostics[kind].question_id,
+        subject_id: scheduled.question_id,
         outcome: verdicts[kind].eventOutcome,
         payload: {
           fsrs_rating: verdicts[kind].rating,
@@ -945,7 +975,40 @@ describe('YUK-791 intervention preparation closed loop', () => {
       const result = await handleInterventionDiagnosticJudgeDelivery(db, lastDelivery);
       expect(result.status).toBe('succeeded');
       if (kind === 'immediate') {
-        const nextDay = new Date(activationNow.getTime() + 24 * 60 * 60 * 1000);
+        const afterExposure = await loadInterventionVersion(db, opened.id, opened.version);
+        if (!afterExposure?.settlement) throw new Error('anchored settlement disappeared');
+        const exposureAt = reviewedAt.getTime();
+        expect(afterExposure.settlement.diagnostics.delayed.due_at).toBe(
+          new Date(exposureAt + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        );
+        expect(afterExposure.settlement.diagnostics.transfer.due_at).toBe(
+          new Date(exposureAt + 21 * 24 * 60 * 60 * 1000).toISOString(),
+        );
+        const anchoredCards = await db
+          .select({
+            subject_id: material_fsrs_state.subject_id,
+            due_at: material_fsrs_state.due_at,
+          })
+          .from(material_fsrs_state)
+          .where(
+            inArray(material_fsrs_state.subject_id, [
+              afterExposure.settlement.diagnostics.delayed.question_id,
+              afterExposure.settlement.diagnostics.transfer.question_id,
+            ]),
+          );
+        expect(anchoredCards).toEqual(
+          expect.arrayContaining([
+            {
+              subject_id: afterExposure.settlement.diagnostics.delayed.question_id,
+              due_at: new Date(afterExposure.settlement.diagnostics.delayed.due_at),
+            },
+            {
+              subject_id: afterExposure.settlement.diagnostics.transfer.question_id,
+              due_at: new Date(afterExposure.settlement.diagnostics.transfer.due_at),
+            },
+          ]),
+        );
+        const nextDay = new Date(reviewedAt.getTime() + 24 * 60 * 60 * 1000);
         const nextDate = nextDay.toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
         await db.insert(practice_stream_item).values({
           id: 'stream_existing_after_immediate_completion',
@@ -1004,9 +1067,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
             correction_kind: 'supersede',
             replacement_event_id: rejudgeEventId,
             reason_md: '申诉重判改为正确。',
-            affected_refs: [
-              { kind: 'question', id: active.settlement.diagnostics[kind].question_id },
-            ],
+            affected_refs: [{ kind: 'question', id: scheduled.question_id }],
           },
           caused_by_event_id: rejudgeEventId,
           created_at: new Date(reviewedAt.getTime() + 4),
@@ -1040,12 +1101,12 @@ describe('YUK-791 intervention preparation closed loop', () => {
       const card = await db
         .select({ id: material_fsrs_state.id })
         .from(material_fsrs_state)
-        .where(eq(material_fsrs_state.subject_id, active.settlement.diagnostics[kind].question_id));
+        .where(eq(material_fsrs_state.subject_id, scheduled.question_id));
       expect(card).toHaveLength(0);
       const [retiredQuestion] = await db
         .select({ draft_status: question.draft_status })
         .from(question)
-        .where(eq(question.id, active.settlement.diagnostics[kind].question_id));
+        .where(eq(question.id, scheduled.question_id));
       expect(retiredQuestion?.draft_status).toBe('draft');
     }
 
@@ -1226,7 +1287,9 @@ describe('YUK-791 intervention preparation closed loop', () => {
       .from(material_fsrs_state)
       .where(eq(material_fsrs_state.subject_kind, 'question'));
     expect(recoveredQuestions[0]?.value).toBe(303);
-    expect(recoveredCards[0]?.value).toBe(303);
+    // Only the immediate delivery is due before exposure; +7/+21 follow-ups
+    // remain draft questions with no FSRS card until that review is recorded.
+    expect(recoveredCards[0]?.value).toBe(101);
     const [recoveredImmediateStreamRow] = await db
       .select({ date: practice_stream_item.date, source: practice_stream_item.source })
       .from(practice_stream_item)

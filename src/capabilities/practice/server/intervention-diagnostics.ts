@@ -220,7 +220,7 @@ async function appendImmediateDiagnosticToLiveStream(
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
   await tx.execute(sql.raw("SET LOCAL lock_timeout = '0'"));
   const [existingDelivery] = await tx
-    .select({ id: practice_stream_item.id })
+    .select({ id: practice_stream_item.id, status: practice_stream_item.status })
     .from(practice_stream_item)
     .where(
       and(
@@ -230,7 +230,31 @@ async function appendImmediateDiagnosticToLiveStream(
       ),
     )
     .limit(1);
-  if (existingDelivery) return;
+  if (existingDelivery) {
+    let restorePending = existingDelivery.status === 'skipped';
+    if (existingDelivery.status === 'done') {
+      const [attempt] = await tx
+        .select({ id: event.id })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'review'),
+            eq(event.subject_kind, 'question'),
+            eq(event.subject_id, input.questionId),
+            sql`${event.payload} ->> 'stream_item_id' = ${existingDelivery.id}`,
+          ),
+        )
+        .limit(1);
+      restorePending = !attempt;
+    }
+    if (restorePending) {
+      await tx
+        .update(practice_stream_item)
+        .set({ status: 'pending', updated_at: input.now })
+        .where(eq(practice_stream_item.id, existingDelivery.id));
+    }
+    return;
+  }
 
   const [current] = await tx
     .select({
@@ -279,6 +303,12 @@ export async function materializeInterventionDiagnostics(
     settlement: InterventionSettlementT;
     snapshot: InterventionSnapshotT;
     now: Date;
+    /**
+     * Set only by the aggregate transaction that records the first immediate
+     * review. It activates and re-enrolls the newly anchored follow-ups in the
+     * same transaction as the settlement update.
+     */
+    activateAnchoredFollowups?: boolean;
   },
 ): Promise<void> {
   const packageValue = InterventionPackage.parse(input.package);
@@ -286,6 +316,14 @@ export async function materializeInterventionDiagnostics(
   const snapshot = InterventionSnapshot.parse(input.snapshot);
   const sourceRef = `${snapshot.intervention_id}@${snapshot.intervention_version}`;
   const kinds = ['immediate', 'delayed', 'transfer'] as const;
+  const followupsReady = settlement.diagnostics.immediate.status !== 'scheduled';
+  const readyScheduledIds = kinds
+    .filter(
+      (kind) =>
+        settlement.diagnostics[kind].status === 'scheduled' &&
+        (kind === 'immediate' || followupsReady),
+    )
+    .map((kind) => settlement.diagnostics[kind].question_id);
 
   await tx
     .insert(question)
@@ -305,7 +343,10 @@ export async function materializeInterventionDiagnostics(
           source_ref: sourceRef,
           // Product-owned diagnostics have already passed package authoring,
           // independent review, deterministic validation, and the lineage proof below.
-          draft_status: 'active',
+          draft_status:
+            scheduled.status === 'scheduled' && (kind === 'immediate' || followupsReady)
+              ? 'active'
+              : 'draft',
           metadata: diagnosticMetadata({
             interventionId: snapshot.intervention_id,
             version: snapshot.intervention_version,
@@ -338,7 +379,7 @@ export async function materializeInterventionDiagnostics(
     .set({ draft_status: 'active', updated_at: input.now })
     .where(
       and(
-        inArray(question.id, ids),
+        inArray(question.id, readyScheduledIds),
         eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
         eq(question.draft_status, 'draft'),
         lte(question.updated_at, staleClaimBefore),
@@ -424,9 +465,48 @@ export async function materializeInterventionDiagnostics(
       throw new Error(`intervention diagnostic question id collision for ${scheduled.question_id}`);
     }
 
-    if (scheduled.status === 'scheduled') {
+    const expectedMetadata = diagnosticMetadata({
+      interventionId: snapshot.intervention_id,
+      version: snapshot.intervention_version,
+      knowledgeId: snapshot.conjecture.knowledge_id,
+      kind,
+      dueAt: scheduled.due_at,
+      probeSpec: packageValue.diagnostics[kind].probe_spec,
+    });
+    const shouldActivateAnchoredFollowup =
+      input.activateAnchoredFollowups === true &&
+      kind !== 'immediate' &&
+      scheduled.status === 'scheduled' &&
+      followupsReady;
+    if (
+      metadata.data.due_at !== scheduled.due_at ||
+      shouldActivateAnchoredFollowup ||
+      (scheduled.status === 'scheduled' && kind !== 'immediate' && !followupsReady)
+    ) {
+      await tx
+        .update(question)
+        .set({
+          metadata: expectedMetadata,
+          ...(shouldActivateAnchoredFollowup
+            ? { draft_status: 'active' as const }
+            : scheduled.status === 'scheduled' && kind !== 'immediate' && !followupsReady
+              ? { draft_status: 'draft' as const }
+              : {}),
+          updated_at: input.now,
+        })
+        .where(eq(question.id, scheduled.question_id));
+    }
+
+    const ready = kind === 'immediate' || followupsReady;
+    if (scheduled.status === 'scheduled' && ready) {
       const dueAt = new Date(scheduled.due_at);
       const initial = initialFsrsState(dueAt);
+      // A pre-fix installation may already have activation-anchored follow-up
+      // cards. Replace only at the atomic exposure transition so the card due
+      // date cannot retain that stale anchor.
+      if (shouldActivateAnchoredFollowup) {
+        await retireQuestionFsrsState(tx, scheduled.question_id);
+      }
       await enrollFsrsStateIfAbsent(tx, {
         subject_kind: 'question',
         subject_id: scheduled.question_id,
@@ -434,6 +514,10 @@ export async function materializeInterventionDiagnostics(
         due_at: dueAt,
         last_review_event_id: null,
       });
+    } else if (scheduled.status === 'scheduled' && !ready) {
+      // Before exposure, follow-ups are product-owned drafts with no due-card
+      // projection. This also repairs activation-anchored rows from pre-fix data.
+      await retireQuestionFsrsState(tx, scheduled.question_id);
     }
   }
 

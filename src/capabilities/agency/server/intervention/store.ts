@@ -24,6 +24,7 @@ import {
   type PedagogyRecommendationT,
   buildInterventionSettlement,
   interventionOutcomeFromSettlement,
+  reanchorInterventionFollowupDiagnostics,
 } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
 import { event, intervention } from '@/db/schema';
@@ -533,6 +534,7 @@ export type RecordInterventionDiagnosticReviewResult =
         | 'intervention_not_active'
         | 'settlement_missing'
         | 'question_mismatch'
+        | 'intervention_not_exposed'
         | 'diagnostic_not_due';
     }
   | {
@@ -575,6 +577,12 @@ export async function recordInterventionDiagnosticReview(
     if (diagnostic.question_id !== input.questionId) {
       return { status: 'skipped', reason: 'question_mismatch' };
     }
+    if (
+      input.diagnosticKind !== 'immediate' &&
+      current.settlement.diagnostics.immediate.status === 'scheduled'
+    ) {
+      return { status: 'skipped', reason: 'intervention_not_exposed' };
+    }
     if (input.reviewedAt.getTime() < new Date(diagnostic.due_at).getTime()) {
       return { status: 'skipped', reason: 'diagnostic_not_due' };
     }
@@ -595,7 +603,7 @@ export async function recordInterventionDiagnosticReview(
       }
     }
 
-    const nextSettlement = InterventionSettlement.parse({
+    const reviewedSettlement = InterventionSettlement.parse({
       ...current.settlement,
       diagnostics: {
         ...current.settlement.diagnostics,
@@ -608,6 +616,25 @@ export async function recordInterventionDiagnosticReview(
         },
       },
     });
+    const nextSettlement =
+      input.diagnosticKind === 'immediate'
+        ? reanchorInterventionFollowupDiagnostics(reviewedSettlement)
+        : reviewedSettlement;
+    if (input.diagnosticKind === 'immediate' && current.delivery_mode === 'eligible') {
+      if (!current.package) {
+        throw new Error(
+          `intervention ${current.id}@${current.version} cannot anchor diagnostics without its package`,
+        );
+      }
+      const { materializeInterventionDiagnostics } = await import('@/capabilities/practice/public');
+      await materializeInterventionDiagnostics(tx, {
+        package: current.package,
+        settlement: nextSettlement,
+        snapshot: current.snapshot,
+        now,
+        activateAnchoredFollowups: true,
+      });
+    }
     const outcome = interventionOutcomeFromSettlement(nextSettlement);
     const terminalSettlement = InterventionSettlement.parse({
       ...nextSettlement,
