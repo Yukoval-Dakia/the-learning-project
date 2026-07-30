@@ -21,9 +21,12 @@
    dispatch 可绕过初审锁。
 5. 唯一验证轮发现 OCR summary-only 路径只写 issue comment；OCR 幂等检查现同时识别
    tagged pull-request review 与 tagged issue summary。按预算不再启动第三轮 review。
-6. `AGENTS.md`、`CLAUDE.md` 与两份 PR skill 统一 review budget：一轮初审 + 最多一轮
+6. 最终 push 后的迟到 Major 指出 manual dispatch 仍可无限触发；入口现要求初审已完成、
+   `kind=verification` 尚不存在。后续复审必须显式 `owner_override=true`，并在 review/
+   summary tag 中留下 owner_override 类型。
+7. `AGENTS.md`、`CLAUDE.md` 与两份 PR skill 统一 review budget：一轮初审 + 最多一轮
    P0/P1 修复验证；P2/minor/nit 默认不阻塞、不触发新 push。
-7. exact-head `CI Gate` 明确为自动硬 gate；无未裁决 P0/P1 时不等待 advisory review
+8. exact-head `CI Gate` 明确为自动硬 gate；无未裁决 P0/P1 时不等待 advisory review
    pending/failure/cancel/timeout。
 
 ## 验证证据

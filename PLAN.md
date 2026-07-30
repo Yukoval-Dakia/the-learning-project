@@ -18,6 +18,8 @@
     与 PR-Agent guide 写入后做跨事件幂等检查。只有显式 OCR manual dispatch 绕过初审锁。
   - 唯一验证轮发现 OCR summary-only 路径不创建 pull-request review；幂等检查现同时
     识别 tagged review 与 tagged issue summary，关闭该漏口。按预算不再启动第三轮 review。
+  - 最终 push 后的迟到 Major 指出 manual dispatch 可无限触发；入口现要求已有初审且尚无
+    `kind=verification`，后续复审只有显式 `owner_override=true` 才允许，并在产物 tag 留痕。
   - 两个 review job 名称显式标注 advisory；OCR 手动入口统一从 GitHub API 解析并验证
     当前 PR/base/head，拒绝 draft、fork 与 Dependabot。
   - agent/Claude PR policy 统一为最多一轮初审 + 一轮 P0/P1 修复后的验证审；push 后新 bot
@@ -29,7 +31,7 @@
 - **本地静态验证已过**
   - Ruby YAML parser：2 个 workflow PASS。
   - workflow trigger/advisory/manual-input 专项断言 PASS；`git diff --check` PASS。
-  - lifecycle 幂等修正后的 workflow 专项断言 PASS。
+  - lifecycle / summary-only / single-verification budget 修正后的 workflow 专项断言 PASS。
   - `tests/integration/audit-docs-invariant.test.ts`：6/6 PASS。
   - Biome 不处理本次 Markdown/YAML 文件；其 0-file 输出不计作有效验证。
 

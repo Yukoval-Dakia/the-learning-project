@@ -11,6 +11,11 @@ on:
         description: Pull request number to review manually
         required: true
         type: number
+      owner_override:
+        description: Allow an explicitly owner-authorized review beyond the normal one-verification budget
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -51,6 +56,7 @@ jobs:
         env:
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          OWNER_OVERRIDE: ${{ inputs.owner_override }}
         with:
           script: |
             const prNumber = Number(process.env.INPUT_PR_NUMBER || process.env.EVENT_PR_NUMBER);
@@ -72,33 +78,54 @@ jobs:
               throw new Error(`PR #${prNumber} is authored by Dependabot; advisory review is disabled.`);
             }
 
-            if (context.eventName !== 'workflow_dispatch') {
-              const [reviews, issueComments] = await Promise.all([
-                github.paginate(github.rest.pulls.listReviews, {
-                  ...context.repo,
-                  pull_number: prNumber,
-                  per_page: 100,
-                }),
-                github.paginate(github.rest.issues.listComments, {
-                  ...context.repo,
-                  issue_number: prNumber,
-                  per_page: 100,
-                }),
-              ]);
-              const alreadyReviewed =
-                reviews.some((review) =>
+            const [reviews, issueComments] = await Promise.all([
+              github.paginate(github.rest.pulls.listReviews, {
+                ...context.repo,
+                pull_number: prNumber,
+                per_page: 100,
+              }),
+              github.paginate(github.rest.issues.listComments, {
+                ...context.repo,
+                issue_number: prNumber,
+                per_page: 100,
+              }),
+            ]);
+            const ocrArtifacts = [
+              ...reviews
+                .filter((review) =>
                   review.user?.login === 'github-actions[bot]' &&
                   String(review.body || '').includes('<!-- ocr-codex-review run=')
-                ) ||
-                issueComments.some((comment) =>
+                )
+                .map((review) => String(review.body || '')),
+              ...issueComments
+                .filter((comment) =>
                   comment.user?.login === 'github-actions[bot]' &&
                   String(comment.body || '').includes('<!-- ocr-codex-review-summary:')
-                );
+                )
+                .map((comment) => String(comment.body || '')),
+            ];
+            const alreadyReviewed = ocrArtifacts.length > 0;
+            const alreadyVerified = ocrArtifacts.some((body) => body.includes('kind=verification'));
+            const isManual = context.eventName === 'workflow_dispatch';
+            const ownerOverride = process.env.OWNER_OVERRIDE === 'true';
+
+            if (!isManual) {
               if (alreadyReviewed) {
                 core.notice(`PR #${prNumber} already has an initial OCR review; skipping this lifecycle event.`);
                 core.setOutput('should_review', 'false');
                 return;
               }
+              core.setOutput('review_kind', 'initial');
+            } else {
+              if (!alreadyReviewed) {
+                throw new Error(`PR #${prNumber} has no completed initial OCR review; manual verification is not allowed.`);
+              }
+              if (alreadyVerified && !ownerOverride) {
+                throw new Error(
+                  `PR #${prNumber} already has a verification OCR review; set owner_override only after explicit owner authorization.`,
+                );
+              }
+              core.setOutput('review_kind', alreadyVerified ? 'owner_override' : 'verification');
             }
 
             core.setOutput('should_review', 'true');
@@ -333,6 +360,7 @@ jobs:
         env:
           HEAD_SHA: ${{ steps.pr_context.outputs.head_sha }}
           PR_NUMBER: ${{ steps.pr_context.outputs.pr_number }}
+          REVIEW_KIND: ${{ steps.pr_context.outputs.review_kind }}
         with:
           script: |
             const fs = require('fs');
@@ -344,8 +372,9 @@ jobs:
               ? envAttempt
               : (Number.isFinite(context.runAttempt) ? context.runAttempt : 1);
             const RUN_TAG = `${runId}-${runAttempt}`;
-            const REVIEW_TAG = `<!-- ocr-codex-review run=${RUN_TAG} -->`;
-            const SUMMARY_TAG = `<!-- ocr-codex-review-summary:${RUN_TAG} -->`;
+            const REVIEW_KIND = process.env.REVIEW_KIND || 'initial';
+            const REVIEW_TAG = `<!-- ocr-codex-review run=${RUN_TAG} kind=${REVIEW_KIND} -->`;
+            const SUMMARY_TAG = `<!-- ocr-codex-review-summary:${RUN_TAG} kind=${REVIEW_KIND} -->`;
 
             const raw = fs.readFileSync('ocr-review.json', 'utf8');
             const result = JSON.parse(raw);
@@ -368,6 +397,7 @@ jobs:
               '## OCR review',
               '',
               `Reviewed commit: \`${(commit_id || '').slice(0, 8)}\``,
+              `Review kind: \`${REVIEW_KIND}\``,
               `Status: \`${result.status || 'unknown'}\``,
               `Files reviewed: \`${summary.files_reviewed ?? 0}\``,
               `Comments: \`${summary.comments ?? comments.length}\``,
