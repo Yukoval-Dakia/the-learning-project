@@ -633,7 +633,7 @@ export async function recordInterventionDiagnosticReview(
     if (!updated) throw new Error('intervention diagnostic review lost its serialized state');
 
     const { retireInterventionDiagnosticQuestion } = await import('@/capabilities/practice/public');
-    await retireInterventionDiagnosticQuestion(tx, input.questionId);
+    await retireInterventionDiagnosticQuestion(tx, input.questionId, now);
 
     if (outcome) {
       await writeEvent(tx, {

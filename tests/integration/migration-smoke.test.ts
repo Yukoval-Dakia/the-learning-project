@@ -10,6 +10,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { InterventionSettlement } from '@/core/schema/intervention';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
@@ -1496,5 +1497,79 @@ describe('migration smoke — YUK-791 intervention preparation', () => {
       { id: 'int_a', version: 1, status: 'active', delivery_mode: 'shadow' },
       { id: 'int_a', version: 2, status: 'preparing', delivery_mode: 'shadow' },
     ]);
+  });
+});
+
+describe('migration smoke — YUK-792 intervention settlement backfill', () => {
+  const BASELINE_TAG = '0085_yuk791_intervention_preparation';
+  const MIGRATION_TAG = '0086_yuk792_intervention_settlement';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    let reachedBaseline = false;
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(client, migration.sql);
+      if (migration.tag === BASELINE_TAG) {
+        reachedBaseline = true;
+        break;
+      }
+    }
+    if (!reachedBaseline) throw new Error(`baseline migration ${BASELINE_TAG} not found`);
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('serializes every backfilled settlement clock as UTC regardless of session timezone', async () => {
+    await client`SET TIME ZONE 'Asia/Shanghai'`;
+    await client`
+      INSERT INTO event (
+        id, actor_kind, actor_ref, action, subject_kind, subject_id,
+        outcome, payload, affected_scopes
+      ) VALUES
+        (
+          'yuk792_probe', 'system', 'yuk792_migration_smoke',
+          'experimental:yuk792_fixture', 'question', 'yuk792_question',
+          'success', '{}'::jsonb, ARRAY[]::text[]
+        ),
+        (
+          'yuk792_conjecture', 'system', 'yuk792_migration_smoke',
+          'experimental:yuk792_fixture', 'knowledge', 'yuk792_kc',
+          'success', '{}'::jsonb, ARRAY[]::text[]
+        )
+    `;
+    await client`
+      INSERT INTO intervention (
+        id, version, source_probe_result_event_id, conjecture_event_id,
+        status, delivery_mode, idempotency_key, snapshot_json,
+        recommendation_json, package_json, activated_at
+      ) VALUES (
+        'int_yuk792_tz', 1, 'yuk792_probe', 'yuk792_conjecture',
+        'active', 'eligible', 'idem_yuk792_tz', '{}'::jsonb,
+        '{"kind":"recommendation"}'::jsonb, '{}'::jsonb,
+        '2026-07-01 10:20:30.123+08'::timestamptz
+      )
+    `;
+
+    const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
+    if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
+    await applyMigrationFile(client, migration.sql);
+
+    const rows = await client<{ settlement_json: unknown }[]>`
+      SELECT settlement_json
+      FROM intervention
+      WHERE id = 'int_yuk792_tz' AND version = 1
+    `;
+    const settlement = InterventionSettlement.parse(rows[0]?.settlement_json);
+    expect(settlement.scheduled_at).toBe('2026-07-01T02:20:30.123Z');
+    expect(settlement.diagnostics.immediate.due_at).toBe('2026-07-01T02:20:30.123Z');
+    expect(settlement.diagnostics.delayed.due_at).toBe('2026-07-08T02:20:30.123Z');
+    expect(settlement.diagnostics.transfer.due_at).toBe('2026-07-22T02:20:30.123Z');
   });
 });

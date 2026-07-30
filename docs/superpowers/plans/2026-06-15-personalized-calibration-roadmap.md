@@ -550,13 +550,16 @@ Do not compute MFI for recall-locked variants. Mark `mfi_eligible: false`.
 填 `SelectionCandidateSignal` 在 Phase 1 留的 type-only 字段（ADR-0042 编排档2 L1 信号集扩充）：
 - `examRelevance` ∈ [0,1]：据考纲/考点权重映射（subject profile 的考纲数据）。
 - `misconceptionRecurrence` ∈ [0,1]：据该题关联错误观念家族的复发频次（mistake/cause 数据）。
-- `transferGap` ∈ [0,1]：据跨情境迁移缺口诊断（同 KC 不同题型/情境的掌握差）。
 
-缺数据时留 `undefined`（评分层按 MFI-only 退化，不强行兜 0）。这三个信号进 L2 LLM 编排器的候选画像 + 落 `signals` 快照，使选题脱离纯 MFI 中心。
+缺数据时留 `undefined`（评分层按 MFI-only 退化，不强行兜 0）。已具备真实
+producer/reader 的信号进入 L2 LLM 编排器候选画像并落 `signals` 快照，使选题脱离纯
+MFI 中心。`transferGap` 不在本 Task 实现：只有 producer、per-(KC,context) live reader
+与 red-capable tests 同步落地后才恢复，期间不得加入 runtime type/prompt 或永久 `n/a`
+占位。
 
 - [ ] **Step 5: Add DB tests**
 
-Seed two knowledge states and one multi-KC question. Assert selected theta snapshot uses the lower `theta_hat`. 另断言 §9.2 信号在有数据时被填、缺数据时留 `undefined`（不污染为 0）。
+Seed two knowledge states and one multi-KC question. Assert selected theta snapshot uses the lower `theta_hat`. 另断言已落地的 §9.2 信号在有数据时被填、缺数据时留 `undefined`（不污染为 0）；`transferGap` 仅在上述恢复条件满足时增加对应红测。
 
 ### Task 8: Randomized MFI Selection in Non-Due Slots
 

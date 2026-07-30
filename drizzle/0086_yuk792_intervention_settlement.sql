@@ -12,7 +12,10 @@ SET "settlement_json" = jsonb_build_object(
     'immediate', jsonb_build_object(
       'kind', 'immediate',
       'question_id', 'intervention:' || "id" || ':v' || "version"::text || ':immediate',
-      'due_at', to_jsonb("activated_at"),
+      'due_at', to_char(
+        "activated_at" AT TIME ZONE 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ),
       'status', 'scheduled',
       'review_event_id', NULL,
       'completed_at', NULL
@@ -20,7 +23,10 @@ SET "settlement_json" = jsonb_build_object(
     'delayed', jsonb_build_object(
       'kind', 'delayed',
       'question_id', 'intervention:' || "id" || ':v' || "version"::text || ':delayed',
-      'due_at', to_jsonb("activated_at" + interval '7 days'),
+      'due_at', to_char(
+        ("activated_at" + interval '7 days') AT TIME ZONE 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ),
       'status', 'scheduled',
       'review_event_id', NULL,
       'completed_at', NULL
@@ -28,13 +34,19 @@ SET "settlement_json" = jsonb_build_object(
     'transfer', jsonb_build_object(
       'kind', 'transfer',
       'question_id', 'intervention:' || "id" || ':v' || "version"::text || ':transfer',
-      'due_at', to_jsonb("activated_at" + interval '21 days'),
+      'due_at', to_char(
+        ("activated_at" + interval '21 days') AT TIME ZONE 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ),
       'status', 'scheduled',
       'review_event_id', NULL,
       'completed_at', NULL
     )
   ),
-  'scheduled_at', to_jsonb("activated_at"),
+  'scheduled_at', to_char(
+    "activated_at" AT TIME ZONE 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+  ),
   'completed_at', NULL
 )
 WHERE "status" = 'active'

@@ -124,6 +124,7 @@ describe('POST /api/review/submit', () => {
     await resetDb();
     __resetRateLimitForTests();
     vi.mocked(runTask).mockReset();
+    vi.mocked(resolveSubjectProfileForKnowledgeIds).mockClear();
   });
 
   afterEach(() => vi.unstubAllEnvs());
@@ -172,6 +173,40 @@ describe('POST /api/review/submit', () => {
       .from(event)
       .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_intervention_future')));
     expect(reviews).toHaveLength(0);
+  });
+
+  it('resolves a diagnostic judge profile from canonical intervention metadata', async () => {
+    await seedQuestion('q_intervention_profile', {
+      kind: 'fill_blank',
+      reference_md: '答案',
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      knowledge_ids: [],
+      metadata: {
+        intervention_diagnostic: {
+          schema_version: INTERVENTION_CONTRACT_VERSION,
+          intervention_id: 'int_profile',
+          intervention_version: 1,
+          diagnostic_kind: 'immediate',
+          knowledge_id: 'kc_math',
+          due_at: '2026-07-01T00:00:00.000Z',
+        },
+      },
+    });
+
+    const response = await POST(
+      submitReq({
+        question_id: 'q_intervention_profile',
+        rating: 'good',
+        response_md: '答案',
+        auto_rate: true,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(vi.mocked(resolveSubjectProfileForKnowledgeIds)).toHaveBeenCalledWith(
+      expect.anything(),
+      ['kc_math'],
+    );
   });
 
   it('canonical attempt creation returns 201 with the review event Location', async () => {

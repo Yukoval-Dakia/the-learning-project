@@ -3,9 +3,14 @@
 // This endpoint must not write review events or mutate FSRS state. It exists so
 // `/review` can show advisory before the user commits a rating.
 
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import {
+  INTERVENTION_CONTRACT_VERSION,
+  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+} from '@/core/schema/intervention';
 import { event, material_fsrs_state, question } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 // YUK-101 (iter2 fix F12) — shared seeders from tests/helpers/event-seed.
 // Iter1 duplicated these byte-for-byte in advice + submit test files; the
@@ -14,6 +19,15 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';
 import { POST } from './advice';
 import { ReviewAdviceResponseSchema } from './review-planning-contracts';
+
+vi.mock('@/capabilities/knowledge/server/subject-profile', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/capabilities/knowledge/server/subject-profile')>();
+  return {
+    ...actual,
+    resolveSubjectProfileForKnowledgeIds: vi.fn(actual.resolveSubjectProfileForKnowledgeIds),
+  };
+});
 
 const QUESTION_BASE = {
   kind: 'short_answer' as const,
@@ -49,6 +63,7 @@ function adviceReq(body: unknown) {
 describe('POST /api/review/advice', () => {
   beforeEach(async () => {
     await resetDb();
+    vi.mocked(resolveSubjectProfileForKnowledgeIds).mockClear();
   });
 
   it('returns exact judge + rating advice without writing review event or FSRS state', async () => {
@@ -94,6 +109,38 @@ describe('POST /api/review/advice', () => {
       .from(material_fsrs_state)
       .where(eq(material_fsrs_state.subject_id, 'q_advice_exact'));
     expect(stateRows).toHaveLength(0);
+  });
+
+  it('resolves a diagnostic judge profile from canonical intervention metadata', async () => {
+    await seedQuestion('q_advice_intervention', {
+      kind: 'fill_blank',
+      reference_md: '答案',
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      knowledge_ids: [],
+      metadata: {
+        intervention_diagnostic: {
+          schema_version: INTERVENTION_CONTRACT_VERSION,
+          intervention_id: 'int_advice',
+          intervention_version: 1,
+          diagnostic_kind: 'immediate',
+          knowledge_id: 'kc_math',
+          due_at: '2026-07-01T00:00:00.000Z',
+        },
+      },
+    });
+
+    const res = await POST(
+      adviceReq({
+        activity_ref: { kind: 'question', id: 'q_advice_intervention' },
+        response_md: '答案',
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(resolveSubjectProfileForKnowledgeIds)).toHaveBeenCalledWith(
+      expect.anything(),
+      ['kc_math'],
+    );
   });
 
   it('returns partial keyword advice as hard before final user rating', async () => {

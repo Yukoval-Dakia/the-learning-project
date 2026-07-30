@@ -14,6 +14,7 @@
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { normalizeReviewSubmitActivityRef } from '@/capabilities/practice/server/activity-ref';
 import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/server/cause-context';
+import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/server/rating-advisor';
 import { db } from '@/db/client';
@@ -57,7 +58,10 @@ export async function POST(req: Request): Promise<Response> {
       throw new ApiError('not_found', `question ${questionId} not found`, 404);
     }
 
-    const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
+    const subjectProfile = await resolveSubjectProfileForKnowledgeIds(
+      db,
+      questionKnowledgeIdsForJudge(q),
+    );
     const invoked = await createDefaultJudgeInvoker().invoke({
       db,
       question: q,

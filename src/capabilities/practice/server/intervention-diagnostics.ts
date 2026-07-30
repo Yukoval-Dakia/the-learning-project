@@ -12,7 +12,7 @@ import {
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { enrollFsrsStateIfAbsent, retireQuestionFsrsState } from '@/server/fsrs/state';
-import { inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { initialFsrsState } from './fsrs';
 
 function diagnosticMetadata(input: {
@@ -36,6 +36,20 @@ function diagnosticMetadata(input: {
     // contract even when the diagnostic itself carries no images.
     probe_spec: input.probeSpec,
   };
+}
+
+export function questionKnowledgeIdsForJudge(input: {
+  source: string | null;
+  metadata: Record<string, unknown> | null;
+  knowledge_ids: string[] | null;
+}): string[] {
+  if (input.source !== INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+    return input.knowledge_ids ?? [];
+  }
+  const diagnostic = InterventionDiagnosticQuestionMetadata.parse(
+    input.metadata?.intervention_diagnostic,
+  );
+  return [diagnostic.knowledge_id];
 }
 
 /**
@@ -74,6 +88,8 @@ export async function materializeInterventionDiagnostics(
           difficulty: 3,
           source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
           source_ref: sourceRef,
+          // Product-owned diagnostics have already passed package authoring,
+          // independent review, deterministic validation, and the lineage proof below.
           draft_status: 'active',
           metadata: diagnosticMetadata({
             interventionId: snapshot.intervention_id,
@@ -141,6 +157,22 @@ export async function materializeInterventionDiagnostics(
 export async function retireInterventionDiagnosticQuestion(
   tx: Tx,
   questionId: string,
+  now: Date,
 ): Promise<boolean> {
-  return retireQuestionFsrsState(tx, questionId);
+  const cardRetired = await retireQuestionFsrsState(tx, questionId);
+  const retired = await tx
+    .update(question)
+    .set({
+      draft_status: 'draft',
+      updated_at: now,
+      version: sql`${question.version} + 1`,
+    })
+    .where(
+      and(
+        eq(question.id, questionId),
+        eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
+      ),
+    )
+    .returning({ id: question.id });
+  return cardRetired || retired.length > 0;
 }

@@ -701,6 +701,11 @@ describe('YUK-791 intervention preparation closed loop', () => {
         .from(material_fsrs_state)
         .where(eq(material_fsrs_state.subject_id, active.settlement.diagnostics[kind].question_id));
       expect(card).toHaveLength(0);
+      const [retiredQuestion] = await db
+        .select({ draft_status: question.draft_status })
+        .from(question)
+        .where(eq(question.id, active.settlement.diagnostics[kind].question_id));
+      expect(retiredQuestion?.draft_status).toBe('draft');
     }
 
     const settled = await loadInterventionVersion(db, opened.id, opened.version);
@@ -720,6 +725,18 @@ describe('YUK-791 intervention preparation closed loop', () => {
       .from(event)
       .where(eq(event.action, 'experimental:intervention_settled'));
     expect(settledEvents[0]?.value).toBe(1);
+    const afterSettlementDue = await handleReviewDue(
+      new Request('http://localhost/api/review/due?limit=20'),
+      { listActiveGoalsFn: async () => [] },
+    );
+    expect(afterSettlementDue.status).toBe(200);
+    const afterSettlementBody = (await afterSettlementDue.json()) as {
+      rows: Array<{ question_id: string }>;
+    };
+    const afterSettlementQuestionIds = afterSettlementBody.rows.map((row) => row.question_id);
+    for (const diagnostic of Object.values(active.settlement.diagnostics)) {
+      expect(afterSettlementQuestionIds).not.toContain(diagnostic.question_id);
+    }
 
     if (!lastDelivery) throw new Error('missing replay delivery');
     const replay = await handleInterventionDiagnosticReviewDelivery(db, lastDelivery);

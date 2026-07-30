@@ -33,6 +33,7 @@
 
 import type { Provider } from '@/ai/registry';
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
+import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
 import { emitMasteryProgressSignal } from '@/capabilities/practice/server/mastery-progress-signal';
 import { newId } from '@/core/ids';
 import { JudgeKind as JudgeKindZ } from '@/core/schema/business';
@@ -345,7 +346,8 @@ export async function judgeSubmit(
   // YUK-594 (D5) — the durable worker injects the frozen answer-time profile; the
   // sync path resolves it fresh (opts absent → byte-identical).
   const subjectProfile = hasAnswer
-    ? (opts.subjectProfile ?? (await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids)))
+    ? (opts.subjectProfile ??
+      (await resolveSubjectProfileForKnowledgeIds(db, questionKnowledgeIdsForJudge(q))))
     : null;
   if (subjectProfile !== null) {
     const resolvedRoute = resolveQuestionJudgeRoute(q, subjectProfile);
@@ -1393,7 +1395,10 @@ export async function resolveDurableDivert(validated: ValidatedSubmit): Promise<
   const hasImageAnswer = body.answer_image_refs.length > 0;
   const hasAnswer = answerMd.length > 0 || hasImageAnswer;
   if (!hasAnswer) return { divert: false, subjectProfile: null };
-  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
+  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(
+    db,
+    questionKnowledgeIdsForJudge(q),
+  );
   if (subjectProfile === null) return { divert: false, subjectProfile: null };
   const route = resolveQuestionJudgeRoute(q, subjectProfile);
   const photoOnly = answerMd.length === 0 && hasImageAnswer;
