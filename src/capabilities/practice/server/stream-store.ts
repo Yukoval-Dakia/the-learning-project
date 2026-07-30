@@ -1334,6 +1334,40 @@ export async function advanceStreamItem(
   if (!LEGAL_TRANSITIONS[row.status].includes(next)) {
     throw new ApiError('conflict', `illegal stream transition ${row.status} -> ${next}`, 409);
   }
+  if (row.source === 'intervention') {
+    if (next === 'skipped') {
+      throw new ApiError(
+        'conflict',
+        'intervention diagnostics cannot be skipped before completion',
+        409,
+      );
+    }
+    if (next === 'done') {
+      const [attempt] = await db
+        .select({ id: event.id })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'review'),
+            eq(event.subject_kind, 'question'),
+            eq(event.subject_id, row.ref_id),
+            row.session_id === null
+              ? isNull(event.session_id)
+              : eq(event.session_id, row.session_id),
+            gte(event.created_at, row.created_at),
+            sql`${event.payload} ->> 'stream_item_id' = ${row.id}`,
+          ),
+        )
+        .limit(1);
+      if (!attempt) {
+        throw new ApiError(
+          'conflict',
+          'intervention diagnostics can be completed only after a recorded attempt',
+          409,
+        );
+      }
+    }
+  }
   const [updated] = await db
     .update(practice_stream_item)
     .set({ status: next, updated_at: new Date() })

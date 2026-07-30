@@ -150,6 +150,26 @@ describe('PfStream item semantics', () => {
     expect(screen.getByText(/今日练习 · 2026-07-13 · 预算 20 分钟/)).toBeTruthy();
   });
 
+  it('does not offer skip for a learner-visible intervention diagnostic', () => {
+    render(
+      <PfStream
+        stream={{
+          ...pendingStream,
+          items: [{ ...pendingStream.items[0], source: 'intervention' }],
+        }}
+        loading={false}
+        error={null}
+        openItem={() => {}}
+        refresh={async () => null}
+        updateItem={() => {}}
+        addToast={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '开始作答' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /跳过/ })).toBeNull();
+  });
+
   it('uses learner-facing copy for the completed-stream summary', () => {
     render(
       <PfStream

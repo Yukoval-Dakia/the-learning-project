@@ -279,7 +279,7 @@ export function PfStream({
           >
             {isSkipped ? '捡回来' : it.item_kind === 'paper' ? '进入卷' : '开始作答'}
           </Btn>
-          {!isSkipped && it.status === 'pending' && (
+          {!isSkipped && it.status === 'pending' && it.source !== 'intervention' && (
             <button
               type="button"
               className="pf-skip"

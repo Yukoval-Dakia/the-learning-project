@@ -377,6 +377,84 @@ describe('YUK-336 StreamView structured item metadata', () => {
   });
 });
 
+describe('YUK-792 intervention delivery transitions', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('rejects skipping a learner-visible intervention diagnostic', async () => {
+    const streamItemId = createId();
+    await testDb().insert(practice_stream_item).values({
+      id: streamItemId,
+      date: TODAY,
+      position: 1,
+      item_kind: 'question',
+      ref_id: createId(),
+      source: 'intervention',
+      status: 'pending',
+      reasoning: '先阅读材料，再完成检验。',
+      added_by: 'composer_live',
+      signals: {},
+    });
+
+    await expect(advanceStreamItem(testDb(), streamItemId, 'skipped')).rejects.toMatchObject({
+      code: 'conflict',
+      status: 409,
+    });
+
+    const [stored] = await testDb()
+      .select({ status: practice_stream_item.status })
+      .from(practice_stream_item)
+      .where(eq(practice_stream_item.id, streamItemId));
+    expect(stored?.status).toBe('pending');
+  });
+
+  it('rejects done without an exact attempt, then permits the post-attempt transition', async () => {
+    const streamItemId = createId();
+    const questionId = createId();
+    const createdAt = new Date(Date.now() - 1_000);
+    await testDb().insert(practice_stream_item).values({
+      id: streamItemId,
+      date: TODAY,
+      position: 1,
+      item_kind: 'question',
+      ref_id: questionId,
+      source: 'intervention',
+      status: 'in_progress',
+      reasoning: '先阅读材料，再完成检验。',
+      added_by: 'composer_live',
+      signals: {},
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+
+    await expect(advanceStreamItem(testDb(), streamItemId, 'done')).rejects.toMatchObject({
+      code: 'conflict',
+      status: 409,
+    });
+
+    await testDb()
+      .insert(event)
+      .values({
+        id: createId(),
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'review',
+        subject_kind: 'question',
+        subject_id: questionId,
+        outcome: 'success',
+        payload: { fsrs_rating: 'good', stream_item_id: streamItemId },
+        created_at: new Date(),
+      });
+
+    await expect(advanceStreamItem(testDb(), streamItemId, 'done')).resolves.toMatchObject({
+      id: streamItemId,
+      status: 'done',
+    });
+  });
+});
+
 describe('streamLocalDate — 用户本地日（Asia/Shanghai）单一真相源（FINDING 4，Codex）', () => {
   it('UTC 容器边界：21:30 UTC = 次日 05:30 Asia/Shanghai → 返回**次日**（不是 UTC 当日）', () => {
     // 模拟夜间 cron `'30 5 * * *', tz: 'Asia/Shanghai'` 在 UTC 容器里触发的瞬间：
