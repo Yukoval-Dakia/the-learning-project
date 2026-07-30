@@ -49,14 +49,25 @@
 
 import { newId } from '@/core/ids';
 import {
+  ConjectureProbeSpec,
+  type ConjectureProbeSpecT,
+  ConjectureProbeSpecV2,
+} from '@/core/schema/business';
+import {
   MAX_CONCURRENT_ACTIVE_PROBES,
+  PROBE_NON_EVIDENCE_RESOLUTION,
   PROBE_QUESTION_INITIAL_VERSION,
   PROBE_QUESTION_KIND,
   PROBE_QUESTION_SOURCE,
   PROBE_RESOLUTION_RULE_VERSION,
   PROBE_RESULT_ACTION,
+  type ProbeAnswerResolution,
   type ProbeResolution,
 } from '@/core/schema/conjecture';
+import {
+  ConjectureProbeResponseJudgement,
+  type ConjectureProbeResponseJudgementT,
+} from '@/core/schema/conjecture-probe-response';
 import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
@@ -126,6 +137,8 @@ export interface ServeProbeOnceParams {
   probeMd: string;
   /** Optional expected/reference answer. */
   referenceMd?: string | null;
+  /** Immutable authored response contract used by target-aware judging and audit replay. */
+  probeSpec?: ConjectureProbeSpecT;
   /** Question kind; neutral default. */
   kind?: string;
   /** Neutral default difficulty (3). */
@@ -235,6 +248,7 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
         metadata: {
           conjecture_proposal_id: conjectureProposalId,
           probe_sequence: probeSequence,
+          ...(params.probeSpec ? { probe_spec: structuredClone(params.probeSpec) } : {}),
         },
         created_at: now,
         updated_at: now,
@@ -248,8 +262,12 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
 export interface AnswerProbeParams {
   db: Db;
   probeQuestionId: string;
-  /** Graded correctness of the probe answer (the prediction-test outcome). */
-  outcome: 0 | 1;
+  /**
+   * Graded correctness of the probe answer. null means the answer was gradable
+   * but matched neither the gold nor target-error signature, so it must consume
+   * the probe without changing conjecture evidence.
+   */
+  outcome: 0 | 1 | null;
   /**
    * Phase-deferred (feedback_phase_deferred_comments): R(t) snapshot at judge time.
    * Defaults to null. The field is present NOW to keep the probe_result event shape
@@ -264,21 +282,84 @@ export interface AnswerProbeParams {
   answer_md?: string | null;
   /** Provenance — the answer image refs (asset ids) that were graded (photo answers). */
   answer_image_refs?: string[];
+  /** Response-signature verdict for v2 probes; absent only on historical probes. */
+  response_judgement?: ConjectureProbeResponseJudgementT | null;
   now?: Date;
 }
 
 export interface AnswerProbeResult {
-  status: ProbeResolution;
-  /** The recorded 0|1 outcome (faithfully reported on BOTH fresh + idempotent paths). */
-  outcome: 0 | 1;
+  status: ProbeAnswerResolution;
+  /** The recorded outcome; null is a terminal non-evidence answer disposition. */
+  outcome: 0 | 1 | null;
   probe_result_event_id: string;
+  response_judgement: ConjectureProbeResponseJudgementT | null;
+  degradation_reason?:
+    | 'legacy_probe_result_without_response_judgement'
+    | 'probe_without_response_contract';
   idempotent?: boolean;
+}
+
+function assertFreshProbeResponseJudgement(params: {
+  probeQuestionId: string;
+  probeSpec: unknown;
+  outcome: 0 | 1 | null;
+  responseJudgement: ConjectureProbeResponseJudgementT | null;
+}): void {
+  const { probeQuestionId, probeSpec, outcome, responseJudgement } = params;
+  const probeSpecRecord = toRecord(probeSpec);
+  if (probeSpecRecord.schema_version !== 2) {
+    if (
+      outcome === null &&
+      (!responseJudgement ||
+        responseJudgement.answer_result !== 'incorrect' ||
+        responseJudgement.target_error_match !== 'not_matched' ||
+        !responseJudgement.gradable)
+    ) {
+      throw new ApiError(
+        'probe_non_evidence_judgement_invalid',
+        `probe ${probeQuestionId} cannot be closed without a gradable non-target-error judgement`,
+        409,
+      );
+    }
+    return;
+  }
+
+  if (!ConjectureProbeSpecV2.safeParse(probeSpec).success) {
+    throw new ApiError(
+      'probe_response_contract_invalid',
+      `probe ${probeQuestionId} has an invalid v2 response contract`,
+      409,
+    );
+  }
+
+  const judgementMatchesOutcome =
+    responseJudgement?.gradable === true &&
+    ((outcome === 1 &&
+      responseJudgement.answer_result === 'correct' &&
+      responseJudgement.target_error_match === 'not_matched' &&
+      responseJudgement.reason_code === 'gold_signature_matched') ||
+      (outcome === 0 &&
+        responseJudgement.answer_result === 'incorrect' &&
+        responseJudgement.target_error_match === 'matched' &&
+        responseJudgement.reason_code === 'target_error_signature_matched') ||
+      (outcome === null &&
+        responseJudgement.answer_result === 'incorrect' &&
+        responseJudgement.target_error_match === 'not_matched' &&
+        responseJudgement.reason_code === 'response_matches_neither_signature'));
+  if (!judgementMatchesOutcome) {
+    throw new ApiError(
+      'probe_response_judgement_mismatch',
+      `probe ${probeQuestionId} outcome does not match its v2 response judgement`,
+      409,
+    );
+  }
 }
 
 interface FollowupProbeSpec {
   knowledgeId: string;
   promptMd: string;
   referenceMd: string;
+  probeSpec?: ConjectureProbeSpecT;
 }
 
 type ProbeConjectureLoadResult =
@@ -331,6 +412,9 @@ async function loadProbeConjectureState(
       knowledgeId: change.knowledge_id,
       promptMd: change.followup_probe_md,
       referenceMd: change.followup_probe_reference_md,
+      ...(change.followup_probe_spec
+        ? { probeSpec: structuredClone(change.followup_probe_spec) }
+        : {}),
     },
   };
 }
@@ -399,13 +483,28 @@ function parseProbeResultEvent(
   // contract violation, so fail closed rather than replaying contradictory evidence.
   const recordedResolution = (existing.payload as { resolution?: unknown }).resolution;
   const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
-  if (recordedOutcome !== 0 && recordedOutcome !== 1) return null;
+  const recordedJudgement = (existing.payload as { response_judgement?: unknown })
+    .response_judgement;
+  const isEvidenceResolution =
+    ((recordedResolution === 'evidence_for' || recordedResolution === 'confirmed') &&
+      recordedOutcome === 0) ||
+    (recordedResolution === 'retired' && recordedOutcome === 1);
+  const isNonEvidenceResolution =
+    recordedResolution === PROBE_NON_EVIDENCE_RESOLUTION && recordedOutcome === null;
+  if (!isEvidenceResolution && !isNonEvidenceResolution) {
+    return null;
+  }
+  const parsedJudgement =
+    recordedJudgement === undefined || recordedJudgement === null
+      ? null
+      : ConjectureProbeResponseJudgement.safeParse(recordedJudgement);
+  if (parsedJudgement !== null && !parsedJudgement.success) return null;
   if (
-    !(
-      ((recordedResolution === 'evidence_for' || recordedResolution === 'confirmed') &&
-        recordedOutcome === 0) ||
-      (recordedResolution === 'retired' && recordedOutcome === 1)
-    )
+    isNonEvidenceResolution &&
+    (!parsedJudgement?.success ||
+      parsedJudgement.data.answer_result !== 'incorrect' ||
+      parsedJudgement.data.target_error_match !== 'not_matched' ||
+      !parsedJudgement.data.gradable)
   ) {
     return null;
   }
@@ -413,6 +512,10 @@ function parseProbeResultEvent(
     status: recordedResolution,
     outcome: recordedOutcome,
     probe_result_event_id: existing.id,
+    response_judgement: parsedJudgement?.data ?? null,
+    ...(parsedJudgement === null
+      ? { degradation_reason: 'legacy_probe_result_without_response_judgement' as const }
+      : {}),
     idempotent: true,
   };
 }
@@ -536,11 +639,12 @@ export async function releaseProbeJudging(
 }
 
 /**
- * Record the probe outcome as exactly ONE canonical `experimental:probe_result`
+ * Record the probe answer as exactly ONE canonical `experimental:probe_result`
  * event (subject_kind='question', subject_id=probeQuestionId, caused_by=the
- * conjecture event id). A first matching observation atomically serves the
- * proposal's pre-authored follow-up question. It still writes no attempt and no
- * FSRS row (ND-5).
+ * conjecture event id). A first target-error observation atomically serves the
+ * proposal's pre-authored follow-up question; a gradable unrelated error is
+ * terminal non-evidence and only consumes this question. Neither path writes an
+ * attempt or FSRS row (ND-5).
  *
  * One-shot guard / idempotency (mirrors U2 acceptConjectureProposal): if a
  * probe_result already exists for this question, no second event is written — the
@@ -555,6 +659,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
   const retrievabilityAtJudge = params.retrievabilityAtJudge ?? null;
   const answerMd = params.answer_md ?? null;
   const answerImageRefs = params.answer_image_refs ?? [];
+  const responseJudgement = params.response_judgement ?? null;
 
   return db.transaction(async (tx) => {
     // Serialize concurrent answers on the SAME probe so the check-existing + write is
@@ -565,9 +670,16 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
 
     // Read the probe question back to recover its conjecture provenance.
     const [probe] = await tx
-      .select({ source: question.source, metadata: question.metadata })
+      .select({
+        source: question.source,
+        metadata: question.metadata,
+        version: question.version,
+        prompt_md: question.prompt_md,
+        reference_md: question.reference_md,
+      })
       .from(question)
       .where(eq(question.id, probeQuestionId))
+      .for('update')
       .limit(1);
     if (!probe) {
       throw new ApiError('probe_not_found', `no probe question ${probeQuestionId}`, 404);
@@ -622,6 +734,37 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       return parsed;
     }
 
+    const authoredProbeSpec =
+      probeMetadata.probe_spec === undefined
+        ? null
+        : ConjectureProbeSpec.safeParse(probeMetadata.probe_spec);
+    if (authoredProbeSpec !== null && !authoredProbeSpec.success) {
+      throw new ApiError(
+        'probe_snapshot_invalid',
+        `probe ${probeQuestionId} has an invalid authored snapshot; no conjecture evidence was written`,
+        409,
+      );
+    }
+    if (
+      authoredProbeSpec?.success &&
+      (probe.version !== PROBE_QUESTION_INITIAL_VERSION ||
+        probe.prompt_md !== authoredProbeSpec.data.prompt_md ||
+        probe.reference_md !== authoredProbeSpec.data.reference_md)
+    ) {
+      throw new ApiError(
+        'probe_snapshot_changed',
+        `probe ${probeQuestionId} no longer matches its immutable authored snapshot; no conjecture evidence was written`,
+        409,
+      );
+    }
+
+    assertFreshProbeResponseJudgement({
+      probeQuestionId,
+      probeSpec: probeMetadata.probe_spec,
+      outcome,
+      responseJudgement,
+    });
+
     // Serialize the evidence-strength fold per conjecture, not only per question.
     // Without this second lock, two different probes answered concurrently could
     // both read an empty history and both persist `evidence_for`. The namespace
@@ -651,9 +794,11 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
     // single-probe rule instead of retroactively reinterpreting or stranding them;
     // omit the v2 rule stamp below so readers label these as legacy-unverified. They
     // also skip the JSONB history scan, whose output cannot affect their terminal rule.
-    let resolution: ProbeResolution;
+    let resolution: ProbeAnswerResolution;
     let independentProbeQuestionIds: string[] = [];
-    if (usesRecurrenceGate) {
+    if (outcome === null) {
+      resolution = PROBE_NON_EVIDENCE_RESOLUTION;
+    } else if (usesRecurrenceGate) {
       const priorRows = await tx
         .select({
           probe_result_event_id: event.id,
@@ -687,7 +832,9 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
           id: prior.probe_result_event_id,
           payload: prior.payload,
         });
-        if (!parsed) continue;
+        if (!parsed || parsed.outcome === null || parsed.status === PROBE_NON_EVIDENCE_RESOLUTION) {
+          continue;
+        }
         priorResults.push({
           probe_question_id: prior.probe_question_id,
           outcome: parsed.outcome,
@@ -722,7 +869,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         conjecture_event_id: conjectureEventId,
         outcome,
         resolution,
-        ...(usesRecurrenceGate
+        ...(usesRecurrenceGate && outcome !== null
           ? {
               resolution_rule_version: PROBE_RESOLUTION_RULE_VERSION,
               independent_probe_question_ids: independentProbeQuestionIds,
@@ -730,6 +877,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
           : {}),
         retrievability_at_judge: retrievabilityAtJudge,
         answer_md: answerMd,
+        ...(responseJudgement ? { response_judgement: structuredClone(responseJudgement) } : {}),
         // Provenance for a photo answer: the team can later see WHAT was submitted for
         // a confirmed probe ("教研团据此备练"), not just the text (evidence-first).
         answer_image_refs: answerImageRefs,
@@ -756,6 +904,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         knowledgeId: followup.spec.knowledgeId,
         probeMd: followup.spec.promptMd,
         referenceMd: followup.spec.referenceMd,
+        probeSpec: followup.spec.probeSpec,
         probeSequence: 2,
         now,
       });
@@ -771,7 +920,15 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       }
     }
 
-    return { status: resolution, outcome, probe_result_event_id: probeResultEventId };
+    return {
+      status: resolution,
+      outcome,
+      probe_result_event_id: probeResultEventId,
+      response_judgement: responseJudgement,
+      ...(responseJudgement
+        ? {}
+        : { degradation_reason: 'probe_without_response_contract' as const }),
+    };
   });
 }
 
@@ -784,7 +941,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
  *
  * Returns:
  *   - the recorded `AnswerProbeResult` (idempotent: true) when a VALID probe_result
- *     exists (outcome ∈ {0,1}, resolution ∈ {evidence_for,confirmed,retired});
+ *     exists (an evidence outcome/resolution pair, or null/inconclusive non-evidence);
  *   - `null` when NO probe_result exists (caller proceeds to judge + answerProbe);
  *   - `null` when an existing event is CORRUPT (caller proceeds to judge + answerProbe,
  *     which surfaces the `probe_result_corrupt` 500 — the judge call is wasted on this

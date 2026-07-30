@@ -12,6 +12,7 @@ import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../../tests/helpers/conjecture-probe-fixtures';
 
 // Capture the registered tool handlers via a mocked SDK (same shape as evidence-mcp.db.test).
 const mockSdk = vi.hoisted(() => ({
@@ -181,6 +182,7 @@ function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
           structured_output: {
             package: {
               primary: {
+                ...RESPONSE_AWARE_PROBE_FIELDS,
                 prompt_md: '判断条件 A 是否足以推出结论 B，并给出反例。',
                 reference_md: 'A 不是充分条件；反例满足 A 但不满足 B。',
                 expected_target_error_answer_md: 'A 足以推出 B。',
@@ -189,6 +191,7 @@ function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
                 representation_kind: 'symbolic',
               },
               followup: {
+                ...RESPONSE_AWARE_PROBE_FIELDS,
                 prompt_md: '在门禁规则情境中判断持卡是否保证可以进入。',
                 reference_md: '持卡只是必要条件，还需权限有效，因此不能保证进入。',
                 expected_target_error_answer_md: '持卡就一定可以进入。',
@@ -301,6 +304,7 @@ describe('propose_conjecture — server-enforced single writer', () => {
         structured_output: {
           package: {
             primary: {
+              ...RESPONSE_AWARE_PROBE_FIELDS,
               prompt_md: '判断 A 是否足以推出 B。',
               reference_md: 'A 不是充分条件。',
               expected_target_error_answer_md: 'A 足以推出 B。',
@@ -309,6 +313,7 @@ describe('propose_conjecture — server-enforced single writer', () => {
               representation_kind: 'symbolic',
             },
             followup: {
+              ...RESPONSE_AWARE_PROBE_FIELDS,
               prompt_md: '换一组字母，判断 C 是否足以推出 D。',
               reference_md: 'C 不是充分条件。',
               expected_target_error_answer_md: 'C 足以推出 D。',
@@ -591,6 +596,7 @@ describe('propose_conjecture — server-enforced single writer', () => {
           structured_output: {
             package: {
               primary: {
+                ...RESPONSE_AWARE_PROBE_FIELDS,
                 prompt_md: '判断条件 A 是否足以推出结论 B，并给出反例。',
                 reference_md: 'A 不是充分条件；反例满足 A 但不满足 B。',
                 expected_target_error_answer_md: 'A 足以推出 B。',
@@ -599,6 +605,7 @@ describe('propose_conjecture — server-enforced single writer', () => {
                 representation_kind: 'symbolic',
               },
               followup: {
+                ...RESPONSE_AWARE_PROBE_FIELDS,
                 prompt_md: '在门禁规则情境中判断持卡是否保证可以进入。',
                 reference_md: '持卡只是必要条件，还需权限有效，因此不能保证进入。',
                 expected_target_error_answer_md: '持卡就一定可以进入。',
@@ -686,6 +693,7 @@ describe('propose_conjecture — server-enforced single writer', () => {
             structured_output: {
               package: {
                 primary: {
+                  ...RESPONSE_AWARE_PROBE_FIELDS,
                   prompt_md: '判断条件 A 是否足以推出 B，并给出反例。',
                   reference_md: 'A 不是充分条件；存在满足 A 但不满足 B 的反例。',
                   expected_target_error_answer_md: 'A 足以推出 B。',
@@ -694,6 +702,7 @@ describe('propose_conjecture — server-enforced single writer', () => {
                   representation_kind: 'symbolic',
                 },
                 followup: {
+                  ...RESPONSE_AWARE_PROBE_FIELDS,
                   prompt_md: '在门禁情境中判断持卡是否保证可以进入。',
                   reference_md: '持卡不是充分条件，还需权限有效。',
                   expected_target_error_answer_md: '持卡就一定可以进入。',

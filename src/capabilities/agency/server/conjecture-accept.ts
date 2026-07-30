@@ -39,7 +39,7 @@ import {
   ConjectureDiagnosticSpec,
   ConjectureHypothesisProposalDraft,
   ConjectureProbeQualityAudit,
-  ConjectureProbeSpec,
+  ConjectureProbeSpecV2,
   conjectureHypothesesEqual,
   conjectureProbePackagesEqual,
   evaluateConjectureProbePackageStructure,
@@ -125,8 +125,8 @@ export async function acceptConjectureProposal(
   // both structured probe specs, and a passing independent-review audit. Optionality
   // in the proposal JSON schema exists only so historical terminal rows remain readable.
   const diagnosticSpec = ConjectureDiagnosticSpec.safeParse(change.diagnostic_spec);
-  const primaryProbeSpec = ConjectureProbeSpec.safeParse(change.probe_spec);
-  const followupProbeSpec = ConjectureProbeSpec.safeParse(change.followup_probe_spec);
+  const primaryProbeSpec = ConjectureProbeSpecV2.safeParse(change.probe_spec);
+  const followupProbeSpec = ConjectureProbeSpecV2.safeParse(change.followup_probe_spec);
   const qualityAudit = ConjectureProbeQualityAudit.safeParse(change.probe_quality);
   const persistedProbeMd = typeof change.probe_md === 'string' ? change.probe_md.trim() : '';
   const persistedProbeReferenceMd =
@@ -148,10 +148,10 @@ export async function acceptConjectureProposal(
   const evidenceEventIds = proposal.payload.evidence_refs
     .filter((ref) => ref.kind === 'event')
     .map((ref) => ref.id);
-  const boundV2Audit =
-    qualityAudit.success && qualityAudit.data.schema_version === 2 ? qualityAudit.data : null;
+  const boundV3Audit =
+    qualityAudit.success && qualityAudit.data.schema_version === 3 ? qualityAudit.data : null;
   const persistedHypothesis =
-    diagnosticSpec.success && boundV2Audit
+    diagnosticSpec.success && boundV3Audit
       ? ConjectureHypothesisProposalDraft.safeParse({
           kind: 'proposal',
           claim_md: change.claim_md,
@@ -167,7 +167,7 @@ export async function acceptConjectureProposal(
   if (!primaryProbeSpec.success) failureReasons.push('primary_probe_spec_invalid');
   if (!followupProbeSpec.success) failureReasons.push('followup_probe_spec_invalid');
   if (!qualityAudit.success) failureReasons.push('probe_quality_audit_invalid');
-  if (qualityAudit.success && !boundV2Audit) {
+  if (qualityAudit.success && !boundV3Audit) {
     failureReasons.push('probe_quality_audit_unbound');
   }
   if (persistedHypothesis && !persistedHypothesis.success) {
@@ -175,8 +175,8 @@ export async function acceptConjectureProposal(
   }
   if (
     persistedHypothesis?.success &&
-    boundV2Audit &&
-    !conjectureHypothesesEqual(boundV2Audit.reviewed_hypothesis, persistedHypothesis.data)
+    boundV3Audit &&
+    !conjectureHypothesesEqual(boundV3Audit.reviewed_hypothesis, persistedHypothesis.data)
   ) {
     failureReasons.push('probe_quality_hypothesis_mismatch');
   }
@@ -199,11 +199,11 @@ export async function acceptConjectureProposal(
     }
   }
   if (
-    boundV2Audit &&
+    boundV3Audit &&
     primaryProbeSpec.success &&
     followupProbeSpec.success &&
     typeof change.predicted_p === 'number' &&
-    !conjectureProbePackagesEqual(boundV2Audit.reviewed_package, {
+    !conjectureProbePackagesEqual(boundV3Audit.reviewed_package, {
       primary: primaryProbeSpec.data,
       followup: followupProbeSpec.data,
       predicted_p: change.predicted_p,
@@ -349,6 +349,7 @@ export async function acceptConjectureProposal(
       knowledgeId: requiredString(change.knowledge_id, 'knowledge_id', proposalId),
       probeMd: requiredString(change.probe_md, 'probe_md', proposalId),
       referenceMd: requiredString(change.probe_reference_md, 'probe_reference_md', proposalId),
+      probeSpec: primaryProbeSpec.success ? primaryProbeSpec.data : undefined,
       now,
     });
     if (probe.status === 'cap_reached') {

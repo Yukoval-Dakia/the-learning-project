@@ -2,6 +2,7 @@ import { event, knowledge } from '@/db/schema';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../tests/helpers/conjecture-probe-fixtures';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET as getEventDetail } from '../../observability/api/event-detail';
 import { POST } from './proposal-decisions';
@@ -90,6 +91,7 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
           expected_wrong_answer_signature_md: '仅有必要条件时仍判断可以推出。',
         },
         probe_spec: {
+          ...RESPONSE_AWARE_PROBE_FIELDS,
           prompt_md: '请解释这一步。',
           reference_md: '参考解释',
           expected_target_error_answer_md: '错误解释',
@@ -98,6 +100,7 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
           representation_kind: 'symbolic',
         },
         followup_probe_spec: {
+          ...RESPONSE_AWARE_PROBE_FIELDS,
           prompt_md: '换一个情境解释同一步。',
           reference_md: '第二个情境中的参考解释',
           expected_target_error_answer_md: '第二个情境中的错误解释',
@@ -106,7 +109,7 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
           representation_kind: 'natural_language',
         },
         probe_quality: {
-          schema_version: 2,
+          schema_version: 3,
           passed: true,
           attempts: [
             {
@@ -140,6 +143,7 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
           },
           reviewed_package: {
             primary: {
+              ...RESPONSE_AWARE_PROBE_FIELDS,
               prompt_md: '请解释这一步。',
               reference_md: '参考解释',
               expected_target_error_answer_md: '错误解释',
@@ -148,6 +152,7 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
               representation_kind: 'symbolic',
             },
             followup: {
+              ...RESPONSE_AWARE_PROBE_FIELDS,
               prompt_md: '换一个情境解释同一步。',
               reference_md: '第二个情境中的参考解释',
               expected_target_error_answer_md: '第二个情境中的错误解释',

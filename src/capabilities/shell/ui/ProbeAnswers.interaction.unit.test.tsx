@@ -28,7 +28,7 @@ function mockFetch(
   opts: {
     answerStatus?: number;
     captured?: CapturedAnswer[];
-    resolution?: 'evidence_for' | 'confirmed' | 'retired';
+    resolution?: 'evidence_for' | 'confirmed' | 'retired' | 'inconclusive';
   } = {},
 ) {
   const answerStatus = opts.answerStatus ?? 200;
@@ -58,7 +58,7 @@ function mockFetch(
       return Response.json({
         status: resolution,
         resolution,
-        outcome: resolution === 'retired' ? 1 : 0,
+        outcome: resolution === 'retired' ? 1 : resolution === 'inconclusive' ? null : 0,
         probe_result_event_id: 'ev_pr',
         coarse_outcome: resolution === 'retired' ? 'correct' : 'incorrect',
         idempotent: false,
@@ -132,6 +132,20 @@ describe('ProbeAnswers — answer interaction (jsdom)', () => {
     expect(screen.queryByText(/据此为你备练/)).toBeNull();
   });
 
+  it('surfaces a terminal non-evidence verdict for an unrelated wrong answer', async () => {
+    vi.stubGlobal('fetch', mockFetch({ resolution: 'inconclusive' }));
+    const user = userEvent.setup();
+    renderPanel();
+
+    await screen.findByText('求 d/dx sin(x^2)。');
+    await user.type(screen.getByPlaceholderText(/写下你的解答/), 'unrelated wrong rule');
+    await user.click(screen.getByRole('button', { name: '提交作答' }));
+
+    expect(await screen.findByText(/不是这条猜想里的错误/)).toBeTruthy();
+    expect(screen.queryByText(/这次没判清/)).toBeNull();
+    expect(screen.getByRole('button', { name: '知道了' })).toBeTruthy();
+  });
+
   it('carries an uploaded image ref in a photo-only answer (owner requirement)', async () => {
     const captured: CapturedAnswer[] = [];
     vi.stubGlobal('fetch', mockFetch({ captured }));
@@ -170,7 +184,9 @@ describe('ProbeAnswers — answer interaction (jsdom)', () => {
 // advances in place) and call onAnswered; onDismiss must keep touching ONLY the probe
 // queue, never the brief.
 describe('ProbeAnswerCard — teaching brief coupling (jsdom)', () => {
-  function renderCard(onAnswered?: (resolution: 'evidence_for' | 'confirmed' | 'retired') => void) {
+  function renderCard(
+    onAnswered?: (resolution: 'evidence_for' | 'confirmed' | 'retired' | 'inconclusive') => void,
+  ) {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
     render(

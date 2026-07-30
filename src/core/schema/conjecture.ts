@@ -27,6 +27,14 @@ export const PREDICTION_SCORE_ACTION = 'experimental:prediction_score' as const;
  */
 export const PROBE_RESOLUTIONS = ['evidence_for', 'confirmed', 'retired'] as const;
 export type ProbeResolution = (typeof PROBE_RESOLUTIONS)[number];
+/**
+ * A completed probe answer that is gradable but matches neither the gold nor the
+ * declared target error. It consumes the question without changing conjecture
+ * evidence, and intentionally stays outside PROBE_RESOLUTIONS so evidence readers
+ * cannot mistake it for a conjecture-survival decision.
+ */
+export const PROBE_NON_EVIDENCE_RESOLUTION = 'inconclusive' as const;
+export type ProbeAnswerResolution = ProbeResolution | typeof PROBE_NON_EVIDENCE_RESOLUTION;
 /** Resolutions that permanently settle one accepted conjecture version. */
 export const TERMINAL_PROBE_RESOLUTIONS = [
   'confirmed',

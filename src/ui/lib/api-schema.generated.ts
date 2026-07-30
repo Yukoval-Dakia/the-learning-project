@@ -9298,14 +9298,40 @@ export interface operations {
         content: {
           'application/json': {
             /** @enum {string|null} */
+            answer_result: 'correct' | 'incorrect' | 'ungradable' | null;
+            /** @enum {string|null} */
             coarse_outcome: 'correct' | 'incorrect' | null;
+            /** @enum {string} */
+            degradation_reason?:
+              | 'legacy_probe_result_without_response_judgement'
+              | 'probe_without_response_contract';
+            gradable: boolean | null;
             idempotent: boolean;
-            outcome: 0 | 1;
+            outcome: 0 | 1 | ('null' | null);
             probe_result_event_id: string;
-            /** @enum {string} */
-            resolution: 'evidence_for' | 'confirmed' | 'retired';
-            /** @enum {string} */
-            status: 'evidence_for' | 'confirmed' | 'retired';
+            resolution: ('evidence_for' | 'confirmed' | 'retired') | 'inconclusive';
+            response_evidence_refs:
+              | (
+                  | 'learner_response'
+                  | 'gold_response_signature'
+                  | 'target_error_response_signature'
+                  | 'correctness_judge'
+                )[]
+              | null;
+            /** @enum {string|null} */
+            response_reason_code:
+              | 'gold_signature_matched'
+              | 'target_error_signature_matched'
+              | 'response_matches_neither_signature'
+              | 'correctness_signature_conflict'
+              | 'correctness_judge_ungradable'
+              | 'signature_match_ambiguous'
+              | 'signature_judgement_missing'
+              | null;
+            signature_match_explanation_md: string | null;
+            status: ('evidence_for' | 'confirmed' | 'retired') | 'inconclusive';
+            /** @enum {string|null} */
+            target_error_match: 'matched' | 'not_matched' | 'ambiguous' | null;
           };
         };
       };
@@ -21669,34 +21695,116 @@ export interface operations {
                       discriminating: boolean;
                       followup_probe_md?: string;
                       followup_probe_reference_md?: string;
-                      followup_probe_spec?: {
-                        /** @enum {string} */
-                        context_kind:
-                          | 'abstract'
-                          | 'applied'
-                          | 'narrative'
-                          | 'document'
-                          | 'visual'
-                          | 'data'
-                          | 'code'
-                          | 'other';
-                        elicits_target_error_reason_md: string;
-                        expected_target_error_answer_md: string;
-                        prompt_md: string;
-                        reference_md: string;
-                        /** @enum {string} */
-                        representation_kind:
-                          | 'symbolic'
-                          | 'natural_language'
-                          | 'multiple_choice'
-                          | 'table'
-                          | 'diagram'
-                          | 'graph'
-                          | 'image'
-                          | 'code'
-                          | 'mixed'
-                          | 'other';
-                      };
+                      followup_probe_spec?:
+                        | {
+                            /** @enum {string} */
+                            context_kind:
+                              | 'abstract'
+                              | 'applied'
+                              | 'narrative'
+                              | 'document'
+                              | 'visual'
+                              | 'data'
+                              | 'code'
+                              | 'other';
+                            elicits_target_error_reason_md: string;
+                            expected_target_error_answer_md: string;
+                            gold_response_signature:
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'choice';
+                                  option_ids: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'text';
+                                  response_md: string;
+                                }
+                              | {
+                                  answer_md: string;
+                                  /** @enum {string} */
+                                  kind: 'answer_with_reason';
+                                  required_reason_features_md: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'rubric';
+                                  required_features_md: string[];
+                                };
+                            prompt_md: string;
+                            reference_md: string;
+                            /** @enum {string} */
+                            representation_kind:
+                              | 'symbolic'
+                              | 'natural_language'
+                              | 'multiple_choice'
+                              | 'table'
+                              | 'diagram'
+                              | 'graph'
+                              | 'image'
+                              | 'code'
+                              | 'mixed'
+                              | 'other';
+                            /** @enum {string} */
+                            response_mode:
+                              | 'single_choice'
+                              | 'multiple_select'
+                              | 'short_answer'
+                              | 'answer_with_reason'
+                              | 'constructed_response';
+                            /** @enum {number} */
+                            schema_version: 2;
+                            target_error_response_signature:
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'choice';
+                                  option_ids: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'text';
+                                  response_md: string;
+                                }
+                              | {
+                                  answer_md: string;
+                                  /** @enum {string} */
+                                  kind: 'answer_with_reason';
+                                  required_reason_features_md: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'rubric';
+                                  required_features_md: string[];
+                                };
+                          }
+                        | {
+                            /** @enum {string} */
+                            context_kind:
+                              | 'abstract'
+                              | 'applied'
+                              | 'narrative'
+                              | 'document'
+                              | 'visual'
+                              | 'data'
+                              | 'code'
+                              | 'other';
+                            elicits_target_error_reason_md: string;
+                            expected_target_error_answer_md: string;
+                            prompt_md: string;
+                            reference_md: string;
+                            /** @enum {string} */
+                            representation_kind:
+                              | 'symbolic'
+                              | 'natural_language'
+                              | 'multiple_choice'
+                              | 'table'
+                              | 'diagram'
+                              | 'graph'
+                              | 'image'
+                              | 'code'
+                              | 'mixed'
+                              | 'other';
+                          };
                       knowledge_id: string;
                       predicted_p: number;
                       probe_md: string;
@@ -21709,6 +21817,7 @@ export interface operations {
                                   explanation_md: string;
                                   failure_codes: (
                                     | 'probe_pair_not_independent'
+                                    | 'response_signature_ungradable'
                                     | 'target_error_answer_not_distinct'
                                   )[];
                                   /** @enum {string} */
@@ -21779,6 +21888,7 @@ export interface operations {
                                   explanation_md: string;
                                   failure_codes: (
                                     | 'probe_pair_not_independent'
+                                    | 'response_signature_ungradable'
                                     | 'target_error_answer_not_distinct'
                                   )[];
                                   /** @enum {string} */
@@ -21916,36 +22026,371 @@ export interface operations {
                             };
                             /** @enum {number} */
                             schema_version: 2;
+                          }
+                        | {
+                            attempts: (
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'probe_pair_not_independent'
+                                    | 'response_signature_ungradable'
+                                    | 'target_error_answer_not_distinct'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'structure_failed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'claim_scope_expansion'
+                                    | 'probe_not_targeting'
+                                    | 'probe_pair_not_independent'
+                                    | 'reference_incorrect'
+                                    | 'target_error_answer_not_distinct'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'review_failed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'author_output_invalid'
+                                    | 'review_output_invalid'
+                                    | 'author_operational_failure'
+                                    | 'review_operational_failure'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'operational_failed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: unknown[];
+                                  /** @enum {string} */
+                                  outcome: 'passed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                            )[];
+                            final_review: {
+                              explanation_md: string;
+                              failure_codes: (
+                                | 'claim_scope_expansion'
+                                | 'probe_not_targeting'
+                                | 'probe_pair_not_independent'
+                                | 'reference_incorrect'
+                                | 'target_error_answer_not_distinct'
+                              )[];
+                              /** @enum {string} */
+                              verdict: 'pass' | 'fail';
+                            };
+                            /** @enum {boolean} */
+                            passed: true;
+                            reviewed_hypothesis: {
+                              cause_category: string;
+                              claim_md: string;
+                              diagnostic_spec: {
+                                expected_wrong_answer_signature_md: string;
+                                /** @enum {number} */
+                                schema_version: 1;
+                                scope_boundary_md: string;
+                                target_error_rule_md: string;
+                                trigger_conditions_md: string;
+                              };
+                              evidence_event_ids: string[];
+                              /** @enum {string} */
+                              kind: 'proposal';
+                              knowledge_id: string;
+                              recurrence_count: number;
+                            };
+                            reviewed_package: {
+                              followup: {
+                                /** @enum {string} */
+                                context_kind:
+                                  | 'abstract'
+                                  | 'applied'
+                                  | 'narrative'
+                                  | 'document'
+                                  | 'visual'
+                                  | 'data'
+                                  | 'code'
+                                  | 'other';
+                                elicits_target_error_reason_md: string;
+                                expected_target_error_answer_md: string;
+                                gold_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                                prompt_md: string;
+                                reference_md: string;
+                                /** @enum {string} */
+                                representation_kind:
+                                  | 'symbolic'
+                                  | 'natural_language'
+                                  | 'multiple_choice'
+                                  | 'table'
+                                  | 'diagram'
+                                  | 'graph'
+                                  | 'image'
+                                  | 'code'
+                                  | 'mixed'
+                                  | 'other';
+                                /** @enum {string} */
+                                response_mode:
+                                  | 'single_choice'
+                                  | 'multiple_select'
+                                  | 'short_answer'
+                                  | 'answer_with_reason'
+                                  | 'constructed_response';
+                                /** @enum {number} */
+                                schema_version: 2;
+                                target_error_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                              };
+                              predicted_p: number;
+                              primary: {
+                                /** @enum {string} */
+                                context_kind:
+                                  | 'abstract'
+                                  | 'applied'
+                                  | 'narrative'
+                                  | 'document'
+                                  | 'visual'
+                                  | 'data'
+                                  | 'code'
+                                  | 'other';
+                                elicits_target_error_reason_md: string;
+                                expected_target_error_answer_md: string;
+                                gold_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                                prompt_md: string;
+                                reference_md: string;
+                                /** @enum {string} */
+                                representation_kind:
+                                  | 'symbolic'
+                                  | 'natural_language'
+                                  | 'multiple_choice'
+                                  | 'table'
+                                  | 'diagram'
+                                  | 'graph'
+                                  | 'image'
+                                  | 'code'
+                                  | 'mixed'
+                                  | 'other';
+                                /** @enum {string} */
+                                response_mode:
+                                  | 'single_choice'
+                                  | 'multiple_select'
+                                  | 'short_answer'
+                                  | 'answer_with_reason'
+                                  | 'constructed_response';
+                                /** @enum {number} */
+                                schema_version: 2;
+                                target_error_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                              };
+                            };
+                            /** @enum {number} */
+                            schema_version: 3;
                           };
                       probe_reference_md: string;
-                      probe_spec?: {
-                        /** @enum {string} */
-                        context_kind:
-                          | 'abstract'
-                          | 'applied'
-                          | 'narrative'
-                          | 'document'
-                          | 'visual'
-                          | 'data'
-                          | 'code'
-                          | 'other';
-                        elicits_target_error_reason_md: string;
-                        expected_target_error_answer_md: string;
-                        prompt_md: string;
-                        reference_md: string;
-                        /** @enum {string} */
-                        representation_kind:
-                          | 'symbolic'
-                          | 'natural_language'
-                          | 'multiple_choice'
-                          | 'table'
-                          | 'diagram'
-                          | 'graph'
-                          | 'image'
-                          | 'code'
-                          | 'mixed'
-                          | 'other';
-                      };
+                      probe_spec?:
+                        | {
+                            /** @enum {string} */
+                            context_kind:
+                              | 'abstract'
+                              | 'applied'
+                              | 'narrative'
+                              | 'document'
+                              | 'visual'
+                              | 'data'
+                              | 'code'
+                              | 'other';
+                            elicits_target_error_reason_md: string;
+                            expected_target_error_answer_md: string;
+                            gold_response_signature:
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'choice';
+                                  option_ids: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'text';
+                                  response_md: string;
+                                }
+                              | {
+                                  answer_md: string;
+                                  /** @enum {string} */
+                                  kind: 'answer_with_reason';
+                                  required_reason_features_md: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'rubric';
+                                  required_features_md: string[];
+                                };
+                            prompt_md: string;
+                            reference_md: string;
+                            /** @enum {string} */
+                            representation_kind:
+                              | 'symbolic'
+                              | 'natural_language'
+                              | 'multiple_choice'
+                              | 'table'
+                              | 'diagram'
+                              | 'graph'
+                              | 'image'
+                              | 'code'
+                              | 'mixed'
+                              | 'other';
+                            /** @enum {string} */
+                            response_mode:
+                              | 'single_choice'
+                              | 'multiple_select'
+                              | 'short_answer'
+                              | 'answer_with_reason'
+                              | 'constructed_response';
+                            /** @enum {number} */
+                            schema_version: 2;
+                            target_error_response_signature:
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'choice';
+                                  option_ids: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'text';
+                                  response_md: string;
+                                }
+                              | {
+                                  answer_md: string;
+                                  /** @enum {string} */
+                                  kind: 'answer_with_reason';
+                                  required_reason_features_md: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'rubric';
+                                  required_features_md: string[];
+                                };
+                          }
+                        | {
+                            /** @enum {string} */
+                            context_kind:
+                              | 'abstract'
+                              | 'applied'
+                              | 'narrative'
+                              | 'document'
+                              | 'visual'
+                              | 'data'
+                              | 'code'
+                              | 'other';
+                            elicits_target_error_reason_md: string;
+                            expected_target_error_answer_md: string;
+                            prompt_md: string;
+                            reference_md: string;
+                            /** @enum {string} */
+                            representation_kind:
+                              | 'symbolic'
+                              | 'natural_language'
+                              | 'multiple_choice'
+                              | 'table'
+                              | 'diagram'
+                              | 'graph'
+                              | 'image'
+                              | 'code'
+                              | 'mixed'
+                              | 'other';
+                          };
                       recurrence_count: number;
                     };
                     reason_md: string;
@@ -22600,34 +23045,116 @@ export interface operations {
                       discriminating: boolean;
                       followup_probe_md?: string;
                       followup_probe_reference_md?: string;
-                      followup_probe_spec?: {
-                        /** @enum {string} */
-                        context_kind:
-                          | 'abstract'
-                          | 'applied'
-                          | 'narrative'
-                          | 'document'
-                          | 'visual'
-                          | 'data'
-                          | 'code'
-                          | 'other';
-                        elicits_target_error_reason_md: string;
-                        expected_target_error_answer_md: string;
-                        prompt_md: string;
-                        reference_md: string;
-                        /** @enum {string} */
-                        representation_kind:
-                          | 'symbolic'
-                          | 'natural_language'
-                          | 'multiple_choice'
-                          | 'table'
-                          | 'diagram'
-                          | 'graph'
-                          | 'image'
-                          | 'code'
-                          | 'mixed'
-                          | 'other';
-                      };
+                      followup_probe_spec?:
+                        | {
+                            /** @enum {string} */
+                            context_kind:
+                              | 'abstract'
+                              | 'applied'
+                              | 'narrative'
+                              | 'document'
+                              | 'visual'
+                              | 'data'
+                              | 'code'
+                              | 'other';
+                            elicits_target_error_reason_md: string;
+                            expected_target_error_answer_md: string;
+                            gold_response_signature:
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'choice';
+                                  option_ids: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'text';
+                                  response_md: string;
+                                }
+                              | {
+                                  answer_md: string;
+                                  /** @enum {string} */
+                                  kind: 'answer_with_reason';
+                                  required_reason_features_md: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'rubric';
+                                  required_features_md: string[];
+                                };
+                            prompt_md: string;
+                            reference_md: string;
+                            /** @enum {string} */
+                            representation_kind:
+                              | 'symbolic'
+                              | 'natural_language'
+                              | 'multiple_choice'
+                              | 'table'
+                              | 'diagram'
+                              | 'graph'
+                              | 'image'
+                              | 'code'
+                              | 'mixed'
+                              | 'other';
+                            /** @enum {string} */
+                            response_mode:
+                              | 'single_choice'
+                              | 'multiple_select'
+                              | 'short_answer'
+                              | 'answer_with_reason'
+                              | 'constructed_response';
+                            /** @enum {number} */
+                            schema_version: 2;
+                            target_error_response_signature:
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'choice';
+                                  option_ids: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'text';
+                                  response_md: string;
+                                }
+                              | {
+                                  answer_md: string;
+                                  /** @enum {string} */
+                                  kind: 'answer_with_reason';
+                                  required_reason_features_md: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'rubric';
+                                  required_features_md: string[];
+                                };
+                          }
+                        | {
+                            /** @enum {string} */
+                            context_kind:
+                              | 'abstract'
+                              | 'applied'
+                              | 'narrative'
+                              | 'document'
+                              | 'visual'
+                              | 'data'
+                              | 'code'
+                              | 'other';
+                            elicits_target_error_reason_md: string;
+                            expected_target_error_answer_md: string;
+                            prompt_md: string;
+                            reference_md: string;
+                            /** @enum {string} */
+                            representation_kind:
+                              | 'symbolic'
+                              | 'natural_language'
+                              | 'multiple_choice'
+                              | 'table'
+                              | 'diagram'
+                              | 'graph'
+                              | 'image'
+                              | 'code'
+                              | 'mixed'
+                              | 'other';
+                          };
                       knowledge_id: string;
                       predicted_p: number;
                       probe_md: string;
@@ -22640,6 +23167,7 @@ export interface operations {
                                   explanation_md: string;
                                   failure_codes: (
                                     | 'probe_pair_not_independent'
+                                    | 'response_signature_ungradable'
                                     | 'target_error_answer_not_distinct'
                                   )[];
                                   /** @enum {string} */
@@ -22710,6 +23238,7 @@ export interface operations {
                                   explanation_md: string;
                                   failure_codes: (
                                     | 'probe_pair_not_independent'
+                                    | 'response_signature_ungradable'
                                     | 'target_error_answer_not_distinct'
                                   )[];
                                   /** @enum {string} */
@@ -22847,36 +23376,371 @@ export interface operations {
                             };
                             /** @enum {number} */
                             schema_version: 2;
+                          }
+                        | {
+                            attempts: (
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'probe_pair_not_independent'
+                                    | 'response_signature_ungradable'
+                                    | 'target_error_answer_not_distinct'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'structure_failed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'claim_scope_expansion'
+                                    | 'probe_not_targeting'
+                                    | 'probe_pair_not_independent'
+                                    | 'reference_incorrect'
+                                    | 'target_error_answer_not_distinct'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'review_failed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'author_output_invalid'
+                                    | 'review_output_invalid'
+                                    | 'author_operational_failure'
+                                    | 'review_operational_failure'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'operational_failed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: unknown[];
+                                  /** @enum {string} */
+                                  outcome: 'passed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                            )[];
+                            final_review: {
+                              explanation_md: string;
+                              failure_codes: (
+                                | 'claim_scope_expansion'
+                                | 'probe_not_targeting'
+                                | 'probe_pair_not_independent'
+                                | 'reference_incorrect'
+                                | 'target_error_answer_not_distinct'
+                              )[];
+                              /** @enum {string} */
+                              verdict: 'pass' | 'fail';
+                            };
+                            /** @enum {boolean} */
+                            passed: true;
+                            reviewed_hypothesis: {
+                              cause_category: string;
+                              claim_md: string;
+                              diagnostic_spec: {
+                                expected_wrong_answer_signature_md: string;
+                                /** @enum {number} */
+                                schema_version: 1;
+                                scope_boundary_md: string;
+                                target_error_rule_md: string;
+                                trigger_conditions_md: string;
+                              };
+                              evidence_event_ids: string[];
+                              /** @enum {string} */
+                              kind: 'proposal';
+                              knowledge_id: string;
+                              recurrence_count: number;
+                            };
+                            reviewed_package: {
+                              followup: {
+                                /** @enum {string} */
+                                context_kind:
+                                  | 'abstract'
+                                  | 'applied'
+                                  | 'narrative'
+                                  | 'document'
+                                  | 'visual'
+                                  | 'data'
+                                  | 'code'
+                                  | 'other';
+                                elicits_target_error_reason_md: string;
+                                expected_target_error_answer_md: string;
+                                gold_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                                prompt_md: string;
+                                reference_md: string;
+                                /** @enum {string} */
+                                representation_kind:
+                                  | 'symbolic'
+                                  | 'natural_language'
+                                  | 'multiple_choice'
+                                  | 'table'
+                                  | 'diagram'
+                                  | 'graph'
+                                  | 'image'
+                                  | 'code'
+                                  | 'mixed'
+                                  | 'other';
+                                /** @enum {string} */
+                                response_mode:
+                                  | 'single_choice'
+                                  | 'multiple_select'
+                                  | 'short_answer'
+                                  | 'answer_with_reason'
+                                  | 'constructed_response';
+                                /** @enum {number} */
+                                schema_version: 2;
+                                target_error_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                              };
+                              predicted_p: number;
+                              primary: {
+                                /** @enum {string} */
+                                context_kind:
+                                  | 'abstract'
+                                  | 'applied'
+                                  | 'narrative'
+                                  | 'document'
+                                  | 'visual'
+                                  | 'data'
+                                  | 'code'
+                                  | 'other';
+                                elicits_target_error_reason_md: string;
+                                expected_target_error_answer_md: string;
+                                gold_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                                prompt_md: string;
+                                reference_md: string;
+                                /** @enum {string} */
+                                representation_kind:
+                                  | 'symbolic'
+                                  | 'natural_language'
+                                  | 'multiple_choice'
+                                  | 'table'
+                                  | 'diagram'
+                                  | 'graph'
+                                  | 'image'
+                                  | 'code'
+                                  | 'mixed'
+                                  | 'other';
+                                /** @enum {string} */
+                                response_mode:
+                                  | 'single_choice'
+                                  | 'multiple_select'
+                                  | 'short_answer'
+                                  | 'answer_with_reason'
+                                  | 'constructed_response';
+                                /** @enum {number} */
+                                schema_version: 2;
+                                target_error_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                              };
+                            };
+                            /** @enum {number} */
+                            schema_version: 3;
                           };
                       probe_reference_md: string;
-                      probe_spec?: {
-                        /** @enum {string} */
-                        context_kind:
-                          | 'abstract'
-                          | 'applied'
-                          | 'narrative'
-                          | 'document'
-                          | 'visual'
-                          | 'data'
-                          | 'code'
-                          | 'other';
-                        elicits_target_error_reason_md: string;
-                        expected_target_error_answer_md: string;
-                        prompt_md: string;
-                        reference_md: string;
-                        /** @enum {string} */
-                        representation_kind:
-                          | 'symbolic'
-                          | 'natural_language'
-                          | 'multiple_choice'
-                          | 'table'
-                          | 'diagram'
-                          | 'graph'
-                          | 'image'
-                          | 'code'
-                          | 'mixed'
-                          | 'other';
-                      };
+                      probe_spec?:
+                        | {
+                            /** @enum {string} */
+                            context_kind:
+                              | 'abstract'
+                              | 'applied'
+                              | 'narrative'
+                              | 'document'
+                              | 'visual'
+                              | 'data'
+                              | 'code'
+                              | 'other';
+                            elicits_target_error_reason_md: string;
+                            expected_target_error_answer_md: string;
+                            gold_response_signature:
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'choice';
+                                  option_ids: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'text';
+                                  response_md: string;
+                                }
+                              | {
+                                  answer_md: string;
+                                  /** @enum {string} */
+                                  kind: 'answer_with_reason';
+                                  required_reason_features_md: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'rubric';
+                                  required_features_md: string[];
+                                };
+                            prompt_md: string;
+                            reference_md: string;
+                            /** @enum {string} */
+                            representation_kind:
+                              | 'symbolic'
+                              | 'natural_language'
+                              | 'multiple_choice'
+                              | 'table'
+                              | 'diagram'
+                              | 'graph'
+                              | 'image'
+                              | 'code'
+                              | 'mixed'
+                              | 'other';
+                            /** @enum {string} */
+                            response_mode:
+                              | 'single_choice'
+                              | 'multiple_select'
+                              | 'short_answer'
+                              | 'answer_with_reason'
+                              | 'constructed_response';
+                            /** @enum {number} */
+                            schema_version: 2;
+                            target_error_response_signature:
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'choice';
+                                  option_ids: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'text';
+                                  response_md: string;
+                                }
+                              | {
+                                  answer_md: string;
+                                  /** @enum {string} */
+                                  kind: 'answer_with_reason';
+                                  required_reason_features_md: string[];
+                                }
+                              | {
+                                  /** @enum {string} */
+                                  kind: 'rubric';
+                                  required_features_md: string[];
+                                };
+                          }
+                        | {
+                            /** @enum {string} */
+                            context_kind:
+                              | 'abstract'
+                              | 'applied'
+                              | 'narrative'
+                              | 'document'
+                              | 'visual'
+                              | 'data'
+                              | 'code'
+                              | 'other';
+                            elicits_target_error_reason_md: string;
+                            expected_target_error_answer_md: string;
+                            prompt_md: string;
+                            reference_md: string;
+                            /** @enum {string} */
+                            representation_kind:
+                              | 'symbolic'
+                              | 'natural_language'
+                              | 'multiple_choice'
+                              | 'table'
+                              | 'diagram'
+                              | 'graph'
+                              | 'image'
+                              | 'code'
+                              | 'mixed'
+                              | 'other';
+                          };
                       recurrence_count: number;
                     };
                     reason_md: string;

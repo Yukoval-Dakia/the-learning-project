@@ -1,8 +1,8 @@
 import type { LoadedConjectureEvidenceImage } from '@/capabilities/agency/server/conjecture/evidence';
 import {
   type ConjectureHypothesisProposalDraftT,
-  ConjectureProbePackage,
-  type ConjectureProbePackageT,
+  ConjectureProbePackageV2,
+  type ConjectureProbePackageV2T,
   type ConjectureProbeQualityAttemptT,
   type ConjectureProbeQualityAuditT,
   ConjectureProbeReview,
@@ -29,7 +29,7 @@ export class ConjectureProbeQualityOperationalError extends Error {
 }
 
 const ProbeAuthorStructuredOutput = z.object({
-  package: ConjectureProbePackage,
+  package: ConjectureProbePackageV2,
 });
 const ProbeReviewStructuredOutput = z.object({
   review: ConjectureProbeReview,
@@ -52,7 +52,7 @@ interface ProbeQualityResultBase {
 export type PrepareConjectureProbePairResult =
   | (ProbeQualityResultBase & {
       outcome: 'passed';
-      package: ConjectureProbePackageT;
+      package: ConjectureProbePackageV2T;
       audit: ConjectureProbeQualityAuditT;
       primary_task_run_id: string | null;
     })
@@ -165,7 +165,11 @@ export async function prepareConjectureProbePair(
       );
     }
     const authorTaskRunId = authorResult.task_run_id;
-    const probePackage = parseTaskStructuredOutput(authorResult, ConjectureProbePackage, 'package');
+    const probePackage = parseTaskStructuredOutput(
+      authorResult,
+      ConjectureProbePackageV2,
+      'package',
+    );
     if (!probePackage) {
       operationalFailureSeen = true;
       lastOperationalTaskKind = 'ConjectureProbeAuthorTask';
@@ -308,7 +312,7 @@ export async function prepareConjectureProbePair(
       outcome: 'passed',
       package: probePackage,
       audit: {
-        schema_version: 2,
+        schema_version: 3,
         passed: true,
         attempts: structuredClone(attempts),
         final_review: review,

@@ -125,20 +125,44 @@ const DRAFT = {
 
 const PROBE_PACKAGE = {
   primary: {
+    schema_version: 2,
     prompt_md: PROBE_MD,
     reference_md: PROBE_REFERENCE_MD,
     expected_target_error_answer_md: '使动；渔人使它变得奇异。',
     elicits_target_error_reason_md: '保留“主观评价被误读为造成变化”的触发条件。',
     context_kind: 'narrative',
     representation_kind: 'natural_language',
+    response_mode: 'answer_with_reason',
+    gold_response_signature: {
+      kind: 'answer_with_reason',
+      answer_md: '意动用法',
+      required_reason_features_md: ['表达主语对宾语的主观评价'],
+    },
+    target_error_response_signature: {
+      kind: 'answer_with_reason',
+      answer_md: '使动用法',
+      required_reason_features_md: ['解释为主语使宾语发生变化'],
+    },
   },
   followup: {
+    schema_version: 2,
     prompt_md: FOLLOWUP_PROBE_MD,
     reference_md: FOLLOWUP_PROBE_REFERENCE_MD,
     expected_target_error_answer_md: '使动；乡里人使它变得奇特。',
     elicits_target_error_reason_md: '换成独立语境和选择形式，仍检验同一个目标错误。',
     context_kind: 'document',
     representation_kind: 'multiple_choice',
+    response_mode: 'answer_with_reason',
+    gold_response_signature: {
+      kind: 'answer_with_reason',
+      answer_md: '意动用法',
+      required_reason_features_md: ['表达主语对宾语的主观评价'],
+    },
+    target_error_response_signature: {
+      kind: 'answer_with_reason',
+      answer_md: '使动用法',
+      required_reason_features_md: ['解释为主语使宾语发生变化'],
+    },
   },
   predicted_p: 0.25,
 };
@@ -154,6 +178,10 @@ const JUDGE_INCORRECT = {
     missing_points: ['意动用法'],
   },
   confidence: 0.82,
+  probe_signature_match: {
+    match: 'target_error',
+    explanation_md: '作答明确把主观评价解释为使宾语发生变化，命中声明的目标错误。',
+  },
 };
 
 /** Minimal SDK terminal success message carrying the structured output. */

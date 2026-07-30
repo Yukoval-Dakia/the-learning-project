@@ -106,23 +106,43 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
       followup_probe_md: `follow-up probe for ${cell.knowledge_id}`,
       followup_probe_reference_md: `follow-up reference answer for ${cell.knowledge_id}`,
       probe_spec: {
+        schema_version: 2,
         prompt_md: `probe for ${cell.knowledge_id}`,
         reference_md: `reference answer for ${cell.knowledge_id}`,
         expected_target_error_answer_md: `target error answer for ${cell.knowledge_id}`,
         elicits_target_error_reason_md: 'primary trigger',
         context_kind: 'abstract',
         representation_kind: 'symbolic',
+        response_mode: 'short_answer',
+        gold_response_signature: {
+          kind: 'text',
+          response_md: `reference answer for ${cell.knowledge_id}`,
+        },
+        target_error_response_signature: {
+          kind: 'text',
+          response_md: `target error answer for ${cell.knowledge_id}`,
+        },
       },
       followup_probe_spec: {
+        schema_version: 2,
         prompt_md: `follow-up probe for ${cell.knowledge_id}`,
         reference_md: `follow-up reference answer for ${cell.knowledge_id}`,
         expected_target_error_answer_md: `follow-up target error answer for ${cell.knowledge_id}`,
         elicits_target_error_reason_md: 'follow-up trigger',
         context_kind: 'applied',
         representation_kind: 'natural_language',
+        response_mode: 'short_answer',
+        gold_response_signature: {
+          kind: 'text',
+          response_md: `follow-up reference answer for ${cell.knowledge_id}`,
+        },
+        target_error_response_signature: {
+          kind: 'text',
+          response_md: `follow-up target error answer for ${cell.knowledge_id}`,
+        },
       },
       probe_quality: {
-        schema_version: 2,
+        schema_version: 3,
         passed: true,
         attempts: [
           {
@@ -156,20 +176,40 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
         },
         reviewed_package: {
           primary: {
+            schema_version: 2,
             prompt_md: `probe for ${cell.knowledge_id}`,
             reference_md: `reference answer for ${cell.knowledge_id}`,
             expected_target_error_answer_md: `target error answer for ${cell.knowledge_id}`,
             elicits_target_error_reason_md: 'primary trigger',
             context_kind: 'abstract',
             representation_kind: 'symbolic',
+            response_mode: 'short_answer',
+            gold_response_signature: {
+              kind: 'text',
+              response_md: `reference answer for ${cell.knowledge_id}`,
+            },
+            target_error_response_signature: {
+              kind: 'text',
+              response_md: `target error answer for ${cell.knowledge_id}`,
+            },
           },
           followup: {
+            schema_version: 2,
             prompt_md: `follow-up probe for ${cell.knowledge_id}`,
             reference_md: `follow-up reference answer for ${cell.knowledge_id}`,
             expected_target_error_answer_md: `follow-up target error answer for ${cell.knowledge_id}`,
             elicits_target_error_reason_md: 'follow-up trigger',
             context_kind: 'applied',
             representation_kind: 'natural_language',
+            response_mode: 'short_answer',
+            gold_response_signature: {
+              kind: 'text',
+              response_md: `follow-up reference answer for ${cell.knowledge_id}`,
+            },
+            target_error_response_signature: {
+              kind: 'text',
+              response_md: `follow-up target error answer for ${cell.knowledge_id}`,
+            },
           },
           predicted_p: 0.3,
         },

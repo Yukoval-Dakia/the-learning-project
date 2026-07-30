@@ -16,6 +16,7 @@ import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../../tests/helpers/conjecture-probe-fixtures';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 
 // Capture the registered tool handlers via a mocked SDK (same shape as evidence-mcp.db.test).
@@ -186,6 +187,7 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
           structured_output: {
             package: {
               primary: {
+                ...RESPONSE_AWARE_PROBE_FIELDS,
                 prompt_md: '判断条件 A 是否足以推出 B，并给出反例。',
                 reference_md: 'A 不是充分条件；存在满足 A 但不满足 B 的反例。',
                 expected_target_error_answer_md: 'A 足以推出 B。',
@@ -194,6 +196,7 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
                 representation_kind: 'symbolic',
               },
               followup: {
+                ...RESPONSE_AWARE_PROBE_FIELDS,
                 prompt_md: '在门禁情境中判断持卡是否保证可以进入。',
                 reference_md: '持卡不是充分条件，还需权限有效。',
                 expected_target_error_answer_md: '持卡就一定可以进入。',

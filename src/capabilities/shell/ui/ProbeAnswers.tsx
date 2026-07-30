@@ -7,6 +7,8 @@
 //             another independent probe and does NOT unlock scoped practice.
 //   confirmed (answered wrong) → the predicted misconception is real (constructive,
 //             NEVER "你果然不会"): "这块确实卡了 —— 教研团会据此为你备练".
+//   inconclusive (wrong for another reason) → consume this probe without changing
+//             conjecture evidence or inviting repeated answer fishing.
 //
 // Anti-guilt (same contract as slice-1): no calibration numbers, no nag; the probe is
 // framed as "the question the team is about to ask", never a graded flashcard.
@@ -56,6 +58,13 @@ function VerdictMessage({
     return (
       <span className="pa-verdict-txt">
         <LoomIcon name="target" size={14} /> 这块确实卡了 —— 教研团会据此为你备练。
+      </span>
+    );
+  }
+  if (verdict === 'inconclusive') {
+    return (
+      <span className="pa-verdict-txt">
+        <LoomIcon name="check" size={14} /> 这次答错了，但不是这条猜想里的错误；不会据此下结论。
       </span>
     );
   }
@@ -135,8 +144,8 @@ export function ProbeAnswerCard({
       // brief isn't on screen. (['prep-desk-probes'] stays on onDismiss, unchanged.)
       void qc.invalidateQueries({ queryKey: ['teaching-brief'] });
     } catch {
-      // 422 (judge couldn't grade cleanly) or network — fail-closed: the probe stays
-      // served and re-answerable, so surface a retry, not a lost answer.
+      // An actually ungradable judge result or network failure stays retryable.
+      // A gradable unrelated error returns the recorded `inconclusive` verdict above.
       setError('这次没判清 —— 换个说法再答一次');
     } finally {
       setSubmitting(false);

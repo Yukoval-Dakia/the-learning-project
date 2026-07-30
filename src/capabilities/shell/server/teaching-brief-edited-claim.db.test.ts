@@ -21,11 +21,13 @@
 import { answerProbe } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { TeachingBriefResponseSchema } from '@/capabilities/shell/api/contracts';
 import { loadTeachingBrief } from '@/capabilities/shell/server/teaching-brief';
+import { classifyConjectureProbeResponseFromJudgeMatch } from '@/core/schema/conjecture-probe-response';
 import { event, question } from '@/db/schema';
 import { acceptAiProposal } from '@/server/proposals/actions';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../tests/helpers/conjecture-probe-fixtures';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 /** The research team's original judgement — the claim the induced probe discriminates. */
@@ -34,6 +36,14 @@ const ORIGINAL_CLAIM = '你把链式法则当成两个导数相乘。';
 const OWNER_REWRITE = '你其实是把链式法则的内外层顺序记反了。';
 const PROBE_MD = 'd/dx sin(x^2) = ?';
 const PROBE_REFERENCE_MD = '2x·cos(x^2)：外层导数 × 内层导数。';
+const TARGET_ERROR_RESPONSE_JUDGEMENT = classifyConjectureProbeResponseFromJudgeMatch('incorrect', {
+  match: 'target_error',
+  explanation_md: 'matches the immutable target-error response signature',
+});
+const GOLD_RESPONSE_JUDGEMENT = classifyConjectureProbeResponseFromJudgeMatch('correct', {
+  match: 'gold',
+  explanation_md: 'matches the immutable gold response signature',
+});
 
 /** The sentence that mis-attributed A's probe evidence to the owner's rewrite. */
 const UNQUALIFIED_SUPPORT_COPY = '这条判断得到这次探针的支持';
@@ -67,6 +77,7 @@ function conjecturePayload() {
         expected_wrong_answer_signature_md: '答案缺少内层导数因子，或把两层导数相加。',
       },
       probe_spec: {
+        ...RESPONSE_AWARE_PROBE_FIELDS,
         prompt_md: PROBE_MD,
         reference_md: PROBE_REFERENCE_MD,
         expected_target_error_answer_md: 'cos(x^2) + 2x',
@@ -75,6 +86,7 @@ function conjecturePayload() {
         representation_kind: 'symbolic' as const,
       },
       followup_probe_spec: {
+        ...RESPONSE_AWARE_PROBE_FIELDS,
         prompt_md: 'd/dx cos(x^3) = ?',
         reference_md: '-3x^2·sin(x^3)',
         expected_target_error_answer_md: '-sin(x^3) + 3x^2',
@@ -83,7 +95,7 @@ function conjecturePayload() {
         representation_kind: 'natural_language' as const,
       },
       probe_quality: {
-        schema_version: 2 as const,
+        schema_version: 3 as const,
         passed: true as const,
         attempts: [
           {
@@ -117,6 +129,7 @@ function conjecturePayload() {
         },
         reviewed_package: {
           primary: {
+            ...RESPONSE_AWARE_PROBE_FIELDS,
             prompt_md: PROBE_MD,
             reference_md: PROBE_REFERENCE_MD,
             expected_target_error_answer_md: 'cos(x^2) + 2x',
@@ -125,6 +138,7 @@ function conjecturePayload() {
             representation_kind: 'symbolic' as const,
           },
           followup: {
+            ...RESPONSE_AWARE_PROBE_FIELDS,
             prompt_md: 'd/dx cos(x^3) = ?',
             reference_md: '-3x^2·sin(x^3)',
             expected_target_error_answer_md: '-sin(x^3) + 3x^2',
@@ -206,6 +220,7 @@ describe('YUK-785 — an owner rewrite must not inherit the original claim’s p
       db: testDb(),
       probeQuestionId,
       outcome: 0,
+      response_judgement: TARGET_ERROR_RESPONSE_JUDGEMENT,
     });
 
     const response = await loadTeachingBrief(testDb(), new Date(Date.now() + 1000));
@@ -233,7 +248,12 @@ describe('YUK-785 — an owner rewrite must not inherit the original claim’s p
 
   it('a retired outcome likewise credits the pre-edit claim', async () => {
     const { probeQuestionId } = await acceptWithRewrite();
-    await answerProbe({ db: testDb(), probeQuestionId, outcome: 1 });
+    await answerProbe({
+      db: testDb(),
+      probeQuestionId,
+      outcome: 1,
+      response_judgement: GOLD_RESPONSE_JUDGEMENT,
+    });
 
     const { brief } = await loadTeachingBrief(testDb(), new Date(Date.now() + 1000));
     expect(brief).toMatchObject({
@@ -298,6 +318,7 @@ describe('YUK-785 — an owner rewrite must not inherit the original claim’s p
       db,
       probeQuestionId: probe.id,
       outcome: 0,
+      response_judgement: TARGET_ERROR_RESPONSE_JUDGEMENT,
     });
 
     const response = await loadTeachingBrief(db, new Date(Date.now() + 1000));

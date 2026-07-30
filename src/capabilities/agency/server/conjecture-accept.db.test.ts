@@ -39,20 +39,44 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 function baseConjecture() {
   const primaryProbeSpec = {
+    schema_version: 2 as const,
     prompt_md: 'd/dx sin(x^2) = ?',
     reference_md: '2x·cos(x^2) — outer cos × inner 2x (chain rule: outer-deriv × inner-deriv).',
     expected_target_error_answer_md: 'cos(x²) + 2x',
     elicits_target_error_reason_md: 'Requires composing the two derivative layers.',
     context_kind: 'abstract' as const,
     representation_kind: 'symbolic' as const,
+    response_mode: 'answer_with_reason' as const,
+    gold_response_signature: {
+      kind: 'answer_with_reason' as const,
+      answer_md: '2x·cos(x²)',
+      required_reason_features_md: ['outer derivative multiplied by inner derivative'],
+    },
+    target_error_response_signature: {
+      kind: 'answer_with_reason' as const,
+      answer_md: 'cos(x²) + 2x',
+      required_reason_features_md: ['outer and inner derivatives added'],
+    },
   };
   const followupProbeSpec = {
+    schema_version: 2 as const,
     prompt_md: 'A changing area follows cos(t^3); explain its instantaneous rate.',
     reference_md: '-3t²·sin(t³), with outer and inner derivatives multiplied.',
     expected_target_error_answer_md: '-sin(t³) + 3t²',
     elicits_target_error_reason_md: 'Retains the same layer-composition decision in context.',
     context_kind: 'applied' as const,
     representation_kind: 'natural_language' as const,
+    response_mode: 'answer_with_reason' as const,
+    gold_response_signature: {
+      kind: 'answer_with_reason' as const,
+      answer_md: '-3t²·sin(t³)',
+      required_reason_features_md: ['outer derivative multiplied by inner derivative'],
+    },
+    target_error_response_signature: {
+      kind: 'answer_with_reason' as const,
+      answer_md: '-sin(t³) + 3t²',
+      required_reason_features_md: ['outer and inner derivatives added'],
+    },
   };
   return {
     kind: 'conjecture' as const,
@@ -84,7 +108,7 @@ function baseConjecture() {
       probe_spec: primaryProbeSpec,
       followup_probe_spec: followupProbeSpec,
       probe_quality: {
-        schema_version: 2 as const,
+        schema_version: 3 as const,
         passed: true as const,
         attempts: [
           {
@@ -349,6 +373,33 @@ describe('acceptConjectureProposal lifecycle', () => {
       message: expect.stringContaining('probe_quality_package_mismatch'),
     });
     expect(await rateEvents('tampered_probe_quality')).toHaveLength(0);
+  });
+
+  it('rejects a reviewed bare single-choice package whose target response is a forced guess', async () => {
+    const tampered = structuredClone(baseConjecture());
+    const ambiguousPrimary = {
+      ...tampered.proposed_change.probe_spec,
+      response_mode: 'single_choice' as const,
+      gold_response_signature: { kind: 'choice' as const, option_ids: ['C'] },
+      target_error_response_signature: {
+        kind: 'choice' as const,
+        option_ids: ['A', 'B', 'D'],
+      },
+    };
+    tampered.proposed_change.probe_spec = ambiguousPrimary as never;
+    tampered.proposed_change.probe_quality.reviewed_package.primary = ambiguousPrimary as never;
+
+    await expect(
+      acceptConjectureProposal(testDb(), 'ambiguous_response_signature', {
+        id: 'ambiguous_response_signature',
+        payload: tampered,
+      } as never),
+    ).rejects.toMatchObject({
+      code: CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
+      status: 409,
+      message: expect.stringContaining('primary_probe_spec_invalid'),
+    });
+    expect(await rateEvents('ambiguous_response_signature')).toHaveLength(0);
   });
 
   it('rejects a passing audit copied from a different frozen hypothesis', async () => {
@@ -965,6 +1016,14 @@ describe('acceptConjectureProposal lifecycle', () => {
       expect(probes).toHaveLength(1);
       expect(probes[0].draft_status).toBe('draft');
       expect(probes[0].source).toBe(PROBE_QUESTION_SOURCE);
+      expect(probes[0].metadata).toMatchObject({
+        probe_spec: {
+          schema_version: 2,
+          response_mode: 'answer_with_reason',
+          gold_response_signature: { kind: 'answer_with_reason' },
+          target_error_response_signature: { kind: 'answer_with_reason' },
+        },
+      });
 
       // (6) ND-5 still holds on the successful retry.
       expect(await fsrsRowCount()).toBe(0);

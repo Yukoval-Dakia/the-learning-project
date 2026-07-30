@@ -13,6 +13,8 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
+import { loadConjectureHistory } from '@/capabilities/agency/server/conjecture/history';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_QUESTION_SOURCE,
@@ -23,9 +25,11 @@ import {
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { handleReviewDue } from '@/capabilities/practice/server/due-list';
 import { newId } from '@/core/ids';
+import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture-probe-response';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/server/proposals/writer';
+import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../../tests/helpers/conjecture-probe-fixtures';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 
 const KC_ID = 'kn_chain_rule';
@@ -95,6 +99,57 @@ async function serve(proposalId: string) {
     referenceMd: '2x·cos(x^2)',
   });
 }
+
+async function serveResponseAware(proposalId: string) {
+  const referenceMd = '2x·cos(x^2) — outer cos × inner 2x (chain rule).';
+  return serveProbeOnce({
+    db: testDb(),
+    conjectureProposalId: proposalId,
+    knowledgeId: KC_ID,
+    probeMd: 'd/dx sin(x^2) = ?',
+    referenceMd,
+    probeSpec: {
+      ...RESPONSE_AWARE_PROBE_FIELDS,
+      prompt_md: 'd/dx sin(x^2) = ?',
+      reference_md: referenceMd,
+      expected_target_error_answer_md: 'cos(x^2)+2x',
+      elicits_target_error_reason_md: 'Distinguishes composition from addition.',
+      context_kind: 'abstract',
+      representation_kind: 'symbolic',
+    },
+  });
+}
+
+const GOLD_RESPONSE_JUDGEMENT = {
+  rule_version: 'conjecture_probe_response_signature_v1',
+  answer_result: 'correct',
+  target_error_match: 'not_matched',
+  gradable: true,
+  reason_code: 'gold_signature_matched',
+  signature_match_explanation_md: 'matches the gold response signature',
+  evidence_refs: [
+    'learner_response',
+    'gold_response_signature',
+    'target_error_response_signature',
+    'correctness_judge',
+  ],
+} satisfies ConjectureProbeResponseJudgementT;
+
+const TARGET_ERROR_RESPONSE_JUDGEMENT = {
+  ...GOLD_RESPONSE_JUDGEMENT,
+  answer_result: 'incorrect',
+  target_error_match: 'matched',
+  reason_code: 'target_error_signature_matched',
+  signature_match_explanation_md: 'matches the target-error response signature',
+} satisfies ConjectureProbeResponseJudgementT;
+
+const ORDINARY_WRONG_RESPONSE_JUDGEMENT = {
+  ...GOLD_RESPONSE_JUDGEMENT,
+  answer_result: 'incorrect',
+  target_error_match: 'not_matched',
+  reason_code: 'response_matches_neither_signature',
+  signature_match_explanation_md: 'matches neither authored response signature',
+} satisfies ConjectureProbeResponseJudgementT;
 
 async function probeResultEvents(probeQuestionId: string) {
   const db = testDb();
@@ -218,6 +273,7 @@ describe('probe one-shot lifecycle (U3)', () => {
       answer_md: 'multiplies derivatives',
     });
     expect(answered.status).toBe('evidence_for');
+    expect(answered.degradation_reason).toBe('probe_without_response_contract');
     expect(answered.idempotent).toBeUndefined();
 
     const results = await probeResultEvents(served.probe_question_id);
@@ -268,6 +324,68 @@ describe('probe one-shot lifecycle (U3)', () => {
       prompt_md: 'd/dx cos(x^3) = ?',
       reference_md: '-3x^2·sin(x^3) — outer -sin × inner 3x².',
       draft_status: 'draft',
+    });
+  });
+
+  it.each([
+    {
+      label: 'missing judgement with target-error outcome',
+      outcome: 0 as const,
+      response_judgement: null,
+    },
+    {
+      label: 'gold judgement with target-error outcome',
+      outcome: 0 as const,
+      response_judgement: GOLD_RESPONSE_JUDGEMENT,
+    },
+    {
+      label: 'target-error judgement with correct outcome',
+      outcome: 1 as const,
+      response_judgement: TARGET_ERROR_RESPONSE_JUDGEMENT,
+    },
+    {
+      label: 'target-error judgement with non-evidence outcome',
+      outcome: null,
+      response_judgement: TARGET_ERROR_RESPONSE_JUDGEMENT,
+    },
+  ])('rejects a fresh v2 persistence bypass: $label', async ({ outcome, response_judgement }) => {
+    const proposalId = await seedConjecture();
+    const served = await serveResponseAware(proposalId);
+    if (served.status !== 'served') throw new Error('expected served response-aware probe');
+
+    await expect(
+      answerProbe({
+        db: testDb(),
+        probeQuestionId: served.probe_question_id,
+        outcome,
+        response_judgement,
+      }),
+    ).rejects.toMatchObject({ code: 'probe_response_judgement_mismatch', status: 409 });
+    await expect(probeResultEvents(served.probe_question_id)).resolves.toHaveLength(0);
+  });
+
+  it('folds an ordinary wrong answer as terminal lifecycle history without treating it as evidence', async () => {
+    const proposalId = await seedConjecture();
+    const served = await serveResponseAware(proposalId);
+    if (served.status !== 'served') throw new Error('expected served response-aware probe');
+    const answeredAt = new Date('2026-07-29T00:00:00.000Z');
+
+    const answered = await answerProbe({
+      db: testDb(),
+      probeQuestionId: served.probe_question_id,
+      outcome: null,
+      response_judgement: ORDINARY_WRONG_RESPONSE_JUDGEMENT,
+      now: answeredAt,
+    });
+
+    expect(answered.status).toBe('inconclusive');
+    expect(answered.outcome).toBeNull();
+    const key = conjectureKey('concept_misunderstanding', KC_ID);
+    const history = await loadConjectureHistory(testDb(), [{ key, knowledge_id: KC_ID }]);
+    expect(history.get(key)).toMatchObject({
+      latest_decision: 'accept',
+      latest_terminal_at: answeredAt,
+      prior_claim_md: 'you treat the chain rule as multiplying derivatives',
     });
   });
 
@@ -604,6 +722,41 @@ describe('probe one-shot lifecycle (U3)', () => {
       status: 'confirmed',
       outcome: 0,
       probe_result_event_id: resultId,
+      response_judgement: null,
+      degradation_reason: 'legacy_probe_result_without_response_judgement',
+      idempotent: true,
+    });
+  });
+
+  it('treats an explicit null response_judgement as legacy missing metadata', async () => {
+    const proposalId = await seedConjecture();
+    const served = await serve(proposalId);
+    if (served.status !== 'served') throw new Error('expected served');
+    const resultId = newId();
+    await writeEvent(testDb(), {
+      id: resultId,
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: PROBE_RESULT_ACTION,
+      subject_kind: 'question',
+      subject_id: served.probe_question_id,
+      payload: {
+        conjecture_event_id: proposalId,
+        outcome: 0,
+        resolution: 'confirmed',
+        response_judgement: null,
+      },
+      caused_by_event_id: proposalId,
+      created_at: new Date(),
+    });
+
+    await expect(
+      peekExistingProbeResult(testDb(), served.probe_question_id),
+    ).resolves.toMatchObject({
+      status: 'confirmed',
+      outcome: 0,
+      response_judgement: null,
+      degradation_reason: 'legacy_probe_result_without_response_judgement',
       idempotent: true,
     });
   });

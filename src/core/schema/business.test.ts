@@ -7,8 +7,10 @@ import {
   ConjectureDraft,
   ConjectureHypothesisDraft,
   ConjectureProbePackage,
+  ConjectureProbePackageV2,
   ConjectureProbeQualityAttempt,
   ConjectureProbeQualityAudit,
+  ConjectureProbeSpecV2,
   LearningItemOpenStatus,
   LearningItemStatus,
   conjectureHypothesesEqual,
@@ -16,6 +18,229 @@ import {
   conjectureProbePackagesEqual,
   evaluateConjectureProbePackageStructure,
 } from './business';
+
+const responseAwareProbeBase = {
+  schema_version: 2 as const,
+  prompt_md: '下列句中加点词的活用类型，与其他三项不同的一项是：A/B/C/D。',
+  reference_md: 'C。',
+  expected_target_error_answer_md: '目标错误会把四项都归为同一类。',
+  elicits_target_error_reason_md: '比较正确分类与目标错误规则产生的分类。',
+  context_kind: 'document' as const,
+  representation_kind: 'multiple_choice' as const,
+};
+
+describe('Conjecture probe response signatures', () => {
+  it('rejects a bare single-choice probe when the target rule only yields several forced guesses', () => {
+    expect(
+      ConjectureProbeSpecV2.safeParse({
+        ...responseAwareProbeBase,
+        response_mode: 'single_choice',
+        gold_response_signature: { kind: 'choice', option_ids: ['C'] },
+        target_error_response_signature: { kind: 'choice', option_ids: ['A', 'B', 'D'] },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('allows the same misconception to be measured with a multi-select response signature', () => {
+    const primary = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      prompt_md: '下列哪些句中的加点词属于使动用法？A/B/C/D（可多选）。',
+      response_mode: 'multiple_select',
+      gold_response_signature: { kind: 'choice', option_ids: ['C'] },
+      target_error_response_signature: {
+        kind: 'choice',
+        option_ids: ['A', 'B', 'C', 'D'],
+      },
+    });
+    const followup = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      prompt_md: '解释“邑人奇其才”中“奇”的活用类型。',
+      reference_md: '意动用法；认为他的才华奇特。',
+      expected_target_error_answer_md: '使动用法；使他的才华变得奇特。',
+      context_kind: 'narrative',
+      representation_kind: 'natural_language',
+      response_mode: 'answer_with_reason',
+      gold_response_signature: {
+        kind: 'answer_with_reason',
+        answer_md: '意动用法',
+        required_reason_features_md: ['表达主语的主观评价'],
+      },
+      target_error_response_signature: {
+        kind: 'answer_with_reason',
+        answer_md: '使动用法',
+        required_reason_features_md: ['以“带宾语”为充分依据'],
+      },
+    });
+
+    const parsed = ConjectureProbePackageV2.parse({ primary, followup, predicted_p: 0.8 });
+    expect(evaluateConjectureProbePackageStructure(parsed)).toEqual([]);
+    expect(ConjectureProbePackage.safeParse(parsed).success).toBe(true);
+  });
+
+  it('allows a single-choice probe when gold and target-error responses each identify one option', () => {
+    const primary = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      response_mode: 'single_choice',
+      gold_response_signature: { kind: 'choice', option_ids: ['C'] },
+      target_error_response_signature: { kind: 'choice', option_ids: ['A'] },
+    });
+    const followup = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      prompt_md: '解释“邑人奇其才”中“奇”的活用类型。',
+      reference_md: '意动用法；认为他的才华奇特。',
+      expected_target_error_answer_md: '使动用法；使他的才华变得奇特。',
+      context_kind: 'narrative',
+      representation_kind: 'natural_language',
+      response_mode: 'short_answer',
+      gold_response_signature: { kind: 'text', response_md: '意动用法' },
+      target_error_response_signature: { kind: 'text', response_md: '使动用法' },
+    });
+
+    expect(
+      evaluateConjectureProbePackageStructure({ primary, followup, predicted_p: 0.8 }),
+    ).toEqual([]);
+  });
+
+  it('rejects a response signature whose kind is incompatible with its declared mode', () => {
+    expect(
+      ConjectureProbeSpecV2.safeParse({
+        ...responseAwareProbeBase,
+        response_mode: 'short_answer',
+        gold_response_signature: { kind: 'choice', option_ids: ['C'] },
+        target_error_response_signature: { kind: 'choice', option_ids: ['A'] },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects identical structured gold and target-error signatures even if prose differs', () => {
+    const primary = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      response_mode: 'multiple_select',
+      gold_response_signature: { kind: 'choice', option_ids: ['A', 'C'] },
+      target_error_response_signature: { kind: 'choice', option_ids: ['C', 'A'] },
+    });
+    const followup = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      prompt_md: '解释“邑人奇其才”中“奇”的活用类型。',
+      context_kind: 'narrative',
+      representation_kind: 'natural_language',
+      response_mode: 'short_answer',
+      gold_response_signature: { kind: 'text', response_md: '意动用法' },
+      target_error_response_signature: { kind: 'text', response_md: '使动用法' },
+    });
+
+    expect(
+      evaluateConjectureProbePackageStructure({ primary, followup, predicted_p: 0.8 }),
+    ).toContain('target_error_answer_not_distinct');
+  });
+
+  it('rejects identical reference and target-error prose even when structured signatures differ', () => {
+    const primary = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      expected_target_error_answer_md: responseAwareProbeBase.reference_md,
+      response_mode: 'single_choice',
+      gold_response_signature: { kind: 'choice', option_ids: ['C'] },
+      target_error_response_signature: { kind: 'choice', option_ids: ['A'] },
+    });
+    const followup = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      prompt_md: '解释“邑人奇其才”中“奇”的活用类型。',
+      reference_md: '意动用法。',
+      expected_target_error_answer_md: '使动用法。',
+      context_kind: 'narrative',
+      representation_kind: 'natural_language',
+      response_mode: 'short_answer',
+      gold_response_signature: { kind: 'text', response_md: '意动用法' },
+      target_error_response_signature: { kind: 'text', response_md: '使动用法' },
+    });
+
+    expect(
+      evaluateConjectureProbePackageStructure({ primary, followup, predicted_p: 0.8 }),
+    ).toContain('target_error_answer_not_distinct');
+  });
+
+  it('normalizes case and punctuation before comparing response signatures', () => {
+    const primary = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      response_mode: 'single_choice',
+      gold_response_signature: { kind: 'choice', option_ids: ['A'] },
+      target_error_response_signature: { kind: 'choice', option_ids: ['a'] },
+    });
+    const followup = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      prompt_md: '解释“邑人奇其才”中“奇”的活用类型。',
+      context_kind: 'narrative',
+      representation_kind: 'natural_language',
+      response_mode: 'short_answer',
+      gold_response_signature: { kind: 'text', response_md: '意动用法。' },
+      target_error_response_signature: { kind: 'text', response_md: '意动用法' },
+    });
+
+    expect(
+      evaluateConjectureProbePackageStructure({ primary, followup, predicted_p: 0.8 }),
+    ).toContain('target_error_answer_not_distinct');
+  });
+
+  it('preserves decimal separators when comparing response signatures', () => {
+    const primary = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      reference_md: '1.2',
+      expected_target_error_answer_md: '12',
+      context_kind: 'data',
+      representation_kind: 'symbolic',
+      response_mode: 'short_answer',
+      gold_response_signature: { kind: 'text', response_md: '1.2' },
+      target_error_response_signature: { kind: 'text', response_md: '12' },
+    });
+    const followup = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      prompt_md: '计算另一组数据中的对应结果。',
+      reference_md: '0.6',
+      expected_target_error_answer_md: '6',
+      context_kind: 'narrative',
+      representation_kind: 'natural_language',
+      response_mode: 'short_answer',
+      gold_response_signature: { kind: 'text', response_md: '0.6' },
+      target_error_response_signature: { kind: 'text', response_md: '6' },
+    });
+
+    expect(
+      evaluateConjectureProbePackageStructure({ primary, followup, predicted_p: 0.8 }),
+    ).toEqual([]);
+  });
+
+  it('keeps v1 history readable but rejects mixed-version probe packages', () => {
+    const legacy = {
+      prompt_md: responseAwareProbeBase.prompt_md,
+      reference_md: responseAwareProbeBase.reference_md,
+      expected_target_error_answer_md: responseAwareProbeBase.expected_target_error_answer_md,
+      elicits_target_error_reason_md: responseAwareProbeBase.elicits_target_error_reason_md,
+      context_kind: responseAwareProbeBase.context_kind,
+      representation_kind: responseAwareProbeBase.representation_kind,
+    };
+    const responseAware = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      response_mode: 'single_choice',
+      gold_response_signature: { kind: 'choice', option_ids: ['C'] },
+      target_error_response_signature: { kind: 'choice', option_ids: ['A'] },
+    });
+
+    expect(
+      ConjectureProbePackage.safeParse({
+        primary: legacy,
+        followup: { ...legacy, prompt_md: '历史复验题' },
+        predicted_p: 0.8,
+      }).success,
+    ).toBe(true);
+    expect(
+      ConjectureProbePackage.safeParse({
+        primary: responseAware,
+        followup: legacy,
+        predicted_p: 0.8,
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe('LearningItemStatus', () => {
   it('keeps practice/supply open statuses inside the canonical lifecycle enum', () => {
@@ -45,23 +270,47 @@ describe('ConjectureDraft', () => {
     followup_probe_md: "对 g(x)=cos(x^3)，写出 g'(x) 并标出内层导数。",
     followup_probe_reference_md: "g'(x)=-3x^2·sin(x^3)；内层导数是 3x²。",
     probe_spec: {
+      schema_version: 2 as const,
       prompt_md: "对 f(x)=sin(x^2)，写出 f'(x) 并说明用到链式法则的哪一层。",
       reference_md: "f'(x)=2x·cos(x^2)；外层 cos·内层 2x（链式：外导 × 内导）。",
       expected_target_error_answer_md: "f'(x)=cos(x^2)+2x",
       elicits_target_error_reason_md: '必须决定外导与内导的组合方式。',
       context_kind: 'abstract' as const,
       representation_kind: 'symbolic' as const,
+      response_mode: 'answer_with_reason' as const,
+      gold_response_signature: {
+        kind: 'answer_with_reason' as const,
+        answer_md: "f'(x)=2x·cos(x^2)",
+        required_reason_features_md: ['外层导数乘以内层导数'],
+      },
+      target_error_response_signature: {
+        kind: 'answer_with_reason' as const,
+        answer_md: "f'(x)=cos(x^2)+2x",
+        required_reason_features_md: ['把两层导数相加'],
+      },
     },
     followup_probe_spec: {
+      schema_version: 2 as const,
       prompt_md: "对 g(x)=cos(x^3)，写出 g'(x) 并标出内层导数。",
       reference_md: "g'(x)=-3x^2·sin(x^3)；内层导数是 3x²。",
       expected_target_error_answer_md: "g'(x)=-sin(x^3)+3x²",
       elicits_target_error_reason_md: '在文字说明中再次要求组合两层导数。',
       context_kind: 'applied' as const,
       representation_kind: 'natural_language' as const,
+      response_mode: 'answer_with_reason' as const,
+      gold_response_signature: {
+        kind: 'answer_with_reason' as const,
+        answer_md: "g'(x)=-3x^2·sin(x^3)",
+        required_reason_features_md: ['外层导数乘以内层导数'],
+      },
+      target_error_response_signature: {
+        kind: 'answer_with_reason' as const,
+        answer_md: "g'(x)=-sin(x^3)+3x²",
+        required_reason_features_md: ['把两层导数相加'],
+      },
     },
     probe_quality: {
-      schema_version: 2 as const,
+      schema_version: 3 as const,
       passed: true as const,
       attempts: [
         {
@@ -95,20 +344,44 @@ describe('ConjectureDraft', () => {
       },
       reviewed_package: {
         primary: {
+          schema_version: 2 as const,
           prompt_md: "对 f(x)=sin(x^2)，写出 f'(x) 并说明用到链式法则的哪一层。",
           reference_md: "f'(x)=2x·cos(x^2)；外层 cos·内层 2x（链式：外导 × 内导）。",
           expected_target_error_answer_md: "f'(x)=cos(x^2)+2x",
           elicits_target_error_reason_md: '必须决定外导与内导的组合方式。',
           context_kind: 'abstract' as const,
           representation_kind: 'symbolic' as const,
+          response_mode: 'answer_with_reason' as const,
+          gold_response_signature: {
+            kind: 'answer_with_reason' as const,
+            answer_md: "f'(x)=2x·cos(x^2)",
+            required_reason_features_md: ['外层导数乘以内层导数'],
+          },
+          target_error_response_signature: {
+            kind: 'answer_with_reason' as const,
+            answer_md: "f'(x)=cos(x^2)+2x",
+            required_reason_features_md: ['把两层导数相加'],
+          },
         },
         followup: {
+          schema_version: 2 as const,
           prompt_md: "对 g(x)=cos(x^3)，写出 g'(x) 并标出内层导数。",
           reference_md: "g'(x)=-3x^2·sin(x^3)；内层导数是 3x²。",
           expected_target_error_answer_md: "g'(x)=-sin(x^3)+3x²",
           elicits_target_error_reason_md: '在文字说明中再次要求组合两层导数。',
           context_kind: 'applied' as const,
           representation_kind: 'natural_language' as const,
+          response_mode: 'answer_with_reason' as const,
+          gold_response_signature: {
+            kind: 'answer_with_reason' as const,
+            answer_md: "g'(x)=-3x^2·sin(x^3)",
+            required_reason_features_md: ['外层导数乘以内层导数'],
+          },
+          target_error_response_signature: {
+            kind: 'answer_with_reason' as const,
+            answer_md: "g'(x)=-sin(x^3)+3x²",
+            required_reason_features_md: ['把两层导数相加'],
+          },
         },
         predicted_p: 0.35,
       },
@@ -309,7 +582,7 @@ describe('ConjectureDraft', () => {
     ).toBe(false);
   });
 
-  it('binds a v2 audit to the exact persisted package and requires complete pass lineage', () => {
+  it('binds a v3 audit to the exact persisted package and requires complete pass lineage', () => {
     expect(
       ConjectureDraft.safeParse({
         ...valid,
@@ -388,6 +661,36 @@ describe('ConjectureDraft', () => {
         probe_quality: v1Audit,
       }).success,
     ).toBe(false);
+  });
+
+  it('keeps package-bound v2 audit history readable but rejects it as a new conjecture draft', () => {
+    const legacyPrimary = {
+      prompt_md: valid.probe_spec.prompt_md,
+      reference_md: valid.probe_spec.reference_md,
+      expected_target_error_answer_md: valid.probe_spec.expected_target_error_answer_md,
+      elicits_target_error_reason_md: valid.probe_spec.elicits_target_error_reason_md,
+      context_kind: valid.probe_spec.context_kind,
+      representation_kind: valid.probe_spec.representation_kind,
+    };
+    const legacyFollowup = {
+      prompt_md: valid.followup_probe_spec.prompt_md,
+      reference_md: valid.followup_probe_spec.reference_md,
+      expected_target_error_answer_md: valid.followup_probe_spec.expected_target_error_answer_md,
+      elicits_target_error_reason_md: valid.followup_probe_spec.elicits_target_error_reason_md,
+      context_kind: valid.followup_probe_spec.context_kind,
+      representation_kind: valid.followup_probe_spec.representation_kind,
+    };
+    const v2Audit = {
+      ...valid.probe_quality,
+      schema_version: 2 as const,
+      reviewed_package: {
+        primary: legacyPrimary,
+        followup: legacyFollowup,
+        predicted_p: valid.predicted_p,
+      },
+    };
+    expect(ConjectureProbeQualityAudit.safeParse(v2Audit).success).toBe(true);
+    expect(ConjectureDraft.safeParse({ ...valid, probe_quality: v2Audit }).success).toBe(false);
   });
 
   it('keeps structure, review, and operational attempt codes in separate vocabularies', () => {
@@ -474,6 +777,7 @@ describe('ConjectureDraft', () => {
         context_kind: valid.probe_spec.context_kind,
         representation_kind: valid.probe_spec.representation_kind,
         expected_target_error_answer_md: valid.followup_probe_spec.reference_md,
+        target_error_response_signature: valid.followup_probe_spec.gold_response_signature,
       },
       predicted_p: 0.3,
     });

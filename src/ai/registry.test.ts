@@ -74,14 +74,16 @@ describe('task prompt definitions', () => {
       const profile = resolveSubjectProfile(profileId);
       for (const task of Object.keys(tasks) as Array<keyof typeof tasks>) {
         // YUK-821 intentionally replaces the induction/grouping contracts, adds the
-        // author/reviewer tasks, and updates the director charter. Dedicated tests below
-        // pin those behaviors; the old oracle still guards every unchanged prompt.
+        // author/reviewer tasks, and updates the director charter. YUK-827 extends the
+        // existing single-call judge with response-signature classification. Dedicated
+        // tests below pin those behaviors; the old oracle still guards unchanged prompts.
         if (
           task === 'MindModelInductionTask' ||
           task === 'ConjectureGroupingTask' ||
           task === 'ConjectureProbeAuthorTask' ||
           task === 'ConjectureProbeReviewTask' ||
-          task === 'ResearchMeetingDirectorTask'
+          task === 'ResearchMeetingDirectorTask' ||
+          task === 'MultimodalDirectJudgeTask'
         ) {
           continue;
         }
@@ -90,6 +92,37 @@ describe('task prompt definitions', () => {
           .update(getTaskSystemPrompt(task, profile), 'utf8')
           .digest('hex');
         expect(actualHash, key).toBe(promptHashOracle.prompts[key]);
+      }
+    }
+  });
+
+  it('pins the response-aware conjecture probe author/reviewer prompts for every profile', () => {
+    const expected = {
+      'general:ConjectureProbeAuthorTask':
+        '1337f632a207767ad1408723f07d9cc9281220828074ba2dc2c6f65da6d87969',
+      'general:ConjectureProbeReviewTask':
+        '6cf0b4bdf41429476075d579014b17acf2a1809da3b17d6897502e34f3f5f404',
+      'math:ConjectureProbeAuthorTask':
+        'bc9ad647833de7e13227a98a7776f76c78c5c3964e88b0ba128202ad555bf6b2',
+      'math:ConjectureProbeReviewTask':
+        'e9b108a1511d127b33c399d23fced583ac871fff460cd9fff1f65ca16e351729',
+      'physics:ConjectureProbeAuthorTask':
+        '44ceec14112bf53e0e197b3e9be813c57d4f056a1c909900c772061a3f9f5694',
+      'physics:ConjectureProbeReviewTask':
+        '5de7d2abe9e2986bb74c61582034e1adc1eb30d285cf5635525cc59de3c12c0e',
+      'yuwen:ConjectureProbeAuthorTask':
+        '5c890570f0dbca25f1661556a4dabecaa0161223643d467b9f6ce6c7931c7d5f',
+      'yuwen:ConjectureProbeReviewTask':
+        '0adbee2e2bb1b47d19897e5b450d960ccd4ad9f26dc9e2cff4642cbfbeb6fcfa',
+    } as const;
+    for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
+      const profile = resolveSubjectProfile(profileId);
+      for (const task of ['ConjectureProbeAuthorTask', 'ConjectureProbeReviewTask'] as const) {
+        const key = `${profileId}:${task}` as keyof typeof expected;
+        const actualHash = createHash('sha256')
+          .update(getTaskSystemPrompt(task, profile), 'utf8')
+          .digest('hex');
+        expect(actualHash, key).toBe(expected[key]);
       }
     }
   });
@@ -195,6 +228,14 @@ describe('MultimodalDirectJudgeTask registry entry', () => {
     // invocation defaults to 'auto' (graded via the multimodal_direct route, not a
     // manual rescue). The entry omits the optional field.
     expect((tasks.MultimodalDirectJudgeTask as TaskDef).invocation).toBeUndefined();
+  });
+
+  it('separates semantic target-error matching from ordinary correctness', () => {
+    const prompt = getTaskSystemPrompt('MultimodalDirectJudgeTask');
+    expect(prompt).toContain('probe_response_contract');
+    expect(prompt).toContain('ordinary wrong');
+    expect(prompt).toContain('target_error');
+    expect(prompt).toContain('ambiguous');
   });
 });
 
@@ -523,8 +564,8 @@ describe('Conjecture probe author/reviewer registry entries', () => {
       expect(def.needsToolCall).toBe(false);
       expect(def.isMultimodal).toBe(true);
       expect(def.allowedTools).toEqual([]);
-      expect(def.budget.maxIterations).toBe(2);
-      expect(def.budget.timeout).toBeGreaterThanOrEqual(120_000);
+      expect(def.budget.maxIterations).toBe(3);
+      expect(def.budget.timeout).toBeGreaterThanOrEqual(180_000);
       expect(getTaskSystemPrompt(kind, resolveSubjectProfile('math'))).not.toBe(
         getTaskSystemPrompt(kind, resolveSubjectProfile('yuwen')),
       );
@@ -536,12 +577,31 @@ describe('Conjecture probe author/reviewer registry entries', () => {
     expect(p).toContain('frozen_hypothesis');
     expect(p).toContain('trigger_conditions_md');
     expect(p).toContain('expected_target_error_answer_md');
+    expect(p).toContain('response_mode');
+    expect(p).toContain('gold_response_signature');
+    expect(p).toContain('target_error_response_signature');
     expect(p).toContain('context_kind');
     expect(p).toContain('representation_kind');
     expect(p).toContain('不能只换数字');
     expect(p).toContain('单选题');
     expect(p).toContain('恰好一个正确选项');
+    expect(p).toContain('不是所有探针都必须是二元或单选');
+    expect(p).toContain('multiple_select');
+    expect(p).toContain('禁止把 gold 集合与目标错项做并集');
+    expect(p).toContain('answer_with_reason');
+    expect(p).toContain('constructed_response');
+    expect(p).toContain('随机猜');
+    expect(p).toContain('context_kind 和 representation_kind 两个字段都必须改变');
+    expect(p).toContain('不能只改标签制造独立性');
+    expect(p).toContain('必须真的含有可读表格');
+    expect(p).toContain('prior_quality_failures');
+    expect(p).toContain('不得写“下图”');
     expect(p).toContain('化简后等价');
+    expect(p).toContain('重新独立解两题');
+    expect(p).toContain('草稿痕迹');
+    expect(p).toContain('条件少、可独立复算');
+    expect(p).toContain('不得擅自改写题干条件');
+    expect(p).toContain('不是逐字相等模板');
   });
 
   it('reviewer is independent, does not repair, and emits bounded failure codes', () => {
@@ -557,6 +617,25 @@ describe('Conjecture probe author/reviewer registry entries', () => {
     expect(p).toContain('零个或多个正确选项');
     expect(p).toContain('reference 自己承认');
     expect(p).toContain('多个选项正确');
+    expect(p).toContain('response_mode');
+    expect(p).toContain('target_error_response_signature');
+    expect(p).toContain('不是要求所有探针都做成二元选择');
+    expect(p).toContain('随机猜');
+    expect(p).toContain('其他普通干扰项');
+    expect(p).toContain('不要求每个普通干扰项都来自本次目标误区');
+    expect(p).toContain('choice');
+    expect(p).toContain('单选和多选共用');
+    expect(p).toContain('独立重算 gold 集合和 target-error 集合');
+    expect(p).toContain('不存在的图片');
+    expect(p).toContain('不信任作者自报');
+    expect(p).toContain('纯文字题即使标成 table');
+    expect(p).toContain('不是逐字字符串比较');
+  });
+
+  it('gives load-bearing semantic grouping enough structured-output budget', () => {
+    const def: TaskDef = tasks.ConjectureGroupingTask;
+    expect(def.budget.maxIterations).toBe(3);
+    expect(def.budget.timeout).toBeGreaterThanOrEqual(120_000);
   });
 });
 

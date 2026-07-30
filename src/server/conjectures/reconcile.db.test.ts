@@ -15,7 +15,7 @@ import { writeEvent } from '@/kernel/events';
 import { gatherDissociationRecordsByIdentity } from '@/server/conjectures/hard-confirm';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq, sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetDb } from '../../../tests/helpers/db';
 import {
@@ -512,6 +512,42 @@ describe('reconcileConjecturePredictions (DB)', () => {
     const ts = await typedRow('k_ret');
     expect(ts?.typed_state).toBe('no-evidence');
     expect(ts?.lifecycle).toBe('open');
+  });
+
+  it('excludes terminal inconclusive non-evidence from every reconciliation run', async () => {
+    const probeResultEventId = 'pr_inconclusive';
+    await db.insert(event).values({
+      id: probeResultEventId,
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: 'experimental:probe_result',
+      subject_kind: 'question',
+      subject_id: 'q_inconclusive',
+      payload: {
+        conjecture_event_id: 'cj_inconclusive',
+        outcome: null,
+        resolution: 'inconclusive',
+        retrievability_at_judge: null,
+        answer_md: 'ordinary wrong answer',
+      },
+      caused_by_event_id: 'cj_inconclusive',
+      created_at: new Date('2026-07-30T00:00:00Z'),
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
+      reconciled: 0,
+      skipped: 0,
+    });
+    await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
+      reconciled: 0,
+      skipped: 0,
+    });
+    expect(warn).not.toHaveBeenCalled();
+    await expect(scoreEvents(probeResultEventId)).resolves.toHaveLength(0);
+    await expect(projectionEvents(probeResultEventId)).resolves.toHaveLength(0);
+
+    warn.mockRestore();
   });
 
   it('skips a probe_result whose conjecture ref is dangling (never throws)', async () => {
