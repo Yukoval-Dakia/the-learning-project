@@ -77,6 +77,9 @@ jobs:
             if (pr.user?.login === 'dependabot[bot]') {
               throw new Error(`PR #${prNumber} is authored by Dependabot; advisory review is disabled.`);
             }
+            if (pr.state !== 'open') {
+              throw new Error(`PR #${prNumber} is ${pr.state}; advisory review only runs on open pull requests.`);
+            }
 
             const [reviews, issueComments] = await Promise.all([
               github.paginate(github.rest.pulls.listReviews, {
@@ -105,9 +108,17 @@ jobs:
                 .map((comment) => String(comment.body || '')),
             ];
             const alreadyReviewed = ocrArtifacts.length > 0;
-            const alreadyVerified = ocrArtifacts.some((body) => body.includes('kind=verification'));
+            const verificationMarker =
+              /<!-- ocr-codex-review(?: run=[^ ]+|-summary:[^ ]+) kind=verification -->/;
+            const alreadyVerified = ocrArtifacts.some((body) => verificationMarker.test(body));
             const isManual = context.eventName === 'workflow_dispatch';
-            const ownerOverride = process.env.OWNER_OVERRIDE === 'true';
+            const ownerOverrideRequested = process.env.OWNER_OVERRIDE === 'true';
+            if (ownerOverrideRequested && context.actor !== context.repo.owner) {
+              throw new Error(
+                `Only repository owner ${context.repo.owner} may set owner_override; received ${context.actor}.`,
+              );
+            }
+            const ownerOverride = ownerOverrideRequested;
 
             if (!isManual) {
               if (alreadyReviewed) {

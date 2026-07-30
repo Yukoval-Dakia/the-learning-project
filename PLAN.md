@@ -20,6 +20,8 @@
     识别 tagged review 与 tagged issue summary，关闭该漏口。按预算不再启动第三轮 review。
   - 最终 push 后的迟到 Major 指出 manual dispatch 可无限触发；入口现要求已有初审且尚无
     `kind=verification`，后续复审只有显式 `owner_override=true` 才允许，并在产物 tag 留痕。
+  - 后续 P1 指出正文 substring 可能伪造 verification；现只解析 OCR HTML marker，并要求
+    PR 仍 open、`owner_override` actor 等于 repository owner。此后不再启动 review 修复轮。
   - 两个 review job 名称显式标注 advisory；OCR 手动入口统一从 GitHub API 解析并验证
     当前 PR/base/head，拒绝 draft、fork 与 Dependabot。
   - agent/Claude PR policy 统一为最多一轮初审 + 一轮 P0/P1 修复后的验证审；push 后新 bot
