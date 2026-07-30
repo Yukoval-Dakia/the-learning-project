@@ -164,6 +164,13 @@ async function validateSubmit(req: Request): Promise<ValidatedSubmit> {
         500,
       );
     }
+    if (q.judge_kind_override !== 'multimodal_direct') {
+      throw new ApiError(
+        'corrupt_state',
+        `intervention diagnostic ${questionId} is missing its response-aware judge contract`,
+        500,
+      );
+    }
     if (now.getTime() < new Date(diagnostic.data.due_at).getTime()) {
       throw new ApiError(
         'conflict',
@@ -1744,8 +1751,10 @@ export async function createAttempt(req: Request): Promise<Response> {
     );
     if (
       validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE &&
-      (judged.executionProvenance?.kind === 'supplied_unverified' ||
-        judged.executionProvenance?.kind === 'historical_unknown')
+      (judged.judgeResult === null ||
+        judged.judgeRoute !== 'multimodal_direct' ||
+        (judged.executionProvenance?.kind !== 'invoked' &&
+          judged.executionProvenance?.kind !== 'supplied_verified'))
     ) {
       throw new ApiError(
         'unsupported_judge_route',
