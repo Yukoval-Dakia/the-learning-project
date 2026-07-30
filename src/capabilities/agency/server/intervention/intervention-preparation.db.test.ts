@@ -684,6 +684,59 @@ describe('YUK-791 intervention preparation closed loop', () => {
     await expect(db.select().from(intervention)).resolves.toHaveLength(0);
   });
 
+  it('terminalizes evidence corrected after enqueue before any paid model call', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('m');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const [opened] = await db.select().from(intervention);
+    await writeEvent(db, {
+      id: 'correct_probe_result_m_before_prepare',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: seeded.probeResultId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'worker 开始前，owner 判定原目标错误匹配无效。',
+        affected_refs: [{ kind: 'question', id: 'probe_m' }],
+      },
+      created_at: new Date(seeded.now.getTime() + 4_000),
+    });
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+      },
+      {
+        runTaskFn: async () => {
+          throw new Error('inactive evidence must fail before paid recommendation');
+        },
+        authorPackageFn: async () => {
+          throw new Error('inactive evidence must fail before QuestionAuthor');
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      reason_code: 'source_evidence_inactive',
+    });
+    const [failed] = await db.select().from(intervention);
+    expect(failed).toMatchObject({
+      status: 'preparation_failed',
+      recommendation_json: null,
+      package_json: null,
+      preparation_attempts_json: [],
+    });
+  });
+
   it('rejects colliding gold and target-error response signatures even when self-review passes', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('f');

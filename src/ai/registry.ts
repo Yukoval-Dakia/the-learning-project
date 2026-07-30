@@ -8,9 +8,9 @@ import {
   getDefaultMetaCause,
 } from '@/core/schema/business';
 import {
-  InterventionPackageModelOutput,
   InterventionPackageReviewFailureCode,
   InterventionPackageReviewStructuredOutput,
+  InterventionPackageStructuredOutput,
   PedagogyRecommendationStructuredOutput,
 } from '@/core/schema/intervention';
 import { SourceGroundingVerifyOutput } from '@/core/schema/source-grounding';
@@ -1999,7 +1999,7 @@ or
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
-    structuredOutputSchema: InterventionPackageModelOutput,
+    structuredOutputSchema: InterventionPackageStructuredOutput,
     prompt: { kind: 'profile', build: buildInterventionPackageAuthorPrompt },
   },
   InterventionPackageReviewTask: {

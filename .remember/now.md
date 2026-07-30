@@ -30,22 +30,22 @@
    原子 `active` 并写 lifecycle event。provider/transport error 抛给 pg-boss retry。
 10. `AUTO_INTERVENTION_EXPANSION_ENABLED` 默认 OFF；当前 aggregate 可 active 但
     `delivery_mode=shadow`，不代表 Today/B3 可以交付。
-11. 激活事务再次验证 source probe/result/proposal/question direct chain；生成期间证据被
-    纠正或 provenance 漂移会原子写 `source_evidence_inactive`，绝不激活陈旧干预。
+11. 任何付费调用前先验证 source direct chain，激活事务再验一次；enqueue 后或生成期间
+    证据被纠正/provenance 漂移会原子写 `source_evidence_inactive`。
 12. backup 保留 aggregate 但不保留 pg-boss 行；restore 会清掉 archived job id，避免同库
     残留的旧 terminal 行被误判成当前 retry exhaustion。两分钟 recovery 为 missing job
     换新 UUID 并同事务持久化；它与 subscription replay 共用 source lock，持锁后再查
     liveness，避免并发生成两个付费 wave。当前 job 耗尽 retry 才转为可审计失败。
-13. mimo structured output 改为无 `anyOf` 的扁平 provider schema，canonical reader 仍严格
-    校验分支；recommendation/author/review 三次生产调用都显式传 registry-derived
-    `outputFormat`。Agency/Practice 共享 canonical JSON SHA-256，键序不再造成 digest 漂移。
+13. recommendation/author/review（含 author 内层 response signature）都使用无 `anyOf`
+    的扁平 provider schema，canonical reader 仍严格校验分支；三次生产调用都显式传
+    registry-derived `outputFormat`。共享 canonical JSON SHA-256 消除 digest 键序漂移。
 14. intervention 的两个 event provenance 建硬 FK，active CHECK 关闭 SQL NULL 三值漏洞；
     review 缺 run id 作为整包 attempt failure 重试，idempotent terminal replay 记 idle。
 
 ## 验证证据
 
-- targeted unit：8 files / 152 tests PASS。
-- targeted DB：2 files / 14 tests PASS，新增覆盖生成期间 evidence 失效、跨库/同库 restore
+- targeted unit：8 files / 153 tests PASS。
+- targeted DB：2 files / 15 tests PASS，新增覆盖付费前/生成期间 evidence 失效、跨库/同库 restore
   job recovery、operational retry exhaustion、review run provenance 缺失。
 - YUK-791 migration smoke：1 PASS / 29 skipped。
 - `pnpm typecheck` PASS。

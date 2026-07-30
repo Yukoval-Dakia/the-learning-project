@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { VariantVerificationResult } from '@/core/schema/business';
 import {
   InterventionPackageReviewStructuredOutput,
+  InterventionPackageStructuredOutput,
   PedagogyRecommendationStructuredOutput,
 } from '@/core/schema/intervention';
 import { zodToJsonSchemaOutputFormat } from './output-format';
@@ -114,6 +115,7 @@ describe('zodToJsonSchemaOutputFormat', () => {
 
   it.each([
     ['recommendation', PedagogyRecommendationStructuredOutput],
+    ['package author', InterventionPackageStructuredOutput],
     ['package review', InterventionPackageReviewStructuredOutput],
   ])('keeps the intervention %s schema in mimo-compatible object form', (_label, input) => {
     const out = zodToJsonSchemaOutputFormat(input);

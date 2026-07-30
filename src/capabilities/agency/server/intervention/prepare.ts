@@ -1,3 +1,4 @@
+import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/server/conjecture/probe-evidence';
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import type {
   InterventionPackageT,
@@ -148,6 +149,27 @@ export async function prepareInterventionWave(
       intervention_id: record.id,
       version: record.version,
       terminal_status: record.status,
+    };
+  }
+
+  const effective = await getEffectiveProbeResultStatuses(
+    db,
+    [record.source_probe_result_event_id],
+    { validateDirectChain: true },
+  );
+  if (effective.get(record.source_probe_result_event_id) !== 'active') {
+    const failed = await failInterventionPreparation(db, {
+      interventionId: record.id,
+      version: record.version,
+      failureCode: 'source_evidence_inactive',
+      now: deps.now?.() ?? new Date(),
+    });
+    return {
+      status: 'preparation_failed',
+      intervention_id: failed.id,
+      version: failed.version,
+      reason_code: failed.failure_code ?? 'source_evidence_inactive',
+      idempotent: false,
     };
   }
 

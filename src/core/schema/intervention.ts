@@ -5,7 +5,11 @@
 // without importing one another's server implementation or database tables.
 
 import { PedagogyMethodId, PrecisionBand, ThetaBand } from '@/core/pedagogy/method-library';
-import { ConjectureDiagnosticSpec, ConjectureProbeSpecV2 } from '@/core/schema/business';
+import {
+  ConjectureDiagnosticSpec,
+  ConjectureProbeSpecV2,
+  ConjectureProbeSpecV2Base,
+} from '@/core/schema/business';
 import { z } from 'zod';
 
 export const INTERVENTION_CONTRACT_VERSION = 1 as const;
@@ -209,6 +213,57 @@ export const InterventionPackageModelOutput = z
   })
   .strict();
 export type InterventionPackageModelOutputT = z.infer<typeof InterventionPackageModelOutput>;
+
+const InterventionResponseSignatureStructuredOutput = z
+  .object({
+    kind: z.enum(['choice', 'text', 'answer_with_reason', 'rubric']),
+    option_ids: z.array(z.string().trim().min(1).max(100)).min(1).max(20).optional(),
+    response_md: z.string().trim().min(1).max(2000).optional(),
+    answer_md: z.string().trim().min(1).max(2000).optional(),
+    required_reason_features_md: z
+      .array(z.string().trim().min(1).max(500))
+      .min(1)
+      .max(10)
+      .optional(),
+    required_features_md: z.array(z.string().trim().min(1).max(500)).min(1).max(10).optional(),
+  })
+  .strict();
+
+const InterventionProbeStructuredOutput = ConjectureProbeSpecV2Base.extend({
+  gold_response_signature: InterventionResponseSignatureStructuredOutput,
+  target_error_response_signature: InterventionResponseSignatureStructuredOutput,
+}).strict();
+
+const InterventionDiagnosticStructuredOutput = InterventionDiagnosticDraft.extend({
+  probe_spec: InterventionProbeStructuredOutput,
+});
+
+/** Flat provider schema; canonical Probe V2 readers enforce signature branches afterwards. */
+export const InterventionPackageStructuredOutput = z
+  .object({
+    schema_version: z.literal(INTERVENTION_CONTRACT_VERSION),
+    material: z
+      .object({
+        title_md: z.string().trim().min(1).max(500),
+        body_md: z.string().trim().min(1).max(12_000),
+      })
+      .strict(),
+    diagnostics: z
+      .object({
+        immediate: InterventionDiagnosticStructuredOutput.extend({
+          kind: z.literal('immediate'),
+        }),
+        delayed: InterventionDiagnosticStructuredOutput.extend({
+          kind: z.literal('delayed'),
+        }),
+        transfer: InterventionDiagnosticStructuredOutput.extend({
+          kind: z.literal('transfer'),
+          context_change_md: z.string().trim().min(1).max(1000),
+        }),
+      })
+      .strict(),
+  })
+  .strict();
 
 export const InterventionPackage = InterventionPackageModelOutput.extend({
   intervention_id: z.string().trim().min(1).max(240),

@@ -28,17 +28,18 @@
     缺失的 operational job 最迟两分钟重建。当前 wave 耗尽 durable retry 的终态 job
     转为可审计 `preparation_failed`，不无限付费重排。recovery 与 subscription replay
     共用 source advisory lock，并在持锁后重查 liveness，不能产生两个付费 wave。
-  - 激活事务重新验证 source probe/result/proposal/question direct chain；生成期间 evidence
-    被纠正或 provenance 漂移时原子失败，不把陈旧证据推进为 active。
-  - provider-facing structured output 保持扁平 object（无 `anyOf`）；返回后仍由 canonical
-    discriminated reader 严格校验；三个生产 task 调用都显式传 registry-derived
-    `outputFormat`。package review digest 使用共享 canonical JSON SHA-256。
+  - 任何付费调用前先验证 source probe/result/proposal/question direct chain；激活事务再验
+    一次。enqueue 后或生成期间 evidence 被纠正/provenance 漂移都原子失败。
+  - recommendation/author/review 的 provider-facing schema（含 author 内层 response
+    signature）均为扁平 object、无 `anyOf`；返回后仍由 canonical discriminated reader
+    严格校验，三个生产调用都显式传 registry-derived `outputFormat`。package review
+    digest 使用共享 canonical JSON SHA-256。
   - intervention source/conjecture 使用真实 event FK；active shape 显式拒绝 NULL
     recommendation/package。缺失 review run provenance 进入整包重试，不抛成无结构 job crash。
   - `AUTO_INTERVENTION_EXPANSION_ENABLED` 默认 OFF；当前只产生 `delivery_mode=shadow`，
     不等同于交付或扩量。
 - **针对性开发验证已过**
-  - unit：8 files / 152 tests；DB：2 files / 14 targeted tests；migration smoke：1 pass。
+  - unit：8 files / 153 tests；DB：2 files / 15 targeted tests；migration smoke：1 pass。
   - `pnpm typecheck`、Biome scoped check、capability boundary audit（0）通过。
   - schema audit 无 unallowed stub；flag reader/ledger 对齐。全仓 strict flag audit 仍报告
     基线已有的 `NOTES_MASTERY_SUBSCRIPTION_ENABLED` 未登记，本 lane 未改其行为。
