@@ -519,6 +519,16 @@ export async function restoreFromArchive({
       row.ingest_at = null;
     }
   }
+  // YUK-791: pg-boss rows are operational and deliberately absent from the
+  // archive. A same-database restore may still retain an old terminal row with
+  // the archived UUID, so never restore that correlation id as current truth.
+  // Preparing aggregates are picked up by intervention_prepare_recovery with a
+  // fresh job UUID; terminal aggregates do not need an operational job id.
+  for (const row of data.intervention ?? []) {
+    if (Object.prototype.hasOwnProperty.call(row, 'preparation_job_id')) {
+      row.preparation_job_id = null;
+    }
+  }
 
   const mem0Rows = data[mem0Table];
 

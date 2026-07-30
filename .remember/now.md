@@ -32,8 +32,9 @@
     `delivery_mode=shadow`，不代表 Today/B3 可以交付。
 11. 激活事务再次验证 source probe/result/proposal/question direct chain；生成期间证据被
     纠正或 provenance 漂移会原子写 `source_evidence_inactive`，绝不激活陈旧干预。
-12. backup 保留 aggregate 但不保留 pg-boss 行；两分钟 recovery 会为 missing job 换新 UUID
-    并同事务持久化。已耗尽 retry 的 terminal job 转为可审计失败，不无限重排/付费。
+12. backup 保留 aggregate 但不保留 pg-boss 行；restore 会清掉 archived job id，避免同库
+    残留的旧 terminal 行被误判成当前 retry exhaustion。两分钟 recovery 为 missing job
+    换新 UUID 并同事务持久化；当前 job 耗尽 retry 才转为可审计失败。
 13. mimo structured output 改为无 `anyOf` 的扁平 provider schema，canonical reader 仍严格
     校验分支；Agency/Practice 共享 canonical JSON SHA-256，键插入顺序不再造成 digest 漂移。
 14. intervention 的两个 event provenance 建硬 FK，active CHECK 关闭 SQL NULL 三值漏洞；
@@ -42,8 +43,8 @@
 ## 验证证据
 
 - targeted unit：8 files / 152 tests PASS。
-- targeted DB：1 file / 12 tests PASS，新增覆盖生成期间 evidence 失效、restore job recovery、
-  operational retry exhaustion、review run provenance 缺失。
+- targeted DB：2 files / 13 tests PASS，新增覆盖生成期间 evidence 失效、跨库/同库 restore
+  job recovery、operational retry exhaustion、review run provenance 缺失。
 - YUK-791 migration smoke：1 PASS / 29 skipped。
 - `pnpm typecheck` PASS。
 - scoped Biome PASS；capability boundary audit 0。

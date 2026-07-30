@@ -24,8 +24,9 @@
     gold/target signature 必须可评分且彼此可区分。独立同模型自审后才激活，最多整包
     重生成一次；仍失败则 `preparation_failed`，不保存部分 package。
   - pg-boss 使用聚合体持久化的 UUID job id；重复投递返回 null 视为已存在，不制造
-    第二个 aggregate。恢复后缺失的 operational job 最迟两分钟重建；耗尽 durable retry
-    的终态 job 转为可审计 `preparation_failed`，不无限付费重排。
+    第二个 aggregate。restore 会清掉 archived job id（包括同库仍残留的旧 terminal 行）；
+    缺失的 operational job 最迟两分钟重建。当前 wave 耗尽 durable retry 的终态 job
+    转为可审计 `preparation_failed`，不无限付费重排。
   - 激活事务重新验证 source probe/result/proposal/question direct chain；生成期间 evidence
     被纠正或 provenance 漂移时原子失败，不把陈旧证据推进为 active。
   - provider-facing structured output 保持扁平 object（无 `anyOf`）；返回后仍由 canonical
@@ -35,7 +36,7 @@
   - `AUTO_INTERVENTION_EXPANSION_ENABLED` 默认 OFF；当前只产生 `delivery_mode=shadow`，
     不等同于交付或扩量。
 - **针对性开发验证已过**
-  - unit：8 files / 152 tests；DB：1 file / 12 tests；migration smoke：1 pass。
+  - unit：8 files / 152 tests；DB：2 files / 13 targeted tests；migration smoke：1 pass。
   - `pnpm typecheck`、Biome scoped check、capability boundary audit（0）通过。
   - schema audit 无 unallowed stub；flag reader/ledger 对齐。全仓 strict flag audit 仍报告
     基线已有的 `NOTES_MASTERY_SUBSCRIPTION_ENABLED` 未登记，本 lane 未改其行为。
