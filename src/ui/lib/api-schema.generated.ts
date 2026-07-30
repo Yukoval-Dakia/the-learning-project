@@ -24919,6 +24919,7 @@ export interface operations {
   getQuestion: {
     parameters: {
       query?: {
+        surface?: 'practice';
         timeline_limit?: number;
       };
       header?: never;
