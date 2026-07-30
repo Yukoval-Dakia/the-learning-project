@@ -196,7 +196,36 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   const dueJson = (await dueRes.json()) as {
     rows?: Array<{ question_id: string; knowledge_ids?: string[] }>;
   };
-  const dueRows = dueJson.rows ?? [];
+  const cappedDueRows = dueJson.rows ?? [];
+
+  // YUK-792 — intervention diagnostics are an approved learner delivery, not an
+  // optional member of the generic due page. `handleReviewDue` caps that page at
+  // 200, so a diagnostic can otherwise disappear behind an older ordinary
+  // backlog before the composer ever sees (and protects) its `intervention`
+  // source. Read the due intervention subset independently, then prefix-union it
+  // with the capped page. The FSRS row is the activation/scheduling boundary;
+  // draft follow-ups without a row remain invisible.
+  const protectedInterventionRows = await db
+    .select({
+      question_id: question.id,
+      knowledge_ids: question.knowledge_ids,
+    })
+    .from(material_fsrs_state)
+    .innerJoin(question, eq(question.id, material_fsrs_state.subject_id))
+    .where(
+      and(
+        eq(material_fsrs_state.subject_kind, 'question'),
+        lte(material_fsrs_state.due_at, new Date()),
+        eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
+        notDraftPredicate(question.draft_status),
+      ),
+    )
+    .orderBy(material_fsrs_state.due_at, question.created_at, question.id);
+  const protectedInterventionIds = new Set(protectedInterventionRows.map((row) => row.question_id));
+  const dueRows = [
+    ...protectedInterventionRows,
+    ...cappedDueRows.filter((row) => !protectedInterventionIds.has(row.question_id)),
+  ];
 
   // 2. 错题变式 — active 变体，parent 近窗口内有 failure attempt。
   const since = new Date(Date.now() - VARIANT_WINDOW_DAYS * 24 * 3600 * 1000);

@@ -599,6 +599,68 @@ describe('Task 9 夜间预产 composeNightly（YUK-361 Phase 4）', () => {
     });
   });
 
+  it('collects a due intervention even when 200 older ordinary cards fill the generic page', async () => {
+    const genericDueLimit = 200;
+    const now = new Date();
+    const ordinaryQuestions = Array.from({ length: genericDueLimit + 1 }, (_, index) => ({
+      id: createId(),
+      kind: 'choice',
+      prompt_md: `普通到期题 ${index}`,
+      reference_md: 'B',
+      knowledge_ids: [] as string[],
+      difficulty: 3,
+      source: 'manual',
+      draft_status: null,
+      variant_depth: 0,
+      figures: [],
+      image_refs: [],
+      structured: null,
+      metadata: {},
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    }));
+    await testDb().insert(question).values(ordinaryQuestions);
+    await testDb()
+      .insert(material_fsrs_state)
+      .values(
+        ordinaryQuestions.map((ordinaryQuestion, index) => ({
+          id: createId(),
+          subject_kind: 'question',
+          subject_id: ordinaryQuestion.id,
+          state: {
+            due: now,
+            stability: 1,
+            difficulty: 5,
+            scheduled_days: 1,
+            learning_steps: 0,
+            reps: 1,
+            lapses: 0,
+            state: 'review' as const,
+            last_review: now,
+          },
+          // Every ordinary card is older than the intervention below, so the
+          // generic 200-row page cannot contain that intervention.
+          due_at: new Date(now.getTime() - 60_000 - index),
+          last_review_event_id: null,
+          updated_at: now,
+        })),
+      );
+    const diagnosticId = await seedDueQuestion({
+      dueOffsetMs: 1_000,
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+    });
+
+    const inputs = await collectComposerInputs(testDb(), TODAY);
+
+    expect(inputs.dueItems).toHaveLength(genericDueLimit + 1);
+    expect(inputs.dueItems[0]).toMatchObject({
+      questionId: diagnosticId,
+      source: 'intervention',
+    });
+    expect(inputs.dueItems.filter((item) => item.questionId === diagnosticId)).toHaveLength(1);
+  });
+
   it('幂等：composeNightly 跑两次不 double-compose（第二次 no-op，added=0、行数不变）', async () => {
     await seedDueQuestion();
 
