@@ -31,39 +31,14 @@ const responseAwareProbeBase = {
 
 describe('Conjecture probe response signatures', () => {
   it('rejects a bare single-choice probe when the target rule only yields several forced guesses', () => {
-    const primary = ConjectureProbeSpecV2.parse({
-      ...responseAwareProbeBase,
-      response_mode: 'single_choice',
-      gold_response_signature: { kind: 'choice', option_ids: ['C'] },
-      target_error_response_signature: { kind: 'choice', option_ids: ['A', 'B', 'D'] },
-    });
-    const followup = ConjectureProbeSpecV2.parse({
-      ...responseAwareProbeBase,
-      prompt_md: '解释“邑人奇其才”中“奇”的活用类型。',
-      reference_md: '意动用法；认为他的才华奇特。',
-      expected_target_error_answer_md: '使动用法；使他的才华变得奇特。',
-      context_kind: 'narrative',
-      representation_kind: 'natural_language',
-      response_mode: 'answer_with_reason',
-      gold_response_signature: {
-        kind: 'answer_with_reason',
-        answer_md: '意动用法',
-        required_reason_features_md: ['表达主语的主观评价'],
-      },
-      target_error_response_signature: {
-        kind: 'answer_with_reason',
-        answer_md: '使动用法',
-        required_reason_features_md: ['以“带宾语”为充分依据'],
-      },
-    });
-
     expect(
-      evaluateConjectureProbePackageStructure({
-        primary,
-        followup,
-        predicted_p: 0.8,
-      }),
-    ).toContain('response_signature_ungradable');
+      ConjectureProbeSpecV2.safeParse({
+        ...responseAwareProbeBase,
+        response_mode: 'single_choice',
+        gold_response_signature: { kind: 'choice', option_ids: ['C'] },
+        target_error_response_signature: { kind: 'choice', option_ids: ['A', 'B', 'D'] },
+      }).success,
+    ).toBe(false);
   });
 
   it('allows the same misconception to be measured with a multi-select response signature', () => {
@@ -127,31 +102,14 @@ describe('Conjecture probe response signatures', () => {
   });
 
   it('rejects a response signature whose kind is incompatible with its declared mode', () => {
-    const primary = ConjectureProbeSpecV2.parse({
-      ...responseAwareProbeBase,
-      response_mode: 'short_answer',
-      gold_response_signature: { kind: 'choice', option_ids: ['C'] },
-      target_error_response_signature: { kind: 'choice', option_ids: ['A'] },
-    });
-    const followup = ConjectureProbeSpecV2.parse({
-      ...responseAwareProbeBase,
-      prompt_md: '解释“邑人奇其才”中“奇”的活用类型。',
-      context_kind: 'narrative',
-      representation_kind: 'natural_language',
-      response_mode: 'constructed_response',
-      gold_response_signature: {
-        kind: 'rubric',
-        required_features_md: ['说明是主观评价'],
-      },
-      target_error_response_signature: {
-        kind: 'rubric',
-        required_features_md: ['说明是造成变化'],
-      },
-    });
-
     expect(
-      evaluateConjectureProbePackageStructure({ primary, followup, predicted_p: 0.8 }),
-    ).toContain('response_signature_ungradable');
+      ConjectureProbeSpecV2.safeParse({
+        ...responseAwareProbeBase,
+        response_mode: 'short_answer',
+        gold_response_signature: { kind: 'choice', option_ids: ['C'] },
+        target_error_response_signature: { kind: 'choice', option_ids: ['A'] },
+      }).success,
+    ).toBe(false);
   });
 
   it('rejects identical structured gold and target-error signatures even if prose differs', () => {
@@ -164,6 +122,31 @@ describe('Conjecture probe response signatures', () => {
     const followup = ConjectureProbeSpecV2.parse({
       ...responseAwareProbeBase,
       prompt_md: '解释“邑人奇其才”中“奇”的活用类型。',
+      context_kind: 'narrative',
+      representation_kind: 'natural_language',
+      response_mode: 'short_answer',
+      gold_response_signature: { kind: 'text', response_md: '意动用法' },
+      target_error_response_signature: { kind: 'text', response_md: '使动用法' },
+    });
+
+    expect(
+      evaluateConjectureProbePackageStructure({ primary, followup, predicted_p: 0.8 }),
+    ).toContain('target_error_answer_not_distinct');
+  });
+
+  it('rejects identical reference and target-error prose even when structured signatures differ', () => {
+    const primary = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      expected_target_error_answer_md: responseAwareProbeBase.reference_md,
+      response_mode: 'single_choice',
+      gold_response_signature: { kind: 'choice', option_ids: ['C'] },
+      target_error_response_signature: { kind: 'choice', option_ids: ['A'] },
+    });
+    const followup = ConjectureProbeSpecV2.parse({
+      ...responseAwareProbeBase,
+      prompt_md: '解释“邑人奇其才”中“奇”的活用类型。',
+      reference_md: '意动用法。',
+      expected_target_error_answer_md: '使动用法。',
       context_kind: 'narrative',
       representation_kind: 'natural_language',
       response_mode: 'short_answer',

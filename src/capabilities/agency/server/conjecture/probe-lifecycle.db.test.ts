@@ -218,6 +218,7 @@ describe('probe one-shot lifecycle (U3)', () => {
       answer_md: 'multiplies derivatives',
     });
     expect(answered.status).toBe('evidence_for');
+    expect(answered.degradation_reason).toBe('probe_without_response_contract');
     expect(answered.idempotent).toBeUndefined();
 
     const results = await probeResultEvents(served.probe_question_id);

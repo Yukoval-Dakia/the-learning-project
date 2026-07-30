@@ -1250,8 +1250,8 @@ describe('induceConjecture self-consistency', () => {
     const draft = proposal(result);
     expect(draft.probe_quality.attempts[0]).toMatchObject({
       attempt: 1,
-      outcome: 'structure_failed',
-      failure_codes: ['response_signature_ungradable'],
+      outcome: 'operational_failed',
+      failure_codes: ['author_output_invalid'],
       author_task_run_id: 'author_1',
       reviewer_task_run_id: null,
     });

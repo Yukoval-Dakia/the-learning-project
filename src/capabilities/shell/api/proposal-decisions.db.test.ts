@@ -2,19 +2,10 @@ import { event, knowledge } from '@/db/schema';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../tests/helpers/conjecture-probe-fixtures';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET as getEventDetail } from '../../observability/api/event-detail';
 import { POST } from './proposal-decisions';
-
-const RESPONSE_AWARE_PROBE_FIELDS = {
-  schema_version: 2 as const,
-  response_mode: 'short_answer' as const,
-  gold_response_signature: { kind: 'text' as const, response_md: 'gold response' },
-  target_error_response_signature: {
-    kind: 'text' as const,
-    response_md: 'target-error response',
-  },
-} as const;
 
 const KNOWLEDGE_BASE = {
   domain: 'yuwen',

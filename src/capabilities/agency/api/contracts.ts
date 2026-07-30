@@ -107,6 +107,8 @@ export const ProbeAnswerResponseSchema = z.object({
   response_evidence_refs: ConjectureProbeResponseJudgement.shape.evidence_refs.nullable(),
   signature_match_explanation_md:
     ConjectureProbeResponseJudgement.shape.signature_match_explanation_md,
-  degradation_reason: z.literal('legacy_probe_result_without_response_judgement').optional(),
+  degradation_reason: z
+    .enum(['legacy_probe_result_without_response_judgement', 'probe_without_response_contract'])
+    .optional(),
   idempotent: z.boolean(),
 });

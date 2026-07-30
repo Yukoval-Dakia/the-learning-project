@@ -68,6 +68,7 @@ import {
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { eq } from 'drizzle-orm';
 import {
+  type AnswerProbeResult,
   answerProbe,
   assertProbeJudgeReady,
   claimProbeJudging,
@@ -94,6 +95,21 @@ function mapGradingOutcome(coarse: JudgeResultV2T['coarse_outcome']): 0 | 1 | nu
     case 'unsupported':
       return null;
   }
+}
+
+function responseJudgementFields(
+  result: Pick<AnswerProbeResult, 'response_judgement' | 'degradation_reason'>,
+) {
+  return {
+    answer_result: result.response_judgement?.answer_result ?? null,
+    target_error_match: result.response_judgement?.target_error_match ?? null,
+    gradable: result.response_judgement?.gradable ?? null,
+    response_reason_code: result.response_judgement?.reason_code ?? null,
+    response_evidence_refs: result.response_judgement?.evidence_refs ?? null,
+    signature_match_explanation_md:
+      result.response_judgement?.signature_match_explanation_md ?? null,
+    ...(result.degradation_reason ? { degradation_reason: result.degradation_reason } : {}),
+  };
 }
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
@@ -149,14 +165,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         outcome: existing.outcome,
         probe_result_event_id: existing.probe_result_event_id,
         coarse_outcome: null,
-        answer_result: existing.response_judgement?.answer_result ?? null,
-        target_error_match: existing.response_judgement?.target_error_match ?? null,
-        gradable: existing.response_judgement?.gradable ?? null,
-        response_reason_code: existing.response_judgement?.reason_code ?? null,
-        response_evidence_refs: existing.response_judgement?.evidence_refs ?? null,
-        signature_match_explanation_md:
-          existing.response_judgement?.signature_match_explanation_md ?? null,
-        ...(existing.degradation_reason ? { degradation_reason: existing.degradation_reason } : {}),
+        ...responseJudgementFields(existing),
         idempotent: true,
       });
     }
@@ -261,16 +270,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         outcome: claimedResult.outcome,
         probe_result_event_id: claimedResult.probe_result_event_id,
         coarse_outcome: null,
-        answer_result: claimedResult.response_judgement?.answer_result ?? null,
-        target_error_match: claimedResult.response_judgement?.target_error_match ?? null,
-        gradable: claimedResult.response_judgement?.gradable ?? null,
-        response_reason_code: claimedResult.response_judgement?.reason_code ?? null,
-        response_evidence_refs: claimedResult.response_judgement?.evidence_refs ?? null,
-        signature_match_explanation_md:
-          claimedResult.response_judgement?.signature_match_explanation_md ?? null,
-        ...(claimedResult.degradation_reason
-          ? { degradation_reason: claimedResult.degradation_reason }
-          : {}),
+        ...responseJudgementFields(claimedResult),
         idempotent: true,
       });
     }
@@ -339,14 +339,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         outcome: result.outcome,
         probe_result_event_id: result.probe_result_event_id,
         coarse_outcome: judgeResult.coarse_outcome,
-        answer_result: result.response_judgement?.answer_result ?? null,
-        target_error_match: result.response_judgement?.target_error_match ?? null,
-        gradable: result.response_judgement?.gradable ?? null,
-        response_reason_code: result.response_judgement?.reason_code ?? null,
-        response_evidence_refs: result.response_judgement?.evidence_refs ?? null,
-        signature_match_explanation_md:
-          result.response_judgement?.signature_match_explanation_md ?? null,
-        ...(result.degradation_reason ? { degradation_reason: result.degradation_reason } : {}),
+        ...responseJudgementFields(result),
         idempotent: result.idempotent ?? false,
       });
     } catch (err) {

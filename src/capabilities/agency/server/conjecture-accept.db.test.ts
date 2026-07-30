@@ -397,7 +397,7 @@ describe('acceptConjectureProposal lifecycle', () => {
     ).rejects.toMatchObject({
       code: CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
       status: 409,
-      message: expect.stringContaining('structural:response_signature_ungradable'),
+      message: expect.stringContaining('primary_probe_spec_invalid'),
     });
     expect(await rateEvents('ambiguous_response_signature')).toHaveLength(0);
   });

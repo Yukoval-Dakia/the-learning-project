@@ -27,7 +27,7 @@
     余下 chain case 因无语义共识安全 abstain。
   - 当前代码重新解析 7 个入选 proposal 全部通过 V2 schema/structure。
   - targeted unit 273、DB 103、migration 1、typecheck 与 prompt snapshot audit 全绿；
-    review 修正另有 unit 61、DB 41 与 migration 1 全绿。
+    review 修正后的扩展回归另有 unit 284、DB 123 与 migration 1 全绿。
   - 完整 gate 不在本地跑；提交后只监听 exact-head GitHub Actions `CI Gate`。
 
 ## NEXT

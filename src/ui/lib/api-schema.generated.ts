@@ -9302,7 +9302,9 @@ export interface operations {
             /** @enum {string|null} */
             coarse_outcome: 'correct' | 'incorrect' | null;
             /** @enum {string} */
-            degradation_reason?: 'legacy_probe_result_without_response_judgement';
+            degradation_reason?:
+              | 'legacy_probe_result_without_response_judgement'
+              | 'probe_without_response_contract';
             gradable: boolean | null;
             idempotent: boolean;
             outcome: 0 | 1 | ('null' | null);

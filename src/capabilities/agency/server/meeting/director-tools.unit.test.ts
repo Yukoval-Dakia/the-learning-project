@@ -12,18 +12,9 @@ import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../../tests/helpers/conjecture-probe-fixtures';
 
 // Capture the registered tool handlers via a mocked SDK (same shape as evidence-mcp.db.test).
-const RESPONSE_AWARE_PROBE_FIELDS = {
-  schema_version: 2 as const,
-  response_mode: 'short_answer' as const,
-  gold_response_signature: { kind: 'text' as const, response_md: 'gold response' },
-  target_error_response_signature: {
-    kind: 'text' as const,
-    response_md: 'target-error response',
-  },
-} as const;
-
 const mockSdk = vi.hoisted(() => ({
   handlers: new Map<
     string,

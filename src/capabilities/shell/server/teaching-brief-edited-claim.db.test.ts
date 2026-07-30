@@ -26,19 +26,10 @@ import { acceptAiProposal } from '@/server/proposals/actions';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../tests/helpers/conjecture-probe-fixtures';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 /** The research team's original judgement — the claim the induced probe discriminates. */
-const RESPONSE_AWARE_PROBE_FIELDS = {
-  schema_version: 2 as const,
-  response_mode: 'short_answer' as const,
-  gold_response_signature: { kind: 'text' as const, response_md: 'gold response' },
-  target_error_response_signature: {
-    kind: 'text' as const,
-    response_md: 'target-error response',
-  },
-} as const;
-
 const ORIGINAL_CLAIM = '你把链式法则当成两个导数相乘。';
 /** The owner's rewrite. Same KC, materially different mechanism — no probe tests it. */
 const OWNER_REWRITE = '你其实是把链式法则的内外层顺序记反了。';

@@ -5,7 +5,7 @@ import {
   ConjectureProbeQualityAttempt,
   type ConjectureProbeSpecT,
   ConjectureProbeSpecV1,
-  ConjectureProbeSpecV2,
+  ConjectureProbeSpecV2Base,
 } from '@/core/schema/business';
 import type { InduceConjectureResult } from '@/server/agency/conjecture/induce';
 import type { GroundingGateCandidate } from '@/server/grounding-gate/candidates';
@@ -66,13 +66,13 @@ const BlindShadowOutputSchema = z.discriminatedUnion('outcome', [
     followup_probe_reference_md: z.string(),
     probe_spec: z
       .union([
-        ConjectureProbeSpecV2.omit({ prompt_md: true, reference_md: true }),
+        ConjectureProbeSpecV2Base.omit({ prompt_md: true, reference_md: true }),
         ConjectureProbeSpecV1.omit({ prompt_md: true, reference_md: true }),
       ])
       .optional(),
     followup_probe_spec: z
       .union([
-        ConjectureProbeSpecV2.omit({ prompt_md: true, reference_md: true }),
+        ConjectureProbeSpecV2Base.omit({ prompt_md: true, reference_md: true }),
         ConjectureProbeSpecV1.omit({ prompt_md: true, reference_md: true }),
       ])
       .optional(),

@@ -579,7 +579,16 @@ export const ConjectureProbeResponseSignature = z.discriminatedUnion('kind', [
 ]);
 export type ConjectureProbeResponseSignatureT = z.infer<typeof ConjectureProbeResponseSignature>;
 
-export const ConjectureProbeSpecV2 = z
+function responseSignatureKindForMode(
+  mode: ConjectureProbeResponseModeT,
+): ConjectureProbeResponseSignatureT['kind'] {
+  if (mode === 'single_choice' || mode === 'multiple_select') return 'choice';
+  if (mode === 'short_answer') return 'text';
+  if (mode === 'answer_with_reason') return 'answer_with_reason';
+  return 'rubric';
+}
+
+export const ConjectureProbeSpecV2Base = z
   .object({
     schema_version: z.literal(2),
     prompt_md: z.string().trim().min(1).max(1000),
@@ -593,6 +602,30 @@ export const ConjectureProbeSpecV2 = z
     target_error_response_signature: ConjectureProbeResponseSignature,
   })
   .strict();
+
+export const ConjectureProbeSpecV2 = ConjectureProbeSpecV2Base.superRefine((probe, ctx) => {
+  const expectedKind = responseSignatureKindForMode(probe.response_mode);
+  for (const field of ['gold_response_signature', 'target_error_response_signature'] as const) {
+    if (probe[field].kind !== expectedKind) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field, 'kind'],
+        message: `${probe.response_mode} requires a ${expectedKind} response signature`,
+      });
+    }
+    if (
+      probe.response_mode === 'single_choice' &&
+      probe[field].kind === 'choice' &&
+      probe[field].option_ids.length !== 1
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field, 'option_ids'],
+        message: 'single_choice requires exactly one option id per response signature',
+      });
+    }
+  }
+});
 export type ConjectureProbeSpecV2T = z.infer<typeof ConjectureProbeSpecV2>;
 
 /** Historical v1 probe specs remain readable; new producers and accepts use v2 explicitly. */
@@ -680,6 +713,12 @@ export function evaluateConjectureProbePackageStructure(
     failureCodes.add('probe_pair_not_independent');
   }
   for (const probe of [probePackage.primary, probePackage.followup]) {
+    if (
+      normalizeProbeIdentity(probe.reference_md) ===
+      normalizeProbeIdentity(probe.expected_target_error_answer_md)
+    ) {
+      failureCodes.add('target_error_answer_not_distinct');
+    }
     const responseAwareProbe = ConjectureProbeSpecV2.safeParse(probe);
     if (responseAwareProbe.success) {
       const {
@@ -687,14 +726,7 @@ export function evaluateConjectureProbePackageStructure(
         target_error_response_signature: target,
         response_mode: responseMode,
       } = responseAwareProbe.data;
-      const expectedKind =
-        responseMode === 'single_choice' || responseMode === 'multiple_select'
-          ? 'choice'
-          : responseMode === 'short_answer'
-            ? 'text'
-            : responseMode === 'answer_with_reason'
-              ? 'answer_with_reason'
-              : 'rubric';
+      const expectedKind = responseSignatureKindForMode(responseMode);
       const singleChoiceIsGradable =
         responseMode !== 'single_choice' ||
         (gold.kind === 'choice' &&
@@ -734,11 +766,6 @@ export function evaluateConjectureProbePackageStructure(
       if (exactJsonValueEqual(normalizedSignature(gold), normalizedSignature(target))) {
         failureCodes.add('target_error_answer_not_distinct');
       }
-    } else if (
-      normalizeProbeIdentity(probe.reference_md) ===
-      normalizeProbeIdentity(probe.expected_target_error_answer_md)
-    ) {
-      failureCodes.add('target_error_answer_not_distinct');
     }
   }
   return [...failureCodes];

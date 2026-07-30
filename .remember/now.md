@@ -48,7 +48,7 @@
 - YUK-827 migration smoke：1 PASS / 28 skipped。
 - `pnpm typecheck` PASS。
 - prompt audit：12 snapshots CLEAN。
-- review/CI 修正定向验证：unit 61、DB 41、migration 1、typecheck PASS。
+- review/CI 修正扩展验证：unit 284、DB 123、migration 1、typecheck PASS。
 - API client 与 Postman collection 已重新生成。
 
 ## 边界

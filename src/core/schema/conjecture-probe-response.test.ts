@@ -44,6 +44,23 @@ describe('classifyConjectureProbeResponseFromJudgeMatch', () => {
     });
   });
 
+  it.each(['partial', 'unsupported'] as const)(
+    'fails closed before semantic matching when correctness is %s',
+    (coarseOutcome) => {
+      expect(
+        classifyConjectureProbeResponseFromJudgeMatch(coarseOutcome, {
+          match: 'target_error',
+          explanation_md: 'The semantic match must not override an ungradable correctness result.',
+        }),
+      ).toMatchObject({
+        answer_result: 'ungradable',
+        target_error_match: 'ambiguous',
+        gradable: false,
+        reason_code: 'correctness_judge_ungradable',
+      });
+    },
+  );
+
   it('fails closed on an ambiguous, missing, or correctness-conflicting semantic match', () => {
     expect(
       classifyConjectureProbeResponseFromJudgeMatch('incorrect', {

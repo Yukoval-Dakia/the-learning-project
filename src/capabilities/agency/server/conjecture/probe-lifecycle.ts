@@ -289,7 +289,9 @@ export interface AnswerProbeResult {
   outcome: 0 | 1 | null;
   probe_result_event_id: string;
   response_judgement: ConjectureProbeResponseJudgementT | null;
-  degradation_reason?: 'legacy_probe_result_without_response_judgement';
+  degradation_reason?:
+    | 'legacy_probe_result_without_response_judgement'
+    | 'probe_without_response_contract';
   idempotent?: boolean;
 }
 
@@ -840,7 +842,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       response_judgement: responseJudgement,
       ...(responseJudgement
         ? {}
-        : { degradation_reason: 'legacy_probe_result_without_response_judgement' as const }),
+        : { degradation_reason: 'probe_without_response_contract' as const }),
     };
   });
 }
