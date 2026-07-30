@@ -19,12 +19,27 @@
 // OOM guard, NOT a business limit — it only bites when the tier/family in-memory
 // path must fetch the full WHERE-hit set (it cannot SQL-paginate, see A1b).
 
-import { type SQL, and, asc, desc, eq, gt, ilike, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import {
+  type SQL,
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  ilike,
+  inArray,
+  isNull,
+  lt,
+  ne,
+  or,
+  sql,
+} from 'drizzle-orm';
 
 import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/capabilities/knowledge/server/subject-resolution';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import {
   type SourceTier,
   type SourceTierName,
@@ -263,6 +278,9 @@ function buildSqlFilters(params: ListQuestionsParams): SQL[] {
   // them so a composite大题 shows once. (Variant members are NOT excluded — they
   // are first-class questions; family aggregation handles their grouping.)
   filters.push(sql`(${question.parent_question_id} IS NULL)`);
+  // Fixed-window diagnostics are learner-facing only through /api/review/due.
+  // Never expose future probes or reference answers through the question bank.
+  filters.push(ne(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE));
   if (params.source !== undefined) filters.push(eq(question.source, params.source));
   if (params.kind !== undefined) {
     // Match every persisted form normalising to the requested canonical (see the
@@ -815,9 +833,10 @@ export async function loadFamilyMembers(
   excludeDrafts: boolean,
 ): Promise<CandidateRow[]> {
   const membership = sql`(${question.root_question_id} = ${rootKey} OR ${question.id} = ${rootKey})`;
+  const bankVisible = ne(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE);
   const where = excludeDrafts
-    ? and(membership, notDraftPredicate(question.draft_status))
-    : membership;
+    ? and(membership, bankVisible, notDraftPredicate(question.draft_status))
+    : and(membership, bankVisible);
   return (await db
     .select(CANDIDATE_COLUMNS)
     .from(question)

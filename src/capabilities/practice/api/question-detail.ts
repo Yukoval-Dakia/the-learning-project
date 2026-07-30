@@ -16,6 +16,7 @@
 // the sibling notes/learning-items routes (zod, 404 on missing, errorResponse).
 
 import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/public';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { loadQuestionDetail } from '@/server/questions/detail';
@@ -68,7 +69,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
     const timelineLimit = parseTimelineLimit(url.searchParams.get('timeline_limit'));
 
     const detail = await loadQuestionDetail(db, parsed.data.id, timelineLimit);
-    if (!detail) {
+    if (!detail || detail.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
       throw new ApiError('not_found', `question ${parsed.data.id} not found`, 404);
     }
     return Response.json(detail);

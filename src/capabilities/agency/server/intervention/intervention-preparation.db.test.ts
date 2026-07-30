@@ -78,6 +78,18 @@ const FOLLOWUP = {
   },
 };
 
+function diagnosticJudgeVerdict(coarseOutcome: 'correct' | 'partial' | 'incorrect') {
+  return {
+    score_meaning: 'correctness',
+    coarse_outcome: coarseOutcome,
+    score: coarseOutcome === 'correct' ? 1 : coarseOutcome === 'partial' ? 0.5 : 0,
+    confidence: 0.9,
+    capability_ref: { id: 'multimodal_direct', version: '1.0.0' },
+    feedback_md: coarseOutcome,
+    evidence_json: {},
+  };
+}
+
 function conjecturePayload(knowledgeId: string) {
   const hypothesis = {
     kind: 'proposal' as const,
@@ -634,6 +646,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
         fsrs_state_after: delayedCard.state,
         user_response_md: '提前直连作答',
         referenced_knowledge_ids: [],
+        judge: diagnosticJudgeVerdict('correct'),
       },
       created_at: new Date(active.settlement.diagnostics.immediate.due_at),
     });
@@ -650,10 +663,12 @@ describe('YUK-791 intervention preparation closed loop', () => {
       settlement: { diagnostics: { delayed: { status: 'scheduled', review_event_id: null } } },
     });
 
-    const outcomes = {
-      immediate: 'success',
-      delayed: 'failure',
-      transfer: 'success',
+    const verdicts = {
+      immediate: { eventOutcome: 'success', rating: 'good', judge: 'correct' },
+      // A learner-controlled `hard` rating still writes outcome=success. The
+      // diagnostic verdict must follow judge=partial and settle as failed.
+      delayed: { eventOutcome: 'success', rating: 'hard', judge: 'partial' },
+      transfer: { eventOutcome: 'success', rating: 'good', judge: 'correct' },
     } as const;
     let lastDelivery: EventSubscriptionDelivery | null = null;
     for (const kind of ['immediate', 'delayed', 'transfer'] as const) {
@@ -671,12 +686,13 @@ describe('YUK-791 intervention preparation closed loop', () => {
         action: 'review',
         subject_kind: 'question',
         subject_id: active.settlement.diagnostics[kind].question_id,
-        outcome: outcomes[kind],
+        outcome: verdicts[kind].eventOutcome,
         payload: {
-          fsrs_rating: outcomes[kind] === 'success' ? 'good' : 'again',
+          fsrs_rating: verdicts[kind].rating,
           fsrs_state_after: cardBeforeReview.state,
-          user_response_md: outcomes[kind] === 'success' ? '作答正确' : '作答错误',
+          user_response_md: kind === 'delayed' ? '部分正确但仍有遗漏' : '作答正确',
           referenced_knowledge_ids: [],
+          judge: diagnosticJudgeVerdict(verdicts[kind].judge),
         },
         created_at: new Date(active.settlement.diagnostics[kind].due_at.replace('.000Z', '.500Z')),
       });

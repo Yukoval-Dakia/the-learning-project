@@ -5,6 +5,7 @@
 
 import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
 import { newId } from '@/core/ids';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { knowledge, question } from '@/db/schema';
 import { listQuestions } from '@/server/questions/list';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -89,6 +90,33 @@ const DAY = 86_400_000;
 describe('listQuestions', () => {
   beforeEach(async () => {
     await resetDb();
+  });
+
+  it('never exposes intervention diagnostics through flat, source, or family reads', async () => {
+    const visible = await seedQuestion({ source: 'manual' });
+    const diagnostic = await seedQuestion({
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      prompt_md: 'future diagnostic probe',
+    });
+
+    const flat = await listQuestions(testDb(), { includeDrafts: true, limit: 50, offset: 0 });
+    expect(flat.items.map((item) => item.id)).toEqual([visible]);
+
+    const bySource = await listQuestions(testDb(), {
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      includeDrafts: true,
+      limit: 50,
+      offset: 0,
+    });
+    expect(bySource.items).toHaveLength(0);
+
+    const family = await listQuestions(testDb(), {
+      expandRoot: diagnostic,
+      includeDrafts: true,
+      limit: 50,
+      offset: 0,
+    });
+    expect(family.items).toHaveLength(0);
   });
 
   describe('A1a SQL axes', () => {

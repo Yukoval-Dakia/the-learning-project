@@ -31,6 +31,13 @@ export async function handleInterventionDiagnosticReviewDelivery(
     };
   }
   const reviewEvent = review.data;
+  const judge = reviewEvent.payload.judge;
+  if (!judge) {
+    return { status: 'skipped', reason: 'diagnostic review has no verified judge verdict' };
+  }
+  if (judge.coarse_outcome === 'unsupported') {
+    return { status: 'skipped', reason: 'diagnostic review judge verdict is unsupported' };
+  }
 
   const [questionRow] = await db
     .select({ metadata: question.metadata })
@@ -53,7 +60,7 @@ export async function handleInterventionDiagnosticReviewDelivery(
     diagnosticKind: metadata.data.diagnostic_kind,
     questionId: reviewEvent.subject_id,
     reviewEventId: source.id,
-    passed: reviewEvent.outcome === 'success',
+    passed: judge.coarse_outcome === 'correct',
     now: source.created_at,
   });
   if (result.status === 'skipped') {
