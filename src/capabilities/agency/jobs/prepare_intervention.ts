@@ -4,6 +4,7 @@ import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 import { prepareInterventionWave } from '../server/intervention/prepare';
+import { prepareInterventionJobYield } from './prepare-intervention-yield';
 
 const PrepareInterventionJobDataSchema = z
   .object({
@@ -36,12 +37,14 @@ export function buildPrepareInterventionHandler(
     const job = jobs[0];
     if (!job) throw new Error('prepare_intervention handler received no job');
     const result = await runPrepareInterventionJob(db, job.data);
-    console.log('[prepare_intervention] result', result);
-    const attempted = result.status === 'skipped' ? 0 : 1;
-    return reportJobYield('prepare_intervention', {
-      attempted,
-      succeeded: result.status === 'active' ? 1 : 0,
-      failed: result.status === 'preparation_failed' ? 1 : 0,
+    console.log('[prepare_intervention] result', {
+      status: result.status,
+      intervention_id: result.intervention_id,
+      version: result.version,
+      ...(result.status === 'preparation_failed'
+        ? { reason_code: result.reason_code.slice(0, 240) }
+        : {}),
     });
+    return reportJobYield('prepare_intervention', prepareInterventionJobYield(result));
   };
 }

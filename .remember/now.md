@@ -30,12 +30,20 @@
    原子 `active` 并写 lifecycle event。provider/transport error 抛给 pg-boss retry。
 10. `AUTO_INTERVENTION_EXPANSION_ENABLED` 默认 OFF；当前 aggregate 可 active 但
     `delivery_mode=shadow`，不代表 Today/B3 可以交付。
+11. 激活事务再次验证 source probe/result/proposal/question direct chain；生成期间证据被
+    纠正或 provenance 漂移会原子写 `source_evidence_inactive`，绝不激活陈旧干预。
+12. backup 保留 aggregate 但不保留 pg-boss 行；两分钟 recovery 会为 missing job 换新 UUID
+    并同事务持久化。已耗尽 retry 的 terminal job 转为可审计失败，不无限重排/付费。
+13. mimo structured output 改为无 `anyOf` 的扁平 provider schema，canonical reader 仍严格
+    校验分支；Agency/Practice 共享 canonical JSON SHA-256，键插入顺序不再造成 digest 漂移。
+14. intervention 的两个 event provenance 建硬 FK，active CHECK 关闭 SQL NULL 三值漏洞；
+    review 缺 run id 作为整包 attempt failure 重试，idempotent terminal replay 记 idle。
 
 ## 验证证据
 
-- targeted unit：3 files / 118 tests PASS。
-- targeted DB：1 file / 8 tests PASS，覆盖成功、整包重试失败、重复投递/null send、
-  no-safe-method、legacy judgement、corrected source、signature collision。
+- targeted unit：8 files / 152 tests PASS。
+- targeted DB：1 file / 12 tests PASS，新增覆盖生成期间 evidence 失效、restore job recovery、
+  operational retry exhaustion、review run provenance 缺失。
 - YUK-791 migration smoke：1 PASS / 29 skipped。
 - `pnpm typecheck` PASS。
 - scoped Biome PASS；capability boundary audit 0。
@@ -52,6 +60,6 @@
 
 ## 下一步
 
-1. diff 自检并将本地 checkpoint/fixup 整理为一个实质 commit。
-2. push，创建 ready PR，仅监听 exact-head GitHub Actions `CI Gate`。
-3. 处理独立 review；CI/review 全绿后 squash merge并对齐 Linear YUK-791。
+1. 将 PR #1119 的集中 review hardening commit + push。
+2. 仅监听新 head 的 GitHub Actions `CI Gate`，回复/resolve review threads 并复查新增反馈。
+3. CI/review 全绿后 squash merge并对齐 Linear YUK-791。

@@ -1,5 +1,6 @@
 import { PEDAGOGY_METHOD_LIBRARY, selectPedagogyCandidates } from '@/core/pedagogy';
 import {
+  INTERVENTION_CONTRACT_VERSION,
   type InterventionSnapshotT,
   PEDAGOGY_METHOD_DEFINITION_VERSION,
   PedagogyRecommendation,
@@ -47,7 +48,7 @@ export async function recommendPedagogy(
   if (candidateIds.length === 0) {
     return PedagogyRecommendation.parse({
       kind: 'abstain',
-      recommendation_version: 1,
+      recommendation_version: INTERVENTION_CONTRACT_VERSION,
       reason_code: 'no_safe_method',
       detail_md: 'Deterministic pedagogy policy and owner-disabled methods left no legal method.',
       candidate_ids: [],
@@ -67,7 +68,7 @@ export async function recommendPedagogy(
       prior_interventions: input.snapshot.prior_interventions,
       output_contract: {
         allowed_method_ids: candidateIds,
-        recommendation_version: 1,
+        recommendation_version: INTERVENTION_CONTRACT_VERSION,
         method_definition_version: PEDAGOGY_METHOD_DEFINITION_VERSION,
       },
     },
@@ -80,7 +81,7 @@ export async function recommendPedagogy(
   } catch (error) {
     return PedagogyRecommendation.parse({
       kind: 'abstain',
-      recommendation_version: 1,
+      recommendation_version: INTERVENTION_CONTRACT_VERSION,
       reason_code: 'model_output_invalid',
       detail_md: error instanceof Error ? error.message.slice(0, 2000) : 'invalid model output',
       candidate_ids: candidateIds,
@@ -92,7 +93,7 @@ export async function recommendPedagogy(
   if (model.kind === 'abstain') {
     return PedagogyRecommendation.parse({
       kind: 'abstain',
-      recommendation_version: 1,
+      recommendation_version: INTERVENTION_CONTRACT_VERSION,
       reason_code: model.reason_code,
       detail_md: model.detail_md,
       candidate_ids: candidateIds,
@@ -103,7 +104,7 @@ export async function recommendPedagogy(
   if (!result.task_run_id) {
     return PedagogyRecommendation.parse({
       kind: 'abstain',
-      recommendation_version: 1,
+      recommendation_version: INTERVENTION_CONTRACT_VERSION,
       reason_code: 'model_output_invalid',
       detail_md: 'Recommendation result did not carry an AI task run id.',
       candidate_ids: candidateIds,
@@ -113,7 +114,7 @@ export async function recommendPedagogy(
   if (!candidateIds.includes(model.method_id)) {
     return PedagogyRecommendation.parse({
       kind: 'abstain',
-      recommendation_version: 1,
+      recommendation_version: INTERVENTION_CONTRACT_VERSION,
       reason_code: 'model_output_invalid',
       detail_md: `Model selected excluded method '${model.method_id}'.`,
       candidate_ids: candidateIds,
@@ -125,13 +126,19 @@ export async function recommendPedagogy(
   // Belt-and-suspenders: ensure the selected definition is still the same closed
   // palette entry that the policy supplied to the model.
   if (!PEDAGOGY_METHOD_LIBRARY.some((method) => method.id === model.method_id)) {
-    throw new Error(
-      `selected pedagogy method '${model.method_id}' is not in the canonical palette`,
-    );
+    return PedagogyRecommendation.parse({
+      kind: 'abstain',
+      recommendation_version: INTERVENTION_CONTRACT_VERSION,
+      reason_code: 'model_output_invalid',
+      detail_md: `Selected pedagogy method '${model.method_id}' is not in the canonical palette.`,
+      candidate_ids: candidateIds,
+      excluded,
+      model_run_id: result.task_run_id,
+    });
   }
   return PedagogyRecommendation.parse({
     kind: 'recommendation',
-    recommendation_version: 1,
+    recommendation_version: INTERVENTION_CONTRACT_VERSION,
     method_id: model.method_id,
     method_definition_version: PEDAGOGY_METHOD_DEFINITION_VERSION,
     rationale_md: model.rationale_md,

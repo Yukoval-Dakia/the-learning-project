@@ -24,11 +24,18 @@
     gold/target signature 必须可评分且彼此可区分。独立同模型自审后才激活，最多整包
     重生成一次；仍失败则 `preparation_failed`，不保存部分 package。
   - pg-boss 使用聚合体持久化的 UUID job id；重复投递返回 null 视为已存在，不制造
-    第二个 aggregate。provider/transport error 继续抛给 durable retry。
+    第二个 aggregate。恢复后缺失的 operational job 最迟两分钟重建；耗尽 durable retry
+    的终态 job 转为可审计 `preparation_failed`，不无限付费重排。
+  - 激活事务重新验证 source probe/result/proposal/question direct chain；生成期间 evidence
+    被纠正或 provenance 漂移时原子失败，不把陈旧证据推进为 active。
+  - provider-facing structured output 保持扁平 object（无 `anyOf`）；返回后仍由 canonical
+    discriminated reader 严格校验。package review digest 使用共享 canonical JSON SHA-256。
+  - intervention source/conjecture 使用真实 event FK；active shape 显式拒绝 NULL
+    recommendation/package。缺失 review run provenance 进入整包重试，不抛成无结构 job crash。
   - `AUTO_INTERVENTION_EXPANSION_ENABLED` 默认 OFF；当前只产生 `delivery_mode=shadow`，
     不等同于交付或扩量。
 - **针对性开发验证已过**
-  - unit：3 files / 118 tests；DB：1 file / 8 tests；migration smoke：1 pass。
+  - unit：8 files / 152 tests；DB：1 file / 12 tests；migration smoke：1 pass。
   - `pnpm typecheck`、Biome scoped check、capability boundary audit（0）通过。
   - schema audit 无 unallowed stub；flag reader/ledger 对齐。全仓 strict flag audit 仍报告
     基线已有的 `NOTES_MASTERY_SUBSCRIPTION_ENABLED` 未登记，本 lane 未改其行为。
@@ -36,9 +43,9 @@
 
 ## NEXT
 
-1. 完成当前 diff 自检与 cockpit/handoff 对齐，整理为一个实质性 YUK-791 commit。
-2. push 并创建 ready PR；只监听 exact-head GitHub Actions `CI Gate`，处理 review threads。
-3. CI 与独立 review 全绿后 squash merge，Linear YUK-791 对齐 Done。
+1. 提交并 push PR #1119 的集中 review-hardening diff。
+2. 只监听新 head 的 GitHub Actions `CI Gate`；回复/resolve 已验证 review threads，并复查新增反馈。
+3. exact-head CI 与独立 review 全绿后 squash merge，Linear YUK-791 对齐 Done。
 4. 按 mesh 依赖进入下一 lane；不提前做 YUK-792 scheduler/settlement 或产品 UI。
 
 ## PARKED

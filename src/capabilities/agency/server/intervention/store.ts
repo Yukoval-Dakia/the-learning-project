@@ -1,3 +1,4 @@
+import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/server/conjecture/probe-evidence';
 import { newId } from '@/core/ids';
 import {
   INTERVENTION_ACTIVATED_ACTION,
@@ -161,7 +162,7 @@ export async function updatePreparationJobId(
   jobId: string,
   now: Date,
 ): Promise<void> {
-  await tx
+  const [updated] = await tx
     .update(intervention)
     .set({ preparation_job_id: jobId, updated_at: now })
     .where(
@@ -170,7 +171,13 @@ export async function updatePreparationJobId(
         eq(intervention.version, version),
         eq(intervention.status, 'preparing'),
       ),
+    )
+    .returning({ id: intervention.id });
+  if (!updated) {
+    throw new Error(
+      `intervention ${interventionId}@${version} is no longer preparing; job id was not persisted`,
     );
+  }
 }
 
 export async function saveRecommendation(
@@ -286,6 +293,58 @@ export async function activateIntervention(
     }
     if (!current.recommendation || current.recommendation.kind !== 'recommendation') {
       throw new Error('intervention cannot activate without a concrete recommendation');
+    }
+    const effective = await getEffectiveProbeResultStatuses(
+      tx,
+      [current.source_probe_result_event_id],
+      { validateDirectChain: true },
+    );
+    if (effective.get(current.source_probe_result_event_id) !== 'active') {
+      const failureCode = 'source_evidence_inactive';
+      const [failed] = await tx
+        .update(intervention)
+        .set({
+          status: 'preparation_failed',
+          package_json: null,
+          failure_code: failureCode,
+          activated_at: null,
+          revision: current.revision + 1,
+          updated_at: now,
+        })
+        .where(
+          and(
+            eq(intervention.id, current.id),
+            eq(intervention.version, current.version),
+            eq(intervention.status, 'preparing'),
+            eq(intervention.revision, current.revision),
+          ),
+        )
+        .returning();
+      if (!failed) throw new Error('intervention evidence invalidation lost its serialized state');
+      await writeEvent(tx, {
+        id: newId(),
+        actor_kind: 'system',
+        actor_ref: 'prepare_intervention',
+        action: INTERVENTION_PREPARATION_FAILED_ACTION,
+        subject_kind: 'event',
+        subject_id: current.source_probe_result_event_id,
+        outcome: 'failure',
+        payload: {
+          intervention_id: current.id,
+          intervention_version: current.version,
+          conjecture_event_id: current.conjecture_event_id,
+          knowledge_id: current.snapshot.conjecture.knowledge_id,
+          failure_code: failureCode,
+        },
+        caused_by_event_id: current.source_probe_result_event_id,
+        affected_scopes: [
+          `knowledge:${current.snapshot.conjecture.knowledge_id}`,
+          `mind_model:${current.conjecture_event_id}`,
+        ],
+        ingest_at: now,
+        created_at: now,
+      });
+      return parseInterventionRow(failed);
     }
 
     const [updated] = await tx

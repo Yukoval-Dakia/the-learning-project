@@ -1577,6 +1577,16 @@ export const intervention = pgTable(
       .where(sql`${t.status} = 'preparing'`),
     index('intervention_status_updated_idx').on(t.status, t.updated_at.desc()),
     index('intervention_conjecture_idx').on(t.conjecture_event_id, t.version.desc()),
+    foreignKey({
+      columns: [t.source_probe_result_event_id],
+      foreignColumns: [event.id],
+      name: 'intervention_source_probe_result_event_fk',
+    }),
+    foreignKey({
+      columns: [t.conjecture_event_id],
+      foreignColumns: [event.id],
+      name: 'intervention_conjecture_event_fk',
+    }),
     check('intervention_version_positive_ck', sql`${t.version} > 0`),
     check('intervention_revision_nonnegative_ck', sql`${t.revision} >= 0`),
     check(
@@ -1595,7 +1605,9 @@ export const intervention = pgTable(
     check(
       'intervention_active_shape_ck',
       sql`${t.status} <> 'active' OR (
-        ${t.recommendation_json}->>'kind' = 'recommendation'
+        ${t.recommendation_json} IS NOT NULL
+        AND ${t.recommendation_json}->>'kind' = 'recommendation'
+        AND ${t.package_json} IS NOT NULL
         AND jsonb_typeof(${t.package_json}) = 'object'
         AND ${t.failure_code} IS NULL
         AND ${t.activated_at} IS NOT NULL

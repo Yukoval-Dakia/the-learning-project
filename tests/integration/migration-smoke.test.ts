@@ -1374,6 +1374,19 @@ describe('migration smoke — YUK-791 intervention preparation', () => {
     await applyMigrationFile(client, migration.sql);
 
     await client`
+      INSERT INTO event (
+        id, actor_kind, actor_ref, action, subject_kind, subject_id,
+        outcome, payload, affected_scopes
+      )
+      SELECT id, 'system', 'yuk791_migration_smoke', 'experimental:yuk791_fixture',
+             'event', id, 'success', '{}'::jsonb, ARRAY[]::text[]
+      FROM unnest(ARRAY[
+        'probe_result_a', 'probe_result_b', 'probe_result_bad',
+        'conjecture_a', 'conjecture_bad'
+      ]::text[]) AS ids(id)
+    `;
+
+    await client`
       INSERT INTO intervention (
         id, version, source_probe_result_event_id, conjecture_event_id,
         status, delivery_mode, idempotency_key, snapshot_json
@@ -1389,11 +1402,14 @@ describe('migration smoke — YUK-791 intervention preparation', () => {
           id, version, source_probe_result_event_id, conjecture_event_id,
           status, delivery_mode, idempotency_key, snapshot_json
         ) VALUES (
-          'int_a', 2, 'probe_result_b', 'conjecture_a',
-          'preparing', 'shadow', 'idem_b', '{}'::jsonb
+          'int_dangling_source', 1, 'missing_probe_result', 'conjecture_a',
+          'preparing', 'shadow', 'idem_dangling_source', '{}'::jsonb
         )
       `,
-    ).rejects.toMatchObject({ code: '23505' });
+    ).rejects.toMatchObject({
+      code: '23503',
+      constraint_name: 'intervention_source_probe_result_event_fk',
+    });
 
     await expect(
       client`
@@ -1401,11 +1417,44 @@ describe('migration smoke — YUK-791 intervention preparation', () => {
           id, version, source_probe_result_event_id, conjecture_event_id,
           status, delivery_mode, idempotency_key, snapshot_json
         ) VALUES (
-          'int_bad_active', 1, 'probe_result_bad', 'conjecture_bad',
-          'active', 'shadow', 'idem_bad', '{}'::jsonb
+          'int_dangling_conjecture', 1, 'probe_result_b', 'missing_conjecture',
+          'preparing', 'shadow', 'idem_dangling_conjecture', '{}'::jsonb
         )
       `,
-    ).rejects.toMatchObject({ code: '23514' });
+    ).rejects.toMatchObject({
+      code: '23503',
+      constraint_name: 'intervention_conjecture_event_fk',
+    });
+
+    await expect(
+      client`
+        INSERT INTO intervention (
+          id, version, source_probe_result_event_id, conjecture_event_id,
+          status, delivery_mode, idempotency_key, snapshot_json
+        ) VALUES (
+          'int_a', 2, 'probe_result_b', 'conjecture_a',
+          'preparing', 'shadow', 'idem_b', '{}'::jsonb
+        )
+      `,
+    ).rejects.toMatchObject({
+      code: '23505',
+      constraint_name: 'intervention_one_preparing_version_uq',
+    });
+
+    await expect(
+      client`
+        INSERT INTO intervention (
+          id, version, source_probe_result_event_id, conjecture_event_id,
+          status, delivery_mode, idempotency_key, snapshot_json, activated_at
+        ) VALUES (
+          'int_bad_active', 1, 'probe_result_bad', 'conjecture_bad',
+          'active', 'shadow', 'idem_bad', '{}'::jsonb, now()
+        )
+      `,
+    ).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'intervention_active_shape_ck',
+    });
 
     await client`
       UPDATE intervention
@@ -1431,7 +1480,10 @@ describe('migration smoke — YUK-791 intervention preparation', () => {
         SET status = 'preparation_failed', failure_code = NULL
         WHERE id = 'int_a' AND version = 2
       `,
-    ).rejects.toMatchObject({ code: '23514' });
+    ).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'intervention_failed_shape_ck',
+    });
 
     const rows = await client<
       { id: string; version: number; status: string; delivery_mode: string }[]

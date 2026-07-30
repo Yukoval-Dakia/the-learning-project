@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   type InterventionAuthoringContextT,
   loadInterventionAuthoringContext,
@@ -6,10 +5,12 @@ import {
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { evaluateConjectureProbeResponseStructure } from '@/core/schema/business';
 import {
+  INTERVENTION_CONTRACT_VERSION,
   InterventionPackage,
   InterventionPackageModelOutput,
   type InterventionPackageModelOutputT,
   InterventionPackageReviewAudit,
+  type InterventionPackageReviewAuditT,
   InterventionPackageReviewModelOutput,
   type InterventionPackageReviewModelOutputT,
   type InterventionPackageT,
@@ -17,6 +18,7 @@ import {
   type InterventionPreparationAttemptT,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -45,6 +47,8 @@ function normalizeIdentity(value: string): string {
 
 function answerLeaks(prompt: string, answer: string): boolean {
   const normalizedAnswer = normalizeIdentity(answer);
+  // Very short tokens occur frequently in prose, so substring matching would
+  // produce excessive false positives. Their leakage remains a reviewer check.
   if (normalizedAnswer.length < 3) return false;
   return normalizeIdentity(prompt).includes(normalizedAnswer);
 }
@@ -100,10 +104,6 @@ export function validateInterventionPackageDeterministically(
   return [...new Set(failures)].sort();
 }
 
-function packageDigest(packageValue: InterventionPackageT): string {
-  return createHash('sha256').update(JSON.stringify(packageValue)).digest('hex');
-}
-
 async function runPackageAuthor(
   runTaskFn: TaskTextRunFn,
   context: InterventionAuthoringContextT,
@@ -148,7 +148,7 @@ async function runPackageAuthor(
       ...draft,
       intervention_id: context.snapshot.intervention_id,
       intervention_version: context.snapshot.intervention_version,
-      package_version: 1,
+      package_version: INTERVENTION_CONTRACT_VERSION,
       method_id: context.recommendation.method_id,
       method_definition_version: context.recommendation.method_definition_version,
       author_task_run_id: result.task_run_id,
@@ -161,7 +161,10 @@ async function runPackageReview(
   context: InterventionAuthoringContextT,
   packageValue: InterventionPackageT,
   subjectProfile: Awaited<ReturnType<typeof resolveSubjectProfileForKnowledgeIds>>,
-): Promise<ReturnType<typeof InterventionPackageReviewAudit.parse>> {
+): Promise<
+  | { status: 'ok'; review: InterventionPackageReviewAuditT }
+  | { status: 'invalid'; failureCode: string }
+> {
   const result = await runTaskFn(
     'InterventionPackageReviewTask',
     {
@@ -172,7 +175,7 @@ async function runPackageReview(
     { subjectProfile },
   );
   if (!result.task_run_id) {
-    throw new Error('intervention package review result did not carry a task run id');
+    return { status: 'invalid', failureCode: 'review_task_run_id_missing' };
   }
 
   let review: InterventionPackageReviewModelOutputT;
@@ -180,22 +183,22 @@ async function runPackageReview(
     review = parseTaskOutput(result, 'intervention package review', (value) =>
       InterventionPackageReviewModelOutput.parse(value),
     );
-  } catch (error) {
+  } catch {
     review = InterventionPackageReviewModelOutput.parse({
       verdict: 'fail',
       failure_codes: ['review_output_invalid'],
-      summary_md:
-        error instanceof Error
-          ? `Review output was invalid: ${error.message}`.slice(0, 2000)
-          : 'Review output was invalid.',
+      summary_md: 'Review output failed structured-output validation.',
     });
   }
-  return InterventionPackageReviewAudit.parse({
-    review_version: 1,
-    package_digest_sha256: packageDigest(packageValue),
-    review_task_run_id: result.task_run_id,
-    result: review,
-  });
+  return {
+    status: 'ok',
+    review: InterventionPackageReviewAudit.parse({
+      review_version: INTERVENTION_CONTRACT_VERSION,
+      package_digest_sha256: sha256CanonicalJson(packageValue),
+      review_task_run_id: result.task_run_id,
+      result: review,
+    }),
+  };
 }
 
 /**
@@ -229,7 +232,15 @@ export async function authorInterventionPackage(
 
   // Same provider/model route as the author task, but a separate task invocation
   // and task_run_id: this is the owner-selected independent same-model self-review.
-  const review = await runPackageReview(runTaskFn, context, authored.package, subjectProfile);
+  const reviewed = await runPackageReview(runTaskFn, context, authored.package, subjectProfile);
+  if (reviewed.status === 'invalid') {
+    return InterventionPreparationAttempt.parse({
+      kind: 'author_failed',
+      attempt,
+      author_task_run_id: authored.package.author_task_run_id,
+      failure_code: reviewed.failureCode,
+    });
+  }
   const deterministicFailures = validateInterventionPackageDeterministically(
     context,
     authored.package,
@@ -238,7 +249,7 @@ export async function authorInterventionPackage(
     kind: 'reviewed_package',
     attempt,
     package: authored.package,
-    review,
+    review: reviewed.review,
     deterministic_failure_codes: deterministicFailures,
   });
 }

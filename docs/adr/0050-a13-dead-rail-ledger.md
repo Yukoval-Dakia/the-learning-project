@@ -181,7 +181,7 @@ planner/critic/judge fan-out 不恢复。
 | (a) `typed_state='confused-with-X'` | **要通电**（推翻初稿 DEFERRED） | **YUK-794** | 本 ADR §(a)（含门槛四面分析）+ 各文件头注释 + 面板「本轨待通电」标注 |
 | (b1) `prediction_score` | **现在接** FLIP 消费者，不等 Rust 节奏（推翻初稿 DEFERRED） | **YUK-795** | 本 ADR §(b1) |
 | (b2) hard-confirm 轨 | **同上，并入 YUK-795**（推翻初稿 knowingly-deferred） | **YUK-795** | 本 ADR §(b2) + `scripts/audit-flags-ledger.json` → `MISCONCEPTION_HARD_CONFIRM_ENABLED.notes` |
-| (c) pedagogy 8 法 palette | **复用已选、尚未通电**；作为 deterministic shortlist，不承担最终推荐 | **YUK-796 → YUK-791** | 本 ADR §(c) + YUK-796 design |
+| (c) pedagogy 8 法 palette | **LIVE**；作为 deterministic shortlist，由同波次 recommendation + QuestionAuthor 真实消费，不承担最终推荐 | **YUK-796 → YUK-791** | 本 ADR §(c) + YUK-796 design |
 | (d) Planning Panel | **要审议能力，不建独立 Panel**；Agency 同波次内部审议 + Teaching Brief 控制区 | **YUK-796 → YUK-791** | 本 ADR §(d) + YUK-796 design |
 
 ## 通电前的文案纪律（本 ADR 一并落地，与裁定方向一致）

@@ -9,8 +9,9 @@ import {
 } from '@/core/schema/business';
 import {
   InterventionPackageModelOutput,
-  InterventionPackageReviewModelOutput,
-  PedagogyRecommendationModelOutput,
+  InterventionPackageReviewFailureCode,
+  InterventionPackageReviewStructuredOutput,
+  PedagogyRecommendationStructuredOutput,
 } from '@/core/schema/intervention';
 import { SourceGroundingVerifyOutput } from '@/core/schema/source-grounding';
 import { GoalScopeIntentSchema } from '@/kernel/task-intents';
@@ -1320,6 +1321,26 @@ function buildInterventionPackageAuthorPrompt(profile: SubjectProfile): string {
 不确定性策略：${profile.grounding.uncertaintyPolicy}`;
 }
 
+const INTERVENTION_REVIEW_FAILURE_CODES_FOR_PROMPT = InterventionPackageReviewFailureCode.options
+  .filter((code) => code !== 'review_output_invalid')
+  .reduce<{ lines: string[]; offset: number }>(
+    (accumulator, code) => {
+      const lineWidths = [4, 4, 3, 1];
+      while (
+        accumulator.offset < lineWidths.length - 1 &&
+        accumulator.lines[accumulator.offset]?.split(', ').length === lineWidths[accumulator.offset]
+      ) {
+        accumulator.offset += 1;
+      }
+      accumulator.lines[accumulator.offset] = accumulator.lines[accumulator.offset]
+        ? `${accumulator.lines[accumulator.offset]}, ${code}`
+        : code;
+      return accumulator;
+    },
+    { lines: [], offset: 0 },
+  )
+  .lines.join(',\n');
+
 function buildInterventionPackageReviewPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}干预包的第二次独立自审。你与作者使用同一个模型系列，但这是一次新的、独立调用；不要修包，只返回 pass 或 failure codes。
 
@@ -1334,10 +1355,7 @@ function buildInterventionPackageReviewPrompt(profile: SubjectProfile): string {
 - 是否存在严重事实错误或不安全内容。
 
 failure_codes 只能从以下闭集选择：
-material_not_grounded, method_not_followed, tested_claim_mismatch, target_error_mismatch,
-answer_not_unique, answer_not_gradable, answer_leak, diagnostics_not_same_construct,
-transfer_context_not_changed, target_error_not_identifiable, serious_factual_error,
-unsafe_material。
+${INTERVENTION_REVIEW_FAILURE_CODES_FOR_PROMPT}。
 
 严格 JSON 输出（不带 markdown 代码块）：
 通过：{"verdict":"pass","failure_codes":[],"summary_md":"..."}
@@ -1956,7 +1974,7 @@ export const tasks = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
-    structuredOutputSchema: PedagogyRecommendationModelOutput,
+    structuredOutputSchema: PedagogyRecommendationStructuredOutput,
     prompt: {
       kind: 'inline',
       text: `You are the single pedagogy recommendation stage inside an intervention preparation wave. Input contains an immutable conjecture/learner snapshot, deterministic candidate method definitions, exclusions, and prior interventions.
@@ -1994,7 +2012,7 @@ or
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
-    structuredOutputSchema: InterventionPackageReviewModelOutput,
+    structuredOutputSchema: InterventionPackageReviewStructuredOutput,
     prompt: { kind: 'profile', build: buildInterventionPackageReviewPrompt },
   },
   // YUK-572 — the agent-led 教研例会 director (shadow lane, dark-ship). A charter-based

@@ -1,11 +1,14 @@
-import { createHash } from 'node:crypto';
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import type {
   InterventionPackageT,
   InterventionPreparationAttemptT,
 } from '@/core/schema/intervention';
-import { InterventionPreparationAttempt } from '@/core/schema/intervention';
+import {
+  InterventionPreparationAttempt,
+  MAX_INTERVENTION_PACKAGE_ATTEMPTS,
+} from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { recommendPedagogy } from './recommend';
@@ -52,10 +55,6 @@ export type PrepareInterventionWaveResult =
       terminal_status: string;
     };
 
-function digestPackage(packageValue: InterventionPackageT): string {
-  return createHash('sha256').update(JSON.stringify(packageValue)).digest('hex');
-}
-
 function bindAttemptToRecord(
   record: InterventionRecord,
   attempt: InterventionPreparationAttemptT,
@@ -76,7 +75,7 @@ function bindAttemptToRecord(
   ) {
     failures.push('agency:method_mismatch');
   }
-  if (attempt.review.package_digest_sha256 !== digestPackage(attempt.package)) {
+  if (attempt.review.package_digest_sha256 !== sha256CanonicalJson(attempt.package)) {
     failures.push('agency:review_package_digest_mismatch');
   }
   return InterventionPreparationAttempt.parse({
@@ -197,6 +196,20 @@ export async function prepareInterventionWave(
         package: passed.package,
         now: deps.now?.() ?? new Date(),
       });
+      if (active.status === 'preparation_failed') {
+        return {
+          status: 'preparation_failed',
+          intervention_id: active.id,
+          version: active.version,
+          reason_code: active.failure_code ?? 'source_evidence_inactive',
+          idempotent: false,
+        };
+      }
+      if (active.status !== 'active') {
+        throw new Error(
+          `intervention ${active.id}@${active.version} activation returned ${active.status}`,
+        );
+      }
       return {
         status: 'active',
         intervention_id: active.id,
@@ -206,12 +219,12 @@ export async function prepareInterventionWave(
       };
     }
 
-    if (record.preparation_attempts.length >= 2) {
+    if (record.preparation_attempts.length >= MAX_INTERVENTION_PACKAGE_ATTEMPTS) {
       const reason = terminalAttemptFailure(record.preparation_attempts.at(-1));
       const failed = await failInterventionPreparation(db, {
         interventionId: record.id,
         version: record.version,
-        failureCode: reason.slice(0, 1000),
+        failureCode: reason,
         now: deps.now?.() ?? new Date(),
       });
       return {

@@ -71,15 +71,18 @@ export function precisionBand(thetaPrecision: number | null): PrecisionBandT {
 export function disabledPedagogyMethods(env: NodeJS.ProcessEnv): PedagogyMethodIdT[] {
   const raw = env[INTERVENTION_DISABLED_METHOD_IDS]?.trim();
   if (!raw) return [];
-  return [
-    ...new Set(
-      raw
-        .split(',')
-        .map((value) => value.trim())
-        .filter(Boolean)
-        .map((value) => PedagogyMethodId.parse(value)),
-    ),
-  ];
+  const values = raw
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const parsed = values.map((value) => PedagogyMethodId.safeParse(value));
+  const invalid = parsed.flatMap((result, index) => (result.success ? [] : [values[index]]));
+  if (invalid.length > 0) {
+    throw new Error(
+      `${INTERVENTION_DISABLED_METHOD_IDS} contains invalid method ids: ${invalid.join(', ')}`,
+    );
+  }
+  return [...new Set(parsed.flatMap((result) => (result.success ? [result.data] : [])))];
 }
 
 export function interventionDeliveryMode(env: NodeJS.ProcessEnv): InterventionDeliveryModeT {
@@ -197,11 +200,17 @@ export async function buildInterventionSnapshotFromProbeResult(
     ];
   });
 
-  const evidenceRefs = proposal.payload.evidence_refs.map((ref) => ({
-    kind: ref.kind,
-    id: ref.id,
-  }));
-  evidenceRefs.push({ kind: 'event', id: input.sourceProbeResultEventId });
+  const evidenceRefs = Array.from(
+    new Map(
+      [
+        ...proposal.payload.evidence_refs.map((ref) => ({
+          kind: ref.kind,
+          id: ref.id,
+        })),
+        { kind: 'event', id: input.sourceProbeResultEventId },
+      ].map((ref) => [`${ref.kind}:${ref.id}`, ref] as const),
+    ).values(),
+  );
 
   return InterventionSnapshot.parse({
     schema_version: 1,

@@ -176,8 +176,8 @@ export const FK_ORDER = [
   'artifact_block_ref',
   'answer',
   'event',
-  // YUK-791 — versioned intervention aggregate. Loose refs to event/knowledge only,
-  // but place it after event for readable restore lineage. Authored recommendation,
+  // YUK-791 — versioned intervention aggregate. Its source/conjecture refs are
+  // enforced event FKs, so place it after event. Authored recommendation,
   // package, reviews, and terminal reason are not disposable worker state.
   'intervention',
   'tool_call_log',

@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { prepareInterventionWave } from './prepare';
 import { handleProbeResultInterventionDelivery } from './probe-result-subscription';
+import { recoverPreparingInterventions } from './reconcile';
 
 const CLAIM = '你把复合函数求导中的外层导数和内层导数相加，而不是相乘。';
 const TARGET_ERROR = '把外层导数与内层导数相加，而不是按链式法则相乘。';
@@ -490,6 +491,57 @@ describe('YUK-791 intervention preparation closed loop', () => {
     expect(failedEvents[0]?.value).toBe(1);
   });
 
+  it('treats a review without run provenance as a retryable package attempt failure', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('k');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn: baseRun, calls } = successfulRunTask();
+    const missingReviewRun: TaskTextRunFn = async (kind, input, ctx) => {
+      if (kind === 'InterventionPackageReviewTask') {
+        calls.push(kind);
+        return {
+          text: '',
+          structured_output: {
+            verdict: 'pass',
+            failure_codes: [],
+            summary_md: '缺少持久化 run provenance，不能接纳。',
+          },
+        };
+      }
+      return baseRun(kind, input, ctx);
+    };
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+      },
+      { runTaskFn: missingReviewRun, authorPackageFn: authorInterventionPackage },
+    );
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      reason_code: 'review_task_run_id_missing',
+    });
+    const [failed] = await db.select().from(intervention);
+    expect(failed.package_json).toBeNull();
+    expect(failed.preparation_attempts_json).toEqual([
+      expect.objectContaining({
+        kind: 'author_failed',
+        failure_code: 'review_task_run_id_missing',
+      }),
+      expect.objectContaining({
+        kind: 'author_failed',
+        failure_code: 'review_task_run_id_missing',
+      }),
+    ]);
+  });
+
   it('replayed delivery re-enqueues recovery but never creates a second aggregate', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('a');
@@ -692,5 +744,159 @@ describe('YUK-791 intervention preparation closed loop', () => {
       .from(event)
       .where(eq(event.action, 'experimental:intervention_preparation_failed'));
     expect(terminalEvents[0]?.value).toBe(0);
+  });
+
+  it('revalidates source evidence after paid author/review work and refuses stale activation', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('h');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn } = successfulRunTask();
+    let corrected = false;
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+      },
+      {
+        runTaskFn: fn,
+        authorPackageFn: async (authorDb, interventionId, deps) => {
+          const authored = await authorInterventionPackage(authorDb, interventionId, deps);
+          if (!corrected) {
+            corrected = true;
+            await writeEvent(db, {
+              id: 'correct_probe_result_h_during_prepare',
+              actor_kind: 'user',
+              actor_ref: 'self',
+              action: 'correct',
+              subject_kind: 'event',
+              subject_id: seeded.probeResultId,
+              outcome: 'success',
+              payload: {
+                correction_kind: 'mark_wrong',
+                reason_md: '干预生成期间，owner 判定原目标错误匹配无效。',
+                affected_refs: [{ kind: 'question', id: 'probe_h' }],
+              },
+              created_at: new Date(seeded.now.getTime() + 4_000),
+            });
+          }
+          return authored;
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      reason_code: 'source_evidence_inactive',
+    });
+    const [failed] = await db.select().from(intervention);
+    expect(failed).toMatchObject({
+      status: 'preparation_failed',
+      package_json: null,
+      failure_code: 'source_evidence_inactive',
+      activated_at: null,
+    });
+    const activated = await db
+      .select({ value: count() })
+      .from(event)
+      .where(eq(event.action, 'experimental:intervention_activated'));
+    expect(activated[0]?.value).toBe(0);
+  });
+
+  it('recreates a missing operational job for a restored preparing aggregate exactly once', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('i');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const [opened] = await db.select().from(intervention);
+    if (!opened?.preparation_job_id) throw new Error('seed did not reserve a preparation job');
+
+    const sent: {
+      id: string;
+      intervention_id: string;
+      version: number;
+      idempotency_key: string;
+    }[] = [];
+    const liveJobIds = new Set<string>();
+    const boss = {
+      getJobById: async (_name: string, id: string) =>
+        liveJobIds.has(id) ? { state: 'active' as const } : null,
+      send: async (
+        _name: string,
+        data: { intervention_id: string; version: number; idempotency_key: string },
+        options: { id: string },
+      ) => {
+        sent.push({ id: options.id, ...data });
+        liveJobIds.add(options.id);
+        return options.id;
+      },
+    };
+
+    const recovered = await recoverPreparingInterventions(db, boss);
+    expect(recovered).toEqual({
+      scanned: 1,
+      live: 0,
+      reenqueued: 1,
+      terminalized: 0,
+      raced: 0,
+      failed: 0,
+    });
+    const [afterRecovery] = await db.select().from(intervention);
+    expect(afterRecovery?.preparation_job_id).not.toBe(opened.preparation_job_id);
+    expect(sent).toEqual([
+      {
+        id: afterRecovery?.preparation_job_id,
+        intervention_id: opened.id,
+        version: opened.version,
+        idempotency_key: opened.idempotency_key,
+      },
+    ]);
+
+    const replay = await recoverPreparingInterventions(db, boss);
+    expect(replay).toEqual({
+      scanned: 1,
+      live: 1,
+      reenqueued: 0,
+      terminalized: 0,
+      raced: 0,
+      failed: 0,
+    });
+    expect(sent).toHaveLength(1);
+  });
+
+  it('turns an exhausted operational job into an auditable terminal failure', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('j');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const report = await recoverPreparingInterventions(db, {
+      getJobById: async () => ({ state: 'failed' }),
+      send: async () => {
+        throw new Error('terminal jobs must not be re-enqueued forever');
+      },
+    });
+
+    expect(report).toEqual({
+      scanned: 1,
+      live: 0,
+      reenqueued: 0,
+      terminalized: 1,
+      raced: 0,
+      failed: 0,
+    });
+    const [failed] = await db.select().from(intervention);
+    expect(failed).toMatchObject({
+      status: 'preparation_failed',
+      failure_code: 'preparation_job_failed',
+      package_json: null,
+      activated_at: null,
+    });
   });
 });

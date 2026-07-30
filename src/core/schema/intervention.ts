@@ -9,6 +9,7 @@ import { ConjectureDiagnosticSpec, ConjectureProbeSpecV2 } from '@/core/schema/b
 import { z } from 'zod';
 
 export const INTERVENTION_CONTRACT_VERSION = 1 as const;
+export const MAX_INTERVENTION_PACKAGE_ATTEMPTS = 2 as const;
 export const PEDAGOGY_METHOD_DEFINITION_VERSION = 'pedagogy_method_library_v1' as const;
 export const INTERVENTION_ACTIVATED_ACTION = 'experimental:intervention_activated' as const;
 export const INTERVENTION_PREPARATION_FAILED_ACTION =
@@ -112,6 +113,25 @@ export const PedagogyRecommendationModelOutput = z.discriminatedUnion('kind', [
 ]);
 export type PedagogyRecommendationModelOutputT = z.infer<typeof PedagogyRecommendationModelOutput>;
 
+/**
+ * Flat provider-facing schema for mimo structured output.
+ *
+ * The canonical reader above remains a discriminated union, but that converts
+ * to JSON Schema `anyOf`, which the mimo-compatible endpoint does not reliably
+ * support. The canonical reader still performs strict branch validation after
+ * the provider returns this object.
+ */
+export const PedagogyRecommendationStructuredOutput = z
+  .object({
+    kind: z.enum(['recommendation', 'abstain']),
+    method_id: PedagogyMethodId.optional(),
+    rationale_md: z.string().trim().min(1).max(2000).optional(),
+    safety_constraints: z.array(z.string().trim().min(1).max(500)).min(1).max(12).optional(),
+    reason_code: z.enum(['insufficient_grounding', 'conflicting_history']).optional(),
+    detail_md: z.string().trim().min(1).max(2000).optional(),
+  })
+  .strict();
+
 const PedagogyPolicyExclusion = z
   .object({
     method_id: PedagogyMethodId,
@@ -119,20 +139,22 @@ const PedagogyPolicyExclusion = z
   })
   .strict();
 
+export const ConcretePedagogyRecommendation = z
+  .object({
+    kind: z.literal('recommendation'),
+    recommendation_version: z.literal(INTERVENTION_CONTRACT_VERSION),
+    method_id: PedagogyMethodId,
+    method_definition_version: z.literal(PEDAGOGY_METHOD_DEFINITION_VERSION),
+    rationale_md: z.string().trim().min(1).max(2000),
+    safety_constraints: z.array(z.string().trim().min(1).max(500)).min(1).max(12),
+    candidate_ids: z.array(PedagogyMethodId).min(1),
+    excluded: z.array(PedagogyPolicyExclusion),
+    model_run_id: z.string().trim().min(1).max(240),
+  })
+  .strict();
+
 export const PedagogyRecommendation = z.discriminatedUnion('kind', [
-  z
-    .object({
-      kind: z.literal('recommendation'),
-      recommendation_version: z.literal(INTERVENTION_CONTRACT_VERSION),
-      method_id: PedagogyMethodId,
-      method_definition_version: z.literal(PEDAGOGY_METHOD_DEFINITION_VERSION),
-      rationale_md: z.string().trim().min(1).max(2000),
-      safety_constraints: z.array(z.string().trim().min(1).max(500)).min(1).max(12),
-      candidate_ids: z.array(PedagogyMethodId).min(1),
-      excluded: z.array(PedagogyPolicyExclusion),
-      model_run_id: z.string().trim().min(1).max(240),
-    })
-    .strict(),
+  ConcretePedagogyRecommendation,
   z
     .object({
       kind: z.literal('abstain'),
@@ -237,6 +259,15 @@ export type InterventionPackageReviewModelOutputT = z.infer<
   typeof InterventionPackageReviewModelOutput
 >;
 
+/** Flat provider schema; the canonical reader above enforces pass/fail branch rules. */
+export const InterventionPackageReviewStructuredOutput = z
+  .object({
+    verdict: z.enum(['pass', 'fail']),
+    failure_codes: z.array(InterventionPackageReviewFailureCode).max(12),
+    summary_md: z.string().trim().min(1).max(2000),
+  })
+  .strict();
+
 export const InterventionPackageReviewAudit = z
   .object({
     review_version: z.literal(INTERVENTION_CONTRACT_VERSION),
@@ -251,7 +282,7 @@ export const InterventionPreparationAttempt = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('author_failed'),
-      attempt: z.number().int().min(1).max(2),
+      attempt: z.number().int().min(1).max(MAX_INTERVENTION_PACKAGE_ATTEMPTS),
       author_task_run_id: z.string().trim().min(1).max(240).optional(),
       failure_code: z.string().trim().min(1).max(160),
     })
@@ -259,7 +290,7 @@ export const InterventionPreparationAttempt = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('reviewed_package'),
-      attempt: z.number().int().min(1).max(2),
+      attempt: z.number().int().min(1).max(MAX_INTERVENTION_PACKAGE_ATTEMPTS),
       package: InterventionPackage,
       review: InterventionPackageReviewAudit,
       deterministic_failure_codes: z.array(z.string().trim().min(1).max(160)).max(30),
@@ -271,13 +302,7 @@ export type InterventionPreparationAttemptT = z.infer<typeof InterventionPrepara
 export const InterventionAuthoringContext = z
   .object({
     snapshot: InterventionSnapshot,
-    recommendation: PedagogyRecommendation.refine(
-      (value) => value.kind === 'recommendation',
-      'package authoring requires a concrete recommendation',
-    ),
+    recommendation: ConcretePedagogyRecommendation,
   })
   .strict();
-export type InterventionAuthoringContextT = {
-  snapshot: InterventionSnapshotT;
-  recommendation: Extract<PedagogyRecommendationT, { kind: 'recommendation' }>;
-};
+export type InterventionAuthoringContextT = z.infer<typeof InterventionAuthoringContext>;

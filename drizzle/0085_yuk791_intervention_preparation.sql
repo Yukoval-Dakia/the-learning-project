@@ -23,6 +23,10 @@ CREATE TABLE "intervention" (
   "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
   "activated_at" timestamp with time zone,
   CONSTRAINT "intervention_id_version_pk" PRIMARY KEY ("id", "version"),
+  CONSTRAINT "intervention_source_probe_result_event_fk"
+    FOREIGN KEY ("source_probe_result_event_id") REFERENCES "event"("id") ON DELETE NO ACTION ON UPDATE NO ACTION,
+  CONSTRAINT "intervention_conjecture_event_fk"
+    FOREIGN KEY ("conjecture_event_id") REFERENCES "event"("id") ON DELETE NO ACTION ON UPDATE NO ACTION,
   CONSTRAINT "intervention_version_positive_ck" CHECK ("version" > 0),
   CONSTRAINT "intervention_revision_nonnegative_ck" CHECK ("revision" >= 0),
   CONSTRAINT "intervention_status_ck" CHECK (
@@ -46,7 +50,9 @@ CREATE TABLE "intervention" (
   ),
   CONSTRAINT "intervention_active_shape_ck" CHECK (
     "status" <> 'active' OR (
-      "recommendation_json" ->> 'kind' = 'recommendation'
+      "recommendation_json" IS NOT NULL
+      AND "recommendation_json" ->> 'kind' = 'recommendation'
+      AND "package_json" IS NOT NULL
       AND jsonb_typeof("package_json") = 'object'
       AND "failure_code" IS NULL
       AND "activated_at" IS NOT NULL

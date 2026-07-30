@@ -153,6 +153,18 @@ export const agencyCapability = defineCapability({
           import('./jobs/prepare_intervention').then((m) => m.buildPrepareInterventionHandler),
       },
       {
+        // Restored `preparing` aggregates are durable business state, while
+        // pg-boss rows are operational and are not in the archive. Reconcile
+        // within two minutes and replace missing/terminal job ids transactionally.
+        name: 'intervention_prepare_recovery',
+        schedule: { cron: '1-59/2 * * * *', tz: 'Asia/Shanghai' },
+        queue: 'fast',
+        load: () =>
+          import('./server/intervention/reconcile').then(
+            (m) => m.buildInterventionPrepareRecoveryHandler,
+          ),
+      },
+      {
         // YUK-758 DAG 成员（根）：propose-only 生产者，读 tree/goals 产 goal_scope 提议入人审
         // inbox，不消费其它夜链 job 的 live 产物（旧 03:50 错峰是时钟巧合）。cron 移除。
         name: 'goal_scope_propose_nightly',
