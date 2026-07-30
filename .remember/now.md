@@ -19,9 +19,11 @@
 4. 首轮独立 review 发现 reopened/ready lifecycle 可重复初审；现已移除 reopened，并为
    OCR review 与 PR-Agent guide 增加已完成初审的跨事件幂等检查。只有显式 OCR manual
    dispatch 可绕过初审锁。
-5. `AGENTS.md`、`CLAUDE.md` 与两份 PR skill 统一 review budget：一轮初审 + 最多一轮
+5. 唯一验证轮发现 OCR summary-only 路径只写 issue comment；OCR 幂等检查现同时识别
+   tagged pull-request review 与 tagged issue summary。按预算不再启动第三轮 review。
+6. `AGENTS.md`、`CLAUDE.md` 与两份 PR skill 统一 review budget：一轮初审 + 最多一轮
    P0/P1 修复验证；P2/minor/nit 默认不阻塞、不触发新 push。
-6. exact-head `CI Gate` 明确为自动硬 gate；无未裁决 P0/P1 时不等待 advisory review
+7. exact-head `CI Gate` 明确为自动硬 gate；无未裁决 P0/P1 时不等待 advisory review
    pending/failure/cancel/timeout。
 
 ## 验证证据

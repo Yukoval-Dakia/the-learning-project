@@ -16,6 +16,8 @@
     ready_for_review 初审。OCR 保留带 `pr_number` 的 `workflow_dispatch` 手动验证入口。
   - 首轮 review 发现 lifecycle 事件仍可重复初审；现已移除 reopened，并在 OCR review
     与 PR-Agent guide 写入后做跨事件幂等检查。只有显式 OCR manual dispatch 绕过初审锁。
+  - 唯一验证轮发现 OCR summary-only 路径不创建 pull-request review；幂等检查现同时
+    识别 tagged review 与 tagged issue summary，关闭该漏口。按预算不再启动第三轮 review。
   - 两个 review job 名称显式标注 advisory；OCR 手动入口统一从 GitHub API 解析并验证
     当前 PR/base/head，拒绝 draft、fork 与 Dependabot。
   - agent/Claude PR policy 统一为最多一轮初审 + 一轮 P0/P1 修复后的验证审；push 后新 bot

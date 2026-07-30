@@ -73,15 +73,27 @@ jobs:
             }
 
             if (context.eventName !== 'workflow_dispatch') {
-              const reviews = await github.paginate(github.rest.pulls.listReviews, {
-                ...context.repo,
-                pull_number: prNumber,
-                per_page: 100,
-              });
-              const alreadyReviewed = reviews.some((review) =>
-                review.user?.login === 'github-actions[bot]' &&
-                String(review.body || '').includes('<!-- ocr-codex-review run=')
-              );
+              const [reviews, issueComments] = await Promise.all([
+                github.paginate(github.rest.pulls.listReviews, {
+                  ...context.repo,
+                  pull_number: prNumber,
+                  per_page: 100,
+                }),
+                github.paginate(github.rest.issues.listComments, {
+                  ...context.repo,
+                  issue_number: prNumber,
+                  per_page: 100,
+                }),
+              ]);
+              const alreadyReviewed =
+                reviews.some((review) =>
+                  review.user?.login === 'github-actions[bot]' &&
+                  String(review.body || '').includes('<!-- ocr-codex-review run=')
+                ) ||
+                issueComments.some((comment) =>
+                  comment.user?.login === 'github-actions[bot]' &&
+                  String(comment.body || '').includes('<!-- ocr-codex-review-summary:')
+                );
               if (alreadyReviewed) {
                 core.notice(`PR #${prNumber} already has an initial OCR review; skipping this lifecycle event.`);
                 core.setOutput('should_review', 'false');
