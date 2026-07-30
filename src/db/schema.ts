@@ -1527,6 +1527,90 @@ export const kc_typed_state = pgTable(
   ],
 );
 
+// YUK-791 — versioned intervention preparation aggregate.
+//
+// One row is one immutable preparation version. `id` is stable across reprepare;
+// `(id, version)` is the aggregate key. Agency is the only lifecycle writer.
+// Practice returns authored package candidates through a public port but never
+// mutates this table. Snapshot/recommendation/package/attempt JSON are parsed
+// through the canonical Zod contracts at every store boundary.
+//
+// This is authored, causally important state (not a disposable worker cache), so
+// it belongs in FK_ORDER and bumps the backup schema version.
+export const intervention = pgTable(
+  'intervention',
+  {
+    id: text('id').notNull(),
+    version: integer('version').notNull(),
+    revision: integer('revision').notNull().default(0),
+    source_probe_result_event_id: text('source_probe_result_event_id').notNull(),
+    conjecture_event_id: text('conjecture_event_id').notNull(),
+    status: text('status', {
+      enum: ['preparing', 'preparation_failed', 'active', 'needs_revision', 'settled', 'canceled'],
+    })
+      .notNull()
+      .default('preparing'),
+    delivery_mode: text('delivery_mode', { enum: ['shadow', 'eligible'] })
+      .notNull()
+      .default('shadow'),
+    outcome: text('outcome', { enum: ['effective', 'ineffective', 'inconclusive'] }),
+    idempotency_key: text('idempotency_key').notNull(),
+    preparation_job_id: text('preparation_job_id'),
+    snapshot_json: jsonb('snapshot_json').$type<JsonObject>().notNull(),
+    recommendation_json: jsonb('recommendation_json').$type<JsonObject>(),
+    package_json: jsonb('package_json').$type<JsonObject>(),
+    preparation_attempts_json: jsonb('preparation_attempts_json')
+      .$type<JsonObject[]>()
+      .notNull()
+      .default([]),
+    failure_code: text('failure_code'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    activated_at: timestamp('activated_at', { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.id, t.version] }),
+    uniqueIndex('intervention_source_version_uq').on(t.source_probe_result_event_id, t.version),
+    uniqueIndex('intervention_idempotency_key_uq').on(t.idempotency_key),
+    uniqueIndex('intervention_one_preparing_version_uq')
+      .on(t.id)
+      .where(sql`${t.status} = 'preparing'`),
+    index('intervention_status_updated_idx').on(t.status, t.updated_at.desc()),
+    index('intervention_conjecture_idx').on(t.conjecture_event_id, t.version.desc()),
+    check('intervention_version_positive_ck', sql`${t.version} > 0`),
+    check('intervention_revision_nonnegative_ck', sql`${t.revision} >= 0`),
+    check(
+      'intervention_status_ck',
+      sql`${t.status} IN ('preparing','preparation_failed','active','needs_revision','settled','canceled')`,
+    ),
+    check('intervention_delivery_mode_ck', sql`${t.delivery_mode} IN ('shadow','eligible')`),
+    check(
+      'intervention_outcome_ck',
+      sql`${t.outcome} IS NULL OR ${t.outcome} IN ('effective','ineffective','inconclusive')`,
+    ),
+    check(
+      'intervention_attempts_array_ck',
+      sql`jsonb_typeof(${t.preparation_attempts_json}) = 'array'`,
+    ),
+    check(
+      'intervention_active_shape_ck',
+      sql`${t.status} <> 'active' OR (
+        ${t.recommendation_json}->>'kind' = 'recommendation'
+        AND jsonb_typeof(${t.package_json}) = 'object'
+        AND ${t.failure_code} IS NULL
+        AND ${t.activated_at} IS NOT NULL
+      )`,
+    ),
+    check(
+      'intervention_failed_shape_ck',
+      sql`${t.status} <> 'preparation_failed' OR (
+        ${t.failure_code} IS NOT NULL
+        AND ${t.activated_at} IS NULL
+      )`,
+    ),
+  ],
+);
+
 // YUK-445 (A11 — 谨慎 / 速度-精度轴) — learner_axis_state: per-KC SLOW-VARYING descriptor
 // recovered by EZ-diffusion (Wagenmakers 2007) from this learner's own RT + accuracy.
 //

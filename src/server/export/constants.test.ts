@@ -10,7 +10,7 @@ import {
 } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.16" (YUK-350 generation grounding enters backup)', () => {
+  it('SCHEMA_VERSION is "4.17" (YUK-791 intervention lineage enters backup)', () => {
     // 4.15 → 4.16 (YUK-350): immutable question_answer_anchor,
     // question_generation_plan, and question_generation_binding authored provenance.
     // New FK_ORDER tables require a backup schema bump.
@@ -42,14 +42,14 @@ describe('export constants', () => {
     // (异构认知关系边，peer of knowledge_edge)。新表入 FK_ORDER 必 bump (per archive.ts
     // assertEveryTableIsBackedUpOrExcluded)。misconception 加 status/source/seen/evidence
     // 列是既有表的 additive 列，随整行 dump/restore，不单独 bump (表=bump，列=不 bump)。
-    expect(SCHEMA_VERSION).toBe('4.16');
+    expect(SCHEMA_VERSION).toBe('4.17');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 49 tables in topological order', () => {
+  it('FK_ORDER lists all 50 tables in topological order', () => {
     // 17 → 24: ②d backup-orphan fix added 7 persistent business tables that had
     // silently dropped out of the wipe-then-restore payload (artifact_block_ref,
     // ai_task_runs, mistake_variant, goal, proposal_signals, practice_stream_item,
@@ -95,9 +95,16 @@ describe('export constants', () => {
     // 子后），placed last as the newest additive cluster。
     // 46 → 49 (YUK-350): immutable question_answer_anchor → question_generation_plan →
     // question_generation_binding (authored generation provenance, all backed up).
-    expect(FK_ORDER.length).toBe(49);
+    // 49 → 50 (YUK-791): versioned intervention snapshot/recommendation/package lineage.
+    expect(FK_ORDER.length).toBe(50);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('placement_starter_cost_component');
+  });
+
+  it('FK_ORDER includes YUK-791 intervention lineage (authored, non-excluded)', () => {
+    expect(FK_ORDER).toContain('intervention');
+    expect(BACKUP_EXCLUDED_TABLES.has('intervention')).toBe(false);
+    expect(FK_ORDER.indexOf('event')).toBeLessThan(FK_ORDER.indexOf('intervention'));
   });
 
   it('FK_ORDER includes YUK-599 subject 控制面六表（authored 配置 + journal，承重非排除）', () => {

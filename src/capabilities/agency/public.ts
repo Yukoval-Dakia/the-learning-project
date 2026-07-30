@@ -16,3 +16,5 @@ export type {
 export { getEffectiveProbeResultStatuses } from './server/conjecture/probe-evidence';
 export type { EffectiveProbeResultStatus } from './server/conjecture/probe-evidence';
 export { misconceptionHardConfirmEnabled } from './server/misconception-promote';
+export { loadInterventionAuthoringContext } from './server/intervention/store';
+export type { InterventionAuthoringContextT } from './server/intervention/contracts';

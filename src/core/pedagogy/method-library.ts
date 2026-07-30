@@ -1,20 +1,20 @@
 // YUK-506 — 教学法 8 法 palette（方法定义 + state guard）。纯数据 + 纯函数，零 IO。
 //
-// WIRING STATUS: **design-selected, not wired**，台账 = **ADR-0050 §(c)**。本模块连同
-// `policy.ts` 目前**零外部消费者**——全仓对 `@/core/pedagogy` 的引用只有自身目录与两个 unit test；
-// YUK-796 已选出真实消费点，但 YUK-791 尚未实施。这是刻意的“设计已定、实现未接”，不是遗漏。
-// 本模块将作为 Agency `prepare_intervention` 同一波次里的确定性合法候选边界；
+// WIRING STATUS: **live consumer shipped by YUK-791**，台账 = **ADR-0050 §(c)**。
+// Agency `prepare_intervention` 的 recommendation module 是真实生产 caller：
+// 本模块作为同一波次里的确定性合法候选边界；
 // 单次 recommendation task 只能从候选中选一个方法或 abstain，
 // intervention-scoped QuestionAuthor 随即在同一波次消费。
 // 它不接收 UI raw context，不学习“方法×人”的因果排名，
-// 也不独立推进 intervention lifecycle。YUK-796 仍是设计票，
-// 所以当前生产 caller 仍为零；“已选复用”不得误写成“已经通电”。
+// 也不独立推进 intervention lifecycle。recommendation 会在同 wave 立刻被
+// Practice QuestionAuthor 消费；没有 dead recommendation 成功态。
 //
 // 为什么**不**登记 `*_ENABLED` flag：`audit:flags` 是双向对账——ledger 每条都要求其声明的 `file` 里
 // 存在该 flag 名的**活 token**（`scripts/audit-flags.ts` reconcileFlags → STALE `name-missing`）。
 // palette 是纯数据，没有任何 runtime 判定点能承载这个 token，硬塞一个只为登记而生的 flag 会立刻
-// 制造一条 STALE 发现（为了让审计变绿而弄脏审计）。等 YUK-791 真接线时，再按 A5
-// dark-ship 纪律在**真正的消费点**登记闸门 flag。审计遇到本模块请引 ADR-0050 §(c)，不要重开死码发现。
+// 制造一条 STALE 发现（为了让审计变绿而弄脏审计）。YUK-791 已在真正的 delivery
+// 判定点登记 AUTO_INTERVENTION_EXPANSION_ENABLED；它默认 OFF，只允许 shadow
+// preparation，不假装 palette 自身有开关。
 
 import { z } from 'zod';
 

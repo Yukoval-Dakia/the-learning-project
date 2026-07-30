@@ -2,66 +2,56 @@
 
 ## Active line
 
-- 唯一 active lane：**YUK-827 Probe 响应签名可诊断性**。
-- branch：`codex/yuk-827-response-signature`。
-- 隔离 worktree：`the-learning-project-worktrees/yuk-827-response-signature`。
-- 基线：`origin/main@09ac0f21`，已包含 YUK-796 / PR #1117。
+- 唯一 active lane：**YUK-791 干预准备通电**。
+- branch：`codex/yuk-791-intervention-prepare`。
+- 隔离 worktree：`the-learning-project-worktrees/yuk-791-intervention-prepare`。
+- 基线：`origin/main@abc62490`，已包含 YUK-827 / PR #1118。
 - owner 主工作树有既存未提交改动；本轮没有修改主工作树。
 - 完整 gate 只监听 GitHub Actions `CI Gate`，不在本地重跑。
 
 ## 本轮实现
 
-1. `ConjectureProbePackageV2` 不规定必须二元选择，支持：
-   `single_choice`、`multiple_select`、`short_answer`、
-   `answer_with_reason`、`constructed_response`。
-2. 每道题必须有可区分的 gold 与 target-error response signature；裸单选若正确理解与
-   目标误区会落到同一响应、或只能随机猜测，结构门直接拒绝。
-3. 新 proposal 只能写 V2 + audit v3；历史 V1/V2 仍可读，混合版本拒绝。
-4. QuestionAuthor/Reviewer 明确检查实际题面、独立求解、multi-select 集合、表示变化与
-   tested claim；最多两次整包生成，失败后 abstain。
-5. immutable `probe_spec` 随 question snapshot 持久化；V2 快照缺失、被编辑或版本漂移，
-   在付费 Judge 前 409 fail closed。
-6. `MultimodalDirectJudgeTask` 同一次调用同时输出 `answer_result` 和
-   `gold | target_error | neither | ambiguous`；普通答错不等价于命中目标误区，并记为
-   终止性 `inconclusive`，消费本题但不改变猜想证据。
-7. lifecycle 持久化/replay response judgement；旧事件无 judgement 时返回明确降级原因。
-8. migration `0084_yuk827_response_signature_cutover.sql` 只退休迁移前仍 active/pending
-   的 agent conjecture，不改写 owner proposal、rate、retract、mark_wrong 或 supersede；
-   latest restore 仍按 active 处理。暂停的 YUK-791 分支合并前必须 rebase 并重新编号其
-   冲突的 `0084`。
-9. typed client、API response、grounding artifact、prompt audit snapshot 与相关 fixtures
-   已同步。
+1. 新增 Agency-owned、versioned `intervention` aggregate，冻结 snapshot、推荐、整包、
+   两轮审计、terminal failure 与 delivery mode；进入 backup/restore 并有 migration smoke。
+2. durable probe-result subscriber 只接受 `evidence_for + outcome=0` 且 response judgement
+   明确为 gradable target-error match；再验证 proposal/question/result direct chain 仍有效。
+3. 被纠正结果、legacy 无 judgement、普通错误或 question/provenance 漂移均不 enqueue。
+4. subscriber 与 pg-boss enqueue 共事务，使用确定性 aggregate identity + 持久 UUID job id；
+   重复 id 返回 null 视为已有 job，重复 delivery 不产生第二个 aggregate。
+5. Agency 用冻结 learner/KC/conjecture snapshot 调用确定性 8 法 shortlist；owner 禁用后无
+   安全方法时不调用模型，直接 `recommendation:no_safe_method` fail closed。
+6. recommendation 在同一 `prepare_intervention` wave 交给 Practice QuestionAuthor；后者公共
+   输入只有 `intervention_id`，经 Agency public reader 取得权威 snapshot/recommendation。
+7. 每个 package 原子包含材料、immediate/delayed/transfer；三题复用 response-aware Probe
+   V2，支持多种响应形式且必须有可区分的 gold/target-error signature。
+8. author 与 reviewer 是同模型路由的两次独立调用；确定性 validator 再检查 lineage、
+   method、claim、target error、重复题面、答案泄露和 response signature collision。
+9. 最多一次整包重生成；两次仍失败写 `preparation_failed`，package 保持 null；通过才
+   原子 `active` 并写 lifecycle event。provider/transport error 抛给 pg-boss retry。
+10. `AUTO_INTERVENTION_EXPANSION_ENABLED` 默认 OFF；当前 aggregate 可 active 但
+    `delivery_mode=shadow`，不代表 Today/B3 可以交付。
 
 ## 验证证据
 
-- 固定 8 个 mock 输入，模型输出不 mock；继续复用真实 production orchestration、
-  prompts、parsers。
-- 最终选择结果：
-  - grounded proposal：7/8（87.5%）
-  - serious factual error：0
-  - claim/probe mismatch：0
-  - operational error：0
-  - chain case：三次调用无语义共识，安全 `abstain`
-- 当前代码重新解析 7 个入选 proposal：7/7 PASS。
-- targeted unit：9 files / 273 tests PASS。
-- targeted DB：6 files / 103 tests PASS。
-- YUK-827 migration smoke：1 PASS / 28 skipped。
+- targeted unit：3 files / 118 tests PASS。
+- targeted DB：1 file / 8 tests PASS，覆盖成功、整包重试失败、重复投递/null send、
+  no-safe-method、legacy judgement、corrected source、signature collision。
+- YUK-791 migration smoke：1 PASS / 29 skipped。
 - `pnpm typecheck` PASS。
-- prompt audit：12 snapshots CLEAN。
-- review/CI 修正扩展验证：unit 284、DB 123、migration 1、typecheck PASS。
-- API client 与 Postman collection 已重新生成。
+- scoped Biome PASS；capability boundary audit 0。
+- schema audit：unallowed stub 0；`intervention.outcome` 明确 allowlist 到 YUK-792。
+- flag audit：本 lane 的 reader marker/ledger 无 drift；全仓 strict 模式仍有基线已有的
+  `NOTES_MASTERY_SUBSCRIPTION_ENABLED` 未登记警告，不属于本 lane 行为改动。
 
 ## 边界
 
-- YUK-827 development gate 已过，但这不是 YUK-814 的真实 owner 发布 gate。
+- YUK-791 是 shadow preparation backbone，不关闭 YUK-814 发布/扩量 gate。
 - YUK-814 Gate A/B/C 仍开放；auto-intervention expansion 保持 OFF。
-- YUK-822 是 P1，owner 明确本轮只保留解释和计划，不写实现。
-- canonical Opus 的 429 只记 operational；开发 gate 使用与旧基线一致的
-  supported Xiaomi/Mimo fallback。
+- YUK-822 是 P1，owner 明确只保留解释和计划，不写实现。
+- YUK-792 scheduler/settlement、Today/Brief UI、Copilot、Growth projection 不在本 PR。
 
 ## 下一步
 
-1. commit/push，创建 ready PR。
-2. 仅监听 exact-head GitHub Actions `CI Gate`；处理 review thread 后 squash merge。
-3. merge 后把 YUK-827 更新为 Done。
-4. 恢复 YUK-791；先 rebase/renumber migration，再继续 intervention 准备链。
+1. diff 自检并将本地 checkpoint/fixup 整理为一个实质 commit。
+2. push，创建 ready PR，仅监听 exact-head GitHub Actions `CI Gate`。
+3. 处理独立 review；CI/review 全绿后 squash merge并对齐 Linear YUK-791。

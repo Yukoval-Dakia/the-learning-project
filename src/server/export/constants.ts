@@ -84,7 +84,10 @@
 // YUK-350: question_answer_anchor / question_generation_plan / question_generation_binding —
 // 生成溯源三表（immutable authored generation provenance；anchor 先于 plan 先于 binding）进 FK_ORDER。
 // NEW FK_ORDER tables 必 bump：46 → 49 tables，4.15 → 4.16。
-export const SCHEMA_VERSION = '4.16';
+// YUK-791: intervention — immutable snapshot + recommendation/package/review lineage.
+// Authored causal state cannot be rebuilt after restore, so it enters FK_ORDER.
+// NEW FK_ORDER table 必 bump：49 → 50 tables，4.16 → 4.17。
+export const SCHEMA_VERSION = '4.17';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -173,6 +176,10 @@ export const FK_ORDER = [
   'artifact_block_ref',
   'answer',
   'event',
+  // YUK-791 — versioned intervention aggregate. Loose refs to event/knowledge only,
+  // but place it after event for readable restore lineage. Authored recommendation,
+  // package, reviews, and terminal reason are not disposable worker state.
+  'intervention',
   'tool_call_log',
   'cost_ledger',
   'ai_task_runs',
