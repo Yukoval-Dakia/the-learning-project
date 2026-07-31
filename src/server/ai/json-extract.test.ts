@@ -86,15 +86,16 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
   });
 
   it('合法但会腐蚀 LaTeX 的单字符 escape → 保留公式，同时不改写真实换行', () => {
-    const text = String.raw`{"formula":"\frac{1}{2}+\text{半}+\nabla f","line":"first\nNext"}`;
+    const text = String.raw`{"formula":"$\frac{1}{2}+\text{半}+\nabla f$","line":"first\nother line","tab":"left\tbar"}`;
     // 原生 JSON.parse 会把 \f / \t / \n 吞成控制字符，属于静默内容损坏。
     expect((JSON.parse(text) as { formula: string }).formula).not.toContain('\\frac');
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const r = parseJsonObjectLoose(text, 'latex', { riskyRepair: 'reject' });
     expect(r).toEqual({
       json: {
-        formula: '\\frac{1}{2}+\\text{半}+\\nabla f',
-        line: 'first\nNext',
+        formula: '$\\frac{1}{2}+\\text{半}+\\nabla f$',
+        line: 'first\nother line',
+        tab: 'left\tbar',
       },
       repaired: 'deterministic',
     });

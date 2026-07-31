@@ -70,16 +70,32 @@ function escapeContentQuotes(slice: string): string {
 function escapeInvalidJsonStringBackslashes(slice: string): string {
   const out: string[] = [];
   let inString = false;
+  let mathDelimiter: '$' | '$$' | '\\(' | '\\[' | null = null;
   for (let i = 0; i < slice.length; i += 1) {
     const ch = slice[i];
     if (!inString) {
       out.push(ch);
-      if (ch === '"') inString = true;
+      if (ch === '"') {
+        inString = true;
+        mathDelimiter = null;
+      }
       continue;
     }
     if (ch === '"') {
       out.push(ch);
       inString = false;
+      mathDelimiter = null;
+      continue;
+    }
+    if (ch === '$') {
+      const delimiter = slice[i + 1] === '$' ? '$$' : '$';
+      if (mathDelimiter === delimiter) {
+        mathDelimiter = null;
+      } else if (mathDelimiter === null) {
+        mathDelimiter = delimiter;
+      }
+      out.push(delimiter);
+      if (delimiter === '$$') i += 1;
       continue;
     }
     if (ch !== '\\') {
@@ -95,7 +111,8 @@ function escapeInvalidJsonStringBackslashes(slice: string): string {
     }
     const suffix = slice.slice(i + 1);
     const likelyLatexCommand =
-      /^[bfrt][A-Za-z]/.test(suffix) || /^n(?:abla|eg|eq|ewline|ot|u)/.test(suffix);
+      mathDelimiter !== null &&
+      (/^[bfrt][A-Za-z]/.test(suffix) || /^n(?:abla|eg|eq|ewline|ot|u)/.test(suffix));
     if (next && 'bfnrt'.includes(next) && !likelyLatexCommand) {
       out.push(ch, next);
       i += 1;
@@ -105,6 +122,14 @@ function escapeInvalidJsonStringBackslashes(slice: string): string {
       out.push(slice.slice(i, i + 6));
       i += 5;
       continue;
+    }
+    if ((next === '(' || next === '[') && mathDelimiter === null) {
+      mathDelimiter = next === '(' ? '\\(' : '\\[';
+    } else if (
+      (next === ')' && mathDelimiter === '\\(') ||
+      (next === ']' && mathDelimiter === '\\[')
+    ) {
+      mathDelimiter = null;
     }
 
     out.push('\\\\');
