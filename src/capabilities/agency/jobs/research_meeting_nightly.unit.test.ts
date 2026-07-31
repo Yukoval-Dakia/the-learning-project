@@ -1136,6 +1136,7 @@ describe('runResearchMeetingNightly', () => {
             ]
           : [];
       const deps = baseDeps({
+        executionId: 'exec_test',
         getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
         induceConjectureFn: vi.fn(async () => {
           throw new ConjectureInductionOperationalError(
@@ -1156,6 +1157,25 @@ describe('runResearchMeetingNightly', () => {
       await expect(runResearchMeetingNightly({} as never, deps)).rejects.toThrow(
         `${taskKind} output unavailable`,
       );
+      await expect(runResearchMeetingNightly({} as never, deps)).rejects.toThrow(
+        `${taskKind} output unavailable`,
+      );
+      const operationalFailureEvents = writeEventFn.mock.calls
+        .map(([, input]) => input)
+        .filter(
+          (input) => input.action === 'experimental:conjecture_probe_quality_operational_failed',
+        );
+      expect(operationalFailureEvents).toHaveLength(2);
+      expect(new Set(operationalFailureEvents.map((input) => input.id)).size).toBe(2);
+      expect(
+        operationalFailureEvents.map((input) => ({
+          execution_id: (input.payload as { execution_id?: unknown }).execution_id,
+          cell_key: (input.payload as { cell_key?: unknown }).cell_key,
+        })),
+      ).toEqual([
+        { execution_id: 'exec_test', cell_key: 'concept_confusion:k_a' },
+        { execution_id: 'exec_test', cell_key: 'concept_confusion:k_a' },
+      ]);
       expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(expect.anything(), taskKind);
       expect(writeAiProposalFn).not.toHaveBeenCalled();
       expect(writeEventFn).toHaveBeenCalledWith(

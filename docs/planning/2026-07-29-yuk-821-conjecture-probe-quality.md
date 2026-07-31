@@ -172,7 +172,11 @@ switch 开启。
    reprepare command 已真实上线时才自动重新准备，否则像 P0 v1/v2 升级一样，用
    agent-authored correction 退出 pending，等待新证据生成新 proposal，绝不能留下
    永远 409 的死卡片；
-4. validator 版本变化产生新准备版本，不能覆盖旧题与旧审计。
+4. shadow → blocking 也有独立 cutover：app 暴露 accept route 前、worker 注册
+   handler 前，都会在 proposal decision lock 下撤回当前 policy 已记录 fail 的
+   pending v4 conjecture，释放 cause × KC 去重键后再生成替代 proposal；两个进程
+   同时启动由确定性 correction event id 保证幂等；
+5. validator 版本变化产生新准备版本，不能覆盖旧题与旧审计。
 
 ### 4.6 测试矩阵
 
@@ -190,7 +194,9 @@ switch 开启。
 1. 只 mock 输入证据包；输出必须走真实 `MindModelInductionTask → Author → Reviewer → deterministic validator`；
 2. 固定包含两类已知反例和一组应通过样例，验证旧失败可以稳定被拦截；
 3. 先 shadow 记录“LLM reviewer 通过但确定性 validator 拒绝”的分歧，不影响现有 P0；
-4. 人工检查分歧，确认 parser 没有误杀后再把 P1 切到 blocking；
+4. 检查 mock-input/真实产品链路输出，确认 parser 没有误杀后再把 P1 切到 blocking；
+   flag-on 重启必须先看到 app/worker 的 blocking cutover 报告，再允许新 proposal
+   进入生产链路；
 5. 任一严重事实错误漏过，或 validator 对支持语法出现误杀，关闭 P1 blocking flag，P0 继续工作；
 6. P1 是否进入 canary 不依赖真实 owner 数据；mock-input/真实-output 可以完成开发验收。真实 owner 数据只决定是否扩大自动干预，不再阻塞实现。
 
@@ -210,7 +216,15 @@ switch 开启。
 - 固定 8-case mock-input/真实模型-output 回归相对旧基线有改善后，通过开发 gate；
   真实 owner 数据只决定是否扩大自动干预。
 
-### P1（未实施）
+### P1（YUK-822）
 
-以上数学确定性验证器、schema v3、shadow/blocking 发布步骤均只在本文件中规划；本次代码不包含它们。
-后续实施由 `YUK-822` 跟踪。
+- subject-owned validator registry、数学单位/异分母分数验证器和精确有理数 parser 已实现；
+- audit v4 持久绑定 subject、policy、每个 validator 的结果与有界 evidence；
+- shadow 默认开启、blocking 默认关闭；blocking failure 会触发整包重生成并在 accept
+  重新计算；
+- 初次 v4 部署 migration 和后续 shadow → blocking boot cutover 都会撤回不可接受的
+  pending proposal，不留下 409/dedup 死卡片；
+- provider/reviewer operational failure 每次 delivery 追加独立 durable evidence，
+  不被 first-write-wins 合并；
+- 完整 correctness 只由 GitHub exact-head CI 判定；产品质量按 mock-input/部署后真实
+  output 评测。

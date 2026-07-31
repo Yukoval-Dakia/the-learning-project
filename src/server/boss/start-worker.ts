@@ -7,6 +7,7 @@
 import type { PgBoss } from 'pg-boss';
 
 import { capabilities } from '@/capabilities';
+import { prepareSubjectProbeValidatorBlockingCutover } from '@/capabilities/agency/public';
 import type { Db } from '@/db/client';
 import { createBoss, isQueueCreateRace, markBossStarted } from '@/server/boss/client';
 import { registerHandlers } from '@/server/boss/handlers';
@@ -20,6 +21,13 @@ export async function startBossWorker(db: Db): Promise<PgBoss> {
   // YUK-599（v2 §4）— worker 首个 job 落地前水合 SubjectRegistry（never-throws：
   // hydrate 内部 WARN + 代码种子地板，绝不挡 worker boot）。
   await hydrateSubjectRegistryFromDb(db);
+  // YUK-822 blocking cutover is strict and precedes every handler. A flag-on
+  // restart must retire shadow-failed pending conjectures before they can keep
+  // occupying dedup keys under a policy that can no longer accept them.
+  const subjectValidatorCutover = await prepareSubjectProbeValidatorBlockingCutover(db);
+  if (subjectValidatorCutover.enabled) {
+    console.log('[worker] subject probe validator blocking cutover', subjectValidatorCutover);
+  }
   // F-2 (YUK-185) / PR #232 review (FIX #6) — the brief regen handler calls the
   // LLM via runTask, which needs XIAOMI_API_KEY (resolveTaskProvider throws
   // otherwise, providers.ts:88). Surface a missing key at BOOT — not per-scope

@@ -49,6 +49,17 @@ async function hydrateSubjectsBeforeServe(): Promise<void> {
   }
 }
 
+async function prepareSubjectProbeValidatorCutoverBeforeServe(): Promise<void> {
+  const [{ db }, { prepareSubjectProbeValidatorBlockingCutover }] = await Promise.all([
+    import('@/db/client'),
+    import('@/capabilities/agency/public'),
+  ]);
+  const report = await prepareSubjectProbeValidatorBlockingCutover(db);
+  if (report.enabled) {
+    console.log('[rw:api] subject probe validator blocking cutover', report);
+  }
+}
+
 // M5-T5b (YUK-321) — prod 静态面：RW_STATIC_DIR 指向 vite build 产物（web/dist）。
 // dev 不设此变量（Vite dev server 承担静态 + /api proxy）。serveStatic 未命中
 // 文件时 next() 放行 /api/*；catch-all GET 回 index.html（TanStack Router
@@ -84,6 +95,10 @@ async function startInProcessWorker(): Promise<void> {
 // 工具声明/load 错误 fail-fast，不暴露缺工具的残缺 API 面。
 void (async () => {
   await hydrateSubjectsBeforeServe();
+  // Strict when the blocking flag is enabled: do not expose an accept surface
+  // until shadow-failed pending proposals have been retired and their dedup keys
+  // are free for regeneration.
+  await prepareSubjectProbeValidatorCutoverBeforeServe();
   await registerToolsBeforeServe();
   serve({ fetch: app.fetch, port }, (info) => {
     const mounted = capabilities.flatMap((c) =>

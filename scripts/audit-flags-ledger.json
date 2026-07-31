@@ -42,7 +42,7 @@
     "polarity": "opt-in",
     "reader_marker": "parseFlag(process.env.SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED)",
     "file": "src/server/agency/conjecture/probe-quality.ts",
-    "notes": "YUK-822 subject-validator veto kill switch. Validators always run and persist shadow evidence; opt-in/default OFF controls only whether deterministic failures regenerate/abstain and block accept."
+    "notes": "YUK-822 subject-validator veto kill switch. Validators always run and persist shadow evidence; opt-in/default OFF controls whether deterministic failures regenerate/abstain and block accept. Flag-on app/worker boot first retires pending current-policy v4 shadow failures under the proposal decision lock so dedup cannot strand them."
   },
   "RESEARCH_MEETING_AGENT_ENABLED": {
     "kind": "env",

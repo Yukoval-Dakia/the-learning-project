@@ -218,10 +218,7 @@ function scheduledEventId(
 }
 
 function conjectureCellEventId(
-  prefix:
-    | 'conjecture_abstained'
-    | 'conjecture_probe_quality_operational_failed'
-    | 'conjecture_proposal',
+  prefix: 'conjecture_abstained' | 'conjecture_proposal',
   executionId: string,
   cell: EnrichedEvidenceCell,
 ): string {
@@ -247,11 +244,14 @@ function conjectureProposalEventId(executionId: string, cell: EnrichedEvidenceCe
   return conjectureCellEventId('conjecture_proposal', executionId, cell);
 }
 
-function conjectureProbeQualityOperationalFailureEventId(
-  executionId: string,
-  cell: EnrichedEvidenceCell,
-): string {
-  return conjectureCellEventId('conjecture_probe_quality_operational_failed', executionId, cell);
+function conjectureProbeQualityOperationalFailureEventId(): string {
+  // Unlike proposal/abstention outcomes, each retryable failure is a distinct
+  // observation. pg-boss redeliveries reuse executionId + cell.key, so hashing
+  // those stable fields would collapse later author/reviewer disagreements into
+  // the first event through writeEvent's first-write-wins idempotency. Keep the
+  // stable fields in the payload for grouping and append every delivery under a
+  // fresh event identity.
+  return `conjecture_probe_quality_operational_failed_${newId()}`;
 }
 
 async function defaultRunWithExecutionLock<T>(
@@ -1102,7 +1102,7 @@ async function runResearchMeetingNightlyClaimed(
             // Persist the complete terminal attempt before retry: task-run rows keep
             // hashes/digests, not deterministic subject-validator evidence.
             await writeEventFn(db, {
-              id: conjectureProbeQualityOperationalFailureEventId(executionId, cell),
+              id: conjectureProbeQualityOperationalFailureEventId(),
               actor_kind: 'agent',
               actor_ref: RESEARCH_MEETING_ACTOR,
               action: 'experimental:conjecture_probe_quality_operational_failed',

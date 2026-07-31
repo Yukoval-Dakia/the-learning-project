@@ -19,6 +19,13 @@ class MockPgBoss {
 
 vi.mock('pg-boss', () => ({ PgBoss: MockPgBoss, default: MockPgBoss }));
 vi.mock('@/capabilities', () => ({ capabilities: [] }));
+vi.mock('@/capabilities/agency/public', () => ({
+  prepareSubjectProbeValidatorBlockingCutover: vi.fn(async () => ({
+    enabled: false,
+    pending_scanned: 0,
+    retired: 0,
+  })),
+}));
 vi.mock('@/server/boss/handlers', () => ({ registerHandlers: vi.fn(async () => undefined) }));
 vi.mock('@/server/boss/handlers/ai_task_run_reconcile', () => ({
   reconcileStuckAiTaskRuns: vi.fn(async () => undefined),
