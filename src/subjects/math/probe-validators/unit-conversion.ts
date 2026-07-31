@@ -87,11 +87,19 @@ function parseAnswer(answer: string): ParsedUnitAnswer | null {
   const normalized = normalizeUnitText(answer);
   const matches = [
     ...normalized.matchAll(
-      /(?<![\w.])([+-]?\d+(?:\.\d+)?)(?![\w.])\s*(km\/h|km\/s|m\/h|m\/s|km|m)(?![a-z])/g,
+      /(?<![\w.])([+-]?\d+(?:\s*\/\s*\d+|\.\d+)?)(?![\w.])\s*(km\/h|km\/s|m\/h|m\/s|km|m)(?![a-z])/g,
     ),
   ];
   const match = matches.at(-1);
-  const value = match?.[1] ? parseDecimalRational(match[1]) : null;
+  const rawValue = match?.[1]?.replace(/\s+/g, '');
+  const value = rawValue?.includes('/')
+    ? (() => {
+        const [numerator, denominator] = rawValue.split('/');
+        return numerator && denominator ? rational(BigInt(numerator), BigInt(denominator)) : null;
+      })()
+    : rawValue
+      ? parseDecimalRational(rawValue)
+      : null;
   const unit = match?.[2];
   return value && unit ? { value, unit } : null;
 }

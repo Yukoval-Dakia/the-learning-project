@@ -76,16 +76,25 @@ export function extractFractionOperands(value: string): Rational[] {
 }
 
 /**
- * Answers may show working before the final value. The last rational token is
- * the conventional final-answer position; unsupported prose without any exact
- * rational remains ungradable rather than being guessed.
+ * Prefer an explicitly labelled answer, a leading answer, or the first equation
+ * result. A prose derivation can end in intermediate integers, so an arbitrary
+ * trailing numeric token is never treated as the answer.
  */
 export function extractFinalRational(value: string): Rational | null {
   const normalized = normalizeLatexFractions(value).replace(/[−–—]/g, '-');
+  const tokenPattern = String.raw`([+-]?\d+\s*\/\s*\d+|[+-]?\d+(?:\.\d+)?)`;
+  const marker = new RegExp(
+    String.raw`(?:答案|结果|答|answer|result)\s*(?:是|为|[:：=])?\s*${tokenPattern}`,
+    'i',
+  ).exec(normalized);
+  const leading = new RegExp(String.raw`^\s*${tokenPattern}(?![\w/])`).exec(normalized);
+  const equation = new RegExp(String.raw`=\s*${tokenPattern}(?![\w/])`).exec(normalized);
   const tokens = [
     ...normalized.matchAll(/(?<![\w/])([+-]?\d+\s*\/\s*\d+|[+-]?\d+(?:\.\d+)?)(?![\w/])/g),
   ];
-  const raw = tokens.at(-1)?.[1]?.replace(/\s+/g, '');
+  const selected =
+    marker?.[1] ?? leading?.[1] ?? equation?.[1] ?? (tokens.length === 1 ? tokens[0]?.[1] : null);
+  const raw = selected?.replace(/\s+/g, '');
   if (!raw) return null;
   if (raw.includes('/')) {
     const [numerator, denominator] = raw.split('/');

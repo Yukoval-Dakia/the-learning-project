@@ -1419,6 +1419,47 @@ describe('induceConjecture self-consistency', () => {
     }
   });
 
+  it('keeps shadow disagreement evidence when the reviewer rejects that package', async () => {
+    // biome-ignore lint/performance/noDelete: shadow is the real unset/default state.
+    delete process.env.SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const runTaskFn = vi
+        .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+        .mockResolvedValueOnce(unitSample())
+        .mockResolvedValueOnce(
+          unitProbePackageResult({ taskRunId: 'unit_shadow_author_1', primaryGold: '21 m/s' }),
+        )
+        .mockResolvedValueOnce(
+          probeReviewResult('fail', ['reference_incorrect'], 'unit_shadow_review_1'),
+        )
+        .mockResolvedValueOnce(unitProbePackageResult({ taskRunId: 'unit_shadow_author_2' }))
+        .mockResolvedValueOnce(probeReviewResult('pass', [], 'unit_shadow_review_2'));
+
+      const draft = proposal(
+        await induceConjectureImpl({
+          cells: [cell()],
+          samples: 1,
+          runTaskFn,
+          subjectProfile: resolveSubjectProfile('math'),
+        }),
+      );
+      const firstAttempt = draft.probe_quality.attempts[0];
+      expect(firstAttempt).toMatchObject({
+        outcome: 'review_failed',
+        subject_validator_results: expect.arrayContaining([
+          expect.objectContaining({
+            validator_id: 'math.compound-unit-denominator-conversion',
+            outcome: 'fail',
+            failure_codes: ['unit_reference_mismatch'],
+          }),
+        ]),
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('regenerates a bare single-choice probe whose target rule only forces a random guess', async () => {
     const runTaskFn = vi
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()

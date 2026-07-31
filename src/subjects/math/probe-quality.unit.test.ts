@@ -195,6 +195,21 @@ describe('math subject probe validators', () => {
     );
   });
 
+  it('accepts exact rational unit answers that cannot be written as finite decimals', () => {
+    const mutated = structuredClone(unitPackage);
+    mutated.primary.prompt_md = 'Convert 1 km/h to m/s.';
+    mutated.primary.reference_md = '5/18 m/s';
+    mutated.primary.gold_response_signature = { kind: 'text', response_md: '5/18 m/s' };
+    mutated.primary.expected_target_error_answer_md = '1000 m/s';
+    mutated.primary.target_error_response_signature = {
+      kind: 'text',
+      response_md: '1000 m/s',
+    };
+    expect(
+      resultFor(unitHypothesis, mutated, 'math.compound-unit-denominator-conversion').outcome,
+    ).toBe('pass');
+  });
+
   it('proves unlike-denominator gold and (a+c)/(b+d) target signatures', () => {
     const result = resultFor(
       fractionHypothesis,
@@ -268,6 +283,16 @@ describe('math subject probe validators', () => {
     );
     expect(result.outcome).toBe('fail');
     expect(result.failure_codes).toContain('fraction_target_collides_with_gold');
+  });
+
+  it('reads an answer stated before its derivation instead of the last intermediate integer', () => {
+    const mutated = structuredClone(fractionPackage);
+    const workedAnswer = '7/12，因为 1×4+1×3=7，3×4=12';
+    mutated.primary.reference_md = workedAnswer;
+    mutated.primary.gold_response_signature = { kind: 'text', response_md: workedAnswer };
+    expect(
+      resultFor(fractionHypothesis, mutated, 'math.unlike-denominator-fraction-addition').outcome,
+    ).toBe('pass');
   });
 
   it('requires a different fraction context or representation', () => {

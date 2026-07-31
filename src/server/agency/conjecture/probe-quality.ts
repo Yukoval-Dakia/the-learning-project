@@ -281,6 +281,7 @@ export async function prepareConjectureProbePair(
           explanation_md: 'Independent review did not complete; the whole pair was regenerated.',
           author_task_run_id: authorTaskRunId,
           reviewer_task_run_id: null,
+          subject_validator_results: structuredClone(subjectValidatorResults),
         });
         continue;
       }
@@ -303,6 +304,7 @@ export async function prepareConjectureProbePair(
           explanation_md: 'Probe reviewer completed without durable task-run lineage.',
           author_task_run_id: authorTaskRunId,
           reviewer_task_run_id: null,
+          subject_validator_results: structuredClone(subjectValidatorResults),
         });
         continue;
       }
@@ -324,6 +326,7 @@ export async function prepareConjectureProbePair(
           explanation_md: 'Independent review output was invalid; the whole pair was regenerated.',
           author_task_run_id: authorTaskRunId,
           reviewer_task_run_id: reviewerTaskRunId,
+          subject_validator_results: structuredClone(subjectValidatorResults),
         });
         continue;
       }
@@ -341,6 +344,7 @@ export async function prepareConjectureProbePair(
         explanation_md: review.explanation_md,
         author_task_run_id: authorTaskRunId,
         reviewer_task_run_id: reviewerTaskRunId,
+        subject_validator_results: structuredClone(subjectValidatorResults),
       });
       if (attempt < 2) continue;
       return rejectOrThrow();
@@ -353,6 +357,7 @@ export async function prepareConjectureProbePair(
       explanation_md: review.explanation_md,
       author_task_run_id: authorTaskRunId,
       reviewer_task_run_id: reviewerTaskRunId,
+      subject_validator_results: structuredClone(subjectValidatorResults),
     };
     attempts.push(passedAttempt);
     return {

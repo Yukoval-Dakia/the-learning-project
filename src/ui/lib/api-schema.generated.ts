@@ -21826,6 +21826,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'structure_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -21841,6 +21886,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'review_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -21855,6 +21945,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'operational_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -21864,6 +21999,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'passed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -21964,6 +22144,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'structure_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -21979,6 +22204,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'review_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -21993,6 +22263,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'operational_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -22002,6 +22317,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'passed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -22178,6 +22538,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'structure_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -22193,6 +22598,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'review_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -22207,6 +22657,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'operational_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -22216,6 +22711,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'passed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -22498,6 +23038,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'structure_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -22513,6 +23098,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'review_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -22527,6 +23157,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'operational_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -22536,6 +23211,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'passed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -23744,6 +24464,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'structure_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -23759,6 +24524,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'review_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -23773,6 +24583,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'operational_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -23782,6 +24637,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'passed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -23882,6 +24782,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'structure_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -23897,6 +24842,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'review_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -23911,6 +24901,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'operational_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -23920,6 +24955,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'passed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -24096,6 +25176,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'structure_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -24111,6 +25236,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'review_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -24125,6 +25295,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'operational_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -24134,6 +25349,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'passed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -24416,6 +25676,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'structure_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -24431,6 +25736,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'review_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -24445,6 +25795,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'operational_failed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;
@@ -24454,6 +25849,51 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'passed';
                                   reviewer_task_run_id: string | null;
+                                  subject_validator_results?: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                               | {
                                   attempt: number;

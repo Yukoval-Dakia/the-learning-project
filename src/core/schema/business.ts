@@ -898,6 +898,7 @@ const ConjectureProbeQualityAttemptBase = {
   explanation_md: z.string().trim().min(1).max(1000),
   author_task_run_id: z.string().trim().min(1).nullable(),
   reviewer_task_run_id: z.string().trim().min(1).nullable(),
+  subject_validator_results: z.array(SubjectProbeValidatorResult).max(20).optional(),
 } as const;
 
 function uniqueProbeFailureCodes<T extends z.ZodTypeAny>(code: T, max: number) {
