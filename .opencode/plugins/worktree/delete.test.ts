@@ -40,7 +40,6 @@ function workflow(overrides: Partial<DeleteWorkflowDependencies> = {}) {
 	let stateCompleted = false
 	let targetRegistered = true
 	const dependencies: DeleteWorkflowDependencies = {
-		repoRoot: "/repo",
 		runGit: async (args, cwd) => {
 			gitCalls.push({ args, cwd })
 			if (args[0] === "worktree" && args[1] === "list") {
@@ -54,6 +53,9 @@ function workflow(overrides: Partial<DeleteWorkflowDependencies> = {}) {
 		runPreDeleteHooks: async () => ok(),
 		findPreservedWorktree: async () => null,
 		preserveWorktree: async (worktreePath) => `${worktreePath}.preserved-by-opencode`,
+		readGitAdminCwd: async () => null,
+		recordGitAdminCwd: async () => {},
+		resolveGitAdminCwd: async () => "/repo/.git",
 		completeState: () => {
 			stateCompleted = true
 			return true
@@ -130,7 +132,7 @@ describe("processPendingDelete", () => {
 		const unregister = test.gitCalls.at(-1)
 		expect(unregister).toEqual({
 			args: ["worktree", "prune", "--expire", "now"],
-			cwd: "/repo",
+			cwd: "/repo/.git",
 		})
 		expect(unregister?.args).not.toContain("--force")
 	})
@@ -156,15 +158,15 @@ describe("processPendingDelete", () => {
 			},
 			{
 				args: ["worktree", "list", "--porcelain"],
-				cwd: "/repo",
+				cwd: "/repo/.git",
 			},
 			{
 				args: ["worktree", "prune", "--expire", "now"],
-				cwd: "/repo",
+				cwd: "/repo/.git",
 			},
 			{
 				args: ["worktree", "list", "--porcelain"],
-				cwd: "/repo",
+				cwd: "/repo/.git",
 			},
 		])
 		const allArgs = test.gitCalls.flatMap((call) => call.args)
@@ -257,12 +259,22 @@ it("keeps real dirty, ignored, and late-arriving files in an auditable preservat
 		let allowCompletion = false
 		let hookCalls = 0
 		const preservationPath = `${worktreePath}.preserved-by-opencode`
+		const gitAdminResult = await realGit(
+			["rev-parse", "--path-format=absolute", "--git-common-dir"],
+			worktreePath,
+		)
+		if (!gitAdminResult.ok) throw new Error(gitAdminResult.error)
+		const gitAdminCwd = gitAdminResult.value
+		const postPreservationGitCwds: string[] = []
 		const dependencies: DeleteWorkflowDependencies = {
-			repoRoot: repository,
 			runGit: async (args, cwd) => {
+				if (args[0] === "worktree") postPreservationGitCwds.push(cwd)
 				if (args[0] === "worktree" && args[1] === "prune") {
 					// Simulate a background process whose cwd followed the atomic rename.
-					await writeFile(join(preservationPath, "late.secret"), "arrived during cleanup\n")
+					await writeFile(
+						join(preservationPath, "worktree", "late.secret"),
+						"arrived during cleanup\n",
+					)
 				}
 				return realGit(args, cwd)
 			},
@@ -304,9 +316,13 @@ it("keeps real dirty, ignored, and late-arriving files in an auditable preservat
 		expect(completed).toBeTrue()
 		expect(hookCalls).toBe(1)
 		expect((await stat(preservationPath)).isDirectory()).toBeTrue()
-		expect(await readFile(join(preservationPath, "late.secret"), "utf8")).toBe(
+		expect(await readFile(join(preservationPath, "worktree", "late.secret"), "utf8")).toBe(
 			"arrived during cleanup\n",
 		)
+		expect(await readFile(join(preservationPath, "git-admin-cwd"), "utf8")).toBe(`${gitAdminCwd}\n`)
+		expect(postPreservationGitCwds.length).toBeGreaterThan(0)
+		expect(postPreservationGitCwds.every((cwd) => cwd === gitAdminCwd)).toBeTrue()
+		expect(postPreservationGitCwds).not.toContain(worktreePath)
 		expect((await stat(worktreePath)).isFile()).toBeTrue()
 		expect(await readFile(worktreePath, "utf8")).toContain(preservationPath)
 		const worktreeList = await realGit(["worktree", "list", "--porcelain"], repository)
@@ -341,7 +357,6 @@ it("keeps both real lanes registered and retained when another worktree is pruna
 		const result = await processPendingDelete(
 			{ branch: "codex/yuk-810-target", path: targetPath },
 			{
-				repoRoot: repository,
 				runGit: realGit,
 				runPreDeleteHooks: async () => ok(),
 				completeState: () => {
@@ -390,7 +405,6 @@ it("does not unregister anything when an absolute-path writer recreates the orig
 		const result = await processPendingDelete(
 			{ branch: "codex/yuk-810-race", path: worktreePath },
 			{
-				repoRoot: fixtureRoot,
 				runGit: async () => {
 					gitCalls += 1
 					return ok()

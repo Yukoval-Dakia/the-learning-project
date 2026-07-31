@@ -1192,7 +1192,6 @@ const WorktreePlugin: Plugin = async (ctx) => {
 			if (!pendingDelete) return
 
 			const deleteResult = await processPendingDelete(pendingDelete, {
-				repoRoot: directory,
 				runGit: git,
 				runPreDeleteHooks: async (worktreePath) => {
 					const config = await loadWorktreeConfig(directory, log)

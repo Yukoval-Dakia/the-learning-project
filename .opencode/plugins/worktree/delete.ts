@@ -1,5 +1,5 @@
 import { chmod, lstat, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+import { isAbsolute, join } from "node:path"
 import { privateDirectoryMode, privateFileMode } from "./permissions"
 import type { PendingDelete } from "./state"
 
@@ -24,12 +24,14 @@ export type DeleteWorkflowResult =
 	  }
 
 export interface DeleteWorkflowDependencies {
-	readonly repoRoot: string
 	readonly runGit: (args: string[], cwd: string) => Promise<GitCommandResult>
 	readonly runPreDeleteHooks: (worktreePath: string) => Promise<GitCommandResult>
 	readonly completeState: (pendingDelete: PendingDelete) => boolean
 	readonly findPreservedWorktree?: (worktreePath: string) => Promise<string | null>
 	readonly preserveWorktree?: (worktreePath: string) => Promise<string>
+	readonly readGitAdminCwd?: (preservationRoot: string) => Promise<string | null>
+	readonly recordGitAdminCwd?: (preservationRoot: string, gitAdminCwd: string) => Promise<void>
+	readonly resolveGitAdminCwd?: (worktreePath: string) => Promise<string>
 }
 
 type InspectionResult =
@@ -47,6 +49,7 @@ const DIRTY_WORKTREE_ERROR =
 	"Worktree has uncommitted, untracked, or ignored files; commit or remove them explicitly before cleanup."
 const PRESERVATION_SUFFIX = ".preserved-by-opencode"
 const PRESERVATION_RECORD = "preservation.json"
+const GIT_ADMIN_CWD_RECORD = "git-admin-cwd"
 const RETAINED_WORKTREE_DIRECTORY = "worktree"
 
 function errorMessage(error: unknown): string {
@@ -102,6 +105,60 @@ function parsePreservationRecord(raw: string, expected: PreservationRecord): Pre
 
 function serializedPreservationRecord(record: PreservationRecord): string {
 	return `${JSON.stringify(record, null, 2)}\n`
+}
+
+async function readGitAdminCwd(preservationRoot: string): Promise<string | null> {
+	let value: string
+	try {
+		value = (await readFile(join(preservationRoot, GIT_ADMIN_CWD_RECORD), "utf8")).trim()
+	} catch (error) {
+		if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+			return null
+		}
+		throw error
+	}
+
+	if (!value || !isAbsolute(value)) {
+		throw new Error(`Invalid surviving Git admin cwd recorded at ${preservationRoot}.`)
+	}
+	return value
+}
+
+async function recordGitAdminCwd(preservationRoot: string, gitAdminCwd: string): Promise<void> {
+	if (!isAbsolute(gitAdminCwd)) {
+		throw new Error(`Git admin cwd must be absolute: ${gitAdminCwd}.`)
+	}
+
+	const existing = await readGitAdminCwd(preservationRoot)
+	if (existing) {
+		if (existing !== gitAdminCwd) {
+			throw new Error(`Git admin cwd changed for preservation root ${preservationRoot}.`)
+		}
+		return
+	}
+
+	await writeFile(join(preservationRoot, GIT_ADMIN_CWD_RECORD), `${gitAdminCwd}\n`, {
+		encoding: "utf8",
+		flag: "wx",
+		mode: privateFileMode(),
+	})
+}
+
+async function resolveGitAdminCwd(
+	worktreePath: string,
+	runGit: DeleteWorkflowDependencies["runGit"],
+): Promise<string> {
+	const result = await runGit(
+		["rev-parse", "--path-format=absolute", "--git-common-dir"],
+		worktreePath,
+	)
+	if (!result.ok) throw new Error(result.error)
+
+	const gitAdminCwd = result.value.trim()
+	if (!gitAdminCwd || !isAbsolute(gitAdminCwd)) {
+		throw new Error(`Git returned an invalid common directory for ${worktreePath}.`)
+	}
+	return gitAdminCwd
 }
 
 async function readRootRecord(record: PreservationRecord): Promise<void> {
@@ -279,7 +336,13 @@ export async function processPendingDelete(
 ): Promise<DeleteWorkflowResult> {
 	const findPreserved = dependencies.findPreservedWorktree ?? findPreservedWorktree
 	const preserve = dependencies.preserveWorktree ?? preserveWorktree
+	const loadGitAdminCwd = dependencies.readGitAdminCwd ?? readGitAdminCwd
+	const persistGitAdminCwd = dependencies.recordGitAdminCwd ?? recordGitAdminCwd
+	const resolveSurvivingGitCwd =
+		dependencies.resolveGitAdminCwd ??
+		((worktreePath: string) => resolveGitAdminCwd(worktreePath, dependencies.runGit))
 	let preservedPath: string | null
+	let gitAdminCwd: string
 
 	try {
 		preservedPath = await findPreserved(pendingDelete.path)
@@ -307,7 +370,18 @@ export async function processPendingDelete(
 		if (!postHookInspection.ok) return postHookInspection
 
 		try {
+			// Resolve an absolute common-dir cwd while the linked worktree still
+			// exists. Unlike the lane path, this directory survives the rename.
+			gitAdminCwd = await resolveSurvivingGitCwd(pendingDelete.path)
+		} catch (error) {
+			return { ok: false, stage: "inspect", error: errorMessage(error) }
+		}
+
+		try {
 			preservedPath = await preserve(pendingDelete.path)
+			// Persist before any prune. A retry after Git metadata is gone must not
+			// depend on the retained worktree's now-dangling .git pointer.
+			await persistGitAdminCwd(preservedPath, gitAdminCwd)
 		} catch (error) {
 			return {
 				ok: false,
@@ -315,14 +389,25 @@ export async function processPendingDelete(
 				error: preservedError(errorMessage(error), `${pendingDelete.path}${PRESERVATION_SUFFIX}`),
 			}
 		}
+	} else {
+		try {
+			const recordedGitAdminCwd = await loadGitAdminCwd(preservedPath)
+			gitAdminCwd =
+				recordedGitAdminCwd ??
+				(await resolveSurvivingGitCwd(join(preservedPath, RETAINED_WORKTREE_DIRECTORY)))
+			await persistGitAdminCwd(preservedPath, gitAdminCwd)
+		} catch (error) {
+			return {
+				ok: false,
+				stage: "remove",
+				error: preservedError(errorMessage(error), preservedPath),
+			}
+		}
 	}
 
 	let beforePruneResult: GitCommandResult
 	try {
-		beforePruneResult = await dependencies.runGit(
-			["worktree", "list", "--porcelain"],
-			dependencies.repoRoot,
-		)
+		beforePruneResult = await dependencies.runGit(["worktree", "list", "--porcelain"], gitAdminCwd)
 	} catch (error) {
 		return {
 			ok: false,
@@ -374,10 +459,7 @@ export async function processPendingDelete(
 			// `prune` unregisters missing worktree metadata without recursively
 			// deleting the retained directory. `worktree remove` is intentionally
 			// forbidden here because it can silently delete late ignored files.
-			pruneResult = await dependencies.runGit(
-				["worktree", "prune", "--expire", "now"],
-				dependencies.repoRoot,
-			)
+			pruneResult = await dependencies.runGit(["worktree", "prune", "--expire", "now"], gitAdminCwd)
 		} catch (error) {
 			return {
 				ok: false,
@@ -395,10 +477,7 @@ export async function processPendingDelete(
 
 		let afterPruneResult: GitCommandResult
 		try {
-			afterPruneResult = await dependencies.runGit(
-				["worktree", "list", "--porcelain"],
-				dependencies.repoRoot,
-			)
+			afterPruneResult = await dependencies.runGit(["worktree", "list", "--porcelain"], gitAdminCwd)
 		} catch (error) {
 			return {
 				ok: false,

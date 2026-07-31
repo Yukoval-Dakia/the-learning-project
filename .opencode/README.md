@@ -29,4 +29,6 @@ that retained directory. A restrictive marker is left at the original path and b
 the preservation location. Even a background writer that follows the rename therefore writes into
 retained storage rather than a directory Git will delete. Inspect and remove the preservation root
 manually when it is no longer needed. Because Git's prune command is repository-wide, cleanup also
-refuses to run it when porcelain reports any other prunable worktree registration.
+refuses to run it when porcelain reports any other prunable worktree registration. The absolute Git
+common-directory cwd is resolved before the move and persisted as `git-admin-cwd`, so retries never
+depend on the original path after it becomes a marker file.
