@@ -35,6 +35,30 @@ describe('SolutionGenerateOutput', () => {
     ).toThrow();
   });
 
+  it('bounds the atomized complete path to twelve reasonably sized operations', () => {
+    const base = {
+      final_answer: '42',
+      answer_equivalents: [],
+    };
+    expect(() =>
+      SolutionGenerateOutput.parse({
+        reference_solution: {
+          ...base,
+          expected_signals: Array.from({ length: 13 }, (_, index) => `必要步骤 ${index + 1}`),
+        },
+        worked_solution_md: '逐项完成并核对。',
+        confidence: 0.9,
+      }),
+    ).toThrow();
+    expect(() =>
+      SolutionGenerateOutput.parse({
+        reference_solution: { ...base, expected_signals: ['步'.repeat(1001)] },
+        worked_solution_md: '逐项完成并核对。',
+        confidence: 0.9,
+      }),
+    ).toThrow();
+  });
+
   it('rejects empty final_answer', () => {
     expect(() =>
       SolutionGenerateOutput.parse({
@@ -51,6 +75,20 @@ describe('SolutionGenerateOutput', () => {
         reference_solution: { expected_signals: ['x'], final_answer: 'y', answer_equivalents: [] },
         worked_solution_md: '',
         confidence: 0.5,
+      }),
+    ).toThrow();
+  });
+
+  it('rejects an oversized worked solution at the shared validator boundary', () => {
+    expect(() =>
+      SolutionGenerateOutput.parse({
+        reference_solution: {
+          expected_signals: ['完整求解并核对最终答案'],
+          final_answer: '42',
+          answer_equivalents: [],
+        },
+        worked_solution_md: '推'.repeat(12_001),
+        confidence: 0.91,
       }),
     ).toThrow();
   });

@@ -57,6 +57,13 @@ function assistant(text: string) {
   };
 }
 
+function assistantThinking(thinking: string) {
+  return {
+    type: 'assistant',
+    message: { role: 'assistant', content: [{ type: 'thinking', thinking, signature: '' }] },
+  };
+}
+
 const resultMsg = {
   type: 'result',
   subtype: 'success',
@@ -94,6 +101,29 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(result.usage).toEqual({ inputTokens: 7, outputTokens: 7 });
     expect(result.task_run_id).toBeTruthy();
     expect(result.partial).toBeUndefined();
+  });
+
+  it('carries thinking-block metadata without streaming or logging raw reasoning', async () => {
+    mockSdk.messages = [assistantThinking('hidden reasoning'), assistant('answer'), resultMsg];
+    const deltas: string[] = [];
+
+    const result = await streamTaskCollecting(
+      'AttributionTask',
+      { q: 'x' },
+      { db: fakeDb },
+      (delta) => deltas.push(delta),
+    );
+
+    expect(result.usage).toEqual({
+      inputTokens: 7,
+      outputTokens: 7,
+      thinkingBlocks: 1,
+      thinkingCharacters: 16,
+    });
+    expect(deltas).toEqual(['answer']);
+    const { writeAiTaskRunFinished } = await import('@/server/ai/log');
+    const finished = (writeAiTaskRunFinished as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1];
+    expect(JSON.stringify(finished)).not.toContain('hidden reasoning');
   });
 
   it('threads the request signal into the SDK abortController (already-aborted)', async () => {

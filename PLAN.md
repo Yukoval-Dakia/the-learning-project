@@ -2,56 +2,49 @@
 
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
-> 更新于：2026-07-30
-> **【更新 2026-07-30 · YUK-792 结算链进入审查】**
-> owner 已授权按 roadmap 依赖序持续推进全部计划，并允许以 agent 自写输入、agent
-> 评判**真实产品链输出**完成数据 gate。YUK-792 是当前唯一 active implementation lane。
+> 更新于：2026-08-01
+> **【YUK-829：FULL intervention reviewer 收口】**
 
 ## NOW
 
-- **YUK-792：延迟/迁移 scheduler 与 intervention outcome settlement 正在审查。**
-  - branch：`codex/yuk-792-intervention-settlement`。
-  - eligible intervention 激活时把已审核的 immediate / delayed / transfer probes
-    物化到现有 question + question-level FSRS due surface；shadow 只写审计 ledger，
-    不生成 learner-visible card。
-  - 固定窗口为激活时、+7 天、+21 天；canonical review subscription 首次结算每个
-    probe，完成后删除 one-shot card，并在三项齐备时产出
-    `effective | ineffective | inconclusive` 与 settled event。
-  - recovery 对 eligible active rows 幂等补齐 question/card；migration 回填既有 active
-    ledger。不存在真实 producer/reader 的 `transfer_gap` 已从 runtime/prompt 删除，
-    ADR 保留未来恢复条件。
-  - 本地针对性证据：typecheck、lint、静态审计、全量 unit 5,959 项、migration 30 项、
-    settlement DB 22 项、candidate DB 43 项及 submit early-due 红测通过。独立
-    standards/spec review 的 4 个 P1/所有权 finding 均经一次 verification 关闭。
-    完整 DB/build 交 GitHub CI 并行验证。
-- **YUK-814 Gate A/B 已通过。**
-  - agent 自写 8-cluster blind inputs；Opus/Mimo/Author/Reviewer 均走真实产品链。
-  - A/B 各 7/8 grounded（87.5%），redline 0，digest 完整；Gate C 等 YUK-792 合并后跑
-    10 个 eligible lifecycle。
-- **YUK-828 已完成并对齐 Done**：PR #1120，merge `52c08b8e`。
+- **唯一 active implementation lane：YUK-829。**
+  - branch：`codex/yuk-829-intervention-reviewer`；Draft PR：#1139。
+  - FULL 已复用通用 `SolutionGenerateTask` + `QuizVerifyTask`：三题逐题盲解、
+    `release_strict` factual grounding、服务端密封因果 occurrence、比较审查与第二次
+    pass confirmation；provider 的 verdict/failure labels 不再是裁决权威。
+  - current audit protocol 为 V3：保存每个 solver/content/comparator attempt 的 canonical
+    input、prompt fingerprint、result/null digest 与 task-run ID；activation 和 actual-output
+    eval 均重建 canonical input 后再核对。
+  - 本地 scoped 证据已通过：相关 unit 190 项、DB 100 项、typecheck、lint、pre-PR
+    audits、build。按仓库规则未在本机运行完整 `pnpm test`。
+  - 合并前仍以 PR #1139 上的干净 exact-head 六案例真实 MiMo 结果和 GitHub CI Gate
+    为最终状态源，不在本看板复制可能过期的运行状态。
+- **Linear 只读快照（2026-08-01）：**19 projects、831 issues；未完成 93 =
+  85 Backlog + 7 In Progress + 1 Todo。唯一显式 blocker 为 YUK-829 → YUK-814。
 
 ## NEXT
 
-1. 完成 YUK-792 独立双轴审查、PR/CI、合并与 Linear closeout。
-2. 用 10 个 agent 自写输入跑真实 eligible intervention 生命周期，完成 YUK-814 Gate C；
-   失败即调查并修复，不以 synthetic harness 输出冒充产品输出。
-3. 推进 YUK-822 学科确定性验证器与 YUK-814 结果联调。
-4. 再推进 YUK-815 / YUK-816 协作与 Growth projection，最后收口剩余 profile/domain/
-   release 验收。
+1. 在干净提交 HEAD 上跑六案例真实 MiMo actual-output，检查 6/6、false canary、
+   provenance、usage/cost 与 exact revision。
+2. push 后只用 exact-head GitHub CI 执行完整 `pnpm test`；修完 P0/P1 后合并并关闭
+   YUK-829。
+3. 解锁但不直接关闭 YUK-814：跑 fresh、prospectively scoped 的 10 个真实产品
+   lifecycle + 10 次 post-review + stop-switch/zero-redline 证据。
+4. 推进 human-in-loop 产品门：YUK-571 首次真实 placement；YUK-405/YUK-406 两周
+   owner 使用验收；再处置 YUK-452、YUK-776。
+5. 对剩余 backlog/Todo 做 product-scope triage：有 live consumer 的执行，无 live
+   consumer/重复/过期项明确 Canceled 或 Duplicate，parent 在 children 处置后关闭。
 
 ## PARKED
 
-- **YUK-822：P1 学科确定性验证器**；YUK-792/Gate C 后立即启动，spec：
-  `docs/planning/2026-07-29-yuk-821-conjecture-probe-quality.md`。
-- **YUK-815 / YUK-816：Copilot/Brief 协作与 Growth intervention projection**；等待
-  准备链及验证结算链先成为可读真相源。
-- **YUK-826 第二波 DB 测试事务迁移**：Backlog；收益需多次 GitHub CI 数据验证。
-- **YUK-824 本地 lint 假红**：sanctioned `.ykv/**` cache 精确忽略是独立线。
+- **YUK-813 / YUK-831 OpenCode**：按 owner 指示暂不处理；可从产品执行队列排除，
+  但不能从 Linear 严格 issue=0 统计中消失。
+- **YUK-815 / YUK-816**：等待 YUK-829/YUK-814 grounding gate 成为可读真相源。
+- 其余 future/refinement backlog 不自动开 implementation lane，先经 owner scope triage。
 
 ## BLOCKED-ON
 
-- **auto-intervention 扩大使用**：保持 OFF，直到 YUK-792 合并且 YUK-814 Gate C 的
-  10 个真实 eligible lifecycle 通过。自写输入可作为 gate 输入，但输出必须来自真实
-  产品 author/reviewer/due/review/settlement 链。
-- **canonical Opus 输出质量**：OAuth 周额度仍可能 429；429 只记 operational，
-  不冒充质量 pass/fail。
+- **YUK-814 / auto-intervention 扩量**：先合并 YUK-829，再满足 owner 10-run 真实观察门；
+  synthetic/mock/harness 不能替代 canonical product gate。
+- **严格 issue=0**：当前还需处置全部 93 张未完成 issue；即使暂不管两张 OpenCode，
+  产品聚焦口径仍有 91 张。不能把“不在当前 lane”写成完成。

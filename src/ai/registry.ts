@@ -8,7 +8,6 @@ import {
   getDefaultMetaCause,
 } from '@/core/schema/business';
 import {
-  InterventionPackageReviewFailureCode,
   InterventionPackageReviewStructuredOutput,
   InterventionPackageStructuredOutput,
   PedagogyRecommendationStructuredOutput,
@@ -332,7 +331,7 @@ function buildMindModelInductionPrompt(profile: SubjectProfile): string {
 
 【输出要点】
 - claim_md 必须是**第二人称、关于思维的**陈述（形如「你把只在某个前提下成立的做法当成了通用做法」「你把两个相邻概念的判别依据互换了」——这是**句式示例，不是内容示例**，请用输入证据里的真实知识点和真实错法把它填实），不是关于某道题对错的陈述。
-- diagnostic_spec.schema_version 恒为 1。
+- diagnostic_spec.schema_version 恒为 2；causal_direction_required 是冻结语义类型：只要 claim / target_error_rule / trigger 涉及“X 导致/引起/造成 Y”、由相关推因果、反向因果或共同原因，就必须为 true；只有确定完全不审查因果方向时才为 false。
 - target_error_rule_md：只写证据直接支持的错误规则，不把局部错误扩大成“所有题都这样”。
 - trigger_conditions_md：明确什么条件出现时，目标错误才会被触发；后续两道 probe 必须都保留它。
 - scope_boundary_md：明确本猜想**不覆盖**什么，阻止从“异分母”扩成“所有分数加法”等范围漂移。
@@ -343,7 +342,7 @@ function buildMindModelInductionPrompt(profile: SubjectProfile): string {
 - 若不能安全 proposal，输出 abstain。reason_code 只能是 insufficient_evidence / conflicting_evidence / no_grounded_claim；explanation_md 可省略；evidence_event_ids 只能引用输入。
 
 【输出格式】内部完成证据核对与推理，不输出推理过程、markdown 或代码块。最终只输出一个顶层 JSON 对象，唯一字段是 draft；draft 严格为以下二者之一：
-1. {"draft":{"kind":"proposal","claim_md":"...","knowledge_id":"...","evidence_event_ids":["...","..."],"diagnostic_spec":{"schema_version":1,"target_error_rule_md":"...","trigger_conditions_md":"...","scope_boundary_md":"...","expected_wrong_answer_signature_md":"..."},"cause_category":"...","recurrence_count":<int≥2>}}
+1. {"draft":{"kind":"proposal","claim_md":"...","knowledge_id":"...","evidence_event_ids":["...","..."],"diagnostic_spec":{"schema_version":2,"target_error_rule_md":"...","trigger_conditions_md":"...","scope_boundary_md":"...","expected_wrong_answer_signature_md":"...","causal_direction_required":true|false},"cause_category":"...","recurrence_count":<int≥2>}}
 2. {"draft":{"kind":"abstain","reason_code":"insufficient_evidence|conflicting_evidence|no_grounded_claim","explanation_md":"...","evidence_event_ids":["..."]}}`;
 }
 
@@ -413,6 +412,8 @@ function buildConjectureProbeReviewPrompt(profile: SubjectProfile): string {
 3. probe_pair_not_independent：两题是否只是换数字，或情境/表征没有真正改变。
 4. reference_incorrect：题目是否不可判定，reference 是否错误、不唯一或不配套。
 5. target_error_answer_not_distinct：预期目标错误答案是否与正确答案相同。
+
+先复核 frozen_hypothesis.diagnostic_spec.causal_direction_required：只要冻结 claim / target_error_rule / trigger 涉及 X 导致、引起、造成 Y、由相关推因果、反向因果或共同原因，该值必须为 true；若被错误写成 false，按 claim_scope_expansion fail，不能让后续因果审查消失。
 
 执行第 4 项时必须先独立解题，再看 reference：
 - 同时核对 response_mode、gold_response_signature、target_error_response_signature 是否与题干、
@@ -924,7 +925,7 @@ function buildSolutionGeneratePrompt(profile: SubjectProfile): string {
 
 任务：你自己独立解这道题，产出两样东西：
 1. reference_solution —— 供自动判分用的结构化参考解：
-   - expected_signals：解题过程**应当体现的核心信号 / 步骤要点**（不是死答案文本），至少 1 条；${profile.displayName}里 derivation 的 signals 是推导步骤要点，prose / translation 的 signals 是必须覆盖的语义要点。
+   - expected_signals：完整必要解题路径的**原子化核心信号 / 步骤要点**（不是死答案文本），按实际执行顺序列出 1..12 条；不可只列命中题目主题的局部步骤，任何得到最终答案不可省略的运算、概念、文本判断或因果方向都必须单独列出。${profile.displayName}里 derivation 的 signals 是推导步骤要点，prose / translation 的 signals 是必须覆盖的语义要点。
    - final_answer：最终答案（一行，尽量规范）。
    - answer_equivalents：学生若打字提交、可判等价的若干表达（0..N 条）。
 2. worked_solution_md —— 给学习者看的完整解题过程（markdown，可含 ${profile.renderConfig.notation === 'katex' ? 'LaTeX' : '本学科记法'}），讲清每一步为什么，不只是甩答案。
@@ -934,7 +935,10 @@ function buildSolutionGeneratePrompt(profile: SubjectProfile): string {
 
 要点：
 - existing_answers_hint / existing_analysis_hint 只是 hint：如果你判断它对就采纳，判断它错就以你自己的解为准，并在 worked_solution_md 里简述为何。
-- expected_signals 至少 1 条且每条非空；final_answer 非空。
+- 题面里的计算条件、明确标为“匿名记录/假设情境/给定数据”的事实可作为本题 givens；但具名真实作品、人物、史实、公式出处及其作者附带的解读不是自动真值。遇到可识别的真实对象时，必须用本学科知识独立核对引文、归属和解释方向；题面 gloss 与原文/公认含义冲突时要指出，不能因为题面写了“整体基调是……”就照抄。
+- expected_signals 必须覆盖完整必要路径、共 1..12 条且每条非空；final_answer 非空。
+- confidence 必须是与 reference_solution、worked_solution_md 并列的**顶层字段**，不得放进 reference_solution；值必须是 0 到 1 之间的 JSON number（例如 0.92），禁止输出 "high"、"0.92" 或百分数字符串。
+- 若题目涉及因果方向，先固定 exposure/treatment X 与题面 outcome construct / estimand Y。反向因果指**同一个 Y 构念**影响 X，而不是按“原因发生在 X 前还是 X 后”机械分类；例如题面 Y=当前抑郁严重度时，较高抑郁严重度影响运动可是真正的 Y→X。若题面 Y 是变化量 ΔY（成绩提高幅度、血压变化等），基线水平 Y0、能力/潜力、动机、倾向、预期改善都不是 ΔY；它们驱动 X 时属于基线选择或其他构念，不得称为观察到的 Y→X。共同原因也不是反向因果。题目或候选理由若混淆这些概念，必须明确指出，不能顺着题面误称。
 - ${profile.grounding.uncertaintyPolicy}
 - confidence 反映你对这份参考解的把握，模棱两可给 0.5。
 - 禁止：输出 JSON 之外的文字、用 markdown 代码块包裹整段 JSON、把 hint 当成不可质疑的真值。`;
@@ -1072,6 +1076,12 @@ function buildQuizVerifyPrompt(profile: SubjectProfile): string {
 不确定性策略：${profile.grounding.uncertaintyPolicy}
 
 重要：本次质检是 **closed-book** —— 你**不**联网检索，只依据出题 agent 自报的 source_refs（含 snippet）与题目本身判断（§0：运行时无法从日志恢复 agent 的真实检索，所以只信它写进 source_refs 的来源）。
+
+输入若带 validation_mode='release_strict'，这是发布级复用路径，额外遵守：
+- author_material 只是作者生成的教学材料，不是事实来源；作者在题干、reference_md 或 author_material 里写出的解释性 gloss 不能自我证明。
+- 明确标为匿名记录、假设情境、给定数据并要求只按记录判断的内容，按题面闭世界 givens 检查内部一致性即可。
+- 对可识别的真实作品、人物、史实、统计、公式出处、引文及其解释方向，必须用 source_refs、持久化 primary material、题面可直接推出的原文证据或本学科可靠知识独立核对。缺少足够独立依据给 grounding='unclear'；与原文或可靠学科事实冲突给 'fail'；绝不能因为作者和 reference 重复同一句解读就给 pass。
+- scope/knowledge 范围只说明考什么，不豁免 factuality。release_strict 的下游只接受 grounding='pass'，所以不确定时如实给 unclear，不要迎合放行。
 
 三项检查（每项独立给 verdict）：
 1. grounding（事实/落地）：题干与 reference_md 是否被 source_refs 的内容支撑、与之一致、无事实错误？若某来源标 used_for='fact' 却与题面矛盾，或题面含 snippet 无法支撑的具体事实断言 → 倾向 'fail'。source_refs 为空且 generation_method 为 closed_book 时，按题面自身是否事实正确判断，不因没来源直接判 fail（给 'unclear' 或依内容判）。
@@ -1320,45 +1330,31 @@ function buildInterventionPackageAuthorPrompt(profile: SubjectProfile): string {
 不确定性策略：${profile.grounding.uncertaintyPolicy}`;
 }
 
-const INTERVENTION_REVIEW_FAILURE_CODES_FOR_PROMPT = InterventionPackageReviewFailureCode.options
-  .filter((code) => code !== 'review_output_invalid')
-  .reduce<{ lines: string[]; offset: number }>(
-    (accumulator, code) => {
-      const lineWidths = [4, 4, 3, 1];
-      while (
-        accumulator.offset < lineWidths.length - 1 &&
-        accumulator.lines[accumulator.offset]?.split(', ').length === lineWidths[accumulator.offset]
-      ) {
-        accumulator.offset += 1;
-      }
-      accumulator.lines[accumulator.offset] = accumulator.lines[accumulator.offset]
-        ? `${accumulator.lines[accumulator.offset]}, ${code}`
-        : code;
-      return accumulator;
-    },
-    { lines: [], offset: 0 },
-  )
-  .lines.join(',\n');
-
 function buildInterventionPackageReviewPrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}干预包的第二次独立自审。你与作者使用同一个模型系列，但这是一次新的、独立调用；不要修包，只返回 pass 或 failure codes。
+  return `你是${profile.displayName}干预包的比较审查员。作者调用已经结束；在你之前，系统已复用现有题目 validator 的两个独立阶段：(a) 对 immediate、delayed、transfer 三道题分别只看题面完成盲解；(b) 用 release_strict policy 分别核验题面/reference 的 factual grounding。输入中的 sealed_independent_solutions 是盲解密封结果；sealed_question_content_validations 是 grounding 密封结果。你不得把作者 reference、gold signature、教学材料或冻结 claim 当成盲解来源，不得改写、替换或伪造任何密封结果，也不得用盲解一致性推翻 grounding 的 unclear/fail。
 
-输入含 immutable snapshot、pedagogy recommendation 和完整 package candidate。逐项检查：
-- material 是否只使用证据支持的学科事实，且真实落实推荐方法与 safety constraints；
+输入含 immutable snapshot（conjecture.diagnostic_spec 已冻结）、pedagogy recommendation、完整 package candidate、server-owned review_requirements，以及恰好三份 sealed_independent_solutions。按 kind 一一对应后审查：
+
+1. **参考答案与学科 grounding**：用密封盲解中的 final_answer_md、answer_equivalents_md、expected_signals_md、worked_solution_md 对照 package 的 reference_md / gold_response_signature。密封盲解只证明“另一模型怎样按题面求解”，**不是题面事实、引文解读或因果分类的权威来源**。同 kind 的 sealed_question_content_validations.grounding 不是 pass 时 discipline_grounded 必须 false；服务端还会执行同一 hard gate，你不能覆盖。题目所问量、量纲、计算、文本方向、因果定义、唯一性或签名有任一不匹配，reference_correct=false。题面明确标为匿名记录/假设数据时可把记录作为 givens；但具名真实作品、人物、史实、公式出处及作者附带 gloss 不是 givens，必须对照所引文字和本学科知识判断。数学、文本、引用、事实或因果方向缺乏可靠依据时 discipline_grounded=false；严重事实错误同时令 serious_factual_error_absent=false。snapshot 的 scope boundary 只限制被测 claim，绝不能豁免 package 的 factuality/material grounding。
+2. **冻结范围**：先确定题目最终要求回答的量或结论，再把完整必要解题路径中的每份 sealed_independent_solutions.required_operations（由盲解 expected_signals 密封生成）逐项对照 snapshot.conjecture.claim_md、diagnostic_spec.trigger_conditions_md 与 scope_boundary_md。每个 operation 只按输入顺序原样复制 operation_index，并分别输出 reference_covers_operation、within_frozen_scope、decision_basis_md；不得输出或猜测 operation_sha256/operation_md，它们由服务端按 kind+index 密封绑定。不得漏项、并项或只审局部。诊断级 within_frozen_scope 是全部 operation 的 all-of 判据：即使某个局部子步骤命中冻结 claim，只要任一步需要 scope_boundary_md 排除、或冻结 claim 未覆盖的运算、概念、文本语境或因果方向，就必须置 false 并报 claim_scope_expansion。任一步未被 reference 覆盖则 reference_correct=false 并报 reference_incorrect。tested_claim_md 的逐字相等不能推翻内容审查；review_requirements.audit_entire_solution_path=true 也不得被忽略。
+3. **因果方向**：每题必须输出 causal_direction_check。输入的 reference_reverse_causation_claims 是服务端仅从 reference_md 与 gold signature 提取并密封的明确反向因果主张；它的存在性、claim_index、source_path、claim_md、claim_sha256 都不是你能否认或改写的。你只按原顺序为**每一条**输出同 index 的 relation 与简短依据，不得漏项、并项、重排或额外添加。review_requirements.causal_direction_required=true 或该题 claims 非空时，applies 必须为 true，并从题面定义 X 与 outcome construct / estimand Y；置 false 属于合同错误。真正的非因果题且 claims 为空才把 applies=false、X/Y 填空串、relations 给空数组。因果题 shape：
+{"applies":true,"exposure_x_md":"treatment/exposure X","observed_outcome_y_md":"题面 outcome construct / estimand Y","reference_reverse_causation_claim_relations":[{"claim_index":0,"relation":"same_outcome_construct_y|baseline_or_prior_different_construct|common_cause_or_other_or_unclear","decision_basis_md":"..."}]}
+reverse causation 指**同一个 outcome construct / estimand Y** 影响 X，不以“发生在 X 前后”或 reference 自称“反向因果”作为证明：例如题面 Y=当前抑郁严重度时，较高抑郁严重度降低运动 X，归 same_outcome_construct_y。若题面 Y 是变化量 ΔY（成绩提高幅度、血压变化等），基线水平 Y0、能力/“提升潜力”、动机、倾向、预期改善都不是 ΔY；它们驱动 X 时归 baseline_or_prior_different_construct 或 common_cause_or_other_or_unclear。共同原因、购买意图影响网站访问但题面 Y=实际购买量等不同构念，也归 common_cause_or_other_or_unclear。任一 server-owned claim 不是 same_outcome_construct_y，就必须 reference_correct=false、discipline_grounded=false。claim presence/text/digest 与最终兼容 bit 均由服务端绑定，你不得输出。
+
+完成三题比较后，再逐项检查：
+- material 是否只使用证据支持的学科事实，且真实落实 recommendation.method_id 与 safety_constraints；
 - 三题 tested_claim_md / target_error_rule_md 是否与 snapshot 完全一致；
-- probe_spec v2 的 response_mode 与两种 signature 是否匹配；gold 与 target signature 是否分别由正确规则和目标错误规则推出、可评分、可区分，且不是被迫随机选择；
-- 答案是否唯一、可判定、无泄题；
-- expected_target_error_answer_md 是否明确对应目标错误，而非泛化的普通错答；
-- immediate/delayed 是否同构念但非同一道题；
-- transfer 是否真正更换情境而仍测试同一 claim；
-- 是否存在严重事实错误或不安全内容。
+- response_mode 与两种 signature 是否匹配，gold/target 是否分别由正确规则和目标错误规则推出、可评分、可区分；
+- 答案是否唯一、可判定、无泄题；expected_target_error_answer_md 是否明确对应目标错误；
+- immediate/delayed 是否同构念但非同题；transfer 是否真正更换情境且仍测试同一 claim；
+- 是否有严重事实错误或不安全内容。
 
-failure_codes 只能从以下闭集选择：
-${INTERVENTION_REVIEW_FAILURE_CODES_FOR_PROMPT}。
+把这些包级结论逐项写入 package_checks；布尔字段不是摘要意见，而是 server 会据此映射 failure code 的承重判据：material_grounded、method_followed、tested_claims_match、target_errors_match、answers_unique、answers_gradable、no_answer_leak、diagnostics_same_construct、transfer_context_changed、target_error_identifiable、serious_factual_error_absent、safe_material。不得用 verdict=pass 覆盖任何 false。
 
-严格 JSON 输出（不带 markdown 代码块）：
-通过：{"verdict":"pass","failure_codes":[],"summary_md":"..."}
-失败：{"verdict":"fail","failure_codes":["..."],"summary_md":"..."}
+每种 kind 恰好一次。服务端按 kind 绑定对应密封 solver digest、按 operation_index 绑定每个 operation digest/原文，并从你给出的承重布尔值与 claim relations 独立派生闭集 failure codes 和最终 verdict；你不得输出 verdict、failure_codes 或 provenance 字段。diagnostic_checks 也不输出独立答案或必要步骤文本。decision_basis_md 只写比较结论的必要依据，不复述完整题面/reference，不给修题建议，不输出探索过程。summary_md 最长 2000 字符。
+
+只输出恰好一个严格 JSON object；不带 markdown 代码块，不要输出第二版或 JSON 外文字。输出完最后一个 } 立即停止：
+{"review_protocol_version":2,"diagnostic_checks":[{"kind":"immediate|delayed|transfer","required_operation_checks":[{"operation_index":0,"reference_covers_operation":true,"within_frozen_scope":true,"decision_basis_md":"..."}],"reference_correct":true,"within_frozen_scope":true,"discipline_grounded":true,"decision_basis_md":"...","causal_direction_check":{"applies":false,"exposure_x_md":"","observed_outcome_y_md":"","reference_reverse_causation_claim_relations":[]}}],"package_checks":{"material_grounded":true,"method_followed":true,"tested_claims_match":true,"target_errors_match":true,"answers_unique":true,"answers_gradable":true,"no_answer_leak":true,"diagnostics_same_construct":true,"transfer_context_changed":true,"target_error_identifiable":true,"serious_factual_error_absent":true,"safe_material":true},"summary_md":"..."}
 
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}`;
@@ -1938,7 +1934,7 @@ export const tasks = {
     allowedTools: [],
     prompt: {
       kind: 'inline',
-      text: '将 hypotheses 按语义等价分组。只有 claim_md、target_error_rule、trigger_conditions、scope_boundary 和 expected_wrong_answer_signature 都描述同一个且边界相同的错误模式，才属于同一组。仅 claim 相似但触发条件、范围边界或错误答案签名不同，必须分组。\n\n输入：{"hypotheses":[{"claim_md":"...","diagnostic_spec":{...}},...]}。\n只输出 JSON：{"groups":[[i,j,...],...]}\n每个下标0..N-1必须恰好出现一次。',
+      text: '将 hypotheses 按语义等价分组。只有 claim_md、target_error_rule、trigger_conditions、scope_boundary、expected_wrong_answer_signature 和 causal_direction_required 都描述同一个且边界相同的错误模式，才属于同一组。causal_direction_required 不同的 hypothesis 绝不能合并；仅 claim 相似但触发条件、范围边界、错误答案签名或因果方向审查要求不同，必须分组。\n\n输入：{"hypotheses":[{"claim_md":"...","diagnostic_spec":{...}},...]}。\n只输出 JSON：{"groups":[[i,j,...],...]}\n每个下标0..N-1必须恰好出现一次。',
     },
   },
   ConjectureProbeAuthorTask: {
@@ -1967,10 +1963,10 @@ export const tasks = {
     allowedTools: [],
     prompt: { kind: 'profile', build: buildConjectureProbeReviewPrompt },
   },
-  // YUK-791 / YUK-796 — single-brain intervention preparation. These are three
-  // serial structured-output calls, not agent seats: no tools, no fan-out, no
-  // proposal rights. The recommendation is consumed immediately by the package
-  // author in the same prepare_intervention wave.
+  // YUK-791 / YUK-829 — bounded intervention preparation. Recommendation and
+  // authoring stay single calls; FULL validation reuses SolutionGenerateTask once
+  // per diagnostic, then passes the three sealed outputs to this comparator. None
+  // are agent seats: no tools, fan-out, or proposal rights.
   InterventionRecommendationTask: {
     kind: 'InterventionRecommendationTask',
     description:
@@ -2015,10 +2011,12 @@ or
   InterventionPackageReviewTask: {
     kind: 'InterventionPackageReviewTask',
     description:
-      'Second independent same-model review of a complete intervention package. Returns pass/failure codes and never repairs or partially activates the package.',
+      'Compares a complete intervention package with three sealed outputs from the shared independent question validator. Returns bounded diagnostic/package checks and never repairs or partially activates the package.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 120_000 },
+    // The comparator receives three worked blind solutions plus the package, so
+    // keep the measured 180s envelope even though it no longer solves them itself.
+    budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 180_000 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

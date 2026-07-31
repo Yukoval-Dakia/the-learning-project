@@ -86,6 +86,11 @@ pnpm build
   GitHub `CI Gate` 执行。本机不以 full `pnpm test` 作为 pre-PR 条件。
 - 本机只运行与改动范围匹配的 scoped unit / DB / migration tests，以及
   `pnpm typecheck`、`pnpm lint`、`pnpm build`。
+- scoped 测试可以 mock 外部依赖，但 fixture 不能退化成单字段 happy path：投入足够复杂、
+  接近生产且包含长文本、嵌套结构、边界、歧义与失败分支的数据；若使用脱敏数据，不得
+  因脱敏降低结构和问题难度。mock 可验证 seam / contract；涉及 agent/model 实际输出
+  质量的 gate 仍须跑真实 provider actual-output，并封存 exact revision、输入/输出
+  digest、task-run ID、provider/model/cost。
 - UI/core/schema/prompt/parser 使用 scoped unit loop；API/DB/route/job 使用 scoped DB
   loop；migration SQL 使用 migration smoke。
 - watch loop 只用于 scoped file：unit 用 `pnpm test:unit:watch <test-file>`，DB 用

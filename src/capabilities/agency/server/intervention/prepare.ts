@@ -1,17 +1,23 @@
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/server/conjecture/probe-evidence';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
+import { resolveSubjectProfileForKnowledgeIdsStrict } from '@/capabilities/knowledge/public';
 import type {
   InterventionPackageT,
   InterventionPreparationAttemptT,
 } from '@/core/schema/intervention';
 import {
+  CurrentInterventionPackageReviewAudit,
   InterventionPreparationAttempt,
   MAX_INTERVENTION_PACKAGE_ATTEMPTS,
+  buildInterventionPackageReviewTaskInput,
+  buildInterventionQuestionContentValidationTaskInput,
+  validateInterventionPackageDeterministically,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
+import { ai_task_runs } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { inArray } from 'drizzle-orm';
 import { recommendPedagogy } from './recommend';
 import {
   type InterventionRecord,
@@ -167,12 +173,27 @@ async function revalidateForPaidPreparationStage(
   };
 }
 
-function bindAttemptToRecord(
+async function bindAttemptToRecord(
+  db: Db,
   record: InterventionRecord,
   attempt: InterventionPreparationAttemptT,
-): InterventionPreparationAttemptT {
+): Promise<InterventionPreparationAttemptT> {
   if (attempt.kind === 'author_failed') return attempt;
-  const failures = [...attempt.deterministic_failure_codes];
+  const failures =
+    record.recommendation?.kind === 'recommendation'
+      ? validateInterventionPackageDeterministically(
+          { snapshot: record.snapshot, recommendation: record.recommendation },
+          attempt.package,
+        )
+      : [];
+  const expectedRuns: Array<{
+    id: string;
+    taskKind: 'SolutionGenerateTask' | 'QuizVerifyTask' | 'InterventionPackageReviewTask';
+    inputHash: string;
+    promptFingerprint: string;
+    resultDigest?: string | null;
+    failureCode: string;
+  }> = [];
   if (
     attempt.package.intervention_id !== record.id ||
     attempt.package.intervention_version !== record.version
@@ -190,6 +211,147 @@ function bindAttemptToRecord(
   if (attempt.review.package_digest_sha256 !== sha256CanonicalJson(attempt.package)) {
     failures.push('agency:review_package_digest_mismatch');
   }
+  const currentReviewAudit = CurrentInterventionPackageReviewAudit.safeParse(attempt.review);
+  if (!currentReviewAudit.success) {
+    failures.push('agency:current_full_review_required');
+  }
+  if (!('independent_solution_audit' in attempt.review)) {
+    failures.push('agency:independent_solution_audit_missing');
+  } else if (currentReviewAudit.success) {
+    const currentReview = currentReviewAudit.data;
+    const independentAudit = currentReview.independent_solution_audit;
+    const subjectProfile = await resolveSubjectProfileForKnowledgeIdsStrict(db, [
+      record.snapshot.conjecture.knowledge_id,
+    ]);
+    const solverPromptFingerprint = taskPromptFingerprint('SolutionGenerateTask', subjectProfile);
+    const reviewPromptFingerprint = taskPromptFingerprint(
+      'InterventionPackageReviewTask',
+      subjectProfile,
+    );
+    const contentPromptFingerprint = taskPromptFingerprint('QuizVerifyTask', subjectProfile);
+    if (independentAudit.package_digest_sha256 !== sha256CanonicalJson(attempt.package)) {
+      failures.push('agency:independent_solution_package_digest_mismatch');
+    }
+    for (const diagnostic of independentAudit.diagnostics) {
+      const packageDiagnostic = attempt.package.diagnostics[diagnostic.kind];
+      if (
+        diagnostic.task_input.prompt_md !== packageDiagnostic.probe_spec.prompt_md ||
+        diagnostic.task_input.kind !== packageDiagnostic.probe_spec.response_mode
+      ) {
+        failures.push(`agency:${diagnostic.kind}:independent_solution_input_mismatch`);
+      }
+      if (diagnostic.question_input_sha256 !== sha256CanonicalJson(diagnostic.task_input)) {
+        failures.push(`agency:${diagnostic.kind}:independent_solution_input_digest_mismatch`);
+      }
+      if (diagnostic.solver_output_sha256 !== sha256CanonicalJson(diagnostic.solver_output)) {
+        failures.push(`agency:${diagnostic.kind}:independent_solution_output_digest_mismatch`);
+      }
+      if (diagnostic.task_input.subject_id !== subjectProfile.id) {
+        failures.push(`agency:${diagnostic.kind}:independent_solution_subject_mismatch`);
+      }
+      for (const taskRunId of diagnostic.solver_attempt_task_run_ids) {
+        expectedRuns.push({
+          id: taskRunId,
+          taskKind: 'SolutionGenerateTask',
+          inputHash: diagnostic.question_input_sha256,
+          promptFingerprint: solverPromptFingerprint,
+          ...(taskRunId === diagnostic.solver_task_run_id
+            ? { resultDigest: diagnostic.solver_output_sha256 }
+            : {}),
+          failureCode: `agency:${diagnostic.kind}:solver_task_run_invalid`,
+        });
+      }
+    }
+    if (record.recommendation?.kind === 'recommendation') {
+      const questionContentValidationAudit = currentReview.question_content_validation_audit;
+      if (
+        questionContentValidationAudit.package_digest_sha256 !==
+        sha256CanonicalJson(attempt.package)
+      ) {
+        failures.push('agency:question_content_validation_package_digest_mismatch');
+      }
+      for (const diagnostic of questionContentValidationAudit.diagnostics) {
+        const expectedInput = buildInterventionQuestionContentValidationTaskInput({
+          context: { snapshot: record.snapshot, recommendation: record.recommendation },
+          packageValue: attempt.package,
+          kind: diagnostic.kind,
+          subjectId: subjectProfile.id,
+        });
+        const expectedInputHash = sha256CanonicalJson(expectedInput);
+        if (
+          sha256CanonicalJson(diagnostic.task_input) !== expectedInputHash ||
+          diagnostic.task_input_sha256 !== expectedInputHash
+        ) {
+          failures.push(`agency:${diagnostic.kind}:question_content_validation_input_mismatch`);
+        }
+        if (diagnostic.result_sha256 !== sha256CanonicalJson(diagnostic.result)) {
+          failures.push(`agency:${diagnostic.kind}:question_content_validation_output_mismatch`);
+        }
+        expectedRuns.push({
+          id: diagnostic.task_run_id,
+          taskKind: 'QuizVerifyTask',
+          inputHash: expectedInputHash,
+          promptFingerprint: contentPromptFingerprint,
+          resultDigest: diagnostic.result_sha256,
+          failureCode: `agency:${diagnostic.kind}:question_content_validation_task_run_invalid`,
+        });
+      }
+      const reviewTaskInputSha256 = sha256CanonicalJson(
+        buildInterventionPackageReviewTaskInput({
+          context: { snapshot: record.snapshot, recommendation: record.recommendation },
+          packageValue: attempt.package,
+          independentAudit,
+          questionContentValidationAudit,
+        }),
+      );
+      if (currentReview.review_task_input_sha256 !== reviewTaskInputSha256) {
+        failures.push('agency:review_task_input_digest_mismatch');
+      }
+      for (const reviewAttempt of currentReview.review_attempts) {
+        expectedRuns.push({
+          id: reviewAttempt.task_run_id,
+          taskKind: 'InterventionPackageReviewTask',
+          inputHash: reviewTaskInputSha256,
+          promptFingerprint: reviewPromptFingerprint,
+          resultDigest:
+            reviewAttempt.outcome === 'valid' ? sha256CanonicalJson(reviewAttempt.result) : null,
+          failureCode: 'agency:review_task_run_invalid',
+        });
+      }
+    }
+  }
+  if (expectedRuns.length > 0) {
+    const rows = await db
+      .select({
+        id: ai_task_runs.id,
+        task_kind: ai_task_runs.task_kind,
+        input_hash: ai_task_runs.input_hash,
+        prompt_fingerprint: ai_task_runs.prompt_fingerprint,
+        result_digest: ai_task_runs.result_digest,
+        status: ai_task_runs.status,
+      })
+      .from(ai_task_runs)
+      .where(
+        inArray(
+          ai_task_runs.id,
+          expectedRuns.map((run) => run.id),
+        ),
+      );
+    const rowById = new Map(rows.map((row) => [row.id, row]));
+    for (const expected of expectedRuns) {
+      const row = rowById.get(expected.id);
+      if (
+        !row ||
+        row.status !== 'success' ||
+        row.task_kind !== expected.taskKind ||
+        row.input_hash !== expected.inputHash ||
+        row.prompt_fingerprint !== expected.promptFingerprint ||
+        (expected.resultDigest !== undefined && row.result_digest !== expected.resultDigest)
+      ) {
+        failures.push(expected.failureCode);
+      }
+    }
+  }
   return InterventionPreparationAttempt.parse({
     ...attempt,
     deterministic_failure_codes: [...new Set(failures)].sort(),
@@ -200,9 +362,18 @@ function passingAttempt(
   attempts: InterventionPreparationAttemptT[],
 ): Extract<InterventionPreparationAttemptT, { kind: 'reviewed_package' }> | null {
   for (const attempt of attempts) {
+    const packageDigest =
+      attempt.kind === 'reviewed_package' ? sha256CanonicalJson(attempt.package) : null;
+    const currentReview =
+      attempt.kind === 'reviewed_package'
+        ? CurrentInterventionPackageReviewAudit.safeParse(attempt.review)
+        : null;
     if (
       attempt.kind === 'reviewed_package' &&
-      attempt.review.result.verdict === 'pass' &&
+      currentReview?.success &&
+      currentReview.data.package_digest_sha256 === packageDigest &&
+      currentReview.data.independent_solution_audit.package_digest_sha256 === packageDigest &&
+      currentReview.data.result.verdict === 'pass' &&
       attempt.deterministic_failure_codes.length === 0
     ) {
       return attempt;
@@ -240,7 +411,7 @@ export async function prepareInterventionWave(
 
   const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   if (!record.recommendation) {
-    const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, [
+    const subjectProfile = await resolveSubjectProfileForKnowledgeIdsStrict(db, [
       record.snapshot.conjecture.knowledge_id,
     ]);
     const recommendation = await recommendPedagogy({
@@ -303,7 +474,14 @@ export async function prepareInterventionWave(
     if (attemptStageGuard.status === 'terminal') return attemptStageGuard.result;
     record = attemptStageGuard.record;
 
-    const passed = passingAttempt(record.preparation_attempts);
+    // Crash/recovery can resume after an attempt was appended but before it was
+    // activated. Re-bind every persisted attempt against current deterministic
+    // checks, authoritative subject prompt, and live run ledger before using it.
+    // Keep cardinality unchanged so an invalid old attempt still consumes its slot.
+    const reboundAttempts = await Promise.all(
+      record.preparation_attempts.map((attempt) => bindAttemptToRecord(db, record, attempt)),
+    );
+    const passed = passingAttempt(reboundAttempts);
     if (passed) {
       const active = await activateIntervention(db, {
         interventionId: record.id,
@@ -342,7 +520,7 @@ export async function prepareInterventionWave(
     }
 
     if (record.preparation_attempts.length >= MAX_INTERVENTION_PACKAGE_ATTEMPTS) {
-      const reason = terminalAttemptFailure(record.preparation_attempts.at(-1));
+      const reason = terminalAttemptFailure(reboundAttempts.at(-1));
       const failed = await failInterventionPreparation(db, {
         interventionId: record.id,
         version: record.version,
@@ -388,7 +566,7 @@ export async function prepareInterventionWave(
     );
     if (postAuthorGuard.status === 'terminal') return postAuthorGuard.result;
     record = postAuthorGuard.record;
-    const boundAttempt = bindAttemptToRecord(record, authored);
+    const boundAttempt = await bindAttemptToRecord(db, record, authored);
     record = await appendPreparationAttempt(db, record, boundAttempt, deps.now?.() ?? new Date());
     if (record.status !== 'preparing') break;
   }

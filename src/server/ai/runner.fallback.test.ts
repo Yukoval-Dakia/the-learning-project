@@ -498,13 +498,39 @@ describe('runTask — GLOBAL stream_no_terminal guard (YUK-576, deliberate behav
     };
     mockSdk.messageQueues = [[], [successResult('never-reached')]];
 
-    await expect(
-      runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true }),
-    ).rejects.toThrow(/aborted/);
+    const error = await runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true })
+      .then(() => null)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AgentRunError);
+    expect(error).toMatchObject({
+      subtype: 'budget_timeout',
+      taskRunId: (logMock.started.mock.calls[0]?.[1] as { id?: string })?.id,
+    });
+    expect((error as Error).message).toContain('aborted');
 
     expect(mockSdk.capturedOptions).toHaveLength(1); // permanent → no retry
     const finish = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     expect(finish.finish_reason).toBe('error'); // not error_retried
     vi.useRealTimers();
+  });
+
+  it('binds an unexpected adapter exception to the lifecycle task-run id', async () => {
+    mockSdk.beforeYield = () => {
+      throw new Error('adapter exploded after lifecycle start');
+    };
+    mockSdk.messageQueues = [[]];
+
+    const error = await runTask(NO_RETRY_KIND, { q: 1 }, { db: fakeDb })
+      .then(() => null)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AgentRunError);
+    expect(error).toMatchObject({
+      subtype: 'runner_error',
+      taskRunId: (logMock.started.mock.calls[0]?.[1] as { id?: string })?.id,
+    });
+    expect((error as Error).message).toContain('adapter exploded after lifecycle start');
+    expect(logMock.finished.mock.calls[0]?.[1]).toMatchObject({ status: 'failure' });
   });
 });

@@ -37,7 +37,11 @@ export type AgentFailureSubtype =
   /** success+is_error terminal (the ONLY shape API errors take — probe-frozen). */
   | 'api_error_result'
   /** SDK stream ended without a terminal result message. */
-  | 'stream_no_terminal';
+  | 'stream_no_terminal'
+  /** Lifecycle budget elapsed before a terminal result was observed. */
+  | 'budget_timeout'
+  /** Non-SDK exception after the attempt acquired a durable task-run id. */
+  | 'runner_error';
 
 /**
  * R1 (YUK-576 review) — the sixth retry gate: a transient failure is only
@@ -85,6 +89,27 @@ export class AgentRunError extends Error {
     this.apiErrorStatus = fields.apiErrorStatus;
     this.errors = fields.errors;
   }
+}
+
+/**
+ * Preserve the durable attempt identity for every exception that escapes a
+ * started run lifecycle, not only SDK terminal errors. Unknown exceptions stay
+ * permanent by classification, but downstream budget/provenance code can still
+ * consume the exact persisted attempt id.
+ */
+export function bindAgentRunError(input: {
+  error: unknown;
+  kind: string;
+  taskRunId: string;
+  aborted: boolean;
+}): AgentRunError {
+  if (input.error instanceof AgentRunError) return input.error;
+  return new AgentRunError({
+    kind: input.kind,
+    taskRunId: input.taskRunId,
+    subtype: input.aborted ? 'budget_timeout' : 'runner_error',
+    errors: [input.error instanceof Error ? input.error.message : String(input.error)],
+  });
 }
 
 /**

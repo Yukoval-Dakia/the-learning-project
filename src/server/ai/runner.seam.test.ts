@@ -10,6 +10,8 @@
 // db config's src/**/*.test.ts glob would sweep it into the testcontainer
 // partition.
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Capture the options the runner hands the SDK + let a test pick which result
@@ -72,6 +74,13 @@ function errorResult(subtype: string) {
   return { type: 'result', subtype };
 }
 
+function assistantThinking(thinking: string) {
+  return {
+    type: 'assistant',
+    message: { content: [{ type: 'thinking', thinking, signature: '' }] },
+  };
+}
+
 const SAMPLE_OUTPUT_FORMAT: JsonSchemaOutputFormat = {
   type: 'json_schema',
   schema: { type: 'object', properties: { ok: { type: 'boolean' } } },
@@ -80,6 +89,18 @@ const SAMPLE_OUTPUT_FORMAT: JsonSchemaOutputFormat = {
 // AttributionTask is an un-migrated, no-tool task — a representative baseline for
 // the zero-regression assertions (it never sets ctx.outputFormat).
 const UNMIGRATED_KIND = 'AttributionTask';
+
+const REVIEW_REGRESSION_PACKET = JSON.parse(
+  readFileSync(
+    join(
+      process.cwd(),
+      'src/server/grounding-gate/fixtures/intervention-review-regressions.v1.json',
+    ),
+    'utf8',
+  ),
+) as {
+  cases: Array<{ context: { snapshot: unknown; recommendation: unknown }; package: unknown }>;
+};
 
 describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
   beforeEach(() => {
@@ -104,6 +125,46 @@ describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
     };
     expect(opts.env.CLAUDE_CODE_MAX_RETRIES).toBe('2');
     expect('maxBudgetUsd' in opts).toBe(false);
+  });
+
+  it('records returned thinking-block presence without persisting raw reasoning', async () => {
+    mockSdk.messages = [assistantThinking('private scratch work'), successResult()];
+
+    const result = await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
+
+    expect(result.usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      thinkingBlocks: 1,
+      thinkingCharacters: 20,
+    });
+    const finished = logMock.finished.mock.calls.at(-1)?.[1] as {
+      usage: Record<string, unknown>;
+    };
+    expect(finished.usage).toEqual(result.usage);
+    expect(JSON.stringify(finished)).not.toContain('private scratch work');
+  });
+
+  it('isolates a production-shaped reviewer packet from project settings and title generation', async () => {
+    const regression = REVIEW_REGRESSION_PACKET.cases[0];
+    if (!regression) throw new Error('review regression fixture has no cases');
+    const input = {
+      snapshot: regression.context.snapshot,
+      recommendation: regression.context.recommendation,
+      package: regression.package,
+    };
+    expect(JSON.stringify(input).length).toBeGreaterThan(7_000);
+
+    await runTask('InterventionPackageReviewTask', input, { db: fakeDb });
+
+    const opts = mockSdk.capturedOptions as {
+      settingSources?: string[];
+      skills?: string[];
+      title?: string;
+    };
+    expect(opts.settingSources).toEqual([]);
+    expect(opts.skills).toEqual([]);
+    expect(opts.title).toBe('InterventionPackageReviewTask');
   });
 
   it('preserves an explicit operator CLAUDE_CODE_MAX_RETRIES override', async () => {
@@ -176,11 +237,13 @@ describe('runTask — YUK-299 outputFormat seam', () => {
       'allowDangerouslySkipPermissions',
       'persistSession',
       'cwd',
+      'title',
       'skills',
+      'settingSources',
     ].sort();
     expect(Object.keys(opts).sort()).toEqual(EXPECTED_KEYS);
-    // settingSources must stay OMITTED (pre-existing invariant, re-asserted here).
-    expect('settingSources' in opts).toBe(false);
+    expect(opts.settingSources).toEqual([]);
+    expect(opts.title).toBe(UNMIGRATED_KIND);
   });
 
   it('threads ctx.outputFormat through on an SDK-structured-output provider', async () => {

@@ -208,6 +208,7 @@ function sample(
     followup_probe_reference_md?: string;
     trigger_conditions_md?: string;
     scope_boundary_md?: string;
+    causal_direction_required?: boolean;
   } = {},
 ): TaskTextResult {
   return {
@@ -217,11 +218,12 @@ function sample(
       knowledge_id: 'k_chain_rule',
       evidence_event_ids: ['e_a', 'e_b'],
       diagnostic_spec: {
-        schema_version: 1,
+        schema_version: 2,
         target_error_rule_md: '把复合函数的外层导数和内层导数相加。',
         trigger_conditions_md: extra.trigger_conditions_md ?? '题目要求对复合函数求导。',
         scope_boundary_md: extra.scope_boundary_md ?? '只覆盖层间组合方式，不推断其它求导法则。',
         expected_wrong_answer_signature_md: '答案把外层导数与内层导数用加号连接。',
+        causal_direction_required: extra.causal_direction_required ?? false,
       },
       cause_category: 'concept_confusion',
       recurrence_count: 3,
@@ -644,11 +646,12 @@ describe('induceConjecture self-consistency', () => {
           knowledge_id: 'k_chain_rule',
           evidence_event_ids: ['e_a', 'e_b'],
           diagnostic_spec: {
-            schema_version: 1,
+            schema_version: 2,
             target_error_rule_md: '把一个例题里的局部规则用于所有相似题。',
             trigger_conditions_md: '题面表面结构与原例题相似，但关键条件不同。',
             scope_boundary_md: '不推断所有迁移任务都失败。',
             expected_wrong_answer_signature_md: '答案照搬原例题规则，忽略改变的条件。',
+            causal_direction_required: false,
           },
           cause_category: 'concept_confusion',
           recurrence_count: 2,
@@ -745,6 +748,19 @@ describe('induceConjecture self-consistency', () => {
     expect(abstain(result).reason_code).toBe('invalid_output');
     expect(result.votes).toEqual({ proposal: 0, abstain: 0, invalid: 2, failed: 0 });
     expect(result.confidence).toBe(0);
+  });
+
+  it('rejects a newly emitted V1 hypothesis even though historical V1 rows remain readable', async () => {
+    const current = sample('你把相关关系直接写成因果关系');
+    const legacyText = current.text
+      .replace('"schema_version":2', '"schema_version":1')
+      .replace(',"causal_direction_required":false', '');
+    const runTaskFn = vi.fn(async () => ({ text: legacyText }));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 1, runTaskFn });
+
+    expect(abstain(result).reason_code).toBe('invalid_output');
+    expect(result.votes).toEqual({ proposal: 0, abstain: 0, invalid: 1, failed: 0 });
   });
 
   it('skips one failed induction sample and keeps requested samples as the confidence denominator', async () => {
@@ -858,6 +874,38 @@ describe('induceConjecture self-consistency', () => {
     expect(dedupCall[0]).toBe('ConjectureGroupingTask');
     expect((dedupCall[2] as { override?: unknown }).override).toBeUndefined();
     expect((dedupCall[1] as { hypotheses: unknown[] }).hypotheses).toHaveLength(3);
+  });
+
+  it('splits a model-authored semantic group on the frozen causal-direction bit', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(
+        sample('你把基线水平影响分组误写成观察结果反向导致分组', {
+          causal_direction_required: true,
+        }),
+      )
+      .mockResolvedValueOnce(
+        sample('你把治疗前特征对暴露的影响误判为结局对暴露的反向因果', {
+          causal_direction_required: true,
+        }),
+      )
+      .mockResolvedValueOnce(
+        sample('你只是混淆了两个非因果概念', {
+          causal_direction_required: false,
+        }),
+      )
+      // The provider incorrectly merges all three. The server must refine this
+      // into the true pair plus the false singleton before counting agreement.
+      .mockResolvedValueOnce(groupResult([[0, 1, 2]]));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
+
+    expect(proposal(result).agreement_count).toBe(2);
+    expect(proposal(result).diagnostic_spec).toMatchObject({
+      schema_version: 2,
+      causal_direction_required: true,
+    });
+    expect(result.confidence).toBeCloseTo(2 / 3, 5);
   });
 
   it('dedup: 2-of-3 semantic agreement → confidence 0.667, agreement_count 2', async () => {

@@ -272,12 +272,10 @@ describe('runTask — YUK-217 spike invariants (slice 4 skills wiring)', () => {
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 
-  // (a) OMITTED invariant: settingSources must NEVER appear on Options.
-  // spike report §5(1): passing `settingSources: []` (SDK isolation mode)
-  // disables the CONFIG_DIR/skills auto-load (CLEAN-PRESEED 案 L1/L2 双 NO),
-  // making the populated skills invisible. The correct form is to omit the
-  // key entirely — guard that the runner never sets it on any path.
-  it('never sets settingSources on Options (OMITTED invariant)', async () => {
+  // (a) Skill-enabled invariant: settingSources stays omitted only when the
+  // CONFIG_DIR skill discovery path is actually needed. No-skill product runs
+  // are isolated separately below so repo CLAUDE.md/hooks cannot leak in.
+  it('omits settingSources for an explicitly skill-enabled run', async () => {
     mockSdk.messages = [successResult('ok')];
 
     await runTask(
@@ -288,6 +286,7 @@ describe('runTask — YUK-217 spike invariants (slice 4 skills wiring)', () => {
 
     const opts = mockSdk.capturedOptions as Record<string, unknown>;
     expect('settingSources' in opts).toBe(false);
+    expect(opts.title).toBe('NoteGenerateTask');
   });
 
   // (b) Zero-impact red line: a task with no ctx.skills must EXPLICITLY DISABLE
@@ -301,9 +300,15 @@ describe('runTask — YUK-217 spike invariants (slice 4 skills wiring)', () => {
 
     await runTask('AttributionTask', { test: 'payload' }, { db: testDb(), r2: memR2() });
 
-    const opts = mockSdk.capturedOptions as { skills?: string[] };
+    const opts = mockSdk.capturedOptions as {
+      skills?: string[];
+      settingSources?: string[];
+      title?: string;
+    };
     expect('skills' in opts).toBe(true);
     expect(opts.skills).toEqual([]);
+    expect(opts.settingSources).toEqual([]);
+    expect(opts.title).toBe('AttributionTask');
   });
 
   // Also guard the empty-array degrade path: ctx.skills=[] is still "no skills"
@@ -317,8 +322,9 @@ describe('runTask — YUK-217 spike invariants (slice 4 skills wiring)', () => {
       { db: testDb(), r2: memR2(), skills: [] },
     );
 
-    const opts = mockSdk.capturedOptions as { skills?: string[] };
+    const opts = mockSdk.capturedOptions as { skills?: string[]; settingSources?: string[] };
     expect(opts.skills).toEqual([]);
+    expect(opts.settingSources).toEqual([]);
   });
 
   // (c) Whitelist passthrough: ctx.skills threads verbatim onto Options.skills.

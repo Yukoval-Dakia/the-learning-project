@@ -87,6 +87,9 @@ describe('task prompt definitions', () => {
           task === 'InterventionRecommendationTask' ||
           task === 'InterventionPackageAuthorTask' ||
           task === 'InterventionPackageReviewTask' ||
+          task === 'QuizVerifyTask' ||
+          task === 'SolutionGenerateTask' ||
+          task === 'SolutionGenerateVisionTask' ||
           task === 'SelectionOrchestratorTask'
         ) {
           continue;
@@ -122,19 +125,19 @@ describe('task prompt definitions', () => {
       'general:ConjectureProbeAuthorTask':
         '1337f632a207767ad1408723f07d9cc9281220828074ba2dc2c6f65da6d87969',
       'general:ConjectureProbeReviewTask':
-        '6cf0b4bdf41429476075d579014b17acf2a1809da3b17d6897502e34f3f5f404',
+        '887a6442092af1cc1882a21942e50a671c249b179e7f931bfac9b4e61dc0552a',
       'math:ConjectureProbeAuthorTask':
         'bc9ad647833de7e13227a98a7776f76c78c5c3964e88b0ba128202ad555bf6b2',
       'math:ConjectureProbeReviewTask':
-        'e9b108a1511d127b33c399d23fced583ac871fff460cd9fff1f65ca16e351729',
+        'bb1c6d7a01ad9ef31ae5e5a5c5784436aa1eb495e3328d0840c0f31539ef8fed',
       'physics:ConjectureProbeAuthorTask':
         '44ceec14112bf53e0e197b3e9be813c57d4f056a1c909900c772061a3f9f5694',
       'physics:ConjectureProbeReviewTask':
-        '5de7d2abe9e2986bb74c61582034e1adc1eb30d285cf5635525cc59de3c12c0e',
+        '3d81bdeac649bd8331f958dc2fb429851f19e49cfffb9316b3a22e0dfe1aacd0',
       'yuwen:ConjectureProbeAuthorTask':
         '5c890570f0dbca25f1661556a4dabecaa0161223643d467b9f6ce6c7931c7d5f',
       'yuwen:ConjectureProbeReviewTask':
-        '0adbee2e2bb1b47d19897e5b450d960ccd4ad9f26dc9e2cff4642cbfbeb6fcfa',
+        '0c24bae37112cdbbd90d65929f11909501ca1747027118008d6db098f34e3d86',
     } as const;
     for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
       const profile = resolveSubjectProfile(profileId);
@@ -155,25 +158,25 @@ describe('task prompt definitions', () => {
       'general:InterventionPackageAuthorTask':
         '60c55bb06557f2815b7ffe7d5835dd8a5561cbe8a23849a596eb45692c73146e',
       'general:InterventionPackageReviewTask':
-        '8eb2e4205a3483045d39f6bff0d1148a13237ac2811ab24af43dce5b28b86258',
+        'df025e315f11b6952624c80597a03cc392d67ef1922771f6f561ef58ba13c9ea',
       'math:InterventionRecommendationTask':
         'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
       'math:InterventionPackageAuthorTask':
         '5748f5259952696212c4504f5a97953ecaa3415c573245d02c499bde99806bc7',
       'math:InterventionPackageReviewTask':
-        'b90170f492ab6402007db5d300163df32fd2e1bdd23e7619b9a5b8a418852c29',
+        '2204079c241e30b15445467d114ff4c737f6e4478352232bdb2ae1d0200d91e6',
       'physics:InterventionRecommendationTask':
         'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
       'physics:InterventionPackageAuthorTask':
         '5f85c39d955878b0c293f07fd271ce6ff8509f9a9b8fe19045aea4696f956cdb',
       'physics:InterventionPackageReviewTask':
-        '1a2c78a47667da020dd72dbaebf613b21423848eccd6cb5fb7aed0b919480057',
+        '0a2ebb885fb7110ab98d2eed155f50c98fb25b103aa0883c721dca9591824021',
       'yuwen:InterventionRecommendationTask':
         'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
       'yuwen:InterventionPackageAuthorTask':
         'c46426ca2c07e712a5e90d6b6962d377df7aff4955cc036c200eac62ea08ce02',
       'yuwen:InterventionPackageReviewTask':
-        '39bacc1cce60012763914b523050be9976746fc783624f7b41d7f068478dfabe',
+        '37ca9213d89d4fe9dc72134fd9af3ba576c73d015ffac9432796cad5477a93c9',
     } as const;
     for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
       const profile = resolveSubjectProfile(profileId);
@@ -189,6 +192,94 @@ describe('task prompt definitions', () => {
         expect(actualHash, key).toBe(expected[key]);
       }
     }
+  });
+
+  it('pins the shared question-content validator release-strict grounding policy', () => {
+    const expected = {
+      general: '237907950811f1dea42515b55bc9c2ab473030287da91c45364d321a17258ff9',
+      math: 'cebc5936ecf2ac13e25447d46e026db68bd200e8154029eed748c75018137a9e',
+      physics: 'f26a7cce5444755fa8dc8312bfc809844411a2cf238b010ee79e86c2c5001181',
+      yuwen: 'f41b5caa37125fc766a3399b72f4a3719dcda7cbf1e637ba34caaf72904a663e',
+    } as const;
+    for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
+      const prompt = getTaskSystemPrompt('QuizVerifyTask', resolveSubjectProfile(profileId));
+      expect(prompt).toContain("validation_mode='release_strict'");
+      expect(prompt).toContain('author_material 只是作者生成的教学材料，不是事实来源');
+      expect(prompt).toContain('匿名记录、假设情境、给定数据');
+      expect(prompt).toContain("缺少足够独立依据给 grounding='unclear'");
+      expect(prompt).not.toContain('卜算子·咏梅');
+      expect(createHash('sha256').update(prompt, 'utf8').digest('hex')).toBe(expected[profileId]);
+    }
+  });
+
+  it('pins the shared solver complete-path contract for every profile', () => {
+    const expected = {
+      'general:SolutionGenerateTask':
+        '83074e876fbe1f90d5b9b1d6eeb3a42d8d5a759a44da29278769f9b285d5120d',
+      'general:SolutionGenerateVisionTask':
+        '2a417ef4d1eb9115af87518fcfa45ac840baa0de303cf1cedfde5a4e24e9ef4d',
+      'math:SolutionGenerateTask':
+        '63154d81985b83b6defd4bb4156f7a3ae2ed152ae14ef334d48dbcff6c89b1d4',
+      'math:SolutionGenerateVisionTask':
+        '793cc0ae94ad58ab99e8a69d53b0f013929bb5cae3dd5f4ba4108b359a2f285f',
+      'physics:SolutionGenerateTask':
+        '9b98a4dc2f12db70549e453fd68494c5e5904fb2665dcc7f16a8e7b7cd3d61ae',
+      'physics:SolutionGenerateVisionTask':
+        '6d634be1d87e7be40bec48532e77d3ba8d98b7b3fb64b4dde1ba4d269d13eacb',
+      'yuwen:SolutionGenerateTask':
+        '73769b8d253da7566990bae25811b4ef10a6548baae892237841077b769f2002',
+      'yuwen:SolutionGenerateVisionTask':
+        '62b7caf07867ff9d9259593dcb58834558815f5a19a8cc027dcc9eb4a3aba0de',
+    } as const;
+    for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
+      for (const task of ['SolutionGenerateTask', 'SolutionGenerateVisionTask'] as const) {
+        const prompt = getTaskSystemPrompt(task, resolveSubjectProfile(profileId));
+        expect(prompt).toContain('完整必要解题路径');
+        expect(prompt).toContain('1..12');
+        expect(prompt).toContain('outcome construct / estimand Y');
+        expect(prompt).toContain('同一个 Y 构念');
+        expect(prompt).toContain('基线水平 Y0、能力/潜力、动机、倾向、预期改善都不是 ΔY');
+        expect(prompt).toContain('具名真实作品、人物、史实');
+        expect(prompt).toContain(
+          'confidence 必须是与 reference_solution、worked_solution_md 并列的',
+        );
+        expect(createHash('sha256').update(prompt, 'utf8').digest('hex')).toBe(
+          expected[`${profileId}:${task}`],
+        );
+      }
+    }
+  });
+
+  it('requires the intervention comparator to consume sealed validator outputs and enforce frozen scope', () => {
+    const prompt = getTaskSystemPrompt(
+      'InterventionPackageReviewTask',
+      resolveSubjectProfile('math'),
+    );
+
+    expect(prompt).toContain('sealed_independent_solutions');
+    expect(prompt).toContain('现有题目 validator');
+    expect(prompt).toContain('不得改写、替换或伪造任何密封结果');
+    expect(prompt).toContain('服务端按 kind 绑定对应密封 solver digest');
+    expect(prompt).toContain('required_operation_checks');
+    expect(prompt).toContain('不得输出或猜测 operation_sha256');
+    expect(prompt).toContain('package_checks');
+    expect(prompt).toContain('scope_boundary_md');
+    expect(prompt).toContain('完整必要解题路径');
+    expect(prompt).toContain('all-of');
+    expect(prompt).toContain('review_requirements.audit_entire_solution_path=true');
+    expect(prompt).toContain('reference_incorrect');
+    expect(prompt).toContain('claim_scope_expansion');
+    expect(prompt).toContain('Y0');
+    expect(prompt).toContain('reverse causation');
+    expect(prompt).toContain('causal_direction_check');
+    expect(prompt).toContain('review_requirements.causal_direction_required=true');
+    expect(prompt).toContain('baseline_or_prior_different_construct');
+    expect(prompt).toContain('same_outcome_construct_y');
+    expect(prompt).toContain('能力/“提升潜力”、动机、倾向、预期改善都不是 ΔY');
+    expect(prompt).toContain('claim presence/text/digest 与最终兼容 bit 均由服务端绑定');
+    expect(prompt).toContain('每种 kind 恰好一次');
+    expect(prompt).not.toContain('先遮蔽 reference_md');
+    expect(prompt).not.toContain('卜算子·咏梅');
   });
 
   it('keeps inline prompts profile-independent', () => {
@@ -538,6 +629,9 @@ describe('MindModelInductionTask registry entry', () => {
     expect(p).toContain('trigger_conditions_md');
     expect(p).toContain('scope_boundary_md');
     expect(p).toContain('expected_wrong_answer_signature_md');
+    expect(p).toContain('diagnostic_spec.schema_version 恒为 2');
+    expect(p).toContain('causal_direction_required');
+    expect(p).toContain('导致/引起/造成');
     expect(p).toContain('本阶段**禁止出题**');
     expect(p).not.toContain('"probe_md"');
   });
@@ -700,14 +794,17 @@ describe('Conjecture probe author/reviewer registry entries', () => {
     const def: TaskDef = tasks.ConjectureGroupingTask;
     expect(def.budget.maxIterations).toBe(3);
     expect(def.budget.timeout).toBeGreaterThanOrEqual(120_000);
+    expect(getTaskSystemPrompt('ConjectureGroupingTask')).toContain(
+      'causal_direction_required 不同的 hypothesis 绝不能合并',
+    );
   });
 });
 
 describe('Intervention preparation registry entries', () => {
-  it('gives the measured package-author output enough time without widening the other stages', () => {
+  it('keeps recommendation narrow and gives the measured package author/reviewer enough time', () => {
     expect(tasks.InterventionRecommendationTask.budget.timeout).toBe(60_000);
     expect(tasks.InterventionPackageAuthorTask.budget.timeout).toBeGreaterThanOrEqual(180_000);
-    expect(tasks.InterventionPackageReviewTask.budget.timeout).toBe(120_000);
+    expect(tasks.InterventionPackageReviewTask.budget.timeout).toBe(180_000);
   });
 });
 

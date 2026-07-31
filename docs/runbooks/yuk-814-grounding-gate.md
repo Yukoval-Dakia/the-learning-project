@@ -17,6 +17,85 @@ as acceptance evidence.
 - The blind reviewer must finish `blind/review.json` before seeing
   `private/lineage.json`.
 
+## Reviewer actual-output regression (development evidence only)
+
+When changing the intervention validator or `InterventionPackageReviewTask`, run
+the production Xiaomi/Mimo route against a sanitized regression packet after
+committing the exact code revision:
+
+```bash
+umask 077
+pnpm grounding:gate review-intervention \
+  --cases src/server/grounding-gate/fixtures/intervention-review-regressions.v1.json \
+  --out .tmp/yuk-829/reviewer-regression-result.json \
+  --env-file /absolute/path/to/private.env
+```
+
+The input packet has `schema_version: 1`,
+`source_kind: "sanitized_regression_fixture"`, and one or more cases containing
+`case_id`, `subject_id`, canonical `context`, canonical `package`,
+`expected_verdict`, and `expected_failure_codes`. The checked-in packet contains
+three expected-fail regressions plus three expected-pass controls, so an
+always-rejecting comparator cannot pass the gate. The harness refuses a dirty
+worktree, global provider overrides, an absent Xiaomi credential, or an existing
+output path. It runs in a disposable pgvector Testcontainer. For every package
+it runs three strict `SolutionGenerateTask` blind solves, three
+`release_strict` checks through the shared `QuizVerifyTask` content validator,
+and then the sealed package comparator. The content checks bind the canonical
+question/reference input and require factual grounding to pass; author-written
+material is context, not independent evidence for a named real-world claim. A
+paid solver response that cannot satisfy the complete
+output contract may retry the identical blind input once; heuristic JSON repair
+is forbidden. Confidence repair is limited to preserving an existing numeric
+value: numeric string to number, or relocation from `reference_solution` to its
+required top-level field; labels and missing values still fail closed.
+Deterministic repair is recorded, and every attempted task-run ID remains in the
+audit. `expected_signals` is a bounded 1..12 atomized necessary
+path; every operation is sealed by index + digest, and the comparator must return
+one reference-coverage and frozen-scope decision for every operation. Provider
+output names only kind + operation index; the server binds solver/operation
+digests and operation text instead of asking the model to echo opaque hashes. A package
+cannot pass from one diagnostic-level self-certified boolean. DiagnosticSpec V2
+also freezes `causal_direction_required`; historical V1 is read-compatible but
+conservatively requires the causal check, and explicit causal language is a
+defense-in-depth positive backstop. A claimed reverse cause is classified by its
+relation to the question's outcome construct/estimand: the same Y construct,
+a distinct baseline/prior estimand, or another/common/unclear cause. The server
+derives the Y→X boolean from that classification instead of accepting a model
+self-certification; timing alone is not the definition. A valid semantic fail
+stops immediately. A first valid pass becomes activation-eligible only after a
+second valid pass on the identical sealed input; a contract-invalid/pass or
+pass/contract-invalid pair is an invalid package attempt rather than a fabricated
+task-run-bound verdict. Activation re-runs deterministic checks and binds every
+solver, content-validator, and comparator attempt to successful `ai_task_runs` rows, exact input
+hashes, the current profile-rendered prompt fingerprint, and the selected
+canonical result digest. Persisted crash-recovery attempts are rebound before
+activation rather than trusted as checkpoints. The harness records exact blind
+inputs/structured solutions, exact content-validation inputs/results and their
+digests, every comparator attempt, FULL diagnostic/package checks,
+provider/model, usage, and exactly one finite non-negative USD success-cost row.
+The actual-output harness additionally requires every audit ID to have been
+observed through the current case's runner seam with the expected subject-rendered
+prompt; matching replay rows cannot make a case green. A per-case operational
+failure retains all task-run IDs observed before the failure (including
+lifecycle timeout/adapter exception 统一绑定的 `AgentRunError.taskRunId`)
+instead of discarding paid evidence. Comparator runner failure returns a closed
+invalid attempt with that ID, so the enclosing package slot is durably consumed
+instead of being reset by pg-boss redelivery.
+
+The structural ceiling is eleven validator calls per package (three diagnostics ×
+two blind-solve attempts, three shared content-validation calls, plus two
+comparator attempts). A two-package preparation delivery including one
+recommendation call and two author calls is therefore capped at 25 task calls;
+the six-case regression command is capped at 66. These are retry ceilings, not
+expected steady-state spend. A durable cross-delivery aggregate budget and
+per-stage checkpoint are not implemented by this change and must not be inferred
+from a green fixture run.
+
+This command verifies real model output rather than a mocked verdict, but its
+artifact always records `satisfies_yuk_814_canary=false`. Sanitized regression
+fixtures cannot replace the fresh prospective ten-run real lifecycle canary.
+
 ## 1. Export production data
 
 Use the authenticated backup endpoint:

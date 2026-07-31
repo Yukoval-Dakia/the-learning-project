@@ -43,8 +43,6 @@ import {
   QuizGenMetadata,
   type QuizGenMetadataT,
   type QuizGenVerificationT,
-  QuizVerificationResult,
-  type QuizVerificationResultT,
 } from '@/core/schema/quiz_gen';
 import {
   type QuizVerifyOverall,
@@ -55,7 +53,6 @@ import type { Db } from '@/db/client';
 import { event, knowledge, question, source_document } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import {
   type TaskTextResult,
   type TaskTextRunFn,
@@ -80,6 +77,7 @@ import {
   type SolveCheckQuestion,
   type TeachingQualityQuestion,
   checksForTier,
+  runQuestionContentValidation,
   runSolveCheck,
   runTeachingQualityCheck,
   solveCheckBlocks,
@@ -102,27 +100,6 @@ export type RunTaskFn = TaskTextRunFn;
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
-
-function parseQuizVerifyOutput(text: string): QuizVerificationResultT {
-  // YUK-607 — 宽松提取（jsonrepair 修复带），与 quiz_gen parseOutput 同款；错误串格式不变。
-  let extracted: ReturnType<typeof parseJsonObjectLoose>;
-  try {
-    extracted = parseJsonObjectLoose(text, 'parseQuizVerifyOutput');
-  } catch (e) {
-    throw new Error(`parseQuizVerifyOutput: JSON.parse failed: ${(e as Error).message}`);
-  }
-  if (extracted === null) {
-    throw new Error('parseQuizVerifyOutput: no JSON object found in text');
-  }
-  const json: unknown = extracted.json;
-  const parsed = QuizVerificationResult.safeParse(json);
-  if (!parsed.success) {
-    throw new Error(
-      `parseQuizVerifyOutput: schema invalid: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
-    );
-  }
-  return parsed.data;
-}
 
 // §4 / §5 — deterministic normalized n-gram overlap. Word-shingle Jaccard between
 // the prompt and each source snippet; we take the MAX over snippets (worst-case
@@ -366,33 +343,37 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         }),
       );
     }
-    const result = await runTaskFn('QuizVerifyTask', input, {
+    const validationRun = await runQuestionContentValidation(input, {
+      runTaskFn,
+      db,
       subjectProfile,
       ...(verifySkills ? { skills: verifySkills } : {}),
+      afterTaskRun: async (result) => {
+        taskResult = result;
+        if (!placementAuthority) return;
+        if (!result.task_run_id) {
+          throw new PlacementStarterAdmissionError(
+            'placement quiz_verify paid invocation missing task_run_id',
+          );
+        }
+        const settlement = await db.transaction(async (tx) =>
+          settleAuthorizedPaidCall(tx, {
+            authority: placementAuthority,
+            reservationKey: primaryReservationKey,
+            providerTaskRunId: result.task_run_id as string,
+            costMicroUsd: costUsdToMicroUsd(result.cost_usd) ?? 0,
+          }),
+        );
+        primaryPaidSettled = true;
+        if (settlement.overCap) {
+          throw new PlacementStarterAdmissionError(
+            'placement quiz_verify paid invocation exceeded authorized reservation',
+          );
+        }
+      },
     });
-    taskResult = result;
-    if (placementAuthority) {
-      if (!result.task_run_id) {
-        throw new PlacementStarterAdmissionError(
-          'placement quiz_verify paid invocation missing task_run_id',
-        );
-      }
-      const settlement = await db.transaction(async (tx) =>
-        settleAuthorizedPaidCall(tx, {
-          authority: placementAuthority,
-          reservationKey: primaryReservationKey,
-          providerTaskRunId: result.task_run_id as string,
-          costMicroUsd: costUsdToMicroUsd(result.cost_usd) ?? 0,
-        }),
-      );
-      primaryPaidSettled = true;
-      if (settlement.overCap) {
-        throw new PlacementStarterAdmissionError(
-          'placement quiz_verify paid invocation exceeded authorized reservation',
-        );
-      }
-    }
-    const parsed = parseQuizVerifyOutput(result.text);
+    const result = validationRun.task_result;
+    const parsed = validationRun.output;
 
     // §4 / §5 — deterministic n-gram overlap over the self-reported snippets,
     // folded into the persisted copy_safety. The DETERMINISTIC computation is
@@ -1034,6 +1015,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // write a failure event, then re-throw so pg-boss retries. The draft stays
     // draft_status='draft' (never promoted) — the catch path NEVER promotes.
     try {
+      const failedTaskResult = taskResult as TaskTextResult | null;
       const failedVerification: QuizGenVerificationT = {
         status: 'failed',
         summary: `quiz_verify failed: ${String((err as Error).message ?? err)}`,
@@ -1082,8 +1064,8 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
         },
         caused_by_event_id: null,
-        task_run_id: taskResult?.task_run_id ?? null,
-        cost_micro_usd: costUsdToMicroUsd(taskResult?.cost_usd),
+        task_run_id: failedTaskResult?.task_run_id ?? null,
+        cost_micro_usd: costUsdToMicroUsd(failedTaskResult?.cost_usd),
         created_at: new Date(),
       });
     } catch (cleanupErr) {

@@ -4,6 +4,12 @@ import {
 } from '@/server/question-supply/placement-starter-attempts';
 import { describe, expect, it, vi } from 'vitest';
 
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import { AgentRunError } from '@/server/ai/agent-run-error';
+import interventionRegressionFixture from '@/server/grounding-gate/fixtures/intervention-review-regressions.v1.json' with {
+  type: 'json',
+};
+import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   semanticJudgeOutput as semanticOutput,
   solverOutput,
@@ -20,11 +26,119 @@ import {
   type TeachingQualityResult,
   checksForTier,
   normalizeAnswer,
+  parseQuestionContentValidationOutput,
+  runIndependentSolution,
+  runQuestionContentValidation,
   runSolveCheck,
   runTeachingQualityCheck,
   solveCheckBlocks,
   teachingQualityBlocks,
 } from './verify-framework';
+
+const complexContentValidationOutput = {
+  grounding: {
+    verdict: 'fail' as const,
+    note: '题目把《卜算子·咏梅》中并不存在的“向来不与百花争春”当作原句，作者材料不能充当独立证据。',
+  },
+  copy_safety: { verdict: 'original' as const, max_overlap: 0.07 },
+  knowledge_hit: {
+    verdict: 'pass' as const,
+    note: '题目确实要求区分论据是否支持论点，但引用事实本身错误。',
+  },
+  overall: 'fail' as const,
+  summary_md: '构念命中，但可识别真实作品的引文与语义方向不成立，不能发布。',
+  confidence: 0.97,
+};
+
+describe('shared question-content validator seam', () => {
+  it('keeps ordinary QuizVerify parsing compatible with the historical heuristic repair band', () => {
+    const malformed = JSON.stringify(complexContentValidationOutput)
+      .replace(/"grounding"/u, "'grounding'")
+      .replace(/"verdict":"fail"/u, "'verdict':'fail'");
+    const parsed = parseQuestionContentValidationOutput({ text: malformed });
+    expect(parsed.output).toEqual(complexContentValidationOutput);
+    expect(parsed.repairLevel).toBe('jsonrepair');
+  });
+
+  it('rejects that heuristic repair in release_strict mode instead of sealing ambiguous output', () => {
+    const malformed = JSON.stringify(complexContentValidationOutput)
+      .replace(/"grounding"/u, "'grounding'")
+      .replace(/"verdict":"fail"/u, "'verdict':'fail'");
+    expect(() =>
+      parseQuestionContentValidationOutput({ text: malformed }, { releaseStrict: true }),
+    ).toThrow('JSON.parse failed');
+  });
+
+  it('runs the shipped QuizVerifyTask with rich real-work attribution data and seals exact hashes', async () => {
+    const yuwenFixture = interventionRegressionFixture.cases.find(
+      (fixture) => fixture.case_id === 'yuwen-fabricated-counterexamples',
+    );
+    if (!yuwenFixture) throw new Error('missing complex yuwen regression fixture');
+    const immediate = yuwenFixture.package.diagnostics.immediate.probe_spec;
+    const taskInput = {
+      question: {
+        id: 'intervention:yuwen-fabricated-counterexamples:immediate',
+        prompt_md: immediate.prompt_md,
+        reference_md: immediate.reference_md,
+        choices_md: null,
+        kind: immediate.response_mode,
+        difficulty: null,
+        knowledge_ids: [yuwenFixture.context.snapshot.conjecture.knowledge_id],
+      },
+      knowledge_context: [
+        {
+          id: yuwenFixture.context.snapshot.conjecture.knowledge_id,
+          name: yuwenFixture.context.snapshot.conjecture.knowledge_name,
+          domain: 'yuwen',
+        },
+      ],
+      source_pack: {
+        query_plan: [],
+        searched_at: yuwenFixture.context.snapshot.created_at,
+        tool: 'none',
+      },
+      source_refs: [],
+      self_copy_safety: { verdict: 'unknown', checked_by: 'agent_self' },
+      generation_method: 'closed_book',
+      author_material: yuwenFixture.package.material,
+      validation_mode: 'release_strict' as const,
+    };
+    const sentinelDb = { source: 'shared-validator-test' } as never;
+    const afterTaskRun = vi.fn(async () => undefined);
+    const runTaskFn = vi.fn(async () => ({
+      text: '',
+      task_run_id: 'quiz-verify-rich-yuwen-1',
+      structured_output: complexContentValidationOutput,
+    }));
+
+    const result = await runQuestionContentValidation(taskInput, {
+      runTaskFn,
+      db: sentinelDb,
+      subjectProfile: resolveSubjectProfile('yuwen'),
+      skills: ['yuwen-reading-evidence'],
+      afterTaskRun,
+    });
+
+    expect(runTaskFn).toHaveBeenCalledWith(
+      'QuizVerifyTask',
+      taskInput,
+      expect.objectContaining({
+        db: sentinelDb,
+        subjectProfile: expect.objectContaining({ id: 'yuwen' }),
+        skills: ['yuwen-reading-evidence'],
+      }),
+    );
+    expect(afterTaskRun).toHaveBeenCalledWith(
+      expect.objectContaining({ task_run_id: 'quiz-verify-rich-yuwen-1' }),
+    );
+    expect(result).toMatchObject({
+      output: complexContentValidationOutput,
+      output_repair_level: false,
+      task_input_sha256: sha256CanonicalJson(taskInput),
+      output_sha256: sha256CanonicalJson(complexContentValidationOutput),
+    });
+  });
+});
 
 // ---------- tier → check-set config ----------
 
@@ -129,6 +243,367 @@ const openQuestion: SolveCheckQuestion = {
 };
 
 const fakeDb = {} as never;
+
+describe('runIndependentSolution — reusable blind validator seam', () => {
+  it('solves every production-shaped intervention diagnostic without leaking its package answer or frozen claim', async () => {
+    const diagnostics = interventionRegressionFixture.cases.flatMap((fixture) =>
+      (['immediate', 'delayed', 'transfer'] as const).map((kind) => ({
+        fixture,
+        kind,
+        diagnostic: fixture.package.diagnostics[kind],
+      })),
+    );
+    expect(diagnostics).toHaveLength(18);
+
+    for (const { fixture, kind, diagnostic } of diagnostics) {
+      const runTaskFn = vi.fn(async (_taskKind: string, _taskInput: unknown, _ctx: unknown) => ({
+        text: JSON.stringify({
+          reference_solution: {
+            expected_signals: [
+              '先识别题目实际要求的量、文本方向或因果方向',
+              '再按题面条件独立推导并检查量纲、文本证据或 X/Y 时序',
+            ],
+            final_answer: `blind answer for ${fixture.case_id}/${kind}`,
+            answer_equivalents: [],
+          },
+          worked_solution_md:
+            '这是独立于作者标答的完整求解摘要；它包含必要步骤，但不读取干预包里的参考答案。',
+          confidence: 0.91,
+        }),
+        task_run_id: `solve-${fixture.case_id}-${kind}`,
+        cost_usd: 0.012,
+      }));
+
+      const result = await runIndependentSolution(
+        {
+          id: `${fixture.case_id}:${kind}`,
+          kind: diagnostic.probe_spec.response_mode,
+          prompt_md: diagnostic.probe_spec.prompt_md,
+          choices_md: null,
+          image_refs: null,
+          figures: null,
+        },
+        {
+          runTaskFn,
+          profile: {
+            id: fixture.subject_id,
+            full: { id: fixture.subject_id, displayName: fixture.subject_id },
+          },
+        },
+      );
+
+      expect(result).toMatchObject({
+        status: 'solved',
+        task_run_id: `solve-${fixture.case_id}-${kind}`,
+        solution: {
+          reference_solution: {
+            final_answer: `blind answer for ${fixture.case_id}/${kind}`,
+            expected_signals: expect.arrayContaining([
+              '先识别题目实际要求的量、文本方向或因果方向',
+            ]),
+          },
+        },
+        task_input_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        solver_output_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        solver_output_repair_level: false,
+        cost_usd: 0.012,
+      });
+      expect(runTaskFn).toHaveBeenCalledTimes(1);
+      const blindInput = runTaskFn.mock.calls[0]?.[1] as Record<string, unknown>;
+      expect(runTaskFn.mock.calls[0]?.[2]).toMatchObject({
+        outputFormat: { type: 'json_schema' },
+      });
+      expect(blindInput.prompt_md).toBe(diagnostic.probe_spec.prompt_md);
+      expect(Object.keys(blindInput).sort()).toEqual([
+        'choices_md',
+        'existing_analysis_hint',
+        'existing_answers_hint',
+        'figures_hint',
+        'kind',
+        'prompt_image_refs',
+        'prompt_md',
+        'subject_id',
+      ]);
+      if (result.status !== 'solved') throw new Error('expected a strict solved result');
+      expect(result.task_input).toEqual(blindInput);
+      expect(result.task_input_sha256).toBe(sha256CanonicalJson(blindInput));
+      expect(result.solver_output_sha256).toBe(sha256CanonicalJson(result.solution));
+      const serializedBlindInput = JSON.stringify(blindInput);
+      expect(serializedBlindInput).not.toContain(diagnostic.probe_spec.reference_md);
+      expect(serializedBlindInput).not.toContain(
+        diagnostic.probe_spec.expected_target_error_answer_md,
+      );
+      expect(serializedBlindInput).not.toContain(fixture.context.snapshot.conjecture.claim_md);
+      expect(serializedBlindInput).not.toContain(fixture.package.material.body_md);
+      expect(serializedBlindInput).not.toContain('gold_response_signature');
+      expect(serializedBlindInput).not.toContain('target_error_response_signature');
+    }
+  });
+
+  it.each([
+    {
+      name: 'incomplete SolutionGenerate contract',
+      output: { reference_solution: { final_answer: '-5(w-4)^2', answer_equivalents: [] } },
+      task_run_id: 'solver-incomplete',
+      reason: 'complete SolutionGenerateOutput contract',
+    },
+    {
+      name: 'missing persisted run provenance',
+      output: {
+        reference_solution: {
+          expected_signals: ['面积=长×宽', '再展开两个含 w 的因式'],
+          final_answer: '-5(w-4)^2',
+          answer_equivalents: ['-5w^2+40w-80'],
+        },
+        worked_solution_md: '面积为 -5(w-4)·(w-4)。',
+        confidence: 0.98,
+      },
+      task_run_id: undefined,
+      reason: 'exactly one persisted task_run_id',
+    },
+  ])('fails closed on $name', async ({ output, task_run_id, reason }) => {
+    const area = interventionRegressionFixture.cases[0]?.package.diagnostics.transfer;
+    if (!area) throw new Error('missing area regression fixture');
+    const result = await runIndependentSolution(
+      {
+        id: 'area-transfer',
+        kind: area.probe_spec.response_mode,
+        prompt_md: area.probe_spec.prompt_md,
+        choices_md: null,
+      },
+      {
+        profile: { id: 'math', full: { id: 'math', displayName: '数学' } },
+        runTaskFn: vi.fn(async () => ({
+          text: JSON.stringify(output),
+          ...(task_run_id ? { task_run_id } : {}),
+        })),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'unsupported',
+      contract_complete: false,
+      reason: expect.stringContaining(reason),
+      retryable: task_run_id !== undefined,
+    });
+  });
+
+  it('records content-preserving deterministic JSON repair in the sealed result', async () => {
+    const output = {
+      reference_solution: {
+        expected_signals: ['判断「反向因果」是否成立'],
+        final_answer: '现有观察不足以推出因果结论。',
+        answer_equivalents: [],
+      },
+      worked_solution_md: '先区分相关、选择偏差、共同原因与真正的 Y→X。',
+      confidence: 0.9,
+    };
+    const malformed = JSON.stringify(output).replace('「', '"').replace('」', '"');
+    const result = await runIndependentSolution(
+      {
+        id: 'causal-deterministic-repair',
+        kind: 'answer_with_reason',
+        prompt_md: '给定一项观察研究，判断其因果结论是否成立并说明理由。',
+        choices_md: null,
+      },
+      {
+        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        runTaskFn: vi.fn(async () => ({ text: malformed, task_run_id: 'solver-repaired' })),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'solved',
+      task_run_id: 'solver-repaired',
+      solver_output_repair_level: 'deterministic',
+    });
+  });
+
+  it('deterministically normalizes a numeric-string confidence without guessing semantics', async () => {
+    const result = await runIndependentSolution(
+      {
+        id: 'numeric-string-confidence',
+        kind: 'answer_with_reason',
+        prompt_md:
+          '某观察研究以干预后抑郁量表相对基线的变化量 ΔY 为结局；基线抑郁水平会影响是否参加运动组 X。这能否称为该研究结局 ΔY→X 的反向因果？',
+        choices_md: null,
+      },
+      {
+        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        runTaskFn: vi.fn(async () => ({
+          text: JSON.stringify({
+            reference_solution: {
+              expected_signals: [
+                '先固定 exposure X 与题面结局 estimand ΔY（相对基线的变化量）',
+                '区分基线水平 Y0 与变化量 ΔY；Y0 影响 X 属于选择机制，不等于 ΔY→X',
+              ],
+              final_answer:
+                '不能称为该结局 estimand 的反向因果；它是基线状态影响分组的选择机制，仍可能造成偏倚。',
+              answer_equivalents: [],
+            },
+            worked_solution_md:
+              '先把题面 Y 固定为变化量 ΔY。基线水平 Y0 与 ΔY 不是同一个 estimand；Y0 影响是否进入运动组 X 会造成选择偏倚，但不能改名为 ΔY 反向导致 X。',
+            confidence: '0.93',
+          }),
+          task_run_id: 'solver-numeric-confidence',
+        })),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'solved',
+      solver_output_repair_level: 'deterministic',
+      solution: { confidence: 0.93 },
+    });
+  });
+
+  it('relocates an exact numeric confidence misplaced inside reference_solution', async () => {
+    const diagnostic = interventionRegressionFixture.cases.find(
+      (entry) => entry.case_id === 'yuwen-valid-direction-counterexamples',
+    )?.package.diagnostics.immediate.probe_spec;
+    if (!diagnostic) throw new Error('missing complex yuwen regression diagnostic');
+    const normalizedSolution = {
+      reference_solution: {
+        expected_signals: [
+          '识别“一定能提高”是无例外的全称断言',
+          '材料 A 只显示多数人表现良好，无法证明每个人都提高',
+          '材料 B 给出完成训练却前后都未提高的直接反例',
+        ],
+        final_answer: '材料 B；它用训练后仍未提高的反例否定“一定”。',
+        answer_equivalents: ['B', '材料 B'],
+      },
+      worked_solution_md: '先锁定全称断言，再区分多数支持性数据与能直接否定无例外主张的反例。',
+      confidence: 0.96,
+    };
+    const { confidence, ...solutionWithoutTopLevelConfidence } = normalizedSolution;
+    const providerShape = {
+      ...solutionWithoutTopLevelConfidence,
+      reference_solution: {
+        ...solutionWithoutTopLevelConfidence.reference_solution,
+        confidence,
+      },
+    };
+
+    const result = await runIndependentSolution(
+      {
+        id: 'misplaced-numeric-confidence',
+        kind: diagnostic.response_mode,
+        prompt_md: diagnostic.prompt_md,
+        choices_md: null,
+      },
+      {
+        profile: { id: 'yuwen', full: { id: 'yuwen', displayName: '语文' } },
+        runTaskFn: vi.fn(async () => ({
+          text: JSON.stringify(providerShape),
+          task_run_id: 'solver-misplaced-confidence',
+        })),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'solved',
+      solver_output_repair_level: 'deterministic',
+      solution: normalizedSolution,
+      solver_output_sha256: sha256CanonicalJson(normalizedSolution),
+    });
+  });
+
+  it('does not invent a numeric confidence from a misplaced qualitative label', async () => {
+    const result = await runIndependentSolution(
+      {
+        id: 'qualitative-confidence',
+        kind: 'short_answer',
+        prompt_md: '根据题面给出结论并说明必要理由。',
+        choices_md: null,
+      },
+      {
+        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        runTaskFn: vi.fn(async () => ({
+          text: JSON.stringify({
+            reference_solution: {
+              expected_signals: ['先提取题面约束', '再由约束推导结论'],
+              final_answer: '结论',
+              answer_equivalents: [],
+              confidence: 'high',
+            },
+            worked_solution_md: '按题面约束逐步推导。',
+          }),
+          task_run_id: 'solver-qualitative-confidence',
+        })),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'unsupported',
+      reason: expect.stringContaining('confidence:invalid_type'),
+      task_run_ids: ['solver-qualitative-confidence'],
+    });
+  });
+
+  it('rejects heuristic jsonrepair output instead of sealing an ambiguously redrawn object', async () => {
+    const output = {
+      reference_solution: {
+        expected_signals: ['独立推导'],
+        final_answer: '42',
+        answer_equivalents: [],
+      },
+      worked_solution_md: '按题面条件推导。',
+      confidence: 0.8,
+    };
+    const singleQuoted = JSON.stringify(output).replaceAll('"', "'");
+    const result = await runIndependentSolution(
+      {
+        id: 'risky-json-repair',
+        kind: 'short_answer',
+        prompt_md: '计算一个给定表达式。',
+        choices_md: null,
+      },
+      {
+        profile: { id: 'math', full: { id: 'math', displayName: '数学' } },
+        runTaskFn: vi.fn(async () => ({ text: singleQuoted, task_run_id: 'solver-risky' })),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'unsupported',
+      contract_complete: false,
+      retryable: true,
+      task_run_ids: ['solver-risky'],
+    });
+  });
+
+  it('retains a persisted AgentRunError attempt id without retrying it as a contract miss', async () => {
+    const result = await runIndependentSolution(
+      {
+        id: 'provider-terminal-failure',
+        kind: 'answer_with_reason',
+        prompt_md:
+          '一项观察研究中，参与补习的学生提升更多。区分观察结果、选择偏差、共同原因和反向因果。',
+        choices_md: null,
+      },
+      {
+        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        runTaskFn: vi.fn(async () => {
+          throw new AgentRunError({
+            kind: 'SolutionGenerateTask',
+            taskRunId: 'solver-provider-failure',
+            subtype: 'api_error_result',
+            apiErrorStatus: 503,
+            errors: ['upstream unavailable'],
+          });
+        }),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'unsupported',
+      contract_complete: false,
+      retryable: false,
+      task_run_ids: ['solver-provider-failure'],
+      reason: expect.stringContaining('upstream unavailable'),
+    });
+  });
+});
 
 function confidentlyWrongExactAnswer(solverAnswer: string) {
   return vi.fn(async (kind: string) => {

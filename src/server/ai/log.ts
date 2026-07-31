@@ -132,11 +132,19 @@ export async function writeAiTaskRunStarted(db: Db, entry: AiTaskRunStartEntry):
   });
 }
 
+export interface AiTaskUsage {
+  inputTokens: number;
+  outputTokens: number;
+  /** Metadata-only proof that the SDK returned reasoning blocks; raw CoT is never persisted. */
+  thinkingBlocks?: number;
+  thinkingCharacters?: number;
+}
+
 export interface AiTaskRunFinishEntry {
   id: string;
   status: 'success' | 'failure';
   finish_reason?: string | null;
-  usage?: { inputTokens: number; outputTokens: number };
+  usage?: AiTaskUsage;
   cost_usd?: number;
   error_message?: string | null;
   finished_at?: Date;

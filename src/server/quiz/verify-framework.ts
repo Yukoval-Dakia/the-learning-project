@@ -30,10 +30,15 @@ import { randomUUID } from 'node:crypto';
 // source_verify.ts). These declarations predate that wiring — do NOT read "tier3/4 never consumes
 // solve_check" as a bug in THIS file; the consumer lives in the handler.
 import type { SourceTier } from '@/core/schema/provenance';
+import { QuizVerificationResult, type QuizVerificationResultT } from '@/core/schema/quiz_gen';
+import { SolutionGenerateOutput, type SolutionGenerateOutputT } from '@/core/schema/solution';
 import type { Db, Tx } from '@/db/client';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import { AgentRunError } from '@/server/ai/agent-run-error';
+import { type RepairLevel, parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
+import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
 import type { Provider } from '@/server/ai/providers';
 import {
   PlacementStarterAdmissionError,
@@ -41,6 +46,9 @@ import {
   type PlacementVerificationAuthority,
   assertPlacementAuthority,
 } from '@/server/question-supply/placement-starter-attempts';
+import type { SubjectProfile } from '@/subjects/profile';
+
+const SOLUTION_GENERATE_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(SolutionGenerateOutput);
 
 // ---------- check identifiers ----------
 //
@@ -107,6 +115,117 @@ export function checksForTier(tier: SourceTier): readonly VerifyCheck[] {
   return CHECK_SETS_BY_TIER[tier];
 }
 
+// ---------- shared question-content validation ----------
+
+/**
+ * Generic input for the shipped QuizVerifyTask content/grounding axes.
+ *
+ * `validation_mode` is server-owned. Ordinary question supply omits it and
+ * retains the historical closed-book policy; release-critical consumers use
+ * `release_strict` so author-written gloss cannot self-ground an identifiable
+ * real-world attribution.
+ */
+export interface QuestionContentValidationInput {
+  question: {
+    id: string;
+    prompt_md: string;
+    reference_md: string | null;
+    choices_md: string[] | null;
+    kind: string;
+    difficulty?: string | number | null;
+    knowledge_ids?: string[] | null;
+  };
+  knowledge_context: unknown[];
+  source_pack: unknown;
+  source_refs: unknown[];
+  self_copy_safety: unknown;
+  generation_method: string;
+  material?: { title: string | null; body_md: string | null };
+  author_material?: { title_md: string; body_md: string };
+  placement_authority?: PlacementVerificationAuthority;
+  validation_mode?: 'release_strict';
+}
+
+export interface QuestionContentValidationRun {
+  output: QuizVerificationResultT;
+  task_result: TaskTextResult;
+  task_input: QuestionContentValidationInput;
+  task_input_sha256: string;
+  output_sha256: string;
+  output_repair_level: RepairLevel;
+}
+
+export function parseQuestionContentValidationOutput(
+  result: Pick<TaskTextResult, 'text' | 'structured_output'>,
+  options: { releaseStrict?: boolean } = {},
+): { output: QuizVerificationResultT; repairLevel: RepairLevel } {
+  if (result.structured_output !== undefined && result.structured_output !== null) {
+    return {
+      output: QuizVerificationResult.parse(result.structured_output),
+      repairLevel: false,
+    };
+  }
+
+  let extracted: ReturnType<typeof parseJsonObjectLoose>;
+  try {
+    extracted = parseJsonObjectLoose(
+      result.text,
+      'parseQuizVerifyOutput',
+      options.releaseStrict
+        ? {
+            riskyRepair: 'reject',
+            containerClosure: 'schema_validated',
+            latexEscapes: 'markdown_math',
+          }
+        : undefined,
+    );
+  } catch (error) {
+    throw new Error(`parseQuizVerifyOutput: JSON.parse failed: ${(error as Error).message}`);
+  }
+  if (extracted === null) {
+    throw new Error('parseQuizVerifyOutput: no JSON object found in text');
+  }
+  if (options.releaseStrict && extracted.repaired === 'jsonrepair') {
+    throw new Error('parseQuizVerifyOutput: release-strict output rejected heuristic JSON repair');
+  }
+  const parsed = QuizVerificationResult.safeParse(extracted.json);
+  if (!parsed.success) {
+    throw new Error(
+      `parseQuizVerifyOutput: schema invalid: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`,
+    );
+  }
+  return { output: parsed.data, repairLevel: extracted.repaired };
+}
+
+export async function runQuestionContentValidation(
+  input: QuestionContentValidationInput,
+  options: {
+    runTaskFn: TaskTextRunFn;
+    subjectProfile: SubjectProfile;
+    db?: Db;
+    skills?: string[];
+    afterTaskRun?: (result: TaskTextResult) => Promise<void>;
+  },
+): Promise<QuestionContentValidationRun> {
+  const taskResult = await options.runTaskFn('QuizVerifyTask', input, {
+    ...(options.db ? { db: options.db } : {}),
+    subjectProfile: options.subjectProfile,
+    ...(options.skills ? { skills: options.skills } : {}),
+  });
+  await options.afterTaskRun?.(taskResult);
+  const parsed = parseQuestionContentValidationOutput(taskResult, {
+    releaseStrict: input.validation_mode === 'release_strict',
+  });
+  return {
+    output: parsed.output,
+    task_result: taskResult,
+    task_input: input,
+    task_input_sha256: sha256CanonicalJson(input),
+    output_sha256: sha256CanonicalJson(parsed.output),
+    output_repair_level: parsed.repairLevel,
+  };
+}
+
 // ---------- solve-check ----------
 
 // Loose run seam (mirrors quiz_verify / variant_verify): the check consumes { text } from
@@ -125,22 +244,33 @@ export interface SolveCheckProfile {
   full: any;
 }
 
-export interface SolveCheckQuestion {
+/**
+ * Reference-free question surface consumed by the reusable independent solver.
+ *
+ * Callers must project into this type rather than spreading a persisted question
+ * or package object. That makes the blind boundary visible in code review and
+ * prevents reference answers, gold signatures, frozen claims, or teaching
+ * material from entering the first-stage model input by accident.
+ */
+export interface IndependentSolutionQuestion {
   id: string;
   kind: string;
   prompt_md: string;
-  // the question's OWN declared answer (reference_md) — solve-check tests whether an
-  // independent solve agrees with it.
-  reference_md: string | null;
   choices_md: string[] | null;
-  judge_kind_override: string | null;
-  rubric_json: unknown;
-  knowledge_ids?: string[] | null;
-  metadata?: Record<string, unknown> | null;
   /** Prompt-figure source_asset ids. When present, solve-check attaches their bytes. */
   image_refs?: string[] | null;
   /** Structured figure placement, forwarded as a textual hint alongside the image bytes. */
   figures?: unknown[] | null;
+}
+
+export interface SolveCheckQuestion extends IndependentSolutionQuestion {
+  // the question's OWN declared answer (reference_md) — solve-check tests whether an
+  // independent solve agrees with it.
+  reference_md: string | null;
+  judge_kind_override: string | null;
+  rubric_json: unknown;
+  knowledge_ids?: string[] | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export type SolveCheckVerdict = 'pass' | 'fail' | 'unsupported';
@@ -169,10 +299,58 @@ export type SolveCheckImageFetchFn = (
   db: Db,
 ) => Promise<Array<{ data: string; mediaType: string }>>;
 
+export type IndependentSolutionResult =
+  | {
+      status: 'solved';
+      solution: SolutionGenerateOutputT;
+      task_run_id: string;
+      task_input: unknown;
+      task_input_sha256: string;
+      solver_output_sha256: string;
+      solver_output_repair_level: Exclude<RepairLevel, 'jsonrepair'>;
+      cost_usd?: number;
+    }
+  | {
+      status: 'unsupported';
+      reason: string;
+      contract_complete: false;
+      /** Safe to repeat once: a paid run was persisted, but its output contract was unusable. */
+      retryable: boolean;
+      task_run_ids?: string[];
+      cost_usd?: number;
+      image_input_unavailable?: boolean;
+    };
+
+type IndependentSolutionExecutionResult =
+  | {
+      status: 'solved';
+      final_answer: string;
+      answer_equivalents: string[];
+      expected_signals: string[];
+      worked_solution_md?: string;
+      confidence?: number;
+      complete_solution?: SolutionGenerateOutputT;
+      task_input: unknown;
+      task_input_sha256: string;
+      solver_output_sha256?: string;
+      solver_output_repair_level: Exclude<RepairLevel, 'jsonrepair'>;
+      task_run_ids?: string[];
+      cost_usd?: number;
+    }
+  | {
+      status: 'unsupported';
+      reason: string;
+      task_run_ids?: string[];
+      cost_usd?: number;
+      image_input_unavailable?: boolean;
+      /** Explicit override for callers that may retry a complete-contract miss. */
+      retryable?: boolean;
+    };
+
 // Per-tier override knob (OF-4 (ii)): future model 异源 / threshold tuning. Zero
 // structural change — pass `{ solverModelOverride }` and the runner picks it up via
 // ctx. Unused this slice except as the documented seam.
-export interface SolveCheckOptions {
+export interface IndependentSolutionOptions {
   runTaskFn: SolveCheckRunTaskFn;
   profile: SolveCheckProfile;
   // db is needed whenever SemanticJudge runs, including an exact-mismatch fallback.
@@ -210,6 +388,8 @@ export interface SolveCheckOptions {
     invocationId: string,
   ) => Promise<void>;
 }
+
+export interface SolveCheckOptions extends IndependentSolutionOptions {}
 
 // CONSERVATIVE threshold for the open-question semantic path (OF-4 / R2): only an
 // 'incorrect' verdict AT OR ABOVE this confidence fails solve-check. High by design
@@ -429,6 +609,358 @@ function extractJsonObject(text: string, label: string): unknown {
   return extracted.json;
 }
 
+function extractStrictIndependentSolutionJson(text: string): {
+  json: unknown;
+  repaired: Exclude<RepairLevel, 'jsonrepair'>;
+} {
+  const extracted = parseJsonObjectLoose(text, 'solve-check: SolutionGenerateTask', {
+    // FULL audits persist this object and use it as sealed ground truth. Accept
+    // only strict JSON or content-preserving deterministic repairs; heuristic
+    // jsonrepair can silently redraw string boundaries.
+    riskyRepair: 'reject',
+    // A complete Zod contract immediately proves all required fields after a
+    // tail-only closure. Markdown math commonly needs literal backslash repair.
+    containerClosure: 'schema_validated',
+    latexEscapes: 'markdown_math',
+  });
+  if (!extracted) {
+    throw new Error('solve-check: SolutionGenerateTask did not contain a JSON object');
+  }
+  if (extracted.repaired === 'jsonrepair') {
+    throw new Error('strict independent solution rejected heuristic JSON repair');
+  }
+  return extracted as { json: unknown; repaired: Exclude<RepairLevel, 'jsonrepair'> };
+}
+
+function solutionLaneOverride(
+  opts: IndependentSolutionOptions,
+): { provider?: Provider; model?: string } | undefined {
+  if (!opts.solverProviderOverride && !opts.solverModelOverride) return undefined;
+  return {
+    ...(opts.solverProviderOverride ? { provider: opts.solverProviderOverride } : {}),
+    ...(opts.solverModelOverride ? { model: opts.solverModelOverride } : {}),
+  };
+}
+
+function normalizeStrictSolutionOutput(value: unknown): {
+  value: unknown;
+  repaired: boolean;
+} {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return { value, repaired: false };
+  }
+  const record = value as Record<string, unknown>;
+  const normalizeConfidence = (confidence: unknown): number | undefined => {
+    if (
+      typeof confidence === 'number' &&
+      Number.isFinite(confidence) &&
+      confidence >= 0 &&
+      confidence <= 1
+    ) {
+      return confidence;
+    }
+    if (typeof confidence !== 'string') return undefined;
+    const normalized = confidence.trim();
+    if (!/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(normalized)) return undefined;
+    return Number(normalized);
+  };
+
+  // A JSON number serialized as a string is a content-preserving scalar repair.
+  // Do not guess labels such as "high" or percentages; those remain contract
+  // failures and consume the existing bounded retry.
+  if (typeof record.confidence === 'string') {
+    const normalized = normalizeConfidence(record.confidence);
+    if (normalized === undefined) return { value, repaired: false };
+    return {
+      value: { ...record, confidence: normalized },
+      repaired: true,
+    };
+  }
+
+  // Some providers preserve the numeric value but place confidence beside the
+  // reference-solution fields. Relocating that exact scalar to the documented
+  // top level is deterministic; never synthesize a missing value or translate
+  // a qualitative label.
+  if (record.confidence !== undefined) return { value, repaired: false };
+  const referenceSolution = record.reference_solution;
+  if (
+    referenceSolution === null ||
+    typeof referenceSolution !== 'object' ||
+    Array.isArray(referenceSolution)
+  ) {
+    return { value, repaired: false };
+  }
+  const nestedReference = referenceSolution as Record<string, unknown>;
+  const relocated = normalizeConfidence(nestedReference.confidence);
+  if (relocated === undefined) return { value, repaired: false };
+  const { confidence: _misplacedConfidence, ...referenceWithoutConfidence } = nestedReference;
+  return {
+    value: {
+      ...record,
+      reference_solution: referenceWithoutConfidence,
+      confidence: relocated,
+    },
+    repaired: true,
+  };
+}
+
+async function assertIndependentSolutionAuthority(opts: IndependentSolutionOptions): Promise<void> {
+  if (!opts.placementAuthority || !opts.db) return;
+  await opts.db.transaction(async (tx: Tx) =>
+    (opts.assertPlacementAuthorityFn ?? assertPlacementAuthority)(
+      tx,
+      opts.placementAuthority as PlacementVerificationAuthority,
+    ),
+  );
+}
+
+/**
+ * Run the shipped SolutionGenerate task against an explicitly reference-free
+ * projection. This is the reusable validator seam: ordinary question supply can
+ * compare the result conservatively, while release-critical consumers can apply
+ * a fail-closed policy without inventing a second solver pipeline.
+ */
+async function runIndependentSolutionInternal(
+  question: IndependentSolutionQuestion,
+  opts: IndependentSolutionOptions,
+  legacyAdapter: {
+    advisoryHints?: {
+      existing_answers_hint?: unknown;
+      existing_analysis_hint?: unknown;
+    };
+    includePlacementAuthorityInTaskInput?: boolean;
+    allowPartialContract?: boolean;
+  } = {},
+): Promise<IndependentSolutionExecutionResult> {
+  const requiresVision = (question.image_refs?.length ?? 0) > 0;
+  const solverOverride = solutionLaneOverride(opts);
+  const taskRunIds: string[] = [];
+  let costUsd: number | undefined;
+  const recordRun = (run: { task_run_id?: string; cost_usd?: number }): void => {
+    if (typeof run.task_run_id === 'string' && run.task_run_id.length > 0) {
+      taskRunIds.push(run.task_run_id);
+    }
+    if (typeof run.cost_usd === 'number' && Number.isFinite(run.cost_usd)) {
+      costUsd = (costUsd ?? 0) + run.cost_usd;
+    }
+  };
+  const provenance = (): Pick<IndependentSolutionExecutionResult, 'task_run_ids' | 'cost_usd'> => ({
+    ...(taskRunIds.length > 0 ? { task_run_ids: [...taskRunIds] } : {}),
+    ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
+  });
+
+  const input = {
+    ...(legacyAdapter.includePlacementAuthorityInTaskInput && opts.placementAuthority
+      ? { placement_authority: opts.placementAuthority }
+      : {}),
+    prompt_md: question.prompt_md,
+    kind: question.kind,
+    subject_id: opts.profile.id,
+    choices_md: question.choices_md ?? [],
+    existing_answers_hint: legacyAdapter.advisoryHints?.existing_answers_hint ?? null,
+    existing_analysis_hint: legacyAdapter.advisoryHints?.existing_analysis_hint ?? null,
+    figures_hint: question.figures ?? null,
+    prompt_image_refs: question.image_refs ?? [],
+  };
+  const ctx: Record<string, unknown> = {
+    db: opts.db,
+    subjectProfile: opts.profile.full,
+    outputFormat: SOLUTION_GENERATE_OUTPUT_FORMAT,
+  };
+  if (solverOverride) ctx.override = solverOverride;
+
+  const promptImageRefs = question.image_refs ?? [];
+  let taskInput: unknown = input;
+  if (promptImageRefs.length > 0) {
+    if (!opts.db) {
+      return {
+        status: 'unsupported',
+        reason: 'prompt images require a Db handle for source_asset resolution',
+        image_input_unavailable: true,
+      };
+    }
+    let images: Array<{ data: string; mediaType: string }>;
+    try {
+      const imageFetchFn =
+        opts.imageFetchFn ?? (await import('@/server/ai/judges/steps-judge')).defaultImageFetch;
+      images = await imageFetchFn(promptImageRefs, opts.db);
+    } catch (err) {
+      return {
+        status: 'unsupported',
+        reason: `prompt image fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+        image_input_unavailable: true,
+      };
+    }
+    if (images.length !== promptImageRefs.length) {
+      return {
+        status: 'unsupported',
+        reason: `prompt image fetch resolved ${images.length}/${promptImageRefs.length} assets`,
+        image_input_unavailable: true,
+      };
+    }
+    taskInput = { text: JSON.stringify(input), images };
+  }
+
+  let solverPaidInvocationId: string | undefined;
+  let solverPaidSettled = false;
+  try {
+    const solverTaskKind = requiresVision ? 'SolutionGenerateVisionTask' : 'SolutionGenerateTask';
+    await assertIndependentSolutionAuthority(opts);
+    solverPaidInvocationId = randomUUID();
+    await opts.beforePaidCall?.('solution_check', solverPaidInvocationId);
+    const solverRun = await opts.runTaskFn(solverTaskKind, taskInput, ctx);
+    recordRun(solverRun);
+    await opts.settlePaidCall?.('solution_check', solverPaidInvocationId, solverRun);
+    solverPaidSettled = true;
+
+    let solverOutputRepairLevel: Exclude<RepairLevel, 'jsonrepair'> = false;
+    let parsed: Record<string, unknown>;
+    if (solverRun.structured_output !== undefined && solverRun.structured_output !== null) {
+      parsed = solverRun.structured_output as Record<string, unknown>;
+    } else if (legacyAdapter.allowPartialContract) {
+      parsed = extractJsonObject(solverRun.text, 'solve-check: SolutionGenerateTask') as Record<
+        string,
+        unknown
+      >;
+    } else {
+      const extracted = extractStrictIndependentSolutionJson(solverRun.text);
+      parsed = extracted.json as Record<string, unknown>;
+      solverOutputRepairLevel = extracted.repaired;
+    }
+    const normalized = normalizeStrictSolutionOutput(parsed);
+    parsed = normalized.value as Record<string, unknown>;
+    if (normalized.repaired) solverOutputRepairLevel = 'deterministic';
+    const complete = SolutionGenerateOutput.safeParse(parsed);
+    const rawReference =
+      parsed.reference_solution !== null &&
+      typeof parsed.reference_solution === 'object' &&
+      !Array.isArray(parsed.reference_solution)
+        ? (parsed.reference_solution as Record<string, unknown>)
+        : {};
+    const finalAnswer = complete.success
+      ? complete.data.reference_solution.final_answer
+      : rawReference.final_answer;
+    const normalizedFinalAnswer = typeof finalAnswer === 'string' ? finalAnswer.trim() : '';
+    if (!complete.success && !legacyAdapter.allowPartialContract) {
+      const issueSummary = complete.error.issues
+        .slice(0, 4)
+        .map((issue) => `${issue.path.join('.') || '<root>'}:${issue.code}`)
+        .join(', ');
+      console.warn(
+        `[solve-check] strict SolutionGenerateOutput contract rejected (${issueSummary})`,
+      );
+      return {
+        status: 'unsupported',
+        reason: `solver output did not satisfy the complete SolutionGenerateOutput contract (${issueSummary})`,
+        ...provenance(),
+      };
+    }
+    if (normalizedFinalAnswer.length === 0) {
+      return {
+        status: 'unsupported',
+        reason: 'solver returned an empty final_answer',
+        ...provenance(),
+      };
+    }
+    const rawEquivalents = complete.success
+      ? complete.data.reference_solution.answer_equivalents
+      : rawReference.answer_equivalents;
+    const rawSignals = complete.success
+      ? complete.data.reference_solution.expected_signals
+      : rawReference.expected_signals;
+    return {
+      status: 'solved',
+      final_answer: normalizedFinalAnswer,
+      answer_equivalents: Array.isArray(rawEquivalents)
+        ? rawEquivalents.filter((entry): entry is string => typeof entry === 'string')
+        : [],
+      expected_signals: Array.isArray(rawSignals)
+        ? rawSignals.filter((entry): entry is string => typeof entry === 'string')
+        : [],
+      ...(complete.success
+        ? {
+            worked_solution_md: complete.data.worked_solution_md,
+            confidence: complete.data.confidence,
+          }
+        : {}),
+      ...(complete.success ? { complete_solution: complete.data } : {}),
+      task_input: taskInput,
+      task_input_sha256: sha256CanonicalJson(taskInput),
+      solver_output_sha256: sha256CanonicalJson(complete.success ? complete.data : parsed),
+      solver_output_repair_level: solverOutputRepairLevel,
+      ...provenance(),
+    };
+  } catch (err) {
+    // runTask persists a failure row before throwing AgentRunError. Preserve
+    // that paid-attempt identity even though this reusable solver seam converts
+    // provider errors into `unsupported` for ordinary question verification.
+    if (err instanceof AgentRunError) {
+      recordRun({ task_run_id: err.taskRunId });
+    }
+    if (solverPaidInvocationId && !solverPaidSettled) {
+      try {
+        await opts.releasePaidCall?.('solution_check', solverPaidInvocationId);
+      } catch (releaseErr) {
+        console.error('[solve-check] solver reservation release failed', releaseErr);
+      }
+    }
+    if (
+      err instanceof PlacementStarterStaleAuthorityError ||
+      err instanceof PlacementStarterAdmissionError
+    ) {
+      throw err;
+    }
+    return {
+      status: 'unsupported',
+      reason: `solver did not produce a usable answer: ${err instanceof Error ? err.message : String(err)}`,
+      ...(requiresVision ? { image_input_unavailable: true } : {}),
+      // A provider/runner throw is not the strict JSON contract-retry case.
+      ...(err instanceof AgentRunError ? { retryable: false } : {}),
+      ...provenance(),
+    };
+  }
+}
+
+/** Strict public blind-solve seam: no answer hints and no control-plane payload. */
+export async function runIndependentSolution(
+  question: IndependentSolutionQuestion,
+  opts: IndependentSolutionOptions,
+): Promise<IndependentSolutionResult> {
+  const executed = await runIndependentSolutionInternal(question, opts);
+  if (executed.status === 'unsupported') {
+    return {
+      ...executed,
+      contract_complete: false,
+      retryable:
+        executed.retryable ??
+        (!executed.image_input_unavailable && executed.task_run_ids?.length === 1),
+    };
+  }
+  const taskRunId = executed.task_run_ids?.length === 1 ? executed.task_run_ids[0] : undefined;
+  if (!executed.complete_solution || !taskRunId || !executed.solver_output_sha256) {
+    return {
+      status: 'unsupported',
+      reason: !executed.complete_solution
+        ? 'solver output did not satisfy the complete SolutionGenerateOutput contract'
+        : 'independent solution requires exactly one persisted task_run_id',
+      contract_complete: false,
+      retryable: false,
+      ...(executed.task_run_ids ? { task_run_ids: executed.task_run_ids } : {}),
+      ...(executed.cost_usd !== undefined ? { cost_usd: executed.cost_usd } : {}),
+    };
+  }
+  return {
+    status: 'solved',
+    solution: executed.complete_solution,
+    task_run_id: taskRunId,
+    task_input: executed.task_input,
+    task_input_sha256: executed.task_input_sha256,
+    solver_output_sha256: executed.solver_output_sha256,
+    solver_output_repair_level: executed.solver_output_repair_level,
+    ...(executed.cost_usd !== undefined ? { cost_usd: executed.cost_usd } : {}),
+  };
+}
+
 /**
  * Independent solve-check: have a separate solver (SolutionGenerateTask) solve the
  * question from scratch, then test whether its answer AGREES with the question's own
@@ -446,7 +978,6 @@ export async function runSolveCheck(
   question: SolveCheckQuestion,
   opts: SolveCheckOptions,
 ): Promise<SolveCheckResult> {
-  const requiresVision = (question.image_refs?.length ?? 0) > 0;
   // F2: prefer the structured final answer (rubric_json.reference_solution) over the
   // worked-solution prose in reference_md. referenceAnswer is the primary candidate
   // used for human-readable reason strings + the semantic-path reference; the full
@@ -467,22 +998,51 @@ export async function runSolveCheck(
     };
   }
 
-  // YUK-608 (异源 solve/verify) — the per-call provider/model override for this check's
-  // paid legs. Built ONCE here so BOTH legs (SolutionGenerate solver + semantic SemanticJudge)
-  // route to the SAME lane: the runner reads ctx.override → resolveTaskProvider(kind, override).
-  // Undefined when neither knob is set → ctx.override stays absent → default-lane behavior is
-  // byte-identical to before (the env-unset invariant the callers guarantee).
-  const solverOverride: { provider?: Provider; model?: string } | undefined =
-    opts.solverProviderOverride || opts.solverModelOverride
-      ? {
-          ...(opts.solverProviderOverride ? { provider: opts.solverProviderOverride } : {}),
-          ...(opts.solverModelOverride ? { model: opts.solverModelOverride } : {}),
-        }
-      : undefined;
+  const meta = (question.metadata ?? {}) as Record<string, unknown>;
+  const independentlySolved = await runIndependentSolutionInternal(
+    {
+      id: question.id,
+      kind: question.kind,
+      prompt_md: question.prompt_md,
+      choices_md: question.choices_md,
+      image_refs: question.image_refs,
+      figures: question.figures,
+    },
+    opts,
+    {
+      // Preserve the ordinary question-supply adapter byte-for-byte while the
+      // exported validator seam remains strictly reference-free.
+      advisoryHints: {
+        existing_answers_hint: meta.tencent_right_answer ?? null,
+        existing_analysis_hint: meta.tencent_answer_analysis ?? null,
+      },
+      includePlacementAuthorityInTaskInput: true,
+      allowPartialContract: true,
+    },
+  );
+  if (independentlySolved.status === 'unsupported') {
+    return {
+      verdict: 'unsupported',
+      reason: independentlySolved.reason,
+      compared_by: 'none',
+      ...(independentlySolved.image_input_unavailable ? { image_input_unavailable: true } : {}),
+      ...(independentlySolved.task_run_ids
+        ? { task_run_ids: independentlySolved.task_run_ids }
+        : {}),
+      ...(independentlySolved.cost_usd !== undefined
+        ? { cost_usd: independentlySolved.cost_usd }
+        : {}),
+    };
+  }
 
-  // EFF-1 (YUK-554 review) — provenance/cost capture across the 1-2 LLM calls below.
-  const taskRunIds: string[] = [];
-  let costUsd: number | undefined;
+  const solverFinalAnswer = independentlySolved.final_answer;
+  const solverEquivalents = independentlySolved.answer_equivalents;
+  const solverOverride = solutionLaneOverride(opts);
+
+  // EFF-1 (YUK-554 review) — seed provenance with the reusable solver leg,
+  // then append the optional SemanticJudge comparator leg below.
+  const taskRunIds: string[] = [...(independentlySolved.task_run_ids ?? [])];
+  let costUsd = independentlySolved.cost_usd;
   const recordRun = (r: { task_run_id?: string; cost_usd?: number }): void => {
     if (typeof r.task_run_id === 'string' && r.task_run_id.length > 0) {
       taskRunIds.push(r.task_run_id);
@@ -496,138 +1056,8 @@ export async function runSolveCheck(
     ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
   });
 
-  const assertCurrentAuthority = async (): Promise<void> => {
-    if (!opts.placementAuthority || !opts.db) return;
-    await opts.db.transaction(async (tx: Tx) =>
-      (opts.assertPlacementAuthorityFn ?? assertPlacementAuthority)(
-        tx,
-        opts.placementAuthority as PlacementVerificationAuthority,
-      ),
-    );
-  };
-
-  // Solve the question independently. Input shape mirrors solution-generate.ts:103.
-  let solverFinalAnswer: string;
-  let solverEquivalents: string[];
-  // Reservation bookkeeping (YUK-452 review): if beforePaidCall reserves budget but the provider
-  // call throws before settlePaidCall, release the reservation so it does not leak into known_cost.
-  let solverPaidInvocationId: string | undefined;
-  let solverPaidSettled = false;
-  try {
-    const meta = (question.metadata ?? {}) as Record<string, unknown>;
-    const input = {
-      ...(opts.placementAuthority ? { placement_authority: opts.placementAuthority } : {}),
-      prompt_md: question.prompt_md,
-      kind: question.kind,
-      subject_id: opts.profile.id,
-      // Choice options are part of the question, but live in a separate column.
-      // Pass them explicitly so stems like "which statement is correct?" are
-      // solvable by SolutionGenerateTask.
-      choices_md: question.choices_md ?? [],
-      // existing answer is only a HINT to the solver (it may copy a wrong answer);
-      // for solve-check we WANT an independent solve, so we do NOT feed the
-      // question's own reference_md as a hint — only OCR-side hints if any.
-      existing_answers_hint: meta.tencent_right_answer ?? null,
-      existing_analysis_hint: meta.tencent_answer_analysis ?? null,
-      figures_hint: question.figures ?? null,
-      prompt_image_refs: question.image_refs ?? [],
-    };
-    const ctx: Record<string, unknown> = { db: opts.db, subjectProfile: opts.profile.full };
-    // OF-4(ii) 异源旋钮真接线（PR #312 验证轮 V4）：生产 runner 的覆盖读
-    // `ctx.override`（resolveTaskProvider(kind, ctx.override)），裸 `ctx.model`
-    // 不会被读取——那是个死旋钮。YUK-608 把 provider 也纳入同一 override（不只 model）。
-    if (solverOverride) ctx.override = solverOverride;
-    const promptImageRefs = question.image_refs ?? [];
-    let taskInput: unknown = input;
-    if (promptImageRefs.length > 0) {
-      if (!opts.db) {
-        return {
-          verdict: 'unsupported',
-          reason: 'prompt images require a Db handle for source_asset resolution',
-          compared_by: 'none',
-          image_input_unavailable: true,
-        };
-      }
-      let images: Array<{ data: string; mediaType: string }>;
-      try {
-        const imageFetchFn =
-          opts.imageFetchFn ?? (await import('@/server/ai/judges/steps-judge')).defaultImageFetch;
-        images = await imageFetchFn(promptImageRefs, opts.db);
-      } catch (err) {
-        return {
-          verdict: 'unsupported',
-          reason: `prompt image fetch failed: ${err instanceof Error ? err.message : String(err)}`,
-          compared_by: 'none',
-          image_input_unavailable: true,
-        };
-      }
-      // defaultImageFetch deliberately skips missing rows/objects. For verification,
-      // partial vision is semantic corruption: hold the draft instead of asking the
-      // solver to guess from an incomplete figure set.
-      if (images.length !== promptImageRefs.length) {
-        return {
-          verdict: 'unsupported',
-          reason: `prompt image fetch resolved ${images.length}/${promptImageRefs.length} assets`,
-          compared_by: 'none',
-          image_input_unavailable: true,
-        };
-      }
-      taskInput = { text: JSON.stringify(input), images };
-    }
-    const solverTaskKind = requiresVision ? 'SolutionGenerateVisionTask' : 'SolutionGenerateTask';
-    await assertCurrentAuthority();
-    solverPaidInvocationId = randomUUID();
-    await opts.beforePaidCall?.('solution_check', solverPaidInvocationId);
-    const solverRun = await opts.runTaskFn(solverTaskKind, taskInput, ctx);
-    recordRun(solverRun);
-    await opts.settlePaidCall?.('solution_check', solverPaidInvocationId, solverRun);
-    solverPaidSettled = true;
-    // EFF-1 — captured before parse so a parse throw still keeps the spend.
-    const { text } = solverRun;
-    // Parse the structured output; only final_answer + answer_equivalents matter here.
-    // Label reproduces the pre-existing error string byte-identically (OCR PR #716).
-    const parsed = extractJsonObject(text, 'solve-check: SolutionGenerateTask') as {
-      reference_solution?: { final_answer?: unknown; answer_equivalents?: unknown };
-    };
-    const fa = parsed.reference_solution?.final_answer;
-    solverFinalAnswer = typeof fa === 'string' ? fa.trim() : '';
-    const eq = parsed.reference_solution?.answer_equivalents;
-    solverEquivalents = Array.isArray(eq)
-      ? eq.filter((e): e is string => typeof e === 'string')
-      : [];
-  } catch (err) {
-    // Release the solver reservation if we reserved but never settled (provider call threw). Runs
-    // for placement errors too — idempotent / RETENTION-safe once settled (YUK-452 review).
-    if (solverPaidInvocationId && !solverPaidSettled) {
-      try {
-        await opts.releasePaidCall?.('solution_check', solverPaidInvocationId);
-      } catch (releaseErr) {
-        console.error('[solve-check] solver reservation release failed', releaseErr);
-      }
-    }
-    if (
-      err instanceof PlacementStarterStaleAuthorityError ||
-      err instanceof PlacementStarterAdmissionError
-    )
-      throw err;
-    // No usable solver answer → no signal. Conservative: do not fail the question.
-    return {
-      verdict: 'unsupported',
-      reason: `solver did not produce a usable answer: ${err instanceof Error ? err.message : String(err)}`,
-      compared_by: 'none',
-      ...(requiresVision ? { image_input_unavailable: true } : {}),
-      ...runProvenance(),
-    };
-  }
-
-  if (solverFinalAnswer.length === 0) {
-    return {
-      verdict: 'unsupported',
-      reason: 'solver returned an empty final_answer',
-      compared_by: 'none',
-      ...runProvenance(),
-    };
-  }
+  const assertCurrentAuthority = async (): Promise<void> =>
+    assertIndependentSolutionAuthority(opts);
 
   // ----- exact path: normalize compare, then semantic fallback on mismatch -----
   let normalizedExactMismatch = false;

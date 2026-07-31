@@ -1,4 +1,7 @@
+import { type AiTaskKind, getTaskSystemPrompt } from '@/ai/task-prompts';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
+import type { SubjectProfile } from '@/subjects/profile';
 
 export interface TaskTextResult {
   text: string;
@@ -20,6 +23,17 @@ export type TaskTextRunFn = (
   input: unknown,
   ctx?: RunTaskCallCtx,
 ) => Promise<TaskTextResult>;
+
+/**
+ * Fingerprint the exact profile-rendered system prompt separately from the
+ * user-input hash persisted by runTask. Together they bind both task inputs.
+ */
+export function taskPromptFingerprint(task: AiTaskKind, profile: SubjectProfile): string {
+  return sha256CanonicalJson({
+    task_kind: task,
+    system_prompt: getTaskSystemPrompt(task, profile),
+  });
+}
 
 export function costUsdToMicroUsd(costUsd: number | undefined): number | null {
   return costUsd === undefined ? null : Math.round(costUsd * 1_000_000);
