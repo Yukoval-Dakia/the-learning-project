@@ -173,7 +173,7 @@ function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
     },
     getMasteryProjectionFn: async () => new Map<string, MasteryProjection>(),
     evidenceRefsExistFn: async () => true,
-    resolveSubjectProfileForKnowledgeIdsFn: async () => resolveSubjectProfile('general'),
+    requireSubjectProfileForKnowledgeIdsFn: async () => resolveSubjectProfile('general'),
     runTaskFn: async (kind) => {
       if (kind === 'ConjectureProbeAuthorTask') {
         return {
@@ -574,6 +574,23 @@ describe('propose_conjecture — server-enforced single writer', () => {
     expect(h.caps.proposeCount).toBe(0);
   });
 
+  it('fails closed when the Director cannot resolve the referenced KC subject', async () => {
+    const h = build({
+      requireSubjectProfileForKnowledgeIdsFn: async () => {
+        throw new Error('referenced KC subject unavailable');
+      },
+    });
+
+    const result = await callTool('propose_conjecture', validProposeArgs());
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('operational failure'),
+    });
+    expect(h.proposals).toHaveLength(0);
+    expect(h.caps.proposeCount).toBe(0);
+  });
+
   it('passes every cited text failure to both quality tasks', async () => {
     const seenEvidenceRefs: string[][] = [];
     const seenFailures: FailureAttempt[][] = [];
@@ -637,7 +654,7 @@ describe('propose_conjecture — server-enforced single writer', () => {
     const h = build({
       failureAttempts: [poisoned, failureAttempt('att_2')],
       runTaskFn: runTaskFn as BuildDirectorServerOpts['runTaskFn'],
-      resolveSubjectProfileForKnowledgeIdsFn: async (_db, knowledgeIds) => {
+      requireSubjectProfileForKnowledgeIdsFn: async (_db, knowledgeIds) => {
         expect(knowledgeIds).toEqual(['k_a']);
         return resolveSubjectProfile('math');
       },

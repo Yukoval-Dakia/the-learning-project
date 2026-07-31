@@ -177,7 +177,7 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
     getMasteryProjectionFn: vi.fn(
       async () => new Map<string, MasteryProjection>([[KC, projection(0.42)]]),
     ),
-    resolveSubjectProfileForKnowledgeIdsFn: vi.fn(async () => resolveSubjectProfile('math')),
+    requireSubjectProfileForKnowledgeIdsFn: vi.fn(async () => resolveSubjectProfile('math')),
     runAgentTaskFn: proposeOnceRunner(),
     runTaskFn: vi.fn(async (kind: string) => {
       if (kind === 'ConjectureProbeAuthorTask') {

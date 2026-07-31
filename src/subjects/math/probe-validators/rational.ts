@@ -1,6 +1,6 @@
 export interface Rational {
-  numerator: bigint;
-  denominator: bigint;
+  readonly numerator: bigint;
+  readonly denominator: bigint;
 }
 
 function gcd(left: bigint, right: bigint): bigint {
@@ -54,7 +54,14 @@ export function divideRationals(left: Rational, right: Rational): Rational | nul
 }
 
 export function rationalsEqual(left: Rational, right: Rational): boolean {
-  return left.numerator === right.numerator && left.denominator === right.denominator;
+  const normalizedLeft = rational(left.numerator, left.denominator);
+  const normalizedRight = rational(right.numerator, right.denominator);
+  return (
+    normalizedLeft !== null &&
+    normalizedRight !== null &&
+    normalizedLeft.numerator === normalizedRight.numerator &&
+    normalizedLeft.denominator === normalizedRight.denominator
+  );
 }
 
 export function formatRational(value: Rational): string {
@@ -64,15 +71,7 @@ export function formatRational(value: Rational): string {
 }
 
 export function normalizeLatexFractions(value: string): string {
-  return value.replace(/\\(?:d?frac)\s*\{\s*([+-]?\d+)\s*\}\s*\{\s*(\d+)\s*\}/g, '$1/$2');
-}
-
-export function extractFractionOperands(value: string): Rational[] {
-  const normalized = normalizeLatexFractions(value);
-  return [...normalized.matchAll(/([+-]?\d+)\s*\/\s*(\d+)/g)].flatMap((match) => {
-    const parsed = rational(BigInt(match[1] ?? '0'), BigInt(match[2] ?? '0'));
-    return parsed ? [parsed] : [];
-  });
+  return value.replace(/\\(?:[dt]?frac)\s*\{\s*([+-]?\d+)\s*\}\s*\{\s*(\d+)\s*\}/g, '$1/$2');
 }
 
 /**
@@ -81,7 +80,7 @@ export function extractFractionOperands(value: string): Rational[] {
  * trailing numeric token is never treated as the answer.
  */
 export function extractFinalRational(value: string): Rational | null {
-  const normalized = normalizeLatexFractions(value).replace(/[−–—]/g, '-');
+  const normalized = normalizeLatexFractions(value.replace(/[−–—]/g, '-'));
   const tokenPattern = String.raw`([+-]?\d+\s*\/\s*\d+|[+-]?\d+(?:\.\d+)?)`;
   const marker = new RegExp(
     String.raw`(?:答案|结果|答|answer|result)\s*(?:是|为|[:：=])?\s*${tokenPattern}`,

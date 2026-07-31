@@ -149,6 +149,21 @@ function unitSample(): TaskTextResult {
   };
 }
 
+function unitCell(): EnrichedEvidenceCell {
+  return cell({
+    key: 'unit_error::k_chain_rule',
+    cause_category: 'unit_error',
+    samples: [
+      evidenceSample({ cause_category: 'unit_error' }),
+      evidenceSample({
+        attempt_event_id: 'e_b',
+        question_id: 'q_b',
+        cause_category: 'unit_error',
+      }),
+    ],
+  });
+}
+
 function unitProbePackageResult(input: {
   taskRunId: string;
   primaryGold?: string;
@@ -460,13 +475,17 @@ describe('induceConjecture taskInput grounding (YUK-786)', () => {
     expect(ctx.subjectProfile?.id).toBe('yuwen');
   });
 
-  it('omits subjectProfile from the ctx when the caller has no subject (neutral render)', async () => {
+  it('resolves a neutral general profile when the cell has no subject', async () => {
     const runTaskFn = vi
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
       .mockResolvedValue(sample('你把复合结构当成并列结构'));
-    await induceConjecture({ cells: [cell()], samples: 1, runTaskFn });
-    const ctx = runTaskFn.mock.calls[0][2] as { subjectProfile?: unknown };
-    expect(ctx.subjectProfile).toBeUndefined();
+    await induceConjecture({
+      cells: [cell({ subject_id: null, subject_display_name: null })],
+      samples: 1,
+      runTaskFn,
+    });
+    const ctx = runTaskFn.mock.calls[0][2] as { subjectProfile?: { id?: string } };
+    expect(ctx.subjectProfile?.id).toBe('general');
   });
 });
 
@@ -1304,7 +1323,7 @@ describe('induceConjecture self-consistency', () => {
         .mockResolvedValueOnce(probeReviewResult('pass', [], 'unit_review_2'));
 
       const result = await induceConjectureImpl({
-        cells: [cell()],
+        cells: [unitCell()],
         samples: 1,
         runTaskFn,
         subjectProfile: resolveSubjectProfile('math'),
@@ -1357,7 +1376,7 @@ describe('induceConjecture self-consistency', () => {
         );
 
       const result = await induceConjectureImpl({
-        cells: [cell()],
+        cells: [unitCell()],
         samples: 1,
         runTaskFn,
         subjectProfile: resolveSubjectProfile('math'),
@@ -1394,7 +1413,7 @@ describe('induceConjecture self-consistency', () => {
 
       const draft = proposal(
         await induceConjectureImpl({
-          cells: [cell()],
+          cells: [unitCell()],
           samples: 1,
           runTaskFn,
           subjectProfile: resolveSubjectProfile('math'),
@@ -1438,7 +1457,7 @@ describe('induceConjecture self-consistency', () => {
 
       const draft = proposal(
         await induceConjectureImpl({
-          cells: [cell()],
+          cells: [unitCell()],
           samples: 1,
           runTaskFn,
           subjectProfile: resolveSubjectProfile('math'),

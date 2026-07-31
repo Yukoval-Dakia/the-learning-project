@@ -31,7 +31,7 @@ import type {
   writeAgentNote as WriteAgentNoteReal,
 } from '@/capabilities/agency/server/notes';
 import { writeAgentNote } from '@/capabilities/agency/server/notes';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
+import { requireSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import {
   ConjectureDiagnosticSpec,
   ConjectureHypothesisProposalDraft,
@@ -271,7 +271,7 @@ export interface BuildDirectorServerOpts {
   getMasteryProjectionFn?: GetMasteryProjectionFn;
   evidenceRefsExistFn?: EvidenceRefsExistFn;
   runTaskFn?: TaskTextRunFn;
-  resolveSubjectProfileForKnowledgeIdsFn?: typeof resolveSubjectProfileForKnowledgeIds;
+  requireSubjectProfileForKnowledgeIdsFn?: typeof requireSubjectProfileForKnowledgeIds;
   /** Same failure-attempt snapshot as the deterministic lane, read once at meeting
    * start. Only conjecture history is re-read fresh by the write handler below. */
   failureAttempts: FailureAttempt[];
@@ -390,8 +390,8 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
   const evidenceRefsExistFn = opts.evidenceRefsExistFn ?? evidenceRefsExist;
   const runTaskFn = opts.runTaskFn ?? makeRunTaskFn(db);
   const loadConjectureHistoryFn = opts.loadConjectureHistoryFn ?? loadConjectureHistory;
-  const resolveSubjectProfileForKnowledgeIdsFn =
-    opts.resolveSubjectProfileForKnowledgeIdsFn ?? resolveSubjectProfileForKnowledgeIds;
+  const requireSubjectProfileForKnowledgeIdsFn =
+    opts.requireSubjectProfileForKnowledgeIdsFn ?? requireSubjectProfileForKnowledgeIds;
 
   const proposalIds: string[] = [];
   const noteIds: string[] = [];
@@ -670,7 +670,7 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
 
           let probeQuality: PrepareConjectureProbePairResult;
           try {
-            const subjectProfile = await resolveSubjectProfileForKnowledgeIdsFn(db, [
+            const subjectProfile = await requireSubjectProfileForKnowledgeIdsFn(db, [
               a.knowledge_id,
             ]);
             probeQuality = await prepareConjectureProbePair({

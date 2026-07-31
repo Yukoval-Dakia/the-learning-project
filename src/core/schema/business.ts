@@ -708,6 +708,7 @@ export type ConjectureProbeOperationalFailureCodeT = z.infer<
 /** Deterministic, subject-owned validation failures for a frozen probe package. */
 export const SubjectProbeValidatorFailureCode = z.enum([
   'subject_validator_ungradable',
+  'subject_validator_internal_error',
   'unit_denominator_trigger_missing',
   'unit_dimension_mismatch',
   'unit_reference_mismatch',
@@ -725,7 +726,11 @@ export type SubjectProbeValidatorFailureCodeT = z.infer<typeof SubjectProbeValid
 const SubjectProbeValidatorResultBase = {
   validator_id: z.string().trim().min(1).max(100),
   validator_version: z.string().trim().min(1).max(100),
-  evidence: z.record(z.string(), z.string().max(4000)),
+  evidence: z
+    .record(z.string().trim().min(1).max(200), z.string().max(4000))
+    .refine((value) => Object.keys(value).length <= 50, {
+      message: 'evidence must contain at most 50 entries',
+    }),
 } as const;
 
 /**
@@ -948,7 +953,7 @@ export const ConjectureProbeQualityAttempt = z.discriminatedUnion('outcome', [
     .object({
       ...ConjectureProbeQualityAttemptBase,
       outcome: z.literal('subject_validator_failed'),
-      failure_codes: uniqueProbeFailureCodes(SubjectProbeValidatorFailureCode, 12),
+      failure_codes: uniqueProbeFailureCodes(SubjectProbeValidatorFailureCode, 13),
       subject_validator_results: z.array(SubjectProbeValidatorResult).min(1).max(20),
     })
     .strict(),

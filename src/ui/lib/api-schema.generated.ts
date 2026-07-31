@@ -21853,6 +21853,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -21913,6 +21914,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -21972,6 +21974,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -22026,6 +22029,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -22051,6 +22055,7 @@ export interface operations {
                                   explanation_md: string;
                                   failure_codes: (
                                     | 'subject_validator_ungradable'
+                                    | 'subject_validator_internal_error'
                                     | 'unit_denominator_trigger_missing'
                                     | 'unit_dimension_mismatch'
                                     | 'unit_reference_mismatch'
@@ -22093,6 +22098,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -22171,6 +22177,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -22231,6 +22238,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -22290,6 +22298,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -22344,6 +22353,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -22369,6 +22379,7 @@ export interface operations {
                                   explanation_md: string;
                                   failure_codes: (
                                     | 'subject_validator_ungradable'
+                                    | 'subject_validator_internal_error'
                                     | 'unit_denominator_trigger_missing'
                                     | 'unit_dimension_mismatch'
                                     | 'unit_reference_mismatch'
@@ -22411,6 +22422,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -22565,6 +22577,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -22625,6 +22638,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -22684,6 +22698,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -22738,6 +22753,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -22763,6 +22779,7 @@ export interface operations {
                                   explanation_md: string;
                                   failure_codes: (
                                     | 'subject_validator_ungradable'
+                                    | 'subject_validator_internal_error'
                                     | 'unit_denominator_trigger_missing'
                                     | 'unit_dimension_mismatch'
                                     | 'unit_reference_mismatch'
@@ -22805,6 +22822,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -23065,6 +23083,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -23125,6 +23144,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -23184,6 +23204,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -23238,6 +23259,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -23263,6 +23285,7 @@ export interface operations {
                                   explanation_md: string;
                                   failure_codes: (
                                     | 'subject_validator_ungradable'
+                                    | 'subject_validator_internal_error'
                                     | 'unit_denominator_trigger_missing'
                                     | 'unit_dimension_mismatch'
                                     | 'unit_reference_mismatch'
@@ -23305,6 +23328,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -23552,6 +23576,7 @@ export interface operations {
                                   };
                                   failure_codes: (
                                     | 'subject_validator_ungradable'
+                                    | 'subject_validator_internal_error'
                                     | 'unit_denominator_trigger_missing'
                                     | 'unit_dimension_mismatch'
                                     | 'unit_reference_mismatch'
@@ -24491,6 +24516,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -24551,6 +24577,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -24610,6 +24637,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -24664,6 +24692,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -24689,6 +24718,7 @@ export interface operations {
                                   explanation_md: string;
                                   failure_codes: (
                                     | 'subject_validator_ungradable'
+                                    | 'subject_validator_internal_error'
                                     | 'unit_denominator_trigger_missing'
                                     | 'unit_dimension_mismatch'
                                     | 'unit_reference_mismatch'
@@ -24731,6 +24761,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -24809,6 +24840,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -24869,6 +24901,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -24928,6 +24961,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -24982,6 +25016,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -25007,6 +25042,7 @@ export interface operations {
                                   explanation_md: string;
                                   failure_codes: (
                                     | 'subject_validator_ungradable'
+                                    | 'subject_validator_internal_error'
                                     | 'unit_denominator_trigger_missing'
                                     | 'unit_dimension_mismatch'
                                     | 'unit_reference_mismatch'
@@ -25049,6 +25085,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -25203,6 +25240,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -25263,6 +25301,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -25322,6 +25361,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -25376,6 +25416,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -25401,6 +25442,7 @@ export interface operations {
                                   explanation_md: string;
                                   failure_codes: (
                                     | 'subject_validator_ungradable'
+                                    | 'subject_validator_internal_error'
                                     | 'unit_denominator_trigger_missing'
                                     | 'unit_dimension_mismatch'
                                     | 'unit_reference_mismatch'
@@ -25443,6 +25485,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -25703,6 +25746,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -25763,6 +25807,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -25822,6 +25867,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -25876,6 +25922,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -25901,6 +25948,7 @@ export interface operations {
                                   explanation_md: string;
                                   failure_codes: (
                                     | 'subject_validator_ungradable'
+                                    | 'subject_validator_internal_error'
                                     | 'unit_denominator_trigger_missing'
                                     | 'unit_dimension_mismatch'
                                     | 'unit_reference_mismatch'
@@ -25943,6 +25991,7 @@ export interface operations {
                                         };
                                         failure_codes: (
                                           | 'subject_validator_ungradable'
+                                          | 'subject_validator_internal_error'
                                           | 'unit_denominator_trigger_missing'
                                           | 'unit_dimension_mismatch'
                                           | 'unit_reference_mismatch'
@@ -26190,6 +26239,7 @@ export interface operations {
                                   };
                                   failure_codes: (
                                     | 'subject_validator_ungradable'
+                                    | 'subject_validator_internal_error'
                                     | 'unit_denominator_trigger_missing'
                                     | 'unit_dimension_mismatch'
                                     | 'unit_reference_mismatch'

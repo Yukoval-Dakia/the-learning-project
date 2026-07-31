@@ -157,8 +157,8 @@ type ListPendingConjecturesFn = (db: Db) => Promise<ProposalInboxRow[]>;
 type PersistToolTraceFn = typeof persistToolTrace;
 type WriteAiProposalFn = NonNullable<BuildDirectorServerOpts['writeAiProposalFn']>;
 type WriteAgentNoteFn = NonNullable<BuildDirectorServerOpts['writeAgentNoteFn']>;
-type ResolveSubjectProfileForKnowledgeIdsFn = NonNullable<
-  BuildDirectorServerOpts['resolveSubjectProfileForKnowledgeIdsFn']
+type RequireSubjectProfileForKnowledgeIdsFn = NonNullable<
+  BuildDirectorServerOpts['requireSubjectProfileForKnowledgeIdsFn']
 >;
 type DirectorOutputCounts = { proposals: number; notes: number };
 type LoadDirectorOutputCountsForDayFn = (db: Db, dayKey: string) => Promise<DirectorOutputCounts>;
@@ -209,7 +209,7 @@ export interface DirectorDeps {
   persistToolTraceFn?: PersistToolTraceFn;
   writeAiProposalFn?: WriteAiProposalFn;
   writeAgentNoteFn?: WriteAgentNoteFn;
-  resolveSubjectProfileForKnowledgeIdsFn?: ResolveSubjectProfileForKnowledgeIdsFn;
+  requireSubjectProfileForKnowledgeIdsFn?: RequireSubjectProfileForKnowledgeIdsFn;
   loadDirectorOutputCountsForDayFn?: LoadDirectorOutputCountsForDayFn;
 }
 
@@ -366,7 +366,7 @@ export async function runResearchMeetingDirector(
     failureAttempts: failures,
     loadConjectureHistoryFn,
     runTaskFn,
-    resolveSubjectProfileForKnowledgeIdsFn: deps.resolveSubjectProfileForKnowledgeIdsFn,
+    requireSubjectProfileForKnowledgeIdsFn: deps.requireSubjectProfileForKnowledgeIdsFn,
   });
   const scout = buildEvidenceScoutAgentDefinition({ prompt: EVIDENCE_SCOUT_CHARTER });
 

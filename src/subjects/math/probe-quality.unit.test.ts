@@ -3,7 +3,11 @@ import type {
   ConjectureProbePackageV2T,
   ConjectureProbeSpecV2T,
 } from '@/core/schema/business';
-import { evaluateSubjectProbeValidators } from '@/subjects/probe-quality';
+import {
+  evaluateSubjectProbeValidators,
+  listSubjectProbeValidators,
+  registerSubjectProbeValidators,
+} from '@/subjects/probe-quality';
 import { describe, expect, it } from 'vitest';
 import './probe-quality';
 
@@ -217,6 +221,25 @@ describe('math subject probe validators', () => {
     ).toBe('pass');
   });
 
+  it('selects the stated unit answer instead of a later source quantity', () => {
+    const mutated = structuredClone(unitPackage);
+    const workedAnswer = '答案是 20 m/s，因为 72 km/h ÷ 3.6 = 20';
+    mutated.primary.reference_md = workedAnswer;
+    mutated.primary.gold_response_signature = { kind: 'text', response_md: workedAnswer };
+    expect(
+      resultFor(unitHypothesis, mutated, 'math.compound-unit-denominator-conversion').outcome,
+    ).toBe('pass');
+  });
+
+  it('accepts a compact value-unit answer without whitespace', () => {
+    const mutated = structuredClone(unitPackage);
+    mutated.primary.reference_md = '20m/s';
+    mutated.primary.gold_response_signature = { kind: 'text', response_md: '20m/s' };
+    expect(
+      resultFor(unitHypothesis, mutated, 'math.compound-unit-denominator-conversion').outcome,
+    ).toBe('pass');
+  });
+
   it('proves unlike-denominator gold and (a+c)/(b+d) target signatures', () => {
     const result = resultFor(
       fractionHypothesis,
@@ -302,6 +325,21 @@ describe('math subject probe validators', () => {
     ).toBe('pass');
   });
 
+  it('normalizes tfrac syntax and a Unicode minus before parsing', () => {
+    const mutated = structuredClone(fractionPackage);
+    mutated.primary.prompt_md = String.raw`计算 \tfrac{−1}{3} + \tfrac{1}{4}。`;
+    mutated.primary.reference_md = String.raw`\tfrac{−1}{12}`;
+    mutated.primary.gold_response_signature = {
+      kind: 'text',
+      response_md: String.raw`\tfrac{−1}{12}`,
+    };
+    mutated.primary.expected_target_error_answer_md = '0';
+    mutated.primary.target_error_response_signature = { kind: 'text', response_md: '0/7' };
+    expect(
+      resultFor(fractionHypothesis, mutated, 'math.unlike-denominator-fraction-addition').outcome,
+    ).toBe('pass');
+  });
+
   it('requires a different fraction context or representation', () => {
     const mutated = structuredClone(fractionPackage);
     mutated.followup.context_kind = mutated.primary.context_kind;
@@ -339,5 +377,58 @@ describe('math subject probe validators', () => {
         package: fractionPackage,
       }),
     ).toEqual([]);
+  });
+
+  it('turns one validator exception into a fail result and continues the registry', () => {
+    const subjectId = 'test-validator-exception-isolation';
+    if (listSubjectProbeValidators(subjectId).length === 0) {
+      registerSubjectProbeValidators(subjectId, [
+        {
+          id: 'test.throwing-validator',
+          version: '1.0.0',
+          validate() {
+            throw new TypeError('deliberate validator failure');
+          },
+        },
+        {
+          id: 'test.following-validator',
+          version: '1.0.0',
+          validate() {
+            return {
+              validator_id: 'test.following-validator',
+              validator_version: '1.0.0',
+              outcome: 'not_applicable',
+              failure_codes: [],
+              evidence: { reached: 'true' },
+            };
+          },
+        },
+      ]);
+    }
+
+    expect(
+      evaluateSubjectProbeValidators(subjectId, {
+        hypothesis: fractionHypothesis,
+        package: fractionPackage,
+      }),
+    ).toEqual([
+      {
+        validator_id: 'test.throwing-validator',
+        validator_version: '1.0.0',
+        outcome: 'fail',
+        failure_codes: ['subject_validator_internal_error'],
+        evidence: {
+          error_name: 'TypeError',
+          error_message: 'deliberate validator failure',
+        },
+      },
+      {
+        validator_id: 'test.following-validator',
+        validator_version: '1.0.0',
+        outcome: 'not_applicable',
+        failure_codes: [],
+        evidence: { reached: 'true' },
+      },
+    ]);
   });
 });

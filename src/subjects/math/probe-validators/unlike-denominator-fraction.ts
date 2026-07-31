@@ -30,17 +30,21 @@ interface ParsedFractionPrompt {
 }
 
 function parsePrompt(prompt: string): ParsedFractionPrompt | null {
-  const normalized = normalizeLatexFractions(prompt).normalize('NFKC').replace(/[−–—]/g, '-');
+  const normalized = normalizeLatexFractions(prompt.replace(/[−–—]/g, '-')).normalize('NFKC');
   if (/\d+\s+\d+\s*\/\s*\d+/.test(normalized)) return null;
   const matches = [...normalized.matchAll(/([+-]?\d+)\s*\/\s*(\d+)/g)];
   if (matches.length !== 2) return null;
+  // A plus sign or an unambiguous addition phrase is required; merely
+  // mentioning two fractions is not enough to claim this validator owns it.
   const additionIntent = /\+|相加|合计|总共|一共|共(?:有|为|是)?|合起来|add|sum|total/i.test(
     normalized,
   );
   if (!additionIntent) return null;
   const stripped = normalized.replace(/([+-]?\d+)\s*\/\s*(\d+)/g, '#');
+  // Fractions are already replaced by "#"; a remaining "# - #" is a real
+  // subtraction step rather than the sign of a negative operand.
   if (
-    /[×*÷]|(?:^|[^eE])-(?:[^>]|$)|减去|乘以|除以|剩余|先.{0,30}再|\b(?:then|after|subtract|multiply|divide|remaining)\b/i.test(
+    /#\s*-\s*#|[×*÷]|减去|乘以|除以|还剩|剩下|剩余|差|先.{0,30}再|\b(?:then|after|subtract|multiply|divide|remaining)\b/i.test(
       stripped,
     )
   ) {
@@ -71,6 +75,8 @@ function contractApplies(input: SubjectProbeValidatorInput): boolean {
   const denominatorSignal = /异分母|不同分母|unlike denominator|different denominator/.test(
     contract,
   );
+  // Match only the frozen "(a+c)/(b+d)" misconception, not arbitrary
+  // fraction-language hypotheses that belong to other validators.
   const targetRuleSignal =
     /分子.{0,12}分母.{0,12}(?:分别)?相加|分子分母分别相加|\(\s*a\s*\+\s*c\s*\)\s*\/\s*\(\s*b\s*\+\s*d\s*\)|add.{0,30}numerator.{0,30}denominator/.test(
       contract,
@@ -104,7 +110,7 @@ function validateProbe(
   );
   if (!targetError) {
     failureCodes.add('subject_validator_ungradable');
-    return parsed;
+    return null;
   }
   evidence[`${label}_gold`] = formatRational(gold);
   evidence[`${label}_target_error`] = formatRational(targetError);

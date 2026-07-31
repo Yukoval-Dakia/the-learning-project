@@ -87,13 +87,26 @@ function parsePrompt(prompt: string): ParsedUnitPrompt | null {
 
 function parseAnswer(answer: string): ParsedUnitAnswer | null {
   const normalized = normalizeUnitText(answer);
+  const valuePattern = String.raw`([+-]?\d+(?:\s*\/\s*\d+|\.\d+)?)(?![\d.])`;
+  const unitPattern = String.raw`(km\/h|km\/s|m\/h|m\/s|km|m)(?![a-z])`;
   const matches = [
-    ...normalized.matchAll(
-      /(?<![\w.])([+-]?\d+(?:\s*\/\s*\d+|\.\d+)?)(?![\w.])\s*(km\/h|km\/s|m\/h|m\/s|km|m)(?![a-z])/g,
-    ),
+    ...normalized.matchAll(new RegExp(String.raw`(?<![\w.])${valuePattern}\s*${unitPattern}`, 'g')),
   ];
-  const match = matches.at(-1);
-  const rawValue = match?.[1]?.replace(/\s+/g, '');
+  // Worked solutions often mention the source quantity after the stated answer.
+  // Prefer explicit answer syntax, a leading answer, or an equation result; an
+  // unmarked multi-quantity response is ambiguous and therefore ungradable.
+  const marker = new RegExp(
+    String.raw`(?:答案|结果|答|answer|result)\s*(?:是|为|[:：=])?\s*${valuePattern}\s*${unitPattern}`,
+    'i',
+  ).exec(normalized);
+  const leading = new RegExp(String.raw`^\s*${valuePattern}\s*${unitPattern}`, 'i').exec(
+    normalized,
+  );
+  const equation = new RegExp(String.raw`=\s*${valuePattern}\s*${unitPattern}`, 'i').exec(
+    normalized,
+  );
+  const selected = marker ?? leading ?? equation ?? (matches.length === 1 ? matches[0] : null);
+  const rawValue = selected?.[1]?.replace(/\s+/g, '');
   const value = rawValue?.includes('/')
     ? (() => {
         const [numerator, denominator] = rawValue.split('/');
@@ -102,7 +115,7 @@ function parseAnswer(answer: string): ParsedUnitAnswer | null {
     : rawValue
       ? parseDecimalRational(rawValue)
       : null;
-  const unit = match?.[2];
+  const unit = selected?.[2];
   return value && unit ? { value, unit } : null;
 }
 
@@ -148,8 +161,10 @@ function contractApplies(input: SubjectProbeValidatorInput): boolean {
   const denominatorSignal = /分母|每小时|每秒|denominator|per hour|per second|时间单位/.test(
     contract,
   );
+  // Require the frozen misconception contract to explicitly describe changing
+  // only the numerator/distance side or omitting the denominator/time side.
   const targetRuleSignal =
-    /只.{0,16}(?:分子|距离|长度)|(?:忘|未).{0,16}(?:分母|时间)|only.{0,40}(?:numerator|distance)|without.{0,40}(?:denominator|time)/.test(
+    /只[\s\S]{0,16}(?:分子|距离|长度)|(?:忘|未)[\s\S]{0,16}(?:分母|时间)|only[\s\S]{0,40}(?:numerator|distance)|without[\s\S]{0,40}(?:denominator|time)/.test(
       contract,
     );
   return unitSignal && denominatorSignal && targetRuleSignal;

@@ -56,7 +56,24 @@ export function evaluateSubjectProbeValidators(
   input: SubjectProbeValidatorInput,
 ): SubjectProbeValidatorResultT[] {
   const validators = validatorsBySubject.get(normalizeSubjectId(subjectId)) ?? [];
-  return validators.map((validator) => validator.validate(input));
+  return validators.map((validator) => {
+    try {
+      return validator.validate(input);
+    } catch (error) {
+      const errorName = error instanceof Error ? error.name : typeof error;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        validator_id: validator.id,
+        validator_version: validator.version,
+        outcome: 'fail',
+        failure_codes: ['subject_validator_internal_error'],
+        evidence: {
+          error_name: errorName.slice(0, 200),
+          error_message: errorMessage.slice(0, 4000),
+        },
+      };
+    }
+  });
 }
 
 export function listSubjectProbeValidators(subjectId: string): readonly SubjectProbeValidator[] {
