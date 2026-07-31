@@ -865,7 +865,12 @@ export const ai_task_runs = pgTable(
     status: text('status').notNull().default('running'),
     finish_reason: text('finish_reason'),
     usage_json: jsonb('usage_json')
-      .$type<{ inputTokens: number; outputTokens: number }>()
+      .$type<{
+        inputTokens: number;
+        outputTokens: number;
+        thinkingBlocks?: number;
+        thinkingCharacters?: number;
+      }>()
       .notNull()
       .default({ inputTokens: 0, outputTokens: 0 }),
     cost_usd: real('cost_usd'),

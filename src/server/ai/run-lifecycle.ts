@@ -4,6 +4,7 @@ import { taskInputHash } from '@/server/judge/judge-execution-provenance';
 import { createId } from '@paralleldrive/cuid2';
 import { RETRY_ELAPSED_CAP_MS, isTransientAgentFailure } from './agent-run-error';
 import {
+  type AiTaskUsage,
   writeAiTaskRunFinished,
   writeAiTaskRunStarted,
   writeCostLedger,
@@ -12,10 +13,7 @@ import {
 import { type TokenCounts, effectiveCostUsd } from './pricing';
 import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
 
-export interface LifecycleUsage {
-  inputTokens: number;
-  outputTokens: number;
-}
+export type LifecycleUsage = AiTaskUsage;
 
 export interface LifecycleResult {
   task_run_id: string;

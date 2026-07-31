@@ -46,6 +46,7 @@ import { populateIsolatedSkills } from './populate-skills';
 import type { ResolvedProvider } from './providers';
 import {
   type AiRunLifecycle,
+  type LifecycleUsage,
   classifyLifecycleRetry,
   createRunLifecycle,
   maxLifecycleAttempts,
@@ -59,7 +60,7 @@ export interface RunTaskResult {
   task_run_id: string;
   text: string;
   finishReason: string;
-  usage: { inputTokens: number; outputTokens: number };
+  usage: LifecycleUsage;
   /** Total cost in USD, as reported by the agent SDK. 0 when running
    *  against an endpoint that doesn't surface cost (xiaomi mimo). */
   cost_usd?: number;
@@ -498,12 +499,17 @@ async function runTaskAttempt(args: {
   await lifecycle.start(actualInput);
 
   let resultText = '';
+  const thinking = emptyThinkingObservation();
   try {
     const q = sdkQuery({
       prompt: promptFromInput(actualInput),
       options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
     });
     for await (const msg of q as AsyncIterable<SDKMessage>) {
+      if (msg.type === 'assistant') {
+        observeAssistantThinking(msg, thinking);
+        continue;
+      }
       if (msg.type !== 'result') continue;
       if (msg.subtype === 'success') {
         if (isApiErrorSuccessResult(msg)) {
@@ -524,10 +530,13 @@ async function runTaskAttempt(args: {
         const usage = msg.usage;
         resultText = msg.result ?? '';
         lifecycle.recordTerminalSuccess({
-          usage: {
-            inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
-            outputTokens: usage?.output_tokens ?? 0,
-          },
+          usage: usageWithThinking(
+            {
+              inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
+              outputTokens: usage?.output_tokens ?? 0,
+            },
+            thinking,
+          ),
           tokenCounts: {
             inputTokens: usage?.input_tokens ?? 0,
             outputTokens: usage?.output_tokens ?? 0,
@@ -688,6 +697,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
   });
   let stepStartTime = Date.now();
   let iteration = 0;
+  const thinking = emptyThinkingObservation();
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -706,6 +716,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
         });
         for await (const msg of q as AsyncIterable<SDKMessage>) {
           if (msg.type === 'assistant') {
+            observeAssistantThinking(msg, thinking);
             const text = extractAssistantText(msg);
             if (text) {
               controller.enqueue(encoder.encode(text));
@@ -747,10 +758,13 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
           }
           const usage = msg.usage;
           lifecycle.recordTerminalSuccess({
-            usage: {
-              inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
-              outputTokens: usage?.output_tokens ?? 0,
-            },
+            usage: usageWithThinking(
+              {
+                inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
+                outputTokens: usage?.output_tokens ?? 0,
+              },
+              thinking,
+            ),
             tokenCounts: {
               inputTokens: usage?.input_tokens ?? 0,
               outputTokens: usage?.output_tokens ?? 0,
@@ -815,6 +829,40 @@ function extractAssistantText(msg: SDKAssistantMessage): string {
   return out;
 }
 
+interface ThinkingObservation {
+  blocks: number;
+  characters: number;
+}
+
+function emptyThinkingObservation(): ThinkingObservation {
+  return { blocks: 0, characters: 0 };
+}
+
+/** Count only block presence/size. Raw provider reasoning must never enter logs or artifacts. */
+function observeAssistantThinking(
+  msg: SDKAssistantMessage,
+  observation: ThinkingObservation,
+): void {
+  const blocks = (msg.message.content ?? []) as ContentBlock[];
+  for (const block of blocks) {
+    if (block.type !== 'thinking') continue;
+    observation.blocks += 1;
+    observation.characters += typeof block.thinking === 'string' ? block.thinking.length : 0;
+  }
+}
+
+function usageWithThinking(
+  usage: LifecycleUsage,
+  observation: ThinkingObservation,
+): LifecycleUsage {
+  if (observation.blocks === 0) return usage;
+  return {
+    ...usage,
+    thinkingBlocks: observation.blocks,
+    thinkingCharacters: observation.characters,
+  };
+}
+
 // ============================================================================
 // streamTaskCollecting — YUK-266 (C1). A collecting variant of streamTask:
 // streams text deltas to an `onDelta(chunk)` callback (one call per
@@ -865,6 +913,7 @@ export async function streamTaskCollecting(
   let stepStartTime = Date.now();
   let iteration = 0;
   let resultText = '';
+  const thinking = emptyThinkingObservation();
 
   try {
     const actualInput = ctx.middleware?.beforeRun
@@ -878,6 +927,7 @@ export async function streamTaskCollecting(
     });
     for await (const msg of q as AsyncIterable<SDKMessage>) {
       if (msg.type === 'assistant') {
+        observeAssistantThinking(msg, thinking);
         const text = extractAssistantText(msg);
         if (text) {
           onDelta(text);
@@ -903,10 +953,13 @@ export async function streamTaskCollecting(
       if (msg.subtype === 'success') {
         const usage = msg.usage;
         lifecycle.recordTerminalSuccess({
-          usage: {
-            inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
-            outputTokens: usage?.output_tokens ?? 0,
-          },
+          usage: usageWithThinking(
+            {
+              inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
+              outputTokens: usage?.output_tokens ?? 0,
+            },
+            thinking,
+          ),
           tokenCounts: {
             inputTokens: usage?.input_tokens ?? 0,
             outputTokens: usage?.output_tokens ?? 0,

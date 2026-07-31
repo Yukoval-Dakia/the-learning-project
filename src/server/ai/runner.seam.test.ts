@@ -72,6 +72,13 @@ function errorResult(subtype: string) {
   return { type: 'result', subtype };
 }
 
+function assistantThinking(thinking: string) {
+  return {
+    type: 'assistant',
+    message: { content: [{ type: 'thinking', thinking, signature: '' }] },
+  };
+}
+
 const SAMPLE_OUTPUT_FORMAT: JsonSchemaOutputFormat = {
   type: 'json_schema',
   schema: { type: 'object', properties: { ok: { type: 'boolean' } } },
@@ -104,6 +111,24 @@ describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
     };
     expect(opts.env.CLAUDE_CODE_MAX_RETRIES).toBe('2');
     expect('maxBudgetUsd' in opts).toBe(false);
+  });
+
+  it('records returned thinking-block presence without persisting raw reasoning', async () => {
+    mockSdk.messages = [assistantThinking('private scratch work'), successResult()];
+
+    const result = await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
+
+    expect(result.usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      thinkingBlocks: 1,
+      thinkingCharacters: 20,
+    });
+    const finished = logMock.finished.mock.calls.at(-1)?.[1] as {
+      usage: Record<string, unknown>;
+    };
+    expect(finished.usage).toEqual(result.usage);
+    expect(JSON.stringify(finished)).not.toContain('private scratch work');
   });
 
   it('preserves an explicit operator CLAUDE_CODE_MAX_RETRIES override', async () => {
