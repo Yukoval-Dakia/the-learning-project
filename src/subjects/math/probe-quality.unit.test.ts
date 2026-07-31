@@ -185,6 +185,13 @@ describe('math subject probe validators', () => {
       },
       'subject_validator_ungradable',
     ],
+    [
+      'operation before conversion',
+      (draft: ConjectureProbePackageV2T) => {
+        draft.primary.prompt_md = '将 72 km/h 先减半再换算为 m/s。';
+      },
+      'subject_validator_ungradable',
+    ],
   ])('fails closed for unit mutation: %s', (_name, mutate, expectedCode) => {
     const mutated = structuredClone(unitPackage);
     mutate(mutated);
@@ -324,6 +331,13 @@ describe('math subject probe validators', () => {
       'multiplier phrase',
       (draft: ConjectureProbePackageV2T) => {
         draft.primary.prompt_md = '计算（1/3 + 1/4）的两倍。';
+      },
+      'subject_validator_ungradable',
+    ],
+    [
+      'reciprocal follow-up',
+      (draft: ConjectureProbePackageV2T) => {
+        draft.primary.prompt_md = '计算 1/3 + 1/4 的倒数。';
       },
       'subject_validator_ungradable',
     ],

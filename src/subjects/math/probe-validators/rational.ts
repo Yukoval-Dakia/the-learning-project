@@ -87,6 +87,8 @@ export function extractFinalRational(value: string): Rational | null {
     'i',
   ).exec(normalized);
   const leading = new RegExp(String.raw`^\s*${tokenPattern}(?![\w/])`).exec(normalized);
+  const leadingIsDesignatedAnswer =
+    leading !== null && !/^\s*[+\-×*÷=]/.test(normalized.slice(leading[0].length));
   const equationResults = [
     ...normalized.matchAll(new RegExp(String.raw`=\s*${tokenPattern}(?![\w/])`, 'g')),
   ];
@@ -96,8 +98,8 @@ export function extractFinalRational(value: string): Rational | null {
   ];
   const selected =
     marker?.[1] ??
+    (leadingIsDesignatedAnswer ? leading?.[1] : null) ??
     terminalEquationResult ??
-    leading?.[1] ??
     (tokens.length === 1 ? tokens[0]?.[1] : null);
   const raw = selected?.replace(/\s+/g, '');
   if (!raw) return null;

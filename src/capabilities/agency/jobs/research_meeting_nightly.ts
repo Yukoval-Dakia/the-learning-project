@@ -218,7 +218,10 @@ function scheduledEventId(
 }
 
 function conjectureCellEventId(
-  prefix: 'conjecture_abstained' | 'conjecture_proposal',
+  prefix:
+    | 'conjecture_abstained'
+    | 'conjecture_probe_quality_operational_failed'
+    | 'conjecture_proposal',
   executionId: string,
   cell: EnrichedEvidenceCell,
 ): string {
@@ -242,6 +245,13 @@ function conjectureProposalEventId(executionId: string, cell: EnrichedEvidenceCe
   // worker is still running. The deterministic proposal id turns that race into
   // first-write-wins rather than two pending conjectures for one logical cell.
   return conjectureCellEventId('conjecture_proposal', executionId, cell);
+}
+
+function conjectureProbeQualityOperationalFailureEventId(
+  executionId: string,
+  cell: EnrichedEvidenceCell,
+): string {
+  return conjectureCellEventId('conjecture_probe_quality_operational_failed', executionId, cell);
 }
 
 async function defaultRunWithExecutionLock<T>(
@@ -1089,6 +1099,28 @@ async function runResearchMeetingNightlyClaimed(
           ) {
             // Do not persist this execution's completion marker. pg-boss redelivery
             // must revisit the cell after an author/reviewer outage or invalid output.
+            // Persist the complete terminal attempt before retry: task-run rows keep
+            // hashes/digests, not deterministic subject-validator evidence.
+            await writeEventFn(db, {
+              id: conjectureProbeQualityOperationalFailureEventId(executionId, cell),
+              actor_kind: 'agent',
+              actor_ref: RESEARCH_MEETING_ACTOR,
+              action: 'experimental:conjecture_probe_quality_operational_failed',
+              subject_kind: 'mind_model',
+              subject_id: cell.knowledge_id,
+              outcome: 'failure',
+              payload: {
+                execution_id: executionId,
+                cell_key: cell.key,
+                task_kind: err.taskKind,
+                input_evidence_event_ids: cell.evidence_event_ids,
+                probe_quality_attempts: err.probe_quality_attempts,
+                probe_quality_task_run_ids: err.task_run_ids,
+              },
+              // Audit/observability only: never ingest an operational failure into memory.
+              ingest_at: now,
+              created_at: now,
+            });
             await writeRetryableAiFailureLedgerFn(db, err.taskKind);
             return {
               cell,

@@ -1113,10 +1113,40 @@ describe('runResearchMeetingNightly', () => {
       const writeAiProposalFn = vi.fn(async () => 'unexpected');
       const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
       const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
+      const probeQualityAttempts =
+        taskKind === 'ConjectureProbeReviewTask'
+          ? [
+              {
+                attempt: 2 as const,
+                outcome: 'operational_failed' as const,
+                failure_codes: ['review_operational_failure' as const],
+                explanation_md: 'reviewer unavailable after shadow validation',
+                author_task_run_id: 'probe_author_2',
+                reviewer_task_run_id: null,
+                subject_validator_results: [
+                  {
+                    validator_id: 'math.compound-unit-denominator-conversion',
+                    validator_version: '1.0.0',
+                    outcome: 'fail' as const,
+                    failure_codes: ['unit_reference_mismatch' as const],
+                    evidence: { primary_gold: '20 m/s' },
+                  },
+                ],
+              },
+            ]
+          : [];
       const deps = baseDeps({
         getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
         induceConjectureFn: vi.fn(async () => {
-          throw new ConjectureInductionOperationalError(taskKind, `${taskKind} output unavailable`);
+          throw new ConjectureInductionOperationalError(
+            taskKind,
+            `${taskKind} output unavailable`,
+            {
+              probe_quality_attempts: probeQualityAttempts,
+              task_run_ids: ['probe_author_2'],
+              cost_usd: 0.01,
+            },
+          );
         }),
         writeAiProposalFn,
         writeEventFn,
@@ -1128,6 +1158,18 @@ describe('runResearchMeetingNightly', () => {
       );
       expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(expect.anything(), taskKind);
       expect(writeAiProposalFn).not.toHaveBeenCalled();
+      expect(writeEventFn).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          action: 'experimental:conjecture_probe_quality_operational_failed',
+          outcome: 'failure',
+          payload: expect.objectContaining({
+            task_kind: taskKind,
+            probe_quality_attempts: probeQualityAttempts,
+            probe_quality_task_run_ids: ['probe_author_2'],
+          }),
+        }),
+      );
       expect(writeEventFn).not.toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
