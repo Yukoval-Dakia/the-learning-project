@@ -67,6 +67,97 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     expect(j.kind).toBe('reading_comprehension');
   });
 
+  it('真实干预坏件：内容引号 + LaTeX 单反斜杠 → reject 模式确定性修复且内容零丢失', () => {
+    // 生产输出还少了最外层的一个 `}`；括号栈能确定性补齐，不涉及内容推断。
+    const text = String.raw`{"material":{"title_md":"为什么必须"相乘"而不是"相加"？","body_md":"设函数 \( y=f(x) \)，求 \dfrac{dy}{dx}\n下一行 \u4e2d"},"diagnostics":{"immediate":{"kind":"immediate"}}`;
+    expect(() => JSON.parse(text)).toThrow();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = parseJsonObjectLoose(text, 'intervention package author', {
+      riskyRepair: 'reject',
+      containerClosure: 'schema_validated',
+      latexEscapes: 'markdown_math',
+    });
+    expect(r?.repaired).toBe('deterministic');
+    expect(r?.json).toEqual({
+      material: {
+        title_md: '为什么必须"相乘"而不是"相加"？',
+        body_md: '设函数 \\( y=f(x) \\)，求 \\dfrac{dy}{dx}\n下一行 中',
+      },
+      diagnostics: { immediate: { kind: 'immediate' } },
+    });
+  });
+
+  it('完整 flat review 仅缺根对象闭合符 → 仅 schema-validated caller 可补齐', () => {
+    const text = '{"verdict":"pass","failure_codes":[],"summary_md":"ok"';
+    expect(parseJsonObjectLoose(text, 'default caller')).toBeNull();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(
+      parseJsonObjectLoose(text, 'intervention package review', {
+        riskyRepair: 'reject',
+        containerClosure: 'schema_validated',
+      }),
+    ).toEqual({
+      json: { verdict: 'pass', failure_codes: [], summary_md: 'ok' },
+      repaired: 'deterministic',
+    });
+  });
+
+  it('合法 JSON control escape 始终优先，不凭数学区间猜成 LaTeX 命令', () => {
+    const text = String.raw`{"formula":"$\frac{1}{2}+\text{半}+\nabla f$","line":"first\nother line","tab":"left\tbar","math_line":"$f(x)\nother$"}`;
+    const r = parseJsonObjectLoose(text, 'latex', {
+      riskyRepair: 'reject',
+      latexEscapes: 'markdown_math',
+    });
+    expect(r).toEqual({ json: JSON.parse(text), repaired: false });
+  });
+
+  it('display math 内换行后跟变量 u → 保留换行，不猜成 LaTeX nu', () => {
+    const text = String.raw`{"body":"$$x=1\nu=2$$"}`;
+    expect(parseJsonObjectLoose(text, 'display math', { latexEscapes: 'markdown_math' })).toEqual({
+      json: { body: '$$x=1\nu=2$$' },
+      repaired: false,
+    });
+  });
+
+  it('非法 Markdown 转义美元按字面量修复，不改写相邻 control escapes', () => {
+    const text = String.raw`{"body":"Pay $5\nnote the fee; 价格 \$100 起；$x$ 后 \tbar"}`;
+    const r = parseJsonObjectLoose(text, 'currency', {
+      latexEscapes: 'markdown_math',
+    });
+    expect(r).toEqual({
+      json: { body: 'Pay $5\nnote the fee; 价格 \\$100 起；$x$ 后 \tbar' },
+      repaired: 'deterministic',
+    });
+  });
+
+  it('JSON-escaped Markdown 美元保持严格解析', () => {
+    const text = String.raw`{"body":"孤立 $ 前缀；价格 \\$100 起；后文 \tbar"}`;
+    expect(parseJsonObjectLoose(text, 'escaped dollar', { latexEscapes: 'markdown_math' })).toEqual(
+      {
+        json: { body: '孤立 $ 前缀；价格 \\$100 起；后文 \tbar' },
+        repaired: false,
+      },
+    );
+  });
+
+  it('最后一个完整 child 后还有未完成 suffix → reject 模式不得截断后补闭合符', () => {
+    const truncated = '{"meta":"ok","questions":[{"id":1},{"id":';
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(() =>
+      parseJsonObjectLoose(truncated, 'truncated suffix', { riskyRepair: 'reject' }),
+    ).toThrow();
+  });
+
+  it('恰好截断在完整 child 边界 → 默认 reject 模式也不得推断批次已完整', () => {
+    const truncatedAtBoundary = '{"meta":"ok","questions":[{"id":1}';
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(() =>
+      parseJsonObjectLoose(truncatedAtBoundary, 'boundary truncation', {
+        riskyRepair: 'reject',
+      }),
+    ).toThrow();
+  });
+
   it('智能引号定界 → 修复成功', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const r = parseJsonObjectLoose('{“kind”: “translation”}', 'site');
