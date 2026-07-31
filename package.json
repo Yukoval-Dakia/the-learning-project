@@ -25,6 +25,7 @@
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:unit:watch": "vitest --config vitest.unit.config.ts",
     "test:watch": "vitest --config vitest.unit.config.ts",
+    "test:opencode-worktree": "cd .opencode/plugins && bun install --frozen-lockfile && bun run typecheck && bun run lint && bun test",
     "test:db": "vitest run --config vitest.db.config.ts",
     "test:db:watch": "vitest --config vitest.db.config.ts",
     "test:migration": "vitest run --config vitest.migration.config.ts",

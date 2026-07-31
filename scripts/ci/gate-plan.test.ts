@@ -55,6 +55,22 @@ describe('CI gate lane planner', () => {
     });
   });
 
+  it('runs only the self-checking static lane for versioned OpenCode tooling', () => {
+    expect(classifyChangedFiles(['.opencode/plugins/worktree/delete.ts'])).toMatchObject({
+      code_changed: true,
+      unit_selection: 'skip',
+      reasons: ['agent-tooling'],
+      lanes: {
+        static: true,
+        unit: false,
+        db: false,
+        migration: false,
+        build: false,
+        usability: false,
+      },
+    });
+  });
+
   it('runs only static and unit for a conventional unit-test-only change', () => {
     expect(
       classifyChangedFiles(['src/capabilities/practice/ui/PfPaper.unit.test.tsx']),
