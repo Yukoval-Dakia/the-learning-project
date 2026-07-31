@@ -44,6 +44,10 @@ import {
   runColdStartBridge,
 } from '@/capabilities/ingestion/server/cold-start-bridge';
 import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
+import {
+  type PinnedFetchResponse,
+  fetchWithPinnedDispatcher,
+} from '@/capabilities/ingestion/server/pinned-fetch';
 import { runVisionExtract } from '@/capabilities/ingestion/server/vision';
 import { tagKnowledge } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
@@ -268,7 +272,7 @@ function createPinnedLookup(answers: ResolvedAddress[]): LookupFunction {
 // a redirect loop / chain can't spin.
 const MAX_REDIRECTS = 3;
 
-async function readBoundedResponseBody(res: Response, url: string): Promise<Uint8Array> {
+async function readBoundedResponseBody(res: PinnedFetchResponse, url: string): Promise<Uint8Array> {
   if (!res.body) return new Uint8Array();
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -317,11 +321,11 @@ async function defaultFetchImageBytes(
       // The URL retains its original hostname (Host + TLS SNI), while the Agent's
       // connector can use only the exact public answers validated above. This closes
       // the DNS-rebinding gap between validation and socket connect.
-      const res = await fetch(currentUrl, {
+      const res = await fetchWithPinnedDispatcher(currentUrl, {
         redirect: 'manual',
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         dispatcher,
-      } as RequestInit & { dispatcher: Agent });
+      });
 
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get('location');
