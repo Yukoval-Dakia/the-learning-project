@@ -1,4 +1,7 @@
-import { validateShadowProviderEnv } from '@/server/grounding-gate/preflight';
+import {
+  validateInterventionReviewEvalProviderEnv,
+  validateShadowProviderEnv,
+} from '@/server/grounding-gate/preflight';
 import { describe, expect, it } from 'vitest';
 
 const providerEnv = {
@@ -36,5 +39,29 @@ describe('validateShadowProviderEnv', () => {
     } catch (error) {
       expect(String(error)).not.toContain('secret-oauth-value');
     }
+  });
+});
+
+describe('validateInterventionReviewEvalProviderEnv', () => {
+  it('accepts only the production intervention reviewer lane credential', () => {
+    expect(() =>
+      validateInterventionReviewEvalProviderEnv({ XIAOMI_API_KEY: 'xiaomi-test-key' }),
+    ).not.toThrow();
+  });
+
+  it.each(['AI_PROVIDER_OVERRIDE', 'AI_PROVIDER_MODEL'])(
+    'rejects a process-global %s before the actual-output regression',
+    (name) => {
+      expect(() =>
+        validateInterventionReviewEvalProviderEnv({
+          XIAOMI_API_KEY: 'xiaomi-test-key',
+          [name]: 'unexpected-global-switch',
+        }),
+      ).toThrow(`unset ${name}`);
+    },
+  );
+
+  it('reports the missing credential name without values', () => {
+    expect(() => validateInterventionReviewEvalProviderEnv({})).toThrow('missing XIAOMI_API_KEY');
   });
 });

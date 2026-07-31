@@ -14,6 +14,8 @@ import {
   type InterventionPackageReviewAuditT,
   InterventionPackageReviewModelOutput,
   type InterventionPackageReviewModelOutputT,
+  InterventionPackageReviewModelOutputV2,
+  type InterventionPackageReviewModelOutputV2T,
   type InterventionPackageT,
   InterventionPreparationAttempt,
   type InterventionPreparationAttemptT,
@@ -177,6 +179,35 @@ export function validateInterventionPackageDeterministically(
   return [...new Set(failures)].sort();
 }
 
+/**
+ * Bind the reviewer's auditable per-diagnostic findings to the closed verdict.
+ * This never repairs package content. It only prevents a contradictory bare
+ * `pass` from overriding the reviewer's own reference/scope/grounding checks.
+ */
+export function enforceInterventionPackageReviewDecision(
+  review: InterventionPackageReviewModelOutputV2T,
+): InterventionPackageReviewModelOutputV2T {
+  const failureCodes = new Set(review.failure_codes);
+  for (const check of review.diagnostic_checks) {
+    const rejectedReverseCausationClaim =
+      check.causal_direction_check.applies &&
+      check.causal_direction_check.reference_claims_reverse_causation &&
+      check.causal_direction_check.claimed_cause_is_observed_y_causing_x === false;
+    if (!check.reference_correct || !check.discipline_grounded || rejectedReverseCausationClaim) {
+      failureCodes.add('reference_incorrect');
+    }
+    if (!check.within_frozen_scope) {
+      failureCodes.add('claim_scope_expansion');
+    }
+  }
+  if (failureCodes.size === 0) return review;
+  return InterventionPackageReviewModelOutputV2.parse({
+    ...review,
+    verdict: 'fail',
+    failure_codes: [...failureCodes].sort(),
+  });
+}
+
 async function runPackageAuthor(
   runTaskFn: TaskTextRunFn,
   context: InterventionAuthoringContextT,
@@ -263,7 +294,7 @@ async function runPackageReview(
   let review: InterventionPackageReviewModelOutputT;
   try {
     review = parseTaskOutput(result, 'intervention package review', (value) =>
-      InterventionPackageReviewModelOutput.parse(value),
+      enforceInterventionPackageReviewDecision(InterventionPackageReviewModelOutputV2.parse(value)),
     );
   } catch {
     review = InterventionPackageReviewModelOutput.parse({

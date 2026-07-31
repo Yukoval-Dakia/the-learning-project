@@ -17,6 +17,32 @@ as acceptance evidence.
 - The blind reviewer must finish `blind/review.json` before seeing
   `private/lineage.json`.
 
+## Reviewer actual-output regression (development evidence only)
+
+When changing `InterventionPackageReviewTask`, run the production Xiaomi/Mimo
+route against a sanitized regression packet after committing the exact code
+revision:
+
+```bash
+umask 077
+pnpm grounding:gate review-intervention \
+  --cases src/server/grounding-gate/fixtures/intervention-review-regressions.v1.json \
+  --out .tmp/yuk-829/reviewer-regression-result.json \
+  --env-file /absolute/path/to/private.env
+```
+
+The input packet has `schema_version: 1`,
+`source_kind: "sanitized_regression_fixture"`, and one or more cases containing
+`case_id`, `subject_id`, canonical `context`, canonical `package`, and
+`expected_failure_codes`. The harness refuses a dirty worktree, global provider
+overrides, an absent Xiaomi credential, or an existing output path. It runs in a
+disposable pgvector Testcontainer and seals each exact package digest, reviewer
+task-run ID, protocol-v2 diagnostic checks, provider/model, usage, and cost rows.
+
+This command verifies real model output rather than a mocked verdict, but its
+artifact always records `satisfies_yuk_814_canary=false`. Sanitized regression
+fixtures cannot replace the fresh prospective ten-run real lifecycle canary.
+
 ## 1. Export production data
 
 Use the authenticated backup endpoint:

@@ -441,6 +441,8 @@ export const InterventionPackage = InterventionPackageModelOutput.extend({
 export type InterventionPackageT = z.infer<typeof InterventionPackage>;
 
 export const InterventionPackageReviewFailureCode = z.enum([
+  'claim_scope_expansion',
+  'reference_incorrect',
   'material_not_grounded',
   'method_not_followed',
   'tested_claim_mismatch',
@@ -459,7 +461,7 @@ export type InterventionPackageReviewFailureCodeT = z.infer<
   typeof InterventionPackageReviewFailureCode
 >;
 
-export const InterventionPackageReviewModelOutput = z.discriminatedUnion('verdict', [
+const LegacyInterventionPackageReviewModelOutput = z.discriminatedUnion('verdict', [
   z
     .object({
       verdict: z.literal('pass'),
@@ -475,16 +477,131 @@ export const InterventionPackageReviewModelOutput = z.discriminatedUnion('verdic
     })
     .strict(),
 ]);
+
+const InterventionPackageReviewCausalDirectionCheck = z
+  .object({
+    applies: z.boolean(),
+    exposure_x_md: z.string().trim().max(160),
+    observed_outcome_y_md: z.string().trim().max(160),
+    reference_claims_reverse_causation: z.boolean(),
+    reference_claimed_reverse_cause_md: z.string().trim().max(240),
+    claimed_cause_is_observed_y_causing_x: z.boolean(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const hasX = value.exposure_x_md.length > 0;
+    const hasY = value.observed_outcome_y_md.length > 0;
+    const hasClaim = value.reference_claimed_reverse_cause_md.length > 0;
+    if (value.applies !== hasX || value.applies !== hasY) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'causal X and observed Y must both be present exactly when applies=true',
+      });
+    }
+    if (value.reference_claims_reverse_causation !== hasClaim) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'a reference reverse-causation claim must include the claimed cause text',
+      });
+    }
+    if (
+      (!value.applies &&
+        (value.reference_claims_reverse_causation ||
+          value.claimed_cause_is_observed_y_causing_x)) ||
+      (!value.reference_claims_reverse_causation && value.claimed_cause_is_observed_y_causing_x)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Y-causes-X can only be true for an applicable, claimed reverse cause',
+      });
+    }
+  });
+
+export const InterventionPackageReviewDiagnosticCheck = z
+  .object({
+    kind: InterventionDiagnosticKind,
+    // This is a concise independently derived result, not hidden chain of thought.
+    // Persisting it makes the reviewer protocol auditable instead of trusting a
+    // bare self-certified pass bit.
+    independently_derived_answer_md: z.string().trim().min(1).max(480),
+    required_operations_md: z.string().trim().min(1).max(320),
+    reference_correct: z.boolean(),
+    within_frozen_scope: z.boolean(),
+    discipline_grounded: z.boolean(),
+    decision_basis_md: z.string().trim().min(1).max(480),
+    causal_direction_check: InterventionPackageReviewCausalDirectionCheck,
+  })
+  .strict();
+export type InterventionPackageReviewDiagnosticCheckT = z.infer<
+  typeof InterventionPackageReviewDiagnosticCheck
+>;
+
+const InterventionPackageReviewDiagnosticChecks = z
+  .array(InterventionPackageReviewDiagnosticCheck)
+  .length(InterventionDiagnosticKind.options.length)
+  .superRefine((checks, context) => {
+    const kinds = checks.map((check) => check.kind);
+    for (const kind of InterventionDiagnosticKind.options) {
+      if (kinds.filter((value) => value === kind).length !== 1) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `diagnostic_checks must contain exactly one ${kind} check`,
+        });
+      }
+    }
+  });
+
+const InterventionPackageReviewProtocolV2Fields = {
+  review_protocol_version: z.literal(2),
+  diagnostic_checks: InterventionPackageReviewDiagnosticChecks,
+  summary_md: z.string().trim().min(1).max(480),
+} as const;
+
+/**
+ * New reviewer outputs must expose one independent solution/scope audit for
+ * every diagnostic. The legacy shape remains readable below solely so already
+ * persisted intervention attempts do not become unparsable after rollout.
+ */
+export const InterventionPackageReviewModelOutputV2 = z.discriminatedUnion('verdict', [
+  z
+    .object({
+      ...InterventionPackageReviewProtocolV2Fields,
+      verdict: z.literal('pass'),
+      failure_codes: z.array(InterventionPackageReviewFailureCode).length(0),
+    })
+    .strict(),
+  z
+    .object({
+      ...InterventionPackageReviewProtocolV2Fields,
+      verdict: z.literal('fail'),
+      failure_codes: z.array(InterventionPackageReviewFailureCode).min(1),
+    })
+    .strict(),
+]);
+export type InterventionPackageReviewModelOutputV2T = z.infer<
+  typeof InterventionPackageReviewModelOutputV2
+>;
+
+export const InterventionPackageReviewModelOutput = z.union([
+  InterventionPackageReviewModelOutputV2,
+  LegacyInterventionPackageReviewModelOutput,
+]);
 export type InterventionPackageReviewModelOutputT = z.infer<
   typeof InterventionPackageReviewModelOutput
 >;
 
-/** Flat provider schema; the canonical reader above enforces pass/fail branch rules. */
+/** Flat provider schema; the V2 canonical reader enforces pass/fail branch rules. */
 export const InterventionPackageReviewStructuredOutput = z
   .object({
+    review_protocol_version: z.literal(2),
     verdict: z.enum(['pass', 'fail']),
-    failure_codes: z.array(InterventionPackageReviewFailureCode).max(12),
-    summary_md: z.string().trim().min(1).max(2000),
+    failure_codes: z
+      .array(InterventionPackageReviewFailureCode)
+      .max(InterventionPackageReviewFailureCode.options.length),
+    diagnostic_checks: z
+      .array(InterventionPackageReviewDiagnosticCheck)
+      .length(InterventionDiagnosticKind.options.length),
+    summary_md: z.string().trim().min(1).max(480),
   })
   .strict();
 

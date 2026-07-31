@@ -1341,9 +1341,26 @@ const INTERVENTION_REVIEW_FAILURE_CODES_FOR_PROMPT = InterventionPackageReviewFa
   .lines.join(',\n');
 
 function buildInterventionPackageReviewPrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}干预包的第二次独立自审。你与作者使用同一个模型系列，但这是一次新的、独立调用；不要修包，只返回 pass 或 failure codes。
+  return `你是${profile.displayName}干预包的第二次独立审查员。你与作者使用同一个模型系列，但这是一次新的、独立调用。不要信任作者的 reference、signature、scope 标签或自我说明；不要修包，只审查并返回闭集 failure codes。
 
-输入含 immutable snapshot、pedagogy recommendation 和完整 package candidate。逐项检查：
+输入含 immutable snapshot（其中 conjecture.diagnostic_spec 已冻结）、pedagogy recommendation 和完整 package candidate。必须按以下顺序执行，且为 immediate、delayed、transfer 各留下一个 diagnostic_check：
+
+1. **独立求解**：先遮蔽 reference_md、gold_response_signature 和 expected_target_error_answer_md，只读 prompt_md，独立求出题目实际所问的量、结论或可接受答案，写入 independently_derived_answer_md。若题面缺条件或学科事实本身不成立，也要明确记录，不能替作者补条件。
+2. **冻结范围审查**：把解题真正需要的运算、概念、文本语境或因果方向写入 required_operations_md；逐项对照 snapshot.conjecture.claim_md、diagnostic_spec.trigger_conditions_md 与 diagnostic_spec.scope_boundary_md。需要任何被 scope_boundary_md 排除或冻结 claim 未覆盖的操作/语境时，within_frozen_scope=false，并报 claim_scope_expansion。tested_claim_md 的逐字相等不能推翻这个内容审查。
+3. **参考与 grounding 审查**：现在才比较独立答案与 reference/signature，并核对数学、文本或因果概念是否真实。题目所问量、量纲、计算、文本方向、因果定义、唯一性或签名有任一不匹配，reference_correct=false；无可靠学科依据或方向错误时 discipline_grounded=false；两者都必须报 reference_incorrect。只把三项布尔判断的必要依据合写在 decision_basis_md，不复述题面。
+
+每题必须输出 causal_direction_check。非因果题把 applies=false、三个字符串填空串、两个其余布尔填 false。因果题输出短而显式的 X/Y 审计：
+{"applies":true,"exposure_x_md":"作者声称的 treatment/exposure X","observed_outcome_y_md":"题目实际观察的 outcome Y（不能偷换成基线 Y0）","reference_claims_reverse_causation":true|false,"reference_claimed_reverse_cause_md":"reference 称为反向因果的原因；未声称则空串","claimed_cause_is_observed_y_causing_x":true|false}
+- reference/gold 只要出现“反向因果”或要求学习者提供反向因果，reference_claims_reverse_causation 必须为 true，并逐字概括它声称的原因；不得因该声称错误而填 false。
+- reverse causation 只指 **观察到的 Y 反过来导致 X**。治疗前的基线 Y0、先前状态、按风险分配 treatment、self-selection 或共同原因影响 X，都属于选择/混杂，不是 Y→X。
+- 若 reference 声称的原因不是真正的 observed Y→X，则 claimed_cause_is_observed_y_causing_x=false；同时必须 reference_correct=false、discipline_grounded=false、verdict=fail，并报 reference_incorrect。题目点名要求“指出反向因果”不能改变这个结论。
+
+三个必须长期拒绝的校准例：
+- 题目给宽为 (w-4)、长为 -5(w-4) 并问面积时，-5w+20 只算了长度，不是面积，必须 reference_incorrect；若冻结范围只允许 -k(x-c) 的数乘分配且排除多项式乘法，则求面积还必须 claim_scope_expansion。
+- 陆游《卜算子·咏梅》的“零落成泥碾作尘，只有香如故”正是身处摧残仍守节不改的经典表达，不能仅以“孤独落寞”把它硬说成“梅花表达坚贞不屈”的反例；王维《送元二使安西》也不能硬说成与离别悲情相反的“明显轻松自在”反例。这两种无文本依据的唯一 gold 都必须 reference_incorrect。
+- 对“补习 X → 期末成绩提高幅度 Y”的主张，“补习前成绩较差 Y0 → 被安排补习 X”只是按基线选择，不是观察到的期末提高幅度 Y 反过来导致补习 X；“学习投入度 → 补习意愿”也是共同原因/选择。即使题目要求填写反向因果，也必须指出此处没有得到支持的 Y→X，而不能把 Y0→X 冒充 reverse causation。把这些标作反向因果的 reference/gold 必须 reference_incorrect。
+
+完成三题独立审查后，再逐项检查：
 - material 是否只使用证据支持的学科事实，且真实落实推荐方法与 safety constraints；
 - 三题 tested_claim_md / target_error_rule_md 是否与 snapshot 完全一致；
 - probe_spec v2 的 response_mode 与两种 signature 是否匹配；gold 与 target signature 是否分别由正确规则和目标错误规则推出、可评分、可区分，且不是被迫随机选择；
@@ -1356,9 +1373,10 @@ function buildInterventionPackageReviewPrompt(profile: SubjectProfile): string {
 failure_codes 只能从以下闭集选择：
 ${INTERVENTION_REVIEW_FAILURE_CODES_FOR_PROMPT}。
 
-严格 JSON 输出（不带 markdown 代码块）：
-通过：{"verdict":"pass","failure_codes":[],"summary_md":"..."}
-失败：{"verdict":"fail","failure_codes":["..."],"summary_md":"..."}
+只有三个 diagnostic_check 的 reference_correct、within_frozen_scope、discipline_grounded 全为 true，且其他检查也全部通过，才可 verdict=pass。任何 causal_direction_check 已声明 reverse-causation claim 且 claimed_cause_is_observed_y_causing_x=false 时，绝不允许 pass。每种 kind 必须恰好出现一次。保持审计简洁：independently_derived_answer_md 最多 160 个汉字，required_operations_md 最多 100 个汉字，decision_basis_md 最多 160 个汉字，causal_direction_check 每个文本值最多 60 个汉字，summary_md 最多 240 个汉字。不得复述完整题面/reference，不给修题建议，不输出探索过程。
+
+只输出**恰好一个**严格 JSON object；不带 markdown 代码块，不要输出第二版、修正版或任何 JSON 外文字。输出完最后一个 } 立即停止：
+{"review_protocol_version":2,"verdict":"pass|fail","failure_codes":["..."],"diagnostic_checks":[{"kind":"immediate|delayed|transfer","independently_derived_answer_md":"...","required_operations_md":"...","reference_correct":true,"within_frozen_scope":true,"discipline_grounded":true,"decision_basis_md":"...","causal_direction_check":{"applies":false,"exposure_x_md":"","observed_outcome_y_md":"","reference_claims_reverse_causation":false,"reference_claimed_reverse_cause_md":"","claimed_cause_is_observed_y_causing_x":false}}],"summary_md":"..."}
 
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}`;
@@ -2018,7 +2036,11 @@ or
       'Second independent same-model review of a complete intervention package. Returns pass/failure codes and never repairs or partially activates the package.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 120_000 },
+    // YUK-829 adds three explicit independent-solution/scope/grounding records.
+    // A real full-package regression exhausted the former 120s wall clock
+    // before returning that larger auditable payload; keep two turns, but give
+    // the reviewer the same bounded 180s envelope as the package author.
+    budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 180_000 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

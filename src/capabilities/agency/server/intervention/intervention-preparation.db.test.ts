@@ -23,6 +23,7 @@ import {
   practice_stream_item,
   question,
 } from '@/db/schema';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
 import type { EventSubscriptionDelivery } from '@/kernel/manifest';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
@@ -407,6 +408,32 @@ function authorOutput(attempt: number) {
   };
 }
 
+function reviewDiagnosticChecks(
+  overrides: Partial<{
+    reference_correct: boolean;
+    within_frozen_scope: boolean;
+    discipline_grounded: boolean;
+  }> = {},
+) {
+  return (['immediate', 'delayed', 'transfer'] as const).map((kind) => ({
+    kind,
+    independently_derived_answer_md: `${kind} independently solved answer`,
+    required_operations_md: '应用冻结 claim 内的链式法则。',
+    reference_correct: overrides.reference_correct ?? true,
+    within_frozen_scope: overrides.within_frozen_scope ?? true,
+    discipline_grounded: overrides.discipline_grounded ?? true,
+    decision_basis_md: '独立答案与 reference 一致；操作在冻结范围内；结论可独立复算。',
+    causal_direction_check: {
+      applies: false,
+      exposure_x_md: '',
+      observed_outcome_y_md: '',
+      reference_claims_reverse_causation: false,
+      reference_claimed_reverse_cause_md: '',
+      claimed_cause_is_observed_y_causing_x: false,
+    },
+  }));
+}
+
 function successfulRunTask(
   packageOutput: (attempt: number) => ReturnType<typeof authorOutput> = authorOutput,
 ): {
@@ -445,8 +472,10 @@ function successfulRunTask(
         text: '',
         task_run_id: `review_run_${attempt}`,
         structured_output: {
+          review_protocol_version: 2,
           verdict: 'pass',
           failure_codes: [],
+          diagnostic_checks: reviewDiagnosticChecks(),
           summary_md: '材料、三题和目标错误均对齐，答案可判定且迁移情境已更换。',
         },
       };
@@ -1317,8 +1346,10 @@ describe('YUK-791 intervention preparation closed loop', () => {
           text: '',
           task_run_id: `review_fail_${attempt}`,
           structured_output: {
+            review_protocol_version: 2,
             verdict: 'fail',
             failure_codes: ['answer_not_unique'],
+            diagnostic_checks: reviewDiagnosticChecks(),
             summary_md: '参考答案不是唯一可接受答案。',
           },
         };
@@ -1350,6 +1381,123 @@ describe('YUK-791 intervention preparation closed loop', () => {
       .from(event)
       .where(eq(event.action, 'experimental:intervention_preparation_failed'));
     expect(failedEvents[0]?.value).toBe(1);
+  });
+
+  it('rejects the area-as-length false pass twice and keeps the full reviewer audit without fallback', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('review_scope');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_review_scope',
+    });
+    const [opened] = await db.select().from(intervention);
+    const [{ value: questionCountBefore }] = await db.select({ value: count() }).from(question);
+    const areaAsLengthOutput = (attempt: number) => {
+      const output = authorOutput(attempt);
+      output.diagnostics.transfer.probe_spec = {
+        ...output.diagnostics.transfer.probe_spec,
+        prompt_md: '一个长方形的宽为 (w-4)，长为 -5(w-4)。求这个长方形的面积并化简。',
+        reference_md: '-5w+20',
+        gold_response_signature: { kind: 'text', response_md: '-5w+20' },
+        expected_target_error_answer_md: '-5w-20',
+        target_error_response_signature: { kind: 'text', response_md: '-5w-20' },
+      };
+      return output;
+    };
+    const { fn: baseRun, calls } = successfulRunTask(areaAsLengthOutput);
+    const falsePassRun: TaskTextRunFn = async (kind, input, ctx) => {
+      if (kind !== 'InterventionPackageReviewTask') return baseRun(kind, input, ctx);
+      calls.push(kind);
+      const attempt = calls.filter((value) => value === kind).length;
+      const checks = reviewDiagnosticChecks();
+      checks[2] = {
+        ...checks[2],
+        independently_derived_answer_md: '-5(w-4)² = -5w²+40w-80',
+        required_operations_md: '面积=长×宽，需要把两个含 w 的因式相乘。',
+        reference_correct: false,
+        within_frozen_scope: false,
+        decision_basis_md: 'reference -5w+20 只化简了长度，没有回答面积；多项式乘法超出冻结范围。',
+      };
+      return {
+        text: '',
+        task_run_id: `review_scope_${attempt}`,
+        structured_output: {
+          review_protocol_version: 2,
+          // Regression: a contradictory bare pass cannot override the
+          // reviewer's own independent reference/scope findings.
+          verdict: 'pass',
+          failure_codes: [],
+          diagnostic_checks: checks,
+          summary_md: '错误地自认证为通过。',
+        },
+      };
+    };
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: falsePassRun, authorPackageFn: authorInterventionPackage },
+    );
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      reason_code: 'package_quality:claim_scope_expansion,reference_incorrect',
+    });
+    const [failed] = await db.select().from(intervention);
+    expect(failed).toMatchObject({
+      status: 'preparation_failed',
+      package_json: null,
+      settlement_json: null,
+    });
+    expect(failed.preparation_attempts_json).toHaveLength(2);
+    for (const [index, rawAttempt] of failed.preparation_attempts_json.entries()) {
+      const attempt = rawAttempt as {
+        kind: string;
+        package: Record<string, unknown>;
+        review: {
+          package_digest_sha256: string;
+          review_task_run_id: string;
+          result: {
+            review_protocol_version: number;
+            verdict: string;
+            failure_codes: string[];
+            diagnostic_checks: unknown[];
+          };
+        };
+      };
+      expect(attempt.kind).toBe('reviewed_package');
+      expect(attempt.package).toMatchObject({ author_task_run_id: `author_run_${index + 1}` });
+      expect(attempt.review).toMatchObject({
+        review_task_run_id: `review_scope_${index + 1}`,
+        result: {
+          review_protocol_version: 2,
+          verdict: 'fail',
+          failure_codes: ['claim_scope_expansion', 'reference_incorrect'],
+          diagnostic_checks: expect.arrayContaining([
+            expect.objectContaining({
+              kind: 'transfer',
+              reference_correct: false,
+              within_frozen_scope: false,
+            }),
+          ]),
+        },
+      });
+      expect(attempt.review.package_digest_sha256).toBe(sha256CanonicalJson(attempt.package));
+    }
+    expect(calls.filter((kind) => kind === 'InterventionPackageAuthorTask')).toHaveLength(2);
+    expect(calls.filter((kind) => kind === 'InterventionPackageReviewTask')).toHaveLength(2);
+    const [{ value: questionCountAfter }] = await db.select({ value: count() }).from(question);
+    expect(questionCountAfter).toBe(questionCountBefore);
+    const [{ value: diagnosticCount }] = await db
+      .select({ value: count() })
+      .from(question)
+      .where(eq(question.source, 'intervention_diagnostic'));
+    expect(diagnosticCount).toBe(0);
   });
 
   it('treats a review without run provenance as a retryable package attempt failure', async () => {

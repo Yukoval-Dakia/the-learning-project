@@ -16,3 +16,19 @@ export function validateShadowProviderEnv(env: NodeJS.ProcessEnv): void {
     );
   }
 }
+
+export function validateInterventionReviewEvalProviderEnv(env: NodeJS.ProcessEnv): void {
+  const conflicting = ['AI_PROVIDER_OVERRIDE', 'AI_PROVIDER_MODEL'].filter((name) =>
+    env[name]?.trim(),
+  );
+  if (conflicting.length > 0) {
+    throw new Error(
+      `intervention review eval preflight failed: unset ${conflicting.join(', ')} so the regression uses the production Xiaomi/Mimo task route`,
+    );
+  }
+  if (!env.XIAOMI_API_KEY?.trim()) {
+    throw new Error(
+      'intervention review eval preflight failed: missing XIAOMI_API_KEY (value was not printed)',
+    );
+  }
+}

@@ -155,25 +155,25 @@ describe('task prompt definitions', () => {
       'general:InterventionPackageAuthorTask':
         '60c55bb06557f2815b7ffe7d5835dd8a5561cbe8a23849a596eb45692c73146e',
       'general:InterventionPackageReviewTask':
-        '8eb2e4205a3483045d39f6bff0d1148a13237ac2811ab24af43dce5b28b86258',
+        'df2530f34e0f8455dfa60760c20dee910991a954a14a70f39522e32c57c7eba4',
       'math:InterventionRecommendationTask':
         'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
       'math:InterventionPackageAuthorTask':
         '5748f5259952696212c4504f5a97953ecaa3415c573245d02c499bde99806bc7',
       'math:InterventionPackageReviewTask':
-        'b90170f492ab6402007db5d300163df32fd2e1bdd23e7619b9a5b8a418852c29',
+        '0e758cc4bc76bd9669987d60e7f2b6b0be74543a932367d7544eaa70f3cf3998',
       'physics:InterventionRecommendationTask':
         'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
       'physics:InterventionPackageAuthorTask':
         '5f85c39d955878b0c293f07fd271ce6ff8509f9a9b8fe19045aea4696f956cdb',
       'physics:InterventionPackageReviewTask':
-        '1a2c78a47667da020dd72dbaebf613b21423848eccd6cb5fb7aed0b919480057',
+        '881209032781426cccfdf1b5fa64ae1c11b01e52763683abe40051600ea90818',
       'yuwen:InterventionRecommendationTask':
         'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
       'yuwen:InterventionPackageAuthorTask':
         'c46426ca2c07e712a5e90d6b6962d377df7aff4955cc036c200eac62ea08ce02',
       'yuwen:InterventionPackageReviewTask':
-        '39bacc1cce60012763914b523050be9976746fc783624f7b41d7f068478dfabe',
+        'd97f21f326b21c2be17a1191c77e0327aa0581b8eb854389865abd7b8c088732',
     } as const;
     for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
       const profile = resolveSubjectProfile(profileId);
@@ -189,6 +189,30 @@ describe('task prompt definitions', () => {
         expect(actualHash, key).toBe(expected[key]);
       }
     }
+  });
+
+  it('requires the intervention reviewer to independently solve references and enforce frozen scope', () => {
+    const prompt = getTaskSystemPrompt(
+      'InterventionPackageReviewTask',
+      resolveSubjectProfile('math'),
+    );
+
+    expect(prompt).toContain('先遮蔽 reference_md');
+    expect(prompt).toContain('independently_derived_answer_md');
+    expect(prompt).toContain('required_operations_md');
+    expect(prompt).toContain('scope_boundary_md');
+    expect(prompt).toContain('reference_incorrect');
+    expect(prompt).toContain('claim_scope_expansion');
+    expect(prompt).toContain('面积');
+    expect(prompt).toContain('卜算子·咏梅');
+    expect(prompt).toContain('送元二使安西');
+    expect(prompt).toContain('基线选择');
+    expect(prompt).toContain('Y0');
+    expect(prompt).toContain('期末成绩提高幅度 Y');
+    expect(prompt).toContain('reverse causation');
+    expect(prompt).toContain('causal_direction_check');
+    expect(prompt).toContain('claimed_cause_is_observed_y_causing_x=false');
+    expect(prompt).toContain('恰好一个');
   });
 
   it('keeps inline prompts profile-independent', () => {
@@ -704,10 +728,10 @@ describe('Conjecture probe author/reviewer registry entries', () => {
 });
 
 describe('Intervention preparation registry entries', () => {
-  it('gives the measured package-author output enough time without widening the other stages', () => {
+  it('keeps recommendation narrow and gives the measured package author/reviewer enough time', () => {
     expect(tasks.InterventionRecommendationTask.budget.timeout).toBe(60_000);
     expect(tasks.InterventionPackageAuthorTask.budget.timeout).toBeGreaterThanOrEqual(180_000);
-    expect(tasks.InterventionPackageReviewTask.budget.timeout).toBe(120_000);
+    expect(tasks.InterventionPackageReviewTask.budget.timeout).toBe(180_000);
   });
 });
 
