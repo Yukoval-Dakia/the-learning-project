@@ -95,11 +95,25 @@ export type ConjectureInductionTaskKind =
  */
 export class ConjectureInductionOperationalError extends Error {
   readonly taskKind: ConjectureInductionTaskKind;
+  readonly probe_quality_attempts: ConjectureProbeQualityAttemptT[];
+  readonly task_run_ids: string[];
+  readonly cost_usd: number;
 
-  constructor(taskKind: ConjectureInductionTaskKind, message: string) {
+  constructor(
+    taskKind: ConjectureInductionTaskKind,
+    message: string,
+    context: {
+      probe_quality_attempts?: ConjectureProbeQualityAttemptT[];
+      task_run_ids?: string[];
+      cost_usd?: number;
+    } = {},
+  ) {
     super(message);
     this.name = 'ConjectureInductionOperationalError';
     this.taskKind = taskKind;
+    this.probe_quality_attempts = structuredClone(context.probe_quality_attempts ?? []);
+    this.task_run_ids = [...(context.task_run_ids ?? [])];
+    this.cost_usd = context.cost_usd ?? 0;
   }
 }
 
@@ -645,7 +659,11 @@ export async function induceConjecture(
     });
   } catch (error) {
     if (error instanceof ConjectureProbeQualityOperationalError) {
-      throw new ConjectureInductionOperationalError(error.taskKind, error.message);
+      throw new ConjectureInductionOperationalError(error.taskKind, error.message, {
+        probe_quality_attempts: error.attempts,
+        task_run_ids: error.task_run_ids,
+        cost_usd: error.cost_usd,
+      });
     }
     throw error;
   }

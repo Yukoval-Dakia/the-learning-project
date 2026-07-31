@@ -325,6 +325,16 @@ describe('math subject probe validators', () => {
     ).toBe('pass');
   });
 
+  it('uses the terminal result of a clean multi-equation fraction derivation', () => {
+    const mutated = structuredClone(fractionPackage);
+    const workedAnswer = '1/3+1/4=4/12+3/12=7/12';
+    mutated.primary.reference_md = workedAnswer;
+    mutated.primary.gold_response_signature = { kind: 'text', response_md: workedAnswer };
+    expect(
+      resultFor(fractionHypothesis, mutated, 'math.unlike-denominator-fraction-addition').outcome,
+    ).toBe('pass');
+  });
+
   it('normalizes tfrac syntax and a Unicode minus before parsing', () => {
     const mutated = structuredClone(fractionPackage);
     mutated.primary.prompt_md = String.raw`计算 \tfrac{−1}{3} + \tfrac{1}{4}。`;

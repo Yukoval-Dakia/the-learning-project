@@ -23,13 +23,29 @@ export type ConjectureProbeQualityTaskKind =
   | 'ConjectureProbeAuthorTask'
   | 'ConjectureProbeReviewTask';
 
+interface ProbeQualityOperationalContext {
+  attempts: ConjectureProbeQualityAttemptT[];
+  task_run_ids: string[];
+  cost_usd: number;
+}
+
 export class ConjectureProbeQualityOperationalError extends Error {
   readonly taskKind: ConjectureProbeQualityTaskKind;
+  readonly attempts: ConjectureProbeQualityAttemptT[];
+  readonly task_run_ids: string[];
+  readonly cost_usd: number;
 
-  constructor(taskKind: ConjectureProbeQualityTaskKind, message: string) {
+  constructor(
+    taskKind: ConjectureProbeQualityTaskKind,
+    message: string,
+    context: ProbeQualityOperationalContext,
+  ) {
     super(message);
     this.name = 'ConjectureProbeQualityOperationalError';
     this.taskKind = taskKind;
+    this.attempts = structuredClone(context.attempts);
+    this.task_run_ids = [...context.task_run_ids];
+    this.cost_usd = context.cost_usd;
   }
 }
 
@@ -101,10 +117,19 @@ export async function prepareConjectureProbePair(
   let costUsd = 0;
   let operationalFailureSeen = false;
   let lastOperationalTaskKind: ConjectureProbeQualityTaskKind = 'ConjectureProbeAuthorTask';
+  const operationalError = (
+    taskKind: ConjectureProbeQualityTaskKind,
+    message: string,
+  ): ConjectureProbeQualityOperationalError =>
+    new ConjectureProbeQualityOperationalError(taskKind, message, {
+      attempts,
+      task_run_ids: taskRunIds,
+      cost_usd: costUsd,
+    });
 
   const rejectOrThrow = (): PrepareConjectureProbePairResult => {
     if (operationalFailureSeen) {
-      throw new ConjectureProbeQualityOperationalError(
+      throw operationalError(
         lastOperationalTaskKind,
         'probe quality gate exhausted its two authoring attempts after an operational failure; retry the worker instead of treating this as evidence',
       );
@@ -140,18 +165,16 @@ export async function prepareConjectureProbePair(
     } catch (error) {
       operationalFailureSeen = true;
       lastOperationalTaskKind = 'ConjectureProbeAuthorTask';
-      if (attempt < 2) {
-        attempts.push({
-          attempt,
-          outcome: 'operational_failed',
-          failure_codes: ['author_operational_failure'],
-          explanation_md: 'Probe author call failed operationally; the whole pair was retried.',
-          author_task_run_id: null,
-          reviewer_task_run_id: null,
-        });
-        continue;
-      }
-      throw new ConjectureProbeQualityOperationalError(
+      attempts.push({
+        attempt,
+        outcome: 'operational_failed',
+        failure_codes: ['author_operational_failure'],
+        explanation_md: 'Probe author call failed operationally; the whole pair was retried.',
+        author_task_run_id: null,
+        reviewer_task_run_id: null,
+      });
+      if (attempt < 2) continue;
+      throw operationalError(
         'ConjectureProbeAuthorTask',
         `probe author failed twice: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -162,18 +185,16 @@ export async function prepareConjectureProbePair(
     if (!authorResult.task_run_id) {
       operationalFailureSeen = true;
       lastOperationalTaskKind = 'ConjectureProbeAuthorTask';
-      if (attempt < 2) {
-        attempts.push({
-          attempt,
-          outcome: 'operational_failed',
-          failure_codes: ['author_operational_failure'],
-          explanation_md: 'Probe author completed without durable task-run lineage.',
-          author_task_run_id: null,
-          reviewer_task_run_id: null,
-        });
-        continue;
-      }
-      throw new ConjectureProbeQualityOperationalError(
+      attempts.push({
+        attempt,
+        outcome: 'operational_failed',
+        failure_codes: ['author_operational_failure'],
+        explanation_md: 'Probe author completed without durable task-run lineage.',
+        author_task_run_id: null,
+        reviewer_task_run_id: null,
+      });
+      if (attempt < 2) continue;
+      throw operationalError(
         'ConjectureProbeAuthorTask',
         'probe author completed twice without durable task-run lineage',
       );
@@ -187,18 +208,16 @@ export async function prepareConjectureProbePair(
     if (!probePackage) {
       operationalFailureSeen = true;
       lastOperationalTaskKind = 'ConjectureProbeAuthorTask';
-      if (attempt < 2) {
-        attempts.push({
-          attempt,
-          outcome: 'operational_failed',
-          failure_codes: ['author_output_invalid'],
-          explanation_md: 'Author output did not satisfy the structured probe-package contract.',
-          author_task_run_id: authorTaskRunId,
-          reviewer_task_run_id: null,
-        });
-        continue;
-      }
-      throw new ConjectureProbeQualityOperationalError(
+      attempts.push({
+        attempt,
+        outcome: 'operational_failed',
+        failure_codes: ['author_output_invalid'],
+        explanation_md: 'Author output did not satisfy the structured probe-package contract.',
+        author_task_run_id: authorTaskRunId,
+        reviewer_task_run_id: null,
+      });
+      if (attempt < 2) continue;
+      throw operationalError(
         'ConjectureProbeAuthorTask',
         'probe author produced invalid structured output twice',
       );
@@ -273,19 +292,17 @@ export async function prepareConjectureProbePair(
     } catch (error) {
       operationalFailureSeen = true;
       lastOperationalTaskKind = 'ConjectureProbeReviewTask';
-      if (attempt < 2) {
-        attempts.push({
-          attempt,
-          outcome: 'operational_failed',
-          failure_codes: ['review_operational_failure'],
-          explanation_md: 'Independent review did not complete; the whole pair was regenerated.',
-          author_task_run_id: authorTaskRunId,
-          reviewer_task_run_id: null,
-          subject_validator_results: structuredClone(subjectValidatorResults),
-        });
-        continue;
-      }
-      throw new ConjectureProbeQualityOperationalError(
+      attempts.push({
+        attempt,
+        outcome: 'operational_failed',
+        failure_codes: ['review_operational_failure'],
+        explanation_md: 'Independent review did not complete; the whole pair was regenerated.',
+        author_task_run_id: authorTaskRunId,
+        reviewer_task_run_id: null,
+        subject_validator_results: structuredClone(subjectValidatorResults),
+      });
+      if (attempt < 2) continue;
+      throw operationalError(
         'ConjectureProbeReviewTask',
         `probe reviewer failed twice: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -296,19 +313,17 @@ export async function prepareConjectureProbePair(
     if (!reviewResult.task_run_id) {
       operationalFailureSeen = true;
       lastOperationalTaskKind = 'ConjectureProbeReviewTask';
-      if (attempt < 2) {
-        attempts.push({
-          attempt,
-          outcome: 'operational_failed',
-          failure_codes: ['review_operational_failure'],
-          explanation_md: 'Probe reviewer completed without durable task-run lineage.',
-          author_task_run_id: authorTaskRunId,
-          reviewer_task_run_id: null,
-          subject_validator_results: structuredClone(subjectValidatorResults),
-        });
-        continue;
-      }
-      throw new ConjectureProbeQualityOperationalError(
+      attempts.push({
+        attempt,
+        outcome: 'operational_failed',
+        failure_codes: ['review_operational_failure'],
+        explanation_md: 'Probe reviewer completed without durable task-run lineage.',
+        author_task_run_id: authorTaskRunId,
+        reviewer_task_run_id: null,
+        subject_validator_results: structuredClone(subjectValidatorResults),
+      });
+      if (attempt < 2) continue;
+      throw operationalError(
         'ConjectureProbeReviewTask',
         'probe reviewer completed twice without durable task-run lineage',
       );
@@ -318,19 +333,17 @@ export async function prepareConjectureProbePair(
     if (!review) {
       operationalFailureSeen = true;
       lastOperationalTaskKind = 'ConjectureProbeReviewTask';
-      if (attempt < 2) {
-        attempts.push({
-          attempt,
-          outcome: 'operational_failed',
-          failure_codes: ['review_output_invalid'],
-          explanation_md: 'Independent review output was invalid; the whole pair was regenerated.',
-          author_task_run_id: authorTaskRunId,
-          reviewer_task_run_id: reviewerTaskRunId,
-          subject_validator_results: structuredClone(subjectValidatorResults),
-        });
-        continue;
-      }
-      throw new ConjectureProbeQualityOperationalError(
+      attempts.push({
+        attempt,
+        outcome: 'operational_failed',
+        failure_codes: ['review_output_invalid'],
+        explanation_md: 'Independent review output was invalid; the whole pair was regenerated.',
+        author_task_run_id: authorTaskRunId,
+        reviewer_task_run_id: reviewerTaskRunId,
+        subject_validator_results: structuredClone(subjectValidatorResults),
+      });
+      if (attempt < 2) continue;
+      throw operationalError(
         'ConjectureProbeReviewTask',
         'probe reviewer produced invalid structured output twice',
       );

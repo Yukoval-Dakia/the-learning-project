@@ -1511,20 +1511,55 @@ describe('induceConjecture self-consistency', () => {
     });
   });
 
-  it('keeps a repeated reviewer outage operational instead of converting it to evidence', async () => {
+  it('preserves terminal reviewer failures and shadow results on the operational error', async () => {
+    // biome-ignore lint/performance/noDelete: shadow is the real unset/default state.
+    delete process.env.SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED;
     const runTaskFn = vi
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
-      .mockResolvedValueOnce(sample('你把复合函数各层导数相加'))
-      .mockResolvedValueOnce(probePackageResult({ taskRunId: 'author_1' }))
+      .mockResolvedValueOnce(unitSample())
+      .mockResolvedValueOnce(
+        unitProbePackageResult({ taskRunId: 'author_1', primaryGold: '21 m/s' }),
+      )
       .mockRejectedValueOnce(new Error('review timeout'))
-      .mockResolvedValueOnce(probePackageResult({ taskRunId: 'author_2' }))
+      .mockResolvedValueOnce(
+        unitProbePackageResult({ taskRunId: 'author_2', primaryGold: '22 m/s' }),
+      )
       .mockRejectedValueOnce(new Error('review timeout'));
 
     await expect(
-      induceConjectureImpl({ cells: [cell()], samples: 1, runTaskFn }),
+      induceConjectureImpl({
+        cells: [unitCell()],
+        samples: 1,
+        runTaskFn,
+        subjectProfile: resolveSubjectProfile('math'),
+      }),
     ).rejects.toMatchObject({
       name: 'ConjectureInductionOperationalError',
       taskKind: 'ConjectureProbeReviewTask',
+      probe_quality_attempts: [
+        {
+          attempt: 1,
+          outcome: 'operational_failed',
+          subject_validator_results: expect.arrayContaining([
+            expect.objectContaining({
+              validator_id: 'math.compound-unit-denominator-conversion',
+              outcome: 'fail',
+              failure_codes: ['unit_reference_mismatch'],
+            }),
+          ]),
+        },
+        {
+          attempt: 2,
+          outcome: 'operational_failed',
+          subject_validator_results: expect.arrayContaining([
+            expect.objectContaining({
+              validator_id: 'math.compound-unit-denominator-conversion',
+              outcome: 'fail',
+              failure_codes: ['unit_reference_mismatch'],
+            }),
+          ]),
+        },
+      ],
     });
   });
 

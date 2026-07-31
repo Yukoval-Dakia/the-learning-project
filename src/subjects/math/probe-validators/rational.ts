@@ -75,8 +75,8 @@ export function normalizeLatexFractions(value: string): string {
 }
 
 /**
- * Prefer an explicitly labelled answer, a leading answer, or the first equation
- * result. A prose derivation can end in intermediate integers, so an arbitrary
+ * Prefer an explicitly labelled answer, the terminal equation result, or a
+ * leading answer. A prose derivation can end in intermediate integers, so an arbitrary
  * trailing numeric token is never treated as the answer.
  */
 export function extractFinalRational(value: string): Rational | null {
@@ -87,12 +87,18 @@ export function extractFinalRational(value: string): Rational | null {
     'i',
   ).exec(normalized);
   const leading = new RegExp(String.raw`^\s*${tokenPattern}(?![\w/])`).exec(normalized);
-  const equation = new RegExp(String.raw`=\s*${tokenPattern}(?![\w/])`).exec(normalized);
+  const equationResults = [
+    ...normalized.matchAll(new RegExp(String.raw`=\s*${tokenPattern}(?![\w/])`, 'g')),
+  ];
+  const terminalEquationResult = equationResults.at(-1)?.[1];
   const tokens = [
     ...normalized.matchAll(/(?<![\w/])([+-]?\d+\s*\/\s*\d+|[+-]?\d+(?:\.\d+)?)(?![\w/])/g),
   ];
   const selected =
-    marker?.[1] ?? leading?.[1] ?? equation?.[1] ?? (tokens.length === 1 ? tokens[0]?.[1] : null);
+    marker?.[1] ??
+    terminalEquationResult ??
+    leading?.[1] ??
+    (tokens.length === 1 ? tokens[0]?.[1] : null);
   const raw = selected?.replace(/\s+/g, '');
   if (!raw) return null;
   if (raw.includes('/')) {

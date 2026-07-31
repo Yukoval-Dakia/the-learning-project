@@ -610,6 +610,13 @@
       "when": 1785429000000,
       "tag": "0086_yuk792_intervention_settlement",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1785471227067,
+      "tag": "0087_yuk822_subject_probe_validator_cutover",
+      "breakpoints": true
     }
   ]
 }
