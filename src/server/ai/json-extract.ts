@@ -63,6 +63,77 @@ function escapeContentQuotes(slice: string): string {
   return out.join('');
 }
 
+// 确定性转义 JSON 字符串里的非法反斜杠：模型写 LaTeX 时偶尔输出 `\(`
+// / `\dfrac` 这类单反斜杠序列；它们不是合法 JSON escape，却能在不改变内容的
+// 前提下机械改写为 `\\(` / `\\dfrac`。合法的 JSON escape（含完整 `\uXXXX`）
+// 原样保留。只在字符串内部处理，绝不重划字符串边界。
+function escapeInvalidJsonStringBackslashes(slice: string): string {
+  const out: string[] = [];
+  let inString = false;
+  for (let i = 0; i < slice.length; i += 1) {
+    const ch = slice[i];
+    if (!inString) {
+      out.push(ch);
+      if (ch === '"') inString = true;
+      continue;
+    }
+    if (ch === '"') {
+      out.push(ch);
+      inString = false;
+      continue;
+    }
+    if (ch !== '\\') {
+      out.push(ch);
+      continue;
+    }
+
+    const next = slice[i + 1];
+    if (next && ['"', '\\', '/', 'b', 'f', 'n', 'r', 't'].includes(next)) {
+      out.push(ch, next);
+      i += 1;
+      continue;
+    }
+    if (next === 'u' && /^[0-9a-fA-F]{4}$/.test(slice.slice(i + 2, i + 6))) {
+      out.push(slice.slice(i, i + 6));
+      i += 5;
+      continue;
+    }
+
+    out.push('\\\\');
+  }
+  return out.join('');
+}
+
+// 模型偶尔在完整输出末尾少闭合一层 object/array。只有在字符串已闭合、括号栈
+// 从未错配时，才把栈中确定可知的闭合符逆序补到末尾；截断在字符串/属性值中间的
+// 情形保持原样，继续响亮失败。
+function closeUnterminatedJsonContainers(slice: string): string {
+  const expectedClosers: string[] = [];
+  let inString = false;
+  for (let i = 0; i < slice.length; i += 1) {
+    const ch = slice[i];
+    if (inString) {
+      if (ch === '\\') {
+        i += 1;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      expectedClosers.push('}');
+    } else if (ch === '[') {
+      expectedClosers.push(']');
+    } else if (ch === '}' || ch === ']') {
+      if (expectedClosers.pop() !== ch) return slice;
+    }
+  }
+  if (inString || expectedClosers.length === 0) return slice;
+  return slice + expectedClosers.reverse().join('');
+}
+
 export type RepairLevel = false | 'deterministic' | 'jsonrepair';
 
 interface LadderHit {
@@ -73,19 +144,21 @@ interface LadderHit {
 // 修复梯度（PR #750 独立 review MAJOR 后分级）：
 //   确定性级（内容保真可证明，只做转义、绝不重划字符串边界）：
 //     ① escapeContentQuotes（内容引号）
-//     ② 再叠 sanitizeJsonStringLiterals（字符串内裸控制字符，复用 orchestrator 状态机）
+//     ② escapeInvalidJsonStringBackslashes（字符串内非法反斜杠）
+//     ③ sanitizeJsonStringLiterals（字符串内裸控制字符，复用 orchestrator 状态机）
+//     ④ closeUnterminatedJsonContainers（只补确定缺失的尾部闭合符）
 //   jsonrepair 级（启发式；对 ASCII 标点毗邻引号的形态可能【静默重划字符串边界】——
 //   截断内容 + 伪造 key，且能过非 strict 的 Zod 门。review 已用真实 lib 复现）：
-//     ③ jsonrepair(原文)  ④ jsonrepair(确定性结果)
+//     ⑤ jsonrepair(原文)  ⑥ jsonrepair(确定性结果)
 // allowRisky=false 时只走确定性级——适用于「解析结果直接持久化且无下游隔离门」的站点。
 function tryRepairLadder(slice: string, allowRisky: boolean): LadderHit {
-  const escaped = escapeContentQuotes(slice);
+  const escaped = escapeInvalidJsonStringBackslashes(escapeContentQuotes(slice));
   try {
     return { json: JSON.parse(escaped), level: 'deterministic' };
   } catch {
     /* 下一级 */
   }
-  const sanitized = sanitizeJsonStringLiterals(escaped);
+  const sanitized = closeUnterminatedJsonContainers(sanitizeJsonStringLiterals(escaped));
   try {
     return { json: JSON.parse(sanitized), level: 'deterministic' };
   } catch (deterministicErr) {

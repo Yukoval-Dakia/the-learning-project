@@ -67,6 +67,24 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     expect(j.kind).toBe('reading_comprehension');
   });
 
+  it('真实干预坏件：内容引号 + LaTeX 单反斜杠 → reject 模式确定性修复且内容零丢失', () => {
+    // 生产输出还少了最外层的一个 `}`；括号栈能确定性补齐，不涉及内容推断。
+    const text = String.raw`{"material":{"title_md":"为什么必须"相乘"而不是"相加"？","body_md":"设函数 \( y=f(x) \)，求 \dfrac{dy}{dx}\n下一行 \u4e2d"},"diagnostics":{"immediate":{"kind":"immediate"}}`;
+    expect(() => JSON.parse(text)).toThrow();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = parseJsonObjectLoose(text, 'intervention package author', {
+      riskyRepair: 'reject',
+    });
+    expect(r?.repaired).toBe('deterministic');
+    expect(r?.json).toEqual({
+      material: {
+        title_md: '为什么必须"相乘"而不是"相加"？',
+        body_md: '设函数 \\( y=f(x) \\)，求 \\dfrac{dy}{dx}\n下一行 中',
+      },
+      diagnostics: { immediate: { kind: 'immediate' } },
+    });
+  });
+
   it('智能引号定界 → 修复成功', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const r = parseJsonObjectLoose('{“kind”: “translation”}', 'site');
