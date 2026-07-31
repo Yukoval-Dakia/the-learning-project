@@ -119,7 +119,7 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     });
   });
 
-  it('未配对货币符号与转义美元不得打开伪数学区间', () => {
+  it('非法 Markdown 转义美元按字面量修复，不改写相邻 control escapes', () => {
     const text = String.raw`{"body":"Pay $5\nnote the fee; 价格 \$100 起；$x$ 后 \tbar"}`;
     const r = parseJsonObjectLoose(text, 'currency', {
       latexEscapes: 'markdown_math',
@@ -130,7 +130,7 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     });
   });
 
-  it('未配对美元不得把 JSON-escaped Markdown 美元误认成闭合符', () => {
+  it('JSON-escaped Markdown 美元保持严格解析', () => {
     const text = String.raw`{"body":"孤立 $ 前缀；价格 \\$100 起；后文 \tbar"}`;
     expect(parseJsonObjectLoose(text, 'escaped dollar', { latexEscapes: 'markdown_math' })).toEqual(
       {

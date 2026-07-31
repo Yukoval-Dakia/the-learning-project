@@ -67,62 +67,21 @@ function escapeContentQuotes(slice: string): string {
 // / `\dfrac` 这类单反斜杠序列；它们不是合法 JSON escape，却能在不改变内容的
 // 前提下机械改写为 `\\(` / `\\dfrac`。合法的 JSON escape（含完整 `\uXXXX`）
 // 原样保留。只在字符串内部处理，绝不重划字符串边界。
-function hasClosingMathDelimiter(
-  slice: string,
-  start: number,
-  delimiter: '$' | '$$' | '\\(' | '\\[',
-): boolean {
-  const closing = delimiter === '\\(' ? '\\)' : delimiter === '\\[' ? '\\]' : delimiter;
-  for (let i = start + delimiter.length; i < slice.length; i += 1) {
-    if (slice.startsWith(closing, i)) {
-      if (closing !== '$' || slice[i + 1] !== '$') return true;
-    }
-    const ch = slice[i];
-    if (ch === '\\') {
-      // 与主扫描器保持同一 token 边界：JSON 中的 `\\$` 表示 Markdown
-      // 转义美元，三个字符必须整体跳过，不能把末尾 `$` 当成数学闭合符。
-      i += slice[i + 1] === '\\' && slice[i + 2] === '$' ? 2 : 1;
-    } else if (ch === '"') {
-      return false;
-    }
-  }
-  return false;
-}
-
 function escapeInvalidJsonStringBackslashes(slice: string): string {
   const out: string[] = [];
   let inString = false;
-  let mathDelimiter: '$' | '$$' | '\\(' | '\\[' | null = null;
   for (let i = 0; i < slice.length; i += 1) {
     const ch = slice[i];
     if (!inString) {
       out.push(ch);
       if (ch === '"') {
         inString = true;
-        mathDelimiter = null;
       }
       continue;
     }
     if (ch === '"') {
       out.push(ch);
       inString = false;
-      mathDelimiter = null;
-      continue;
-    }
-    if (ch === '$') {
-      const delimiter = slice[i + 1] === '$' ? '$$' : '$';
-      const currencyLike = delimiter === '$' && /^\s*\d/.test(slice.slice(i + 1));
-      if (mathDelimiter === delimiter) {
-        mathDelimiter = null;
-      } else if (
-        mathDelimiter === null &&
-        !currencyLike &&
-        hasClosingMathDelimiter(slice, i, delimiter)
-      ) {
-        mathDelimiter = delimiter;
-      }
-      out.push(delimiter);
-      if (delimiter === '$$') i += 1;
       continue;
     }
     if (ch !== '\\') {
@@ -159,19 +118,6 @@ function escapeInvalidJsonStringBackslashes(slice: string): string {
       i += 5;
       continue;
     }
-    if (
-      (next === '(' || next === '[') &&
-      mathDelimiter === null &&
-      hasClosingMathDelimiter(slice, i, next === '(' ? '\\(' : '\\[')
-    ) {
-      mathDelimiter = next === '(' ? '\\(' : '\\[';
-    } else if (
-      (next === ')' && mathDelimiter === '\\(') ||
-      (next === ']' && mathDelimiter === '\\[')
-    ) {
-      mathDelimiter = null;
-    }
-
     out.push('\\\\');
   }
   return out.join('');
@@ -280,9 +226,10 @@ export interface ParseJsonLooseOpts {
    */
   containerClosure?: 'schema_validated';
   /**
-   * Repair invalid backslashes only inside paired Markdown math spans. Legal
-   * JSON control escapes remain authoritative because their intent is
-   * indistinguishable from short LaTeX commands using text alone.
+   * Preserve invalid JSON backslashes as literal backslashes. This opt-in is
+   * limited to model outputs that are expected to contain Markdown math; legal
+   * JSON control escapes remain authoritative because their intent cannot be
+   * inferred from text alone.
    */
   latexEscapes?: 'markdown_math';
 }
