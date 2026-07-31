@@ -53,6 +53,7 @@ function parseTaskOutput<T>(
     // Both author/review outputs are immediately validated by closed strict
     // schemas below, so an exactly-boundary partial batch cannot be admitted.
     containerClosure: 'schema_validated',
+    latexEscapes: 'markdown_math',
   });
   if (!extracted) throw new Error(`${label} did not contain a JSON object`);
   return parse(extracted.json);

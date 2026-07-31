@@ -75,6 +75,7 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     const r = parseJsonObjectLoose(text, 'intervention package author', {
       riskyRepair: 'reject',
       containerClosure: 'schema_validated',
+      latexEscapes: 'markdown_math',
     });
     expect(r?.repaired).toBe('deterministic');
     expect(r?.json).toEqual({
@@ -91,7 +92,10 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     // 原生 JSON.parse 会把 \f / \t / \n 吞成控制字符，属于静默内容损坏。
     expect((JSON.parse(text) as { formula: string }).formula).not.toContain('\\frac');
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const r = parseJsonObjectLoose(text, 'latex', { riskyRepair: 'reject' });
+    const r = parseJsonObjectLoose(text, 'latex', {
+      riskyRepair: 'reject',
+      latexEscapes: 'markdown_math',
+    });
     expect(r).toEqual({
       json: {
         formula: '$\\frac{1}{2}+\\text{半}+\\nabla f$',
@@ -105,7 +109,9 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
 
   it('未配对货币符号与转义美元不得打开伪数学区间', () => {
     const text = String.raw`{"body":"Pay $5\nnote the fee; 价格 \$100 起；$x$ 后 \tbar"}`;
-    const r = parseJsonObjectLoose(text, 'currency');
+    const r = parseJsonObjectLoose(text, 'currency', {
+      latexEscapes: 'markdown_math',
+    });
     expect(r).toEqual({
       json: { body: 'Pay $5\nnote the fee; 价格 \\$100 起；$x$ 后 \tbar' },
       repaired: 'deterministic',

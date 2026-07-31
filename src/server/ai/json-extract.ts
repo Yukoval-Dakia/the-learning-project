@@ -229,8 +229,12 @@ function tryRepairLadder(
   slice: string,
   allowRisky: boolean,
   allowContainerClosure: boolean,
+  repairMarkdownMathEscapes: boolean,
 ): LadderHit {
-  const escaped = escapeInvalidJsonStringBackslashes(escapeContentQuotes(slice));
+  const quoteEscaped = escapeContentQuotes(slice);
+  const escaped = repairMarkdownMathEscapes
+    ? escapeInvalidJsonStringBackslashes(quoteEscaped)
+    : quoteEscaped;
   try {
     return { json: JSON.parse(escaped), level: 'deterministic' };
   } catch {
@@ -276,6 +280,12 @@ export interface ParseJsonLooseOpts {
    * every required field/cardinality is present; default callers never infer them.
    */
   containerClosure?: 'schema_validated';
+  /**
+   * Reinterpret invalid/ambiguous backslashes only inside paired Markdown math
+   * spans. This is opt-in because the shared extractor also parses prose-only
+   * payloads where legal JSON control escapes must remain authoritative.
+   */
+  latexEscapes?: 'markdown_math';
 }
 
 /**
@@ -294,7 +304,9 @@ export function parseJsonObjectLoose(
   if (start === -1 || end === -1 || end < start) return null;
   const slice = text.slice(start, end + 1);
   const hasTruncatedSuffix = text.slice(end + 1).trim().length > 0;
-  const needsLatexRepair = escapeInvalidJsonStringBackslashes(slice) !== slice;
+  const repairMarkdownMathEscapes = opts.latexEscapes === 'markdown_math';
+  const needsLatexRepair =
+    repairMarkdownMathEscapes && escapeInvalidJsonStringBackslashes(slice) !== slice;
   let strictErr: unknown;
   try {
     const strictJson = JSON.parse(slice);
@@ -310,6 +322,7 @@ export function parseJsonObjectLoose(
         slice,
         (opts.riskyRepair ?? 'allow') === 'allow',
         opts.containerClosure === 'schema_validated' && !hasTruncatedSuffix,
+        repairMarkdownMathEscapes,
       );
     } catch (repairErr) {
       // 不可修：留一段错误位置附近的有界片段（±120 字符）供诊断——原始输出不落库，
