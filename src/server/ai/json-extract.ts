@@ -79,7 +79,9 @@ function hasClosingMathDelimiter(
     }
     const ch = slice[i];
     if (ch === '\\') {
-      i += 1;
+      // 与主扫描器保持同一 token 边界：JSON 中的 `\\$` 表示 Markdown
+      // 转义美元，三个字符必须整体跳过，不能把末尾 `$` 当成数学闭合符。
+      i += slice[i + 1] === '\\' && slice[i + 2] === '$' ? 2 : 1;
     } else if (ch === '"') {
       return false;
     }

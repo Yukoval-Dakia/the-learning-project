@@ -133,6 +133,16 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     });
   });
 
+  it('未配对美元不得把 JSON-escaped Markdown 美元误认成闭合符', () => {
+    const text = String.raw`{"body":"孤立 $ 前缀；价格 \\$100 起；后文 \tbar"}`;
+    expect(parseJsonObjectLoose(text, 'escaped dollar', { latexEscapes: 'markdown_math' })).toEqual(
+      {
+        json: { body: '孤立 $ 前缀；价格 \\$100 起；后文 \tbar' },
+        repaired: false,
+      },
+    );
+  });
+
   it('最后一个完整 child 后还有未完成 suffix → reject 模式不得截断后补闭合符', () => {
     const truncated = '{"meta":"ok","questions":[{"id":1},{"id":';
     vi.spyOn(console, 'warn').mockImplementation(() => {});
