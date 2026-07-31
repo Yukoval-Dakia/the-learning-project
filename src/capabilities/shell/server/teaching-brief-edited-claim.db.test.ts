@@ -22,7 +22,7 @@ import { answerProbe } from '@/capabilities/agency/server/conjecture/probe-lifec
 import { TeachingBriefResponseSchema } from '@/capabilities/shell/api/contracts';
 import { loadTeachingBrief } from '@/capabilities/shell/server/teaching-brief';
 import { classifyConjectureProbeResponseFromJudgeMatch } from '@/core/schema/conjecture-probe-response';
-import { event, question } from '@/db/schema';
+import { event, knowledge, question } from '@/db/schema';
 import { acceptAiProposal } from '@/server/proposals/actions';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq } from 'drizzle-orm';
@@ -177,6 +177,14 @@ async function acceptWithRewrite(): Promise<{ proposalId: string; probeQuestionI
 describe('YUK-785 — an owner rewrite must not inherit the original claim’s probe evidence', () => {
   beforeEach(async () => {
     await resetDb();
+    const now = new Date('2026-07-31T00:00:00.000Z');
+    await testDb().insert(knowledge).values({
+      id: 'kn_chain_rule',
+      name: '链式法则',
+      domain: 'general',
+      created_at: now,
+      updated_at: now,
+    });
     // The promote hop stays dark here; its own alignment is locked in
     // conjecture-accept.db.test.ts under an explicitly flipped flag.
     // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。

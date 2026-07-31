@@ -54,7 +54,7 @@ export interface PrepareConjectureProbePairInput {
   evidencePayload: unknown;
   evidenceImages: LoadedConjectureEvidenceImage[];
   runTaskFn: TaskTextRunFn;
-  subjectProfile?: SubjectProfile;
+  subjectProfile: SubjectProfile;
 }
 
 interface ProbeQualityResultBase {
@@ -134,7 +134,7 @@ export async function prepareConjectureProbePair(
         {
           override: { provider: 'anthropic-sub' as const },
           outputFormat: zodToJsonSchemaOutputFormat(ProbeAuthorStructuredOutput),
-          ...(input.subjectProfile ? { subjectProfile: input.subjectProfile } : {}),
+          subjectProfile: input.subjectProfile,
         },
       );
     } catch (error) {
@@ -218,7 +218,7 @@ export async function prepareConjectureProbePair(
       return rejectOrThrow();
     }
 
-    const subjectId = input.subjectProfile?.id ?? 'general';
+    const subjectId = input.subjectProfile.id;
     const subjectValidatorResults = evaluateSubjectProbeValidators(subjectId, {
       hypothesis: input.hypothesis,
       package: probePackage,
@@ -267,7 +267,7 @@ export async function prepareConjectureProbePair(
         {
           override: { provider: 'anthropic-sub' as const },
           outputFormat: zodToJsonSchemaOutputFormat(ProbeReviewStructuredOutput),
-          ...(input.subjectProfile ? { subjectProfile: input.subjectProfile } : {}),
+          subjectProfile: input.subjectProfile,
         },
       );
     } catch (error) {

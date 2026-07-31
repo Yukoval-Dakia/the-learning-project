@@ -65,6 +65,7 @@ async function seedNodeProposal(id = 'node_p1'): Promise<void> {
 }
 
 async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
+  await seedKnowledge(['k1']);
   await writeAiProposal(testDb(), {
     id,
     actor_ref: 'research_meeting',
@@ -162,7 +163,7 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
             },
             predicted_p: 0.3,
           },
-          subject_id: 'general',
+          subject_id: 'yuwen',
           policy_version: 'subject-probe-validator-v1',
           subject_validator_results: [],
         },

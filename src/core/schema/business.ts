@@ -948,7 +948,7 @@ export const ConjectureProbeQualityAttempt = z.discriminatedUnion('outcome', [
     .object({
       ...ConjectureProbeQualityAttemptBase,
       outcome: z.literal('subject_validator_failed'),
-      failure_codes: uniqueProbeFailureCodes(SubjectProbeValidatorFailureCode, 8),
+      failure_codes: uniqueProbeFailureCodes(SubjectProbeValidatorFailureCode, 12),
       subject_validator_results: z.array(SubjectProbeValidatorResult).min(1).max(20),
     })
     .strict(),

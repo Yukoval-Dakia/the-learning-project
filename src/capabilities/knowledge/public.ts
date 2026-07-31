@@ -19,6 +19,7 @@ export {
 } from './server/misconception-edges';
 export {
   assertCauseAllowedForSubjectProfile,
+  requireSubjectProfileForKnowledgeIds,
   resolveSubjectProfileForKnowledgeIds,
 } from './server/subject-profile';
 export { tagKnowledge } from './server/tag-knowledge';

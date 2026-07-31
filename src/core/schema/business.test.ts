@@ -585,7 +585,7 @@ describe('ConjectureDraft', () => {
     ).toBe(false);
   });
 
-  it('binds a v3 audit to the exact persisted package and requires complete pass lineage', () => {
+  it('binds a v4 audit to the exact persisted package and requires complete pass lineage', () => {
     expect(
       ConjectureDraft.safeParse({
         ...valid,
@@ -683,8 +683,14 @@ describe('ConjectureDraft', () => {
       context_kind: valid.followup_probe_spec.context_kind,
       representation_kind: valid.followup_probe_spec.representation_kind,
     };
+    const {
+      subject_id: _subjectId,
+      policy_version: _policyVersion,
+      subject_validator_results: _subjectValidatorResults,
+      ...packageBoundAudit
+    } = valid.probe_quality;
     const v2Audit = {
-      ...valid.probe_quality,
+      ...packageBoundAudit,
       schema_version: 2 as const,
       reviewed_package: {
         primary: legacyPrimary,
@@ -694,6 +700,18 @@ describe('ConjectureDraft', () => {
     };
     expect(ConjectureProbeQualityAudit.safeParse(v2Audit).success).toBe(true);
     expect(ConjectureDraft.safeParse({ ...valid, probe_quality: v2Audit }).success).toBe(false);
+  });
+
+  it('keeps response-aware v3 audit history readable but rejects it as a new conjecture draft', () => {
+    const {
+      subject_id: _subjectId,
+      policy_version: _policyVersion,
+      subject_validator_results: _subjectValidatorResults,
+      ...packageBoundAudit
+    } = valid.probe_quality;
+    const v3Audit = { ...packageBoundAudit, schema_version: 3 as const };
+    expect(ConjectureProbeQualityAudit.safeParse(v3Audit).success).toBe(true);
+    expect(ConjectureDraft.safeParse({ ...valid, probe_quality: v3Audit }).success).toBe(false);
   });
 
   it('keeps structure, review, and operational attempt codes in separate vocabularies', () => {

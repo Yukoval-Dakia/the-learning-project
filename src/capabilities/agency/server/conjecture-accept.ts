@@ -34,7 +34,7 @@ import {
   misconceptionPromoteEnabled,
   promoteConjectureToMisconception,
 } from '@/capabilities/agency/server/misconception-promote';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
+import { requireSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import {
   ConjectureDiagnosticSpec,
@@ -179,7 +179,7 @@ export async function acceptConjectureProposal(
       : null;
   const resolvedSubjectProfile =
     persistedHypothesis?.success && boundV4Audit
-      ? await resolveSubjectProfileForKnowledgeIds(db, [persistedHypothesis.data.knowledge_id])
+      ? await requireSubjectProfileForKnowledgeIds(db, [persistedHypothesis.data.knowledge_id])
       : null;
   const expectedSubjectValidatorResults =
     persistedHypothesis?.success && persistedPackage && resolvedSubjectProfile

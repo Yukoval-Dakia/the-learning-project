@@ -352,6 +352,14 @@ async function fillProbeSlots(n: number): Promise<string[]> {
 describe('acceptConjectureProposal lifecycle', () => {
   beforeEach(async () => {
     await resetDb();
+    const now = new Date('2026-07-31T00:00:00.000Z');
+    await testDb().insert(knowledge).values({
+      id: 'kn_chain_rule',
+      name: '链式法则',
+      domain: 'general',
+      created_at: now,
+      updated_at: now,
+    });
     // YUK-531 PR-3 — every test starts with the promotion flag OFF (dark default).
     // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
     delete process.env.MISCONCEPTION_PROMOTE_ENABLED;

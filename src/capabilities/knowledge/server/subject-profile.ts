@@ -34,6 +34,23 @@ export async function resolveSubjectProfileForKnowledgeIds(
   }
 }
 
+/**
+ * Provenance-sensitive writes must not turn a missing row or transient DB error
+ * into the neutral fallback: the caller needs the subject actually owned by the
+ * referenced KC or an error it can retry/repair.
+ */
+export async function requireSubjectProfileForKnowledgeIds(
+  db: Db,
+  knowledgeIds: string[],
+): Promise<SubjectProfile> {
+  const firstKnowledgeId = knowledgeIds[0];
+  if (!firstKnowledgeId) {
+    throw new Error('requireSubjectProfileForKnowledgeIds: at least one knowledge id is required');
+  }
+  const domain = await getEffectiveDomain(db, firstKnowledgeId);
+  return resolveSubjectProfile(domain);
+}
+
 export function assertCauseAllowedForSubjectProfile(
   cause: { primary_category: string } | null,
   profile: SubjectProfile,

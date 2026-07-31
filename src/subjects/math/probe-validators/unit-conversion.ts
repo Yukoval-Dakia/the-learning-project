@@ -75,6 +75,8 @@ function parsePrompt(prompt: string): ParsedUnitPrompt | null {
   if (units.length !== 2) return null;
   const source = units[0];
   const target = units[1];
+  const direction = normalized.slice(source.end, target.index);
+  if (!/(?:到|换算(?:为|成)|化为|变为|折算为|->|→|\bto\b)/.test(direction)) return null;
   const beforeSource = normalized.slice(0, source.index);
   const numbers = [...beforeSource.matchAll(/(?<![\w.])([+-]?\d+(?:\.\d+)?)(?![\w.])/g)];
   const rawValue = numbers.at(-1)?.[1];

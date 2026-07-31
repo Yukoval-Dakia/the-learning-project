@@ -45,7 +45,7 @@ import {
 } from '@/core/schema/business';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
-import type { SubjectProfile } from '@/subjects/profile';
+import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
 import {
   ConjectureProbeQualityOperationalError,
@@ -77,8 +77,8 @@ export interface InduceConjectureInput {
   priorClaimMd?: string;
   /**
    * YUK-786 — subject context for the prompt render, resolved by the job from
-   * the cell's KC domain. Omitted ⇒ the neutral `general` profile (an untagged
-   * KC must not inherit a concrete subject's voice).
+   * the cell's KC domain. Tests/internal callers may omit it; the orchestrator
+   * then resolves the cell's own subject id (null still maps to `general`).
    */
   subjectProfile?: SubjectProfile;
 }
@@ -413,6 +413,7 @@ export async function induceConjecture(
   const evidenceImages = input.evidenceImages ?? [];
   if (samples < 1) throw new Error('induceConjecture: samples must be >= 1');
   if (cells.length === 0) throw new Error('induceConjecture: cells must be non-empty');
+  const resolvedSubjectProfile = subjectProfile ?? resolveSubjectProfile(cells[0]?.subject_id);
 
   const taskPayload = {
     evidence_cells: cells.map((c) => ({
@@ -466,7 +467,7 @@ export async function induceConjecture(
         outputFormat: zodToJsonSchemaOutputFormat(ConjectureHypothesisStructuredOutput),
         // YUK-786 — the prompt renders from the SubjectProfile; without this the
         // renderer falls back to `general` even when the cell's KC is tagged.
-        ...(subjectProfile ? { subjectProfile } : {}),
+        subjectProfile: resolvedSubjectProfile,
       }),
     ),
   );
@@ -640,7 +641,7 @@ export async function induceConjecture(
       evidencePayload: taskPayload,
       evidenceImages,
       runTaskFn,
-      ...(subjectProfile ? { subjectProfile } : {}),
+      subjectProfile: resolvedSubjectProfile,
     });
   } catch (error) {
     if (error instanceof ConjectureProbeQualityOperationalError) {

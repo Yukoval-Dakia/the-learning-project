@@ -158,6 +158,13 @@ describe('math subject probe validators', () => {
       'subject_validator_ungradable',
     ],
     [
+      'target unit stated before source quantity',
+      (draft: ConjectureProbePackageV2T) => {
+        draft.primary.prompt_md = '以 m/s 为单位，把 72 km/h 换算过来。';
+      },
+      'subject_validator_ungradable',
+    ],
+    [
       'wrong target signature',
       (draft: ConjectureProbePackageV2T) => {
         draft.primary.target_error_response_signature = {
