@@ -45,7 +45,7 @@ function parsePrompt(prompt: string): ParsedFractionPrompt | null {
   // subtraction step rather than the sign of a negative operand. Any remaining
   // number or multiplier phrase also proves the prompt is not a one-step sum.
   if (
-    /-|[×*÷√]|\d|减去|乘|除以|倍|翻倍|倒数|平方|开方|还剩|剩下|剩余|差|先.{0,30}再|\b(?:then|after|subtract|multiply|divide|double|twice|times|reciprocal|square|remaining)\b/i.test(
+    /-|[×*÷√]|\d|减去|乘|除以|倍|翻倍|倒数|平方|开方|绝对值|还剩|剩下|剩余|差|先.{0,30}再|absolute\s+value|\b(?:abs|then|after|subtract|multiply|divide|double|twice|times|reciprocal|square|remaining)\b/i.test(
       stripped,
     )
   ) {

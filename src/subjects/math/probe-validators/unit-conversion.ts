@@ -80,7 +80,7 @@ function parsePrompt(prompt: string): ParsedUnitPrompt | null {
   if (!/(?:到|换算(?:为|成)|化为|变为|折算为|->|→|\bto\b)/.test(direction)) return null;
   const directionForStepCheck = direction.replace(/->|→/g, '');
   const multiStepSignal =
-    /[+\-*×÷=]|\d|(?:然后|之后|以后|后再|再|then|after|multiply|divide|add|subtract)|倍|乘|除|加|减|平方|开方|倒数/i;
+    /[+\-*×÷=]|\d|(?:然后|之后|以后|后再|再|then|after|multiply|divide|add|subtract)|倍|乘|除|加|减|平方|开方|倒数|绝对值|absolute\s+value|\babs\b/i;
   if (multiStepSignal.test(directionForStepCheck)) return null;
   const beforeSource = normalized.slice(0, source.index);
   const numberPattern = /(?<![\w.])([+-]?\d+(?:\.\d+)?)(?![\d.])/g;

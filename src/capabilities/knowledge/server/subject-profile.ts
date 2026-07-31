@@ -1,7 +1,11 @@
 import { getAllowedCauseIds } from '@/core/schema/cause';
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
-import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
+import {
+  type SubjectProfile,
+  resolveKnownSubjectId,
+  resolveSubjectProfile,
+} from '@/subjects/profile';
 import { getEffectiveDomain } from './domain';
 
 export async function resolveSubjectProfileForKnowledgeIds(
@@ -48,7 +52,13 @@ export async function requireSubjectProfileForKnowledgeIds(
     throw new Error('requireSubjectProfileForKnowledgeIds: at least one knowledge id is required');
   }
   const domain = await getEffectiveDomain(db, firstKnowledgeId);
-  return resolveSubjectProfile(domain);
+  const subjectId = resolveKnownSubjectId(domain);
+  if (!subjectId) {
+    throw new Error(
+      `requireSubjectProfileForKnowledgeIds: effective domain '${domain}' for knowledge '${firstKnowledgeId}' has no registered subject profile`,
+    );
+  }
+  return resolveSubjectProfile(subjectId);
 }
 
 export function assertCauseAllowedForSubjectProfile(
