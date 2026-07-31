@@ -199,6 +199,13 @@ describe('math subject probe validators', () => {
       },
       'subject_validator_ungradable',
     ],
+    [
+      'operation before source quantity',
+      (draft: ConjectureProbePackageV2T) => {
+        draft.primary.prompt_md = '将两倍的 72 km/h 换算为 m/s。';
+      },
+      'subject_validator_ungradable',
+    ],
   ])('fails closed for unit mutation: %s', (_name, mutate, expectedCode) => {
     const mutated = structuredClone(unitPackage);
     mutate(mutated);
@@ -352,6 +359,13 @@ describe('math subject probe validators', () => {
       'symbolic square root',
       (draft: ConjectureProbePackageV2T) => {
         draft.primary.prompt_md = '计算 1/3 + √(1/4)。';
+      },
+      'subject_validator_ungradable',
+    ],
+    [
+      'unary negation around sum',
+      (draft: ConjectureProbePackageV2T) => {
+        draft.primary.prompt_md = '计算 -(1/3 + 1/4)。';
       },
       'subject_validator_ungradable',
     ],

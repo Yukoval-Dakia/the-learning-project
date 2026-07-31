@@ -86,6 +86,11 @@ function parsePrompt(prompt: string): ParsedUnitPrompt | null {
   const numberPattern = /(?<![\w.])([+-]?\d+(?:\.\d+)?)(?![\d.])/g;
   const numbers = [...beforeSource.matchAll(numberPattern)];
   if ([...normalized.matchAll(numberPattern)].length !== 1) return null;
+  // Remove the signed source literal itself, then reject any operation wrapped
+  // around it before the source unit (for example "两倍的 72 km/h"). The sign
+  // of a negative source quantity is part of the literal and is not a step.
+  const beforeSourceForStepCheck = beforeSource.replace(numberPattern, '');
+  if (multiStepSignal.test(beforeSourceForStepCheck)) return null;
   const afterTarget = normalized.slice(target.end);
   if (multiStepSignal.test(afterTarget)) return null;
   const rawValue = numbers.at(-1)?.[1];
