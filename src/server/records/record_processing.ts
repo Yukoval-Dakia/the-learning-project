@@ -12,8 +12,10 @@
 
 import type { AiProposalPayloadT, ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import { event, learning_record } from '@/db/schema';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { event } from '@/db/schema';
+import { sql } from 'drizzle-orm';
+import { transitionLearningRecords } from './queries';
+import type { LearningRecordProcessingStatus } from './types';
 
 type DbLike = Db | Tx;
 
@@ -32,23 +34,10 @@ export function extractRecordEvidenceIds(refs: readonly ProposalEvidenceRefT[]):
 async function bulkSetStatus(
   db: DbLike,
   ids: string[],
-  fromStatuses: string[],
-  to: 'linked' | 'actioned' | 'raw',
+  fromStatuses: readonly LearningRecordProcessingStatus[],
+  to: LearningRecordProcessingStatus,
 ): Promise<number> {
-  if (ids.length === 0) return 0;
-  const now = new Date();
-  const rows = await db
-    .update(learning_record)
-    .set({ processing_status: to, updated_at: now })
-    .where(
-      and(
-        inArray(learning_record.id, ids),
-        inArray(learning_record.processing_status, fromStatuses),
-        isNull(learning_record.archived_at),
-      ),
-    )
-    .returning({ id: learning_record.id });
-  return rows.length;
+  return await transitionLearningRecords(db, ids, fromStatuses, to);
 }
 
 /**

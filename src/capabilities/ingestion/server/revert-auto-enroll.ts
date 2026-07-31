@@ -131,7 +131,7 @@ export async function revertAutoEnrolledBlock(
       created_at: now,
     });
 
-    await archiveLearningRecord(tx, record.id);
+    await archiveLearningRecord(tx, record.id, record.version);
 
     const [{ version: revertedBlockVersion }] = await tx
       .update(question_block)

@@ -9,12 +9,74 @@ import type {
   CreateLearningRecordInput,
   CreateLearningRecordResult,
   LearningRecordListRow,
+  LearningRecordProcessingStatus,
   LearningRecordRow,
   ListLearningRecordsFilter,
+  TransitionLearningRecordInput,
+  TransitionLearningRecordResult,
   UpdateLearningRecordPatch,
 } from './types';
 
 type DbLike = Db | Tx;
+
+const LEARNING_RECORD_STATUS_TRANSITIONS: Readonly<
+  Record<LearningRecordProcessingStatus, readonly LearningRecordProcessingStatus[]>
+> = {
+  raw: ['linked', 'actioned', 'archived'],
+  linked: ['actioned', 'archived'],
+  // Retraction is the one deliberate backward edge: accepted proposal evidence remains linked.
+  actioned: ['linked', 'archived'],
+  archived: [],
+};
+
+function asProcessingStatus(value: string, recordId: string): LearningRecordProcessingStatus {
+  if (value === 'raw' || value === 'linked' || value === 'actioned' || value === 'archived') {
+    return value;
+  }
+  console.warn('[learning-record] mutation_rejected', {
+    reason: 'illegal_current_status',
+    record_id: recordId,
+    current_status: value,
+  });
+  throw new ApiError(
+    'conflict',
+    `learning_record ${recordId} has unknown processing_status '${value}'`,
+    409,
+  );
+}
+
+function rejectStaleMutation(
+  recordId: string,
+  expectedVersion: number,
+  currentVersion: number | null,
+): never {
+  console.warn('[learning-record] mutation_rejected', {
+    reason: 'stale_version',
+    record_id: recordId,
+    expected_version: expectedVersion,
+    current_version: currentVersion,
+  });
+  throw new ApiError('conflict', `learning_record ${recordId} version mismatch`, 409);
+}
+
+function assertLegalStatusTransition(
+  recordId: string,
+  from: LearningRecordProcessingStatus,
+  to: LearningRecordProcessingStatus,
+): void {
+  if (from === to || LEARNING_RECORD_STATUS_TRANSITIONS[from].includes(to)) return;
+  console.warn('[learning-record] mutation_rejected', {
+    reason: 'illegal_status_transition',
+    record_id: recordId,
+    from_status: from,
+    to_status: to,
+  });
+  throw new ApiError(
+    'conflict',
+    `learning_record ${recordId} cannot transition ${from} -> ${to}`,
+    409,
+  );
+}
 
 async function assertKnowledgeIdsActive(db: DbLike, ids: string[]): Promise<void> {
   if (ids.length === 0) return;
@@ -93,7 +155,7 @@ export async function createLearningRecord(
       payload: input.payload,
       created_at: now,
       updated_at: now,
-      archived_at: null,
+      archived_at: input.processing_status === 'archived' ? now : null,
       version: 0,
     })
     .returning();
@@ -155,6 +217,23 @@ export async function updateLearningRecord(
   id: string,
   patch: UpdateLearningRecordPatch,
 ): Promise<LearningRecordRow> {
+  const current = await getLearningRecord(db, id);
+  if (!current) throw new ApiError('not_found', `learning_record ${id} not found`, 404);
+  const currentStatus = asProcessingStatus(current.processing_status, id);
+  if (current.version !== patch.version) {
+    rejectStaleMutation(id, patch.version, current.version);
+  }
+  if (currentStatus === 'archived') {
+    assertLegalStatusTransition(id, currentStatus, patch.processing_status ?? currentStatus);
+    console.warn('[learning-record] mutation_rejected', {
+      reason: 'archived_record_is_terminal',
+      record_id: id,
+      current_version: current.version,
+    });
+    throw new ApiError('conflict', `learning_record ${id} is archived and immutable`, 409);
+  }
+  const targetStatus = patch.processing_status ?? currentStatus;
+  assertLegalStatusTransition(id, currentStatus, targetStatus);
   if (patch.knowledge_ids) await assertKnowledgeIdsActive(db, patch.knowledge_ids);
   const now = new Date();
   const rows = await db
@@ -166,33 +245,105 @@ export async function updateLearningRecord(
       ...(patch.processing_status !== undefined
         ? { processing_status: patch.processing_status }
         : {}),
+      ...(patch.question_id !== undefined ? { question_id: patch.question_id } : {}),
+      ...(patch.learning_item_id !== undefined ? { learning_item_id: patch.learning_item_id } : {}),
+      ...(patch.artifact_id !== undefined ? { artifact_id: patch.artifact_id } : {}),
       ...(patch.payload !== undefined ? { payload: patch.payload } : {}),
+      ...(targetStatus === 'archived' ? { archived_at: now } : {}),
       updated_at: now,
       version: patch.version + 1,
     })
-    .where(and(eq(learning_record.id, id), eq(learning_record.version, patch.version)))
+    .where(
+      and(
+        eq(learning_record.id, id),
+        eq(learning_record.version, patch.version),
+        eq(learning_record.processing_status, currentStatus),
+      ),
+    )
     .returning();
   if (rows.length === 0) {
-    throw new ApiError('conflict', `learning_record ${id} version mismatch`, 409);
+    const latest = await getLearningRecord(db, id);
+    rejectStaleMutation(id, patch.version, latest?.version ?? null);
   }
   return rows[0];
 }
 
-export async function archiveLearningRecord(db: DbLike, id: string): Promise<void> {
+export async function transitionLearningRecord(
+  db: DbLike,
+  id: string,
+  input: TransitionLearningRecordInput,
+): Promise<TransitionLearningRecordResult> {
   const current = await getLearningRecord(db, id);
   if (!current) throw new ApiError('not_found', `learning_record ${id} not found`, 404);
+  const currentStatus = asProcessingStatus(current.processing_status, id);
+  if (current.version !== input.expected_version) {
+    if (currentStatus === input.to) return { record: current, applied: false };
+    rejectStaleMutation(id, input.expected_version, current.version);
+  }
+  if (currentStatus === input.to) return { record: current, applied: false };
+  assertLegalStatusTransition(id, currentStatus, input.to);
+
   const now = new Date();
   const rows = await db
     .update(learning_record)
     .set({
-      processing_status: 'archived',
-      archived_at: now,
+      processing_status: input.to,
+      ...(input.to === 'archived' ? { archived_at: now } : {}),
       updated_at: now,
       version: current.version + 1,
     })
-    .where(and(eq(learning_record.id, id), eq(learning_record.version, current.version)))
-    .returning({ id: learning_record.id });
+    .where(
+      and(
+        eq(learning_record.id, id),
+        eq(learning_record.version, input.expected_version),
+        eq(learning_record.processing_status, currentStatus),
+      ),
+    )
+    .returning();
   if (rows.length === 0) {
-    throw new ApiError('conflict', `learning_record ${id} version mismatch`, 409);
+    const latest = await getLearningRecord(db, id);
+    if (latest && asProcessingStatus(latest.processing_status, id) === input.to) {
+      return { record: latest, applied: false };
+    }
+    rejectStaleMutation(id, input.expected_version, latest?.version ?? null);
   }
+  return { record: rows[0], applied: true };
+}
+
+export async function transitionLearningRecords(
+  db: DbLike,
+  ids: readonly string[],
+  fromStatuses: readonly LearningRecordProcessingStatus[],
+  to: LearningRecordProcessingStatus,
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  const uniqueIds = [...new Set(ids)].sort();
+  const rows = await db
+    .select()
+    .from(learning_record)
+    .where(inArray(learning_record.id, uniqueIds));
+  rows.sort((a, b) => a.id.localeCompare(b.id));
+
+  let applied = 0;
+  for (const row of rows) {
+    const status = asProcessingStatus(row.processing_status, row.id);
+    if (!fromStatuses.includes(status)) continue;
+    const result = await transitionLearningRecord(db, row.id, {
+      expected_version: row.version,
+      to,
+    });
+    if (result.applied) applied += 1;
+  }
+  return applied;
+}
+
+export async function archiveLearningRecord(
+  db: DbLike,
+  id: string,
+  expectedVersion: number,
+): Promise<void> {
+  await transitionLearningRecord(db, id, {
+    expected_version: expectedVersion,
+    to: 'archived',
+  });
 }

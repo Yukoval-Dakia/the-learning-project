@@ -99,6 +99,14 @@ describe('markRecordsLinked / markRecordsActioned / rollbackRecordsActioned', ()
     expect(await getStatus('r-linked')).toBe('linked');
     expect(await getStatus('r-actioned')).toBe('actioned');
     expect(await getStatus('r-archived')).toBe('archived');
+
+    const duplicate = await markRecordsLinked(testDb(), ['r-raw']);
+    expect(duplicate).toBe(0);
+    const [rawNowLinked] = await testDb()
+      .select({ version: learning_record.version })
+      .from(learning_record)
+      .where(eq(learning_record.id, 'r-raw'));
+    expect(rawNowLinked.version).toBe(1);
   });
 
   it('no-op on empty input', async () => {

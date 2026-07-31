@@ -5,10 +5,11 @@
 //   1. `db.insert(event)` only appears in the documented allowlist of writer
 //      modules; `db.update(event)` stays confined to documented lifecycle
 //      owner modules.
-//   2. `db.update(learning_session)` only appears in src/server/session/.
-//   3. `db.insert/update(material_fsrs_state)` only appears in
+//   2. `learning_record` mutations stay inside its canonical owner module.
+//   3. `db.update(learning_session)` only appears in src/server/session/.
+//   4. `db.insert/update(material_fsrs_state)` only appears in
 //      src/server/fsrs/state.ts (the new Step 9.A single-owner).
-//   4. The 4 DROP'd tables (mistake / review_event / dreaming_proposal /
+//   5. The 4 DROP'd tables (mistake / review_event / dreaming_proposal /
 //      ingestion_session) have ZERO write-callers anywhere in src/ + app/.
 //      The Step 3 migration script (scripts/migrate-phase1c1.ts) may have
 //      historical references — verified separately to be comments / stub
@@ -101,7 +102,7 @@ async function findWriteHits(
   opts: {
     roots?: ReadonlyArray<string>;
     includeTests?: boolean;
-    ops?: ReadonlyArray<'insert' | 'update'>;
+    ops?: ReadonlyArray<'insert' | 'update' | 'delete'>;
   } = {},
 ): Promise<Hit[]> {
   const ops = opts.ops ?? (['insert', 'update'] as const);
@@ -166,6 +167,22 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     expect(
       violations,
       `Disallowed updaters of \`event\` table found:\n  ${violations.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('learning_record mutations appear only inside the canonical records owner', async () => {
+    const ALLOWED_LEARNING_RECORD_WRITERS = ['src/server/records/queries.ts'] as const;
+    const hits = await findWriteHits('learning_record', {
+      ops: ['insert', 'update', 'delete'],
+    });
+    const violations = hits.filter((h) => !isAllowed(h, ALLOWED_LEARNING_RECORD_WRITERS));
+    expect(
+      violations,
+      [
+        'Disallowed writers of `learning_record` found:',
+        ...violations.map((path) => `  ${path}`),
+        'All production mutations must cross src/server/records/queries.ts (ADR-0015 mutation contract v1).',
+      ].join('\n'),
     ).toEqual([]);
   });
 
