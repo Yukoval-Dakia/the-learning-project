@@ -2145,6 +2145,87 @@ describe('updateThetaForAttempt — hierarchical Elo (A2 / YUK-434)', () => {
     expect(s?.theta_hat).toBeLessThan(0.06); // less surprise than a cold new KC
   });
 
+  it('durable frozen ability map uses the submit-time domain instead of the live tree domain', async () => {
+    hierFlag.value = true;
+    const liveDomain = `live-${createId()}`;
+    const frozenDomain = `frozen-${createId()}`;
+    const k = createId();
+    const q = createId();
+    await seedKnowledgeWithDomain(k, liveDomain);
+    await seedQuestion(q, [k], 3);
+    await upsertMasteryState(db, {
+      subject_kind: 'ability_global',
+      subject_id: liveDomain,
+      theta_hat: -0.9,
+      evidence_count: 10,
+      success_count: 5,
+      fail_count: 5,
+      last_outcome_at: new Date(),
+    });
+    await upsertMasteryState(db, {
+      subject_kind: 'ability_global',
+      subject_id: frozenDomain,
+      theta_hat: 0.9,
+      evidence_count: 10,
+      success_count: 5,
+      fail_count: 5,
+      last_outcome_at: new Date(),
+    });
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [k],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        abilityGlobalByKnowledgeId: { [k]: frozenDomain },
+      });
+    });
+
+    const pFrozen = 1 / (1 + Math.exp(-0.9));
+    expect((await readState(k))?.theta_hat).toBeCloseTo(0.4 * 0.3 * (1 - pFrozen), 7);
+    expect((await readGlobal(frozenDomain))?.evidence_count).toBe(11);
+    expect((await readGlobal(liveDomain))?.evidence_count).toBe(10);
+    expect((await readGlobal(liveDomain))?.theta_hat).toBeCloseTo(-0.9, 7);
+  });
+
+  it('durable frozen ability map treats a missing KC as orphaned with theta_global=0', async () => {
+    hierFlag.value = true;
+    const liveDomain = `live-${createId()}`;
+    const k = createId();
+    const q = createId();
+    await seedKnowledgeWithDomain(k, liveDomain);
+    await seedQuestion(q, [k], 3);
+    await upsertMasteryState(db, {
+      subject_kind: 'ability_global',
+      subject_id: liveDomain,
+      theta_hat: 4,
+      evidence_count: 10,
+      success_count: 10,
+      fail_count: 0,
+      last_outcome_at: new Date(),
+    });
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [k],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        abilityGlobalByKnowledgeId: {},
+      });
+    });
+
+    // Missing from the frozen map means null domain, so the KC takes the cold θ_global=0 step.
+    expect((await readState(k))?.theta_hat).toBeCloseTo(0.06, 12);
+    expect((await readGlobal(liveDomain))?.evidence_count).toBe(10);
+    expect((await readGlobal(liveDomain))?.theta_hat).toBe(4);
+  });
+
   it('flag ON → θ_global drifts SLOWER than θ_KC for the same attempt', async () => {
     hierFlag.value = true;
     const domain = 'yuwen';

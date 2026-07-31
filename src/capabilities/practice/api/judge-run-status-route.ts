@@ -17,6 +17,7 @@ import { computeReplay } from '@/server/events/sse_replay';
 // progress?" would eventually disagree, and the two consumers would then disagree about
 // whether a run needs recovering.
 import {
+  type JudgeRecoveryMetadata,
   getJudgeRecoveryMetadata,
   hasAutomaticRecoveryBudgetFor,
   inspectJudgeQueue,
@@ -30,6 +31,28 @@ import {
   deriveJudgeRunStatus,
   terminalJudgeRunResult,
 } from '../server/judge-run-status';
+
+interface StatusLookup<T> {
+  value: T;
+  available: boolean;
+}
+
+async function statusLookup<T>(
+  runId: string,
+  label: string,
+  lookup: () => Promise<T>,
+  fallback: T,
+): Promise<StatusLookup<T>> {
+  try {
+    return { value: await lookup(), available: true };
+  } catch (error) {
+    console.warn(`[judge_run] ${label} lookup failed; preserving non-terminal status`, {
+      run_id: runId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { value: fallback, available: false };
+  }
+}
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -71,10 +94,23 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     // job; returning `started` forever told the client to poll a corpse. Asking the queue
     // first is also the cheap path: an in-flight run answers here with one PK lookup and
     // never touches the domain log.
-    const [pendingRecordedAt, recovery] = await Promise.all([
-      pendingAttemptRecordedAt(db, runId),
-      getJudgeRecoveryMetadata(db, runId),
+    const emptyRecovery: JudgeRecoveryMetadata = {
+      latestDeliveryId: null,
+      attempts: 0,
+      hasTerminalFailure: false,
+    };
+    const [pendingLookup, recoveryLookup] = await Promise.all([
+      statusLookup(runId, 'pending-attempt', () => pendingAttemptRecordedAt(db, runId), null),
+      statusLookup(
+        runId,
+        'recovery-metadata',
+        () => getJudgeRecoveryMetadata(db, runId),
+        emptyRecovery,
+      ),
     ]);
+    const pendingRecordedAt = pendingLookup.value;
+    const recovery = recoveryLookup.value;
+    const recoveryEvidenceAvailable = pendingLookup.available && recoveryLookup.available;
     const pendingEvidence = pendingRecordedAt !== null;
     let queue = await inspectJudgeQueue(
       runId,
@@ -93,7 +129,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     if (queue.liveness === 'unknown') {
       // pg-boss did not answer. Report what the events say and change nothing — a lookup
       // blip must never be upgraded into a verdict about the run.
-      if (events.length === 0 && !pendingEvidence) {
+      if (recoveryEvidenceAvailable && events.length === 0 && !pendingEvidence) {
         throw new ApiError('not_found', `judge_run ${runId} not found`, 404);
       }
       return Response.json({ run_id: runId, status, result: null });
@@ -121,6 +157,13 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
         status: 'done' as const,
         result: parsedDomain.success ? parsedDomain.data : null,
       });
+    }
+
+    // A local evidence lookup failure cannot prove either that the run never existed or that
+    // automatic recovery is exhausted. Preserve the replay-derived non-terminal status instead
+    // of converting a transient metadata outage into 404/failed (or leaking it as a 500).
+    if (!recoveryEvidenceAvailable) {
+      return Response.json({ run_id: runId, status, result: null });
     }
 
     // ── (3) Dead queue, nothing persisted ─────────────────────────────────────────────
