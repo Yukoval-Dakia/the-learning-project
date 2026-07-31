@@ -43,11 +43,37 @@ it runs three strict `SolutionGenerateTask` blind solves followed by the sealed
 package comparator. A paid solver response that cannot satisfy the complete
 output contract may retry the identical blind input once; heuristic JSON repair
 is forbidden, deterministic repair is recorded, and every attempted task-run ID
-remains in the audit. Activation binds solver/comparator IDs to successful
-`ai_task_runs` rows and exact input hashes. The harness records exact blind
+remains in the audit. `expected_signals` is a bounded 1..12 atomized necessary
+path; every operation is sealed by index + digest, and the comparator must return
+one reference-coverage and frozen-scope decision for every operation. A package
+cannot pass from one diagnostic-level self-certified boolean. DiagnosticSpec V2
+also freezes `causal_direction_required`; historical V1 is read-compatible but
+conservatively requires the causal check, and explicit causal language is a
+defense-in-depth positive backstop. The comparator likewise retries the exact sealed input once
+only after a persisted response fails the complete output contract; a valid
+semantic fail is never retried. Activation re-runs deterministic checks and binds
+every solver/comparator attempt to successful `ai_task_runs` rows, exact input
+hashes, the current profile-rendered prompt fingerprint, and the selected
+canonical result digest. Persisted crash-recovery attempts are rebound before
+activation rather than trusted as checkpoints. The harness records exact blind
 inputs/structured solutions and their digests, FULL diagnostic/package checks,
-provider/model, usage, and cost rows. A per-case operational failure is retained
-in the final artifact instead of discarding earlier paid evidence.
+provider/model, usage, and exactly one finite non-negative USD success-cost row.
+The actual-output harness additionally requires every audit ID to have been
+observed through the current case's runner seam with the expected subject-rendered
+prompt; matching replay rows cannot make a case green. A per-case operational
+failure retains all task-run IDs observed before the failure (including
+lifecycle timeout/adapter exception 统一绑定的 `AgentRunError.taskRunId`)
+instead of discarding paid evidence. Comparator runner failure returns a closed
+invalid attempt with that ID, so the enclosing package slot is durably consumed
+instead of being reset by pg-boss redelivery.
+
+The structural ceiling is eight validator calls per package (three diagnostics ×
+two blind-solve attempts, plus two comparator attempts). A two-package preparation
+delivery including recommendation and authoring is therefore capped at 19 task
+calls; one five-case regression command is capped at 40. These are retry ceilings,
+not expected steady-state spend. A durable cross-delivery aggregate budget and
+per-stage checkpoint are not implemented by this change and must not be inferred
+from a green fixture run.
 
 This command verifies real model output rather than a mocked verdict, but its
 artifact always records `satisfies_yuk_814_canary=false`. Sanitized regression

@@ -381,15 +381,37 @@ export const ConjectureAbstainReason = z.enum([
 ]);
 export type ConjectureAbstainReasonT = z.infer<typeof ConjectureAbstainReason>;
 
-export const ConjectureDiagnosticSpec = z
+const ConjectureDiagnosticSpecFields = {
+  target_error_rule_md: z.string().trim().min(1).max(1000),
+  trigger_conditions_md: z.string().trim().min(1).max(1000),
+  scope_boundary_md: z.string().trim().min(1).max(1000),
+  expected_wrong_answer_signature_md: z.string().trim().min(1).max(1000),
+} as const;
+
+/**
+ * V1 remains readable for accepted historical conjectures. V2 freezes whether
+ * the claim needs causal-direction review instead of asking a downstream
+ * release gate to rediscover that semantic type from free-form keywords.
+ */
+export const ConjectureDiagnosticSpecV1 = z
   .object({
     schema_version: z.literal(1),
-    target_error_rule_md: z.string().trim().min(1).max(1000),
-    trigger_conditions_md: z.string().trim().min(1).max(1000),
-    scope_boundary_md: z.string().trim().min(1).max(1000),
-    expected_wrong_answer_signature_md: z.string().trim().min(1).max(1000),
+    ...ConjectureDiagnosticSpecFields,
   })
   .strict();
+
+export const ConjectureDiagnosticSpecV2 = z
+  .object({
+    schema_version: z.literal(2),
+    ...ConjectureDiagnosticSpecFields,
+    causal_direction_required: z.boolean(),
+  })
+  .strict();
+
+export const ConjectureDiagnosticSpec = z.discriminatedUnion('schema_version', [
+  ConjectureDiagnosticSpecV1,
+  ConjectureDiagnosticSpecV2,
+]);
 export type ConjectureDiagnosticSpecT = z.infer<typeof ConjectureDiagnosticSpec>;
 
 const ConjectureHypothesisFields = {
@@ -410,6 +432,11 @@ export const ConjectureHypothesisProposalDraft = z
   })
   .strict();
 export type ConjectureHypothesisProposalDraftT = z.infer<typeof ConjectureHypothesisProposalDraft>;
+
+/** Writer contract for new hypotheses; V1 is intentionally read-only. */
+export const ConjectureHypothesisProposalDraftV2 = ConjectureHypothesisProposalDraft.extend({
+  diagnostic_spec: ConjectureDiagnosticSpecV2,
+}).strict();
 
 export type ConjectureHypothesisCoreT = Omit<
   ConjectureHypothesisProposalDraftT,
@@ -988,6 +1015,11 @@ export const ConjectureHypothesisDraft = z.discriminatedUnion('kind', [
   ConjectureModelAbstainDraft,
 ]);
 export type ConjectureHypothesisDraftT = z.infer<typeof ConjectureHypothesisDraft>;
+
+export const ConjectureHypothesisAuthorDraft = z.discriminatedUnion('kind', [
+  ConjectureHypothesisProposalDraftV2,
+  ConjectureModelAbstainDraft,
+]);
 
 /**
  * Final proposal assembled by the orchestrator after independent review.

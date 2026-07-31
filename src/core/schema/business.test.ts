@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ConjectureAbstainDraft,
+  ConjectureDiagnosticSpec,
   ConjectureDraft,
+  ConjectureHypothesisAuthorDraft,
   ConjectureHypothesisDraft,
   ConjectureProbePackage,
   ConjectureProbePackageV2,
@@ -392,6 +394,31 @@ describe('ConjectureDraft', () => {
     discriminating: true as const,
     agreement_count: 2,
   };
+
+  it('reads historical V1 while requiring an explicit causal semantic bit in V2', () => {
+    expect(ConjectureDiagnosticSpec.parse(valid.diagnostic_spec).schema_version).toBe(1);
+    expect(
+      ConjectureDiagnosticSpec.parse({
+        ...valid.diagnostic_spec,
+        schema_version: 2,
+        causal_direction_required: true,
+      }),
+    ).toMatchObject({ schema_version: 2, causal_direction_required: true });
+    expect(
+      ConjectureDiagnosticSpec.safeParse({ ...valid.diagnostic_spec, schema_version: 2 }).success,
+    ).toBe(false);
+    expect(
+      ConjectureHypothesisAuthorDraft.safeParse({
+        kind: 'proposal',
+        claim_md: valid.claim_md,
+        knowledge_id: valid.knowledge_id,
+        evidence_event_ids: valid.evidence_event_ids,
+        diagnostic_spec: valid.diagnostic_spec,
+        cause_category: valid.cause_category,
+        recurrence_count: valid.recurrence_count,
+      }).success,
+    ).toBe(false);
+  });
 
   it('accepts a well-formed second-person conjecture with two distinct probes', () => {
     const parsed = ConjectureDraft.safeParse(valid);

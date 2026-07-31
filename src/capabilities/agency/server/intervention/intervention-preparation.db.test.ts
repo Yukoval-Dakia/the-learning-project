@@ -28,6 +28,7 @@ import {
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
 import type { EventSubscriptionDelivery } from '@/kernel/manifest';
+import { AgentRunError } from '@/server/ai/agent-run-error';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
@@ -38,16 +39,22 @@ import { prepareInterventionWave } from './prepare';
 import { handleProbeResultInterventionDelivery } from './probe-result-subscription';
 import { recoverEligibleInterventionDiagnostics, recoverPreparingInterventions } from './reconcile';
 import { handleInterventionDiagnosticJudgeDelivery } from './settlement-subscription';
-import { activateIntervention, loadInterventionVersion, saveRecommendation } from './store';
+import {
+  activateIntervention,
+  appendPreparationAttempt,
+  loadInterventionVersion,
+  saveRecommendation,
+} from './store';
 
 const CLAIM = '你把复合函数求导中的外层导数和内层导数相加，而不是相乘。';
 const TARGET_ERROR = '把外层导数与内层导数相加，而不是按链式法则相乘。';
 const DIAGNOSTIC_SPEC = {
-  schema_version: 1 as const,
+  schema_version: 2 as const,
   target_error_rule_md: TARGET_ERROR,
   trigger_conditions_md: '题目要求对复合函数求导。',
   scope_boundary_md: '不覆盖和、积、商等其他求导法则。',
   expected_wrong_answer_signature_md: '外层导数 + 内层导数。',
+  causal_direction_required: false,
 };
 
 const PRIMARY = {
@@ -460,13 +467,18 @@ function reviewPackageChecksBase() {
 function comparatorDiagnosticChecks(input: unknown, checks = reviewDiagnosticChecks()) {
   const sealed = (
     input as {
-      sealed_independent_solutions?: Array<{ kind: string; solver_output_sha256: string }>;
+      sealed_independent_solutions?: Array<{
+        kind: string;
+        solver_output_sha256: string;
+        required_operations: Array<{
+          operation_index: number;
+          operation_sha256: string;
+        }>;
+      }>;
     }
   ).sealed_independent_solutions;
   if (!sealed || sealed.length !== 3) throw new Error('missing sealed independent solutions');
-  const digestByKind = new Map(
-    sealed.map((solution) => [solution.kind, solution.solver_output_sha256]),
-  );
+  const solutionByKind = new Map(sealed.map((solution) => [solution.kind, solution]));
   return checks.map(
     ({
       independently_derived_answer_md: _answer,
@@ -474,7 +486,16 @@ function comparatorDiagnosticChecks(input: unknown, checks = reviewDiagnosticChe
       ...check
     }) => ({
       ...check,
-      independent_solution_sha256: digestByKind.get(check.kind),
+      independent_solution_sha256: solutionByKind.get(check.kind)?.solver_output_sha256,
+      required_operation_checks: solutionByKind
+        .get(check.kind)
+        ?.required_operations.map((operation) => ({
+          operation_index: operation.operation_index,
+          operation_sha256: operation.operation_sha256,
+          reference_covers_operation: check.reference_correct,
+          within_frozen_scope: check.within_frozen_scope,
+          decision_basis_md: '该原子步骤已逐项对照 reference 与冻结 scope，结论与诊断级判据一致。',
+        })),
     }),
   );
 }
@@ -499,6 +520,20 @@ async function recordMockAiRun(
     started_at: now,
     finished_at: now,
   });
+}
+
+function concreteRecommendation(modelRunId: string) {
+  return {
+    kind: 'recommendation' as const,
+    recommendation_version: INTERVENTION_CONTRACT_VERSION,
+    method_id: 'worked_example' as const,
+    method_definition_version: PEDAGOGY_METHOD_DEFINITION_VERSION,
+    rationale_md: '先用完整示范显式区分内外层，再用三道独立题验证。',
+    safety_constraints: ['不得把一次表现写成能力定论'],
+    candidate_ids: ['worked_example' as const],
+    excluded: [],
+    model_run_id: modelRunId,
+  };
 }
 
 function successfulRunTask(
@@ -676,6 +711,8 @@ describe('YUK-791 intervention preparation closed loop', () => {
     expect(active.preparation_attempts_json).toHaveLength(1);
     expect(active.preparation_attempts_json[0]).toMatchObject({
       review: {
+        review_task_run_id: 'review_run_1',
+        review_attempt_task_run_ids: ['review_run_1'],
         independent_solution_audit: {
           validation_protocol_version: 1,
           diagnostics: [
@@ -859,6 +896,295 @@ describe('YUK-791 intervention preparation closed loop', () => {
         deterministic_failure_codes: ['agency:review_task_run_invalid'],
       }),
     ]);
+  });
+
+  it('retries the exact comparator input once and audits both paid review runs', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('review_contract_retry');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_review_contract_retry',
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn: baseRun, calls } = successfulRunTask(db);
+    let injectedInvalidReview = false;
+    const oneInvalidReviewThenSuccess: TaskTextRunFn = async (kind, input, ctx) => {
+      if (kind === 'InterventionPackageReviewTask' && !injectedInvalidReview) {
+        injectedInvalidReview = true;
+        calls.push(kind);
+        await recordMockAiRun(db, kind, input, 'review_invalid_contract_1');
+        return {
+          text: '{"verdict":"pass"}',
+          task_run_id: 'review_invalid_contract_1',
+        };
+      }
+      return baseRun(kind, input, ctx);
+    };
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: oneInvalidReviewThenSuccess, authorPackageFn: authorInterventionPackage },
+    );
+
+    expect(result).toMatchObject({ status: 'active' });
+    expect(calls.filter((kind) => kind === 'InterventionPackageReviewTask')).toHaveLength(2);
+    const active = await loadInterventionVersion(db, opened.id, opened.version);
+    const attempt = active?.preparation_attempts[0];
+    if (attempt?.kind !== 'reviewed_package' || !('independent_solution_audit' in attempt.review)) {
+      throw new Error('missing FULL comparator retry audit');
+    }
+    expect(attempt.review).toMatchObject({
+      review_task_run_id: 'review_run_2',
+      review_attempt_task_run_ids: ['review_invalid_contract_1', 'review_run_2'],
+      result: { verdict: 'pass', failure_codes: [] },
+    });
+    const reviewRuns = await db
+      .select({
+        id: ai_task_runs.id,
+        prompt_fingerprint: ai_task_runs.prompt_fingerprint,
+        result_digest: ai_task_runs.result_digest,
+      })
+      .from(ai_task_runs)
+      .where(inArray(ai_task_runs.id, attempt.review.review_attempt_task_run_ids));
+    expect(reviewRuns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'review_invalid_contract_1',
+          prompt_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+          result_digest: null,
+        }),
+        expect.objectContaining({
+          id: 'review_run_2',
+          prompt_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+          result_digest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
+      ]),
+    );
+  });
+
+  it('durably consumes a package attempt when the comparator runner times out', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('review_runner_timeout');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_review_runner_timeout',
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn: baseRun, calls } = successfulRunTask(db);
+    let injectedTimeout = false;
+    const oneComparatorTimeoutThenSuccess: TaskTextRunFn = async (kind, input, ctx) => {
+      if (kind === 'InterventionPackageReviewTask' && !injectedTimeout) {
+        injectedTimeout = true;
+        calls.push(kind);
+        throw new AgentRunError({
+          kind,
+          taskRunId: 'review_budget_timeout_1',
+          subtype: 'budget_timeout',
+          errors: ['budget elapsed after the paid run started'],
+        });
+      }
+      return baseRun(kind, input, ctx);
+    };
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: oneComparatorTimeoutThenSuccess, authorPackageFn: authorInterventionPackage },
+    );
+
+    expect(result).toMatchObject({ status: 'active' });
+    expect(calls.filter((kind) => kind === 'InterventionPackageReviewTask')).toHaveLength(2);
+    const active = await loadInterventionVersion(db, opened.id, opened.version);
+    expect(active?.preparation_attempts).toHaveLength(2);
+    expect(active?.preparation_attempts[0]).toMatchObject({
+      kind: 'author_failed',
+      failure_code: 'review_runner_failure',
+      validator_task_run_ids: expect.arrayContaining([
+        'independent_solution_run_1',
+        'independent_solution_run_2',
+        'independent_solution_run_3',
+        'review_budget_timeout_1',
+      ]),
+    });
+    expect(active?.preparation_attempts[1]).toMatchObject({
+      kind: 'reviewed_package',
+      review: { review_task_run_id: 'review_run_2' },
+    });
+  });
+
+  it('fails closed after two comparator contract misses per package attempt', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('review_contract_exhausted');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_review_contract_exhausted',
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn: baseRun, calls } = successfulRunTask(db);
+    const invalidReviews: TaskTextRunFn = async (kind, input, ctx) => {
+      if (kind !== 'InterventionPackageReviewTask') return baseRun(kind, input, ctx);
+      calls.push(kind);
+      const ordinal = calls.filter((value) => value === kind).length;
+      const taskRunId = `review_invalid_contract_${ordinal}`;
+      await recordMockAiRun(db, kind, input, taskRunId);
+      return { text: '{"verdict":"pass"}', task_run_id: taskRunId };
+    };
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: invalidReviews, authorPackageFn: authorInterventionPackage },
+    );
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      reason_code: 'package_quality:review_output_invalid',
+    });
+    expect(calls.filter((kind) => kind === 'InterventionPackageReviewTask')).toHaveLength(4);
+    const failed = await loadInterventionVersion(db, opened.id, opened.version);
+    expect(failed?.preparation_attempts).toHaveLength(2);
+    for (const attempt of failed?.preparation_attempts ?? []) {
+      if (
+        attempt.kind !== 'reviewed_package' ||
+        !('independent_solution_audit' in attempt.review)
+      ) {
+        throw new Error('missing exhausted comparator audit');
+      }
+      expect(attempt.review.review_attempt_task_run_ids).toHaveLength(2);
+      expect(attempt.review.result).toMatchObject({
+        verdict: 'fail',
+        failure_codes: ['review_output_invalid'],
+      });
+    }
+  });
+
+  it('rebinds a persisted FULL pass on recovery and spends only the remaining attempt slot', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('persisted_full_rebind_retry');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_persisted_full_rebind_retry',
+    });
+    const [opened] = await db.select().from(intervention);
+    const record = await loadInterventionVersion(db, opened.id, opened.version);
+    if (!record) throw new Error('intervention disappeared');
+    const recommended = await saveRecommendation(
+      db,
+      record,
+      concreteRecommendation('persisted_full_rebind_recommendation'),
+    );
+    const { fn, calls } = successfulRunTask(db);
+    const attempt1 = await authorInterventionPackage(db, recommended.id, {
+      attempt: 1,
+      runTaskFn: fn,
+      preparationJobId: preparationJobIdOf(recommended),
+    });
+    if (
+      attempt1.kind !== 'reviewed_package' ||
+      !('independent_solution_audit' in attempt1.review)
+    ) {
+      throw new Error('missing first FULL attempt');
+    }
+    await appendPreparationAttempt(db, recommended, attempt1);
+    await db.delete(ai_task_runs).where(eq(ai_task_runs.id, attempt1.review.review_task_run_id));
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: fn, authorPackageFn: authorInterventionPackage },
+    );
+
+    expect(result).toMatchObject({ status: 'active' });
+    expect(calls.filter((kind) => kind === 'InterventionPackageAuthorTask')).toHaveLength(2);
+    const active = await loadInterventionVersion(db, opened.id, opened.version);
+    expect(active?.package).toMatchObject({ author_task_run_id: 'author_run_2' });
+    expect(active?.preparation_attempts.map((attempt) => attempt.attempt)).toEqual([1, 2]);
+  });
+
+  it('does not reset the package budget when a persisted final FULL pass loses provenance', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('persisted_full_rebind_exhausted');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_persisted_full_rebind_exhausted',
+    });
+    const [opened] = await db.select().from(intervention);
+    const record = await loadInterventionVersion(db, opened.id, opened.version);
+    if (!record) throw new Error('intervention disappeared');
+    const recommended = await saveRecommendation(
+      db,
+      record,
+      concreteRecommendation('persisted_full_rebind_exhausted_recommendation'),
+    );
+    const withFirst = await appendPreparationAttempt(
+      db,
+      recommended,
+      InterventionPreparationAttempt.parse({
+        kind: 'author_failed',
+        attempt: 1,
+        failure_code: 'seeded_first_attempt_failure',
+      }),
+    );
+    const { fn } = successfulRunTask(db);
+    const attempt2 = await authorInterventionPackage(db, recommended.id, {
+      attempt: 2,
+      runTaskFn: fn,
+      preparationJobId: preparationJobIdOf(recommended),
+    });
+    if (
+      attempt2.kind !== 'reviewed_package' ||
+      !('independent_solution_audit' in attempt2.review)
+    ) {
+      throw new Error('missing second FULL attempt');
+    }
+    await appendPreparationAttempt(db, withFirst, attempt2);
+    await db.delete(ai_task_runs).where(eq(ai_task_runs.id, attempt2.review.review_task_run_id));
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      {
+        runTaskFn: async () => {
+          throw new Error('exhausted recovery must not call the model');
+        },
+        authorPackageFn: async () => {
+          throw new Error('exhausted recovery must not call QuestionAuthor');
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      reason_code: 'package_quality:agency:review_task_run_invalid',
+    });
+    const failed = await loadInterventionVersion(db, opened.id, opened.version);
+    expect(failed?.preparation_attempts.map((attempt) => attempt.attempt)).toEqual([1, 2]);
   });
 
   it('consumes one real review per window, retires one-shot cards, and settles deterministically', async () => {

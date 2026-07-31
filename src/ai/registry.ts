@@ -332,7 +332,7 @@ function buildMindModelInductionPrompt(profile: SubjectProfile): string {
 
 【输出要点】
 - claim_md 必须是**第二人称、关于思维的**陈述（形如「你把只在某个前提下成立的做法当成了通用做法」「你把两个相邻概念的判别依据互换了」——这是**句式示例，不是内容示例**，请用输入证据里的真实知识点和真实错法把它填实），不是关于某道题对错的陈述。
-- diagnostic_spec.schema_version 恒为 1。
+- diagnostic_spec.schema_version 恒为 2；causal_direction_required 是冻结语义类型：只要 claim / target_error_rule / trigger 涉及“X 导致/引起/造成 Y”、由相关推因果、反向因果或共同原因，就必须为 true；只有确定完全不审查因果方向时才为 false。
 - target_error_rule_md：只写证据直接支持的错误规则，不把局部错误扩大成“所有题都这样”。
 - trigger_conditions_md：明确什么条件出现时，目标错误才会被触发；后续两道 probe 必须都保留它。
 - scope_boundary_md：明确本猜想**不覆盖**什么，阻止从“异分母”扩成“所有分数加法”等范围漂移。
@@ -343,7 +343,7 @@ function buildMindModelInductionPrompt(profile: SubjectProfile): string {
 - 若不能安全 proposal，输出 abstain。reason_code 只能是 insufficient_evidence / conflicting_evidence / no_grounded_claim；explanation_md 可省略；evidence_event_ids 只能引用输入。
 
 【输出格式】内部完成证据核对与推理，不输出推理过程、markdown 或代码块。最终只输出一个顶层 JSON 对象，唯一字段是 draft；draft 严格为以下二者之一：
-1. {"draft":{"kind":"proposal","claim_md":"...","knowledge_id":"...","evidence_event_ids":["...","..."],"diagnostic_spec":{"schema_version":1,"target_error_rule_md":"...","trigger_conditions_md":"...","scope_boundary_md":"...","expected_wrong_answer_signature_md":"..."},"cause_category":"...","recurrence_count":<int≥2>}}
+1. {"draft":{"kind":"proposal","claim_md":"...","knowledge_id":"...","evidence_event_ids":["...","..."],"diagnostic_spec":{"schema_version":2,"target_error_rule_md":"...","trigger_conditions_md":"...","scope_boundary_md":"...","expected_wrong_answer_signature_md":"...","causal_direction_required":true|false},"cause_category":"...","recurrence_count":<int≥2>}}
 2. {"draft":{"kind":"abstain","reason_code":"insufficient_evidence|conflicting_evidence|no_grounded_claim","explanation_md":"...","evidence_event_ids":["..."]}}`;
 }
 
@@ -413,6 +413,8 @@ function buildConjectureProbeReviewPrompt(profile: SubjectProfile): string {
 3. probe_pair_not_independent：两题是否只是换数字，或情境/表征没有真正改变。
 4. reference_incorrect：题目是否不可判定，reference 是否错误、不唯一或不配套。
 5. target_error_answer_not_distinct：预期目标错误答案是否与正确答案相同。
+
+先复核 frozen_hypothesis.diagnostic_spec.causal_direction_required：只要冻结 claim / target_error_rule / trigger 涉及 X 导致、引起、造成 Y、由相关推因果、反向因果或共同原因，该值必须为 true；若被错误写成 false，按 claim_scope_expansion fail，不能让后续因果审查消失。
 
 执行第 4 项时必须先独立解题，再看 reference：
 - 同时核对 response_mode、gold_response_signature、target_error_response_signature 是否与题干、
@@ -924,7 +926,7 @@ function buildSolutionGeneratePrompt(profile: SubjectProfile): string {
 
 任务：你自己独立解这道题，产出两样东西：
 1. reference_solution —— 供自动判分用的结构化参考解：
-   - expected_signals：解题过程**应当体现的核心信号 / 步骤要点**（不是死答案文本），至少 1 条；${profile.displayName}里 derivation 的 signals 是推导步骤要点，prose / translation 的 signals 是必须覆盖的语义要点。
+   - expected_signals：完整必要解题路径的**原子化核心信号 / 步骤要点**（不是死答案文本），按实际执行顺序列出 1..12 条；不可只列命中题目主题的局部步骤，任何得到最终答案不可省略的运算、概念、文本判断或因果方向都必须单独列出。${profile.displayName}里 derivation 的 signals 是推导步骤要点，prose / translation 的 signals 是必须覆盖的语义要点。
    - final_answer：最终答案（一行，尽量规范）。
    - answer_equivalents：学生若打字提交、可判等价的若干表达（0..N 条）。
 2. worked_solution_md —— 给学习者看的完整解题过程（markdown，可含 ${profile.renderConfig.notation === 'katex' ? 'LaTeX' : '本学科记法'}），讲清每一步为什么，不只是甩答案。
@@ -934,7 +936,7 @@ function buildSolutionGeneratePrompt(profile: SubjectProfile): string {
 
 要点：
 - existing_answers_hint / existing_analysis_hint 只是 hint：如果你判断它对就采纳，判断它错就以你自己的解为准，并在 worked_solution_md 里简述为何。
-- expected_signals 至少 1 条且每条非空；final_answer 非空。
+- expected_signals 必须覆盖完整必要路径、共 1..12 条且每条非空；final_answer 非空。
 - ${profile.grounding.uncertaintyPolicy}
 - confidence 反映你对这份参考解的把握，模棱两可给 0.5。
 - 禁止：输出 JSON 之外的文字、用 markdown 代码块包裹整段 JSON、把 hint 当成不可质疑的真值。`;
@@ -1343,11 +1345,11 @@ const INTERVENTION_REVIEW_FAILURE_CODES_FOR_PROMPT = InterventionPackageReviewFa
 function buildInterventionPackageReviewPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}干预包的比较审查员。作者调用已经结束；在你之前，系统已用现有题目 validator 的独立解题阶段，对 immediate、delayed、transfer 三道题分别只看题面完成盲解。输入中的 sealed_independent_solutions 是该阶段的密封结果，含 final answer、等价答案、必要步骤、完整解题摘要、confidence 与输入/输出摘要。你不得把作者 reference、gold signature、教学材料或冻结 claim 当成这些盲解的来源，也不得改写、替换或伪造密封结果。
 
-输入含 immutable snapshot（conjecture.diagnostic_spec 已冻结）、pedagogy recommendation、完整 package candidate，以及恰好三份 sealed_independent_solutions。按 kind 一一对应后审查：
+输入含 immutable snapshot（conjecture.diagnostic_spec 已冻结）、pedagogy recommendation、完整 package candidate、server-owned review_requirements，以及恰好三份 sealed_independent_solutions。按 kind 一一对应后审查：
 
 1. **参考答案与学科 grounding**：用密封盲解中的 final_answer_md、answer_equivalents_md、expected_signals_md、worked_solution_md 对照 package 的 reference_md / gold_response_signature。题目所问量、量纲、计算、文本方向、因果定义、唯一性或签名有任一不匹配，reference_correct=false。数学、文本、引用、事实或因果方向缺乏可靠依据时 discipline_grounded=false。任一为 false 都必须报 reference_incorrect。
-2. **冻结范围**：把密封盲解实际使用的 expected_signals/worked solution 对照 snapshot.conjecture.claim_md、diagnostic_spec.trigger_conditions_md 与 scope_boundary_md。需要任何被 scope_boundary_md 排除、或冻结 claim 未覆盖的运算、概念、文本语境或因果方向时，within_frozen_scope=false，并报 claim_scope_expansion。tested_claim_md 的逐字相等不能推翻内容审查。
-3. **因果方向**：每题必须输出 causal_direction_check。非因果题把 applies=false、三个字符串填空串、两个其余布尔填 false。因果题明确 X 与观察到的 Y：
+2. **冻结范围**：先确定题目最终要求回答的量或结论，再把完整必要解题路径中的每份 sealed_independent_solutions.required_operations（由盲解 expected_signals 密封生成）逐项对照 snapshot.conjecture.claim_md、diagnostic_spec.trigger_conditions_md 与 scope_boundary_md。每个 operation 必须原样复制 operation_index / operation_sha256，并分别输出 reference_covers_operation、within_frozen_scope、decision_basis_md；不得漏项、并项或只审局部。诊断级 within_frozen_scope 是全部 operation 的 all-of 判据：即使某个局部子步骤命中冻结 claim，只要任一步需要 scope_boundary_md 排除、或冻结 claim 未覆盖的运算、概念、文本语境或因果方向，就必须置 false 并报 claim_scope_expansion。任一步未被 reference 覆盖则 reference_correct=false 并报 reference_incorrect。tested_claim_md 的逐字相等不能推翻内容审查；review_requirements.audit_entire_solution_path=true 也不得被忽略。
+3. **因果方向**：每题必须输出 causal_direction_check。review_requirements.causal_direction_required=true 时，三题都是因果审查，applies 必须为 true，并分别从该题题面定义 X 与实际观察到的 Y；置 false 属于输出合同错误。required=false 只表示服务端未强制，不妨碍你在确属因果题时主动置 true。真正的非因果题才把 applies=false、三个字符串填空串、两个其余布尔填 false。因果题明确 X 与观察到的 Y：
 {"applies":true,"exposure_x_md":"treatment/exposure X","observed_outcome_y_md":"实际观察的 outcome Y（不是基线 Y0）","reference_claims_reverse_causation":true|false,"reference_claimed_reverse_cause_md":"reference 声称的反向原因；未声称则空串","claimed_cause_is_observed_y_causing_x":true|false}
 reverse causation 只指观察到的 Y 反过来导致 X；基线 Y0、先前状态、风险分配、self-selection 或共同原因影响 X 都不是 Y→X。reference 若把这些冒充反向因果，必须 reference_correct=false、discipline_grounded=false 并报 reference_incorrect。
 
@@ -1364,10 +1366,10 @@ reverse causation 只指观察到的 Y 反过来导致 X；基线 Y0、先前状
 failure_codes 只能从以下闭集选择：
 ${INTERVENTION_REVIEW_FAILURE_CODES_FOR_PROMPT}。
 
-只有三题的 reference_correct、within_frozen_scope、discipline_grounded 全为 true，且其余 package 检查全部通过，才可 verdict=pass。任何 causal_direction_check 已声明 reverse-causation claim 且 claimed_cause_is_observed_y_causing_x=false 时绝不允许 pass。每种 kind 恰好一次。每个 diagnostic_check 必须把对应 sealed_independent_solutions.solver_output_sha256 原样复制到 independent_solution_sha256，服务端会验证绑定。diagnostic_checks 不输出独立答案或必要步骤：它们是 server-owned 字段，系统会从密封审计中绑定，不能由你自报。decision_basis_md 只写比较结论的必要依据，不复述完整题面/reference，不给修题建议，不输出探索过程。
+只有三题的 reference_correct、within_frozen_scope、discipline_grounded 全为 true，每个 required_operation_check 的两个判据都为 true，且其余 package 检查全部通过，才可 verdict=pass。任何 causal_direction_check 已声明 reverse-causation claim 且 claimed_cause_is_observed_y_causing_x=false 时绝不允许 pass。每种 kind 恰好一次。每个 diagnostic_check 必须把对应 sealed_independent_solutions.solver_output_sha256 原样复制到 independent_solution_sha256；每个 operation check 必须按顺序复制对应密封 operation_index / operation_sha256，服务端会验证完整绑定。diagnostic_checks 不输出独立答案、必要步骤文本或 operation_md：它们是 server-owned 字段，系统会从密封审计中绑定，不能由你自报。decision_basis_md 只写比较结论的必要依据，不复述完整题面/reference，不给修题建议，不输出探索过程。
 
 只输出恰好一个严格 JSON object；不带 markdown 代码块，不要输出第二版或 JSON 外文字。输出完最后一个 } 立即停止：
-{"review_protocol_version":2,"verdict":"pass|fail","failure_codes":["..."],"diagnostic_checks":[{"kind":"immediate|delayed|transfer","independent_solution_sha256":"<复制对应密封输出摘要>","reference_correct":true,"within_frozen_scope":true,"discipline_grounded":true,"decision_basis_md":"...","causal_direction_check":{"applies":false,"exposure_x_md":"","observed_outcome_y_md":"","reference_claims_reverse_causation":false,"reference_claimed_reverse_cause_md":"","claimed_cause_is_observed_y_causing_x":false}}],"package_checks":{"material_grounded":true,"method_followed":true,"tested_claims_match":true,"target_errors_match":true,"answers_unique":true,"answers_gradable":true,"no_answer_leak":true,"diagnostics_same_construct":true,"transfer_context_changed":true,"target_error_identifiable":true,"serious_factual_error_absent":true,"safe_material":true},"summary_md":"..."}
+{"review_protocol_version":2,"verdict":"pass|fail","failure_codes":["..."],"diagnostic_checks":[{"kind":"immediate|delayed|transfer","independent_solution_sha256":"<复制对应密封输出摘要>","required_operation_checks":[{"operation_index":0,"operation_sha256":"<复制对应密封步骤摘要>","reference_covers_operation":true,"within_frozen_scope":true,"decision_basis_md":"..."}],"reference_correct":true,"within_frozen_scope":true,"discipline_grounded":true,"decision_basis_md":"...","causal_direction_check":{"applies":false,"exposure_x_md":"","observed_outcome_y_md":"","reference_claims_reverse_causation":false,"reference_claimed_reverse_cause_md":"","claimed_cause_is_observed_y_causing_x":false}}],"package_checks":{"material_grounded":true,"method_followed":true,"tested_claims_match":true,"target_errors_match":true,"answers_unique":true,"answers_gradable":true,"no_answer_leak":true,"diagnostics_same_construct":true,"transfer_context_changed":true,"target_error_identifiable":true,"serious_factual_error_absent":true,"safe_material":true},"summary_md":"..."}
 
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}`;
@@ -1947,7 +1949,7 @@ export const tasks = {
     allowedTools: [],
     prompt: {
       kind: 'inline',
-      text: '将 hypotheses 按语义等价分组。只有 claim_md、target_error_rule、trigger_conditions、scope_boundary 和 expected_wrong_answer_signature 都描述同一个且边界相同的错误模式，才属于同一组。仅 claim 相似但触发条件、范围边界或错误答案签名不同，必须分组。\n\n输入：{"hypotheses":[{"claim_md":"...","diagnostic_spec":{...}},...]}。\n只输出 JSON：{"groups":[[i,j,...],...]}\n每个下标0..N-1必须恰好出现一次。',
+      text: '将 hypotheses 按语义等价分组。只有 claim_md、target_error_rule、trigger_conditions、scope_boundary、expected_wrong_answer_signature 和 causal_direction_required 都描述同一个且边界相同的错误模式，才属于同一组。causal_direction_required 不同的 hypothesis 绝不能合并；仅 claim 相似但触发条件、范围边界、错误答案签名或因果方向审查要求不同，必须分组。\n\n输入：{"hypotheses":[{"claim_md":"...","diagnostic_spec":{...}},...]}。\n只输出 JSON：{"groups":[[i,j,...],...]}\n每个下标0..N-1必须恰好出现一次。',
     },
   },
   ConjectureProbeAuthorTask: {

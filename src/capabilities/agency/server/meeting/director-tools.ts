@@ -33,7 +33,7 @@ import type {
 import { writeAgentNote } from '@/capabilities/agency/server/notes';
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import {
-  ConjectureDiagnosticSpec,
+  ConjectureDiagnosticSpecV2,
   ConjectureHypothesisProposalDraft,
 } from '@/core/schema/business';
 import { CauseCategoryId } from '@/core/schema/cause';
@@ -298,7 +298,7 @@ const ProposeConjectureShape = {
   knowledge_id: z.string().min(1),
   cause_category: z.string().min(1),
   claim_md: z.string().min(1),
-  diagnostic_spec: ConjectureDiagnosticSpec,
+  diagnostic_spec: ConjectureDiagnosticSpecV2,
   // A terminal identity may reopen only after the director has read and echoed the
   // owner-corrected claim supplied by get_meeting_context (or a soft rejection).
   prior_claim_md: z.string().trim().min(1).max(280).optional(),
@@ -435,7 +435,7 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
       // reason } (soft, so the director can react) and NEVER consumes a cap slot.
       tool(
         PROPOSE_CONJECTURE_LOCAL_NAME,
-        'PROPOSE (not write) one conjecture about how the owner thinks plus a frozen DiagnosticSpec. Do not author probes: the server runs the shared author + independent-review quality gate before writing. At most 3 per night; pending, lifecycle, and freshness gates still apply.',
+        'PROPOSE (not write) one conjecture about how the owner thinks plus a frozen DiagnosticSpec V2. New proposals must use schema_version=2 and set causal_direction_required=true for causal claims; V1 exists only to read historical rows. Do not author probes: the server runs the shared author + independent-review quality gate before writing. At most 3 per night; pending, lifecycle, and freshness gates still apply.',
         ProposeConjectureShape,
         async (args) => {
           // round-3 review CodeRabbit Major (A2) — TOCTOU fix. Claude can emit multiple

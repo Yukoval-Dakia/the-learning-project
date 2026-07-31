@@ -9,12 +9,22 @@ import {
   ConjectureDiagnosticSpec,
   ConjectureProbeSpecV2,
   ConjectureProbeSpecV2Base,
+  evaluateConjectureProbeResponseStructure,
 } from '@/core/schema/business';
 import { SolutionGenerateOutput } from '@/core/schema/solution';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { z } from 'zod';
 
 export const INTERVENTION_CONTRACT_VERSION = 1 as const;
 export const MAX_INTERVENTION_PACKAGE_ATTEMPTS = 2 as const;
+export const MAX_INTERVENTION_SOLVER_ATTEMPTS_PER_DIAGNOSTIC = 2 as const;
+export const MAX_INTERVENTION_REVIEW_ATTEMPTS = 2 as const;
+export const MAX_INTERVENTION_VALIDATOR_CALLS_PER_PACKAGE =
+  3 * MAX_INTERVENTION_SOLVER_ATTEMPTS_PER_DIAGNOSTIC + MAX_INTERVENTION_REVIEW_ATTEMPTS;
+export const MAX_INTERVENTION_PREPARATION_CALLS_PER_DELIVERY =
+  1 + MAX_INTERVENTION_PACKAGE_ATTEMPTS * (1 + MAX_INTERVENTION_VALIDATOR_CALLS_PER_PACKAGE);
+export const MAX_INTERVENTION_REVIEW_EVAL_CALLS_PER_CASE =
+  MAX_INTERVENTION_VALIDATOR_CALLS_PER_PACKAGE;
 export const PEDAGOGY_METHOD_DEFINITION_VERSION = 'pedagogy_method_library_v1' as const;
 export const INTERVENTION_ACTIVATED_ACTION = 'experimental:intervention_activated' as const;
 export const INTERVENTION_PREPARATION_FAILED_ACTION =
@@ -441,6 +451,114 @@ export const InterventionPackage = InterventionPackageModelOutput.extend({
 }).strict();
 export type InterventionPackageT = z.infer<typeof InterventionPackage>;
 
+function normalizeInterventionIdentity(value: string): string {
+  return value.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function interventionAnswerLeaks(prompt: string, answer: string): boolean {
+  const normalizedAnswer = normalizeInterventionIdentity(answer);
+  // Very short tokens occur frequently in prose, so substring matching would
+  // produce excessive false positives. Their leakage remains a comparator check.
+  if (normalizedAnswer.length < 3) return false;
+  return normalizeInterventionIdentity(prompt).includes(normalizedAnswer);
+}
+
+/** Pure, authoritative package checks shared by authoring and activation. */
+export function validateInterventionPackageDeterministically(
+  context: InterventionAuthoringContextT,
+  packageValue: InterventionPackageT,
+): string[] {
+  const failures: string[] = [];
+  if (
+    packageValue.intervention_id !== context.snapshot.intervention_id ||
+    packageValue.intervention_version !== context.snapshot.intervention_version
+  ) {
+    failures.push('lineage_mismatch');
+  }
+  if (
+    packageValue.method_id !== context.recommendation.method_id ||
+    packageValue.method_definition_version !== context.recommendation.method_definition_version
+  ) {
+    failures.push('method_mismatch');
+  }
+
+  const diagnostics = [
+    packageValue.diagnostics.immediate,
+    packageValue.diagnostics.delayed,
+    packageValue.diagnostics.transfer,
+  ];
+  const promptIdentities = new Set<string>();
+  for (const diagnostic of diagnostics) {
+    if (diagnostic.tested_claim_md !== context.snapshot.conjecture.claim_md) {
+      failures.push(`${diagnostic.kind}:tested_claim_mismatch`);
+    }
+    if (diagnostic.target_error_rule_md !== context.snapshot.conjecture.target_error_rule_md) {
+      failures.push(`${diagnostic.kind}:target_error_mismatch`);
+    }
+    const probeSpec = diagnostic.probe_spec;
+    const promptIdentity = normalizeInterventionIdentity(probeSpec.prompt_md);
+    if (promptIdentities.has(promptIdentity)) failures.push(`${diagnostic.kind}:duplicate_prompt`);
+    promptIdentities.add(promptIdentity);
+    for (const code of evaluateConjectureProbeResponseStructure(probeSpec)) {
+      failures.push(`${diagnostic.kind}:${code}`);
+    }
+    if (
+      interventionAnswerLeaks(probeSpec.prompt_md, probeSpec.reference_md) ||
+      interventionAnswerLeaks(probeSpec.prompt_md, probeSpec.expected_target_error_answer_md)
+    ) {
+      failures.push(`${diagnostic.kind}:answer_leak`);
+    }
+  }
+  if (!packageValue.diagnostics.transfer.context_change_md.trim()) {
+    failures.push('transfer:context_change_missing');
+  }
+  return [...new Set(failures)].sort();
+}
+
+export const InterventionPackageReviewRequirements = z
+  .object({
+    audit_entire_solution_path: z.literal(true),
+    causal_direction_required: z.boolean(),
+  })
+  .strict();
+export type InterventionPackageReviewRequirementsT = z.infer<
+  typeof InterventionPackageReviewRequirements
+>;
+
+/**
+ * Server-owned semantic routing from the frozen conjecture contract.
+ *
+ * V2 carries an explicit semantic bit. Historical V1 has no trustworthy way to
+ * prove a claim is non-causal, so release-critical FULL review conservatively
+ * requires the causal check. The marker scan is defense in depth for a wrongly
+ * classified V2 proposal; it is never the sole positive authority.
+ */
+export function interventionPackageReviewRequirements(
+  context: InterventionAuthoringContextT,
+): InterventionPackageReviewRequirementsT {
+  const conjecture = context.snapshot.conjecture;
+  const diagnosticSpec = conjecture.diagnostic_spec;
+  const frozenText = [
+    conjecture.claim_md,
+    conjecture.target_error_rule_md,
+    diagnosticSpec.target_error_rule_md,
+    diagnosticSpec.trigger_conditions_md,
+    diagnosticSpec.scope_boundary_md,
+    diagnosticSpec.expected_wrong_answer_signature_md,
+  ].join('\n');
+  const hasExplicitCausalMarker =
+    /(?:因果|反向(?:因果|原因)|共同(?:的)?(?:第三方)?原因|(?:导致|引起|造成|致使|使得|促使|归因于|源于|结果是|原因是)|caus(?:e|al|ation)|confound|lead(?:s|ing)?\s+to|result(?:s|ing)?\s+in|because\s+of)/iu.test(
+      frozenText,
+    );
+  return InterventionPackageReviewRequirements.parse({
+    audit_entire_solution_path: true,
+    causal_direction_required:
+      diagnosticSpec.schema_version === 1 ||
+      diagnosticSpec.causal_direction_required ||
+      hasExplicitCausalMarker,
+  });
+}
+
 export const InterventionPackageReviewFailureCode = z.enum([
   'claim_scope_expansion',
   'reference_incorrect',
@@ -518,6 +636,35 @@ const InterventionPackageReviewCausalDirectionCheck = z
     }
   });
 
+export function interventionRequiredOperationDigest(operationMd: string): string {
+  return sha256CanonicalJson({ operation_md: operationMd });
+}
+
+const InterventionPackageReviewRequiredOperationCheck = z
+  .object({
+    operation_index: z.number().int().min(0).max(11),
+    operation_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    // Server-owned in bound FULL output; provider-facing output omits it.
+    operation_md: z.string().trim().min(1).max(1000),
+    reference_covers_operation: z.boolean(),
+    within_frozen_scope: z.boolean(),
+    decision_basis_md: z.string().trim().min(1).max(320),
+  })
+  .strict();
+
+const InterventionPackageComparatorRequiredOperationCheck =
+  InterventionPackageReviewRequiredOperationCheck.omit({ operation_md: true }).strict();
+
+const InterventionPackageReviewRequiredOperationChecks = z
+  .array(InterventionPackageReviewRequiredOperationCheck)
+  .min(1)
+  .max(12);
+
+const InterventionPackageComparatorRequiredOperationChecks = z
+  .array(InterventionPackageComparatorRequiredOperationCheck)
+  .min(1)
+  .max(12);
+
 export const InterventionPackageReviewDiagnosticCheck = z
   .object({
     kind: InterventionDiagnosticKind,
@@ -532,6 +679,9 @@ export const InterventionPackageReviewDiagnosticCheck = z
     // bare self-certified pass bit.
     independently_derived_answer_md: z.string().trim().min(1).max(480),
     required_operations_md: z.string().trim().min(1).max(320),
+    // Optional only for historical V2 rows. Every new FULL comparator result
+    // carries one bound check per sealed expected_signal.
+    required_operation_checks: InterventionPackageReviewRequiredOperationChecks.optional(),
     reference_correct: z.boolean(),
     within_frozen_scope: z.boolean(),
     discipline_grounded: z.boolean(),
@@ -561,6 +711,7 @@ const InterventionPackageReviewDiagnosticChecks = z
 const InterventionPackageReviewFullDiagnosticCheck =
   InterventionPackageReviewDiagnosticCheck.extend({
     independent_solution_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    required_operation_checks: InterventionPackageReviewRequiredOperationChecks,
   }).strict();
 
 const InterventionPackageReviewFullDiagnosticChecks = z
@@ -581,8 +732,12 @@ const InterventionPackageReviewFullDiagnosticChecks = z
 const InterventionPackageComparatorDiagnosticCheck = InterventionPackageReviewDiagnosticCheck.omit({
   independently_derived_answer_md: true,
   required_operations_md: true,
+  required_operation_checks: true,
 })
-  .extend({ independent_solution_sha256: z.string().regex(/^[a-f0-9]{64}$/) })
+  .extend({
+    independent_solution_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    required_operation_checks: InterventionPackageComparatorRequiredOperationChecks,
+  })
   .strict();
 
 const InterventionPackageComparatorDiagnosticChecks = z
@@ -689,6 +844,9 @@ export const InterventionPackageReviewModelOutputFull = z
         check.reference_correct &&
         check.within_frozen_scope &&
         check.discipline_grounded &&
+        check.required_operation_checks.every(
+          (operation) => operation.reference_covers_operation && operation.within_frozen_scope,
+        ) &&
         !rejectedReverseCausation
       );
     });
@@ -733,6 +891,14 @@ export type InterventionPackageReviewStructuredOutputT = z.infer<
   typeof InterventionPackageReviewStructuredOutput
 >;
 
+const InterventionIndependentRequiredOperation = z
+  .object({
+    operation_index: z.number().int().min(0).max(11),
+    operation_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    operation_md: z.string().min(1).max(1000),
+  })
+  .strict();
+
 export const InterventionIndependentSolutionDiagnosticAudit = z
   .object({
     kind: InterventionDiagnosticKind,
@@ -763,6 +929,7 @@ export const InterventionIndependentSolutionDiagnosticAudit = z
     solver_attempt_task_run_ids: z.array(z.string().trim().min(1).max(240)).min(1).max(2),
     independently_derived_answer_md: z.string().trim().min(1).max(480),
     required_operations_md: z.string().trim().min(1).max(320),
+    required_operations: z.array(InterventionIndependentRequiredOperation).min(1).max(12),
   })
   .strict()
   .superRefine((diagnostic, context) => {
@@ -777,6 +944,27 @@ export const InterventionIndependentSolutionDiagnosticAudit = z
         code: z.ZodIssueCode.custom,
         message: 'selected solver task_run_id must appear exactly once as the final attempt',
       });
+    }
+    const expectedSignals = diagnostic.solver_output.reference_solution.expected_signals;
+    if (diagnostic.required_operations.length !== expectedSignals.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'required_operations must cover every sealed expected_signal exactly once',
+      });
+      return;
+    }
+    for (const [index, operation] of diagnostic.required_operations.entries()) {
+      const expectedOperation = expectedSignals[index];
+      if (
+        operation.operation_index !== index ||
+        operation.operation_md !== expectedOperation ||
+        operation.operation_sha256 !== interventionRequiredOperationDigest(expectedOperation ?? '')
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `required operation ${index} must bind the matching sealed expected_signal`,
+        });
+      }
     }
   });
 
@@ -830,6 +1018,10 @@ const InterventionPackageReviewAuditV2 = z
     review_version: z.literal(INTERVENTION_CONTRACT_VERSION),
     package_digest_sha256: z.string().regex(/^[a-f0-9]{64}$/),
     review_task_run_id: z.string().trim().min(1).max(240),
+    review_attempt_task_run_ids: z
+      .array(z.string().trim().min(1).max(240))
+      .min(1)
+      .max(MAX_INTERVENTION_REVIEW_ATTEMPTS),
     review_task_input_sha256: z.string().regex(/^[a-f0-9]{64}$/),
     independent_solution_audit: InterventionIndependentSolutionAudit,
     result: InterventionPackageReviewModelOutputFull,
@@ -844,12 +1036,27 @@ const InterventionPackageReviewAuditV2 = z
     }
     if (
       audit.independent_solution_audit.diagnostics.some((diagnostic) =>
-        diagnostic.solver_attempt_task_run_ids.includes(audit.review_task_run_id),
+        diagnostic.solver_attempt_task_run_ids.some((taskRunId) =>
+          audit.review_attempt_task_run_ids.includes(taskRunId),
+        ),
       )
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'review task_run_id must differ from every independent solver task_run_id',
+      });
+    }
+    if (
+      new Set(audit.review_attempt_task_run_ids).size !==
+        audit.review_attempt_task_run_ids.length ||
+      audit.review_attempt_task_run_ids.filter(
+        (taskRunId) => taskRunId === audit.review_task_run_id,
+      ).length !== 1 ||
+      audit.review_attempt_task_run_ids.at(-1) !== audit.review_task_run_id
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'selected review task_run_id must appear exactly once as the final attempt',
       });
     }
     const solutionByKind = new Map(
@@ -859,13 +1066,32 @@ const InterventionPackageReviewAuditV2 = z
       ]),
     );
     for (const check of audit.result.diagnostic_checks) {
-      if (
-        check.independent_solution_sha256 !== solutionByKind.get(check.kind)?.solver_output_sha256
-      ) {
+      const sealed = solutionByKind.get(check.kind);
+      if (check.independent_solution_sha256 !== sealed?.solver_output_sha256) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
           message: `review check ${check.kind} must reference its sealed solver output digest`,
         });
+      }
+      if (!sealed || check.required_operation_checks.length !== sealed.required_operations.length) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `review check ${check.kind} must cover every sealed required operation`,
+        });
+        continue;
+      }
+      for (const [index, operationCheck] of check.required_operation_checks.entries()) {
+        const requiredOperation = sealed.required_operations[index];
+        if (
+          operationCheck.operation_index !== requiredOperation?.operation_index ||
+          operationCheck.operation_sha256 !== requiredOperation?.operation_sha256 ||
+          operationCheck.operation_md !== requiredOperation?.operation_md
+        ) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `review check ${check.kind} operation ${index} must bind the sealed operation`,
+          });
+        }
       }
     }
   });
@@ -882,7 +1108,10 @@ export const InterventionPreparationAttempt = z.discriminatedUnion('kind', [
       kind: z.literal('author_failed'),
       attempt: z.number().int().min(1).max(MAX_INTERVENTION_PACKAGE_ATTEMPTS),
       author_task_run_id: z.string().trim().min(1).max(240).optional(),
-      validator_task_run_ids: z.array(z.string().trim().min(1).max(240)).max(6).optional(),
+      validator_task_run_ids: z
+        .array(z.string().trim().min(1).max(240))
+        .max(MAX_INTERVENTION_VALIDATOR_CALLS_PER_PACKAGE)
+        .optional(),
       failure_code: z.string().trim().min(1).max(160),
     })
     .strict(),
@@ -916,6 +1145,7 @@ export function buildInterventionPackageReviewTaskInput(input: {
     snapshot: input.context.snapshot,
     recommendation: input.context.recommendation,
     package: input.packageValue,
+    review_requirements: interventionPackageReviewRequirements(input.context),
     sealed_independent_solutions: input.independentAudit.diagnostics.map((diagnostic) => ({
       kind: diagnostic.kind,
       question_input_sha256: diagnostic.question_input_sha256,
@@ -923,6 +1153,7 @@ export function buildInterventionPackageReviewTaskInput(input: {
       final_answer_md: diagnostic.solver_output.reference_solution.final_answer,
       answer_equivalents_md: diagnostic.solver_output.reference_solution.answer_equivalents,
       expected_signals_md: diagnostic.solver_output.reference_solution.expected_signals,
+      required_operations: diagnostic.required_operations,
       worked_solution_md: diagnostic.solver_output.worked_solution_md,
       confidence: diagnostic.solver_output.confidence,
     })),

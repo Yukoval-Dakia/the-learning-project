@@ -5,6 +5,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import { AgentRunError } from '@/server/ai/agent-run-error';
 import interventionRegressionFixture from '@/server/grounding-gate/fixtures/intervention-review-regressions.v1.json' with {
   type: 'json',
 };
@@ -336,6 +337,38 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
       contract_complete: false,
       retryable: true,
       task_run_ids: ['solver-risky'],
+    });
+  });
+
+  it('retains a persisted AgentRunError attempt id without retrying it as a contract miss', async () => {
+    const result = await runIndependentSolution(
+      {
+        id: 'provider-terminal-failure',
+        kind: 'answer_with_reason',
+        prompt_md:
+          '一项观察研究中，参与补习的学生提升更多。区分观察结果、选择偏差、共同原因和反向因果。',
+        choices_md: null,
+      },
+      {
+        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        runTaskFn: vi.fn(async () => {
+          throw new AgentRunError({
+            kind: 'SolutionGenerateTask',
+            taskRunId: 'solver-provider-failure',
+            subtype: 'api_error_result',
+            apiErrorStatus: 503,
+            errors: ['upstream unavailable'],
+          });
+        }),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'unsupported',
+      contract_complete: false,
+      retryable: false,
+      task_run_ids: ['solver-provider-failure'],
+      reason: expect.stringContaining('upstream unavailable'),
     });
   });
 });

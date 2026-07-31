@@ -40,7 +40,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import type { R2Client } from '../r2';
-import { AgentRunError, isApiErrorSuccessResult } from './agent-run-error';
+import { AgentRunError, bindAgentRunError, isApiErrorSuccessResult } from './agent-run-error';
 import { logMissingMcpServersWarning } from './log';
 import { populateIsolatedSkills } from './populate-skills';
 import type { ResolvedProvider } from './providers';
@@ -645,15 +645,21 @@ export async function runTask(
     try {
       return await runTaskAttempt({ kind, actualInput, ctx, lifecycle });
     } catch (err) {
-      lastErr = err;
+      const boundError = bindAgentRunError({
+        error: err,
+        kind,
+        taskRunId: lifecycle.taskRunId,
+        aborted: lifecycle.aborted,
+      });
+      lastErr = boundError;
       const retry = classifyLifecycleRetry({
         attempt,
         maxAttempts,
         firstAttemptStartedAt,
-        error: err,
+        error: boundError,
       });
-      await lifecycle.finishFailure(err, retry.willRetry ? 'error_retried' : 'error');
-      if (!retry.willRetry) throw err;
+      await lifecycle.finishFailure(boundError, retry.willRetry ? 'error_retried' : 'error');
+      if (!retry.willRetry) throw boundError;
       console.warn('[runTask] task_run_transient_retry', {
         event: 'task_run_transient_retry',
         kind,

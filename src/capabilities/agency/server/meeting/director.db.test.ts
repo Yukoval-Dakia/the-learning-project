@@ -147,11 +147,12 @@ const validProposeArgs = {
   cause_category: CAUSE,
   claim_md: '你把必要条件当成充分条件',
   diagnostic_spec: {
-    schema_version: 1,
+    schema_version: 2,
     target_error_rule_md: '把必要条件当成充分条件。',
     trigger_conditions_md: '题目要求判断一个条件是否足以推出结论。',
     scope_boundary_md: '不推断其它逻辑关系。',
     expected_wrong_answer_signature_md: '把仅必要的条件判断为足够。',
+    causal_direction_required: false,
   },
   evidence_refs: ['att_1', 'att_2'],
 };

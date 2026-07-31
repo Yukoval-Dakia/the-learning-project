@@ -3,8 +3,7 @@ import {
   type InterventionAuthoringContextT,
   guardInterventionPreparationStage,
 } from '@/capabilities/agency/public';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
-import { evaluateConjectureProbeResponseStructure } from '@/core/schema/business';
+import { resolveSubjectProfileForKnowledgeIdsStrict } from '@/capabilities/knowledge/public';
 import {
   INTERVENTION_CONTRACT_VERSION,
   InterventionIndependentSolutionAudit,
@@ -18,23 +17,36 @@ import {
   type InterventionPackageReviewModelOutputFullT,
   InterventionPackageReviewModelOutputV2,
   type InterventionPackageReviewModelOutputV2T,
+  type InterventionPackageReviewRequirementsT,
   InterventionPackageReviewStructuredOutput,
   type InterventionPackageReviewStructuredOutputT,
   type InterventionPackageT,
   InterventionPreparationAttempt,
   type InterventionPreparationAttemptT,
+  MAX_INTERVENTION_REVIEW_ATTEMPTS,
+  MAX_INTERVENTION_SOLVER_ATTEMPTS_PER_DIAGNOSTIC,
   buildInterventionPackageReviewTaskInput,
+  interventionRequiredOperationDigest,
+  validateInterventionPackageDeterministically,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
+import { ai_task_runs } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import { AgentRunError } from '@/server/ai/agent-run-error';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
-import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
+import {
+  type TaskTextResult,
+  type TaskTextRunFn,
+  taskPromptFingerprint,
+} from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import {
   type IndependentSolutionResult,
   runIndependentSolution,
 } from '@/server/quiz/verify-framework';
+import type { SubjectProfile } from '@/subjects/profile';
+import { and, eq } from 'drizzle-orm';
 
 export interface InterventionAuthorDeps {
   runTaskFn?: TaskTextRunFn;
@@ -50,6 +62,32 @@ const reviewOutputSchema = tasks.InterventionPackageReviewTask.structuredOutputS
 const REVIEW_OUTPUT_FORMAT = reviewOutputSchema
   ? zodToJsonSchemaOutputFormat(reviewOutputSchema)
   : undefined;
+
+async function persistValidatorRunBinding(
+  db: Db,
+  input: {
+    taskRunId: string;
+    taskKind: 'SolutionGenerateTask' | 'InterventionPackageReviewTask';
+    taskInputSha256: string;
+    promptFingerprint: string;
+    resultDigest?: string;
+  },
+): Promise<void> {
+  await db
+    .update(ai_task_runs)
+    .set({
+      prompt_fingerprint: input.promptFingerprint,
+      ...(input.resultDigest ? { result_digest: input.resultDigest } : {}),
+    })
+    .where(
+      and(
+        eq(ai_task_runs.id, input.taskRunId),
+        eq(ai_task_runs.task_kind, input.taskKind),
+        eq(ai_task_runs.input_hash, input.taskInputSha256),
+        eq(ai_task_runs.status, 'success'),
+      ),
+    );
+}
 
 function parseTaskOutput<T>(
   result: TaskTextResult,
@@ -125,69 +163,6 @@ export function normalizeInterventionPackageModelOutput(
   return InterventionPackageModelOutput.parse({ ...value, diagnostics });
 }
 
-function normalizeIdentity(value: string): string {
-  return value.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
-}
-
-function answerLeaks(prompt: string, answer: string): boolean {
-  const normalizedAnswer = normalizeIdentity(answer);
-  // Very short tokens occur frequently in prose, so substring matching would
-  // produce excessive false positives. Their leakage remains a reviewer check.
-  if (normalizedAnswer.length < 3) return false;
-  return normalizeIdentity(prompt).includes(normalizedAnswer);
-}
-
-export function validateInterventionPackageDeterministically(
-  context: InterventionAuthoringContextT,
-  packageValue: InterventionPackageT,
-): string[] {
-  const failures: string[] = [];
-  if (
-    packageValue.intervention_id !== context.snapshot.intervention_id ||
-    packageValue.intervention_version !== context.snapshot.intervention_version
-  ) {
-    failures.push('lineage_mismatch');
-  }
-  if (
-    packageValue.method_id !== context.recommendation.method_id ||
-    packageValue.method_definition_version !== context.recommendation.method_definition_version
-  ) {
-    failures.push('method_mismatch');
-  }
-
-  const diagnostics = [
-    packageValue.diagnostics.immediate,
-    packageValue.diagnostics.delayed,
-    packageValue.diagnostics.transfer,
-  ];
-  const promptIdentities = new Set<string>();
-  for (const diagnostic of diagnostics) {
-    if (diagnostic.tested_claim_md !== context.snapshot.conjecture.claim_md) {
-      failures.push(`${diagnostic.kind}:tested_claim_mismatch`);
-    }
-    if (diagnostic.target_error_rule_md !== context.snapshot.conjecture.target_error_rule_md) {
-      failures.push(`${diagnostic.kind}:target_error_mismatch`);
-    }
-    const probeSpec = diagnostic.probe_spec;
-    const promptIdentity = normalizeIdentity(probeSpec.prompt_md);
-    if (promptIdentities.has(promptIdentity)) failures.push(`${diagnostic.kind}:duplicate_prompt`);
-    promptIdentities.add(promptIdentity);
-    for (const code of evaluateConjectureProbeResponseStructure(probeSpec)) {
-      failures.push(`${diagnostic.kind}:${code}`);
-    }
-    if (
-      answerLeaks(probeSpec.prompt_md, probeSpec.reference_md) ||
-      answerLeaks(probeSpec.prompt_md, probeSpec.expected_target_error_answer_md)
-    ) {
-      failures.push(`${diagnostic.kind}:answer_leak`);
-    }
-  }
-  if (!packageValue.diagnostics.transfer.context_change_md.trim()) {
-    failures.push('transfer:context_change_missing');
-  }
-  return [...new Set(failures)].sort();
-}
-
 /**
  * Bind the reviewer's auditable per-diagnostic findings to the closed verdict.
  * This never repairs package content. It only prevents a contradictory bare
@@ -207,6 +182,10 @@ export function enforceInterventionPackageReviewDecision(
     }
     if (!check.within_frozen_scope) {
       failureCodes.add('claim_scope_expansion');
+    }
+    for (const operation of check.required_operation_checks ?? []) {
+      if (!operation.reference_covers_operation) failureCodes.add('reference_incorrect');
+      if (!operation.within_frozen_scope) failureCodes.add('claim_scope_expansion');
     }
   }
   const packageChecks = review.package_checks;
@@ -242,7 +221,7 @@ export function enforceInterventionPackageReviewDecision(
 
 const INTERVENTION_DIAGNOSTIC_KINDS = ['immediate', 'delayed', 'transfer'] as const;
 
-type ResolvedSubjectProfile = Awaited<ReturnType<typeof resolveSubjectProfileForKnowledgeIds>>;
+type ResolvedSubjectProfile = SubjectProfile;
 
 function boundedAuditText(value: string, maxLength: number): string {
   const normalized = value.trim();
@@ -265,6 +244,10 @@ async function runInterventionIndependentSolutions(input: {
   const taskRunIds: string[] = [];
   const auditDiagnostics: InterventionIndependentSolutionAuditT['diagnostics'] = [];
   const packageDigest = sha256CanonicalJson(input.packageValue);
+  const solverPromptFingerprint = taskPromptFingerprint(
+    'SolutionGenerateTask',
+    input.subjectProfile,
+  );
 
   for (const kind of INTERVENTION_DIAGNOSTIC_KINDS) {
     const diagnostic = input.packageValue.diagnostics[kind];
@@ -276,6 +259,17 @@ async function runInterventionIndependentSolutions(input: {
       image_refs: null,
       figures: null,
     } as const;
+    const blindTaskInput = {
+      prompt_md: blindQuestion.prompt_md,
+      kind: blindQuestion.kind,
+      subject_id: input.subjectProfile.id,
+      choices_md: [],
+      existing_answers_hint: null,
+      existing_analysis_hint: null,
+      figures_hint: null,
+      prompt_image_refs: [],
+    };
+    const blindTaskInputSha256 = sha256CanonicalJson(blindTaskInput);
     const solverAttemptTaskRunIds: string[] = [];
     let solved: Extract<IndependentSolutionResult, { status: 'solved' }> | null = null;
     let failureDetail = '';
@@ -283,7 +277,11 @@ async function runInterventionIndependentSolutions(input: {
     // response can therefore be syntactically repairable yet still miss the
     // complete SolutionGenerateOutput contract. Retry that exact blind input at
     // most once; never accept a partial result, and audit every attempted run.
-    for (let solverAttempt = 1; solverAttempt <= 2; solverAttempt += 1) {
+    for (
+      let solverAttempt = 1;
+      solverAttempt <= MAX_INTERVENTION_SOLVER_ATTEMPTS_PER_DIAGNOSTIC;
+      solverAttempt += 1
+    ) {
       const guardFailure = await input.beforeEachPaidCall();
       if (guardFailure) {
         return { status: 'invalid', failureCode: guardFailure, taskRunIds };
@@ -293,17 +291,38 @@ async function runInterventionIndependentSolutions(input: {
         runTaskFn: input.runTaskFn,
         profile: { id: input.subjectProfile.id, full: input.subjectProfile },
       });
+      const attemptTaskRunIds =
+        attempt.status === 'solved' ? [attempt.task_run_id] : (attempt.task_run_ids ?? []);
+      for (const taskRunId of attemptTaskRunIds) {
+        await persistValidatorRunBinding(input.db, {
+          taskRunId,
+          taskKind: 'SolutionGenerateTask',
+          taskInputSha256: blindTaskInputSha256,
+          promptFingerprint: solverPromptFingerprint,
+          ...(attempt.status === 'solved' && taskRunId === attempt.task_run_id
+            ? { resultDigest: attempt.solver_output_sha256 }
+            : {}),
+        });
+      }
       if (attempt.status === 'solved') {
+        if (attempt.task_input_sha256 !== blindTaskInputSha256) {
+          return {
+            status: 'invalid',
+            failureCode: `independent_solution_input_mismatch:${kind}`,
+            taskRunIds: [...taskRunIds, attempt.task_run_id],
+          };
+        }
         solved = attempt;
         taskRunIds.push(attempt.task_run_id);
         solverAttemptTaskRunIds.push(attempt.task_run_id);
         break;
       }
-      const attemptTaskRunIds = attempt.task_run_ids ?? [];
       taskRunIds.push(...attemptTaskRunIds);
       solverAttemptTaskRunIds.push(...attemptTaskRunIds);
       failureDetail = attempt.reason;
-      if (!attempt.retryable || solverAttempt === 2) break;
+      if (!attempt.retryable || solverAttempt === MAX_INTERVENTION_SOLVER_ATTEMPTS_PER_DIAGNOSTIC) {
+        break;
+      }
     }
     if (!solved) {
       return {
@@ -345,6 +364,13 @@ async function runInterventionIndependentSolutions(input: {
       solver_attempt_task_run_ids: solverAttemptTaskRunIds,
       independently_derived_answer_md: independentlyDerivedAnswer,
       required_operations_md: requiredOperations,
+      required_operations: solution.reference_solution.expected_signals.map(
+        (operationMd, operationIndex) => ({
+          operation_index: operationIndex,
+          operation_sha256: interventionRequiredOperationDigest(operationMd),
+          operation_md: operationMd,
+        }),
+      ),
     });
   }
 
@@ -362,6 +388,10 @@ async function runInterventionIndependentSolutions(input: {
 export function bindInterventionPackageReviewDecision(
   value: unknown,
   independentAudit: InterventionIndependentSolutionAuditT,
+  requirements: InterventionPackageReviewRequirementsT = {
+    audit_entire_solution_path: true,
+    causal_direction_required: false,
+  },
 ): InterventionPackageReviewModelOutputFullT {
   const modelValue: InterventionPackageReviewStructuredOutputT =
     InterventionPackageReviewStructuredOutput.parse(value);
@@ -376,11 +406,33 @@ export function bindInterventionPackageReviewDecision(
       if (check.independent_solution_sha256 !== sealed.solver_output_sha256) {
         throw new Error(`comparator referenced the wrong sealed solution for ${check.kind}`);
       }
+      if (requirements.causal_direction_required && !check.causal_direction_check.applies) {
+        throw new Error(`comparator omitted required causal-direction review for ${check.kind}`);
+      }
+      if (check.required_operation_checks.length !== sealed.required_operations.length) {
+        throw new Error(`comparator omitted required solution operations for ${check.kind}`);
+      }
+      const requiredOperationChecks = check.required_operation_checks.map(
+        (operationCheck, index) => {
+          const sealedOperation = sealed.required_operations[index];
+          if (
+            !sealedOperation ||
+            operationCheck.operation_index !== sealedOperation.operation_index ||
+            operationCheck.operation_sha256 !== sealedOperation.operation_sha256
+          ) {
+            throw new Error(
+              `comparator referenced the wrong sealed operation ${index} for ${check.kind}`,
+            );
+          }
+          return { ...operationCheck, operation_md: sealedOperation.operation_md };
+        },
+      );
       return {
         ...check,
         independent_solution_sha256: sealed.solver_output_sha256,
         independently_derived_answer_md: sealed.independently_derived_answer_md,
         required_operations_md: sealed.required_operations_md,
+        required_operation_checks: requiredOperationChecks,
       };
     }),
   });
@@ -401,6 +453,12 @@ function invalidComparatorReview(
       independent_solution_sha256: diagnostic.solver_output_sha256,
       independently_derived_answer_md: diagnostic.independently_derived_answer_md,
       required_operations_md: diagnostic.required_operations_md,
+      required_operation_checks: diagnostic.required_operations.map((operation) => ({
+        ...operation,
+        reference_covers_operation: false,
+        within_frozen_scope: false,
+        decision_basis_md: 'Comparator output failed before this required operation was reviewed.',
+      })),
       reference_correct: false,
       within_frozen_scope: false,
       discipline_grounded: false,
@@ -435,7 +493,7 @@ function invalidComparatorReview(
 async function runPackageAuthor(
   runTaskFn: TaskTextRunFn,
   context: InterventionAuthoringContextT,
-  subjectProfile: Awaited<ReturnType<typeof resolveSubjectProfileForKnowledgeIds>>,
+  subjectProfile: ResolvedSubjectProfile,
 ): Promise<
   | { status: 'ok'; package: InterventionPackageT }
   | { status: 'invalid'; taskRunId?: string; failureCode: string }
@@ -491,51 +549,140 @@ async function runPackageAuthor(
 }
 
 async function runPackageReview(
+  db: Db,
   runTaskFn: TaskTextRunFn,
   context: InterventionAuthoringContextT,
   packageValue: InterventionPackageT,
   subjectProfile: ResolvedSubjectProfile,
   independentAudit: InterventionIndependentSolutionAuditT,
+  beforeEachPaidCall: () => Promise<string | null>,
 ): Promise<
   | { status: 'ok'; review: InterventionPackageReviewAuditT }
-  | { status: 'invalid'; failureCode: string }
+  | { status: 'invalid'; failureCode: string; taskRunIds: string[]; failureDetail?: string }
 > {
+  const packageDigest = sha256CanonicalJson(packageValue);
+  if (independentAudit.package_digest_sha256 !== packageDigest) {
+    return {
+      status: 'invalid',
+      failureCode: 'independent_solution_package_digest_mismatch',
+      taskRunIds: [],
+    };
+  }
   const reviewTaskInput = buildInterventionPackageReviewTaskInput({
     context,
     packageValue,
     independentAudit,
   });
-  const result = await runTaskFn('InterventionPackageReviewTask', reviewTaskInput, {
-    subjectProfile,
-    ...(REVIEW_OUTPUT_FORMAT ? { outputFormat: REVIEW_OUTPUT_FORMAT } : {}),
-  });
-  if (!result.task_run_id) {
-    return { status: 'invalid', failureCode: 'review_task_run_id_missing' };
-  }
+  const reviewTaskInputSha256 = sha256CanonicalJson(reviewTaskInput);
+  const promptFingerprint = taskPromptFingerprint('InterventionPackageReviewTask', subjectProfile);
+  const reviewAttemptTaskRunIds: string[] = [];
+  let failureDetail = '';
 
-  let review: InterventionPackageReviewModelOutputFullT;
-  try {
-    review = parseTaskOutput(result, 'intervention package review', (value) =>
-      bindInterventionPackageReviewDecision(value, independentAudit),
-    );
-  } catch {
-    review = invalidComparatorReview(independentAudit);
+  for (
+    let reviewAttempt = 1;
+    reviewAttempt <= MAX_INTERVENTION_REVIEW_ATTEMPTS;
+    reviewAttempt += 1
+  ) {
+    const guardFailure = await beforeEachPaidCall();
+    if (guardFailure) {
+      return {
+        status: 'invalid',
+        failureCode: guardFailure,
+        taskRunIds: reviewAttemptTaskRunIds,
+        ...(failureDetail ? { failureDetail } : {}),
+      };
+    }
+    let result: TaskTextResult;
+    try {
+      result = await runTaskFn('InterventionPackageReviewTask', reviewTaskInput, {
+        subjectProfile,
+        ...(REVIEW_OUTPUT_FORMAT ? { outputFormat: REVIEW_OUTPUT_FORMAT } : {}),
+      });
+    } catch (error) {
+      // A lifecycle-started runner error already owns a durable paid-attempt id.
+      // Return it as an invalid validator attempt so the enclosing package slot
+      // is appended and consumed; do not let pg-boss redelivery reset the same
+      // author/solver/comparator budget. Custom runners without an id still
+      // consume the package slot rather than escaping into an unbounded retry.
+      const failedTaskRunIds = [...reviewAttemptTaskRunIds];
+      if (error instanceof AgentRunError && !failedTaskRunIds.includes(error.taskRunId)) {
+        failedTaskRunIds.push(error.taskRunId);
+      }
+      return {
+        status: 'invalid',
+        failureCode: 'review_runner_failure',
+        taskRunIds: failedTaskRunIds,
+        failureDetail: error instanceof Error ? error.message : String(error),
+      };
+    }
+    if (!result.task_run_id) {
+      return {
+        status: 'invalid',
+        failureCode: 'review_task_run_id_missing',
+        taskRunIds: reviewAttemptTaskRunIds,
+      };
+    }
+    reviewAttemptTaskRunIds.push(result.task_run_id);
+    await persistValidatorRunBinding(db, {
+      taskRunId: result.task_run_id,
+      taskKind: 'InterventionPackageReviewTask',
+      taskInputSha256: reviewTaskInputSha256,
+      promptFingerprint,
+    });
+
+    let review: InterventionPackageReviewModelOutputFullT;
+    try {
+      review = parseTaskOutput(result, 'intervention package review', (value) =>
+        bindInterventionPackageReviewDecision(
+          value,
+          independentAudit,
+          reviewTaskInput.review_requirements,
+        ),
+      );
+    } catch (error) {
+      const issues =
+        isRecord(error) && Array.isArray(error.issues)
+          ? error.issues
+              .slice(0, 4)
+              .map((issue) =>
+                isRecord(issue)
+                  ? `${Array.isArray(issue.path) ? issue.path.join('.') : '<root>'}:${String(issue.code ?? 'invalid')}`
+                  : 'invalid',
+              )
+              .join(', ')
+          : error instanceof Error
+            ? error.name
+            : 'invalid';
+      failureDetail = `comparator output did not satisfy the FULL review contract (${issues})`;
+      console.warn('[intervention-author] comparator contract rejected', {
+        attempt: reviewAttempt,
+        issues,
+      });
+      if (reviewAttempt < MAX_INTERVENTION_REVIEW_ATTEMPTS) continue;
+      review = invalidComparatorReview(independentAudit);
+    }
+
+    await persistValidatorRunBinding(db, {
+      taskRunId: result.task_run_id,
+      taskKind: 'InterventionPackageReviewTask',
+      taskInputSha256: reviewTaskInputSha256,
+      promptFingerprint,
+      resultDigest: sha256CanonicalJson(review),
+    });
+    return {
+      status: 'ok',
+      review: InterventionPackageReviewAudit.parse({
+        review_version: INTERVENTION_CONTRACT_VERSION,
+        package_digest_sha256: packageDigest,
+        review_task_run_id: result.task_run_id,
+        review_attempt_task_run_ids: reviewAttemptTaskRunIds,
+        review_task_input_sha256: reviewTaskInputSha256,
+        independent_solution_audit: independentAudit,
+        result: review,
+      }),
+    };
   }
-  const packageDigest = sha256CanonicalJson(packageValue);
-  if (independentAudit.package_digest_sha256 !== packageDigest) {
-    return { status: 'invalid', failureCode: 'independent_solution_package_digest_mismatch' };
-  }
-  return {
-    status: 'ok',
-    review: InterventionPackageReviewAudit.parse({
-      review_version: INTERVENTION_CONTRACT_VERSION,
-      package_digest_sha256: packageDigest,
-      review_task_run_id: result.task_run_id,
-      review_task_input_sha256: sha256CanonicalJson(reviewTaskInput),
-      independent_solution_audit: independentAudit,
-      result: review,
-    }),
-  };
+  throw new Error('unreachable comparator retry state');
 }
 
 /**
@@ -563,29 +710,24 @@ export async function reviewInterventionPackageCandidate(input: {
   });
   if (independentlySolved.status === 'invalid') return independentlySolved;
 
-  const comparatorGuardFailure = await beforeEachPaidCall();
-  if (comparatorGuardFailure) {
-    return {
-      status: 'invalid',
-      failureCode: comparatorGuardFailure,
-      taskRunIds: independentlySolved.audit.diagnostics.flatMap(
-        (diagnostic) => diagnostic.solver_attempt_task_run_ids,
-      ),
-    };
-  }
   const reviewed = await runPackageReview(
+    input.db,
     input.runTaskFn,
     input.context,
     input.packageValue,
     input.subjectProfile,
     independentlySolved.audit,
+    beforeEachPaidCall,
   );
   if (reviewed.status === 'invalid') {
     return {
       ...reviewed,
-      taskRunIds: independentlySolved.audit.diagnostics.flatMap(
-        (diagnostic) => diagnostic.solver_attempt_task_run_ids,
-      ),
+      taskRunIds: [
+        ...independentlySolved.audit.diagnostics.flatMap(
+          (diagnostic) => diagnostic.solver_attempt_task_run_ids,
+        ),
+        ...reviewed.taskRunIds,
+      ],
     };
   }
   return reviewed;
@@ -617,7 +759,7 @@ export async function authorInterventionPackage(
     });
   }
   const context = authorGuard.context;
-  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, [
+  const subjectProfile = await resolveSubjectProfileForKnowledgeIdsStrict(db, [
     context.snapshot.conjecture.knowledge_id,
   ]);
   const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);

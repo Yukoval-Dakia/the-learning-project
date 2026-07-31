@@ -36,7 +36,7 @@ import {
   CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH,
   type ConjectureAbstainDraftT,
   type ConjectureAbstainReasonT,
-  ConjectureHypothesisDraft,
+  ConjectureHypothesisAuthorDraft,
   type ConjectureHypothesisDraftT,
   type ConjectureHypothesisProposalDraftT,
   type ConjectureModelAbstainDraftT,
@@ -140,7 +140,7 @@ export const JUDGE_ONLY_CONFIDENCE_CAP = 0.5;
 export const MIN_GROUNDED_PROPOSAL_EVIDENCE = 2;
 
 const ConjectureHypothesisStructuredOutput = z.object({
-  draft: ConjectureHypothesisDraft,
+  draft: ConjectureHypothesisAuthorDraft,
 });
 
 interface GroundedHypothesisSample {
@@ -149,7 +149,7 @@ interface GroundedHypothesisSample {
 }
 
 function parseSampleDraft(result: TaskTextResult): ConjectureHypothesisDraftT | null {
-  const parsed = parseTaskStructuredOutput(result, ConjectureHypothesisDraft, 'draft');
+  const parsed = parseTaskStructuredOutput(result, ConjectureHypothesisAuthorDraft, 'draft');
   if (!parsed) return null;
   return parsed.kind === 'abstain'
     ? { ...parsed, evidence_event_ids: parsed.evidence_event_ids ?? [] }
@@ -398,9 +398,29 @@ async function deduplicateHypotheses(
     flatSorted.length === hypotheses.length && flatSorted.every((v, i) => v === i);
   if (!isPartition) return failure(result);
 
+  // The model may not erase a frozen semantic type. Refine every returned
+  // semantic group by the server-owned V2 causal-direction bit before it can
+  // contribute to agreement. This is deliberately a deterministic
+  // postcondition rather than prompt-only enforcement: a mixed group such as
+  // [true, false, true] becomes [[true, true], [false]], never a false quorum.
+  const causallyHomogeneousGroups = parsed.data.groups.flatMap((group) => {
+    const byCausalRequirement = new Map<string, number[]>();
+    for (const index of group) {
+      const diagnosticSpec = hypotheses[index]?.diagnostic_spec;
+      const causalSemanticType =
+        diagnosticSpec?.schema_version === 2
+          ? `v2:${diagnosticSpec.causal_direction_required}`
+          : 'v1:conservative';
+      const bucket = byCausalRequirement.get(causalSemanticType) ?? [];
+      bucket.push(index);
+      byCausalRequirement.set(causalSemanticType, bucket);
+    }
+    return [...byCausalRequirement.values()];
+  });
+
   return {
     ok: true,
-    groups: parsed.data.groups,
+    groups: causallyHomogeneousGroups,
     cost_usd: result.cost_usd ?? 0,
     task_run_id: result.task_run_id,
   };

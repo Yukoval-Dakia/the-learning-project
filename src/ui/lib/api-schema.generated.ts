@@ -21687,14 +21687,24 @@ export interface operations {
                       confidence: number;
                       /** @default false */
                       corrected_by_owner: boolean;
-                      diagnostic_spec?: {
-                        expected_wrong_answer_signature_md: string;
-                        /** @enum {number} */
-                        schema_version: 1;
-                        scope_boundary_md: string;
-                        target_error_rule_md: string;
-                        trigger_conditions_md: string;
-                      };
+                      diagnostic_spec?:
+                        | {
+                            expected_wrong_answer_signature_md: string;
+                            /** @enum {number} */
+                            schema_version: 1;
+                            scope_boundary_md: string;
+                            target_error_rule_md: string;
+                            trigger_conditions_md: string;
+                          }
+                        | {
+                            causal_direction_required: boolean;
+                            expected_wrong_answer_signature_md: string;
+                            /** @enum {number} */
+                            schema_version: 2;
+                            scope_boundary_md: string;
+                            target_error_rule_md: string;
+                            trigger_conditions_md: string;
+                          };
                       discriminating: boolean;
                       followup_probe_md?: string;
                       followup_probe_reference_md?: string;
@@ -21954,14 +21964,24 @@ export interface operations {
                             reviewed_hypothesis: {
                               cause_category: string;
                               claim_md: string;
-                              diagnostic_spec: {
-                                expected_wrong_answer_signature_md: string;
-                                /** @enum {number} */
-                                schema_version: 1;
-                                scope_boundary_md: string;
-                                target_error_rule_md: string;
-                                trigger_conditions_md: string;
-                              };
+                              diagnostic_spec:
+                                | {
+                                    expected_wrong_answer_signature_md: string;
+                                    /** @enum {number} */
+                                    schema_version: 1;
+                                    scope_boundary_md: string;
+                                    target_error_rule_md: string;
+                                    trigger_conditions_md: string;
+                                  }
+                                | {
+                                    causal_direction_required: boolean;
+                                    expected_wrong_answer_signature_md: string;
+                                    /** @enum {number} */
+                                    schema_version: 2;
+                                    scope_boundary_md: string;
+                                    target_error_rule_md: string;
+                                    trigger_conditions_md: string;
+                                  };
                               evidence_event_ids: string[];
                               /** @enum {string} */
                               kind: 'proposal';
@@ -22101,14 +22121,24 @@ export interface operations {
                             reviewed_hypothesis: {
                               cause_category: string;
                               claim_md: string;
-                              diagnostic_spec: {
-                                expected_wrong_answer_signature_md: string;
-                                /** @enum {number} */
-                                schema_version: 1;
-                                scope_boundary_md: string;
-                                target_error_rule_md: string;
-                                trigger_conditions_md: string;
-                              };
+                              diagnostic_spec:
+                                | {
+                                    expected_wrong_answer_signature_md: string;
+                                    /** @enum {number} */
+                                    schema_version: 1;
+                                    scope_boundary_md: string;
+                                    target_error_rule_md: string;
+                                    trigger_conditions_md: string;
+                                  }
+                                | {
+                                    causal_direction_required: boolean;
+                                    expected_wrong_answer_signature_md: string;
+                                    /** @enum {number} */
+                                    schema_version: 2;
+                                    scope_boundary_md: string;
+                                    target_error_rule_md: string;
+                                    trigger_conditions_md: string;
+                                  };
                               evidence_event_ids: string[];
                               /** @enum {string} */
                               kind: 'proposal';
@@ -23037,14 +23067,24 @@ export interface operations {
                       confidence: number;
                       /** @default false */
                       corrected_by_owner: boolean;
-                      diagnostic_spec?: {
-                        expected_wrong_answer_signature_md: string;
-                        /** @enum {number} */
-                        schema_version: 1;
-                        scope_boundary_md: string;
-                        target_error_rule_md: string;
-                        trigger_conditions_md: string;
-                      };
+                      diagnostic_spec?:
+                        | {
+                            expected_wrong_answer_signature_md: string;
+                            /** @enum {number} */
+                            schema_version: 1;
+                            scope_boundary_md: string;
+                            target_error_rule_md: string;
+                            trigger_conditions_md: string;
+                          }
+                        | {
+                            causal_direction_required: boolean;
+                            expected_wrong_answer_signature_md: string;
+                            /** @enum {number} */
+                            schema_version: 2;
+                            scope_boundary_md: string;
+                            target_error_rule_md: string;
+                            trigger_conditions_md: string;
+                          };
                       discriminating: boolean;
                       followup_probe_md?: string;
                       followup_probe_reference_md?: string;
@@ -23304,14 +23344,24 @@ export interface operations {
                             reviewed_hypothesis: {
                               cause_category: string;
                               claim_md: string;
-                              diagnostic_spec: {
-                                expected_wrong_answer_signature_md: string;
-                                /** @enum {number} */
-                                schema_version: 1;
-                                scope_boundary_md: string;
-                                target_error_rule_md: string;
-                                trigger_conditions_md: string;
-                              };
+                              diagnostic_spec:
+                                | {
+                                    expected_wrong_answer_signature_md: string;
+                                    /** @enum {number} */
+                                    schema_version: 1;
+                                    scope_boundary_md: string;
+                                    target_error_rule_md: string;
+                                    trigger_conditions_md: string;
+                                  }
+                                | {
+                                    causal_direction_required: boolean;
+                                    expected_wrong_answer_signature_md: string;
+                                    /** @enum {number} */
+                                    schema_version: 2;
+                                    scope_boundary_md: string;
+                                    target_error_rule_md: string;
+                                    trigger_conditions_md: string;
+                                  };
                               evidence_event_ids: string[];
                               /** @enum {string} */
                               kind: 'proposal';
@@ -23451,14 +23501,24 @@ export interface operations {
                             reviewed_hypothesis: {
                               cause_category: string;
                               claim_md: string;
-                              diagnostic_spec: {
-                                expected_wrong_answer_signature_md: string;
-                                /** @enum {number} */
-                                schema_version: 1;
-                                scope_boundary_md: string;
-                                target_error_rule_md: string;
-                                trigger_conditions_md: string;
-                              };
+                              diagnostic_spec:
+                                | {
+                                    expected_wrong_answer_signature_md: string;
+                                    /** @enum {number} */
+                                    schema_version: 1;
+                                    scope_boundary_md: string;
+                                    target_error_rule_md: string;
+                                    trigger_conditions_md: string;
+                                  }
+                                | {
+                                    causal_direction_required: boolean;
+                                    expected_wrong_answer_signature_md: string;
+                                    /** @enum {number} */
+                                    schema_version: 2;
+                                    scope_boundary_md: string;
+                                    target_error_rule_md: string;
+                                    trigger_conditions_md: string;
+                                  };
                               evidence_event_ids: string[];
                               /** @enum {string} */
                               kind: 'proposal';

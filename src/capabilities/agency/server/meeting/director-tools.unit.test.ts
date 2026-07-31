@@ -94,11 +94,12 @@ function validProposeArgs(overrides: Record<string, unknown> = {}) {
     cause_category: 'concept_confusion',
     claim_md: '你把必要条件当成充分条件',
     diagnostic_spec: {
-      schema_version: 1,
+      schema_version: 2,
       target_error_rule_md: '把必要条件当成充分条件。',
       trigger_conditions_md: '题目要求判断条件是否足以推出结论。',
       scope_boundary_md: '不推断其它逻辑关系。',
       expected_wrong_answer_signature_md: '把仅必要的条件判断为足够。',
+      causal_direction_required: false,
     },
     evidence_refs: ['att_1', 'att_2'],
     ...overrides,
@@ -288,7 +289,10 @@ describe('propose_conjecture — server-enforced single writer', () => {
     expect(change.confidence).toBe(DIRECTOR_FIXED_CONFIDENCE); // fixed, never LLM-reported
     expect(change.recurrence_count).toBe(3); // from the matching cell
     expect(change.corrected_by_owner).toBe(false);
-    expect(change.diagnostic_spec).toMatchObject({ schema_version: 1 });
+    expect(change.diagnostic_spec).toMatchObject({
+      schema_version: 2,
+      causal_direction_required: false,
+    });
     expect(change.probe_quality).toMatchObject({ passed: true });
     expect(change.probe_spec?.expected_target_error_answer_md).toBe('A 足以推出 B。');
   });
@@ -529,6 +533,19 @@ describe('propose_conjecture — server-enforced single writer', () => {
       expect(h.proposals).toHaveLength(0);
       expect(h.caps.proposeCount).toBe(0);
     }
+  });
+
+  it('rejects newly authored historical V1 DiagnosticSpec at the tool boundary', async () => {
+    const h = build();
+    const { causal_direction_required: _causal, ...legacy } = validProposeArgs()
+      .diagnostic_spec as Record<string, unknown>;
+    const res = await callTool(
+      'propose_conjecture',
+      validProposeArgs({ diagnostic_spec: { ...legacy, schema_version: 1 } }),
+    );
+    expect(res.ok).toBe(false);
+    expect(h.proposals).toHaveLength(0);
+    expect(h.caps.proposeCount).toBe(0);
   });
 
   it('rejects when no first-hand evidence ref survives the agent_note filter', async () => {

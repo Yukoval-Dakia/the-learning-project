@@ -20,6 +20,7 @@ export {
 export {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
+  resolveSubjectProfileForKnowledgeIdsStrict,
 } from './server/subject-profile';
 export { tagKnowledge } from './server/tag-knowledge';
 export type { NameKcFn } from './server/tag-knowledge';

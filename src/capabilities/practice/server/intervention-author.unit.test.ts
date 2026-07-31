@@ -1,7 +1,17 @@
 import {
+  INTERVENTION_CONTRACT_VERSION,
+  InterventionAuthoringContext,
   InterventionIndependentSolutionAudit,
+  InterventionPackage,
+  InterventionPackageReviewAudit,
   type InterventionPackageReviewDiagnosticCheckT,
   InterventionPackageReviewModelOutput,
+  MAX_INTERVENTION_PREPARATION_CALLS_PER_DELIVERY,
+  MAX_INTERVENTION_REVIEW_EVAL_CALLS_PER_CASE,
+  MAX_INTERVENTION_VALIDATOR_CALLS_PER_PACKAGE,
+  buildInterventionPackageReviewTaskInput,
+  interventionPackageReviewRequirements,
+  interventionRequiredOperationDigest,
 } from '@/core/schema/intervention';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import interventionRegressionFixture from '@/server/grounding-gate/fixtures/intervention-review-regressions.v1.json' with {
@@ -155,8 +165,8 @@ describe('normalizeInterventionPackageModelOutput', () => {
 });
 
 describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () => {
-  function audit() {
-    const fixture = interventionRegressionFixture.cases[0];
+  function audit(caseIndex = 0) {
+    const fixture = interventionRegressionFixture.cases[caseIndex];
     if (!fixture) throw new Error('missing complex area regression fixture');
     return InterventionIndependentSolutionAudit.parse({
       validation_protocol_version: 1,
@@ -200,6 +210,13 @@ describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () 
           solver_attempt_task_run_ids: [`blind-${index + 1}`],
           independently_derived_answer_md: solverOutput.reference_solution.final_answer,
           required_operations_md: solverOutput.reference_solution.expected_signals.join('；'),
+          required_operations: solverOutput.reference_solution.expected_signals.map(
+            (operationMd, operationIndex) => ({
+              operation_index: operationIndex,
+              operation_sha256: interventionRequiredOperationDigest(operationMd),
+              operation_md: operationMd,
+            }),
+          ),
         };
       }),
     });
@@ -213,6 +230,13 @@ describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () 
       diagnostic_checks: independentAudit.diagnostics.map((diagnostic) => ({
         kind: diagnostic.kind,
         independent_solution_sha256: diagnostic.solver_output_sha256,
+        required_operation_checks: diagnostic.required_operations.map((operation) => ({
+          operation_index: operation.operation_index,
+          operation_sha256: operation.operation_sha256,
+          reference_covers_operation: true,
+          within_frozen_scope: true,
+          decision_basis_md: 'reference 覆盖该步骤，且该步骤位于冻结范围内。',
+        })),
         reference_correct: true,
         within_frozen_scope: true,
         discipline_grounded: true,
@@ -243,6 +267,13 @@ describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () 
       independent_solution_sha256: independentAudit.diagnostics[2]?.solver_output_sha256,
       independently_derived_answer_md: '-5(w-4)² = -5w²+40w-80 平方米',
       required_operations_md: expect.stringContaining('面积=长×宽'),
+      required_operation_checks: [
+        expect.objectContaining({
+          operation_index: 0,
+          operation_md: expect.stringContaining('面积=长×宽'),
+        }),
+        expect.objectContaining({ operation_index: 1 }),
+      ],
     });
 
     const mismatched = comparatorOutput(independentAudit);
@@ -250,6 +281,12 @@ describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () 
     mismatched.diagnostic_checks[2].independent_solution_sha256 = 'f'.repeat(64);
     expect(() => bindInterventionPackageReviewDecision(mismatched, independentAudit)).toThrow(
       'wrong sealed solution',
+    );
+
+    const missingOperation = comparatorOutput(independentAudit);
+    missingOperation.diagnostic_checks[2]?.required_operation_checks.pop();
+    expect(() => bindInterventionPackageReviewDecision(missingOperation, independentAudit)).toThrow(
+      'omitted required solution operations',
     );
   });
 
@@ -262,6 +299,103 @@ describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () 
       verdict: 'fail',
       failure_codes: ['material_not_grounded'],
     });
+  });
+
+  it('derives causal review requirements only from the frozen conjecture and forbids applies=false', () => {
+    const causalFixture = interventionRegressionFixture.cases[2];
+    const mathFixture = interventionRegressionFixture.cases[3];
+    const yuwenFixture = interventionRegressionFixture.cases[4];
+    if (!causalFixture || !mathFixture || !yuwenFixture) throw new Error('missing regressions');
+
+    expect(
+      interventionPackageReviewRequirements(
+        InterventionAuthoringContext.parse(causalFixture.context),
+      ),
+    ).toEqual({ audit_entire_solution_path: true, causal_direction_required: true });
+    for (const fixture of [mathFixture, yuwenFixture]) {
+      expect(
+        interventionPackageReviewRequirements(InterventionAuthoringContext.parse(fixture.context)),
+      ).toEqual({ audit_entire_solution_path: true, causal_direction_required: false });
+    }
+
+    const mislabeledCauses = structuredClone(mathFixture.context);
+    mislabeledCauses.snapshot.conjecture.claim_md = '你把同时出现当成甲导致乙的充分证据。';
+    expect(
+      interventionPackageReviewRequirements(InterventionAuthoringContext.parse(mislabeledCauses)),
+    ).toEqual({ audit_entire_solution_path: true, causal_direction_required: true });
+
+    const legacyWithoutExplicitType = structuredClone(mathFixture.context);
+    const { causal_direction_required: _causal, ...legacyDiagnosticSpec } =
+      legacyWithoutExplicitType.snapshot.conjecture.diagnostic_spec;
+    legacyWithoutExplicitType.snapshot.conjecture.diagnostic_spec = {
+      ...legacyDiagnosticSpec,
+      schema_version: 1,
+    } as never;
+    expect(
+      interventionPackageReviewRequirements(
+        InterventionAuthoringContext.parse(legacyWithoutExplicitType),
+      ),
+    ).toEqual({ audit_entire_solution_path: true, causal_direction_required: true });
+
+    const independentAudit = audit(2);
+    const context = InterventionAuthoringContext.parse(causalFixture.context);
+    const reviewInput = buildInterventionPackageReviewTaskInput({
+      context,
+      packageValue: InterventionPackage.parse(causalFixture.package),
+      independentAudit,
+    });
+    expect(reviewInput.review_requirements.causal_direction_required).toBe(true);
+    expect(() =>
+      bindInterventionPackageReviewDecision(
+        comparatorOutput(independentAudit),
+        independentAudit,
+        reviewInput.review_requirements,
+      ),
+    ).toThrow('omitted required causal-direction review');
+  });
+
+  it('seals unique ordered comparator attempts and pins the bounded call envelope', () => {
+    expect(MAX_INTERVENTION_VALIDATOR_CALLS_PER_PACKAGE).toBe(8);
+    expect(MAX_INTERVENTION_PREPARATION_CALLS_PER_DELIVERY).toBe(19);
+    expect(MAX_INTERVENTION_REVIEW_EVAL_CALLS_PER_CASE).toBe(8);
+
+    const independentAudit = audit();
+    const result = bindInterventionPackageReviewDecision(
+      comparatorOutput(independentAudit),
+      independentAudit,
+    );
+    const base = {
+      review_version: INTERVENTION_CONTRACT_VERSION,
+      package_digest_sha256: independentAudit.package_digest_sha256,
+      review_task_run_id: 'review-2',
+      review_attempt_task_run_ids: ['review-1', 'review-2'],
+      review_task_input_sha256: 'a'.repeat(64),
+      independent_solution_audit: independentAudit,
+      result,
+    };
+    expect(InterventionPackageReviewAudit.parse(base)).toMatchObject({
+      review_task_run_id: 'review-2',
+      review_attempt_task_run_ids: ['review-1', 'review-2'],
+    });
+    expect(() =>
+      InterventionPackageReviewAudit.parse({
+        ...base,
+        review_attempt_task_run_ids: ['review-2', 'review-1'],
+      }),
+    ).toThrow();
+    expect(() =>
+      InterventionPackageReviewAudit.parse({
+        ...base,
+        review_attempt_task_run_ids: ['review-1', 'review-1'],
+      }),
+    ).toThrow();
+    expect(() =>
+      InterventionPackageReviewAudit.parse({
+        ...base,
+        review_task_run_id: independentAudit.diagnostics[0]?.solver_task_run_id,
+        review_attempt_task_run_ids: [independentAudit.diagnostics[0]?.solver_task_run_id],
+      }),
+    ).toThrow();
   });
 });
 
@@ -349,6 +483,40 @@ describe('enforceInterventionPackageReviewDecision', () => {
 
     expect(result.verdict).toBe('fail');
     expect(result.failure_codes).toEqual(['reference_incorrect']);
+  });
+
+  it('cannot pass when one structurally bound required operation is out of scope', () => {
+    const diagnosticChecks = checks();
+    diagnosticChecks[2] = {
+      ...diagnosticChecks[2],
+      reference_correct: true,
+      within_frozen_scope: true,
+    };
+    diagnosticChecks[0] = {
+      ...diagnosticChecks[0],
+      required_operation_checks: [
+        {
+          operation_index: 0,
+          operation_sha256: 'a'.repeat(64),
+          operation_md: '先建立面积等于长乘宽，再进行二次多项式乘法。',
+          reference_covers_operation: true,
+          within_frozen_scope: false,
+          decision_basis_md: '该必要步骤引入冻结 scope 明确排除的面积和多项式乘法。',
+        },
+      ],
+    };
+    const result = enforceInterventionPackageReviewDecision({
+      review_protocol_version: 2,
+      verdict: 'pass',
+      failure_codes: [],
+      diagnostic_checks: diagnosticChecks,
+      summary_md: '局部命中 claim，但完整路径越界。',
+    });
+
+    expect(result).toMatchObject({
+      verdict: 'fail',
+      failure_codes: ['claim_scope_expansion'],
+    });
   });
 
   it('rejects a self-reported baseline-selection claim mislabeled as reverse causation', () => {

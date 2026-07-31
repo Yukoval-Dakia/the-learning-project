@@ -1,8 +1,35 @@
 import { getAllowedCauseIds } from '@/core/schema/cause';
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
-import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
+import {
+  type SubjectProfile,
+  resolveKnownSubjectId,
+  resolveSubjectProfile,
+} from '@/subjects/profile';
 import { getEffectiveDomain } from './domain';
+
+/**
+ * Resolve the authoritative profile without the read-side orphan fallback.
+ * Release-critical writers use this variant so a transient DB/domain failure
+ * cannot silently change the task prompt to the generic subject profile.
+ */
+export async function resolveSubjectProfileForKnowledgeIdsStrict(
+  db: Db,
+  knowledgeIds: string[],
+): Promise<SubjectProfile> {
+  const firstKnowledgeId = knowledgeIds[0];
+  if (!firstKnowledgeId) {
+    throw new Error('resolveSubjectProfileForKnowledgeIdsStrict requires a knowledge id');
+  }
+  const domain = await getEffectiveDomain(db, firstKnowledgeId);
+  const subjectId = resolveKnownSubjectId(domain);
+  if (!subjectId) {
+    throw new Error(
+      `knowledge domain '${domain}' has no hydrated subject profile; strict resolution cannot use the general fallback`,
+    );
+  }
+  return resolveSubjectProfile(subjectId);
+}
 
 export async function resolveSubjectProfileForKnowledgeIds(
   db: Db,
@@ -11,8 +38,7 @@ export async function resolveSubjectProfileForKnowledgeIds(
   const firstKnowledgeId = knowledgeIds[0];
   if (!firstKnowledgeId) return resolveSubjectProfile(null);
   try {
-    const domain = await getEffectiveDomain(db, firstKnowledgeId);
-    return resolveSubjectProfile(domain);
+    return await resolveSubjectProfileForKnowledgeIdsStrict(db, knowledgeIds);
   } catch (err) {
     // YUK-56 (2026-05-24): tolerate missing / orphaned knowledge ids — fall
     // back to default profile rather than 500ing the caller. Reasons:

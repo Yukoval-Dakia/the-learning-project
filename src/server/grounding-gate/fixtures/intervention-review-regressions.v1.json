@@ -18,11 +18,12 @@
             "cause_category": "sign_error",
             "target_error_rule_md": "展开形如 -k(x - c)（k、c 为正）时，第一项 -k·x 处理正确，但把第二项写成 -kc（照抄括号里的减号），漏掉了负负得正，正确应为 +kc。错误只体现在负因子乘被减常数项这一步的符号上。",
             "diagnostic_spec": {
-              "schema_version": 1,
+              "schema_version": 2,
               "target_error_rule_md": "展开形如 -k(x - c)（k、c 为正）时，第一项 -k·x 处理正确，但把第二项写成 -kc（照抄括号里的减号），漏掉了负负得正，正确应为 +kc。错误只体现在负因子乘被减常数项这一步的符号上。",
               "trigger_conditions_md": "括号外是负系数，且括号内是「减去一项」的结构（x - c 形式），需要把负因子分配到被减的那一项。两道 probe 都必须同时具备：负的括号外因子 + 括号内含减号的项。",
               "scope_boundary_md": "不覆盖括号外为正因子的分配（如 2(x-3)）、括号内全为加号的情形（-k(x+c)），也不覆盖分数、多项式相乘或合并同类项等其他运算；仅针对负因子乘含减号括号时被减项的符号处理。",
-              "expected_wrong_answer_signature_md": "答案第一项符号正确（如 -2x、-6y、-4a），但常数项保留负号（-2x-6、-6y-15、-4a-8），即把本该 +kc 的项写成 -kc；自述过程会出现「减号照抄/保持不变」这类把括号内减号当固定符号的说法。"
+              "expected_wrong_answer_signature_md": "答案第一项符号正确（如 -2x、-6y、-4a），但常数项保留负号（-2x-6、-6y-15、-4a-8），即把本该 +kc 的项写成 -kc；自述过程会出现「减号照抄/保持不变」这类把括号内减号当固定符号的说法。",
+              "causal_direction_required": false
             },
             "evidence_refs": [
               {
@@ -198,11 +199,12 @@
             "cause_category": "reading_misinterpretation",
             "target_error_rule_md": "当题干要求选“削弱/质疑/反例”的材料时，你用“该材料与主题相关度高、人数多、是典型例子”作为选择标准，而不判断它与结论方向是相同还是相反，结果选出与观点方向一致的支持材料。",
             "diagnostic_spec": {
-              "schema_version": 1,
+              "schema_version": 2,
               "target_error_rule_md": "当题干要求选“削弱/质疑/反例”的材料时，你用“该材料与主题相关度高、人数多、是典型例子”作为选择标准，而不判断它与结论方向是相同还是相反，结果选出与观点方向一致的支持材料。",
               "trigger_conditions_md": "题干明确要求选出能削弱、质疑观点或构成反例的材料，且选项里同时存在一条与观点方向一致（支持/典型例/相关度高）和一条与观点方向相反（真正的反例/削弱）的材料。",
               "scope_boundary_md": "不覆盖题干本身就要求选“支持/加强”材料的情形；也不涉及材料真伪判断、论据是否充分、隐含前提等论证的其他环节。",
-              "expected_wrong_answer_signature_md": "选中与观点方向一致的支持性或典型例子材料，理由集中在“人数更多”“关系更直接”“是典型例子”，而对题干“削弱/反例”所要求的相反方向完全没有辨析。"
+              "expected_wrong_answer_signature_md": "选中与观点方向一致的支持性或典型例子材料，理由集中在“人数更多”“关系更直接”“是典型例子”，而对题干“削弱/反例”所要求的相反方向完全没有辨析。",
+              "causal_direction_required": false
             },
             "evidence_refs": [
               {
@@ -386,11 +388,12 @@
             "cause_category": "reasoning_error",
             "target_error_rule_md": "看到两个现象相关（同时出现，或数据上同向变化），就直接断定其中一个是另一个的原因，回答「能证明因果」，理由停留在「两者总是一起出现/曲线同向」，不检验反向因果，也不排查共同原因或研究设计缺陷。",
             "diagnostic_spec": {
-              "schema_version": 1,
+              "schema_version": 2,
               "target_error_rule_md": "看到两个现象相关（同时出现，或数据上同向变化），就直接断定其中一个是另一个的原因，回答「能证明因果」，理由停留在「两者总是一起出现/曲线同向」，不检验反向因果，也不排查共同原因或研究设计缺陷。",
               "trigger_conditions_md": "题目给出两个现象之间的相关或同步观察（一起出现、同时上升、时间越长数值越高等），并追问能否据此证明「甲导致乙」这一因果结论。",
               "scope_boundary_md": "只针对「由相关直接跳到因果」这一步；不覆盖真正确立因果所需的实验/控制变量方法本身，也不覆盖以偏概全、诉诸权威、偷换概念等其他论证谬误。",
-              "expected_wrong_answer_signature_md": "给出「能／可以证明」的判断，支撑理由是「两者总是一起出现」或「同向变化就是因果」，通篇不提反向因果的可能、混杂/共同原因，也不质疑数据来源与研究设计。"
+              "expected_wrong_answer_signature_md": "给出「能／可以证明」的判断，支撑理由是「两者总是一起出现」或「同向变化就是因果」，通篇不提反向因果的可能、混杂/共同原因，也不质疑数据来源与研究设计。",
+              "causal_direction_required": true
             },
             "evidence_refs": [
               {
@@ -568,11 +571,12 @@
             "cause_category": "sign_error",
             "target_error_rule_md": "展开形如 -k(x - c)（k、c 为正）时，第一项 -k·x 处理正确，但把第二项写成 -kc（照抄括号里的减号），漏掉了负负得正，正确应为 +kc。错误只体现在负因子乘被减常数项这一步的符号上。",
             "diagnostic_spec": {
-              "schema_version": 1,
+              "schema_version": 2,
               "target_error_rule_md": "展开形如 -k(x - c)（k、c 为正）时，第一项 -k·x 处理正确，但把第二项写成 -kc（照抄括号里的减号），漏掉了负负得正，正确应为 +kc。错误只体现在负因子乘被减常数项这一步的符号上。",
               "trigger_conditions_md": "括号外是负系数，且括号内是「减去一项」的结构（x - c 形式），需要把负因子分配到被减的那一项。两道 probe 都必须同时具备：负的括号外因子 + 括号内含减号的项。",
               "scope_boundary_md": "不覆盖括号外为正因子的分配（如 2(x-3)）、括号内全为加号的情形（-k(x+c)），也不覆盖分数、多项式相乘或合并同类项等其他运算；仅针对负因子乘含减号括号时被减项的符号处理。",
-              "expected_wrong_answer_signature_md": "答案第一项符号正确（如 -2x、-6y、-4a），但常数项保留负号（-2x-6、-6y-15、-4a-8），即把本该 +kc 的项写成 -kc；自述过程会出现「减号照抄/保持不变」这类把括号内减号当固定符号的说法。"
+              "expected_wrong_answer_signature_md": "答案第一项符号正确（如 -2x、-6y、-4a），但常数项保留负号（-2x-6、-6y-15、-4a-8），即把本该 +kc 的项写成 -kc；自述过程会出现「减号照抄/保持不变」这类把括号内减号当固定符号的说法。",
+              "causal_direction_required": false
             },
             "evidence_refs": [
               {
@@ -647,20 +651,20 @@
             "kind": "immediate",
             "probe_spec": {
               "schema_version": 2,
-              "prompt_md": "展开表达式：-2(x - 3) = ？\n\n请写出展开后的结果（仅写表达式，不需要过程）。",
-              "reference_md": "-2x + 6",
-              "expected_target_error_answer_md": "-2x - 6",
-              "elicits_target_error_reason_md": "学生把括号里的减号当固定符号照抄，写成 -2×3 = -6，而不是正确地将 -2 乘以 -3 得到 +6。结果常数项保留了负号。",
+              "prompt_md": "展开表达式：-4(z - 7) = ？\n\n请写出展开后的结果（仅写表达式，不需要过程）。",
+              "reference_md": "-4z + 28",
+              "expected_target_error_answer_md": "-4z - 28",
+              "elicits_target_error_reason_md": "学生把括号里的减号当固定符号照抄，写成 -4×7 = -28，而不是正确地将 -4 乘以 -7 得到 +28。结果常数项保留了负号。",
               "context_kind": "abstract",
               "representation_kind": "symbolic",
               "response_mode": "short_answer",
               "gold_response_signature": {
                 "kind": "text",
-                "response_md": "-2x + 6"
+                "response_md": "-4z + 28"
               },
               "target_error_response_signature": {
                 "kind": "text",
-                "response_md": "-2x - 6"
+                "response_md": "-4z - 28"
               }
             },
             "tested_claim_md": "当你把一个负数乘进含减号的括号时，你只把负号作用到第一项，却把第二项（被减的那一项）的减号原样照抄，没有意识到「负数×被减项」等于负数乘一个负项、应当变成加号。你把括号内的减号当成了结果里固定不动的符号，而不是需要参与乘法运算的因子。",
@@ -756,11 +760,12 @@
             "cause_category": "reading_misinterpretation",
             "target_error_rule_md": "当题干要求选“削弱/质疑/反例”的材料时，你用“该材料与主题相关度高、人数多、是典型例子”作为选择标准，而不判断它与结论方向是相同还是相反，结果选出与观点方向一致的支持材料。",
             "diagnostic_spec": {
-              "schema_version": 1,
+              "schema_version": 2,
               "target_error_rule_md": "当题干要求选“削弱/质疑/反例”的材料时，你用“该材料与主题相关度高、人数多、是典型例子”作为选择标准，而不判断它与结论方向是相同还是相反，结果选出与观点方向一致的支持材料。",
               "trigger_conditions_md": "题干明确要求选出能削弱、质疑观点或构成反例的材料，且选项里同时存在一条与观点方向一致（支持/典型例/相关度高）和一条与观点方向相反（真正的反例/削弱）的材料。",
               "scope_boundary_md": "不覆盖题干本身就要求选“支持/加强”材料的情形；也不涉及材料真伪判断、论据是否充分、隐含前提等论证的其他环节。",
-              "expected_wrong_answer_signature_md": "选中与观点方向一致的支持性或典型例子材料，理由集中在“人数更多”“关系更直接”“是典型例子”，而对题干“削弱/反例”所要求的相反方向完全没有辨析。"
+              "expected_wrong_answer_signature_md": "选中与观点方向一致的支持性或典型例子材料，理由集中在“人数更多”“关系更直接”“是典型例子”，而对题干“削弱/反例”所要求的相反方向完全没有辨析。",
+              "causal_direction_required": false
             },
             "evidence_refs": [
               {

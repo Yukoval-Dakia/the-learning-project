@@ -113,11 +113,12 @@ const DRAFT = {
   knowledge_id: KC_ID,
   evidence_event_ids: ['att_wy_0', 'att_wy_1', 'att_wy_2'],
   diagnostic_spec: {
-    schema_version: 1,
+    schema_version: 2,
     target_error_rule_md: '把表达主观评价的意动用法解释成让宾语发生变化的使动用法。',
     trigger_conditions_md: '句中活用动词表达主语对宾语的主观看法，且宾语本身未被造成变化。',
     scope_boundary_md: '不覆盖确实表示主语使宾语发生动作或状态变化的使动用法。',
     expected_wrong_answer_signature_md: '把句意解释为“使宾语变得……”，并据此判为使动。',
+    causal_direction_required: false,
   },
   cause_category: CAUSE,
   recurrence_count: 3,

@@ -33,6 +33,7 @@ import type { SourceTier } from '@/core/schema/provenance';
 import { SolutionGenerateOutput, type SolutionGenerateOutputT } from '@/core/schema/solution';
 import type { Db, Tx } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import { AgentRunError } from '@/server/ai/agent-run-error';
 import { type RepairLevel, parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
@@ -226,6 +227,8 @@ type IndependentSolutionExecutionResult =
       task_run_ids?: string[];
       cost_usd?: number;
       image_input_unavailable?: boolean;
+      /** Explicit override for callers that may retry a complete-contract miss. */
+      retryable?: boolean;
     };
 
 // Per-tier override knob (OF-4 (ii)): future model 异源 / threshold tuning. Zero
@@ -703,6 +706,12 @@ async function runIndependentSolutionInternal(
       ...provenance(),
     };
   } catch (err) {
+    // runTask persists a failure row before throwing AgentRunError. Preserve
+    // that paid-attempt identity even though this reusable solver seam converts
+    // provider errors into `unsupported` for ordinary question verification.
+    if (err instanceof AgentRunError) {
+      recordRun({ task_run_id: err.taskRunId });
+    }
     if (solverPaidInvocationId && !solverPaidSettled) {
       try {
         await opts.releasePaidCall?.('solution_check', solverPaidInvocationId);
@@ -720,6 +729,8 @@ async function runIndependentSolutionInternal(
       status: 'unsupported',
       reason: `solver did not produce a usable answer: ${err instanceof Error ? err.message : String(err)}`,
       ...(requiresVision ? { image_input_unavailable: true } : {}),
+      // A provider/runner throw is not the strict JSON contract-retry case.
+      ...(err instanceof AgentRunError ? { retryable: false } : {}),
       ...provenance(),
     };
   }
@@ -735,7 +746,9 @@ export async function runIndependentSolution(
     return {
       ...executed,
       contract_complete: false,
-      retryable: !executed.image_input_unavailable && executed.task_run_ids?.length === 1,
+      retryable:
+        executed.retryable ??
+        (!executed.image_input_unavailable && executed.task_run_ids?.length === 1),
     };
   }
   const taskRunId = executed.task_run_ids?.length === 1 ? executed.task_run_ids[0] : undefined;

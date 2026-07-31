@@ -1,5 +1,5 @@
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/server/conjecture/probe-evidence';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
+import { resolveSubjectProfileForKnowledgeIdsStrict } from '@/capabilities/knowledge/public';
 import type {
   InterventionPackageT,
   InterventionPreparationAttemptT,
@@ -8,11 +8,12 @@ import {
   InterventionPreparationAttempt,
   MAX_INTERVENTION_PACKAGE_ATTEMPTS,
   buildInterventionPackageReviewTaskInput,
+  validateInterventionPackageDeterministically,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { inArray } from 'drizzle-orm';
 import { recommendPedagogy } from './recommend';
@@ -176,11 +177,19 @@ async function bindAttemptToRecord(
   attempt: InterventionPreparationAttemptT,
 ): Promise<InterventionPreparationAttemptT> {
   if (attempt.kind === 'author_failed') return attempt;
-  const failures = [...attempt.deterministic_failure_codes];
+  const failures =
+    record.recommendation?.kind === 'recommendation'
+      ? validateInterventionPackageDeterministically(
+          { snapshot: record.snapshot, recommendation: record.recommendation },
+          attempt.package,
+        )
+      : [];
   const expectedRuns: Array<{
     id: string;
     taskKind: 'SolutionGenerateTask' | 'InterventionPackageReviewTask';
     inputHash: string;
+    promptFingerprint: string;
+    resultDigest?: string;
     failureCode: string;
   }> = [];
   if (
@@ -204,9 +213,14 @@ async function bindAttemptToRecord(
     failures.push('agency:independent_solution_audit_missing');
   } else {
     const independentAudit = attempt.review.independent_solution_audit;
-    const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, [
+    const subjectProfile = await resolveSubjectProfileForKnowledgeIdsStrict(db, [
       record.snapshot.conjecture.knowledge_id,
     ]);
+    const solverPromptFingerprint = taskPromptFingerprint('SolutionGenerateTask', subjectProfile);
+    const reviewPromptFingerprint = taskPromptFingerprint(
+      'InterventionPackageReviewTask',
+      subjectProfile,
+    );
     if (independentAudit.package_digest_sha256 !== sha256CanonicalJson(attempt.package)) {
       failures.push('agency:independent_solution_package_digest_mismatch');
     }
@@ -232,6 +246,10 @@ async function bindAttemptToRecord(
           id: taskRunId,
           taskKind: 'SolutionGenerateTask',
           inputHash: diagnostic.question_input_sha256,
+          promptFingerprint: solverPromptFingerprint,
+          ...(taskRunId === diagnostic.solver_task_run_id
+            ? { resultDigest: diagnostic.solver_output_sha256 }
+            : {}),
           failureCode: `agency:${diagnostic.kind}:solver_task_run_invalid`,
         });
       }
@@ -247,12 +265,18 @@ async function bindAttemptToRecord(
       if (attempt.review.review_task_input_sha256 !== reviewTaskInputSha256) {
         failures.push('agency:review_task_input_digest_mismatch');
       }
-      expectedRuns.push({
-        id: attempt.review.review_task_run_id,
-        taskKind: 'InterventionPackageReviewTask',
-        inputHash: reviewTaskInputSha256,
-        failureCode: 'agency:review_task_run_invalid',
-      });
+      for (const taskRunId of attempt.review.review_attempt_task_run_ids) {
+        expectedRuns.push({
+          id: taskRunId,
+          taskKind: 'InterventionPackageReviewTask',
+          inputHash: reviewTaskInputSha256,
+          promptFingerprint: reviewPromptFingerprint,
+          ...(taskRunId === attempt.review.review_task_run_id
+            ? { resultDigest: sha256CanonicalJson(attempt.review.result) }
+            : {}),
+          failureCode: 'agency:review_task_run_invalid',
+        });
+      }
     }
   }
   if (expectedRuns.length > 0) {
@@ -261,6 +285,8 @@ async function bindAttemptToRecord(
         id: ai_task_runs.id,
         task_kind: ai_task_runs.task_kind,
         input_hash: ai_task_runs.input_hash,
+        prompt_fingerprint: ai_task_runs.prompt_fingerprint,
+        result_digest: ai_task_runs.result_digest,
         status: ai_task_runs.status,
       })
       .from(ai_task_runs)
@@ -277,7 +303,9 @@ async function bindAttemptToRecord(
         !row ||
         row.status !== 'success' ||
         row.task_kind !== expected.taskKind ||
-        row.input_hash !== expected.inputHash
+        row.input_hash !== expected.inputHash ||
+        row.prompt_fingerprint !== expected.promptFingerprint ||
+        (expected.resultDigest !== undefined && row.result_digest !== expected.resultDigest)
       ) {
         failures.push(expected.failureCode);
       }
@@ -338,7 +366,7 @@ export async function prepareInterventionWave(
 
   const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   if (!record.recommendation) {
-    const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, [
+    const subjectProfile = await resolveSubjectProfileForKnowledgeIdsStrict(db, [
       record.snapshot.conjecture.knowledge_id,
     ]);
     const recommendation = await recommendPedagogy({
@@ -401,7 +429,14 @@ export async function prepareInterventionWave(
     if (attemptStageGuard.status === 'terminal') return attemptStageGuard.result;
     record = attemptStageGuard.record;
 
-    const passed = passingAttempt(record.preparation_attempts);
+    // Crash/recovery can resume after an attempt was appended but before it was
+    // activated. Re-bind every persisted attempt against current deterministic
+    // checks, authoritative subject prompt, and live run ledger before using it.
+    // Keep cardinality unchanged so an invalid old attempt still consumes its slot.
+    const reboundAttempts = await Promise.all(
+      record.preparation_attempts.map((attempt) => bindAttemptToRecord(db, record, attempt)),
+    );
+    const passed = passingAttempt(reboundAttempts);
     if (passed) {
       const active = await activateIntervention(db, {
         interventionId: record.id,
@@ -440,7 +475,7 @@ export async function prepareInterventionWave(
     }
 
     if (record.preparation_attempts.length >= MAX_INTERVENTION_PACKAGE_ATTEMPTS) {
-      const reason = terminalAttemptFailure(record.preparation_attempts.at(-1));
+      const reason = terminalAttemptFailure(reboundAttempts.at(-1));
       const failed = await failInterventionPreparation(db, {
         interventionId: record.id,
         version: record.version,
