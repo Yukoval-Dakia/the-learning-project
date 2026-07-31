@@ -74,6 +74,7 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const r = parseJsonObjectLoose(text, 'intervention package author', {
       riskyRepair: 'reject',
+      containerClosure: 'schema_validated',
     });
     expect(r?.repaired).toBe('deterministic');
     expect(r?.json).toEqual({
@@ -106,6 +107,16 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(() =>
       parseJsonObjectLoose(truncated, 'truncated suffix', { riskyRepair: 'reject' }),
+    ).toThrow();
+  });
+
+  it('恰好截断在完整 child 边界 → 默认 reject 模式也不得推断批次已完整', () => {
+    const truncatedAtBoundary = '{"meta":"ok","questions":[{"id":1}';
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(() =>
+      parseJsonObjectLoose(truncatedAtBoundary, 'boundary truncation', {
+        riskyRepair: 'reject',
+      }),
     ).toThrow();
   });
 

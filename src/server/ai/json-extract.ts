@@ -229,6 +229,12 @@ export interface ParseJsonLooseOpts {
    * 用于解析结果直接落库、且下游没有 parse_repaired 隔离门的站点（sourcing）。
    */
   riskyRepair?: 'allow' | 'reject';
+  /**
+   * Missing tail closers are ambiguous with an exactly-boundary truncation.
+   * Enable only when the caller immediately applies a strict schema that proves
+   * every required field/cardinality is present; default callers never infer them.
+   */
+  containerClosure?: 'schema_validated';
 }
 
 /**
@@ -259,7 +265,11 @@ export function parseJsonObjectLoose(
   {
     let hit: LadderHit;
     try {
-      hit = tryRepairLadder(slice, (opts.riskyRepair ?? 'allow') === 'allow', !hasTruncatedSuffix);
+      hit = tryRepairLadder(
+        slice,
+        (opts.riskyRepair ?? 'allow') === 'allow',
+        opts.containerClosure === 'schema_validated' && !hasTruncatedSuffix,
+      );
     } catch (repairErr) {
       // 不可修：留一段错误位置附近的有界片段（±120 字符）供诊断——原始输出不落库，
       // 没有这段 warn 时该失败类完全无法事后归因（spike 2026-07-10 教训）。

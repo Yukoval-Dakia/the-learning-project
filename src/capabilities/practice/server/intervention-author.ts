@@ -48,7 +48,12 @@ function parseTaskOutput<T>(
   if (result.structured_output !== undefined && result.structured_output !== null) {
     return parse(result.structured_output);
   }
-  const extracted = parseJsonObjectLoose(result.text, label, { riskyRepair: 'reject' });
+  const extracted = parseJsonObjectLoose(result.text, label, {
+    riskyRepair: 'reject',
+    // Both author/review outputs are immediately validated by closed strict
+    // schemas below, so an exactly-boundary partial batch cannot be admitted.
+    containerClosure: 'schema_validated',
+  });
   if (!extracted) throw new Error(`${label} did not contain a JSON object`);
   return parse(extracted.json);
 }
