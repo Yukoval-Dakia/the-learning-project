@@ -213,7 +213,7 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
           },
           predicted_p: 0.3,
         },
-        subject_id: cell.subject_id,
+        subject_id: cell.subject_id ?? 'general',
         policy_version: 'subject-probe-validator-v1',
         subject_validator_results: [],
       },
