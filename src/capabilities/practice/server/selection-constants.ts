@@ -73,7 +73,7 @@ export const SELECTION_ORCHESTRATOR_CANDIDATE_CAP = 24;
 
 /**
  * P2 D2 / A8 — dark-ship flag for the `misconceptionRecurrence` selection signal
- * (candidate-signals.ts aggregateMisconceptionRecurrence).
+ * (candidate-signals.ts batchAggregateMisconceptionRecurrence).
  *
  * false (DEFAULT) → misconceptionRecurrence stays `undefined` for every candidate → the
  *   aggregate query is never issued → buildSelectionOrchestratorInput emits
@@ -85,6 +85,8 @@ export const SELECTION_ORCHESTRATOR_CANDIDATE_CAP = 24;
  * Lives here (a pure, IO-free dependency module) — NOT inline in candidate-signals.ts — so
  * tests can mock just this one export via `vi.mock(... importOriginal)` exactly like the
  * EARLY_KLP_ENABLED pattern, keeping both flag directions covered regardless of the default.
- * Flip to true is an owner go-live decision.
+ * Flip to true is a separate owner go-live decision, gated by the fresh correctness, latency,
+ * judge-health, cause-label calibration, and rollback evidence in
+ * docs/audit/2026-07-31-yuk-741-recurrence-batch.md. This batching change does NOT flip it.
  */
 export const MISCONCEPTION_RECURRENCE_ENABLED = false;

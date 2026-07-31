@@ -162,7 +162,7 @@
     "kind": "const",
     "value": false,
     "file": "src/capabilities/practice/server/selection-constants.ts",
-    "notes": "compile-time const dark-ship. export const X = false."
+    "notes": "compile-time const dark-ship. export const X = false. Enablement gates: docs/audit/2026-07-31-yuk-741-recurrence-batch.md."
   },
   "POLY_SIGMOID_ENABLED": {
     "kind": "const",

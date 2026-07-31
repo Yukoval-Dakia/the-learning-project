@@ -69,6 +69,7 @@ vi.mock('@/core/theta-grid', async (importOriginal) => {
 
 import {
   type CandidateInput,
+  batchAggregateMisconceptionRecurrence,
   collectCandidateSignals,
 } from '@/capabilities/practice/server/candidate-signals';
 import { newId } from '@/core/ids';
@@ -89,7 +90,7 @@ import {
   mistake_variant,
   question,
 } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const db = testDb();
@@ -193,6 +194,34 @@ async function seedMistake(
     created_at: now,
     updated_at: now,
   });
+}
+
+/** Frozen reference implementation: this is the pre-YUK-741 per-candidate SQL shape. Keep it in
+ * tests only so the batched boundary can prove semantic equivalence without retaining N+1 in
+ * production. */
+async function referenceMisconceptionRecurrence(
+  knowledgeIds: string[],
+): Promise<number | undefined> {
+  if (knowledgeIds.length === 0) return undefined;
+  const containment = sql.join(
+    knowledgeIds.map(
+      (knowledgeId) => sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`,
+    ),
+    sql` OR `,
+  );
+  const rows = await db.select({ maxCount: sql<number>`max(grouped.cnt)` }).from(sql`(
+      SELECT count(*)::int AS cnt
+      FROM ${mistake_variant}
+      JOIN ${question} ON ${question.id} = ${mistake_variant.parent_question_id}
+      WHERE ${mistake_variant.cause_category} IS NOT NULL
+        AND ${mistake_variant.status} = 'active'
+        AND (${containment})
+      GROUP BY ${mistake_variant.cause_category}
+    ) AS grouped`);
+  const maxCount = rows[0]?.maxCount;
+  return maxCount === null || maxCount === undefined || maxCount <= 0
+    ? undefined
+    : Math.min(1, maxCount / 5);
 }
 
 // Seed an item_family_calibration row with a (gate-passed) non-zero b_delta.
@@ -803,6 +832,112 @@ describe('collectCandidateSignals — family b_delta composition (YUK-372 L3)', 
 //   mistake_variant on parent_question_id, GROUP BY cause_category, MAX count → normalized
 //   to 0-1 by owner-fixed RECURRENCE_NORM (=5). SELECTION-ONLY; NEVER zero-fill.
 describe('collectCandidateSignals — misconceptionRecurrence (P2 D2 / A8)', () => {
+  it('YUK-741: batched results equal the frozen per-candidate reference across overlapping, sparse, duplicate, and empty KC sets', async () => {
+    // q-ab is the provenance edge case: it carries both requested KCs. Its mistakes must count
+    // ONCE for candidate [a,b], exactly like the reference boolean OR (not twice via each KC).
+    await seedQuestion('q-ref-ab', ['kc-ref-a', 'kc-ref-b']);
+    await seedQuestion('q-ref-a', ['kc-ref-a']);
+    await seedQuestion('q-ref-b', ['kc-ref-b']);
+    await seedQuestion('q-ref-sparse', ['kc-ref-sparse']);
+    await seedQuestion('q-ref-unrelated', ['kc-ref-z']);
+    await seedMistake('q-ref-ab', 'shared');
+    await seedMistake('q-ref-ab', 'shared');
+    await seedMistake('q-ref-a', 'shared');
+    await seedMistake('q-ref-a', 'other');
+    await seedMistake('q-ref-a', 'other');
+    await seedMistake('q-ref-b', 'shared');
+    await seedMistake('q-ref-sparse', 'pending_only', 'draft');
+    await seedMistake('q-ref-unrelated', 'must_not_leak');
+
+    const frozenKcSets = [
+      [],
+      ['kc-ref-a'],
+      ['kc-ref-b'],
+      ['kc-ref-a', 'kc-ref-b'],
+      ['kc-ref-b', 'kc-ref-a', 'kc-ref-a'], // order/duplicates are semantically inert
+      ['kc-ref-sparse'],
+      ['kc-ref-never-seen'],
+    ];
+    const expected = await Promise.all(
+      frozenKcSets.map((knowledgeIds) => referenceMisconceptionRecurrence(knowledgeIds)),
+    );
+    const actual = await batchAggregateMisconceptionRecurrence(db, frozenKcSets);
+
+    expect(actual).toEqual(expected);
+    expect(actual).toEqual([undefined, 3 / 5, 3 / 5, 4 / 5, 4 / 5, undefined, undefined]);
+  });
+
+  it('YUK-741: one collect request adds exactly one recurrence aggregate query; flag OFF adds zero', async () => {
+    const candidates: CandidateInput[] = Array.from({ length: 12 }, (_, index) => ({
+      refKind: 'question' as const,
+      refId: `q-budget-${index}`,
+      role: 'diagnostic' as const,
+      kind: 'short_answer' as const,
+      knowledgeIds: [`kc-budget-${index}`],
+      difficulty: 3,
+    }));
+
+    recurrenceFlag.value = false;
+    const offCounter = { n: 0 };
+    await collectCandidateSignals(countingDb(db, offCounter), candidates);
+
+    recurrenceFlag.value = true;
+    const onCounter = { n: 0 };
+    await collectCandidateSignals(countingDb(db, onCounter), candidates);
+
+    // All non-recurrence reads are identical. ON adds one request-level aggregate, not 12.
+    expect(onCounter.n - offCounter.n).toBe(1);
+  });
+
+  it('YUK-741: high-cardinality batch stays at one query and preserves every aligned result', async () => {
+    const cardinality = 200; // placement-select's bounded request ceiling
+    const now = new Date();
+    const kcSets = Array.from({ length: cardinality }, (_, index) => [`kc-high-${index}`]);
+    await db.insert(question).values(
+      kcSets.map((knowledgeIds, index) => ({
+        id: `q-high-${index}`,
+        kind: 'short_answer',
+        prompt_md: `prompt-high-${index}`,
+        knowledge_ids: knowledgeIds,
+        difficulty: 3,
+        source: 'manual',
+        draft_status: 'active',
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      })),
+    );
+    await db.insert(mistake_variant).values(
+      kcSets.map((_, index) => ({
+        id: newId(),
+        parent_question_id: `q-high-${index}`,
+        variant_question_id: null,
+        proposal_event_id: null,
+        status: 'active',
+        failure_reasons: [],
+        cause_category: `cause-high-${index}`,
+        created_at: now,
+        updated_at: now,
+      })),
+    );
+
+    const counter = { n: 0 };
+    const scores = await batchAggregateMisconceptionRecurrence(countingDb(db, counter), kcSets);
+
+    expect(counter.n).toBe(1);
+    expect(scores).toHaveLength(cardinality);
+    expect(scores.every((score) => score === 1 / 5)).toBe(true);
+  });
+
+  it('YUK-741: empty/all-empty batches return aligned undefined values without querying', async () => {
+    const counter = { n: 0 };
+    expect(await batchAggregateMisconceptionRecurrence(countingDb(db, counter), [])).toEqual([]);
+    expect(
+      await batchAggregateMisconceptionRecurrence(countingDb(db, counter), [[], [], []]),
+    ).toEqual([undefined, undefined, undefined]);
+    expect(counter.n).toBe(0);
+  });
+
   it('(1) flag ON: recurring cause_category on a candidate KC → finite 0-1 value rising with recurrence count', async () => {
     recurrenceFlag.value = true;
     await seedMastery('kc-mr', 0.0, 4);

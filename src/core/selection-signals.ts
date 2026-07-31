@@ -50,7 +50,7 @@ export interface SelectionCandidateSignal {
   // Runtime 中只保留有真实 reader 契约或已明确建模的数据：
   //   - examRelevance：仍 deferred（无 cheap reader——无考纲映射数据源）。
   //   - misconceptionRecurrence：**已实现**（P2 D2 / A8）——由 candidate-signals.ts
-  //     aggregateMisconceptionRecurrence 按错题家族复发频次算，flag-gated
+  //     batchAggregateMisconceptionRecurrence 按错题家族复发频次算，flag-gated
   //     （MISCONCEPTION_RECURRENCE_ENABLED，默认 OFF → undefined）。见下方字段注。
   // transferGap 暂不进入 type/prompt：无 per-(KC,context) reader 时，永久 undefined
   // 字段只会诱导 LLM 从虚构信号推理（YUK-792）。
@@ -60,7 +60,7 @@ export interface SelectionCandidateSignal {
   examRelevance?: number;
   /**
    * 错误观念复发度 0-1（错题家族跨 attempt 复发频次）。**已实现**（P2 D2 / A8）：由
-   * candidate-signals.ts:aggregateMisconceptionRecurrence 按 per-learner SELF-STATE
+   * candidate-signals.ts:batchAggregateMisconceptionRecurrence 按 per-learner SELF-STATE
    * tally（KC-based linkage：候选 KC → 题 → mistake_variant.cause_category group-count）
    * 算出，归一化常数 owner-fixed。flag-gated（MISCONCEPTION_RECURRENCE_ENABLED，默认 OFF
    * → undefined）。SELECTION-ONLY：仅经 buildSelectionOrchestratorInput 进 orchestrator
