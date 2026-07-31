@@ -129,7 +129,11 @@ drizzle/.snapshots/
 .omc/
 .omo/
 .omx/
-.opencode/
+.opencode/*
+!.opencode/.gitignore
+!.opencode/README.md
+!.opencode/plugins/
+!.opencode/plugins/**
 
 # Cursor runtime hook state; .cursor/rules remains tracked.
 .cursor/hooks/state/

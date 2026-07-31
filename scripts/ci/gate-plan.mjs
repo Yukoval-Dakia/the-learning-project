@@ -80,7 +80,7 @@ function globalTriggerReason(file) {
 function filePlan(file) {
   if (isDocsOnly(file)) return { lanes: emptyLanes(), unitSelection: 'skip', reason: 'docs' };
 
-  if (file.startsWith('.agents/') || file.startsWith('.claude/')) {
+  if (file.startsWith('.agents/') || file.startsWith('.claude/') || file.startsWith('.opencode/')) {
     return {
       lanes: { ...emptyLanes(), static: true },
       unitSelection: 'skip',

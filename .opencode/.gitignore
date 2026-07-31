@@ -1,0 +1,6 @@
+node_modules/
+package-lock.json
+worktree.jsonc
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
