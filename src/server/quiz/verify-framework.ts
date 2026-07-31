@@ -33,7 +33,7 @@ import type { SourceTier } from '@/core/schema/provenance';
 import { SolutionGenerateOutput, type SolutionGenerateOutputT } from '@/core/schema/solution';
 import type { Db, Tx } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
+import { type RepairLevel, parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import type { Provider } from '@/server/ai/providers';
@@ -190,12 +190,15 @@ export type IndependentSolutionResult =
       task_input: unknown;
       task_input_sha256: string;
       solver_output_sha256: string;
+      solver_output_repair_level: Exclude<RepairLevel, 'jsonrepair'>;
       cost_usd?: number;
     }
   | {
       status: 'unsupported';
       reason: string;
       contract_complete: false;
+      /** Safe to repeat once: a paid run was persisted, but its output contract was unusable. */
+      retryable: boolean;
       task_run_ids?: string[];
       cost_usd?: number;
       image_input_unavailable?: boolean;
@@ -213,6 +216,7 @@ type IndependentSolutionExecutionResult =
       task_input: unknown;
       task_input_sha256: string;
       solver_output_sha256?: string;
+      solver_output_repair_level: Exclude<RepairLevel, 'jsonrepair'>;
       task_run_ids?: string[];
       cost_usd?: number;
     }
@@ -486,6 +490,29 @@ function extractJsonObject(text: string, label: string): unknown {
   return extracted.json;
 }
 
+function extractStrictIndependentSolutionJson(text: string): {
+  json: unknown;
+  repaired: Exclude<RepairLevel, 'jsonrepair'>;
+} {
+  const extracted = parseJsonObjectLoose(text, 'solve-check: SolutionGenerateTask', {
+    // FULL audits persist this object and use it as sealed ground truth. Accept
+    // only strict JSON or content-preserving deterministic repairs; heuristic
+    // jsonrepair can silently redraw string boundaries.
+    riskyRepair: 'reject',
+    // A complete Zod contract immediately proves all required fields after a
+    // tail-only closure. Markdown math commonly needs literal backslash repair.
+    containerClosure: 'schema_validated',
+    latexEscapes: 'markdown_math',
+  });
+  if (!extracted) {
+    throw new Error('solve-check: SolutionGenerateTask did not contain a JSON object');
+  }
+  if (extracted.repaired === 'jsonrepair') {
+    throw new Error('strict independent solution rejected heuristic JSON repair');
+  }
+  return extracted as { json: unknown; repaired: Exclude<RepairLevel, 'jsonrepair'> };
+}
+
 function solutionLaneOverride(
   opts: IndependentSolutionOptions,
 ): { provider?: Provider; model?: string } | undefined {
@@ -601,11 +628,20 @@ async function runIndependentSolutionInternal(
     await opts.settlePaidCall?.('solution_check', solverPaidInvocationId, solverRun);
     solverPaidSettled = true;
 
-    const parsed = (solverRun.structured_output ??
-      extractJsonObject(solverRun.text, 'solve-check: SolutionGenerateTask')) as Record<
-      string,
-      unknown
-    >;
+    let solverOutputRepairLevel: Exclude<RepairLevel, 'jsonrepair'> = false;
+    let parsed: Record<string, unknown>;
+    if (solverRun.structured_output !== undefined && solverRun.structured_output !== null) {
+      parsed = solverRun.structured_output as Record<string, unknown>;
+    } else if (legacyAdapter.allowPartialContract) {
+      parsed = extractJsonObject(solverRun.text, 'solve-check: SolutionGenerateTask') as Record<
+        string,
+        unknown
+      >;
+    } else {
+      const extracted = extractStrictIndependentSolutionJson(solverRun.text);
+      parsed = extracted.json as Record<string, unknown>;
+      solverOutputRepairLevel = extracted.repaired;
+    }
     const complete = SolutionGenerateOutput.safeParse(parsed);
     const rawReference =
       parsed.reference_solution !== null &&
@@ -618,9 +654,16 @@ async function runIndependentSolutionInternal(
       : rawReference.final_answer;
     const normalizedFinalAnswer = typeof finalAnswer === 'string' ? finalAnswer.trim() : '';
     if (!complete.success && !legacyAdapter.allowPartialContract) {
+      const issueSummary = complete.error.issues
+        .slice(0, 4)
+        .map((issue) => `${issue.path.join('.') || '<root>'}:${issue.code}`)
+        .join(', ');
+      console.warn(
+        `[solve-check] strict SolutionGenerateOutput contract rejected (${issueSummary})`,
+      );
       return {
         status: 'unsupported',
-        reason: 'solver output did not satisfy the complete SolutionGenerateOutput contract',
+        reason: `solver output did not satisfy the complete SolutionGenerateOutput contract (${issueSummary})`,
         ...provenance(),
       };
     }
@@ -656,6 +699,7 @@ async function runIndependentSolutionInternal(
       task_input: taskInput,
       task_input_sha256: sha256CanonicalJson(taskInput),
       solver_output_sha256: sha256CanonicalJson(complete.success ? complete.data : parsed),
+      solver_output_repair_level: solverOutputRepairLevel,
       ...provenance(),
     };
   } catch (err) {
@@ -688,7 +732,11 @@ export async function runIndependentSolution(
 ): Promise<IndependentSolutionResult> {
   const executed = await runIndependentSolutionInternal(question, opts);
   if (executed.status === 'unsupported') {
-    return { ...executed, contract_complete: false };
+    return {
+      ...executed,
+      contract_complete: false,
+      retryable: !executed.image_input_unavailable && executed.task_run_ids?.length === 1,
+    };
   }
   const taskRunId = executed.task_run_ids?.length === 1 ? executed.task_run_ids[0] : undefined;
   if (!executed.complete_solution || !taskRunId || !executed.solver_output_sha256) {
@@ -698,6 +746,7 @@ export async function runIndependentSolution(
         ? 'solver output did not satisfy the complete SolutionGenerateOutput contract'
         : 'independent solution requires exactly one persisted task_run_id',
       contract_complete: false,
+      retryable: false,
       ...(executed.task_run_ids ? { task_run_ids: executed.task_run_ids } : {}),
       ...(executed.cost_usd !== undefined ? { cost_usd: executed.cost_usd } : {}),
     };
@@ -709,6 +758,7 @@ export async function runIndependentSolution(
     task_input: executed.task_input,
     task_input_sha256: executed.task_input_sha256,
     solver_output_sha256: executed.solver_output_sha256,
+    solver_output_repair_level: executed.solver_output_repair_level,
     ...(executed.cost_usd !== undefined ? { cost_usd: executed.cost_usd } : {}),
   };
 }

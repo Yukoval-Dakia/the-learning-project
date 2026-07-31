@@ -10,10 +10,12 @@ import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture
 import {
   INTERVENTION_CONTRACT_VERSION,
   InterventionPackage,
+  InterventionPreparationAttempt,
   PEDAGOGY_METHOD_DEFINITION_VERSION,
   buildInterventionSettlement,
 } from '@/core/schema/intervention';
 import {
+  ai_task_runs,
   event,
   intervention,
   job_events,
@@ -477,7 +479,30 @@ function comparatorDiagnosticChecks(input: unknown, checks = reviewDiagnosticChe
   );
 }
 
+async function recordMockAiRun(
+  db: ReturnType<typeof testDb>,
+  kind: string,
+  input: unknown,
+  taskRunId: string,
+) {
+  const now = new Date('2026-07-20T00:00:00.000Z');
+  await db.insert(ai_task_runs).values({
+    id: taskRunId,
+    task_kind: kind,
+    provider: 'xiaomi',
+    model: 'mimo-v2.5-pro',
+    input_hash: sha256CanonicalJson(input),
+    status: 'success',
+    finish_reason: 'stop',
+    usage_json: { inputTokens: 100, outputTokens: 50 },
+    cost_usd: 0.01,
+    started_at: now,
+    finished_at: now,
+  });
+}
+
 function successfulRunTask(
+  db: ReturnType<typeof testDb>,
   packageOutput: (attempt: number) => ReturnType<typeof authorOutput> = authorOutput,
 ): {
   fn: TaskTextRunFn;
@@ -511,9 +536,11 @@ function successfulRunTask(
     }
     if (kind === 'SolutionGenerateTask') {
       const ordinal = calls.filter((value) => value === kind).length;
+      const taskRunId = `independent_solution_run_${ordinal}`;
+      await recordMockAiRun(db, kind, input, taskRunId);
       return {
         text: '',
-        task_run_id: `independent_solution_run_${ordinal}`,
+        task_run_id: taskRunId,
         structured_output: {
           reference_solution: {
             expected_signals: ['识别题目实际要求的量或结论', '只按题面条件完成学科推导并核对结果'],
@@ -527,9 +554,11 @@ function successfulRunTask(
     }
     if (kind === 'InterventionPackageReviewTask') {
       const attempt = calls.filter((value) => value === kind).length;
+      const taskRunId = `review_run_${attempt}`;
+      await recordMockAiRun(db, kind, input, taskRunId);
       return {
         text: '',
-        task_run_id: `review_run_${attempt}`,
+        task_run_id: taskRunId,
         structured_output: {
           review_protocol_version: 2,
           verdict: 'pass',
@@ -578,7 +607,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       source_probe_result_event_id: seeded.probeResultId,
       preparation_job_id: expect.any(String),
     });
-    const { fn, calls, contexts } = successfulRunTask();
+    const { fn, calls, contexts } = successfulRunTask(db);
     const result = await prepareInterventionWave(
       db,
       {
@@ -650,9 +679,21 @@ describe('YUK-791 intervention preparation closed loop', () => {
         independent_solution_audit: {
           validation_protocol_version: 1,
           diagnostics: [
-            { kind: 'immediate', solver_task_run_id: 'independent_solution_run_1' },
-            { kind: 'delayed', solver_task_run_id: 'independent_solution_run_2' },
-            { kind: 'transfer', solver_task_run_id: 'independent_solution_run_3' },
+            {
+              kind: 'immediate',
+              solver_task_run_id: 'independent_solution_run_1',
+              solver_attempt_task_run_ids: ['independent_solution_run_1'],
+            },
+            {
+              kind: 'delayed',
+              solver_task_run_id: 'independent_solution_run_2',
+              solver_attempt_task_run_ids: ['independent_solution_run_2'],
+            },
+            {
+              kind: 'transfer',
+              solver_task_run_id: 'independent_solution_run_3',
+              solver_attempt_task_run_ids: ['independent_solution_run_3'],
+            },
           ],
         },
       },
@@ -708,6 +749,118 @@ describe('YUK-791 intervention preparation closed loop', () => {
     expect(activated[0]?.value).toBe(1);
   });
 
+  it('retries one persisted schema-invalid blind solve and audits both paid attempts', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('strict_solver_retry');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_strict_solver_retry',
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn: baseRun, calls } = successfulRunTask(db);
+    let injectedInvalidContract = false;
+    const oneInvalidThenSuccess: TaskTextRunFn = async (kind, input, ctx) => {
+      if (kind === 'SolutionGenerateTask' && !injectedInvalidContract) {
+        injectedInvalidContract = true;
+        calls.push(kind);
+        await recordMockAiRun(db, kind, input, 'independent_solution_invalid_contract_1');
+        return {
+          text: JSON.stringify({
+            reference_solution: {
+              final_answer: '只有答案，缺少完整 validator contract',
+              answer_equivalents: [],
+            },
+          }),
+          task_run_id: 'independent_solution_invalid_contract_1',
+        };
+      }
+      return baseRun(kind, input, ctx);
+    };
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: oneInvalidThenSuccess, authorPackageFn: authorInterventionPackage },
+    );
+
+    expect(result).toMatchObject({ status: 'active' });
+    expect(calls.filter((kind) => kind === 'SolutionGenerateTask')).toHaveLength(4);
+    expect(calls.filter((kind) => kind === 'InterventionPackageReviewTask')).toHaveLength(1);
+    const [active] = await db.select().from(intervention);
+    const activatedAttempt = InterventionPreparationAttempt.parse(
+      active.preparation_attempts_json[0],
+    );
+    if (
+      activatedAttempt?.kind !== 'reviewed_package' ||
+      !('independent_solution_audit' in activatedAttempt.review)
+    ) {
+      throw new Error('missing FULL activated attempt');
+    }
+    expect(activatedAttempt.review.independent_solution_audit.diagnostics[0]).toMatchObject({
+      kind: 'immediate',
+      solver_task_run_id: 'independent_solution_run_2',
+      solver_attempt_task_run_ids: [
+        'independent_solution_invalid_contract_1',
+        'independent_solution_run_2',
+      ],
+    });
+  });
+
+  it('refuses activation when a comparator run is not bound to its canonical input', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('review_run_binding');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_review_run_binding',
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn: baseRun } = successfulRunTask(db);
+    const mismatchedReviewRun: TaskTextRunFn = async (kind, input, ctx) => {
+      const result = await baseRun(kind, input, ctx);
+      if (kind === 'InterventionPackageReviewTask' && result.task_run_id) {
+        await db
+          .update(ai_task_runs)
+          .set({ input_hash: 'f'.repeat(64) })
+          .where(eq(ai_task_runs.id, result.task_run_id));
+      }
+      return result;
+    };
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: mismatchedReviewRun, authorPackageFn: authorInterventionPackage },
+    );
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      reason_code: expect.stringContaining('agency:review_task_run_invalid'),
+    });
+    const [failed] = await db.select().from(intervention);
+    expect(failed).toMatchObject({ status: 'preparation_failed', package_json: null });
+    expect(failed.preparation_attempts_json).toHaveLength(2);
+    expect(failed.preparation_attempts_json).toEqual([
+      expect.objectContaining({
+        kind: 'reviewed_package',
+        deterministic_failure_codes: ['agency:review_task_run_invalid'],
+      }),
+      expect.objectContaining({
+        kind: 'reviewed_package',
+        deterministic_failure_codes: ['agency:review_task_run_invalid'],
+      }),
+    ]);
+  });
+
   it('consumes one real review per window, retires one-shot cards, and settles deterministically', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('settlement');
@@ -729,7 +882,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       bossSend: async (_name, _data, options) => options.id,
     });
     const [opened] = await db.select().from(intervention);
-    const { fn } = successfulRunTask();
+    const { fn } = successfulRunTask(db);
     const activationNow = new Date(Math.floor(Date.now() / 1000) * 1000);
     const activationDate = activationNow.toLocaleDateString('sv-SE', {
       timeZone: 'Asia/Shanghai',
@@ -1275,7 +1428,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       bossSend: async (_name, _data, options) => options.id,
     });
     const [opened] = await db.select().from(intervention);
-    const { fn } = successfulRunTask();
+    const { fn } = successfulRunTask(db);
     await prepareInterventionWave(
       db,
       {
@@ -1415,14 +1568,16 @@ describe('YUK-791 intervention preparation closed loop', () => {
       bossSend: async () => 'prepare_job_b',
     });
     const [opened] = await db.select().from(intervention);
-    const { fn: baseRun, calls } = successfulRunTask();
+    const { fn: baseRun, calls } = successfulRunTask(db);
     const failingRun: TaskTextRunFn = async (kind, input, ctx) => {
       if (kind === 'InterventionPackageReviewTask') {
         calls.push(kind);
         const attempt = calls.filter((value) => value === kind).length;
+        const taskRunId = `review_fail_${attempt}`;
+        await recordMockAiRun(db, kind, input, taskRunId);
         return {
           text: '',
-          task_run_id: `review_fail_${attempt}`,
+          task_run_id: taskRunId,
           structured_output: {
             review_protocol_version: 2,
             verdict: 'fail',
@@ -1470,13 +1625,13 @@ describe('YUK-791 intervention preparation closed loop', () => {
       bossSend: async () => 'prepare_job_blind_fail_fast',
     });
     const [opened] = await db.select().from(intervention);
-    const { fn: baseRun, calls } = successfulRunTask();
+    const { fn: baseRun, calls } = successfulRunTask(db);
     let solveInAttempt = 0;
     const incompleteDelayedSolver: TaskTextRunFn = async (kind, input, ctx) => {
       if (kind === 'InterventionPackageAuthorTask') solveInAttempt = 0;
       if (kind === 'SolutionGenerateTask') {
         solveInAttempt += 1;
-        if (solveInAttempt === 2) {
+        if (solveInAttempt === 2 || solveInAttempt === 3) {
           calls.push(kind);
           return {
             text: JSON.stringify({
@@ -1508,7 +1663,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       reason_code: 'independent_solution_unavailable:delayed',
     });
     expect(calls.filter((kind) => kind === 'InterventionPackageAuthorTask')).toHaveLength(2);
-    expect(calls.filter((kind) => kind === 'SolutionGenerateTask')).toHaveLength(4);
+    expect(calls.filter((kind) => kind === 'SolutionGenerateTask')).toHaveLength(6);
     expect(calls).not.toContain('InterventionPackageReviewTask');
     const [failed] = await db.select().from(intervention);
     expect(failed).toMatchObject({ status: 'preparation_failed', package_json: null });
@@ -1549,11 +1704,13 @@ describe('YUK-791 intervention preparation closed loop', () => {
       };
       return output;
     };
-    const { fn: baseRun, calls } = successfulRunTask(areaAsLengthOutput);
+    const { fn: baseRun, calls } = successfulRunTask(db, areaAsLengthOutput);
     const falsePassRun: TaskTextRunFn = async (kind, input, ctx) => {
       if (kind !== 'InterventionPackageReviewTask') return baseRun(kind, input, ctx);
       calls.push(kind);
       const attempt = calls.filter((value) => value === kind).length;
+      const taskRunId = `review_scope_${attempt}`;
+      await recordMockAiRun(db, kind, input, taskRunId);
       const checks = reviewDiagnosticChecks();
       checks[2] = {
         ...checks[2],
@@ -1565,7 +1722,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       };
       return {
         text: '',
-        task_run_id: `review_scope_${attempt}`,
+        task_run_id: taskRunId,
         structured_output: {
           review_protocol_version: 2,
           // Regression: a contradictory bare pass cannot override the
@@ -1654,7 +1811,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       bossSend: async () => 'prepare_job_blind_input_swap',
     });
     const [opened] = await db.select().from(intervention);
-    const { fn } = successfulRunTask();
+    const { fn } = successfulRunTask(db);
     const swappedBlindInputAuthor: typeof authorInterventionPackage = async (...args) => {
       const attempt = await authorInterventionPackage(...args);
       if (
@@ -1687,7 +1844,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
 
     expect(result).toMatchObject({
       status: 'preparation_failed',
-      reason_code: 'package_quality:agency:immediate:independent_solution_input_mismatch',
+      reason_code: expect.stringContaining('agency:immediate:independent_solution_input_mismatch'),
     });
     const [failed] = await db.select().from(intervention);
     expect(failed).toMatchObject({
@@ -1704,7 +1861,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       bossSend: async (_name, _data, options) => options.id,
     });
     const [opened] = await db.select().from(intervention);
-    const { fn: baseRun, calls } = successfulRunTask();
+    const { fn: baseRun, calls } = successfulRunTask(db);
     const missingReviewRun: TaskTextRunFn = async (kind, input, ctx) => {
       if (kind === 'InterventionPackageReviewTask') {
         calls.push(kind);
@@ -1982,7 +2139,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
     });
     const [opened] = await db.select().from(intervention);
     const archivedJobId = preparationJobIdOf(opened);
-    const { fn, calls } = successfulRunTask();
+    const { fn, calls } = successfulRunTask(db);
     const supersedingRun: TaskTextRunFn = async (kind, input, context) => {
       const output = await fn(kind, input, context);
       if (kind === 'InterventionRecommendationTask') {
@@ -2026,7 +2183,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       bossSend: async (_name, _data, options) => options.id,
     });
     const [opened] = await db.select().from(intervention);
-    const { fn, calls } = successfulRunTask();
+    const { fn, calls } = successfulRunTask(db);
     const correctingRun: TaskTextRunFn = async (kind, input, context) => {
       const output = await fn(kind, input, context);
       if (kind === 'InterventionPackageAuthorTask') {
@@ -2081,7 +2238,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       bossSend: async (_name, _data, options) => options.id,
     });
     const [opened] = await db.select().from(intervention);
-    const { fn, calls } = successfulRunTask((attempt) => {
+    const { fn, calls } = successfulRunTask(db, (attempt) => {
       const output = authorOutput(attempt);
       output.diagnostics.immediate.probe_spec.target_error_response_signature = {
         ...output.diagnostics.immediate.probe_spec.gold_response_signature,
@@ -2161,7 +2318,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       bossSend: async (_name, _data, options) => options.id,
     });
     const [opened] = await db.select().from(intervention);
-    const { fn } = successfulRunTask();
+    const { fn } = successfulRunTask(db);
     let corrected = false;
 
     const result = await prepareInterventionWave(

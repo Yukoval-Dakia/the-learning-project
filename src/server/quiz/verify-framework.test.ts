@@ -196,11 +196,22 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         },
         task_input_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         solver_output_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        solver_output_repair_level: false,
         cost_usd: 0.012,
       });
       expect(runTaskFn).toHaveBeenCalledTimes(1);
       const blindInput = runTaskFn.mock.calls[0]?.[1] as Record<string, unknown>;
       expect(blindInput.prompt_md).toBe(diagnostic.probe_spec.prompt_md);
+      expect(Object.keys(blindInput).sort()).toEqual([
+        'choices_md',
+        'existing_analysis_hint',
+        'existing_answers_hint',
+        'figures_hint',
+        'kind',
+        'prompt_image_refs',
+        'prompt_md',
+        'subject_id',
+      ]);
       if (result.status !== 'solved') throw new Error('expected a strict solved result');
       expect(result.task_input).toEqual(blindInput);
       expect(result.task_input_sha256).toBe(sha256CanonicalJson(blindInput));
@@ -261,6 +272,70 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
       status: 'unsupported',
       contract_complete: false,
       reason: expect.stringContaining(reason),
+      retryable: task_run_id !== undefined,
+    });
+  });
+
+  it('records content-preserving deterministic JSON repair in the sealed result', async () => {
+    const output = {
+      reference_solution: {
+        expected_signals: ['判断「反向因果」是否成立'],
+        final_answer: '现有观察不足以推出因果结论。',
+        answer_equivalents: [],
+      },
+      worked_solution_md: '先区分相关、选择偏差、共同原因与真正的 Y→X。',
+      confidence: 0.9,
+    };
+    const malformed = JSON.stringify(output).replace('「', '"').replace('」', '"');
+    const result = await runIndependentSolution(
+      {
+        id: 'causal-deterministic-repair',
+        kind: 'answer_with_reason',
+        prompt_md: '给定一项观察研究，判断其因果结论是否成立并说明理由。',
+        choices_md: null,
+      },
+      {
+        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        runTaskFn: vi.fn(async () => ({ text: malformed, task_run_id: 'solver-repaired' })),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'solved',
+      task_run_id: 'solver-repaired',
+      solver_output_repair_level: 'deterministic',
+    });
+  });
+
+  it('rejects heuristic jsonrepair output instead of sealing an ambiguously redrawn object', async () => {
+    const output = {
+      reference_solution: {
+        expected_signals: ['独立推导'],
+        final_answer: '42',
+        answer_equivalents: [],
+      },
+      worked_solution_md: '按题面条件推导。',
+      confidence: 0.8,
+    };
+    const singleQuoted = JSON.stringify(output).replaceAll('"', "'");
+    const result = await runIndependentSolution(
+      {
+        id: 'risky-json-repair',
+        kind: 'short_answer',
+        prompt_md: '计算一个给定表达式。',
+        choices_md: null,
+      },
+      {
+        profile: { id: 'math', full: { id: 'math', displayName: '数学' } },
+        runTaskFn: vi.fn(async () => ({ text: singleQuoted, task_run_id: 'solver-risky' })),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'unsupported',
+      contract_complete: false,
+      retryable: true,
+      task_run_ids: ['solver-risky'],
     });
   });
 });

@@ -755,11 +755,30 @@ export const InterventionIndependentSolutionDiagnosticAudit = z
       worked_solution_md: z.string().min(1).max(12_000),
     }),
     solver_output_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    solver_output_repair_level: z.union([z.literal(false), z.literal('deterministic')]),
     solver_task_run_id: z.string().trim().min(1).max(240),
+    // A strict solver may retry once after a paid response is persisted but its
+    // JSON cannot satisfy the complete SolutionGenerateOutput contract. Keep
+    // every attempted run id; solver_task_run_id is the selected successful run.
+    solver_attempt_task_run_ids: z.array(z.string().trim().min(1).max(240)).min(1).max(2),
     independently_derived_answer_md: z.string().trim().min(1).max(480),
     required_operations_md: z.string().trim().min(1).max(320),
   })
-  .strict();
+  .strict()
+  .superRefine((diagnostic, context) => {
+    const successfulRunIds = diagnostic.solver_attempt_task_run_ids.filter(
+      (taskRunId) => taskRunId === diagnostic.solver_task_run_id,
+    );
+    if (
+      successfulRunIds.length !== 1 ||
+      diagnostic.solver_attempt_task_run_ids.at(-1) !== diagnostic.solver_task_run_id
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'selected solver task_run_id must appear exactly once as the final attempt',
+      });
+    }
+  });
 
 const InterventionIndependentSolutionDiagnosticAudits = z
   .array(InterventionIndependentSolutionDiagnosticAudit)
@@ -774,7 +793,7 @@ const InterventionIndependentSolutionDiagnosticAudits = z
         });
       }
     }
-    const taskRunIds = diagnostics.map((diagnostic) => diagnostic.solver_task_run_id);
+    const taskRunIds = diagnostics.flatMap((diagnostic) => diagnostic.solver_attempt_task_run_ids);
     if (new Set(taskRunIds).size !== taskRunIds.length) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -811,6 +830,7 @@ const InterventionPackageReviewAuditV2 = z
     review_version: z.literal(INTERVENTION_CONTRACT_VERSION),
     package_digest_sha256: z.string().regex(/^[a-f0-9]{64}$/),
     review_task_run_id: z.string().trim().min(1).max(240),
+    review_task_input_sha256: z.string().regex(/^[a-f0-9]{64}$/),
     independent_solution_audit: InterventionIndependentSolutionAudit,
     result: InterventionPackageReviewModelOutputFull,
   })
@@ -823,8 +843,8 @@ const InterventionPackageReviewAuditV2 = z
       });
     }
     if (
-      audit.independent_solution_audit.diagnostics.some(
-        (diagnostic) => diagnostic.solver_task_run_id === audit.review_task_run_id,
+      audit.independent_solution_audit.diagnostics.some((diagnostic) =>
+        diagnostic.solver_attempt_task_run_ids.includes(audit.review_task_run_id),
       )
     ) {
       context.addIssue({
@@ -862,7 +882,7 @@ export const InterventionPreparationAttempt = z.discriminatedUnion('kind', [
       kind: z.literal('author_failed'),
       attempt: z.number().int().min(1).max(MAX_INTERVENTION_PACKAGE_ATTEMPTS),
       author_task_run_id: z.string().trim().min(1).max(240).optional(),
-      validator_task_run_ids: z.array(z.string().trim().min(1).max(240)).max(3).optional(),
+      validator_task_run_ids: z.array(z.string().trim().min(1).max(240)).max(6).optional(),
       failure_code: z.string().trim().min(1).max(160),
     })
     .strict(),
@@ -885,3 +905,26 @@ export const InterventionAuthoringContext = z
   })
   .strict();
 export type InterventionAuthoringContextT = z.infer<typeof InterventionAuthoringContext>;
+
+/** Canonical comparator input, reconstructed again before activation for run binding. */
+export function buildInterventionPackageReviewTaskInput(input: {
+  context: InterventionAuthoringContextT;
+  packageValue: InterventionPackageT;
+  independentAudit: InterventionIndependentSolutionAuditT;
+}) {
+  return {
+    snapshot: input.context.snapshot,
+    recommendation: input.context.recommendation,
+    package: input.packageValue,
+    sealed_independent_solutions: input.independentAudit.diagnostics.map((diagnostic) => ({
+      kind: diagnostic.kind,
+      question_input_sha256: diagnostic.question_input_sha256,
+      solver_output_sha256: diagnostic.solver_output_sha256,
+      final_answer_md: diagnostic.solver_output.reference_solution.final_answer,
+      answer_equivalents_md: diagnostic.solver_output.reference_solution.answer_equivalents,
+      expected_signals_md: diagnostic.solver_output.reference_solution.expected_signals,
+      worked_solution_md: diagnostic.solver_output.worked_solution_md,
+      confidence: diagnostic.solver_output.confidence,
+    })),
+  };
+}

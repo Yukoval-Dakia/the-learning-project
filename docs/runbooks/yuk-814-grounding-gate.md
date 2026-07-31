@@ -36,13 +36,18 @@ The input packet has `schema_version: 1`,
 `case_id`, `subject_id`, canonical `context`, canonical `package`,
 `expected_verdict`, and `expected_failure_codes`. The checked-in packet contains
 three expected-fail regressions plus two expected-pass controls, so an
-always-rejecting comparator cannot pass the gate. The harness refuses a dirty worktree, global provider
-overrides, an absent Xiaomi credential, or an existing output path. It runs in a
-disposable pgvector Testcontainer. For every package it runs three strict
-`SolutionGenerateTask` blind solves followed by the sealed package comparator,
-then records all four task-run IDs, exact blind inputs/structured solutions and
-their digests, FULL diagnostic/package checks, provider/model, usage, and cost
-rows.
+always-rejecting comparator cannot pass the gate. The harness refuses a dirty
+worktree, global provider overrides, an absent Xiaomi credential, or an existing
+output path. It runs in a disposable pgvector Testcontainer. For every package
+it runs three strict `SolutionGenerateTask` blind solves followed by the sealed
+package comparator. A paid solver response that cannot satisfy the complete
+output contract may retry the identical blind input once; heuristic JSON repair
+is forbidden, deterministic repair is recorded, and every attempted task-run ID
+remains in the audit. Activation binds solver/comparator IDs to successful
+`ai_task_runs` rows and exact input hashes. The harness records exact blind
+inputs/structured solutions and their digests, FULL diagnostic/package checks,
+provider/model, usage, and cost rows. A per-case operational failure is retained
+in the final artifact instead of discarding earlier paid evidence.
 
 This command verifies real model output rather than a mocked verdict, but its
 artifact always records `satisfies_yuk_814_canary=false`. Sanitized regression

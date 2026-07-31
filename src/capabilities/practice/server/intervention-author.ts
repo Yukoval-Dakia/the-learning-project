@@ -23,6 +23,7 @@ import {
   type InterventionPackageT,
   InterventionPreparationAttempt,
   type InterventionPreparationAttemptT,
+  buildInterventionPackageReviewTaskInput,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
@@ -30,7 +31,10 @@ import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { runIndependentSolution } from '@/server/quiz/verify-framework';
+import {
+  type IndependentSolutionResult,
+  runIndependentSolution,
+} from '@/server/quiz/verify-framework';
 
 export interface InterventionAuthorDeps {
   runTaskFn?: TaskTextRunFn;
@@ -240,17 +244,6 @@ const INTERVENTION_DIAGNOSTIC_KINDS = ['immediate', 'delayed', 'transfer'] as co
 
 type ResolvedSubjectProfile = Awaited<ReturnType<typeof resolveSubjectProfileForKnowledgeIds>>;
 
-interface SealedIndependentSolutionForReview {
-  kind: (typeof INTERVENTION_DIAGNOSTIC_KINDS)[number];
-  question_input_sha256: string;
-  solver_output_sha256: string;
-  final_answer_md: string;
-  answer_equivalents_md: string[];
-  expected_signals_md: string[];
-  worked_solution_md: string;
-  confidence: number;
-}
-
 function boundedAuditText(value: string, maxLength: number): string {
   const normalized = value.trim();
   return normalized.length <= maxLength ? normalized : `${normalized.slice(0, maxLength - 1)}…`;
@@ -266,20 +259,14 @@ async function runInterventionIndependentSolutions(input: {
   | {
       status: 'ok';
       audit: InterventionIndependentSolutionAuditT;
-      sealedSolutions: SealedIndependentSolutionForReview[];
     }
-  | { status: 'invalid'; failureCode: string; taskRunIds: string[] }
+  | { status: 'invalid'; failureCode: string; taskRunIds: string[]; failureDetail?: string }
 > {
   const taskRunIds: string[] = [];
   const auditDiagnostics: InterventionIndependentSolutionAuditT['diagnostics'] = [];
-  const sealedSolutions: SealedIndependentSolutionForReview[] = [];
   const packageDigest = sha256CanonicalJson(input.packageValue);
 
   for (const kind of INTERVENTION_DIAGNOSTIC_KINDS) {
-    const guardFailure = await input.beforeEachPaidCall();
-    if (guardFailure) {
-      return { status: 'invalid', failureCode: guardFailure, taskRunIds };
-    }
     const diagnostic = input.packageValue.diagnostics[kind];
     const blindQuestion = {
       id: `${input.packageValue.intervention_id}:v${input.packageValue.intervention_version}:${kind}`,
@@ -289,20 +276,43 @@ async function runInterventionIndependentSolutions(input: {
       image_refs: null,
       figures: null,
     } as const;
-    const solved = await runIndependentSolution(blindQuestion, {
-      db: input.db,
-      runTaskFn: input.runTaskFn,
-      profile: { id: input.subjectProfile.id, full: input.subjectProfile },
-    });
-    if (solved.status !== 'solved') {
-      if (solved.task_run_ids) taskRunIds.push(...solved.task_run_ids);
+    const solverAttemptTaskRunIds: string[] = [];
+    let solved: Extract<IndependentSolutionResult, { status: 'solved' }> | null = null;
+    let failureDetail = '';
+    // MiMo emits text JSON rather than SDK-native structured output. A paid
+    // response can therefore be syntactically repairable yet still miss the
+    // complete SolutionGenerateOutput contract. Retry that exact blind input at
+    // most once; never accept a partial result, and audit every attempted run.
+    for (let solverAttempt = 1; solverAttempt <= 2; solverAttempt += 1) {
+      const guardFailure = await input.beforeEachPaidCall();
+      if (guardFailure) {
+        return { status: 'invalid', failureCode: guardFailure, taskRunIds };
+      }
+      const attempt = await runIndependentSolution(blindQuestion, {
+        db: input.db,
+        runTaskFn: input.runTaskFn,
+        profile: { id: input.subjectProfile.id, full: input.subjectProfile },
+      });
+      if (attempt.status === 'solved') {
+        solved = attempt;
+        taskRunIds.push(attempt.task_run_id);
+        solverAttemptTaskRunIds.push(attempt.task_run_id);
+        break;
+      }
+      const attemptTaskRunIds = attempt.task_run_ids ?? [];
+      taskRunIds.push(...attemptTaskRunIds);
+      solverAttemptTaskRunIds.push(...attemptTaskRunIds);
+      failureDetail = attempt.reason;
+      if (!attempt.retryable || solverAttempt === 2) break;
+    }
+    if (!solved) {
       return {
         status: 'invalid',
         failureCode: `independent_solution_unavailable:${kind}`,
         taskRunIds,
+        ...(failureDetail ? { failureDetail } : {}),
       };
     }
-    taskRunIds.push(solved.task_run_id);
     const solution = solved.solution;
 
     const questionInputSha256 = solved.task_input_sha256;
@@ -330,19 +340,11 @@ async function runInterventionIndependentSolutions(input: {
       question_input_sha256: questionInputSha256,
       solver_output: solution,
       solver_output_sha256: solverOutputSha256,
+      solver_output_repair_level: solved.solver_output_repair_level,
       solver_task_run_id: solverTaskRunId,
+      solver_attempt_task_run_ids: solverAttemptTaskRunIds,
       independently_derived_answer_md: independentlyDerivedAnswer,
       required_operations_md: requiredOperations,
-    });
-    sealedSolutions.push({
-      kind,
-      question_input_sha256: questionInputSha256,
-      solver_output_sha256: solverOutputSha256,
-      final_answer_md: solution.reference_solution.final_answer,
-      answer_equivalents_md: solution.reference_solution.answer_equivalents,
-      expected_signals_md: solution.reference_solution.expected_signals,
-      worked_solution_md: solution.worked_solution_md,
-      confidence: solution.confidence,
     });
   }
 
@@ -353,7 +355,6 @@ async function runInterventionIndependentSolutions(input: {
       package_digest_sha256: packageDigest,
       diagnostics: auditDiagnostics,
     }),
-    sealedSolutions,
   };
 }
 
@@ -494,27 +495,20 @@ async function runPackageReview(
   context: InterventionAuthoringContextT,
   packageValue: InterventionPackageT,
   subjectProfile: ResolvedSubjectProfile,
-  independentSolutions: {
-    audit: InterventionIndependentSolutionAuditT;
-    sealedSolutions: SealedIndependentSolutionForReview[];
-  },
+  independentAudit: InterventionIndependentSolutionAuditT,
 ): Promise<
   | { status: 'ok'; review: InterventionPackageReviewAuditT }
   | { status: 'invalid'; failureCode: string }
 > {
-  const result = await runTaskFn(
-    'InterventionPackageReviewTask',
-    {
-      snapshot: context.snapshot,
-      recommendation: context.recommendation,
-      package: packageValue,
-      sealed_independent_solutions: independentSolutions.sealedSolutions,
-    },
-    {
-      subjectProfile,
-      ...(REVIEW_OUTPUT_FORMAT ? { outputFormat: REVIEW_OUTPUT_FORMAT } : {}),
-    },
-  );
+  const reviewTaskInput = buildInterventionPackageReviewTaskInput({
+    context,
+    packageValue,
+    independentAudit,
+  });
+  const result = await runTaskFn('InterventionPackageReviewTask', reviewTaskInput, {
+    subjectProfile,
+    ...(REVIEW_OUTPUT_FORMAT ? { outputFormat: REVIEW_OUTPUT_FORMAT } : {}),
+  });
   if (!result.task_run_id) {
     return { status: 'invalid', failureCode: 'review_task_run_id_missing' };
   }
@@ -522,13 +516,13 @@ async function runPackageReview(
   let review: InterventionPackageReviewModelOutputFullT;
   try {
     review = parseTaskOutput(result, 'intervention package review', (value) =>
-      bindInterventionPackageReviewDecision(value, independentSolutions.audit),
+      bindInterventionPackageReviewDecision(value, independentAudit),
     );
   } catch {
-    review = invalidComparatorReview(independentSolutions.audit);
+    review = invalidComparatorReview(independentAudit);
   }
   const packageDigest = sha256CanonicalJson(packageValue);
-  if (independentSolutions.audit.package_digest_sha256 !== packageDigest) {
+  if (independentAudit.package_digest_sha256 !== packageDigest) {
     return { status: 'invalid', failureCode: 'independent_solution_package_digest_mismatch' };
   }
   return {
@@ -537,7 +531,8 @@ async function runPackageReview(
       review_version: INTERVENTION_CONTRACT_VERSION,
       package_digest_sha256: packageDigest,
       review_task_run_id: result.task_run_id,
-      independent_solution_audit: independentSolutions.audit,
+      review_task_input_sha256: sha256CanonicalJson(reviewTaskInput),
+      independent_solution_audit: independentAudit,
       result: review,
     }),
   };
@@ -556,7 +551,7 @@ export async function reviewInterventionPackageCandidate(input: {
   beforeEachPaidCall?: () => Promise<string | null>;
 }): Promise<
   | { status: 'ok'; review: InterventionPackageReviewAuditT }
-  | { status: 'invalid'; failureCode: string; taskRunIds: string[] }
+  | { status: 'invalid'; failureCode: string; taskRunIds: string[]; failureDetail?: string }
 > {
   const beforeEachPaidCall = input.beforeEachPaidCall ?? (async () => null);
   const independentlySolved = await runInterventionIndependentSolutions({
@@ -573,8 +568,8 @@ export async function reviewInterventionPackageCandidate(input: {
     return {
       status: 'invalid',
       failureCode: comparatorGuardFailure,
-      taskRunIds: independentlySolved.audit.diagnostics.map(
-        (diagnostic) => diagnostic.solver_task_run_id,
+      taskRunIds: independentlySolved.audit.diagnostics.flatMap(
+        (diagnostic) => diagnostic.solver_attempt_task_run_ids,
       ),
     };
   }
@@ -583,13 +578,13 @@ export async function reviewInterventionPackageCandidate(input: {
     input.context,
     input.packageValue,
     input.subjectProfile,
-    independentlySolved,
+    independentlySolved.audit,
   );
   if (reviewed.status === 'invalid') {
     return {
       ...reviewed,
-      taskRunIds: independentlySolved.audit.diagnostics.map(
-        (diagnostic) => diagnostic.solver_task_run_id,
+      taskRunIds: independentlySolved.audit.diagnostics.flatMap(
+        (diagnostic) => diagnostic.solver_attempt_task_run_ids,
       ),
     };
   }

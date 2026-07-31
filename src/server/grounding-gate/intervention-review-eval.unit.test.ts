@@ -1,9 +1,17 @@
+import { reviewInterventionPackageCandidate } from '@/capabilities/practice/server/intervention-author';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import regressionFixture from '@/server/grounding-gate/fixtures/intervention-review-regressions.v1.json' with {
   type: 'json',
 };
-import { InterventionReviewRegressionPacket } from '@/server/grounding-gate/intervention-review-eval';
-import { describe, expect, it } from 'vitest';
+import {
+  InterventionReviewRegressionPacket,
+  runInterventionReviewActualOutputEval,
+} from '@/server/grounding-gate/intervention-review-eval';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/capabilities/practice/server/intervention-author', () => ({
+  reviewInterventionPackageCandidate: vi.fn(),
+}));
 
 describe('intervention reviewer actual-output regression fixture', () => {
   it('pins complex false-pass regressions and true-pass controls', () => {
@@ -78,5 +86,41 @@ describe('intervention reviewer actual-output regression fixture', () => {
       '每周课外阅读时间',
     );
     expect(validYuwen?.package.diagnostics.transfer.probe_spec.prompt_md).toContain('短视频');
+  });
+
+  it('retains a per-case strict-solver operational failure instead of discarding the artifact', async () => {
+    const packet = InterventionReviewRegressionPacket.parse({
+      ...regressionFixture,
+      cases: [regressionFixture.cases[0]],
+    });
+    vi.mocked(reviewInterventionPackageCandidate).mockResolvedValueOnce({
+      status: 'invalid',
+      failureCode: 'independent_solution_unavailable:immediate',
+      failureDetail:
+        'solver output did not satisfy the complete SolutionGenerateOutput contract (confidence:invalid_type)',
+      taskRunIds: [],
+    });
+
+    const result = await runInterventionReviewActualOutputEval({
+      db: {} as never,
+      packet,
+      runTaskFn: vi.fn(),
+      codeRevision: 'test-revision',
+    });
+
+    expect(result).toMatchObject({
+      passed: false,
+      cases: [
+        {
+          case_id: 'area-vs-length-and-scope',
+          expectation_met: false,
+          independent_solution_task_run_ids: [],
+          operational_failure: {
+            code: 'independent_solution_unavailable:immediate',
+            detail: expect.stringContaining('confidence:invalid_type'),
+          },
+        },
+      ],
+    });
   });
 });

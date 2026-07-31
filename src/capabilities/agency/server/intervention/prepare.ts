@@ -7,11 +7,14 @@ import type {
 import {
   InterventionPreparationAttempt,
   MAX_INTERVENTION_PACKAGE_ATTEMPTS,
+  buildInterventionPackageReviewTaskInput,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
+import { ai_task_runs } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { inArray } from 'drizzle-orm';
 import { recommendPedagogy } from './recommend';
 import {
   type InterventionRecord,
@@ -167,12 +170,19 @@ async function revalidateForPaidPreparationStage(
   };
 }
 
-function bindAttemptToRecord(
+async function bindAttemptToRecord(
+  db: Db,
   record: InterventionRecord,
   attempt: InterventionPreparationAttemptT,
-): InterventionPreparationAttemptT {
+): Promise<InterventionPreparationAttemptT> {
   if (attempt.kind === 'author_failed') return attempt;
   const failures = [...attempt.deterministic_failure_codes];
+  const expectedRuns: Array<{
+    id: string;
+    taskKind: 'SolutionGenerateTask' | 'InterventionPackageReviewTask';
+    inputHash: string;
+    failureCode: string;
+  }> = [];
   if (
     attempt.package.intervention_id !== record.id ||
     attempt.package.intervention_version !== record.version
@@ -194,6 +204,9 @@ function bindAttemptToRecord(
     failures.push('agency:independent_solution_audit_missing');
   } else {
     const independentAudit = attempt.review.independent_solution_audit;
+    const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, [
+      record.snapshot.conjecture.knowledge_id,
+    ]);
     if (independentAudit.package_digest_sha256 !== sha256CanonicalJson(attempt.package)) {
       failures.push('agency:independent_solution_package_digest_mismatch');
     }
@@ -210,6 +223,63 @@ function bindAttemptToRecord(
       }
       if (diagnostic.solver_output_sha256 !== sha256CanonicalJson(diagnostic.solver_output)) {
         failures.push(`agency:${diagnostic.kind}:independent_solution_output_digest_mismatch`);
+      }
+      if (diagnostic.task_input.subject_id !== subjectProfile.id) {
+        failures.push(`agency:${diagnostic.kind}:independent_solution_subject_mismatch`);
+      }
+      for (const taskRunId of diagnostic.solver_attempt_task_run_ids) {
+        expectedRuns.push({
+          id: taskRunId,
+          taskKind: 'SolutionGenerateTask',
+          inputHash: diagnostic.question_input_sha256,
+          failureCode: `agency:${diagnostic.kind}:solver_task_run_invalid`,
+        });
+      }
+    }
+    if (record.recommendation?.kind === 'recommendation') {
+      const reviewTaskInputSha256 = sha256CanonicalJson(
+        buildInterventionPackageReviewTaskInput({
+          context: { snapshot: record.snapshot, recommendation: record.recommendation },
+          packageValue: attempt.package,
+          independentAudit,
+        }),
+      );
+      if (attempt.review.review_task_input_sha256 !== reviewTaskInputSha256) {
+        failures.push('agency:review_task_input_digest_mismatch');
+      }
+      expectedRuns.push({
+        id: attempt.review.review_task_run_id,
+        taskKind: 'InterventionPackageReviewTask',
+        inputHash: reviewTaskInputSha256,
+        failureCode: 'agency:review_task_run_invalid',
+      });
+    }
+  }
+  if (expectedRuns.length > 0) {
+    const rows = await db
+      .select({
+        id: ai_task_runs.id,
+        task_kind: ai_task_runs.task_kind,
+        input_hash: ai_task_runs.input_hash,
+        status: ai_task_runs.status,
+      })
+      .from(ai_task_runs)
+      .where(
+        inArray(
+          ai_task_runs.id,
+          expectedRuns.map((run) => run.id),
+        ),
+      );
+    const rowById = new Map(rows.map((row) => [row.id, row]));
+    for (const expected of expectedRuns) {
+      const row = rowById.get(expected.id);
+      if (
+        !row ||
+        row.status !== 'success' ||
+        row.task_kind !== expected.taskKind ||
+        row.input_hash !== expected.inputHash
+      ) {
+        failures.push(expected.failureCode);
       }
     }
   }
@@ -416,7 +486,7 @@ export async function prepareInterventionWave(
     );
     if (postAuthorGuard.status === 'terminal') return postAuthorGuard.result;
     record = postAuthorGuard.record;
-    const boundAttempt = bindAttemptToRecord(record, authored);
+    const boundAttempt = await bindAttemptToRecord(db, record, authored);
     record = await appendPreparationAttempt(db, record, boundAttempt, deps.now?.() ?? new Date());
     if (record.status !== 'preparing') break;
   }

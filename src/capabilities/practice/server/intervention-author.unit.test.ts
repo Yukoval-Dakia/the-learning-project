@@ -195,7 +195,9 @@ describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () 
           question_input_sha256: sha256CanonicalJson(taskInput),
           solver_output: solverOutput,
           solver_output_sha256: sha256CanonicalJson(solverOutput),
+          solver_output_repair_level: false,
           solver_task_run_id: `blind-${index + 1}`,
+          solver_attempt_task_run_ids: [`blind-${index + 1}`],
           independently_derived_answer_md: solverOutput.reference_solution.final_answer,
           required_operations_md: solverOutput.reference_solution.expected_signals.join('；'),
         };
