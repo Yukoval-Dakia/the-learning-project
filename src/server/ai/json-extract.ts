@@ -88,7 +88,15 @@ function escapeInvalidJsonStringBackslashes(slice: string): string {
     }
 
     const next = slice[i + 1];
-    if (next && ['"', '\\', '/', 'b', 'f', 'n', 'r', 't'].includes(next)) {
+    if (next === '"' || next === '\\' || next === '/') {
+      out.push(ch, next);
+      i += 1;
+      continue;
+    }
+    const suffix = slice.slice(i + 1);
+    const likelyLatexCommand =
+      /^[bfrt][A-Za-z]/.test(suffix) || /^n(?:abla|eg|eq|ewline|ot|u)/.test(suffix);
+    if (next && 'bfnrt'.includes(next) && !likelyLatexCommand) {
       out.push(ch, next);
       i += 1;
       continue;
@@ -151,14 +159,21 @@ interface LadderHit {
 //   截断内容 + 伪造 key，且能过非 strict 的 Zod 门。review 已用真实 lib 复现）：
 //     ⑤ jsonrepair(原文)  ⑥ jsonrepair(确定性结果)
 // allowRisky=false 时只走确定性级——适用于「解析结果直接持久化且无下游隔离门」的站点。
-function tryRepairLadder(slice: string, allowRisky: boolean): LadderHit {
+function tryRepairLadder(
+  slice: string,
+  allowRisky: boolean,
+  allowContainerClosure: boolean,
+): LadderHit {
   const escaped = escapeInvalidJsonStringBackslashes(escapeContentQuotes(slice));
   try {
     return { json: JSON.parse(escaped), level: 'deterministic' };
   } catch {
     /* 下一级 */
   }
-  const sanitized = closeUnterminatedJsonContainers(sanitizeJsonStringLiterals(escaped));
+  const sanitizedEscaped = sanitizeJsonStringLiterals(escaped);
+  const sanitized = allowContainerClosure
+    ? closeUnterminatedJsonContainers(sanitizedEscaped)
+    : sanitizedEscaped;
   try {
     return { json: JSON.parse(sanitized), level: 'deterministic' };
   } catch (deterministicErr) {
@@ -206,12 +221,20 @@ export function parseJsonObjectLoose(
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) return null;
   const slice = text.slice(start, end + 1);
+  const hasTruncatedSuffix = text.slice(end + 1).trim().length > 0;
+  const needsLatexRepair = escapeInvalidJsonStringBackslashes(slice) !== slice;
+  let strictErr: unknown;
   try {
-    return { json: JSON.parse(slice), repaired: false };
-  } catch (strictErr) {
+    const strictJson = JSON.parse(slice);
+    if (!needsLatexRepair) return { json: strictJson, repaired: false };
+    strictErr = new SyntaxError(`${label} contained an ambiguous LaTeX escape`);
+  } catch (err) {
+    strictErr = err;
+  }
+  {
     let hit: LadderHit;
     try {
-      hit = tryRepairLadder(slice, (opts.riskyRepair ?? 'allow') === 'allow');
+      hit = tryRepairLadder(slice, (opts.riskyRepair ?? 'allow') === 'allow', !hasTruncatedSuffix);
     } catch (repairErr) {
       // 不可修：留一段错误位置附近的有界片段（±120 字符）供诊断——原始输出不落库，
       // 没有这段 warn 时该失败类完全无法事后归因（spike 2026-07-10 教训）。

@@ -26,13 +26,13 @@ describe('normalizeInterventionPackageModelOutput', () => {
       material: { title_md: '链式法则', body_md: '外层导数乘以内层导数。' },
       diagnostics: {
         immediate: {
-          kind: 'delayed',
+          kind: 'immediate',
           probe_spec: probeSpec('立即题'),
           tested_claim_md: '模型改写的 claim',
           target_error_rule_md: '模型改写的规则',
         },
         delayed: {
-          kind: 'immediate',
+          kind: 'delayed',
           probe_spec: probeSpec('延迟题'),
           tested_claim_md: '模型改写的 claim',
           target_error_rule_md: '模型改写的规则',
@@ -71,5 +71,44 @@ describe('normalizeInterventionPackageModelOutput', () => {
       context_change_md: '从纯符号函数换到热膨胀情境。',
     });
     expect(normalized.diagnostics.transfer.probe_spec).not.toHaveProperty('context_change_md');
+  });
+
+  it('rejects a mismatched diagnostic kind instead of masking a possible content swap', () => {
+    const output = {
+      schema_version: 1,
+      material: { title_md: '链式法则', body_md: '外层导数乘以内层导数。' },
+      diagnostics: {
+        immediate: {
+          kind: 'delayed',
+          probe_spec: probeSpec('立即题'),
+          tested_claim_md: CLAIM,
+          target_error_rule_md: TARGET_ERROR,
+        },
+        delayed: {
+          kind: 'delayed',
+          probe_spec: probeSpec('延迟题'),
+          tested_claim_md: CLAIM,
+          target_error_rule_md: TARGET_ERROR,
+        },
+        transfer: {
+          kind: 'transfer',
+          probe_spec: {
+            ...probeSpec('迁移题'),
+            context_kind: 'applied',
+            representation_kind: 'natural_language',
+          },
+          tested_claim_md: CLAIM,
+          target_error_rule_md: TARGET_ERROR,
+          context_change_md: '从纯符号函数换到热膨胀情境。',
+        },
+      },
+    };
+
+    expect(() =>
+      normalizeInterventionPackageModelOutput(output, {
+        testedClaimMd: CLAIM,
+        targetErrorRuleMd: TARGET_ERROR,
+      }),
+    ).toThrow();
   });
 });

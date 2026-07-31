@@ -85,6 +85,29 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     });
   });
 
+  it('合法但会腐蚀 LaTeX 的单字符 escape → 保留公式，同时不改写真实换行', () => {
+    const text = String.raw`{"formula":"\frac{1}{2}+\text{半}+\nabla f","line":"first\nNext"}`;
+    // 原生 JSON.parse 会把 \f / \t / \n 吞成控制字符，属于静默内容损坏。
+    expect((JSON.parse(text) as { formula: string }).formula).not.toContain('\\frac');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = parseJsonObjectLoose(text, 'latex', { riskyRepair: 'reject' });
+    expect(r).toEqual({
+      json: {
+        formula: '\\frac{1}{2}+\\text{半}+\\nabla f',
+        line: 'first\nNext',
+      },
+      repaired: 'deterministic',
+    });
+  });
+
+  it('最后一个完整 child 后还有未完成 suffix → reject 模式不得截断后补闭合符', () => {
+    const truncated = '{"meta":"ok","questions":[{"id":1},{"id":';
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(() =>
+      parseJsonObjectLoose(truncated, 'truncated suffix', { riskyRepair: 'reject' }),
+    ).toThrow();
+  });
+
   it('智能引号定界 → 修复成功', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const r = parseJsonObjectLoose('{“kind”: “translation”}', 'site');

@@ -74,9 +74,20 @@ export function normalizeInterventionPackageModelOutput(
   for (const kind of ['immediate', 'delayed', 'transfer'] as const) {
     const rawDiagnostic = diagnostics[kind];
     if (!isRecord(rawDiagnostic)) continue;
+    const normalizedIdentityFields = [
+      rawDiagnostic.tested_claim_md !== identity.testedClaimMd ? 'tested_claim_md' : null,
+      rawDiagnostic.target_error_rule_md !== identity.targetErrorRuleMd
+        ? 'target_error_rule_md'
+        : null,
+    ].filter((field): field is string => field !== null);
+    if (normalizedIdentityFields.length > 0) {
+      console.warn('[intervention-author] normalized server-owned diagnostic identities', {
+        diagnostic_kind: kind,
+        fields: normalizedIdentityFields,
+      });
+    }
     const diagnostic: Record<string, unknown> = {
       ...rawDiagnostic,
-      kind,
       tested_claim_md: identity.testedClaimMd,
       target_error_rule_md: identity.targetErrorRuleMd,
     };
