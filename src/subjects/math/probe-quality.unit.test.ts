@@ -495,6 +495,34 @@ describe('math subject probe validators', () => {
     ).toBe('pass');
   });
 
+  it('strips unselected distractors before parsing a choice question stem', () => {
+    const mutated = structuredClone(fractionPackage);
+    mutated.primary.prompt_md = '计算 1/3 + 1/4。 A. 1/2 B. 3/7 C. 7/12 D. 2/7';
+    mutated.primary.representation_kind = 'multiple_choice';
+    mutated.primary.response_mode = 'single_choice';
+    mutated.primary.gold_response_signature = { kind: 'choice', option_ids: ['C'] };
+    mutated.primary.target_error_response_signature = { kind: 'choice', option_ids: ['D'] };
+    expect(
+      resultFor(fractionHypothesis, mutated, 'math.unlike-denominator-fraction-addition').outcome,
+    ).toBe('pass');
+  });
+
+  it('rejects an incomplete choice signature when an unselected option is equivalent', () => {
+    const mutated = structuredClone(fractionPackage);
+    mutated.primary.prompt_md = '计算 1/3 + 1/4。 A. 7/12 B. 14/24 C. 2/7';
+    mutated.primary.representation_kind = 'multiple_choice';
+    mutated.primary.response_mode = 'single_choice';
+    mutated.primary.gold_response_signature = { kind: 'choice', option_ids: ['A'] };
+    mutated.primary.target_error_response_signature = { kind: 'choice', option_ids: ['C'] };
+    const result = resultFor(
+      fractionHypothesis,
+      mutated,
+      'math.unlike-denominator-fraction-addition',
+    );
+    expect(result.outcome).toBe('fail');
+    expect(result.failure_codes).toContain('fraction_reference_mismatch');
+  });
+
   it('does not treat prose hyphens as a subtraction step', () => {
     const mutated = structuredClone(fractionPackage);
     mutated.primary.prompt_md = 'Use the well-known method to add 1/3 + 1/4.';

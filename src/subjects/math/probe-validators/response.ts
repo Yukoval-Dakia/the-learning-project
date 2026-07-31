@@ -4,6 +4,10 @@ export interface DeterministicProbeAnswerGroup {
   reference: string;
   signature: string[];
   signatureMatch: 'all' | 'some';
+  choice?: {
+    options: Array<{ id: string; answer: string }>;
+    selectedOptionIds: string[];
+  };
 }
 
 interface ChoiceOption {
@@ -27,8 +31,57 @@ function parseChoiceOptions(prompt: string): ChoiceOption[] {
   });
 }
 
-function choiceSignatureAnswers(prompt: string, optionIds: string[]): string[] | null {
-  const options = parseChoiceOptions(prompt);
+function optionOrdinal(id: string): { prefix: string; ordinal: number } | null {
+  if (/^[a-z]$/i.test(id)) return { prefix: 'letter', ordinal: id.toUpperCase().charCodeAt(0) };
+  const numbered = /^(.*?)(\d+)$/.exec(id);
+  return numbered
+    ? { prefix: numbered[1]?.toLowerCase() ?? '', ordinal: Number(numbered[2]) }
+    : null;
+}
+
+function optionsAreSequential(left: ChoiceOption, right: ChoiceOption): boolean {
+  const leftOrdinal = optionOrdinal(left.id);
+  const rightOrdinal = optionOrdinal(right.id);
+  return (
+    leftOrdinal !== null &&
+    rightOrdinal !== null &&
+    leftOrdinal.prefix === rightOrdinal.prefix &&
+    rightOrdinal.ordinal === leftOrdinal.ordinal + 1
+  );
+}
+
+function probeChoiceOptions(probe: ConjectureProbeSpecV2T): ChoiceOption[] | null {
+  const selectedIds = [
+    ...(probe.gold_response_signature.kind === 'choice'
+      ? probe.gold_response_signature.option_ids
+      : []),
+    ...(probe.target_error_response_signature.kind === 'choice'
+      ? probe.target_error_response_signature.option_ids
+      : []),
+  ].map((id) => id.normalize('NFKC').trim().toLowerCase());
+  if (selectedIds.length === 0) return [];
+  const options = parseChoiceOptions(probe.prompt_md);
+  const selectedIndexes = selectedIds.map((id) => options.findIndex((option) => option.id === id));
+  if (selectedIndexes.some((index) => index < 0)) return null;
+  let start = Math.min(...selectedIndexes);
+  let end = Math.max(...selectedIndexes);
+  while (start > 0) {
+    const previous = options[start - 1];
+    const current = options[start];
+    if (!previous || !current || !optionsAreSequential(previous, current)) break;
+    start -= 1;
+  }
+  while (end + 1 < options.length) {
+    const current = options[end];
+    const next = options[end + 1];
+    if (!current || !next || !optionsAreSequential(current, next)) break;
+    end += 1;
+  }
+  const block = options.slice(start, end + 1);
+  return selectedIds.every((id) => block.some((option) => option.id === id)) ? block : null;
+}
+
+function choiceSignatureAnswers(options: ChoiceOption[], optionIds: string[]): string[] | null {
   const answers = optionIds.map((id) =>
     options.find((option) => option.id === id.normalize('NFKC').trim().toLowerCase()),
   );
@@ -38,7 +91,7 @@ function choiceSignatureAnswers(prompt: string, optionIds: string[]): string[] |
 }
 
 function signatureAnswers(
-  prompt: string,
+  options: ChoiceOption[],
   signature:
     | ConjectureProbeSpecV2T['gold_response_signature']
     | ConjectureProbeSpecV2T['target_error_response_signature'],
@@ -48,47 +101,49 @@ function signatureAnswers(
     return { answers: [signature.answer_md], match: 'all' };
   }
   if (signature.kind === 'choice') {
-    const answers = choiceSignatureAnswers(prompt, signature.option_ids);
+    const answers = choiceSignatureAnswers(options, signature.option_ids);
     return answers ? { answers, match: 'all' } : null;
   }
   return { answers: signature.required_features_md, match: 'some' };
 }
 
 export function deterministicProbeQuestionStem(probe: ConjectureProbeSpecV2T): string {
-  const optionIds = [
-    ...(probe.gold_response_signature.kind === 'choice'
-      ? probe.gold_response_signature.option_ids
-      : []),
-    ...(probe.target_error_response_signature.kind === 'choice'
-      ? probe.target_error_response_signature.option_ids
-      : []),
-  ].map((id) => id.normalize('NFKC').trim().toLowerCase());
-  if (optionIds.length === 0) return probe.prompt_md;
-  const firstSelectedOption = parseChoiceOptions(probe.prompt_md)
-    .filter((option) => optionIds.includes(option.id))
-    .sort((left, right) => left.markerIndex - right.markerIndex)[0];
-  return firstSelectedOption
-    ? probe.prompt_md.slice(0, firstSelectedOption.markerIndex).trim()
-    : '';
+  const options = probeChoiceOptions(probe);
+  if (options?.length === 0) return probe.prompt_md;
+  const firstOption = options?.[0];
+  return firstOption ? probe.prompt_md.slice(0, firstOption.markerIndex).trim() : '';
 }
 
 export function deterministicProbeAnswers(probe: ConjectureProbeSpecV2T): {
   gold: DeterministicProbeAnswerGroup;
   target: DeterministicProbeAnswerGroup;
 } | null {
-  const goldSignature = signatureAnswers(probe.prompt_md, probe.gold_response_signature);
-  const targetSignature = signatureAnswers(probe.prompt_md, probe.target_error_response_signature);
+  const choiceOptions = probeChoiceOptions(probe);
+  if (!choiceOptions) return null;
+  const goldSignature = signatureAnswers(choiceOptions, probe.gold_response_signature);
+  const targetSignature = signatureAnswers(choiceOptions, probe.target_error_response_signature);
   if (!goldSignature || !targetSignature) return null;
+  const choice = (signature: ConjectureProbeSpecV2T['gold_response_signature']) =>
+    signature.kind === 'choice'
+      ? {
+          options: choiceOptions.map(({ id, answer }) => ({ id, answer })),
+          selectedOptionIds: signature.option_ids.map((id) =>
+            id.normalize('NFKC').trim().toLowerCase(),
+          ),
+        }
+      : undefined;
   return {
     gold: {
       reference: probe.reference_md,
       signature: goldSignature.answers,
       signatureMatch: goldSignature.match,
+      choice: choice(probe.gold_response_signature),
     },
     target: {
       reference: probe.expected_target_error_answer_md,
       signature: targetSignature.answers,
       signatureMatch: targetSignature.match,
+      choice: choice(probe.target_error_response_signature),
     },
   };
 }
@@ -98,6 +153,17 @@ export function deterministicAnswerGroupMatches(
   matches: (answer: string) => boolean,
 ): boolean {
   if (!matches(group.reference) || group.signature.length === 0) return false;
+  if (group.choice) {
+    const expectedIds = group.choice.options
+      .filter((option) => matches(option.answer))
+      .map((option) => option.id)
+      .sort();
+    const selectedIds = [...group.choice.selectedOptionIds].sort();
+    return (
+      expectedIds.length === selectedIds.length &&
+      expectedIds.every((id, index) => id === selectedIds[index])
+    );
+  }
   return group.signatureMatch === 'all'
     ? group.signature.every(matches)
     : group.signature.some(matches);
