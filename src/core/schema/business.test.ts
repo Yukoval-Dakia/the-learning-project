@@ -310,7 +310,7 @@ describe('ConjectureDraft', () => {
       },
     },
     probe_quality: {
-      schema_version: 3 as const,
+      schema_version: 4 as const,
       passed: true as const,
       attempts: [
         {
@@ -385,6 +385,9 @@ describe('ConjectureDraft', () => {
         },
         predicted_p: 0.35,
       },
+      subject_id: 'general',
+      policy_version: 'subject-probe-validator-v1',
+      subject_validator_results: [],
     },
     cause_category: 'concept_confusion',
     recurrence_count: 3,

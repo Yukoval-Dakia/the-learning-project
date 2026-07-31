@@ -1,4 +1,5 @@
 import type { SubjectProfile } from '../profile';
+import './probe-quality';
 
 export const mathProfile: SubjectProfile = {
   id: 'math',

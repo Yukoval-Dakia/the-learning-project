@@ -129,6 +129,66 @@ function probeReviewResult(
   };
 }
 
+function unitSample(): TaskTextResult {
+  return {
+    text: JSON.stringify({
+      kind: 'proposal',
+      claim_md: '你在复合速度单位换算时只换分子距离单位，忘记换分母时间单位。',
+      knowledge_id: 'k_chain_rule',
+      evidence_event_ids: ['e_a', 'e_b'],
+      diagnostic_spec: {
+        schema_version: 1,
+        target_error_rule_md: '只换算分子距离单位，不换算分母时间单位。',
+        trigger_conditions_md: '题目要求在 km/h 与 m/s 之间做速度单位换算。',
+        scope_boundary_md: '只覆盖复合速度单位换算。',
+        expected_wrong_answer_signature_md: '分母的每小时或每秒倍率保持不变。',
+      },
+      cause_category: 'unit_error',
+      recurrence_count: 3,
+    }),
+  };
+}
+
+function unitProbePackageResult(input: {
+  taskRunId: string;
+  primaryGold?: string;
+}): TaskTextResult {
+  const primaryGold = input.primaryGold ?? '20 m/s';
+  return {
+    text: '',
+    task_run_id: input.taskRunId,
+    structured_output: {
+      package: {
+        primary: {
+          schema_version: 2,
+          prompt_md: 'Convert 72 km/h to m/s.',
+          reference_md: primaryGold,
+          expected_target_error_answer_md: '72000 m/s',
+          elicits_target_error_reason_md: 'Requires converting both parts of the compound unit.',
+          context_kind: 'abstract',
+          representation_kind: 'symbolic',
+          response_mode: 'short_answer',
+          gold_response_signature: { kind: 'text', response_md: primaryGold },
+          target_error_response_signature: { kind: 'text', response_md: '72000 m/s' },
+        },
+        followup: {
+          schema_version: 2,
+          prompt_md: '将 10 m/s 换算为 km/h。',
+          reference_md: '36 km/h',
+          expected_target_error_answer_md: '0.01 km/h',
+          elicits_target_error_reason_md: '再次要求同时换算距离和分母时间单位。',
+          context_kind: 'applied',
+          representation_kind: 'natural_language',
+          response_mode: 'short_answer',
+          gold_response_signature: { kind: 'text', response_md: '36 km/h' },
+          target_error_response_signature: { kind: 'text', response_md: '0.01 km/h' },
+        },
+        predicted_p: 0.3,
+      },
+    },
+  };
+}
+
 function withPassingProbeQuality(runTaskFn: TaskTextRunFn): TaskTextRunFn {
   return async (kind, input, ctx) => {
     if (kind === 'ConjectureProbeAuthorTask') return probePackageResult();
@@ -1144,7 +1204,7 @@ describe('induceConjecture self-consistency', () => {
 
     const draft = proposal(result);
     expect(draft.probe_md).toBe('对 y=sin(x³) 求导。');
-    expect(draft.probe_quality.schema_version).toBe(3);
+    expect(draft.probe_quality.schema_version).toBe(4);
     expect(draft.probe_quality).toMatchObject({
       reviewed_hypothesis: {
         kind: 'proposal',
@@ -1161,7 +1221,7 @@ describe('induceConjecture self-consistency', () => {
         predicted_p: draft.predicted_p,
       },
     });
-    if (draft.probe_quality.schema_version !== 3) throw new Error('expected v3 audit');
+    if (draft.probe_quality.schema_version !== 4) throw new Error('expected v4 audit');
     expect(draft.probe_quality.reviewed_hypothesis).not.toBe(draft);
     expect(draft.probe_quality.reviewed_package.primary).not.toBe(draft.probe_spec);
     expect(draft.probe_quality.attempts).toMatchObject([
@@ -1229,6 +1289,134 @@ describe('induceConjecture self-consistency', () => {
       'ConjectureProbeAuthorTask',
       'ConjectureProbeAuthorTask',
     ]);
+  });
+
+  it('runs deterministic subject validators before review and regenerates the whole pair once', async () => {
+    process.env.SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED = 'true';
+    try {
+      const runTaskFn = vi
+        .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+        .mockResolvedValueOnce(unitSample())
+        .mockResolvedValueOnce(
+          unitProbePackageResult({ taskRunId: 'unit_author_1', primaryGold: '21 m/s' }),
+        )
+        .mockResolvedValueOnce(unitProbePackageResult({ taskRunId: 'unit_author_2' }))
+        .mockResolvedValueOnce(probeReviewResult('pass', [], 'unit_review_2'));
+
+      const result = await induceConjectureImpl({
+        cells: [cell()],
+        samples: 1,
+        runTaskFn,
+        subjectProfile: resolveSubjectProfile('math'),
+      });
+
+      const draft = proposal(result);
+      expect(draft.probe_quality).toMatchObject({
+        schema_version: 4,
+        subject_id: 'math',
+        policy_version: 'subject-probe-validator-v1',
+        attempts: [
+          {
+            attempt: 1,
+            outcome: 'subject_validator_failed',
+            failure_codes: ['unit_reference_mismatch'],
+            reviewer_task_run_id: null,
+          },
+          { attempt: 2, outcome: 'passed', reviewer_task_run_id: 'unit_review_2' },
+        ],
+        subject_validator_results: expect.arrayContaining([
+          expect.objectContaining({
+            validator_id: 'math.compound-unit-denominator-conversion',
+            outcome: 'pass',
+          }),
+        ]),
+      });
+      expect(runTaskFn.mock.calls.map(([kind]) => kind)).toEqual([
+        'MindModelInductionTask',
+        'ConjectureProbeAuthorTask',
+        'ConjectureProbeAuthorTask',
+        'ConjectureProbeReviewTask',
+      ]);
+    } finally {
+      // biome-ignore lint/performance/noDelete: test isolation needs a real unset.
+      delete process.env.SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED;
+    }
+  });
+
+  it('abstains after two deterministic subject failures without spending reviewer calls', async () => {
+    process.env.SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED = 'true';
+    try {
+      const runTaskFn = vi
+        .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+        .mockResolvedValueOnce(unitSample())
+        .mockResolvedValueOnce(
+          unitProbePackageResult({ taskRunId: 'unit_author_1', primaryGold: '21 m/s' }),
+        )
+        .mockResolvedValueOnce(
+          unitProbePackageResult({ taskRunId: 'unit_author_2', primaryGold: '22 m/s' }),
+        );
+
+      const result = await induceConjectureImpl({
+        cells: [cell()],
+        samples: 1,
+        runTaskFn,
+        subjectProfile: resolveSubjectProfile('math'),
+      });
+
+      expect(abstain(result).reason_code).toBe('no_discriminating_probe');
+      expect(result.probe_quality_attempts.map((attempt) => attempt.outcome)).toEqual([
+        'subject_validator_failed',
+        'subject_validator_failed',
+      ]);
+      expect(runTaskFn.mock.calls.map(([kind]) => kind)).toEqual([
+        'MindModelInductionTask',
+        'ConjectureProbeAuthorTask',
+        'ConjectureProbeAuthorTask',
+      ]);
+    } finally {
+      // biome-ignore lint/performance/noDelete: test isolation needs a real unset.
+      delete process.env.SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED;
+    }
+  });
+
+  it('persists deterministic disagreement in shadow mode without replacing the P0 decision', async () => {
+    // biome-ignore lint/performance/noDelete: shadow is the real unset/default state.
+    delete process.env.SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const runTaskFn = vi
+        .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+        .mockResolvedValueOnce(unitSample())
+        .mockResolvedValueOnce(
+          unitProbePackageResult({ taskRunId: 'unit_shadow_author', primaryGold: '21 m/s' }),
+        )
+        .mockResolvedValueOnce(probeReviewResult('pass', [], 'unit_shadow_review'));
+
+      const draft = proposal(
+        await induceConjectureImpl({
+          cells: [cell()],
+          samples: 1,
+          runTaskFn,
+          subjectProfile: resolveSubjectProfile('math'),
+        }),
+      );
+      if (draft.probe_quality.schema_version !== 4) throw new Error('expected v4 audit');
+      expect(draft.probe_quality.subject_validator_results).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            validator_id: 'math.compound-unit-denominator-conversion',
+            outcome: 'fail',
+            failure_codes: ['unit_reference_mismatch'],
+          }),
+        ]),
+      );
+      expect(warn).toHaveBeenCalledWith(
+        '[conjecture-probe-quality] shadow subject validator disagreement',
+        expect.objectContaining({ subject_id: 'math' }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('regenerates a bare single-choice probe whose target rule only forces a random guess', async () => {

@@ -21865,6 +21865,73 @@ export interface operations {
                                   outcome: 'passed';
                                   reviewer_task_run_id: string | null;
                                 }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'subject_validator_ungradable'
+                                    | 'unit_denominator_trigger_missing'
+                                    | 'unit_dimension_mismatch'
+                                    | 'unit_reference_mismatch'
+                                    | 'unit_target_signature_mismatch'
+                                    | 'unit_target_collides_with_gold'
+                                    | 'unit_pair_not_independent'
+                                    | 'fraction_unlike_denominator_trigger_missing'
+                                    | 'fraction_reference_mismatch'
+                                    | 'fraction_target_signature_mismatch'
+                                    | 'fraction_target_collides_with_gold'
+                                    | 'fraction_pair_not_independent'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'subject_validator_failed';
+                                  reviewer_task_run_id: string | null;
+                                  subject_validator_results: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
+                                }
                             )[];
                             final_review: {
                               explanation_md: string;
@@ -21935,6 +22002,73 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'passed';
                                   reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'subject_validator_ungradable'
+                                    | 'unit_denominator_trigger_missing'
+                                    | 'unit_dimension_mismatch'
+                                    | 'unit_reference_mismatch'
+                                    | 'unit_target_signature_mismatch'
+                                    | 'unit_target_collides_with_gold'
+                                    | 'unit_pair_not_independent'
+                                    | 'fraction_unlike_denominator_trigger_missing'
+                                    | 'fraction_reference_mismatch'
+                                    | 'fraction_target_signature_mismatch'
+                                    | 'fraction_target_collides_with_gold'
+                                    | 'fraction_pair_not_independent'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'subject_validator_failed';
+                                  reviewer_task_run_id: string | null;
+                                  subject_validator_results: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                             )[];
                             final_review: {
@@ -22082,6 +22216,73 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'passed';
                                   reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'subject_validator_ungradable'
+                                    | 'unit_denominator_trigger_missing'
+                                    | 'unit_dimension_mismatch'
+                                    | 'unit_reference_mismatch'
+                                    | 'unit_target_signature_mismatch'
+                                    | 'unit_target_collides_with_gold'
+                                    | 'unit_pair_not_independent'
+                                    | 'fraction_unlike_denominator_trigger_missing'
+                                    | 'fraction_reference_mismatch'
+                                    | 'fraction_target_signature_mismatch'
+                                    | 'fraction_target_collides_with_gold'
+                                    | 'fraction_pair_not_independent'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'subject_validator_failed';
+                                  reviewer_task_run_id: string | null;
+                                  subject_validator_results: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                             )[];
                             final_review: {
@@ -22282,6 +22483,373 @@ export interface operations {
                             };
                             /** @enum {number} */
                             schema_version: 3;
+                          }
+                        | {
+                            attempts: (
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'probe_pair_not_independent'
+                                    | 'response_signature_ungradable'
+                                    | 'target_error_answer_not_distinct'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'structure_failed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'claim_scope_expansion'
+                                    | 'probe_not_targeting'
+                                    | 'probe_pair_not_independent'
+                                    | 'reference_incorrect'
+                                    | 'target_error_answer_not_distinct'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'review_failed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'author_output_invalid'
+                                    | 'review_output_invalid'
+                                    | 'author_operational_failure'
+                                    | 'review_operational_failure'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'operational_failed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: unknown[];
+                                  /** @enum {string} */
+                                  outcome: 'passed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'subject_validator_ungradable'
+                                    | 'unit_denominator_trigger_missing'
+                                    | 'unit_dimension_mismatch'
+                                    | 'unit_reference_mismatch'
+                                    | 'unit_target_signature_mismatch'
+                                    | 'unit_target_collides_with_gold'
+                                    | 'unit_pair_not_independent'
+                                    | 'fraction_unlike_denominator_trigger_missing'
+                                    | 'fraction_reference_mismatch'
+                                    | 'fraction_target_signature_mismatch'
+                                    | 'fraction_target_collides_with_gold'
+                                    | 'fraction_pair_not_independent'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'subject_validator_failed';
+                                  reviewer_task_run_id: string | null;
+                                  subject_validator_results: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
+                                }
+                            )[];
+                            final_review: {
+                              explanation_md: string;
+                              failure_codes: (
+                                | 'claim_scope_expansion'
+                                | 'probe_not_targeting'
+                                | 'probe_pair_not_independent'
+                                | 'reference_incorrect'
+                                | 'target_error_answer_not_distinct'
+                              )[];
+                              /** @enum {string} */
+                              verdict: 'pass' | 'fail';
+                            };
+                            /** @enum {boolean} */
+                            passed: true;
+                            policy_version: string;
+                            reviewed_hypothesis: {
+                              cause_category: string;
+                              claim_md: string;
+                              diagnostic_spec: {
+                                expected_wrong_answer_signature_md: string;
+                                /** @enum {number} */
+                                schema_version: 1;
+                                scope_boundary_md: string;
+                                target_error_rule_md: string;
+                                trigger_conditions_md: string;
+                              };
+                              evidence_event_ids: string[];
+                              /** @enum {string} */
+                              kind: 'proposal';
+                              knowledge_id: string;
+                              recurrence_count: number;
+                            };
+                            reviewed_package: {
+                              followup: {
+                                /** @enum {string} */
+                                context_kind:
+                                  | 'abstract'
+                                  | 'applied'
+                                  | 'narrative'
+                                  | 'document'
+                                  | 'visual'
+                                  | 'data'
+                                  | 'code'
+                                  | 'other';
+                                elicits_target_error_reason_md: string;
+                                expected_target_error_answer_md: string;
+                                gold_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                                prompt_md: string;
+                                reference_md: string;
+                                /** @enum {string} */
+                                representation_kind:
+                                  | 'symbolic'
+                                  | 'natural_language'
+                                  | 'multiple_choice'
+                                  | 'table'
+                                  | 'diagram'
+                                  | 'graph'
+                                  | 'image'
+                                  | 'code'
+                                  | 'mixed'
+                                  | 'other';
+                                /** @enum {string} */
+                                response_mode:
+                                  | 'single_choice'
+                                  | 'multiple_select'
+                                  | 'short_answer'
+                                  | 'answer_with_reason'
+                                  | 'constructed_response';
+                                /** @enum {number} */
+                                schema_version: 2;
+                                target_error_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                              };
+                              predicted_p: number;
+                              primary: {
+                                /** @enum {string} */
+                                context_kind:
+                                  | 'abstract'
+                                  | 'applied'
+                                  | 'narrative'
+                                  | 'document'
+                                  | 'visual'
+                                  | 'data'
+                                  | 'code'
+                                  | 'other';
+                                elicits_target_error_reason_md: string;
+                                expected_target_error_answer_md: string;
+                                gold_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                                prompt_md: string;
+                                reference_md: string;
+                                /** @enum {string} */
+                                representation_kind:
+                                  | 'symbolic'
+                                  | 'natural_language'
+                                  | 'multiple_choice'
+                                  | 'table'
+                                  | 'diagram'
+                                  | 'graph'
+                                  | 'image'
+                                  | 'code'
+                                  | 'mixed'
+                                  | 'other';
+                                /** @enum {string} */
+                                response_mode:
+                                  | 'single_choice'
+                                  | 'multiple_select'
+                                  | 'short_answer'
+                                  | 'answer_with_reason'
+                                  | 'constructed_response';
+                                /** @enum {number} */
+                                schema_version: 2;
+                                target_error_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                              };
+                            };
+                            /** @enum {number} */
+                            schema_version: 4;
+                            subject_id: string;
+                            subject_validator_results: (
+                              | {
+                                  evidence: {
+                                    [key: string]: string;
+                                  };
+                                  failure_codes: unknown[];
+                                  /** @enum {string} */
+                                  outcome: 'not_applicable';
+                                  validator_id: string;
+                                  validator_version: string;
+                                }
+                              | {
+                                  evidence: {
+                                    [key: string]: string;
+                                  };
+                                  failure_codes: unknown[];
+                                  /** @enum {string} */
+                                  outcome: 'pass';
+                                  validator_id: string;
+                                  validator_version: string;
+                                }
+                              | {
+                                  evidence: {
+                                    [key: string]: string;
+                                  };
+                                  failure_codes: (
+                                    | 'subject_validator_ungradable'
+                                    | 'unit_denominator_trigger_missing'
+                                    | 'unit_dimension_mismatch'
+                                    | 'unit_reference_mismatch'
+                                    | 'unit_target_signature_mismatch'
+                                    | 'unit_target_collides_with_gold'
+                                    | 'unit_pair_not_independent'
+                                    | 'fraction_unlike_denominator_trigger_missing'
+                                    | 'fraction_reference_mismatch'
+                                    | 'fraction_target_signature_mismatch'
+                                    | 'fraction_target_collides_with_gold'
+                                    | 'fraction_pair_not_independent'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'fail';
+                                  validator_id: string;
+                                  validator_version: string;
+                                }
+                            )[];
                           };
                       probe_reference_md: string;
                       probe_spec?:
@@ -23215,6 +23783,73 @@ export interface operations {
                                   outcome: 'passed';
                                   reviewer_task_run_id: string | null;
                                 }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'subject_validator_ungradable'
+                                    | 'unit_denominator_trigger_missing'
+                                    | 'unit_dimension_mismatch'
+                                    | 'unit_reference_mismatch'
+                                    | 'unit_target_signature_mismatch'
+                                    | 'unit_target_collides_with_gold'
+                                    | 'unit_pair_not_independent'
+                                    | 'fraction_unlike_denominator_trigger_missing'
+                                    | 'fraction_reference_mismatch'
+                                    | 'fraction_target_signature_mismatch'
+                                    | 'fraction_target_collides_with_gold'
+                                    | 'fraction_pair_not_independent'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'subject_validator_failed';
+                                  reviewer_task_run_id: string | null;
+                                  subject_validator_results: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
+                                }
                             )[];
                             final_review: {
                               explanation_md: string;
@@ -23285,6 +23920,73 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'passed';
                                   reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'subject_validator_ungradable'
+                                    | 'unit_denominator_trigger_missing'
+                                    | 'unit_dimension_mismatch'
+                                    | 'unit_reference_mismatch'
+                                    | 'unit_target_signature_mismatch'
+                                    | 'unit_target_collides_with_gold'
+                                    | 'unit_pair_not_independent'
+                                    | 'fraction_unlike_denominator_trigger_missing'
+                                    | 'fraction_reference_mismatch'
+                                    | 'fraction_target_signature_mismatch'
+                                    | 'fraction_target_collides_with_gold'
+                                    | 'fraction_pair_not_independent'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'subject_validator_failed';
+                                  reviewer_task_run_id: string | null;
+                                  subject_validator_results: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                             )[];
                             final_review: {
@@ -23432,6 +24134,73 @@ export interface operations {
                                   /** @enum {string} */
                                   outcome: 'passed';
                                   reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'subject_validator_ungradable'
+                                    | 'unit_denominator_trigger_missing'
+                                    | 'unit_dimension_mismatch'
+                                    | 'unit_reference_mismatch'
+                                    | 'unit_target_signature_mismatch'
+                                    | 'unit_target_collides_with_gold'
+                                    | 'unit_pair_not_independent'
+                                    | 'fraction_unlike_denominator_trigger_missing'
+                                    | 'fraction_reference_mismatch'
+                                    | 'fraction_target_signature_mismatch'
+                                    | 'fraction_target_collides_with_gold'
+                                    | 'fraction_pair_not_independent'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'subject_validator_failed';
+                                  reviewer_task_run_id: string | null;
+                                  subject_validator_results: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
                                 }
                             )[];
                             final_review: {
@@ -23632,6 +24401,373 @@ export interface operations {
                             };
                             /** @enum {number} */
                             schema_version: 3;
+                          }
+                        | {
+                            attempts: (
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'probe_pair_not_independent'
+                                    | 'response_signature_ungradable'
+                                    | 'target_error_answer_not_distinct'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'structure_failed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'claim_scope_expansion'
+                                    | 'probe_not_targeting'
+                                    | 'probe_pair_not_independent'
+                                    | 'reference_incorrect'
+                                    | 'target_error_answer_not_distinct'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'review_failed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'author_output_invalid'
+                                    | 'review_output_invalid'
+                                    | 'author_operational_failure'
+                                    | 'review_operational_failure'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'operational_failed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: unknown[];
+                                  /** @enum {string} */
+                                  outcome: 'passed';
+                                  reviewer_task_run_id: string | null;
+                                }
+                              | {
+                                  attempt: number;
+                                  author_task_run_id: string | null;
+                                  explanation_md: string;
+                                  failure_codes: (
+                                    | 'subject_validator_ungradable'
+                                    | 'unit_denominator_trigger_missing'
+                                    | 'unit_dimension_mismatch'
+                                    | 'unit_reference_mismatch'
+                                    | 'unit_target_signature_mismatch'
+                                    | 'unit_target_collides_with_gold'
+                                    | 'unit_pair_not_independent'
+                                    | 'fraction_unlike_denominator_trigger_missing'
+                                    | 'fraction_reference_mismatch'
+                                    | 'fraction_target_signature_mismatch'
+                                    | 'fraction_target_collides_with_gold'
+                                    | 'fraction_pair_not_independent'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'subject_validator_failed';
+                                  reviewer_task_run_id: string | null;
+                                  subject_validator_results: (
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'not_applicable';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: unknown[];
+                                        /** @enum {string} */
+                                        outcome: 'pass';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                    | {
+                                        evidence: {
+                                          [key: string]: string;
+                                        };
+                                        failure_codes: (
+                                          | 'subject_validator_ungradable'
+                                          | 'unit_denominator_trigger_missing'
+                                          | 'unit_dimension_mismatch'
+                                          | 'unit_reference_mismatch'
+                                          | 'unit_target_signature_mismatch'
+                                          | 'unit_target_collides_with_gold'
+                                          | 'unit_pair_not_independent'
+                                          | 'fraction_unlike_denominator_trigger_missing'
+                                          | 'fraction_reference_mismatch'
+                                          | 'fraction_target_signature_mismatch'
+                                          | 'fraction_target_collides_with_gold'
+                                          | 'fraction_pair_not_independent'
+                                        )[];
+                                        /** @enum {string} */
+                                        outcome: 'fail';
+                                        validator_id: string;
+                                        validator_version: string;
+                                      }
+                                  )[];
+                                }
+                            )[];
+                            final_review: {
+                              explanation_md: string;
+                              failure_codes: (
+                                | 'claim_scope_expansion'
+                                | 'probe_not_targeting'
+                                | 'probe_pair_not_independent'
+                                | 'reference_incorrect'
+                                | 'target_error_answer_not_distinct'
+                              )[];
+                              /** @enum {string} */
+                              verdict: 'pass' | 'fail';
+                            };
+                            /** @enum {boolean} */
+                            passed: true;
+                            policy_version: string;
+                            reviewed_hypothesis: {
+                              cause_category: string;
+                              claim_md: string;
+                              diagnostic_spec: {
+                                expected_wrong_answer_signature_md: string;
+                                /** @enum {number} */
+                                schema_version: 1;
+                                scope_boundary_md: string;
+                                target_error_rule_md: string;
+                                trigger_conditions_md: string;
+                              };
+                              evidence_event_ids: string[];
+                              /** @enum {string} */
+                              kind: 'proposal';
+                              knowledge_id: string;
+                              recurrence_count: number;
+                            };
+                            reviewed_package: {
+                              followup: {
+                                /** @enum {string} */
+                                context_kind:
+                                  | 'abstract'
+                                  | 'applied'
+                                  | 'narrative'
+                                  | 'document'
+                                  | 'visual'
+                                  | 'data'
+                                  | 'code'
+                                  | 'other';
+                                elicits_target_error_reason_md: string;
+                                expected_target_error_answer_md: string;
+                                gold_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                                prompt_md: string;
+                                reference_md: string;
+                                /** @enum {string} */
+                                representation_kind:
+                                  | 'symbolic'
+                                  | 'natural_language'
+                                  | 'multiple_choice'
+                                  | 'table'
+                                  | 'diagram'
+                                  | 'graph'
+                                  | 'image'
+                                  | 'code'
+                                  | 'mixed'
+                                  | 'other';
+                                /** @enum {string} */
+                                response_mode:
+                                  | 'single_choice'
+                                  | 'multiple_select'
+                                  | 'short_answer'
+                                  | 'answer_with_reason'
+                                  | 'constructed_response';
+                                /** @enum {number} */
+                                schema_version: 2;
+                                target_error_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                              };
+                              predicted_p: number;
+                              primary: {
+                                /** @enum {string} */
+                                context_kind:
+                                  | 'abstract'
+                                  | 'applied'
+                                  | 'narrative'
+                                  | 'document'
+                                  | 'visual'
+                                  | 'data'
+                                  | 'code'
+                                  | 'other';
+                                elicits_target_error_reason_md: string;
+                                expected_target_error_answer_md: string;
+                                gold_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                                prompt_md: string;
+                                reference_md: string;
+                                /** @enum {string} */
+                                representation_kind:
+                                  | 'symbolic'
+                                  | 'natural_language'
+                                  | 'multiple_choice'
+                                  | 'table'
+                                  | 'diagram'
+                                  | 'graph'
+                                  | 'image'
+                                  | 'code'
+                                  | 'mixed'
+                                  | 'other';
+                                /** @enum {string} */
+                                response_mode:
+                                  | 'single_choice'
+                                  | 'multiple_select'
+                                  | 'short_answer'
+                                  | 'answer_with_reason'
+                                  | 'constructed_response';
+                                /** @enum {number} */
+                                schema_version: 2;
+                                target_error_response_signature:
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'choice';
+                                      option_ids: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'text';
+                                      response_md: string;
+                                    }
+                                  | {
+                                      answer_md: string;
+                                      /** @enum {string} */
+                                      kind: 'answer_with_reason';
+                                      required_reason_features_md: string[];
+                                    }
+                                  | {
+                                      /** @enum {string} */
+                                      kind: 'rubric';
+                                      required_features_md: string[];
+                                    };
+                              };
+                            };
+                            /** @enum {number} */
+                            schema_version: 4;
+                            subject_id: string;
+                            subject_validator_results: (
+                              | {
+                                  evidence: {
+                                    [key: string]: string;
+                                  };
+                                  failure_codes: unknown[];
+                                  /** @enum {string} */
+                                  outcome: 'not_applicable';
+                                  validator_id: string;
+                                  validator_version: string;
+                                }
+                              | {
+                                  evidence: {
+                                    [key: string]: string;
+                                  };
+                                  failure_codes: unknown[];
+                                  /** @enum {string} */
+                                  outcome: 'pass';
+                                  validator_id: string;
+                                  validator_version: string;
+                                }
+                              | {
+                                  evidence: {
+                                    [key: string]: string;
+                                  };
+                                  failure_codes: (
+                                    | 'subject_validator_ungradable'
+                                    | 'unit_denominator_trigger_missing'
+                                    | 'unit_dimension_mismatch'
+                                    | 'unit_reference_mismatch'
+                                    | 'unit_target_signature_mismatch'
+                                    | 'unit_target_collides_with_gold'
+                                    | 'unit_pair_not_independent'
+                                    | 'fraction_unlike_denominator_trigger_missing'
+                                    | 'fraction_reference_mismatch'
+                                    | 'fraction_target_signature_mismatch'
+                                    | 'fraction_target_collides_with_gold'
+                                    | 'fraction_pair_not_independent'
+                                  )[];
+                                  /** @enum {string} */
+                                  outcome: 'fail';
+                                  validator_id: string;
+                                  validator_version: string;
+                                }
+                            )[];
                           };
                       probe_reference_md: string;
                       probe_spec?:

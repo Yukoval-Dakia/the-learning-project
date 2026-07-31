@@ -96,10 +96,11 @@ P0 因此明确要求 author 逐项解答并保证单选唯一，reviewer 必须
 - 它能要求单位换算两题使用不同情境和表征，但不能仅靠通用字符串规则证明分母时间单位确实从 hour 变成 second；
 - 它能要求分数题保留同一目标错误，但不能仅靠通用规则证明两个分母确实互异、错误答案确实来自“分子分母分别相加”。
 
-这部分是 P1。按照 owner 决定，本次不写 P1 代码，下面只给实施计划；Linear 已单独
-建为 `YUK-822`，避免它被误报成 YUK-821 已交付的一部分。
+这部分由独立 P1 `YUK-822` 实施，不属于 YUK-821 的 P0 交付。YUK-822 将验证器
+dark-ship 为始终记录结果、默认不否决的 shadow 路径；blocking 仅由独立 kill
+switch 开启。
 
-## 4. P1 详细实施计划（本次不实施）
+## 4. P1 实施规格与发布状态
 
 ### 4.1 目标
 
@@ -118,6 +119,10 @@ P0 因此明确要求 author 逐项解答并保证单选唯一，reviewer 必须
   - 复合单位分母变换验证器。
 - `src/subjects/math/probe-validators/unlike-denominator-fraction.ts`
   - 异分母分数相加验证器。
+- `src/subjects/math/probe-validators/rational.ts`
+  - 两个数学验证器共用的精确有理数运算与有限解析基元。
+- `src/subjects/math/probe-validators/response.ts`
+  - 从 response-aware probe spec 提取可确定性验证的 gold/target answer。
 - `src/server/agency/conjecture/probe-quality.ts`
   - 在通用结构门之后、LLM reviewer 之前调用解析到的 subject validators；只消费公共接口。
 - `src/core/schema/business.ts`
@@ -161,7 +166,7 @@ P0 因此明确要求 author 逐项解答并保证单选唯一，reviewer 必须
 
 ### 4.5 schema 与迁移策略
 
-1. 在 P0 audit v2 之上把 `probe_quality.schema_version` 升到 v3，新增 `policy_version` 与 `subject_validator_results`；
+1. P0 最终已使用 audit v3，因此 P1 把 `probe_quality.schema_version` 升到 v4，新增 `subject_id`、`policy_version` 与 `subject_validator_results`；
 2. 新生产的、被 math validator 判定为 applicable 的 proposal 必须保存对应版本的 pass 结果；
 3. 历史已接受记录保持可读和幂等；历史 pending 记录不能用旧 audit 接受。只有在
    reprepare command 已真实上线时才自动重新准备，否则像 P0 v1/v2 升级一样，用

@@ -34,6 +34,7 @@ import {
   misconceptionPromoteEnabled,
   promoteConjectureToMisconception,
 } from '@/capabilities/agency/server/misconception-promote';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import {
   ConjectureDiagnosticSpec,
@@ -47,6 +48,7 @@ import {
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { subjectProbeValidatorsBlockingEnabled } from '@/server/agency/conjecture/probe-quality';
 import {
   asPlainRecord,
   ensureAcceptOnly,
@@ -58,6 +60,11 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/server/proposals/signals';
+import {
+  SUBJECT_PROBE_VALIDATOR_POLICY_VERSION,
+  evaluateSubjectProbeValidators,
+  subjectProbeValidatorResultsEqual,
+} from '@/subjects/probe-quality';
 
 // YUK-711 — wire error code raised (as a typed ApiError, HTTP 409) when the accept
 // cannot serve its discriminating probe because MAX_CONCURRENT_ACTIVE_PROBES active
@@ -148,10 +155,10 @@ export async function acceptConjectureProposal(
   const evidenceEventIds = proposal.payload.evidence_refs
     .filter((ref) => ref.kind === 'event')
     .map((ref) => ref.id);
-  const boundV3Audit =
-    qualityAudit.success && qualityAudit.data.schema_version === 3 ? qualityAudit.data : null;
+  const boundV4Audit =
+    qualityAudit.success && qualityAudit.data.schema_version === 4 ? qualityAudit.data : null;
   const persistedHypothesis =
-    diagnosticSpec.success && boundV3Audit
+    diagnosticSpec.success && boundV4Audit
       ? ConjectureHypothesisProposalDraft.safeParse({
           kind: 'proposal',
           claim_md: change.claim_md,
@@ -162,12 +169,31 @@ export async function acceptConjectureProposal(
           recurrence_count: change.recurrence_count,
         })
       : null;
+  const persistedPackage =
+    primaryProbeSpec.success && followupProbeSpec.success && typeof change.predicted_p === 'number'
+      ? {
+          primary: primaryProbeSpec.data,
+          followup: followupProbeSpec.data,
+          predicted_p: change.predicted_p,
+        }
+      : null;
+  const resolvedSubjectProfile =
+    persistedHypothesis?.success && boundV4Audit
+      ? await resolveSubjectProfileForKnowledgeIds(db, [persistedHypothesis.data.knowledge_id])
+      : null;
+  const expectedSubjectValidatorResults =
+    persistedHypothesis?.success && persistedPackage && resolvedSubjectProfile
+      ? evaluateSubjectProbeValidators(resolvedSubjectProfile.id, {
+          hypothesis: persistedHypothesis.data,
+          package: persistedPackage,
+        })
+      : null;
   const failureReasons: string[] = [];
   if (!diagnosticSpec.success) failureReasons.push('diagnostic_spec_invalid');
   if (!primaryProbeSpec.success) failureReasons.push('primary_probe_spec_invalid');
   if (!followupProbeSpec.success) failureReasons.push('followup_probe_spec_invalid');
   if (!qualityAudit.success) failureReasons.push('probe_quality_audit_invalid');
-  if (qualityAudit.success && !boundV3Audit) {
+  if (qualityAudit.success && !boundV4Audit) {
     failureReasons.push('probe_quality_audit_unbound');
   }
   if (persistedHypothesis && !persistedHypothesis.success) {
@@ -175,10 +201,36 @@ export async function acceptConjectureProposal(
   }
   if (
     persistedHypothesis?.success &&
-    boundV3Audit &&
-    !conjectureHypothesesEqual(boundV3Audit.reviewed_hypothesis, persistedHypothesis.data)
+    boundV4Audit &&
+    !conjectureHypothesesEqual(boundV4Audit.reviewed_hypothesis, persistedHypothesis.data)
   ) {
     failureReasons.push('probe_quality_hypothesis_mismatch');
+  }
+  if (
+    boundV4Audit &&
+    resolvedSubjectProfile &&
+    boundV4Audit.subject_id !== resolvedSubjectProfile.id
+  ) {
+    failureReasons.push('subject_validator_subject_mismatch');
+  }
+  if (boundV4Audit && boundV4Audit.policy_version !== SUBJECT_PROBE_VALIDATOR_POLICY_VERSION) {
+    failureReasons.push('subject_validator_policy_outdated');
+  }
+  if (
+    boundV4Audit &&
+    expectedSubjectValidatorResults &&
+    !subjectProbeValidatorResultsEqual(
+      boundV4Audit.subject_validator_results,
+      expectedSubjectValidatorResults,
+    )
+  ) {
+    failureReasons.push('subject_validator_results_mismatch');
+  }
+  if (
+    subjectProbeValidatorsBlockingEnabled() &&
+    expectedSubjectValidatorResults?.some((result) => result.outcome === 'fail')
+  ) {
+    failureReasons.push('subject_validator_blocking_failure');
   }
   if (change.discriminating !== true) failureReasons.push('not_discriminating');
   failureReasons.push(...structuralFailures.map((code) => `structural:${code}`));
@@ -199,22 +251,16 @@ export async function acceptConjectureProposal(
     }
   }
   if (
-    boundV3Audit &&
-    primaryProbeSpec.success &&
-    followupProbeSpec.success &&
-    typeof change.predicted_p === 'number' &&
-    !conjectureProbePackagesEqual(boundV3Audit.reviewed_package, {
-      primary: primaryProbeSpec.data,
-      followup: followupProbeSpec.data,
-      predicted_p: change.predicted_p,
-    })
+    boundV4Audit &&
+    persistedPackage &&
+    !conjectureProbePackagesEqual(boundV4Audit.reviewed_package, persistedPackage)
   ) {
     failureReasons.push('probe_quality_package_mismatch');
   }
   if (failureReasons.length > 0) {
     throw new ApiError(
       CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
-      `cannot accept: verified v3 diagnostic/probe package failed [${failureReasons.join(', ')}]; reprepare it before accepting`,
+      `cannot accept: verified v4 diagnostic/probe package failed [${failureReasons.join(', ')}]; reprepare it before accepting`,
       409,
     );
   }

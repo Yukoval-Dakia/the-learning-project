@@ -95,7 +95,7 @@ function conjecturePayload() {
         representation_kind: 'natural_language' as const,
       },
       probe_quality: {
-        schema_version: 3 as const,
+        schema_version: 4 as const,
         passed: true as const,
         attempts: [
           {
@@ -148,6 +148,9 @@ function conjecturePayload() {
           },
           predicted_p: 0.3,
         },
+        subject_id: 'general',
+        policy_version: 'subject-probe-validator-v1',
+        subject_validator_results: [],
       },
       discriminating: true,
       predicted_p: 0.3,

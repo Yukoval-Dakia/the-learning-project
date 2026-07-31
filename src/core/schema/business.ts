@@ -705,6 +705,65 @@ export type ConjectureProbeOperationalFailureCodeT = z.infer<
   typeof ConjectureProbeOperationalFailureCode
 >;
 
+/** Deterministic, subject-owned validation failures for a frozen probe package. */
+export const SubjectProbeValidatorFailureCode = z.enum([
+  'subject_validator_ungradable',
+  'unit_denominator_trigger_missing',
+  'unit_dimension_mismatch',
+  'unit_reference_mismatch',
+  'unit_target_signature_mismatch',
+  'unit_target_collides_with_gold',
+  'unit_pair_not_independent',
+  'fraction_unlike_denominator_trigger_missing',
+  'fraction_reference_mismatch',
+  'fraction_target_signature_mismatch',
+  'fraction_target_collides_with_gold',
+  'fraction_pair_not_independent',
+]);
+export type SubjectProbeValidatorFailureCodeT = z.infer<typeof SubjectProbeValidatorFailureCode>;
+
+const SubjectProbeValidatorResultBase = {
+  validator_id: z.string().trim().min(1).max(100),
+  validator_version: z.string().trim().min(1).max(100),
+  evidence: z.record(z.string(), z.string().max(4000)),
+} as const;
+
+/**
+ * Validator evidence is deliberately a flat string map: it is deterministic,
+ * bounded, JSON-stable, and remains inspectable without teaching core/schema any
+ * subject-specific payload shape.
+ */
+export const SubjectProbeValidatorResult = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      ...SubjectProbeValidatorResultBase,
+      outcome: z.literal('not_applicable'),
+      failure_codes: z.array(z.never()).max(0),
+    })
+    .strict(),
+  z
+    .object({
+      ...SubjectProbeValidatorResultBase,
+      outcome: z.literal('pass'),
+      failure_codes: z.array(z.never()).max(0),
+    })
+    .strict(),
+  z
+    .object({
+      ...SubjectProbeValidatorResultBase,
+      outcome: z.literal('fail'),
+      failure_codes: z
+        .array(SubjectProbeValidatorFailureCode)
+        .min(1)
+        .max(8)
+        .refine((codes) => new Set(codes).size === codes.length, {
+          message: 'failure_codes must be unique',
+        }),
+    })
+    .strict(),
+]);
+export type SubjectProbeValidatorResultT = z.infer<typeof SubjectProbeValidatorResult>;
+
 /**
  * Subject-neutral response contract guard for one probe. This is shared by
  * conjecture diagnostics and intervention verification questions so a later
@@ -884,6 +943,14 @@ export const ConjectureProbeQualityAttempt = z.discriminatedUnion('outcome', [
       failure_codes: z.array(z.never()).max(0),
     })
     .strict(),
+  z
+    .object({
+      ...ConjectureProbeQualityAttemptBase,
+      outcome: z.literal('subject_validator_failed'),
+      failure_codes: uniqueProbeFailureCodes(SubjectProbeValidatorFailureCode, 8),
+      subject_validator_results: z.array(SubjectProbeValidatorResult).min(1).max(20),
+    })
+    .strict(),
 ]);
 export type ConjectureProbeQualityAttemptT = z.infer<typeof ConjectureProbeQualityAttempt>;
 
@@ -896,8 +963,9 @@ const ConjectureProbeQualityAuditFields = {
 } as const;
 
 /**
- * v1/v2 remain readable for terminal history. v3 binds the response-aware package
- * and is the only audit eligible for a new accept decision.
+ * v1-v3 remain readable for terminal history. v4 additionally binds the subject
+ * validator policy and deterministic results and is the only audit eligible for
+ * a new accept decision.
  */
 export const ConjectureProbeQualityAudit = z
   .discriminatedUnion('schema_version', [
@@ -919,6 +987,17 @@ export const ConjectureProbeQualityAudit = z
         ...ConjectureProbeQualityAuditFields,
         reviewed_hypothesis: ConjectureHypothesisProposalDraft,
         reviewed_package: ConjectureProbePackageV2,
+      })
+      .strict(),
+    z
+      .object({
+        schema_version: z.literal(4),
+        ...ConjectureProbeQualityAuditFields,
+        reviewed_hypothesis: ConjectureHypothesisProposalDraft,
+        reviewed_package: ConjectureProbePackageV2,
+        subject_id: z.string().trim().min(1).max(200),
+        policy_version: z.string().trim().min(1).max(100),
+        subject_validator_results: z.array(SubjectProbeValidatorResult).max(20),
       })
       .strict(),
   ])
@@ -1013,11 +1092,11 @@ export const ConjectureDraft = z
   .discriminatedUnion('kind', [ConjectureProposalDraft, ConjectureModelAbstainDraft])
   .superRefine((draft, ctx) => {
     if (draft.kind !== 'proposal') return;
-    if (draft.probe_quality.schema_version !== 3) {
+    if (draft.probe_quality.schema_version !== 4) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['probe_quality', 'schema_version'],
-        message: 'new conjecture drafts require a response-aware v3 quality audit',
+        message: 'new conjecture drafts require a subject-validated v4 quality audit',
       });
     }
     if (
@@ -1061,7 +1140,7 @@ export const ConjectureDraft = z
       });
     }
     if (
-      draft.probe_quality.schema_version === 3 &&
+      draft.probe_quality.schema_version === 4 &&
       !conjectureHypothesesEqual(draft.probe_quality.reviewed_hypothesis, {
         kind: 'proposal',
         claim_md: draft.claim_md,
@@ -1079,7 +1158,7 @@ export const ConjectureDraft = z
       });
     }
     if (
-      draft.probe_quality.schema_version === 3 &&
+      draft.probe_quality.schema_version === 4 &&
       !conjectureProbePackagesEqual(draft.probe_quality.reviewed_package, {
         primary: draft.probe_spec,
         followup: draft.followup_probe_spec,

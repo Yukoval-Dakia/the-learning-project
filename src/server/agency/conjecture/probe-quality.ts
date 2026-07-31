@@ -1,4 +1,5 @@
 import type { LoadedConjectureEvidenceImage } from '@/capabilities/agency/server/conjecture/evidence';
+import { parseFlag } from '@/core/env-flags';
 import {
   type ConjectureHypothesisProposalDraftT,
   ConjectureProbePackageV2,
@@ -10,6 +11,10 @@ import {
 } from '@/core/schema/business';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
+import {
+  SUBJECT_PROBE_VALIDATOR_POLICY_VERSION,
+  evaluateSubjectProbeValidators,
+} from '@/subjects/probe-quality';
 import type { SubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
 import { parseTaskStructuredOutput } from './structured-output';
@@ -26,6 +31,15 @@ export class ConjectureProbeQualityOperationalError extends Error {
     this.name = 'ConjectureProbeQualityOperationalError';
     this.taskKind = taskKind;
   }
+}
+
+/**
+ * Validators always run and persist their shadow result. This flag controls only
+ * whether an applicable deterministic failure vetoes the package; disabling it
+ * leaves the existing subject-neutral P0 path intact.
+ */
+export function subjectProbeValidatorsBlockingEnabled(): boolean {
+  return parseFlag(process.env.SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED);
 }
 
 const ProbeAuthorStructuredOutput = z.object({
@@ -204,6 +218,39 @@ export async function prepareConjectureProbePair(
       return rejectOrThrow();
     }
 
+    const subjectId = input.subjectProfile?.id ?? 'general';
+    const subjectValidatorResults = evaluateSubjectProbeValidators(subjectId, {
+      hypothesis: input.hypothesis,
+      package: probePackage,
+    });
+    const subjectValidatorFailures = subjectValidatorResults.filter(
+      (result) => result.outcome === 'fail',
+    );
+    if (subjectValidatorFailures.length > 0) {
+      const failureCodes = [
+        ...new Set(subjectValidatorFailures.flatMap((result) => result.failure_codes)),
+      ];
+      if (subjectProbeValidatorsBlockingEnabled()) {
+        attempts.push({
+          attempt,
+          outcome: 'subject_validator_failed',
+          failure_codes: failureCodes,
+          subject_validator_results: structuredClone(subjectValidatorResults),
+          explanation_md:
+            'The subject-owned deterministic validators rejected the complete package.',
+          author_task_run_id: authorTaskRunId,
+          reviewer_task_run_id: null,
+        });
+        if (attempt < 2) continue;
+        return rejectOrThrow();
+      }
+      console.warn('[conjecture-probe-quality] shadow subject validator disagreement', {
+        subject_id: subjectId,
+        policy_version: SUBJECT_PROBE_VALIDATOR_POLICY_VERSION,
+        failure_codes: failureCodes,
+      });
+    }
+
     let reviewResult: TaskTextResult;
     try {
       reviewResult = await input.runTaskFn(
@@ -312,12 +359,15 @@ export async function prepareConjectureProbePair(
       outcome: 'passed',
       package: probePackage,
       audit: {
-        schema_version: 3,
+        schema_version: 4,
         passed: true,
         attempts: structuredClone(attempts),
         final_review: review,
         reviewed_hypothesis: structuredClone(input.hypothesis),
         reviewed_package: structuredClone(probePackage),
+        subject_id: subjectId,
+        policy_version: SUBJECT_PROBE_VALIDATOR_POLICY_VERSION,
+        subject_validator_results: structuredClone(subjectValidatorResults),
       },
       primary_task_run_id: authorTaskRunId,
       attempts: structuredClone(attempts),

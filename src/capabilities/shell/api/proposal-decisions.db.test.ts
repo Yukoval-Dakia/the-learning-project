@@ -109,7 +109,7 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
           representation_kind: 'natural_language',
         },
         probe_quality: {
-          schema_version: 3,
+          schema_version: 4,
           passed: true,
           attempts: [
             {
@@ -162,6 +162,9 @@ async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
             },
             predicted_p: 0.3,
           },
+          subject_id: 'general',
+          policy_version: 'subject-probe-validator-v1',
+          subject_validator_results: [],
         },
         discriminating: true,
         predicted_p: 0.3,

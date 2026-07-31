@@ -25,6 +25,7 @@ import { createMisconceptionEdge } from '@/capabilities/knowledge/server/misconc
 import { loadPrepDeskConjectures } from '@/capabilities/shell/server/prep-desk';
 import {
   event,
+  knowledge,
   material_fsrs_state,
   misconception,
   misconception_edge,
@@ -33,6 +34,7 @@ import {
 import { writeEvent } from '@/kernel/events';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
 import { writeAiProposal } from '@/server/proposals/writer';
+import { evaluateSubjectProbeValidators } from '@/subjects/probe-quality';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -108,7 +110,7 @@ function baseConjecture() {
       probe_spec: primaryProbeSpec,
       followup_probe_spec: followupProbeSpec,
       probe_quality: {
-        schema_version: 3 as const,
+        schema_version: 4 as const,
         passed: true as const,
         attempts: [
           {
@@ -145,10 +147,100 @@ function baseConjecture() {
           followup: followupProbeSpec,
           predicted_p: 0.3,
         },
+        subject_id: 'general',
+        policy_version: 'subject-probe-validator-v1',
+        subject_validator_results: [],
       },
       discriminating: true,
       predicted_p: 0.3,
       baseline_p_at_induction: 0.6,
+    },
+  };
+}
+
+function mathUnitConjecture() {
+  const base = baseConjecture();
+  const primary = {
+    schema_version: 2 as const,
+    prompt_md: 'Convert 72 km/h to m/s.',
+    reference_md: '20 m/s',
+    expected_target_error_answer_md: '72000 m/s',
+    elicits_target_error_reason_md: 'Requires converting both parts of the compound unit.',
+    context_kind: 'abstract' as const,
+    representation_kind: 'symbolic' as const,
+    response_mode: 'short_answer' as const,
+    gold_response_signature: { kind: 'text' as const, response_md: '20 m/s' },
+    target_error_response_signature: { kind: 'text' as const, response_md: '72000 m/s' },
+  };
+  const followup = {
+    schema_version: 2 as const,
+    prompt_md: '将 10 m/s 换算为 km/h。',
+    reference_md: '36 km/h',
+    expected_target_error_answer_md: '0.01 km/h',
+    elicits_target_error_reason_md: '再次要求同时换算距离和分母时间单位。',
+    context_kind: 'applied' as const,
+    representation_kind: 'natural_language' as const,
+    response_mode: 'short_answer' as const,
+    gold_response_signature: { kind: 'text' as const, response_md: '36 km/h' },
+    target_error_response_signature: { kind: 'text' as const, response_md: '0.01 km/h' },
+  };
+  const hypothesis = {
+    kind: 'proposal' as const,
+    claim_md: '你在复合速度单位换算时只换分子距离单位，忘记换分母时间单位。',
+    knowledge_id: 'kn_unit_accept',
+    evidence_event_ids: ['evt_a', 'evt_b'],
+    diagnostic_spec: {
+      schema_version: 1 as const,
+      target_error_rule_md: '只换算分子距离单位，不换算分母时间单位。',
+      trigger_conditions_md: '题目要求在 km/h 与 m/s 之间做速度单位换算。',
+      scope_boundary_md: '只覆盖复合速度单位换算。',
+      expected_wrong_answer_signature_md: '分母的每小时或每秒倍率保持不变。',
+    },
+    cause_category: 'unit_error',
+    recurrence_count: 2,
+  };
+  const packageValue = { primary, followup, predicted_p: 0.3 };
+  return {
+    ...base,
+    target: { ...base.target, subject_id: hypothesis.knowledge_id },
+    cooldown_key: `conjecture:${hypothesis.knowledge_id}`,
+    proposed_change: {
+      ...base.proposed_change,
+      ...hypothesis,
+      probe_md: primary.prompt_md,
+      probe_reference_md: primary.reference_md,
+      followup_probe_md: followup.prompt_md,
+      followup_probe_reference_md: followup.reference_md,
+      probe_spec: primary,
+      followup_probe_spec: followup,
+      probe_quality: {
+        schema_version: 4 as const,
+        passed: true as const,
+        attempts: [
+          {
+            attempt: 1,
+            outcome: 'passed' as const,
+            failure_codes: [],
+            explanation_md: 'verified',
+            author_task_run_id: 'unit_author_run',
+            reviewer_task_run_id: 'unit_review_run',
+          },
+        ],
+        final_review: {
+          verdict: 'pass' as const,
+          failure_codes: [],
+          explanation_md: 'verified',
+        },
+        reviewed_hypothesis: hypothesis,
+        reviewed_package: packageValue,
+        subject_id: 'math',
+        policy_version: 'subject-probe-validator-v1',
+        subject_validator_results: evaluateSubjectProbeValidators('math', {
+          hypothesis,
+          package: packageValue,
+        }),
+      },
+      predicted_p: packageValue.predicted_p,
     },
   };
 }
@@ -263,11 +355,15 @@ describe('acceptConjectureProposal lifecycle', () => {
     // YUK-531 PR-3 — every test starts with the promotion flag OFF (dark default).
     // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
     delete process.env.MISCONCEPTION_PROMOTE_ENABLED;
+    // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
+    delete process.env.SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED;
   });
 
   afterEach(() => {
     // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
     delete process.env.MISCONCEPTION_PROMOTE_ENABLED;
+    // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
+    delete process.env.SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED;
   });
 
   it('plain accept writes corrected_by_owner=false, no CORE write, no FSRS row', async () => {
@@ -299,7 +395,7 @@ describe('acceptConjectureProposal lifecycle', () => {
     expect(await fsrsRowCount()).toBe(0);
   });
 
-  it('fails closed for an unaccepted historical proposal without the v3 probe-quality packet', async () => {
+  it('fails closed for an unaccepted historical proposal without the v4 probe-quality packet', async () => {
     const db = testDb();
     const payload = baseConjecture();
     const proposalId = await writeAiProposal(db, {
@@ -325,6 +421,94 @@ describe('acceptConjectureProposal lifecycle', () => {
     });
     expect(await rateEvents(proposalId)).toHaveLength(0);
     expect(await probeQuestionsFor(proposalId)).toHaveLength(0);
+  });
+
+  it('accepts an exact current math validator packet when blocking is enabled', async () => {
+    const db = testDb();
+    const now = new Date('2026-07-31T00:00:00.000Z');
+    await db.insert(knowledge).values({
+      id: 'kn_unit_accept',
+      name: '复合单位换算',
+      domain: 'math',
+      created_at: now,
+      updated_at: now,
+    });
+    process.env.SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED = 'true';
+    const proposalId = await writeAiProposal(db, {
+      actor_ref: 'research_meeting',
+      payload: mathUnitConjecture(),
+    });
+
+    await expect(acceptAiProposal(db, proposalId)).resolves.toMatchObject({
+      kind: 'conjecture',
+      conjecture_id: proposalId,
+    });
+    expect(await rateEvents(proposalId)).toHaveLength(1);
+  });
+
+  it.each([
+    [
+      'missing provenance',
+      (payload: ReturnType<typeof mathUnitConjecture>) => {
+        payload.proposed_change.probe_quality.subject_validator_results = [];
+      },
+      'subject_validator_results_mismatch',
+    ],
+    [
+      'outdated policy',
+      (payload: ReturnType<typeof mathUnitConjecture>) => {
+        payload.proposed_change.probe_quality.policy_version = 'subject-probe-validator-v0';
+      },
+      'subject_validator_policy_outdated',
+    ],
+    [
+      'forged pass',
+      (payload: ReturnType<typeof mathUnitConjecture>) => {
+        payload.proposed_change.probe_spec.reference_md = '21 m/s';
+        payload.proposed_change.probe_reference_md = '21 m/s';
+        payload.proposed_change.probe_spec.gold_response_signature = {
+          kind: 'text',
+          response_md: '21 m/s',
+        };
+        payload.proposed_change.probe_quality.reviewed_package.primary =
+          payload.proposed_change.probe_spec;
+      },
+      'subject_validator_results_mismatch',
+    ],
+    [
+      'package replacement',
+      (payload: ReturnType<typeof mathUnitConjecture>) => {
+        payload.proposed_change.probe_spec.prompt_md = 'Convert 90 km/h to m/s.';
+        payload.proposed_change.probe_md = 'Convert 90 km/h to m/s.';
+        payload.proposed_change.probe_quality.reviewed_package.primary =
+          payload.proposed_change.probe_spec;
+      },
+      'subject_validator_results_mismatch',
+    ],
+  ])('rejects math validator packet with %s', async (_name, mutate, expectedReason) => {
+    const db = testDb();
+    const now = new Date('2026-07-31T00:00:00.000Z');
+    await db.insert(knowledge).values({
+      id: 'kn_unit_accept',
+      name: '复合单位换算',
+      domain: 'math',
+      created_at: now,
+      updated_at: now,
+    });
+    process.env.SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED = 'true';
+    const payload = mathUnitConjecture();
+    mutate(payload);
+
+    await expect(
+      acceptConjectureProposal(db, `invalid_${String(_name)}`, {
+        id: `invalid_${String(_name)}`,
+        payload,
+      } as never),
+    ).rejects.toMatchObject({
+      code: CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
+      status: 409,
+      message: expect.stringContaining(expectedReason),
+    });
   });
 
   it('keeps a v1 audit readable but refuses to use it for a new accept decision', async () => {

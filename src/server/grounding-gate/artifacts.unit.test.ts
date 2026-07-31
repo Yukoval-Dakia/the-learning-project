@@ -111,7 +111,7 @@ function induced(): InduceConjectureResult {
         },
       },
       probe_quality: {
-        schema_version: 3,
+        schema_version: 4,
         passed: true,
         attempts: [
           {
@@ -182,6 +182,9 @@ function induced(): InduceConjectureResult {
           },
           predicted_p: 0.4,
         },
+        subject_id: 'general',
+        policy_version: 'subject-probe-validator-v1',
+        subject_validator_results: [],
       },
       cause_category: 'conceptual',
       recurrence_count: 2,

@@ -142,7 +142,7 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
         },
       },
       probe_quality: {
-        schema_version: 3,
+        schema_version: 4,
         passed: true,
         attempts: [
           {
@@ -213,6 +213,9 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
           },
           predicted_p: 0.3,
         },
+        subject_id: cell.subject_id,
+        policy_version: 'subject-probe-validator-v1',
+        subject_validator_results: [],
       },
       cause_category: cell.cause_category,
       recurrence_count: cell.recurrence_count,

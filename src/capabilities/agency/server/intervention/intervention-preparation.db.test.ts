@@ -169,7 +169,7 @@ function conjecturePayload(knowledgeId: string) {
       probe_spec: PRIMARY,
       followup_probe_spec: FOLLOWUP,
       probe_quality: {
-        schema_version: 3 as const,
+        schema_version: 4 as const,
         passed: true as const,
         attempts: [
           {
@@ -188,6 +188,9 @@ function conjecturePayload(knowledgeId: string) {
         },
         reviewed_hypothesis: hypothesis,
         reviewed_package: packageValue,
+        subject_id: 'math',
+        policy_version: 'subject-probe-validator-v1',
+        subject_validator_results: [],
       },
       discriminating: true,
       corrected_by_owner: false,

@@ -35,6 +35,15 @@
     "file": "src/capabilities/agency/server/intervention/snapshot.ts",
     "notes": "YUK-791 dark-ship delivery gate. Default OFF: preparation still creates auditable shadow packages, but Today/B3 delivery must reject delivery_mode=shadow. Flip only after YUK-814 real-observation and canary gates."
   },
+  "SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED": {
+    "kind": "env",
+    "literals": ["true", "1"],
+    "case_insensitive": true,
+    "polarity": "opt-in",
+    "reader_marker": "parseFlag(process.env.SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED)",
+    "file": "src/server/agency/conjecture/probe-quality.ts",
+    "notes": "YUK-822 subject-validator veto kill switch. Validators always run and persist shadow evidence; opt-in/default OFF controls only whether deterministic failures regenerate/abstain and block accept."
+  },
   "RESEARCH_MEETING_AGENT_ENABLED": {
     "kind": "env",
     "literals": ["true", "1"],
