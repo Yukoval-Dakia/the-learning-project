@@ -537,17 +537,56 @@ function normalizeStrictSolutionOutput(value: unknown): {
     return { value, repaired: false };
   }
   const record = value as Record<string, unknown>;
-  const confidence = record.confidence;
-  if (typeof confidence !== 'string') return { value, repaired: false };
-  const normalized = confidence.trim();
+  const normalizeConfidence = (confidence: unknown): number | undefined => {
+    if (
+      typeof confidence === 'number' &&
+      Number.isFinite(confidence) &&
+      confidence >= 0 &&
+      confidence <= 1
+    ) {
+      return confidence;
+    }
+    if (typeof confidence !== 'string') return undefined;
+    const normalized = confidence.trim();
+    if (!/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(normalized)) return undefined;
+    return Number(normalized);
+  };
+
   // A JSON number serialized as a string is a content-preserving scalar repair.
   // Do not guess labels such as "high" or percentages; those remain contract
   // failures and consume the existing bounded retry.
-  if (!/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(normalized)) {
+  if (typeof record.confidence === 'string') {
+    const normalized = normalizeConfidence(record.confidence);
+    if (normalized === undefined) return { value, repaired: false };
+    return {
+      value: { ...record, confidence: normalized },
+      repaired: true,
+    };
+  }
+
+  // Some providers preserve the numeric value but place confidence beside the
+  // reference-solution fields. Relocating that exact scalar to the documented
+  // top level is deterministic; never synthesize a missing value or translate
+  // a qualitative label.
+  if (record.confidence !== undefined) return { value, repaired: false };
+  const referenceSolution = record.reference_solution;
+  if (
+    referenceSolution === null ||
+    typeof referenceSolution !== 'object' ||
+    Array.isArray(referenceSolution)
+  ) {
     return { value, repaired: false };
   }
+  const nestedReference = referenceSolution as Record<string, unknown>;
+  const relocated = normalizeConfidence(nestedReference.confidence);
+  if (relocated === undefined) return { value, repaired: false };
+  const { confidence: _misplacedConfidence, ...referenceWithoutConfidence } = nestedReference;
   return {
-    value: { ...record, confidence: Number(normalized) },
+    value: {
+      ...record,
+      reference_solution: referenceWithoutConfidence,
+      confidence: relocated,
+    },
     repaired: true,
   };
 }

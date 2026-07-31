@@ -42,9 +42,11 @@ output path. It runs in a disposable pgvector Testcontainer. For every package
 it runs three strict `SolutionGenerateTask` blind solves followed by the sealed
 package comparator. A paid solver response that cannot satisfy the complete
 output contract may retry the identical blind input once; heuristic JSON repair
-is forbidden, numeric-string confidence has one semantics-preserving scalar
-normalization, deterministic repair is recorded, and every attempted task-run ID
-remains in the audit. `expected_signals` is a bounded 1..12 atomized necessary
+is forbidden. Confidence repair is limited to preserving an existing numeric
+value: numeric string to number, or relocation from `reference_solution` to its
+required top-level field; labels and missing values still fail closed.
+Deterministic repair is recorded, and every attempted task-run ID remains in the
+audit. `expected_signals` is a bounded 1..12 atomized necessary
 path; every operation is sealed by index + digest, and the comparator must return
 one reference-coverage and frozen-scope decision for every operation. Provider
 output names only kind + operation index; the server binds solver/operation

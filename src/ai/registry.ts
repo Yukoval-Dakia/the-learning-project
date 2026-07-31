@@ -937,7 +937,7 @@ function buildSolutionGeneratePrompt(profile: SubjectProfile): string {
 要点：
 - existing_answers_hint / existing_analysis_hint 只是 hint：如果你判断它对就采纳，判断它错就以你自己的解为准，并在 worked_solution_md 里简述为何。
 - expected_signals 必须覆盖完整必要路径、共 1..12 条且每条非空；final_answer 非空。
-- confidence 必须是 0 到 1 之间的 JSON number（例如 0.92），禁止输出 "high"、"0.92" 或百分数字符串。
+- confidence 必须是与 reference_solution、worked_solution_md 并列的**顶层字段**，不得放进 reference_solution；值必须是 0 到 1 之间的 JSON number（例如 0.92），禁止输出 "high"、"0.92" 或百分数字符串。
 - 若题目涉及因果方向，先固定 exposure/treatment X 与题面 outcome construct / estimand Y。反向因果指 Y（也包括同一 outcome construct 的先行状态或倾向）影响 X，而不是按“原因发生在 X 前还是 X 后”机械分类；例如抑郁严重度影响运动、疾病严重度影响用药都可是真正的 Y→X，即使机制表现为 self-selection 或按病情分配。若题面 Y 是变化量/提高幅度，则基线水平 Y0 是不同 estimand。只有由不同于 Y 的构念驱动的风险分配/self-selection，以及共同原因，才不是该 Y→X。题目或候选理由若混淆这些概念，必须明确指出，不能顺着题面误称。
 - ${profile.grounding.uncertaintyPolicy}
 - confidence 反映你对这份参考解的把握，模棱两可给 0.5。

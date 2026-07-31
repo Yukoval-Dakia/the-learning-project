@@ -196,21 +196,21 @@ describe('task prompt definitions', () => {
   it('pins the shared solver complete-path contract for every profile', () => {
     const expected = {
       'general:SolutionGenerateTask':
-        'da24cd782c7457d4f0c24fac9532416b03742e32e488a8219bf51679aa62b3e4',
+        '6b0374083690aa87cbc55a66d830e6f18a702e0499e186bc830602b487409b1d',
       'general:SolutionGenerateVisionTask':
-        'ff525b259a3c289b4f503ac3abea536d913c417495dfb797d8fd0da2fbffea12',
+        'fe6ba5b0202d9d9be5364052c27c9751f5afaa197fb355b847d598da63f41724',
       'math:SolutionGenerateTask':
-        '8633a43ebad6faecaa5ab43c7a07b3a2dc781325b1c49ae5d879edd2a12e2934',
+        'c9cce16fd679ed9ae0a6269112275254811c19636324adfe99ba6168fb639458',
       'math:SolutionGenerateVisionTask':
-        '58b399397a3beb2170ee6b2734b66024e493c4f9024f8832bd3065b095c63ada',
+        '3276a1b2b413095da43ddc2f3bd4e1f83ab2c93a02b9187037cb7a5824257ce7',
       'physics:SolutionGenerateTask':
-        'a83c64d31a97cf996720f2acd62be761fe0b179403e23ba62e945dbb11de80af',
+        '823ad50a614a6b7bcf07aea3f6803b5360e05b26012ebfb01de71afe07d01eef',
       'physics:SolutionGenerateVisionTask':
-        'cdfe1ea118e0376354d7810e10007c1d64eb53b5b5503481b747cff194b18cf5',
+        '0cb2e4606f5d771567db37e835a32d3f35eeb926c5cbdfab14e7dd79a3ec1da2',
       'yuwen:SolutionGenerateTask':
-        '8725987c7b9039b6fa49fbd12a31a4eff40cbe0e098fe0e0c748724ed6dc8be8',
+        '611d0b1baa18b66ced1dc344ac8e1e6ac1571681743392b65fee16ca539ee9ae',
       'yuwen:SolutionGenerateVisionTask':
-        '8701d02b69cc5d07b0384709bac4684a5125812fc405cd59b377abf8b71b8bf8',
+        '00b798d195750ee78670c842ab1c34f8cd8d20d6951353ca044a7816b38884a4',
     } as const;
     for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
       for (const task of ['SolutionGenerateTask', 'SolutionGenerateVisionTask'] as const) {
@@ -220,6 +220,9 @@ describe('task prompt definitions', () => {
         expect(prompt).toContain('outcome construct / estimand Y');
         expect(prompt).toContain('同一 outcome construct 的先行状态或倾向');
         expect(prompt).toContain('即使机制表现为 self-selection 或按病情分配');
+        expect(prompt).toContain(
+          'confidence 必须是与 reference_solution、worked_solution_md 并列的',
+        );
         expect(createHash('sha256').update(prompt, 'utf8').digest('hex')).toBe(
           expected[`${profileId}:${task}`],
         );

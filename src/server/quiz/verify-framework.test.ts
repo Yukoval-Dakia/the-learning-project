@@ -349,6 +349,89 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
     });
   });
 
+  it('relocates an exact numeric confidence misplaced inside reference_solution', async () => {
+    const diagnostic = interventionRegressionFixture.cases.find(
+      (entry) => entry.case_id === 'yuwen-valid-direction-counterexamples',
+    )?.package.diagnostics.immediate.probe_spec;
+    if (!diagnostic) throw new Error('missing complex yuwen regression diagnostic');
+    const normalizedSolution = {
+      reference_solution: {
+        expected_signals: [
+          '识别“一定能提高”是无例外的全称断言',
+          '材料 A 只显示多数人表现良好，无法证明每个人都提高',
+          '材料 B 给出完成训练却前后都未提高的直接反例',
+        ],
+        final_answer: '材料 B；它用训练后仍未提高的反例否定“一定”。',
+        answer_equivalents: ['B', '材料 B'],
+      },
+      worked_solution_md: '先锁定全称断言，再区分多数支持性数据与能直接否定无例外主张的反例。',
+      confidence: 0.96,
+    };
+    const { confidence, ...solutionWithoutTopLevelConfidence } = normalizedSolution;
+    const providerShape = {
+      ...solutionWithoutTopLevelConfidence,
+      reference_solution: {
+        ...solutionWithoutTopLevelConfidence.reference_solution,
+        confidence,
+      },
+    };
+
+    const result = await runIndependentSolution(
+      {
+        id: 'misplaced-numeric-confidence',
+        kind: diagnostic.response_mode,
+        prompt_md: diagnostic.prompt_md,
+        choices_md: null,
+      },
+      {
+        profile: { id: 'yuwen', full: { id: 'yuwen', displayName: '语文' } },
+        runTaskFn: vi.fn(async () => ({
+          text: JSON.stringify(providerShape),
+          task_run_id: 'solver-misplaced-confidence',
+        })),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'solved',
+      solver_output_repair_level: 'deterministic',
+      solution: normalizedSolution,
+      solver_output_sha256: sha256CanonicalJson(normalizedSolution),
+    });
+  });
+
+  it('does not invent a numeric confidence from a misplaced qualitative label', async () => {
+    const result = await runIndependentSolution(
+      {
+        id: 'qualitative-confidence',
+        kind: 'short_answer',
+        prompt_md: '根据题面给出结论并说明必要理由。',
+        choices_md: null,
+      },
+      {
+        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        runTaskFn: vi.fn(async () => ({
+          text: JSON.stringify({
+            reference_solution: {
+              expected_signals: ['先提取题面约束', '再由约束推导结论'],
+              final_answer: '结论',
+              answer_equivalents: [],
+              confidence: 'high',
+            },
+            worked_solution_md: '按题面约束逐步推导。',
+          }),
+          task_run_id: 'solver-qualitative-confidence',
+        })),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'unsupported',
+      reason: expect.stringContaining('confidence:invalid_type'),
+      task_run_ids: ['solver-qualitative-confidence'],
+    });
+  });
+
   it('rejects heuristic jsonrepair output instead of sealing an ambiguously redrawn object', async () => {
     const output = {
       reference_solution: {
