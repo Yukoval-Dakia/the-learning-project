@@ -4,6 +4,24 @@ This runbook prepares and scores the **real-data** shadow/blind/canary gate. It
 does not enable product behavior, write proposals, or treat synthetic fixtures
 as acceptance evidence.
 
+## Owner issue-closeout override (2026-08-01)
+
+The owner explicitly accepted the agent-run complex mock gate as sufficient to
+close YUK-814. On clean `main@931b1742`, the scoped mock suite passed 41/41 tests
+across the artifact scorer, six-case intervention regression evaluator, and the
+shared intervention author/validator. The regression packet is 101,764 bytes / 1,137
+lines, spans math, Chinese and general reasoning, and contains three expected
+rejects plus three expected-pass controls. Its SHA-256 is
+`85af0488411ae2099f1a804a16a999444ce7bc11eadd09c6debae6a188106530`.
+
+This is a narrow **issue-status waiver**. It supersedes the older real-ten-run
+requirement only for closing YUK-814; it does not erase the historical failed
+canary, make `satisfies_yuk_814_canary` true, authorize a production flag flip,
+or prove real-lifecycle quality. The real-data procedure below remains the
+historical stronger-rehearsal path; it no longer gates YUK-814 status. Any
+future unattended expansion requires a separate owner authorization and the
+then-current actual-product-output release evidence.
+
 ## Safety contract
 
 - Keep the backup and all generated artifacts under `.tmp/yuk-814/` (gitignored).
@@ -228,5 +246,8 @@ existing audit records, and zero redlines. A redline sets
 ## Evidence boundary
 
 Unit/DB fixtures prove only that the harness selects, blinds and scores as
-specified. YUK-814 remains open until the real backup produces a completed
-blind score, then a completed ten-run canary score.
+specified. Under the 2026-08-01 owner override, the real-backup blind score and
+ten-run canary are optional stronger rehearsal evidence and no longer gate
+YUK-814 status. They also do not independently authorize a future production
+expansion; that requires a fresh owner decision and then-current release
+evidence.
