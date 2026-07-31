@@ -192,11 +192,11 @@ describe('buildSelectionOrchestratorInput', () => {
     expect(line).not.toContain('diagnostic=');
   });
 
-  it('renders §9.2 signals as n/a when undefined (Step A leaves them undefined)', () => {
+  it('renders only signals that have live-reader contracts', () => {
     const line = buildSelectionOrchestratorInput([questionSignal({ mfiScore: 0.1 })]);
     expect(line).toContain('exam_relevance=n/a');
     expect(line).toContain('misconception_recurrence=n/a');
-    expect(line).toContain('transfer_gap=n/a');
+    expect(line).not.toContain('transfer_gap');
   });
 
   it('projects a paper candidate (role=paper, no mfi)', () => {

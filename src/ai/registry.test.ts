@@ -86,7 +86,8 @@ describe('task prompt definitions', () => {
           task === 'MultimodalDirectJudgeTask' ||
           task === 'InterventionRecommendationTask' ||
           task === 'InterventionPackageAuthorTask' ||
-          task === 'InterventionPackageReviewTask'
+          task === 'InterventionPackageReviewTask' ||
+          task === 'SelectionOrchestratorTask'
         ) {
           continue;
         }
@@ -96,6 +97,23 @@ describe('task prompt definitions', () => {
           .digest('hex');
         expect(actualHash, key).toBe(promptHashOracle.prompts[key]);
       }
+    }
+  });
+
+  it('pins the live-reader-only selection orchestrator prompt for every profile', () => {
+    const expected = {
+      general: '4ccfb385fdd9156c84a0345db8582a1ad7ff0b9c8ef6e124d24b022e72d97f25',
+      math: '2dcc510d7748f3f43c6cf8b209be54c8fc2a0bd1e33178310b9b3ef598aca975',
+      physics: '1d0b5f01465d9f85c6f7cdc660a7bed9f974102d4d95a2ba9cda0641d365faa4',
+      yuwen: 'd4383ab72c547dfec9da94f2b5221d5ff443261170ab892fd4ecb18491bfd0e1',
+    } as const;
+    for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
+      const prompt = getTaskSystemPrompt(
+        'SelectionOrchestratorTask',
+        resolveSubjectProfile(profileId),
+      );
+      expect(prompt).not.toContain('transfer_gap');
+      expect(createHash('sha256').update(prompt, 'utf8').digest('hex')).toBe(expected[profileId]);
     }
   });
 
@@ -262,14 +280,14 @@ describe('UnitDimensionFallback registry entry', () => {
 });
 
 describe('MultimodalDirectJudgeTask registry entry', () => {
-  it('is a single-call multimodal vision task (YUK-201)', () => {
+  it('is a single-call multimodal vision task with room for outputFormat finalization (YUK-201/YUK-792)', () => {
     expect(tasks.MultimodalDirectJudgeTask.kind).toBe('MultimodalDirectJudgeTask');
     expect(tasks.MultimodalDirectJudgeTask.defaultProvider).toBe('xiaomi');
     expect(tasks.MultimodalDirectJudgeTask.defaultModel).toBe('mimo-v2.5');
     expect(tasks.MultimodalDirectJudgeTask.isMultimodal).toBe(true);
     expect(tasks.MultimodalDirectJudgeTask.needsToolCall).toBe(false);
     expect(tasks.MultimodalDirectJudgeTask.allowedTools).toEqual([]);
-    expect(tasks.MultimodalDirectJudgeTask.budget.maxIterations).toBe(1);
+    expect(tasks.MultimodalDirectJudgeTask.budget.maxIterations).toBe(2);
     expect(tasks.MultimodalDirectJudgeTask.budget.timeout).toBe(90_000);
     // invocation defaults to 'auto' (graded via the multimodal_direct route, not a
     // manual rescue). The entry omits the optional field.
@@ -745,6 +763,11 @@ describe('ResearchMeetingDirectorTask registry entry', () => {
 // judges opt in (they are synchronous-route sensors whose catch swallows into
 // 'unsupported' — pg-boss never sees a throw, so no durable backstop exists).
 describe('budget.transientRetries (YUK-576)', () => {
+  it('both SDK outputFormat vision judges have a terminal turn after the envelope turn', () => {
+    expect(tasks.StepsJudgeTask.budget.maxIterations).toBe(2);
+    expect(tasks.MultimodalDirectJudgeTask.budget.maxIterations).toBe(2);
+  });
+
   it('the two vision judges get exactly 1 same-target transient retry', () => {
     expect(tasks.StepsJudgeTask.budget.transientRetries).toBe(1);
     expect(tasks.MultimodalDirectJudgeTask.budget.transientRetries).toBe(1);

@@ -72,3 +72,15 @@ test('another session startup cannot overwrite this session baseline', () => {
   assert.equal(parseStdoutJson(result).decision, 'block');
   assert.match(parseStdoutJson(result).reason, /JSON invalid after edit/);
 });
+
+test('resume with a missing baseline validates existing dirty JSON before adoption', () => {
+  const repo = makeRepo();
+  writeFileSync(join(repo, 'package.json'), '{bad\n');
+
+  const resumed = runSessionStart(repo, 'missing-baseline', 'resume');
+  const result = runHook(repo, 'missing-baseline');
+
+  assert.equal(resumed.status, 0);
+  assert.equal(parseStdoutJson(result).decision, 'block');
+  assert.match(parseStdoutJson(result).reason, /JSON invalid after edit/);
+});

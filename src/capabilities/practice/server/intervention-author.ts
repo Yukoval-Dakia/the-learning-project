@@ -48,9 +48,70 @@ function parseTaskOutput<T>(
   if (result.structured_output !== undefined && result.structured_output !== null) {
     return parse(result.structured_output);
   }
-  const extracted = parseJsonObjectLoose(result.text, label, { riskyRepair: 'reject' });
+  const extracted = parseJsonObjectLoose(result.text, label, {
+    riskyRepair: 'reject',
+    // Both author/review outputs are immediately validated by closed strict
+    // schemas below, so an exactly-boundary partial batch cannot be admitted.
+    containerClosure: 'schema_validated',
+    latexEscapes: 'markdown_math',
+  });
   if (!extracted) throw new Error(`${label} did not contain a JSON object`);
   return parse(extracted.json);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Freeze server-owned diagnostic identity fields and repair the one unambiguous
+ * nesting slip observed from the Mimo text fallback. Generated question/material
+ * content is untouched and still passes the strict package schema below.
+ */
+export function normalizeInterventionPackageModelOutput(
+  value: unknown,
+  identity: { testedClaimMd: string; targetErrorRuleMd: string },
+): InterventionPackageModelOutputT {
+  if (!isRecord(value) || !isRecord(value.diagnostics)) {
+    return InterventionPackageModelOutput.parse(value);
+  }
+
+  const diagnostics = { ...value.diagnostics };
+  for (const kind of ['immediate', 'delayed', 'transfer'] as const) {
+    const rawDiagnostic = diagnostics[kind];
+    if (!isRecord(rawDiagnostic)) continue;
+    const normalizedIdentityFields = [
+      rawDiagnostic.tested_claim_md !== identity.testedClaimMd ? 'tested_claim_md' : null,
+      rawDiagnostic.target_error_rule_md !== identity.targetErrorRuleMd
+        ? 'target_error_rule_md'
+        : null,
+    ].filter((field): field is string => field !== null);
+    if (normalizedIdentityFields.length > 0) {
+      console.warn('[intervention-author] normalized server-owned diagnostic identities', {
+        diagnostic_kind: kind,
+        fields: normalizedIdentityFields,
+      });
+    }
+    const diagnostic: Record<string, unknown> = {
+      ...rawDiagnostic,
+      tested_claim_md: identity.testedClaimMd,
+      target_error_rule_md: identity.targetErrorRuleMd,
+    };
+    if (kind === 'transfer' && isRecord(rawDiagnostic.probe_spec)) {
+      const { context_change_md: misplacedContextChangeMd, ...probeSpec } =
+        rawDiagnostic.probe_spec;
+      if (
+        typeof diagnostic.context_change_md !== 'string' &&
+        typeof misplacedContextChangeMd === 'string'
+      ) {
+        diagnostic.context_change_md = misplacedContextChangeMd;
+      }
+      diagnostic.probe_spec = probeSpec;
+    }
+    diagnostics[kind] = diagnostic;
+  }
+
+  return InterventionPackageModelOutput.parse({ ...value, diagnostics });
 }
 
 function normalizeIdentity(value: string): string {
@@ -148,7 +209,10 @@ async function runPackageAuthor(
   let draft: InterventionPackageModelOutputT;
   try {
     draft = parseTaskOutput(result, 'intervention package author', (value) =>
-      InterventionPackageModelOutput.parse(value),
+      normalizeInterventionPackageModelOutput(value, {
+        testedClaimMd: context.snapshot.conjecture.claim_md,
+        targetErrorRuleMd: context.snapshot.conjecture.target_error_rule_md,
+      }),
     );
   } catch {
     return {

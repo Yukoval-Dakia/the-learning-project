@@ -13,6 +13,7 @@
 // opening/closing line：M2 为模板（M4 夜链 AI 化后由 composer_nightly 写入）。
 
 import { newId } from '@/core/ids';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
 import {
   artifact,
@@ -151,6 +152,7 @@ async function knowledgeLabels(db: DbLike, ids: string[]): Promise<Map<string, s
 interface QuestionMixMetadata {
   knowledgeId?: string;
   questionKind?: string;
+  isInterventionDiagnostic?: boolean;
 }
 
 async function questionMixMetadata(
@@ -160,13 +162,22 @@ async function questionMixMetadata(
   const unique = [...new Set(ids)].filter(Boolean);
   if (unique.length === 0) return new Map();
   const rows = await db
-    .select({ id: question.id, knowledge_ids: question.knowledge_ids, kind: question.kind })
+    .select({
+      id: question.id,
+      knowledge_ids: question.knowledge_ids,
+      kind: question.kind,
+      source: question.source,
+    })
     .from(question)
     .where(inArray(question.id, unique));
   return new Map(
     rows.map((row) => [
       row.id,
-      { knowledgeId: row.knowledge_ids[0], questionKind: row.kind } satisfies QuestionMixMetadata,
+      {
+        knowledgeId: row.knowledge_ids[0],
+        questionKind: row.kind,
+        isInterventionDiagnostic: row.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      } satisfies QuestionMixMetadata,
     ]),
   );
 }
@@ -185,7 +196,36 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   const dueJson = (await dueRes.json()) as {
     rows?: Array<{ question_id: string; knowledge_ids?: string[] }>;
   };
-  const dueRows = dueJson.rows ?? [];
+  const cappedDueRows = dueJson.rows ?? [];
+
+  // YUK-792 — intervention diagnostics are an approved learner delivery, not an
+  // optional member of the generic due page. `handleReviewDue` caps that page at
+  // 200, so a diagnostic can otherwise disappear behind an older ordinary
+  // backlog before the composer ever sees (and protects) its `intervention`
+  // source. Read the due intervention subset independently, then prefix-union it
+  // with the capped page. The FSRS row is the activation/scheduling boundary;
+  // draft follow-ups without a row remain invisible.
+  const protectedInterventionRows = await db
+    .select({
+      question_id: question.id,
+      knowledge_ids: question.knowledge_ids,
+    })
+    .from(material_fsrs_state)
+    .innerJoin(question, eq(question.id, material_fsrs_state.subject_id))
+    .where(
+      and(
+        eq(material_fsrs_state.subject_kind, 'question'),
+        lte(material_fsrs_state.due_at, new Date()),
+        eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
+        notDraftPredicate(question.draft_status),
+      ),
+    )
+    .orderBy(material_fsrs_state.due_at, question.created_at, question.id);
+  const protectedInterventionIds = new Set(protectedInterventionRows.map((row) => row.question_id));
+  const dueRows = [
+    ...protectedInterventionRows,
+    ...cappedDueRows.filter((row) => !protectedInterventionIds.has(row.question_id)),
+  ];
 
   // 2. 错题变式 — active 变体，parent 近窗口内有 failure attempt。
   const since = new Date(Date.now() - VARIANT_WINDOW_DAYS * 24 * 3600 * 1000);
@@ -320,11 +360,16 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   return {
     date,
     dailyBudgetMinutes: dailyBudget.minutes,
-    dueItems: dueRows.map((r) => ({
-      questionId: r.question_id,
-      knowledgeLabel: r.knowledge_ids?.length ? labelMap.get(r.knowledge_ids[0]) : undefined,
-      ...mixMetadataByQuestion.get(r.question_id),
-    })),
+    dueItems: dueRows.map((r) => {
+      const metadata = mixMetadataByQuestion.get(r.question_id);
+      return {
+        questionId: r.question_id,
+        knowledgeLabel: r.knowledge_ids?.length ? labelMap.get(r.knowledge_ids[0]) : undefined,
+        knowledgeId: metadata?.knowledgeId,
+        questionKind: metadata?.questionKind,
+        source: metadata?.isInterventionDiagnostic ? 'intervention' : 'decay',
+      };
+    }),
     variantItems: variantRows
       .filter((v): v is { variant_question_id: string; parent_question_id: string } =>
         Boolean(v.variant_question_id),
@@ -1128,8 +1173,20 @@ async function trimStoredPendingItemsToBudget(
       0,
     );
     const pending = current.filter((row) => row.status === 'pending');
-    const remaining = Math.max(0, budgetMinutes - frozenMinutes);
-    const keptPending = remaining === 0 ? [] : fitStreamToTimeBudget(pending, remaining).kept;
+    // An intervention row is the learner-visible delivery of approved material,
+    // not an ordinary recommendation tail. Never trim it merely because it was
+    // appended after the day's budget was composed; instead budget the remaining
+    // pending rows around this protected delivery.
+    const protectedPending = pending.filter((row) => row.source === 'intervention');
+    const budgetablePending = pending.filter((row) => row.source !== 'intervention');
+    const protectedMinutes = protectedPending.reduce(
+      (sum, row) => sum + estimateStreamItemMinutes(row.item_kind),
+      0,
+    );
+    const remaining = Math.max(0, budgetMinutes - frozenMinutes - protectedMinutes);
+    const keptBudgetable =
+      remaining === 0 ? [] : fitStreamToTimeBudget(budgetablePending, remaining).kept;
+    const keptPending = [...protectedPending, ...keptBudgetable];
     const keptIds = new Set(keptPending.map((row) => row.id));
     const deleteIds = pending.filter((row) => !keptIds.has(row.id)).map((row) => row.id);
     if (deleteIds.length > 0) {
@@ -1305,6 +1362,40 @@ export async function advanceStreamItem(
   if (!row) return null;
   if (!LEGAL_TRANSITIONS[row.status].includes(next)) {
     throw new ApiError('conflict', `illegal stream transition ${row.status} -> ${next}`, 409);
+  }
+  if (row.source === 'intervention') {
+    if (next === 'skipped') {
+      throw new ApiError(
+        'conflict',
+        'intervention diagnostics cannot be skipped before completion',
+        409,
+      );
+    }
+    if (next === 'done') {
+      const [attempt] = await db
+        .select({ id: event.id })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'review'),
+            eq(event.subject_kind, 'question'),
+            eq(event.subject_id, row.ref_id),
+            row.session_id === null
+              ? isNull(event.session_id)
+              : eq(event.session_id, row.session_id),
+            gte(event.created_at, row.created_at),
+            sql`${event.payload} ->> 'stream_item_id' = ${row.id}`,
+          ),
+        )
+        .limit(1);
+      if (!attempt) {
+        throw new ApiError(
+          'conflict',
+          'intervention diagnostics can be completed only after a recorded attempt',
+          409,
+        );
+      }
+    }
   }
   const [updated] = await db
     .update(practice_stream_item)

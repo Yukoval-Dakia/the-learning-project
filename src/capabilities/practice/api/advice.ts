@@ -14,8 +14,10 @@
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { normalizeReviewSubmitActivityRef } from '@/capabilities/practice/server/activity-ref';
 import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/server/cause-context';
+import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/server/rating-advisor';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
@@ -56,8 +58,18 @@ export async function POST(req: Request): Promise<Response> {
     if (!q) {
       throw new ApiError('not_found', `question ${questionId} not found`, 404);
     }
+    if (q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+      throw new ApiError(
+        'conflict',
+        `intervention diagnostic ${questionId} must be judged by its one-shot submission`,
+        409,
+      );
+    }
 
-    const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
+    const subjectProfile = await resolveSubjectProfileForKnowledgeIds(
+      db,
+      questionKnowledgeIdsForJudge(q),
+    );
     const invoked = await createDefaultJudgeInvoker().invoke({
       db,
       question: q,

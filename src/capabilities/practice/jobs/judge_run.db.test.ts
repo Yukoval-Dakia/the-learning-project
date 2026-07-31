@@ -7,6 +7,11 @@
 // at the judgeSubmit seam (no LLM call); the REAL persistSubmit runs the backfill tx.
 
 import { newId } from '@/core/ids';
+import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
+import {
+  INTERVENTION_CONTRACT_VERSION,
+  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+} from '@/core/schema/intervention';
 import {
   event,
   job_events,
@@ -48,7 +53,7 @@ const JUDGED_GOOD = {
   judgeResult: CORRECT_VERDICT,
   judgeRoute: 'semantic',
   judgeTelemetry: null,
-  executionProvenance: null,
+  executionProvenance: null as JudgeExecutionProvenanceT | null,
   suggestedRating: 'good' as const,
   finalRating: 'good' as const,
   adviceCauseCategory: null,
@@ -253,6 +258,66 @@ describe('runJudgeRun — backfill', () => {
     // …but NOT as a terminal event: no FAILED, and the derived status keeps clients waiting.
     expect(events.some((e) => e.event_type === 'judge_run.failed')).toBe(false);
     expect(deriveJudgeRunStatus(events)).toBe('started');
+  });
+
+  it('rejects an untrusted durable diagnostic verdict and releases its terminal claim', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const runId = newId();
+    const data = jobData(runId, questionId);
+    const claimedAt = new Date(data.submit.submitted_at);
+    await db
+      .update(question)
+      .set({
+        source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+        draft_status: 'draft',
+        judge_kind_override: 'multimodal_direct',
+        knowledge_ids: [],
+        metadata: {
+          intervention_diagnostic: {
+            schema_version: INTERVENTION_CONTRACT_VERSION,
+            intervention_id: 'int_durable_worker',
+            intervention_version: 1,
+            diagnostic_kind: 'immediate',
+            knowledge_id: 'kc_durable',
+            due_at: claimedAt.toISOString(),
+          },
+        },
+        updated_at: claimedAt,
+      })
+      .where(eq(question.id, questionId));
+
+    const persistSubmitFn = vi.fn();
+    await expect(
+      runJudgeRun(
+        db,
+        data,
+        { retryCount: 2, retryLimit: 2 },
+        {
+          judgeSubmitFn: mockJudgeSubmit({
+            judgeResult: {
+              ...CORRECT_VERDICT,
+              capability_ref: { id: 'multimodal_direct', version: '1.0.0' },
+            },
+            judgeRoute: 'multimodal_direct',
+            executionProvenance: {
+              version: 1,
+              kind: 'historical_unknown',
+              prompt_fingerprint: 'b'.repeat(64),
+              prompt_template_revision: 'judge-v1',
+            },
+          }),
+          persistSubmitFn: persistSubmitFn as JudgeRunDeps['persistSubmitFn'],
+        },
+      ),
+    ).rejects.toThrow('requires a verified judge execution');
+    expect(persistSubmitFn).not.toHaveBeenCalled();
+    const [row] = await db
+      .select({ draftStatus: question.draft_status })
+      .from(question)
+      .where(eq(question.id, questionId));
+    expect(row.draftStatus).toBe('active');
   });
 
   it('the FINAL delivery (budget spent) writes the terminal FAILED', async () => {

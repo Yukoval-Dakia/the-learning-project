@@ -38,15 +38,13 @@ const main = () => {
   const hashes = currentHashes(root);
 
   const baseline = readBaseline(root, sessionId);
-  if (baseline === null) {
-    writeBaseline(root, sessionId, hashes);
-    stopOk();
-  }
-
-  const filesToCheck = currentFiles.filter((file) => {
-    const hash = hashes[file];
-    return hash && baseline[file] !== hash;
-  });
+  const filesToCheck =
+    baseline === null
+      ? currentFiles
+      : currentFiles.filter((file) => {
+          const hash = hashes[file];
+          return hash && baseline[file] !== hash;
+        });
 
   const jsonFiles = filesToCheck.filter((file) => file.endsWith('.json'));
 

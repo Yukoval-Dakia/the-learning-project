@@ -2,6 +2,7 @@ import { PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
 import {
   INTERVENTION_ACTIVATED_ACTION,
   INTERVENTION_PREPARATION_FAILED_ACTION,
+  INTERVENTION_SETTLED_ACTION,
 } from '@/core/schema/intervention';
 import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
@@ -28,6 +29,7 @@ export const agencyCapability = defineCapability({
       PROBE_RESULT_ACTION,
       INTERVENTION_ACTIVATED_ACTION,
       INTERVENTION_PREPARATION_FAILED_ACTION,
+      INTERVENTION_SETTLED_ACTION,
     ],
   },
   subscriptions: {
@@ -39,6 +41,17 @@ export const agencyCapability = defineCapability({
         load: () =>
           import('./server/intervention/probe-result-subscription').then(
             (m) => m.buildProbeResultInterventionSubscriber,
+          ),
+      },
+      {
+        // YUK-792 — trusted canonical judge events advance the Agency-owned
+        // settlement aggregate. Rejudge events recompute the same diagnostic.
+        id: 'agency.intervention-diagnostic-review-settlement',
+        version: 2,
+        actions: ['judge'],
+        load: () =>
+          import('./server/intervention/settlement-subscription').then(
+            (m) => m.buildInterventionDiagnosticJudgeSubscriber,
           ),
       },
     ],

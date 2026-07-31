@@ -63,6 +63,96 @@ function escapeContentQuotes(slice: string): string {
   return out.join('');
 }
 
+// 确定性转义 JSON 字符串里的非法反斜杠：模型写 LaTeX 时偶尔输出 `\(`
+// / `\dfrac` 这类单反斜杠序列；它们不是合法 JSON escape，却能在不改变内容的
+// 前提下机械改写为 `\\(` / `\\dfrac`。合法的 JSON escape（含完整 `\uXXXX`）
+// 原样保留。只在字符串内部处理，绝不重划字符串边界。
+function escapeInvalidJsonStringBackslashes(slice: string): string {
+  const out: string[] = [];
+  let inString = false;
+  for (let i = 0; i < slice.length; i += 1) {
+    const ch = slice[i];
+    if (!inString) {
+      out.push(ch);
+      if (ch === '"') {
+        inString = true;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      out.push(ch);
+      inString = false;
+      continue;
+    }
+    if (ch !== '\\') {
+      out.push(ch);
+      continue;
+    }
+
+    const next = slice[i + 1];
+    if (next === '$') {
+      out.push('\\\\', '$');
+      i += 1;
+      continue;
+    }
+    if (next === '\\' && slice[i + 2] === '$') {
+      out.push(ch, next, '$');
+      i += 2;
+      continue;
+    }
+    if (next === '"' || next === '\\' || next === '/') {
+      out.push(ch, next);
+      i += 1;
+      continue;
+    }
+    // 合法 JSON control escape 始终优先。即使位于成对数学区间，`\n` 后的
+    // `u` 也可能是一次真实换行后跟变量，而不是 LaTeX `\nu`；两者仅凭文本
+    // 不可判定，不能把严格解析成功的内容静默改写。
+    if (next && 'bfnrt'.includes(next)) {
+      out.push(ch, next);
+      i += 1;
+      continue;
+    }
+    if (next === 'u' && /^[0-9a-fA-F]{4}$/.test(slice.slice(i + 2, i + 6))) {
+      out.push(slice.slice(i, i + 6));
+      i += 5;
+      continue;
+    }
+    out.push('\\\\');
+  }
+  return out.join('');
+}
+
+// 模型偶尔在完整输出末尾少闭合一层 object/array。只有在字符串已闭合、括号栈
+// 从未错配时，才把栈中确定可知的闭合符逆序补到末尾；截断在字符串/属性值中间的
+// 情形保持原样，继续响亮失败。
+function closeUnterminatedJsonContainers(slice: string): string {
+  const expectedClosers: string[] = [];
+  let inString = false;
+  for (let i = 0; i < slice.length; i += 1) {
+    const ch = slice[i];
+    if (inString) {
+      if (ch === '\\') {
+        i += 1;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      expectedClosers.push('}');
+    } else if (ch === '[') {
+      expectedClosers.push(']');
+    } else if (ch === '}' || ch === ']') {
+      if (expectedClosers.pop() !== ch) return slice;
+    }
+  }
+  if (inString || expectedClosers.length === 0) return slice;
+  return slice + expectedClosers.reverse().join('');
+}
+
 export type RepairLevel = false | 'deterministic' | 'jsonrepair';
 
 interface LadderHit {
@@ -73,19 +163,32 @@ interface LadderHit {
 // 修复梯度（PR #750 独立 review MAJOR 后分级）：
 //   确定性级（内容保真可证明，只做转义、绝不重划字符串边界）：
 //     ① escapeContentQuotes（内容引号）
-//     ② 再叠 sanitizeJsonStringLiterals（字符串内裸控制字符，复用 orchestrator 状态机）
+//     ② escapeInvalidJsonStringBackslashes（字符串内非法反斜杠）
+//     ③ sanitizeJsonStringLiterals（字符串内裸控制字符，复用 orchestrator 状态机）
+//     ④ closeUnterminatedJsonContainers（只补确定缺失的尾部闭合符）
 //   jsonrepair 级（启发式；对 ASCII 标点毗邻引号的形态可能【静默重划字符串边界】——
 //   截断内容 + 伪造 key，且能过非 strict 的 Zod 门。review 已用真实 lib 复现）：
-//     ③ jsonrepair(原文)  ④ jsonrepair(确定性结果)
+//     ⑤ jsonrepair(原文)  ⑥ jsonrepair(确定性结果)
 // allowRisky=false 时只走确定性级——适用于「解析结果直接持久化且无下游隔离门」的站点。
-function tryRepairLadder(slice: string, allowRisky: boolean): LadderHit {
-  const escaped = escapeContentQuotes(slice);
+function tryRepairLadder(
+  slice: string,
+  allowRisky: boolean,
+  allowContainerClosure: boolean,
+  repairMarkdownMathEscapes: boolean,
+): LadderHit {
+  const quoteEscaped = escapeContentQuotes(slice);
+  const escaped = repairMarkdownMathEscapes
+    ? escapeInvalidJsonStringBackslashes(quoteEscaped)
+    : quoteEscaped;
   try {
     return { json: JSON.parse(escaped), level: 'deterministic' };
   } catch {
     /* 下一级 */
   }
-  const sanitized = sanitizeJsonStringLiterals(escaped);
+  const sanitizedEscaped = sanitizeJsonStringLiterals(escaped);
+  const sanitized = allowContainerClosure
+    ? closeUnterminatedJsonContainers(sanitizedEscaped)
+    : sanitizedEscaped;
   try {
     return { json: JSON.parse(sanitized), level: 'deterministic' };
   } catch (deterministicErr) {
@@ -116,6 +219,19 @@ export interface ParseJsonLooseOpts {
    * 用于解析结果直接落库、且下游没有 parse_repaired 隔离门的站点（sourcing）。
    */
   riskyRepair?: 'allow' | 'reject';
+  /**
+   * Missing tail closers are ambiguous with an exactly-boundary truncation.
+   * Enable only when the caller immediately applies a strict schema that proves
+   * every required field/cardinality is present; default callers never infer them.
+   */
+  containerClosure?: 'schema_validated';
+  /**
+   * Preserve invalid JSON backslashes as literal backslashes. This opt-in is
+   * limited to model outputs that are expected to contain Markdown math; legal
+   * JSON control escapes remain authoritative because their intent cannot be
+   * inferred from text alone.
+   */
+  latexEscapes?: 'markdown_math';
 }
 
 /**
@@ -131,14 +247,31 @@ export function parseJsonObjectLoose(
 ): LooseJsonResult | null {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) return null;
-  const slice = text.slice(start, end + 1);
+  if (start === -1) return null;
+  const hasCompleteEnd = end >= start;
+  if (!hasCompleteEnd && opts.containerClosure !== 'schema_validated') return null;
+  const slice = hasCompleteEnd ? text.slice(start, end + 1) : text.slice(start);
+  const hasTruncatedSuffix = hasCompleteEnd && text.slice(end + 1).trim().length > 0;
+  const repairMarkdownMathEscapes = opts.latexEscapes === 'markdown_math';
+  const needsLatexRepair =
+    repairMarkdownMathEscapes && escapeInvalidJsonStringBackslashes(slice) !== slice;
+  let strictErr: unknown;
   try {
-    return { json: JSON.parse(slice), repaired: false };
-  } catch (strictErr) {
+    const strictJson = JSON.parse(slice);
+    if (!needsLatexRepair) return { json: strictJson, repaired: false };
+    strictErr = new SyntaxError(`${label} contained an ambiguous LaTeX escape`);
+  } catch (err) {
+    strictErr = err;
+  }
+  {
     let hit: LadderHit;
     try {
-      hit = tryRepairLadder(slice, (opts.riskyRepair ?? 'allow') === 'allow');
+      hit = tryRepairLadder(
+        slice,
+        (opts.riskyRepair ?? 'allow') === 'allow',
+        opts.containerClosure === 'schema_validated' && !hasTruncatedSuffix,
+        repairMarkdownMathEscapes,
+      );
     } catch (repairErr) {
       // 不可修：留一段错误位置附近的有界片段（±120 字符）供诊断——原始输出不落库，
       // 没有这段 warn 时该失败类完全无法事后归因（spike 2026-07-10 教训）。

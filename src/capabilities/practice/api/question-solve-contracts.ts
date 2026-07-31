@@ -103,6 +103,10 @@ export const QuestionListResponseSchema = z.object({
 export const QuestionDetailQuerySchema = z.object({
   // The detail reader accepts larger values and clamps them to 50.
   timeline_limit: z.coerce.number().int().min(1).optional(),
+  // Product-owned intervention diagnostics stay absent from the question-bank
+  // surface. The canonical Practice face may request a learner-safe projection
+  // so the due one-shot can still be answered through the existing PfSolo flow.
+  surface: z.literal('practice').optional(),
 });
 
 export const QuestionDetailResponseSchema = z
@@ -207,6 +211,28 @@ export const QuestionDetailResponseSchema = z
         fsrs_rating: z.enum(['again', 'hard', 'good']).optional(),
       }),
     ),
+    committed_attempt: z
+      .object({
+        review_event: z
+          .object({
+            id: z.string(),
+            rating: z.enum(['again', 'hard', 'good']),
+          })
+          .strict(),
+        judge: z
+          .object({
+            route: z.literal('multimodal_direct'),
+            coarse_outcome: z.enum(['correct', 'partial', 'incorrect']),
+            confidence: z.number().min(0).max(1),
+            feedback_md: z.string(),
+            suggested_rating: z.enum(['again', 'hard', 'good']),
+            judge_event_id: z.string(),
+          })
+          .strict(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
     metadata: z.record(z.string(), z.unknown()).nullable(),
     created_at_sec: z.number(),
     updated_at_sec: z.number(),

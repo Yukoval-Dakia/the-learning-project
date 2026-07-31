@@ -2,6 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { event, learning_record, learning_session, question } from '@/db/schema';
 import type { JudgeInvokerOutput } from '@/server/judge/invoker';
 import { Tutor } from '@/server/session';
@@ -10,7 +11,7 @@ import { planSolveHint, startSolveSession, submitSolveAttempt } from './solve-se
 
 const db = testDb();
 
-async function seedQuestion(opts: { rubric_json?: unknown }): Promise<string> {
+async function seedQuestion(opts: { rubric_json?: unknown; source?: string }): Promise<string> {
   const id = createId();
   const now = new Date();
   await db.insert(question).values({
@@ -21,7 +22,7 @@ async function seedQuestion(opts: { rubric_json?: unknown }): Promise<string> {
     rubric_json: (opts.rubric_json ?? null) as never,
     knowledge_ids: [],
     difficulty: 3,
-    source: 'manual',
+    source: opts.source ?? 'manual',
     created_at: now,
     updated_at: now,
     version: 0,
@@ -100,6 +101,16 @@ describe('startSolveSession', () => {
     await expect(startSolveSession({ db, questionId: 'nope', runTaskFn })).rejects.toMatchObject({
       code: 'question_not_found',
     });
+  });
+
+  it('hides intervention diagnostics from solve sessions', async () => {
+    const id = await seedQuestion({ source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE });
+    const runTaskFn = vi.fn();
+
+    await expect(startSolveSession({ db, questionId: id, runTaskFn })).rejects.toMatchObject({
+      code: 'question_not_found',
+    });
+    expect(runTaskFn).not.toHaveBeenCalled();
   });
 });
 

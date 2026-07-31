@@ -65,28 +65,32 @@ nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
 
 ## Development and verification
 
-命令矩阵、测试分区、audit 清单、Postman 流程与完整 pre-PR gate 见
+命令矩阵、测试分区、audit 清单和 Postman 流程见
 `docs/agents/development-workflow.md`。audit allowlist 的具体契约见
-`audits-reference` skill。
+`audits-reference` skill；完整 test gate 的执行位置以下述约束为准。
 
-常用入口：
+常用本地入口：
 
 ```bash
 pnpm dev:local
-pnpm test:unit
-pnpm test:db
+pnpm vitest run --config vitest.unit.config.ts <test-file>
+pnpm vitest run --config vitest.db.config.ts <test-file>
 pnpm test:migration
 pnpm typecheck
 pnpm lint
-pnpm test
 pnpm build
 ```
 
 - 使用 pnpm；不要引入 npm/yarn lockfile。
-- UI/core/schema/prompt/parser 使用 unit loop；API/DB/route/job 使用 DB loop；
-  migration SQL 使用 migration smoke。
-- `pnpm test:watch` 是 unit watch alias；DB watch 用 `pnpm test:db:watch`。
-- `pnpm build` 必须作为 pre-PR gate，负责捕获 tsc/Biome/Vitest 未覆盖的 bundle
+- **禁止在本机运行完整 `pnpm test`**；完整 test gate 只由 push 后的 exact-head
+  GitHub `CI Gate` 执行。本机不以 full `pnpm test` 作为 pre-PR 条件。
+- 本机只运行与改动范围匹配的 scoped unit / DB / migration tests，以及
+  `pnpm typecheck`、`pnpm lint`、`pnpm build`。
+- UI/core/schema/prompt/parser 使用 scoped unit loop；API/DB/route/job 使用 scoped DB
+  loop；migration SQL 使用 migration smoke。
+- watch loop 只用于 scoped file：unit 用 `pnpm test:unit:watch <test-file>`，DB 用
+  `pnpm test:db:watch <test-file>`。
+- `pnpm build` 必须作为本机 pre-PR gate，负责捕获 tsc/Biome/Vitest 未覆盖的 bundle
   错误。
 - 修改 API route 时同步 `postman/api-endpoints.json` 并运行
   `pnpm gen:postman`。
@@ -139,8 +143,19 @@ Cloudflare Tunnel。无 Vercel、无 Redis。部署细节与验证命令以 `REA
 ## Review, merge, and delivery
 
 - authoring 与独立 review 分离；review agent 必须能读取真实 diff。
-- 修复 PR review 后，在 commit + push 后回复/resolve 对应 review threads。
-- 全量 pre-PR gate、独立 review、CI 全绿后可自主 merge，并按 owner 已授权流程部署；
-  owner 可随时指定人工合并。
+- **Review budget（owner 2026-07-30 拍板）**：自动 review 是 advisory，不是 CI correctness
+  gate。每个 PR 最多一轮初审 + 一轮 P0/P1 修复后的验证审；push 后出现的新 bot review
+  不重置预算，除非 owner 明确要求，不得启动第三轮。
+- 只在当前 PR 修复经验证的 P0/P1：security、data loss、correctness failure、release
+  blocker。P2/minor/nit/hygiene/refactor/performance 默认不阻塞：回复 skip rationale 后
+  resolve；只有实质且可执行的 follow-up 才在去重后进 Linear，不得一条 nit 开一个
+  issue，也不得把跳过写成已修复。
+- exact-head `CI Gate` 绿色且没有未裁决的 P0/P1 后，不等待、不重跑 pending / failed /
+  cancelled / timed-out 的 OCR、PR-Agent、Codex、CodeRabbit 等 advisory review check。
+- 修复 PR review 后，在 commit + push 后回复/resolve 对应 review threads；跳过的非阻塞
+  finding 可回复 rationale 后 resolve，不能声称已修复。
+- 本机 scoped 验证与 typecheck/lint/build、独立 review，以及 push 后 exact-head
+  GitHub `CI Gate` 全绿后可自主 merge，并按 owner 已授权流程部署；owner 可随时指定
+  人工合并。
 - 危险 git guard 被触发时停下查原因，不绕过；不要 force push、force-delete branch、
   或 `git worktree remove --force`。

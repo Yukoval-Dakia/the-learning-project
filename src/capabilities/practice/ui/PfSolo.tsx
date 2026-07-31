@@ -6,6 +6,8 @@
 // 数据流（两段式）：作答 → POST /api/review/advice（判分预览，不写事件）→
 // 反馈卡 + 评级三档（默认=建议）→「确认评级 · 下一项」→ POST /api/attempts
 // （judge_result_v2 复用预览判分，不重跑 judge；事件 + FSRS + 判定锚点落库）。
+// intervention_diagnostic 是刻意的一段式例外：首份答案直接 POST /api/attempts +
+// auto_rate，由服务端真实 judge 原子认领并结算；绝不先打可重复的 advice 预览。
 // 不服判：提交重判 = 先 submit（当前评级生效）拿锚点 judge_event_id → appeal
 // → 流继续（设计稿「重判中 · 不阻塞，先继续」；改判回执经 M4 工作台/通知回流）。
 
@@ -17,6 +19,7 @@
 // 见 src/kernel/limits.ts 头注释的实测表。
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { AttemptTimeline } from '@/ui/components/AttemptTimeline';
+import { ApiError } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { IconBtn } from '@/ui/primitives/IconBtn';
@@ -33,7 +36,9 @@ import { toAttemptTimelineEvents } from './attempt-timeline-adapter';
 import {
   type JudgePreview,
   type QuestionDetail,
+  type QuestionFullDetail,
   type StreamItem,
+  type SubmitResult,
   type SubmitReviewInput,
   computeLatencyMs,
   fileAppeal,
@@ -43,6 +48,43 @@ import {
 } from './practice-api';
 
 type Rating = 'again' | 'hard' | 'good';
+type JudgeFeedback = Pick<
+  JudgePreview,
+  'route' | 'coarse_outcome' | 'confidence' | 'feedback_md' | 'suggested_rating'
+>;
+
+const INTERVENTION_DIAGNOSTIC_SOURCE = 'intervention_diagnostic';
+
+export function isInterventionDiagnosticSource(source: string): boolean {
+  return source === INTERVENTION_DIAGNOSTIC_SOURCE;
+}
+
+export function feedbackFromCommittedAttempt(result: SubmitResult): JudgeFeedback {
+  if (!result.judge) {
+    throw new Error('诊断提交没有返回服务端判分');
+  }
+  return {
+    route: result.judge.route,
+    coarse_outcome: result.judge.coarse_outcome,
+    confidence: result.judge.confidence,
+    feedback_md: result.judge.feedback_md,
+    // auto_rate 的正常回执恒带 suggested_rating；旧/滚动部署响应若漏掉，
+    // review_event.rating 仍是服务端最终实际采用的评级，不能在 UI 侧猜。
+    suggested_rating: result.judge.suggested_rating ?? result.review_event.rating,
+  };
+}
+
+export function feedbackFromCommittedDiagnosticAttempt(
+  result: NonNullable<QuestionFullDetail['committed_attempt']>,
+): JudgeFeedback {
+  return {
+    route: result.judge.route,
+    coarse_outcome: result.judge.coarse_outcome,
+    confidence: result.judge.confidence,
+    feedback_md: result.judge.feedback_md,
+    suggested_rating: result.judge.suggested_rating,
+  };
+}
 
 const VERDICT_OF: Record<JudgePreview['coarse_outcome'], { label: string; tone: Rating }> = {
   correct: { label: '对', tone: 'good' },
@@ -220,12 +262,18 @@ export function PfSolo({
   // 用全投影，YUK-617 W1 的 timeline 从同一份 data.timeline 白拿，不再二次请求（避免同题双取全聚合）。
   const qQ = useQuery({
     queryKey: ['question-detail', item.ref_id],
-    queryFn: () => getQuestionFull(item.ref_id),
+    // Explicit Practice projection lets product-owned diagnostics expose only
+    // learner-safe prompt/options while the question-bank surface remains 404.
+    queryFn: () => getQuestionFull(item.ref_id, { surface: 'practice' }),
   });
   const [sel, setSel] = useState<number | null>(null);
   const [text, setText] = useState('');
   const [judging, setJudging] = useState(false);
   const [preview, setPreview] = useState<JudgePreview | null>(null);
+  // intervention_diagnostic skips the repeatable advice preview and is committed
+  // by the first /api/attempts call. Its response is sufficient for the feedback
+  // card, but intentionally lacks advice-only provenance fields used by commit().
+  const [committedPreview, setCommittedPreview] = useState<JudgeFeedback | null>(null);
   // YUK-562 (过程框) — 「记下你的思路」采集：默认折叠（showTrace=false，一行触发展开），
   // reasoningTrace 是可选过程文本。零强制：不挡提交、折叠即跳过、空值不发字段（buildCaptureFields）。
   const [showTrace, setShowTrace] = useState(false);
@@ -256,6 +304,8 @@ export function PfSolo({
   const questionShownAtRef = useRef<number | null>(null);
 
   const q = qQ.data ?? null;
+  const isInterventionDiagnostic = isInterventionDiagnosticSource(q?.source ?? '');
+  const committedDiagnosticQuestionId = q?.id;
   // YUK-617 W1 — 本题 attempt·review 历史，从题面聚合 data.timeline 直接派生（同一份请求，无二次取）。
   // 取自题面加载那刻 → 恒是本次作答**之前**的历史（不含刚提交的这次，客观题自动 commit 也不竞态），
   // 正合「卡在同一误区」信号意图。反馈卡里 length>0 才渲染。
@@ -265,7 +315,7 @@ export function PfSolo({
   const canSubmit = !judging && (isChoice ? sel !== null : text.trim().length > 0);
   // YUK-444 — 三相：answering（作答）→ confidence（judge 结果暂存、信心自评插拍、判定未揭晓）→
   // feedback（判定卡）。confidence 只在非客观流出现；客观题 answering 直接跳到 feedback（auto-commit）。
-  const phase = derivePhase(preview, pendingPreview);
+  const phase = committedPreview ? 'feedback' : derivePhase(preview, pendingPreview);
   // YUK-432 (Bugbot FINDING 1) — 「返回流」出口：自动 commit 后必须标 slot done（onCommittedBack），
   // 否则只 onBack 会留下「已判分但 slot 卡 in_progress」的不一致。未自动 commit → 原 onBack。
   const handleBack = () =>
@@ -281,6 +331,24 @@ export function PfSolo({
   useLayoutEffect(() => {
     if (q?.id) questionShownAtRef.current = Date.now();
   }, [q?.id]);
+
+  // A successful one-shot is already retired server-side. Restore its
+  // canonical review/judge projection on mount so refresh or a lost response
+  // returns to the settled feedback card rather than a dead loading state.
+  useEffect(() => {
+    const committed = q?.committed_attempt;
+    if (!committedDiagnosticQuestionId || !isInterventionDiagnostic || !committed) {
+      setCommittedPreview(null);
+      setAutoCommitted(false);
+      setAutoCommitJudgeEventId(null);
+      return;
+    }
+    const feedback = feedbackFromCommittedDiagnosticAttempt(committed);
+    setCommittedPreview(feedback);
+    setRating(feedback.suggested_rating);
+    setAutoCommitted(true);
+    setAutoCommitJudgeEventId(committed.judge.judge_event_id);
+  }, [committedDiagnosticQuestionId, isInterventionDiagnostic, q?.committed_attempt]);
 
   // commit 接受显式 rating + autoRate：客观题自动流不依赖手动 `rating` state（直接用 judge 的
   // suggested_rating + auto_rate:true）；手动流（开放题/申诉）走 body.rating + auto_rate 缺省 false。
@@ -371,6 +439,31 @@ export function PfSolo({
     if (!q || !canSubmit) return;
     setJudging(true);
     try {
+      if (isInterventionDiagnostic) {
+        // One-shot measurement integrity: do not call the repeatable advice
+        // endpoint. The canonical attempt owns the first and only server judge,
+        // atomically claims the diagnostic, persists the learner answer, settles
+        // the probe, and uses its suggested rating via auto_rate.
+        const res = await submitReview({
+          question_id: q.id,
+          session_id: sessionId ?? undefined,
+          // Required wire fallback only; auto_rate replaces it with the server
+          // judge's suggested rating before persistence.
+          rating: 'hard',
+          response_md: answerMd,
+          referenced_knowledge_ids: q.labels.map((l) => l.id),
+          stream_item_id: item.id,
+          ...buildCaptureFields({ reasoningTrace, selfConfidence }),
+          auto_rate: true,
+          latency_ms: computeLatencyMs(questionShownAtRef.current, Date.now()),
+        });
+        const feedback = feedbackFromCommittedAttempt(res);
+        setCommittedPreview(feedback);
+        setRating(feedback.suggested_rating);
+        setAutoCommitted(true);
+        setAutoCommitJudgeEventId(res.judge?.judge_event_id ?? null);
+        return;
+      }
       const r = await getAdvice(q.id, answerMd);
       // YUK-444 (PR #1069 thread 修复) — 分流判据是 shouldOfferConfidenceGate(route) 本体，不再在这里
       // 重新拼一遍 isObjectiveQuestion(route)。两者语义严格互补（gate = !isObjectiveQuestion，见上方定义
@@ -397,6 +490,18 @@ export function PfSolo({
         });
       }
     } catch (e) {
+      if (isInterventionDiagnostic && e instanceof ApiError && e.status === 409) {
+        const restored = await qQ.refetch();
+        const committed = restored.data?.committed_attempt;
+        if (committed) {
+          const feedback = feedbackFromCommittedDiagnosticAttempt(committed);
+          setCommittedPreview(feedback);
+          setRating(feedback.suggested_rating);
+          setAutoCommitted(true);
+          setAutoCommitJudgeEventId(committed.judge.judge_event_id);
+          return;
+        }
+      }
       addToast(`判分失败：${(e as Error).message}`, 'info', 'alert');
     } finally {
       setJudging(false);
@@ -442,7 +547,8 @@ export function PfSolo({
       </div>
     );
 
-  const verdict = preview ? VERDICT_OF[preview.coarse_outcome] : null;
+  const displayedPreview = preview ?? committedPreview;
+  const verdict = displayedPreview ? VERDICT_OF[displayedPreview.coarse_outcome] : null;
 
   return (
     <div className="pfs" data-screen-label={`散题作答 · ${q.id}`}>
@@ -456,9 +562,11 @@ export function PfSolo({
         </span>
         <PfSrcBadge source={item.source} />
         <span className="topbar-spacer" />
-        <Btn size="sm" variant="secondary" icon="teach" onClick={() => setCoach(true)}>
-          卡住了？解题会话
-        </Btn>
+        {!isInterventionDiagnostic && (
+          <Btn size="sm" variant="secondary" icon="teach" onClick={() => setCoach(true)}>
+            卡住了？解题会话
+          </Btn>
+        )}
       </div>
 
       <Card pad="lg">
@@ -477,8 +585,8 @@ export function PfSolo({
           <div className="pfs-opts" role="radiogroup" aria-label="选项">
             {(q.choices_md ?? []).map((c, i) => {
               const graded = phase === 'feedback';
-              const isRight = graded && preview?.coarse_outcome === 'correct' && sel === i;
-              const isWrong = graded && preview?.coarse_outcome !== 'correct' && sel === i;
+              const isRight = graded && displayedPreview?.coarse_outcome === 'correct' && sel === i;
+              const isWrong = graded && displayedPreview?.coarse_outcome !== 'correct' && sel === i;
               const cls = [
                 'pfs-opt',
                 !graded && sel === i ? 'is-sel' : '',
@@ -594,7 +702,7 @@ export function PfSolo({
           </div>
         )}
 
-        {phase === 'feedback' && preview && verdict && (
+        {phase === 'feedback' && displayedPreview && verdict && (
           // YUK-718 — 判定卡是即时判分结果，须播报给读屏（对/错 + AI 反馈）。
           // aria-live=polite 沿用仓库 live-region 习惯（.li-intent-preview /
           // .pf-toasts）——不加 role=status，因 biome useSemanticElements 会要求换
@@ -615,10 +723,10 @@ export function PfSolo({
                 AI 判定
               </span>
               <span className="pfs-fb-meta">
-                judge · {preview.route} · {Math.round(preview.confidence * 100)}%
+                judge · {displayedPreview.route} · {Math.round(displayedPreview.confidence * 100)}%
               </span>
             </div>
-            <p className="pfs-fb-text">{preview.feedback_md}</p>
+            <p className="pfs-fb-text">{displayedPreview.feedback_md}</p>
             {q.reference_md && (
               <div className="pfs-fb-ref">
                 <span className="cmp-label">参考</span>
@@ -648,7 +756,7 @@ export function PfSolo({
                   </button>
                 ))}
                 <span className="pfs-rate-advised">
-                  建议：{RATING_LABEL[preview.suggested_rating]}
+                  建议：{RATING_LABEL[displayedPreview.suggested_rating]}
                 </span>
               </div>
             )}

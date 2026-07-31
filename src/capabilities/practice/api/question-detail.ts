@@ -16,7 +16,12 @@
 // the sibling notes/learning-items routes (zod, 404 on missing, errorResponse).
 
 import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/public';
+import {
+  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+  InterventionDiagnosticQuestionMetadata,
+} from '@/core/schema/intervention';
 import { db } from '@/db/client';
+import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { loadQuestionDetail } from '@/server/questions/detail';
 import {
@@ -26,6 +31,8 @@ import {
   editQuestion,
   hasAnyAssociation,
 } from '@/server/questions/write';
+import { eq } from 'drizzle-orm';
+import { loadCommittedInterventionDiagnosticAttempt } from '../server/intervention-diagnostics';
 import { QuestionParamsSchema, UpdateQuestionBodySchema } from './question-solve-contracts';
 
 // Distinct, friendlier error when a bloodline field is the offender.
@@ -66,10 +73,63 @@ export async function GET(req: Request, params: Record<string, string>): Promise
     }
     const url = new URL(req.url);
     const timelineLimit = parseTimelineLimit(url.searchParams.get('timeline_limit'));
+    const surface = url.searchParams.get('surface');
+    if (surface !== null && surface !== 'practice') {
+      throw new ApiError('validation_error', `invalid question surface '${surface}'`, 400);
+    }
 
     const detail = await loadQuestionDetail(db, parsed.data.id, timelineLimit);
-    if (!detail) {
+    if (
+      !detail ||
+      (detail.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE && surface !== 'practice')
+    ) {
       throw new ApiError('not_found', `question ${parsed.data.id} not found`, 404);
+    }
+    if (detail.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+      const [diagnosticRow] = await db
+        .select({
+          draft_status: question.draft_status,
+          metadata: question.metadata,
+        })
+        .from(question)
+        .where(eq(question.id, detail.id))
+        .limit(1);
+      const schedule = InterventionDiagnosticQuestionMetadata.safeParse(
+        diagnosticRow?.metadata?.intervention_diagnostic,
+      );
+      const committedAttempt = await loadCommittedInterventionDiagnosticAttempt(db, detail.id);
+      // `surface=practice` is client-controlled, so it is not a fence by itself.
+      // Only the current active one-shot may be read after its immutable due
+      // time. A retired one-shot is readable only when its canonical committed
+      // result exists, allowing refresh/response-loss recovery without reopening
+      // the submission gate. Derived future IDs reveal neither prompt nor timing.
+      if (
+        !schedule.success ||
+        (diagnosticRow?.draft_status === 'draft' && committedAttempt === null) ||
+        (diagnosticRow?.draft_status !== 'draft' &&
+          Date.now() < new Date(schedule.data.due_at).getTime())
+      ) {
+        throw new ApiError('not_found', `question ${parsed.data.id} not found`, 404);
+      }
+      // The Practice face needs the prompt/options/labels to render the scheduled
+      // one-shot, but must not receive any answer-bearing material before the
+      // canonical /api/attempts submission has been judged. Keep the question-bank
+      // GET behavior above (404) and expose only this explicit learner-safe view.
+      return Response.json({
+        ...detail,
+        reference_md: null,
+        rubric_json: null,
+        source_ref: null,
+        // Diagnostic metadata contains the response-aware judge contract
+        // (`probe_spec`), including gold and target-error signatures. The
+        // learner surface needs none of it; expose no metadata rather than
+        // attempting an answer-field denylist that can drift with the schema.
+        metadata: {},
+        backlinks: [],
+        backlinks_by_intent_source: {},
+        timeline: [],
+        committed_attempt: committedAttempt,
+      });
     }
     return Response.json(detail);
   } catch (err) {
@@ -129,6 +189,13 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
         'validation_error',
         `unknown knowledge_ids: ${(result.missing_knowledge_ids ?? []).join(', ')}`,
         400,
+      );
+    }
+    if (result.status === 'protected') {
+      throw new ApiError(
+        'immutable_question',
+        'intervention diagnostic questions cannot be edited through the question bank',
+        409,
       );
     }
     if (result.status === 'conflict') {
@@ -216,6 +283,13 @@ export async function DELETE(req: Request, params: Record<string, string>): Prom
     const result = await archiveQuestion(db, id, version, 'self');
     if (result.status === 'not_found') {
       throw new ApiError('not_found', `question ${id} not found`, 404);
+    }
+    if (result.status === 'protected') {
+      throw new ApiError(
+        'immutable_question',
+        'intervention diagnostic questions cannot be archived through the question bank',
+        409,
+      );
     }
     if (result.status === 'conflict') {
       throw new ApiError('conflict', `question ${id} concurrently modified`, 409);

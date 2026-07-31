@@ -23,3 +23,11 @@ export {
   validateInterventionPackageDeterministically,
 } from './server/intervention-author';
 export type { InterventionAuthorDeps } from './server/intervention-author';
+export {
+  INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
+  loadCommittedInterventionDiagnosticAttempt,
+  loadLatestTrustedInterventionDiagnosticVerdict,
+  materializeInterventionDiagnostics,
+  retireInterventionDiagnosticQuestion,
+} from './server/intervention-diagnostics';
+export type { CommittedInterventionDiagnosticAttempt } from './server/intervention-diagnostics';

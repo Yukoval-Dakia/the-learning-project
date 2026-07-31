@@ -398,6 +398,12 @@ function buildQueryOptions(
 ): Options {
   const def = tasks[kind];
   const allowedTools = ctx.allowedTools ?? def.allowedTools;
+  const configuredMaxTurns = (ctx.budgetOverride?.maxIterations ?? def.budget.maxIterations) || 1;
+  // Xiaomi's Anthropic-compatible endpoint does not implement the Agent SDK's
+  // native structured-output protocol. Passing outputFormat makes the CLI loop
+  // until maxTurns, while every migrated caller already owns a Zod-checked
+  // char-scan fallback for the text JSON response.
+  const sdkOutputFormat = resolved.provider === 'xiaomi' ? undefined : ctx.outputFormat;
   const options: Options = {
     model: resolved.model,
     systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile),
@@ -405,10 +411,12 @@ function buildQueryOptions(
     env: buildAgentEnv(resolved),
     tools: allowedTools,
     mcpServers: ctx.mcpServers,
-    // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call. The
-    // `|| 1` fallback is preserved (a 0 override or 0 registry value both floor to
-    // 1). undefined-guard: non-durable callers keep def.budget.maxIterations verbatim.
-    maxTurns: (ctx.budgetOverride?.maxIterations ?? def.budget.maxIterations) || 1,
+    // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call.
+    // YUK-792: supported SDK-native outputFormat calls may consume one envelope
+    // turn before their terminal result, so floor only that protocol at two.
+    // Xiaomi takes the explicit text-JSON fallback above and retains the task's
+    // configured ceiling; every higher explicit budget remains unchanged.
+    maxTurns: sdkOutputFormat === undefined ? configuredMaxTurns : Math.max(2, configuredMaxTurns),
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
     persistSession: false,
@@ -436,13 +444,11 @@ function buildQueryOptions(
     // spike's settingSources=OMITTED conclusion is unchanged).
     skills: ctx.skills ?? [],
   };
-  // YUK-299 seam: outputFormat passthrough. Default ctx.outputFormat is undefined
-  // ⇒ the key is NOT written ⇒ the Options object is byte-identical to pre-seam
-  // for every un-migrated task (general chat / teaching / quiz / judges / all
-  // stream callers never set it) — the zero-regression contract (约束①). Only a
-  // handler that explicitly threads ctx.outputFormat opts into structured output.
-  if (ctx.outputFormat !== undefined) {
-    options.outputFormat = ctx.outputFormat;
+  // YUK-299 seam: pass outputFormat only to providers that implement the SDK
+  // protocol. Mimo callers intentionally omit the option and consume the
+  // existing strict-prompt + Zod text fallback instead.
+  if (sdkOutputFormat !== undefined) {
+    options.outputFormat = sdkOutputFormat;
   }
   // YUK-572 seam: SDK-native nested-agent / hooks / canUseTool passthrough. Same
   // undefined-guard as the outputFormat seam above — when a caller does not set these

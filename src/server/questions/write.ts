@@ -38,6 +38,7 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { artifact, event, material_fsrs_state, question } from '@/db/schema';
@@ -166,8 +167,9 @@ export interface QuestionEditPatch {
 export interface QuestionEditResult {
   // `noop` = patch contained no real change vs the current row (no version bump,
   // no audit event); `knowledge_invalid` = a knowledge_id was missing/archived
-  // (re-validated inside the tx to close the TOCTOU window).
-  status: 'updated' | 'noop' | 'conflict' | 'not_found' | 'knowledge_invalid';
+  // (re-validated inside the tx to close the TOCTOU window); `protected` =
+  // product-owned diagnostic content cannot be mutated through the question bank.
+  status: 'updated' | 'noop' | 'conflict' | 'not_found' | 'knowledge_invalid' | 'protected';
   event_id?: string;
   version?: number;
   missing_knowledge_ids?: string[];
@@ -199,6 +201,9 @@ export async function editQuestion(
     const rows = await tx.select().from(question).where(eq(question.id, questionId)).limit(1);
     const row = rows[0];
     if (!row) return { status: 'not_found' };
+    if (row.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+      return { status: 'protected' };
+    }
 
     // Re-validate knowledge_ids inside the SAME transaction the update commits in.
     // The route does a pre-check for a friendly early 400, but doing it here too
@@ -341,7 +346,7 @@ export async function editQuestion(
 }
 
 export interface QuestionArchiveResult {
-  status: 'archived' | 'conflict' | 'not_found';
+  status: 'archived' | 'conflict' | 'not_found' | 'protected';
   event_id?: string;
   // Part question ids cascade-archived alongside the parent.
   cascaded_part_ids?: string[];
@@ -363,6 +368,23 @@ export async function archiveQuestion(
     const rows = await tx.select().from(question).where(eq(question.id, questionId)).limit(1);
     const row = rows[0];
     if (!row) return { status: 'not_found' };
+    if (row.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+      return { status: 'protected' };
+    }
+    const [protectedChild] = await tx
+      .select({ id: question.id })
+      .from(question)
+      .where(
+        and(
+          eq(question.parent_question_id, questionId),
+          eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
+          notDraftPredicate(question.draft_status),
+        ),
+      )
+      .limit(1);
+    if (protectedChild) {
+      return { status: 'protected' };
+    }
 
     const now = new Date();
     const archivedAtSec = Math.floor(now.getTime() / 1000);

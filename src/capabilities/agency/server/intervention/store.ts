@@ -3,21 +3,28 @@ import { newId } from '@/core/ids';
 import {
   INTERVENTION_ACTIVATED_ACTION,
   INTERVENTION_PREPARATION_FAILED_ACTION,
+  INTERVENTION_SETTLED_ACTION,
   type InterventionAuthoringContextT,
   InterventionDeliveryMode,
   type InterventionDeliveryModeT,
+  type InterventionDiagnosticKindT,
   InterventionOutcome,
   type InterventionOutcomeT,
   InterventionPackage,
   type InterventionPackageT,
   InterventionPreparationAttempt,
   type InterventionPreparationAttemptT,
+  InterventionSettlement,
+  type InterventionSettlementT,
   InterventionSnapshot,
   type InterventionSnapshotT,
   InterventionStatus,
   type InterventionStatusT,
   PedagogyRecommendation,
   type PedagogyRecommendationT,
+  buildInterventionSettlement,
+  interventionOutcomeFromSettlement,
+  reanchorInterventionFollowupDiagnostics,
 } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
 import { event, intervention } from '@/db/schema';
@@ -41,6 +48,7 @@ export interface InterventionRecord {
   snapshot: InterventionSnapshotT;
   recommendation: PedagogyRecommendationT | null;
   package: InterventionPackageT | null;
+  settlement: InterventionSettlementT | null;
   preparation_attempts: InterventionPreparationAttemptT[];
   failure_code: string | null;
   created_at: Date;
@@ -66,6 +74,8 @@ function parseInterventionRow(row: InterventionRow): InterventionRecord {
         ? null
         : PedagogyRecommendation.parse(row.recommendation_json),
     package: row.package_json === null ? null : InterventionPackage.parse(row.package_json),
+    settlement:
+      row.settlement_json === null ? null : InterventionSettlement.parse(row.settlement_json),
     preparation_attempts: InterventionPreparationAttempt.array().parse(
       row.preparation_attempts_json,
     ),
@@ -429,11 +439,30 @@ export async function activateIntervention(
       return parseInterventionRow(failed);
     }
 
+    const settlement = buildInterventionSettlement({
+      interventionId: current.id,
+      version: current.version,
+      activatedAt: now,
+    });
+    // Shadow remains genuinely dark: it records the due ledger but creates no
+    // learner-visible review cards. Eligible canaries materialize the exact
+    // reviewed probes into the ordinary due/stream surface.
+    if (current.delivery_mode === 'eligible') {
+      const { materializeInterventionDiagnostics } = await import('@/capabilities/practice/public');
+      await materializeInterventionDiagnostics(tx, {
+        package: packageValue,
+        settlement,
+        snapshot: current.snapshot,
+        now,
+      });
+    }
+
     const [updated] = await tx
       .update(intervention)
       .set({
         status: 'active',
         package_json: packageValue,
+        settlement_json: settlement,
         failure_code: null,
         activated_at: now,
         revision: current.revision + 1,
@@ -471,6 +500,11 @@ export async function activateIntervention(
         delivery_mode: current.delivery_mode,
         method_id: current.recommendation.method_id,
         package_version: packageValue.package_version,
+        diagnostics: Object.values(settlement.diagnostics).map((diagnostic) => ({
+          kind: diagnostic.kind,
+          question_id: diagnostic.question_id,
+          due_at: diagnostic.due_at,
+        })),
       },
       caused_by_event_id: current.source_probe_result_event_id,
       affected_scopes: [
@@ -483,6 +517,195 @@ export async function activateIntervention(
       created_at: now,
     });
     return parseInterventionRow(updated);
+  });
+}
+
+export type RecordInterventionDiagnosticReviewResult =
+  | {
+      status: 'recorded';
+      intervention: InterventionRecord;
+      diagnostic_kind: InterventionDiagnosticKindT;
+      settled: boolean;
+    }
+  | {
+      status: 'skipped';
+      reason:
+        | 'intervention_not_found'
+        | 'intervention_not_active'
+        | 'settlement_missing'
+        | 'question_mismatch'
+        | 'intervention_not_exposed'
+        | 'diagnostic_not_due';
+    }
+  | {
+      status: 'already_recorded';
+      intervention: InterventionRecord;
+      diagnostic_kind: InterventionDiagnosticKindT;
+    };
+
+/**
+ * Apply the newest trusted judge verdict for one immutable diagnostic review.
+ * A later rejudge can replace that verdict; the intervention is recomputed from
+ * all three current window outcomes under the same aggregate lock.
+ */
+export async function recordInterventionDiagnosticReview(
+  db: Db,
+  input: {
+    interventionId: string;
+    version: number;
+    diagnosticKind: InterventionDiagnosticKindT;
+    questionId: string;
+    reviewEventId: string;
+    verdictEventId: string;
+    passed: boolean;
+    reviewedAt: Date;
+    now?: Date;
+  },
+): Promise<RecordInterventionDiagnosticReviewResult> {
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intervention:${input.interventionId}:${input.version}`}, 0))`,
+    );
+    const current = await loadInterventionVersion(tx, input.interventionId, input.version);
+    if (!current) return { status: 'skipped', reason: 'intervention_not_found' };
+    if (current.status !== 'active' && current.status !== 'settled') {
+      return { status: 'skipped', reason: 'intervention_not_active' };
+    }
+    if (!current.settlement) return { status: 'skipped', reason: 'settlement_missing' };
+    const diagnostic = current.settlement.diagnostics[input.diagnosticKind];
+    if (diagnostic.question_id !== input.questionId) {
+      return { status: 'skipped', reason: 'question_mismatch' };
+    }
+    if (
+      input.diagnosticKind !== 'immediate' &&
+      current.settlement.diagnostics.immediate.status === 'scheduled'
+    ) {
+      return { status: 'skipped', reason: 'intervention_not_exposed' };
+    }
+    if (input.reviewedAt.getTime() < new Date(diagnostic.due_at).getTime()) {
+      return { status: 'skipped', reason: 'diagnostic_not_due' };
+    }
+    if (diagnostic.status !== 'scheduled') {
+      if (diagnostic.review_event_id !== input.reviewEventId) {
+        return {
+          status: 'already_recorded',
+          intervention: current,
+          diagnostic_kind: input.diagnosticKind,
+        };
+      }
+      if (diagnostic.verdict_event_id === input.verdictEventId) {
+        return {
+          status: 'already_recorded',
+          intervention: current,
+          diagnostic_kind: input.diagnosticKind,
+        };
+      }
+    }
+
+    const reviewedSettlement = InterventionSettlement.parse({
+      ...current.settlement,
+      diagnostics: {
+        ...current.settlement.diagnostics,
+        [input.diagnosticKind]: {
+          ...diagnostic,
+          status: input.passed ? 'passed' : 'failed',
+          review_event_id: diagnostic.review_event_id ?? input.reviewEventId,
+          verdict_event_id: input.verdictEventId,
+          completed_at: diagnostic.completed_at ?? input.reviewedAt.toISOString(),
+        },
+      },
+    });
+    const nextSettlement =
+      input.diagnosticKind === 'immediate'
+        ? reanchorInterventionFollowupDiagnostics(reviewedSettlement)
+        : reviewedSettlement;
+    if (input.diagnosticKind === 'immediate' && current.delivery_mode === 'eligible') {
+      if (!current.package) {
+        throw new Error(
+          `intervention ${current.id}@${current.version} cannot anchor diagnostics without its package`,
+        );
+      }
+      const { materializeInterventionDiagnostics } = await import('@/capabilities/practice/public');
+      await materializeInterventionDiagnostics(tx, {
+        package: current.package,
+        settlement: nextSettlement,
+        snapshot: current.snapshot,
+        now,
+        activateAnchoredFollowups: true,
+      });
+    }
+    const outcome = interventionOutcomeFromSettlement(nextSettlement);
+    const terminalSettlement = InterventionSettlement.parse({
+      ...nextSettlement,
+      completed_at: outcome ? now.toISOString() : null,
+    });
+    const [updated] = await tx
+      .update(intervention)
+      .set({
+        settlement_json: terminalSettlement,
+        status: outcome ? ('settled' as const) : ('active' as const),
+        outcome,
+        revision: current.revision + 1,
+        updated_at: now,
+      })
+      .where(
+        and(
+          eq(intervention.id, current.id),
+          eq(intervention.version, current.version),
+          eq(intervention.status, current.status),
+          eq(intervention.revision, current.revision),
+        ),
+      )
+      .returning();
+    if (!updated) {
+      throw new Error(
+        `intervention ${input.interventionId}@${input.version} diagnostic ${input.diagnosticKind} lost its serialized state`,
+      );
+    }
+
+    const { retireInterventionDiagnosticQuestion } = await import('@/capabilities/practice/public');
+    await retireInterventionDiagnosticQuestion(tx, input.questionId, now);
+
+    if (outcome) {
+      await writeEvent(tx, {
+        id: newId(),
+        actor_kind: 'system',
+        actor_ref: 'intervention_settlement',
+        action: INTERVENTION_SETTLED_ACTION,
+        subject_kind: 'event',
+        subject_id: current.source_probe_result_event_id,
+        outcome: outcome === 'effective' ? 'success' : 'failure',
+        payload: {
+          intervention_id: current.id,
+          intervention_version: current.version,
+          conjecture_event_id: current.conjecture_event_id,
+          knowledge_id: current.snapshot.conjecture.knowledge_id,
+          intervention_outcome: outcome,
+          diagnostic_reviews: Object.values(terminalSettlement.diagnostics).map((entry) => ({
+            kind: entry.kind,
+            question_id: entry.question_id,
+            review_event_id: entry.review_event_id,
+            verdict_event_id: entry.verdict_event_id,
+            status: entry.status,
+          })),
+        },
+        caused_by_event_id: input.verdictEventId,
+        affected_scopes: [
+          `knowledge:${current.snapshot.conjecture.knowledge_id}`,
+          `mind_model:${current.conjecture_event_id}`,
+        ],
+        ingest_at: now,
+        created_at: now,
+      });
+    }
+
+    return {
+      status: 'recorded',
+      intervention: parseInterventionRow(updated),
+      diagnostic_kind: input.diagnosticKind,
+      settled: outcome !== null,
+    };
   });
 }
 

@@ -33,6 +33,7 @@
 
 import type { Provider } from '@/ai/registry';
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
+import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
 import { emitMasteryProgressSignal } from '@/capabilities/practice/server/mastery-progress-signal';
 import { newId } from '@/core/ids';
 import { JudgeKind as JudgeKindZ } from '@/core/schema/business';
@@ -40,7 +41,11 @@ import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 // YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the per-subject snapshot `before`.
 import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
-import { type Tx, db } from '@/db/client';
+import {
+  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+  InterventionDiagnosticQuestionMetadata,
+} from '@/core/schema/intervention';
+import { type Db, type Tx, db } from '@/db/client';
 import { learning_session, mastery_state, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import {
@@ -148,8 +153,101 @@ async function validateSubmit(req: Request): Promise<ValidatedSubmit> {
   if (!q) {
     throw new ApiError('not_found', `question ${questionId} not found`, 404);
   }
+  if (q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+    const diagnostic = InterventionDiagnosticQuestionMetadata.safeParse(
+      q.metadata?.intervention_diagnostic,
+    );
+    if (!diagnostic.success) {
+      throw new ApiError(
+        'corrupt_state',
+        `intervention diagnostic ${questionId} has invalid scheduling metadata`,
+        500,
+      );
+    }
+    if (q.judge_kind_override !== 'multimodal_direct') {
+      throw new ApiError(
+        'corrupt_state',
+        `intervention diagnostic ${questionId} is missing its response-aware judge contract`,
+        500,
+      );
+    }
+    if (now.getTime() < new Date(diagnostic.data.due_at).getTime()) {
+      throw new ApiError(
+        'conflict',
+        `intervention diagnostic ${questionId} is not due until ${diagnostic.data.due_at}`,
+        409,
+      );
+    }
+    if ((body.response_md?.trim().length ?? 0) === 0 && body.answer_image_refs.length === 0) {
+      throw new ApiError(
+        'validation_error',
+        `intervention diagnostic ${questionId} requires an answer`,
+        400,
+      );
+    }
+  }
 
   return { body, now, questionId, activityRef: identity.activity_ref, q };
+}
+
+async function claimInterventionDiagnosticSubmission(validated: ValidatedSubmit): Promise<boolean> {
+  if (validated.q.source !== INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) return false;
+
+  const [claimed] = await db
+    .update(question)
+    .set({ draft_status: 'draft', updated_at: validated.now })
+    .where(
+      and(
+        eq(question.id, validated.questionId),
+        eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
+        eq(question.draft_status, 'active'),
+      ),
+    )
+    .returning({ id: question.id });
+  if (!claimed) {
+    throw new ApiError(
+      'conflict',
+      `intervention diagnostic ${validated.questionId} has already been submitted`,
+      409,
+    );
+  }
+  return true;
+}
+
+export async function releaseInterventionDiagnosticSubmissionClaim(
+  input: { questionId: string; claimedAt: Date },
+  database: Db = db,
+): Promise<void> {
+  await database
+    .update(question)
+    .set({ draft_status: 'active', updated_at: new Date() })
+    .where(
+      and(
+        eq(question.id, input.questionId),
+        eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
+        eq(question.draft_status, 'draft'),
+        eq(question.updated_at, input.claimedAt),
+      ),
+    );
+}
+
+export function assertTrustedInterventionDiagnosticJudgment(
+  q: QuestionRow,
+  judged: Pick<JudgedSubmit, 'judgeResult' | 'judgeRoute' | 'executionProvenance'>,
+): void {
+  if (q.source !== INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) return;
+  if (
+    judged.judgeResult === null ||
+    judged.judgeRoute !== 'multimodal_direct' ||
+    (judged.executionProvenance?.kind !== 'invoked' &&
+      judged.executionProvenance?.kind !== 'supplied_verified')
+  ) {
+    throw new ApiError(
+      'unsupported_judge_route',
+      `intervention diagnostic ${q.id} requires a verified judge execution`,
+      422,
+    );
+  }
 }
 
 // ============================================================================
@@ -322,7 +420,8 @@ export async function judgeSubmit(
   // YUK-594 (D5) — the durable worker injects the frozen answer-time profile; the
   // sync path resolves it fresh (opts absent → byte-identical).
   const subjectProfile = hasAnswer
-    ? (opts.subjectProfile ?? (await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids)))
+    ? (opts.subjectProfile ??
+      (await resolveSubjectProfileForKnowledgeIds(db, questionKnowledgeIdsForJudge(q))))
     : null;
   if (subjectProfile !== null) {
     const resolvedRoute = resolveQuestionJudgeRoute(q, subjectProfile);
@@ -1370,7 +1469,10 @@ export async function resolveDurableDivert(validated: ValidatedSubmit): Promise<
   const hasImageAnswer = body.answer_image_refs.length > 0;
   const hasAnswer = answerMd.length > 0 || hasImageAnswer;
   if (!hasAnswer) return { divert: false, subjectProfile: null };
-  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
+  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(
+    db,
+    questionKnowledgeIdsForJudge(q),
+  );
   if (subjectProfile === null) return { divert: false, subjectProfile: null };
   const route = resolveQuestionJudgeRoute(q, subjectProfile);
   const photoOnly = answerMd.length === 0 && hasImageAnswer;
@@ -1636,8 +1738,13 @@ export async function enqueueDurableJudge(
 // ============================================================================
 
 export async function createAttempt(req: Request): Promise<Response> {
+  let claimedDiagnostic: ValidatedSubmit | null = null;
+  let retainDiagnosticClaim = false;
   try {
     const validated = await validateSubmit(req);
+    if (await claimInterventionDiagnosticSubmission(validated)) {
+      claimedDiagnostic = validated;
+    }
     // YUK-594 (W2) — async-main divert (dark-ship). When JUDGE_DURABLE_ENABLED is on
     // AND this submit would spend a synchronous server-side judge call, move the judge
     // to the durable `judge_run` lane and return 202-pending; the verdict + FSRS land
@@ -1652,7 +1759,16 @@ export async function createAttempt(req: Request): Promise<Response> {
     if (judgeDurableEnabled() && shouldEnqueueBackgroundJobs()) {
       const gate = await resolveDurableDivert(validated);
       if (gate.divert && gate.subjectProfile !== null) {
-        return await enqueueDurableJudge(validated, gate.subjectProfile);
+        const pending = await enqueueDurableJudge(validated, gate.subjectProfile);
+        if (pending.status !== 202 && claimedDiagnostic !== null) {
+          await releaseInterventionDiagnosticSubmissionClaim({
+            questionId: claimedDiagnostic.questionId,
+            claimedAt: claimedDiagnostic.now,
+          });
+          claimedDiagnostic = null;
+        }
+        retainDiagnosticClaim = true;
+        return pending;
       }
       reusedProfile = gate.subjectProfile;
     }
@@ -1660,7 +1776,9 @@ export async function createAttempt(req: Request): Promise<Response> {
       validated,
       reusedProfile ? { subjectProfile: reusedProfile } : {},
     );
+    assertTrustedInterventionDiagnosticJudgment(validated.q, judged);
     const persisted = await persistSubmit(validated, judged);
+    retainDiagnosticClaim = true;
     const { body, now, questionId, activityRef } = validated;
     const { judgeResult, judgeRoute, judgeTelemetry, suggestedRating, finalRating } = judged;
     const { eventId, fsrsSubjectKind, fsrsSubjectIds, finalResult, finalFsrsStateAfter } =
@@ -1711,6 +1829,17 @@ export async function createAttempt(req: Request): Promise<Response> {
       judge: judgeResponse,
     });
   } catch (err) {
+    if (claimedDiagnostic !== null && !retainDiagnosticClaim) {
+      await releaseInterventionDiagnosticSubmissionClaim({
+        questionId: claimedDiagnostic.questionId,
+        claimedAt: claimedDiagnostic.now,
+      }).catch((releaseError) => {
+        console.error(
+          `failed to release intervention diagnostic submission claim for ${claimedDiagnostic?.questionId}:`,
+          releaseError,
+        );
+      });
+    }
     return errorResponse(err);
   }
 }

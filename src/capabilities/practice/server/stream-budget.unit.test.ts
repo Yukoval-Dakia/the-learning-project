@@ -62,4 +62,28 @@ describe('daily practice time budget (YUK-622)', () => {
     expect(result.deferredDueCount).toBe(3);
     expect(result.estimatedMinutes).toBe(10);
   });
+
+  it('never trims an approved intervention delivery from an exhausted budget', () => {
+    const result = fitStreamToTimeBudget(
+      [
+        ...Array.from({ length: 5 }, (_, index) => ({
+          ref: `due-${index}`,
+          item_kind: 'question' as const,
+          source: 'decay',
+        })),
+        { ref: 'approved-intervention', item_kind: 'question' as const, source: 'intervention' },
+      ],
+      10,
+    );
+
+    expect(result.kept.map((item) => item.ref)).toEqual([
+      'due-0',
+      'due-1',
+      'due-2',
+      'due-3',
+      'approved-intervention',
+    ]);
+    expect(result.estimatedMinutes).toBe(10);
+    expect(result.deferredDueCount).toBe(1);
+  });
 });

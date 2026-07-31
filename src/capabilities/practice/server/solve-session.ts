@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -77,11 +78,13 @@ export async function startSolveSession(
   const { db, questionId } = params;
 
   const [q] = await db
-    .select({ id: question.id })
+    .select({ id: question.id, source: question.source })
     .from(question)
     .where(eq(question.id, questionId))
     .limit(1);
-  if (!q) throw new SolveError('question_not_found', `question ${questionId} not found`);
+  if (!q || q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+    throw new SolveError('question_not_found', `question ${questionId} not found`);
+  }
 
   let gen: GenerateReferenceSolutionResult;
   try {

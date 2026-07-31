@@ -101,6 +101,29 @@ export async function enrollFsrsStateIfAbsent(
 }
 
 /**
+ * Retire a question-scoped one-shot diagnostic after its first review.
+ *
+ * Intervention diagnostics are deliberately scheduled as exact question cards,
+ * not reusable knowledge-level reviews. Removing only their derived FSRS row
+ * keeps the immutable question and review evidence while preventing a settled
+ * diagnostic from resurfacing as an ordinary recurring review.
+ */
+export async function retireQuestionFsrsState(db: DbLike, questionId: string): Promise<boolean> {
+  return withLearningStateLock(db, async (tx): Promise<boolean> => {
+    const deleted = await tx
+      .delete(material_fsrs_state)
+      .where(
+        and(
+          eq(material_fsrs_state.subject_kind, 'question'),
+          eq(material_fsrs_state.subject_id, questionId),
+        ),
+      )
+      .returning({ id: material_fsrs_state.id });
+    return deleted.length > 0;
+  });
+}
+
+/**
  * YUK-543 — repair `material_fsrs_state` (R-axis scheduling projection) when a KC (`fromId`) is
  * merged into another (`intoId`). NEVER merges FSRS Card state / recomputes stability or due dates
  * (no invented merge math; spec §6). 3-case identity-rename/freeze-and-log, mirroring

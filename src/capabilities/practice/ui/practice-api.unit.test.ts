@@ -16,6 +16,7 @@ import {
   buildPaperAnswerDraftInit,
   buildPaperSubmissionBody,
   buildPracticeStreamUrl,
+  buildQuestionDetailUrl,
   buildQuestionsListQuery,
   computeLatencyMs,
 } from './practice-api';
@@ -29,6 +30,16 @@ describe('buildPracticeStreamUrl — KC-scoped on-demand stream (YUK-535)', () =
     expect(buildPracticeStreamUrl('  kc/判断句  ')).toBe(
       '/api/practice/stream?date=today&kc=kc%2F%E5%88%A4%E6%96%AD%E5%8F%A5',
     );
+  });
+});
+
+describe('buildQuestionDetailUrl — Practice-safe diagnostic read', () => {
+  it('keeps the question-bank detail URL unchanged by default', () => {
+    expect(buildQuestionDetailUrl('q/1')).toBe('/api/questions/q%2F1');
+  });
+
+  it('marks the canonical Practice read surface explicitly', () => {
+    expect(buildQuestionDetailUrl('q/1', 'practice')).toBe('/api/questions/q%2F1?surface=practice');
   });
 });
 

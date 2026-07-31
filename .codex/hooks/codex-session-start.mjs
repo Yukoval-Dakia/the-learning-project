@@ -3,7 +3,6 @@
 import {
   currentHashes,
   pruneExpiredBaselines,
-  readBaseline,
   readHookEvent,
   repoRoot,
   sessionIdFrom,
@@ -16,8 +15,9 @@ const recordBaseline = (event) => {
     const sessionId = sessionIdFrom(event);
     pruneExpiredBaselines();
 
-    const isResume = event?.source === 'resume';
-    if (isResume && readBaseline(root, sessionId) !== null) return;
+    // Preserve an existing resume baseline. If it was lost or expired, Stop
+    // validates every dirty JSON file before writing a replacement baseline.
+    if (event?.source === 'resume') return;
 
     writeBaseline(root, sessionId, currentHashes(root));
   } catch {

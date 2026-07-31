@@ -144,6 +144,7 @@ describe('runTask — YUK-299 outputFormat seam', () => {
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it('does NOT write outputFormat onto Options when ctx.outputFormat is omitted (zero regression)', async () => {
@@ -182,17 +183,47 @@ describe('runTask — YUK-299 outputFormat seam', () => {
     expect('settingSources' in opts).toBe(false);
   });
 
-  it('threads ctx.outputFormat through to Options.outputFormat when set', async () => {
+  it('threads ctx.outputFormat through on an SDK-structured-output provider', async () => {
+    mockSdk.messages = [successResult()];
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-anthropic-test-key');
+
+    await runTask(
+      'InterventionRecommendationTask',
+      { snapshot: 'test' },
+      {
+        db: fakeDb,
+        outputFormat: SAMPLE_OUTPUT_FORMAT,
+        override: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      },
+    );
+
+    const opts = mockSdk.capturedOptions as { outputFormat?: unknown; maxTurns?: number };
+    expect(opts.outputFormat).toEqual(SAMPLE_OUTPUT_FORMAT);
+    expect(opts.maxTurns).toBe(2);
+  });
+
+  it('omits unsupported Xiaomi outputFormat and preserves the text-fallback turn ceiling', async () => {
     mockSdk.messages = [successResult()];
 
     await runTask(
-      UNMIGRATED_KIND,
-      { question: 'q', wrong_answer: 'a' },
+      'InterventionRecommendationTask',
+      { snapshot: 'test' },
       { db: fakeDb, outputFormat: SAMPLE_OUTPUT_FORMAT },
     );
 
-    const opts = mockSdk.capturedOptions as { outputFormat?: unknown };
-    expect(opts.outputFormat).toEqual(SAMPLE_OUTPUT_FORMAT);
+    const opts = mockSdk.capturedOptions as { outputFormat?: unknown; maxTurns?: number };
+    expect(tasks.InterventionRecommendationTask.budget.maxIterations).toBe(1);
+    expect('outputFormat' in opts).toBe(false);
+    expect(opts.maxTurns).toBe(1);
+  });
+
+  it('keeps the one-turn ceiling when the same task has no outputFormat protocol', async () => {
+    mockSdk.messages = [successResult()];
+
+    await runTask('InterventionRecommendationTask', { snapshot: 'test' }, { db: fakeDb });
+
+    const opts = mockSdk.capturedOptions as { maxTurns?: number };
+    expect(opts.maxTurns).toBe(1);
   });
 
   it('passes through structured_output when the success result carries it (state A)', async () => {

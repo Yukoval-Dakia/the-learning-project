@@ -77,3 +77,14 @@ test('resume keeps the existing baseline for the same session', () => {
   assert.equal(result.status, 0);
   assert.deepEqual(after.hashes, before.hashes);
 });
+
+test('resume without a baseline defers adoption until Stop validates the dirty tree', () => {
+  const repo = makeRepo();
+  writeFileSync(join(repo, 'package.json'), '{bad\n');
+
+  const result = runHook(repo, { session_id: 'missing-baseline', source: 'resume' });
+  const root = repoRoot(repo);
+
+  assert.equal(result.status, 0);
+  assert.equal(existsSync(statePath(root, 'missing-baseline')), false);
+});

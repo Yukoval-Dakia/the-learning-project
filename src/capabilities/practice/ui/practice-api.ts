@@ -18,8 +18,9 @@ import type { SessionTransitionRequestOptions } from '@/ui/lib/session-transitio
 // 'frontier'（YUK-551）= B3 learnable_frontier 尾（前置全掌握、自身未掌握的可学前沿 KC）。
 // 后端 softmax-selection.ts sourceForRole 早已可产出 source:'frontier' 的 StreamItem（走
 // DEFAULT softmax 路径，非 legacy-only），此前 FE 联合漏同步 → PfStream SRC_META bare index
-// 崩 TypeError。源枚举有四份手维护副本（schema.ts $type / stream-composer StreamPlanItem.source /
-// 本联合 / PfStream SRC_META keys）无共享 SoT——见 PfStream.tsx srcMeta accessor 的运行时兜底。
+// 崩 TypeError。源枚举有五份手维护副本（schema.ts $type / stream-composer StreamPlanItem.source /
+// stream-contracts / 本联合 / PfStream SRC_META keys）无共享 SoT——见 PfStream.tsx srcMeta accessor
+// 的运行时兜底。
 export type StreamSource =
   | 'decay'
   | 'variant'
@@ -27,7 +28,8 @@ export type StreamSource =
   | 'paper'
   | 'on_demand'
   | 'import'
-  | 'frontier';
+  | 'frontier'
+  | 'intervention';
 export type StreamStatus = 'pending' | 'in_progress' | 'done' | 'skipped';
 
 export interface StreamItem {
@@ -130,9 +132,17 @@ export type QFullPerKnowledge = QuestionFullDetail['scheduling']['per_knowledge'
 export type QFullBacklink = QuestionFullDetail['backlinks'][number];
 export type QFullTimelineEntry = QuestionFullDetail['timeline'][number];
 
-export const getQuestionFull = (id: string): Promise<QuestionFullDetail> =>
+export function buildQuestionDetailUrl(id: string, surface?: 'practice'): string {
+  const base = `/api/questions/${encodeURIComponent(id)}`;
+  return surface ? `${base}?surface=${surface}` : base;
+}
+
+export const getQuestionFull = (
+  id: string,
+  opts: { surface?: 'practice' } = {},
+): Promise<QuestionFullDetail> =>
   apiOperationJson('getQuestion', {
-    url: `/api/questions/${encodeURIComponent(id)}`,
+    url: buildQuestionDetailUrl(id, opts.surface),
     method: 'GET',
   });
 

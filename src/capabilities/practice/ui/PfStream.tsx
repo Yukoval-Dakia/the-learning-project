@@ -39,6 +39,7 @@ const SRC_META: Record<StreamSource, SrcMeta> = {
   // 'hard' 的「六态中唯一未占用」前提被 review 证伪（neutral 本就被 on_demand+import 双占,
   // 「唯一性」从不是真约束;而唯一未占用的 hard 是全仓警示琥珀,不宜作中性来源标）。
   frontier: { label: '下一步', tone: 'neutral', icon: 'target' },
+  intervention: { label: '干预检验', tone: 'info', icon: 'target' },
 };
 
 // 未知 source 防御 fallback（YUK-551）——src/ui/lib/api.ts 的 apiJson 是运行时零校验裸 cast
@@ -278,7 +279,7 @@ export function PfStream({
           >
             {isSkipped ? '捡回来' : it.item_kind === 'paper' ? '进入卷' : '开始作答'}
           </Btn>
-          {!isSkipped && it.status === 'pending' && (
+          {!isSkipped && it.status === 'pending' && it.source !== 'intervention' && (
             <button
               type="button"
               className="pf-skip"

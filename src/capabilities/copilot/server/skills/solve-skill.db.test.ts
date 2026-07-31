@@ -12,13 +12,14 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildSolveHintInput } from '@/capabilities/practice/server/solve-session';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { event, learning_session, question } from '@/db/schema';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { runSolveSkill } from './solve-skill';
 
 const db = testDb();
 
-async function seedQuestion(): Promise<string> {
+async function seedQuestion(source = 'manual'): Promise<string> {
   const id = createId();
   const now = new Date();
   await db.insert(question).values({
@@ -29,7 +30,7 @@ async function seedQuestion(): Promise<string> {
     rubric_json: null,
     knowledge_ids: [],
     difficulty: 3,
-    source: 'manual',
+    source,
     created_at: now,
     updated_at: now,
   });
@@ -108,6 +109,14 @@ describe('runSolveSkill (U6 solve skill)', () => {
   it('throws for an unknown question', async () => {
     const runAgentTaskFn = vi.fn();
     await expect(runSolveSkill({ db, questionId: 'nope' }, { runAgentTaskFn })).rejects.toThrow();
+    expect(runAgentTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('hides intervention diagnostics from hint generation', async () => {
+    const id = await seedQuestion(INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE);
+    const runAgentTaskFn = vi.fn();
+
+    await expect(runSolveSkill({ db, questionId: id }, { runAgentTaskFn })).rejects.toThrow();
     expect(runAgentTaskFn).not.toHaveBeenCalled();
   });
 });

@@ -1,78 +1,43 @@
 # 当前 handoff — 2026-07-30
 
-## Active line
+## Current state
 
-- 唯一 active lane：**YUK-791 干预准备通电**。
-- branch：`codex/yuk-791-intervention-prepare`。
-- 隔离 worktree：`the-learning-project-worktrees/yuk-791-intervention-prepare`。
-- 基线：`origin/main@abc62490`，已包含 YUK-827 / PR #1118。
-- owner 主工作树有既存未提交改动；本轮没有修改主工作树。
-- 完整 gate 只监听 GitHub Actions `CI Gate`，不在本地重跑。
+- owner 已授权持续推进全部 roadmap，并允许 agent 自写 gate 输入、agent 评判真实产品输出。
+- 唯一 active lane：YUK-792。
+- branch：`codex/yuk-792-intervention-settlement`。
+- YUK-814 Gate A/B 已各用 8-cluster 真实产品链输出通过；Gate C 等 YUK-792 合并。
+- YUK-828：Done，PR #1120，merge `52c08b8e`。
 
-## 本轮实现
+## YUK-792 已实现
 
-1. 新增 Agency-owned、versioned `intervention` aggregate，冻结 snapshot、推荐、整包、
-   两轮审计、terminal failure 与 delivery mode；进入 backup/restore 并有 migration smoke。
-2. durable probe-result subscriber 只接受 `evidence_for + outcome=0` 且 response judgement
-   明确为 gradable target-error match；再验证 proposal/question/result direct chain 仍有效。
-3. 被纠正结果、legacy 无 judgement、普通错误或 question/provenance 漂移均不 enqueue。
-4. subscriber 与 pg-boss enqueue 共事务，使用确定性 aggregate identity + 持久 UUID job id；
-   重复 id 返回 null 视为已有 job，重复 delivery 不产生第二个 aggregate。
-5. Agency 用冻结 learner/KC/conjecture snapshot 调用确定性 8 法 shortlist；owner 禁用后无
-   安全方法时不调用模型，直接 `recommendation:no_safe_method` fail closed。
-6. recommendation 在同一 `prepare_intervention` wave 交给 Practice QuestionAuthor；后者公共
-   输入只有 `intervention_id`，经 Agency public reader 取得权威 snapshot/recommendation。
-7. 每个 package 原子包含材料、immediate/delayed/transfer；三题复用 response-aware Probe
-   V2，支持多种响应形式且必须有可区分的 gold/target-error signature。
-8. author 与 reviewer 是同模型路由的两次独立调用；确定性 validator 再检查 lineage、
-   method、claim、target error、重复题面、答案泄露和 response signature collision。
-9. 最多一次整包重生成；两次仍失败写 `preparation_failed`，package 保持 null；通过才
-   原子 `active` 并写 lifecycle event。provider/transport error 抛给 pg-boss retry。
-10. `AUTO_INTERVENTION_EXPANSION_ENABLED` 默认 OFF；当前 aggregate 可 active 但
-    `delivery_mode=shadow`，不代表 Today/B3 可以交付。
-11. recommendation、author、review 每次付费调用前分别验证 source direct chain 与当前
-    preparation job id，激活事务再验一次；证据在任一生成阶段被纠正/provenance 漂移时
-    立即停止后续付费并原子写 `source_evidence_inactive`。
-12. backup 保留 aggregate 但不保留 pg-boss 行；restore 在同一事务先取消 archived
-    created/retry/active job，再清空 job id。旧 active handler 即使已经领走，也因每阶段
-    job-id fence 不能继续付费或写回。两分钟 recovery 为 missing job 换新 UUID 并同事务
-    持久化；它与 subscription replay 共用 source lock，持锁后再查 liveness，避免并发
-    生成两个付费 wave。当前 job 耗尽 retry 才转为可审计失败。
-13. recommendation/author/review（含 author 内层 response signature）都使用无 `anyOf`
-    的扁平 provider schema，canonical reader 仍严格校验分支；三次生产调用都显式传
-    registry-derived `outputFormat`。共享 canonical JSON SHA-256 消除 digest 键序漂移。
-14. intervention 的两个 event provenance 建硬 FK，active CHECK 关闭 SQL NULL 三值漏洞；
-    review 缺 run id 作为整包 attempt failure 重试，idempotent terminal replay 记 idle。
-15. event correction 单一写入口与 intervention activation 共用 source transaction
-    advisory lock，关闭 READ COMMITTED 的 read→correction→activate 竞态；recovery
-    terminalization 携带扫描到的 expected job id，restore/replay 换 id 后旧 scan 只记 raced。
-16. activation 的最终 UPDATE 同样带 expected job id；restore 在初检后换 id 时旧 handler
-    只能返回 current preparing。grounding harness 对新建 disposable DB 显式声明
-    `fresh_disposable`，不会因不存在可取消的旧 pg-boss 行而拒绝 restore。
+1. eligible intervention 激活时把 immediate / delayed / transfer probe 物化为现有
+   question + question-level FSRS card；写入/退役由 Practice public port 单一持有，
+   shadow 只写 ledger，不暴露给 learner。
+2. 固定 due policy：activation / +7d / +21d；canonical review subscription 记录
+   pass/fail，删除 one-shot card，三项齐备后结算 outcome 并写 settled event；未到期
+   submit 返回 409，store 对旁路 event 再做 due fence。
+3. archive/deploy recovery 用 `(updated_at,id,version)` keyset 扫完全部 eligible active
+   rows；migration 回填既有 active ledger。
+4. 删除无 producer/reader/red-test 的 runtime `transfer_gap` 及 prompt 暗示；ADR 只保留
+   未来具备真实闭环后的恢复条件。
+5. Practice 声明 canonical `review` event ownership；Agency 只经 subscription 消费。
 
-## 验证证据
+## 验证
 
-- 最新 review diff targeted unit：5 files / 101 tests PASS；此前 broader cockpit
-  8 files / 153 tests PASS。
-- targeted DB：4 files / 55 tests PASS，新增覆盖付费前/author 后 evidence 失效、
-  correction/activation 串行化、stale terminal scan、restore job 取消与 job-id fencing、
-  跨库/同库 recovery、operational retry exhaustion、review run provenance 缺失。
-- YUK-791 migration smoke：1 PASS / 29 skipped。
-- `pnpm typecheck` PASS。
-- scoped Biome PASS；capability boundary audit 0。
-- schema audit：unallowed stub 0；`intervention.outcome` 明确 allowlist 到 YUK-792。
-- flag audit：本 lane 的 reader marker/ledger 无 drift；全仓 strict 模式仍有基线已有的
-  `NOTES_MASTERY_SUBSCRIPTION_ENABLED` 未登记警告，不属于本 lane 行为改动。
-
-## 边界
-
-- YUK-791 是 shadow preparation backbone，不关闭 YUK-814 发布/扩量 gate。
-- YUK-814 Gate A/B/C 仍开放；auto-intervention expansion 保持 OFF。
-- YUK-822 是 P1，owner 明确只保留解释和计划，不写实现。
-- YUK-792 scheduler/settlement、Today/Brief UI、Copilot、Growth projection 不在本 PR。
+- PASS：typecheck、lint、API/capability/draft/schema 等静态审计。
+- PASS：全量 unit 516 files / 5,959 tests；相关 DB 2 files / 64 tests；
+  migration 1 file / 30 tests。
+- PASS：修复 review finding 后 settlement DB 22 tests、submit early-due 红测、101-row
+  recovery 边界、真实 `answerProbe → evidence_for → /api/review/due` 链。
+- 独立 standards/spec 初审的 4 个 P1/所有权 finding 已全部修复；一次 verification
+  review 均判 CLOSED，无新增 P0/P1。
+- 本机 OrbStack 一度停止导致第一次全量 DB 无 runtime；恢复后完整 DB 跑约 19 分钟无
+  failure 输出，但为避免低效本地串行等待已主动中止，不计为 PASS。
+- 完整 DB/build 交 GitHub CI 并行验证。
 
 ## 下一步
 
-1. 将 PR #1119 的集中 review hardening commit + push。
-2. 仅监听新 head 的 GitHub Actions `CI Gate`，回复/resolve review threads 并复查新增反馈。
-3. CI/review 全绿后 squash merge并对齐 Linear YUK-791。
+1. 独立 standards/spec 双轴 review；修 P0/P1 后开 PR。
+2. 等 exact-head CI Gate；合并并对齐 Linear/PLAN/.remember。
+3. 跑 YUK-814 Gate C：10 个 agent 自写输入的真实 eligible lifecycle。
+4. 依次推进 YUK-822 → YUK-815/YUK-816 → 剩余 profile/domain/release 验收。

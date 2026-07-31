@@ -18,6 +18,10 @@ import { MASTERY_PROGRESS_ACTION } from '@/capabilities/practice/server/mastery-
 import { recordSelectionObservation } from '@/capabilities/practice/server/selection-observations';
 import { newId } from '@/core/ids';
 import {
+  INTERVENTION_CONTRACT_VERSION,
+  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+} from '@/core/schema/intervention';
+import {
   ai_task_runs,
   difficulty_calibration_label,
   event,
@@ -120,6 +124,7 @@ describe('POST /api/review/submit', () => {
     await resetDb();
     __resetRateLimitForTests();
     vi.mocked(runTask).mockReset();
+    vi.mocked(resolveSubjectProfileForKnowledgeIds).mockClear();
   });
 
   afterEach(() => vi.unstubAllEnvs());
@@ -134,6 +139,226 @@ describe('POST /api/review/submit', () => {
     );
 
     expect(response.status).toBe(400);
+  });
+
+  it('rejects a fixed-window intervention diagnostic before its due time', async () => {
+    const dueAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    await seedQuestion('q_intervention_future', {
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      judge_kind_override: 'multimodal_direct',
+      knowledge_ids: [],
+      metadata: {
+        intervention_diagnostic: {
+          schema_version: INTERVENTION_CONTRACT_VERSION,
+          intervention_id: 'int_future',
+          intervention_version: 1,
+          diagnostic_kind: 'delayed',
+          knowledge_id: 'kc_future',
+          due_at: dueAt,
+        },
+      },
+    });
+
+    const response = await POST(
+      submitReq({
+        question_id: 'q_intervention_future',
+        rating: 'good',
+        response_md: '提前作答',
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: 'conflict' });
+    const reviews = await testDb()
+      .select({ id: event.id })
+      .from(event)
+      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_intervention_future')));
+    expect(reviews).toHaveLength(0);
+  });
+
+  it('resolves a diagnostic judge profile from canonical intervention metadata', async () => {
+    await seedQuestion('q_intervention_profile', {
+      kind: 'fill_blank',
+      reference_md: '答案',
+      judge_kind_override: 'multimodal_direct',
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      draft_status: 'active',
+      knowledge_ids: [],
+      metadata: {
+        intervention_diagnostic: {
+          schema_version: INTERVENTION_CONTRACT_VERSION,
+          intervention_id: 'int_profile',
+          intervention_version: 1,
+          diagnostic_kind: 'immediate',
+          knowledge_id: 'kc_math',
+          due_at: '2026-07-01T00:00:00.000Z',
+        },
+      },
+    });
+
+    const response = await POST(
+      submitReq({
+        question_id: 'q_intervention_profile',
+        rating: 'good',
+        response_md: '答案',
+        auto_rate: true,
+      }),
+    );
+
+    expect(response.status).toBe(422);
+    expect(vi.mocked(resolveSubjectProfileForKnowledgeIds)).toHaveBeenCalledWith(
+      expect.anything(),
+      ['kc_math'],
+    );
+  });
+
+  it('atomically accepts only one submission for a one-shot intervention diagnostic', async () => {
+    const secret = 'test-one-shot-provenance-secret-32bytes';
+    vi.stubEnv('JUDGE_PROVENANCE_SECRET', secret);
+    vi.stubEnv('INTERNAL_TOKEN', 'a-different-internal-token');
+    const profile = resolveSubjectProfile('general');
+    vi.mocked(resolveSubjectProfileForKnowledgeIds).mockResolvedValueOnce(profile);
+    const suppliedResult = {
+      coarse_outcome: 'correct' as const,
+      score: 1,
+      score_meaning: 'correctness' as const,
+      confidence: 0.9,
+      feedback_md: 'Response-aware diagnostic verdict.',
+      evidence_json: {},
+      capability_ref: { id: 'multimodal_direct', version: profile.version },
+    };
+    const inputHash = 'a'.repeat(64);
+    const promptFingerprint = 'b'.repeat(64);
+    const resultDigest = sha256Canonical(suppliedResult);
+    const taskRunId = newId();
+    await testDb().insert(ai_task_runs).values({
+      id: taskRunId,
+      task_kind: 'MultimodalDirectJudgeTask',
+      provider: 'xiaomi',
+      model: 'mock',
+      input_hash: inputHash,
+      prompt_fingerprint: promptFingerprint,
+      result_digest: resultDigest,
+      status: 'success',
+      started_at: new Date(),
+      finished_at: new Date(),
+    });
+    const provenanceToken = issueJudgePreviewProvenanceToken(
+      {
+        version: 1,
+        task_run_id: taskRunId,
+        task_kind: 'MultimodalDirectJudgeTask',
+        input_hash: inputHash,
+        prompt_fingerprint: promptFingerprint,
+        prompt_template_revision: JUDGE_PROMPT_TEMPLATE_REVISION,
+        subject_profile_id: profile.id,
+        subject_profile_version: profile.version,
+        judge_route: 'multimodal_direct',
+        result_digest: resultDigest,
+      },
+      secret,
+    );
+    await seedQuestion('q_intervention_one_shot', {
+      kind: 'short_answer',
+      reference_md: '答案',
+      judge_kind_override: 'multimodal_direct',
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      draft_status: 'active',
+      knowledge_ids: [],
+      metadata: {
+        intervention_diagnostic: {
+          schema_version: INTERVENTION_CONTRACT_VERSION,
+          intervention_id: 'int_one_shot',
+          intervention_version: 1,
+          diagnostic_kind: 'immediate',
+          knowledge_id: 'kc_math',
+          due_at: '2026-07-01T00:00:00.000Z',
+        },
+      },
+    });
+
+    const responses = await Promise.all([
+      POST(
+        submitReq({
+          question_id: 'q_intervention_one_shot',
+          rating: 'good',
+          response_md: '答案',
+          auto_rate: true,
+          judge_result_v2: suppliedResult,
+          judge_provenance_token: provenanceToken,
+          judge_task_run_id: taskRunId,
+        }),
+      ),
+      POST(
+        submitReq({
+          question_id: 'q_intervention_one_shot',
+          rating: 'good',
+          response_md: '答案',
+          auto_rate: true,
+          judge_result_v2: suppliedResult,
+          judge_provenance_token: provenanceToken,
+          judge_task_run_id: taskRunId,
+        }),
+      ),
+    ]);
+
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    const reviews = await testDb()
+      .select({ id: event.id })
+      .from(event)
+      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_intervention_one_shot')));
+    expect(reviews).toHaveLength(1);
+  });
+
+  it('releases the one-shot claim when a supplied diagnostic verdict is unverified', async () => {
+    await seedQuestion('q_intervention_unverified', {
+      kind: 'short_answer',
+      reference_md: '答案',
+      judge_kind_override: 'multimodal_direct',
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      draft_status: 'active',
+      knowledge_ids: [],
+      metadata: {
+        intervention_diagnostic: {
+          schema_version: INTERVENTION_CONTRACT_VERSION,
+          intervention_id: 'int_unverified',
+          intervention_version: 1,
+          diagnostic_kind: 'immediate',
+          knowledge_id: 'kc_math',
+          due_at: '2026-07-01T00:00:00.000Z',
+        },
+      },
+    });
+
+    const response = await POST(
+      submitReq({
+        question_id: 'q_intervention_unverified',
+        rating: 'good',
+        response_md: '答案',
+        auto_rate: true,
+        judge_result_v2: {
+          coarse_outcome: 'correct',
+          score: 1,
+          score_meaning: 'correctness',
+          confidence: 0.9,
+          feedback_md: 'looks right',
+          evidence_json: {},
+          capability_ref: { id: 'multimodal_direct', version: '1' },
+        },
+      }),
+    );
+
+    expect(response.status).toBe(422);
+    const [row] = await testDb()
+      .select({ draftStatus: question.draft_status })
+      .from(question)
+      .where(eq(question.id, 'q_intervention_unverified'));
+    expect(row.draftStatus).toBe('active');
+    const reviews = await testDb()
+      .select({ id: event.id })
+      .from(event)
+      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_intervention_unverified')));
+    expect(reviews).toHaveLength(0);
   });
 
   it('canonical attempt creation returns 201 with the review event Location', async () => {
