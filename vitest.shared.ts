@@ -274,20 +274,10 @@ export const fastTestInclude = [
   // YUK-751 (review TcWGF) — subscription-dispatch mount wiring; queue-config (its only DB-tainted
   // import) is vi.mock'd, so no live DB is touched — fast unit.
   'src/server/event-subscriptions/dispatch-mount.unit.test.ts',
-  // YUK-406 Phase 0 (关系脑 conjecture engine) — pure no-DB units. 取证
-  // (gatherConjectureEvidence) is a pure aggregator over injected FailureAttempt[] +
-  // a mastery-projection Map; induceConjecture is a pure Opus self-consistency
-  // orchestrator over an injected runTaskFn. No @/db/* / postgres / live deps at
-  // either surface, so they belong in the unit partition (the research_meeting_nightly
-  // job test is likewise pure — all reads/writes injected). fastTestInclude is an
-  // explicit per-file allowlist with no src/server/conjectures|agency glob, so these
-  // must be enumerated or the db config's src/**/*.test.ts glob would sweep them into
-  // the testcontainer partition. NB: conjectures is enumerated PER-FILE (not a `**`
-  // glob) because the typed-ledger (YUK-440) adds typed-state.db.test.ts — a
-  // `**/*.test.ts` glob would sweep that DB test into the unit partition
-  // (audit:partition P0). Only the pure no-DB units are listed here; *.db.test.ts
-  // falls through to the db partition like every other `.db.test.ts`.
-  'src/server/conjectures/evidence.test.ts',
+  // YUK-406 Phase 0 (关系脑 conjecture engine) — the pure evidence aggregator moved to
+  // src/capabilities/agency/server/conjecture/evidence.unit.test.ts and is covered by
+  // the capability *.unit.test.ts convention above. Keep only the remaining legacy
+  // server-side pure files enumerated here; their DB siblings must still fall through.
   'src/server/conjectures/scoring.unit.test.ts',
   // YUK-440 U8 — reconcile loop unit test (fully injected deps, no DB). Enumerated
   // per-file (not a glob) for the same reason as above: a `**/*.test.ts` glob would

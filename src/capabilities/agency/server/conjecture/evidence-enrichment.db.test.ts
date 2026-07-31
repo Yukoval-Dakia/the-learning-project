@@ -143,6 +143,30 @@ async function seedFailureWithJudge(opts: SeedFailureOpts): Promise<void> {
   });
 }
 
+async function seedOwnerCause(
+  attemptEventId: string,
+  primaryCategory: string,
+  createdAt: Date,
+): Promise<void> {
+  await testDb()
+    .insert(event)
+    .values({
+      id: `owner_cause_${attemptEventId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:user_cause',
+      subject_kind: 'event',
+      subject_id: attemptEventId,
+      outcome: null,
+      payload: {
+        primary_category: primaryCategory,
+        user_notes: 'owner supplied cause',
+      },
+      caused_by_event_id: attemptEventId,
+      created_at: createdAt,
+    });
+}
+
 /** Run the real pipe: read failures → gather cells → enrich. */
 async function runPipe(samplesPerCell?: number) {
   const db = testDb();
@@ -309,6 +333,56 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     expect(cell.samples).toHaveLength(1);
     expect(cell.samples[0].question_id).toBe('q2');
     expect(cell.samples[0].question_prompt_md).not.toContain('后来题面');
+  });
+
+  it('recomputes owner-cause provenance after filtering an unreproducible owner attempt', async () => {
+    await seedKnowledge('kc_owner_filter', '过滤后的归因来源', 'math');
+    await seedQuestion('q_owner', '作答后被编辑的题面');
+    await seedQuestion('q_agent_1', '稳定题面 1');
+    await seedQuestion('q_agent_2', '稳定题面 2');
+    await seedFailureWithJudge({
+      id: 'a_owner',
+      questionId: 'q_owner',
+      knowledgeIds: ['kc_owner_filter'],
+      createdAt: new Date('2026-07-19T10:00:00Z'),
+    });
+    await seedOwnerCause('a_owner', 'concept', new Date('2026-07-19T10:01:00Z'));
+    await seedFailureWithJudge({
+      id: 'a_agent_1',
+      questionId: 'q_agent_1',
+      knowledgeIds: ['kc_owner_filter'],
+      createdAt: new Date('2026-07-19T09:00:00Z'),
+    });
+    await seedFailureWithJudge({
+      id: 'a_agent_2',
+      questionId: 'q_agent_2',
+      knowledgeIds: ['kc_owner_filter'],
+      createdAt: new Date('2026-07-19T08:00:00Z'),
+    });
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'edit_q_owner',
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'experimental:question_edit',
+        subject_kind: 'question',
+        subject_id: 'q_owner',
+        outcome: 'success',
+        payload: {
+          question_id: 'q_owner',
+          previous_version: 1,
+          next_version: 2,
+          before: { prompt_md: '作答后被编辑的题面' },
+          after: { prompt_md: '当前题面' },
+        },
+        created_at: new Date('2026-07-19T11:00:00Z'),
+      });
+
+    const [cell] = await runPipe();
+    expect(cell.recurrence_count).toBe(2);
+    expect(cell.evidence_event_ids).toEqual(['a_agent_1', 'a_agent_2']);
+    expect(cell.has_owner_cause).toBe(false);
   });
 
   it('uses the immutable attempt snapshot after the live question is edited', async () => {
