@@ -398,6 +398,7 @@ function buildQueryOptions(
 ): Options {
   const def = tasks[kind];
   const allowedTools = ctx.allowedTools ?? def.allowedTools;
+  const configuredMaxTurns = (ctx.budgetOverride?.maxIterations ?? def.budget.maxIterations) || 1;
   const options: Options = {
     model: resolved.model,
     systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile),
@@ -405,10 +406,13 @@ function buildQueryOptions(
     env: buildAgentEnv(resolved),
     tools: allowedTools,
     mcpServers: ctx.mcpServers,
-    // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call. The
-    // `|| 1` fallback is preserved (a 0 override or 0 registry value both floor to
-    // 1). undefined-guard: non-durable callers keep def.budget.maxIterations verbatim.
-    maxTurns: (ctx.budgetOverride?.maxIterations ?? def.budget.maxIterations) || 1,
+    // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call.
+    // YUK-792 deployed canary found that the SDK-native outputFormat protocol
+    // can consume one envelope turn before returning its terminal result. A
+    // one-turn task otherwise ends as error_max_turns without any structured
+    // or text fallback. Floor only outputFormat calls at two; unstructured
+    // one-turn tasks and every higher explicit budget remain byte-identical.
+    maxTurns: ctx.outputFormat === undefined ? configuredMaxTurns : Math.max(2, configuredMaxTurns),
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
     persistSession: false,
