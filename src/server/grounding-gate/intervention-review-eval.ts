@@ -1,20 +1,13 @@
-import { createHash } from 'node:crypto';
-import { tasks } from '@/ai/registry';
-import { enforceInterventionPackageReviewDecision } from '@/capabilities/practice/server/intervention-author';
+import { reviewInterventionPackageCandidate } from '@/capabilities/practice/server/intervention-author';
 import {
   InterventionAuthoringContext,
   InterventionPackage,
   InterventionPackageReviewFailureCode,
-  InterventionPackageReviewModelOutput,
-  type InterventionPackageReviewModelOutputT,
-  InterventionPackageReviewModelOutputV2,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { ai_task_runs, cost_ledger } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
-import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -25,9 +18,21 @@ const InterventionReviewRegressionCase = z
     subject_id: z.enum(['general', 'math', 'physics', 'yuwen']),
     context: InterventionAuthoringContext,
     package: InterventionPackage,
-    expected_failure_codes: z.array(InterventionPackageReviewFailureCode).min(1),
+    expected_verdict: z.enum(['pass', 'fail']),
+    expected_failure_codes: z.array(InterventionPackageReviewFailureCode),
   })
-  .strict();
+  .strict()
+  .superRefine((fixture, context) => {
+    if (
+      (fixture.expected_verdict === 'pass' && fixture.expected_failure_codes.length > 0) ||
+      (fixture.expected_verdict === 'fail' && fixture.expected_failure_codes.length === 0)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'pass fixtures require zero failure codes; fail fixtures require at least one',
+      });
+    }
+  });
 
 export const InterventionReviewRegressionPacket = z
   .object({
@@ -39,47 +44,6 @@ export const InterventionReviewRegressionPacket = z
 export type InterventionReviewRegressionPacketT = z.infer<
   typeof InterventionReviewRegressionPacket
 >;
-
-const reviewOutputSchema = tasks.InterventionPackageReviewTask.structuredOutputSchema;
-if (!reviewOutputSchema) throw new Error('InterventionPackageReviewTask has no output schema');
-const REVIEW_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(reviewOutputSchema);
-
-function parseReviewResult(result: TaskTextResult): {
-  review: InterventionPackageReviewModelOutputT;
-  raw_output_sha256: string;
-  parse_error: string | null;
-} {
-  const rawOutput =
-    result.structured_output === undefined || result.structured_output === null
-      ? result.text
-      : JSON.stringify(result.structured_output);
-  try {
-    const value =
-      result.structured_output ??
-      parseJsonObjectLoose(result.text, 'intervention review actual-output eval', {
-        riskyRepair: 'reject',
-        containerClosure: 'schema_validated',
-        latexEscapes: 'markdown_math',
-      })?.json;
-    return {
-      review: enforceInterventionPackageReviewDecision(
-        InterventionPackageReviewModelOutputV2.parse(value),
-      ),
-      raw_output_sha256: createHash('sha256').update(rawOutput).digest('hex'),
-      parse_error: null,
-    };
-  } catch (error) {
-    return {
-      review: InterventionPackageReviewModelOutput.parse({
-        verdict: 'fail',
-        failure_codes: ['review_output_invalid'],
-        summary_md: 'Review output failed structured-output validation.',
-      }),
-      raw_output_sha256: createHash('sha256').update(rawOutput).digest('hex'),
-      parse_error: (error instanceof Error ? error.message : String(error)).slice(0, 4000),
-    };
-  }
-}
 
 export async function runInterventionReviewActualOutputEval(input: {
   db: Db;
@@ -100,72 +64,88 @@ export async function runInterventionReviewActualOutputEval(input: {
   const results: Array<Record<string, unknown>> = [];
   for (const fixture of packet.cases) {
     const packageDigest = sha256CanonicalJson(fixture.package);
-    const taskResult = await input.runTaskFn(
-      'InterventionPackageReviewTask',
-      {
-        snapshot: fixture.context.snapshot,
-        recommendation: fixture.context.recommendation,
-        package: fixture.package,
-      },
-      {
-        subjectProfile: resolveSubjectProfile(fixture.subject_id),
-        outputFormat: REVIEW_OUTPUT_FORMAT,
-      },
-    );
-    if (!taskResult.task_run_id) {
-      throw new Error(`review regression ${fixture.case_id} returned no task_run_id`);
-    }
-    const parsedReview = parseReviewResult(taskResult);
-    const review = parsedReview.review;
-    const [run] = await input.db
-      .select({
-        task_kind: ai_task_runs.task_kind,
-        provider: ai_task_runs.provider,
-        model: ai_task_runs.model,
-        status: ai_task_runs.status,
-        usage: ai_task_runs.usage_json,
-        cost_usd: ai_task_runs.cost_usd,
-      })
-      .from(ai_task_runs)
-      .where(eq(ai_task_runs.id, taskResult.task_run_id))
-      .limit(1);
-    if (!run) {
+    const validation = await reviewInterventionPackageCandidate({
+      db: input.db,
+      runTaskFn: input.runTaskFn,
+      context: fixture.context,
+      packageValue: fixture.package,
+      subjectProfile: resolveSubjectProfile(fixture.subject_id),
+    });
+    if (validation.status === 'invalid') {
       throw new Error(
-        `review regression ${fixture.case_id} task_run_id ${taskResult.task_run_id} was not persisted`,
+        `review regression ${fixture.case_id} failed before a durable FULL audit: ${validation.failureCode}`,
       );
     }
-    const costs = await input.db
-      .select({
-        provider: cost_ledger.provider,
-        model: cost_ledger.model,
-        cost: cost_ledger.cost,
-        currency: cost_ledger.currency,
-        tokens_in: cost_ledger.tokens_in,
-        tokens_out: cost_ledger.tokens_out,
-        outcome: cost_ledger.outcome,
-      })
-      .from(cost_ledger)
-      .where(eq(cost_ledger.task_run_id, taskResult.task_run_id));
-    if (run.status !== 'success' || costs.length === 0) {
-      throw new Error(
-        `review regression ${fixture.case_id} is missing successful provider/model/cost provenance`,
-      );
+    const audit = validation.review;
+    if (!('independent_solution_audit' in audit)) {
+      throw new Error(`review regression ${fixture.case_id} returned a legacy audit`);
+    }
+    const review = audit.result;
+    const taskRunIds = [
+      ...audit.independent_solution_audit.diagnostics.map(
+        (diagnostic) => diagnostic.solver_task_run_id,
+      ),
+      audit.review_task_run_id,
+    ];
+    const runs: Array<Record<string, unknown>> = [];
+    const costs: Array<Record<string, unknown>> = [];
+    for (const taskRunId of taskRunIds) {
+      const [run] = await input.db
+        .select({
+          task_kind: ai_task_runs.task_kind,
+          provider: ai_task_runs.provider,
+          model: ai_task_runs.model,
+          status: ai_task_runs.status,
+          usage: ai_task_runs.usage_json,
+          cost_usd: ai_task_runs.cost_usd,
+        })
+        .from(ai_task_runs)
+        .where(eq(ai_task_runs.id, taskRunId))
+        .limit(1);
+      if (!run) {
+        throw new Error(
+          `review regression ${fixture.case_id} task_run_id ${taskRunId} was not persisted`,
+        );
+      }
+      const runCosts = await input.db
+        .select({
+          provider: cost_ledger.provider,
+          model: cost_ledger.model,
+          cost: cost_ledger.cost,
+          currency: cost_ledger.currency,
+          tokens_in: cost_ledger.tokens_in,
+          tokens_out: cost_ledger.tokens_out,
+          outcome: cost_ledger.outcome,
+        })
+        .from(cost_ledger)
+        .where(eq(cost_ledger.task_run_id, taskRunId));
+      if (run.status !== 'success' || runCosts.length === 0) {
+        throw new Error(
+          `review regression ${fixture.case_id} task_run_id ${taskRunId} lacks successful cost provenance`,
+        );
+      }
+      runs.push({ task_run_id: taskRunId, ...run });
+      costs.push(...runCosts.map((cost) => ({ task_run_id: taskRunId, ...cost })));
     }
     const actualFailureCodes = new Set(review.failure_codes);
     const expectationMet =
-      review.verdict === 'fail' &&
+      review.verdict === fixture.expected_verdict &&
       fixture.expected_failure_codes.every((code) => actualFailureCodes.has(code));
     results.push({
       case_id: fixture.case_id,
       subject_id: fixture.subject_id,
       package_digest_sha256: packageDigest,
+      expected_verdict: fixture.expected_verdict,
       expected_failure_codes: fixture.expected_failure_codes,
       expectation_met: expectationMet,
-      review_task_run_id: taskResult.task_run_id,
-      raw_output_sha256: parsedReview.raw_output_sha256,
-      review_parse_error: parsedReview.parse_error,
+      independent_solution_task_run_ids: audit.independent_solution_audit.diagnostics.map(
+        (diagnostic) => diagnostic.solver_task_run_id,
+      ),
+      review_task_run_id: audit.review_task_run_id,
+      full_validation_audit_sha256: sha256CanonicalJson(audit),
+      full_validation_audit: audit,
       review,
-      run,
+      runs,
       costs,
     });
   }

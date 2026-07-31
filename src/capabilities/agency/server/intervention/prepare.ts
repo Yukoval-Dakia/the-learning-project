@@ -190,6 +190,29 @@ function bindAttemptToRecord(
   if (attempt.review.package_digest_sha256 !== sha256CanonicalJson(attempt.package)) {
     failures.push('agency:review_package_digest_mismatch');
   }
+  if (!('independent_solution_audit' in attempt.review)) {
+    failures.push('agency:independent_solution_audit_missing');
+  } else {
+    const independentAudit = attempt.review.independent_solution_audit;
+    if (independentAudit.package_digest_sha256 !== sha256CanonicalJson(attempt.package)) {
+      failures.push('agency:independent_solution_package_digest_mismatch');
+    }
+    for (const diagnostic of independentAudit.diagnostics) {
+      const packageDiagnostic = attempt.package.diagnostics[diagnostic.kind];
+      if (
+        diagnostic.task_input.prompt_md !== packageDiagnostic.probe_spec.prompt_md ||
+        diagnostic.task_input.kind !== packageDiagnostic.probe_spec.response_mode
+      ) {
+        failures.push(`agency:${diagnostic.kind}:independent_solution_input_mismatch`);
+      }
+      if (diagnostic.question_input_sha256 !== sha256CanonicalJson(diagnostic.task_input)) {
+        failures.push(`agency:${diagnostic.kind}:independent_solution_input_digest_mismatch`);
+      }
+      if (diagnostic.solver_output_sha256 !== sha256CanonicalJson(diagnostic.solver_output)) {
+        failures.push(`agency:${diagnostic.kind}:independent_solution_output_digest_mismatch`);
+      }
+    }
+  }
   return InterventionPreparationAttempt.parse({
     ...attempt,
     deterministic_failure_codes: [...new Set(failures)].sort(),
@@ -200,8 +223,13 @@ function passingAttempt(
   attempts: InterventionPreparationAttemptT[],
 ): Extract<InterventionPreparationAttemptT, { kind: 'reviewed_package' }> | null {
   for (const attempt of attempts) {
+    const packageDigest =
+      attempt.kind === 'reviewed_package' ? sha256CanonicalJson(attempt.package) : null;
     if (
       attempt.kind === 'reviewed_package' &&
+      'independent_solution_audit' in attempt.review &&
+      attempt.review.package_digest_sha256 === packageDigest &&
+      attempt.review.independent_solution_audit.package_digest_sha256 === packageDigest &&
       attempt.review.result.verdict === 'pass' &&
       attempt.deterministic_failure_codes.length === 0
     ) {

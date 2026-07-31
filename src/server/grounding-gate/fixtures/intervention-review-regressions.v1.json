@@ -179,7 +179,8 @@
         "method_definition_version": "pedagogy_method_library_v1",
         "author_task_run_id": "yuk829-author-run-1"
       },
-      "expected_failure_codes": ["reference_incorrect", "claim_scope_expansion"]
+      "expected_failure_codes": ["reference_incorrect", "claim_scope_expansion"],
+      "expected_verdict": "fail"
     },
     {
       "case_id": "yuwen-fabricated-counterexamples",
@@ -366,7 +367,8 @@
         "method_definition_version": "pedagogy_method_library_v1",
         "author_task_run_id": "yuk829-author-run-2"
       },
-      "expected_failure_codes": ["reference_incorrect"]
+      "expected_failure_codes": ["reference_incorrect"],
+      "expected_verdict": "fail"
     },
     {
       "case_id": "causal-baseline-selection-not-reverse-causation",
@@ -547,7 +549,384 @@
         "method_definition_version": "pedagogy_method_library_v1",
         "author_task_run_id": "yuk829-author-run-3"
       },
-      "expected_failure_codes": ["reference_incorrect"]
+      "expected_failure_codes": ["reference_incorrect"],
+      "expected_verdict": "fail"
+    },
+    {
+      "case_id": "math-valid-negative-distribution-transfer",
+      "subject_id": "math",
+      "context": {
+        "snapshot": {
+          "schema_version": 1,
+          "intervention_id": "yuk829-fixture-4",
+          "intervention_version": 1,
+          "conjecture": {
+            "conjecture_id": "yuk829-conjecture-4",
+            "claim_md": "当你把一个负数乘进含减号的括号时，你只把负号作用到第一项，却把第二项（被减的那一项）的减号原样照抄，没有意识到「负数×被减项」等于负数乘一个负项、应当变成加号。你把括号内的减号当成了结果里固定不动的符号，而不是需要参与乘法运算的因子。",
+            "knowledge_id": "synthetic:yuk-829:math:valid-negative-distribution",
+            "knowledge_name": "authored:math:valid-negative-distribution",
+            "cause_category": "sign_error",
+            "target_error_rule_md": "展开形如 -k(x - c)（k、c 为正）时，第一项 -k·x 处理正确，但把第二项写成 -kc（照抄括号里的减号），漏掉了负负得正，正确应为 +kc。错误只体现在负因子乘被减常数项这一步的符号上。",
+            "diagnostic_spec": {
+              "schema_version": 1,
+              "target_error_rule_md": "展开形如 -k(x - c)（k、c 为正）时，第一项 -k·x 处理正确，但把第二项写成 -kc（照抄括号里的减号），漏掉了负负得正，正确应为 +kc。错误只体现在负因子乘被减常数项这一步的符号上。",
+              "trigger_conditions_md": "括号外是负系数，且括号内是「减去一项」的结构（x - c 形式），需要把负因子分配到被减的那一项。两道 probe 都必须同时具备：负的括号外因子 + 括号内含减号的项。",
+              "scope_boundary_md": "不覆盖括号外为正因子的分配（如 2(x-3)）、括号内全为加号的情形（-k(x+c)），也不覆盖分数、多项式相乘或合并同类项等其他运算；仅针对负因子乘含减号括号时被减项的符号处理。",
+              "expected_wrong_answer_signature_md": "答案第一项符号正确（如 -2x、-6y、-4a），但常数项保留负号（-2x-6、-6y-15、-4a-8），即把本该 +kc 的项写成 -kc；自述过程会出现「减号照抄/保持不变」这类把括号内减号当固定符号的说法。"
+            },
+            "evidence_refs": [
+              {
+                "kind": "synthetic_regression",
+                "id": "yuk829-evidence-4-a"
+              },
+              {
+                "kind": "synthetic_regression",
+                "id": "yuk829-evidence-4-b"
+              }
+            ]
+          },
+          "learner_context": {
+            "theta_band": "novice",
+            "precision_band": "low",
+            "misconception_present": true,
+            "kc_is_rule_based": false
+          },
+          "prior_interventions": [],
+          "disabled_method_ids": [],
+          "source_probe_result_event_id": "yuk829-probe-result-4",
+          "created_at": "2026-07-31T00:00:00.000Z"
+        },
+        "recommendation": {
+          "kind": "recommendation",
+          "recommendation_version": 1,
+          "method_id": "refutation",
+          "method_definition_version": "pedagogy_method_library_v1",
+          "rationale_md": "Learner is novice/low-precision with a clearly identified misconception: treating the minus sign inside parentheses as a fixed symbol rather than a factor subject to multiplication. Refutation is indicated whenever misconception_present is true, has no contraindications for this learner profile, and directly targets the specific wrong model (\"减号照抄/保持不变\") by first surfacing that error explicitly, then using the correct mechanism (negative × negative = positive) to replace it. The conjecture provides a precise wrong-answer signature (-kc instead of +kc) which gives the refutation content exactly what it needs to name and dismantle the faulty rule.",
+          "safety_constraints": [
+            "Must explicitly name the incorrect model the learner is using (copying the subtraction sign as-is) before showing why it fails.",
+            "Must include at least one concrete numerical counterexample where the learner can verify that (-k)×(-c) yields a positive result (e.g., -2(x-3): verify -2×(-3)=+6, not -6).",
+            "Do not assume any prior exposure to formal 'distribution law' terminology; keep the refutation grounded in concrete arithmetic the learner can check.",
+            "Limit scope to negative factor × subtraction-in-parentheses; do not extend to fractions, multi-term polynomials, or other distribution variants.",
+            "Include an explicit 'wrong vs. right' side-by-side comparison at least once to make the sign difference visually salient."
+          ],
+          "candidate_ids": [
+            "worked_example",
+            "completion_problem",
+            "contrasting_cases",
+            "refutation"
+          ],
+          "excluded": [
+            {
+              "method_id": "open_problem",
+              "reason": "contraindicated"
+            },
+            {
+              "method_id": "interleaving",
+              "reason": "contraindicated"
+            },
+            {
+              "method_id": "reconstruction",
+              "reason": "not_indicated"
+            },
+            {
+              "method_id": "socratic",
+              "reason": "not_indicated"
+            }
+          ],
+          "model_run_id": "yuk829-recommendation-run-4"
+        }
+      },
+      "package": {
+        "schema_version": 1,
+        "material": {
+          "title_md": "负数分配进含减号的括号——「减号照抄」为什么错了",
+          "body_md": "## 你可能犯的错误\n\n拿到 **-2(x - 3)**，你可能会这样展开：\n\n- 第一项：-2 × x = **-2x** ✔（正确）\n- 第二项：括号里有个「减 3」，所以写 **-6** ✘（错误！）\n\n结果写成 **-2x - 6**。\n\n这样做的人把括号里的 **减号当成了一个固定不动的符号**，觉得「分配」就是把 -2 乘到数字上，减号原封不动抄下来。\n\n---\n\n## 正确的做法\n\n关键要问自己：**-2 乘的对象到底是什么？**\n\n括号里写的是 **x - 3**，意思就是 **x + (-3)**。\n\n所以分配时，-2 乘的不是「+3」，而是 **-3**（负三）。\n\n回忆一条基本事实：\n\n> **负数 × 负数 = 正数**\n\n所以：\n\n$$(-2) \\times (-3) = +6$$\n\n---\n\n## 对比一下\n\n| | 第一项（-2 × x） | 第二项（-2 × (-3)） | 结果 |\n|---|---|---|---|\n| ✘ 错误做法 | -2x | -6（照抄减号） | -2x - 6 |\n| ✔ 正确做法 | -2x | +6（负负得正） | -2x + 6 |\n\n常数项的符号，从 **-6** 变成了 **+6**——唯一的区别就在这里。\n\n---\n\n## 动手验证\n\n取 x = 1 代入原式：\n\n- **原式**：-2(1 - 3) = -2 × (-2) = **+4**\n- **错误展开**：-2(1) - 6 = -2 - 6 = **-8** ✘\n- **正确展开**：-2(1) + 6 = -2 + 6 = **+4** ✔\n\n数值对得上的是正确展开，差了 12——正是常数项符号翻转造成的（-6 vs +6，差 12）。\n\n---\n\n## 记住这条规则\n\n分配负数时，括号里每一项都要带符号一起参与运算。\n\n减号不是「固定格式」，它是该项符号的一部分，需要和外面的负数相乘。\n\n**负 × 负 = 正**，所以结果里的常数项应该是 **+** 号。"
+        },
+        "diagnostics": {
+          "immediate": {
+            "kind": "immediate",
+            "probe_spec": {
+              "schema_version": 2,
+              "prompt_md": "展开表达式：-2(x - 3) = ？\n\n请写出展开后的结果（仅写表达式，不需要过程）。",
+              "reference_md": "-2x + 6",
+              "expected_target_error_answer_md": "-2x - 6",
+              "elicits_target_error_reason_md": "学生把括号里的减号当固定符号照抄，写成 -2×3 = -6，而不是正确地将 -2 乘以 -3 得到 +6。结果常数项保留了负号。",
+              "context_kind": "abstract",
+              "representation_kind": "symbolic",
+              "response_mode": "short_answer",
+              "gold_response_signature": {
+                "kind": "text",
+                "response_md": "-2x + 6"
+              },
+              "target_error_response_signature": {
+                "kind": "text",
+                "response_md": "-2x - 6"
+              }
+            },
+            "tested_claim_md": "当你把一个负数乘进含减号的括号时，你只把负号作用到第一项，却把第二项（被减的那一项）的减号原样照抄，没有意识到「负数×被减项」等于负数乘一个负项、应当变成加号。你把括号内的减号当成了结果里固定不动的符号，而不是需要参与乘法运算的因子。",
+            "target_error_rule_md": "展开形如 -k(x - c)（k、c 为正）时，第一项 -k·x 处理正确，但把第二项写成 -kc（照抄括号里的减号），漏掉了负负得正，正确应为 +kc。错误只体现在负因子乘被减常数项这一步的符号上。"
+          },
+          "delayed": {
+            "kind": "delayed",
+            "probe_spec": {
+              "schema_version": 2,
+              "prompt_md": "请展开表达式 -3(y - 5) 并说明：你的结果中常数项为什么是正号（或负号）？请具体说清楚你对括号里「-5」做了什么运算。",
+              "reference_md": "-3y + 15。因为 -3 乘以的对象是 -5（不是 +5），负数乘负数得正，(-3)×(-5) = +15，所以常数项是 +15。",
+              "expected_target_error_answer_md": "-3y - 15。因为括号里是减 5，减号保持不变，-3 乘以 5 得 -15，所以常数项是 -15。",
+              "elicits_target_error_reason_md": "学生自述过程会暴露「减号保持不变/照抄」的策略：把 -5 的负号视为固定格式，只用 -3 乘 5，得到 -15。正确做法应识别 -3 × (-5) = +15。",
+              "context_kind": "abstract",
+              "representation_kind": "natural_language",
+              "response_mode": "answer_with_reason",
+              "gold_response_signature": {
+                "kind": "answer_with_reason",
+                "answer_md": "-3y + 15",
+                "required_reason_features_md": [
+                  "提到 -3 乘的对象是 -5（负五），而不是 +5",
+                  "说明负数乘负数等于正数，(-3)×(-5) = +15"
+                ]
+              },
+              "target_error_response_signature": {
+                "kind": "answer_with_reason",
+                "answer_md": "-3y - 15",
+                "required_reason_features_md": [
+                  "提到括号里的减号保持不变/照抄/不变",
+                  "说明 -3 乘以 5 得到 -15"
+                ]
+              }
+            },
+            "tested_claim_md": "当你把一个负数乘进含减号的括号时，你只把负号作用到第一项，却把第二项（被减的那一项）的减号原样照抄，没有意识到「负数×被减项」等于负数乘一个负项、应当变成加号。你把括号内的减号当成了结果里固定不动的符号，而不是需要参与乘法运算的因子。",
+            "target_error_rule_md": "展开形如 -k(x - c)（k、c 为正）时，第一项 -k·x 处理正确，但把第二项写成 -kc（照抄括号里的减号），漏掉了负负得正，正确应为 +kc。错误只体现在负因子乘被减常数项这一步的符号上。"
+          },
+          "transfer": {
+            "kind": "transfer",
+            "probe_spec": {
+              "schema_version": 2,
+              "prompt_md": "某冷却过程从第 4 分钟起，温度相对初始值的变化量（℃）由 -5(t - 4) 表示，其中 t 是分钟数。请把这个变化量展开成不含括号的表达式，并说明常数项的符号及其由来。",
+              "reference_md": "-5t + 20 ℃。常数项为正，因为 -5 乘的是 -4，而 (-5)×(-4)=+20。",
+              "expected_target_error_answer_md": "-5t - 20 ℃。括号里的减号保持不变，-5×4=-20，所以常数项为负。",
+              "elicits_target_error_reason_md": "学生在给定的冷却表达式中仍把括号里的减号当固定符号照抄：只算 -5×4=-20，而没有把 -4 作为整体参与乘法并得到 +20。",
+              "context_kind": "applied",
+              "representation_kind": "natural_language",
+              "response_mode": "answer_with_reason",
+              "gold_response_signature": {
+                "kind": "answer_with_reason",
+                "answer_md": "-5t + 20 ℃",
+                "required_reason_features_md": [
+                  "指出 -5 乘的对象是 -4",
+                  "说明负数乘负数得正，(-5)×(-4)=+20"
+                ]
+              },
+              "target_error_response_signature": {
+                "kind": "answer_with_reason",
+                "answer_md": "-5t - 20 ℃",
+                "required_reason_features_md": [
+                  "提到括号里的减号保持不变或照抄",
+                  "把常数项计算为 -5×4=-20"
+                ]
+              }
+            },
+            "tested_claim_md": "当你把一个负数乘进含减号的括号时，你只把负号作用到第一项，却把第二项（被减的那一项）的减号原样照抄，没有意识到「负数×被减项」等于负数乘一个负项、应当变成加号。你把括号内的减号当成了结果里固定不动的符号，而不是需要参与乘法运算的因子。",
+            "target_error_rule_md": "展开形如 -k(x - c)（k、c 为正）时，第一项 -k·x 处理正确，但把第二项写成 -kc（照抄括号里的减号），漏掉了负负得正，正确应为 +kc。错误只体现在负因子乘被减常数项这一步的符号上。",
+            "context_change_md": "从纯代数表达式展开（-2(x-3)、-3(y-5)）更换为题目直接给定的冷却过程温度变化公式 -5(t-4)。语境、变量含义和单位均改变，但待检验步骤仍严格是负因子乘含减号括号时，被减常数项的符号处理；没有引入面积、多项式相乘或其他超出原诊断边界的运算。"
+          }
+        },
+        "intervention_id": "yuk829-fixture-4",
+        "intervention_version": 1,
+        "package_version": 1,
+        "method_id": "refutation",
+        "method_definition_version": "pedagogy_method_library_v1",
+        "author_task_run_id": "yuk829-author-run-4"
+      },
+      "expected_failure_codes": [],
+      "expected_verdict": "pass"
+    },
+    {
+      "case_id": "yuwen-valid-direction-counterexamples",
+      "subject_id": "yuwen",
+      "context": {
+        "snapshot": {
+          "schema_version": 1,
+          "intervention_id": "yuk829-fixture-5",
+          "intervention_version": 1,
+          "conjecture": {
+            "conjecture_id": "yuk829-conjecture-5",
+            "claim_md": "你在挑材料时，只衡量它和观点“关系强不强、是不是典型例子、数量多不多”，却没先分清题目要的是支持还是削弱。于是当题目要反例或质疑材料时，你仍然选那条与观点方向一致、更典型或更相关的支持材料——你把“相关度/证据强度”当成了选择依据，替换掉了本该用的“与结论方向是否相反”。",
+            "knowledge_id": "synthetic:yuk-829:yuwen:valid-direction-counterexamples",
+            "knowledge_name": "authored:yuwen:valid-direction-counterexamples",
+            "cause_category": "reading_misinterpretation",
+            "target_error_rule_md": "当题干要求选“削弱/质疑/反例”的材料时，你用“该材料与主题相关度高、人数多、是典型例子”作为选择标准，而不判断它与结论方向是相同还是相反，结果选出与观点方向一致的支持材料。",
+            "diagnostic_spec": {
+              "schema_version": 1,
+              "target_error_rule_md": "当题干要求选“削弱/质疑/反例”的材料时，你用“该材料与主题相关度高、人数多、是典型例子”作为选择标准，而不判断它与结论方向是相同还是相反，结果选出与观点方向一致的支持材料。",
+              "trigger_conditions_md": "题干明确要求选出能削弱、质疑观点或构成反例的材料，且选项里同时存在一条与观点方向一致（支持/典型例/相关度高）和一条与观点方向相反（真正的反例/削弱）的材料。",
+              "scope_boundary_md": "不覆盖题干本身就要求选“支持/加强”材料的情形；也不涉及材料真伪判断、论据是否充分、隐含前提等论证的其他环节。",
+              "expected_wrong_answer_signature_md": "选中与观点方向一致的支持性或典型例子材料，理由集中在“人数更多”“关系更直接”“是典型例子”，而对题干“削弱/反例”所要求的相反方向完全没有辨析。"
+            },
+            "evidence_refs": [
+              {
+                "kind": "synthetic_regression",
+                "id": "yuk829-evidence-5-a"
+              },
+              {
+                "kind": "synthetic_regression",
+                "id": "yuk829-evidence-5-b"
+              }
+            ]
+          },
+          "learner_context": {
+            "theta_band": "novice",
+            "precision_band": "low",
+            "misconception_present": true,
+            "kc_is_rule_based": false
+          },
+          "prior_interventions": [],
+          "disabled_method_ids": [],
+          "source_probe_result_event_id": "yuk829-probe-result-5",
+          "created_at": "2026-07-31T00:00:00.000Z"
+        },
+        "recommendation": {
+          "kind": "recommendation",
+          "recommendation_version": 1,
+          "method_id": "refutation",
+          "method_definition_version": "pedagogy_method_library_v1",
+          "rationale_md": "The conjecture identifies a stable misconception: the learner substitutes 'relevance/typicality/strength' for 'direction alignment' when selecting weakening/counter-example material. Refutation is indicated because misconception_present=true and directly targets the faulty mental model—first surfacing the wrong rule ('pick the most relevant/typical example'), then using a concrete counter-example to show it selects the wrong direction, and finally replacing it with the correct decision rule ('check whether the material opposes or supports the conclusion'). The learner is novice with low precision, so the explicit correct→incorrect contrast in refutation provides clearer signal than completion_problem (which would merely scaffold the existing confused heuristic) or contrasting_cases alone (which shows the boundary but doesn't name and replace the false rule). Prior interventions are empty, so no history conflicts.",
+          "safety_constraints": [
+            "Present the wrong decision rule ('pick the most relevant/typical/strong example') explicitly before refuting it—do not assume the learner already articulates it; quote the expected_wrong_answer_signature language from the evidence (e.g. '人数更多', '关系更直接', '是典型例子') as the misconception.",
+            "Use the same triggering scenario from the diagnostic spec: a question that asks for a weakening/counter-example, with one option aligned with the view (supportive/typical) and one opposing it. Show concretely how the wrong rule selects the aligned option while the correct rule selects the opposing one.",
+            "State the replacement rule in a single, testable sentence the learner can apply in future: e.g. '先判断材料与结论方向相同还是相反，再看题目要求的是同向还是反向材料；只有方向符合题目要求的材料才进入后续比较。'",
+            "Do not extend into general argument analysis (material authenticity, sufficiency, hidden premises) per the scope_boundary_md.",
+            "Keep the refutation self-contained in one worked-through example; do not require the learner to complete steps (that is completion_problem's role for a later intervention)."
+          ],
+          "candidate_ids": [
+            "worked_example",
+            "completion_problem",
+            "contrasting_cases",
+            "refutation"
+          ],
+          "excluded": [
+            {
+              "method_id": "open_problem",
+              "reason": "contraindicated"
+            },
+            {
+              "method_id": "interleaving",
+              "reason": "contraindicated"
+            },
+            {
+              "method_id": "reconstruction",
+              "reason": "not_indicated"
+            },
+            {
+              "method_id": "socratic",
+              "reason": "not_indicated"
+            }
+          ],
+          "model_run_id": "yuk829-recommendation-run-5"
+        }
+      },
+      "package": {
+        "schema_version": 1,
+        "material": {
+          "title_md": "先看论证方向，再比较材料强弱",
+          "body_md": "## 要纠正的错误规则\n\n题目要求找**削弱材料**时，不能因为一条材料人数更多、描述更具体，就直接选它。人数和具体程度是证据强弱问题；在此之前，必须先判断材料与结论是同向还是反向。\n\n## 给定练习记录\n\n观点：**完成 30 天校园阅读打卡一定能提高论证能力。**\n\n- 记录 A：80 名完成打卡的学生，论证题平均分从 68 分升到 76 分。\n- 记录 B：12 名完成打卡的学生，前后测分数均为 71 分；盲评还显示他们原有的“证据无法推出结论”问题没有减少。\n\n错误选法是选 A：它人数多、数据变化明显、与阅读打卡直接相关。但 A 与观点同向，只能支持观点。\n\n正确选法是 B：观点用了“一定”，B 却给出完成打卡而没有提高的一组记录，方向与观点相反，因而能构成反例。这里不需要把记录外的原因补进来，也不需要判断两项记录能否证明普遍因果，只需完成题目指定的方向判断。\n\n## 可复用规则\n\n> 先判断材料与结论方向相同还是相反，再看题目要求同向还是反向；只有方向符合要求的材料，才进入人数、具体程度等后续比较。"
+        },
+        "diagnostics": {
+          "immediate": {
+            "kind": "immediate",
+            "probe_spec": {
+              "schema_version": 2,
+              "prompt_md": "以下均为题目给定的匿名训练记录，只按记录内容判断，不补充记录外信息。\n\n观点：参加校园辩论训练一定能提高资料核验能力。\n\n材料 A：90 名完成训练的学生中，78 人在结课测验里能指出新闻材料的来源；这项记录人数最多。\n\n材料 B：10 名完成训练的学生，在训练前后都把同一则无来源消息当成可靠证据，核验表现没有提高。\n\n哪条材料最能质疑该观点？请写材料 A 或材料 B，并说明方向关系。",
+              "reference_md": "材料 B。观点声称参加训练一定提高核验能力，材料 B 给出参加训练却没有提高的一组记录，方向相反，能构成反例。材料 A 与观点方向一致，人数多也只能支持而不能质疑。",
+              "expected_target_error_answer_md": "材料 A。它有 90 人，人数最多，而且直接记录了核验表现，所以最能质疑该观点。",
+              "elicits_target_error_reason_md": "学生用人数多、记录直接作为选择标准，忽略材料 A 与观点同向、实际是在支持观点；真正与观点反向的是材料 B。",
+              "context_kind": "abstract",
+              "representation_kind": "natural_language",
+              "response_mode": "answer_with_reason",
+              "gold_response_signature": {
+                "kind": "answer_with_reason",
+                "answer_md": "材料 B",
+                "required_reason_features_md": [
+                  "指出材料 B 中完成训练但核验表现没有提高",
+                  "说明材料 B 与一定提高的观点方向相反并构成反例"
+                ]
+              },
+              "target_error_response_signature": {
+                "kind": "answer_with_reason",
+                "answer_md": "材料 A",
+                "required_reason_features_md": [
+                  "以人数最多或记录直接作为选择依据",
+                  "未判断材料 A 与观点方向一致"
+                ]
+              }
+            },
+            "tested_claim_md": "你在挑材料时，只衡量它和观点“关系强不强、是不是典型例子、数量多不多”，却没先分清题目要的是支持还是削弱。于是当题目要反例或质疑材料时，你仍然选那条与观点方向一致、更典型或更相关的支持材料——你把“相关度/证据强度”当成了选择依据，替换掉了本该用的“与结论方向是否相反”。",
+            "target_error_rule_md": "当题干要求选“削弱/质疑/反例”的材料时，你用“该材料与主题相关度高、人数多、是典型例子”作为选择标准，而不判断它与结论方向是相同还是相反，结果选出与观点方向一致的支持材料。"
+          },
+          "delayed": {
+            "kind": "delayed",
+            "probe_spec": {
+              "schema_version": 2,
+              "prompt_md": "以下均为题目给定的匿名学习记录，只按记录内容判断，不补充记录外信息。\n\n观点：把每周课外阅读时间从 2 小时增加到 5 小时，总能提高信息整合能力。\n\n记录 1：60 名增加阅读时间的学生，整合题平均分从 70 分升到 78 分。\n\n记录 2：15 名增加阅读时间的学生，整合题平均分前后都为 71 分，且仍会遗漏互相冲突的材料。\n\n哪条记录最能削弱该观点？请写记录 1 或记录 2，并说明理由。",
+              "reference_md": "记录 2。观点声称增加阅读时间总能提高信息整合能力，记录 2 显示增加时间后分数和错误表现都没有改善，方向相反，构成反例。记录 1与观点同向，只能支持。",
+              "expected_target_error_answer_md": "记录 1。它有 60 人，样本更大，而且分数提高得很清楚，所以最能削弱该观点。",
+              "elicits_target_error_reason_md": "学生以样本更大、变化明显为依据误选同向的记录 1，没有先检查题目要求的是削弱；与观点反向、能构成反例的是记录 2。",
+              "context_kind": "abstract",
+              "representation_kind": "natural_language",
+              "response_mode": "answer_with_reason",
+              "gold_response_signature": {
+                "kind": "answer_with_reason",
+                "answer_md": "记录 2",
+                "required_reason_features_md": [
+                  "指出增加阅读时间后分数或整合错误没有改善",
+                  "说明记录 2 与总能提高的观点方向相反并构成反例"
+                ]
+              },
+              "target_error_response_signature": {
+                "kind": "answer_with_reason",
+                "answer_md": "记录 1",
+                "required_reason_features_md": [
+                  "以人数更多或分数变化明显作为选择依据",
+                  "未判断记录 1 与观点方向一致"
+                ]
+              }
+            },
+            "tested_claim_md": "你在挑材料时，只衡量它和观点“关系强不强、是不是典型例子、数量多不多”，却没先分清题目要的是支持还是削弱。于是当题目要反例或质疑材料时，你仍然选那条与观点方向一致、更典型或更相关的支持材料——你把“相关度/证据强度”当成了选择依据，替换掉了本该用的“与结论方向是否相反”。",
+            "target_error_rule_md": "当题干要求选“削弱/质疑/反例”的材料时，你用“该材料与主题相关度高、人数多、是典型例子”作为选择标准，而不判断它与结论方向是相同还是相反，结果选出与观点方向一致的支持材料。"
+          },
+          "transfer": {
+            "kind": "transfer",
+            "probe_spec": {
+              "schema_version": 2,
+              "prompt_md": "有人在社交媒体上发帖称：\"刷短视频必然让人变得浅薄。\"\n\n小吴的例子：他每天刷两小时短视频，习惯了快速切换内容，现在读长文章超过五分钟就走神，阅读能力明显下降。\n\n小郑的例子：她经常在短视频平台上观看历史讲解类视频，看完后觉得不够过瘾，主动查阅相关史料和论文，把某一历史事件研究得相当深入。\n\n请回答：哪个例子最能削弱\"刷短视频必然让人变得浅薄\"这一观点？请写小吴或小郑。",
+              "reference_md": "小郑。小郑因短视频激发兴趣而主动深入研究，说明刷短视频不一定导致浅薄（方向与\"必然浅薄\"相反）。小吴的例子表明刷短视频确实导致注意力下降和浅层阅读（方向与观点一致），不能削弱。",
+              "expected_target_error_answer_md": "小吴。小吴每天刷两小时、走神、阅读下降，直接展现了短视频让人变浅薄的典型过程，例子最具体、最能说明问题，所以选小吴。",
+              "elicits_target_error_reason_md": "以\"最具体\"\"直接展现过程\"\"最能说明问题\"作为选择标准，没有发现小吴的例子方向与观点一致（支持），而小郑的例子方向与观点相反（反例），因此误选了支持性材料。",
+              "context_kind": "applied",
+              "representation_kind": "natural_language",
+              "response_mode": "short_answer",
+              "gold_response_signature": {
+                "kind": "text",
+                "response_md": "小郑"
+              },
+              "target_error_response_signature": {
+                "kind": "text",
+                "response_md": "小吴"
+              }
+            },
+            "tested_claim_md": "你在挑材料时，只衡量它和观点“关系强不强、是不是典型例子、数量多不多”，却没先分清题目要的是支持还是削弱。于是当题目要反例或质疑材料时，你仍然选那条与观点方向一致、更典型或更相关的支持材料——你把“相关度/证据强度”当成了选择依据，替换掉了本该用的“与结论方向是否相反”。",
+            "target_error_rule_md": "当题干要求选“削弱/质疑/反例”的材料时，你用“该材料与主题相关度高、人数多、是典型例子”作为选择标准，而不判断它与结论方向是相同还是相反，结果选出与观点方向一致的支持材料。",
+            "context_change_md": "从校内训练与课外阅读记录中的材料方向判断，转移到社交媒体短视频是否必然使人浅薄的日常情境。话题、参与者和证据形式均改变，但仍只测试：面对含绝对量词的观点，能否先找方向相反的反例，而不是误选更具体、更典型的同向支持材料。"
+          }
+        },
+        "intervention_id": "yuk829-fixture-5",
+        "intervention_version": 1,
+        "package_version": 1,
+        "method_id": "refutation",
+        "method_definition_version": "pedagogy_method_library_v1",
+        "author_task_run_id": "yuk829-author-run-5"
+      },
+      "expected_failure_codes": [],
+      "expected_verdict": "pass"
     }
   ]
 }

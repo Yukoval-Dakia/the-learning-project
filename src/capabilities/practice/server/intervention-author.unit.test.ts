@@ -1,12 +1,35 @@
 import {
+  InterventionIndependentSolutionAudit,
   type InterventionPackageReviewDiagnosticCheckT,
   InterventionPackageReviewModelOutput,
 } from '@/core/schema/intervention';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import interventionRegressionFixture from '@/server/grounding-gate/fixtures/intervention-review-regressions.v1.json' with {
+  type: 'json',
+};
 import { describe, expect, it } from 'vitest';
 import {
+  bindInterventionPackageReviewDecision,
   enforceInterventionPackageReviewDecision,
   normalizeInterventionPackageModelOutput,
 } from './intervention-author';
+
+function passingPackageChecks() {
+  return {
+    material_grounded: true,
+    method_followed: true,
+    tested_claims_match: true,
+    target_errors_match: true,
+    answers_unique: true,
+    answers_gradable: true,
+    no_answer_leak: true,
+    diagnostics_same_construct: true,
+    transfer_context_changed: true,
+    target_error_identifiable: true,
+    serious_factual_error_absent: true,
+    safe_material: true,
+  };
+}
 
 const CLAIM = '学习者把外层导数和内层导数相加。';
 const TARGET_ERROR = '把外层导数与内层导数相加，而不是相乘。';
@@ -128,6 +151,115 @@ describe('normalizeInterventionPackageModelOutput', () => {
         targetErrorRuleMd: TARGET_ERROR,
       }),
     ).toThrow();
+  });
+});
+
+describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () => {
+  function audit() {
+    const fixture = interventionRegressionFixture.cases[0];
+    if (!fixture) throw new Error('missing complex area regression fixture');
+    return InterventionIndependentSolutionAudit.parse({
+      validation_protocol_version: 1,
+      package_digest_sha256: sha256CanonicalJson(fixture.package),
+      diagnostics: (['immediate', 'delayed', 'transfer'] as const).map((kind, index) => {
+        const diagnostic = fixture.package.diagnostics[kind];
+        const taskInput = {
+          prompt_md: diagnostic.probe_spec.prompt_md,
+          kind: diagnostic.probe_spec.response_mode,
+          subject_id: fixture.subject_id,
+          choices_md: [],
+          existing_answers_hint: null,
+          existing_analysis_hint: null,
+          figures_hint: null,
+          prompt_image_refs: [],
+        };
+        const solverOutput = {
+          reference_solution: {
+            expected_signals:
+              kind === 'transfer'
+                ? ['先由面积=长×宽建立 -5(w-4)²', '再展开二次式并检查平方米量纲']
+                : ['把负因子分配到括号内每一项', '负数乘负数得到正数'],
+            final_answer:
+              kind === 'transfer' ? '-5(w-4)² = -5w²+40w-80 平方米' : `independent-${kind}`,
+            answer_equivalents: [],
+          },
+          worked_solution_md:
+            kind === 'transfer'
+              ? '长度是 -5(w-4)，宽是 (w-4)，面积必须把两者相乘。'
+              : '逐项分配负因子并检查符号。',
+          confidence: 0.97,
+        };
+        return {
+          kind,
+          task_input: taskInput,
+          question_input_sha256: sha256CanonicalJson(taskInput),
+          solver_output: solverOutput,
+          solver_output_sha256: sha256CanonicalJson(solverOutput),
+          solver_task_run_id: `blind-${index + 1}`,
+          independently_derived_answer_md: solverOutput.reference_solution.final_answer,
+          required_operations_md: solverOutput.reference_solution.expected_signals.join('；'),
+        };
+      }),
+    });
+  }
+
+  function comparatorOutput(independentAudit = audit()) {
+    return {
+      review_protocol_version: 2 as const,
+      verdict: 'pass' as const,
+      failure_codes: [],
+      diagnostic_checks: independentAudit.diagnostics.map((diagnostic) => ({
+        kind: diagnostic.kind,
+        independent_solution_sha256: diagnostic.solver_output_sha256,
+        reference_correct: true,
+        within_frozen_scope: true,
+        discipline_grounded: true,
+        decision_basis_md: '密封盲解与 reference、冻结范围和学科事实一致。',
+        causal_direction_check: {
+          applies: false,
+          exposure_x_md: '',
+          observed_outcome_y_md: '',
+          reference_claims_reverse_causation: false,
+          reference_claimed_reverse_cause_md: '',
+          claimed_cause_is_observed_y_causing_x: false,
+        },
+      })),
+      package_checks: passingPackageChecks(),
+      summary_md: '密封盲解和包级检查全部通过。',
+    };
+  }
+
+  it('server-binds the persisted answer/operations and rejects a wrong sealed digest', () => {
+    const independentAudit = audit();
+    const bound = bindInterventionPackageReviewDecision(
+      comparatorOutput(independentAudit),
+      independentAudit,
+    );
+    expect(bound.verdict).toBe('pass');
+    expect(bound.diagnostic_checks[2]).toMatchObject({
+      kind: 'transfer',
+      independent_solution_sha256: independentAudit.diagnostics[2]?.solver_output_sha256,
+      independently_derived_answer_md: '-5(w-4)² = -5w²+40w-80 平方米',
+      required_operations_md: expect.stringContaining('面积=长×宽'),
+    });
+
+    const mismatched = comparatorOutput(independentAudit);
+    if (!mismatched.diagnostic_checks[2]) throw new Error('missing transfer check');
+    mismatched.diagnostic_checks[2].independent_solution_sha256 = 'f'.repeat(64);
+    expect(() => bindInterventionPackageReviewDecision(mismatched, independentAudit)).toThrow(
+      'wrong sealed solution',
+    );
+  });
+
+  it('maps a contradictory package-level bare pass to a bounded fail code', () => {
+    const independentAudit = audit();
+    const output = comparatorOutput(independentAudit);
+    output.package_checks.material_grounded = false;
+    const bound = bindInterventionPackageReviewDecision(output, independentAudit);
+    expect(bound).toMatchObject({
+      verdict: 'fail',
+      failure_codes: ['material_not_grounded'],
+    });
   });
 });
 

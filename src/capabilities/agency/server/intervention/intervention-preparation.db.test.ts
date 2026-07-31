@@ -434,6 +434,49 @@ function reviewDiagnosticChecks(
   }));
 }
 
+function reviewPackageChecks(overrides: Partial<ReturnType<typeof reviewPackageChecksBase>> = {}) {
+  return { ...reviewPackageChecksBase(), ...overrides };
+}
+
+function reviewPackageChecksBase() {
+  return {
+    material_grounded: true,
+    method_followed: true,
+    tested_claims_match: true,
+    target_errors_match: true,
+    answers_unique: true,
+    answers_gradable: true,
+    no_answer_leak: true,
+    diagnostics_same_construct: true,
+    transfer_context_changed: true,
+    target_error_identifiable: true,
+    serious_factual_error_absent: true,
+    safe_material: true,
+  };
+}
+
+function comparatorDiagnosticChecks(input: unknown, checks = reviewDiagnosticChecks()) {
+  const sealed = (
+    input as {
+      sealed_independent_solutions?: Array<{ kind: string; solver_output_sha256: string }>;
+    }
+  ).sealed_independent_solutions;
+  if (!sealed || sealed.length !== 3) throw new Error('missing sealed independent solutions');
+  const digestByKind = new Map(
+    sealed.map((solution) => [solution.kind, solution.solver_output_sha256]),
+  );
+  return checks.map(
+    ({
+      independently_derived_answer_md: _answer,
+      required_operations_md: _operations,
+      ...check
+    }) => ({
+      ...check,
+      independent_solution_sha256: digestByKind.get(check.kind),
+    }),
+  );
+}
+
 function successfulRunTask(
   packageOutput: (attempt: number) => ReturnType<typeof authorOutput> = authorOutput,
 ): {
@@ -443,7 +486,7 @@ function successfulRunTask(
 } {
   const calls: string[] = [];
   const contexts: Array<{ kind: string; ctx: Parameters<TaskTextRunFn>[2] }> = [];
-  const fn: TaskTextRunFn = async (kind, _input, ctx) => {
+  const fn: TaskTextRunFn = async (kind, input, ctx) => {
     calls.push(kind);
     contexts.push({ kind, ctx });
     if (kind === 'InterventionRecommendationTask') {
@@ -466,6 +509,22 @@ function successfulRunTask(
         structured_output: packageOutput(attempt),
       };
     }
+    if (kind === 'SolutionGenerateTask') {
+      const ordinal = calls.filter((value) => value === kind).length;
+      return {
+        text: '',
+        task_run_id: `independent_solution_run_${ordinal}`,
+        structured_output: {
+          reference_solution: {
+            expected_signals: ['识别题目实际要求的量或结论', '只按题面条件完成学科推导并核对结果'],
+            final_answer: `independent solution ${ordinal}`,
+            answer_equivalents: [],
+          },
+          worked_solution_md: '独立求解题面，不读取作者 reference 或干预材料。',
+          confidence: 0.92,
+        },
+      };
+    }
     if (kind === 'InterventionPackageReviewTask') {
       const attempt = calls.filter((value) => value === kind).length;
       return {
@@ -475,7 +534,8 @@ function successfulRunTask(
           review_protocol_version: 2,
           verdict: 'pass',
           failure_codes: [],
-          diagnostic_checks: reviewDiagnosticChecks(),
+          diagnostic_checks: comparatorDiagnosticChecks(input),
+          package_checks: reviewPackageChecks(),
           summary_md: '材料、三题和目标错误均对齐，答案可判定且迁移情境已更换。',
         },
       };
@@ -537,6 +597,9 @@ describe('YUK-791 intervention preparation closed loop', () => {
     expect(calls).toEqual([
       'InterventionRecommendationTask',
       'InterventionPackageAuthorTask',
+      'SolutionGenerateTask',
+      'SolutionGenerateTask',
+      'SolutionGenerateTask',
       'InterventionPackageReviewTask',
     ]);
     expect(
@@ -547,6 +610,9 @@ describe('YUK-791 intervention preparation closed loop', () => {
     ).toEqual([
       { kind: 'InterventionRecommendationTask', outputFormatType: 'json_schema' },
       { kind: 'InterventionPackageAuthorTask', outputFormatType: 'json_schema' },
+      { kind: 'SolutionGenerateTask', outputFormatType: undefined },
+      { kind: 'SolutionGenerateTask', outputFormatType: undefined },
+      { kind: 'SolutionGenerateTask', outputFormatType: undefined },
       { kind: 'InterventionPackageReviewTask', outputFormatType: 'json_schema' },
     ]);
 
@@ -579,6 +645,18 @@ describe('YUK-791 intervention preparation closed loop', () => {
       },
     });
     expect(active.preparation_attempts_json).toHaveLength(1);
+    expect(active.preparation_attempts_json[0]).toMatchObject({
+      review: {
+        independent_solution_audit: {
+          validation_protocol_version: 1,
+          diagnostics: [
+            { kind: 'immediate', solver_task_run_id: 'independent_solution_run_1' },
+            { kind: 'delayed', solver_task_run_id: 'independent_solution_run_2' },
+            { kind: 'transfer', solver_task_run_id: 'independent_solution_run_3' },
+          ],
+        },
+      },
+    });
     const diagnosticQuestions = await db
       .select({
         id: question.id,
@@ -1349,7 +1427,8 @@ describe('YUK-791 intervention preparation closed loop', () => {
             review_protocol_version: 2,
             verdict: 'fail',
             failure_codes: ['answer_not_unique'],
-            diagnostic_checks: reviewDiagnosticChecks(),
+            diagnostic_checks: comparatorDiagnosticChecks(input),
+            package_checks: reviewPackageChecks({ answers_unique: false }),
             summary_md: '参考答案不是唯一可接受答案。',
           },
         };
@@ -1381,6 +1460,72 @@ describe('YUK-791 intervention preparation closed loop', () => {
       .from(event)
       .where(eq(event.action, 'experimental:intervention_preparation_failed'));
     expect(failedEvents[0]?.value).toBe(1);
+  });
+
+  it('fails fast when the delayed blind solver violates its contract and never runs transfer/comparator', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('blind_fail_fast');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_blind_fail_fast',
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn: baseRun, calls } = successfulRunTask();
+    let solveInAttempt = 0;
+    const incompleteDelayedSolver: TaskTextRunFn = async (kind, input, ctx) => {
+      if (kind === 'InterventionPackageAuthorTask') solveInAttempt = 0;
+      if (kind === 'SolutionGenerateTask') {
+        solveInAttempt += 1;
+        if (solveInAttempt === 2) {
+          calls.push(kind);
+          return {
+            text: JSON.stringify({
+              reference_solution: {
+                final_answer: '只有 final answer，没有完整 validator contract',
+                answer_equivalents: [],
+              },
+            }),
+            task_run_id: `incomplete_delayed_${calls.filter((value) => value === kind).length}`,
+          };
+        }
+      }
+      return baseRun(kind, input, ctx);
+    };
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: incompleteDelayedSolver, authorPackageFn: authorInterventionPackage },
+    );
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      reason_code: 'independent_solution_unavailable:delayed',
+    });
+    expect(calls.filter((kind) => kind === 'InterventionPackageAuthorTask')).toHaveLength(2);
+    expect(calls.filter((kind) => kind === 'SolutionGenerateTask')).toHaveLength(4);
+    expect(calls).not.toContain('InterventionPackageReviewTask');
+    const [failed] = await db.select().from(intervention);
+    expect(failed).toMatchObject({ status: 'preparation_failed', package_json: null });
+    expect(failed.preparation_attempts_json).toEqual([
+      expect.objectContaining({
+        kind: 'author_failed',
+        failure_code: 'independent_solution_unavailable:delayed',
+        validator_task_run_ids: expect.arrayContaining([
+          'independent_solution_run_1',
+          'incomplete_delayed_2',
+        ]),
+      }),
+      expect.objectContaining({
+        kind: 'author_failed',
+        failure_code: 'independent_solution_unavailable:delayed',
+      }),
+    ]);
   });
 
   it('rejects the area-as-length false pass twice and keeps the full reviewer audit without fallback', async () => {
@@ -1427,7 +1572,8 @@ describe('YUK-791 intervention preparation closed loop', () => {
           // reviewer's own independent reference/scope findings.
           verdict: 'pass',
           failure_codes: [],
-          diagnostic_checks: checks,
+          diagnostic_checks: comparatorDiagnosticChecks(input, checks),
+          package_checks: reviewPackageChecks(),
           summary_md: '错误地自认证为通过。',
         },
       };
@@ -1498,6 +1644,57 @@ describe('YUK-791 intervention preparation closed loop', () => {
       .from(question)
       .where(eq(question.source, 'intervention_diagnostic'));
     expect(diagnosticCount).toBe(0);
+  });
+
+  it('rejects a self-consistent sealed hash when the blind input belongs to a different prompt', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('blind_input_swap');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_blind_input_swap',
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn } = successfulRunTask();
+    const swappedBlindInputAuthor: typeof authorInterventionPackage = async (...args) => {
+      const attempt = await authorInterventionPackage(...args);
+      if (
+        attempt.kind !== 'reviewed_package' ||
+        !('independent_solution_audit' in attempt.review)
+      ) {
+        return attempt;
+      }
+      const clone = structuredClone(attempt);
+      if (!('independent_solution_audit' in clone.review)) return clone;
+      const immediate = clone.review.independent_solution_audit.diagnostics.find(
+        (diagnostic) => diagnostic.kind === 'immediate',
+      );
+      if (!immediate) throw new Error('missing immediate blind audit');
+      immediate.task_input.prompt_md = '这是另一道题，但攻击者同时重算了 input hash。';
+      immediate.question_input_sha256 = sha256CanonicalJson(immediate.task_input);
+      return clone;
+    };
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: fn, authorPackageFn: swappedBlindInputAuthor },
+    );
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      reason_code: 'package_quality:agency:immediate:independent_solution_input_mismatch',
+    });
+    const [failed] = await db.select().from(intervention);
+    expect(failed).toMatchObject({
+      status: 'preparation_failed',
+      package_json: null,
+      settlement_json: null,
+    });
   });
 
   it('treats a review without run provenance as a retryable package attempt failure', async () => {

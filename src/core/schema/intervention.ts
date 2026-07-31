@@ -10,6 +10,7 @@ import {
   ConjectureProbeSpecV2,
   ConjectureProbeSpecV2Base,
 } from '@/core/schema/business';
+import { SolutionGenerateOutput } from '@/core/schema/solution';
 import { z } from 'zod';
 
 export const INTERVENTION_CONTRACT_VERSION = 1 as const;
@@ -520,6 +521,12 @@ const InterventionPackageReviewCausalDirectionCheck = z
 export const InterventionPackageReviewDiagnosticCheck = z
   .object({
     kind: InterventionDiagnosticKind,
+    // New comparator outputs reference the sealed solver artifact by digest.
+    // Optional only so earlier persisted V2 self-review rows remain readable.
+    independent_solution_sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     // This is a concise independently derived result, not hidden chain of thought.
     // Persisting it makes the reviewer protocol auditable instead of trusting a
     // bare self-certified pass bit.
@@ -551,9 +558,74 @@ const InterventionPackageReviewDiagnosticChecks = z
     }
   });
 
+const InterventionPackageReviewFullDiagnosticCheck =
+  InterventionPackageReviewDiagnosticCheck.extend({
+    independent_solution_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict();
+
+const InterventionPackageReviewFullDiagnosticChecks = z
+  .array(InterventionPackageReviewFullDiagnosticCheck)
+  .length(InterventionDiagnosticKind.options.length)
+  .superRefine((checks, context) => {
+    const kinds = checks.map((check) => check.kind);
+    for (const kind of InterventionDiagnosticKind.options) {
+      if (kinds.filter((value) => value === kind).length !== 1) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `diagnostic_checks must contain exactly one ${kind} check`,
+        });
+      }
+    }
+  });
+
+const InterventionPackageComparatorDiagnosticCheck = InterventionPackageReviewDiagnosticCheck.omit({
+  independently_derived_answer_md: true,
+  required_operations_md: true,
+})
+  .extend({ independent_solution_sha256: z.string().regex(/^[a-f0-9]{64}$/) })
+  .strict();
+
+const InterventionPackageComparatorDiagnosticChecks = z
+  .array(InterventionPackageComparatorDiagnosticCheck)
+  .length(InterventionDiagnosticKind.options.length)
+  .superRefine((checks, context) => {
+    const kinds = checks.map((check) => check.kind);
+    for (const kind of InterventionDiagnosticKind.options) {
+      if (kinds.filter((value) => value === kind).length !== 1) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `diagnostic_checks must contain exactly one ${kind} check`,
+        });
+      }
+    }
+  });
+
+export const InterventionPackageReviewPackageChecks = z
+  .object({
+    material_grounded: z.boolean(),
+    method_followed: z.boolean(),
+    tested_claims_match: z.boolean(),
+    target_errors_match: z.boolean(),
+    answers_unique: z.boolean(),
+    answers_gradable: z.boolean(),
+    no_answer_leak: z.boolean(),
+    diagnostics_same_construct: z.boolean(),
+    transfer_context_changed: z.boolean(),
+    target_error_identifiable: z.boolean(),
+    serious_factual_error_absent: z.boolean(),
+    safe_material: z.boolean(),
+  })
+  .strict();
+export type InterventionPackageReviewPackageChecksT = z.infer<
+  typeof InterventionPackageReviewPackageChecks
+>;
+
 const InterventionPackageReviewProtocolV2Fields = {
   review_protocol_version: z.literal(2),
   diagnostic_checks: InterventionPackageReviewDiagnosticChecks,
+  // Optional only for reading V2 rows written before the comparator split.
+  // Every new provider output and FULL activation requires this object.
+  package_checks: InterventionPackageReviewPackageChecks.optional(),
   summary_md: z.string().trim().min(1).max(480),
 } as const;
 
@@ -582,6 +654,56 @@ export type InterventionPackageReviewModelOutputV2T = z.infer<
   typeof InterventionPackageReviewModelOutputV2
 >;
 
+const InterventionPackageReviewFullProtocolFields = {
+  review_protocol_version: z.literal(2),
+  diagnostic_checks: InterventionPackageReviewFullDiagnosticChecks,
+  package_checks: InterventionPackageReviewPackageChecks,
+  summary_md: z.string().trim().min(1).max(480),
+} as const;
+
+export const InterventionPackageReviewModelOutputFull = z
+  .discriminatedUnion('verdict', [
+    z
+      .object({
+        ...InterventionPackageReviewFullProtocolFields,
+        verdict: z.literal('pass'),
+        failure_codes: z.array(InterventionPackageReviewFailureCode).length(0),
+      })
+      .strict(),
+    z
+      .object({
+        ...InterventionPackageReviewFullProtocolFields,
+        verdict: z.literal('fail'),
+        failure_codes: z.array(InterventionPackageReviewFailureCode).min(1),
+      })
+      .strict(),
+  ])
+  .superRefine((review, context) => {
+    if (review.verdict !== 'pass') return;
+    const diagnosticsPass = review.diagnostic_checks.every((check) => {
+      const rejectedReverseCausation =
+        check.causal_direction_check.applies &&
+        check.causal_direction_check.reference_claims_reverse_causation &&
+        !check.causal_direction_check.claimed_cause_is_observed_y_causing_x;
+      return (
+        check.reference_correct &&
+        check.within_frozen_scope &&
+        check.discipline_grounded &&
+        !rejectedReverseCausation
+      );
+    });
+    const packagePass = Object.values(review.package_checks).every((value) => value === true);
+    if (!diagnosticsPass || !packagePass) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'FULL review pass requires every diagnostic and package check to pass',
+      });
+    }
+  });
+export type InterventionPackageReviewModelOutputFullT = z.infer<
+  typeof InterventionPackageReviewModelOutputFull
+>;
+
 export const InterventionPackageReviewModelOutput = z.union([
   InterventionPackageReviewModelOutputV2,
   LegacyInterventionPackageReviewModelOutput,
@@ -598,21 +720,140 @@ export const InterventionPackageReviewStructuredOutput = z
     failure_codes: z
       .array(InterventionPackageReviewFailureCode)
       .max(InterventionPackageReviewFailureCode.options.length),
-    diagnostic_checks: z
-      .array(InterventionPackageReviewDiagnosticCheck)
-      .length(InterventionDiagnosticKind.options.length),
+    // The comparator does not author blind-solve evidence. Those two fields are
+    // server-owned and joined from the sealed independent-solution audit after
+    // this provider response parses.
+    diagnostic_checks: InterventionPackageComparatorDiagnosticChecks,
+    package_checks: InterventionPackageReviewPackageChecks,
     summary_md: z.string().trim().min(1).max(480),
   })
   .strict();
 
-export const InterventionPackageReviewAudit = z
+export type InterventionPackageReviewStructuredOutputT = z.infer<
+  typeof InterventionPackageReviewStructuredOutput
+>;
+
+export const InterventionIndependentSolutionDiagnosticAudit = z
+  .object({
+    kind: InterventionDiagnosticKind,
+    task_input: z
+      .object({
+        prompt_md: z.string().trim().min(1).max(12_000),
+        kind: z.string().trim().min(1).max(120),
+        subject_id: z.string().trim().min(1).max(240),
+        choices_md: z.array(z.string().max(4000)).length(0),
+        existing_answers_hint: z.null(),
+        existing_analysis_hint: z.null(),
+        figures_hint: z.null(),
+        prompt_image_refs: z.array(z.string().trim().min(1).max(240)).length(0),
+      })
+      .strict(),
+    question_input_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    solver_output: SolutionGenerateOutput.extend({
+      // Preserve byte-for-byte canonical SolutionGenerateOutput for digest
+      // replay; trimming here would mutate the object after its hash was made.
+      worked_solution_md: z.string().min(1).max(12_000),
+    }),
+    solver_output_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    solver_task_run_id: z.string().trim().min(1).max(240),
+    independently_derived_answer_md: z.string().trim().min(1).max(480),
+    required_operations_md: z.string().trim().min(1).max(320),
+  })
+  .strict();
+
+const InterventionIndependentSolutionDiagnosticAudits = z
+  .array(InterventionIndependentSolutionDiagnosticAudit)
+  .length(InterventionDiagnosticKind.options.length)
+  .superRefine((diagnostics, context) => {
+    const kinds = diagnostics.map((diagnostic) => diagnostic.kind);
+    for (const kind of InterventionDiagnosticKind.options) {
+      if (kinds.filter((value) => value === kind).length !== 1) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `independent solution audit must contain exactly one ${kind} result`,
+        });
+      }
+    }
+    const taskRunIds = diagnostics.map((diagnostic) => diagnostic.solver_task_run_id);
+    if (new Set(taskRunIds).size !== taskRunIds.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'independent solution task_run_ids must be unique',
+      });
+    }
+  });
+
+export const InterventionIndependentSolutionAudit = z
+  .object({
+    validation_protocol_version: z.literal(1),
+    package_digest_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    diagnostics: InterventionIndependentSolutionDiagnosticAudits,
+  })
+  .strict();
+export type InterventionIndependentSolutionAuditT = z.infer<
+  typeof InterventionIndependentSolutionAudit
+>;
+
+const LegacyInterventionPackageReviewAudit = z
   .object({
     review_version: z.literal(INTERVENTION_CONTRACT_VERSION),
     package_digest_sha256: z.string().regex(/^[a-f0-9]{64}$/),
     review_task_run_id: z.string().trim().min(1).max(240),
+    // Historical rows may contain either the original bare result or the branch's
+    // earlier V2 self-review result without a sealed independent-solution audit.
+    // Keep both readable; activation code separately requires the FULL audit.
     result: InterventionPackageReviewModelOutput,
   })
   .strict();
+
+const InterventionPackageReviewAuditV2 = z
+  .object({
+    review_version: z.literal(INTERVENTION_CONTRACT_VERSION),
+    package_digest_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    review_task_run_id: z.string().trim().min(1).max(240),
+    independent_solution_audit: InterventionIndependentSolutionAudit,
+    result: InterventionPackageReviewModelOutputFull,
+  })
+  .strict()
+  .superRefine((audit, context) => {
+    if (audit.package_digest_sha256 !== audit.independent_solution_audit.package_digest_sha256) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'review and independent solution package digests must match',
+      });
+    }
+    if (
+      audit.independent_solution_audit.diagnostics.some(
+        (diagnostic) => diagnostic.solver_task_run_id === audit.review_task_run_id,
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'review task_run_id must differ from every independent solver task_run_id',
+      });
+    }
+    const solutionByKind = new Map(
+      audit.independent_solution_audit.diagnostics.map((diagnostic) => [
+        diagnostic.kind,
+        diagnostic,
+      ]),
+    );
+    for (const check of audit.result.diagnostic_checks) {
+      if (
+        check.independent_solution_sha256 !== solutionByKind.get(check.kind)?.solver_output_sha256
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `review check ${check.kind} must reference its sealed solver output digest`,
+        });
+      }
+    }
+  });
+
+export const InterventionPackageReviewAudit = z.union([
+  InterventionPackageReviewAuditV2,
+  LegacyInterventionPackageReviewAudit,
+]);
 export type InterventionPackageReviewAuditT = z.infer<typeof InterventionPackageReviewAudit>;
 
 export const InterventionPreparationAttempt = z.discriminatedUnion('kind', [
@@ -621,6 +862,7 @@ export const InterventionPreparationAttempt = z.discriminatedUnion('kind', [
       kind: z.literal('author_failed'),
       attempt: z.number().int().min(1).max(MAX_INTERVENTION_PACKAGE_ATTEMPTS),
       author_task_run_id: z.string().trim().min(1).max(240).optional(),
+      validator_task_run_ids: z.array(z.string().trim().min(1).max(240)).max(3).optional(),
       failure_code: z.string().trim().min(1).max(160),
     })
     .strict(),

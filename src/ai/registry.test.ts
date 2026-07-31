@@ -155,25 +155,25 @@ describe('task prompt definitions', () => {
       'general:InterventionPackageAuthorTask':
         '60c55bb06557f2815b7ffe7d5835dd8a5561cbe8a23849a596eb45692c73146e',
       'general:InterventionPackageReviewTask':
-        'df2530f34e0f8455dfa60760c20dee910991a954a14a70f39522e32c57c7eba4',
+        '0da98af43895323b721f2ce70b415c2e63ef7adb33dc6e93a4f8e06f4ef6cafc',
       'math:InterventionRecommendationTask':
         'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
       'math:InterventionPackageAuthorTask':
         '5748f5259952696212c4504f5a97953ecaa3415c573245d02c499bde99806bc7',
       'math:InterventionPackageReviewTask':
-        '0e758cc4bc76bd9669987d60e7f2b6b0be74543a932367d7544eaa70f3cf3998',
+        '575e6642d6f3b97eeb524a925e72910a0bee115563c570e94b3473b756d519dc',
       'physics:InterventionRecommendationTask':
         'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
       'physics:InterventionPackageAuthorTask':
         '5f85c39d955878b0c293f07fd271ce6ff8509f9a9b8fe19045aea4696f956cdb',
       'physics:InterventionPackageReviewTask':
-        '881209032781426cccfdf1b5fa64ae1c11b01e52763683abe40051600ea90818',
+        '36edcb99c408b5ccaf573b1c36f1b5c4cb45ab6c51582278e8a4b18e973c4f28',
       'yuwen:InterventionRecommendationTask':
         'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
       'yuwen:InterventionPackageAuthorTask':
         'c46426ca2c07e712a5e90d6b6962d377df7aff4955cc036c200eac62ea08ce02',
       'yuwen:InterventionPackageReviewTask':
-        'd97f21f326b21c2be17a1191c77e0327aa0581b8eb854389865abd7b8c088732',
+        '6a6bb73c59c3f65f94249d238e7cd3925366f887da170b7e4fa9089ab6231e00',
     } as const;
     for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
       const profile = resolveSubjectProfile(profileId);
@@ -191,28 +191,27 @@ describe('task prompt definitions', () => {
     }
   });
 
-  it('requires the intervention reviewer to independently solve references and enforce frozen scope', () => {
+  it('requires the intervention comparator to consume sealed validator outputs and enforce frozen scope', () => {
     const prompt = getTaskSystemPrompt(
       'InterventionPackageReviewTask',
       resolveSubjectProfile('math'),
     );
 
-    expect(prompt).toContain('先遮蔽 reference_md');
-    expect(prompt).toContain('independently_derived_answer_md');
-    expect(prompt).toContain('required_operations_md');
+    expect(prompt).toContain('sealed_independent_solutions');
+    expect(prompt).toContain('现有题目 validator');
+    expect(prompt).toContain('不得改写、替换或伪造密封结果');
+    expect(prompt).toContain('independent_solution_sha256');
+    expect(prompt).toContain('package_checks');
     expect(prompt).toContain('scope_boundary_md');
     expect(prompt).toContain('reference_incorrect');
     expect(prompt).toContain('claim_scope_expansion');
-    expect(prompt).toContain('面积');
-    expect(prompt).toContain('卜算子·咏梅');
-    expect(prompt).toContain('送元二使安西');
-    expect(prompt).toContain('基线选择');
     expect(prompt).toContain('Y0');
-    expect(prompt).toContain('期末成绩提高幅度 Y');
     expect(prompt).toContain('reverse causation');
     expect(prompt).toContain('causal_direction_check');
     expect(prompt).toContain('claimed_cause_is_observed_y_causing_x=false');
-    expect(prompt).toContain('恰好一个');
+    expect(prompt).toContain('每种 kind 恰好一次');
+    expect(prompt).not.toContain('先遮蔽 reference_md');
+    expect(prompt).not.toContain('卜算子·咏梅');
   });
 
   it('keeps inline prompts profile-independent', () => {

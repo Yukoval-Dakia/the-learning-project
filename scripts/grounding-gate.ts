@@ -99,7 +99,7 @@ Commands:
 Safety:
   - inspect/shadow restore only into an automatically removed pgvector Testcontainer.
   - shadow writes AI provenance only inside that disposable DB; it never writes product proposals/events.
-  - review-intervention runs sanitized fixtures against the real reviewer in a disposable DB; it is a development regression and never satisfies the Gate C canary.
+  - review-intervention runs the real 3x blind-solver + sealed-comparator validator against sanitized fixtures in a disposable DB; it is development evidence and never satisfies the Gate C canary.
   - raw backups and generated packets belong under .tmp/yuk-814 and must never be committed.
   - synthetic fixtures validate this harness only and never satisfy the real gate.`;
 }

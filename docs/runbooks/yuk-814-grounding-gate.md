@@ -19,9 +19,9 @@ as acceptance evidence.
 
 ## Reviewer actual-output regression (development evidence only)
 
-When changing `InterventionPackageReviewTask`, run the production Xiaomi/Mimo
-route against a sanitized regression packet after committing the exact code
-revision:
+When changing the intervention validator or `InterventionPackageReviewTask`, run
+the production Xiaomi/Mimo route against a sanitized regression packet after
+committing the exact code revision:
 
 ```bash
 umask 077
@@ -33,11 +33,16 @@ pnpm grounding:gate review-intervention \
 
 The input packet has `schema_version: 1`,
 `source_kind: "sanitized_regression_fixture"`, and one or more cases containing
-`case_id`, `subject_id`, canonical `context`, canonical `package`, and
-`expected_failure_codes`. The harness refuses a dirty worktree, global provider
+`case_id`, `subject_id`, canonical `context`, canonical `package`,
+`expected_verdict`, and `expected_failure_codes`. The checked-in packet contains
+three expected-fail regressions plus two expected-pass controls, so an
+always-rejecting comparator cannot pass the gate. The harness refuses a dirty worktree, global provider
 overrides, an absent Xiaomi credential, or an existing output path. It runs in a
-disposable pgvector Testcontainer and seals each exact package digest, reviewer
-task-run ID, protocol-v2 diagnostic checks, provider/model, usage, and cost rows.
+disposable pgvector Testcontainer. For every package it runs three strict
+`SolutionGenerateTask` blind solves followed by the sealed package comparator,
+then records all four task-run IDs, exact blind inputs/structured solutions and
+their digests, FULL diagnostic/package checks, provider/model, usage, and cost
+rows.
 
 This command verifies real model output rather than a mocked verdict, but its
 artifact always records `satisfies_yuk_814_canary=false`. Sanitized regression
