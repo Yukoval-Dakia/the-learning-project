@@ -132,6 +132,8 @@ drizzle/.snapshots/
 .opencode/*
 !.opencode/.gitignore
 !.opencode/README.md
+!.opencode/opencode.json
+!.opencode/oh-my-openagent.json
 !.opencode/plugins/
 !.opencode/plugins/**
 
