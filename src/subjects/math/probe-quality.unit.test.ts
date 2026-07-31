@@ -301,6 +301,34 @@ describe('math subject probe validators', () => {
     ).toBe('pass');
   });
 
+  it('validates selected unit option values for single-choice probes', () => {
+    const mutated = structuredClone(unitPackage);
+    mutated.primary.prompt_md = 'Convert 72 km/h to m/s. A. 20 m/s B. 72000 m/s C. 72 m/s';
+    mutated.primary.representation_kind = 'multiple_choice';
+    mutated.primary.response_mode = 'single_choice';
+    mutated.primary.gold_response_signature = { kind: 'choice', option_ids: ['A'] };
+    mutated.primary.target_error_response_signature = { kind: 'choice', option_ids: ['B'] };
+    expect(
+      resultFor(unitHypothesis, mutated, 'math.compound-unit-denominator-conversion').outcome,
+    ).toBe('pass');
+  });
+
+  it('validates exact numeric features for constructed-response probes', () => {
+    const mutated = structuredClone(unitPackage);
+    mutated.primary.response_mode = 'constructed_response';
+    mutated.primary.gold_response_signature = {
+      kind: 'rubric',
+      required_features_md: ['答案为 20 m/s', '同时换算距离和时间单位'],
+    };
+    mutated.primary.target_error_response_signature = {
+      kind: 'rubric',
+      required_features_md: ['答案为 72000 m/s', '只换算距离单位'],
+    };
+    expect(
+      resultFor(unitHypothesis, mutated, 'math.compound-unit-denominator-conversion').outcome,
+    ).toBe('pass');
+  });
+
   it('proves unlike-denominator gold and (a+c)/(b+d) target signatures', () => {
     const result = resultFor(
       fractionHypothesis,
@@ -438,6 +466,38 @@ describe('math subject probe validators', () => {
     const workedAnswer = '1/3+1/4=4/12+3/12=7/12';
     mutated.primary.reference_md = workedAnswer;
     mutated.primary.gold_response_signature = { kind: 'text', response_md: workedAnswer };
+    expect(
+      resultFor(fractionHypothesis, mutated, 'math.unlike-denominator-fraction-addition').outcome,
+    ).toBe('pass');
+  });
+
+  it('parses a mixed-number fraction result as one rational', () => {
+    const mutated = structuredClone(fractionPackage);
+    mutated.primary.prompt_md = '计算 1/2 + 2/3。';
+    mutated.primary.reference_md = '1 1/6';
+    mutated.primary.gold_response_signature = { kind: 'text', response_md: '答案为 1 1/6' };
+    mutated.primary.expected_target_error_answer_md = '3/5';
+    mutated.primary.target_error_response_signature = { kind: 'text', response_md: '3/5' };
+    expect(
+      resultFor(fractionHypothesis, mutated, 'math.unlike-denominator-fraction-addition').outcome,
+    ).toBe('pass');
+  });
+
+  it('validates every selected equivalent option for multiple-select fraction probes', () => {
+    const mutated = structuredClone(fractionPackage);
+    mutated.primary.prompt_md = '计算 1/3 + 1/4，可多选。 A. 7/12 B. 14/24 C. 2/7 D. 4/14';
+    mutated.primary.representation_kind = 'multiple_choice';
+    mutated.primary.response_mode = 'multiple_select';
+    mutated.primary.gold_response_signature = { kind: 'choice', option_ids: ['A', 'B'] };
+    mutated.primary.target_error_response_signature = { kind: 'choice', option_ids: ['C', 'D'] };
+    expect(
+      resultFor(fractionHypothesis, mutated, 'math.unlike-denominator-fraction-addition').outcome,
+    ).toBe('pass');
+  });
+
+  it('does not treat prose hyphens as a subtraction step', () => {
+    const mutated = structuredClone(fractionPackage);
+    mutated.primary.prompt_md = 'Use the well-known method to add 1/3 + 1/4.';
     expect(
       resultFor(fractionHypothesis, mutated, 'math.unlike-denominator-fraction-addition').outcome,
     ).toBe('pass');

@@ -81,7 +81,7 @@ export function normalizeLatexFractions(value: string): string {
  */
 export function extractFinalRational(value: string): Rational | null {
   const normalized = normalizeLatexFractions(value.replace(/[−–—]/g, '-'));
-  const tokenPattern = String.raw`([+-]?\d+\s*\/\s*\d+|[+-]?\d+(?:\.\d+)?)`;
+  const tokenPattern = String.raw`([+-]?\d+\s+\d+\s*\/\s*\d+|[+-]?\d+\s*\/\s*\d+|[+-]?\d+(?:\.\d+)?)`;
   const marker = new RegExp(
     String.raw`(?:答案|结果|答|answer|result)\s*(?:是|为|[:：=])?\s*${tokenPattern}`,
     'i',
@@ -94,17 +94,26 @@ export function extractFinalRational(value: string): Rational | null {
   ];
   const terminalEquationResult = equationResults.at(-1)?.[1];
   const tokens = [
-    ...normalized.matchAll(/(?<![\w/])([+-]?\d+\s*\/\s*\d+|[+-]?\d+(?:\.\d+)?)(?![\w/])/g),
+    ...normalized.matchAll(
+      /(?<![\w/])([+-]?\d+\s+\d+\s*\/\s*\d+|[+-]?\d+\s*\/\s*\d+|[+-]?\d+(?:\.\d+)?)(?![\w/])/g,
+    ),
   ];
   const selected =
     marker?.[1] ??
     (leadingIsDesignatedAnswer ? leading?.[1] : null) ??
     terminalEquationResult ??
     (tokens.length === 1 ? tokens[0]?.[1] : null);
-  const raw = selected?.replace(/\s+/g, '');
+  const raw = selected?.trim();
   if (!raw) return null;
+  const mixed = /^([+-]?)(\d+)\s+(\d+)\s*\/\s*(\d+)$/.exec(raw);
+  if (mixed) {
+    const [, sign = '', whole = '', numerator = '', denominator = ''] = mixed;
+    const denominatorValue = BigInt(denominator);
+    const numeratorValue = BigInt(whole) * denominatorValue + BigInt(numerator);
+    return rational(sign === '-' ? -numeratorValue : numeratorValue, denominatorValue);
+  }
   if (raw.includes('/')) {
-    const [numerator, denominator] = raw.split('/');
+    const [numerator, denominator] = raw.replace(/\s+/g, '').split('/');
     if (!numerator || !denominator) return null;
     return rational(BigInt(numerator), BigInt(denominator));
   }

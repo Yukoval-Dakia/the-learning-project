@@ -13,7 +13,11 @@ import {
   rational,
   rationalsEqual,
 } from './rational';
-import { deterministicProbeAnswers } from './response';
+import {
+  deterministicAnswerGroupMatches,
+  deterministicProbeAnswers,
+  deterministicProbeQuestionStem,
+} from './response';
 
 const VALIDATOR_ID = 'math.unlike-denominator-fraction-addition';
 const VALIDATOR_VERSION = '1.0.0';
@@ -45,7 +49,7 @@ function parsePrompt(prompt: string): ParsedFractionPrompt | null {
   // subtraction step rather than the sign of a negative operand. Any remaining
   // number or multiplier phrase also proves the prompt is not a one-step sum.
   if (
-    /-|[×*÷√]|\d|减去|乘|除以|倍|翻倍|倒数|平方|开方|绝对值|还剩|剩下|剩余|差|先.{0,30}再|absolute\s+value|\b(?:abs|then|after|subtract|multiply|divide|double|twice|times|reciprocal|square|remaining)\b/i.test(
+    /#\s*-\s*#|-\s*[\[(（]?\s*#|[×*÷√]|\d|减去|乘|除以|倍|翻倍|倒数|平方|开方|绝对值|还剩|剩下|剩余|差|先.{0,30}再|absolute\s+value|\b(?:abs|then|after|subtract|multiply|divide|double|twice|times|reciprocal|square|remaining)\b/i.test(
       stripped,
     )
   ) {
@@ -91,7 +95,7 @@ function validateProbe(
   failureCodes: Set<SubjectProbeValidatorFailureCodeT>,
   evidence: Record<string, string>,
 ): ParsedFractionPrompt | null {
-  const parsed = parsePrompt(probe.prompt_md);
+  const parsed = parsePrompt(deterministicProbeQuestionStem(probe));
   const answers = deterministicProbeAnswers(probe);
   if (!parsed || !answers) {
     failureCodes.add('subject_validator_ungradable');
@@ -118,12 +122,12 @@ function validateProbe(
   if (rationalsEqual(gold, targetError)) {
     failureCodes.add('fraction_target_collides_with_gold');
   }
-  const goldMatches = answers.gold.every((answer) => {
+  const goldMatches = deterministicAnswerGroupMatches(answers.gold, (answer) => {
     const actual = extractFinalRational(answer);
     return actual !== null && rationalsEqual(actual, gold);
   });
   if (!goldMatches) failureCodes.add('fraction_reference_mismatch');
-  const targetMatches = answers.target.every((answer) => {
+  const targetMatches = deterministicAnswerGroupMatches(answers.target, (answer) => {
     const actual = extractFinalRational(answer);
     return actual !== null && rationalsEqual(actual, targetError);
   });

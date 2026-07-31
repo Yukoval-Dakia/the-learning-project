@@ -14,7 +14,11 @@ import {
   rational,
   rationalsEqual,
 } from './rational';
-import { deterministicProbeAnswers } from './response';
+import {
+  deterministicAnswerGroupMatches,
+  deterministicProbeAnswers,
+  deterministicProbeQuestionStem,
+} from './response';
 
 const VALIDATOR_ID = 'math.compound-unit-denominator-conversion';
 const VALIDATOR_VERSION = '1.0.0';
@@ -191,7 +195,7 @@ function validateProbe(
   failureCodes: Set<SubjectProbeValidatorFailureCodeT>,
   evidence: Record<string, string>,
 ): ParsedUnitPrompt | null {
-  const parsed = parsePrompt(probe.prompt_md);
+  const parsed = parsePrompt(deterministicProbeQuestionStem(probe));
   const answers = deterministicProbeAnswers(probe);
   if (!parsed || !answers) {
     failureCodes.add('subject_validator_ungradable');
@@ -227,7 +231,7 @@ function validateProbe(
   if (rationalsEqual(expected.gold, expected.targetError)) {
     failureCodes.add('unit_target_collides_with_gold');
   }
-  const goldMatches = answers.gold.every((answer) => {
+  const goldMatches = deterministicAnswerGroupMatches(answers.gold, (answer) => {
     const actual = parseAnswer(answer);
     return (
       actual !== null &&
@@ -236,7 +240,7 @@ function validateProbe(
     );
   });
   if (!goldMatches) failureCodes.add('unit_reference_mismatch');
-  const targetMatches = answers.target.every((answer) => {
+  const targetMatches = deterministicAnswerGroupMatches(answers.target, (answer) => {
     const actual = parseAnswer(answer);
     return (
       actual !== null &&
