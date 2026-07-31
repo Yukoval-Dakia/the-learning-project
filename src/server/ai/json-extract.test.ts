@@ -102,23 +102,20 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     });
   });
 
-  it('合法但会腐蚀 LaTeX 的单字符 escape → 保留公式，同时不改写真实换行', () => {
+  it('合法 JSON control escape 始终优先，不凭数学区间猜成 LaTeX 命令', () => {
     const text = String.raw`{"formula":"$\frac{1}{2}+\text{半}+\nabla f$","line":"first\nother line","tab":"left\tbar","math_line":"$f(x)\nother$"}`;
-    // 原生 JSON.parse 会把 \f / \t / \n 吞成控制字符，属于静默内容损坏。
-    expect((JSON.parse(text) as { formula: string }).formula).not.toContain('\\frac');
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
     const r = parseJsonObjectLoose(text, 'latex', {
       riskyRepair: 'reject',
       latexEscapes: 'markdown_math',
     });
-    expect(r).toEqual({
-      json: {
-        formula: '$\\frac{1}{2}+\\text{半}+\\nabla f$',
-        line: 'first\nother line',
-        tab: 'left\tbar',
-        math_line: '$f(x)\nother$',
-      },
-      repaired: 'deterministic',
+    expect(r).toEqual({ json: JSON.parse(text), repaired: false });
+  });
+
+  it('display math 内换行后跟变量 u → 保留换行，不猜成 LaTeX nu', () => {
+    const text = String.raw`{"body":"$$x=1\nu=2$$"}`;
+    expect(parseJsonObjectLoose(text, 'display math', { latexEscapes: 'markdown_math' })).toEqual({
+      json: { body: '$$x=1\nu=2$$' },
+      repaired: false,
     });
   });
 

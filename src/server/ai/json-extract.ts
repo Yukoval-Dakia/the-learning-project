@@ -146,13 +146,10 @@ function escapeInvalidJsonStringBackslashes(slice: string): string {
       i += 1;
       continue;
     }
-    const suffix = slice.slice(i + 1);
-    const likelyLatexCommand =
-      mathDelimiter !== null &&
-      (/^[bfrt][A-Za-z]/.test(suffix) ||
-        /^n(?:abla|eg|ewline)/.test(suffix) ||
-        /^n(?:eq|ot|u)(?![A-Za-z])/.test(suffix));
-    if (next && 'bfnrt'.includes(next) && !likelyLatexCommand) {
+    // 合法 JSON control escape 始终优先。即使位于成对数学区间，`\n` 后的
+    // `u` 也可能是一次真实换行后跟变量，而不是 LaTeX `\nu`；两者仅凭文本
+    // 不可判定，不能把严格解析成功的内容静默改写。
+    if (next && 'bfnrt'.includes(next)) {
       out.push(ch, next);
       i += 1;
       continue;
@@ -283,9 +280,9 @@ export interface ParseJsonLooseOpts {
    */
   containerClosure?: 'schema_validated';
   /**
-   * Reinterpret invalid/ambiguous backslashes only inside paired Markdown math
-   * spans. This is opt-in because the shared extractor also parses prose-only
-   * payloads where legal JSON control escapes must remain authoritative.
+   * Repair invalid backslashes only inside paired Markdown math spans. Legal
+   * JSON control escapes remain authoritative because their intent is
+   * indistinguishable from short LaTeX commands using text alone.
    */
   latexEscapes?: 'markdown_math';
 }
