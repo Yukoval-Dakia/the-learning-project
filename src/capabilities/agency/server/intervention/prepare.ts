@@ -5,10 +5,11 @@ import type {
   InterventionPreparationAttemptT,
 } from '@/core/schema/intervention';
 import {
-  InterventionPackageReviewAuditV2,
+  CurrentInterventionPackageReviewAudit,
   InterventionPreparationAttempt,
   MAX_INTERVENTION_PACKAGE_ATTEMPTS,
   buildInterventionPackageReviewTaskInput,
+  buildInterventionQuestionContentValidationTaskInput,
   validateInterventionPackageDeterministically,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
@@ -187,10 +188,10 @@ async function bindAttemptToRecord(
       : [];
   const expectedRuns: Array<{
     id: string;
-    taskKind: 'SolutionGenerateTask' | 'InterventionPackageReviewTask';
+    taskKind: 'SolutionGenerateTask' | 'QuizVerifyTask' | 'InterventionPackageReviewTask';
     inputHash: string;
     promptFingerprint: string;
-    resultDigest?: string;
+    resultDigest?: string | null;
     failureCode: string;
   }> = [];
   if (
@@ -210,7 +211,7 @@ async function bindAttemptToRecord(
   if (attempt.review.package_digest_sha256 !== sha256CanonicalJson(attempt.package)) {
     failures.push('agency:review_package_digest_mismatch');
   }
-  const currentReviewAudit = InterventionPackageReviewAuditV2.safeParse(attempt.review);
+  const currentReviewAudit = CurrentInterventionPackageReviewAudit.safeParse(attempt.review);
   if (!currentReviewAudit.success) {
     failures.push('agency:current_full_review_required');
   }
@@ -227,6 +228,7 @@ async function bindAttemptToRecord(
       'InterventionPackageReviewTask',
       subjectProfile,
     );
+    const contentPromptFingerprint = taskPromptFingerprint('QuizVerifyTask', subjectProfile);
     if (independentAudit.package_digest_sha256 !== sha256CanonicalJson(attempt.package)) {
       failures.push('agency:independent_solution_package_digest_mismatch');
     }
@@ -261,25 +263,58 @@ async function bindAttemptToRecord(
       }
     }
     if (record.recommendation?.kind === 'recommendation') {
+      const questionContentValidationAudit = currentReview.question_content_validation_audit;
+      if (
+        questionContentValidationAudit.package_digest_sha256 !==
+        sha256CanonicalJson(attempt.package)
+      ) {
+        failures.push('agency:question_content_validation_package_digest_mismatch');
+      }
+      for (const diagnostic of questionContentValidationAudit.diagnostics) {
+        const expectedInput = buildInterventionQuestionContentValidationTaskInput({
+          context: { snapshot: record.snapshot, recommendation: record.recommendation },
+          packageValue: attempt.package,
+          kind: diagnostic.kind,
+          subjectId: subjectProfile.id,
+        });
+        const expectedInputHash = sha256CanonicalJson(expectedInput);
+        if (
+          sha256CanonicalJson(diagnostic.task_input) !== expectedInputHash ||
+          diagnostic.task_input_sha256 !== expectedInputHash
+        ) {
+          failures.push(`agency:${diagnostic.kind}:question_content_validation_input_mismatch`);
+        }
+        if (diagnostic.result_sha256 !== sha256CanonicalJson(diagnostic.result)) {
+          failures.push(`agency:${diagnostic.kind}:question_content_validation_output_mismatch`);
+        }
+        expectedRuns.push({
+          id: diagnostic.task_run_id,
+          taskKind: 'QuizVerifyTask',
+          inputHash: expectedInputHash,
+          promptFingerprint: contentPromptFingerprint,
+          resultDigest: diagnostic.result_sha256,
+          failureCode: `agency:${diagnostic.kind}:question_content_validation_task_run_invalid`,
+        });
+      }
       const reviewTaskInputSha256 = sha256CanonicalJson(
         buildInterventionPackageReviewTaskInput({
           context: { snapshot: record.snapshot, recommendation: record.recommendation },
           packageValue: attempt.package,
           independentAudit,
+          questionContentValidationAudit,
         }),
       );
       if (currentReview.review_task_input_sha256 !== reviewTaskInputSha256) {
         failures.push('agency:review_task_input_digest_mismatch');
       }
-      for (const taskRunId of currentReview.review_attempt_task_run_ids) {
+      for (const reviewAttempt of currentReview.review_attempts) {
         expectedRuns.push({
-          id: taskRunId,
+          id: reviewAttempt.task_run_id,
           taskKind: 'InterventionPackageReviewTask',
           inputHash: reviewTaskInputSha256,
           promptFingerprint: reviewPromptFingerprint,
-          ...(taskRunId === currentReview.review_task_run_id
-            ? { resultDigest: sha256CanonicalJson(currentReview.result) }
-            : {}),
+          resultDigest:
+            reviewAttempt.outcome === 'valid' ? sha256CanonicalJson(reviewAttempt.result) : null,
           failureCode: 'agency:review_task_run_invalid',
         });
       }
@@ -331,7 +366,7 @@ function passingAttempt(
       attempt.kind === 'reviewed_package' ? sha256CanonicalJson(attempt.package) : null;
     const currentReview =
       attempt.kind === 'reviewed_package'
-        ? InterventionPackageReviewAuditV2.safeParse(attempt.review)
+        ? CurrentInterventionPackageReviewAudit.safeParse(attempt.review)
         : null;
     if (
       attempt.kind === 'reviewed_package' &&

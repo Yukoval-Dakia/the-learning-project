@@ -8,9 +8,9 @@ import { PEDAGOGY_METHOD_LIBRARY } from '@/core/pedagogy';
 import { PROBE_QUESTION_KIND, PROBE_QUESTION_SOURCE } from '@/core/schema/conjecture';
 import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture-probe-response';
 import {
+  CurrentInterventionPackageReviewAudit,
   INTERVENTION_CONTRACT_VERSION,
   InterventionPackage,
-  InterventionPackageReviewAuditV2,
   InterventionPreparationAttempt,
   PEDAGOGY_METHOD_DEFINITION_VERSION,
   buildInterventionSettlement,
@@ -437,9 +437,7 @@ function reviewDiagnosticChecks(
       applies: false,
       exposure_x_md: '',
       observed_outcome_y_md: '',
-      reference_claims_reverse_causation: false,
-      reference_claimed_reverse_cause_md: '',
-      reference_claimed_reverse_cause_relation: 'none' as const,
+      reference_reverse_causation_claim_relations: [],
     },
   }));
 }
@@ -586,6 +584,29 @@ function successfulRunTask(
         },
       };
     }
+    if (kind === 'QuizVerifyTask') {
+      const ordinal = calls.filter((value) => value === kind).length;
+      const taskRunId = `question_content_validation_run_${ordinal}`;
+      await recordMockAiRun(db, kind, input, taskRunId);
+      return {
+        text: '',
+        task_run_id: taskRunId,
+        structured_output: {
+          grounding: {
+            verdict: 'pass',
+            note: '逐项复算导数、核对量纲与符号后，题面和 reference 在数学上成立。',
+          },
+          copy_safety: { verdict: 'original', max_overlap: 0.03 },
+          knowledge_hit: {
+            verdict: 'pass',
+            note: '题目只要求识别复合结构并应用链式法则，命中冻结知识点。',
+          },
+          overall: 'pass',
+          summary_md: '复杂链式法则题面、答案和构念均通过共享内容 validator。',
+          confidence: 0.96,
+        },
+      };
+    }
     if (kind === 'InterventionPackageReviewTask') {
       const attempt = calls.filter((value) => value === kind).length;
       const taskRunId = `review_run_${attempt}`;
@@ -663,6 +684,10 @@ describe('YUK-791 intervention preparation closed loop', () => {
       'SolutionGenerateTask',
       'SolutionGenerateTask',
       'SolutionGenerateTask',
+      'QuizVerifyTask',
+      'QuizVerifyTask',
+      'QuizVerifyTask',
+      'InterventionPackageReviewTask',
       'InterventionPackageReviewTask',
     ]);
     expect(
@@ -676,6 +701,10 @@ describe('YUK-791 intervention preparation closed loop', () => {
       { kind: 'SolutionGenerateTask', outputFormatType: 'json_schema' },
       { kind: 'SolutionGenerateTask', outputFormatType: 'json_schema' },
       { kind: 'SolutionGenerateTask', outputFormatType: 'json_schema' },
+      { kind: 'QuizVerifyTask', outputFormatType: undefined },
+      { kind: 'QuizVerifyTask', outputFormatType: undefined },
+      { kind: 'QuizVerifyTask', outputFormatType: undefined },
+      { kind: 'InterventionPackageReviewTask', outputFormatType: 'json_schema' },
       { kind: 'InterventionPackageReviewTask', outputFormatType: 'json_schema' },
     ]);
 
@@ -710,8 +739,8 @@ describe('YUK-791 intervention preparation closed loop', () => {
     expect(active.preparation_attempts_json).toHaveLength(1);
     expect(active.preparation_attempts_json[0]).toMatchObject({
       review: {
-        review_task_run_id: 'review_run_1',
-        review_attempt_task_run_ids: ['review_run_1'],
+        review_task_run_id: 'review_run_2',
+        review_attempt_task_run_ids: ['review_run_1', 'review_run_2'],
         independent_solution_audit: {
           validation_protocol_version: 1,
           diagnostics: [
@@ -730,6 +759,14 @@ describe('YUK-791 intervention preparation closed loop', () => {
               solver_task_run_id: 'independent_solution_run_3',
               solver_attempt_task_run_ids: ['independent_solution_run_3'],
             },
+          ],
+        },
+        question_content_validation_audit: {
+          validation_protocol_version: 1,
+          diagnostics: [
+            { kind: 'immediate', task_run_id: 'question_content_validation_run_1' },
+            { kind: 'delayed', task_run_id: 'question_content_validation_run_2' },
+            { kind: 'transfer', task_run_id: 'question_content_validation_run_3' },
           ],
         },
       },
@@ -826,7 +863,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
 
     expect(result).toMatchObject({ status: 'active' });
     expect(calls.filter((kind) => kind === 'SolutionGenerateTask')).toHaveLength(4);
-    expect(calls.filter((kind) => kind === 'InterventionPackageReviewTask')).toHaveLength(1);
+    expect(calls.filter((kind) => kind === 'InterventionPackageReviewTask')).toHaveLength(2);
     const [active] = await db.select().from(intervention);
     const activatedAttempt = InterventionPreparationAttempt.parse(
       active.preparation_attempts_json[0],
@@ -844,6 +881,62 @@ describe('YUK-791 intervention preparation closed loop', () => {
         'independent_solution_invalid_contract_1',
         'independent_solution_run_2',
       ],
+    });
+  });
+
+  it('retains a paid release-strict content run with null digest when its output contract is malformed', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('strict_content_provenance');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_strict_content_provenance',
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn: baseRun, calls } = successfulRunTask(db);
+    let injectedMalformedContent = false;
+    const malformedThenFreshPackage: TaskTextRunFn = async (kind, input, ctx) => {
+      if (kind === 'QuizVerifyTask' && !injectedMalformedContent) {
+        injectedMalformedContent = true;
+        calls.push(kind);
+        await recordMockAiRun(db, kind, input, 'question_content_malformed_1');
+        return {
+          text: '{"grounding":{"verdict":"pass"}',
+          task_run_id: 'question_content_malformed_1',
+        };
+      }
+      return baseRun(kind, input, ctx);
+    };
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: malformedThenFreshPackage, authorPackageFn: authorInterventionPackage },
+    );
+
+    expect(result).toMatchObject({ status: 'active' });
+    const active = await loadInterventionVersion(db, opened.id, opened.version);
+    expect(active?.preparation_attempts[0]).toMatchObject({
+      kind: 'author_failed',
+      failure_code: 'question_content_validation_unavailable:immediate',
+      validator_task_run_ids: expect.arrayContaining(['question_content_malformed_1']),
+    });
+    const [malformedRun] = await db
+      .select({
+        input_hash: ai_task_runs.input_hash,
+        prompt_fingerprint: ai_task_runs.prompt_fingerprint,
+        result_digest: ai_task_runs.result_digest,
+      })
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.id, 'question_content_malformed_1'));
+    expect(malformedRun).toMatchObject({
+      input_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      prompt_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      result_digest: null,
     });
   });
 
@@ -897,7 +990,59 @@ describe('YUK-791 intervention preparation closed loop', () => {
     ]);
   });
 
-  it('retries the exact comparator input once and audits both paid review runs', async () => {
+  it('rebinds the first pass attempt prompt and result digest instead of trusting the selected second pass', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('first_review_attempt_binding');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_first_review_attempt_binding',
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn } = successfulRunTask(db);
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      {
+        runTaskFn: fn,
+        authorPackageFn: async (authorDb, interventionId, deps) => {
+          const authored = await authorInterventionPackage(authorDb, interventionId, deps);
+          if (authored.kind === 'reviewed_package') {
+            const current = CurrentInterventionPackageReviewAudit.parse(authored.review);
+            const firstPassTaskRunId = current.review_attempt_task_run_ids[0];
+            await authorDb
+              .update(ai_task_runs)
+              .set({ prompt_fingerprint: 'f'.repeat(64), result_digest: null })
+              .where(eq(ai_task_runs.id, firstPassTaskRunId));
+          }
+          return authored;
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      reason_code: 'package_quality:agency:review_task_run_invalid',
+    });
+    const failed = await loadInterventionVersion(db, opened.id, opened.version);
+    expect(failed?.preparation_attempts).toEqual([
+      expect.objectContaining({
+        kind: 'reviewed_package',
+        deterministic_failure_codes: ['agency:review_task_run_invalid'],
+      }),
+      expect.objectContaining({
+        kind: 'reviewed_package',
+        deterministic_failure_codes: ['agency:review_task_run_invalid'],
+      }),
+    ]);
+  });
+
+  it('consumes an unconfirmed comparator pass, then activates only after a fresh pass/pass', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('review_contract_retry');
     await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
@@ -932,16 +1077,25 @@ describe('YUK-791 intervention preparation closed loop', () => {
     );
 
     expect(result).toMatchObject({ status: 'active' });
-    expect(calls.filter((kind) => kind === 'InterventionPackageReviewTask')).toHaveLength(2);
+    expect(calls.filter((kind) => kind === 'InterventionPackageReviewTask')).toHaveLength(4);
     const active = await loadInterventionVersion(db, opened.id, opened.version);
-    const attempt = active?.preparation_attempts[0];
+    expect(active?.preparation_attempts[0]).toMatchObject({
+      kind: 'author_failed',
+      failure_code: 'review_output_invalid',
+      validator_task_run_ids: expect.arrayContaining(['review_invalid_contract_1', 'review_run_2']),
+    });
+    const attempt = active?.preparation_attempts[1];
     if (attempt?.kind !== 'reviewed_package' || !('independent_solution_audit' in attempt.review)) {
-      throw new Error('missing FULL comparator retry audit');
+      throw new Error('missing freshly confirmed FULL comparator audit');
     }
-    const currentReview = InterventionPackageReviewAuditV2.parse(attempt.review);
+    const currentReview = CurrentInterventionPackageReviewAudit.parse(attempt.review);
     expect(currentReview).toMatchObject({
-      review_task_run_id: 'review_run_2',
-      review_attempt_task_run_ids: ['review_invalid_contract_1', 'review_run_2'],
+      review_task_run_id: 'review_run_4',
+      review_attempt_task_run_ids: ['review_run_3', 'review_run_4'],
+      review_attempts: [
+        { task_run_id: 'review_run_3', outcome: 'valid', result: { verdict: 'pass' } },
+        { task_run_id: 'review_run_4', outcome: 'valid', result: { verdict: 'pass' } },
+      ],
       result: { verdict: 'pass', failure_codes: [] },
     });
     const reviewRuns = await db
@@ -955,12 +1109,12 @@ describe('YUK-791 intervention preparation closed loop', () => {
     expect(reviewRuns).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'review_invalid_contract_1',
+          id: 'review_run_3',
           prompt_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
-          result_digest: null,
+          result_digest: expect.stringMatching(/^[a-f0-9]{64}$/),
         }),
         expect.objectContaining({
-          id: 'review_run_2',
+          id: 'review_run_4',
           prompt_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
           result_digest: expect.stringMatching(/^[a-f0-9]{64}$/),
         }),
@@ -1004,7 +1158,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
     );
 
     expect(result).toMatchObject({ status: 'active' });
-    expect(calls.filter((kind) => kind === 'InterventionPackageReviewTask')).toHaveLength(2);
+    expect(calls.filter((kind) => kind === 'InterventionPackageReviewTask')).toHaveLength(3);
     const active = await loadInterventionVersion(db, opened.id, opened.version);
     expect(active?.preparation_attempts).toHaveLength(2);
     expect(active?.preparation_attempts[0]).toMatchObject({
@@ -1019,8 +1173,205 @@ describe('YUK-791 intervention preparation closed loop', () => {
     });
     expect(active?.preparation_attempts[1]).toMatchObject({
       kind: 'reviewed_package',
-      review: { review_task_run_id: 'review_run_2' },
+      review: {
+        review_task_run_id: 'review_run_3',
+        review_attempt_task_run_ids: ['review_run_2', 'review_run_3'],
+      },
     });
+  });
+
+  it('records pass then semantic fail and never lets the first pass activate', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('review_pass_then_fail');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_review_pass_then_fail',
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn: baseRun, calls } = successfulRunTask(db);
+    const passThenFail: TaskTextRunFn = async (kind, input, ctx) => {
+      const result = await baseRun(kind, input, ctx);
+      if (
+        kind === 'InterventionPackageReviewTask' &&
+        calls.filter((value) => value === kind).length % 2 === 0
+      ) {
+        return {
+          ...result,
+          structured_output: {
+            ...(result.structured_output as Record<string, unknown>),
+            package_checks: reviewPackageChecks({ material_grounded: false }),
+            summary_md:
+              '第一次逐项检查暂时通过；确认轮发现材料中的链式法则解释无法支撑题目 reference。',
+          },
+        };
+      }
+      return result;
+    };
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: passThenFail, authorPackageFn: authorInterventionPackage },
+    );
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      reason_code: 'package_quality:material_not_grounded',
+    });
+    expect(calls.filter((kind) => kind === 'InterventionPackageReviewTask')).toHaveLength(4);
+    const failed = await loadInterventionVersion(db, opened.id, opened.version);
+    for (const attempt of failed?.preparation_attempts ?? []) {
+      if (attempt.kind !== 'reviewed_package') throw new Error('missing failed FULL audit');
+      const audit = CurrentInterventionPackageReviewAudit.parse(attempt.review);
+      expect(audit.review_attempts).toMatchObject([
+        { outcome: 'valid', result: { verdict: 'pass' } },
+        { outcome: 'valid', result: { verdict: 'fail' } },
+      ]);
+      expect(audit.result).toMatchObject({
+        verdict: 'fail',
+        failure_codes: ['material_not_grounded'],
+      });
+    }
+  });
+
+  it('records contract-invalid then semantic fail as one bounded failed FULL audit', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('review_invalid_then_fail');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_review_invalid_then_fail',
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn: baseRun, calls } = successfulRunTask(db);
+    const invalidThenFail: TaskTextRunFn = async (kind, input, ctx) => {
+      if (kind !== 'InterventionPackageReviewTask') return baseRun(kind, input, ctx);
+      const nextOrdinal = calls.filter((value) => value === kind).length + 1;
+      if (nextOrdinal % 2 === 1) {
+        calls.push(kind);
+        const taskRunId = `review_contract_invalid_${nextOrdinal}`;
+        await recordMockAiRun(db, kind, input, taskRunId);
+        return { text: '{"review_protocol_version":2}', task_run_id: taskRunId };
+      }
+      const result = await baseRun(kind, input, ctx);
+      return {
+        ...result,
+        structured_output: {
+          ...(result.structured_output as Record<string, unknown>),
+          package_checks: reviewPackageChecks({ serious_factual_error_absent: false }),
+          summary_md: '确认轮发现 reference 含严重事实错误，因此立即停止，不再请求第三次判断。',
+        },
+      };
+    };
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: invalidThenFail, authorPackageFn: authorInterventionPackage },
+    );
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      reason_code: 'package_quality:serious_factual_error',
+    });
+    const failed = await loadInterventionVersion(db, opened.id, opened.version);
+    for (const attempt of failed?.preparation_attempts ?? []) {
+      if (attempt.kind !== 'reviewed_package') throw new Error('missing bounded failed audit');
+      const audit = CurrentInterventionPackageReviewAudit.parse(attempt.review);
+      expect(audit.review_attempts).toMatchObject([
+        { outcome: 'contract_invalid' },
+        { outcome: 'valid', result: { verdict: 'fail' } },
+      ]);
+    }
+  });
+
+  it('treats pass then contract-invalid as invalid and preserves both persisted result digests', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('review_pass_then_invalid');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_review_pass_then_invalid',
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn: baseRun, calls } = successfulRunTask(db);
+    const passThenInvalid: TaskTextRunFn = async (kind, input, ctx) => {
+      if (kind !== 'InterventionPackageReviewTask') return baseRun(kind, input, ctx);
+      const nextOrdinal = calls.filter((value) => value === kind).length + 1;
+      if (nextOrdinal % 2 === 1) return baseRun(kind, input, ctx);
+      calls.push(kind);
+      const taskRunId = `review_contract_invalid_${nextOrdinal}`;
+      await recordMockAiRun(db, kind, input, taskRunId);
+      return { text: '{"verdict":"pass"}', task_run_id: taskRunId };
+    };
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: passThenInvalid, authorPackageFn: authorInterventionPackage },
+    );
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      reason_code: 'review_output_invalid',
+    });
+    const failed = await loadInterventionVersion(db, opened.id, opened.version);
+    expect(failed?.preparation_attempts).toEqual([
+      expect.objectContaining({
+        kind: 'author_failed',
+        failure_code: 'review_output_invalid',
+        validator_task_run_ids: expect.arrayContaining([
+          'review_run_1',
+          'review_contract_invalid_2',
+        ]),
+      }),
+      expect.objectContaining({
+        kind: 'author_failed',
+        failure_code: 'review_output_invalid',
+        validator_task_run_ids: expect.arrayContaining([
+          'review_run_3',
+          'review_contract_invalid_4',
+        ]),
+      }),
+    ]);
+    const reviewRows = await db
+      .select({ id: ai_task_runs.id, result_digest: ai_task_runs.result_digest })
+      .from(ai_task_runs)
+      .where(
+        inArray(ai_task_runs.id, [
+          'review_run_1',
+          'review_contract_invalid_2',
+          'review_run_3',
+          'review_contract_invalid_4',
+        ]),
+      );
+    expect(reviewRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'review_run_1',
+          result_digest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
+        expect.objectContaining({ id: 'review_contract_invalid_2', result_digest: null }),
+        expect.objectContaining({
+          id: 'review_run_3',
+          result_digest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
+        expect.objectContaining({ id: 'review_contract_invalid_4', result_digest: null }),
+      ]),
+    );
   });
 
   it('fails closed after two comparator contract misses per package attempt', async () => {
@@ -1054,25 +1405,29 @@ describe('YUK-791 intervention preparation closed loop', () => {
 
     expect(result).toMatchObject({
       status: 'preparation_failed',
-      reason_code: 'package_quality:review_output_invalid',
+      reason_code: 'review_output_invalid',
     });
     expect(calls.filter((kind) => kind === 'InterventionPackageReviewTask')).toHaveLength(4);
     const failed = await loadInterventionVersion(db, opened.id, opened.version);
     expect(failed?.preparation_attempts).toHaveLength(2);
-    for (const attempt of failed?.preparation_attempts ?? []) {
-      if (
-        attempt.kind !== 'reviewed_package' ||
-        !('independent_solution_audit' in attempt.review)
-      ) {
-        throw new Error('missing exhausted comparator audit');
-      }
-      const currentReview = InterventionPackageReviewAuditV2.parse(attempt.review);
-      expect(currentReview.review_attempt_task_run_ids).toHaveLength(2);
-      expect(currentReview.result).toMatchObject({
-        verdict: 'fail',
-        failure_codes: ['review_output_invalid'],
-      });
-    }
+    expect(failed?.preparation_attempts).toEqual([
+      expect.objectContaining({
+        kind: 'author_failed',
+        failure_code: 'review_output_invalid',
+        validator_task_run_ids: expect.arrayContaining([
+          'review_invalid_contract_1',
+          'review_invalid_contract_2',
+        ]),
+      }),
+      expect.objectContaining({
+        kind: 'author_failed',
+        failure_code: 'review_output_invalid',
+        validator_task_run_ids: expect.arrayContaining([
+          'review_invalid_contract_3',
+          'review_invalid_contract_4',
+        ]),
+      }),
+    ]);
   });
 
   it('rebinds a persisted FULL pass on recovery and spends only the remaining attempt slot', async () => {
@@ -1225,9 +1580,14 @@ describe('YUK-791 intervention preparation closed loop', () => {
       throw new Error('missing current FULL attempt');
     }
 
-    const currentReview = InterventionPackageReviewAuditV2.parse(currentAttempt.review);
-    const { review_attempt_task_run_ids: _reviewAttempts, ...historicalReviewOuter } =
-      structuredClone(currentReview);
+    const currentReview = CurrentInterventionPackageReviewAudit.parse(currentAttempt.review);
+    const {
+      audit_protocol_version: _auditProtocolVersion,
+      question_content_validation_audit: _questionContentValidationAudit,
+      review_attempts: _reviewAttemptAudits,
+      review_attempt_task_run_ids: _reviewAttempts,
+      ...historicalReviewOuter
+    } = structuredClone(currentReview);
     const historicalCandidate = {
       ...structuredClone(currentAttempt),
       review: {
@@ -1244,6 +1604,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
             ({ required_operation_checks: _operationChecks, ...check }) => {
               const {
                 reference_claimed_reverse_cause_relation: _relation,
+                reference_reverse_causation_claim_checks: _claimChecks,
                 ...historicalCausalDirectionCheck
               } = check.causal_direction_check;
               return { ...check, causal_direction_check: historicalCausalDirectionCheck };
@@ -2697,7 +3058,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
       reason_code: 'package_quality:immediate:target_error_answer_not_distinct',
     });
     expect(calls.filter((kind) => kind === 'InterventionPackageAuthorTask')).toHaveLength(2);
-    expect(calls.filter((kind) => kind === 'InterventionPackageReviewTask')).toHaveLength(2);
+    expect(calls.filter((kind) => kind === 'InterventionPackageReviewTask')).toHaveLength(4);
     const [failed] = await db.select().from(intervention);
     expect(failed.package_json).toBeNull();
     expect(failed.preparation_attempts_json).toHaveLength(2);

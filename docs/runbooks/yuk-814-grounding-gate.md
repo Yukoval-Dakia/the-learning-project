@@ -39,8 +39,12 @@ three expected-fail regressions plus three expected-pass controls, so an
 always-rejecting comparator cannot pass the gate. The harness refuses a dirty
 worktree, global provider overrides, an absent Xiaomi credential, or an existing
 output path. It runs in a disposable pgvector Testcontainer. For every package
-it runs three strict `SolutionGenerateTask` blind solves followed by the sealed
-package comparator. A paid solver response that cannot satisfy the complete
+it runs three strict `SolutionGenerateTask` blind solves, three
+`release_strict` checks through the shared `QuizVerifyTask` content validator,
+and then the sealed package comparator. The content checks bind the canonical
+question/reference input and require factual grounding to pass; author-written
+material is context, not independent evidence for a named real-world claim. A
+paid solver response that cannot satisfy the complete
 output contract may retry the identical blind input once; heuristic JSON repair
 is forbidden. Confidence repair is limited to preserving an existing numeric
 value: numeric string to number, or relocation from `reference_solution` to its
@@ -58,14 +62,17 @@ defense-in-depth positive backstop. A claimed reverse cause is classified by its
 relation to the question's outcome construct/estimand: the same Y construct,
 a distinct baseline/prior estimand, or another/common/unclear cause. The server
 derives the Y→X boolean from that classification instead of accepting a model
-self-certification; timing alone is not the definition. The comparator likewise retries the exact sealed input once
-only after a persisted response fails the complete output contract; a valid
-semantic fail is never retried. Activation re-runs deterministic checks and binds
-every solver/comparator attempt to successful `ai_task_runs` rows, exact input
+self-certification; timing alone is not the definition. A valid semantic fail
+stops immediately. A first valid pass becomes activation-eligible only after a
+second valid pass on the identical sealed input; a contract-invalid/pass or
+pass/contract-invalid pair is an invalid package attempt rather than a fabricated
+task-run-bound verdict. Activation re-runs deterministic checks and binds every
+solver, content-validator, and comparator attempt to successful `ai_task_runs` rows, exact input
 hashes, the current profile-rendered prompt fingerprint, and the selected
 canonical result digest. Persisted crash-recovery attempts are rebound before
 activation rather than trusted as checkpoints. The harness records exact blind
-inputs/structured solutions and their digests, FULL diagnostic/package checks,
+inputs/structured solutions, exact content-validation inputs/results and their
+digests, every comparator attempt, FULL diagnostic/package checks,
 provider/model, usage, and exactly one finite non-negative USD success-cost row.
 The actual-output harness additionally requires every audit ID to have been
 observed through the current case's runner seam with the expected subject-rendered
@@ -76,11 +83,12 @@ instead of discarding paid evidence. Comparator runner failure returns a closed
 invalid attempt with that ID, so the enclosing package slot is durably consumed
 instead of being reset by pg-boss redelivery.
 
-The structural ceiling is eight validator calls per package (three diagnostics ×
-two blind-solve attempts, plus two comparator attempts). A two-package preparation
-delivery including recommendation and authoring is therefore capped at 19 task
-calls; the six-case regression command is capped at 48. These are retry ceilings,
-not expected steady-state spend. A durable cross-delivery aggregate budget and
+The structural ceiling is eleven validator calls per package (three diagnostics ×
+two blind-solve attempts, three shared content-validation calls, plus two
+comparator attempts). A two-package preparation delivery including one
+recommendation call and two author calls is therefore capped at 25 task calls;
+the six-case regression command is capped at 66. These are retry ceilings, not
+expected steady-state spend. A durable cross-delivery aggregate budget and
 per-stage checkpoint are not implemented by this change and must not be inferred
 from a green fixture run.
 

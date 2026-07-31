@@ -1,4 +1,9 @@
 import { reviewInterventionPackageCandidate } from '@/capabilities/practice/server/intervention-author';
+import {
+  INTERVENTION_REVIEW_AUDIT_PROTOCOL_VERSION,
+  buildInterventionPackageReviewTaskInput,
+  buildInterventionQuestionContentValidationTaskInput,
+} from '@/core/schema/intervention';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { taskPromptFingerprint } from '@/server/ai/provenance';
@@ -477,6 +482,7 @@ describe('intervention reviewer actual-output regression fixture', () => {
           reference_claims_reverse_causation: false,
           reference_claimed_reverse_cause_md: '',
           reference_claimed_reverse_cause_relation: 'none' as const,
+          reference_reverse_causation_claim_checks: [],
           claimed_cause_is_observed_y_causing_x: false,
         },
       })),
@@ -496,22 +502,67 @@ describe('intervention reviewer actual-output regression fixture', () => {
       },
       summary_md: '三题完整路径和包级检查均通过。',
     };
-    const reviewInput = {
-      snapshot: fixture.context.snapshot,
-      package_digest: sha256CanonicalJson(fixture.package),
-      sealed_run_ids: independentDiagnostics.map((entry) => entry.solver_task_run_id),
+    const firstReviewResult = structuredClone(reviewResult);
+    firstReviewResult.summary_md =
+      '第一轮独立复核通过：三道诊断题的原子步骤、答案与冻结构念均一致。';
+    const firstImmediateCheck = firstReviewResult.diagnostic_checks[0];
+    if (!firstImmediateCheck) throw new Error('missing first-pass immediate check');
+    firstImmediateCheck.decision_basis_md =
+      '第一轮逐步重算后，immediate 题的每个必要操作和最终答案都与密封盲解一致。';
+    const contentResults = kinds.map((kind) => ({
+      grounding: { verdict: 'pass' as const, note: `${kind} factual grounding verified.` },
+      copy_safety: { verdict: 'original' as const, max_overlap: 0.04 },
+      knowledge_hit: { verdict: 'pass' as const, note: `${kind} targets the frozen construct.` },
+      overall: 'pass' as const,
+      summary_md: `${kind} release-strict content validation passed.`,
+      confidence: 0.95,
+    }));
+    const contentDiagnostics = kinds.map((kind, index) => {
+      const taskInput = buildInterventionQuestionContentValidationTaskInput({
+        context: fixture.context,
+        packageValue: fixture.package,
+        kind,
+        subjectId: fixture.subject_id,
+      });
+      return {
+        kind,
+        task_input: taskInput,
+        task_input_sha256: sha256CanonicalJson(taskInput),
+        result: contentResults[index],
+        result_sha256: sha256CanonicalJson(contentResults[index]),
+        output_repair_level: false as const,
+        task_run_id: `fresh-content-${index + 1}`,
+      };
+    });
+    const independentSolutionAudit = {
+      validation_protocol_version: 1 as const,
+      package_digest_sha256: sha256CanonicalJson(fixture.package),
+      diagnostics: independentDiagnostics,
     };
+    const questionContentValidationAudit = {
+      validation_protocol_version: 1 as const,
+      package_digest_sha256: sha256CanonicalJson(fixture.package),
+      diagnostics: contentDiagnostics,
+    };
+    const reviewInput = buildInterventionPackageReviewTaskInput({
+      context: fixture.context,
+      packageValue: fixture.package,
+      independentAudit: independentSolutionAudit,
+      questionContentValidationAudit,
+    });
     const audit = {
+      audit_protocol_version: INTERVENTION_REVIEW_AUDIT_PROTOCOL_VERSION,
       review_version: 1 as const,
       package_digest_sha256: sha256CanonicalJson(fixture.package),
-      review_task_run_id: 'fresh-review-1',
-      review_attempt_task_run_ids: ['fresh-review-1'],
+      review_task_run_id: 'fresh-review-2',
+      review_attempt_task_run_ids: ['fresh-review-1', 'fresh-review-2'],
       review_task_input_sha256: sha256CanonicalJson(reviewInput),
-      independent_solution_audit: {
-        validation_protocol_version: 1 as const,
-        package_digest_sha256: sha256CanonicalJson(fixture.package),
-        diagnostics: independentDiagnostics,
-      },
+      independent_solution_audit: independentSolutionAudit,
+      question_content_validation_audit: questionContentValidationAudit,
+      review_attempts: [
+        { task_run_id: 'fresh-review-1', outcome: 'valid' as const, result: firstReviewResult },
+        { task_run_id: 'fresh-review-2', outcome: 'valid' as const, result: reviewResult },
+      ],
       result: reviewResult,
     };
 
@@ -519,13 +570,27 @@ describe('intervention reviewer actual-output regression fixture', () => {
       for (const solverInput of solverInputs) {
         await runTaskFn('SolutionGenerateTask', solverInput, { subjectProfile: profile });
       }
-      await runTaskFn('InterventionPackageReviewTask', reviewInput, {
-        subjectProfile: profile,
-      });
+      for (const diagnostic of contentDiagnostics) {
+        await runTaskFn('QuizVerifyTask', diagnostic.task_input, { subjectProfile: profile });
+      }
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await runTaskFn('InterventionPackageReviewTask', reviewInput, {
+          subjectProfile: profile,
+        });
+      }
       return { status: 'ok', review: audit as never };
     });
 
-    const runIds = ['fresh-solver-1', 'fresh-solver-2', 'fresh-solver-3', 'fresh-review-1'];
+    const runIds = [
+      'fresh-solver-1',
+      'fresh-solver-2',
+      'fresh-solver-3',
+      'fresh-content-1',
+      'fresh-content-2',
+      'fresh-content-3',
+      'fresh-review-1',
+      'fresh-review-2',
+    ];
     let callIndex = 0;
     const taskRunFn = vi.fn(async () => ({ text: '', task_run_id: runIds[callIndex++] }));
     const expectedRuns = [
@@ -535,6 +600,18 @@ describe('intervention reviewer actual-output regression fixture', () => {
         prompt_fingerprint: taskPromptFingerprint('SolutionGenerateTask', profile),
         result_digest: diagnostic.solver_output_sha256,
       })),
+      ...contentDiagnostics.map((diagnostic) => ({
+        task_kind: 'QuizVerifyTask',
+        input_hash: diagnostic.task_input_sha256,
+        prompt_fingerprint: taskPromptFingerprint('QuizVerifyTask', profile),
+        result_digest: diagnostic.result_sha256,
+      })),
+      {
+        task_kind: 'InterventionPackageReviewTask',
+        input_hash: audit.review_task_input_sha256,
+        prompt_fingerprint: taskPromptFingerprint('InterventionPackageReviewTask', profile),
+        result_digest: sha256CanonicalJson(firstReviewResult),
+      },
       {
         task_kind: 'InterventionPackageReviewTask',
         input_hash: audit.review_task_input_sha256,
@@ -585,7 +662,171 @@ describe('intervention reviewer actual-output regression fixture', () => {
         {
           expectation_met: true,
           validator_task_run_ids: runIds,
-          review_task_run_id: 'fresh-review-1',
+          review_task_run_id: 'fresh-review-2',
+        },
+      ],
+    });
+
+    // Each valid comparator attempt owns its own result digest. Two pass
+    // attempts may legitimately differ in explanatory text, so checking only
+    // the selected/final result would lose first-attempt provenance.
+    vi.mocked(reviewInterventionPackageCandidate).mockImplementationOnce(async ({ runTaskFn }) => {
+      for (const solverInput of solverInputs) {
+        await runTaskFn('SolutionGenerateTask', solverInput, { subjectProfile: profile });
+      }
+      for (const diagnostic of contentDiagnostics) {
+        await runTaskFn('QuizVerifyTask', diagnostic.task_input, { subjectProfile: profile });
+      }
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await runTaskFn('InterventionPackageReviewTask', reviewInput, {
+          subjectProfile: profile,
+        });
+      }
+      return { status: 'ok', review: audit as never };
+    });
+    let wrongFirstDigestCallIndex = 0;
+    const wrongFirstDigestTaskRunFn = vi.fn(async () => ({
+      text: '',
+      task_run_id: runIds[wrongFirstDigestCallIndex++],
+    }));
+    const wrongFirstDigestRuns = structuredClone(expectedRuns);
+    const firstReviewRun = wrongFirstDigestRuns[6];
+    if (!firstReviewRun) throw new Error('missing first review provenance row');
+    firstReviewRun.result_digest = sha256CanonicalJson(reviewResult);
+    let wrongFirstDigestRunRead = 0;
+    let wrongFirstDigestCostRead = 0;
+    const wrongFirstDigestDb = {
+      select: (selection: Record<string, unknown>) => ({
+        from: () => ({
+          where: () =>
+            Object.hasOwn(selection, 'status')
+              ? { limit: async () => [wrongFirstDigestRuns[wrongFirstDigestRunRead++]] }
+              : Promise.resolve([expectedCosts[wrongFirstDigestCostRead++]]),
+        }),
+      }),
+    } as never;
+    const wrongFirstDigestResult = await runInterventionReviewActualOutputEval({
+      db: wrongFirstDigestDb,
+      packet,
+      runTaskFn: wrongFirstDigestTaskRunFn,
+      codeRevision: 'exact-test-revision',
+    });
+    expect(wrongFirstDigestResult).toMatchObject({
+      passed: false,
+      cases: [
+        {
+          expectation_met: false,
+          operational_failure: {
+            code: 'task_run_provenance_incomplete',
+            provenance_issues: expect.arrayContaining(['task_run_wrong_result:fresh-review-1']),
+          },
+        },
+      ],
+    });
+
+    // A self-consistent audit + DB row is not sufficient: the eval must rebuild
+    // the canonical content-validator and comparator inputs from the fixture.
+    const tamperedContentDiagnostics = structuredClone(contentDiagnostics);
+    const tamperedImmediate = tamperedContentDiagnostics[0];
+    if (!tamperedImmediate) throw new Error('missing content diagnostic to tamper');
+    const tamperedTaskInput = structuredClone(tamperedImmediate.task_input);
+    tamperedTaskInput.question.prompt_md += '\n[non-canonical replay substitution]';
+    tamperedImmediate.task_input = tamperedTaskInput;
+    tamperedImmediate.task_input_sha256 = sha256CanonicalJson(tamperedTaskInput);
+    const tamperedContentAudit = {
+      ...questionContentValidationAudit,
+      diagnostics: tamperedContentDiagnostics,
+    };
+    const tamperedReviewInput = buildInterventionPackageReviewTaskInput({
+      context: fixture.context,
+      packageValue: fixture.package,
+      independentAudit: independentSolutionAudit,
+      questionContentValidationAudit: tamperedContentAudit,
+    });
+    const tamperedAudit = {
+      ...audit,
+      question_content_validation_audit: tamperedContentAudit,
+      review_task_input_sha256: sha256CanonicalJson(tamperedReviewInput),
+    };
+    vi.mocked(reviewInterventionPackageCandidate).mockImplementationOnce(async ({ runTaskFn }) => {
+      for (const solverInput of solverInputs) {
+        await runTaskFn('SolutionGenerateTask', solverInput, { subjectProfile: profile });
+      }
+      for (const diagnostic of tamperedContentDiagnostics) {
+        await runTaskFn('QuizVerifyTask', diagnostic.task_input, { subjectProfile: profile });
+      }
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await runTaskFn('InterventionPackageReviewTask', tamperedReviewInput, {
+          subjectProfile: profile,
+        });
+      }
+      return { status: 'ok', review: tamperedAudit as never };
+    });
+    let tamperedCallIndex = 0;
+    const tamperedTaskRunFn = vi.fn(async () => ({
+      text: '',
+      task_run_id: runIds[tamperedCallIndex++],
+    }));
+    const tamperedExpectedRuns = [
+      ...independentDiagnostics.map((diagnostic) => ({
+        task_kind: 'SolutionGenerateTask',
+        input_hash: diagnostic.question_input_sha256,
+        prompt_fingerprint: taskPromptFingerprint('SolutionGenerateTask', profile),
+        result_digest: diagnostic.solver_output_sha256,
+      })),
+      ...tamperedContentDiagnostics.map((diagnostic) => ({
+        task_kind: 'QuizVerifyTask',
+        input_hash: diagnostic.task_input_sha256,
+        prompt_fingerprint: taskPromptFingerprint('QuizVerifyTask', profile),
+        result_digest: diagnostic.result_sha256,
+      })),
+      ...Array.from({ length: 2 }, () => ({
+        task_kind: 'InterventionPackageReviewTask' as const,
+        input_hash: tamperedAudit.review_task_input_sha256,
+        prompt_fingerprint: taskPromptFingerprint('InterventionPackageReviewTask', profile),
+        result_digest: '',
+      })).map((run, index) => ({
+        ...run,
+        result_digest: sha256CanonicalJson(index === 0 ? firstReviewResult : reviewResult),
+      })),
+    ].map((run) => ({
+      ...run,
+      provider: 'xiaomi',
+      model: 'mimo-v2.5-pro',
+      status: 'success',
+      usage: { inputTokens: 800, outputTokens: 420 },
+      cost_usd: 0.025,
+    }));
+    let tamperedRunRead = 0;
+    let tamperedCostRead = 0;
+    const tamperedDb = {
+      select: (selection: Record<string, unknown>) => ({
+        from: () => ({
+          where: () =>
+            Object.hasOwn(selection, 'status')
+              ? { limit: async () => [tamperedExpectedRuns[tamperedRunRead++]] }
+              : Promise.resolve([expectedCosts[tamperedCostRead++]]),
+        }),
+      }),
+    } as never;
+    const tamperedResult = await runInterventionReviewActualOutputEval({
+      db: tamperedDb,
+      packet,
+      runTaskFn: tamperedTaskRunFn,
+      codeRevision: 'exact-test-revision',
+    });
+    expect(tamperedResult).toMatchObject({
+      passed: false,
+      cases: [
+        {
+          expectation_met: false,
+          operational_failure: {
+            code: 'task_run_provenance_incomplete',
+            provenance_issues: expect.arrayContaining([
+              'audit_content_input_mismatch:immediate',
+              'task_run_observed_wrong_input:fresh-content-1',
+            ]),
+          },
         },
       ],
     });
@@ -622,7 +863,16 @@ describe('intervention reviewer actual-output regression fixture', () => {
           figures_hint: null,
           prompt_image_refs: [],
         },
-        question_input_sha256: `${index + 1}`.repeat(64),
+        question_input_sha256: sha256CanonicalJson({
+          prompt_md: fixture.package.diagnostics[kind].probe_spec.prompt_md,
+          kind: fixture.package.diagnostics[kind].probe_spec.response_mode,
+          subject_id: fixture.subject_id,
+          choices_md: [],
+          existing_answers_hint: null,
+          existing_analysis_hint: null,
+          figures_hint: null,
+          prompt_image_refs: [],
+        }),
         solver_output: solverOutput,
         solver_output_sha256: sha256CanonicalJson(solverOutput),
         solver_output_repair_level: false as const,
@@ -653,51 +903,104 @@ describe('intervention reviewer actual-output regression fixture', () => {
       serious_factual_error_absent: true,
       safe_material: true,
     };
+    const contentDiagnostics = (['immediate', 'delayed', 'transfer'] as const).map(
+      (kind, index) => {
+        const taskInput = buildInterventionQuestionContentValidationTaskInput({
+          context: fixture.context,
+          packageValue: fixture.package,
+          kind,
+          subjectId: fixture.subject_id,
+        });
+        const validationResult = {
+          grounding: {
+            verdict: 'pass' as const,
+            note: `${kind} 的公式、量纲、答案和题面在 release-strict 模式下均已核对。`,
+          },
+          copy_safety: { verdict: 'original' as const, max_overlap: 0.03 },
+          knowledge_hit: {
+            verdict: 'pass' as const,
+            note: `${kind} 仍只检验负因子分配及负负得正。`,
+          },
+          overall: 'pass' as const,
+          summary_md: `${kind} 复杂题面通过内容 grounding 与构念命中检查。`,
+          confidence: 0.96,
+        };
+        return {
+          kind,
+          task_input: taskInput,
+          task_input_sha256: sha256CanonicalJson(taskInput),
+          result: validationResult,
+          result_sha256: sha256CanonicalJson(validationResult),
+          output_repair_level: false as const,
+          task_run_id: `replayed-content-${index + 1}`,
+        };
+      },
+    );
+    const reviewResult = {
+      review_protocol_version: 2 as const,
+      verdict: 'pass' as const,
+      failure_codes: [],
+      diagnostic_checks: diagnostics.map((diagnostic) => ({
+        kind: diagnostic.kind,
+        independent_solution_sha256: diagnostic.solver_output_sha256,
+        independently_derived_answer_md: diagnostic.independently_derived_answer_md,
+        required_operations_md: diagnostic.required_operations_md,
+        required_operation_checks: diagnostic.required_operations.map((operation) => ({
+          ...operation,
+          reference_covers_operation: true,
+          within_frozen_scope: true,
+          decision_basis_md: 'reference 覆盖该必要步骤，且没有越过冻结范围。',
+        })),
+        reference_correct: true,
+        within_frozen_scope: true,
+        discipline_grounded: true,
+        decision_basis_md: '密封盲解、内容 grounding、reference 与冻结范围一致。',
+        causal_direction_check: {
+          applies: false,
+          exposure_x_md: '',
+          observed_outcome_y_md: '',
+          reference_claims_reverse_causation: false,
+          reference_claimed_reverse_cause_md: '',
+          reference_claimed_reverse_cause_relation: 'none' as const,
+          reference_reverse_causation_claim_checks: [],
+          claimed_cause_is_observed_y_causing_x: false,
+        },
+      })),
+      package_checks: passingPackageChecks,
+      summary_md: '完整 FULL 审计通过，但这些运行并未在本 case 中观察到。',
+    };
+    const independentSolutionAudit = {
+      validation_protocol_version: 1 as const,
+      package_digest_sha256: packageDigest,
+      diagnostics,
+    };
+    const questionContentValidationAudit = {
+      validation_protocol_version: 1 as const,
+      package_digest_sha256: packageDigest,
+      diagnostics: contentDiagnostics,
+    };
+    const reviewTaskInput = buildInterventionPackageReviewTaskInput({
+      context: fixture.context,
+      packageValue: fixture.package,
+      independentAudit: independentSolutionAudit,
+      questionContentValidationAudit,
+    });
     vi.mocked(reviewInterventionPackageCandidate).mockResolvedValueOnce({
       status: 'ok',
       review: {
+        audit_protocol_version: INTERVENTION_REVIEW_AUDIT_PROTOCOL_VERSION,
         review_version: 1,
         package_digest_sha256: packageDigest,
-        review_task_run_id: 'replayed-review',
-        review_attempt_task_run_ids: ['replayed-review'],
-        review_task_input_sha256: 'b'.repeat(64),
-        independent_solution_audit: {
-          validation_protocol_version: 1,
-          package_digest_sha256: packageDigest,
-          diagnostics,
-        },
-        result: {
-          review_protocol_version: 2,
-          verdict: 'pass',
-          failure_codes: [],
-          diagnostic_checks: diagnostics.map((diagnostic) => ({
-            kind: diagnostic.kind,
-            independent_solution_sha256: diagnostic.solver_output_sha256,
-            independently_derived_answer_md: diagnostic.independently_derived_answer_md,
-            required_operations_md: diagnostic.required_operations_md,
-            required_operation_checks: diagnostic.required_operations.map((operation) => ({
-              ...operation,
-              reference_covers_operation: true,
-              within_frozen_scope: true,
-              decision_basis_md: 'reference 覆盖该必要步骤，且没有越过冻结范围。',
-            })),
-            reference_correct: true,
-            within_frozen_scope: true,
-            discipline_grounded: true,
-            decision_basis_md: '密封盲解、reference 与冻结范围一致。',
-            causal_direction_check: {
-              applies: false,
-              exposure_x_md: '',
-              observed_outcome_y_md: '',
-              reference_claims_reverse_causation: false,
-              reference_claimed_reverse_cause_md: '',
-              reference_claimed_reverse_cause_relation: 'none',
-              claimed_cause_is_observed_y_causing_x: false,
-            },
-          })),
-          package_checks: passingPackageChecks,
-          summary_md: '完整 FULL 审计通过，但这些运行并未在本 case 中观察到。',
-        },
+        review_task_run_id: 'replayed-review-2',
+        review_attempt_task_run_ids: ['replayed-review-1', 'replayed-review-2'],
+        review_task_input_sha256: sha256CanonicalJson(reviewTaskInput),
+        independent_solution_audit: independentSolutionAudit,
+        question_content_validation_audit: questionContentValidationAudit,
+        review_attempts: [
+          { task_run_id: 'replayed-review-1', outcome: 'valid', result: reviewResult },
+          { task_run_id: 'replayed-review-2', outcome: 'valid', result: reviewResult },
+        ],
+        result: reviewResult,
       } as never,
     });
     const db = {
@@ -723,7 +1026,8 @@ describe('intervention reviewer actual-output regression fixture', () => {
         code: 'task_run_provenance_incomplete',
         provenance_issues: expect.arrayContaining([
           'task_run_not_observed:replayed-solver-1',
-          'task_run_not_observed:replayed-review',
+          'task_run_not_observed:replayed-content-1',
+          'task_run_not_observed:replayed-review-1',
         ]),
       },
     });

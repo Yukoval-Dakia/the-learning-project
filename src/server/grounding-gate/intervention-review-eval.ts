@@ -1,9 +1,11 @@
 import { reviewInterventionPackageCandidate } from '@/capabilities/practice/server/intervention-author';
 import {
+  CurrentInterventionPackageReviewAudit,
   InterventionAuthoringContext,
   InterventionPackage,
-  InterventionPackageReviewAuditV2,
   InterventionPackageReviewFailureCode,
+  buildInterventionPackageReviewTaskInput,
+  buildInterventionQuestionContentValidationTaskInput,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { ai_task_runs, cost_ledger } from '@/db/schema';
@@ -49,10 +51,10 @@ export type InterventionReviewRegressionPacketT = z.infer<
 
 export interface ExpectedValidatorTaskRun {
   id: string;
-  taskKind?: 'SolutionGenerateTask' | 'InterventionPackageReviewTask';
+  taskKind?: 'SolutionGenerateTask' | 'QuizVerifyTask' | 'InterventionPackageReviewTask';
   inputHash?: string;
   promptFingerprint?: string;
-  resultDigest?: string;
+  resultDigest?: string | null;
 }
 
 type TaskRunProvenance = Awaited<ReturnType<typeof collectTaskRunProvenance>>;
@@ -133,7 +135,7 @@ export async function collectTaskRunProvenance(
       if (expected.promptFingerprint && run.prompt_fingerprint !== expected.promptFingerprint) {
         issues.push(`task_run_wrong_prompt:${taskRunId}`);
       }
-      if (expected.resultDigest && run.result_digest !== expected.resultDigest) {
+      if (expected.resultDigest !== undefined && run.result_digest !== expected.resultDigest) {
         issues.push(`task_run_wrong_result:${taskRunId}`);
       }
       if (typeof run.cost_usd !== 'number' || !Number.isFinite(run.cost_usd) || run.cost_usd < 0) {
@@ -214,7 +216,11 @@ export async function runInterventionReviewActualOutputEval(input: {
         observationIssues.push(`task_run_observed_twice:${taskRunId}`);
         return;
       }
-      if (kind !== 'SolutionGenerateTask' && kind !== 'InterventionPackageReviewTask') {
+      if (
+        kind !== 'SolutionGenerateTask' &&
+        kind !== 'QuizVerifyTask' &&
+        kind !== 'InterventionPackageReviewTask'
+      ) {
         observedRuns.push({ id: taskRunId });
         observationIssues.push(`task_run_unexpected_kind:${taskRunId}:${kind}`);
         return;
@@ -328,7 +334,7 @@ export async function runInterventionReviewActualOutputEval(input: {
       });
       continue;
     }
-    const currentAudit = InterventionPackageReviewAuditV2.safeParse(validation.review);
+    const currentAudit = CurrentInterventionPackageReviewAudit.safeParse(validation.review);
     if (!currentAudit.success) {
       const expectedRuns = observedExpectations([validation.review.review_task_run_id]);
       const provenance = appendProvenanceIssues(
@@ -355,10 +361,66 @@ export async function runInterventionReviewActualOutputEval(input: {
     }
     const audit = currentAudit.data;
     const review = audit.result;
+    if (audit.package_digest_sha256 !== packageDigest) {
+      observationIssues.push('audit_package_digest_mismatch');
+    }
+    for (const diagnostic of audit.independent_solution_audit.diagnostics) {
+      const packageDiagnostic = fixture.package.diagnostics[diagnostic.kind];
+      if (
+        diagnostic.task_input.prompt_md !== packageDiagnostic.probe_spec.prompt_md ||
+        diagnostic.task_input.kind !== packageDiagnostic.probe_spec.response_mode ||
+        diagnostic.task_input.subject_id !== subjectProfile.id
+      ) {
+        observationIssues.push(`audit_solver_input_mismatch:${diagnostic.kind}`);
+      }
+      if (diagnostic.question_input_sha256 !== sha256CanonicalJson(diagnostic.task_input)) {
+        observationIssues.push(`audit_solver_input_digest_mismatch:${diagnostic.kind}`);
+      }
+      if (diagnostic.solver_output_sha256 !== sha256CanonicalJson(diagnostic.solver_output)) {
+        observationIssues.push(`audit_solver_output_digest_mismatch:${diagnostic.kind}`);
+      }
+    }
+    const expectedContentInputHashes = new Map(
+      audit.question_content_validation_audit.diagnostics.map((diagnostic) => {
+        const expectedInput = buildInterventionQuestionContentValidationTaskInput({
+          context: fixture.context,
+          packageValue: fixture.package,
+          kind: diagnostic.kind,
+          subjectId: subjectProfile.id,
+        });
+        const expectedInputHash = sha256CanonicalJson(expectedInput);
+        if (
+          sha256CanonicalJson(diagnostic.task_input) !== expectedInputHash ||
+          diagnostic.task_input_sha256 !== expectedInputHash
+        ) {
+          observationIssues.push(`audit_content_input_mismatch:${diagnostic.kind}`);
+        }
+        if (diagnostic.result_sha256 !== sha256CanonicalJson(diagnostic.result)) {
+          observationIssues.push(`audit_content_output_digest_mismatch:${diagnostic.kind}`);
+        }
+        return [diagnostic.kind, expectedInputHash] as const;
+      }),
+    );
+    const expectedReviewTaskInputSha256 = sha256CanonicalJson(
+      buildInterventionPackageReviewTaskInput({
+        context: fixture.context,
+        packageValue: fixture.package,
+        independentAudit: audit.independent_solution_audit,
+        questionContentValidationAudit: audit.question_content_validation_audit,
+      }),
+    );
+    if (audit.review_task_input_sha256 !== expectedReviewTaskInputSha256) {
+      observationIssues.push('audit_review_input_mismatch');
+    }
     const independentSolutionTaskRunIds = audit.independent_solution_audit.diagnostics.flatMap(
       (diagnostic) => diagnostic.solver_attempt_task_run_ids,
     );
+    const questionContentValidationTaskRunIds =
+      audit.question_content_validation_audit.diagnostics.map(
+        (diagnostic) => diagnostic.task_run_id,
+      );
     const solverPromptFingerprint = taskPromptFingerprint('SolutionGenerateTask', subjectProfile);
+    const contentPromptFingerprint = taskPromptFingerprint('QuizVerifyTask', subjectProfile);
     const reviewPromptFingerprint = taskPromptFingerprint(
       'InterventionPackageReviewTask',
       subjectProfile,
@@ -375,14 +437,20 @@ export async function runInterventionReviewActualOutputEval(input: {
             : {}),
         })),
       ),
-      ...audit.review_attempt_task_run_ids.map((taskRunId) => ({
-        id: taskRunId,
+      ...audit.question_content_validation_audit.diagnostics.map((diagnostic) => ({
+        id: diagnostic.task_run_id,
+        taskKind: 'QuizVerifyTask' as const,
+        inputHash: expectedContentInputHashes.get(diagnostic.kind),
+        promptFingerprint: contentPromptFingerprint,
+        resultDigest: sha256CanonicalJson(diagnostic.result),
+      })),
+      ...audit.review_attempts.map((reviewAttempt) => ({
+        id: reviewAttempt.task_run_id,
         taskKind: 'InterventionPackageReviewTask' as const,
-        inputHash: audit.review_task_input_sha256,
+        inputHash: expectedReviewTaskInputSha256,
         promptFingerprint: reviewPromptFingerprint,
-        ...(taskRunId === audit.review_task_run_id
-          ? { resultDigest: sha256CanonicalJson(audit.result) }
-          : {}),
+        resultDigest:
+          reviewAttempt.outcome === 'valid' ? sha256CanonicalJson(reviewAttempt.result) : null,
       })),
     ];
     const observedById = new Map(observedRuns.map((run) => [run.id, run]));
@@ -427,6 +495,7 @@ export async function runInterventionReviewActualOutputEval(input: {
       expectation_met: expectationMet,
       validator_task_run_ids: expectedRuns.map((run) => run.id),
       independent_solution_task_run_ids: independentSolutionTaskRunIds,
+      question_content_validation_task_run_ids: questionContentValidationTaskRunIds,
       review_task_run_id: audit.review_task_run_id,
       review_attempt_task_run_ids: audit.review_attempt_task_run_ids,
       full_validation_audit_sha256: sha256CanonicalJson(audit),

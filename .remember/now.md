@@ -1,43 +1,38 @@
-# 当前 handoff — 2026-07-30
+# 当前 handoff — 2026-08-01
 
 ## Current state
 
-- owner 已授权持续推进全部 roadmap，并允许 agent 自写 gate 输入、agent 评判真实产品输出。
-- 唯一 active lane：YUK-792。
-- branch：`codex/yuk-792-intervention-settlement`。
-- YUK-814 Gate A/B 已各用 8-cluster 真实产品链输出通过；Gate C 等 YUK-792 合并。
-- YUK-828：Done，PR #1120，merge `52c08b8e`。
+- active lane：YUK-829；branch `codex/yuk-829-intervention-reviewer`；Draft PR #1139。
+- owner 要求：复用并泛化现有题目 validator；mock fixture 必须复杂、接近真实题目；
+  模型输出质量用真实 provider actual-output；完整 `pnpm test` 只在 GitHub exact-head CI。
+- OpenCode 的 YUK-813/YUK-831 暂不推进，只盯产品。
 
-## YUK-792 已实现
+## YUK-829 当前实现
 
-1. eligible intervention 激活时把 immediate / delayed / transfer probe 物化为现有
-   question + question-level FSRS card；写入/退役由 Practice public port 单一持有，
-   shadow 只写 ledger，不暴露给 learner。
-2. 固定 due policy：activation / +7d / +21d；canonical review subscription 记录
-   pass/fail，删除 one-shot card，三项齐备后结算 outcome 并写 settled event；未到期
-   submit 返回 409，store 对旁路 event 再做 due fence。
-3. archive/deploy recovery 用 `(updated_at,id,version)` keyset 扫完全部 eligible active
-   rows；migration 回填既有 active ledger。
-4. 删除无 producer/reader/red-test 的 runtime `transfer_gap` 及 prompt 暗示；ADR 只保留
-   未来具备真实闭环后的恢复条件。
-5. Practice 声明 canonical `review` event ownership；Agency 只经 subscription 消费。
+1. 复用 `SolutionGenerateTask` 与 `QuizVerifyTask`，为三道 intervention diagnostic
+   分别保存严格盲解和 `release_strict` content-grounding audit。
+2. 服务端从 reference/gold authoritative surfaces 提取带 UTF-16 offsets/digest 的
+   reverse-causation occurrences；provider 只能逐 index 分类与题面 outcome Y 的关系。
+3. 服务端从 granular checks 派生闭集 verdict/failure codes；content grounding 非 pass、
+   非同一 Y→X、漏项/重排/伪造 claim 均 fail closed。
+4. pass 必须在同一 canonical comparator input 上得到两次有效确认；V3 audit 保存每轮
+   valid result 或 contract-invalid null digest，activation/eval 逐轮复核 provenance。
+5. FULL ceiling：11 validator calls/package、25 calls/preparation delivery、66 calls/六案例。
 
-## 验证
+## 已完成验证
 
-- PASS：typecheck、lint、API/capability/draft/schema 等静态审计。
-- PASS：全量 unit 516 files / 5,959 tests；相关 DB 2 files / 64 tests；
-  migration 1 file / 30 tests。
-- PASS：修复 review finding 后 settlement DB 22 tests、submit early-due 红测、101-row
-  recovery 边界、真实 `answerProbe → evidence_for → /api/review/due` 链。
-- 独立 standards/spec 初审的 4 个 P1/所有权 finding 已全部修复；一次 verification
-  review 均判 CLOSED，无新增 P0/P1。
-- 本机 OrbStack 一度停止导致第一次全量 DB 无 runtime；恢复后完整 DB 跑约 19 分钟无
-  failure 输出，但为避免低效本地串行等待已主动中止，不计为 PASS。
-- 完整 DB/build 交 GitHub CI 并行验证。
+- unit：4 个相关文件，190/190。
+- DB：intervention preparation + quiz_verify + source_verify，100/100。
+- PASS：`pnpm typecheck`、`pnpm lint`、pre-PR schema/partition/API/capability/profile/draft
+  audits、`pnpm build`、`git diff --check`。
+- 独立 review 已覆盖 causal binding、shared validator regression、V3 state/provenance；
+  修复其 P1 后均需在最终 diff 上确认关闭。
+- 未在本机运行完整 `pnpm test`。
 
-## 下一步
+## Merge gate / next action
 
-1. 独立 standards/spec 双轴 review；修 P0/P1 后开 PR。
-2. 等 exact-head CI Gate；合并并对齐 Linear/PLAN/.remember。
-3. 跑 YUK-814 Gate C：10 个 agent 自写输入的真实 eligible lifecycle。
-4. 依次推进 YUK-822 → YUK-815/YUK-816 → 剩余 profile/domain/release 验收。
+1. 最终独立 P0/P1 复核关闭后提交干净 HEAD。
+2. 跑版本化六案例真实 MiMo actual-output；输出必须不存在、private、记录 exact SHA。
+3. push；由 GitHub exact-head CI 跑完整测试，更新 PR #1139 与 Linear YUK-829 后合并。
+4. YUK-829 合并只解除 YUK-814 blocker；YUK-814 仍需 fresh 10-run 真实 owner canary。
+5. live 运行状态只以 PR #1139 / Linear YUK-829 为准，避免本 handoff 复制后漂移。

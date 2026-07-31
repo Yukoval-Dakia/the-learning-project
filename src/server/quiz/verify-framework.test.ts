@@ -9,6 +9,7 @@ import { AgentRunError } from '@/server/ai/agent-run-error';
 import interventionRegressionFixture from '@/server/grounding-gate/fixtures/intervention-review-regressions.v1.json' with {
   type: 'json',
 };
+import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   semanticJudgeOutput as semanticOutput,
   solverOutput,
@@ -25,12 +26,119 @@ import {
   type TeachingQualityResult,
   checksForTier,
   normalizeAnswer,
+  parseQuestionContentValidationOutput,
   runIndependentSolution,
+  runQuestionContentValidation,
   runSolveCheck,
   runTeachingQualityCheck,
   solveCheckBlocks,
   teachingQualityBlocks,
 } from './verify-framework';
+
+const complexContentValidationOutput = {
+  grounding: {
+    verdict: 'fail' as const,
+    note: '题目把《卜算子·咏梅》中并不存在的“向来不与百花争春”当作原句，作者材料不能充当独立证据。',
+  },
+  copy_safety: { verdict: 'original' as const, max_overlap: 0.07 },
+  knowledge_hit: {
+    verdict: 'pass' as const,
+    note: '题目确实要求区分论据是否支持论点，但引用事实本身错误。',
+  },
+  overall: 'fail' as const,
+  summary_md: '构念命中，但可识别真实作品的引文与语义方向不成立，不能发布。',
+  confidence: 0.97,
+};
+
+describe('shared question-content validator seam', () => {
+  it('keeps ordinary QuizVerify parsing compatible with the historical heuristic repair band', () => {
+    const malformed = JSON.stringify(complexContentValidationOutput)
+      .replace(/"grounding"/u, "'grounding'")
+      .replace(/"verdict":"fail"/u, "'verdict':'fail'");
+    const parsed = parseQuestionContentValidationOutput({ text: malformed });
+    expect(parsed.output).toEqual(complexContentValidationOutput);
+    expect(parsed.repairLevel).toBe('jsonrepair');
+  });
+
+  it('rejects that heuristic repair in release_strict mode instead of sealing ambiguous output', () => {
+    const malformed = JSON.stringify(complexContentValidationOutput)
+      .replace(/"grounding"/u, "'grounding'")
+      .replace(/"verdict":"fail"/u, "'verdict':'fail'");
+    expect(() =>
+      parseQuestionContentValidationOutput({ text: malformed }, { releaseStrict: true }),
+    ).toThrow('JSON.parse failed');
+  });
+
+  it('runs the shipped QuizVerifyTask with rich real-work attribution data and seals exact hashes', async () => {
+    const yuwenFixture = interventionRegressionFixture.cases.find(
+      (fixture) => fixture.case_id === 'yuwen-fabricated-counterexamples',
+    );
+    if (!yuwenFixture) throw new Error('missing complex yuwen regression fixture');
+    const immediate = yuwenFixture.package.diagnostics.immediate.probe_spec;
+    const taskInput = {
+      question: {
+        id: 'intervention:yuwen-fabricated-counterexamples:immediate',
+        prompt_md: immediate.prompt_md,
+        reference_md: immediate.reference_md,
+        choices_md: null,
+        kind: immediate.response_mode,
+        difficulty: null,
+        knowledge_ids: [yuwenFixture.context.snapshot.conjecture.knowledge_id],
+      },
+      knowledge_context: [
+        {
+          id: yuwenFixture.context.snapshot.conjecture.knowledge_id,
+          name: yuwenFixture.context.snapshot.conjecture.knowledge_name,
+          domain: 'yuwen',
+        },
+      ],
+      source_pack: {
+        query_plan: [],
+        searched_at: yuwenFixture.context.snapshot.created_at,
+        tool: 'none',
+      },
+      source_refs: [],
+      self_copy_safety: { verdict: 'unknown', checked_by: 'agent_self' },
+      generation_method: 'closed_book',
+      author_material: yuwenFixture.package.material,
+      validation_mode: 'release_strict' as const,
+    };
+    const sentinelDb = { source: 'shared-validator-test' } as never;
+    const afterTaskRun = vi.fn(async () => undefined);
+    const runTaskFn = vi.fn(async () => ({
+      text: '',
+      task_run_id: 'quiz-verify-rich-yuwen-1',
+      structured_output: complexContentValidationOutput,
+    }));
+
+    const result = await runQuestionContentValidation(taskInput, {
+      runTaskFn,
+      db: sentinelDb,
+      subjectProfile: resolveSubjectProfile('yuwen'),
+      skills: ['yuwen-reading-evidence'],
+      afterTaskRun,
+    });
+
+    expect(runTaskFn).toHaveBeenCalledWith(
+      'QuizVerifyTask',
+      taskInput,
+      expect.objectContaining({
+        db: sentinelDb,
+        subjectProfile: expect.objectContaining({ id: 'yuwen' }),
+        skills: ['yuwen-reading-evidence'],
+      }),
+    );
+    expect(afterTaskRun).toHaveBeenCalledWith(
+      expect.objectContaining({ task_run_id: 'quiz-verify-rich-yuwen-1' }),
+    );
+    expect(result).toMatchObject({
+      output: complexContentValidationOutput,
+      output_repair_level: false,
+      task_input_sha256: sha256CanonicalJson(taskInput),
+      output_sha256: sha256CanonicalJson(complexContentValidationOutput),
+    });
+  });
+});
 
 // ---------- tier → check-set config ----------
 

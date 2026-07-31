@@ -8,7 +8,6 @@ import {
   getDefaultMetaCause,
 } from '@/core/schema/business';
 import {
-  InterventionPackageReviewFailureCode,
   InterventionPackageReviewStructuredOutput,
   InterventionPackageStructuredOutput,
   PedagogyRecommendationStructuredOutput,
@@ -936,9 +935,10 @@ function buildSolutionGeneratePrompt(profile: SubjectProfile): string {
 
 要点：
 - existing_answers_hint / existing_analysis_hint 只是 hint：如果你判断它对就采纳，判断它错就以你自己的解为准，并在 worked_solution_md 里简述为何。
+- 题面里的计算条件、明确标为“匿名记录/假设情境/给定数据”的事实可作为本题 givens；但具名真实作品、人物、史实、公式出处及其作者附带的解读不是自动真值。遇到可识别的真实对象时，必须用本学科知识独立核对引文、归属和解释方向；题面 gloss 与原文/公认含义冲突时要指出，不能因为题面写了“整体基调是……”就照抄。
 - expected_signals 必须覆盖完整必要路径、共 1..12 条且每条非空；final_answer 非空。
 - confidence 必须是与 reference_solution、worked_solution_md 并列的**顶层字段**，不得放进 reference_solution；值必须是 0 到 1 之间的 JSON number（例如 0.92），禁止输出 "high"、"0.92" 或百分数字符串。
-- 若题目涉及因果方向，先固定 exposure/treatment X 与题面 outcome construct / estimand Y。反向因果指 Y（也包括同一 outcome construct 的先行状态或倾向）影响 X，而不是按“原因发生在 X 前还是 X 后”机械分类；例如抑郁严重度影响运动、疾病严重度影响用药都可是真正的 Y→X，即使机制表现为 self-selection 或按病情分配。若题面 Y 是变化量/提高幅度，则基线水平 Y0 是不同 estimand。只有由不同于 Y 的构念驱动的风险分配/self-selection，以及共同原因，才不是该 Y→X。题目或候选理由若混淆这些概念，必须明确指出，不能顺着题面误称。
+- 若题目涉及因果方向，先固定 exposure/treatment X 与题面 outcome construct / estimand Y。反向因果指**同一个 Y 构念**影响 X，而不是按“原因发生在 X 前还是 X 后”机械分类；例如题面 Y=当前抑郁严重度时，较高抑郁严重度影响运动可是真正的 Y→X。若题面 Y 是变化量 ΔY（成绩提高幅度、血压变化等），基线水平 Y0、能力/潜力、动机、倾向、预期改善都不是 ΔY；它们驱动 X 时属于基线选择或其他构念，不得称为观察到的 Y→X。共同原因也不是反向因果。题目或候选理由若混淆这些概念，必须明确指出，不能顺着题面误称。
 - ${profile.grounding.uncertaintyPolicy}
 - confidence 反映你对这份参考解的把握，模棱两可给 0.5。
 - 禁止：输出 JSON 之外的文字、用 markdown 代码块包裹整段 JSON、把 hint 当成不可质疑的真值。`;
@@ -1076,6 +1076,12 @@ function buildQuizVerifyPrompt(profile: SubjectProfile): string {
 不确定性策略：${profile.grounding.uncertaintyPolicy}
 
 重要：本次质检是 **closed-book** —— 你**不**联网检索，只依据出题 agent 自报的 source_refs（含 snippet）与题目本身判断（§0：运行时无法从日志恢复 agent 的真实检索，所以只信它写进 source_refs 的来源）。
+
+输入若带 validation_mode='release_strict'，这是发布级复用路径，额外遵守：
+- author_material 只是作者生成的教学材料，不是事实来源；作者在题干、reference_md 或 author_material 里写出的解释性 gloss 不能自我证明。
+- 明确标为匿名记录、假设情境、给定数据并要求只按记录判断的内容，按题面闭世界 givens 检查内部一致性即可。
+- 对可识别的真实作品、人物、史实、统计、公式出处、引文及其解释方向，必须用 source_refs、持久化 primary material、题面可直接推出的原文证据或本学科可靠知识独立核对。缺少足够独立依据给 grounding='unclear'；与原文或可靠学科事实冲突给 'fail'；绝不能因为作者和 reference 重复同一句解读就给 pass。
+- scope/knowledge 范围只说明考什么，不豁免 factuality。release_strict 的下游只接受 grounding='pass'，所以不确定时如实给 unclear，不要迎合放行。
 
 三项检查（每项独立给 verdict）：
 1. grounding（事实/落地）：题干与 reference_md 是否被 source_refs 的内容支撑、与之一致、无事实错误？若某来源标 used_for='fact' 却与题面矛盾，或题面含 snippet 无法支撑的具体事实断言 → 倾向 'fail'。source_refs 为空且 generation_method 为 closed_book 时，按题面自身是否事实正确判断，不因没来源直接判 fail（给 'unclear' 或依内容判）。
@@ -1324,36 +1330,16 @@ function buildInterventionPackageAuthorPrompt(profile: SubjectProfile): string {
 不确定性策略：${profile.grounding.uncertaintyPolicy}`;
 }
 
-const INTERVENTION_REVIEW_FAILURE_CODES_FOR_PROMPT = InterventionPackageReviewFailureCode.options
-  .filter((code) => code !== 'review_output_invalid')
-  .reduce<{ lines: string[]; offset: number }>(
-    (accumulator, code) => {
-      const lineWidths = [4, 4, 3, 1];
-      while (
-        accumulator.offset < lineWidths.length - 1 &&
-        accumulator.lines[accumulator.offset]?.split(', ').length === lineWidths[accumulator.offset]
-      ) {
-        accumulator.offset += 1;
-      }
-      accumulator.lines[accumulator.offset] = accumulator.lines[accumulator.offset]
-        ? `${accumulator.lines[accumulator.offset]}, ${code}`
-        : code;
-      return accumulator;
-    },
-    { lines: [], offset: 0 },
-  )
-  .lines.join(',\n');
-
 function buildInterventionPackageReviewPrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}干预包的比较审查员。作者调用已经结束；在你之前，系统已用现有题目 validator 的独立解题阶段，对 immediate、delayed、transfer 三道题分别只看题面完成盲解。输入中的 sealed_independent_solutions 是该阶段的密封结果，含 final answer、等价答案、必要步骤、完整解题摘要、confidence 与输入/输出摘要。你不得把作者 reference、gold signature、教学材料或冻结 claim 当成这些盲解的来源，也不得改写、替换或伪造密封结果。
+  return `你是${profile.displayName}干预包的比较审查员。作者调用已经结束；在你之前，系统已复用现有题目 validator 的两个独立阶段：(a) 对 immediate、delayed、transfer 三道题分别只看题面完成盲解；(b) 用 release_strict policy 分别核验题面/reference 的 factual grounding。输入中的 sealed_independent_solutions 是盲解密封结果；sealed_question_content_validations 是 grounding 密封结果。你不得把作者 reference、gold signature、教学材料或冻结 claim 当成盲解来源，不得改写、替换或伪造任何密封结果，也不得用盲解一致性推翻 grounding 的 unclear/fail。
 
 输入含 immutable snapshot（conjecture.diagnostic_spec 已冻结）、pedagogy recommendation、完整 package candidate、server-owned review_requirements，以及恰好三份 sealed_independent_solutions。按 kind 一一对应后审查：
 
-1. **参考答案与学科 grounding**：用密封盲解中的 final_answer_md、answer_equivalents_md、expected_signals_md、worked_solution_md 对照 package 的 reference_md / gold_response_signature。题目所问量、量纲、计算、文本方向、因果定义、唯一性或签名有任一不匹配，reference_correct=false。数学、文本、引用、事实或因果方向缺乏可靠依据时 discipline_grounded=false。任一为 false 都必须报 reference_incorrect。
+1. **参考答案与学科 grounding**：用密封盲解中的 final_answer_md、answer_equivalents_md、expected_signals_md、worked_solution_md 对照 package 的 reference_md / gold_response_signature。密封盲解只证明“另一模型怎样按题面求解”，**不是题面事实、引文解读或因果分类的权威来源**。同 kind 的 sealed_question_content_validations.grounding 不是 pass 时 discipline_grounded 必须 false；服务端还会执行同一 hard gate，你不能覆盖。题目所问量、量纲、计算、文本方向、因果定义、唯一性或签名有任一不匹配，reference_correct=false。题面明确标为匿名记录/假设数据时可把记录作为 givens；但具名真实作品、人物、史实、公式出处及作者附带 gloss 不是 givens，必须对照所引文字和本学科知识判断。数学、文本、引用、事实或因果方向缺乏可靠依据时 discipline_grounded=false；严重事实错误同时令 serious_factual_error_absent=false。snapshot 的 scope boundary 只限制被测 claim，绝不能豁免 package 的 factuality/material grounding。
 2. **冻结范围**：先确定题目最终要求回答的量或结论，再把完整必要解题路径中的每份 sealed_independent_solutions.required_operations（由盲解 expected_signals 密封生成）逐项对照 snapshot.conjecture.claim_md、diagnostic_spec.trigger_conditions_md 与 scope_boundary_md。每个 operation 只按输入顺序原样复制 operation_index，并分别输出 reference_covers_operation、within_frozen_scope、decision_basis_md；不得输出或猜测 operation_sha256/operation_md，它们由服务端按 kind+index 密封绑定。不得漏项、并项或只审局部。诊断级 within_frozen_scope 是全部 operation 的 all-of 判据：即使某个局部子步骤命中冻结 claim，只要任一步需要 scope_boundary_md 排除、或冻结 claim 未覆盖的运算、概念、文本语境或因果方向，就必须置 false 并报 claim_scope_expansion。任一步未被 reference 覆盖则 reference_correct=false 并报 reference_incorrect。tested_claim_md 的逐字相等不能推翻内容审查；review_requirements.audit_entire_solution_path=true 也不得被忽略。
-3. **因果方向**：每题必须输出 causal_direction_check。review_requirements.causal_direction_required=true 时，三题都是因果审查，applies 必须为 true，并分别从该题题面定义 X 与 outcome construct Y；置 false 属于输出合同错误。required=false 只表示服务端未强制，不妨碍你在确属因果题时主动置 true。真正的非因果题才把 applies=false，X/Y/claimed cause 三个字符串填空串，reference_claims_reverse_causation=false，relation="none"。因果题明确 X 与 Y：
-{"applies":true,"exposure_x_md":"treatment/exposure X","observed_outcome_y_md":"题面 outcome construct / estimand Y","reference_claims_reverse_causation":true|false,"reference_claimed_reverse_cause_md":"逐字概括 reference 声称的反向原因；未声称则空串","reference_claimed_reverse_cause_relation":"none|same_outcome_construct_y|baseline_or_prior_different_construct|common_cause_or_other_or_unclear"}
-reverse causation 指 outcome construct Y（或同一构念的先行状态/倾向）影响 X，不以“发生在 X 之后”作为定义：例如疾病严重度 Y 促使患者用药 X、抑郁状态 Y 降低运动 X 都可是真正的 Y→X；即使机制表现为按病情分配或 self-selection，只要驱动 X 的就是同一 Y construct，仍归 same_outcome_construct_y。先固定题面 Y 的量与 estimand，再判断 claimed cause 是否同一构念。若 Y 是“成绩提高幅度/变化量”，补习前成绩水平 Y0 与它不是同一个量，应归 baseline_or_prior_different_construct；只有由不同于 Y 的构念驱动的分配/self-selection、共同原因或无法确认的其他因素，才归 common_cause_or_other_or_unclear。reference 若把后两类冒充反向因果，必须 reference_correct=false、discipline_grounded=false 并报 reference_incorrect。claimed_cause_is_observed_y_causing_x 由服务端从 relation 派生，你不得输出。
+3. **因果方向**：每题必须输出 causal_direction_check。输入的 reference_reverse_causation_claims 是服务端仅从 reference_md 与 gold signature 提取并密封的明确反向因果主张；它的存在性、claim_index、source_path、claim_md、claim_sha256 都不是你能否认或改写的。你只按原顺序为**每一条**输出同 index 的 relation 与简短依据，不得漏项、并项、重排或额外添加。review_requirements.causal_direction_required=true 或该题 claims 非空时，applies 必须为 true，并从题面定义 X 与 outcome construct / estimand Y；置 false 属于合同错误。真正的非因果题且 claims 为空才把 applies=false、X/Y 填空串、relations 给空数组。因果题 shape：
+{"applies":true,"exposure_x_md":"treatment/exposure X","observed_outcome_y_md":"题面 outcome construct / estimand Y","reference_reverse_causation_claim_relations":[{"claim_index":0,"relation":"same_outcome_construct_y|baseline_or_prior_different_construct|common_cause_or_other_or_unclear","decision_basis_md":"..."}]}
+reverse causation 指**同一个 outcome construct / estimand Y** 影响 X，不以“发生在 X 前后”或 reference 自称“反向因果”作为证明：例如题面 Y=当前抑郁严重度时，较高抑郁严重度降低运动 X，归 same_outcome_construct_y。若题面 Y 是变化量 ΔY（成绩提高幅度、血压变化等），基线水平 Y0、能力/“提升潜力”、动机、倾向、预期改善都不是 ΔY；它们驱动 X 时归 baseline_or_prior_different_construct 或 common_cause_or_other_or_unclear。共同原因、购买意图影响网站访问但题面 Y=实际购买量等不同构念，也归 common_cause_or_other_or_unclear。任一 server-owned claim 不是 same_outcome_construct_y，就必须 reference_correct=false、discipline_grounded=false。claim presence/text/digest 与最终兼容 bit 均由服务端绑定，你不得输出。
 
 完成三题比较后，再逐项检查：
 - material 是否只使用证据支持的学科事实，且真实落实 recommendation.method_id 与 safety_constraints；
@@ -1365,13 +1351,10 @@ reverse causation 指 outcome construct Y（或同一构念的先行状态/倾�
 
 把这些包级结论逐项写入 package_checks；布尔字段不是摘要意见，而是 server 会据此映射 failure code 的承重判据：material_grounded、method_followed、tested_claims_match、target_errors_match、answers_unique、answers_gradable、no_answer_leak、diagnostics_same_construct、transfer_context_changed、target_error_identifiable、serious_factual_error_absent、safe_material。不得用 verdict=pass 覆盖任何 false。
 
-failure_codes 只能从以下闭集选择：
-${INTERVENTION_REVIEW_FAILURE_CODES_FOR_PROMPT}。
-
-只有三题的 reference_correct、within_frozen_scope、discipline_grounded 全为 true，每个 required_operation_check 的两个判据都为 true，且其余 package 检查全部通过，才可 verdict=pass。任何 reference_claims_reverse_causation=true 但 relation 不是 same_outcome_construct_y 时绝不允许 pass。每种 kind 恰好一次。服务端按 kind 绑定对应密封 solver digest，并按 operation_index 绑定每个 operation digest/原文；你不得输出这些 provenance 字段。diagnostic_checks 也不输出独立答案或必要步骤文本。decision_basis_md 只写比较结论的必要依据，不复述完整题面/reference，不给修题建议，不输出探索过程。
+每种 kind 恰好一次。服务端按 kind 绑定对应密封 solver digest、按 operation_index 绑定每个 operation digest/原文，并从你给出的承重布尔值与 claim relations 独立派生闭集 failure codes 和最终 verdict；你不得输出 verdict、failure_codes 或 provenance 字段。diagnostic_checks 也不输出独立答案或必要步骤文本。decision_basis_md 只写比较结论的必要依据，不复述完整题面/reference，不给修题建议，不输出探索过程。summary_md 最长 2000 字符。
 
 只输出恰好一个严格 JSON object；不带 markdown 代码块，不要输出第二版或 JSON 外文字。输出完最后一个 } 立即停止：
-{"review_protocol_version":2,"verdict":"pass|fail","failure_codes":["..."],"diagnostic_checks":[{"kind":"immediate|delayed|transfer","required_operation_checks":[{"operation_index":0,"reference_covers_operation":true,"within_frozen_scope":true,"decision_basis_md":"..."}],"reference_correct":true,"within_frozen_scope":true,"discipline_grounded":true,"decision_basis_md":"...","causal_direction_check":{"applies":false,"exposure_x_md":"","observed_outcome_y_md":"","reference_claims_reverse_causation":false,"reference_claimed_reverse_cause_md":"","reference_claimed_reverse_cause_relation":"none"}}],"package_checks":{"material_grounded":true,"method_followed":true,"tested_claims_match":true,"target_errors_match":true,"answers_unique":true,"answers_gradable":true,"no_answer_leak":true,"diagnostics_same_construct":true,"transfer_context_changed":true,"target_error_identifiable":true,"serious_factual_error_absent":true,"safe_material":true},"summary_md":"..."}
+{"review_protocol_version":2,"diagnostic_checks":[{"kind":"immediate|delayed|transfer","required_operation_checks":[{"operation_index":0,"reference_covers_operation":true,"within_frozen_scope":true,"decision_basis_md":"..."}],"reference_correct":true,"within_frozen_scope":true,"discipline_grounded":true,"decision_basis_md":"...","causal_direction_check":{"applies":false,"exposure_x_md":"","observed_outcome_y_md":"","reference_reverse_causation_claim_relations":[]}}],"package_checks":{"material_grounded":true,"method_followed":true,"tested_claims_match":true,"target_errors_match":true,"answers_unique":true,"answers_gradable":true,"no_answer_leak":true,"diagnostics_same_construct":true,"transfer_context_changed":true,"target_error_identifiable":true,"serious_factual_error_absent":true,"safe_material":true},"summary_md":"..."}
 
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}`;

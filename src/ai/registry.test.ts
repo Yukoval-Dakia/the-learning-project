@@ -87,6 +87,7 @@ describe('task prompt definitions', () => {
           task === 'InterventionRecommendationTask' ||
           task === 'InterventionPackageAuthorTask' ||
           task === 'InterventionPackageReviewTask' ||
+          task === 'QuizVerifyTask' ||
           task === 'SolutionGenerateTask' ||
           task === 'SolutionGenerateVisionTask' ||
           task === 'SelectionOrchestratorTask'
@@ -157,25 +158,25 @@ describe('task prompt definitions', () => {
       'general:InterventionPackageAuthorTask':
         '60c55bb06557f2815b7ffe7d5835dd8a5561cbe8a23849a596eb45692c73146e',
       'general:InterventionPackageReviewTask':
-        '75941f02812960b9c09b55e3e33f2710bf98ca69dc2de35de4d705f8b7ba9ba3',
+        'df025e315f11b6952624c80597a03cc392d67ef1922771f6f561ef58ba13c9ea',
       'math:InterventionRecommendationTask':
         'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
       'math:InterventionPackageAuthorTask':
         '5748f5259952696212c4504f5a97953ecaa3415c573245d02c499bde99806bc7',
       'math:InterventionPackageReviewTask':
-        '7d1ab3d888856c098162c75a48d1274c8a109a9dc623ba6e497d634c6f34fe8f',
+        '2204079c241e30b15445467d114ff4c737f6e4478352232bdb2ae1d0200d91e6',
       'physics:InterventionRecommendationTask':
         'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
       'physics:InterventionPackageAuthorTask':
         '5f85c39d955878b0c293f07fd271ce6ff8509f9a9b8fe19045aea4696f956cdb',
       'physics:InterventionPackageReviewTask':
-        '1532772eb23553180e710d34703b2d7abac5984d8302823358e71e66598c2e28',
+        '0a2ebb885fb7110ab98d2eed155f50c98fb25b103aa0883c721dca9591824021',
       'yuwen:InterventionRecommendationTask':
         'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
       'yuwen:InterventionPackageAuthorTask':
         'c46426ca2c07e712a5e90d6b6962d377df7aff4955cc036c200eac62ea08ce02',
       'yuwen:InterventionPackageReviewTask':
-        '4ec8a859aad509e936ce3f4764dba462beb9f77893c255b9d4758f833cd34fe9',
+        '37ca9213d89d4fe9dc72134fd9af3ba576c73d015ffac9432796cad5477a93c9',
     } as const;
     for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
       const profile = resolveSubjectProfile(profileId);
@@ -193,24 +194,42 @@ describe('task prompt definitions', () => {
     }
   });
 
+  it('pins the shared question-content validator release-strict grounding policy', () => {
+    const expected = {
+      general: '237907950811f1dea42515b55bc9c2ab473030287da91c45364d321a17258ff9',
+      math: 'cebc5936ecf2ac13e25447d46e026db68bd200e8154029eed748c75018137a9e',
+      physics: 'f26a7cce5444755fa8dc8312bfc809844411a2cf238b010ee79e86c2c5001181',
+      yuwen: 'f41b5caa37125fc766a3399b72f4a3719dcda7cbf1e637ba34caaf72904a663e',
+    } as const;
+    for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
+      const prompt = getTaskSystemPrompt('QuizVerifyTask', resolveSubjectProfile(profileId));
+      expect(prompt).toContain("validation_mode='release_strict'");
+      expect(prompt).toContain('author_material 只是作者生成的教学材料，不是事实来源');
+      expect(prompt).toContain('匿名记录、假设情境、给定数据');
+      expect(prompt).toContain("缺少足够独立依据给 grounding='unclear'");
+      expect(prompt).not.toContain('卜算子·咏梅');
+      expect(createHash('sha256').update(prompt, 'utf8').digest('hex')).toBe(expected[profileId]);
+    }
+  });
+
   it('pins the shared solver complete-path contract for every profile', () => {
     const expected = {
       'general:SolutionGenerateTask':
-        '6b0374083690aa87cbc55a66d830e6f18a702e0499e186bc830602b487409b1d',
+        '83074e876fbe1f90d5b9b1d6eeb3a42d8d5a759a44da29278769f9b285d5120d',
       'general:SolutionGenerateVisionTask':
-        'fe6ba5b0202d9d9be5364052c27c9751f5afaa197fb355b847d598da63f41724',
+        '2a417ef4d1eb9115af87518fcfa45ac840baa0de303cf1cedfde5a4e24e9ef4d',
       'math:SolutionGenerateTask':
-        'c9cce16fd679ed9ae0a6269112275254811c19636324adfe99ba6168fb639458',
+        '63154d81985b83b6defd4bb4156f7a3ae2ed152ae14ef334d48dbcff6c89b1d4',
       'math:SolutionGenerateVisionTask':
-        '3276a1b2b413095da43ddc2f3bd4e1f83ab2c93a02b9187037cb7a5824257ce7',
+        '793cc0ae94ad58ab99e8a69d53b0f013929bb5cae3dd5f4ba4108b359a2f285f',
       'physics:SolutionGenerateTask':
-        '823ad50a614a6b7bcf07aea3f6803b5360e05b26012ebfb01de71afe07d01eef',
+        '9b98a4dc2f12db70549e453fd68494c5e5904fb2665dcc7f16a8e7b7cd3d61ae',
       'physics:SolutionGenerateVisionTask':
-        '0cb2e4606f5d771567db37e835a32d3f35eeb926c5cbdfab14e7dd79a3ec1da2',
+        '6d634be1d87e7be40bec48532e77d3ba8d98b7b3fb64b4dde1ba4d269d13eacb',
       'yuwen:SolutionGenerateTask':
-        '611d0b1baa18b66ced1dc344ac8e1e6ac1571681743392b65fee16ca539ee9ae',
+        '73769b8d253da7566990bae25811b4ef10a6548baae892237841077b769f2002',
       'yuwen:SolutionGenerateVisionTask':
-        '00b798d195750ee78670c842ab1c34f8cd8d20d6951353ca044a7816b38884a4',
+        '62b7caf07867ff9d9259593dcb58834558815f5a19a8cc027dcc9eb4a3aba0de',
     } as const;
     for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
       for (const task of ['SolutionGenerateTask', 'SolutionGenerateVisionTask'] as const) {
@@ -218,8 +237,9 @@ describe('task prompt definitions', () => {
         expect(prompt).toContain('完整必要解题路径');
         expect(prompt).toContain('1..12');
         expect(prompt).toContain('outcome construct / estimand Y');
-        expect(prompt).toContain('同一 outcome construct 的先行状态或倾向');
-        expect(prompt).toContain('即使机制表现为 self-selection 或按病情分配');
+        expect(prompt).toContain('同一个 Y 构念');
+        expect(prompt).toContain('基线水平 Y0、能力/潜力、动机、倾向、预期改善都不是 ΔY');
+        expect(prompt).toContain('具名真实作品、人物、史实');
         expect(prompt).toContain(
           'confidence 必须是与 reference_solution、worked_solution_md 并列的',
         );
@@ -238,7 +258,7 @@ describe('task prompt definitions', () => {
 
     expect(prompt).toContain('sealed_independent_solutions');
     expect(prompt).toContain('现有题目 validator');
-    expect(prompt).toContain('不得改写、替换或伪造密封结果');
+    expect(prompt).toContain('不得改写、替换或伪造任何密封结果');
     expect(prompt).toContain('服务端按 kind 绑定对应密封 solver digest');
     expect(prompt).toContain('required_operation_checks');
     expect(prompt).toContain('不得输出或猜测 operation_sha256');
@@ -255,8 +275,8 @@ describe('task prompt definitions', () => {
     expect(prompt).toContain('review_requirements.causal_direction_required=true');
     expect(prompt).toContain('baseline_or_prior_different_construct');
     expect(prompt).toContain('same_outcome_construct_y');
-    expect(prompt).toContain('只要驱动 X 的就是同一 Y construct');
-    expect(prompt).toContain('claimed_cause_is_observed_y_causing_x 由服务端');
+    expect(prompt).toContain('能力/“提升潜力”、动机、倾向、预期改善都不是 ΔY');
+    expect(prompt).toContain('claim presence/text/digest 与最终兼容 bit 均由服务端绑定');
     expect(prompt).toContain('每种 kind 恰好一次');
     expect(prompt).not.toContain('先遮蔽 reference_md');
     expect(prompt).not.toContain('卜算子·咏梅');

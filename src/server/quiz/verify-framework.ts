@@ -30,6 +30,7 @@ import { randomUUID } from 'node:crypto';
 // source_verify.ts). These declarations predate that wiring — do NOT read "tier3/4 never consumes
 // solve_check" as a bug in THIS file; the consumer lives in the handler.
 import type { SourceTier } from '@/core/schema/provenance';
+import { QuizVerificationResult, type QuizVerificationResultT } from '@/core/schema/quiz_gen';
 import { SolutionGenerateOutput, type SolutionGenerateOutputT } from '@/core/schema/solution';
 import type { Db, Tx } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
@@ -37,7 +38,7 @@ import { AgentRunError } from '@/server/ai/agent-run-error';
 import { type RepairLevel, parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
+import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
 import type { Provider } from '@/server/ai/providers';
 import {
   PlacementStarterAdmissionError,
@@ -45,6 +46,7 @@ import {
   type PlacementVerificationAuthority,
   assertPlacementAuthority,
 } from '@/server/question-supply/placement-starter-attempts';
+import type { SubjectProfile } from '@/subjects/profile';
 
 const SOLUTION_GENERATE_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(SolutionGenerateOutput);
 
@@ -111,6 +113,117 @@ export const CHECK_SETS_BY_TIER: Record<SourceTier, readonly VerifyCheck[]> = {
 
 export function checksForTier(tier: SourceTier): readonly VerifyCheck[] {
   return CHECK_SETS_BY_TIER[tier];
+}
+
+// ---------- shared question-content validation ----------
+
+/**
+ * Generic input for the shipped QuizVerifyTask content/grounding axes.
+ *
+ * `validation_mode` is server-owned. Ordinary question supply omits it and
+ * retains the historical closed-book policy; release-critical consumers use
+ * `release_strict` so author-written gloss cannot self-ground an identifiable
+ * real-world attribution.
+ */
+export interface QuestionContentValidationInput {
+  question: {
+    id: string;
+    prompt_md: string;
+    reference_md: string | null;
+    choices_md: string[] | null;
+    kind: string;
+    difficulty?: string | number | null;
+    knowledge_ids?: string[] | null;
+  };
+  knowledge_context: unknown[];
+  source_pack: unknown;
+  source_refs: unknown[];
+  self_copy_safety: unknown;
+  generation_method: string;
+  material?: { title: string | null; body_md: string | null };
+  author_material?: { title_md: string; body_md: string };
+  placement_authority?: PlacementVerificationAuthority;
+  validation_mode?: 'release_strict';
+}
+
+export interface QuestionContentValidationRun {
+  output: QuizVerificationResultT;
+  task_result: TaskTextResult;
+  task_input: QuestionContentValidationInput;
+  task_input_sha256: string;
+  output_sha256: string;
+  output_repair_level: RepairLevel;
+}
+
+export function parseQuestionContentValidationOutput(
+  result: Pick<TaskTextResult, 'text' | 'structured_output'>,
+  options: { releaseStrict?: boolean } = {},
+): { output: QuizVerificationResultT; repairLevel: RepairLevel } {
+  if (result.structured_output !== undefined && result.structured_output !== null) {
+    return {
+      output: QuizVerificationResult.parse(result.structured_output),
+      repairLevel: false,
+    };
+  }
+
+  let extracted: ReturnType<typeof parseJsonObjectLoose>;
+  try {
+    extracted = parseJsonObjectLoose(
+      result.text,
+      'parseQuizVerifyOutput',
+      options.releaseStrict
+        ? {
+            riskyRepair: 'reject',
+            containerClosure: 'schema_validated',
+            latexEscapes: 'markdown_math',
+          }
+        : undefined,
+    );
+  } catch (error) {
+    throw new Error(`parseQuizVerifyOutput: JSON.parse failed: ${(error as Error).message}`);
+  }
+  if (extracted === null) {
+    throw new Error('parseQuizVerifyOutput: no JSON object found in text');
+  }
+  if (options.releaseStrict && extracted.repaired === 'jsonrepair') {
+    throw new Error('parseQuizVerifyOutput: release-strict output rejected heuristic JSON repair');
+  }
+  const parsed = QuizVerificationResult.safeParse(extracted.json);
+  if (!parsed.success) {
+    throw new Error(
+      `parseQuizVerifyOutput: schema invalid: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`,
+    );
+  }
+  return { output: parsed.data, repairLevel: extracted.repaired };
+}
+
+export async function runQuestionContentValidation(
+  input: QuestionContentValidationInput,
+  options: {
+    runTaskFn: TaskTextRunFn;
+    subjectProfile: SubjectProfile;
+    db?: Db;
+    skills?: string[];
+    afterTaskRun?: (result: TaskTextResult) => Promise<void>;
+  },
+): Promise<QuestionContentValidationRun> {
+  const taskResult = await options.runTaskFn('QuizVerifyTask', input, {
+    ...(options.db ? { db: options.db } : {}),
+    subjectProfile: options.subjectProfile,
+    ...(options.skills ? { skills: options.skills } : {}),
+  });
+  await options.afterTaskRun?.(taskResult);
+  const parsed = parseQuestionContentValidationOutput(taskResult, {
+    releaseStrict: input.validation_mode === 'release_strict',
+  });
+  return {
+    output: parsed.output,
+    task_result: taskResult,
+    task_input: input,
+    task_input_sha256: sha256CanonicalJson(input),
+    output_sha256: sha256CanonicalJson(parsed.output),
+    output_repair_level: parsed.repairLevel,
+  };
 }
 
 // ---------- solve-check ----------
