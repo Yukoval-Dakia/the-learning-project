@@ -287,10 +287,20 @@ export async function enrichEvidenceCells(
     // failure this ticket exists to stop.
     const subjectId = resolveKnownSubjectId(effectiveDomains.get(cell.knowledge_id) ?? null);
     const reproducibleEventIds = reproducibleIdsByCellKey.get(cell.key) ?? [];
+    const hasOwnerCause = reproducibleEventIds.some((attemptId) => {
+      const failure = failureByAttemptId.get(attemptId);
+      return (
+        failure !== undefined && effectiveCauseForConjectureFailure(failure)?.source === 'user'
+      );
+    });
     return {
       ...cell,
       recurrence_count: reproducibleEventIds.length,
       evidence_event_ids: reproducibleEventIds,
+      // The raw cell may have been owner-backed only through an attempt that was
+      // filtered above. Keep the judge-only confidence cap tied to the same
+      // reproducible evidence set that survives into recurrence/provenance.
+      has_owner_cause: hasOwnerCause,
       knowledge_name: wrapTruncatedLearnerText(kc?.name ?? null, UNTRUSTED_TEXT_CHAR_CAP),
       subject_id: subjectId,
       subject_display_name:

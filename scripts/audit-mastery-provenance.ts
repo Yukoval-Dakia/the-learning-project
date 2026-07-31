@@ -55,8 +55,8 @@ const ALLOWLIST_PATH = join(__dirname, 'audit-mastery-provenance-allowlist.json'
 // ── tracked consumers ────────────────────────────────────────────────────
 //
 // getMasteryProjection 的 9 个直接 call site（spec §1.1 终裁 grep 实数）+ 命名的传递
-// 消费者（conjectures/evidence.ts 收 caller 解析好的 projection）。state.ts 自身是
-// provenance 的 PRODUCER（定义判别式 + isObserved），不列为 consumer。
+// 消费者（agency/server/conjecture/evidence.ts 收 caller 解析好的 projection）。
+// state.ts 自身是 provenance 的 PRODUCER（定义判别式 + isObserved），不列为 consumer。
 // 新增「读 MasteryProjection field」的消费路径时，在此补一条（否则不在反查覆盖内 —
 // 同 audit:relations CONSUMER_REGISTRY 的已知 shape 限制）。
 export const TRACKED_CONSUMERS: readonly string[] = [
@@ -70,15 +70,16 @@ export const TRACKED_CONSUMERS: readonly string[] = [
   'src/server/ai/tools/knowledge-readers.ts',
   'src/server/questions/detail.ts',
   // transitive consumer (spec §1.1): receives a caller-parsed projection.
-  'src/server/conjectures/evidence.ts',
+  'src/capabilities/agency/server/conjecture/evidence.ts',
 ] as const;
 
 // ── comment/string stripping (char-stepped, escape-aware) ─────────────────
 //
 // Both the field-read and guard scans run on the SOURCE WITH COMMENTS AND STRING/TEMPLATE
 // CONTENT REMOVED, so a `.mastery` inside a docstring or a bare `evidence_count` token quoted
-// in a comment (as in knowledge-readers.ts / conjectures/evidence.ts) is NOT mistaken for a
-// real code read/guard. Char-stepping technique mirrors audit-draft-status.ts extractObjectBlock
+// in a comment (as in knowledge-readers.ts / agency/server/conjecture/evidence.ts) is NOT
+// mistaken for a real code read/guard. Char-stepping technique mirrors
+// audit-draft-status.ts extractObjectBlock
 // (line/block comments; single/double/template strings; escape-aware; `${…}` interpolation code
 // is KEPT so `${proj.mastery}` still counts). Nested templates-inside-interpolation are handled
 // approximately (a documented heuristic limitation). Regex literals are NOT stripped either — a

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   type Allowlist,
+  TRACKED_CONSUMERS,
   computeProvenanceAudit,
   scanFile,
   validateAllowlistEntry,
@@ -16,6 +17,13 @@ import {
 //   (3) validateAllowlistEntry：resolves_when 契约（kind/ref/expected_by + 过期）。
 
 const TODAY = '2026-07-04';
+
+describe('TRACKED_CONSUMERS — current capability ownership', () => {
+  it('tracks the live conjecture evidence consumer instead of its deleted legacy path', () => {
+    expect(TRACKED_CONSUMERS).toContain('src/capabilities/agency/server/conjecture/evidence.ts');
+    expect(TRACKED_CONSUMERS).not.toContain('src/server/conjectures/evidence.ts');
+  });
+});
 
 describe('scanFile — field-read + guard detection', () => {
   it('reads .mastery / .theta_hat without a guard → unguarded field read', () => {
