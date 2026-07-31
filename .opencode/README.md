@@ -80,6 +80,16 @@ The former bare `list` entry was removed. The resolved package was the unrelated
 structure `list@2.0.19`; it exposes no OpenCode plugin entrypoint and registered no tool in the
 before/after runtime inventory, so it had no live consumer.
 
+## Known advisories and risk boundary
+
+The current locked graph is **not `bun audit` clean**: it has three High advisories
+(`GHSA-xcpc-8h2w-3j85`, `GHSA-f88m-g3jw-g9cj`, `GHSA-mh99-v99m-4gvg`) and one Low advisory
+(`GHSA-4x5r-pxfx-6jf8`). YUK-813 makes that graph exact and drift-detectable; it does not claim to
+remediate those transitives. [YUK-831](https://linear.app/yukoval-studios/issue/YUK-831) owns the
+upstream-compatible remediation and reachability evidence. Until it closes, keep dependency
+lifecycle scripts disabled and do not introduce untrusted image/media processing through this
+Transformers/sharp graph. Do not mask the findings with overrides outside upstream semver ranges.
+
 ## Upgrade procedure
 
 1. Review the upstream changelog, package license, entrypoints, lifecycle scripts, permissions, and
