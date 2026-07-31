@@ -1,9 +1,13 @@
-import type { LearningRecordKind as LearningRecordKindSchema } from '@/core/schema';
+import type {
+  LearningRecordKind as LearningRecordKindSchema,
+  LearningRecordProcessingStatus as LearningRecordProcessingStatusSchema,
+} from '@/core/schema';
 import type { learning_record } from '@/db/schema';
 import type { InferSelectModel } from 'drizzle-orm';
 import type { z } from 'zod';
 
 export type LearningRecordKind = z.infer<typeof LearningRecordKindSchema>;
+export type LearningRecordProcessingStatus = z.infer<typeof LearningRecordProcessingStatusSchema>;
 
 export type LearningRecordRow = InferSelectModel<typeof learning_record>;
 
@@ -25,7 +29,7 @@ export interface CreateLearningRecordInput {
     | 'import'
     | 'conversation'
     | 'plan';
-  processing_status?: 'raw' | 'linked' | 'actioned' | 'archived';
+  processing_status?: LearningRecordProcessingStatus;
   origin_event_id?: string | null;
   subject_id?: string | null;
   knowledge_ids: string[];
@@ -53,7 +57,7 @@ export interface ListLearningRecordsFilter {
   question_id?: string;
   attempt_event_id?: string;
   activity_kind?: string;
-  processing_status?: Array<'raw' | 'linked' | 'actioned' | 'archived'>;
+  processing_status?: LearningRecordProcessingStatus[];
   since?: Date;
   before_created_at?: Date;
   before_id?: string;
@@ -65,7 +69,21 @@ export interface UpdateLearningRecordPatch {
   title?: string | null;
   content_md?: string;
   knowledge_ids?: string[];
-  processing_status?: 'raw' | 'linked' | 'actioned' | 'archived';
+  processing_status?: LearningRecordProcessingStatus;
+  question_id?: string | null;
+  learning_item_id?: string | null;
+  artifact_id?: string | null;
   payload?: Record<string, unknown>;
+  /** Optimistic compare-and-swap version; every applied mutation increments it exactly once. */
   version: number;
+}
+
+export interface TransitionLearningRecordInput {
+  expected_version: number;
+  to: LearningRecordProcessingStatus;
+}
+
+export interface TransitionLearningRecordResult {
+  record: LearningRecordRow;
+  applied: boolean;
 }

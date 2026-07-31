@@ -39,14 +39,40 @@
 - learning_record 通过 event 间接挂到 session（`event.session_id`），不直接持 `session_id` —— 这样在没有 session 的场景（独立练习 / 后台批处理）也能存在。
 
 **单一所有者**（ADR-0005 对齐）：
-- 写路径：`src/server/records/queries.ts:74`（insert）/ `:149`（update）/ `:174`（archive）。所有 insert / update / archive 必须经过此模块的函数（`recordActivity()` / `updateRecord()` / `archiveRecord()` 等）。
+- 写路径：`src/server/records/queries.ts`。所有 insert / update / archive 必须经过此模块导出的 `createLearningRecord()`、`updateLearningRecord()`、`transitionLearningRecord(s)()`、`archiveLearningRecord()`。
 - 其它模块（route handler / orchestrator / cron）一律只读，不绕过 queries 模块直接写。
-- 违反约束在 review 阶段拦截；schema-level enforcement（RLS / trigger）作为 Phase N+1 follow-up。
+- `tests/integration/step9-invariant-audit.test.ts` 机械扫描生产源码；任何模块外的 `insert/update/delete(learning_record)` 直接让 CI 失败。schema-level enforcement（RLS / trigger）仍可作为以后单独评估项。
 
 **不变量**：
 - `kind` ∈ ActivityKind enum（attempt / read / teach_turn / ... 见 `src/core/schema/activity.ts`）。
 - `subject_id` 必填语义（与 `event.subject_id` 对齐 / fallback 'wenyan'）。
-- `processing_status` 状态机：`raw` → ... → terminal（具体状态见 `src/server/records/types.ts`）；流转单调，不回退。
+- `processing_status` 只按下述 mutation contract v1 流转；不得由调用方自造状态边。
+
+#### Mutation contract v1（YUK-740，2026-07-31）
+
+本节是 `learning_record` 可变行的版本化写契约；修改 writer boundary、CAS 或状态图必须显式升版并同步测试。
+
+**CAS**：
+
+- `version` 是唯一 compare-and-swap 轴。调用方提交其读到的版本；每次实际 mutation 恰好 `+1`。
+- `updateLearningRecord()` 是严格 CAS：版本不匹配固定返回 409，不得覆盖新行。
+- `transitionLearningRecord()` 对「相同目标状态」的重复提交幂等：即使重试携带旧版本，也返回当前行且不再加版本；旧版本若指向不同目标则固定 409。
+- 批量状态 helper 先读当前版本，再逐行走同一个 transition primitive；CAS 竞态时重读，已离开来源状态或已到目标状态则跳过，仍可迁移时只做一次 bounded retry。这样 best-effort 批处理不会把已提交 proposal 伪装成整体失败，并发不同写也不会静默覆盖；严格单行 API 的 stale 409 语义不变。
+
+**合法状态图**：
+
+    raw ───────→ linked ───────→ actioned
+     │             ↑                │
+     ├─────────────┴────────────────┘  raw → actioned 仅保留给 legacy/repair accept
+     │                              │
+     └──────────→ archived ←────────┘  raw/linked/actioned 均可归档
+
+    actioned → linked                  仅用于 proposal retract；保留「仍曾被引用」信号
+    archived → (none)                 terminal；同目标重复归档仅幂等 no-op
+
+正常 runtime 创建从 `raw` 开始；import/replay 可按历史快照创建任一已知状态，这不算状态迁移，且 `archived` 快照必须同时设置 `archived_at`。本 v1 不改 schema、不重写历史行，也不改变读取/导出形状。
+
+**可观测拒绝**：stale version、非法状态边、未知当前状态和 archived 后写入均先发结构化 `[learning-record] mutation_rejected` 日志，再以 409 fail closed。
 
 ### 2. `memory_brief_note` — 滚动学习记忆摘要（Dreaming-owned，写路径由 ADR-0017 接管）
 
@@ -84,10 +110,11 @@ event (ADR-0006 v2)      — 不可变 action log，所有持久化必经
 ## Consequences
 
 - ✅ ADR 序列补齐：未来 Agent / 新人通过 ADR-0006 v2 → 0008 → 0014 → 0015 完整理解四张主表。
-- ✅ `learning_record` 单一所有者明文约束到 `src/server/records/queries.ts`，与 ADR-0005 一致。
+- ✅ `learning_record` 单一所有者明文约束到 `src/server/records/queries.ts`，并由静态 invariant audit 持续执行，与 ADR-0005 一致。
 - ✅ `memory_brief_note` 在 Dreaming agent 落地前显式禁止其它模块写 — 避免临时回填污染语义。
 - ✅ `memory_brief_note` 写路径**已由 ADR-0017 接管**（归一 `src/server/memory/brief.ts`，per ADR-0017 Phase B / YUK-37）。本 ADR 的 forward-locking decision 仍生效；Dreaming 设计若大改（例如改为按 event 实时增量而非周期重算），需同步 revise §2 的"周期重算 / upsert 不留历史"约束 + ADR-0017。
-- ⚠️ 当前没有 schema-level enforcement（trigger / RLS）阻止其它模块绕过 queries 模块写 learning_record；依赖代码 review。Phase N+1 评估是否需要 schema-level 保护。
+- ✅ mutation contract v1 统一 CAS、重复重试和合法状态图；读取/schema 不变，历史 replay/export 保持兼容。
+- ⚠️ 当前没有 DB trigger / RLS；跨模块旁路由 CI 静态审计阻止。是否还需数据库级保护留作独立评估，不在本次最小修复内。
 
 ## Notes
 

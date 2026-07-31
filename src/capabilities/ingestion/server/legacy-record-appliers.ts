@@ -37,6 +37,7 @@ import {
 } from '@/server/proposals/signals';
 import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { updateLearningRecord } from '@/server/records/queries';
 import { and, eq, isNull } from 'drizzle-orm';
 
 // 结构最小化（与 practice / agency / ingestion 包同模式）：只声明本文件 applier
@@ -226,23 +227,15 @@ export async function acceptRecordLinksProposal(
   };
 
   await db.transaction(async (tx) => {
-    const updated = await tx
-      .update(learning_record)
-      .set({
-        processing_status: 'actioned',
-        knowledge_ids: knowledgeIds,
-        question_id: questionId,
-        learning_item_id: learningItemId,
-        artifact_id: artifactId,
-        payload,
-        updated_at: now,
-        version: record.version + 1,
-      })
-      .where(and(eq(learning_record.id, recordId), eq(learning_record.version, record.version)))
-      .returning({ id: learning_record.id });
-    if (updated.length !== 1) {
-      throw new ApiError('conflict', `record ${recordId} concurrently modified`, 409);
-    }
+    await updateLearningRecord(tx, recordId, {
+      processing_status: 'actioned',
+      knowledge_ids: knowledgeIds,
+      question_id: questionId,
+      learning_item_id: learningItemId,
+      artifact_id: artifactId,
+      payload,
+      version: record.version,
+    });
     await writeEvent(tx, {
       id: rateEventId,
       actor_kind: 'user',
@@ -512,22 +505,14 @@ export async function acceptRecordPromotionProposal(
       });
     }
 
-    const updated = await tx
-      .update(learning_record)
-      .set({
-        processing_status: 'actioned',
-        question_id: target === 'question' ? materializedId : record.question_id,
-        learning_item_id: target === 'learning_item' ? materializedId : record.learning_item_id,
-        artifact_id: target === 'artifact' ? materializedId : record.artifact_id,
-        payload,
-        updated_at: now,
-        version: record.version + 1,
-      })
-      .where(and(eq(learning_record.id, recordId), eq(learning_record.version, record.version)))
-      .returning({ id: learning_record.id });
-    if (updated.length !== 1) {
-      throw new ApiError('conflict', `record ${recordId} concurrently modified`, 409);
-    }
+    await updateLearningRecord(tx, recordId, {
+      processing_status: 'actioned',
+      question_id: target === 'question' ? materializedId : record.question_id,
+      learning_item_id: target === 'learning_item' ? materializedId : record.learning_item_id,
+      artifact_id: target === 'artifact' ? materializedId : record.artifact_id,
+      payload,
+      version: record.version,
+    });
 
     await writeEvent(tx, {
       id: rateEventId,
