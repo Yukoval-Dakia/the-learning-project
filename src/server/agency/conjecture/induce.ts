@@ -661,8 +661,8 @@ export async function induceConjecture(
     if (error instanceof ConjectureProbeQualityOperationalError) {
       throw new ConjectureInductionOperationalError(error.taskKind, error.message, {
         probe_quality_attempts: error.attempts,
-        task_run_ids: error.task_run_ids,
-        cost_usd: error.cost_usd,
+        task_run_ids: [...taskRunIds, ...error.task_run_ids],
+        cost_usd: costUsd + error.cost_usd,
       });
     }
     throw error;

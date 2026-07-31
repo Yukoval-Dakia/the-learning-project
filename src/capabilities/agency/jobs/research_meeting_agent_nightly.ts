@@ -44,6 +44,8 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
+import { ConjectureInductionOperationalError } from '@/server/agency/conjecture/induce';
+import { costUsdToMicroUsd } from '@/server/ai/provenance';
 import { and, eq, sql } from 'drizzle-orm';
 
 /** Opt-in dark-ship flag. Handler uses the shared runtime-flag grammar. */
@@ -295,6 +297,7 @@ export async function runResearchMeetingAgentNightly(
     return { skipped: false, day_key: dayKey, director };
   } catch (err) {
     const attemptKind = claim.attemptKind ?? 'initial';
+    const inductionFailure = err instanceof ConjectureInductionOperationalError ? err : null;
     try {
       const failureId = retryableFailureEventId(dayKey, attemptKind);
       await writeEventFn(db, {
@@ -310,8 +313,17 @@ export async function runResearchMeetingAgentNightly(
           attempt_kind: attemptKind,
           recovery_attempt: attemptKind === 'recovery' ? 1 : 0,
           error: err instanceof Error ? err.message : String(err),
+          ...(inductionFailure
+            ? {
+                task_kind: inductionFailure.taskKind,
+                probe_quality_attempts: inductionFailure.probe_quality_attempts,
+                task_run_ids: inductionFailure.task_run_ids,
+                cost_usd: inductionFailure.cost_usd,
+              }
+            : {}),
         },
-        cost_micro_usd: null,
+        task_run_id: inductionFailure?.task_run_ids.at(-1) ?? null,
+        cost_micro_usd: inductionFailure ? costUsdToMicroUsd(inductionFailure.cost_usd) : null,
         ingest_at: now,
         created_at: now,
       });

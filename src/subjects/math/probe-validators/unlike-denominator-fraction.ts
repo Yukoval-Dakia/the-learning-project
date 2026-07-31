@@ -45,7 +45,7 @@ function parsePrompt(prompt: string): ParsedFractionPrompt | null {
   // subtraction step rather than the sign of a negative operand. Any remaining
   // number or multiplier phrase also proves the prompt is not a one-step sum.
   if (
-    /#\s*-\s*#|[×*÷]|\d|减去|乘|除以|倍|翻倍|倒数|平方|开方|还剩|剩下|剩余|差|先.{0,30}再|\b(?:then|after|subtract|multiply|divide|double|twice|times|reciprocal|square|remaining)\b/i.test(
+    /#\s*-\s*#|[×*÷√]|\d|减去|乘|除以|倍|翻倍|倒数|平方|开方|还剩|剩下|剩余|差|先.{0,30}再|\b(?:then|after|subtract|multiply|divide|double|twice|times|reciprocal|square|remaining)\b/i.test(
       stripped,
     )
   ) {
@@ -79,7 +79,7 @@ function contractApplies(input: SubjectProbeValidatorInput): boolean {
   // Match only the frozen "(a+c)/(b+d)" misconception, not arbitrary
   // fraction-language hypotheses that belong to other validators.
   const targetRuleSignal =
-    /分子.{0,12}分母.{0,12}(?:分别)?相加|分子分母分别相加|\(\s*a\s*\+\s*c\s*\)\s*\/\s*\(\s*b\s*\+\s*d\s*\)|add.{0,30}numerator.{0,30}denominator/.test(
+    /(?:分子.{0,12}分母|分母.{0,12}分子).{0,12}(?:分别)?相加|(?:分子分母|分母分子)分别相加|\(\s*a\s*\+\s*c\s*\)\s*\/\s*\(\s*b\s*\+\s*d\s*\)|add.{0,30}(?:numerator.{0,30}denominator|denominator.{0,30}numerator)/.test(
       contract,
     );
   return denominatorSignal && targetRuleSignal;

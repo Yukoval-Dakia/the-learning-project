@@ -1516,14 +1516,20 @@ describe('induceConjecture self-consistency', () => {
     delete process.env.SUBJECT_PROBE_VALIDATORS_BLOCKING_ENABLED;
     const runTaskFn = vi
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
-      .mockResolvedValueOnce(unitSample())
-      .mockResolvedValueOnce(
-        unitProbePackageResult({ taskRunId: 'author_1', primaryGold: '21 m/s' }),
-      )
+      .mockResolvedValueOnce({
+        ...unitSample(),
+        task_run_id: 'induction_1',
+        cost_usd: 0.125,
+      })
+      .mockResolvedValueOnce({
+        ...unitProbePackageResult({ taskRunId: 'author_1', primaryGold: '21 m/s' }),
+        cost_usd: 0.25,
+      })
       .mockRejectedValueOnce(new Error('review timeout'))
-      .mockResolvedValueOnce(
-        unitProbePackageResult({ taskRunId: 'author_2', primaryGold: '22 m/s' }),
-      )
+      .mockResolvedValueOnce({
+        ...unitProbePackageResult({ taskRunId: 'author_2', primaryGold: '22 m/s' }),
+        cost_usd: 0.375,
+      })
       .mockRejectedValueOnce(new Error('review timeout'));
 
     await expect(
@@ -1560,6 +1566,8 @@ describe('induceConjecture self-consistency', () => {
           ]),
         },
       ],
+      task_run_ids: ['induction_1', 'author_1', 'author_2'],
+      cost_usd: 0.75,
     });
   });
 

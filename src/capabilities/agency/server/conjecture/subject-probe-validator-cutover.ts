@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-
+import { newId } from '@/core/ids';
 import { ConjectureProbeQualityAudit } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
@@ -45,11 +44,11 @@ function hasPersistedSubjectValidatorFailure(row: ProposalInboxRow): boolean {
 }
 
 function retirementEventId(proposalId: string): string {
-  const digest = createHash('sha256')
-    .update(`${SUBJECT_PROBE_VALIDATOR_POLICY_VERSION}\0${proposalId}`)
-    .digest('hex')
-    .slice(0, 32);
-  return `subject_probe_validator_blocking_retire_${digest}`;
+  // A later owner restore is a new correction generation. Reusing a deterministic
+  // proposal-only id would make writeEvent's first-write-wins ignore the next
+  // blocking retirement. The decision lock + post-lock status reload already make
+  // simultaneous app/worker boots idempotent, so each actual retirement must append.
+  return `subject_probe_validator_blocking_retire_${proposalId}_${newId()}`;
 }
 
 /**
@@ -63,8 +62,9 @@ function retirementEventId(proposalId: string): string {
  * a replacement under the blocking policy.
  *
  * The per-proposal advisory lock serializes this system correction with an owner
- * decision. A deterministic event id makes simultaneous app/worker boots
- * idempotent; the second caller reloads the folded row after taking the lock.
+ * decision. The second simultaneous app/worker caller reloads the folded row
+ * after taking the lock and skips it; a later owner restore receives a fresh
+ * correction event rather than colliding with the first retirement.
  */
 export async function prepareSubjectProbeValidatorBlockingCutover(
   db: Db,

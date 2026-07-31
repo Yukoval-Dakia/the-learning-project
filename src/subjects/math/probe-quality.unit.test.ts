@@ -132,6 +132,13 @@ describe('math subject probe validators', () => {
     });
   });
 
+  it('accepts compact quantities and an ASCII conversion arrow without treating it as subtraction', () => {
+    const compact = structuredClone(unitPackage);
+    compact.primary.prompt_md = 'Convert 72km/h -> m/s.';
+    const result = resultFor(unitHypothesis, compact, 'math.compound-unit-denominator-conversion');
+    expect(result).toMatchObject({ outcome: 'pass', failure_codes: [] });
+  });
+
   it.each([
     [
       'denominator unchanged',
@@ -341,6 +348,13 @@ describe('math subject probe validators', () => {
       },
       'subject_validator_ungradable',
     ],
+    [
+      'symbolic square root',
+      (draft: ConjectureProbePackageV2T) => {
+        draft.primary.prompt_md = '计算 1/3 + √(1/4)。';
+      },
+      'subject_validator_ungradable',
+    ],
   ])('fails closed for fraction mutation: %s', (_name, mutate, expectedCode) => {
     const mutated = structuredClone(fractionPackage);
     mutate(mutated);
@@ -351,6 +365,18 @@ describe('math subject probe validators', () => {
     );
     expect(result.outcome).toBe('fail');
     expect(result.failure_codes).toContain(expectedCode);
+  });
+
+  it('recognizes the frozen numerator/denominator misconception in reversed wording order', () => {
+    const reversed = structuredClone(fractionHypothesis);
+    reversed.claim_md = '你做异分母分数加法时把分母和分子分别相加。';
+    reversed.diagnostic_spec.target_error_rule_md = '把分母和分子分别相加得到 (a+c)/(b+d)。';
+    const result = resultFor(
+      reversed,
+      fractionPackage,
+      'math.unlike-denominator-fraction-addition',
+    );
+    expect(result).toMatchObject({ outcome: 'pass', failure_codes: [] });
   });
 
   it('detects reduced target/gold collision instead of accepting textual difference', () => {

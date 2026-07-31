@@ -1173,8 +1173,8 @@ describe('runResearchMeetingNightly', () => {
           cell_key: (input.payload as { cell_key?: unknown }).cell_key,
         })),
       ).toEqual([
-        { execution_id: 'exec_test', cell_key: 'concept_confusion:k_a' },
-        { execution_id: 'exec_test', cell_key: 'concept_confusion:k_a' },
+        { execution_id: 'exec_test', cell_key: 'concept_confusion::k_a' },
+        { execution_id: 'exec_test', cell_key: 'concept_confusion::k_a' },
       ]);
       expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(expect.anything(), taskKind);
       expect(writeAiProposalFn).not.toHaveBeenCalled();

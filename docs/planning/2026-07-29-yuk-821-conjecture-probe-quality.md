@@ -175,7 +175,8 @@ switch 开启。
 4. shadow → blocking 也有独立 cutover：app 暴露 accept route 前、worker 注册
    handler 前，都会在 proposal decision lock 下撤回当前 policy 已记录 fail 的
    pending v4 conjecture，释放 cause × KC 去重键后再生成替代 proposal；两个进程
-   同时启动由确定性 correction event id 保证幂等；
+   同时启动由 decision lock 后的状态重读保证幂等；若 owner 后来 restore，同一
+   proposal 的下一次 retirement 会追加新 correction generation，不与旧事件 ID 冲突；
 5. validator 版本变化产生新准备版本，不能覆盖旧题与旧审计。
 
 ### 4.6 测试矩阵

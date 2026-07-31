@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ConjectureProbeQualityAuditT } from '@/core/schema/business';
+import type { WriteEventInput } from '@/kernel/events';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import { SUBJECT_PROBE_VALIDATOR_POLICY_VERSION } from '@/subjects/probe-quality';
 import { prepareSubjectProbeValidatorBlockingCutover } from './subject-probe-validator-cutover';
@@ -103,6 +104,7 @@ function pendingConjecture(id: string, subjectValidatorOutcome: 'pass' | 'fail')
         claim_md: hypothesis.claim_md,
         knowledge_id: hypothesis.knowledge_id,
         cause_category: hypothesis.cause_category,
+        confidence: 0.7,
         recurrence_count: 2,
         predicted_p: 0.4,
         probe_md: primary.prompt_md,
@@ -113,7 +115,9 @@ function pendingConjecture(id: string, subjectValidatorOutcome: 'pass' | 'fail')
         probe_spec: primary,
         followup_probe_spec: followup,
         discriminating: true,
+        corrected_by_owner: false,
         probe_quality: probeQuality,
+        baseline_p_at_induction: 0.5,
       },
     },
     status: 'pending',
@@ -194,5 +198,26 @@ describe('prepareSubjectProbeValidatorBlockingCutover', () => {
 
     expect(result).toEqual({ enabled: true, pending_scanned: 1, retired: 0 });
     expect(writeEventFn).not.toHaveBeenCalled();
+  });
+
+  it('appends a new retirement generation if the same failing proposal is later restored', async () => {
+    const restored = pendingConjecture('restored-proposal', 'fail');
+    const writeEventFn = vi.fn(async (_handle: unknown, input: WriteEventInput) => input.id);
+    const deps = {
+      blockingEnabledFn: () => true,
+      listPendingConjecturesFn: vi.fn(async () => [restored]),
+      getProposalFn: vi.fn(async () => restored),
+      acquireProposalDecisionLockFn: vi.fn(async () => undefined),
+      writeEventFn,
+    };
+
+    await prepareSubjectProbeValidatorBlockingCutover(db, deps);
+    // A real owner restore makes the folded row pending again before the next
+    // flag-on boot; the injected projection models that state on this second run.
+    await prepareSubjectProbeValidatorBlockingCutover(db, deps);
+
+    const ids = writeEventFn.mock.calls.map(([, input]) => input.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
   });
 });

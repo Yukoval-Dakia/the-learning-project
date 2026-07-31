@@ -8,6 +8,7 @@ import {
   SCAN_ACTION,
 } from '@/capabilities/agency/server/meeting/director';
 import type { WriteEventInput } from '@/kernel/events';
+import { ConjectureInductionOperationalError } from '@/server/agency/conjecture/induce';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -285,6 +286,64 @@ describe('runResearchMeetingAgentNightly — orphaned-claim recovery (§2 review
     expect(
       [...store.store.values()].filter((row) => row.action === RECOVERY_CLAIM_ACTION),
     ).toHaveLength(1);
+  });
+
+  it('persists probe-quality attempts, lineage, and cost before director redelivery', async () => {
+    const store = memoryEventStore();
+    const attempts = [
+      {
+        attempt: 1 as const,
+        outcome: 'operational_failed' as const,
+        failure_codes: ['review_operational_failure' as const],
+        explanation_md: 'reviewer unavailable after deterministic shadow validation',
+        author_task_run_id: 'author_1',
+        reviewer_task_run_id: null,
+        subject_validator_results: [
+          {
+            validator_id: 'math.compound-unit-denominator-conversion',
+            validator_version: '1.0.0',
+            outcome: 'fail' as const,
+            failure_codes: ['unit_reference_mismatch' as const],
+            evidence: { primary_gold: '20 m/s' },
+          },
+        ],
+      },
+    ];
+    const runDirectorFn = vi.fn(async () => {
+      throw new ConjectureInductionOperationalError(
+        'ConjectureProbeReviewTask',
+        'review provider unavailable',
+        {
+          probe_quality_attempts: attempts,
+          task_run_ids: ['induction_1', 'author_1'],
+          cost_usd: 0.012345,
+        },
+      );
+    });
+
+    await expect(
+      runResearchMeetingAgentNightly({} as never, {
+        now: () => new Date('2026-07-06T21:00:00Z'),
+        writeEventFn: store.writeEventFn,
+        readEventByIdFn: store.readEventByIdFn,
+        hasScanEventForDayFn: store.hasScanEventForDayFn,
+        runDirectorFn,
+      }),
+    ).rejects.toThrow('review provider unavailable');
+
+    const [failure] = [...store.store.values()].filter(
+      (row) => row.action === RETRYABLE_FAILURE_ACTION,
+    );
+    expect(failure).toMatchObject({
+      task_run_id: 'author_1',
+      cost_micro_usd: 12345,
+      payload: {
+        task_kind: 'ConjectureProbeReviewTask',
+        probe_quality_attempts: attempts,
+        task_run_ids: ['induction_1', 'author_1'],
+        cost_usd: 0.012345,
+      },
+    });
   });
 
   it('skips when a claim exists AND a scan event for today already landed (complete prior run)', async () => {
