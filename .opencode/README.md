@@ -28,4 +28,5 @@ After a clean check, the complete directory is atomically moved beneath
 that retained directory. A restrictive marker is left at the original path and both markers name
 the preservation location. Even a background writer that follows the rename therefore writes into
 retained storage rather than a directory Git will delete. Inspect and remove the preservation root
-manually when it is no longer needed.
+manually when it is no longer needed. Because Git's prune command is repository-wide, cleanup also
+refuses to run it when porcelain reports any other prunable worktree registration.

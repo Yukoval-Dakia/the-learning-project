@@ -1,11 +1,12 @@
 import { Database } from "bun:sqlite"
 import { describe, expect, it } from "bun:test"
-import { mkdir, mkdtemp, readFile, rm, stat, unlink, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
 	type DeleteWorkflowDependencies,
 	type GitCommandResult,
+	findPreservedWorktree,
 	preserveWorktree,
 	processPendingDelete,
 } from "./delete"
@@ -24,13 +25,30 @@ function fail(error: string): GitCommandResult {
 	return { ok: false, error }
 }
 
+function prunableEntry(candidate: PendingDelete): string {
+	return [
+		`worktree ${candidate.path}`,
+		"HEAD 0000000000000000000000000000000000000000",
+		`branch refs/heads/${candidate.branch}`,
+		"prunable gitdir file points to non-existent location",
+		"",
+	].join("\n")
+}
+
 function workflow(overrides: Partial<DeleteWorkflowDependencies> = {}) {
 	const gitCalls: Array<{ args: string[]; cwd: string }> = []
 	let stateCompleted = false
+	let targetRegistered = true
 	const dependencies: DeleteWorkflowDependencies = {
 		repoRoot: "/repo",
 		runGit: async (args, cwd) => {
 			gitCalls.push({ args, cwd })
+			if (args[0] === "worktree" && args[1] === "list") {
+				return ok(targetRegistered ? prunableEntry(pending) : "")
+			}
+			if (args[0] === "worktree" && args[1] === "prune") {
+				targetRegistered = false
+			}
 			return ok()
 		},
 		runPreDeleteHooks: async () => ok(),
@@ -95,6 +113,7 @@ describe("processPendingDelete", () => {
 		const test = workflow({
 			runGit: async (args, cwd) => {
 				test.gitCalls.push({ args, cwd })
+				if (args[1] === "list") return ok(prunableEntry(pending))
 				return args[1] === "prune" ? fail("worktree unregister refused") : ok()
 			},
 		})
@@ -136,6 +155,10 @@ describe("processPendingDelete", () => {
 				cwd: pending.path,
 			},
 			{
+				args: ["worktree", "list", "--porcelain"],
+				cwd: "/repo",
+			},
+			{
 				args: ["worktree", "prune", "--expire", "now"],
 				cwd: "/repo",
 			},
@@ -166,9 +189,33 @@ describe("processPendingDelete", () => {
 		expect(result.ok).toBeTrue()
 		expect(hookCalls).toBe(0)
 		expect(test.gitCalls.map((call) => call.args.slice(0, 2))).toEqual([
+			["worktree", "list"],
 			["worktree", "prune"],
 			["worktree", "list"],
 		])
+	})
+
+	it("refuses a global prune while another worktree is also prunable", async () => {
+		const other = { branch: "codex/other", path: "/worktrees/other" }
+		const test = workflow({
+			runGit: async (args, cwd) => {
+				test.gitCalls.push({ args, cwd })
+				if (args[1] === "list") return ok(`${prunableEntry(pending)}\n${prunableEntry(other)}`)
+				return ok()
+			},
+		})
+
+		const result = await processPendingDelete(pending, test.dependencies)
+
+		expect(result.ok).toBeFalse()
+		if (result.ok) throw new Error("Expected unrelated prunable worktree to block cleanup")
+		expect(result.stage).toBe("remove")
+		expect(result.error).toContain("other prunable worktrees")
+		expect(result.error).toContain(other.path)
+		expect(
+			test.gitCalls.map((call) => (call.args[0] === "status" ? "status" : call.args[1])),
+		).toEqual(["status", "status", "list"])
+		expect(test.stateCompleted()).toBeFalse()
 	})
 })
 
@@ -271,6 +318,61 @@ it("keeps real dirty, ignored, and late-arriving files in an auditable preservat
 	}
 })
 
+it("keeps both real lanes registered and retained when another worktree is prunable", async () => {
+	const fixtureRoot = await mkdtemp(join(tmpdir(), "yuk810-worktree-global-prune-"))
+	const repository = join(fixtureRoot, "repository")
+	const targetPath = join(fixtureRoot, "target")
+	const otherPath = join(fixtureRoot, "other")
+	const otherRetainedPath = join(fixtureRoot, "other-retained")
+	await mkdir(repository)
+
+	try {
+		mustGit(["init", "-b", "main"], repository)
+		mustGit(["config", "user.email", "yuk810@example.invalid"], repository)
+		mustGit(["config", "user.name", "YUK-810 test"], repository)
+		await writeFile(join(repository, "tracked.txt"), "tracked\n")
+		mustGit(["add", "tracked.txt"], repository)
+		mustGit(["commit", "-m", "test: YUK-810 fixture"], repository)
+		mustGit(["worktree", "add", "-b", "codex/yuk-810-target", targetPath], repository)
+		mustGit(["worktree", "add", "-b", "codex/yuk-810-other", otherPath], repository)
+		await rename(otherPath, otherRetainedPath)
+
+		let stateCompleted = false
+		const result = await processPendingDelete(
+			{ branch: "codex/yuk-810-target", path: targetPath },
+			{
+				repoRoot: repository,
+				runGit: realGit,
+				runPreDeleteHooks: async () => ok(),
+				completeState: () => {
+					stateCompleted = true
+					return true
+				},
+			},
+		)
+
+		expect(result.ok).toBeFalse()
+		if (result.ok) throw new Error("Expected global prune preflight to fail closed")
+		expect(result.stage).toBe("remove")
+		expect(result.error).toContain("other prunable worktrees")
+		expect(stateCompleted).toBeFalse()
+		expect(
+			await readFile(
+				join(`${targetPath}.preserved-by-opencode`, "worktree", "tracked.txt"),
+				"utf8",
+			),
+		).toBe("tracked\n")
+		expect(await readFile(join(otherRetainedPath, "tracked.txt"), "utf8")).toBe("tracked\n")
+		const worktreeList = await realGit(["worktree", "list", "--porcelain"], repository)
+		expect(worktreeList.ok).toBeTrue()
+		if (!worktreeList.ok) throw new Error(worktreeList.error)
+		expect(worktreeList.value).toContain("refs/heads/codex/yuk-810-target")
+		expect(worktreeList.value).toContain("refs/heads/codex/yuk-810-other")
+	} finally {
+		await rm(fixtureRoot, { recursive: true, force: true })
+	}
+})
+
 it("does not unregister anything when an absolute-path writer recreates the original path", async () => {
 	const fixtureRoot = await mkdtemp(join(tmpdir(), "yuk810-worktree-race-"))
 	const worktreePath = join(fixtureRoot, "lane")
@@ -311,6 +413,28 @@ it("does not unregister anything when an absolute-path writer recreates the orig
 		)
 		expect(await readFile(join(preservationPath, "worktree", "tracked.txt"), "utf8")).toBe(
 			"retained\n",
+		)
+	} finally {
+		await rm(fixtureRoot, { recursive: true, force: true })
+	}
+})
+
+it("recovers an empty preservation root left before its audit record was written", async () => {
+	const fixtureRoot = await mkdtemp(join(tmpdir(), "yuk810-worktree-empty-root-"))
+	const worktreePath = join(fixtureRoot, "lane")
+	const preservationPath = `${worktreePath}.preserved-by-opencode`
+	await mkdir(worktreePath)
+	await writeFile(join(worktreePath, "tracked.txt"), "retained after restart\n")
+	await mkdir(preservationPath)
+
+	try {
+		expect(await findPreservedWorktree(worktreePath)).toBeNull()
+		expect(await preserveWorktree(worktreePath)).toBe(preservationPath)
+		expect(await readFile(join(preservationPath, "worktree", "tracked.txt"), "utf8")).toBe(
+			"retained after restart\n",
+		)
+		expect(await readFile(join(preservationPath, "preservation.json"), "utf8")).toContain(
+			preservationPath,
 		)
 	} finally {
 		await rm(fixtureRoot, { recursive: true, force: true })

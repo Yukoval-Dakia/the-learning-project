@@ -1,5 +1,6 @@
-import { lstat, mkdir, readFile, rename, writeFile } from "node:fs/promises"
+import { chmod, lstat, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { privateDirectoryMode, privateFileMode } from "./permissions"
 import type { PendingDelete } from "./state"
 
 export interface GitCommandSuccess {
@@ -108,13 +109,32 @@ async function readRootRecord(record: PreservationRecord): Promise<void> {
 	parsePreservationRecord(raw, record)
 }
 
+async function readOrRecoverRootRecord(record: PreservationRecord): Promise<void> {
+	try {
+		await readRootRecord(record)
+	} catch (error) {
+		const entries = await readdir(record.preservationRoot)
+		const original = await statOrNull(record.originalPath)
+		if (entries.length !== 0 || !original?.isDirectory()) throw error
+
+		// Recover a crash after the exclusive root reservation but before its
+		// audit record was written. The empty root contains no user data.
+		await chmod(record.preservationRoot, privateDirectoryMode())
+		await writeFile(
+			join(record.preservationRoot, PRESERVATION_RECORD),
+			serializedPreservationRecord(record),
+			{ encoding: "utf8", flag: "wx", mode: privateFileMode() },
+		)
+	}
+}
+
 async function ensureOriginalPathBlocked(record: PreservationRecord): Promise<void> {
 	const original = await statOrNull(record.originalPath)
 	if (!original) {
 		await writeFile(record.originalPath, serializedPreservationRecord(record), {
 			encoding: "utf8",
 			flag: "wx",
-			mode: 0o600,
+			mode: privateFileMode(),
 		})
 		return
 	}
@@ -142,7 +162,7 @@ export async function findPreservedWorktree(worktreePath: string): Promise<strin
 		throw new Error(`Preservation path is not a directory: ${record.preservationRoot}.`)
 	}
 
-	await readRootRecord(record)
+	await readOrRecoverRootRecord(record)
 	const retainedWorktree = await statOrNull(record.retainedWorktree)
 	if (!retainedWorktree) {
 		// A prior attempt reserved the preservation root but did not move the lane.
@@ -167,17 +187,17 @@ export async function preserveWorktree(worktreePath: string): Promise<string> {
 	if (!existingRoot) {
 		// Reserving a directory first gives us no-overwrite semantics that
 		// node:fs.rename alone cannot provide portably.
-		await mkdir(record.preservationRoot, { mode: 0o700 })
+		await mkdir(record.preservationRoot, { mode: privateDirectoryMode() })
 		await writeFile(
 			join(record.preservationRoot, PRESERVATION_RECORD),
 			serializedPreservationRecord(record),
-			{ encoding: "utf8", flag: "wx", mode: 0o600 },
+			{ encoding: "utf8", flag: "wx", mode: privateFileMode() },
 		)
 	} else {
 		if (!existingRoot.isDirectory()) {
 			throw new Error(`Preservation path is not a directory: ${record.preservationRoot}.`)
 		}
-		await readRootRecord(record)
+		await readOrRecoverRootRecord(record)
 	}
 
 	const retainedWorktree = await statOrNull(record.retainedWorktree)
@@ -218,15 +238,26 @@ async function inspectCleanWorktree(
 	return { ok: true }
 }
 
-function isPendingWorktreeRegistered(worktreeList: string, pendingDelete: PendingDelete): boolean {
-	const expectedBranch = `branch refs/heads/${pendingDelete.branch}`
+interface WorktreeListEntry {
+	readonly path: string | null
+	readonly branch: string | null
+	readonly prunable: boolean
+}
+
+function parseWorktreeList(worktreeList: string): WorktreeListEntry[] {
 	return worktreeList
 		.split(/\n\n+/)
-		.some((entry) =>
-			entry
-				.split("\n")
-				.some((line) => line === expectedBranch || line === `worktree ${pendingDelete.path}`),
-		)
+		.map((block) => block.split("\n").filter(Boolean))
+		.filter((lines) => lines.length > 0)
+		.map((lines) => ({
+			path: lines.find((line) => line.startsWith("worktree "))?.slice("worktree ".length) ?? null,
+			branch: lines.find((line) => line.startsWith("branch "))?.slice("branch ".length) ?? null,
+			prunable: lines.some((line) => line === "prunable" || line.startsWith("prunable ")),
+		}))
+}
+
+function isPendingWorktree(entry: WorktreeListEntry, pendingDelete: PendingDelete): boolean {
+	return entry.path === pendingDelete.path || entry.branch === `refs/heads/${pendingDelete.branch}`
 }
 
 function preservedError(error: string, preservedPath: string): string {
@@ -286,33 +317,9 @@ export async function processPendingDelete(
 		}
 	}
 
-	let pruneResult: GitCommandResult
+	let beforePruneResult: GitCommandResult
 	try {
-		// `prune` unregisters missing worktree metadata without recursively
-		// deleting the retained directory. `worktree remove` is intentionally
-		// forbidden here because it can silently delete late ignored files.
-		pruneResult = await dependencies.runGit(
-			["worktree", "prune", "--expire", "now"],
-			dependencies.repoRoot,
-		)
-	} catch (error) {
-		return {
-			ok: false,
-			stage: "remove",
-			error: preservedError(errorMessage(error), preservedPath),
-		}
-	}
-	if (!pruneResult.ok) {
-		return {
-			ok: false,
-			stage: "remove",
-			error: preservedError(pruneResult.error, preservedPath),
-		}
-	}
-
-	let listResult: GitCommandResult
-	try {
-		listResult = await dependencies.runGit(
+		beforePruneResult = await dependencies.runGit(
 			["worktree", "list", "--porcelain"],
 			dependencies.repoRoot,
 		)
@@ -323,18 +330,99 @@ export async function processPendingDelete(
 			error: preservedError(errorMessage(error), preservedPath),
 		}
 	}
-	if (!listResult.ok) {
+	if (!beforePruneResult.ok) {
 		return {
 			ok: false,
 			stage: "remove",
-			error: preservedError(listResult.error, preservedPath),
+			error: preservedError(beforePruneResult.error, preservedPath),
 		}
 	}
-	if (isPendingWorktreeRegistered(listResult.value, pendingDelete)) {
-		return {
-			ok: false,
-			stage: "remove",
-			error: preservedError("Git still reports the worktree as registered.", preservedPath),
+
+	const beforePruneEntries = parseWorktreeList(beforePruneResult.value)
+	const targetEntry = beforePruneEntries.find((entry) => isPendingWorktree(entry, pendingDelete))
+	if (targetEntry) {
+		if (!targetEntry.prunable) {
+			return {
+				ok: false,
+				stage: "remove",
+				error: preservedError(
+					"Git does not report the preserved worktree as safely prunable.",
+					preservedPath,
+				),
+			}
+		}
+
+		const otherPrunableEntries = beforePruneEntries.filter(
+			(entry) => entry.prunable && !isPendingWorktree(entry, pendingDelete),
+		)
+		if (otherPrunableEntries.length > 0) {
+			const labels = otherPrunableEntries
+				.map((entry) => entry.path ?? entry.branch ?? "unknown worktree")
+				.join(", ")
+			return {
+				ok: false,
+				stage: "remove",
+				error: preservedError(
+					`Refused repository-global prune because other prunable worktrees exist: ${labels}.`,
+					preservedPath,
+				),
+			}
+		}
+
+		let pruneResult: GitCommandResult
+		try {
+			// `prune` unregisters missing worktree metadata without recursively
+			// deleting the retained directory. `worktree remove` is intentionally
+			// forbidden here because it can silently delete late ignored files.
+			pruneResult = await dependencies.runGit(
+				["worktree", "prune", "--expire", "now"],
+				dependencies.repoRoot,
+			)
+		} catch (error) {
+			return {
+				ok: false,
+				stage: "remove",
+				error: preservedError(errorMessage(error), preservedPath),
+			}
+		}
+		if (!pruneResult.ok) {
+			return {
+				ok: false,
+				stage: "remove",
+				error: preservedError(pruneResult.error, preservedPath),
+			}
+		}
+
+		let afterPruneResult: GitCommandResult
+		try {
+			afterPruneResult = await dependencies.runGit(
+				["worktree", "list", "--porcelain"],
+				dependencies.repoRoot,
+			)
+		} catch (error) {
+			return {
+				ok: false,
+				stage: "remove",
+				error: preservedError(errorMessage(error), preservedPath),
+			}
+		}
+		if (!afterPruneResult.ok) {
+			return {
+				ok: false,
+				stage: "remove",
+				error: preservedError(afterPruneResult.error, preservedPath),
+			}
+		}
+		if (
+			parseWorktreeList(afterPruneResult.value).some((entry) =>
+				isPendingWorktree(entry, pendingDelete),
+			)
+		) {
+			return {
+				ok: false,
+				stage: "remove",
+				error: preservedError("Git still reports the worktree as registered.", preservedPath),
+			}
 		}
 	}
 
