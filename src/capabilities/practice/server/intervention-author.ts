@@ -403,9 +403,6 @@ export function bindInterventionPackageReviewDecision(
     diagnostic_checks: modelValue.diagnostic_checks.map((check) => {
       const sealed = auditByKind.get(check.kind);
       if (!sealed) throw new Error(`missing sealed independent solution for ${check.kind}`);
-      if (check.independent_solution_sha256 !== sealed.solver_output_sha256) {
-        throw new Error(`comparator referenced the wrong sealed solution for ${check.kind}`);
-      }
       if (requirements.causal_direction_required && !check.causal_direction_check.applies) {
         throw new Error(`comparator omitted required causal-direction review for ${check.kind}`);
       }
@@ -417,14 +414,17 @@ export function bindInterventionPackageReviewDecision(
           const sealedOperation = sealed.required_operations[index];
           if (
             !sealedOperation ||
-            operationCheck.operation_index !== sealedOperation.operation_index ||
-            operationCheck.operation_sha256 !== sealedOperation.operation_sha256
+            operationCheck.operation_index !== sealedOperation.operation_index
           ) {
             throw new Error(
               `comparator referenced the wrong sealed operation ${index} for ${check.kind}`,
             );
           }
-          return { ...operationCheck, operation_md: sealedOperation.operation_md };
+          return {
+            ...operationCheck,
+            operation_sha256: sealedOperation.operation_sha256,
+            operation_md: sealedOperation.operation_md,
+          };
         },
       );
       return {
@@ -433,6 +433,13 @@ export function bindInterventionPackageReviewDecision(
         independently_derived_answer_md: sealed.independently_derived_answer_md,
         required_operations_md: sealed.required_operations_md,
         required_operation_checks: requiredOperationChecks,
+        causal_direction_check: {
+          ...check.causal_direction_check,
+          claimed_cause_is_observed_y_causing_x:
+            check.causal_direction_check.reference_claims_reverse_causation &&
+            check.causal_direction_check.reference_claimed_reverse_cause_relation ===
+              'same_outcome_construct_y',
+        },
       };
     }),
   });
@@ -469,6 +476,7 @@ function invalidComparatorReview(
         observed_outcome_y_md: '',
         reference_claims_reverse_causation: false,
         reference_claimed_reverse_cause_md: '',
+        reference_claimed_reverse_cause_relation: 'none',
         claimed_cause_is_observed_y_causing_x: false,
       },
     })),

@@ -35,21 +35,28 @@ The input packet has `schema_version: 1`,
 `source_kind: "sanitized_regression_fixture"`, and one or more cases containing
 `case_id`, `subject_id`, canonical `context`, canonical `package`,
 `expected_verdict`, and `expected_failure_codes`. The checked-in packet contains
-three expected-fail regressions plus two expected-pass controls, so an
+three expected-fail regressions plus three expected-pass controls, so an
 always-rejecting comparator cannot pass the gate. The harness refuses a dirty
 worktree, global provider overrides, an absent Xiaomi credential, or an existing
 output path. It runs in a disposable pgvector Testcontainer. For every package
 it runs three strict `SolutionGenerateTask` blind solves followed by the sealed
 package comparator. A paid solver response that cannot satisfy the complete
 output contract may retry the identical blind input once; heuristic JSON repair
-is forbidden, deterministic repair is recorded, and every attempted task-run ID
+is forbidden, numeric-string confidence has one semantics-preserving scalar
+normalization, deterministic repair is recorded, and every attempted task-run ID
 remains in the audit. `expected_signals` is a bounded 1..12 atomized necessary
 path; every operation is sealed by index + digest, and the comparator must return
-one reference-coverage and frozen-scope decision for every operation. A package
+one reference-coverage and frozen-scope decision for every operation. Provider
+output names only kind + operation index; the server binds solver/operation
+digests and operation text instead of asking the model to echo opaque hashes. A package
 cannot pass from one diagnostic-level self-certified boolean. DiagnosticSpec V2
 also freezes `causal_direction_required`; historical V1 is read-compatible but
 conservatively requires the causal check, and explicit causal language is a
-defense-in-depth positive backstop. The comparator likewise retries the exact sealed input once
+defense-in-depth positive backstop. A claimed reverse cause is classified by its
+relation to the question's outcome construct/estimand: the same Y construct,
+a distinct baseline/prior estimand, or another/common/unclear cause. The server
+derives the Y→X boolean from that classification instead of accepting a model
+self-certification; timing alone is not the definition. The comparator likewise retries the exact sealed input once
 only after a persisted response fails the complete output contract; a valid
 semantic fail is never retried. Activation re-runs deterministic checks and binds
 every solver/comparator attempt to successful `ai_task_runs` rows, exact input
@@ -70,7 +77,7 @@ instead of being reset by pg-boss redelivery.
 The structural ceiling is eight validator calls per package (three diagnostics ×
 two blind-solve attempts, plus two comparator attempts). A two-package preparation
 delivery including recommendation and authoring is therefore capped at 19 task
-calls; one five-case regression command is capped at 40. These are retry ceilings,
+calls; the six-case regression command is capped at 48. These are retry ceilings,
 not expected steady-state spend. A durable cross-delivery aggregate budget and
 per-stage checkpoint are not implemented by this change and must not be inferred
 from a green fixture run.

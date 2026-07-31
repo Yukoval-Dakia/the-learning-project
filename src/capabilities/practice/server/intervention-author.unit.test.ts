@@ -6,6 +6,8 @@ import {
   InterventionPackageReviewAudit,
   type InterventionPackageReviewDiagnosticCheckT,
   InterventionPackageReviewModelOutput,
+  InterventionPackageReviewStructuredOutput,
+  type InterventionPackageReviewStructuredOutputT,
   MAX_INTERVENTION_PREPARATION_CALLS_PER_DELIVERY,
   MAX_INTERVENTION_REVIEW_EVAL_CALLS_PER_CASE,
   MAX_INTERVENTION_VALIDATOR_CALLS_PER_PACKAGE,
@@ -229,10 +231,8 @@ describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () 
       failure_codes: [],
       diagnostic_checks: independentAudit.diagnostics.map((diagnostic) => ({
         kind: diagnostic.kind,
-        independent_solution_sha256: diagnostic.solver_output_sha256,
         required_operation_checks: diagnostic.required_operations.map((operation) => ({
           operation_index: operation.operation_index,
-          operation_sha256: operation.operation_sha256,
           reference_covers_operation: true,
           within_frozen_scope: true,
           decision_basis_md: 'reference 覆盖该步骤，且该步骤位于冻结范围内。',
@@ -247,7 +247,7 @@ describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () 
           observed_outcome_y_md: '',
           reference_claims_reverse_causation: false,
           reference_claimed_reverse_cause_md: '',
-          claimed_cause_is_observed_y_causing_x: false,
+          reference_claimed_reverse_cause_relation: 'none' as const,
         },
       })),
       package_checks: passingPackageChecks(),
@@ -255,7 +255,7 @@ describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () 
     };
   }
 
-  it('server-binds the persisted answer/operations and rejects a wrong sealed digest', () => {
+  it('server-binds all provenance and rejects a reordered required operation', () => {
     const independentAudit = audit();
     const bound = bindInterventionPackageReviewDecision(
       comparatorOutput(independentAudit),
@@ -270,6 +270,8 @@ describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () 
       required_operation_checks: [
         expect.objectContaining({
           operation_index: 0,
+          operation_sha256:
+            independentAudit.diagnostics[2]?.required_operations[0]?.operation_sha256,
           operation_md: expect.stringContaining('面积=长×宽'),
         }),
         expect.objectContaining({ operation_index: 1 }),
@@ -278,9 +280,12 @@ describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () 
 
     const mismatched = comparatorOutput(independentAudit);
     if (!mismatched.diagnostic_checks[2]) throw new Error('missing transfer check');
-    mismatched.diagnostic_checks[2].independent_solution_sha256 = 'f'.repeat(64);
+    if (!mismatched.diagnostic_checks[2].required_operation_checks[0]) {
+      throw new Error('missing transfer operation check');
+    }
+    mismatched.diagnostic_checks[2].required_operation_checks[0].operation_index = 1;
     expect(() => bindInterventionPackageReviewDecision(mismatched, independentAudit)).toThrow(
-      'wrong sealed solution',
+      'wrong sealed operation',
     );
 
     const missingOperation = comparatorOutput(independentAudit);
@@ -292,7 +297,7 @@ describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () 
 
   it('maps a contradictory package-level bare pass to a bounded fail code', () => {
     const independentAudit = audit();
-    const output = comparatorOutput(independentAudit);
+    const output = comparatorOutput(independentAudit) as InterventionPackageReviewStructuredOutputT;
     output.package_checks.material_grounded = false;
     const bound = bindInterventionPackageReviewDecision(output, independentAudit);
     expect(bound).toMatchObject({
@@ -354,6 +359,100 @@ describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () 
     ).toThrow('omitted required causal-direction review');
   });
 
+  it('rejects provider-authored solver and operation digests', () => {
+    const independentAudit = audit();
+    const solverDigest = structuredClone(comparatorOutput(independentAudit));
+    Object.assign(solverDigest.diagnostic_checks[0] ?? {}, {
+      independent_solution_sha256: 'a'.repeat(64),
+    });
+    expect(InterventionPackageReviewStructuredOutput.safeParse(solverDigest).success).toBe(false);
+
+    const operationDigest = structuredClone(comparatorOutput(independentAudit));
+    Object.assign(operationDigest.diagnostic_checks[0]?.required_operation_checks[0] ?? {}, {
+      operation_sha256: 'b'.repeat(64),
+    });
+    expect(InterventionPackageReviewStructuredOutput.safeParse(operationDigest).success).toBe(
+      false,
+    );
+  });
+
+  it('derives Y→X from the claimed cause relation instead of trusting a provider boolean', () => {
+    const independentAudit = audit(2);
+    const output = comparatorOutput(independentAudit) as InterventionPackageReviewStructuredOutputT;
+    for (const check of output.diagnostic_checks) {
+      check.causal_direction_check = {
+        applies: true,
+        exposure_x_md: 'treatment X',
+        observed_outcome_y_md: '暴露后实际观察的 outcome Y',
+        reference_claims_reverse_causation: false,
+        reference_claimed_reverse_cause_md: '',
+        reference_claimed_reverse_cause_relation: 'none',
+      };
+    }
+    const delayed = output.diagnostic_checks.find((check) => check.kind === 'delayed');
+    if (!delayed) throw new Error('missing delayed comparator check');
+    delayed.causal_direction_check = {
+      applies: true,
+      exposure_x_md: '参加补习',
+      observed_outcome_y_md: '期末成绩提高幅度',
+      reference_claims_reverse_causation: true,
+      reference_claimed_reverse_cause_md: '补习前成绩较差导致被安排补习',
+      reference_claimed_reverse_cause_relation: 'baseline_or_prior_different_construct',
+    };
+
+    const bound = bindInterventionPackageReviewDecision(output, independentAudit, {
+      audit_entire_solution_path: true,
+      causal_direction_required: true,
+    });
+
+    expect(bound.diagnostic_checks[1]?.causal_direction_check).toMatchObject({
+      reference_claimed_reverse_cause_relation: 'baseline_or_prior_different_construct',
+      claimed_cause_is_observed_y_causing_x: false,
+    });
+    expect(bound).toMatchObject({
+      verdict: 'fail',
+      failure_codes: expect.arrayContaining(['reference_incorrect']),
+    });
+  });
+
+  it('accepts textbook reverse causation when a prior manifestation is the same outcome construct', () => {
+    const independentAudit = audit(2);
+    const output = comparatorOutput(independentAudit) as InterventionPackageReviewStructuredOutputT;
+    for (const check of output.diagnostic_checks) {
+      check.causal_direction_check = {
+        applies: true,
+        exposure_x_md: '每周中高强度运动频率',
+        observed_outcome_y_md: '抑郁症状严重度',
+        reference_claims_reverse_causation: false,
+        reference_claimed_reverse_cause_md: '',
+        reference_claimed_reverse_cause_relation: 'none',
+      };
+    }
+    const transfer = output.diagnostic_checks.find((check) => check.kind === 'transfer');
+    if (!transfer) throw new Error('missing transfer comparator check');
+    transfer.causal_direction_check = {
+      applies: true,
+      exposure_x_md: '每周中高强度运动频率',
+      observed_outcome_y_md: '抑郁症状严重度',
+      reference_claims_reverse_causation: true,
+      reference_claimed_reverse_cause_md:
+        '较高的既有抑郁症状严重度可能降低之后参与中高强度运动的频率',
+      reference_claimed_reverse_cause_relation: 'same_outcome_construct_y',
+    };
+
+    const bound = bindInterventionPackageReviewDecision(output, independentAudit, {
+      audit_entire_solution_path: true,
+      causal_direction_required: true,
+    });
+
+    expect(bound.verdict).toBe('pass');
+    expect(bound.failure_codes).toEqual([]);
+    expect(bound.diagnostic_checks[2]?.causal_direction_check).toMatchObject({
+      reference_claimed_reverse_cause_relation: 'same_outcome_construct_y',
+      claimed_cause_is_observed_y_causing_x: true,
+    });
+  });
+
   it('seals unique ordered comparator attempts and pins the bounded call envelope', () => {
     expect(MAX_INTERVENTION_VALIDATOR_CALLS_PER_PACKAGE).toBe(8);
     expect(MAX_INTERVENTION_PREPARATION_CALLS_PER_DELIVERY).toBe(19);
@@ -396,6 +495,100 @@ describe('bindInterventionPackageReviewDecision — sealed FULL comparator', () 
         review_attempt_task_run_ids: [independentAudit.diagnostics[0]?.solver_task_run_id],
       }),
     ).toThrow();
+
+    const historicalFullAudit = {
+      ...structuredClone(base),
+      result: {
+        ...structuredClone(base.result),
+        diagnostic_checks: base.result.diagnostic_checks.map((check) => {
+          const {
+            reference_claimed_reverse_cause_relation: _relation,
+            ...historicalCausalDirectionCheck
+          } = check.causal_direction_check;
+          return {
+            ...structuredClone(check),
+            causal_direction_check: historicalCausalDirectionCheck,
+          };
+        }),
+      },
+    };
+    expect(InterventionPackageReviewAudit.safeParse(historicalFullAudit).success).toBe(true);
+
+    const { review_attempt_task_run_ids: _reviewAttempts, ...preOperationHistoricalOuter } =
+      historicalFullAudit;
+    const preOperationHistoricalAudit = {
+      ...preOperationHistoricalOuter,
+      independent_solution_audit: {
+        ...historicalFullAudit.independent_solution_audit,
+        diagnostics: historicalFullAudit.independent_solution_audit.diagnostics.map(
+          ({ required_operations: _requiredOperations, ...diagnostic }) => diagnostic,
+        ),
+      },
+      result: {
+        ...historicalFullAudit.result,
+        diagnostic_checks: historicalFullAudit.result.diagnostic_checks.map(
+          ({ required_operation_checks: _operationChecks, ...check }) => check,
+        ),
+      },
+    };
+    expect(InterventionPackageReviewAudit.safeParse(preOperationHistoricalAudit).success).toBe(
+      true,
+    );
+
+    const wideSignalHistoricalAudit = structuredClone(preOperationHistoricalAudit);
+    const wideSignalDiagnostic =
+      wideSignalHistoricalAudit.independent_solution_audit.diagnostics[0];
+    if (!wideSignalDiagnostic) throw new Error('missing historical diagnostic');
+    wideSignalDiagnostic.solver_output.reference_solution.expected_signals = Array.from(
+      { length: 13 },
+      (_, index) =>
+        index === 0
+          ? `legacy operation ${index + 1}: ${'甲'.repeat(1_050)}`
+          : `legacy operation ${index + 1}`,
+    );
+    wideSignalDiagnostic.solver_output_sha256 = sha256CanonicalJson(
+      wideSignalDiagnostic.solver_output,
+    );
+    const wideSignalCheck = wideSignalHistoricalAudit.result.diagnostic_checks.find(
+      (check) => check.kind === wideSignalDiagnostic.kind,
+    );
+    if (!wideSignalCheck) throw new Error('missing historical diagnostic check');
+    wideSignalCheck.independent_solution_sha256 = wideSignalDiagnostic.solver_output_sha256;
+    expect(InterventionPackageReviewAudit.safeParse(wideSignalHistoricalAudit).success).toBe(true);
+
+    const { review_task_input_sha256: _reviewInputDigest, ...earliestHistoricalOuter } =
+      preOperationHistoricalAudit;
+    const earliestHistoricalAudit = {
+      ...earliestHistoricalOuter,
+      independent_solution_audit: {
+        ...preOperationHistoricalAudit.independent_solution_audit,
+        diagnostics: preOperationHistoricalAudit.independent_solution_audit.diagnostics.map(
+          ({
+            solver_output_repair_level: _repairLevel,
+            solver_attempt_task_run_ids: _solverAttempts,
+            ...diagnostic
+          }) => diagnostic,
+        ),
+      },
+    };
+    expect(InterventionPackageReviewAudit.safeParse(earliestHistoricalAudit).success).toBe(true);
+
+    const { package_checks: _packageChecks, ...historicalFullResult } = historicalFullAudit.result;
+    const historicalSelfReview = {
+      ...historicalFullResult,
+      diagnostic_checks: historicalFullResult.diagnostic_checks.map((check) => {
+        const {
+          independent_solution_sha256: _solverDigest,
+          required_operation_checks: _operationChecks,
+          ...historicalCheck
+        } = check;
+        return historicalCheck;
+      }),
+    };
+    expect(InterventionPackageReviewModelOutput.safeParse(historicalSelfReview).success).toBe(true);
+    expect(InterventionPackageReviewStructuredOutput.safeParse(historicalSelfReview).success).toBe(
+      false,
+    );
   });
 });
 
@@ -407,6 +600,7 @@ describe('enforceInterventionPackageReviewDecision', () => {
       observed_outcome_y_md: '',
       reference_claims_reverse_causation: false,
       reference_claimed_reverse_cause_md: '',
+      reference_claimed_reverse_cause_relation: 'none' as const,
       claimed_cause_is_observed_y_causing_x: false,
     };
   }
@@ -536,6 +730,7 @@ describe('enforceInterventionPackageReviewDecision', () => {
         observed_outcome_y_md: '期末成绩提高幅度',
         reference_claims_reverse_causation: true,
         reference_claimed_reverse_cause_md: '补习前成绩较差导致被安排补习',
+        reference_claimed_reverse_cause_relation: 'baseline_or_prior_different_construct',
         claimed_cause_is_observed_y_causing_x: false,
       },
     };

@@ -2,6 +2,7 @@ import { reviewInterventionPackageCandidate } from '@/capabilities/practice/serv
 import {
   InterventionAuthoringContext,
   InterventionPackage,
+  InterventionPackageReviewAuditV2,
   InterventionPackageReviewFailureCode,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
@@ -327,9 +328,9 @@ export async function runInterventionReviewActualOutputEval(input: {
       });
       continue;
     }
-    const audit = validation.review;
-    if (!('independent_solution_audit' in audit)) {
-      const expectedRuns = observedExpectations([audit.review_task_run_id]);
+    const currentAudit = InterventionPackageReviewAuditV2.safeParse(validation.review);
+    if (!currentAudit.success) {
+      const expectedRuns = observedExpectations([validation.review.review_task_run_id]);
       const provenance = appendProvenanceIssues(
         await collectTaskRunProvenance(input.db, expectedRuns),
         observationIssues,
@@ -352,6 +353,7 @@ export async function runInterventionReviewActualOutputEval(input: {
       });
       continue;
     }
+    const audit = currentAudit.data;
     const review = audit.result;
     const independentSolutionTaskRunIds = audit.independent_solution_audit.diagnostics.flatMap(
       (diagnostic) => diagnostic.solver_attempt_task_run_ids,

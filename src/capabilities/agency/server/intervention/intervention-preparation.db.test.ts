@@ -10,6 +10,7 @@ import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture
 import {
   INTERVENTION_CONTRACT_VERSION,
   InterventionPackage,
+  InterventionPackageReviewAuditV2,
   InterventionPreparationAttempt,
   PEDAGOGY_METHOD_DEFINITION_VERSION,
   buildInterventionSettlement,
@@ -438,7 +439,7 @@ function reviewDiagnosticChecks(
       observed_outcome_y_md: '',
       reference_claims_reverse_causation: false,
       reference_claimed_reverse_cause_md: '',
-      claimed_cause_is_observed_y_causing_x: false,
+      reference_claimed_reverse_cause_relation: 'none' as const,
     },
   }));
 }
@@ -486,12 +487,10 @@ function comparatorDiagnosticChecks(input: unknown, checks = reviewDiagnosticChe
       ...check
     }) => ({
       ...check,
-      independent_solution_sha256: solutionByKind.get(check.kind)?.solver_output_sha256,
       required_operation_checks: solutionByKind
         .get(check.kind)
         ?.required_operations.map((operation) => ({
           operation_index: operation.operation_index,
-          operation_sha256: operation.operation_sha256,
           reference_covers_operation: check.reference_correct,
           within_frozen_scope: check.within_frozen_scope,
           decision_basis_md: '该原子步骤已逐项对照 reference 与冻结 scope，结论与诊断级判据一致。',
@@ -674,9 +673,9 @@ describe('YUK-791 intervention preparation closed loop', () => {
     ).toEqual([
       { kind: 'InterventionRecommendationTask', outputFormatType: 'json_schema' },
       { kind: 'InterventionPackageAuthorTask', outputFormatType: 'json_schema' },
-      { kind: 'SolutionGenerateTask', outputFormatType: undefined },
-      { kind: 'SolutionGenerateTask', outputFormatType: undefined },
-      { kind: 'SolutionGenerateTask', outputFormatType: undefined },
+      { kind: 'SolutionGenerateTask', outputFormatType: 'json_schema' },
+      { kind: 'SolutionGenerateTask', outputFormatType: 'json_schema' },
+      { kind: 'SolutionGenerateTask', outputFormatType: 'json_schema' },
       { kind: 'InterventionPackageReviewTask', outputFormatType: 'json_schema' },
     ]);
 
@@ -939,7 +938,8 @@ describe('YUK-791 intervention preparation closed loop', () => {
     if (attempt?.kind !== 'reviewed_package' || !('independent_solution_audit' in attempt.review)) {
       throw new Error('missing FULL comparator retry audit');
     }
-    expect(attempt.review).toMatchObject({
+    const currentReview = InterventionPackageReviewAuditV2.parse(attempt.review);
+    expect(currentReview).toMatchObject({
       review_task_run_id: 'review_run_2',
       review_attempt_task_run_ids: ['review_invalid_contract_1', 'review_run_2'],
       result: { verdict: 'pass', failure_codes: [] },
@@ -951,7 +951,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
         result_digest: ai_task_runs.result_digest,
       })
       .from(ai_task_runs)
-      .where(inArray(ai_task_runs.id, attempt.review.review_attempt_task_run_ids));
+      .where(inArray(ai_task_runs.id, currentReview.review_attempt_task_run_ids));
     expect(reviewRuns).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1066,8 +1066,9 @@ describe('YUK-791 intervention preparation closed loop', () => {
       ) {
         throw new Error('missing exhausted comparator audit');
       }
-      expect(attempt.review.review_attempt_task_run_ids).toHaveLength(2);
-      expect(attempt.review.result).toMatchObject({
+      const currentReview = InterventionPackageReviewAuditV2.parse(attempt.review);
+      expect(currentReview.review_attempt_task_run_ids).toHaveLength(2);
+      expect(currentReview.result).toMatchObject({
         verdict: 'fail',
         failure_codes: ['review_output_invalid'],
       });
@@ -1185,6 +1186,114 @@ describe('YUK-791 intervention preparation closed loop', () => {
     });
     const failed = await loadInterventionVersion(db, opened.id, opened.version);
     expect(failed?.preparation_attempts.map((attempt) => attempt.attempt)).toEqual([1, 2]);
+  });
+
+  it('reads a historical FULL audit but refuses to activate it as a current FULL review', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('historical_full_review_rebound');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: {},
+      bossSend: async () => 'prepare_job_historical_full_review_rebound',
+    });
+    const [opened] = await db.select().from(intervention);
+    const record = await loadInterventionVersion(db, opened.id, opened.version);
+    if (!record) throw new Error('intervention disappeared');
+    const recommended = await saveRecommendation(
+      db,
+      record,
+      concreteRecommendation('historical_full_review_recommendation'),
+    );
+    const withFirst = await appendPreparationAttempt(
+      db,
+      recommended,
+      InterventionPreparationAttempt.parse({
+        kind: 'author_failed',
+        attempt: 1,
+        failure_code: 'seeded_first_attempt_failure',
+      }),
+    );
+    const { fn } = successfulRunTask(db);
+    const currentAttempt = await authorInterventionPackage(db, recommended.id, {
+      attempt: 2,
+      runTaskFn: fn,
+      preparationJobId: preparationJobIdOf(recommended),
+    });
+    if (
+      currentAttempt.kind !== 'reviewed_package' ||
+      !('independent_solution_audit' in currentAttempt.review)
+    ) {
+      throw new Error('missing current FULL attempt');
+    }
+
+    const currentReview = InterventionPackageReviewAuditV2.parse(currentAttempt.review);
+    const { review_attempt_task_run_ids: _reviewAttempts, ...historicalReviewOuter } =
+      structuredClone(currentReview);
+    const historicalCandidate = {
+      ...structuredClone(currentAttempt),
+      review: {
+        ...historicalReviewOuter,
+        independent_solution_audit: {
+          ...historicalReviewOuter.independent_solution_audit,
+          diagnostics: historicalReviewOuter.independent_solution_audit.diagnostics.map(
+            ({ required_operations: _requiredOperations, ...diagnostic }) => diagnostic,
+          ),
+        },
+        result: {
+          ...historicalReviewOuter.result,
+          diagnostic_checks: historicalReviewOuter.result.diagnostic_checks.map(
+            ({ required_operation_checks: _operationChecks, ...check }) => {
+              const {
+                reference_claimed_reverse_cause_relation: _relation,
+                ...historicalCausalDirectionCheck
+              } = check.causal_direction_check;
+              return { ...check, causal_direction_check: historicalCausalDirectionCheck };
+            },
+          ),
+        },
+      },
+    };
+    const historicalAttempt = InterventionPreparationAttempt.parse(historicalCandidate);
+    if (
+      historicalAttempt.kind !== 'reviewed_package' ||
+      !('independent_solution_audit' in historicalAttempt.review)
+    ) {
+      throw new Error('historical FULL audit did not remain readable');
+    }
+    await db
+      .update(ai_task_runs)
+      .set({ result_digest: sha256CanonicalJson(historicalAttempt.review.result) })
+      .where(eq(ai_task_runs.id, historicalAttempt.review.review_task_run_id));
+    const withHistorical = await appendPreparationAttempt(db, withFirst, historicalAttempt);
+    expect(withHistorical.preparation_attempts).toHaveLength(2);
+
+    const result = await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      {
+        runTaskFn: async () => {
+          throw new Error('exhausted historical recovery must not call the model');
+        },
+        authorPackageFn: async () => {
+          throw new Error('exhausted historical recovery must not call QuestionAuthor');
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'preparation_failed',
+      reason_code: 'package_quality:agency:current_full_review_required',
+    });
+    const failed = await loadInterventionVersion(db, opened.id, opened.version);
+    expect(failed).toMatchObject({
+      status: 'preparation_failed',
+      failure_code: 'package_quality:agency:current_full_review_required',
+    });
+    expect(failed?.preparation_attempts[1]).toMatchObject({ kind: 'reviewed_package' });
   });
 
   it('consumes one real review per window, retires one-shot cards, and settles deterministically', async () => {

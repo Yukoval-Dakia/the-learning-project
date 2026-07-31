@@ -36,6 +36,7 @@ import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { type RepairLevel, parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
+import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import type { Provider } from '@/server/ai/providers';
 import {
@@ -44,6 +45,8 @@ import {
   type PlacementVerificationAuthority,
   assertPlacementAuthority,
 } from '@/server/question-supply/placement-starter-attempts';
+
+const SOLUTION_GENERATE_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(SolutionGenerateOutput);
 
 // ---------- check identifiers ----------
 //
@@ -526,6 +529,29 @@ function solutionLaneOverride(
   };
 }
 
+function normalizeStrictSolutionOutput(value: unknown): {
+  value: unknown;
+  repaired: boolean;
+} {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return { value, repaired: false };
+  }
+  const record = value as Record<string, unknown>;
+  const confidence = record.confidence;
+  if (typeof confidence !== 'string') return { value, repaired: false };
+  const normalized = confidence.trim();
+  // A JSON number serialized as a string is a content-preserving scalar repair.
+  // Do not guess labels such as "high" or percentages; those remain contract
+  // failures and consume the existing bounded retry.
+  if (!/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(normalized)) {
+    return { value, repaired: false };
+  }
+  return {
+    value: { ...record, confidence: Number(normalized) },
+    repaired: true,
+  };
+}
+
 async function assertIndependentSolutionAuthority(opts: IndependentSolutionOptions): Promise<void> {
   if (!opts.placementAuthority || !opts.db) return;
   await opts.db.transaction(async (tx: Tx) =>
@@ -584,7 +610,11 @@ async function runIndependentSolutionInternal(
     figures_hint: question.figures ?? null,
     prompt_image_refs: question.image_refs ?? [],
   };
-  const ctx: Record<string, unknown> = { db: opts.db, subjectProfile: opts.profile.full };
+  const ctx: Record<string, unknown> = {
+    db: opts.db,
+    subjectProfile: opts.profile.full,
+    outputFormat: SOLUTION_GENERATE_OUTPUT_FORMAT,
+  };
   if (solverOverride) ctx.override = solverOverride;
 
   const promptImageRefs = question.image_refs ?? [];
@@ -645,6 +675,9 @@ async function runIndependentSolutionInternal(
       parsed = extracted.json as Record<string, unknown>;
       solverOutputRepairLevel = extracted.repaired;
     }
+    const normalized = normalizeStrictSolutionOutput(parsed);
+    parsed = normalized.value as Record<string, unknown>;
+    if (normalized.repaired) solverOutputRepairLevel = 'deterministic';
     const complete = SolutionGenerateOutput.safeParse(parsed);
     const rawReference =
       parsed.reference_solution !== null &&

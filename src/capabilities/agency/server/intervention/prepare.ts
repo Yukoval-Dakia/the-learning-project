@@ -5,6 +5,7 @@ import type {
   InterventionPreparationAttemptT,
 } from '@/core/schema/intervention';
 import {
+  InterventionPackageReviewAuditV2,
   InterventionPreparationAttempt,
   MAX_INTERVENTION_PACKAGE_ATTEMPTS,
   buildInterventionPackageReviewTaskInput,
@@ -209,10 +210,15 @@ async function bindAttemptToRecord(
   if (attempt.review.package_digest_sha256 !== sha256CanonicalJson(attempt.package)) {
     failures.push('agency:review_package_digest_mismatch');
   }
+  const currentReviewAudit = InterventionPackageReviewAuditV2.safeParse(attempt.review);
+  if (!currentReviewAudit.success) {
+    failures.push('agency:current_full_review_required');
+  }
   if (!('independent_solution_audit' in attempt.review)) {
     failures.push('agency:independent_solution_audit_missing');
-  } else {
-    const independentAudit = attempt.review.independent_solution_audit;
+  } else if (currentReviewAudit.success) {
+    const currentReview = currentReviewAudit.data;
+    const independentAudit = currentReview.independent_solution_audit;
     const subjectProfile = await resolveSubjectProfileForKnowledgeIdsStrict(db, [
       record.snapshot.conjecture.knowledge_id,
     ]);
@@ -262,17 +268,17 @@ async function bindAttemptToRecord(
           independentAudit,
         }),
       );
-      if (attempt.review.review_task_input_sha256 !== reviewTaskInputSha256) {
+      if (currentReview.review_task_input_sha256 !== reviewTaskInputSha256) {
         failures.push('agency:review_task_input_digest_mismatch');
       }
-      for (const taskRunId of attempt.review.review_attempt_task_run_ids) {
+      for (const taskRunId of currentReview.review_attempt_task_run_ids) {
         expectedRuns.push({
           id: taskRunId,
           taskKind: 'InterventionPackageReviewTask',
           inputHash: reviewTaskInputSha256,
           promptFingerprint: reviewPromptFingerprint,
-          ...(taskRunId === attempt.review.review_task_run_id
-            ? { resultDigest: sha256CanonicalJson(attempt.review.result) }
+          ...(taskRunId === currentReview.review_task_run_id
+            ? { resultDigest: sha256CanonicalJson(currentReview.result) }
             : {}),
           failureCode: 'agency:review_task_run_invalid',
         });
@@ -323,12 +329,16 @@ function passingAttempt(
   for (const attempt of attempts) {
     const packageDigest =
       attempt.kind === 'reviewed_package' ? sha256CanonicalJson(attempt.package) : null;
+    const currentReview =
+      attempt.kind === 'reviewed_package'
+        ? InterventionPackageReviewAuditV2.safeParse(attempt.review)
+        : null;
     if (
       attempt.kind === 'reviewed_package' &&
-      'independent_solution_audit' in attempt.review &&
-      attempt.review.package_digest_sha256 === packageDigest &&
-      attempt.review.independent_solution_audit.package_digest_sha256 === packageDigest &&
-      attempt.review.result.verdict === 'pass' &&
+      currentReview?.success &&
+      currentReview.data.package_digest_sha256 === packageDigest &&
+      currentReview.data.independent_solution_audit.package_digest_sha256 === packageDigest &&
+      currentReview.data.result.verdict === 'pass' &&
       attempt.deterministic_failure_codes.length === 0
     ) {
       return attempt;

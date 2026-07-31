@@ -932,6 +932,206 @@
       },
       "expected_failure_codes": [],
       "expected_verdict": "pass"
+    },
+    {
+      "case_id": "causal-valid-same-outcome-reverse-causation",
+      "subject_id": "general",
+      "context": {
+        "snapshot": {
+          "schema_version": 1,
+          "intervention_id": "yuk829-fixture-6",
+          "intervention_version": 1,
+          "conjecture": {
+            "conjecture_id": "yuk829-conjecture-6",
+            "claim_md": "你把「两个现象一起出现、或同向变化」直接当成「一个导致另一个」的证据，只要看到相关就下因果结论，而不去检查是否可能反向因果（如下雨预期让人带伞）或存在共同的第三方原因（如气温、季节、学习动机）。",
+            "knowledge_id": "synthetic:yuk-829:general:causal-valid-same-outcome-reverse-causation",
+            "knowledge_name": "authored:general-causal-direction",
+            "cause_category": "reasoning_error",
+            "target_error_rule_md": "看到两个现象相关（同时出现，或数据上同向变化），就直接断定其中一个是另一个的原因，回答「能证明因果」，理由停留在「两者总是一起出现/曲线同向」，不检验反向因果，也不排查共同原因或研究设计缺陷。",
+            "diagnostic_spec": {
+              "schema_version": 2,
+              "target_error_rule_md": "看到两个现象相关（同时出现，或数据上同向变化），就直接断定其中一个是另一个的原因，回答「能证明因果」，理由停留在「两者总是一起出现/曲线同向」，不检验反向因果，也不排查共同原因或研究设计缺陷。",
+              "trigger_conditions_md": "题目给出两个现象之间的相关或同步观察（一起出现、同时上升、时间越长数值越高等），并追问能否据此证明「甲导致乙」这一因果结论。",
+              "scope_boundary_md": "只针对「由相关直接跳到因果」这一步；不覆盖真正确立因果所需的实验/控制变量方法本身，也不覆盖以偏概全、诉诸权威、偷换概念等其他论证谬误。",
+              "expected_wrong_answer_signature_md": "给出「能／可以证明」的判断，支撑理由是「两者总是一起出现」或「同向变化就是因果」，通篇不提反向因果的可能、混杂/共同原因，也不质疑数据来源与研究设计。",
+              "causal_direction_required": true
+            },
+            "evidence_refs": [
+              {
+                "kind": "synthetic_regression",
+                "id": "yuk829-evidence-6-a"
+              },
+              {
+                "kind": "synthetic_regression",
+                "id": "yuk829-evidence-6-b"
+              }
+            ]
+          },
+          "learner_context": {
+            "theta_band": "novice",
+            "precision_band": "low",
+            "misconception_present": true,
+            "kc_is_rule_based": false
+          },
+          "prior_interventions": [],
+          "disabled_method_ids": [],
+          "source_probe_result_event_id": "yuk829-probe-result-6",
+          "created_at": "2026-07-31T00:00:00.000Z"
+        },
+        "recommendation": {
+          "kind": "recommendation",
+          "recommendation_version": 1,
+          "method_id": "refutation",
+          "method_definition_version": "pedagogy_method_library_v1",
+          "rationale_md": "The learner repeatedly converts observational association into a one-way causal claim without checking direction or a shared cause. Refutation is the smallest sufficient method: it names that exact rule, contrasts the claimed X→Y direction with a genuine same-outcome Y→X mechanism, then supplies a repeatable two-question check. The learner is novice/low-precision, so each example keeps X and the outcome construct Y explicit and uses concrete school, wellbeing, and workplace settings.",
+          "safety_constraints": [
+            "Explicitly name the mistaken rule that correlation alone proves the proposed X→Y direction before replacing it.",
+            "For every reverse-causation example, identify exposure X and the same outcome construct Y; do not relabel an unrelated baseline variable or common cause as Y.",
+            "Also distinguish a genuine common cause from Y→X, because either can explain an observational association without proving X→Y.",
+            "Stay within correlation-versus-causation reasoning and avoid personal medical, psychological, or employment advice.",
+            "Use neutral, non-stigmatizing language and state that the examples are hypothetical observational studies."
+          ],
+          "candidate_ids": [
+            "worked_example",
+            "completion_problem",
+            "contrasting_cases",
+            "refutation"
+          ],
+          "excluded": [
+            {
+              "method_id": "open_problem",
+              "reason": "contraindicated"
+            },
+            {
+              "method_id": "interleaving",
+              "reason": "contraindicated"
+            },
+            {
+              "method_id": "reconstruction",
+              "reason": "not_indicated"
+            },
+            {
+              "method_id": "socratic",
+              "reason": "not_indicated"
+            }
+          ],
+          "model_run_id": "yuk829-recommendation-run-6"
+        }
+      },
+      "package": {
+        "schema_version": 1,
+        "material": {
+          "title_md": "相关不等于因果：先固定 X 和 Y，再检查方向",
+          "body_md": "## 先拆掉错误规则\n\n“X 和 Y 一起出现，所以 X 一定导致 Y”并不成立。观察到相关，只说明两者有联系；它没有告诉我们箭头朝哪边，也没有排除第三个因素同时影响二者。\n\n## 先固定 X、Y 与 estimand\n\nX 是题目声称的原因（行为、处理或暴露），Y 是题目真正观察的结果构念。先逐字写清二者，再判断替代机制；不能因为另一个量与 Y 有关，就把它改名成题面的 Y。\n\n## 检查同一结果构念是否可能 Y→X\n\n真正的反向因果要求：驱动 X 的量就是题面同一个 Y 结果构念，或者该构念较早的表现/倾向，而不是另一个选择变量。\n\n看一个独立例子：应急记录中，调派消防车数量 X 越多，记录到的火情严重度 Y 越高。这不能证明消防车使火情恶化；更严重、仍在发展的火情 Y 会促使指挥中心增派消防车 X。驱动 X 的是同一火情严重度构念的先行表现，所以这是 Y→X。\n\n## 把共同原因 Z 与 Y→X 分开\n\n第三个变量也可能同时影响 X 与 Y。例如高温 Z 既会提高冷饮销量 X，也会增加户外活动中的中暑事件 Y；这是 Z→X 且 Z→Y，不是 Y→X。两种机制都能让相关不足以证明 X→Y，但箭头含义不同。\n\n## 不要偷换 Y 的量\n\n如果题面 Y 明确是“相对基线的提高幅度 ΔY”，基线水平 Y0 不是同一个 estimand。Y0 影响是否进入 X 组可能造成选择偏差，但不能被改名为 ΔY→X。\n\n## 可重复的判断步骤\n\n1. 写出 X 与题面真正观察的 Y，包括时间点和度量方式。\n2. 问：reference 所说的反向原因，是不是同一个 Y 构念（包括它的先行状态或倾向）？\n3. 若是，保留 Y→X；若是不同的基线量、共同原因或其他选择因素，就按其真实机制命名。\n4. 在研究设计排除这些替代解释之前，不把相关当成 X→Y 的证明。"
+        },
+        "diagnostics": {
+          "immediate": {
+            "kind": "immediate",
+            "probe_spec": {
+              "schema_version": 2,
+              "prompt_md": "某校汇总本学期数据后发现：接受教师一对一数学辅导的时长越多，学生期末时的数学掌握度反而越低。有人因此说：“一对一辅导会降低数学掌握度。”\n\n这个因果结论可靠吗？请用一句话指出一个真正的反向因果方向，并明确 X 与 Y。",
+              "reference_md": "不可靠。这里只观察到相关，不能证明辅导导致掌握度下降。X 是一对一辅导时长，Y 是期末时的数学掌握度；真正的反向因果可能是数学掌握度较低这一同一 Y 构念促使教师安排更多辅导，即 Y→X。也可能有课程难度等共同原因。",
+              "expected_target_error_answer_md": "可靠。辅导越久的学生掌握度越低，说明一对一辅导会让数学掌握度下降；两者同向出现已经证明了 X→Y。",
+              "elicits_target_error_reason_md": "目标错误会把“辅导时长多”和“掌握度低”的相关直接当成辅导造成低掌握度，不检查低掌握度 Y 是否反过来导致教师增加辅导 X。",
+              "context_kind": "abstract",
+              "representation_kind": "natural_language",
+              "response_mode": "answer_with_reason",
+              "gold_response_signature": {
+                "kind": "answer_with_reason",
+                "answer_md": "不可靠/不能证明辅导降低掌握度",
+                "required_reason_features_md": [
+                  "明确 X 是一对一辅导时长、Y 是期末数学掌握度",
+                  "指出同一数学掌握度 Y 较低可能促使教师安排更多辅导 X，属于 Y→X",
+                  "指出观察相关不能单独证明 X→Y"
+                ]
+              },
+              "target_error_response_signature": {
+                "kind": "answer_with_reason",
+                "answer_md": "可靠，辅导会降低数学掌握度",
+                "required_reason_features_md": [
+                  "把相关直接当成 X→Y 的证明",
+                  "不检查数学掌握度 Y→辅导时长 X"
+                ]
+              }
+            },
+            "tested_claim_md": "你把「两个现象一起出现、或同向变化」直接当成「一个导致另一个」的证据，只要看到相关就下因果结论，而不去检查是否可能反向因果（如下雨预期让人带伞）或存在共同的第三方原因（如气温、季节、学习动机）。",
+            "target_error_rule_md": "看到两个现象相关（同时出现，或数据上同向变化），就直接断定其中一个是另一个的原因，回答「能证明因果」，理由停留在「两者总是一起出现/曲线同向」，不检验反向因果，也不排查共同原因或研究设计缺陷。"
+          },
+          "delayed": {
+            "kind": "delayed",
+            "probe_spec": {
+              "schema_version": 2,
+              "prompt_md": "一项横断面调查发现：每周中高强度运动频率较低的人，当前抑郁症状严重度往往较高。报道据此断言：“少运动导致抑郁症状更严重。”\n\n请判断该断言是否已被调查证明，并分别写出 X、Y 和一种反向因果解释。",
+              "reference_md": "没有被证明。X 是每周中高强度运动频率，Y 是当前抑郁症状严重度。除了 X→Y，还可能是同一抑郁症状严重度 Y 使人缺乏精力或动机，从而降低运动频率 X，即 Y→X；生活压力等共同原因也可能同时影响二者。横断面相关无法区分这些方向。",
+              "expected_target_error_answer_md": "已经证明。低运动频率与高抑郁症状总是一起出现，所以少运动就是症状加重的原因。",
+              "elicits_target_error_reason_md": "目标错误会从横断面相关直接断言少运动造成症状，不考虑抑郁症状严重度这个同一 Y 构念可能降低运动 X，也不检查共同原因。",
+              "context_kind": "abstract",
+              "representation_kind": "natural_language",
+              "response_mode": "answer_with_reason",
+              "gold_response_signature": {
+                "kind": "answer_with_reason",
+                "answer_md": "没有被证明/不能仅凭调查证明",
+                "required_reason_features_md": [
+                  "X 是运动频率，Y 是当前抑郁症状严重度",
+                  "抑郁症状严重度 Y 可能降低运动频率 X，属于同一 outcome construct 的 Y→X",
+                  "横断面相关不能区分方向，并可提及共同原因"
+                ]
+              },
+              "target_error_response_signature": {
+                "kind": "answer_with_reason",
+                "answer_md": "已经证明少运动导致症状更严重",
+                "required_reason_features_md": [
+                  "把相关当成因果证明",
+                  "未考虑抑郁症状严重度 Y→运动频率 X"
+                ]
+              }
+            },
+            "tested_claim_md": "你把「两个现象一起出现、或同向变化」直接当成「一个导致另一个」的证据，只要看到相关就下因果结论，而不去检查是否可能反向因果（如下雨预期让人带伞）或存在共同的第三方原因（如气温、季节、学习动机）。",
+            "target_error_rule_md": "看到两个现象相关（同时出现，或数据上同向变化），就直接断定其中一个是另一个的原因，回答「能证明因果」，理由停留在「两者总是一起出现/曲线同向」，不检验反向因果，也不排查共同原因或研究设计缺陷。"
+          },
+          "transfer": {
+            "kind": "transfer",
+            "probe_spec": {
+              "schema_version": 2,
+              "prompt_md": "一家企业分析自愿参加员工支持计划的数据：参加支持会谈次数越多的员工，当前职业倦怠评分越高。管理者说：“支持会谈增加了职业倦怠。”\n\n这个结论能由数据直接推出吗？请指出一个与题面 Y 相同构念的反向因果解释，并再指出一个不同的共同原因。",
+              "reference_md": "不能直接推出。X 是支持会谈次数，Y 是当前职业倦怠严重度。真正的反向因果可以是倦怠更严重这一同一 Y 构念促使员工主动参加更多会谈，即 Y→X。另一个不同机制是工作负荷 Z 同时提高倦怠 Y，并促使员工寻求更多会谈 X。观察相关不能证明会谈造成倦怠。",
+              "expected_target_error_answer_md": "能推出。会谈次数越多，倦怠评分越高，所以支持会谈增加了倦怠；两个数一起上升就是因果证据。",
+              "elicits_target_error_reason_md": "目标错误会把自愿参加计划中的相关直接当成会谈导致倦怠，不区分同一倦怠 Y→会谈 X 与工作负荷 Z 同时影响 X、Y。",
+              "context_kind": "applied",
+              "representation_kind": "natural_language",
+              "response_mode": "answer_with_reason",
+              "gold_response_signature": {
+                "kind": "answer_with_reason",
+                "answer_md": "不能直接推出/不能证明支持会谈增加倦怠",
+                "required_reason_features_md": [
+                  "X 是支持会谈次数，Y 是当前职业倦怠严重度",
+                  "同一职业倦怠 Y 较高可能促使参加更多会谈 X，属于 Y→X",
+                  "工作负荷等不同的共同原因 Z 可能同时影响 X 与 Y"
+                ]
+              },
+              "target_error_response_signature": {
+                "kind": "answer_with_reason",
+                "answer_md": "能推出，支持会谈增加倦怠",
+                "required_reason_features_md": [
+                  "把次数与评分的相关直接当成 X→Y",
+                  "未区分 Y→X 和共同原因"
+                ]
+              }
+            },
+            "tested_claim_md": "你把「两个现象一起出现、或同向变化」直接当成「一个导致另一个」的证据，只要看到相关就下因果结论，而不去检查是否可能反向因果（如下雨预期让人带伞）或存在共同的第三方原因（如气温、季节、学习动机）。",
+            "target_error_rule_md": "看到两个现象相关（同时出现，或数据上同向变化），就直接断定其中一个是另一个的原因，回答「能证明因果」，理由停留在「两者总是一起出现/曲线同向」，不检验反向因果，也不排查共同原因或研究设计缺陷。",
+            "context_change_md": "从材料的应急调度示例、以及前两题的教育与健康情境，迁移到员工自愿支持计划；仍要求先固定 X/Y，再区分同一 outcome construct 的 Y→X 与不同的共同原因 Z。"
+          }
+        },
+        "intervention_id": "yuk829-fixture-6",
+        "intervention_version": 1,
+        "package_version": 1,
+        "method_id": "refutation",
+        "method_definition_version": "pedagogy_method_library_v1",
+        "author_task_run_id": "yuk829-author-run-6"
+      },
+      "expected_failure_codes": [],
+      "expected_verdict": "pass"
     }
   ]
 }

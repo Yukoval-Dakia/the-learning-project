@@ -23,7 +23,7 @@ describe('intervention reviewer actual-output regression fixture', () => {
   it('pins complex false-pass regressions and true-pass controls', () => {
     const packet = InterventionReviewRegressionPacket.parse(regressionFixture);
     expect(sha256CanonicalJson(packet)).toBe(
-      '039d7a688c2e5fe9139bb9f31a8738faecb21ed1c47e27afc72dc8d3d2c0735b',
+      'e6ec4d84a37a3756f23b785ea6da03d0c49d5752769a91d5de4d98afaaadc508',
     );
     expect(
       packet.cases.map((fixture) => ({
@@ -57,9 +57,14 @@ describe('intervention reviewer actual-output regression fixture', () => {
         expected_verdict: 'pass',
         expected_failure_codes: [],
       },
+      {
+        case_id: 'causal-valid-same-outcome-reverse-causation',
+        expected_verdict: 'pass',
+        expected_failure_codes: [],
+      },
     ]);
 
-    const [area, yuwen, causal, validMath, validYuwen] = packet.cases;
+    const [area, yuwen, causal, validMath, validYuwen, validCausal] = packet.cases;
     expect(area?.context.snapshot.conjecture.diagnostic_spec.scope_boundary_md).toContain(
       '多项式相乘',
     );
@@ -98,6 +103,29 @@ describe('intervention reviewer actual-output regression fixture', () => {
       '每周课外阅读时间',
     );
     expect(validYuwen?.package.diagnostics.transfer.probe_spec.prompt_md).toContain('短视频');
+
+    expect(validCausal?.package.material.body_md).toContain('火情 Y 会促使指挥中心增派消防车 X');
+    for (const leakedDiagnosticTerm of [
+      '一对一辅导',
+      '数学掌握度',
+      '抑郁症状',
+      '运动频率',
+      '职业倦怠',
+      '支持会谈',
+      '工作负荷',
+    ]) {
+      expect(validCausal?.package.material.body_md).not.toContain(leakedDiagnosticTerm);
+    }
+    expect(validCausal?.package.diagnostics.delayed.probe_spec).toMatchObject({
+      prompt_md: expect.stringContaining('当前抑郁症状严重度'),
+      reference_md: expect.stringContaining('同一抑郁症状严重度 Y 使人缺乏精力或动机'),
+    });
+    expect(validCausal?.package.diagnostics.transfer.probe_spec.reference_md).toContain(
+      '同一 Y 构念促使员工主动参加更多会谈',
+    );
+    expect(validCausal?.package.diagnostics.transfer.context_change_md).toContain(
+      '从材料的应急调度示例',
+    );
   });
 
   it('retains a per-case strict-solver operational failure instead of discarding the artifact', async () => {
@@ -448,6 +476,7 @@ describe('intervention reviewer actual-output regression fixture', () => {
           observed_outcome_y_md: '',
           reference_claims_reverse_causation: false,
           reference_claimed_reverse_cause_md: '',
+          reference_claimed_reverse_cause_relation: 'none' as const,
           claimed_cause_is_observed_y_causing_x: false,
         },
       })),
@@ -567,26 +596,108 @@ describe('intervention reviewer actual-output regression fixture', () => {
       ...regressionFixture,
       cases: [regressionFixture.cases[3]],
     });
+    const fixture = packet.cases[0];
+    if (!fixture) throw new Error('missing replay fixture');
+    const packageDigest = sha256CanonicalJson(fixture.package);
+    const diagnostics = (['immediate', 'delayed', 'transfer'] as const).map((kind, index) => {
+      const operationMd = `独立完成 ${kind} 题并核对最终答案`;
+      const solverOutput = {
+        reference_solution: {
+          expected_signals: [operationMd],
+          final_answer: fixture.package.diagnostics[kind].probe_spec.reference_md,
+          answer_equivalents: [],
+        },
+        worked_solution_md: `${kind} 题按题面独立求解。`,
+        confidence: 0.95,
+      };
+      return {
+        kind,
+        task_input: {
+          prompt_md: fixture.package.diagnostics[kind].probe_spec.prompt_md,
+          kind: fixture.package.diagnostics[kind].probe_spec.response_mode,
+          subject_id: fixture.subject_id,
+          choices_md: [],
+          existing_answers_hint: null,
+          existing_analysis_hint: null,
+          figures_hint: null,
+          prompt_image_refs: [],
+        },
+        question_input_sha256: `${index + 1}`.repeat(64),
+        solver_output: solverOutput,
+        solver_output_sha256: sha256CanonicalJson(solverOutput),
+        solver_output_repair_level: false as const,
+        solver_task_run_id: `replayed-solver-${index + 1}`,
+        solver_attempt_task_run_ids: [`replayed-solver-${index + 1}`],
+        independently_derived_answer_md: solverOutput.reference_solution.final_answer,
+        required_operations_md: operationMd,
+        required_operations: [
+          {
+            operation_index: 0,
+            operation_sha256: sha256CanonicalJson({ operation_md: operationMd }),
+            operation_md: operationMd,
+          },
+        ],
+      };
+    });
+    const passingPackageChecks = {
+      material_grounded: true,
+      method_followed: true,
+      tested_claims_match: true,
+      target_errors_match: true,
+      answers_unique: true,
+      answers_gradable: true,
+      no_answer_leak: true,
+      diagnostics_same_construct: true,
+      transfer_context_changed: true,
+      target_error_identifiable: true,
+      serious_factual_error_absent: true,
+      safe_material: true,
+    };
     vi.mocked(reviewInterventionPackageCandidate).mockResolvedValueOnce({
       status: 'ok',
       review: {
         review_version: 1,
-        package_digest_sha256: 'a'.repeat(64),
+        package_digest_sha256: packageDigest,
         review_task_run_id: 'replayed-review',
         review_attempt_task_run_ids: ['replayed-review'],
         review_task_input_sha256: 'b'.repeat(64),
         independent_solution_audit: {
           validation_protocol_version: 1,
-          package_digest_sha256: 'a'.repeat(64),
-          diagnostics: (['immediate', 'delayed', 'transfer'] as const).map((kind, index) => ({
-            kind,
-            solver_task_run_id: `replayed-solver-${index + 1}`,
-            solver_attempt_task_run_ids: [`replayed-solver-${index + 1}`],
-            question_input_sha256: `${index + 1}`.repeat(64),
-            solver_output_sha256: `${index + 4}`.repeat(64),
-          })),
+          package_digest_sha256: packageDigest,
+          diagnostics,
         },
-        result: { verdict: 'pass', failure_codes: [] },
+        result: {
+          review_protocol_version: 2,
+          verdict: 'pass',
+          failure_codes: [],
+          diagnostic_checks: diagnostics.map((diagnostic) => ({
+            kind: diagnostic.kind,
+            independent_solution_sha256: diagnostic.solver_output_sha256,
+            independently_derived_answer_md: diagnostic.independently_derived_answer_md,
+            required_operations_md: diagnostic.required_operations_md,
+            required_operation_checks: diagnostic.required_operations.map((operation) => ({
+              ...operation,
+              reference_covers_operation: true,
+              within_frozen_scope: true,
+              decision_basis_md: 'reference 覆盖该必要步骤，且没有越过冻结范围。',
+            })),
+            reference_correct: true,
+            within_frozen_scope: true,
+            discipline_grounded: true,
+            decision_basis_md: '密封盲解、reference 与冻结范围一致。',
+            causal_direction_check: {
+              applies: false,
+              exposure_x_md: '',
+              observed_outcome_y_md: '',
+              reference_claims_reverse_causation: false,
+              reference_claimed_reverse_cause_md: '',
+              reference_claimed_reverse_cause_relation: 'none',
+              claimed_cause_is_observed_y_causing_x: false,
+            },
+          })),
+          package_checks: passingPackageChecks,
+          summary_md: '完整 FULL 审计通过，但这些运行并未在本 case 中观察到。',
+        },
       } as never,
     });
     const db = {

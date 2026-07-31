@@ -145,7 +145,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         diagnostic: fixture.package.diagnostics[kind],
       })),
     );
-    expect(diagnostics).toHaveLength(15);
+    expect(diagnostics).toHaveLength(18);
 
     for (const { fixture, kind, diagnostic } of diagnostics) {
       const runTaskFn = vi.fn(async (_taskKind: string, _taskInput: unknown, _ctx: unknown) => ({
@@ -202,6 +202,9 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
       });
       expect(runTaskFn).toHaveBeenCalledTimes(1);
       const blindInput = runTaskFn.mock.calls[0]?.[1] as Record<string, unknown>;
+      expect(runTaskFn.mock.calls[0]?.[2]).toMatchObject({
+        outputFormat: { type: 'json_schema' },
+      });
       expect(blindInput.prompt_md).toBe(diagnostic.probe_spec.prompt_md);
       expect(Object.keys(blindInput).sort()).toEqual([
         'choices_md',
@@ -305,6 +308,44 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
       status: 'solved',
       task_run_id: 'solver-repaired',
       solver_output_repair_level: 'deterministic',
+    });
+  });
+
+  it('deterministically normalizes a numeric-string confidence without guessing semantics', async () => {
+    const result = await runIndependentSolution(
+      {
+        id: 'numeric-string-confidence',
+        kind: 'answer_with_reason',
+        prompt_md:
+          '某观察研究以干预后抑郁量表相对基线的变化量 ΔY 为结局；基线抑郁水平会影响是否参加运动组 X。这能否称为该研究结局 ΔY→X 的反向因果？',
+        choices_md: null,
+      },
+      {
+        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        runTaskFn: vi.fn(async () => ({
+          text: JSON.stringify({
+            reference_solution: {
+              expected_signals: [
+                '先固定 exposure X 与题面结局 estimand ΔY（相对基线的变化量）',
+                '区分基线水平 Y0 与变化量 ΔY；Y0 影响 X 属于选择机制，不等于 ΔY→X',
+              ],
+              final_answer:
+                '不能称为该结局 estimand 的反向因果；它是基线状态影响分组的选择机制，仍可能造成偏倚。',
+              answer_equivalents: [],
+            },
+            worked_solution_md:
+              '先把题面 Y 固定为变化量 ΔY。基线水平 Y0 与 ΔY 不是同一个 estimand；Y0 影响是否进入运动组 X 会造成选择偏倚，但不能改名为 ΔY 反向导致 X。',
+            confidence: '0.93',
+          }),
+          task_run_id: 'solver-numeric-confidence',
+        })),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'solved',
+      solver_output_repair_level: 'deterministic',
+      solution: { confidence: 0.93 },
     });
   });
 
