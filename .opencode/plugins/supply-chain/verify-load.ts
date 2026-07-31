@@ -1,6 +1,4 @@
-import { randomUUID } from "node:crypto"
 import { cp, mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises"
-import { createConnection, createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import {
@@ -16,7 +14,7 @@ function invariant(condition: unknown, message: string): asserts condition {
 	if (!condition) throw new Error(message)
 }
 
-function safeEnvironment(home: string, password: string) {
+function safeEnvironment(home: string) {
 	const env: Record<string, string> = {}
 	for (const key of ["PATH", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TZ", "SSL_CERT_FILE"]) {
 		const value = process.env[key]
@@ -31,7 +29,6 @@ function safeEnvironment(home: string, password: string) {
 	env.TMP = env.TMPDIR
 	env.TEMP = env.TMPDIR
 	env.DO_NOT_TRACK = "1"
-	env.OPENCODE_SERVER_PASSWORD = password
 	return env
 }
 
@@ -72,52 +69,6 @@ async function createIsolatedWorkspace(home: string) {
 	return workspace
 }
 
-async function freePort() {
-	return new Promise<number>((resolvePort, reject) => {
-		const server = createServer()
-		server.unref()
-		server.on("error", reject)
-		server.listen(0, "127.0.0.1", () => {
-			const address = server.address()
-			if (!address || typeof address === "string") {
-				server.close()
-				reject(new Error("failed to allocate a local verification port"))
-				return
-			}
-			server.close((error) => (error ? reject(error) : resolvePort(address.port)))
-		})
-	})
-}
-
-async function waitForPort(port: number, timeoutMs: number) {
-	const deadline = Date.now() + timeoutMs
-	while (Date.now() < deadline) {
-		const connected = await new Promise<boolean>((resolveConnection) => {
-			const socket = createConnection({ host: "127.0.0.1", port })
-			socket.once("connect", () => {
-				socket.end()
-				resolveConnection(true)
-			})
-			socket.once("error", () => resolveConnection(false))
-		})
-		if (connected) return
-		await Bun.sleep(100)
-	}
-	throw new Error(`OpenCode server did not listen within ${timeoutMs}ms`)
-}
-
-async function stopProcess(process: Bun.Subprocess) {
-	process.kill("SIGTERM")
-	const exited = await Promise.race([
-		process.exited.then(() => true),
-		Bun.sleep(5_000).then(() => false),
-	])
-	if (!exited) {
-		process.kill("SIGKILL")
-		await process.exited
-	}
-}
-
 function sanitizedTail(value: string) {
 	return value
 		.split("\n")
@@ -125,6 +76,54 @@ function sanitizedTail(value: string) {
 		.slice(-40)
 		.join("\n")
 		.replace(/(password|token|authorization|api[_-]?key)=[^\s]+/gi, "$1=<redacted>")
+}
+
+async function loadToolSnapshot(home: string, workspace: string) {
+	const process = Bun.spawn({
+		cmd: [localOpenCodeBinary(), "debug", "agent", "build"],
+		cwd: workspace,
+		env: safeEnvironment(home),
+		stdout: "pipe",
+		stderr: "pipe",
+	})
+	const stdout = new Response(process.stdout).text()
+	const stderr = new Response(process.stderr).text()
+	const exitCode = await Promise.race([
+		process.exited,
+		Bun.sleep(12 * 60_000).then(() => undefined),
+	])
+	if (exitCode === undefined) {
+		process.kill("SIGTERM")
+		const exited = await Promise.race([
+			process.exited.then(() => true),
+			Bun.sleep(5_000).then(() => false),
+		])
+		if (!exited) {
+			process.kill("SIGKILL")
+			await process.exited
+		}
+	}
+	const [stdoutText, stderrText] = await Promise.all([stdout, stderr])
+	invariant(
+		exitCode !== undefined,
+		`OpenCode did not emit a finite tool snapshot and exit within 12 minutes\n${sanitizedTail(stderrText)}`,
+	)
+	invariant(
+		exitCode === 0,
+		`OpenCode tool snapshot exited ${exitCode}\n${sanitizedTail(stderrText)}`,
+	)
+	let snapshot: unknown
+	try {
+		snapshot = JSON.parse(stdoutText)
+	} catch (error) {
+		throw new Error(
+			`OpenCode tool snapshot was not JSON: ${error instanceof Error ? error.message : String(error)}\n${sanitizedTail(`${stdoutText}\n${stderrText}`)}`,
+		)
+	}
+	invariant(snapshot && typeof snapshot === "object", "OpenCode tool snapshot was not an object")
+	const tools = (snapshot as Record<string, unknown>).tools
+	invariant(tools && typeof tools === "object", "OpenCode tool snapshot did not contain tools")
+	return tools as Record<string, unknown>
 }
 
 function cacheDirectory(home: string, specifier: string) {
@@ -146,39 +145,14 @@ async function main() {
 	)
 	const statusBefore = repositoryStatus()
 	const home = await mkdtemp(join(tmpdir(), "yukoval-opencode-load-"))
-	const workspace = await createIsolatedWorkspace(home)
-	const password = randomUUID()
-	const port = await freePort()
-	const serverProcess = Bun.spawn({
-		cmd: [localOpenCodeBinary(), "serve", "--hostname", "127.0.0.1", "--port", String(port)],
-		cwd: workspace,
-		env: safeEnvironment(home, password),
-		stdout: "pipe",
-		stderr: "pipe",
-	})
-	const stdout = new Response(serverProcess.stdout).text()
-	const stderr = new Response(serverProcess.stderr).text()
 	let failure: unknown
 
 	try {
-		await waitForPort(port, 15_000)
-		const url = new URL(`http://127.0.0.1:${port}/experimental/tool/ids`)
-		url.searchParams.set("directory", workspace)
-		const auth = Buffer.from(`opencode:${password}`).toString("base64")
-		const response = await fetch(url, {
-			headers: { authorization: `Basic ${auth}` },
-			signal: AbortSignal.timeout(600_000),
-		})
-		invariant(response.ok, `OpenCode tool inventory endpoint returned ${response.status}`)
-		const ids = await response.json()
-		invariant(
-			Array.isArray(ids) && ids.every((id) => typeof id === "string"),
-			"tool inventory was not a string array",
-		)
-		const loaded = new Set(ids as string[])
+		const workspace = await createIsolatedWorkspace(home)
+		const loaded = await loadToolSnapshot(home, workspace)
 		for (const plugin of [...inventory.npmPlugins, ...inventory.localPlugins]) {
 			for (const id of plugin.requiredToolIds) {
-				invariant(loaded.has(id), `${plugin.id} did not register required tool ${id}`)
+				invariant(loaded[id] === true, `${plugin.id} did not register enabled tool ${id}`)
 			}
 		}
 
@@ -192,20 +166,13 @@ async function main() {
 	} catch (error) {
 		failure = error
 	} finally {
-		await stopProcess(serverProcess)
+		await rm(home, { recursive: true, force: true })
 	}
 
-	const [stdoutText, stderrText] = await Promise.all([stdout, stderr])
-	await rm(home, { recursive: true, force: true })
 	const statusAfter = repositoryStatus()
 	if (statusAfter !== statusBefore && !failure)
 		failure = new Error("actual-load check changed repository status")
-	if (failure) {
-		const output = sanitizedTail(`${stdoutText}\n${stderrText}`)
-		throw new Error(
-			`${failure instanceof Error ? failure.message : String(failure)}${output ? `\n${output}` : ""}`,
-		)
-	}
+	if (failure) throw failure
 
 	console.log(
 		`OpenCode actual-load verified at ${inventory.opencode.version}: ${inventory.npmPlugins.length + inventory.localPlugins.length} plugins registered required tools, complete npm graphs matched the tracked Bun resolution superset, and the repository stayed unchanged.`,

@@ -56,12 +56,13 @@ bun run verify:supply-chain
 The final command uses the exact platform artifact installed by pinned `opencode-ai@1.18.10` twice.
 It executes that artifact directly, so the wrapper's `postinstall` remains disabled and cannot run
 an unreviewed fallback install. First, `opencode debug config --pure` resolves a synthetic,
-credential-free user overlay and proves project pins win. Then a localhost server runs against a
-temporary git workspace with a temporary HOME/cache/data/log directory and default Arborist
-optional-dependency semantics. It loads the real plugins through `/experimental/tool/ids`, checks
-their identifying tools, validates the complete normalized npm graphs described above, and asserts
-that repository status is unchanged. No provider config, auth material, existing telemetry
-preference, or user plugin state is passed to that process.
+credential-free user overlay and proves project pins win. Then the finite `opencode debug agent
+build` command runs against a temporary git workspace with a temporary HOME/cache/data/log
+directory and default Arborist optional-dependency semantics. Its successful JSON tool snapshot and
+zero exit are the readiness boundary; the gate checks each identifying tool, validates the complete
+normalized npm graphs described above, and asserts that repository status is unchanged. A hard kill
+guard is failure-only, never a substitute for readiness. No provider config, auth material, existing
+telemetry preference, or user plugin state is passed to that process.
 
 ## Runtime inventory
 
