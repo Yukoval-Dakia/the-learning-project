@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# SessionStart hook: 提示 agent 代码检索工具分工（2026-06-06 起 serena + claude-context）。
-# 两者均为用户级 stdio MCP（~/.claude.json 顶层 mcpServers），默认进 deferred，要 ToolSearch 才能调。
+# SessionStart hook: 提示 agent 代码检索工具分工（serena + ykv-code-index）。
+# 两者默认 deferred，要 ToolSearch 才能调。
 cat <<'JSON'
-{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Code search MCP servers (since 2026-06-06): [1] serena — symbol-precise tools (find_symbol / find_referencing_symbols / get_symbols_overview); use for known symbols, reference enumeration, file structure; load via ToolSearch select:mcp__serena__find_symbol,mcp__serena__find_referencing_symbols,mcp__serena__get_symbols_overview and call mcp__serena__initial_instructions once per session. [2] claude-context — semantic natural-language code search; use for cross-file 'where is X handled' queries; load via ToolSearch select:mcp__claude-context__search_code,mcp__claude-context__get_indexing_status. CAVEAT: get_indexing_status may report 'completed' prematurely while indexing is still running — if search results look irrelevant, verify real completion in ~/.context/mcp-codebase-snapshot.json (totalChunks should be ~13k for this repo, not ~file-count) and retry. Prefer these over ad-hoc grep for discovery; grep stays fine for literal string enumeration."}}
+{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Code search tools: [1] serena — symbol-precise lookup (find_symbol / find_referencing_symbols / get_symbols_overview); use for known symbols, reference enumeration, and file structure; call initial_instructions once before first use. [2] ykv-code-index — semantic cross-file discovery; use search_code first for unfamiliar areas or conceptual questions, and index_status only to diagnose index health. Prefer these over ad-hoc grep for discovery; grep/glob remain appropriate for exact literals, regexes, known symbols, and file names."}}
 JSON

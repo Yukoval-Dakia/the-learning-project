@@ -6,6 +6,7 @@ Desktop.ini
 # Dependencies and package-manager caches
 node_modules/
 .pnpm-store/
+.ykv/
 .yarn/cache/
 .yarn/install-state.gz
 .pnp.*

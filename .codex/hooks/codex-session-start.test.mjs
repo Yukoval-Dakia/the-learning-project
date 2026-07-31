@@ -8,14 +8,20 @@ import test from 'node:test';
 
 const hook = new URL('./codex-session-start.mjs', import.meta.url).pathname;
 
-const runHook = (cwd) =>
+const runHook = (cwd, event = { session_id: 'session-a', source: 'startup' }) =>
   spawnSync('node', [hook], {
     cwd,
     encoding: 'utf8',
+    input: JSON.stringify(event),
   });
 
-const statePath = (root) => {
-  const id = createHash('sha256').update(root).digest('hex').slice(0, 16);
+const statePath = (root, sessionId = 'session-a') => {
+  const id = createHash('sha256')
+    .update(root)
+    .update('\0')
+    .update(sessionId)
+    .digest('hex')
+    .slice(0, 24);
   return join(tmpdir(), 'codex-repo-hook-state', `${id}.json`);
 };
 
@@ -51,6 +57,34 @@ test('records baseline and returns valid SessionStart hook JSON', () => {
 
   const state = JSON.parse(readFileSync(statePath(root), 'utf8'));
   assert.equal(state.root, root);
+  assert.equal(state.sessionId, 'session-a');
   assert.equal(typeof state.hashes['package.json'], 'string');
   assert.equal(existsSync(statePath(root)), true);
+});
+
+test('resume keeps the existing baseline for the same session', () => {
+  const repo = makeRepo();
+  writeFileSync(join(repo, 'package.json'), '{"step":1}\n');
+  runHook(repo);
+
+  const root = repoRoot(repo);
+  const before = JSON.parse(readFileSync(statePath(root), 'utf8'));
+  writeFileSync(join(repo, 'package.json'), '{"step":2}\n');
+
+  const result = runHook(repo, { session_id: 'session-a', source: 'resume' });
+  const after = JSON.parse(readFileSync(statePath(root), 'utf8'));
+
+  assert.equal(result.status, 0);
+  assert.deepEqual(after.hashes, before.hashes);
+});
+
+test('resume without a baseline defers adoption until Stop validates the dirty tree', () => {
+  const repo = makeRepo();
+  writeFileSync(join(repo, 'package.json'), '{bad\n');
+
+  const result = runHook(repo, { session_id: 'missing-baseline', source: 'resume' });
+  const root = repoRoot(repo);
+
+  assert.equal(result.status, 0);
+  assert.equal(existsSync(statePath(root, 'missing-baseline')), false);
 });

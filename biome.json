@@ -17,6 +17,7 @@
       ".factory",
       ".cache",
       ".pnpm-store",
+      ".ykv",
       ".claude",
       ".omc",
       ".omx",

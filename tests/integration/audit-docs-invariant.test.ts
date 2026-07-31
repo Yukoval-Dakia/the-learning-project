@@ -6,8 +6,8 @@
 // in the UNIT partition (enumerated in vitest.shared.ts fastTestInclude).
 //
 // These guard against the three doc-drift issues re-appearing:
-//   - YUK-242: CLAUDE.md must point local dev at `pnpm dev:local` (the recommended
-//     entry), not bare `pnpm dev`.
+//   - YUK-242: the shared development workflow must point local dev at
+//     `pnpm dev:local` (the recommended entry), not bare `pnpm dev`.
 //   - YUK-243: AGENTS.md must not hard-code a stale submodule count ("22 子模块").
 //   - YUK-244: docs/architecture.md §5.1 Task snapshot must list EVERY task kind
 //     registered in src/ai/registry.ts (the canonical source) — no stale snapshot.
@@ -23,24 +23,24 @@ function read(relPath: string): string {
 }
 
 describe('Audit 2026-06-06 G8-docs invariants', () => {
-  // ── YUK-242 — CLAUDE.md Commands block surfaces pnpm dev:local ─────────────
+  // ── YUK-242 — shared command source surfaces pnpm dev:local ────────────────
 
-  it('CLAUDE.md: Commands block recommends `pnpm dev:local` as the local entry', () => {
-    const content = read('CLAUDE.md');
+  it('development workflow recommends `pnpm dev:local` as the local entry', () => {
+    const content = read('docs/agents/development-workflow.md');
     expect(
       content.includes('pnpm dev:local'),
-      'CLAUDE.md Commands must surface `pnpm dev:local` (the recommended local entry; see scripts/dev-local.ts)',
+      'development workflow must surface `pnpm dev:local` (the recommended local entry; see scripts/dev-local.ts)',
     ).toBe(true);
   });
 
-  it('CLAUDE.md: `pnpm dev:local` is listed before bare `pnpm dev`', () => {
-    const content = read('CLAUDE.md');
+  it('development workflow lists `pnpm dev:local` before bare `pnpm dev`', () => {
+    const content = read('docs/agents/development-workflow.md');
     const localIdx = content.indexOf('pnpm dev:local');
     // The first occurrence of a bare `pnpm dev` that is NOT the `dev:local` line.
     // `pnpm dev ` (trailing space) avoids matching `pnpm dev:local`.
     const bareIdx = content.indexOf('pnpm dev ');
-    expect(localIdx, 'pnpm dev:local missing from CLAUDE.md').toBeGreaterThanOrEqual(0);
-    expect(bareIdx, 'bare pnpm dev missing from CLAUDE.md').toBeGreaterThanOrEqual(0);
+    expect(localIdx, 'pnpm dev:local missing from development workflow').toBeGreaterThanOrEqual(0);
+    expect(bareIdx, 'bare pnpm dev missing from development workflow').toBeGreaterThanOrEqual(0);
     expect(
       localIdx,
       'pnpm dev:local should be listed before bare `pnpm dev` (dev:local is the recommended entry)',
