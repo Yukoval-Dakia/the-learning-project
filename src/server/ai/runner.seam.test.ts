@@ -144,6 +144,7 @@ describe('runTask — YUK-299 outputFormat seam', () => {
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it('does NOT write outputFormat onto Options when ctx.outputFormat is omitted (zero regression)', async () => {
@@ -182,20 +183,26 @@ describe('runTask — YUK-299 outputFormat seam', () => {
     expect('settingSources' in opts).toBe(false);
   });
 
-  it('threads ctx.outputFormat through to Options.outputFormat when set', async () => {
+  it('threads ctx.outputFormat through on an SDK-structured-output provider', async () => {
     mockSdk.messages = [successResult()];
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-anthropic-test-key');
 
     await runTask(
-      UNMIGRATED_KIND,
-      { question: 'q', wrong_answer: 'a' },
-      { db: fakeDb, outputFormat: SAMPLE_OUTPUT_FORMAT },
+      'InterventionRecommendationTask',
+      { snapshot: 'test' },
+      {
+        db: fakeDb,
+        outputFormat: SAMPLE_OUTPUT_FORMAT,
+        override: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      },
     );
 
-    const opts = mockSdk.capturedOptions as { outputFormat?: unknown };
+    const opts = mockSdk.capturedOptions as { outputFormat?: unknown; maxTurns?: number };
     expect(opts.outputFormat).toEqual(SAMPLE_OUTPUT_FORMAT);
+    expect(opts.maxTurns).toBe(2);
   });
 
-  it('gives one-turn outputFormat tasks an envelope turn plus a terminal turn', async () => {
+  it('omits unsupported Xiaomi outputFormat and preserves the text-fallback turn ceiling', async () => {
     mockSdk.messages = [successResult()];
 
     await runTask(
@@ -204,9 +211,10 @@ describe('runTask — YUK-299 outputFormat seam', () => {
       { db: fakeDb, outputFormat: SAMPLE_OUTPUT_FORMAT },
     );
 
-    const opts = mockSdk.capturedOptions as { maxTurns?: number };
+    const opts = mockSdk.capturedOptions as { outputFormat?: unknown; maxTurns?: number };
     expect(tasks.InterventionRecommendationTask.budget.maxIterations).toBe(1);
-    expect(opts.maxTurns).toBe(2);
+    expect('outputFormat' in opts).toBe(false);
+    expect(opts.maxTurns).toBe(1);
   });
 
   it('keeps the one-turn ceiling when the same task has no outputFormat protocol', async () => {
