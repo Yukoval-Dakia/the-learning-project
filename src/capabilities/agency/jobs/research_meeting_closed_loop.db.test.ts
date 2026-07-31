@@ -234,7 +234,16 @@ async function seedKnowledge(): Promise<void> {
   const now = new Date();
   await testDb()
     .insert(knowledge)
-    .values({ id: KC_ID, name: '词类活用', created_at: now, updated_at: now })
+    // YUK-822: the closed loop now exercises subject provenance as part of the
+    // real acceptance seam. Keep the fixture explicit instead of relying on the
+    // historical null-domain fallback that production fail-closes.
+    .values({
+      id: KC_ID,
+      name: '词类活用',
+      domain: 'yuwen',
+      created_at: now,
+      updated_at: now,
+    })
     .onConflictDoNothing();
 }
 
