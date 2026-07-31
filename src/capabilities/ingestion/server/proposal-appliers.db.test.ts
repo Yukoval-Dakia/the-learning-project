@@ -24,6 +24,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import type { ImageCandidateAcceptDeps } from './image-candidate-accept';
 
+// The production path intentionally uses npm Undici fetch with its npm Agent (YUK-743).
+// These DB tests still stub network responses through the existing global-fetch spies;
+// the real package pairing is exercised by pinned-fetch.unit.test.ts on Node 24.
+vi.mock('./pinned-fetch', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./pinned-fetch')>();
+  return {
+    ...original,
+    fetchWithPinnedDispatcher: (...args: Parameters<typeof original.fetchWithPinnedDispatcher>) =>
+      (globalThis.fetch as unknown as typeof original.fetchWithPinnedDispatcher)(...args),
+  };
+});
+
 // YUK-202 / BlockAssembly path-B (design 2026-06-02 §4) — accept a block_merge
 // proposal end-to-end: it reuses the YUK-195 `mergeQuestions` primitive (the
 // merge runs ONLY here, on user accept — §5 no auto-merge), writes the accept
