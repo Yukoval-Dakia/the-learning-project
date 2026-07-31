@@ -10,6 +10,8 @@
 // db config's src/**/*.test.ts glob would sweep it into the testcontainer
 // partition.
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Capture the options the runner hands the SDK + let a test pick which result
@@ -88,6 +90,18 @@ const SAMPLE_OUTPUT_FORMAT: JsonSchemaOutputFormat = {
 // the zero-regression assertions (it never sets ctx.outputFormat).
 const UNMIGRATED_KIND = 'AttributionTask';
 
+const REVIEW_REGRESSION_PACKET = JSON.parse(
+  readFileSync(
+    join(
+      process.cwd(),
+      'src/server/grounding-gate/fixtures/intervention-review-regressions.v1.json',
+    ),
+    'utf8',
+  ),
+) as {
+  cases: Array<{ context: { snapshot: unknown; recommendation: unknown }; package: unknown }>;
+};
+
 describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
   beforeEach(() => {
     mockSdk.capturedOptions = undefined;
@@ -129,6 +143,28 @@ describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
     };
     expect(finished.usage).toEqual(result.usage);
     expect(JSON.stringify(finished)).not.toContain('private scratch work');
+  });
+
+  it('isolates a production-shaped reviewer packet from project settings and title generation', async () => {
+    const regression = REVIEW_REGRESSION_PACKET.cases[0];
+    if (!regression) throw new Error('review regression fixture has no cases');
+    const input = {
+      snapshot: regression.context.snapshot,
+      recommendation: regression.context.recommendation,
+      package: regression.package,
+    };
+    expect(JSON.stringify(input).length).toBeGreaterThan(7_000);
+
+    await runTask('InterventionPackageReviewTask', input, { db: fakeDb });
+
+    const opts = mockSdk.capturedOptions as {
+      settingSources?: string[];
+      skills?: string[];
+      title?: string;
+    };
+    expect(opts.settingSources).toEqual([]);
+    expect(opts.skills).toEqual([]);
+    expect(opts.title).toBe('InterventionPackageReviewTask');
   });
 
   it('preserves an explicit operator CLAUDE_CODE_MAX_RETRIES override', async () => {
@@ -201,11 +237,13 @@ describe('runTask — YUK-299 outputFormat seam', () => {
       'allowDangerouslySkipPermissions',
       'persistSession',
       'cwd',
+      'title',
       'skills',
+      'settingSources',
     ].sort();
     expect(Object.keys(opts).sort()).toEqual(EXPECTED_KEYS);
-    // settingSources must stay OMITTED (pre-existing invariant, re-asserted here).
-    expect('settingSources' in opts).toBe(false);
+    expect(opts.settingSources).toEqual([]);
+    expect(opts.title).toBe(UNMIGRATED_KIND);
   });
 
   it('threads ctx.outputFormat through on an SDK-structured-output provider', async () => {

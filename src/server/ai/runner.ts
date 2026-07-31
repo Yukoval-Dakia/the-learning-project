@@ -399,6 +399,7 @@ function buildQueryOptions(
 ): Options {
   const def = tasks[kind];
   const allowedTools = ctx.allowedTools ?? def.allowedTools;
+  const configuredSkills = ctx.skills ?? [];
   const configuredMaxTurns = (ctx.budgetOverride?.maxIterations ?? def.budget.maxIterations) || 1;
   // Xiaomi's Anthropic-compatible endpoint does not implement the Agent SDK's
   // native structured-output protocol. Passing outputFormat makes the CLI loop
@@ -422,6 +423,10 @@ function buildQueryOptions(
     allowDangerouslySkipPermissions: true,
     persistSession: false,
     cwd: process.cwd(),
+    // Ephemeral server runs do not use the persisted session title. Supplying a
+    // stable title prevents the CLI from spending a separate model request to
+    // synthesize one from the first (often large) product payload.
+    title: kind,
     // YUK-225 (S2 slice 4) — Agent Skill whitelist.
     //
     // SDK 语义实证（node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts）:
@@ -439,12 +444,19 @@ function buildQueryOptions(
     // be explicit-disable: pass `skills: ctx.skills ?? []`. Only a handler that
     // explicitly whitelists (ctx.skills = ['quiz-gen-<kind>']) sees those skills.
     //
-    // settingSources stays OMITTED on purpose — the YUK-217 spike proved
-    // settingSources:[] disables the CONFIG_DIR/skills auto-load (CLEAN-PRESEED 双 NO).
-    // That is a SEPARATE field from Options.skills; this change does not touch it (the
-    // spike's settingSources=OMITTED conclusion is unchanged).
-    skills: ctx.skills ?? [],
+    // settingSources is handled below: no-skill product runs use SDK isolation;
+    // explicitly skill-enabled runs retain the YUK-217 omitted-source discovery path.
+    skills: configuredSkills,
   };
+  // SDK default/omitted means "load user + project + local settings", including
+  // this repository's CLAUDE.md and SessionStart hooks. Those developer-agent
+  // instructions are not product context. A no-skill server task therefore uses
+  // SDK isolation mode. Skill-enabled tasks keep the key omitted for now because
+  // the verified YUK-217 CONFIG_DIR discovery path depends on filesystem settings;
+  // the explicit skills whitelist still restricts what the model can invoke.
+  if (configuredSkills.length === 0) {
+    options.settingSources = [];
+  }
   // YUK-299 seam: pass outputFormat only to providers that implement the SDK
   // protocol. Mimo callers intentionally omit the option and consume the
   // existing strict-prompt + Zod text fallback instead.
