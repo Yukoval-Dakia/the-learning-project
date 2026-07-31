@@ -19,6 +19,10 @@ import type {
 
 type DbLike = Db | Tx;
 
+class StaleLearningRecordMutationError extends ApiError {}
+
+const BATCH_TRANSITION_MAX_ATTEMPTS = 2;
+
 const LEARNING_RECORD_STATUS_TRANSITIONS: Readonly<
   Record<LearningRecordProcessingStatus, readonly LearningRecordProcessingStatus[]>
 > = {
@@ -56,7 +60,11 @@ function rejectStaleMutation(
     expected_version: expectedVersion,
     current_version: currentVersion,
   });
-  throw new ApiError('conflict', `learning_record ${recordId} version mismatch`, 409);
+  throw new StaleLearningRecordMutationError(
+    'conflict',
+    `learning_record ${recordId} version mismatch`,
+    409,
+  );
 }
 
 function assertLegalStatusTransition(
@@ -326,13 +334,34 @@ export async function transitionLearningRecords(
 
   let applied = 0;
   for (const row of rows) {
-    const status = asProcessingStatus(row.processing_status, row.id);
-    if (!fromStatuses.includes(status)) continue;
-    const result = await transitionLearningRecord(db, row.id, {
-      expected_version: row.version,
-      to,
-    });
-    if (result.applied) applied += 1;
+    let candidate = row;
+    for (let attempt = 0; attempt < BATCH_TRANSITION_MAX_ATTEMPTS; attempt += 1) {
+      const status = asProcessingStatus(candidate.processing_status, candidate.id);
+      if (status === to || !fromStatuses.includes(status)) break;
+      try {
+        const result = await transitionLearningRecord(db, candidate.id, {
+          expected_version: candidate.version,
+          to,
+        });
+        if (result.applied) applied += 1;
+        break;
+      } catch (error) {
+        if (!(error instanceof StaleLearningRecordMutationError)) throw error;
+        const latest = await getLearningRecord(db, candidate.id);
+        if (!latest) break;
+        const latestStatus = asProcessingStatus(latest.processing_status, latest.id);
+        if (latestStatus === to || !fromStatuses.includes(latestStatus)) break;
+        candidate = latest;
+        if (attempt === BATCH_TRANSITION_MAX_ATTEMPTS - 1) {
+          console.warn('[learning-record] batch_transition_retry_exhausted', {
+            record_id: candidate.id,
+            current_version: candidate.version,
+            current_status: latestStatus,
+            target_status: to,
+          });
+        }
+      }
+    }
   }
   return applied;
 }

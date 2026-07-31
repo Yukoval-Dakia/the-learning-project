@@ -57,7 +57,7 @@
 - `version` 是唯一 compare-and-swap 轴。调用方提交其读到的版本；每次实际 mutation 恰好 `+1`。
 - `updateLearningRecord()` 是严格 CAS：版本不匹配固定返回 409，不得覆盖新行。
 - `transitionLearningRecord()` 对「相同目标状态」的重复提交幂等：即使重试携带旧版本，也返回当前行且不再加版本；旧版本若指向不同目标则固定 409。
-- 批量状态 helper 先读当前版本，再逐行走同一个 transition primitive；并发不同写不会静默覆盖。
+- 批量状态 helper 先读当前版本，再逐行走同一个 transition primitive；CAS 竞态时重读，已离开来源状态或已到目标状态则跳过，仍可迁移时只做一次 bounded retry。这样 best-effort 批处理不会把已提交 proposal 伪装成整体失败，并发不同写也不会静默覆盖；严格单行 API 的 stale 409 语义不变。
 
 **合法状态图**：
 
