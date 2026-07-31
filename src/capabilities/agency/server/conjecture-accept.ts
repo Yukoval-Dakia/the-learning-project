@@ -50,12 +50,13 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { subjectProbeValidatorsBlockingEnabled } from '@/server/agency/conjecture/probe-quality';
 import {
+  acquireProposalDecisionLock,
   asPlainRecord,
   ensureAcceptOnly,
   existingAcceptRate,
   requiredString,
 } from '@/server/proposals/applier-helpers';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
+import { type ProposalInboxRow, getProposalInboxRow } from '@/server/proposals/inbox';
 import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
@@ -290,6 +291,21 @@ export async function acceptConjectureProposal(
   // state. A minted misconception is SOFT-track (source='soft', dark flag) — an AI prior
   // the owner agreed with, NOT a confirmed weakness (only the probe one-shot mints that).
   await db.transaction(async (tx) => {
+    // Serialize with system/user retractions (including the subject-validator
+    // blocking cutover) and concurrent accepts. Validation above may be expensive,
+    // so re-read the folded decision state only after acquiring the commit lock:
+    // whoever terminally decided first wins; the loser cannot append a rate/probe
+    // against a proposal that became stale while it was validating.
+    await acquireProposalDecisionLock(tx, proposalId);
+    const lockedProposal = await getProposalInboxRow(tx, proposalId);
+    if (!lockedProposal || lockedProposal.status !== 'pending') {
+      throw new ApiError(
+        'proposal_not_pending',
+        `cannot accept conjecture ${proposalId}: proposal is no longer pending`,
+        409,
+      );
+    }
+
     await writeEvent(tx, {
       id: rateEventId,
       actor_kind: 'user',
