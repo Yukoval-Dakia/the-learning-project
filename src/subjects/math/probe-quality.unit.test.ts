@@ -178,6 +178,13 @@ describe('math subject probe validators', () => {
       },
       'unit_target_signature_mismatch',
     ],
+    [
+      'trailing operation',
+      (draft: ConjectureProbePackageV2T) => {
+        draft.primary.prompt_md = '将 72 km/h 换算为 m/s 后再乘 2。';
+      },
+      'subject_validator_ungradable',
+    ],
   ])('fails closed for unit mutation: %s', (_name, mutate, expectedCode) => {
     const mutated = structuredClone(unitPackage);
     mutate(mutated);
@@ -284,6 +291,13 @@ describe('math subject probe validators', () => {
       'multi-step prompt',
       (draft: ConjectureProbePackageV2T) => {
         draft.primary.prompt_md = '先计算 1/3 + 1/4，再减去 1/5。';
+      },
+      'subject_validator_ungradable',
+    ],
+    [
+      'multiplier phrase',
+      (draft: ConjectureProbePackageV2T) => {
+        draft.primary.prompt_md = '计算（1/3 + 1/4）的两倍。';
       },
       'subject_validator_ungradable',
     ],

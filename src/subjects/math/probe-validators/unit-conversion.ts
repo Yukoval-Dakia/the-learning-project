@@ -78,7 +78,17 @@ function parsePrompt(prompt: string): ParsedUnitPrompt | null {
   const direction = normalized.slice(source.end, target.index);
   if (!/(?:到|换算(?:为|成)|化为|变为|折算为|->|→|\bto\b)/.test(direction)) return null;
   const beforeSource = normalized.slice(0, source.index);
-  const numbers = [...beforeSource.matchAll(/(?<![\w.])([+-]?\d+(?:\.\d+)?)(?![\w.])/g)];
+  const numberPattern = /(?<![\w.])([+-]?\d+(?:\.\d+)?)(?![\w.])/g;
+  const numbers = [...beforeSource.matchAll(numberPattern)];
+  if ([...normalized.matchAll(numberPattern)].length !== 1) return null;
+  const afterTarget = normalized.slice(target.end);
+  if (
+    /[+\-*×÷=]|\d|(?:然后|之后|以后|后再|再|then|after|multiply|divide|add|subtract)|倍|乘|除|加|减|平方|开方|倒数/i.test(
+      afterTarget,
+    )
+  ) {
+    return null;
+  }
   const rawValue = numbers.at(-1)?.[1];
   const value = rawValue ? parseDecimalRational(rawValue) : null;
   if (!value) return null;

@@ -42,9 +42,10 @@ function parsePrompt(prompt: string): ParsedFractionPrompt | null {
   if (!additionIntent) return null;
   const stripped = normalized.replace(/([+-]?\d+)\s*\/\s*(\d+)/g, '#');
   // Fractions are already replaced by "#"; a remaining "# - #" is a real
-  // subtraction step rather than the sign of a negative operand.
+  // subtraction step rather than the sign of a negative operand. Any remaining
+  // number or multiplier phrase also proves the prompt is not a one-step sum.
   if (
-    /#\s*-\s*#|[×*÷]|减去|乘以|除以|还剩|剩下|剩余|差|先.{0,30}再|\b(?:then|after|subtract|multiply|divide|remaining)\b/i.test(
+    /#\s*-\s*#|[×*÷]|\d|减去|乘|除以|倍|翻倍|还剩|剩下|剩余|差|先.{0,30}再|\b(?:then|after|subtract|multiply|divide|double|twice|times|remaining)\b/i.test(
       stripped,
     )
   ) {
