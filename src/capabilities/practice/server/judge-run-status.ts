@@ -112,7 +112,9 @@ export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunSta
         terminalDeliveryId = deliveryId;
         break;
       case JUDGE_RUN_EVENTS.STARTED:
-        startedDeliveryId = deliveryId;
+        // Legacy/direct producers may omit delivery identity. Keep the last known identity so
+        // a causally-late REQUEUED marker for that same delivery cannot rewind started → queued.
+        if (deliveryId !== null) startedDeliveryId = deliveryId;
         if (status === 'queued') status = 'started';
         break;
       case JUDGE_RUN_EVENTS.ATTEMPT_FAILED:

@@ -8,6 +8,7 @@ import * as bossClient from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import * as judgeDispatch from '../server/judge-run-dispatch';
 import { judgeRunJobId, recordJudgePendingAttempt } from '../server/judge-run-dispatch';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
 import { GET } from './judge-run-status-route';
@@ -157,6 +158,57 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     vi.spyOn(bossClient, 'getStartedBoss').mockRejectedValue(new Error('temporary lookup failure'));
 
     const res = await GET(new Request('http://localhost'), { id: runId });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { status: string }).toMatchObject({ status: 'queued' });
+  });
+
+  it('preserves the replay status when the pending-attempt lookup fails locally', async () => {
+    const runId = newId();
+    await writeJobEvent(testDb(), {
+      business_table: JUDGE_RUN_TABLE,
+      business_id: runId,
+      event_type: JUDGE_RUN_EVENTS.STARTED,
+      payload: { delivery_id: 'delivery-1' },
+    });
+    vi.spyOn(judgeDispatch, 'pendingAttemptRecordedAt').mockRejectedValue(
+      new Error('pending lookup failed'),
+    );
+    vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
+      getJobById: vi.fn().mockResolvedValue(null),
+    } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
+
+    const res = await GET(new Request('http://localhost'), { id: runId });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { status: string }).toMatchObject({ status: 'started' });
+  });
+
+  it('keeps recorded work recoverable when the recovery-metadata lookup fails locally', async () => {
+    const runId = newId();
+    const questionId = `q_${newId()}`;
+    await recordJudgePendingAttempt(testDb(), {
+      runId,
+      sessionId: null,
+      questionId,
+      knowledgeIds: ['k1'],
+      submit: {
+        body: { question_id: questionId, rating: 'good', response_md: 'ans', auto_rate: true },
+        question_id: questionId,
+        subject_profile: { subject: 'wenyan' },
+        question_snapshot: {},
+        submitted_at: new Date().toISOString(),
+      },
+      submittedAt: new Date(),
+    });
+    vi.spyOn(judgeDispatch, 'getJudgeRecoveryMetadata').mockRejectedValue(
+      new Error('recovery lookup failed'),
+    );
+    vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
+      getJobById: vi.fn().mockResolvedValue(null),
+    } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
+
+    const res = await GET(new Request('http://localhost'), { id: runId });
+
     expect(res.status).toBe(200);
     expect((await res.json()) as { status: string }).toMatchObject({ status: 'queued' });
   });

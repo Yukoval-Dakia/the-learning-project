@@ -93,6 +93,16 @@ describe('deriveJudgeRunStatus — REQUEUED recovery (YUK-777)', () => {
     ).toBe('started');
   });
 
+  it('does not forget the started delivery when a later STARTED omits its id', () => {
+    expect(
+      deriveJudgeRunStatus([
+        ev(JUDGE_RUN_EVENTS.STARTED, 'recovery-1'),
+        ev(JUDGE_RUN_EVENTS.STARTED),
+        ev(JUDGE_RUN_EVENTS.REQUEUED, 'recovery-1'),
+      ]),
+    ).toBe('started');
+  });
+
   it('reads the legacy REQUEUED job_id as delivery identity', () => {
     expect(
       deriveJudgeRunStatus([
