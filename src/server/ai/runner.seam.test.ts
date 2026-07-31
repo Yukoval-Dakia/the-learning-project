@@ -195,6 +195,29 @@ describe('runTask — YUK-299 outputFormat seam', () => {
     expect(opts.outputFormat).toEqual(SAMPLE_OUTPUT_FORMAT);
   });
 
+  it('gives one-turn outputFormat tasks an envelope turn plus a terminal turn', async () => {
+    mockSdk.messages = [successResult()];
+
+    await runTask(
+      'InterventionRecommendationTask',
+      { snapshot: 'test' },
+      { db: fakeDb, outputFormat: SAMPLE_OUTPUT_FORMAT },
+    );
+
+    const opts = mockSdk.capturedOptions as { maxTurns?: number };
+    expect(tasks.InterventionRecommendationTask.budget.maxIterations).toBe(1);
+    expect(opts.maxTurns).toBe(2);
+  });
+
+  it('keeps the one-turn ceiling when the same task has no outputFormat protocol', async () => {
+    mockSdk.messages = [successResult()];
+
+    await runTask('InterventionRecommendationTask', { snapshot: 'test' }, { db: fakeDb });
+
+    const opts = mockSdk.capturedOptions as { maxTurns?: number };
+    expect(opts.maxTurns).toBe(1);
+  });
+
   it('passes through structured_output when the success result carries it (state A)', async () => {
     const payload = { verdict: 'pass', confidence: 0.9 };
     mockSdk.messages = [successResult({ structured_output: payload })];
