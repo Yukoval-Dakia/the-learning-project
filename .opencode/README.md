@@ -18,10 +18,14 @@ bun run lint
 
 The delete path is intentionally fail-closed: callers must commit or discard changes explicitly
 before requesting cleanup. The plugin never stages files, creates snapshot commits, or invokes
-`git worktree remove --force`.
+`git worktree remove` (forced or otherwise).
 
 The repository hooks remain the canonical policy for explicit staging/commits (including
 artifact and credential safeguards). Cleanup does not duplicate that policy: it refuses every
-worktree containing tracked modifications, untracked files, or ignored files before running hooks
-or removal, so hidden artifacts and credentials cannot be deleted and there is no plugin-owned
-staging surface to guard separately.
+worktree containing tracked modifications, untracked files, or ignored files before running hooks.
+After a clean check, the complete directory is atomically moved beneath
+`<worktree>.preserved-by-opencode/worktree`; Git registration is pruned without recursively deleting
+that retained directory. A restrictive marker is left at the original path and both markers name
+the preservation location. Even a background writer that follows the rename therefore writes into
+retained storage rather than a directory Git will delete. Inspect and remove the preservation root
+manually when it is no longer needed.

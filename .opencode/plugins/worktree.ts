@@ -1158,7 +1158,7 @@ const WorktreePlugin: Plugin = async (ctx) => {
 
 			worktree_delete: tool({
 				description:
-					"Delete the current clean worktree without staging, committing, or forcing. Commit or discard changes explicitly first.",
+					"Detach the current clean worktree without staging, committing, forcing, or deleting files. The complete lane is retained at an auditable preservation path for manual cleanup.",
 				args: {
 					reason: tool.schema
 						.string()
@@ -1180,7 +1180,7 @@ const WorktreePlugin: Plugin = async (ctx) => {
 						return `Cleanup was not scheduled: ${pendingBranch} is already pending.`
 					}
 
-					return "Worktree marked for fail-closed cleanup. It will be removed only if it is clean and every pre-delete hook succeeds."
+					return `Worktree marked for fail-closed cleanup. If clean and all hooks succeed, Git registration will be removed but every file will remain at ${session.path}.preserved-by-opencode for manual audit/cleanup.`
 				},
 			}),
 		},
@@ -1208,7 +1208,9 @@ const WorktreePlugin: Plugin = async (ctx) => {
 				return
 			}
 
-			log.info(`[worktree] Removed clean worktree: ${pendingDelete.path}`)
+			log.info(
+				`[worktree] Unregistered clean worktree without deleting files. Retained at: ${deleteResult.preservedPath}`,
+			)
 		},
 	}
 }

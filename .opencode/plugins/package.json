@@ -3,7 +3,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"test": "bun test worktree/delete.test.ts",
+		"test": "bun test worktree/*.test.ts",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check ."
 	},

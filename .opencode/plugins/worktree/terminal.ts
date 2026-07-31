@@ -31,6 +31,7 @@ import {
 	logWarn,
 	withTimeout,
 } from "../kdco-primitives"
+import { makeTempScriptExecutable } from "./permissions"
 
 export {
 	canUseCmuxWorkflow,
@@ -64,7 +65,7 @@ export async function withTempScript<T>(
 		`worktree-${Date.now()}-${Math.random().toString(36).slice(2)}${extension}`,
 	)
 	await Bun.write(scriptPath, scriptContent)
-	await fs.chmod(scriptPath, 0o755)
+	await makeTempScriptExecutable(scriptPath)
 
 	try {
 		return await fn(scriptPath)
@@ -364,7 +365,7 @@ ${command}
 exec $SHELL`,
 				)
 				await Bun.write(scriptPath, scriptContent)
-				Bun.spawnSync(["chmod", "+x", scriptPath])
+				await makeTempScriptExecutable(scriptPath)
 
 				// Add script execution to tmux args
 				tmuxArgs.push("--", "bash", scriptPath)
@@ -648,7 +649,7 @@ export async function openMacOSTerminal(cwd: string, argv?: string[]): Promise<T
 					`worktree-${Date.now()}-${Math.random().toString(36).slice(2)}.sh`,
 				)
 				await Bun.write(detachedScriptPath, scriptContent)
-				await fs.chmod(detachedScriptPath, 0o755)
+				await makeTempScriptExecutable(detachedScriptPath)
 
 				const kittyProc = Bun.spawn(
 					["kitty", "--directory", cwd, "-e", "bash", detachedScriptPath],
@@ -669,7 +670,7 @@ export async function openMacOSTerminal(cwd: string, argv?: string[]): Promise<T
 					`worktree-${Date.now()}-${Math.random().toString(36).slice(2)}.sh`,
 				)
 				await Bun.write(detachedScriptPath, scriptContent)
-				await fs.chmod(detachedScriptPath, 0o755)
+				await makeTempScriptExecutable(detachedScriptPath)
 
 				const alacrittyProc = Bun.spawn(
 					["alacritty", "--working-directory", cwd, "-e", "bash", detachedScriptPath],
@@ -690,7 +691,7 @@ export async function openMacOSTerminal(cwd: string, argv?: string[]): Promise<T
 					`worktree-${Date.now()}-${Math.random().toString(36).slice(2)}.sh`,
 				)
 				await Bun.write(detachedScriptPath, scriptContent)
-				await fs.chmod(detachedScriptPath, 0o755)
+				await makeTempScriptExecutable(detachedScriptPath)
 
 				const warpProc = Bun.spawn(["open", "-b", "dev.warp.Warp-Stable", detachedScriptPath], {
 					detached: true,
@@ -709,7 +710,7 @@ export async function openMacOSTerminal(cwd: string, argv?: string[]): Promise<T
 					`worktree-${Date.now()}-${Math.random().toString(36).slice(2)}.sh`,
 				)
 				await Bun.write(detachedScriptPath, scriptContent)
-				await fs.chmod(detachedScriptPath, 0o755)
+				await makeTempScriptExecutable(detachedScriptPath)
 
 				const escapedPath = escapeAppleScript(detachedScriptPath)
 				const appleScript = `
@@ -851,7 +852,7 @@ export async function openLinuxTerminal(cwd: string, argv?: string[]): Promise<T
 			`worktree-${Date.now()}-${Math.random().toString(36).slice(2)}.sh`,
 		)
 		await Bun.write(scriptPath, scriptContent)
-		await fs.chmod(scriptPath, 0o755)
+		await makeTempScriptExecutable(scriptPath)
 		return scriptPath
 	}
 
@@ -1127,7 +1128,7 @@ export async function openWindowsTerminal(cwd: string, argv?: string[]): Promise
 		`worktree-${Date.now()}-${Math.random().toString(36).slice(2)}.bat`,
 	)
 	await Bun.write(scriptPath, scriptContent)
-	await fs.chmod(scriptPath, 0o755)
+	await makeTempScriptExecutable(scriptPath)
 
 	try {
 		// Check for Windows Terminal
@@ -1207,7 +1208,7 @@ export async function openWSLTerminal(cwd: string, argv?: string[]): Promise<Ter
 		`worktree-${Date.now()}-${Math.random().toString(36).slice(2)}.sh`,
 	)
 	await Bun.write(scriptPath, scriptContent)
-	await fs.chmod(scriptPath, 0o755)
+	await makeTempScriptExecutable(scriptPath)
 
 	try {
 		// Try wt.exe first (Windows Terminal via PATH interop)
