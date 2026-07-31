@@ -301,9 +301,11 @@ export function parseJsonObjectLoose(
 ): LooseJsonResult | null {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) return null;
-  const slice = text.slice(start, end + 1);
-  const hasTruncatedSuffix = text.slice(end + 1).trim().length > 0;
+  if (start === -1) return null;
+  const hasCompleteEnd = end >= start;
+  if (!hasCompleteEnd && opts.containerClosure !== 'schema_validated') return null;
+  const slice = hasCompleteEnd ? text.slice(start, end + 1) : text.slice(start);
+  const hasTruncatedSuffix = hasCompleteEnd && text.slice(end + 1).trim().length > 0;
   const repairMarkdownMathEscapes = opts.latexEscapes === 'markdown_math';
   const needsLatexRepair =
     repairMarkdownMathEscapes && escapeInvalidJsonStringBackslashes(slice) !== slice;

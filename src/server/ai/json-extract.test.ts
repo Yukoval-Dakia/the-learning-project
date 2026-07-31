@@ -87,6 +87,21 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     });
   });
 
+  it('完整 flat review 仅缺根对象闭合符 → 仅 schema-validated caller 可补齐', () => {
+    const text = '{"verdict":"pass","failure_codes":[],"summary_md":"ok"';
+    expect(parseJsonObjectLoose(text, 'default caller')).toBeNull();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(
+      parseJsonObjectLoose(text, 'intervention package review', {
+        riskyRepair: 'reject',
+        containerClosure: 'schema_validated',
+      }),
+    ).toEqual({
+      json: { verdict: 'pass', failure_codes: [], summary_md: 'ok' },
+      repaired: 'deterministic',
+    });
+  });
+
   it('合法但会腐蚀 LaTeX 的单字符 escape → 保留公式，同时不改写真实换行', () => {
     const text = String.raw`{"formula":"$\frac{1}{2}+\text{半}+\nabla f$","line":"first\nother line","tab":"left\tbar","math_line":"$f(x)\nother$"}`;
     // 原生 JSON.parse 会把 \f / \t / \n 吞成控制字符，属于静默内容损坏。
