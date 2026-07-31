@@ -9,6 +9,7 @@ import {
   divideRationals,
   formatRational,
   multiplyRationals,
+  normalizeLatexFractions,
   parseDecimalRational,
   rational,
   rationalsEqual,
@@ -44,10 +45,10 @@ interface ParsedUnitAnswer {
 }
 
 function normalizeUnitText(value: string): string {
-  return value
+  return normalizeLatexFractions(value.replace(/[−–—]/g, '-'))
     .normalize('NFKC')
+    .replace(/\\(?:,|;|!|quad|qquad| )/g, ' ')
     .replace(/\\mathrm\s*\{([^{}]+)\}/g, '$1')
-    .replace(/[−–—]/g, '-')
     .replace(/公里\s*\/\s*(?:小时|时)/g, 'km/h')
     .replace(/千米\s*\/\s*(?:小时|时)/g, 'km/h')
     .replace(/公里\s*每\s*(?:小时|时)/g, 'km/h')
@@ -112,10 +113,11 @@ function parseAnswer(answer: string): ParsedUnitAnswer | null {
   const leading = new RegExp(String.raw`^\s*${valuePattern}\s*${unitPattern}`, 'i').exec(
     normalized,
   );
-  const equation = new RegExp(String.raw`=\s*${valuePattern}\s*${unitPattern}`, 'i').exec(
-    normalized,
-  );
-  const selected = marker ?? leading ?? equation ?? (matches.length === 1 ? matches[0] : null);
+  const equationResults = [
+    ...normalized.matchAll(new RegExp(String.raw`=\s*${valuePattern}\s*${unitPattern}`, 'gi')),
+  ];
+  const selected =
+    marker ?? equationResults.at(-1) ?? leading ?? (matches.length === 1 ? matches[0] : null);
   const rawValue = selected?.[1]?.replace(/\s+/g, '');
   const value = rawValue?.includes('/')
     ? (() => {

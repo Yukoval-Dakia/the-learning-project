@@ -238,6 +238,32 @@ describe('math subject probe validators', () => {
     ).toBe('pass');
   });
 
+  it('uses the terminal unit result of a clean conversion equation', () => {
+    const mutated = structuredClone(unitPackage);
+    const workedAnswer = '72 km/h = 20 m/s';
+    mutated.primary.reference_md = workedAnswer;
+    mutated.primary.gold_response_signature = { kind: 'text', response_md: workedAnswer };
+    expect(
+      resultFor(unitHypothesis, mutated, 'math.compound-unit-denominator-conversion').outcome,
+    ).toBe('pass');
+  });
+
+  it('normalizes an exact LaTeX fraction and spacing in a unit answer', () => {
+    const mutated = structuredClone(unitPackage);
+    const latexAnswer = String.raw`\frac{5}{18}\,\mathrm{m/s}`;
+    mutated.primary.prompt_md = 'Convert 1 km/h to m/s.';
+    mutated.primary.reference_md = latexAnswer;
+    mutated.primary.gold_response_signature = { kind: 'text', response_md: latexAnswer };
+    mutated.primary.expected_target_error_answer_md = '1000 m/s';
+    mutated.primary.target_error_response_signature = {
+      kind: 'text',
+      response_md: '1000 m/s',
+    };
+    expect(
+      resultFor(unitHypothesis, mutated, 'math.compound-unit-denominator-conversion').outcome,
+    ).toBe('pass');
+  });
+
   it('accepts a compact value-unit answer without whitespace', () => {
     const mutated = structuredClone(unitPackage);
     mutated.primary.reference_md = '20m/s';
