@@ -87,7 +87,7 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
   });
 
   it('合法但会腐蚀 LaTeX 的单字符 escape → 保留公式，同时不改写真实换行', () => {
-    const text = String.raw`{"formula":"$\frac{1}{2}+\text{半}+\nabla f$","line":"first\nother line","tab":"left\tbar"}`;
+    const text = String.raw`{"formula":"$\frac{1}{2}+\text{半}+\nabla f$","line":"first\nother line","tab":"left\tbar","math_line":"$f(x)\nother$"}`;
     // 原生 JSON.parse 会把 \f / \t / \n 吞成控制字符，属于静默内容损坏。
     expect((JSON.parse(text) as { formula: string }).formula).not.toContain('\\frac');
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -97,7 +97,17 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
         formula: '$\\frac{1}{2}+\\text{半}+\\nabla f$',
         line: 'first\nother line',
         tab: 'left\tbar',
+        math_line: '$f(x)\nother$',
       },
+      repaired: 'deterministic',
+    });
+  });
+
+  it('未配对货币符号与转义美元不得打开伪数学区间', () => {
+    const text = String.raw`{"body":"Pay $5\nnote the fee; 价格 \$100 起；$x$ 后 \tbar"}`;
+    const r = parseJsonObjectLoose(text, 'currency');
+    expect(r).toEqual({
+      json: { body: 'Pay $5\nnote the fee; 价格 \\$100 起；$x$ 后 \tbar' },
       repaired: 'deterministic',
     });
   });

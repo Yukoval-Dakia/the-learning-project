@@ -71,6 +71,17 @@ describe('normalizeInterventionPackageModelOutput', () => {
       context_change_md: '从纯符号函数换到热膨胀情境。',
     });
     expect(normalized.diagnostics.transfer.probe_spec).not.toHaveProperty('context_change_md');
+
+    const misplacedImmediate = structuredClone(output);
+    Object.assign(misplacedImmediate.diagnostics.immediate.probe_spec, {
+      context_change_md: '不应被静默剥离',
+    });
+    expect(() =>
+      normalizeInterventionPackageModelOutput(misplacedImmediate, {
+        testedClaimMd: CLAIM,
+        targetErrorRuleMd: TARGET_ERROR,
+      }),
+    ).toThrow();
   });
 
   it('rejects a mismatched diagnostic kind instead of masking a possible content swap', () => {

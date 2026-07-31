@@ -96,11 +96,10 @@ export function normalizeInterventionPackageModelOutput(
       tested_claim_md: identity.testedClaimMd,
       target_error_rule_md: identity.targetErrorRuleMd,
     };
-    if (isRecord(rawDiagnostic.probe_spec)) {
+    if (kind === 'transfer' && isRecord(rawDiagnostic.probe_spec)) {
       const { context_change_md: misplacedContextChangeMd, ...probeSpec } =
         rawDiagnostic.probe_spec;
       if (
-        kind === 'transfer' &&
         typeof diagnostic.context_change_md !== 'string' &&
         typeof misplacedContextChangeMd === 'string'
       ) {

@@ -67,6 +67,26 @@ function escapeContentQuotes(slice: string): string {
 // / `\dfrac` 这类单反斜杠序列；它们不是合法 JSON escape，却能在不改变内容的
 // 前提下机械改写为 `\\(` / `\\dfrac`。合法的 JSON escape（含完整 `\uXXXX`）
 // 原样保留。只在字符串内部处理，绝不重划字符串边界。
+function hasClosingMathDelimiter(
+  slice: string,
+  start: number,
+  delimiter: '$' | '$$' | '\\(' | '\\[',
+): boolean {
+  const closing = delimiter === '\\(' ? '\\)' : delimiter === '\\[' ? '\\]' : delimiter;
+  for (let i = start + delimiter.length; i < slice.length; i += 1) {
+    if (slice.startsWith(closing, i)) {
+      if (closing !== '$' || slice[i + 1] !== '$') return true;
+    }
+    const ch = slice[i];
+    if (ch === '\\') {
+      i += 1;
+    } else if (ch === '"') {
+      return false;
+    }
+  }
+  return false;
+}
+
 function escapeInvalidJsonStringBackslashes(slice: string): string {
   const out: string[] = [];
   let inString = false;
@@ -89,9 +109,14 @@ function escapeInvalidJsonStringBackslashes(slice: string): string {
     }
     if (ch === '$') {
       const delimiter = slice[i + 1] === '$' ? '$$' : '$';
+      const currencyLike = delimiter === '$' && /^\s*\d/.test(slice.slice(i + 1));
       if (mathDelimiter === delimiter) {
         mathDelimiter = null;
-      } else if (mathDelimiter === null) {
+      } else if (
+        mathDelimiter === null &&
+        !currencyLike &&
+        hasClosingMathDelimiter(slice, i, delimiter)
+      ) {
         mathDelimiter = delimiter;
       }
       out.push(delimiter);
@@ -104,6 +129,16 @@ function escapeInvalidJsonStringBackslashes(slice: string): string {
     }
 
     const next = slice[i + 1];
+    if (next === '$') {
+      out.push('\\\\', '$');
+      i += 1;
+      continue;
+    }
+    if (next === '\\' && slice[i + 2] === '$') {
+      out.push(ch, next, '$');
+      i += 2;
+      continue;
+    }
     if (next === '"' || next === '\\' || next === '/') {
       out.push(ch, next);
       i += 1;
@@ -112,7 +147,9 @@ function escapeInvalidJsonStringBackslashes(slice: string): string {
     const suffix = slice.slice(i + 1);
     const likelyLatexCommand =
       mathDelimiter !== null &&
-      (/^[bfrt][A-Za-z]/.test(suffix) || /^n(?:abla|eg|eq|ewline|ot|u)/.test(suffix));
+      (/^[bfrt][A-Za-z]/.test(suffix) ||
+        /^n(?:abla|eg|ewline)/.test(suffix) ||
+        /^n(?:eq|ot|u)(?![A-Za-z])/.test(suffix));
     if (next && 'bfnrt'.includes(next) && !likelyLatexCommand) {
       out.push(ch, next);
       i += 1;
@@ -123,7 +160,11 @@ function escapeInvalidJsonStringBackslashes(slice: string): string {
       i += 5;
       continue;
     }
-    if ((next === '(' || next === '[') && mathDelimiter === null) {
+    if (
+      (next === '(' || next === '[') &&
+      mathDelimiter === null &&
+      hasClosingMathDelimiter(slice, i, next === '(' ? '\\(' : '\\[')
+    ) {
       mathDelimiter = next === '(' ? '\\(' : '\\[';
     } else if (
       (next === ')' && mathDelimiter === '\\(') ||
