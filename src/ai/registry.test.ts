@@ -703,6 +703,14 @@ describe('Conjecture probe author/reviewer registry entries', () => {
   });
 });
 
+describe('Intervention preparation registry entries', () => {
+  it('gives the measured package-author output enough time without widening the other stages', () => {
+    expect(tasks.InterventionRecommendationTask.budget.timeout).toBe(60_000);
+    expect(tasks.InterventionPackageAuthorTask.budget.timeout).toBeGreaterThanOrEqual(180_000);
+    expect(tasks.InterventionPackageReviewTask.budget.timeout).toBe(120_000);
+  });
+});
+
 // YUK-572 — agent-led 教研例会 director task registry entry.
 describe('ResearchMeetingDirectorTask registry entry', () => {
   it('is a tool-call loop on the Opus lane (override only, never default), 24 turns / 300s', () => {

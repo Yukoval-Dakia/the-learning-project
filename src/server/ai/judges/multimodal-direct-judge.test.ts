@@ -555,6 +555,23 @@ describe('runMultimodalDirectJudge — structured output (YUK-591)', () => {
       expect(parsed.coarse_outcome).toBe('correct');
     });
 
+    it('deterministically repairs unescaped content quotes from the real Mimo probe judge', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const raw = String.raw`{"coarse_outcome":"incorrect","score":0,"feedback_md":""安"是使动，不是意动。","evidence":{"observed_md":"学生把"安之"理解成"认为他们安定"。","matched_points":[],"missing_points":["识别"使……安定"的致使关系"]},"confidence":0.95,"probe_signature_match":{"match":"target_error","explanation_md":"回答与"意动"目标错误签名一致。"}}`;
+
+      expect(() => JSON.parse(raw)).toThrow();
+      const parsed = parseMultimodalDirectResult({ text: raw });
+
+      expect(parsed).toMatchObject({
+        coarse_outcome: 'incorrect',
+        score: 0,
+        feedback_md: '"安"是使动，不是意动。',
+        probe_signature_match: { match: 'target_error' },
+      });
+      expect(parsed.evidence.observed_md).toContain('"安之"');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('repaired malformed LLM JSON'));
+    });
+
     it('throws (→ caller unsupported) on a non-JSON text with no structured_output', () => {
       expect(() => parseMultimodalDirectResult({ text: 'no json here' })).toThrow(
         'did not contain a JSON object',

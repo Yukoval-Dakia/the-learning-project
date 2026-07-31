@@ -6,10 +6,11 @@ import {
 import { ConjectureProbeSpecV2 } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
+import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
-import { defaultStructuredRunTaskFn, extractJsonObject } from './judge-output-parse';
+import { defaultStructuredRunTaskFn } from './judge-output-parse';
 import type { JudgeQuestionRow } from './question-contract';
 // Reuse the steps@1 R2 image fetcher verbatim — no R2 logic duplicated here.
 import { defaultImageFetch } from './steps-judge';
@@ -68,11 +69,12 @@ function unsupportedResult(reason: string, evidence: Record<string, unknown>): J
  *       a shape-valid-but-constraint-violating payload still throws (→ the
  *       caller's `unsupported` fallback, byte-identical bucket to today).
  *   (B) structured_output absent/null (mimo ignores outputFormat, or the model
- *       fell back to text) → the existing char-scan extractJsonObject path, so
- *       the default mimo lane is byte-identical to pre-migration.
+ *       fell back to text) → char-scan plus the deterministic JSON repair band.
+ *       This preserves malformed-but-unambiguous content quotes/Markdown math
+ *       before the same strict output schema validates the complete payload.
  * `.parse` (throwing) is kept over safeParse so the thrown message is identical
- * to the pre-migration text path (`extractJsonObject` "did not contain a JSON
- * object" / ZodError), preserving the caller's evidence_json.error contract.
+ * to the pre-migration text path ("did not contain a JSON object" / ZodError),
+ * preserving the caller's evidence_json.error contract.
  */
 export function parseMultimodalDirectResult(result: {
   text: string;
@@ -81,11 +83,15 @@ export function parseMultimodalDirectResult(result: {
   if (result.structured_output !== undefined && result.structured_output !== null) {
     return MultimodalDirectLlmOutput.parse(result.structured_output);
   }
-  // YUK-230 thread 7 — shared helper; the 'multimodal_direct judge output' label keeps the
-  // thrown message byte-identical to the pre-consolidation text (evidence_json.error contract).
-  return MultimodalDirectLlmOutput.parse(
-    extractJsonObject(result.text, 'multimodal_direct judge output'),
-  );
+  const label = 'multimodal_direct judge output';
+  const extracted = parseJsonObjectLoose(result.text, label, {
+    // Judge output has no parse-repaired quarantine field, so heuristic
+    // jsonrepair remains forbidden. Only content-preserving repairs run.
+    riskyRepair: 'reject',
+    latexEscapes: 'markdown_math',
+  });
+  if (!extracted) throw new Error(`${label} did not contain a JSON object`);
+  return MultimodalDirectLlmOutput.parse(extracted.json);
 }
 
 /**

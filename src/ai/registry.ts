@@ -2002,7 +2002,10 @@ or
       'Authors one atomic intervention package: one teaching material plus immediate, delayed, and transfer diagnostics, all bound to the frozen claim, target error, and selected method.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 120_000 },
+    // YUK-814 Gate C measured one valid 7,178-token package at 117.1s, then
+    // observed two consecutive SDK aborts at the former 120s ceiling. Preserve
+    // the bounded two-turn contract while allowing the structured output to land.
+    budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 180_000 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
