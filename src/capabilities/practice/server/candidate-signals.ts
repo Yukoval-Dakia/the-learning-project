@@ -38,7 +38,7 @@ import {
   effectiveThetaForKcBatch,
   getMasteryStates,
 } from '@/server/mastery/state';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { MISCONCEPTION_RECURRENCE_ENABLED } from './selection-constants';
 import { rotationClassForKind } from './variant-rotation';
 
@@ -267,74 +267,111 @@ async function resolveBAnchor(
  */
 const RECURRENCE_NORM = 5;
 
+/** Stable, collision-free identity for a KC set. Order and duplicate KCs never changed the
+ * reference query's OR predicate, so canonicalising them preserves its semantics. */
+function recurrenceKnowledgeSetKey(knowledgeIds: readonly string[]): string {
+  return JSON.stringify(Array.from(new Set(knowledgeIds)).sort());
+}
+
 /**
- * Per-learner cross-attempt cause-family recurrence for a candidate touching KC set K.
+ * Per-learner cross-attempt cause-family recurrence for every candidate KC set in one request.
+ *
+ * This is the YUK-741 set-based read boundary. It issues at most ONE aggregate query over the
+ * union of all requested KCs, retaining `parent_question_id → question.knowledge_ids` in each
+ * grouped evidence row. The in-memory fold then projects each row only into candidate sets whose
+ * KCs intersect that question. A Set de-duplicates candidate-set routing, so a question carrying
+ * two KCs from the same candidate contributes each mistake exactly once — identical to the old
+ * boolean OR predicate rather than double-counting through a KC unnest join.
  *
  * SELF-STATE sufficient statistic (single-user tool → every mistake_variant row is THIS
- * learner's). One bounded aggregate read (NOT a new service): a single GROUP BY over
- * mistake_variant joined to question on parent_question_id, filtered to rows whose parent
- * question carries any kc∈K (jsonb `@>` containment, GIN-indexed), with a non-null
- * cause_category AND status='active' (only CONFIRMED-ACCEPTED mistakes count — draft /
- * dismissed / broken are excluded; see the inline WHERE-clause comment for the lifecycle
- * rationale). Returns the MAX per-cause-family count normalized to [0,1] via the owner-fixed
- * RECURRENCE_NORM.
+ * learner's). Only status='active' + non-null cause rows count. Draft/dismissed/broken rows retain
+ * their cause_category in storage but are not confirmed recurrence evidence, so they remain
+ * excluded. For each candidate, counts are summed per cause family across matching parent
+ * questions, then the maximum family count is normalised through the owner-fixed RECURRENCE_NORM.
  *
- * NEVER zero-fill — undefined (no-data) returns, distinct from a measured 0:
- *   - empty K (candidate has no KCs) → undefined (no KC anchor → no linkage).
- *   - no ACTIVE mistake_variant rows on those KCs with a cause_category → undefined (no
- *     confirmed cause data — e.g. only draft/dismissed/broken rows, or none at all).
- * A measured count ≥1 maps to a finite (0,1] value that rises with the recurrence count.
+ * The returned array is aligned to `candidateKnowledgeIds`. NEVER zero-fill:
+ *   - empty K (candidate has no KCs) → undefined;
+ *   - no confirmed cause rows on K → undefined;
+ *   - empty/all-empty input → no query and aligned undefined values.
  */
-async function aggregateMisconceptionRecurrence(
+export async function batchAggregateMisconceptionRecurrence(
   db: DbLike,
-  knowledgeIds: string[],
-): Promise<number | undefined> {
-  if (knowledgeIds.length === 0) return undefined;
-  // OR of jsonb containments: question probes ANY of the candidate's KCs.
-  const kcContainment = sql.join(
-    knowledgeIds.map((kc) => sql`${question.knowledge_ids} @> ${JSON.stringify([kc])}::jsonb`),
+  candidateKnowledgeIds: readonly (readonly string[])[],
+): Promise<(number | undefined)[]> {
+  if (candidateKnowledgeIds.length === 0) return [];
+
+  const seenKnowledgeSetKeys = new Set<string>();
+  const setKeysByKc = new Map<string, Set<string>>();
+  const inputKeys = candidateKnowledgeIds.map((knowledgeIds) => {
+    const key = recurrenceKnowledgeSetKey(knowledgeIds);
+    if (knowledgeIds.length === 0) return key;
+
+    if (!seenKnowledgeSetKeys.has(key)) {
+      const distinct = Array.from(new Set(knowledgeIds));
+      seenKnowledgeSetKeys.add(key);
+      for (const knowledgeId of distinct) {
+        const keys = setKeysByKc.get(knowledgeId) ?? new Set<string>();
+        keys.add(key);
+        setKeysByKc.set(knowledgeId, keys);
+      }
+    }
+    return key;
+  });
+
+  const unionKcIds = Array.from(setKeysByKc.keys());
+  if (unionKcIds.length === 0) return inputKeys.map(() => undefined);
+
+  // Preserve the established `@>` shape so question_knowledge_ids_gin(jsonb_path_ops) remains
+  // usable. `?|` is intentionally avoided because that operator is unsupported by path_ops.
+  const unionContainment = sql.join(
+    unionKcIds.map(
+      (knowledgeId) => sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`,
+    ),
     sql` OR `,
   );
-  // GROUP BY cause_category over this learner's mistakes on those questions; take MAX count.
-  // count(*) is the per-cause-family recurrence tally (each mistake_variant row = one
-  // recurrence of that cause family). The outer max() over the grouped counts is the single
-  // "most-recurring misconception probed by this candidate" scalar.
-  //
-  // STATUS FILTER (correctness): only status='active' rows are CONFIRMED-ACCEPTED mistakes
-  // — the lifecycle (schema.ts mistake_variant / business.ts MistakeVariant enum) is:
-  //   draft     → AI-proposed, pending user acceptance (cause_category is set at INSERT
-  //               while still 'draft' — see variant_gen.ts — so a draft row carries a
-  //               non-null cause but is NOT yet a confirmed mistake);
-  //   active    → user accepted + variant materialized (THE confirmed recurrence);
-  //   broken    → the generated variant failed VariantVerify pass-2 (drifted / off-target)
-  //               — a quality-rejected generation, not a confirmed-accepted recurrence;
-  //   dismissed → user rejected the proposal (false-positive cause analysis).
-  // dismiss/broken transitions flip status WITHOUT clearing cause_category (proposals/
-  // actions.ts sets only status; variant_verify.ts sets only status+failure_reasons), so an
-  // un-filtered count inflates the signal with pending / rejected / failed rows. We count
-  // ONLY status='active' (mirrors stream-store.ts's variant read), excluding draft +
-  // dismissed + broken. (broken is excluded too: it represents a failed VARIANT generation,
-  // not a confirmed recurrence the learner accepted.)
-  const rows = await db
+
+  // One row per (parent question, cause family) retains the evidence linkage needed to fold the
+  // same row into every intersecting candidate set without fetching one aggregate per candidate.
+  const evidenceRows = await db
     .select({
-      maxCount: sql<number>`max(grouped.cnt)`,
+      questionId: question.id,
+      knowledgeIds: question.knowledge_ids,
+      causeCategory: mistake_variant.cause_category,
+      recurrenceCount: sql<number>`count(*)::int`,
     })
-    .from(
-      sql`(
-        SELECT count(*)::int AS cnt
-        FROM ${mistake_variant}
-        JOIN ${question} ON ${question.id} = ${mistake_variant.parent_question_id}
-        WHERE ${mistake_variant.cause_category} IS NOT NULL
-          AND ${mistake_variant.status} = 'active'
-          AND (${kcContainment})
-        GROUP BY ${mistake_variant.cause_category}
-      ) AS grouped`,
-    );
-  const maxCount = rows[0]?.maxCount;
-  // No grouped rows → max() returns NULL → maxCount null/undefined → no cause data → undefined.
-  if (maxCount === null || maxCount === undefined || maxCount <= 0) return undefined;
-  // Owner-fixed normalization; rises with recurrence count, saturates at RECURRENCE_NORM.
-  return Math.min(1, maxCount / RECURRENCE_NORM);
+    .from(mistake_variant)
+    .innerJoin(question, eq(question.id, mistake_variant.parent_question_id))
+    .where(
+      and(
+        isNotNull(mistake_variant.cause_category),
+        eq(mistake_variant.status, 'active'),
+        sql`(${unionContainment})`,
+      ),
+    )
+    .groupBy(question.id, question.knowledge_ids, mistake_variant.cause_category);
+
+  const countsBySetAndCause = new Map<string, Map<string, number>>();
+  for (const row of evidenceRows) {
+    // One question may carry multiple requested KCs. Route to each candidate-set key once so its
+    // evidence count matches the reference `kc1 OR kc2` query rather than being multiplied.
+    const matchingSetKeys = new Set<string>();
+    for (const knowledgeId of row.knowledgeIds) {
+      for (const key of setKeysByKc.get(knowledgeId) ?? []) matchingSetKeys.add(key);
+    }
+    if (row.causeCategory === null) continue; // narrowed by SQL; retain a fail-closed TS guard.
+    for (const key of matchingSetKeys) {
+      const byCause = countsBySetAndCause.get(key) ?? new Map<string, number>();
+      byCause.set(row.causeCategory, (byCause.get(row.causeCategory) ?? 0) + row.recurrenceCount);
+      countsBySetAndCause.set(key, byCause);
+    }
+  }
+
+  const scoreBySet = new Map<string, number>();
+  for (const [key, byCause] of countsBySetAndCause) {
+    const maxCount = Math.max(...byCause.values());
+    if (maxCount > 0) scoreBySet.set(key, Math.min(1, maxCount / RECURRENCE_NORM));
+  }
+  return inputKeys.map((key) => scoreBySet.get(key));
 }
 
 /**
@@ -351,6 +388,7 @@ async function collectQuestionSignal(
   masteryByKc: Map<string, MasteryStateRow>,
   effectiveThetaByKc: Map<string, number>,
   familyRow: FamilyCalibrationRow | null = null,
+  misconceptionRecurrence?: number,
 ): Promise<CollectedSignal> {
   const knowledgeIds = cand.knowledgeIds ?? [];
   const { thetaHat, thetaPrecision, evidenceCount, gridPosterior, thetaGlobal } =
@@ -413,20 +451,10 @@ async function collectQuestionSignal(
   // P2 D2 / A8 — misconceptionRecurrence（错误观念复发度，选题专属，flag-gated dark-ship）。
   //   FLAG OFF (DEFAULT)：短路在读之前 → 恒 undefined → orchestrator prompt + mfiScore/
   //     diagnosticScore 路径逐位等同今天（NEVER zero-fill）。
-  //   FLAG ON：per-learner SELF-STATE tally（aggregateMisconceptionRecurrence）。无数据 →
+  //   FLAG ON：per-learner SELF-STATE tally（batchAggregateMisconceptionRecurrence）。无数据 →
   //     undefined（NOT 0）。recall-locked 也照常算——它是候选画像的一部分（生产里
   //     recall-locked 在喂 orchestrator 前已被切出，故此值对它实际不被消费；但保持
   //     snapshot 完整、不引入 recall 特例分支）。
-  // TODO(flag-on): batch aggregateMisconceptionRecurrence across all candidates (like the
-  //   family-calibration read in collectCandidateSignals ~lines 442-453: dedupe the KC keys
-  //   then issue ONE IN/containment query) BEFORE flipping MISCONCEPTION_RECURRENCE_ENABLED
-  //   to true. Right now this runs per-candidate inside the serial loop (an N+1 aggregate
-  //   read). It is harmless while the flag is OFF (default) — the call is short-circuited
-  //   before any query — but go-live must not silently ship the N+1.
-  const misconceptionRecurrence = MISCONCEPTION_RECURRENCE_ENABLED
-    ? await aggregateMisconceptionRecurrence(db, knowledgeIds)
-    : undefined;
-
   return {
     refKind: 'question',
     refId: cand.refId,
@@ -447,7 +475,7 @@ async function collectQuestionSignal(
     //     profile 考纲权重表后，在此据 candidate 的 knowledgeIds → 考点权重映射计算。
     //   - misconceptionRecurrence（错误观念复发度）：**已填**（P2 D2 / A8）。flag-gated
     //     dark-ship（MISCONCEPTION_RECURRENCE_ENABLED，默认 false → undefined → orchestrator
-    //     prompt byte-identical）。ON 时 aggregateMisconceptionRecurrence 算 per-learner
+    //     prompt byte-identical）。ON 时 batchAggregateMisconceptionRecurrence 算 per-learner
     //     SELF-STATE 错因家族跨 attempt 复发频次（KC-based linkage），归一化到 0-1（owner-fixed
     //     RECURRENCE_NORM）。无数据 → undefined（见该函数文档）。
     // transferGap 不再投影为永久 undefined：无 per-(KC,context) reader 时，字段与 prompt
@@ -535,14 +563,36 @@ export async function collectCandidateSignals(
     })),
   );
 
+  // YUK-741 — recurrence is a request-level sidecar, not a per-candidate query. Flag OFF keeps
+  // the historical hard short-circuit: no recurrence aggregate is issued and every value stays
+  // undefined. Flag ON performs one union-KC aggregate for all question candidates; outputs stay
+  // aligned with questionCands, including empty/sparse sets and duplicate KC-set signatures.
+  const recurrenceByQuestion = MISCONCEPTION_RECURRENCE_ENABLED
+    ? await batchAggregateMisconceptionRecurrence(
+        db,
+        questionCands.map((candidate) => candidate.knowledgeIds ?? []),
+      )
+    : questionCands.map(() => undefined);
+
   const out: CollectedSignal[] = [];
+  let questionIndex = 0;
   for (const cand of candidates) {
     if (cand.refKind === 'paper') {
       out.push(collectPaperSignal(cand));
     } else {
       const fk = familyKeyByRefId.get(cand.refId) ?? null;
       const familyRow = fk !== null ? (familyRowByKey.get(fk) ?? null) : null;
-      out.push(await collectQuestionSignal(db, cand, masteryByKc, effectiveThetaByKc, familyRow));
+      out.push(
+        await collectQuestionSignal(
+          db,
+          cand,
+          masteryByKc,
+          effectiveThetaByKc,
+          familyRow,
+          recurrenceByQuestion[questionIndex],
+        ),
+      );
+      questionIndex += 1;
     }
   }
   return out;
