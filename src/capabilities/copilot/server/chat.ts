@@ -815,10 +815,10 @@ async function runCopilotChatImpl(
   // two paths are byte-parity by construction — the drift the panel elevated to a
   // correctness requirement). Called HERE, BEFORE the user_ask write below, so the
   // inline path keeps its proven read-before-write ordering (the current ask is not
-  // yet persisted → structurally excluded) and OMITS `excludeUserAskEventId`. Only
-  // the durable path (dispatch-writes-ask-then-worker-picks-up) passes the exclude
-  // cursor. The additive-input degrade semantics (learner-state / history read
-  // failures → empty, never crash) live inside the assembler now.
+  // yet persisted → structurally excluded) and omits a history anchor. The durable
+  // path (dispatch-writes-ask-then-worker-picks-up) passes its run_id as the fixed
+  // causal anchor instead. The additive-input degrade semantics (learner-state /
+  // history read failures → empty, never crash) live inside the assembler now.
   let freeFormRunInput: CopilotRunInput | undefined;
   if (!req.skill_context || req.skill_context.skill === 'quiz') {
     freeFormRunInput = await assembleCopilotRunInput(

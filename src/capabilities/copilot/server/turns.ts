@@ -22,7 +22,8 @@ import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { findReusableCopilotConversation } from '@/server/session/conversation';
-import { and, desc, eq, inArray, ne, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 
 export type CopilotTurnRole = 'user' | 'ai' | 'tombstone';
@@ -196,66 +197,23 @@ function replySkillContext(payload: Record<string, unknown>): CopilotTurnSkillCo
   return { skill: s.skill, ref: { kind: r.kind, id: r.id } };
 }
 
+type CopilotTurnRow = Pick<
+  typeof event.$inferSelect,
+  'id' | 'action' | 'payload' | 'created_at' | 'caused_by_event_id'
+>;
+
 /**
- * Returns the most recent Copilot turns, oldest→newest, capped at `limit`
- * (default 20, max 100). Pulls the newest `limit` of both the user-side and
- * reply-side actions, merges by (created_at desc, id desc), keeps the newest
- * `limit`, then reverses to chronological order for the drawer.
- *
- * Rows whose payload has no usable text (corrupt / partial) are dropped — replay
- * is best-effort prefill, never the source of truth.
+ * Project newest-first Copilot event rows into the replay surface shared by the
+ * live-session reader and the durable anchor reader. Keeping correction,
+ * materialization, tombstone, and checkpoint rules here prevents the two
+ * history modes from drifting as replay semantics evolve.
  */
-export async function getRecentCopilotTurns(
+async function projectCopilotTurnRows(
   dbArg: DbLike,
-  // YUK-575 (MF-B) — `excludeEventId` drops one event row (by id) from the
-  // returned history. The durable copilot run handler passes its own
-  // `run_id` (= the user_ask event id) here: unlike the inline path — which
-  // reads history BEFORE writing the ask, so the ask is structurally excluded
-  // (chat.ts read-before-write) — the durable path DISPATCH writes the user_ask
-  // first (api/chat.ts), then the worker picks the job up later, so at pickup
-  // time the current ask is already persisted and would otherwise double-count
-  // as the newest user turn (and shove out the oldest real turn). Inline callers
-  // OMIT this (their read-before-write ordering already excludes the ask); only
-  // durable pickup passes it. Absent → byte-identical to the pre-YUK-575 query.
-  opts: { limit?: number; now?: Date; excludeEventId?: string } = {},
+  sessionId: string,
+  rows: CopilotTurnRow[],
+  limit: number,
 ): Promise<CopilotTurn[]> {
-  const limit = clampLimit(opts.limit);
-
-  // codex #3356884484 — scope replay to the CURRENT reusable Copilot session.
-  // Resolve it with the SAME predicate find-or-create uses (shared helper) so a
-  // stale prior conversation (ended/abandoned, or last active >24h ago) is never
-  // replayed into what the server will treat as a fresh session. No reusable
-  // session → this is a brand-new conversation; return nothing to prefill.
-  const session = await findReusableCopilotConversation(dbArg as Db, { now: opts.now });
-  if (session === null) return [];
-
-  // One query over all three actions for THIS session, newest first, bounded by
-  // limit*2 (a turn pair is one user + one reply row, so ≤ limit*2 rows cover
-  // `limit` turns). Filter on the events.session_id column — every Copilot turn
-  // event (ask/chip + reply) now writes it (the column = the event's conversation
-  // session, shared by teaching + copilot; payload.session_id is the portable copy).
-  const rows = await dbArg
-    .select({
-      id: event.id,
-      action: event.action,
-      payload: event.payload,
-      created_at: event.created_at,
-      caused_by_event_id: event.caused_by_event_id,
-    })
-    .from(event)
-    .where(
-      and(
-        eq(event.session_id, session.id),
-        or(inArray(event.action, [...USER_ACTIONS]), eq(event.action, REPLY_ACTION)),
-        // YUK-575 (MF-B) — durable pickup excludes its own just-written user_ask
-        // by id. `and(…, undefined)` is a drizzle no-op, so omitting it (inline)
-        // leaves the query byte-identical.
-        opts.excludeEventId ? ne(event.id, opts.excludeEventId) : undefined,
-      ),
-    )
-    .orderBy(desc(event.created_at), desc(event.id))
-    .limit(limit * 2);
-
   // YUK-497 wave-3 (OCR minor) — also probe the retraction status of each reply's parent, even when
   // that parent fell OUTSIDE this limit*2 window. Otherwise a reply whose parent was retracted
   // out-of-window renders normally after a refresh (stale content from a reverted turn). NOTE: a
@@ -349,7 +307,7 @@ export async function getRecentCopilotTurns(
         event_id: row.id,
         // PR round-2 (CR 3360614432): Dock chip renderer needs session_id to
         // resolve the conversation and reply_event_id to anchor the chip.
-        session_id: session.id,
+        session_id: sessionId,
         reply_event_id: row.id,
         // Only a reply rooted at a typed user_ask exposes a revert affordance; a chip-triggered
         // reply's caused_by points at a chip_trigger (not a revert root). Suppress a materializing
@@ -384,4 +342,173 @@ export async function getRecentCopilotTurns(
 
   // rows are newest-first; keep the newest `limit`, then reverse to chronological.
   return turns.slice(0, limit).reverse();
+}
+
+/**
+ * Returns the most recent Copilot turns, oldest→newest, capped at `limit`
+ * (default 20, max 100). Pulls the newest `limit` of both the user-side and
+ * reply-side actions, merges by (created_at desc, id desc), keeps the newest
+ * `limit`, then reverses to chronological order for the drawer.
+ *
+ * Rows whose payload has no usable text (corrupt / partial) are dropped — replay
+ * is best-effort prefill, never the source of truth.
+ */
+export async function getRecentCopilotTurns(
+  dbArg: DbLike,
+  opts: { limit?: number; now?: Date } = {},
+): Promise<CopilotTurn[]> {
+  const limit = clampLimit(opts.limit);
+
+  // codex #3356884484 — scope replay to the CURRENT reusable Copilot session.
+  // Resolve it with the SAME predicate find-or-create uses (shared helper) so a
+  // stale prior conversation (ended/abandoned, or last active >24h ago) is never
+  // replayed into what the server will treat as a fresh session. No reusable
+  // session → this is a brand-new conversation; return nothing to prefill.
+  const session = await findReusableCopilotConversation(dbArg as Db, { now: opts.now });
+  if (session === null) return [];
+
+  // One query over all three actions for THIS session, newest first, bounded by
+  // limit*2 (a turn pair is one user + one reply row, so ≤ limit*2 rows cover
+  // `limit` turns). Filter on the events.session_id column — every Copilot turn
+  // event (ask/chip + reply) now writes it (the column = the event's conversation
+  // session, shared by teaching + copilot; payload.session_id is the portable copy).
+  const rows = await dbArg
+    .select({
+      id: event.id,
+      action: event.action,
+      payload: event.payload,
+      created_at: event.created_at,
+      caused_by_event_id: event.caused_by_event_id,
+    })
+    .from(event)
+    .where(
+      and(
+        eq(event.session_id, session.id),
+        or(inArray(event.action, [...USER_ACTIONS]), eq(event.action, REPLY_ACTION)),
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(limit * 2);
+
+  return projectCopilotTurnRows(dbArg, session.id, rows, limit);
+}
+
+export type CopilotHistoryAnchorErrorReason =
+  | 'missing_anchor'
+  | 'invalid_anchor_action'
+  | 'session_mismatch';
+
+/**
+ * A durable run must never silently switch to whatever conversation happens to
+ * be reusable when the worker finally picks it up. Existing anchors with the
+ * wrong action/session are integrity failures and fail closed. `missing_anchor`
+ * remains distinguishable so the assembler can apply YUK-596's explicit legacy
+ * fallback with a structured alert.
+ */
+export class CopilotHistoryAnchorError extends Error {
+  constructor(
+    readonly reason: CopilotHistoryAnchorErrorReason,
+    readonly anchorEventId: string,
+  ) {
+    super(`Copilot history anchor integrity failure: ${reason}`);
+    this.name = 'CopilotHistoryAnchorError';
+  }
+}
+
+/**
+ * Read the causal conversation history for one durable Copilot run.
+ *
+ * Root asks/chips are eligible only when their insertion coordinate precedes
+ * the run's user-ask anchor. A reply follows its causal root instead of its own
+ * timestamp/dispatch coordinate, so a late reply to an earlier root is kept,
+ * while replies to the anchor or later roots are excluded. Parentless legacy
+ * replies fall back to their own coordinate. Eligibility is applied before the
+ * LIMIT so future traffic cannot evict the run's real history.
+ */
+export async function getCopilotTurnsBeforeAnchor(
+  dbArg: DbLike,
+  opts: { sessionId: string; anchorEventId: string; limit?: number },
+): Promise<CopilotTurn[]> {
+  const limit = clampLimit(opts.limit);
+  const [anchor] = await dbArg
+    .select({
+      action: event.action,
+      session_id: event.session_id,
+    })
+    .from(event)
+    .where(eq(event.id, opts.anchorEventId))
+    .limit(1);
+
+  if (!anchor) {
+    throw new CopilotHistoryAnchorError('missing_anchor', opts.anchorEventId);
+  }
+  if (anchor.action !== USER_ASK_ACTION) {
+    throw new CopilotHistoryAnchorError('invalid_anchor_action', opts.anchorEventId);
+  }
+  if (anchor.session_id !== opts.sessionId) {
+    throw new CopilotHistoryAnchorError('session_mismatch', opts.anchorEventId);
+  }
+
+  // Keep bigint dispatch_seq entirely inside Postgres. The schema intentionally
+  // types this diagnostic sequence as number because normal subscription flows
+  // never materialize it in JavaScript; reading an anchor value here would lose
+  // precision once the sequence exceeds Number.MAX_SAFE_INTEGER.
+  const historyAnchor = alias(event, 'copilot_history_anchor');
+  const historyParent = alias(event, 'copilot_history_parent');
+  // A queued run's reply may be inserted long after several later roots. Sort
+  // attributed replies by their ROOT coordinate, not their own insertion time,
+  // and put the reply immediately before its root in newest-first order. The
+  // shared projector reverses this to root→reply chronological pairs. Applying
+  // this ordering before LIMIT prevents a batchSize:1 backlog from producing a
+  // history of orphan replies or a block of users followed by a block of AIs.
+  const causalDispatchSeq = sql<number>`case
+    when ${event.action} = ${REPLY_ACTION}
+      then coalesce(${historyParent.dispatch_seq}, ${event.dispatch_seq})
+    else ${event.dispatch_seq}
+  end`;
+  const replyWithinRoot = sql<number>`case when ${event.action} = ${REPLY_ACTION} then 1 else 0 end`;
+  const rows = await dbArg
+    .select({
+      id: event.id,
+      action: event.action,
+      payload: event.payload,
+      created_at: event.created_at,
+      caused_by_event_id: event.caused_by_event_id,
+    })
+    .from(event)
+    .innerJoin(historyAnchor, eq(historyAnchor.id, opts.anchorEventId))
+    .leftJoin(historyParent, eq(historyParent.id, event.caused_by_event_id))
+    .where(
+      and(
+        eq(event.session_id, opts.sessionId),
+        or(
+          // Root user turns use the anchor's stable insertion-order boundary.
+          and(
+            inArray(event.action, [...USER_ACTIONS]),
+            lt(event.dispatch_seq, historyAnchor.dispatch_seq),
+          ),
+          and(
+            eq(event.action, REPLY_ACTION),
+            or(
+              // Legacy replies may predate caused_by_event_id attribution.
+              and(
+                isNull(event.caused_by_event_id),
+                lt(event.dispatch_seq, historyAnchor.dispatch_seq),
+              ),
+              // Attributed replies inherit eligibility from their root, even
+              // when the reply itself was inserted after the anchor.
+              and(
+                eq(historyParent.session_id, opts.sessionId),
+                inArray(historyParent.action, [...USER_ACTIONS]),
+                lt(historyParent.dispatch_seq, historyAnchor.dispatch_seq),
+              ),
+            ),
+          ),
+        ),
+      ),
+    )
+    .orderBy(desc(causalDispatchSeq), desc(replyWithinRoot), desc(event.dispatch_seq))
+    .limit(limit * 2);
+
+  return projectCopilotTurnRows(dbArg, opts.sessionId, rows, limit);
 }

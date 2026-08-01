@@ -1055,9 +1055,9 @@ describe('runCopilotRun', () => {
     expect(deriveCopilotRunStatus(events.slice(0, 4))).toBe('running');
   });
 
-  // YUK-575 (N3/A1/MF-B + S4) — handler pickup 时调共享装配器，传 excludeUserAskEventId=
-  // run_id 且 ambient RIDE 自 job payload 进装配参数。
-  it('N3/S4 — 装配器收到 excludeUserAskEventId=run_id + ambient（从 job payload 透传）', async () => {
+  // YUK-596 (causal history + S4) — handler pickup 时调共享装配器，传
+  // historyAnchorEventId=run_id 且 ambient RIDE 自 job payload 进装配参数。
+  it('N3/S4 — 装配器收到 historyAnchorEventId=run_id + ambient（从 job payload 透传）', async () => {
     const runId = 'run_assemble_params';
     const assembleSpy = vi.fn(stubRunInput);
     const run = streamMock('ok');
@@ -1075,7 +1075,7 @@ describe('runCopilotRun', () => {
       sessionId: 'sess_assemble',
       userMessage: baseData.user_message,
       triggeredBy: 'chat',
-      excludeUserAskEventId: runId,
+      historyAnchorEventId: runId,
       ambient,
     });
     // 装配器返回的 run input（含 ambient_context）透传给 stream。
