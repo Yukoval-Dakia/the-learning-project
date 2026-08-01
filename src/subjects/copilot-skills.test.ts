@@ -117,4 +117,23 @@ describe('live SoT — shipped shared SKILL.md packs resolve against the real tr
       );
     },
   );
+
+  it('YUK-757 — dialogue methodology delegates only genuinely heavy focused work', () => {
+    const skillFile = join(
+      process.cwd(),
+      'src',
+      'subjects',
+      COPILOT_SHARED_SUBJECT_DIR,
+      'skills',
+      COPILOT_SKILL_NAME,
+      'SKILL.md',
+    );
+    const content = readFileSync(skillFile, 'utf-8');
+    expect(content).toContain('什么时候派后台研究员');
+    expect(content).toContain('跨 artifact 深检索');
+    expect(content).toContain('复杂出题预览');
+    expect(content).toContain('诊断解释');
+    expect(content).toContain('短任务不要派');
+    expect(content).toContain('只把结论交回主 Copilot');
+  });
 });

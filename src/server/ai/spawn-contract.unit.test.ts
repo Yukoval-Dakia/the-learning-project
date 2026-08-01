@@ -11,6 +11,7 @@ function taskHookInput(toolUseId: string, toolName = SPAWN_TOOL_NAME) {
     tool_input: {
       subagent_type: 'diagnostic-scout',
       description: '交叉核对七日错题、探针与复习轨迹中的必要条件/充分条件混淆',
+      run_in_background: false,
     },
     tool_use_id: toolUseId,
     session_id: 'copilot-session-2026-08-01-complex-01',
@@ -195,7 +196,7 @@ describe('createSpawnContract — YUK-757/YUK-572 v2', () => {
     });
   });
 
-  it('rejects fallback agents and model/isolation overrides instead of escaping the declared surface', async () => {
+  it('rejects fallback agents and model/isolation/background overrides instead of escaping the declared surface', async () => {
     const observations = vi.fn();
     const contract = createSpawnContract({
       enabled: true,
@@ -234,6 +235,15 @@ describe('createSpawnContract — YUK-757/YUK-572 v2', () => {
       'spawn-isolation-override',
       { signal },
     );
+    const backgroundOverride = await contract.canUseTool(
+      SPAWN_TOOL_NAME,
+      {
+        subagent_type: 'diagnostic-scout',
+        run_in_background: true,
+        description: '尝试让父 Copilot 不等结论便提前结束',
+      },
+      permissionOptions('spawn-background-override'),
+    );
 
     expect(unknownHook).toMatchObject({
       hookSpecificOutput: {
@@ -247,25 +257,30 @@ describe('createSpawnContract — YUK-757/YUK-572 v2', () => {
     });
     expect(modelOverride).toEqual({
       behavior: 'deny',
-      message: 'Task model/isolation overrides are not allowed',
+      message: 'Task model/isolation/background overrides are not allowed',
     });
     expect(isolationOverride).toMatchObject({
       hookSpecificOutput: {
         permissionDecision: 'deny',
-        permissionDecisionReason: 'Task model/isolation overrides are not allowed',
+        permissionDecisionReason: 'Task model/isolation/background overrides are not allowed',
       },
     });
-    expect(observations).toHaveBeenCalledTimes(3);
+    expect(backgroundOverride).toEqual({
+      behavior: 'deny',
+      message: 'Task model/isolation/background overrides are not allowed',
+    });
+    expect(observations).toHaveBeenCalledTimes(4);
     expect(contract.readBudgetReport()).toEqual({
       mode: SPAWN_BUDGET_MODE,
-      observedAttempts: 3,
+      observedAttempts: 4,
       allowedAttempts: 0,
       deniedByKillSwitch: 0,
-      deniedByContract: 3,
+      deniedByContract: 4,
       toolUseIds: [
         'spawn-unknown-general-purpose',
         'spawn-model-override',
         'spawn-isolation-override',
+        'spawn-background-override',
       ],
     });
   });

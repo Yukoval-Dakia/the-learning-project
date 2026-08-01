@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 const runMock = vi.hoisted(() => vi.fn());
+const dispatchMock = vi.hoisted(() => vi.fn());
 const writeUserAskMock = vi.hoisted(() => vi.fn());
 const writeReplyMock = vi.hoisted(() => vi.fn());
 const bossSendMock = vi.hoisted(() => vi.fn());
@@ -20,6 +21,12 @@ vi.mock('@/capabilities/copilot/server/chat', () => ({
     triggered_by: z.enum(['chat', 'chip']),
     chip_kind: z.string().optional(),
     durable: z.boolean().optional(),
+    ambient_context: z
+      .object({
+        route: z.string(),
+        focused_entity: z.object({ kind: z.string(), id: z.string() }).optional(),
+      })
+      .optional(),
     // YUK-364 (bot-review C3) — 镜像 skill_context（route 用它把 teaching turn 排除
     // 出 durable 面）；最小形态够触发分支即可。
     skill_context: z
@@ -29,6 +36,7 @@ vi.mock('@/capabilities/copilot/server/chat', () => ({
       })
       .optional(),
   }),
+  decideCopilotDispatch: dispatchMock,
   runCopilotChatStreaming: runMock,
   writeCopilotUserAsk: writeUserAskMock,
   writeCopilotReply: writeReplyMock,
@@ -66,6 +74,12 @@ const readAll = (res: Response) => new Response(res.body).text();
 beforeEach(() => {
   __resetRateLimitForTests();
   dbExecuteMock.mockReset().mockResolvedValue([{ count: 0 }]);
+  dispatchMock.mockReset().mockResolvedValue({
+    mode: 'inline',
+    reason: 'bounded_answer',
+    source: 'model_triage',
+    task_run_id: 'copilot_dispatch_default_inline',
+  });
 });
 
 describe('POST /api/copilot/chat — SSE via SSEStreamingApi', () => {
@@ -84,6 +98,56 @@ describe('POST /api/copilot/chat — SSE via SSEStreamingApi', () => {
         'event: delta\ndata: {"text":"好"}\n\n' +
         'event: reply\ndata: {"session_id":"s1","reply_event_id":"e1"}\n\n',
     );
+  });
+
+  it('YUK-757 — inline 子任务帧与 Copilot delta 共用 FIFO，且只出白名单字段', async () => {
+    shouldEnqueueMock.mockReturnValue(false);
+    runMock.mockImplementation(async (_db, _req, onDelta, deps) => {
+      await deps.onSubtaskEvent({
+        step_kind: 'subtask',
+        subtask_id: 'task-cross-artifacts-55',
+        label: '核对三份函数讲义、四道错题与知识图谱先修关系',
+        status: 'running',
+      });
+      onDelta('我正在核对这些证据。');
+      await deps.onSubtaskEvent({
+        step_kind: 'subtask',
+        subtask_id: 'task-question-preview-12',
+        label: '预览含参数函数辨析题并检查退化分支',
+        status: 'running',
+      });
+      await deps.onSubtaskEvent({
+        step_kind: 'subtask',
+        subtask_id: 'task-cross-artifacts-55',
+        label: '子任务已完成',
+        status: 'completed',
+      });
+      onDelta('结论：驻点之后仍要检查导数是否变号。');
+      return { session_id: 's-subtasks', reply_event_id: 'e-subtasks' };
+    });
+
+    const res = await post({
+      user_message: '交叉核对我的材料，再预览一道能区分驻点与极值点的题。',
+      triggered_by: 'chat',
+    });
+    const text = await readAll(res);
+    expect(text).toBe(
+      'event: subtask\n' +
+        'data: {"step_kind":"subtask","subtask_id":"task-cross-artifacts-55","label":"核对三份函数讲义、四道错题与知识图谱先修关系","status":"running"}\n\n' +
+        'event: delta\n' +
+        'data: {"text":"我正在核对这些证据。"}\n\n' +
+        'event: subtask\n' +
+        'data: {"step_kind":"subtask","subtask_id":"task-question-preview-12","label":"预览含参数函数辨析题并检查退化分支","status":"running"}\n\n' +
+        'event: subtask\n' +
+        'data: {"step_kind":"subtask","subtask_id":"task-cross-artifacts-55","label":"子任务已完成","status":"completed"}\n\n' +
+        'event: delta\n' +
+        'data: {"text":"结论：驻点之后仍要检查导数是否变号。"}\n\n' +
+        'event: reply\n' +
+        'data: {"session_id":"s-subtasks","reply_event_id":"e-subtasks"}\n\n',
+    );
+    expect(text).not.toContain('prompt');
+    expect(text).not.toContain('reasoning');
+    expect(text).not.toContain('transcript');
   });
 
   it('zod 解析失败 → JSON errorResponse，绝不开流', async () => {
@@ -168,6 +232,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     );
     // 同步 streaming 路径不被走。
     expect(runMock).not.toHaveBeenCalled();
+    expect(dispatchMock).not.toHaveBeenCalled();
 
     // YUK-364 (F5) — happen-before 顺序：user_ask（commit run handle）→ QUEUED 进度
     // 事件 → boss.send 投递。防未来重排成 boss.send 先于 user_ask 写入的 race
@@ -248,6 +313,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
     expect(bossSendMock).not.toHaveBeenCalled();
     expect(runMock).toHaveBeenCalled();
+    expect(dispatchMock).not.toHaveBeenCalled();
   });
 
   it('durable:true 但 triggered_by=chip → 降级回 inline（chip 不入 durable 面）', async () => {
@@ -260,9 +326,10 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
     expect(bossSendMock).not.toHaveBeenCalled();
     expect(runMock).toHaveBeenCalled();
+    expect(dispatchMock).not.toHaveBeenCalled();
   });
 
-  it('durable absent → 同步 SSE 路径 byte-identical（零回归）', async () => {
+  it('durable absent + model inline decision → 同步 SSE framing byte-identical', async () => {
     shouldEnqueueMock.mockReturnValue(true);
     bossSendMock.mockClear();
     runMock.mockClear();
@@ -270,6 +337,90 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
 
     const res = await post({ user_message: 'hi', triggered_by: 'chat' });
     expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
+    expect(bossSendMock).not.toHaveBeenCalled();
+    expect(runMock).toHaveBeenCalled();
+    expect(dispatchMock).toHaveBeenCalledWith(expect.objectContaining({ execute: dbExecuteMock }), {
+      user_message: 'hi',
+    });
+  });
+
+  it('YUK-757 — absent + model durable decision returns 202 and stamps bounded dispatch provenance', async () => {
+    shouldEnqueueMock.mockReturnValue(true);
+    dispatchMock.mockResolvedValue({
+      mode: 'durable',
+      reason: 'multi_artifact_work',
+      source: 'model_triage',
+      task_run_id: 'copilot_dispatch_physics_batch',
+    });
+    findOrCreateMock.mockReset().mockResolvedValue({
+      sessionId: 'sess_auto_durable',
+      created: true,
+    });
+    writeUserAskMock.mockReset().mockResolvedValue('copilot_user_ask_AUTO');
+    writeJobEventMock.mockReset().mockResolvedValue(1);
+    getStartedBossMock.mockReset().mockResolvedValue({ send: bossSendMock });
+    bossSendMock.mockReset().mockResolvedValue('job_auto');
+    runMock.mockClear();
+
+    const userMessage =
+      '读取近 30 天 12 次电磁感应错题，按四类聚类并找重复证据；再生成 8 道新题，逐题核验唯一解、单位和退化条件，最后只 propose 调整计划。';
+    const res = await post({
+      user_message: userMessage,
+      triggered_by: 'chat',
+      ambient_context: {
+        route: '/subjects/physics/mistakes',
+        focused_entity: { kind: 'knowledge', id: 'kc_electromagnetic_induction' },
+      },
+    });
+
+    expect(res.status).toBe(202);
+    expect(res.headers.get('Location')).toBe('/api/jobs/copilot_run/copilot_user_ask_AUTO/events');
+    expect(dispatchMock).toHaveBeenCalledWith(expect.objectContaining({ execute: dbExecuteMock }), {
+      user_message: userMessage,
+      ambient_context: {
+        route: '/subjects/physics/mistakes',
+        focused_entity: { kind: 'knowledge', id: 'kc_electromagnetic_induction' },
+      },
+    });
+    expect(writeJobEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({ execute: dbExecuteMock }),
+      expect.objectContaining({
+        event_type: 'copilot_run.queued',
+        payload: expect.objectContaining({
+          dispatch: {
+            source: 'model_triage',
+            reason_code: 'multi_artifact_work',
+            task_run_id: 'copilot_dispatch_physics_batch',
+          },
+        }),
+      }),
+    );
+    expect(bossSendMock).toHaveBeenCalledWith(
+      'copilot_run',
+      expect.objectContaining({
+        user_message: userMessage,
+        ambient: {
+          route: '/subjects/physics/mistakes',
+          focused_entity: { kind: 'knowledge', id: 'kc_electromagnetic_induction' },
+        },
+      }),
+    );
+    expect(runMock).not.toHaveBeenCalled();
+  });
+
+  it('YUK-757 — durable:false is an explicit force-inline and skips model triage', async () => {
+    shouldEnqueueMock.mockReturnValue(true);
+    runMock.mockReset().mockResolvedValue({ session_id: 's_force_inline', reply_event_id: 'e1' });
+    bossSendMock.mockClear();
+
+    const res = await post({
+      user_message: '把我整套高二物理错题逐题核验、修正并出变式。',
+      triggered_by: 'chat',
+      durable: false,
+    });
+
+    expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
+    expect(dispatchMock).not.toHaveBeenCalled();
     expect(bossSendMock).not.toHaveBeenCalled();
     expect(runMock).toHaveBeenCalled();
   });
@@ -290,5 +441,6 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
     expect(bossSendMock).not.toHaveBeenCalled();
     expect(runMock).toHaveBeenCalled();
+    expect(dispatchMock).not.toHaveBeenCalled();
   });
 });

@@ -113,13 +113,19 @@ export function createSpawnContract(options: CreateSpawnContractOptions): SpawnC
           decision: 'deny_unknown_agent',
           message: `unknown subagent_type; allowed: ${[...allowedAgentNames].join(', ') || '(none)'}`,
         };
-      } else if ('model' in taskInput || 'isolation' in taskInput) {
-        // Role definitions, not model-emitted Task input, own model and isolation.
+      } else if (
+        'model' in taskInput ||
+        'isolation' in taskInput ||
+        taskInput.run_in_background === true
+      ) {
+        // Role definitions, not model-emitted Task input, own model/isolation and
+        // foreground completion. A background override can let the parent finish
+        // without receiving the child conclusion, breaking one-voice product flow.
         // Reject rather than silently strip so both guard surfaces make the same
         // correlation-id keyed decision and the attempted privilege change is visible.
         record = {
           decision: 'deny_input_override',
-          message: 'Task model/isolation overrides are not allowed',
+          message: 'Task model/isolation/background overrides are not allowed',
         };
       } else {
         record = { decision: 'allow' };

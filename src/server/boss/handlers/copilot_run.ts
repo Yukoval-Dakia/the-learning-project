@@ -36,6 +36,11 @@ import {
   hasCancelRequest,
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
+import {
+  buildCopilotSubagents,
+  createCopilotSubtaskProjector,
+  isCopilotSubagentEnabled,
+} from '@/capabilities/copilot/server/subagents';
 import type { Db } from '@/db/client';
 // YUK-364 (bot-review C5) — 共享 Tavily 远程 MCP（web grounding），与 inline copilot
 // （chat.ts runCopilotChatImpl）+ quiz_gen handler 同一份 env-gated builder。配置
@@ -46,7 +51,16 @@ import {
   TAVILY_MCP_SERVER_NAME,
   buildTavilyMcpServer,
 } from '@/server/ai/mcp/tavily';
-import { type StreamCollectResult, streamTaskCollecting } from '@/server/ai/runner';
+import {
+  type StreamCollectResult,
+  type TaskEventMessage,
+  streamTaskCollecting,
+} from '@/server/ai/runner';
+import {
+  SPAWN_TOOL_NAME,
+  type SpawnBudgetObservation,
+  createSpawnContract,
+} from '@/server/ai/spawn-contract';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   resolveDomainToolNames,
@@ -153,12 +167,26 @@ export interface RunCopilotRunParams {
   // subjects/_shared/skills/copilot/SKILL.md）。注入 () => ['copilot'] 验证传入，
   // () => undefined 验证降级（ctx 省略 skills，runner skills ?? [] 不变）。
   resolveCopilotSkillsFn?: typeof resolveCopilotSkills;
+  /** Test/ops seam for the default-on COPILOT_SUBAGENT_ENABLED kill switch. */
+  copilotSubagentEnabled?: boolean;
+  /** Report-only observation seam; native tool-call/cost logs remain authoritative. */
+  onSpawnBudgetObservation?: (observation: SpawnBudgetObservation) => void;
 }
 
 export type RunCopilotRunResult =
   | { status: 'done'; reply: string; task_run_id: string }
   | { status: 'cancelled' }
   | { status: 'failed'; error: string };
+
+function observeCopilotSpawnBudget(observation: SpawnBudgetObservation): void {
+  console.info('[copilot_run] spawn_budget_observation', {
+    event: 'copilot_spawn_budget_observation',
+    mode: observation.mode,
+    tool_use_id: observation.toolUseId,
+    ordinal: observation.ordinal,
+    decision: observation.decision,
+  });
+}
 
 export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCopilotRunResult> {
   const { db, data } = params;
@@ -319,10 +347,19 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer,
     ...(tavilyCfg ? { [TAVILY_MCP_SERVER_NAME]: tavilyCfg } : {}),
   };
-  const allowedTools = [
+  const baseAllowedTools = [
     ...resolveMcpAllowedTools(surface),
     ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
   ];
+  const subagentEnabled = params.copilotSubagentEnabled ?? isCopilotSubagentEnabled(process.env);
+  const allowedTools = [...baseAllowedTools, ...(subagentEnabled ? [SPAWN_TOOL_NAME] : [])];
+  const spawnContract = subagentEnabled
+    ? createSpawnContract({
+        enabled: true,
+        agents: buildCopilotSubagents({ parentAllowedTools: allowedTools }),
+        onBudgetObservation: params.onSpawnBudgetObservation ?? observeCopilotSpawnBudget,
+      })
+    : undefined;
 
   // YUK-364 (bot-review C2) — 解析 copilot 对话方法论 SKILL.md 白名单（与 inline
   // 同一份 resolveCopilotSkills；cross-subject 共享 resolver）。命中 → 传 ctx.skills
@@ -350,24 +387,36 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   // writeJobEvent 异步；fire-and-forget 会乱序 id）。terminal REPLY/DONE 前 await 排空
   // → 每条 delta id 严格早于 REPLY/DONE。primary_view marker 从 live delta 剥掉（与
   // inline 同一份 wrapDeltaSuppressingMarker；终稿 REPLY 携 cleaned 文本）。
-  let deltaChain: Promise<void> = Promise.resolve();
-  const onDelta = wrapDeltaSuppressingMarker((text: string) => {
-    deltaChain = deltaChain.then(async () => {
-      // MINOR(3) fix — per-write catch INSIDE the .then so one failed delta write
-      // does not poison the chain (a rejected link would skip every subsequent
-      // delta + reject the drain). Each delta is independent best-effort.
+  let progressChain: Promise<void> = Promise.resolve();
+  const enqueueProgress = (eventType: string, payload: Record<string, unknown>) => {
+    progressChain = progressChain.then(async () => {
+      // Progress is advisory and each write is independent. Keeping the catch
+      // inside the link prevents one failed frame from poisoning later frames.
       try {
         await writeJobEvent(db, {
           business_table: COPILOT_RUN_TABLE,
           business_id: runId,
-          event_type: COPILOT_RUN_EVENTS.DELTA,
-          payload: { text },
+          event_type: eventType,
+          payload,
         });
       } catch (err) {
-        console.error('[copilot_run] delta write failed for', runId, err);
+        console.error('[copilot_run] progress write failed for', runId, err);
       }
     });
+    return progressChain;
+  };
+  const onDelta = wrapDeltaSuppressingMarker((text: string) => {
+    void enqueueProgress(COPILOT_RUN_EVENTS.DELTA, { text });
   });
+  const projectSubtaskEvent = createCopilotSubtaskProjector();
+  const onTaskEvent = subagentEnabled
+    ? async (event: TaskEventMessage) => {
+        const projected = projectSubtaskEvent(event);
+        if (projected) {
+          await enqueueProgress(COPILOT_RUN_EVENTS.STEP, { ...projected });
+        }
+      }
+    : undefined;
 
   try {
     const result: StreamCollectResult = await streamRun(
@@ -377,6 +426,14 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         db,
         mcpServers,
         allowedTools,
+        ...(spawnContract
+          ? {
+              agents: spawnContract.agents,
+              hooks: spawnContract.hooks,
+              canUseTool: spawnContract.canUseTool,
+            }
+          : {}),
+        ...(onTaskEvent ? { onTaskEvent } : {}),
         // C2 — spread-when-present：copilotSkills===undefined 时省略 skills 字段，
         // 与 inline chat.ts 同款降级（runner ctx.skills ?? [] 不变 → 零回归）。
         ...(copilotSkills ? { skills: copilotSkills } : {}),
@@ -390,7 +447,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       onDelta,
     );
     // S3 — 排空 delta 链：所有 delta id 落定后再写 terminal。
-    await drainDeltaChain(deltaChain, runId);
+    await drainDeltaChain(progressChain, runId);
 
     // YUK-575 — streamTaskCollecting graceful-degrade：run 出错时它 resolve
     // { partial:true, error }（plain Error 内含）而非 throw。partial = run 跑了但失败
@@ -471,7 +528,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   } catch (err) {
     // streamTaskCollecting graceful-degrades（resolve partial，见上），故这里只捕获
     // 它之外的 throw（装配 / MCP mount / 事件写），或注入 fixture 的 throw（测 MF1/MF2）。
-    await drainDeltaChain(deltaChain, runId);
+    await drainDeltaChain(progressChain, runId);
     return await handleDurableFailure(db, {
       err,
       runId,

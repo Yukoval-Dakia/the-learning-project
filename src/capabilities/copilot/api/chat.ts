@@ -11,6 +11,7 @@ import { ZodError } from 'zod';
 
 import {
   CopilotChatRequest,
+  decideCopilotDispatch,
   runCopilotChatStreaming,
   writeCopilotReply,
   writeCopilotUserAsk,
@@ -57,10 +58,23 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
     return errorResponse(err);
   }
 
-  // YUK-364 (ADR-0041 endurance W1 L2) — durable 分流。判定阈值 v1 = 显式
-  // `durable` 标记（最粗、最不误伤短活；先粗、实测后调）。仅 chat surface 入
-  // durable 面（chip 是 UI 直触轻活，不写 user_ask；durable 标记落在 chip 上
-  // 时降级回 inline，下方守卫）。
+  const backgroundJobsEnabled = shouldEnqueueBackgroundJobs();
+  const dispatchDecision =
+    parsed.durable === undefined &&
+    parsed.triggered_by === 'chat' &&
+    !parsed.skill_context &&
+    backgroundJobsEnabled
+      ? await decideCopilotDispatch(db, {
+          user_message: parsed.user_message,
+          ...(parsed.ambient_context ? { ambient_context: parsed.ambient_context } : {}),
+        })
+      : undefined;
+  const durableRequested = parsed.durable === true || dispatchDecision?.mode === 'durable';
+
+  // YUK-364/YUK-757 — durable 分流。显式 durable:true 仍直接受理；未显式选择的
+  // eligible free-form turn 先由 no-tool CopilotDispatchTask 做一次 bounded judgment。
+  // durable:false 是 force-inline。这里只让 chat surface 入 durable 面；chip 与
+  // skill_context 继续走确定性 inline 路径。
   //
   // YUK-575 (MF-C 诚实措辞) — shouldEnqueueBackgroundJobs()（runtime-env.ts）**只挡
   // 测试环境**（NODE_ENV==='test'||VITEST），**零 worker-liveness 检测**；生产恒 true，
@@ -81,10 +95,10 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
   // chips、corrective-chip 锚）。本 lane durable 暂不能复刻 teaching skill 短路（teaching
   // 是 SERVICE-层 behavior pack，不是 free-form run），故 skill_context turn 一律留 inline。
   if (
-    parsed.durable &&
+    durableRequested &&
     parsed.triggered_by === 'chat' &&
     !parsed.skill_context &&
-    shouldEnqueueBackgroundJobs()
+    backgroundJobsEnabled
   ) {
     // YUK-364 (F2) — 补偿用的局部状态：只在 user_ask 已 commit 后才需要补偿（否则
     // 没有 phantom 风险），所以记录 runId / sessionId 是否已知。
@@ -129,6 +143,14 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
           session_id: sessionId,
           triggered_by: parsed.triggered_by,
           pickup_deadline_ms: Date.now() + PICKUP_TIMEOUT_MS,
+          dispatch:
+            dispatchDecision?.mode === 'durable'
+              ? {
+                  source: dispatchDecision.source,
+                  reason_code: dispatchDecision.reason,
+                  task_run_id: dispatchDecision.task_run_id,
+                }
+              : { source: 'request_flag' },
         },
       });
       // 4) 投递 durable job。run 在 worker 进程跑、进度落 job_events、SSE 经泛化
@@ -209,7 +231,11 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
         db,
         parsed,
         (text) => void writeFrame('delta', { text }),
-        {},
+        {
+          // Task lifecycle is projected onto a strict public payload allowlist
+          // in the service layer. It shares this FIFO with main-voice deltas.
+          onSubtaskEvent: (event) => writeFrame('subtask', event),
+        },
         req.signal,
       );
       await writeFrame('reply', result);

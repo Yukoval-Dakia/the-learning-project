@@ -175,7 +175,7 @@ export interface RunTaskCtx {
    * (Record<string, AgentDefinition>). OMITTED (the default) ⇒ buildQueryOptions does
    * NOT write the key ⇒ the Options object is byte-identical to pre-seam (zero
    * regression). Type is re-exported 1:1 from the SDK's `Options['agents']` so it never
-   * drifts from the SDK typings. Only the research-meeting director lane sets it.
+   * drifts from the SDK typings. Only explicit nested-work lanes set it.
    */
   agents?: Options['agents'];
   /** YUK-572 seam: SDK hook callbacks with undefined-guard zero-regression. */
@@ -507,9 +507,9 @@ function buildQueryOptions(
   }
   // YUK-572 seam: SDK-native nested-agent / hooks / canUseTool passthrough. Same
   // undefined-guard as the outputFormat seam above — when a caller does not set these
-  // (every existing runTask/runAgentTask/streamTask caller), the keys are NOT written
-  // and Options stays byte-identical to pre-seam (零回归). Only the research-meeting
-  // director lane threads them.
+  // (every caller that does not opt into nested work), the keys are NOT written and
+  // Options stays byte-identical to pre-seam (零回归). The research-meeting director
+  // and Copilot lanes both reuse the same depth-one/report-only contract.
   if (ctx.agents !== undefined) {
     options.agents = ctx.agents;
     // Product UI has one narrative voice. Nested task lifecycle is exposed only via
