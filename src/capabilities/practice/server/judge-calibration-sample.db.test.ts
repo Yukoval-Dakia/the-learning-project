@@ -281,6 +281,38 @@ describe('runJudgeCalibrationSample', () => {
     expect(payload.bit_agreed).toBe(true); // …but the θ̂ bit agrees (both 1).
   });
 
+  it('(a3) records the structured semantic product when the SDK text face is empty', async () => {
+    await seedJudgedAttempt({
+      route: 'semantic',
+      priorOutcome: 'correct',
+      answerMd: '司马迁忍辱完成《史记》，因为个人荣辱应让位于贯通古今并形成一家之言的公共著述。',
+    });
+    const structured = {
+      score: 0.62,
+      coarse_outcome: 'partial' as const,
+      confidence: 0.9,
+      feedback_md: '说明了行动与著述目的，但遗漏“死有轻重”的价值判断前提。',
+      evidence_json: {
+        matched_points: ['忍辱完成《史记》', '贯通古今并形成一家之言'],
+        missing_points: ['死亡价值取决于所为何事'],
+      },
+    };
+    const runTaskInner = vi.fn(async () => ({
+      task_run_id: 'run-structured-semantic',
+      text: '',
+      structured_output: structured,
+    }));
+
+    const result = await runJudgeCalibrationSample(testDb(), mkCfg(), { runTaskInner });
+
+    expect(result.sampled).toBe(1);
+    const [row] = await sampleEvents();
+    const payload = row?.payload as Record<string, unknown>;
+    expect(payload.rejudge_outcome).toBe('partial');
+    expect(payload.rejudge_task_run_id).toBe('run-structured-semantic');
+    expect(JSON.parse(payload.rejudge_raw_output as string)).toEqual(structured);
+  });
+
   it('(b) RED LINE — writes nothing beyond sample + run_summary; mastery/calibration untouched', async () => {
     const { judgeEventId } = await seedJudgedAttempt({
       route: 'semantic',

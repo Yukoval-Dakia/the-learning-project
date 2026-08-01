@@ -159,21 +159,22 @@ describe('real registry + shipped allowlist', () => {
     readFileSync(join(__dirname, 'audit-structured-judge-allowlist.json'), 'utf-8'),
   ) as Allowlist;
 
-  it('has exactly the four known judge tasks with the expected schema state', () => {
+  it('has exactly the four known judge tasks and all declare structured output', () => {
     const judgeTasks = collectJudgeTasks(tasks as Record<string, TaskDefLike>);
     expect(judgeTasks).toEqual([
       { kind: 'MultimodalDirectJudgeTask', hasStructuredOutput: true },
-      { kind: 'SemanticJudgeTask', hasStructuredOutput: false },
+      { kind: 'SemanticJudgeTask', hasStructuredOutput: true },
       { kind: 'StepsJudgeTask', hasStructuredOutput: true },
-      { kind: 'UnitDimensionFallback', hasStructuredOutput: false },
+      { kind: 'UnitDimensionFallback', hasStructuredOutput: true },
     ]);
   });
 
-  it('passes the audit as shipped (violations + redundant + allowlist problems all clear)', () => {
+  it('ships no structured-judge waivers and passes the audit', () => {
     const judgeTasks = collectJudgeTasks(tasks as Record<string, TaskDefLike>);
     // A fixed `today` well before every shipped expected_by keeps this a state
     // regression guard, not a clock-dependent test.
     const result = computeStructuredJudgeAudit(judgeTasks, shippedAllowlist, '2026-07-23');
+    expect(shippedAllowlist).toEqual({});
     expect(result.violations).toEqual([]);
     expect(result.redundantAllowlist).toEqual([]);
     expect(result.allowlistProblems).toEqual([]);

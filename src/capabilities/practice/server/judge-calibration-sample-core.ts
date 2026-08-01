@@ -74,7 +74,7 @@ type RunTaskInner = (
   kind: string,
   input: unknown,
   ctx: unknown,
-) => Promise<{ task_run_id?: string; text: string }>;
+) => Promise<{ task_run_id?: string; text: string; structured_output?: unknown }>;
 
 export interface JudgeCalibrationSampleDeps {
   /** replace the whole judge (coarse-grained test hook; default = real judgeAnswer). */
@@ -104,6 +104,20 @@ function truncateRawOutput(text: string | null): string | null {
   if (text === null) return null;
   if (text.length <= RAW_OUTPUT_MAX_CHARS) return text;
   return `${text.slice(0, RAW_OUTPUT_MAX_CHARS)}${RAW_TRUNCATION_MARKER}`;
+}
+
+/** Prefer the actual structured product when the SDK supplies one; text can be empty. */
+function rawTaskOutput(result: { text: string; structured_output?: unknown }): string {
+  if (result.structured_output === undefined || result.structured_output === null) {
+    return result.text;
+  }
+  try {
+    return JSON.stringify(result.structured_output);
+  } catch {
+    // Defensive only: SDK structured output is JSON, but evidence capture must
+    // never turn a successful rejudge into a sampler failure.
+    return result.text;
+  }
 }
 
 /** postgres.js surfaces unique violations as code '23505' (possibly wrapped); walk the cause chain. */
@@ -386,7 +400,7 @@ export async function runJudgeCalibrationSample(
           },
         });
         slot.taskRunId = inner.task_run_id ?? null;
-        slot.rawText = inner.text;
+        slot.rawText = rawTaskOutput(inner);
         return inner;
       };
 

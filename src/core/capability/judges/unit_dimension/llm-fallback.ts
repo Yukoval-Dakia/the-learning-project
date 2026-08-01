@@ -3,13 +3,15 @@ import { LlmFallbackOutput, type LlmFallbackOutputT } from './types';
 
 export interface UnitDimensionRunTaskCtx {
   subjectProfile?: SubjectProfile;
+  /** Structural copy of the Agent SDK JSON-schema envelope; core must not import server/ai. */
+  outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> };
 }
 
 export type RunTaskFn = (
   kind: string,
   input: { text: string },
   ctx?: UnitDimensionRunTaskCtx,
-) => Promise<{ text: string }>;
+) => Promise<{ text: string; structured_output?: unknown }>;
 
 export interface LlmFallbackParams {
   student_answer: string;
@@ -54,8 +56,22 @@ export async function runLlmFallback(params: LlmFallbackParams): Promise<LlmFall
     );
 
   const result = await runTask('UnitDimensionFallback', { text: prompt }, params.runTaskCtx ?? {});
-  const parsed = LlmFallbackOutput.parse(JSON.parse(extractJsonObject(result.text)));
-  return parsed;
+  return parseLlmFallbackResult(result);
+}
+
+/**
+ * Prefer SDK structured output when present. null/undefined means the endpoint
+ * ignored outputFormat, so preserve the pre-YUK-759 char-scan fallback exactly.
+ */
+export function parseLlmFallbackResult(result: {
+  text: string;
+  structured_output?: unknown;
+}): LlmFallbackOutputT {
+  const candidate =
+    result.structured_output !== undefined && result.structured_output !== null
+      ? result.structured_output
+      : JSON.parse(extractJsonObject(result.text));
+  return LlmFallbackOutput.parse(candidate);
 }
 
 function extractJsonObject(text: string): string {
