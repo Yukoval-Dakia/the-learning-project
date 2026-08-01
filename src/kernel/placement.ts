@@ -8,6 +8,10 @@ export {
   isPlacementStarterJobLive,
 } from '@/server/question-supply/placement-starter';
 export {
+  PLACEMENT_QUEUE_EXPIRY_MS,
+  terminalizeLostPlacementDelivery,
+} from '@/server/question-supply/placement-starter-attempts';
+export {
   markPlacementStarterClaimTerminal,
   resolvePlacementStarterGoalAuthority,
 } from '@/server/question-supply/placement-starter-store';

@@ -9,8 +9,9 @@ import {
   placement_starter_cost_component,
   question,
 } from '@/db/schema';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import { placementStarterAttemptId } from './placement-starter-identity';
+import { markPlacementStarterClaimTerminal } from './placement-starter-store';
 
 export const PLACEMENT_VERIFY_POLL_MS = 2_000;
 export const PLACEMENT_ATTEMPT_LEASE_MS = 20 * 60_000;
@@ -85,6 +86,145 @@ export interface PlacementAttemptAuthority {
   fencingToken: string;
   leaseExpiresAt: Date;
   startedOn: Date;
+}
+
+export interface LostPlacementDeliverySnapshot {
+  claimId: string;
+  pgBossJobId: string | null;
+  attempt: { attemptId: string; fencingToken: string; pgBossJobId: string } | null;
+}
+
+function isPlacementRecoveryLockUnavailable(err: unknown): boolean {
+  for (let cur: unknown = err, depth = 0; cur != null && depth < 5; depth++) {
+    const e = cur as { code?: string; cause?: unknown };
+    if (e.code === '55P03') return true;
+    cur = e.cause;
+  }
+  return false;
+}
+
+/**
+ * Fail-closed terminalization for a delivery whose pg-boss job has already been confirmed dead.
+ *
+ * The caller owns the external job-liveness proof. This function owns the durable fence: an
+ * expired attempt is changed to `interrupted` before its claim becomes `exhausted`, in the same
+ * transaction, so a late worker holding the old fencing token cannot finalize after recovery.
+ * If the lease was renewed, the fence rotated, the claim advanced, or a missing-at-scan attempt
+ * appeared, the operation loses cleanly and writes nothing.
+ */
+export async function terminalizeLostPlacementDelivery(
+  db: Db,
+  snapshot: LostPlacementDeliverySnapshot,
+  now = new Date(),
+): Promise<boolean> {
+  const error = {
+    class: 'stalled',
+    code: 'inflight_delivery_lost',
+    message:
+      'placement starter delivery lost its lease and its owning quiz_gen job can no longer deliver',
+  };
+
+  try {
+    return await db.transaction(async (tx) => {
+      // Recovery never waits on a delivery transaction. acquirePlacementAttempt locks
+      // claim→attempt, while finish/verify/heartbeat can already hold attempt before touching the
+      // claim. Taking both locks with NOWAIT makes either live writer win immediately instead of
+      // creating an AB-BA deadlock that Postgres might resolve by aborting the learner's worker.
+      const [claim] = await tx
+        .select()
+        .from(placement_starter_claim)
+        .where(eq(placement_starter_claim.id, snapshot.claimId))
+        .for('update', { noWait: true });
+      if (
+        !claim ||
+        !['queued', 'running', 'verifying'].includes(claim.status) ||
+        claim.pg_boss_job_id !== snapshot.pgBossJobId
+      ) {
+        return false;
+      }
+
+      if (!snapshot.attempt) {
+        // queued legitimately has no attempt. Holding the claim lock prevents a new attempt from
+        // being admitted while we prove that no active attempt appeared after the sweeper scan.
+        const [activeAttempt] = await tx
+          .select({ id: placement_starter_attempt.id })
+          .from(placement_starter_attempt)
+          .where(
+            and(
+              eq(placement_starter_attempt.claim_id, snapshot.claimId),
+              inArray(placement_starter_attempt.status, ['running', 'verifying']),
+            ),
+          )
+          .for('update', { noWait: true });
+        if (activeAttempt) return false;
+        await markPlacementStarterClaimTerminal(tx, snapshot.claimId, 'exhausted', now, error);
+        return true;
+      }
+
+      const [attempt] = await tx
+        .select({
+          id: placement_starter_attempt.id,
+          claimId: placement_starter_attempt.claim_id,
+          pgBossJobId: placement_starter_attempt.pg_boss_job_id,
+          fencingToken: placement_starter_attempt.fencing_token,
+          status: placement_starter_attempt.status,
+          leaseExpiresAt: placement_starter_attempt.lease_expires_at,
+        })
+        .from(placement_starter_attempt)
+        .where(eq(placement_starter_attempt.id, snapshot.attempt.attemptId))
+        .for('update', { noWait: true });
+      if (
+        !attempt ||
+        attempt.claimId !== snapshot.claimId ||
+        attempt.pgBossJobId !== snapshot.attempt.pgBossJobId ||
+        snapshot.attempt.pgBossJobId !== snapshot.pgBossJobId ||
+        attempt.fencingToken !== snapshot.attempt.fencingToken ||
+        !['running', 'verifying'].includes(attempt.status) ||
+        (attempt.leaseExpiresAt !== null && attempt.leaseExpiresAt > now)
+      ) {
+        return false;
+      }
+
+      // The claim and exact attempt/fence are both locked. Keep the predicates on the write as a
+      // defensive assertion of the durable authority we just checked.
+      const interrupted = await tx
+        .update(placement_starter_attempt)
+        .set({
+          status: 'interrupted',
+          lease_expires_at: null,
+          error_class: error.class,
+          error_code: error.code,
+          error_message: error.message,
+          finished_at: now,
+          updated_at: now,
+        })
+        .where(
+          and(
+            eq(placement_starter_attempt.id, snapshot.attempt.attemptId),
+            eq(placement_starter_attempt.claim_id, snapshot.claimId),
+            eq(placement_starter_attempt.pg_boss_job_id, snapshot.attempt.pgBossJobId),
+            eq(placement_starter_attempt.fencing_token, snapshot.attempt.fencingToken),
+            inArray(placement_starter_attempt.status, ['running', 'verifying']),
+          ),
+        )
+        .returning({ id: placement_starter_attempt.id });
+      if (interrupted.length !== 1) return false;
+      await tx
+        .update(placement_starter_attempt_question)
+        .set({ verification_status: 'superseded' })
+        .where(
+          and(
+            eq(placement_starter_attempt_question.attempt_id, snapshot.attempt.attemptId),
+            eq(placement_starter_attempt_question.verification_status, 'authorized'),
+          ),
+        );
+      await markPlacementStarterClaimTerminal(tx, snapshot.claimId, 'exhausted', now, error);
+      return true;
+    });
+  } catch (err) {
+    if (isPlacementRecoveryLockUnavailable(err)) return false;
+    throw err;
+  }
 }
 
 export async function acquirePlacementAttempt(
@@ -394,6 +534,7 @@ export async function renewPlacementAttempt(
         eq(placement_starter_attempt.id, attempt.attemptId),
         eq(placement_starter_attempt.fencing_token, attempt.fencingToken),
         inArray(placement_starter_attempt.status, ['running', 'verifying']),
+        gt(placement_starter_attempt.lease_expires_at, now),
       ),
     )
     .returning({ id: placement_starter_attempt.id });
@@ -813,8 +954,8 @@ export async function placementAttemptVerificationSettled(
 export async function markAttemptVerifying(
   db: Db,
   attempt: PlacementAttemptAuthority,
+  now = new Date(),
 ): Promise<void> {
-  const now = new Date();
   // Attempt + claim status must flip together: a crash between the two UPDATEs would leave the
   // attempt 'verifying' while the claim stays 'running' (or vice versa), a split state the fence /
   // reconcile guards do not model. One transaction (YUK-452 review).
@@ -827,6 +968,7 @@ export async function markAttemptVerifying(
           eq(placement_starter_attempt.id, attempt.attemptId),
           eq(placement_starter_attempt.fencing_token, attempt.fencingToken),
           eq(placement_starter_attempt.status, 'running'),
+          gt(placement_starter_attempt.lease_expires_at, now),
         ),
       )
       .returning({ id: placement_starter_attempt.id });
@@ -854,6 +996,7 @@ export async function finishPlacementAttempt(
           eq(placement_starter_attempt.id, attempt.attemptId),
           eq(placement_starter_attempt.fencing_token, attempt.fencingToken),
           inArray(placement_starter_attempt.status, ['running', 'verifying']),
+          gt(placement_starter_attempt.lease_expires_at, now),
         ),
       )
       .returning({ id: placement_starter_attempt.id });

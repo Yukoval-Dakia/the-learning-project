@@ -2066,19 +2066,20 @@ export const placement_starter_claim = pgTable(
     // The paid single-flight invariant is preserved: paid work only begins once a claim reaches
     // 'queued' (acquirePlacementAttempt requires queued+), so gating on {queued, running, verifying,
     // retry_scheduled} still admits exactly one paid flight. The pending→queued transition in
-    // dispatchPlacementStarterClaimTx catches the resulting 23505 and terminalizes the losing
-    // (stale) claim as 'cancelled' — never a retry loop or 500.
+    // dispatchPlacementStarterClaimTx catches the resulting 23505 inside a savepoint, rolls back
+    // the losing enqueue, and KEEPS that claim pending: it may be the current authoritative
+    // revision and must remain retryable after the old paid flight ends.
     uniqueIndex('placement_starter_claim_nonterminal_uq')
       .on(t.goal_id, t.subject_id)
       .where(sql`${t.status} IN ('queued','running','verifying','retry_scheduled')`),
     // YUK-761 — LIVE CONSUMER: sweepStalePlacementStarterClaims
     // (src/capabilities/practice/server/placement-starter-recovery.ts), run from the tail of the
-    // question_supply_nightly job. It scans `status IN ('pending_dispatch','retry_scheduled') AND
-    // next_reconcile_at <= now() ORDER BY next_reconcile_at, created_at` — a status subset of this
-    // partial predicate in this exact column order — to re-drive stranded pending_dispatch claims
-    // and reap zombie retry_scheduled ones. `next_reconcile_at` doubles as that sweeper's acquire
-    // cursor (conditional-UPDATE CAS), which is why the sweeper moves it WITHOUT touching
-    // updated_at/version.
+    // question_supply_nightly job. Its three independently capped scans cover pending_dispatch,
+    // retry_scheduled, and queued/running/verifying with `next_reconcile_at <= now() ORDER BY
+    // next_reconcile_at, created_at`: re-drive never-dispatched claims, reap dead retries, and use
+    // queue expiry / attempt lease + job liveness to fence lost in-flight deliveries.
+    // `next_reconcile_at` doubles as that sweeper's acquire cursor (conditional-UPDATE CAS), which
+    // is why the sweeper moves it WITHOUT touching updated_at/version.
     index('placement_starter_claim_recovery_idx')
       .on(t.next_reconcile_at, t.created_at)
       .where(

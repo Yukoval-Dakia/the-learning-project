@@ -161,9 +161,10 @@ export async function createPlacementSession(req: Request): Promise<Response> {
           // (src/capabilities/practice/server/placement-starter-recovery.ts). A stranded pending
           // claim is HARMLESS in the meantime: it is exempt from
           // the placement_starter_claim_nonterminal_uq single-flight guard (round-2), so it blocks no
-          // later revision; if it is ever re-dispatched while a newer revision is already in flight it
-          // is cleanly superseded (cancelled), never a 500. We surface sourcingNeeded to the client
-          // rather than failing the whole probe (YUK-452 review: message corrected to match reality).
+          // later revision. If re-dispatch collides with another revision's live paid flight, its
+          // savepoint enqueue is rolled back and the claim stays pending until that flight ends —
+          // never an irreversible cancellation or a 500. We surface sourcingNeeded to the client
+          // rather than failing the whole probe (YUK-452/YUK-776).
           console.error(
             `[placement-starter] initial dispatch failed for ${claimId}; claim left pending_dispatch, a subsequent placement start re-dispatches it`,
             err,

@@ -22,9 +22,11 @@ import {
   countEligiblePlacementQuestions,
   finishPlacementAttempt,
   heartbeatSleep,
+  markAttemptVerifying,
   placementAttemptVerificationSettled,
   placementDeliveryMetadata,
   placementFulfillmentDisposition,
+  renewPlacementAttempt,
   reserveAuthorizedPaidCall,
   settleAuthorizedPaidCall,
   startPlacementAttemptHeartbeat,
@@ -170,6 +172,42 @@ describe('placement attempt authority', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].delivery_no).toBe(1);
     expect(rows[0].lease_expires_at).toEqual(new Date(now.getTime() + 20 * 60_000));
+  });
+
+  it('does not let an expired worker resurrect, verify, or finish with its old fence', async () => {
+    const startedOn = new Date('2026-07-23T00:00:00.000Z');
+    await seedClaim(startedOn);
+    const attempt = await acquirePlacementAttempt(testDb(), {
+      claimId: CLAIM_ID,
+      pgBossJobId: JOB_ID,
+      deliveryNo: 1,
+      startedOn,
+      now: startedOn,
+    });
+    const afterLease = new Date(startedOn.getTime() + PLACEMENT_ATTEMPT_LEASE_MS + 1);
+
+    await expect(renewPlacementAttempt(testDb(), attempt, afterLease)).rejects.toThrow(
+      /fence lost/,
+    );
+    await expect(markAttemptVerifying(testDb(), attempt, afterLease)).rejects.toThrow(/fence lost/);
+    await expect(
+      finishPlacementAttempt(testDb(), attempt, 'underfilled', afterLease),
+    ).rejects.toThrow(/fence lost/);
+
+    const [row] = await testDb()
+      .select()
+      .from(placement_starter_attempt)
+      .where(eq(placement_starter_attempt.id, attempt.attemptId));
+    expect(row).toMatchObject({
+      status: 'running',
+      fencing_token: attempt.fencingToken,
+      lease_expires_at: new Date(startedOn.getTime() + PLACEMENT_ATTEMPT_LEASE_MS),
+    });
+    const [claim] = await testDb()
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, CLAIM_ID));
+    expect(claim.status).toBe('running');
   });
 
   it('exhausts the claim only when the FINAL paid delivery fails (YUK-452 review)', async () => {

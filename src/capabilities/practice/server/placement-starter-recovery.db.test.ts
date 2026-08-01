@@ -9,10 +9,22 @@
 // 的饿死路径）。
 
 import { db } from '@/db/client';
-import { goal, knowledge, placement_starter_claim, question } from '@/db/schema';
-import { resolvePlacementStarterGoalAuthority } from '@/kernel/placement';
+import {
+  goal,
+  knowledge,
+  placement_starter_attempt,
+  placement_starter_attempt_question,
+  placement_starter_claim,
+  question,
+} from '@/db/schema';
+import {
+  PLACEMENT_QUEUE_EXPIRY_MS,
+  dispatchPlacementStarterClaim,
+  resolvePlacementStarterGoalAuthority,
+  terminalizeLostPlacementDelivery,
+} from '@/kernel/placement';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb } from '../../../../tests/helpers/db';
 import {
   PLACEMENT_STARTER_RECOVERY_BACKOFF_MS,
@@ -23,10 +35,25 @@ import {
 const NOW = new Date('2026-07-25T06:00:00Z');
 const CREATED = new Date('2026-07-20T00:00:00Z');
 
+// Only pg-boss transport is mocked. The recovery leg, production dispatch wrapper, nested
+// savepoint, real Postgres partial-unique conflict, admission locks, and retry all execute for
+// real. Distinct job ids make the rolled-back first enqueue distinguishable from the later winner.
+const bossMock = vi.hoisted(() => ({ send: vi.fn() }));
+vi.mock('@/server/boss/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/server/boss/client')>();
+  return {
+    ...actual,
+    getStartedBoss: async () => ({ send: bossMock.send }),
+  };
+});
+
 /** Default seam: no pg-boss job is ever live, so the reap leg is governed purely by grace. */
 const noJobLive = async () => false;
 
-beforeEach(() => resetDb());
+beforeEach(async () => {
+  bossMock.send.mockReset();
+  await resetDb();
+});
 
 /**
  * Seed the KC tree once. Kept to `@/db/schema` writes — a practice-capability test may depend on
@@ -138,6 +165,48 @@ async function readClaim(claimId: string) {
     .where(eq(placement_starter_claim.id, claimId));
   if (!row) throw new Error(`claim ${claimId} vanished`);
   return row;
+}
+
+async function seedInflightClaim(
+  status: 'queued' | 'running' | 'verifying',
+  options: {
+    leaseExpiresAt?: Date | null;
+    updatedAt?: Date;
+    withAttempt?: boolean;
+  } = {},
+) {
+  const claimId = await seedClaim();
+  const jobId = 'boss-inflight-1';
+  const attemptId = 'attempt-inflight-1';
+  const fencingToken = '11111111-1111-4111-8111-111111111111';
+  await db
+    .update(placement_starter_claim)
+    .set({
+      status,
+      pg_boss_job_id: jobId,
+      next_reconcile_at: CREATED,
+      updated_at: options.updatedAt ?? CREATED,
+    })
+    .where(eq(placement_starter_claim.id, claimId));
+  const withAttempt = options.withAttempt ?? status !== 'queued';
+  if (withAttempt) {
+    await db.insert(placement_starter_attempt).values({
+      id: attemptId,
+      claim_id: claimId,
+      pg_boss_job_id: jobId,
+      delivery_no: 1,
+      fencing_token: fencingToken,
+      status: status === 'queued' ? 'running' : status,
+      lease_expires_at:
+        options.leaseExpiresAt === undefined
+          ? new Date(NOW.getTime() - 60_000)
+          : options.leaseExpiresAt,
+      started_at: CREATED,
+      created_at: CREATED,
+      updated_at: CREATED,
+    });
+  }
+  return { attemptId, claimId, fencingToken, jobId };
 }
 
 /** A dispatch seam that records calls and reports the admission verdict it computed. */
@@ -290,10 +359,8 @@ describe('sweepStalePlacementStarterClaims — pending_dispatch re-drive', () =>
 describe('sweepStalePlacementStarterClaims — stale revision guard', () => {
   // Review PRRT…ua3w. The live /placement/start path can only dispatch the CURRENT revision's
   // claim; this sweeper is the only code that can pick up an older one. Doing so is destructive:
-  // the stale claim takes the nonterminal_uq slot, the CURRENT revision's claim then loses the
-  // 23505 race and is cancelled by dispatchPlacementStarterClaimTx — and since claim ids are
-  // deterministic in (revision, subject), re-materialize is a no-op, so the current revision can
-  // never get a claim again.
+  // it pays for obsolete work and lets the stale claim take the nonterminal_uq slot, delaying the
+  // CURRENT revision even though its 23505 loser now correctly stays pending (YUK-776).
   it('cancels a superseded-revision claim instead of dispatching it', async () => {
     await seedGoal();
     const staleId = await insertClaim(0, {
@@ -597,9 +664,53 @@ describe('sweepStalePlacementStarterClaims — anti-starvation', () => {
     });
     expect(second.scannedPending).toBe(0);
   });
+
+  it('gives pending, retry, and in-flight work independent budgets in the same run', async () => {
+    const [inflightId, retryId, pendingId] = await seedClaimsOnDistinctGoals(3);
+    const stalled = new Date(NOW.getTime() - PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS - 60_000);
+    await db
+      .update(placement_starter_claim)
+      .set({
+        status: 'queued',
+        pg_boss_job_id: 'boss-inflight-dead',
+        next_reconcile_at: CREATED,
+        updated_at: CREATED,
+      })
+      .where(eq(placement_starter_claim.id, inflightId));
+    await db
+      .update(placement_starter_claim)
+      .set({
+        status: 'retry_scheduled',
+        pg_boss_job_id: 'boss-retry-dead',
+        next_reconcile_at: CREATED,
+        updated_at: stalled,
+      })
+      .where(eq(placement_starter_claim.id, retryId));
+    const { calls, dispatch } = recordingDispatch();
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      maxPerRun: 1,
+      dispatch,
+      isJobLive: noJobLive,
+      placementProbeEnabled: true,
+    });
+
+    expect(result).toMatchObject({
+      scannedPending: 1,
+      redispatched: 1,
+      scannedRetry: 1,
+      reaped: 1,
+      scannedInflight: 1,
+      inflightReaped: 1,
+    });
+    expect(calls.map((call) => call.claimId)).toEqual([pendingId]);
+    expect((await readClaim(inflightId)).status).toBe('exhausted');
+    expect((await readClaim(retryId)).status).toBe('exhausted');
+  });
 });
 
-describe('sweepStalePlacementStarterClaims — terminal and non-swept states', () => {
+describe('sweepStalePlacementStarterClaims — terminal states', () => {
   it.each(['satisfied', 'exhausted', 'cancelled'] as const)(
     'never touches a %s claim',
     async (status) => {
@@ -623,35 +734,616 @@ describe('sweepStalePlacementStarterClaims — terminal and non-swept states', (
         placementProbeEnabled: true,
       });
 
-      expect(result).toMatchObject({ scannedPending: 0, scannedRetry: 0 });
+      expect(result).toMatchObject({ scannedInflight: 0, scannedPending: 0, scannedRetry: 0 });
       expect(calls).toHaveLength(0);
       expect(await readClaim(claimId)).toEqual(before);
     },
   );
+});
 
-  it.each(['queued', 'running', 'verifying'] as const)(
-    'leaves an in-flight %s claim to the attempt lease machinery',
+describe('sweepStalePlacementStarterClaims — queued/running/verifying recovery', () => {
+  it('parks a fresh queued claim on the existing 120-minute queue expiry without probing pg-boss', async () => {
+    const queuedAt = new Date(NOW.getTime() - 45 * 60_000);
+    const { claimId } = await seedInflightClaim('queued', { updatedAt: queuedAt });
+    let probes = 0;
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      isJobLive: async () => {
+        probes += 1;
+        return false;
+      },
+      placementProbeEnabled: false,
+    });
+
+    expect(result).toMatchObject({
+      scannedInflight: 1,
+      inflightQueuePending: 1,
+      inflightReaped: 0,
+    });
+    expect(probes).toBe(0);
+    const claim = await readClaim(claimId);
+    expect(claim.status).toBe('queued');
+    expect(claim.next_reconcile_at).toEqual(
+      new Date(queuedAt.getTime() + PLACEMENT_QUEUE_EXPIRY_MS),
+    );
+
+    const insideWindow = await sweepStalePlacementStarterClaims(db, {
+      now: new Date(NOW.getTime() + 60_000),
+      isJobLive: async () => {
+        probes += 1;
+        return false;
+      },
+      placementProbeEnabled: false,
+    });
+    expect(insideWindow.scannedInflight).toBe(0);
+    expect(probes).toBe(0);
+  });
+
+  it('terminalizes a queued claim only after its owning job is confirmed dead', async () => {
+    const { claimId, jobId } = await seedInflightClaim('queued', {
+      // Equality is expired: the queue contract is live while expiry > now, not at the deadline.
+      updatedAt: new Date(NOW.getTime() - PLACEMENT_QUEUE_EXPIRY_MS),
+    });
+    const probed: Array<string | null> = [];
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      isJobLive: async (candidate) => {
+        probed.push(candidate);
+        return false;
+      },
+      placementProbeEnabled: false,
+    });
+
+    expect(result).toMatchObject({
+      scannedInflight: 1,
+      inflightJobLive: 0,
+      inflightLeaseActive: 0,
+      inflightReaped: 1,
+    });
+    expect(probed).toEqual([jobId]);
+    const claim = await readClaim(claimId);
+    expect(claim.status).toBe('exhausted');
+    expect(claim.exhausted_at?.getTime()).toBe(NOW.getTime());
+    expect(claim.last_error_code).toBe('inflight_delivery_lost');
+  });
+
+  it('defers a queued claim while its owning job can still deliver', async () => {
+    const { claimId } = await seedInflightClaim('queued');
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      isJobLive: async () => true,
+      placementProbeEnabled: false,
+    });
+
+    expect(result).toMatchObject({
+      scannedInflight: 1,
+      inflightJobLive: 1,
+      inflightReaped: 0,
+    });
+    const claim = await readClaim(claimId);
+    expect(claim.status).toBe('queued');
+    expect(claim.next_reconcile_at.getTime()).toBe(
+      NOW.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS,
+    );
+  });
+
+  it.each(['running', 'verifying'] as const)(
+    'atomically fences and terminalizes an expired %s attempt after its job is dead',
     async (status) => {
-      const claimId = await seedClaim();
+      const { attemptId, claimId } = await seedInflightClaim(status);
       await db
-        .update(placement_starter_claim)
-        .set({ status, next_reconcile_at: CREATED })
-        .where(eq(placement_starter_claim.id, claimId));
-      const before = await readClaim(claimId);
-      const { calls, dispatch } = recordingDispatch();
+        .update(placement_starter_attempt)
+        .set({
+          provider_task_run_id: `provider-run-${status}-20260725`,
+          provider_output_hash: `sha256-output-${status}`,
+          provider_output_recorded_at: CREATED,
+        })
+        .where(eq(placement_starter_attempt.id, attemptId));
+      const fixtures = [
+        {
+          id: `question-${status}-lexical`,
+          prompt:
+            '《屈原列传》“屈平疾王听之不聪也”中“疾”应如何解释？结合宾语和并列分句说明为何不是“生病”。',
+          reference: '“疾”是痛心、憎恨；其宾语为“王听之不聪”，并与后文批评并列。',
+          verificationStatus: 'authorized',
+          epoch: '22222222-2222-4222-8222-222222222221',
+        },
+        {
+          id: `question-${status}-counterfactual`,
+          prompt:
+            '若删去“谗谄之蔽明也”，屈原遭疏的哪一条因果解释会失去直接文本支撑？请列出证据链。',
+          reference: '会失去“谗臣蒙蔽君王导致疏远”的直接支撑，证据链须含行为者、机制与结果。',
+          verificationStatus: 'authorized',
+          epoch: '22222222-2222-4222-8222-222222222222',
+        },
+        {
+          id: `question-${status}-contrast`,
+          prompt: '对比“君有疾在腠理”与“屈平疾王听之不聪也”的“疾”义项，并分别给出句法证据。',
+          reference: '前者为疾病、处所结构作补足；后者为痛恨、后接事件性宾语。',
+          verificationStatus: 'failed',
+          epoch: '22222222-2222-4222-8222-222222222223',
+        },
+      ] as const;
+      await db.insert(question).values(
+        fixtures.map((fixture, index) => ({
+          id: fixture.id,
+          kind: 'short_answer' as const,
+          prompt_md: fixture.prompt,
+          reference_md: fixture.reference,
+          knowledge_ids: ['kc-explicit'],
+          difficulty: index + 2,
+          source: 'quiz_gen' as const,
+          source_ref: `provider-run-${status}-20260725`,
+          draft_status: 'draft' as const,
+          metadata: { fixture: 'yuk-776-complex-recovery', evidenceDepth: index + 1 },
+          created_at: CREATED,
+          updated_at: CREATED,
+        })),
+      );
+      await db.insert(placement_starter_attempt_question).values(
+        fixtures.map((fixture) => ({
+          attempt_id: attemptId,
+          claim_id: claimId,
+          question_id: fixture.id,
+          canonical_hash: `hash-${fixture.id}`,
+          verification_authority_epoch: fixture.epoch,
+          verification_status: fixture.verificationStatus,
+          created_at: CREATED,
+        })),
+      );
 
       const result = await sweepStalePlacementStarterClaims(db, {
         now: NOW,
-        dispatch,
         isJobLive: noJobLive,
-        placementProbeEnabled: true,
+        placementProbeEnabled: false,
       });
 
-      expect(result).toMatchObject({ scannedPending: 0, scannedRetry: 0 });
-      expect(calls).toHaveLength(0);
-      expect(await readClaim(claimId)).toEqual(before);
+      expect(result).toMatchObject({ scannedInflight: 1, inflightReaped: 1, lost: 0 });
+      const claim = await readClaim(claimId);
+      expect(claim.status).toBe('exhausted');
+      expect(claim.last_error_code).toBe('inflight_delivery_lost');
+      const [attempt] = await db
+        .select()
+        .from(placement_starter_attempt)
+        .where(eq(placement_starter_attempt.id, attemptId));
+      expect(attempt).toMatchObject({
+        status: 'interrupted',
+        lease_expires_at: null,
+        error_class: 'stalled',
+        error_code: 'inflight_delivery_lost',
+      });
+      expect(attempt?.finished_at?.getTime()).toBe(NOW.getTime());
+      const authorities = await db
+        .select()
+        .from(placement_starter_attempt_question)
+        .where(eq(placement_starter_attempt_question.attempt_id, attemptId));
+      expect(
+        Object.fromEntries(
+          authorities.map((authority) => [authority.question_id, authority.verification_status]),
+        ),
+      ).toEqual({
+        [`question-${status}-lexical`]: 'superseded',
+        [`question-${status}-counterfactual`]: 'superseded',
+        [`question-${status}-contrast`]: 'failed',
+      });
     },
   );
+
+  it.each(['running', 'verifying'] as const)(
+    'does not even probe pg-boss while a %s attempt lease is still active',
+    async (status) => {
+      const leaseExpiresAt = new Date(NOW.getTime() + 5 * 60_000);
+      const { claimId } = await seedInflightClaim(status, { leaseExpiresAt });
+      let probes = 0;
+
+      const result = await sweepStalePlacementStarterClaims(db, {
+        now: NOW,
+        isJobLive: async () => {
+          probes += 1;
+          return false;
+        },
+        placementProbeEnabled: false,
+      });
+
+      expect(result).toMatchObject({
+        scannedInflight: 1,
+        inflightLeaseActive: 1,
+        inflightReaped: 0,
+      });
+      expect(probes).toBe(0);
+      const claim = await readClaim(claimId);
+      expect(claim.status).toBe(status);
+      expect(claim.next_reconcile_at).toEqual(leaseExpiresAt);
+    },
+  );
+
+  it('defers an expired attempt while its owning job can still retry', async () => {
+    const { attemptId, claimId } = await seedInflightClaim('verifying');
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      isJobLive: async () => true,
+      placementProbeEnabled: false,
+    });
+
+    expect(result).toMatchObject({
+      scannedInflight: 1,
+      inflightJobLive: 1,
+      inflightReaped: 0,
+    });
+    expect((await readClaim(claimId)).status).toBe('verifying');
+    expect((await readClaim(claimId)).next_reconcile_at).toEqual(
+      new Date(NOW.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS),
+    );
+    const [attempt] = await db
+      .select()
+      .from(placement_starter_attempt)
+      .where(eq(placement_starter_attempt.id, attemptId));
+    expect(attempt?.status).toBe('verifying');
+  });
+
+  it('re-checks the lease under the fence after the external job probe', async () => {
+    const { attemptId, claimId } = await seedInflightClaim('running');
+    const renewedUntil = new Date(NOW.getTime() + 10 * 60_000);
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      isJobLive: async () => {
+        await db
+          .update(placement_starter_attempt)
+          .set({ lease_expires_at: renewedUntil })
+          .where(eq(placement_starter_attempt.id, attemptId));
+        return false;
+      },
+      placementProbeEnabled: false,
+    });
+
+    expect(result).toMatchObject({ scannedInflight: 1, inflightReaped: 0, lost: 1 });
+    expect((await readClaim(claimId)).status).toBe('running');
+    const [attempt] = await db
+      .select()
+      .from(placement_starter_attempt)
+      .where(eq(placement_starter_attempt.id, attemptId));
+    expect(attempt).toMatchObject({ status: 'running', lease_expires_at: renewedUntil });
+  });
+
+  it('fails safe when the pg-boss liveness probe is unavailable', async () => {
+    const { claimId } = await seedInflightClaim('running');
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      isJobLive: async () => {
+        throw new Error('boss unavailable');
+      },
+      placementProbeEnabled: false,
+    });
+
+    expect(result).toMatchObject({
+      scannedInflight: 1,
+      inflightJobLive: 1,
+      inflightReaped: 0,
+    });
+    const claim = await readClaim(claimId);
+    expect(claim.status).toBe('running');
+    expect(claim.next_reconcile_at).toEqual(
+      new Date(NOW.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS),
+    );
+  });
+
+  it.each([
+    ['running without any attempt', 'running', false, undefined],
+    ['verifying with a null lease', 'verifying', true, null],
+  ] as const)(
+    'recovers the abnormal state %s after the owning job is dead',
+    async (_name, status, withAttempt, leaseExpiresAt) => {
+      const seeded = await seedInflightClaim(status, { withAttempt, leaseExpiresAt });
+
+      const result = await sweepStalePlacementStarterClaims(db, {
+        now: NOW,
+        isJobLive: noJobLive,
+        placementProbeEnabled: false,
+      });
+
+      expect(result).toMatchObject({ scannedInflight: 1, inflightReaped: 1, lost: 0 });
+      expect((await readClaim(seeded.claimId)).status).toBe('exhausted');
+      if (withAttempt) {
+        const [attempt] = await db
+          .select()
+          .from(placement_starter_attempt)
+          .where(eq(placement_starter_attempt.id, seeded.attemptId));
+        expect(attempt).toMatchObject({ status: 'interrupted', lease_expires_at: null });
+      }
+    },
+  );
+
+  it('ignores terminal delivery history when proving that a running claim has no active attempt', async () => {
+    const { claimId, jobId } = await seedInflightClaim('running', { withAttempt: false });
+    await db.insert(placement_starter_attempt).values([
+      {
+        id: 'attempt-history-1',
+        claim_id: claimId,
+        pg_boss_job_id: jobId,
+        delivery_no: 1,
+        fencing_token: '33333333-3333-4333-8333-333333333331',
+        status: 'underfilled',
+        lease_expires_at: new Date(NOW.getTime() + 60_000),
+        started_at: CREATED,
+        finished_at: new Date(CREATED.getTime() + 60_000),
+        created_at: CREATED,
+        updated_at: CREATED,
+      },
+      {
+        id: 'attempt-history-2',
+        claim_id: claimId,
+        pg_boss_job_id: jobId,
+        delivery_no: 2,
+        fencing_token: '33333333-3333-4333-8333-333333333332',
+        status: 'timed_out',
+        lease_expires_at: null,
+        started_at: CREATED,
+        finished_at: new Date(CREATED.getTime() + 120_000),
+        created_at: CREATED,
+        updated_at: CREATED,
+      },
+    ]);
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      isJobLive: noJobLive,
+      placementProbeEnabled: false,
+    });
+
+    expect(result).toMatchObject({ scannedInflight: 1, inflightReaped: 1 });
+    const history = await db
+      .select({ id: placement_starter_attempt.id, status: placement_starter_attempt.status })
+      .from(placement_starter_attempt);
+    expect(history.sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: 'attempt-history-1', status: 'underfilled' },
+      { id: 'attempt-history-2', status: 'timed_out' },
+    ]);
+  });
+
+  it('stands down with zero half-write when the attempt fence rotates after the job probe', async () => {
+    const { attemptId, claimId } = await seedInflightClaim('running');
+    const rotatedFence = '44444444-4444-4444-8444-444444444444';
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      isJobLive: async () => {
+        await db
+          .update(placement_starter_attempt)
+          .set({ fencing_token: rotatedFence })
+          .where(eq(placement_starter_attempt.id, attemptId));
+        return false;
+      },
+      placementProbeEnabled: false,
+    });
+
+    expect(result).toMatchObject({ inflightReaped: 0, lost: 1 });
+    expect((await readClaim(claimId)).status).toBe('running');
+    const [attempt] = await db
+      .select()
+      .from(placement_starter_attempt)
+      .where(eq(placement_starter_attempt.id, attemptId));
+    expect(attempt).toMatchObject({ status: 'running', fencing_token: rotatedFence });
+  });
+
+  it('stands down with zero half-write when claim job authority changes after the probe', async () => {
+    const { attemptId, claimId } = await seedInflightClaim('verifying');
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      isJobLive: async () => {
+        await db
+          .update(placement_starter_claim)
+          .set({ pg_boss_job_id: 'boss-replacement' })
+          .where(eq(placement_starter_claim.id, claimId));
+        return false;
+      },
+      placementProbeEnabled: false,
+    });
+
+    expect(result).toMatchObject({ inflightReaped: 0, lost: 1 });
+    expect(await readClaim(claimId)).toMatchObject({
+      status: 'verifying',
+      pg_boss_job_id: 'boss-replacement',
+    });
+    const [attempt] = await db
+      .select()
+      .from(placement_starter_attempt)
+      .where(eq(placement_starter_attempt.id, attemptId));
+    expect(attempt?.status).toBe('verifying');
+  });
+
+  it('lets concurrent sweepers probe and reap one in-flight claim at most once', async () => {
+    const { claimId } = await seedInflightClaim('queued');
+    let probes = 0;
+    const deps = {
+      now: NOW,
+      isJobLive: async () => {
+        probes += 1;
+        await Promise.resolve();
+        return false;
+      },
+      placementProbeEnabled: false,
+    };
+
+    const results = await Promise.all([
+      sweepStalePlacementStarterClaims(db, deps),
+      sweepStalePlacementStarterClaims(db, deps),
+    ]);
+
+    expect(probes).toBe(1);
+    expect(results.reduce((sum, result) => sum + result.inflightReaped, 0)).toBe(1);
+    expect((await readClaim(claimId)).status).toBe('exhausted');
+    const rerun = await sweepStalePlacementStarterClaims(db, deps);
+    expect(rerun.scannedInflight).toBe(0);
+  });
+
+  it.each(['claim', 'attempt'] as const)(
+    'stands down immediately when a live writer holds the %s row lock',
+    async (lockedRow) => {
+      const { attemptId, claimId, fencingToken, jobId } = await seedInflightClaim('running');
+      let releaseLock: (() => void) | undefined;
+      const released = new Promise<void>((resolve) => {
+        releaseLock = resolve;
+      });
+      let announceLock: (() => void) | undefined;
+      const lockReady = new Promise<void>((resolve) => {
+        announceLock = resolve;
+      });
+      const holder = db.transaction(async (tx) => {
+        if (lockedRow === 'claim') {
+          await tx
+            .select({ id: placement_starter_claim.id })
+            .from(placement_starter_claim)
+            .where(eq(placement_starter_claim.id, claimId))
+            .for('update');
+        } else {
+          await tx
+            .select({ id: placement_starter_attempt.id })
+            .from(placement_starter_attempt)
+            .where(eq(placement_starter_attempt.id, attemptId))
+            .for('update');
+        }
+        announceLock?.();
+        await released;
+      });
+      await lockReady;
+
+      const recovery = terminalizeLostPlacementDelivery(
+        db,
+        {
+          claimId,
+          pgBossJobId: jobId,
+          attempt: { attemptId, fencingToken, pgBossJobId: jobId },
+        },
+        NOW,
+      );
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const outcome = await Promise.race([
+        recovery,
+        new Promise<'blocked'>((resolve) => {
+          timeout = setTimeout(() => resolve('blocked'), 2_000);
+        }),
+      ]);
+      if (timeout) clearTimeout(timeout);
+      releaseLock?.();
+      await holder;
+      const eventual = await recovery;
+
+      expect(outcome).toBe(false);
+      expect(eventual).toBe(false);
+      expect((await readClaim(claimId)).status).toBe('running');
+      const [attempt] = await db
+        .select()
+        .from(placement_starter_attempt)
+        .where(eq(placement_starter_attempt.id, attemptId));
+      expect(attempt).toMatchObject({ status: 'running', fencing_token: fencingToken });
+    },
+  );
+
+  it('keeps current pending while the old job is live, then reaps old and dispatches that same claim', async () => {
+    await seedGoal();
+    const currentRevisionId = await currentRevision('goal-1');
+    const oldClaimId = await insertClaim(0, {
+      id: 'claim-old-running',
+      semantic_goal_revision_id: 'revision-superseded-before-yuk-776',
+      status: 'running',
+      pg_boss_job_id: 'boss-old-flight',
+      next_reconcile_at: CREATED,
+      updated_at: CREATED,
+    });
+    await db.insert(placement_starter_attempt).values({
+      id: 'attempt-old-running',
+      claim_id: oldClaimId,
+      pg_boss_job_id: 'boss-old-flight',
+      delivery_no: 2,
+      fencing_token: '55555555-5555-4555-8555-555555555555',
+      status: 'running',
+      lease_expires_at: new Date(NOW.getTime() - 60_000),
+      started_at: CREATED,
+      created_at: CREATED,
+      updated_at: CREATED,
+    });
+    const currentClaimId = await insertClaim(1, {
+      id: 'claim-current-pending',
+      semantic_goal_revision_id: currentRevisionId,
+      status: 'pending_dispatch',
+      next_reconcile_at: CREATED,
+      updated_at: CREATED,
+    });
+    const probes: string[] = [];
+    bossMock.send
+      .mockResolvedValueOnce('boss-current-rolled-back')
+      .mockResolvedValueOnce('boss-current-after-reap');
+
+    // Round 1: the expired attempt is not enough to reap — the old pg-boss delivery is still live.
+    // The paid leg then exercises the REAL dispatch Tx helper, hits nonterminal_uq on its
+    // pending→queued transition, rolls back that savepoint, and preserves the current claim.
+    const first = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      isJobLive: async (jobId) => {
+        probes.push(`live:${jobId}`);
+        return true;
+      },
+      dispatch: dispatchPlacementStarterClaim,
+      placementProbeEnabled: true,
+    });
+
+    expect(first).toMatchObject({
+      scannedInflight: 1,
+      inflightJobLive: 1,
+      inflightReaped: 0,
+      scannedPending: 1,
+      redispatched: 0,
+      admissionSkipped: 1,
+    });
+    expect(probes).toEqual(['live:boss-old-flight']);
+    expect(bossMock.send).toHaveBeenCalledTimes(1);
+    expect((await readClaim(oldClaimId)).status).toBe('running');
+    expect(await readClaim(currentClaimId)).toMatchObject({
+      status: 'pending_dispatch',
+      pg_boss_job_id: null,
+      last_error_class: null,
+    });
+
+    // Round 2: after the independent recovery cursors mature, the old job is confirmed dead.
+    // In-flight recovery fences/reaps it BEFORE the paid leg; the SAME deterministic current claim
+    // now takes the freed slot through the production dispatcher. No re-materialization shortcut.
+    const secondNow = new Date(NOW.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS + 60_000);
+    const second = await sweepStalePlacementStarterClaims(db, {
+      now: secondNow,
+      isJobLive: async (jobId) => {
+        probes.push(`dead:${jobId}`);
+        return false;
+      },
+      dispatch: dispatchPlacementStarterClaim,
+      placementProbeEnabled: true,
+    });
+
+    expect(second).toMatchObject({
+      scannedInflight: 1,
+      inflightReaped: 1,
+      scannedPending: 1,
+      redispatched: 1,
+      admissionSkipped: 0,
+    });
+    expect(probes).toEqual(['live:boss-old-flight', 'dead:boss-old-flight']);
+    expect(bossMock.send).toHaveBeenCalledTimes(2);
+    expect(await readClaim(oldClaimId)).toMatchObject({
+      status: 'exhausted',
+      last_error_code: 'inflight_delivery_lost',
+    });
+    expect(await readClaim(currentClaimId)).toMatchObject({
+      status: 'queued',
+      pg_boss_job_id: 'boss-current-after-reap',
+      last_error_class: null,
+    });
+  });
 });
 
 describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {

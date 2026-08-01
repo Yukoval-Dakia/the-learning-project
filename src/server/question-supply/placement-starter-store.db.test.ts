@@ -19,6 +19,7 @@ import { dispatchSupplyTarget } from './dispatcher';
 import { SupplyTraceV1 } from './evidence-demand';
 import { buildPlacementStarterTarget, dispatchPlacementStarterClaimTx } from './placement-starter';
 import {
+  markPlacementStarterClaimTerminal,
   materializePlacementStartersForGoal,
   resolvePlacementStarterGoalAuthority,
 } from './placement-starter-store';
@@ -381,7 +382,7 @@ describe('placement starter store', () => {
     expect(byId['stranded-pending']).toBe('pending_dispatch');
   });
 
-  it('cancels a claim whose dispatch loses the single-flight slot, no orphan job (YUK-452 round-2)', async () => {
+  it('keeps the current claim pending when dispatch loses single-flight, then retries it after the winner ends (YUK-776)', async () => {
     await seedGoal();
     const { identities } = await db.transaction((tx) =>
       materializePlacementStartersForGoal(tx, 'goal-1'),
@@ -405,19 +406,56 @@ describe('placement starter store', () => {
       status: 'queued',
       pg_boss_job_id: 'job-winner',
     });
+    const attemptedJobs: string[] = [];
     const jobId = await db.transaction((tx) =>
-      dispatchPlacementStarterClaimTx(tx, identity.claimId, async () => 'job-loser'),
+      dispatchPlacementStarterClaimTx(tx, identity.claimId, async () => {
+        attemptedJobs.push('job-current-rolled-back');
+        return 'job-current-rolled-back';
+      }),
     );
-    // The losing claim's pending→queued raised the single-flight 23505; it is terminalized as
-    // cancelled (no throw, no dispatch) and the savepoint rolled back its enqueue → pg_boss_job_id
-    // stays null (no orphan job). The winner is untouched.
+    // The current claim's pending→queued raises the single-flight 23505 while the older revision
+    // owns the paid slot. The savepoint rolls back its enqueue/observations (no orphan job), but
+    // the deterministic current claim remains retryable instead of being irreversibly cancelled.
     expect(jobId).toBeNull();
-    const rows = await db.select().from(placement_starter_claim);
-    const loser = rows.find((r) => r.id === identity.claimId);
-    expect(loser?.status).toBe('cancelled');
+    expect(attemptedJobs).toEqual(['job-current-rolled-back']);
+    let rows = await db.select().from(placement_starter_claim);
+    let loser = rows.find((r) => r.id === identity.claimId);
+    expect(loser?.status).toBe('pending_dispatch');
     expect(loser?.pg_boss_job_id).toBeNull();
-    expect(loser?.last_error_class).toBe('superseded');
+    expect(loser?.last_error_class).toBeNull();
     expect(rows.find((r) => r.id === 'in-flight-winner')?.status).toBe('queued');
+
+    // Once the old paid flight terminalizes, retry the SAME deterministic current claim. This is
+    // the recovery property cancellation destroyed: no re-materialization or new identity needed.
+    const winnerFinishedAt = new Date('2026-07-23T03:00:00Z');
+    await db.transaction((tx) =>
+      markPlacementStarterClaimTerminal(tx, 'in-flight-winner', 'exhausted', winnerFinishedAt, {
+        class: 'delivery_lost',
+        code: 'old_flight_reaped',
+        message: 'older revision job is confirmed dead after its attempt lease expired',
+      }),
+    );
+    const retriedJobId = await db.transaction((tx) =>
+      dispatchPlacementStarterClaimTx(tx, identity.claimId, async () => {
+        attemptedJobs.push('job-current-after-winner');
+        return 'job-current-after-winner';
+      }),
+    );
+
+    expect(retriedJobId).toBe('job-current-after-winner');
+    expect(attemptedJobs).toEqual(['job-current-rolled-back', 'job-current-after-winner']);
+    rows = await db.select().from(placement_starter_claim);
+    loser = rows.find((r) => r.id === identity.claimId);
+    expect(loser).toMatchObject({
+      status: 'queued',
+      pg_boss_job_id: 'job-current-after-winner',
+      last_error_class: null,
+    });
+    expect(rows.find((r) => r.id === 'in-flight-winner')).toMatchObject({
+      status: 'exhausted',
+      exhausted_at: winnerFinishedAt,
+      last_error_code: 'old_flight_reaped',
+    });
   });
 
   it('ignores sequence-only goal updates when deriving semantic identity', async () => {
