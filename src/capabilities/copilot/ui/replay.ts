@@ -105,6 +105,10 @@ export interface ReplayChatMessage {
  */
 export function replayToMessages(turns: ReplayTurn[]): ReplayChatMessage[] {
   const out: ReplayChatMessage[] = [];
+  // A stable domain event may appear twice when a caller combines overlapping
+  // replay windows. Preserve the first usable projection and never render a
+  // second "ghost" user/assistant bubble for the same event.
+  const seenEventIds = new Set<string>();
   for (const t of turns) {
     if (t.role !== 'user' && t.role !== 'ai' && t.role !== 'tombstone') continue;
     // Classify tombstones BEFORE the text guard — a tombstone must still render even with empty
@@ -114,6 +118,8 @@ export function replayToMessages(turns: ReplayTurn[]): ReplayChatMessage[] {
     // split so it can't be imported here; if turns.ts changes the tombstone text, update both
     // (YUK-497 wave-3).
     if (t.role === 'tombstone') {
+      if (seenEventIds.has(t.event_id)) continue;
+      seenEventIds.add(t.event_id);
       out.push({
         id: t.event_id,
         role: 'tombstone',
@@ -124,6 +130,8 @@ export function replayToMessages(turns: ReplayTurn[]): ReplayChatMessage[] {
     }
     // user / ai turns must carry real text — drop empty/malformed (best-effort prefill).
     if (typeof t.text !== 'string' || t.text.length === 0) continue;
+    if (seenEventIds.has(t.event_id)) continue;
+    seenEventIds.add(t.event_id);
     out.push({
       id: t.event_id,
       role: t.role,

@@ -46,12 +46,23 @@ import { CopilotDrawer } from '@/ui/primitives/CopilotDrawer';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { ToolUseCard } from '@/ui/primitives/ToolUseCard';
 import { useQuery } from '@tanstack/react-query';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { CopilotHeroCard } from './CopilotHeroCard';
 import { nextNudgeSessionAfterTurn, resolveTurnAmbientFocus } from './nudge-focus';
 import { type ReplayPrimaryView, type ReplayTurn, replayToMessages } from './replay';
 import { isOneShotSkill } from './skill-lifecycle';
+import {
+  type CopilotRunView,
+  type CopilotSubtaskView,
+  consumeDurableCopilotRun,
+  createCopilotRunView,
+  foldCopilotRunFrames,
+  parseCopilotSseStream,
+  parseInlineSubtaskEvent,
+  subtaskEventToFrame,
+} from './subtask-events';
 import { useCopilotNudges } from './useCopilotNudges';
 
 interface DreamingPreviewRow {
@@ -114,6 +125,12 @@ interface CopilotChatResponse {
   primary_view?: ReplayPrimaryView;
 }
 
+interface DurableCopilotAccepted {
+  run_id: string;
+  session_id: string;
+  checkpoint_event_id?: string;
+}
+
 // GET /api/copilot/turns response shape — see src/capabilities/copilot/server/turns.ts.
 interface CopilotTurnsResponse {
   turns: ReplayTurn[];
@@ -142,6 +159,9 @@ export interface ChatMessage {
   // turn, rendered below the reply text by CopilotHeroCard. Forwarded from the
   // terminal reply event (live) or replayToMessages (reopen). Absent = no hero.
   primary_view?: ReplayPrimaryView;
+  // YUK-757 — public child lifecycle only. The raw nested-agent transcript,
+  // prompt and reasoning never enter ChatMessage.
+  subtasks?: CopilotSubtaskView[];
 }
 
 // Quick-chips are user-readable prompts; they send via triggered_by:'chat'
@@ -154,56 +174,6 @@ const REPLAY_LIMIT = 20;
 
 function nextId(): string {
   return `m_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-// YUK-266 (C1) — one parsed SSE event from the chat stream.
-interface SseEvent {
-  event: string;
-  data: string;
-}
-
-// YUK-266 (C1) — parse an SSE response body, yielding {event, data} per frame.
-// Frames are separated by a blank line (\n\n); each frame's `event:` / `data:`
-// lines are accumulated. Tolerant of \r\n and missing trailing newline. The
-// terminal frame may lack a trailing blank line, so we flush a pending frame at
-// end-of-stream.
-async function* parseSseStream(body: ReadableStream<Uint8Array>): AsyncGenerator<SseEvent> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  function* drainComplete(): Generator<SseEvent> {
-    let sep = buffer.indexOf('\n\n');
-    while (sep !== -1) {
-      const frame = buffer.slice(0, sep);
-      buffer = buffer.slice(sep + 2);
-      const parsed = parseFrame(frame);
-      if (parsed) yield parsed;
-      sep = buffer.indexOf('\n\n');
-    }
-  }
-  function parseFrame(frame: string): SseEvent | null {
-    let event = 'message';
-    const dataLines: string[] = [];
-    for (const rawLine of frame.split('\n')) {
-      const line = rawLine.replace(/\r$/, '');
-      if (line.startsWith('event:')) event = line.slice(6).trim();
-      else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
-    }
-    if (dataLines.length === 0) return null;
-    return { event, data: dataLines.join('\n') };
-  }
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    buffer = buffer.replace(/\r\n/g, '\n');
-    yield* drainComplete();
-  }
-  buffer += decoder.decode();
-  buffer = buffer.replace(/\r\n/g, '\n');
-  yield* drainComplete();
-  const tail = parseFrame(buffer);
-  if (tail) yield tail;
 }
 
 export interface CopilotDockProps {
@@ -340,6 +310,29 @@ export const MessageRow = memo(function MessageRow({
         {m.role === 'ai' && m.primary_view ? (
           <CopilotHeroCard primaryView={m.primary_view} navigate={navigate} />
         ) : null}
+        {m.role === 'ai' && m.subtasks && m.subtasks.length > 0 ? (
+          <div className="flex flex-col gap-[6px]" data-testid="copilot-subtask-list">
+            {m.subtasks.map((subtask) => (
+              <div key={subtask.id} data-testid="copilot-subtask-card" data-subtask-id={subtask.id}>
+                <ToolUseCard
+                  toolName="后台子任务"
+                  summary={subtask.label}
+                  actor={null}
+                  status={
+                    subtask.status === 'completed'
+                      ? 'done'
+                      : subtask.status === 'failed'
+                        ? 'failed'
+                        : 'running'
+                  }
+                  running={<span>正在处理…</span>}
+                  result={subtask.summary ? <span>{subtask.summary}</span> : <span>已完成</span>}
+                  errorView={<span>{subtask.error ?? '这项子任务未能完成。'}</span>}
+                />
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -371,6 +364,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
+  const [durableRunning, setDurableRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Per-checkpoint in-flight id for the revert POST (disables that row's button), and a
   // distinct "revert landed but the refresh failed" flag so a post-revert refetch error is
@@ -626,6 +620,26 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     // structured fields.
     const aiId = nextId();
     let aiCreated = false;
+    let durableAccepted = false;
+    let inlineReplyStarted = false;
+    let inlineSubtaskVersion = 0;
+    let inlineRunView = createCopilotRunView();
+    const applyRunView = (view: CopilotRunView, fallbackText: string) => {
+      const terminal = view.phase === 'completed' || view.phase === 'failed';
+      setMessages((prev) => {
+        const existing = prev.find((message) => message.id === aiId);
+        const next: ChatMessage = {
+          ...(existing ?? { id: aiId, role: 'ai' as const }),
+          text: view.replyText || existing?.text || fallbackText,
+          checkpoint_event_id: view.checkpointEventId ?? existing?.checkpoint_event_id,
+          subtasks: view.subtasks,
+          streaming: !terminal,
+        };
+        return existing
+          ? prev.map((message) => (message.id === aiId ? next : message))
+          : [...prev, next];
+      });
+    };
     try {
       // YUK-267 (C2) — ambient_context: the current route + (when a skill is
       // active) the focused entity. route is always present; focused_entity is the
@@ -647,6 +661,33 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           ...(ambientContext ? { ambient_context: ambientContext } : {}),
         }),
       });
+      // YUK-757/YUK-596 bridge — durable dispatch returns 202 JSON + a generic
+      // authenticated job-events Location instead of inline chat SSE. Consume it
+      // with explicit Last-Event-ID reconnects; every update patches the SAME AI
+      // row, so replay cannot create duplicate cards or a ghost reply.
+      if (res.status === 202) {
+        const accepted = (await res.json()) as DurableCopilotAccepted;
+        if (!accepted.run_id) throw new Error('后台任务没有返回 run id');
+        durableAccepted = true;
+        const location =
+          res.headers.get('Location') ??
+          `/api/jobs/copilot_run/${encodeURIComponent(accepted.run_id)}/events`;
+        aiCreated = true;
+        setDurableRunning(true);
+        applyRunView(inlineRunView, '这件事需要多步处理，我已转到后台；进度会在这里持续更新。');
+        const durable = await consumeDurableCopilotRun({
+          location,
+          fetchResponse: apiFetch,
+          onUpdate: (view) =>
+            applyRunView(view, '这件事需要多步处理，我已转到后台；进度会在这里持续更新。'),
+        });
+        if (durable.phase === 'failed') {
+          applyRunView(durable, '这次后台运行没有完成。可以换个更聚焦的问法再试。');
+          reportSendError('后台运行未完成');
+        }
+        nudgeSessionRef.current = nextNudgeSessionAfterTurn(nudgeSessionRef.current, true);
+        return;
+      }
       const body = res.body;
       // Graceful degrade (red line): no streamable body → read the whole thing
       // and treat it as a single terminal reply. The terminal `reply` event is the
@@ -655,7 +696,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       if (!body) {
         finalReply = (await res.json()) as CopilotChatResponse;
       } else {
-        for await (const evt of parseSseStream(body)) {
+        for await (const evt of parseCopilotSseStream(body)) {
           if (evt.event === 'delta') {
             let chunk = '';
             try {
@@ -668,16 +709,39 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             // message; subsequent deltas grow its text.
             if (!aiCreated) {
               aiCreated = true;
+              inlineReplyStarted = true;
               setSending(false);
               setMessages((prev) => [
                 ...prev,
-                { id: aiId, role: 'ai', text: chunk, streaming: true },
+                {
+                  id: aiId,
+                  role: 'ai',
+                  text: chunk,
+                  streaming: true,
+                  subtasks: inlineRunView.subtasks,
+                },
               ]);
             } else {
+              const appendToReply = inlineReplyStarted;
+              inlineReplyStarted = true;
               setMessages((prev) =>
-                prev.map((m) => (m.id === aiId ? { ...m, text: m.text + chunk } : m)),
+                prev.map((m) =>
+                  m.id === aiId ? { ...m, text: appendToReply ? m.text + chunk : chunk } : m,
+                ),
               );
             }
+          } else if (evt.event === 'subtask') {
+            const subtask = parseInlineSubtaskEvent(evt.data);
+            if (!subtask) continue;
+            inlineSubtaskVersion += 1;
+            inlineRunView = foldCopilotRunFrames(inlineRunView, [
+              subtaskEventToFrame(subtask, inlineSubtaskVersion),
+            ]);
+            if (!aiCreated) {
+              aiCreated = true;
+              setSending(false);
+            }
+            applyRunView(inlineRunView, '我正在协调这些子任务，完成后会在这里统一收口。');
           } else if (evt.event === 'reply') {
             try {
               finalReply = JSON.parse(evt.data) as CopilotChatResponse;
@@ -736,6 +800,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         // YUK-307 — the hero nomination from the terminal reply event (chat.ts
         // CopilotChatResult.primary_view). Undefined ⇒ no hero rendered.
         primary_view: res2.primary_view,
+        subtasks: inlineRunView.subtasks,
       };
       setMessages((prev) =>
         aiCreated ? prev.map((m) => (m.id === aiId ? finalized : m)) : [...prev, finalized],
@@ -745,10 +810,18 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       if (res2.error) reportSendError(res2.error);
     } catch (err) {
       // Network / stream error mid-flight. Drop any partial bubble and show the
-      // existing 重试 affordance — the turn was best-effort.
-      if (aiCreated) setMessages((prev) => prev.filter((m) => m.id !== aiId));
-      const message =
-        err instanceof ApiError
+      // existing 重试 affordance — the inline turn was best-effort. A durable
+      // 202 was already accepted server-side, so NEVER drop its row: doing so
+      // would hide a still-running job and let its eventual replay look like a
+      // ghost reply. Freeze the visible progress instead.
+      if (aiCreated && !durableAccepted) {
+        setMessages((prev) => prev.filter((m) => m.id !== aiId));
+      } else if (durableAccepted) {
+        setMessages((prev) => prev.map((m) => (m.id === aiId ? { ...m, streaming: false } : m)));
+      }
+      const message = durableAccepted
+        ? '后台进度连接已中断；任务可能仍在运行，稍后重新打开对话可查看结果。'
+        : err instanceof ApiError
           ? `请求失败（${err.status}）`
           : err instanceof Error
             ? err.message
@@ -757,6 +830,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     } finally {
       sendingRef.current = false;
       setSending(false);
+      setDurableRunning(false);
     }
   }, []);
 
@@ -1100,7 +1174,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                 />
               );
             })}
-            {sending ? (
+            {sending && !durableRunning ? (
               <div className="msg msg-ai" data-testid="copilot-thinking">
                 <div className="msg-avatar">
                   <LoomIcon name="sparkle" size={14} />
