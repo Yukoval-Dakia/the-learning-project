@@ -65,7 +65,11 @@ function assistantThinking(thinking: string) {
   };
 }
 
-function assistantThinkingWithTask(thinking: string, toolUseId: string) {
+function assistantThinkingWithTask(
+  thinking: string,
+  toolUseId: string,
+  domainTool?: { id: string; name: string; input: Record<string, unknown> },
+) {
   return {
     type: 'assistant',
     message: {
@@ -81,6 +85,16 @@ function assistantThinkingWithTask(thinking: string, toolUseId: string) {
             description: '核对近七日必要条件/充分条件错题、探针与复习轨迹，只回证据结论',
           },
         },
+        ...(domainTool
+          ? [
+              {
+                type: 'tool_use',
+                id: domainTool.id,
+                name: domainTool.name,
+                input: domainTool.input,
+              },
+            ]
+          : []),
       ],
     },
   };
@@ -220,7 +234,19 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     const foregroundText = '我会在前台只用 Copilot 一个声音汇总后台调查。';
     mockSdk.messages = [
       taskStarted('task-logic-evidence', 'tool-spawn-logic-01', '核对逻辑关系失败证据'),
-      assistantThinkingWithTask(hiddenReasoning, 'tool-spawn-logic-01'),
+      assistantThinkingWithTask(hiddenReasoning, 'tool-spawn-logic-01', {
+        id: 'tool-domain-attempts-02',
+        name: 'mcp__copilot__get_attempt_details',
+        input: {
+          question_ids: [
+            'q_logic_necessary_sufficient_17',
+            'q_logic_gate_access_09',
+            'q_logic_counterexample_22',
+          ],
+          include_submission_snapshots: true,
+          include_judge_evidence: true,
+        },
+      }),
       taskProgress('task-logic-evidence', 'tool-spawn-logic-01', '比对作答、探针与复习记录'),
       assistant(foregroundText),
       taskUpdated('task-logic-evidence', {

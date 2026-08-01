@@ -55,6 +55,7 @@ import {
   createRunLifecycle,
   maxLifecycleAttempts,
 } from './run-lifecycle';
+import { SPAWN_TOOL_NAME } from './spawn-contract';
 
 // ============================================================================
 // Public surface
@@ -212,8 +213,9 @@ export interface RunTaskCtx {
    */
   taskRunId?: string;
   /**
-   * Disable input-only tool logging when an in-process MCP owner writes the
-   * authoritative input + output trace itself. Defaults to true for every runner.
+   * Disable runner-owned tool logging. `runTask` records only the SDK-native Task
+   * spawn; MCP DomainTools keep their bridge-owned authoritative input/output row.
+   * Streaming runners retain their existing input-only logging contract.
    */
   autoLogToolCalls?: boolean;
 }
@@ -573,7 +575,11 @@ async function runTaskAttempt(args: {
         const stepLatencyMs = Date.now() - stepStartTime;
         const blocks = (msg.message.content ?? []) as ContentBlock[];
         for (const block of blocks) {
-          if (block.type === 'tool_use' && ctx.autoLogToolCalls !== false) {
+          if (
+            block.type === 'tool_use' &&
+            block.name === SPAWN_TOOL_NAME &&
+            ctx.autoLogToolCalls !== false
+          ) {
             await lifecycle.recordToolCall({
               toolName: block.name,
               inputJson: (block.input ?? {}) as Record<string, unknown>,
