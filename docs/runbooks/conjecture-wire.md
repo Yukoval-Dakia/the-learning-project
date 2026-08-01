@@ -2,7 +2,7 @@
 
 > 单元：producer `serveProbeOnce`/`answerProbe`（`src/capabilities/agency/server/conjecture/probe-lifecycle.ts`）+ answer route `POST /api/conjecture/probe/[id]/answer`（`src/capabilities/agency/api/probe-answer.ts`）+ reader `GET /api/admin/conjecture-scores`（`src/capabilities/observability/api/conjecture-scores.ts`）。
 > 决策 SoT：`docs/adr/0049-conjecture-wire-dark-loop-producer-consumer.md`。spec：`docs/design/2026-07-04-conjecture-wire-spec.md`。
-> 红线：ND-5——probe 生命周期**永不写** FSRS / attempt / θ̂。judge 经 `createDefaultJudgeInvoker().invoke()`（`probe-answer.ts:218`），ND-5 边界是 `answerProbe` 而非 dispatch path——invoker 本身 judge-only，零 FSRS/attempt/event 写。
+> 红线：ND-5——probe 生命周期**永不写** FSRS / attempt / θ̂。judge 经 `createDefaultJudgeInvoker().invoke()`（`probe-answer.ts` 的 `POST`），ND-5 边界是 `answerProbe` 而非 dispatch path——invoker 本身 judge-only，零 FSRS/attempt/event 写。
 >
 > ⚠️ **本行曾写反**（YUK-790 核对修正）：旧版称「经 registry 直调 `resolveJudge(kind).run()`，**不走** `createDefaultJudgeInvoker`」。那是 ADR-0049 §2 记录的 **CRITICAL 缺陷**（PR #705 已修）——base registry 的 semantic `run()` 是 profile-validation STUB，返回 `coarse_outcome:'unsupported'`，走它则每个 free_text probe 都 fail-closed 422、永不写 probe_result。**照旧文改代码会重新引入该 bug。**
 
@@ -23,7 +23,7 @@ owner 现实中靠 admin reader + 结构化日志感知 loop；本 runbook 是�
 2. **consumer 端**——owner 作答后是否写了 probe_result event + reconcile 是否 mint 了软态 + prediction_score：
    ```sql
    -- probe answer 结果（accepted probe 的判分锚）
-   SELECT id, subject_id, action, payload->>'outcome' AS outcome,
+   SELECT id, subject_id, task_run_id, action, payload->>'outcome' AS outcome,
           payload->>'resolution' AS resolution, created_at
    FROM event
    WHERE action = 'experimental:probe_result'
@@ -88,45 +88,81 @@ WHERE e.action = 'attempt' AND e.subject_kind = 'question' AND q.source = 'mind_
 ```
 两条都期望 0。非零 → ND-5 被破，停一切 + 查 answer route 的写路径。
 
-answer route 的隔离保证**不**靠「避开 invoker」——它就是走 `createDefaultJudgeInvoker().invoke()`（`probe-answer.ts:218`）。保证来自：invoker 本身 judge-only（零 FSRS/attempt/event 写），FSRS 写在 `submit.ts` 里 judge 调用**之后**的自有代码中，而本 route 不走 submit.ts；唯一写是 `answerProbe` 的单个 `experimental:probe_result` event。见 ADR-0049 §2 + 红线守恒矩阵。回归测试 `probe-answer.db.test.ts` 在每条路径断言零 FSRS 行。
+answer route 的隔离保证**不**靠「避开 invoker」——它就是走 `createDefaultJudgeInvoker().invoke()`（`probe-answer.ts` 的 `POST`）。保证来自：invoker 本身 judge-only（零 FSRS/attempt/event 写），FSRS 写在 `submit.ts` 里 judge 调用**之后**的自有代码中，而本 route 不走 submit.ts；判分结果只由 `answerProbe` 写一个 `experimental:probe_result`。付费槽控制另写 `experimental:probe_judge_started`，失败释放时写 `experimental:probe_judge_released`，两者都不是 attempt/FSRS。见 ADR-0049 §2 + 红线守恒矩阵。回归测试 `probe-answer.db.test.ts` 在每条路径断言零 FSRS 行。
 
 ## judge kind 与 OAuth lane（multimodal probe）
 
-probe question 的 kind 由 conjecture 诱导期决定。当前 conjecture engine 产 **`short_answer`** kind → `defaultJudgeKindForQuestion` 解析到 **semantic judge**（local，无 OAuth 依赖）。
+probe question 的 authored kind 当前是 **`short_answer`**，但 `serveProbeOnce` 会在每个
+`mind_probe` question 上显式写 `judge_kind_override='multimodal_direct'`。因此当前 answer
+route 对文字与图片答案都走 **`multimodal_direct`**，不是 semantic，也不是尚未接线的
+future path。
 
-**multimodal probe**（kind 带图 → `multimodal_direct` judge）是 follow-up，未在本波接线。一旦启用：
-- `multimodal_direct` judge 走 **OAuth lane**（`AI_PROVIDER_OVERRIDE=anthropic-sub`，owner Claude Max，token = `CLAUDE_CODE_OAUTH_TOKEN`）。
+未设置 override 时，`MultimodalDirectJudgeTask` 按 registry 默认走
+`xiaomi / mimo-v2.5`。实际 provider 解析优先级是：vision 调用点传入的
+`VISION_JUDGE_PROVIDER`（可选配套 `VISION_JUDGE_MODEL`；当前包括
+`multimodal_direct` 等 vision 调用点）> 全局
+`AI_PROVIDER_OVERRIDE` / `AI_PROVIDER_MODEL` > registry 默认；因此
+`VISION_JUDGE_PROVIDER=anthropic-sub` 或 `AI_PROVIDER_OVERRIDE=anthropic-sub` 都能切到 owner
+Claude Max 的 OAuth lane。前者在 OAuth token 缺失时会告警并省略 per-call override，回落到
+全局 override 或 registry 默认；不要把 judge kind 与 provider/auth lane 混为一谈。启用 OAuth 时：
+- token = `CLAUDE_CODE_OAUTH_TOKEN`。
 - token **绝不入 git / 绝不打印**——经 `.env.local` 透传三进程（API / Vite / worker），生产经 compose `.env` 注入 app + worker 两容器（见 CLAUDE.md「Switchable AI provider lane」）。
 - judge 子进程 env 由 `runner.buildAgentEnv(authMode:'oauth')` 构造：SET `CLAUDE_CODE_OAUTH_TOKEN`、UNSET `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` + 四个 cloud-provider selector（YUK-365 Finding 1）。
 
 ## judge 成本观测
 
-answer route 本身**不**记成本——LLM 调用成本经 judge runner 内部的 AI 任务日志落地（`src/server/ai/log.ts`，evidence-first 既定基建），计费行落 **`cost_ledger` 表**。
-
-> ⚠️ **逐 probe 成本当前不可得，下面这条是「全部 judge 判分成本」的上界，含普通练习判分——不要当 probe 专属成本读。**
->
-> 原因是结构性的，整条链没有连接键：`cost_ledger` 无任何 probe/练习判别列（只有 `task_run_id`(松耦合可空无 FK)/`task_kind`/`provider`/`model`/`cost`/`currency`/`tokens_in|out`/`outcome`/`pgboss_job_id`/`occurred_at`）；`ai_task_runs` 也无 question/subject 关联列（只有 `input_hash`/`prompt_fingerprint`/`result_digest` 这类摘要，不是按 probe 的查找键）；`experimental:probe_result` 事件**不写** `task_run_id`；`probe-answer.ts` 也**不把** invoker 的 run id 传给 `answerProbe`。而 probe 判分与普通提交判分**共用** `createDefaultJudgeInvoker`，产出的 `*JudgeTask` 完全同名 ⇒ 按 `task_kind` 聚合必然把普通练习一并计入。
->
-> 要真正的 per-probe 成本，须先补这条关联链（属设计变更，本 runbook 不擅自设计）——见 **YUK-805**。
+answer route 本身不重复记成本：runner lifecycle 写 `ai_task_runs` 与 `cost_ledger`，judge
+invoker 返回同源的 authoritative `task_run_id`；`answerProbe` 将它写入对应
+`experimental:probe_result` event envelope。查询必须从 probe result 出发再按 run id
+连接，**不能**从 `task_kind LIKE '%JudgeTask'` 反推，否则会混入使用同名 judge task 的
+普通练习。
 
 ```sql
--- judge task_kind 为 SemanticJudgeTask / StepsJudgeTask / MultimodalDirectJudgeTask
--- （registry.ts）。⚠️ 上界口径：含普通练习判分，非 probe 专属（见上）。
--- cost 是原始计费值，币种在 currency 列——聚合必须按 currency 分组，
--- 绝不裸 SUM 混币（schema.ts cost_ledger 注释）。
-SELECT task_kind, provider, model, currency,
-       SUM(cost) AS total_cost,
-       SUM(tokens_in) AS total_tokens_in,
-       SUM(tokens_out) AS total_tokens_out,
-       MIN(occurred_at) AS first_occurred_at,
-       MAX(occurred_at) AS last_occurred_at
-FROM cost_ledger
-WHERE task_kind LIKE '%JudgeTask'
-GROUP BY task_kind, provider, model, currency
-ORDER BY last_occurred_at DESC;
+-- 真·probe 专属：ordinary practice 即使 task_kind/provider/model 完全相同也不会进入。
+-- 按需在 probe_runs CTE 内加 created_at / subject_id 过滤。
+WITH probe_runs AS (
+  SELECT id AS probe_result_event_id,
+         subject_id AS probe_question_id,
+         task_run_id,
+         created_at AS probe_result_at
+  FROM event
+  WHERE action = 'experimental:probe_result'
+    AND subject_kind = 'question'
+)
+SELECT p.probe_question_id,
+       p.probe_result_event_id,
+       p.task_run_id,
+       r.status AS run_status,
+       c.task_kind,
+       c.provider,
+       c.model,
+       c.currency,
+       COUNT(c.id) AS ledger_rows,
+       ARRAY_REMOVE(ARRAY_AGG(c.id ORDER BY c.occurred_at, c.id), NULL) AS ledger_ids,
+       COALESCE(SUM(c.cost), 0) AS total_cost,
+       COALESCE(SUM(c.tokens_in), 0) AS total_tokens_in,
+       COALESCE(SUM(c.tokens_out), 0) AS total_tokens_out,
+       p.probe_result_at
+FROM probe_runs p
+LEFT JOIN ai_task_runs r ON r.id = p.task_run_id
+LEFT JOIN cost_ledger c ON c.task_run_id = p.task_run_id
+GROUP BY p.probe_question_id, p.probe_result_event_id, p.task_run_id,
+         r.status, c.task_kind, c.provider, c.model, c.currency, p.probe_result_at
+ORDER BY p.probe_result_at DESC;
 ```
+
+`LEFT JOIN` 是故意的：历史 `task_run_id IS NULL`、新调用因 run provenance/digest
+持久化失败而由 invoker fail-closed 清空 run id，以及 best-effort ledger 写失败，都会以
+`ledger_rows=0` 暴露而不是被静默吞掉。需要精确合计时只纳入
+`task_run_id IS NOT NULL AND ledger_rows > 0` 的新链路结果，并继续按 `currency` 分组，
+绝不跨币种裸 `SUM`。历史空值不回填；judge 已付费但在写 `probe_result` 前 fail-closed /
+失败的调用也没有结果事件，因此本查询诚实回答的是“成功落下 probe result 的可归因成本”，
+不是所有尝试过的 probe spend。
+
 ⚠️ **旧版此处三重写错**（YUK-790 核对修正）：查的是 `event WHERE action='ai:tool_call'`——该 action **不存在**；工具调用落 `tool_call_log` **表**而非 event 流；且 `tool_call_log.cost` 按设计恒为 0（schema.ts 明注：成本权威在 `cost_ledger`，此列填值会双记）。payload 键 `model`/`input_tokens`/`output_tokens`/`cost_usd` 亦全部不存在。
-若 `multimodal_direct` OAuth lane 启用，成本经 owner Claude Max 订阅（不按 token 计），日志只记 invocation 不记 cost_usd。
+若显式切到 `anthropic-sub`，成本经 owner Claude Max 订阅（不按 token 计）；ledger 仍保留
+run/provider/model/token correlation，但金额是当前 `effectiveCostUsd` 能提供的运营口径，不应
+误读为订阅账单的逐调用现金成本。
 
 ## 场景 A：accept 了 conjecture 但 reader 看不到 probe
 

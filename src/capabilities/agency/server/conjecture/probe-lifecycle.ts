@@ -282,6 +282,8 @@ export interface AnswerProbeParams {
   answer_md?: string | null;
   /** Provenance — the answer image refs (asset ids) that were graded (photo answers). */
   answer_image_refs?: string[];
+  /** Authoritative judge run correlation id for cost / execution attribution. */
+  taskRunId?: string;
   /** Response-signature verdict for v2 probes; absent only on historical probes. */
   response_judgement?: ConjectureProbeResponseJudgementT | null;
   now?: Date;
@@ -659,6 +661,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
   const retrievabilityAtJudge = params.retrievabilityAtJudge ?? null;
   const answerMd = params.answer_md ?? null;
   const answerImageRefs = params.answer_image_refs ?? [];
+  const taskRunId = params.taskRunId ?? null;
   const responseJudgement = params.response_judgement ?? null;
 
   return db.transaction(async (tx) => {
@@ -883,6 +886,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         answer_image_refs: answerImageRefs,
       },
       caused_by_event_id: conjectureEventId,
+      task_run_id: taskRunId,
       // The outcome remains available to A13's event readers/reconcile loop, but is
       // an internal mechanism result rather than a learner-authored memory. A
       // non-NULL stamp opts it out of the Mem0 outbox without deleting the event.
