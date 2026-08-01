@@ -1,58 +1,57 @@
-# 当前 handoff — 2026-08-01 YUK-772 已交付，NEXT YUK-805
+# 当前 handoff — 2026-08-01 YUK-805 已交付，NEXT YUK-757
 
 ## Delivered
 
-- YUK-772 / PR #1145 已合并：
-  `main@dca5a0ec0585398ce120a144c7612ce890ecc827`；Linear 已自动 Done，并已有 PR、
+- YUK-805 / PR #1147 已合并：
+  `main@1989ac7fe42f091db37755a4d7052d65bbeadeae`；Linear 已自动 Done，并已有 PR、
   merge、exact-head CI 与收口评论 evidence。
-- 15 个 KnownEvent kind 已逐项盘点。9 个 user-capable kind 通过同一策略同时保护
-  public member parsers 与 KnownEvent union；任何 stable user/non-self ref 都指向
-  `actor_ref` fail-closed。6 个 agent-only + Attempt/GenerateKnowledgeEdge/CorrectEvent
-  三个 mixed agent lane 保持原语义。
-- experimental refs（`owner`、`user:self`、`block_import`、editor/workflow provenance 等）
-  仍按当前持久化契约解析；收紧它们需要独立 migration，不在 YUK-772 偷渡。多用户方向
-  已由 YUK-767 承接，capture gate 未重复开票。
-- `judgeProvenanceSigningSecret()` 现在按原始字符串长度拒绝 `<32`，先于
-  INTERNAL_TOKEN equality 检查；不 trim/normalize、不打印 secret，合法 32/64 字符原样返回。
+- `probe-answer.ts` 现在把 `createDefaultJudgeInvoker().invoke()` 返回的 authoritative
+  `task_run_id` 传给 `answerProbe`，后者写入既有 event envelope 列；保持 nullable、无 FK、
+  无 migration，不扩张公共 invoker 契约。
+- conjecture runbook 的成本口径从 task-kind 上界改为
+  `experimental:probe_result + subject_kind='question'` 出发，再按 `task_run_id` 连接
+  `ai_task_runs` / `cost_ledger` 的 probe-only 查询；按 currency 分组并保留历史空关联。
+- provider 文档与现实一致：vision 调用点 override 逐字段优先于 global override，再回落
+  registry；默认 multimodal judge 为 `xiaomi/mimo-v2.5`。
 
 ## Verification evidence
 
-- author scoped unit：event schema 16 files / 209 tests；最终 actor/Correct/secret 聚焦
-  3 files / 46 tests。相关 event/writer DB 5 files / 110 tests；advice/submit provenance
-  consumer DB 2 files / 72 tests。数据覆盖复杂古文作答、FSRS、artifact/edge/judge/OCR，
-  以及单写和 valid-prefix + invalid-tail batch 零写入。
-- `pnpm audit:partition`、`pnpm audit:schema`、`pnpm audit:capability-boundaries`、
-  `pnpm typecheck`、`pnpm lint`、`pnpm build`：passed。
-- 独立 initial review 对完整工作树无 P0/P1、无 actionable P2；无 verification round。
-- PR exact-head CI Gate `30689854960` 在 `1a501ce5` 全绿：unit、DB 2/2、migration、
-  production build、static/audits、usability 均成功。3 个 review threads 已按证据回复并
-  resolve；其中 1 个 Major 是忽略 `fatal:false` 的不可复现误报，2 个 minor 按 policy
-  保留为 advisory。
-- 合并后 `main@dca5a0ec` CI Gate `30690217136` 全绿。
-- 未在本机运行完整 `pnpm test`；本 lane 不部署、不改 flag、不触发真实付费模型。
+- TDD red 先证明两个 event 路径原先都落 `task_run_id = NULL`；实现后 scoped PostgreSQL
+  DB 2 files / 48 tests 通过。复杂 fixture 同时 seeded probe 判分与同 task/provider/model
+  普通练习判分，生产形 SQL 只计 probe ledger row、tokens 与 cost。
+- `pnpm typecheck`、`pnpm lint`、`pnpm build`、schema/partition/capability/API audits、
+  Postman generation、Biome 与 `git diff --check`：passed。
+- 两路独立 initial review 各完成一次 verification，最终均无 P0/P1/actionable P2；OCR
+  exact-head review 0 comments，GitHub 无开放 review thread。
+- PR exact-head CI Gate `30691440250` 在
+  `761885ac1b39b5bf5ab6ea18e500bc4f9ed2d286` 全绿；CodeRabbit/Cursor 因额度未运行，
+  按 advisory policy 不阻塞。未在本机运行完整 `pnpm test`；本 lane 不部署、不改 flag、
+  不触发真实付费模型。
+- 合并后 `main@1989ac7f` CI Gate `30691590064` 全绿。
 
 ## Current queue
 
-- 2026-08-01 live Linear：Backlog 83、In Progress 4、Todo 1，严格未完成 **88**；排除
-  owner 指示 parked 的 YUK-813 / YUK-831 OpenCode 后，产品执行口径 **86**。
+- 2026-08-01 live Linear：Backlog 82、In Progress 4、Todo 1，严格未完成 **87**；排除
+  owner 指示 parked 的 YUK-813 / YUK-831 OpenCode 后，产品执行口径 **85**。
 - live projects 共 19：3 In Progress、2 Backlog、1 Planned、13 Completed。
-- 下一条独立产品 lane：YUK-805。先核验 judge invoker 是否回传 authoritative run id；
-  若是，最小透传到 `experimental:probe_result.event.task_run_id`，用现有松耦合列连接
-  cost ledger，并把 runbook 查询收紧为 probe-only。若不是，公共 invoker 契约扩张前
-  回 owner 过目。
-- 次选 YUK-757，但包含 UI，须重新走 design pre-flight；YUK-571 / YUK-405 / YUK-406
-  等待真实 owner 输入，YUK-452 是 parent/epic。
+- YUK-772 因 closeout PR automation 从 Done 回拨到 In Progress，已核对合并/CI 现实并
+  手动恢复 Done；后续 closeout PR 合并后必须再次核对并恢复 touched issue 状态，避免
+  留下虚假的 In Progress。
+- 下一条独立产品 lane：YUK-757。它包含 UI，须先给 owner 提交 design doc 逐字引用、
+  组件类型和精确文件清单并获批；批准前不写 UI。
+- YUK-571 / YUK-405 / YUK-406 等待真实 owner 输入，YUK-452 是 parent/epic；
+  YUK-813 / YUK-831 OpenCode 按 owner 指示 parked。
 
 ## Worktrees
 
-- YUK-772 functional + closeout worktree：
-  `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-772-actor-ref-gate`。
-- functional branch `codex/yuk-772-actor-ref-gate` 已由 PR #1145 squash merge；当前 worktree
-  已切到 `codex/yuk-772-closeout`，基于 `main@dca5a0ec`。
+- YUK-805 functional + closeout worktree：
+  `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-805-probe-cost-attribution`。
+- functional branch `codex/yuk-805-probe-cost-attribution` 已由 PR #1147 squash merge；当前
+  worktree 已切到 `codex/yuk-805-closeout`，基于 `main@1989ac7f`。
 - primary repo 的既有 unrelated dirty/conflict 未触碰；未强删任何 worktree 或 branch。
 
 ## Capture gate
 
-- YUK-772 已有实现、review、CI、merge evidence；搜索 `actor_ref experimental multi-user
-  migration` 并筛除无关语义噪声后，相关命中仅有本票和既有 YUK-767。本次无新增、
-  去重后的 actionable follow-up，因此未新建 Linear issue。
+- 已搜索 `probe task_run_id cost ledger attribution`、`experimental:probe_result task_run_id`
+  与 `vision judge provider runbook`；相关命中由 YUK-805、YUK-197、YUK-566 等既有票覆盖。
+  本次没有新增、去重后的 actionable follow-up，因此未新建 Linear issue。
