@@ -5,7 +5,7 @@
 ## WHERE TO LOOK
 | 文件 | 职责 |
 |------|------|
-| `manifest.ts` | 7 条 API 路由 + 2 个 jobs + 5 个自有 copilot tools + 7 个 event actions |
+| `manifest.ts` | 7 条 API 路由 + 3 个 jobs + 5 个自有 copilot tools + 7 个 event actions |
 | `api/chat.ts` | `/api/copilot/chat` SSE 流入口 |
 | `api/turns.ts` | `/api/copilot/turns` turns 重放 |
 | `api/copilot-summary.ts` | `/api/today/copilot-summary` 今日摘要 |
@@ -19,6 +19,11 @@
   用 `getRecentCopilotTurns`，durable pickup 用 `getCopilotTurnsBeforeAnchor`，两者复用同一
   row→turn projection；不要另建第三套 reader/projection。
 - durable copilot run 走 `copilot_run` pg-boss job（queue='agent'），进度落 `job_events`。
+- durable 终态统一经 `copilot-run-status.ts` 判定；`FAILED(reason='error')` 是可重试帧，
+  其它 FAILED reason（含 legacy missing/unknown）按 fail-closed 终态处理。每分钟
+  `copilot_run_reconcile` 只依据 pg-boss 权威状态、持久化 outcome marker 与 execution
+  fence / legacy worker-touch evidence 做有界修复；只有 QUEUED-only dead delivery 才能标成
+  pre-execution loss。不得用 wall-clock 或 heartbeat timestamp 猜测 live queue run 已死。
 - Copilot 自有工具：事件流读、记忆面读、artifact authoring 写。
 - chip 是 Copilot 回复里的可点击动作卡片，accept-chip 把用户选择物化为教学事件。
 

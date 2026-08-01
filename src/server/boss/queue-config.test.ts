@@ -85,4 +85,18 @@ describe('createJobQueue — explicit queue-level retry policy (YUK-576)', () =>
       expect('retryLimit' in call.opts).toBe(false);
     }
   });
+
+  it('applies a heartbeat only to the requested live queue, never its inert DLQ', async () => {
+    const { boss, calls } = captureBoss();
+
+    await createJobQueue(boss, 'copilot_run', EXPIRE_AGENT, { heartbeatSeconds: 30 });
+
+    for (const call of calls.filter((item) => item.name === 'copilot_run')) {
+      expect(call.opts.heartbeatSeconds).toBe(30);
+    }
+    for (const call of calls.filter((item) => item.name === 'copilot_run_dlq')) {
+      expect(call.opts).toEqual(FAST_QUEUE_OPTS);
+      expect(call.opts).not.toHaveProperty('heartbeatSeconds');
+    }
+  });
 });

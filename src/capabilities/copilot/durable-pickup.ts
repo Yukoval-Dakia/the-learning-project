@@ -24,6 +24,7 @@ export const PICKUP_TIMEOUT_MS = 10_000;
 /** Event types that prove the worker TOUCHED the run (picked it up). */
 const WORKER_TOUCHED: ReadonlySet<string> = new Set<string>([
   COPILOT_RUN_EVENTS.STARTED,
+  COPILOT_RUN_EVENTS.EXECUTION_STARTED,
   COPILOT_RUN_EVENTS.DELTA,
   COPILOT_RUN_EVENTS.STEP,
   COPILOT_RUN_EVENTS.REPLY,
@@ -35,6 +36,15 @@ const WORKER_TOUCHED: ReadonlySet<string> = new Set<string>([
 export interface DurablePickupEvent {
   event_type: string;
   payload?: unknown;
+}
+
+/** Canonical worker-touch predicate shared by pickup UX and legacy recovery. */
+export function isDurableWorkerTouchEvent(event: DurablePickupEvent): boolean {
+  return WORKER_TOUCHED.has(event.event_type);
+}
+
+export function hasDurableWorkerTouch(events: DurablePickupEvent[]): boolean {
+  return events.some(isDurableWorkerTouchEvent);
 }
 
 /** Return the first valid QUEUED pickup deadline carried by the durable log. */
@@ -51,7 +61,7 @@ export function getDurablePickupDeadlineMs(events: DurablePickupEvent[]): number
  * Pure predicate: has this durable run stalled un-picked-up past its pickup deadline?
  *
  * true ⟺ a QUEUED event exists carrying a numeric `pickup_deadline_ms`, the worker
- * has NOT yet touched the run (no STARTED/DELTA/STEP/REPLY/DONE/FAILED),
+ * has NOT yet touched the run (no STARTED/EXECUTION_STARTED/DELTA/STEP/REPLY/DONE/FAILED),
  * and `nowMs` is past the deadline. Any worker touch (even a terminal FAILED) →
  * false (the run is not stalled-at-pickup; it ran). No deadline / no QUEUED → false
  * (nothing to judge). Unit-tested in durable-pickup.unit.test.ts; consumed by the
@@ -60,6 +70,6 @@ export function getDurablePickupDeadlineMs(events: DurablePickupEvent[]): number
 export function isDurablePickupStalled(events: DurablePickupEvent[], nowMs: number): boolean {
   const deadline = getDurablePickupDeadlineMs(events);
   if (deadline === undefined) return false;
-  if (events.some((e) => WORKER_TOUCHED.has(e.event_type))) return false;
+  if (hasDurableWorkerTouch(events)) return false;
   return nowMs > deadline;
 }

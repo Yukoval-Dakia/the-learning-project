@@ -14,6 +14,19 @@
 > the wrong action/session fails closed to header-only. Inline read-before-write
 > still uses `getRecentCopilotTurns`.
 
+> **YUK-596 liveness update (2026-08-01):** `copilot_run` now requests a
+> 30-second pg-boss queue heartbeat and shares a generic queue-observation
+> adapter with durable Judge. A one-minute, cap-20, zero-model reconciler first
+> repairs persisted outcome markers, then settles only queue-proven dead runs:
+> `pre_execution_lost` is limited to QUEUED-only histories with no worker touch;
+> an explicit fence or legacy STARTED/DELTA/STEP/REPLY/FAILED(error) is treated
+> as possible execution and becomes no-checkpoint `ambiguous_execution` only
+> after the 12-minute execution ceiling plus 30-second settlement grace.
+> `FAILED(reason='error')` remains a retry frame; all other FAILED reasons are
+> fail-closed terminal. Created/retry/active jobs and queue lookup failures are
+> never terminalized. This is the backend safety slice; Dock consumption and
+> in-loop stop remain later YUK-596 work and still require the UI pre-flight.
+
 ---
 
 ## 0. Owner 判词与重构（2026-07-07）

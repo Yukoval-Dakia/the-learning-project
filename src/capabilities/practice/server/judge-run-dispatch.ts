@@ -34,6 +34,7 @@ import { event, job_events } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
+import { observeBossJob } from '@/server/boss/job-observation';
 import { checkRateLimit, refundRateLimit } from '@/server/http/rate-limit';
 import { and, asc, eq, gt, lt, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
@@ -250,23 +251,6 @@ export async function enqueueJudgeRun(
 // ============================================================================
 
 /**
- * pg-boss states from which a job can still run.
- *
- * W5 #TumMo — existence is NOT the question; LIVENESS is. `getJobById` returns a row for
- * terminal states too, so treating one as alive tells a poller to keep waiting on a job that
- * will never emit another event, and tells the sweeper to skip a run nothing will ever judge.
- *
- * pg-boss 12 types the field as `'created' | 'retry' | 'active' | 'completed' | 'cancelled' |
- * 'failed'`. There is no separate `expired` state: a job never picked up before its expire
- * window lands in `failed`, which this set already excludes.
- */
-const LIVE_BOSS_STATES: ReadonlySet<JobWithMetadata['state']> = new Set([
-  'created',
-  'retry',
-  'active',
-] as const);
-
-/**
  * Can this run still make progress on the queue?
  *
  * Deliberately TRI-state. A boolean would fold "pg-boss says this job is dead" together with
@@ -305,22 +289,29 @@ export async function inspectJudgeQueue(
     jobId?: string;
   } = {},
 ): Promise<JudgeQueueInspection> {
-  try {
-    const boss = deps.boss ?? (await getStartedBoss());
-    const job = await boss.getJobById(JUDGE_RUN_QUEUE, deps.jobId ?? judgeRunJobId(runId));
-    if (job === null || job.state === 'completed') {
+  const observation = await observeBossJob(JUDGE_RUN_QUEUE, deps.jobId ?? judgeRunJobId(runId), {
+    ...(deps.boss ? { boss: deps.boss } : {}),
+  });
+  switch (observation.kind) {
+    case 'missing':
       return { liveness: 'dead', eligibility: 'eligible' };
-    }
-    if (LIVE_BOSS_STATES.has(job.state)) {
+    case 'live':
       return { liveness: 'live', eligibility: 'live' };
-    }
-    console.warn(
-      `[judge_run] ${runId} pg-boss job is terminal (state=${job.state}) — automatic recovery is manual-only`,
-    );
-    return { liveness: 'dead', eligibility: 'manual' };
-  } catch (err) {
-    console.error('[judge_run] pg-boss lookup failed while inspecting run', runId, err);
-    return { liveness: 'unknown', eligibility: 'unknown' };
+    case 'settled':
+      if (observation.state === 'completed') {
+        return { liveness: 'dead', eligibility: 'eligible' };
+      }
+      console.warn(
+        `[judge_run] ${runId} pg-boss job is terminal (state=${observation.state}) — automatic recovery is manual-only`,
+      );
+      return { liveness: 'dead', eligibility: 'manual' };
+    case 'unknown':
+      console.error(
+        '[judge_run] pg-boss lookup failed while inspecting run',
+        runId,
+        observation.error,
+      );
+      return { liveness: 'unknown', eligibility: 'unknown' };
   }
 }
 

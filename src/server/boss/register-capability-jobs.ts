@@ -48,9 +48,14 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   if (!decl.load) return;
 
   if (decl.queue === 'fast') {
-    await createOrUpdateQueue(boss, decl.name, FAST_QUEUE_OPTS);
+    await createOrUpdateQueue(boss, decl.name, {
+      ...FAST_QUEUE_OPTS,
+      ...(decl.heartbeatSeconds !== undefined ? { heartbeatSeconds: decl.heartbeatSeconds } : {}),
+    });
   } else {
-    await createJobQueue(boss, decl.name, EXPIRE_BY_QUEUE[decl.queue]);
+    await createJobQueue(boss, decl.name, EXPIRE_BY_QUEUE[decl.queue], {
+      ...(decl.heartbeatSeconds !== undefined ? { heartbeatSeconds: decl.heartbeatSeconds } : {}),
+    });
   }
 
   const factory = await decl.load();

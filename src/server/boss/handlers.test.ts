@@ -76,6 +76,14 @@ describe('registerHandlers + registerCapabilityJobs', () => {
         singletonSeconds: 3_600,
       },
     );
+    expect(boss.createQueue).toHaveBeenCalledWith(
+      'copilot_run',
+      expect.objectContaining({ heartbeatSeconds: 30 }),
+    );
+    expect(boss.updateQueue).toHaveBeenCalledWith(
+      'copilot_run',
+      expect.objectContaining({ heartbeatSeconds: 30 }),
+    );
   });
 
   // YUK-237: every LLM/agent producer queue gets a non-default active expiry

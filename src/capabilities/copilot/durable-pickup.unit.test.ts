@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PICKUP_TIMEOUT_MS,
   getDurablePickupDeadlineMs,
+  hasDurableWorkerTouch,
   isDurablePickupStalled,
 } from './durable-pickup';
 import { COPILOT_RUN_EVENTS } from './server/copilot-run-status';
@@ -39,6 +40,18 @@ describe('isDurablePickupStalled', () => {
         DEADLINE + 100_000,
       ),
     ).toBe(false);
+  });
+
+  it('legacy FAILED(reason=error) is worker-touch evidence even though it remains retryable', () => {
+    const legacyRetry = {
+      event_type: COPILOT_RUN_EVENTS.FAILED,
+      payload: {
+        reason: 'error',
+        error: 'provider reset after validating 31 of 48 answers and four of six probes',
+      },
+    };
+    expect(hasDurableWorkerTouch([queued, legacyRetry])).toBe(true);
+    expect(isDurablePickupStalled([queued, legacyRetry], DEADLINE + 100_000)).toBe(false);
   });
 
   it('no QUEUED event → not judged (false)', () => {

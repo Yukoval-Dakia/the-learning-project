@@ -18,19 +18,23 @@ pnpm build            # Vite + server/worker/migrate bundles
 Development requires the API, web app, and standalone worker. `RW_WORKER=1`
 is a fallback and does not replace the standalone worker.
 
-## Validation commands
+## Local validation commands
 
 ```bash
 pnpm typecheck
 pnpm lint
-pnpm test
-pnpm test:unit
-pnpm test:unit:watch
-pnpm test:db
-pnpm test:db:watch
+pnpm vitest run --config vitest.unit.config.ts <test-file>
+pnpm vitest run --config vitest.db.config.ts <test-file>
+pnpm test:unit:watch <test-file>
+pnpm test:db:watch <test-file>
 pnpm test:migration
 pnpm build
 ```
+
+Do **not** run the complete `pnpm test` suite on the local machine. Push the
+candidate head and let the exact-head GitHub `CI Gate` run the complete suite.
+Local verification is intentionally scoped to the changed unit/DB/migration
+surface plus typecheck, lint, audits, and build.
 
 Choose the narrowest loop while iterating:
 
@@ -84,6 +88,8 @@ pnpm audit:judge-prompts
 
 Before a PR, run:
 
+First run the scoped tests that match the diff. Then run this local gate:
+
 ```bash
 pnpm typecheck
 pnpm lint
@@ -95,16 +101,15 @@ pnpm audit:capability-boundaries
 pnpm audit:profile
 pnpm audit:draft-status
 pnpm audit:draft-status-reads
-pnpm test
 pnpm build
 ```
 
-`pnpm test` already runs the agent-control-plane, API-contract, API-client,
-API-client-usage, capability-boundary, profile,
-learner-copy, no-learning-styles, structured-judge, draft-status, strict
-draft-status-read, and hub-sync-writer audits before unit, DB, and migration
-tests. The explicit pre-PR commands remain useful for clear attribution and
-alignment with CI.
+After push, the exact-head GitHub `CI Gate` runs `pnpm test`, which includes the
+agent-control-plane, API-contract, API-client, API-client-usage,
+capability-boundary, profile, learner-copy, no-learning-styles,
+structured-judge, draft-status, strict draft-status-read, and hub-sync-writer
+audits before unit, DB, and migration tests. The explicit local audit commands
+remain useful for clear attribution, but they do not replace the GitHub gate.
 
 ## Postman
 

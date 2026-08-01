@@ -85,12 +85,53 @@ describe('deriveCopilotRunStatus', () => {
     ).toBe('done');
   });
 
-  it('failed 终态', () => {
+  it('FAILED without an explicit retry reason fails closed as terminal', () => {
     expect(
       deriveCopilotRunStatus([
         { event_type: COPILOT_RUN_EVENTS.QUEUED },
         { event_type: COPILOT_RUN_EVENTS.STARTED },
         { event_type: COPILOT_RUN_EVENTS.FAILED },
+      ]),
+    ).toBe('failed');
+  });
+
+  it('FAILED(reason=error) is a retry frame and a later delivery can finish successfully', () => {
+    expect(
+      deriveCopilotRunStatus([
+        { event_type: COPILOT_RUN_EVENTS.QUEUED },
+        { event_type: COPILOT_RUN_EVENTS.STARTED },
+        {
+          event_type: COPILOT_RUN_EVENTS.FAILED,
+          payload: {
+            reason: 'error',
+            error: 'provider reset after checking 31 of 48 answers and four of six probes',
+          },
+        },
+      ]),
+    ).toBe('started');
+    expect(
+      deriveCopilotRunStatus([
+        { event_type: COPILOT_RUN_EVENTS.QUEUED },
+        { event_type: COPILOT_RUN_EVENTS.STARTED },
+        { event_type: COPILOT_RUN_EVENTS.FAILED, payload: { reason: 'error' } },
+        { event_type: COPILOT_RUN_EVENTS.STARTED },
+        { event_type: COPILOT_RUN_EVENTS.DELTA, payload: { text: '已恢复第二次投递' } },
+        { event_type: COPILOT_RUN_EVENTS.DONE, payload: { task_run_id: 'tr_recovered' } },
+      ]),
+    ).toBe('done');
+  });
+
+  it.each([
+    'cancelled',
+    'exhausted',
+    'enqueue_failed',
+    'ambiguous_execution',
+    'pre_execution_lost',
+  ])('FAILED(reason=%s) is terminal', (reason) => {
+    expect(
+      deriveCopilotRunStatus([
+        { event_type: COPILOT_RUN_EVENTS.QUEUED },
+        { event_type: COPILOT_RUN_EVENTS.FAILED, payload: { reason } },
       ]),
     ).toBe('failed');
   });

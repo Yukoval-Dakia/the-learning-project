@@ -6,11 +6,8 @@ import type { Db, Tx } from '@/db/client';
 import { job_events } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
 import { writeCopilotUserAsk } from './chat';
-import {
-  COPILOT_RUN_EVENTS,
-  COPILOT_RUN_TABLE,
-  COPILOT_RUN_TERMINAL_FAILURE_REASONS,
-} from './copilot-run-status';
+import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
+import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
 
 export const COPILOT_IDEMPOTENCY_KEY_MAX_LENGTH = 200;
 
@@ -179,10 +176,6 @@ export async function reserveCopilotDurableAcceptance(
 }
 
 export async function hasTerminalCopilotRun(db: Db | Tx, runId: string): Promise<boolean> {
-  const deliberateFailureReasons = sql.join(
-    COPILOT_RUN_TERMINAL_FAILURE_REASONS.map((reason) => sql`${reason}`),
-    sql`, `,
-  );
   const rows = await db
     .select({ id: job_events.id })
     .from(job_events)
@@ -190,13 +183,7 @@ export async function hasTerminalCopilotRun(db: Db | Tx, runId: string): Promise
       and(
         eq(job_events.business_table, COPILOT_RUN_TABLE),
         eq(job_events.business_id, runId),
-        sql`(
-          ${job_events.event_type} = ${COPILOT_RUN_EVENTS.DONE}
-          OR (
-            ${job_events.event_type} = ${COPILOT_RUN_EVENTS.FAILED}
-            AND ${job_events.payload}->>'reason' IN (${deliberateFailureReasons})
-          )
-        )`,
+        copilotRunTerminalSql(job_events.event_type, job_events.payload),
       ),
     )
     .limit(1);
