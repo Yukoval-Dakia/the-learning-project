@@ -2,14 +2,19 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { COPILOT_RUN_EVENTS } from './copilot-run-status';
-import { PICKUP_TIMEOUT_MS, isDurablePickupStalled } from './durable-pickup';
+import {
+  PICKUP_TIMEOUT_MS,
+  getDurablePickupDeadlineMs,
+  isDurablePickupStalled,
+} from './durable-pickup';
+import { COPILOT_RUN_EVENTS } from './server/copilot-run-status';
 
 const DEADLINE = 1_000_000;
 const queued = { event_type: COPILOT_RUN_EVENTS.QUEUED, payload: { pickup_deadline_ms: DEADLINE } };
 
 describe('isDurablePickupStalled', () => {
   it('QUEUED past deadline + worker never touched → stalled', () => {
+    expect(getDurablePickupDeadlineMs([queued])).toBe(DEADLINE);
     expect(isDurablePickupStalled([queued], DEADLINE + 1)).toBe(true);
   });
 
@@ -49,6 +54,11 @@ describe('isDurablePickupStalled', () => {
         DEADLINE + 1,
       ),
     ).toBe(false);
+    expect(
+      getDurablePickupDeadlineMs([
+        { event_type: COPILOT_RUN_EVENTS.QUEUED, payload: { pickup_deadline_ms: Number.NaN } },
+      ]),
+    ).toBeUndefined();
   });
 
   it('PICKUP_TIMEOUT_MS is a positive constant', () => {

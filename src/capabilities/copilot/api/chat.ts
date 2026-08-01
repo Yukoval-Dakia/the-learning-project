@@ -9,6 +9,9 @@
 import { SSEStreamingApi } from 'hono/streaming';
 import { ZodError } from 'zod';
 
+// YUK-575 (N6/MF-C) — the pickup-timeout deadline stamped on the QUEUED event so a
+// consumer (PR2 Dock, isDurablePickupStalled) can detect a worker-down stall.
+import { PICKUP_TIMEOUT_MS } from '@/capabilities/copilot/durable-pickup';
 import {
   CopilotChatRequest,
   decideCopilotDispatch,
@@ -24,9 +27,6 @@ import {
   MAX_OUTSTANDING_DURABLE_RUNS,
   countOutstandingDurableRuns,
 } from '@/capabilities/copilot/server/durable-backlog';
-// YUK-575 (N6/MF-C) — the pickup-timeout deadline stamped on the QUEUED event so a
-// consumer (PR2 Dock, isDurablePickupStalled) can detect a worker-down stall.
-import { PICKUP_TIMEOUT_MS } from '@/capabilities/copilot/server/durable-pickup';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';

@@ -56,6 +56,7 @@ import { isOneShotSkill } from './skill-lifecycle';
 import {
   type CopilotRunView,
   type CopilotSubtaskView,
+  DurablePickupStalledError,
   consumeDurableCopilotRun,
   createCopilotRunView,
   foldCopilotRunFrames,
@@ -81,6 +82,12 @@ interface CopilotSummary {
   pending_proposals_total: number;
   coach_last_run_at: string | null;
   dreaming_last_run_at: string | null;
+}
+
+function durableReconnectErrorMessage(error: unknown): string {
+  return error instanceof DurablePickupStalledError
+    ? '后台任务还在等待开始，可能正在排队；本次任务已保留，可以稍后重新连接。'
+    : '后台进度连接仍未恢复；任务可能仍在运行，可以再次连接。';
 }
 
 // AF S4 / YUK-203 U6 — UI-side mirror of the server CopilotSkillTurn carrier
@@ -665,7 +672,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           );
           reportSendError('后台运行未完成');
         }
-      } catch {
+      } catch (error) {
         // Keep the accepted handle and its latest cursor. The next click resumes
         // the same Location; it never falls through to a fresh chat dispatch.
         durableReconnectRef.current = handle;
@@ -674,7 +681,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             message.id === handle.aiMessageId ? { ...message, streaming: false } : message,
           ),
         );
-        reportSendError('后台进度连接仍未恢复；任务可能仍在运行，可以再次连接。');
+        reportSendError(durableReconnectErrorMessage(error));
       } finally {
         if (activeTransportAbortRef.current === abortController) {
           activeTransportAbortRef.current = null;
@@ -944,7 +951,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         if (durableHandle) durableReconnectRef.current = durableHandle;
       }
       const message = durableAccepted
-        ? '后台进度连接已中断；任务可能仍在运行，稍后重新打开对话可查看结果。'
+        ? durableReconnectErrorMessage(err)
         : err instanceof ApiError
           ? `请求失败（${err.status}）`
           : err instanceof Error

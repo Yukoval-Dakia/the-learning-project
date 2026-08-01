@@ -7,6 +7,12 @@
 // job_events.id as their version; inline frames receive a local monotonic id in
 // CopilotDock before entering the same fold.
 
+import {
+  PICKUP_TIMEOUT_MS,
+  getDurablePickupDeadlineMs,
+  isDurablePickupStalled,
+} from '@/capabilities/copilot/durable-pickup';
+
 export const COPILOT_RUN_STEP_EVENT = 'copilot_run.step' as const;
 
 export type CopilotSubtaskStatus = 'running' | 'completed' | 'failed';
@@ -56,6 +62,13 @@ export interface ParsedSseEvent {
 interface ParseCopilotSseStreamOptions {
   /** Fires for every raw transport chunk, including SSE keepalive comments. */
   onActivity?: () => void;
+}
+
+export class DurablePickupStalledError extends Error {
+  constructor(readonly pickupDeadlineMs: number) {
+    super('durable run was not picked up before its deadline');
+    this.name = 'DurablePickupStalledError';
+  }
 }
 
 const TERMINAL_SUBTASKS = new Set<CopilotSubtaskStatus>(['completed', 'failed']);
@@ -390,6 +403,12 @@ export async function consumeDurableCopilotRun(
   );
   let state = options.initialState ?? createCopilotRunView();
   let reconnects = 0;
+  const pickupReobservationStartedAtMs = Date.now();
+  const pickupReobservationUntilMs =
+    options.initialState &&
+    isDurablePickupStalled(options.initialState.frames, pickupReobservationStartedAtMs)
+      ? pickupReobservationStartedAtMs + PICKUP_TIMEOUT_MS
+      : 0;
 
   while (true) {
     if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -398,6 +417,12 @@ export async function consumeDurableCopilotRun(
     options.signal?.addEventListener('abort', relayAbort, { once: true });
     let idleTimedOut = false;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    let pickupStalledDeadlineMs: number | undefined;
+    let pickupTimer: ReturnType<typeof setTimeout> | undefined;
+    const currentPickupStallError = (): DurablePickupStalledError | undefined =>
+      pickupStalledDeadlineMs !== undefined && isDurablePickupStalled(state.frames, Date.now())
+        ? new DurablePickupStalledError(pickupStalledDeadlineMs)
+        : undefined;
     const armIdleTimer = () => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
@@ -405,11 +430,27 @@ export async function consumeDurableCopilotRun(
         controller.abort();
       }, idleTimeoutMs);
     };
+    const armPickupTimer = () => {
+      if (pickupTimer) clearTimeout(pickupTimer);
+      pickupTimer = undefined;
+      const deadline = getDurablePickupDeadlineMs(state.frames);
+      if (deadline === undefined || state.phase !== 'queued') return;
+      const observationDeadlineMs = Math.max(deadline + 1, pickupReobservationUntilMs);
+      pickupTimer = setTimeout(
+        () => {
+          if (!isDurablePickupStalled(state.frames, Date.now())) return;
+          pickupStalledDeadlineMs = deadline;
+          controller.abort();
+        },
+        Math.max(0, observationDeadlineMs - Date.now()),
+      );
+    };
     const headers =
       state.lastEventId > 0 ? { 'Last-Event-ID': String(state.lastEventId) } : undefined;
 
     try {
       armIdleTimer();
+      armPickupTimer();
       const response = await options.fetchResponse(options.location, {
         ...(headers ? { headers } : {}),
         signal: controller.signal,
@@ -424,15 +465,20 @@ export async function consumeDurableCopilotRun(
         const frame = parseCopilotRunJobFrame(event.data);
         if (!frame) continue;
         state = foldCopilotRunFrames(state, [frame]);
+        armPickupTimer();
         options.onUpdate?.(state);
         if (TERMINAL_RUN_PHASES.has(state.phase)) {
           controller.abort();
           return state;
         }
       }
+      const cleanClosePickupError = currentPickupStallError();
+      if (cleanClosePickupError) throw cleanClosePickupError;
     } catch (error) {
       if (options.signal?.aborted) throw error;
       if (TERMINAL_RUN_PHASES.has(state.phase)) return state;
+      const pickupError = currentPickupStallError();
+      if (pickupError) throw pickupError;
       const retryError = idleTimedOut
         ? new Error(`durable stream idle for ${idleTimeoutMs}ms`)
         : error;
@@ -442,6 +488,7 @@ export async function consumeDurableCopilotRun(
       continue;
     } finally {
       if (idleTimer) clearTimeout(idleTimer);
+      if (pickupTimer) clearTimeout(pickupTimer);
       options.signal?.removeEventListener('abort', relayAbort);
       controller.abort();
     }

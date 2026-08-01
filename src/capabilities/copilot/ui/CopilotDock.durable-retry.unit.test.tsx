@@ -91,6 +91,7 @@ vi.mock('./subtask-events', async (importOriginal) => {
 });
 
 import { CopilotDock } from './CopilotDock';
+import { type CopilotRunView, DurablePickupStalledError } from './subtask-events';
 
 const partialView = {
   phase: 'running' as const,
@@ -105,7 +106,30 @@ const partialView = {
       lastEventId: 411,
     },
   ],
-};
+  frames: [
+    {
+      event_id: 409,
+      event_type: 'copilot_run.queued',
+      payload: { session_id: 'copilot-session-transfer-audit' },
+    },
+    { event_id: 410, event_type: 'copilot_run.started', payload: {} },
+    {
+      event_id: 411,
+      event_type: 'copilot_run.step',
+      payload: {
+        step_kind: 'subtask',
+        subtask_id: 'audit-transfer-evidence',
+        label: '核对 27 次作答、5 次延迟复习与 3 个未教学探针',
+        status: 'running',
+      },
+    },
+    {
+      event_id: 412,
+      event_type: 'copilot_run.delta',
+      payload: { text: '我已核对 27 次分式方程作答，正在用未教学探针排除偶然失误。' },
+    },
+  ],
+} satisfies CopilotRunView;
 
 const completedView = {
   phase: 'completed' as const,
@@ -120,7 +144,111 @@ const completedView = {
       lastEventId: 413,
     },
   ],
-};
+  frames: [
+    ...partialView.frames,
+    {
+      event_id: 413,
+      event_type: 'copilot_run.step',
+      payload: {
+        step_kind: 'subtask',
+        subtask_id: 'audit-transfer-evidence',
+        label: '核对 27 次作答、5 次延迟复习与 3 个未教学探针',
+        status: 'completed',
+        summary: '三个独立探针复现同一错误，已排除偶然失误。',
+      },
+    },
+    {
+      event_id: 415,
+      event_type: 'copilot_run.reply',
+      payload: {
+        reply_md:
+          '证据核对完成：错误集中在含参题的定义域前置检查。下一组练习先固定定义域，再处理通分。',
+      },
+    },
+    { event_id: 416, event_type: 'copilot_run.done', payload: {} },
+  ],
+} satisfies CopilotRunView;
+
+const queuedView = {
+  phase: 'queued' as const,
+  lastEventId: 601,
+  replyText: '',
+  checkpointEventId: 'ask_queued_gradient_rebuild',
+  subtasks: [],
+  frames: [
+    {
+      event_id: 601,
+      event_type: 'copilot_run.queued',
+      payload: {
+        session_id: 'copilot-session-queued-gradient-rebuild',
+        pickup_deadline_ms: 1_000_000,
+        dispatch: {
+          source: 'model_triage',
+          reason_code: 'multi_artifact_work',
+          task_run_id: 'copilot_dispatch_queued_gradient_rebuild',
+        },
+      },
+    },
+  ],
+} satisfies CopilotRunView;
+
+const queuedRecoveryView = {
+  phase: 'completed' as const,
+  lastEventId: 608,
+  replyText: '后台核对完成：36 道题分成定义域、增根与迁移三类；下一轮按两次延迟复习结果调梯度。',
+  checkpointEventId: 'ask_queued_gradient_rebuild',
+  subtasks: [
+    {
+      id: 'audit-delayed-review',
+      label: '核对 36 道跨章节练习与两轮延迟复习',
+      status: 'completed' as const,
+      summary: '定位 7 道定义域遗漏与 3 道增根误判。',
+      lastEventId: 604,
+    },
+    {
+      id: 'validate-transfer-gradient',
+      label: '用四个未教学探针验证三档迁移梯度',
+      status: 'completed' as const,
+      summary: '三档题目均通过确定性 validator，最高档保留一个增根陷阱。',
+      lastEventId: 605,
+    },
+  ],
+  frames: [
+    ...queuedView.frames,
+    { event_id: 602, event_type: 'copilot_run.started', payload: {} },
+    {
+      event_id: 604,
+      event_type: 'copilot_run.step',
+      payload: {
+        step_kind: 'subtask',
+        subtask_id: 'audit-delayed-review',
+        label: '核对 36 道跨章节练习与两轮延迟复习',
+        status: 'completed',
+        summary: '定位 7 道定义域遗漏与 3 道增根误判。',
+      },
+    },
+    {
+      event_id: 605,
+      event_type: 'copilot_run.step',
+      payload: {
+        step_kind: 'subtask',
+        subtask_id: 'validate-transfer-gradient',
+        label: '用四个未教学探针验证三档迁移梯度',
+        status: 'completed',
+        summary: '三档题目均通过确定性 validator，最高档保留一个增根陷阱。',
+      },
+    },
+    {
+      event_id: 607,
+      event_type: 'copilot_run.reply',
+      payload: {
+        reply_md:
+          '后台核对完成：36 道题分成定义域、增根与迁移三类；下一轮按两次延迟复习结果调梯度。',
+      },
+    },
+    { event_id: 608, event_type: 'copilot_run.done', payload: {} },
+  ],
+} satisfies CopilotRunView;
 
 describe('CopilotDock accepted durable reconnect', () => {
   afterEach(() => {
@@ -129,7 +257,7 @@ describe('CopilotDock accepted durable reconnect', () => {
     consumeDurableMock.mockReset();
   });
 
-  it('reconnects the same run after progress loss without a second chat POST or duplicate rows', async () => {
+  it('reconnects the same run after network progress loss without a second chat POST or duplicate rows', async () => {
     const location = '/api/jobs/copilot_run/ask_transfer_audit/events';
     apiFetchMock.mockResolvedValue(
       new Response(
@@ -168,6 +296,7 @@ describe('CopilotDock accepted durable reconnect', () => {
     await user.click(screen.getByTestId('copilot-composer-send'));
 
     expect(await screen.findByRole('button', { name: '重新连接' })).toBeTruthy();
+    expect(screen.getByText('后台进度连接仍未恢复；任务可能仍在运行，可以再次连接。')).toBeTruthy();
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
     expect(apiFetchMock).toHaveBeenCalledWith(
       '/api/copilot/chat',
@@ -196,6 +325,68 @@ describe('CopilotDock accepted durable reconnect', () => {
     expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
     expect(screen.getAllByTestId('copilot-subtask-card')).toHaveLength(1);
     expect(screen.getByText('三个独立探针复现同一错误，已排除偶然失误。')).toBeTruthy();
+  });
+
+  it('unlocks a queued pickup stall and later resumes the accepted Location in the same row', async () => {
+    const location = '/api/jobs/copilot_run/ask_queued_gradient_rebuild/events';
+    apiFetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          run_id: 'ask_queued_gradient_rebuild',
+          session_id: 'copilot-session-queued-gradient-rebuild',
+          checkpoint_event_id: 'ask_queued_gradient_rebuild',
+        }),
+        { status: 202, headers: { Location: location, 'Content-Type': 'application/json' } },
+      ),
+    );
+    consumeDurableMock
+      .mockImplementationOnce(async (options: { onUpdate?: (view: CopilotRunView) => void }) => {
+        options.onUpdate?.(queuedView);
+        throw new DurablePickupStalledError(1_000_000);
+      })
+      .mockImplementationOnce(
+        async (options: {
+          location: string;
+          initialState?: CopilotRunView;
+          onUpdate?: (view: CopilotRunView) => void;
+        }) => {
+          options.onUpdate?.(queuedRecoveryView);
+          return queuedRecoveryView;
+        },
+      );
+
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByTestId('copilot-composer-input'),
+      '请后台核对 36 道跨章节练习、两轮延迟复习和四个未教学探针，再生成三档迁移梯度。',
+    );
+    await user.click(screen.getByTestId('copilot-composer-send'));
+
+    expect(await screen.findByRole('button', { name: '重新连接' })).toBeTruthy();
+    expect(
+      screen.getByText('后台任务还在等待开始，可能正在排队；本次任务已保留，可以稍后重新连接。'),
+    ).toBeTruthy();
+    expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
+      false,
+    );
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
+    expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: '重新连接' }));
+    await screen.findByText(queuedRecoveryView.replyText);
+
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(consumeDurableMock).toHaveBeenCalledTimes(2);
+    expect(consumeDurableMock.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ location }));
+    expect(consumeDurableMock.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ location, initialState: queuedView }),
+    );
+    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
+    expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
+    expect(screen.getAllByTestId('copilot-subtask-card')).toHaveLength(2);
+    expect(screen.getByText('定位 7 道定义域遗漏与 3 道增根误判。')).toBeTruthy();
   });
 
   it('aborts the accepted run transport when the dock unmounts without posting the turn again', async () => {

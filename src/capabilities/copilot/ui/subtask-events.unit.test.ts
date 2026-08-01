@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   type CopilotRunJobFrame,
+  DurablePickupStalledError,
   consumeDurableCopilotRun,
   createCopilotRunView,
   foldCopilotRunFrames,
@@ -465,6 +466,179 @@ describe('durable Copilot run SSE replay', () => {
         ],
       }),
     );
+  });
+
+  it('surfaces an overdue queued run even while heartbeats keep the transport healthy', async () => {
+    vi.useFakeTimers();
+    try {
+      const pickupDeadlineMs = Date.now() + 5_000;
+      let transportSignal: AbortSignal | undefined;
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
+      const updates: string[] = [];
+      const fetchResponse = vi.fn(async (_input: string, init?: RequestInit) => {
+        transportSignal = init?.signal ?? undefined;
+        const queued = new TextEncoder().encode(
+          `id: 601\ndata: ${JSON.stringify(
+            frame(601, 'copilot_run.queued', {
+              session_id: 'copilot-session-queued-gradient-rebuild',
+              pickup_deadline_ms: pickupDeadlineMs,
+              dispatch: {
+                source: 'model_triage',
+                reason_code: 'multi_artifact_work',
+                task_run_id: 'copilot_dispatch_queued_gradient_rebuild',
+              },
+            }),
+          )}\n\n`,
+        );
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(queued);
+            heartbeat = setInterval(
+              () => controller.enqueue(new TextEncoder().encode(': keepalive\n\n')),
+              1_000,
+            );
+            transportSignal?.addEventListener(
+              'abort',
+              () => {
+                if (heartbeat) clearInterval(heartbeat);
+                // Some fetch/stream adapters surface an abort as a clean body close
+                // rather than a rejected read. The semantic timeout must still win.
+                controller.close();
+              },
+              { once: true },
+            );
+          },
+          cancel() {
+            if (heartbeat) clearInterval(heartbeat);
+          },
+        });
+        return new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      });
+      const run = consumeDurableCopilotRun({
+        location: '/api/jobs/copilot_run/ask_queued_gradient_rebuild/events',
+        fetchResponse,
+        idleTimeoutMs: 2_500,
+        reconnectBaseDelayMs: 0,
+        maxReconnects: 3,
+        onUpdate: (view) => updates.push(`${view.phase}:${view.lastEventId}`),
+      });
+      const outcome = run.then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(5_001);
+      const error = await outcome;
+
+      expect(error).toBeInstanceOf(DurablePickupStalledError);
+      expect(error).toMatchObject({ pickupDeadlineMs });
+      expect(fetchResponse).toHaveBeenCalledTimes(1);
+      expect(transportSignal?.aborted).toBe(true);
+      expect(updates).toEqual(['queued:601']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives an explicitly reconnected overdue run time to reveal a late worker pickup', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(2_000_000);
+    try {
+      const expiredQueued = foldCopilotRunFrames(createCopilotRunView(), [
+        frame(701, 'copilot_run.queued', {
+          session_id: 'copilot-session-late-worker-transfer-audit',
+          pickup_deadline_ms: Date.now() - 1,
+          dispatch: {
+            source: 'model_triage',
+            reason_code: 'multi_artifact_work',
+            task_run_id: 'copilot_dispatch_late_worker_transfer_audit',
+          },
+        }),
+      ]);
+      let transportSignal: AbortSignal | undefined;
+      const fetchResponse = vi.fn(async (_input: string, init?: RequestInit) => {
+        transportSignal = init?.signal ?? undefined;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            setTimeout(() => {
+              for (const item of [
+                frame(702, 'copilot_run.started', {
+                  task_run_id: 'copilot_dispatch_late_worker_transfer_audit',
+                }),
+                frame(703, 'copilot_run.step', {
+                  step_kind: 'subtask',
+                  subtask_id: 'audit-delayed-transfer-evidence',
+                  label: '核对 36 道跨章节练习、两轮延迟复习与四个未教学探针',
+                  status: 'running',
+                }),
+                frame(704, 'copilot_run.step', {
+                  step_kind: 'subtask',
+                  subtask_id: 'audit-delayed-transfer-evidence',
+                  label: '核对 36 道跨章节练习、两轮延迟复习与四个未教学探针',
+                  status: 'completed',
+                  summary: '定位 7 道定义域遗漏与 3 道增根误判，四个探针均可复现。',
+                }),
+                frame(705, 'copilot_run.reply', {
+                  reply_md: '迟到的 worker 已完成核对：先修定义域前置检查，再进入含参迁移梯度。',
+                  checkpoint_event_id: 'ask_late_worker_transfer_audit',
+                }),
+                frame(706, 'copilot_run.done', {
+                  task_run_id: 'copilot_dispatch_late_worker_transfer_audit',
+                }),
+              ]) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    `id: ${item.event_id}\ndata: ${JSON.stringify(item)}\n\n`,
+                  ),
+                );
+              }
+            }, 5_000);
+          },
+        });
+        return new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      });
+
+      const run = consumeDurableCopilotRun({
+        location: '/api/jobs/copilot_run/ask_late_worker_transfer_audit/events',
+        fetchResponse,
+        initialState: expiredQueued,
+        idleTimeoutMs: 15_000,
+        reconnectBaseDelayMs: 0,
+        maxReconnects: 0,
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(transportSignal?.aborted).toBe(false);
+      expect(new Headers(fetchResponse.mock.calls[0]?.[1]?.headers).get('Last-Event-ID')).toBe(
+        '701',
+      );
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      const result = await run;
+
+      expect(fetchResponse).toHaveBeenCalledTimes(1);
+      expect(result.phase).toBe('completed');
+      expect(result.lastEventId).toBe(706);
+      expect(result.replyText).toBe(
+        '迟到的 worker 已完成核对：先修定义域前置检查，再进入含参迁移梯度。',
+      );
+      expect(result.subtasks).toEqual([
+        expect.objectContaining({
+          id: 'audit-delayed-transfer-evidence',
+          status: 'completed',
+          summary: '定位 7 道定义域遗漏与 3 道增根误判，四个探针均可复现。',
+        }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('stops an in-backoff reconnect immediately when the owning UI aborts', async () => {
