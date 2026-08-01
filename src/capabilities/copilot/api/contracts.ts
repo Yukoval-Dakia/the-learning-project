@@ -7,6 +7,9 @@ export { CopilotChatRequest };
 
 export const CopilotRouteIdParamsSchema = ApiIdParamsSchema;
 export const CopilotCheckpointParamsSchema = z.object({ eventId: z.string().min(1) });
+export const CopilotChatHeadersSchema = z.object({
+  'Idempotency-Key': z.string().min(1).max(200).optional(),
+});
 
 // YUK-497 review F3 — the cascade-revert refusal envelope the handler emits at 404
 // (no_checkpoint) / 409 (truncated / irreversible / legacy_snapshot / conflict). Declared as

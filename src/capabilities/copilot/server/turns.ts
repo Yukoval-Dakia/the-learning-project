@@ -291,12 +291,33 @@ export async function getRecentCopilotTurns(
       )
       .map((row) => row.caused_by_event_id as string),
   );
+  // An ambiguous durable recovery means paid/model or materializing work may
+  // have committed while its tool-use mirror did not. The failure marker is
+  // therefore stronger evidence than an absent mirror: after refresh, neither
+  // side of this turn may resurrect a revert anchor whose safety is unknown.
+  const ambiguousExecutionAskIds = new Set(
+    rows
+      .filter((row) => row.action === REPLY_ACTION && row.caused_by_event_id)
+      .filter((row) => {
+        const payload = (row.payload ?? {}) as Record<string, unknown>;
+        const durableFailure = payload.durable_failure;
+        return (
+          durableFailure !== null &&
+          typeof durableFailure === 'object' &&
+          !Array.isArray(durableFailure) &&
+          (durableFailure as Record<string, unknown>).reason === 'ambiguous_execution'
+        );
+      })
+      .map((row) => row.caused_by_event_id as string),
+  );
   // Anchor exposed ⇔ every effect of the turn is event-chain-compensable (materializing-tools.ts).
   // Suppress when the turn materialized a teaching_check draft (wave-3) OR called a materializing
   // DOMAIN tool (wave-4) — both write rows cascade-revert can't undo. Applied to BOTH the ask row
   // (wave-5, TcHwW — W4 only guarded the reply) and the reply row so the button can't leak via either.
   const anchorSuppressed = (askId: string): boolean =>
-    asksWithMaterializingTool.has(askId) || structuredQuestionAskIds.has(askId);
+    asksWithMaterializingTool.has(askId) ||
+    structuredQuestionAskIds.has(askId) ||
+    ambiguousExecutionAskIds.has(askId);
 
   const turns: CopilotTurn[] = [];
   for (const row of rows) {

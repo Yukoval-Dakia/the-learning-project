@@ -30,6 +30,7 @@
 'use client';
 
 import type { CopilotSkillContextT } from '@/capabilities/copilot/server/chat';
+import type { CopilotChatRequestT } from '@/capabilities/copilot/server/chat-contracts';
 import { ApiError, apiFetch, apiJson } from '@/ui/lib/api';
 import {
   DeferredMarkdownRenderer,
@@ -52,10 +53,15 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { CopilotHeroCard } from './CopilotHeroCard';
 import {
   type PersistedDurableCopilotReconnect,
+  type PersistedPendingCopilotTurn,
   clearPersistedDurableCopilotReconnect,
+  clearPersistedPendingCopilotTurn,
+  discardPersistedPendingCopilotTurn,
   durableRunIdFromLocation,
   loadPersistedDurableCopilotReconnect,
+  loadPersistedPendingCopilotTurn,
   persistDurableCopilotReconnect,
+  persistPendingCopilotTurn,
 } from './durable-reconnect-storage';
 import { nextNudgeSessionAfterTurn, resolveTurnAmbientFocus } from './nudge-focus';
 import { type ReplayPrimaryView, type ReplayTurn, replayToMessages } from './replay';
@@ -379,6 +385,15 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     const persisted = loadPersistedDurableCopilotReconnect();
     return persisted ? { ...persisted, view: createCopilotRunView() } : null;
   });
+  const [restoredPendingTurn] = useState<PersistedPendingCopilotTurn | null>(() => {
+    if (restoredDurableHandle) {
+      // The accepted Location is strictly stronger than a pre-acceptance
+      // handoff. Never revive an older uncertain POST beside a durable run.
+      discardPersistedPendingCopilotTurn();
+      return null;
+    }
+    return loadPersistedPendingCopilotTurn();
+  });
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     restoredDurableHandle
       ? [
@@ -399,7 +414,14 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   const [sending, setSending] = useState(restoredDurableHandle !== null);
   const [durableRunning, setDurableRunning] = useState(restoredDurableHandle !== null);
   const [awaitingFirstFrame, setAwaitingFirstFrame] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() =>
+    restoredPendingTurn
+      ? '上次请求的受理状态未知：它可能尚未执行，也可能已经完成。请先查看现有结果，再决定是否恢复这次请求。'
+      : null,
+  );
+  const [pendingAcceptanceUnknown, setPendingAcceptanceUnknown] = useState(
+    restoredPendingTurn !== null,
+  );
   // Per-checkpoint in-flight id for the revert POST (disables that row's button), and a
   // distinct "revert landed but the refresh failed" flag so a post-revert refetch error is
   // never surfaced as a revert failure (F5).
@@ -450,8 +472,30 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     setFocusedKnowledgeId(null);
     closeDrawerDwell();
   }, [closeDrawerDwell]);
-  // Holds the last user_message so an INLINE/known-terminal error can be resent.
-  const lastUserMessageRef = useRef<string | null>(null);
+  // A logical turn keeps one stable key until it is accepted. If the server
+  // committed a durable job but its 202 was lost, manual retry replays this key
+  // and recovers the original handle instead of creating a second paid run.
+  const lastUserTurnRef = useRef<{
+    text: string;
+    idempotencyKey: string;
+    /** Reuse only while server acceptance is unknown or explicitly ambiguous. */
+    retryWithSameKey: boolean;
+    userMessageId: string;
+    requestBody: Pick<
+      CopilotChatRequestT,
+      'user_message' | 'triggered_by' | 'skill_context' | 'ambient_context'
+    >;
+  } | null>(
+    restoredPendingTurn
+      ? {
+          text: restoredPendingTurn.userMessage,
+          idempotencyKey: restoredPendingTurn.idempotencyKey,
+          retryWithSameKey: true,
+          userMessageId: restoredPendingTurn.userMessageId,
+          requestBody: restoredPendingTurn.requestBody,
+        }
+      : null,
+  );
   // A 202 means the paid durable run already exists. If its progress stream later
   // exhausts automatic reconnects, the error button must resume THIS handle — never
   // POST the user message again and accidentally create a second run.
@@ -521,10 +565,30 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         const res = await apiJson<CopilotTurnsResponse>(`/api/copilot/turns?limit=${REPLAY_LIMIT}`);
         if (cancelled) return;
         const replayed = replayToMessages(res.turns ?? []);
-        if (replayed.length === 0) return;
+        if (replayed.length === 0 && !restoredPendingTurn) return;
         // Only prefill if the user has not already started typing/sending in this
-        // open (don't stomp a live exchange that raced the fetch).
-        setMessages((prev) => (prev.length === 0 ? replayed : prev));
+        // open (don't stomp a live exchange that raced the fetch). An uncertain
+        // pre-202 handoff deliberately waits for this replay first: the inline
+        // server path may already have completed, and hiding that real reply
+        // behind a local pending row would steer the user toward a duplicate run.
+        setMessages((prev) => {
+          if (prev.length !== 0) return prev;
+          if (!restoredPendingTurn) return replayed;
+          const pendingAlreadyVisible = replayed.some(
+            (message) =>
+              message.role === 'user' && message.text === restoredPendingTurn.userMessage,
+          );
+          return pendingAlreadyVisible
+            ? replayed
+            : [
+                ...replayed,
+                {
+                  id: restoredPendingTurn.userMessageId,
+                  role: 'user' as const,
+                  text: restoredPendingTurn.userMessage,
+                },
+              ];
+        });
         // Restore activeSkillRef + the quiz chip's in-scope knowledge entity from the
         // replayed turns so composer answers / the quiz chip survive a page refresh.
         restoreSkillStateFromReplay(replayed);
@@ -535,7 +599,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     return () => {
       cancelled = true;
     };
-  }, [open, restoreSkillStateFromReplay]);
+  }, [open, restoreSkillStateFromReplay, restoredPendingTurn]);
 
   // Returns true when it actually replaced the message list, false when it SKIPPED (a send is in
   // flight). Callers use the flag so they don't report a refresh as done when it was skipped
@@ -634,7 +698,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           text:
             view.replyText ||
             (view.phase === 'failed' ? fallbackText : existing?.text || fallbackText),
-          checkpoint_event_id: view.checkpointEventId ?? existing?.checkpoint_event_id,
+          checkpoint_event_id:
+            view.failureReason === 'ambiguous_execution'
+              ? undefined
+              : (view.checkpointEventId ?? existing?.checkpoint_event_id),
           subtasks: view.subtasks,
           streaming: !terminal,
         };
@@ -700,6 +767,11 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             durable,
             '这次后台运行没有完成。可以换个更聚焦的问法再试。',
           );
+          if (durable.failureReason === 'ambiguous_execution') {
+            // The live copy asks the owner to inspect potentially committed
+            // effects first. Do not pair it with a blind one-click redispatch.
+            lastUserTurnRef.current = null;
+          }
           reportSendError('后台运行未完成');
         }
       } catch (error) {
@@ -744,7 +816,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   }, [messages, sending]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: helpers are stable for this component lifetime; refs carry live turn context
-  const send = useCallback(async (raw: string) => {
+  const send = useCallback(async (raw: string, retryIdempotencyKey?: string) => {
     const text = raw.trim();
     if (!text || sendingRef.current) return;
     sendingRef.current = true;
@@ -757,7 +829,50 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     const supersededDurable = durableReconnectRef.current;
     if (supersededDurable) clearPersistedDurableCopilotReconnect(supersededDurable.runId);
     durableReconnectRef.current = null;
-    lastUserMessageRef.current = text;
+    const idempotencyKey = retryIdempotencyKey ?? crypto.randomUUID();
+    const priorLogicalTurn =
+      retryIdempotencyKey && lastUserTurnRef.current?.idempotencyKey === retryIdempotencyKey
+        ? lastUserTurnRef.current
+        : null;
+    const userMessageId = priorLogicalTurn?.userMessageId ?? nextId();
+    // A retry must replay the exact normalized body as well as the key. The
+    // drawer can stay open while navigation/skill focus changes; recomputing
+    // ambient_context here would correctly trigger a server 409 but prevent
+    // recovery of the already accepted original turn.
+    const currentSkillContext = activeSkillRef.current;
+    const route = pathnameRef.current;
+    const focusedEntity = currentSkillContext?.ref;
+    const ambientFocus = resolveTurnAmbientFocus(focusedEntity, nudgeSessionRef.current);
+    const ambientContext = route
+      ? { route, ...(ambientFocus ? { focused_entity: ambientFocus } : {}) }
+      : undefined;
+    const requestBody = priorLogicalTurn?.requestBody ?? {
+      user_message: text,
+      triggered_by: 'chat' as const,
+      ...(currentSkillContext ? { skill_context: currentSkillContext } : {}),
+      ...(ambientContext ? { ambient_context: ambientContext } : {}),
+    };
+    const skillContext = requestBody.skill_context;
+    lastUserTurnRef.current = {
+      text,
+      idempotencyKey,
+      retryWithSameKey: true,
+      userMessageId,
+      requestBody,
+    };
+    // Persist before the POST begins. If this component unmounts before response
+    // headers arrive, the next mount can present an explicit human-controlled
+    // recovery using this exact key + body. It never auto-POSTs: automatic
+    // dispatch may have completed inline, whose current server path is not
+    // idempotently replayable.
+    persistPendingCopilotTurn({
+      v: 1,
+      idempotencyKey,
+      userMessageId,
+      userMessage: text,
+      requestBody,
+    });
+    setPendingAcceptanceUnknown(false);
     setError(null);
     // Clear the "revert landed, refresh failed/skipped" banners when starting a new send: otherwise
     // they stay set (only retryRefresh success / a new revert clears them) and their suppression of
@@ -765,14 +880,24 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     setRefreshFailed(false);
     setRefreshSkipped(false);
     setInput('');
-    const userMessageId = nextId();
-    setMessages((prev) => [...prev, { id: userMessageId, role: 'user', text }]);
+    if (priorLogicalTurn) {
+      // Same-key recovery may already be visible from replay under a different
+      // server event id. Avoid duplicating that one logical turn.
+      setMessages((prev) =>
+        prev.some(
+          (message) =>
+            message.id === userMessageId || (message.role === 'user' && message.text === text),
+        )
+          ? prev
+          : [...prev, { id: userMessageId, role: 'user', text }],
+      );
+    } else {
+      // A terminal failure retry owns a fresh key and therefore a fresh domain
+      // ask, even when the user-visible text is identical.
+      setMessages((prev) => [...prev, { id: userMessageId, role: 'user', text }]);
+    }
     setSending(true);
     setAwaitingFirstFrame(true);
-    // AF S4 / YUK-203 U6 — when a skill context is active, route this turn to the
-    // teaching/solve skill (additive optional body field; absent → unchanged
-    // free-form chat). The Copilot session id is unchanged (single-session, §4.2).
-    const skillContext = activeSkillRef.current;
     // YUK-266 (C1) — the AI message id is minted up-front so the incremental SSE
     // deltas can target the SAME message as it grows; the terminal `reply` event
     // then overwrites its text with the authoritative reply + attaches the
@@ -785,28 +910,15 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     let inlineReplyStarted = false;
     let inlineSubtaskVersion = 0;
     let inlineRunView = createCopilotRunView();
+    let dispatchResponseReceived = false;
     try {
-      // YUK-267 (C2) — ambient_context: the current route + (when a skill is
-      // active) the focused entity. route is always present; focused_entity is the
-      // active skill ref. Server treats it as current-message-only (防循环 ②).
-      const route = pathnameRef.current;
-      const focusedEntity = skillContext?.ref;
-      // YUK-577 — when no skill entity is in scope but a nudge opened this conversation, ride the
-      // ingestion session as the focused entity so the agent knows the reply is about that material.
-      const ambientFocus = resolveTurnAmbientFocus(focusedEntity, nudgeSessionRef.current);
-      const ambientContext = route
-        ? { route, ...(ambientFocus ? { focused_entity: ambientFocus } : {}) }
-        : undefined;
       const res = await apiFetch('/api/copilot/chat', {
         method: 'POST',
         signal: turnAbortController.signal,
-        body: JSON.stringify({
-          user_message: text,
-          triggered_by: 'chat',
-          ...(skillContext ? { skill_context: skillContext } : {}),
-          ...(ambientContext ? { ambient_context: ambientContext } : {}),
-        }),
+        headers: { 'Idempotency-Key': idempotencyKey },
+        body: JSON.stringify(requestBody),
       });
+      dispatchResponseReceived = true;
       // YUK-757/YUK-596 bridge — durable dispatch returns 202 JSON + a generic
       // authenticated job-events Location instead of inline chat SSE. Consume it
       // with explicit Last-Event-ID reconnects; every update patches the SAME AI
@@ -831,7 +943,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           // strips it, suppress generic re-POST retry because acceptance is
           // already known but the stable reconnect handle is unavailable.
           durableHandleMissing = true;
-          lastUserMessageRef.current = null;
+          lastUserTurnRef.current = null;
+          clearPersistedPendingCopilotTurn(idempotencyKey);
           throw new Error('后台任务已受理，但没有返回进度地址；请稍后重新打开对话。');
         }
         durableHandle = {
@@ -844,7 +957,13 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           view: inlineRunView,
         };
         durableReconnectRef.current = durableHandle;
-        persistDurableCopilotReconnect(durableHandle);
+        if (persistDurableCopilotReconnect(durableHandle)) {
+          // The stable accepted Location supersedes the uncertain POST record.
+          clearPersistedPendingCopilotTurn(idempotencyKey);
+        }
+        if (lastUserTurnRef.current?.idempotencyKey === idempotencyKey) {
+          lastUserTurnRef.current.retryWithSameKey = false;
+        }
         setDurableRunning(true);
         setAwaitingFirstFrame(false);
         const durable = await consumeDurableCopilotRun({
@@ -862,14 +981,25 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         });
         if (durable.phase === 'failed') {
           applyRunViewToMessage(aiId, durable, '这次后台运行没有完成。可以换个更聚焦的问法再试。');
+          if (durable.failureReason === 'ambiguous_execution') {
+            lastUserTurnRef.current = null;
+          }
           reportSendError('后台运行未完成');
         }
         if (durableReconnectRef.current?.runId === durableHandle.runId) {
           durableReconnectRef.current = null;
         }
         clearPersistedDurableCopilotReconnect(durableHandle.runId);
+        clearPersistedPendingCopilotTurn(idempotencyKey);
         nudgeSessionRef.current = nextNudgeSessionAfterTurn(nudgeSessionRef.current, true);
         return;
+      }
+      // A concrete inline response settles the POST acceptance question. Clear
+      // the pre-acceptance handoff before consuming the body: a later stream
+      // disconnect must not be mistaken for a never-answered dispatch.
+      clearPersistedPendingCopilotTurn(idempotencyKey);
+      if (lastUserTurnRef.current?.idempotencyKey === idempotencyKey) {
+        lastUserTurnRef.current.retryWithSameKey = false;
       }
       const body = res.body;
       // Graceful degrade (red line): no streamable body → read the whole thing
@@ -1008,6 +1138,22 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         if (durableHandle) durableReconnectRef.current = durableHandle;
       }
       let message = '请求失败';
+      // A structured server error is definitive except for the explicit
+      // accepted-but-queue-unknown contract. Transport loss keeps same-key
+      // recovery because the 202 itself may have been lost in flight.
+      if (
+        !durableAccepted &&
+        err instanceof ApiError &&
+        err.code !== 'copilot_enqueue_ambiguous' &&
+        lastUserTurnRef.current?.idempotencyKey === idempotencyKey
+      ) {
+        lastUserTurnRef.current.retryWithSameKey = false;
+        clearPersistedPendingCopilotTurn(idempotencyKey);
+      }
+      setPendingAcceptanceUnknown(
+        !dispatchResponseReceived &&
+          (!(err instanceof ApiError) || err.code === 'copilot_enqueue_ambiguous'),
+      );
       if (durableHandleMissing) {
         message = '后台任务已受理，但没有返回进度地址；请稍后重新打开对话。';
       } else if (durableAccepted) {
@@ -1035,9 +1181,17 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       void reconnectDurable(durable);
       return;
     }
-    const last = lastUserMessageRef.current;
-    if (last) void send(last);
+    const last = lastUserTurnRef.current;
+    if (last) void send(last.text, last.retryWithSameKey ? last.idempotencyKey : undefined);
   }, [reconnectDurable, send]);
+
+  const discardPendingRecovery = useCallback(() => {
+    const pending = lastUserTurnRef.current;
+    if (pending) clearPersistedPendingCopilotTurn(pending.idempotencyKey);
+    lastUserTurnRef.current = null;
+    setPendingAcceptanceUnknown(false);
+    setError(null);
+  }, []);
 
   // YUK-272 (C3) — quiz quick-chip. When a knowledge node is in scope, seed a quiz
   // skill turn with that real id; `send` clears the one-shot context afterwards via
@@ -1393,7 +1547,16 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
               <div className="chat-error" data-testid="copilot-error" role="alert">
                 <LoomIcon name="alert" size={14} />
                 <span>{error}</span>
-                {durableReconnectRef.current || lastUserMessageRef.current ? (
+                {pendingAcceptanceUnknown && lastUserTurnRef.current ? (
+                  <>
+                    <Btn variant="ghost" size="sm" onClick={discardPendingRecovery}>
+                      不再恢复
+                    </Btn>
+                    <Btn variant="ghost" size="sm" icon="refresh" onClick={retry}>
+                      恢复
+                    </Btn>
+                  </>
+                ) : durableReconnectRef.current || lastUserTurnRef.current ? (
                   <Btn variant="ghost" size="sm" icon="refresh" onClick={retry}>
                     {durableReconnectRef.current ? '重新连接' : '重试'}
                   </Btn>

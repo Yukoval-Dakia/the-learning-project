@@ -182,6 +182,33 @@ describe('Copilot subtask event fold', () => {
       ),
     ).toBeNull();
   });
+
+  it('projects an ambiguous paid execution warning live and clears any stale revert anchor', () => {
+    const warning =
+      '这次后台运行已经开始，但结果没有可靠保存。为避免重复执行可能已经发生的操作，我没有自动重跑；请先确认现有结果，再决定是否重新发起。';
+    const result = foldCopilotRunFrames(createCopilotRunView(), [
+      frame(701, 'copilot_run.queued', {
+        session_id: 'copilot-session-ambiguous-materialization',
+      }),
+      frame(702, 'copilot_run.started', {}),
+      frame(703, 'copilot_run.reply', {
+        reply_md: '正在物化九道跨章节迁移题。',
+        checkpoint_event_id: 'ask_ambiguous_materialization',
+      }),
+      frame(704, 'copilot_run.failed', {
+        reason: 'ambiguous_execution',
+        error: 'execution outcome could not be confirmed after worker recovery',
+        reply_md: warning,
+      }),
+    ]);
+
+    expect(result).toMatchObject({
+      phase: 'failed',
+      failureReason: 'ambiguous_execution',
+      replyText: warning,
+    });
+    expect(result.checkpointEventId).toBeUndefined();
+  });
 });
 
 describe('durable Copilot run SSE replay', () => {

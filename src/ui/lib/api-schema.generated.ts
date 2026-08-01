@@ -9438,7 +9438,9 @@ export interface operations {
   runCopilotChat: {
     parameters: {
       query?: never;
-      header?: never;
+      header?: {
+        'Idempotency-Key'?: string;
+      };
       path?: never;
       cookie?: never;
     };
@@ -9591,6 +9593,20 @@ export interface operations {
       };
       /** @description Internal error */
       500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Internal error */
+      503: {
         headers: {
           [name: string]: unknown;
         };

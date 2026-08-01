@@ -112,6 +112,45 @@ async function writeReply(
   return id;
 }
 
+async function writeDurableFailureReply(
+  text: string,
+  sessionId: string,
+  inReplyTo: string,
+  at: Date,
+  reason: 'ambiguous_execution' | 'exhausted',
+): Promise<string> {
+  const id = `copilot_reply_${createId()}`;
+  writtenEventIds.push(id);
+  await writeEvent(db, {
+    id,
+    session_id: sessionId,
+    actor_kind: 'agent',
+    actor_ref: 'agent:copilot',
+    action: 'experimental:copilot_reply',
+    subject_kind: 'query',
+    subject_id: id,
+    outcome: 'failure',
+    payload: {
+      surface: 'copilot',
+      session_id: sessionId,
+      reply_md: text,
+      task_run_id: `copilot_run_${reason}_${inReplyTo}`,
+      in_reply_to_event_id: inReplyTo,
+      durable_failure: {
+        reason,
+        error:
+          reason === 'ambiguous_execution'
+            ? 'execution outcome could not be confirmed after worker recovery'
+            : 'provider budget exhausted after validating three of five transfer probes',
+      },
+    },
+    caused_by_event_id: inReplyTo,
+    task_run_id: `copilot_run_${reason}_${inReplyTo}`,
+    created_at: at,
+  });
+  return id;
+}
+
 // YUK-497 wave-4 — mirror an mcp-bridge tool_use event chained to the ask (caused_by), carrying the
 // tool_name (the persisted key the anchor-suppression reads; tool_use has session_id null in prod and
 // is queried by caused_by, not session).
@@ -438,6 +477,52 @@ describe('getRecentCopilotTurns', () => {
       expect(turns.find((t) => t.event_id === askProp)?.checkpoint_event_id).toBe(askProp);
     },
   );
+
+  it('suppresses ask and reply anchors after ambiguous durable execution even when the tool mirror was lost', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    const ambiguousAsk = await writeAsk(
+      '核对 42 次真实作答、三轮延迟复习和五个未教学探针，再物化九道含参迁移题。',
+      sessionId,
+      new Date(now.getTime() - 4_000),
+    );
+    const ambiguousReply = await writeDurableFailureReply(
+      '后台执行已经开始，但结果标记和 tool_use 镜像都未能可靠保存；为避免重复物化题目，没有自动重跑。',
+      sessionId,
+      ambiguousAsk,
+      new Date(now.getTime() - 3_500),
+      'ambiguous_execution',
+    );
+    const exhaustedAsk = await writeAsk(
+      '只读取同一批证据并给出一份不落库的聚类摘要。',
+      sessionId,
+      new Date(now.getTime() - 2_000),
+    );
+    const exhaustedReply = await writeDurableFailureReply(
+      '三个迁移探针已经完成，剩余两个因预算耗尽而停止。',
+      sessionId,
+      exhaustedAsk,
+      new Date(now.getTime() - 1_500),
+      'exhausted',
+    );
+
+    const turns = await getRecentCopilotTurns(db, { now });
+
+    expect(
+      turns.find((turn) => turn.event_id === ambiguousAsk)?.checkpoint_event_id,
+    ).toBeUndefined();
+    expect(
+      turns.find((turn) => turn.event_id === ambiguousReply)?.checkpoint_event_id,
+    ).toBeUndefined();
+    // Narrowness guard: an ordinary exhausted read/propose-only attempt remains
+    // event-chain compensable and still advertises its checkpoint.
+    expect(turns.find((turn) => turn.event_id === exhaustedAsk)?.checkpoint_event_id).toBe(
+      exhaustedAsk,
+    );
+    expect(turns.find((turn) => turn.event_id === exhaustedReply)?.checkpoint_event_id).toBe(
+      exhaustedAsk,
+    );
+  });
 
   it('caps to limit turns (newest kept), returned chronologically', async () => {
     const now = new Date();

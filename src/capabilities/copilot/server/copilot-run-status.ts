@@ -19,6 +19,8 @@ export const COPILOT_RUN_EVENTS = {
   QUEUED: 'copilot_run.queued',
   /** handler 拾起、SDK run 启动前。 */
   STARTED: 'copilot_run.started',
+  /** deterministic setup 完成、紧邻 paid model/tool gateway 的 at-most-once fence。 */
+  EXECUTION_STARTED: 'copilot_run.execution_started',
   /** 回合/进度心跳（工具步进等；v1 保留为 forward-compat 进度槽）。 */
   STEP: 'copilot_run.step',
   /**

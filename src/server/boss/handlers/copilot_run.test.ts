@@ -11,14 +11,16 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { writeCopilotReply } from '@/capabilities/copilot/server/chat';
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
   deriveCopilotRunStatus,
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { countOutstandingDurableRuns } from '@/capabilities/copilot/server/durable-backlog';
+import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
 import { COPILOT_SUBAGENT_NAME } from '@/capabilities/copilot/server/subagents';
-import { event } from '@/db/schema';
+import { event, job_events } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/server/ai/tools/allowlists';
 import { computeReplay } from '@/server/events/sse_replay';
@@ -31,6 +33,7 @@ import {
   DURABLE_BUDGET,
   type RunCopilotRunParams,
   buildCopilotRunHandler,
+  claimCopilotExecutionFence,
   runCopilotRun,
   writeFailedTerminalProjection,
   writeSuccessfulTerminalProjection,
@@ -143,6 +146,7 @@ describe('runCopilotRun', () => {
     const types = events.map((e) => e.event_type);
     expect(types).toEqual([
       COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
       COPILOT_RUN_EVENTS.REPLY,
       COPILOT_RUN_EVENTS.DONE,
     ]);
@@ -261,6 +265,7 @@ describe('runCopilotRun', () => {
     const events = await replay(runId);
     expect(events.map((event) => event.event_type)).toEqual([
       COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
       COPILOT_RUN_EVENTS.STEP,
       COPILOT_RUN_EVENTS.DELTA,
       COPILOT_RUN_EVENTS.STEP,
@@ -481,6 +486,7 @@ describe('runCopilotRun', () => {
     expect((await replay(runId)).map((item) => item.event_type)).toEqual([
       COPILOT_RUN_EVENTS.QUEUED,
       COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
     ]);
     expect(await countOutstandingDurableRuns(testDb())).toBe(1);
 
@@ -497,6 +503,7 @@ describe('runCopilotRun', () => {
     expect(repairedEvents.map((item) => item.event_type)).toEqual([
       COPILOT_RUN_EVENTS.QUEUED,
       COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
       COPILOT_RUN_EVENTS.REPLY,
       COPILOT_RUN_EVENTS.DONE,
     ]);
@@ -561,6 +568,7 @@ describe('runCopilotRun', () => {
     expect((await replay(runId)).map((item) => item.event_type)).toEqual([
       COPILOT_RUN_EVENTS.QUEUED,
       COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
     ]);
     expect(await countOutstandingDurableRuns(testDb())).toBe(1);
 
@@ -573,6 +581,7 @@ describe('runCopilotRun', () => {
     expect(repairedEvents.map((item) => item.event_type)).toEqual([
       COPILOT_RUN_EVENTS.QUEUED,
       COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
       COPILOT_RUN_EVENTS.FAILED,
     ]);
     expect(repairedEvents.at(-1)?.payload).toMatchObject({
@@ -580,6 +589,313 @@ describe('runCopilotRun', () => {
       error: providerError,
     });
     expect(repairedEvents.at(-1)?.payload).not.toHaveProperty('checkpoint_event_id');
+    expect(await countOutstandingDurableRuns(testDb())).toBe(0);
+  });
+
+  it('YUK-757 — execution claim failure never enters paid execution and a clean redelivery may run once', async () => {
+    const runId = 'copilot_user_ask_execution_fence_retry';
+    const sessionId = 'sess_execution_fence_retry';
+    const streamRun = streamMock(
+      '已核对 36 道含参函数与电磁感应迁移题：定义域、退化分支和方向单位三类证据均已闭合。',
+      { taskRunId: 'tr_execution_fence_retry' },
+    );
+    const claimFence = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('execution claim commit unavailable'))
+      .mockImplementation(claimCopilotExecutionFence);
+    const params = {
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: streamRun as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+      claimExecutionFenceFn: claimFence,
+    } satisfies RunCopilotRunParams;
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.QUEUED,
+      payload: { session_id: sessionId, admission: 'paid-durable-slot' },
+    });
+
+    await expect(runCopilotRun(params)).rejects.toThrow('execution claim commit unavailable');
+    expect(streamRun).not.toHaveBeenCalled();
+    expect((await replay(runId)).map((item) => item.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.QUEUED,
+      COPILOT_RUN_EVENTS.STARTED,
+    ]);
+
+    await expect(runCopilotRun(params)).resolves.toMatchObject({ status: 'done' });
+    expect(streamRun).toHaveBeenCalledTimes(1);
+    expect((await replay(runId)).map((item) => item.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.QUEUED,
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      COPILOT_RUN_EVENTS.REPLY,
+      COPILOT_RUN_EVENTS.DONE,
+    ]);
+  });
+
+  it('YUK-757 — overlapping deliveries atomically claim one paid execution and the loser never terminalizes the live owner', async () => {
+    const runId = 'copilot_user_ask_overlapping_execution_claim';
+    const sessionId = 'sess_overlapping_execution_claim';
+    let releaseAssembly: (() => void) | undefined;
+    const bothAtAssembly = new Promise<void>((resolve) => {
+      releaseAssembly = resolve;
+    });
+    let assemblyArrivals = 0;
+    const assembleBarrier = vi.fn(async (database, input) => {
+      assemblyArrivals += 1;
+      if (assemblyArrivals === 2) releaseAssembly?.();
+      await bothAtAssembly;
+      return stubRunInput(database, input);
+    }) as RunCopilotRunParams['resolveCopilotRunInputFn'];
+
+    let releasePaidRun: (() => void) | undefined;
+    const paidRunGate = new Promise<void>((resolve) => {
+      releasePaidRun = resolve;
+    });
+    const streamRun = vi.fn(async () => {
+      await paidRunGate;
+      return {
+        text: '已由唯一 owner 核对 36 道跨章节作答、三轮延迟复习和五个未教学探针；没有重复物化题目。',
+        task_run_id: 'tr_overlapping_execution_owner',
+        finishReason: 'end_turn',
+        usage: { inputTokens: 8_200, outputTokens: 1_100 },
+      };
+    });
+    const params = {
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: streamRun as never,
+      resolveCopilotRunInputFn: assembleBarrier,
+      buildMcpServerFn: mcpMock() as never,
+    } satisfies RunCopilotRunParams;
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.QUEUED,
+      payload: { session_id: sessionId, admission: 'paid-durable-slot' },
+    });
+
+    const deliveries = [runCopilotRun(params), runCopilotRun(params)];
+    let settledCount = 0;
+    for (const delivery of deliveries) {
+      void delivery.then(
+        () => {
+          settledCount += 1;
+        },
+        () => {
+          settledCount += 1;
+        },
+      );
+    }
+    await vi.waitFor(() => expect(streamRun).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // The contender stays observational: it neither retries paid work nor
+    // completes/terminalizes the shared run while its owner is live.
+    expect(settledCount).toBe(0);
+    expect(streamRun).toHaveBeenCalledTimes(1);
+    // The loser did not write an ambiguous reply/FAILED while the owner was live.
+    expect(await copilotReplyEvents(sessionId)).toHaveLength(0);
+    expect(
+      (await replay(runId)).some((item) => item.event_type === COPILOT_RUN_EVENTS.FAILED),
+    ).toBe(false);
+
+    releasePaidRun?.();
+    const settled = await Promise.allSettled(deliveries);
+    expect(settled.filter((item) => item.status === 'fulfilled')).toHaveLength(2);
+    expect(settled.filter((item) => item.status === 'rejected')).toHaveLength(0);
+    expect(streamRun).toHaveBeenCalledTimes(1);
+    expect(await copilotReplyEvents(sessionId)).toHaveLength(1);
+    expect((await replay(runId)).map((item) => item.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.QUEUED,
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      COPILOT_RUN_EVENTS.REPLY,
+      COPILOT_RUN_EVENTS.DONE,
+    ]);
+
+    // A later pg-boss redelivery observes DONE and remains no-op.
+    await expect(runCopilotRun(params)).resolves.toMatchObject({ status: 'done' });
+    expect(streamRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('YUK-757 — deadline recovery wins settlement once and a late paid owner cannot append success', async () => {
+    const runId = 'copilot_user_ask_recovery_wins_late_owner';
+    const sessionId = 'sess_recovery_wins_late_owner';
+    let ownerEntered: (() => void) | undefined;
+    const ownerStarted = new Promise<void>((resolve) => {
+      ownerEntered = resolve;
+    });
+    let releaseOwner: (() => void) | undefined;
+    const ownerGate = new Promise<void>((resolve) => {
+      releaseOwner = resolve;
+    });
+    const streamRun = vi.fn(async () => {
+      ownerEntered?.();
+      await ownerGate;
+      return {
+        text: '迟到 owner 的成功文本：已物化九道含参迁移题，但不得在恢复终态之后写入对话或 DONE。',
+        task_run_id: 'tr_recovery_wins_late_owner',
+        finishReason: 'end_turn',
+        usage: { inputTokens: 9_600, outputTokens: 1_480 },
+      };
+    });
+    const params = {
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: streamRun as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    } satisfies RunCopilotRunParams;
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.QUEUED,
+      payload: { session_id: sessionId, admission: 'paid-durable-slot' },
+    });
+
+    const owner = runCopilotRun(params);
+    await ownerStarted;
+    await testDb()
+      .update(job_events)
+      .set({ occurred_at: new Date(Date.now() - DURABLE_BUDGET.timeoutMs - 31_000) })
+      .where(
+        and(
+          eq(job_events.business_table, COPILOT_RUN_TABLE),
+          eq(job_events.business_id, runId),
+          eq(job_events.event_type, COPILOT_RUN_EVENTS.EXECUTION_STARTED),
+        ),
+      );
+
+    const recovered = await runCopilotRun(params);
+    expect(recovered).toEqual({
+      status: 'failed',
+      error: 'execution outcome could not be confirmed after worker recovery',
+    });
+    releaseOwner?.();
+    await expect(owner).resolves.toEqual(recovered);
+
+    expect(streamRun).toHaveBeenCalledTimes(1);
+    const replies = await copilotReplyEvents(sessionId);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      outcome: 'failure',
+      task_run_id: `copilot_run_ambiguous_${runId}`,
+      payload: { durable_failure: { reason: 'ambiguous_execution' } },
+    });
+    expect(String(replies[0]?.payload.reply_md)).not.toContain('迟到 owner 的成功文本');
+    expect((await replay(runId)).map((event) => event.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.QUEUED,
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      COPILOT_RUN_EVENTS.FAILED,
+    ]);
+    expect(await countOutstandingDurableRuns(testDb())).toBe(0);
+  });
+
+  it('YUK-757 — lost paid outcome becomes one honest ambiguous terminal and never re-runs tools', async () => {
+    const runId = 'copilot_user_ask_paid_outcome_marker_lost';
+    const sessionId = 'sess_paid_outcome_marker_lost';
+    const paidReply =
+      '已完成 42 次真实作答、三轮延迟复习、五个未教学探针和九道新迁移题；其中 author_question 已物化三档题组。';
+    const streamRun = streamMock(paidReply, {
+      taskRunId: 'tr_paid_outcome_marker_lost',
+      finishReason: 'end_turn',
+    });
+    const persistReply = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('domain reply marker database unavailable after tools'))
+      .mockImplementation(writeCopilotReply);
+    const projectFailed = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('FAILED projection temporarily unavailable'))
+      .mockImplementation(writeFailedTerminalProjection);
+    const params = {
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: streamRun as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+      writeCopilotReplyFn: persistReply,
+      writeFailedTerminalProjectionFn: projectFailed,
+    } satisfies RunCopilotRunParams;
+    await seedToolUseMirror(runId, 'author_question');
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.QUEUED,
+      payload: { session_id: sessionId, admission: 'paid-durable-slot' },
+    });
+
+    await expect(runCopilotRun(params)).rejects.toThrow(
+      `durable success terminal projection failed for ${runId}`,
+    );
+    expect(streamRun).toHaveBeenCalledTimes(1);
+    expect(await copilotReplyEvents(sessionId)).toHaveLength(0);
+    expect((await replay(runId)).map((item) => item.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.QUEUED,
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+    ]);
+    expect(await countOutstandingDurableRuns(testDb())).toBe(1);
+
+    // A genuine recovery happens only after the original 12-minute execution
+    // budget has elapsed (normally pg-boss redelivers after its 2h lease). Age
+    // the fence rather than mis-model an early overlap as a crashed owner.
+    await testDb()
+      .update(job_events)
+      .set({
+        occurred_at: new Date(Date.now() - DURABLE_BUDGET.timeoutMs - 31_000),
+      })
+      .where(
+        and(
+          eq(job_events.business_table, COPILOT_RUN_TABLE),
+          eq(job_events.business_id, runId),
+          eq(job_events.event_type, COPILOT_RUN_EVENTS.EXECUTION_STARTED),
+        ),
+      );
+
+    // Redelivery sees EXECUTION_STARTED with no outcome. It writes an ambiguous marker,
+    // but this injected FAILED projection loss forces one further repair pass.
+    await expect(runCopilotRun(params)).rejects.toThrow(
+      `durable failure terminal projection failed for ${runId}`,
+    );
+    expect(streamRun).toHaveBeenCalledTimes(1);
+    const ambiguousReplies = await copilotReplyEvents(sessionId);
+    expect(ambiguousReplies).toHaveLength(1);
+    expect(ambiguousReplies[0]).toMatchObject({
+      outcome: 'failure',
+      task_run_id: `copilot_run_ambiguous_${runId}`,
+      caused_by_event_id: runId,
+      payload: {
+        durable_failure: {
+          reason: 'ambiguous_execution',
+          error: 'execution outcome could not be confirmed after worker recovery',
+        },
+      },
+    });
+    expect(String(ambiguousReplies[0]?.payload.reply_md)).toContain('没有自动重跑');
+
+    const repaired = await runCopilotRun(params);
+    expect(repaired).toEqual({
+      status: 'failed',
+      error: 'execution outcome could not be confirmed after worker recovery',
+    });
+    expect(streamRun).toHaveBeenCalledTimes(1);
+    expect(await copilotReplyEvents(sessionId)).toHaveLength(1);
+    const terminal = (await replay(runId)).at(-1);
+    expect(terminal).toMatchObject({
+      event_type: COPILOT_RUN_EVENTS.FAILED,
+      payload: {
+        reason: 'ambiguous_execution',
+        error: 'execution outcome could not be confirmed after worker recovery',
+      },
+    });
+    expect(terminal?.payload).not.toHaveProperty('checkpoint_event_id');
     expect(await countOutstandingDurableRuns(testDb())).toBe(0);
   });
 
@@ -712,10 +1028,11 @@ describe('runCopilotRun', () => {
     // id 单调递增。
     const ids = events.map((e) => e.id);
     expect(ids).toEqual([...ids].sort((a, b) => a - b));
-    // 事件序列：STARTED, 3×DELTA, REPLY, DONE。
+    // 事件序列：STARTED, EXECUTION_STARTED, 3×DELTA, REPLY, DONE。
     const types = events.map((e) => e.event_type);
     expect(types).toEqual([
       COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
       COPILOT_RUN_EVENTS.DELTA,
       COPILOT_RUN_EVENTS.DELTA,
       COPILOT_RUN_EVENTS.DELTA,
@@ -874,10 +1191,52 @@ describe('runCopilotRun', () => {
     expect(events.map((e) => e.event_type)).toEqual([
       COPILOT_RUN_EVENTS.FAILED,
       COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
       COPILOT_RUN_EVENTS.REPLY,
       COPILOT_RUN_EVENTS.DONE,
     ]);
     expect(deriveCopilotRunStatus(events)).toBe('done');
+  });
+
+  it("YUK-757 — retryable error does not suppress the retried attempt's exhausted terminal", async () => {
+    const runId = 'run_retryable_error_then_exhausted';
+    const sessionId = 'sess_retryable_error_then_exhausted';
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.FAILED,
+      payload: { reason: 'error', error: 'transient provider gateway reset' },
+    });
+    const run = streamMock('已核对 31 道真实作答与四个未教学探针，但第三档迁移题在预算内未完成。', {
+      partial: true,
+      error: 'retry budget exhausted after validator batch 7',
+    });
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    });
+
+    expect(result).toEqual({
+      status: 'failed',
+      error: 'retry budget exhausted after validator batch 7',
+    });
+    expect(run).toHaveBeenCalledTimes(1);
+    const events = await replay(runId);
+    expect(events.map((event) => event.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.FAILED,
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      COPILOT_RUN_EVENTS.FAILED,
+    ]);
+    expect(events.at(-1)?.payload).toMatchObject({
+      reason: 'exhausted',
+      error: 'retry budget exhausted after validator batch 7',
+    });
+    expect(await copilotReplyEvents(sessionId)).toHaveLength(1);
   });
 
   it('C1 — 已有 FAILED(reason=cancelled) 的 run 被重投 → 早停返回 cancelled，不重跑', async () => {
@@ -900,6 +1259,109 @@ describe('runCopilotRun', () => {
     expect(run).not.toHaveBeenCalled();
     const events = await replay(runId);
     expect(events.map((e) => e.event_type)).toEqual([COPILOT_RUN_EVENTS.FAILED]);
+  });
+
+  it('YUK-757 — enqueue-failure compensation and execution claim share one lock and block stale paid work', async () => {
+    const runId = 'run_enqueue_compensation_between_replay_and_claim';
+    const sessionId = 'sess_enqueue_compensation_between_replay_and_claim';
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.QUEUED,
+      payload: { session_id: sessionId, admission: 'paid-durable-slot' },
+    });
+
+    let releaseAssembly!: () => void;
+    let markAssemblyEntered!: () => void;
+    const assemblyGate = new Promise<void>((resolve) => {
+      releaseAssembly = resolve;
+    });
+    const assemblyEntered = new Promise<void>((resolve) => {
+      markAssemblyEntered = resolve;
+    });
+    const blockedAssembly = vi.fn(async (database, input) => {
+      markAssemblyEntered();
+      await assemblyGate;
+      return stubRunInput(database, input);
+    }) as RunCopilotRunParams['resolveCopilotRunInputFn'];
+    const paidRun = streamMock(
+      '不应在公开 enqueue_failed 之后执行 48 道作答、六个未教学探针和九道迁移题物化。',
+    );
+    const worker = runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: paidRun as never,
+      resolveCopilotRunInputFn: blockedAssembly,
+      buildMcpServerFn: mcpMock() as never,
+    });
+    await assemblyEntered;
+
+    let releaseCompensation!: () => void;
+    let markCompensationLocked!: () => void;
+    const compensationGate = new Promise<void>((resolve) => {
+      releaseCompensation = resolve;
+    });
+    const compensationLocked = new Promise<void>((resolve) => {
+      markCompensationLocked = resolve;
+    });
+    const compensation = withCopilotDurableDispatchLock(testDb(), runId, async (tx) => {
+      await writeJobEvent(tx, {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.FAILED,
+        payload: { reason: 'enqueue_failed', checkpoint_event_id: runId },
+      });
+      markCompensationLocked();
+      await compensationGate;
+    });
+    await compensationLocked;
+
+    // The worker has already replayed a non-terminal run. Let it reach claim
+    // while compensation is still uncommitted: the shared dispatch lock must
+    // keep EXECUTION_STARTED and paid model/tools behind that transaction.
+    releaseAssembly();
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    expect(paidRun).not.toHaveBeenCalled();
+    expect((await replay(runId)).map((event) => event.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.QUEUED,
+      COPILOT_RUN_EVENTS.STARTED,
+    ]);
+
+    releaseCompensation();
+    await compensation;
+    await expect(worker).resolves.toEqual({ status: 'failed', error: 'enqueue_failed' });
+    expect(paidRun).not.toHaveBeenCalled();
+    expect((await replay(runId)).map((event) => event.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.QUEUED,
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.FAILED,
+    ]);
+  });
+
+  it('YUK-757 — a late pg-boss delivery behind enqueue_failed never starts paid execution', async () => {
+    const runId = 'run_late_delivery_after_enqueue_failed';
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.FAILED,
+      payload: { reason: 'enqueue_failed', checkpoint_event_id: runId },
+    });
+    const run = streamMock('不应该在公开 enqueue_failed 之后仍执行 48 道作答与六个未教学探针。');
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_late_enqueue_failed' },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    });
+
+    expect(result).toEqual({ status: 'failed', error: 'enqueue_failed' });
+    expect(run).not.toHaveBeenCalled();
+    expect((await replay(runId)).map((event) => event.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.FAILED,
+    ]);
+    expect(await copilotReplyEvents('sess_late_enqueue_failed')).toHaveLength(0);
   });
 
   // YUK-575 (MF2b) — 已有 FAILED(reason=exhausted) 的 run 被重投（写完 terminal 后崩溃）→
@@ -1010,6 +1472,7 @@ describe('runCopilotRun', () => {
     const events = await replay('run_fail');
     expect(events.map((e) => e.event_type)).toEqual([
       COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
       COPILOT_RUN_EVENTS.FAILED,
     ]);
     const failed = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.FAILED);

@@ -35,6 +35,7 @@ import {
   COPILOT_RUN_TABLE,
   hasCancelRequest,
 } from '@/capabilities/copilot/server/copilot-run-status';
+import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
 import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
 import {
   buildCopilotSubagents,
@@ -42,7 +43,7 @@ import {
   isCopilotSubagentEnabled,
 } from '@/capabilities/copilot/server/subagents';
 import type { Db, Tx } from '@/db/client';
-import { event } from '@/db/schema';
+import { event, job_events } from '@/db/schema';
 // YUK-364 (bot-review C5) — 共享 Tavily 远程 MCP（web grounding），与 inline copilot
 // （chat.ts runCopilotChatImpl）+ quiz_gen handler 同一份 env-gated builder。配置
 // TAVILY_API_KEY 时挂 search/extract，未配置时 buildTavily() 返回 null → 与之前
@@ -82,7 +83,7 @@ import { writeJobEvent } from '@/server/events/writer';
 // subjectId 参数），inline + durable 直接复用同一份，零漂移。
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
 import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 
 // dispatch 入口投递的 job 体。run_id = checkpoint_id = user_ask event id（route
 // 在 enqueue 前已写 user_ask domain event，本 handler 以它做 causedByEventId 让
@@ -177,6 +178,10 @@ export interface RunCopilotRunParams {
   writeSuccessfulTerminalProjectionFn?: WriteSuccessfulTerminalProjectionFn;
   /** Test seam for the FAILED projection and redelivery repair. */
   writeFailedTerminalProjectionFn?: WriteFailedTerminalProjectionFn;
+  /** Test seam for the domain outcome marker written after paid execution. */
+  writeCopilotReplyFn?: typeof writeCopilotReply;
+  /** Test seam for the load-bearing atomic paid-execution claim. */
+  claimExecutionFenceFn?: ClaimCopilotExecutionFenceFn;
 }
 
 export type RunCopilotRunResult =
@@ -192,25 +197,84 @@ interface SuccessfulTerminalProjection {
 }
 
 interface TerminalProjectionEvent {
+  id?: number;
   event_type: string;
+  payload?: Record<string, unknown>;
+}
+
+function isCopilotDeliberateFailedEvent(event: TerminalProjectionEvent): boolean {
+  if (event.event_type !== COPILOT_RUN_EVENTS.FAILED) return false;
+  const reason = event.payload?.reason;
+  return (
+    reason === 'cancelled' ||
+    reason === 'exhausted' ||
+    reason === 'enqueue_failed' ||
+    reason === 'ambiguous_execution'
+  );
 }
 
 interface FailedTerminalProjection {
   runId: string;
   error: string;
-  reason: 'exhausted';
+  reason: 'exhausted' | 'ambiguous_execution';
+  /** User-facing terminal copy for the live job-events consumer. */
+  replyMd?: string;
 }
 
 type WriteJobEventFn = (tx: Db | Tx, input: Parameters<typeof writeJobEvent>[1]) => Promise<number>;
 
-export type WriteSuccessfulTerminalProjectionFn = (
+type ClaimCopilotExecutionFenceResult =
+  | { outcome: 'claimed' }
+  | { outcome: 'existing' }
+  | { outcome: 'terminal'; events: TerminalProjectionEvent[] };
+
+type ClaimCopilotExecutionFenceFn = (
   db: Db,
+  runId: string,
+) => Promise<ClaimCopilotExecutionFenceResult>;
+
+/**
+ * Atomically claim the one paid/tool execution allowed for a run. The dispatch
+ * advisory lock is shared with API enqueue-failure compensation, so a worker
+ * cannot pass a stale replay, let enqueue_failed commit, and then start paid
+ * work. It also serializes overlapping deliveries before appending the fence.
+ */
+export async function claimCopilotExecutionFence(
+  db: Db,
+  runId: string,
+  options: { writeJobEventFn?: WriteJobEventFn } = {},
+): Promise<ClaimCopilotExecutionFenceResult> {
+  const write = options.writeJobEventFn ?? writeJobEvent;
+  return withCopilotDurableDispatchLock(db, runId, async (tx) => {
+    const events = await tx
+      .select({ id: job_events.id, event_type: job_events.event_type, payload: job_events.payload })
+      .from(job_events)
+      .where(
+        and(eq(job_events.business_table, COPILOT_RUN_TABLE), eq(job_events.business_id, runId)),
+      )
+      .orderBy(asc(job_events.id));
+    if (hasCopilotSettlementTerminal(events)) return { outcome: 'terminal', events };
+    if (events.some((event) => event.event_type === COPILOT_RUN_EVENTS.EXECUTION_STARTED)) {
+      return { outcome: 'existing' };
+    }
+    await write(tx, {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      payload: { execution_fence: 'at_most_once' },
+    });
+    return { outcome: 'claimed' };
+  });
+}
+
+export type WriteSuccessfulTerminalProjectionFn = (
+  db: Db | Tx,
   projection: SuccessfulTerminalProjection,
   priorEvents: TerminalProjectionEvent[],
 ) => Promise<void>;
 
 export type WriteFailedTerminalProjectionFn = (
-  db: Db,
+  db: Db | Tx,
   projection: FailedTerminalProjection,
   priorEvents: TerminalProjectionEvent[],
 ) => Promise<void>;
@@ -222,7 +286,21 @@ class DurableTerminalProjectionError extends Error {
   }
 }
 
-async function durableCheckpointPayload(db: Db, runId: string): Promise<Record<string, string>> {
+function isRootDb(database: Db | Tx): database is Db {
+  return '$client' in database;
+}
+
+async function withinExistingOrNewTransaction<T>(
+  database: Db | Tx,
+  run: (tx: Tx) => Promise<T>,
+): Promise<T> {
+  return isRootDb(database) ? database.transaction(run) : run(database);
+}
+
+async function durableCheckpointPayload(
+  db: Db | Tx,
+  runId: string,
+): Promise<Record<string, string>> {
   let turnMaterialized: boolean;
   try {
     turnMaterialized = (await selectAsksWithMaterializingToolCall(db, [runId])).has(runId);
@@ -243,7 +321,7 @@ async function durableCheckpointPayload(db: Db, runId: string): Promise<Record<s
  * a pg-boss redelivery repairs only the missing suffix.
  */
 export async function writeSuccessfulTerminalProjection(
-  db: Db,
+  db: Db | Tx,
   projection: SuccessfulTerminalProjection,
   priorEvents: TerminalProjectionEvent[],
   options: { writeJobEventFn?: WriteJobEventFn } = {},
@@ -254,7 +332,7 @@ export async function writeSuccessfulTerminalProjection(
 
   const checkpointPayload = await durableCheckpointPayload(db, projection.runId);
 
-  await db.transaction(async (tx) => {
+  await withinExistingOrNewTransaction(db, async (tx) => {
     if (!existingTypes.has(COPILOT_RUN_EVENTS.REPLY)) {
       await write(tx, {
         business_table: COPILOT_RUN_TABLE,
@@ -282,15 +360,23 @@ export async function writeSuccessfulTerminalProjection(
 
 /** Project a persisted failed domain reply into one load-bearing FAILED frame. */
 export async function writeFailedTerminalProjection(
-  db: Db,
+  db: Db | Tx,
   projection: FailedTerminalProjection,
   priorEvents: TerminalProjectionEvent[],
   options: { writeJobEventFn?: WriteJobEventFn } = {},
 ): Promise<void> {
-  if (priorEvents.some((item) => item.event_type === COPILOT_RUN_EVENTS.FAILED)) return;
+  // FAILED(reason=error) is a retryable legacy frame, not the outcome of this
+  // paid attempt. It must not suppress a new exhausted/ambiguous projection.
+  if (priorEvents.some(isCopilotDeliberateFailedEvent)) return;
   const write = options.writeJobEventFn ?? writeJobEvent;
-  const checkpointPayload = await durableCheckpointPayload(db, projection.runId);
-  await db.transaction(async (tx) => {
+  // An execution fence proves the model/tools may have run, not which external
+  // effects committed. Missing mirrors during a DB outage cannot make that
+  // work safely revertible, so ambiguous recovery never advertises an anchor.
+  const checkpointPayload =
+    projection.reason === 'ambiguous_execution'
+      ? {}
+      : await durableCheckpointPayload(db, projection.runId);
+  await withinExistingOrNewTransaction(db, async (tx) => {
     await write(tx, {
       business_table: COPILOT_RUN_TABLE,
       business_id: projection.runId,
@@ -298,6 +384,7 @@ export async function writeFailedTerminalProjection(
       payload: {
         reason: projection.reason,
         error: projection.error,
+        ...(projection.replyMd ? { reply_md: projection.replyMd } : {}),
         ...checkpointPayload,
       },
     });
@@ -310,12 +397,12 @@ type PersistedDurableReply =
       outcome: 'failure';
       replyMd: string;
       taskRunId: string;
-      reason: 'exhausted';
+      reason: 'exhausted' | 'ambiguous_execution';
       error: string;
     };
 
 async function findPersistedDurableReply(
-  db: Db,
+  db: Db | Tx,
   runId: string,
 ): Promise<PersistedDurableReply | null> {
   const rows = await db
@@ -342,11 +429,13 @@ async function findPersistedDurableReply(
       failure && typeof failure === 'object' && !Array.isArray(failure)
         ? (failure as Record<string, unknown>)
         : {};
+    const reason =
+      failureRecord.reason === 'ambiguous_execution' ? 'ambiguous_execution' : 'exhausted';
     return {
       outcome: 'failure',
       replyMd,
       taskRunId,
-      reason: 'exhausted',
+      reason,
       error: typeof failureRecord.error === 'string' ? failureRecord.error : replyMd,
     };
   }
@@ -372,6 +461,182 @@ function observeCopilotSpawnBudget(observation: SpawnBudgetObservation): void {
   });
 }
 
+const CLAIMED_EXECUTION_POLL_MS = 250;
+const CLAIMED_EXECUTION_SETTLE_GRACE_MS = 30_000;
+
+function hasCopilotTerminalEvent(events: TerminalProjectionEvent[]): boolean {
+  return events.some(
+    (item) =>
+      item.event_type === COPILOT_RUN_EVENTS.DONE || item.event_type === COPILOT_RUN_EVENTS.FAILED,
+  );
+}
+
+function hasCopilotSettlementTerminal(events: TerminalProjectionEvent[]): boolean {
+  return events.some(
+    (event) =>
+      event.event_type === COPILOT_RUN_EVENTS.DONE || isCopilotDeliberateFailedEvent(event),
+  );
+}
+
+type CopilotExecutionSettlement<T> =
+  | { outcome: 'settled'; value: T }
+  | { outcome: 'already_terminal'; events: TerminalProjectionEvent[] };
+
+/**
+ * Serialize every paid-owner outcome and ambiguous recovery for one run. The
+ * expensive model/tool loop deliberately runs outside this lock; only its
+ * durable settlement is protected. Recovery may win after the owner deadline,
+ * but a late owner then observes that terminal under this same lock and cannot
+ * append a contradictory reply/DONE.
+ */
+async function withCopilotExecutionSettlementLock<T>(
+  db: Db,
+  runId: string,
+  settle: (tx: Tx, priorEvents: TerminalProjectionEvent[]) => Promise<T>,
+): Promise<CopilotExecutionSettlement<T>> {
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${'copilot-execution-settlement'}), hashtext(${runId}))`,
+    );
+    const priorEvents = await tx
+      .select({ id: job_events.id, event_type: job_events.event_type, payload: job_events.payload })
+      .from(job_events)
+      .where(
+        and(eq(job_events.business_table, COPILOT_RUN_TABLE), eq(job_events.business_id, runId)),
+      )
+      .orderBy(asc(job_events.id));
+    // A legacy FAILED(reason=error) is intentionally retryable. It must not
+    // discard the successful outcome of that paid retry at settlement time.
+    if (hasCopilotSettlementTerminal(priorEvents)) {
+      return { outcome: 'already_terminal' as const, events: priorEvents };
+    }
+    return { outcome: 'settled' as const, value: await settle(tx, priorEvents) };
+  });
+}
+
+function terminalRunResult(
+  events: TerminalProjectionEvent[],
+  fallbackTaskRunId: string,
+): RunCopilotRunResult {
+  const newestFirst = [...events].reverse();
+  const done = newestFirst.find((event) => event.event_type === COPILOT_RUN_EVENTS.DONE);
+  if (done) {
+    const reply = newestFirst.find((event) => event.event_type === COPILOT_RUN_EVENTS.REPLY);
+    return {
+      status: 'done',
+      reply: typeof reply?.payload?.reply_md === 'string' ? reply.payload.reply_md : '',
+      task_run_id:
+        typeof done.payload?.task_run_id === 'string'
+          ? done.payload.task_run_id
+          : fallbackTaskRunId,
+    };
+  }
+  const failed = newestFirst.find((event) => event.event_type === COPILOT_RUN_EVENTS.FAILED);
+  const reason = typeof failed?.payload?.reason === 'string' ? failed.payload.reason : 'failed';
+  if (reason === 'cancelled') return { status: 'cancelled' };
+  return {
+    status: 'failed',
+    error: typeof failed?.payload?.error === 'string' ? failed.payload.error : reason,
+  };
+}
+
+type CopilotOutcomeMarkerClaim =
+  | { outcome: 'marker'; marker: PersistedDurableReply }
+  | { outcome: 'already_terminal'; events: TerminalProjectionEvent[] };
+
+/**
+ * Persist the authoritative domain outcome while holding the settlement lock,
+ * but commit it before projecting the public suffix. This preserves the known
+ * paid result if a later REPLY/DONE/FAILED write fails; redelivery can repair
+ * that suffix without re-running model/tools.
+ */
+async function ensureCopilotOutcomeMarker(
+  db: Db,
+  runId: string,
+  create: (tx: Tx) => Promise<PersistedDurableReply>,
+): Promise<CopilotOutcomeMarkerClaim> {
+  const settlement = await withCopilotExecutionSettlementLock(db, runId, async (tx) => {
+    return (await findPersistedDurableReply(tx, runId)) ?? create(tx);
+  });
+  return settlement.outcome === 'settled'
+    ? { outcome: 'marker', marker: settlement.value }
+    : settlement;
+}
+
+/** Re-acquire the same lock and project exactly the marker that actually won. */
+async function projectCopilotOutcomeMarker(
+  db: Db,
+  runId: string,
+  fallbackTaskRunId: string,
+  projectSuccessfulTerminal: WriteSuccessfulTerminalProjectionFn,
+  projectFailedTerminal: WriteFailedTerminalProjectionFn,
+): Promise<RunCopilotRunResult> {
+  const settlement = await withCopilotExecutionSettlementLock(
+    db,
+    runId,
+    async (tx, lockedEvents) => {
+      const marker = await findPersistedDurableReply(tx, runId);
+      if (!marker) throw new Error(`durable outcome marker missing for ${runId}`);
+      if (marker.outcome === 'success') {
+        await projectSuccessfulTerminal(tx, { runId, ...marker }, lockedEvents);
+        return {
+          status: 'done' as const,
+          reply: marker.replyMd,
+          task_run_id: marker.taskRunId,
+        };
+      }
+      await projectFailedTerminal(
+        tx,
+        {
+          runId,
+          reason: marker.reason,
+          error: marker.error,
+          replyMd: marker.replyMd,
+        },
+        lockedEvents,
+      );
+      return { status: 'failed' as const, error: marker.error };
+    },
+  );
+  return settlement.outcome === 'settled'
+    ? settlement.value
+    : terminalRunResult(settlement.events, fallbackTaskRunId);
+}
+
+/**
+ * An overlapping physical delivery must neither execute nor declare the live
+ * owner ambiguous. Wait within the 2h pg-boss lease for the 12m owner budget to
+ * settle, then re-enter through the normal replay guards. If the owner crashed,
+ * the expired fence becomes an honest ambiguous terminal; if it committed an
+ * outcome/terminal, replay repairs or returns it without paid work.
+ */
+async function awaitClaimedCopilotExecution(
+  params: RunCopilotRunParams,
+  deadlineMs: number,
+): Promise<RunCopilotRunResult> {
+  while (Date.now() < deadlineMs) {
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(CLAIMED_EXECUTION_POLL_MS, deadlineMs - Date.now())),
+    );
+    try {
+      const events = await computeReplay(params.db, {
+        businessTable: COPILOT_RUN_TABLE,
+        businessId: params.data.run_id,
+        lastEventId: 0,
+      });
+      if (hasCopilotTerminalEvent(events)) return runCopilotRun(params);
+    } catch (error) {
+      // A transient observation failure is not evidence that the owner died.
+      // Keep waiting instead of creating a premature ambiguous terminal.
+      console.error('[copilot_run] execution-owner observation failed', {
+        runId: params.data.run_id,
+        error,
+      });
+    }
+  }
+  return runCopilotRun(params);
+}
+
 export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCopilotRunResult> {
   const { db, data } = params;
   const streamRun = params.streamTaskCollectingFn ?? streamTaskCollecting;
@@ -387,6 +652,8 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     params.writeSuccessfulTerminalProjectionFn ?? writeSuccessfulTerminalProjection;
   const projectFailedTerminal =
     params.writeFailedTerminalProjectionFn ?? writeFailedTerminalProjection;
+  const persistReply = params.writeCopilotReplyFn ?? writeCopilotReply;
+  const claimExecutionFence = params.claimExecutionFenceFn ?? claimCopilotExecutionFence;
 
   // 启动前 replay 一次：F3 terminal-already-present 守卫 + 协作取消（v1：回合间
   // 早停，不做 live-steer）。run handle 是 run_id，取消请求 / 终态事件由别处或上一
@@ -424,6 +691,20 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     return { status: 'done', reply: replyMd, task_run_id: priorTaskRunId };
   }
 
+  // The API writes enqueue_failed only after a deterministic pg-boss readback
+  // proved the stable job absent, while still holding the dispatch lock. A late
+  // in-flight database commit is nevertheless possible at the transport edge;
+  // if such a job is eventually delivered, the public run is already terminal
+  // and paid/tool execution must not start behind that FAILED result.
+  const priorEnqueueFailed = priorEvents.some(
+    (event) =>
+      event.event_type === COPILOT_RUN_EVENTS.FAILED &&
+      (event.payload as { reason?: string } | undefined)?.reason === 'enqueue_failed',
+  );
+  if (priorEnqueueFailed) {
+    return { status: 'failed', error: 'enqueue_failed' };
+  }
+
   // The paid model/tools may already have completed and persisted their domain
   // reply while the trailing terminal projection failed. That outcome marker
   // is authoritative: repair the success/failure projection and return without
@@ -431,31 +712,29 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   const persistedReply = await findPersistedDurableReply(db, runId);
   if (persistedReply?.outcome === 'success') {
     try {
-      await projectSuccessfulTerminal(db, { runId, ...persistedReply }, priorEvents);
+      return await projectCopilotOutcomeMarker(
+        db,
+        runId,
+        taskRunId,
+        projectSuccessfulTerminal,
+        projectFailedTerminal,
+      );
     } catch (projectionErr) {
       throw new DurableTerminalProjectionError(runId, 'success', projectionErr);
     }
-    return {
-      status: 'done',
-      reply: persistedReply.replyMd,
-      task_run_id: persistedReply.taskRunId,
-    };
   }
   if (persistedReply?.outcome === 'failure') {
     try {
-      await projectFailedTerminal(
+      return await projectCopilotOutcomeMarker(
         db,
-        {
-          runId,
-          reason: persistedReply.reason,
-          error: persistedReply.error,
-        },
-        priorEvents,
+        runId,
+        taskRunId,
+        projectSuccessfulTerminal,
+        projectFailedTerminal,
       );
     } catch (projectionErr) {
       throw new DurableTerminalProjectionError(runId, 'failure', projectionErr);
     }
-    return { status: 'failed', error: persistedReply.error };
   }
   // cancelled-before-start 落在 FAILED(reason='cancelled')：早停终态，不重跑。
   // 普通 FAILED（reason='error' 等）故意 NOT 在此返回——往下重跑，恢复 retry。
@@ -483,6 +762,32 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     return { status: 'failed', error };
   }
 
+  // EXECUTION_STARTED is the load-bearing at-most-once fence committed
+  // immediately before streamRun below. A redelivery that sees the fence but no
+  // durable outcome cannot know whether paid model/tool work committed before a
+  // DB/process failure. Re-running would duplicate cost and potentially external
+  // side effects, so recover to an honest ambiguous terminal instead.
+  const priorExecutionFence = priorEvents.find(
+    (event) => event.event_type === COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+  );
+  if (priorExecutionFence) {
+    const ownerDeadlineMs =
+      priorExecutionFence.occurred_at.getTime() +
+      DURABLE_BUDGET.timeoutMs +
+      CLAIMED_EXECUTION_SETTLE_GRACE_MS;
+    if (Date.now() < ownerDeadlineMs) {
+      return awaitClaimedCopilotExecution(params, ownerDeadlineMs);
+    }
+    return handleAmbiguousExecution(db, {
+      runId,
+      sessionId: data.session_id,
+      actorRef,
+      projectSuccessfulTerminal,
+      projectFailedTerminal,
+      writeCopilotReplyFn: persistReply,
+    });
+  }
+
   // F4 — 复用 copilot-run-status 的 hasCancelRequest helper（消重内联 .some()，
   // 救活 production 零调用的 dead helper）。已请求取消则早停写 failed(cancelled)。
   if (hasCancelRequest(priorEvents)) {
@@ -498,7 +803,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     return { status: 'cancelled' };
   }
 
-  // started 心跳——消费者据此把 status 从 queued 推到 started。
+  // Worker-touch heartbeat stays early so pickup-stall detection does not
+  // mislabel deterministic DB/input assembly as a dead worker. This is not the
+  // paid execution fence; EXECUTION_STARTED below owns that stronger contract.
   await writeJobEvent(db, {
     business_table: COPILOT_RUN_TABLE,
     business_id: runId,
@@ -640,6 +947,23 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       }
     : undefined;
 
+  // Load-bearing execution fence, deliberately placed after every deterministic
+  // setup/read and immediately before the only paid/external-effect gateway.
+  // The claim rechecks under a per-run transaction lock: two overlapping
+  // deliveries cannot both pass a replay-then-append TOCTOU and run tools twice.
+  // A loser must NOT terminalize the run while the winner may still be live;
+  // throwing lets pg-boss retry after the owner either persists DONE or crashes.
+  const executionClaim = await claimExecutionFence(db, runId);
+  if (executionClaim.outcome === 'terminal') {
+    return terminalRunResult(executionClaim.events, taskRunId);
+  }
+  if (executionClaim.outcome === 'existing') {
+    return awaitClaimedCopilotExecution(
+      params,
+      Date.now() + DURABLE_BUDGET.timeoutMs + CLAIMED_EXECUTION_SETTLE_GRACE_MS,
+    );
+  }
+
   try {
     const result: StreamCollectResult = await streamRun(
       'CopilotTask',
@@ -683,47 +1007,48 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         sessionId: data.session_id,
         actorRef,
         partialText: result.text,
+        projectSuccessfulTerminal,
         projectFailedTerminal,
+        writeCopilotReplyFn: persistReply,
       });
     }
 
-    // YUK-364 (F1) — 成功：写 conversation-历史可见的 copilot_reply domain event（经与
-    // inline 同一份 writeCopilotReply：extractPrimaryView 剥 primary_view marker +
-    // chained caused_by → user_ask，同 session_id）。turns.ts 的 conversation_history
-    // 只读 copilot_user_ask + copilot_reply domain event——不写它则 durable 回复对历史
-    // 不可见、user_ask 成 phantom。terminal job_event 在 domain event 之后写。
-    const { cleanedReply } = await writeCopilotReply(db, {
-      sessionId: data.session_id,
-      userAskEventId: runId,
-      replyText: result.text,
-      actorRef,
-      taskRunId: result.task_run_id,
-      outcome: 'success',
-      durableFinishReason: result.finishReason,
-      now: new Date(),
-    });
-    // The domain reply is the durable success marker. REPLY+DONE are a
-    // load-bearing transactional projection: if it fails, propagate a special
-    // error to pg-boss. Redelivery sees outcome=success above and repairs the
-    // projection without re-running the model/tools or writing another reply.
+    // YUK-364 (F1) — commit the domain outcome marker first, then project the
+    // public REPLY/DONE in a second transaction; both phases use the same
+    // per-run settlement lock. A projection failure remains repairable from the
+    // marker, while a recovery that wins first blocks a contradictory outcome.
     try {
-      await projectSuccessfulTerminal(
-        db,
-        {
-          runId,
+      const markerClaim = await ensureCopilotOutcomeMarker(db, runId, async (tx) => {
+        const { cleanedReply } = await persistReply(tx, {
+          sessionId: data.session_id,
+          userAskEventId: runId,
+          replyText: result.text,
+          actorRef,
+          taskRunId: result.task_run_id,
+          outcome: 'success',
+          durableFinishReason: result.finishReason,
+          now: new Date(),
+        });
+        return {
+          outcome: 'success' as const,
           replyMd: cleanedReply,
           taskRunId: result.task_run_id,
           finishReason: result.finishReason,
-        },
-        // This is a fresh paid success. Do not let a stale nonterminal REPLY
-        // from an older delivery suppress its authoritative terminal text;
-        // prior-event suffix repair is only for the persisted-success branch.
-        [],
+        };
+      });
+      if (markerClaim.outcome === 'already_terminal') {
+        return terminalRunResult(markerClaim.events, taskRunId);
+      }
+      return await projectCopilotOutcomeMarker(
+        db,
+        runId,
+        taskRunId,
+        projectSuccessfulTerminal,
+        projectFailedTerminal,
       );
-    } catch (projectionErr) {
-      throw new DurableTerminalProjectionError(runId, 'success', projectionErr);
+    } catch (settlementErr) {
+      throw new DurableTerminalProjectionError(runId, 'success', settlementErr);
     }
-    return { status: 'done', reply: cleanedReply, task_run_id: result.task_run_id };
   } catch (err) {
     if (err instanceof DurableTerminalProjectionError) throw err;
     // streamTaskCollecting graceful-degrades（resolve partial，见上），故这里只捕获
@@ -734,7 +1059,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       runId,
       sessionId: data.session_id,
       actorRef,
+      projectSuccessfulTerminal,
       projectFailedTerminal,
+      writeCopilotReplyFn: persistReply,
     });
   }
 }
@@ -773,37 +1100,121 @@ async function handleDurableFailure(
     actorRef: string;
     /** streamTaskCollecting graceful-degrade 的半程文本（若有），作 phantom-reply 正文。 */
     partialText?: string;
+    projectSuccessfulTerminal: WriteSuccessfulTerminalProjectionFn;
     projectFailedTerminal: WriteFailedTerminalProjectionFn;
+    writeCopilotReplyFn: typeof writeCopilotReply;
   },
 ): Promise<RunCopilotRunResult> {
-  const { err, runId, sessionId, actorRef, partialText, projectFailedTerminal } = args;
+  const {
+    err,
+    runId,
+    sessionId,
+    actorRef,
+    partialText,
+    projectSuccessfulTerminal,
+    projectFailedTerminal,
+    writeCopilotReplyFn,
+  } = args;
   const message = String((err as Error)?.message ?? err);
   const replyText =
     partialText && partialText.length > 0
       ? partialText
       : '这次后台运行没能在预算内收敛完成。可以换个更聚焦的问法再试。';
   try {
-    await writeCopilotReply(db, {
-      sessionId,
-      userAskEventId: runId,
-      replyText,
-      actorRef,
-      taskRunId: `copilot_run_exhausted_${runId}`,
-      outcome: 'failure',
-      durableFailure: { reason: 'exhausted', error: message },
-      now: new Date(),
+    const markerClaim = await ensureCopilotOutcomeMarker(db, runId, async (tx) => {
+      await writeCopilotReplyFn(tx, {
+        sessionId,
+        userAskEventId: runId,
+        replyText,
+        actorRef,
+        taskRunId: `copilot_run_exhausted_${runId}`,
+        outcome: 'failure',
+        durableFailure: { reason: 'exhausted', error: message },
+        now: new Date(),
+      });
+      return {
+        outcome: 'failure' as const,
+        replyMd: replyText,
+        taskRunId: `copilot_run_exhausted_${runId}`,
+        reason: 'exhausted' as const,
+        error: message,
+      };
     });
-    await projectFailedTerminal(
+    if (markerClaim.outcome === 'already_terminal') {
+      return terminalRunResult(markerClaim.events, `copilot_run_tool_${runId}`);
+    }
+    return await projectCopilotOutcomeMarker(
       db,
-      { runId, reason: 'exhausted', error: message },
-      // This is a fresh failed result; recovery is the only path that honours
-      // an already persisted terminal suffix.
-      [],
+      runId,
+      `copilot_run_tool_${runId}`,
+      projectSuccessfulTerminal,
+      projectFailedTerminal,
     );
   } catch (projectionErr) {
     throw new DurableTerminalProjectionError(runId, 'failure', projectionErr);
   }
-  return { status: 'failed', error: message };
+}
+
+/**
+ * Recover a redelivery whose paid/external execution may already have happened
+ * but whose outcome marker is absent. Exactly-once cannot be reconstructed from
+ * that state, so prefer at-most-once execution and tell the user the truth.
+ */
+async function handleAmbiguousExecution(
+  db: Db,
+  args: {
+    runId: string;
+    sessionId: string;
+    actorRef: string;
+    projectSuccessfulTerminal: WriteSuccessfulTerminalProjectionFn;
+    projectFailedTerminal: WriteFailedTerminalProjectionFn;
+    writeCopilotReplyFn: typeof writeCopilotReply;
+  },
+): Promise<RunCopilotRunResult> {
+  const {
+    runId,
+    sessionId,
+    actorRef,
+    projectSuccessfulTerminal,
+    projectFailedTerminal,
+    writeCopilotReplyFn,
+  } = args;
+  const error = 'execution outcome could not be confirmed after worker recovery';
+  const replyText =
+    '这次后台运行已经开始，但结果没有可靠保存。为避免重复执行可能已经发生的操作，我没有自动重跑；请先确认现有结果，再决定是否重新发起。';
+  try {
+    const markerClaim = await ensureCopilotOutcomeMarker(db, runId, async (tx) => {
+      await writeCopilotReplyFn(tx, {
+        sessionId,
+        userAskEventId: runId,
+        replyText,
+        actorRef,
+        taskRunId: `copilot_run_ambiguous_${runId}`,
+        outcome: 'failure',
+        durableFailure: { reason: 'ambiguous_execution', error },
+        now: new Date(),
+      });
+      return {
+        outcome: 'failure' as const,
+        replyMd: replyText,
+        taskRunId: `copilot_run_ambiguous_${runId}`,
+        reason: 'ambiguous_execution' as const,
+        error,
+      };
+    });
+    if (markerClaim.outcome === 'already_terminal') {
+      return terminalRunResult(markerClaim.events, `copilot_run_tool_${runId}`);
+    }
+    return await projectCopilotOutcomeMarker(
+      db,
+      runId,
+      `copilot_run_tool_${runId}`,
+      projectSuccessfulTerminal,
+      projectFailedTerminal,
+    );
+  } catch (projectionErr) {
+    throw new DurableTerminalProjectionError(runId, 'failure', projectionErr);
+  }
 }
 
 /**

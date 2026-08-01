@@ -17,7 +17,6 @@ import {
   decideCopilotDispatch,
   runCopilotChatStreaming,
   writeCopilotReply,
-  writeCopilotUserAsk,
 } from '@/capabilities/copilot/server/chat';
 import {
   COPILOT_RUN_EVENTS,
@@ -27,6 +26,17 @@ import {
   MAX_OUTSTANDING_DURABLE_RUNS,
   countOutstandingDurableRuns,
 } from '@/capabilities/copilot/server/durable-backlog';
+import {
+  COPILOT_IDEMPOTENCY_KEY_MAX_LENGTH,
+  type CopilotDurableAcceptance,
+  type ReserveCopilotDurableAcceptanceResult,
+  findCopilotDurableAcceptance,
+  hasTerminalCopilotRun,
+  hashCopilotDurableInput,
+  reconcileCopilotDurableAcceptance,
+  reserveCopilotDurableAcceptance,
+  withCopilotDurableDispatchLock,
+} from '@/capabilities/copilot/server/durable-dispatch';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
@@ -50,6 +60,129 @@ function assertRequestActive(signal: AbortSignal): void {
   if (signal.aborted) throw requestAbortedError();
 }
 
+type ParsedCopilotChatRequest = ReturnType<typeof CopilotChatRequest.parse>;
+
+class CopilotDispatchAmbiguousError extends ApiError {
+  constructor(cause: unknown) {
+    super(
+      'copilot_enqueue_ambiguous',
+      'durable run acceptance or queue state could not be confirmed; retry with the same Idempotency-Key',
+      503,
+      { 'Retry-After': '1' },
+    );
+    this.cause = cause;
+  }
+}
+
+class CopilotDispatchNotAcceptedError extends Error {
+  constructor(cause: unknown) {
+    super('durable run could not be enqueued', { cause });
+    this.name = 'CopilotDispatchNotAcceptedError';
+  }
+}
+
+function durableAcceptanceResponse(acceptance: CopilotDurableAcceptance): Response {
+  return Response.json(
+    {
+      run_id: acceptance.runId,
+      session_id: acceptance.sessionId,
+      checkpoint_event_id: acceptance.runId,
+    },
+    {
+      status: 202,
+      headers: {
+        Location: `/api/jobs/copilot_run/${encodeURIComponent(acceptance.runId)}/events`,
+      },
+    },
+  );
+}
+
+async function dispatchAcceptedRun(
+  acceptance: CopilotDurableAcceptance,
+  parsed: ParsedCopilotChatRequest,
+): Promise<void> {
+  try {
+    const outcome = await withCopilotDurableDispatchLock(db, acceptance.runId, async (tx) => {
+      // A terminal replay is still the same accepted operation. Never recreate a
+      // deleted pg-boss row after its durable public result already exists.
+      if (await hasTerminalCopilotRun(tx, acceptance.runId)) {
+        return { status: 'settled' as const };
+      }
+
+      const boss = await getStartedBoss();
+      try {
+        if (await boss.getJobById('copilot_run', acceptance.bossJobId)) {
+          return { status: 'accepted' as const };
+        }
+      } catch (readErr) {
+        // We have not sent anything in this attempt, but an earlier ambiguous
+        // attempt may already own this stable id. Do not write a false FAILED.
+        throw new CopilotDispatchAmbiguousError(readErr);
+      }
+
+      try {
+        await boss.send(
+          'copilot_run',
+          {
+            run_id: acceptance.runId,
+            session_id: acceptance.sessionId,
+            user_message: parsed.user_message,
+            triggered_by: parsed.triggered_by,
+            ...(parsed.chip_kind ? { chip_kind: parsed.chip_kind } : {}),
+            ...(parsed.ambient_context ? { ambient: parsed.ambient_context } : {}),
+          },
+          { id: acceptance.bossJobId },
+        );
+      } catch (sendErr) {
+        // `send` may have committed and only lost its acknowledgement. Read back
+        // the deterministic job id before deciding whether compensation is safe.
+        try {
+          if (await boss.getJobById('copilot_run', acceptance.bossJobId)) {
+            return { status: 'accepted' as const };
+          }
+        } catch (readErr) {
+          throw new CopilotDispatchAmbiguousError(readErr);
+        }
+        // A successful readback proving absence is the only path allowed to mark
+        // this accepted turn enqueue_failed. The compensation MUST commit while
+        // this same dispatch advisory lock is still held. Releasing the lock and
+        // compensating in a second transaction would let a same-key contender
+        // enqueue the stable job between those two critical sections, producing
+        // a FAILED run whose worker is already executing.
+        await writeJobEvent(tx, {
+          business_table: COPILOT_RUN_TABLE,
+          business_id: acceptance.runId,
+          event_type: COPILOT_RUN_EVENTS.FAILED,
+          payload: { reason: 'enqueue_failed', checkpoint_event_id: acceptance.runId },
+        });
+        await writeCopilotReply(tx, {
+          sessionId: acceptance.sessionId,
+          userAskEventId: acceptance.runId,
+          replyText: 'run 未能受理（enqueue 失败）。请重试。',
+          actorRef: 'agent:copilot',
+          taskRunId: `copilot_run_enqueue_failed_${acceptance.runId}`,
+          now: new Date(),
+        });
+        return { status: 'not_accepted' as const, cause: sendErr };
+      }
+      return { status: 'accepted' as const };
+    });
+    if (outcome.status === 'not_accepted') {
+      throw new CopilotDispatchNotAcceptedError(outcome.cause);
+    }
+  } catch (err) {
+    if (
+      err instanceof CopilotDispatchAmbiguousError ||
+      err instanceof CopilotDispatchNotAcceptedError
+    ) {
+      throw err;
+    }
+    // Includes advisory-lock/transaction settlement failures after a successful
+    // send. Conservatively keep QUEUED; a same-key replay can disambiguate.
+    throw new CopilotDispatchAmbiguousError(err);
+  }
+}
+
 // 签名对齐 kernel RouteHandler 双参形（path 无参数段，_params 不用）。
 export async function POST(req: Request, _params: Record<string, string>): Promise<Response> {
   // Parse BEFORE constructing the stream：坏 body 走普通 JSON error（既有契约），
@@ -69,6 +202,61 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
     return errorResponse(err);
   }
   if (req.signal.aborted) return errorResponse(requestAbortedError());
+
+  const idempotencyKey = req.headers.get('Idempotency-Key')?.trim() || undefined;
+  if (idempotencyKey && idempotencyKey.length > COPILOT_IDEMPOTENCY_KEY_MAX_LENGTH) {
+    return errorResponse(
+      new ApiError(
+        'validation_error',
+        `Idempotency-Key must be at most ${COPILOT_IDEMPOTENCY_KEY_MAX_LENGTH} characters`,
+        400,
+      ),
+    );
+  }
+  const durableInputHash = hashCopilotDurableInput(parsed);
+
+  // Replay accepted durable work before backlog/rate-limit/model triage. A
+  // client that lost the 202 must recover the original handle, not buy another
+  // classifier call or be rejected by capacity consumed by its own run.
+  if (idempotencyKey) {
+    let accepted: CopilotDurableAcceptance | null = null;
+    try {
+      accepted = await findCopilotDurableAcceptance(db, idempotencyKey);
+    } catch (findErr) {
+      try {
+        // A lost-202 recovery must never turn a transient read failure into a
+        // generic 500 that tells the client to discard its stable key. Re-read
+        // behind the reserve lock; this also waits out any in-flight COMMIT.
+        accepted = await reconcileCopilotDurableAcceptance(db, idempotencyKey);
+      } catch (reconcileErr) {
+        return errorResponse(
+          new CopilotDispatchAmbiguousError(
+            new AggregateError(
+              [findErr, reconcileErr],
+              'durable replay lookup and locked reconciliation were both unavailable',
+            ),
+          ),
+        );
+      }
+    }
+    if (accepted && accepted.inputHash !== durableInputHash) {
+      return errorResponse(
+        new ApiError(
+          'idempotency_conflict',
+          `Idempotency-Key is already bound to durable run ${accepted.runId}`,
+          409,
+        ),
+      );
+    }
+    if (accepted) {
+      try {
+        await dispatchAcceptedRun(accepted, parsed);
+      } catch (err) {
+        return errorResponse(err);
+      }
+      return durableAcceptanceResponse(accepted);
+    }
+  }
 
   const backgroundJobsEnabled = shouldEnqueueBackgroundJobs();
   const shouldClassifyDispatch =
@@ -164,10 +352,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
     !parsed.skill_context &&
     backgroundJobsEnabled
   ) {
-    // YUK-364 (F2) — 补偿用的局部状态：只在 user_ask 已 commit 后才需要补偿（否则
-    // 没有 phantom 风险），所以记录 runId / sessionId 是否已知。
-    let runId: string | undefined;
-    let sessionId: string | undefined;
+    let acceptance: CopilotDurableAcceptance | undefined;
     let reservedDispatchSlot = preAcceptanceReservation;
     preAcceptanceReservation = false;
     try {
@@ -193,99 +378,78 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       // 1) 复用 inline 同一会话信封——durable run 的 user_ask / 回复事件共享 session_id。
       const conv = await Conversation.findOrCreateCopilotConversation(db, {});
       assertRequestActive(req.signal);
-      sessionId = conv.sessionId;
-      // 2) 写 user_ask domain event = run handle = checkpoint_id（与 inline 同一份
-      //    写入逻辑，防漂移）。run_id 既是 handle 也是 job_events business_id。
-      runId = await writeCopilotUserAsk(db, {
-        sessionId,
-        userMessage: parsed.user_message,
-        now: new Date(),
-      });
-      // The ask commit is still before enqueue acceptance. If the client went
-      // away while that write was pending, stop here; the catch compensation
-      // closes the persisted ask without launching invisible paid work.
-      assertRequestActive(req.signal);
-      // 3) queued 初态进度事件——消费者订阅后即见 run 已受理（worker 拾起前）。
-      //    YUK-575 (N6) — 盖 pickup_deadline_ms：worker 若没在此前拾取（写 STARTED），
-      //    isDurablePickupStalled 谓词据它检出 worker-down 停摆（PR2 Dock 主动 surface）。
-      await writeJobEvent(db, {
-        business_table: COPILOT_RUN_TABLE,
-        business_id: runId,
-        event_type: COPILOT_RUN_EVENTS.QUEUED,
-        payload: {
-          session_id: sessionId,
-          triggered_by: parsed.triggered_by,
-          pickup_deadline_ms: Date.now() + PICKUP_TIMEOUT_MS,
-          dispatch:
-            dispatchDecision?.mode === 'durable'
-              ? {
-                  source: dispatchDecision.source,
-                  reason_code: dispatchDecision.reason,
-                  task_run_id: dispatchDecision.task_run_id,
-                }
-              : { source: 'request_flag' },
-        },
-      });
-      // QUEUED is likewise compensable until boss.send crosses the enqueue
-      // boundary. Do not knowingly submit a run whose 202 can no longer arrive.
-      assertRequestActive(req.signal);
-      // 4) 投递 durable job。run 在 worker 进程跑、进度落 job_events、SSE 经泛化
+      // 2) One transaction reserves the stable handle and commits user_ask +
+      // QUEUED together. Same key + same normalized input reuses that handle;
+      // a changed input is an explicit 409 rather than a second paid run.
+      let reservation: ReserveCopilotDurableAcceptanceResult;
+      try {
+        reservation = await reserveCopilotDurableAcceptance(db, {
+          sessionId: conv.sessionId,
+          userMessage: parsed.user_message,
+          inputHash: durableInputHash,
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+          queuedPayload: {
+            session_id: conv.sessionId,
+            triggered_by: parsed.triggered_by,
+            pickup_deadline_ms: Date.now() + PICKUP_TIMEOUT_MS,
+            dispatch:
+              dispatchDecision?.mode === 'durable'
+                ? {
+                    source: dispatchDecision.source,
+                    reason_code: dispatchDecision.reason,
+                    task_run_id: dispatchDecision.task_run_id,
+                  }
+                : { source: 'request_flag' },
+          },
+          assertActive: () => assertRequestActive(req.signal),
+        });
+      } catch (reserveErr) {
+        if (!idempotencyKey) throw reserveErr;
+        let reconciled: CopilotDurableAcceptance | null;
+        try {
+          // A rejected COMMIT is not proof of rollback. Wait behind the exact
+          // idempotency lock used by reserve, then read the deterministic run:
+          // this cannot race ahead of a server-side late COMMIT.
+          reconciled = await reconcileCopilotDurableAcceptance(db, idempotencyKey);
+        } catch (reconcileErr) {
+          throw new CopilotDispatchAmbiguousError(
+            new AggregateError(
+              [reserveErr, reconcileErr],
+              'durable acceptance commit and locked reconciliation were both unavailable',
+            ),
+          );
+        }
+        // A successful locked null read proves that the failed transaction did
+        // not commit. Preserve its original (possibly 499) definitive error.
+        if (!reconciled) throw reserveErr;
+        reservation = {
+          outcome: reconciled.inputHash === durableInputHash ? 'reused' : 'conflict',
+          acceptance: reconciled,
+        };
+      }
+      if (reservation.outcome === 'conflict') {
+        throw new ApiError(
+          'idempotency_conflict',
+          `Idempotency-Key is already bound to durable run ${reservation.acceptance.runId}`,
+          409,
+        );
+      }
+      acceptance = reservation.acceptance;
+      // ask + QUEUED is now committed: this is the server-side acceptance
+      // boundary. Do not strand that durable run if the client disconnects in
+      // the commit→send window. Dispatch must finish; a lost response is safely
+      // recovered by replaying the same Idempotency-Key.
+      // 3) 投递 durable job。run 在 worker 进程跑、进度落 job_events、SSE 经泛化
       //    GET /api/jobs/copilot_run/[run_id]/events（YUK-310 caller-agnostic 路由，
       //    copilot_run 已在其 allowlist）重连；dock 消费端由 YUK-596（PR2）接。
       //    YUK-575 (S4) — ambient RIDE 进 payload（request-only、从不 persisted，worker
       //    拾取时无处可重读；conversation_history / learner-state 则从事件重建）。
-      const boss = await getStartedBoss();
-      await boss.send('copilot_run', {
-        run_id: runId,
-        session_id: sessionId,
-        user_message: parsed.user_message,
-        triggered_by: parsed.triggered_by,
-        ...(parsed.chip_kind ? { chip_kind: parsed.chip_kind } : {}),
-        ...(parsed.ambient_context ? { ambient: parsed.ambient_context } : {}),
-      });
-      // 202 Accepted — run handle 回给客户端用于订阅；非 SSE（durable 面与同步
-      // SSE 面是两条返回契约）。
-      return Response.json(
-        { run_id: runId, session_id: sessionId, checkpoint_event_id: runId },
-        {
-          status: 202,
-          headers: {
-            Location: `/api/jobs/copilot_run/${encodeURIComponent(runId)}/events`,
-          },
-        },
-      );
+      await dispatchAcceptedRun(acceptance, parsed);
+      return durableAcceptanceResponse(acceptance);
     } catch (err) {
-      // YUK-364 (F2) — enqueue 链路失败补偿。若 user_ask + QUEUED 已 commit 但
-      // boss.send（或之后任一步）throw，job 没投递 → user_ask 成 phantom
-      // （conversation_history 见一条无回复的 user 轮）+ deriveCopilotRunStatus 永远
-      // 卡 'queued'。补偿：写一条 FAILED job_event（status→failed 非卡死 queued）+
-      // 一条 copilot_reply error domain event（chained user_ask）让该轮不是 phantom。
-      // 只在 runId 已知（= user_ask 已写）时补偿；conversation/user_ask 写入前失败
-      // 无 phantom 风险，照旧返 error 即可。补偿本身 best-effort，不能吞原始错误。
-      if (runId && sessionId) {
-        try {
-          await writeJobEvent(db, {
-            business_table: COPILOT_RUN_TABLE,
-            business_id: runId,
-            event_type: COPILOT_RUN_EVENTS.FAILED,
-            payload: { reason: 'enqueue_failed', checkpoint_event_id: runId },
-          });
-          await writeCopilotReply(db, {
-            sessionId,
-            userAskEventId: runId,
-            replyText: 'run 未能受理（enqueue 失败）。请重试。',
-            actorRef: 'agent:copilot',
-            taskRunId: `copilot_run_enqueue_failed_${runId}`,
-            now: new Date(),
-          });
-        } catch (compErr) {
-          console.error(
-            '[copilot/chat] durable enqueue-failure compensation failed for',
-            runId,
-            compErr,
-          );
-        }
-      }
+      // dispatchAcceptedRun owns the complete dispatch-lock critical section,
+      // including definitive enqueue-failure compensation. Ambiguous send or
+      // readback state intentionally leaves QUEUED for same-key recovery.
       // enqueue 链路任一步失败 → 普通 JSON error（绝不开半截 SSE 流）。run 未受理。
       return errorResponse(err);
     } finally {

@@ -384,16 +384,18 @@ const REPLY_EVENT_ACTION = 'experimental:copilot_reply';
 // 事件形态分叉。生成 id、写事件、返回 id。session_id 列写在 user ask 上让 idle
 // 时钟把这视为本会话的一个 user turn（codex #3356884490，与 inline 同理）。
 export async function writeCopilotUserAsk(
-  db: Db,
+  db: Db | Tx,
   params: {
     sessionId: string;
     userMessage: string;
     now: Date;
-    writeFn?: (db: Db, event: WriteEventInput) => Promise<unknown>;
+    /** Stable id for an idempotently accepted durable turn; inline callers omit it. */
+    eventId?: string;
+    writeFn?: (db: Db | Tx, event: WriteEventInput) => Promise<unknown>;
   },
 ): Promise<string> {
   const write = params.writeFn ?? writeEvent;
-  const userAskEventId = `copilot_user_ask_${createId()}`;
+  const userAskEventId = params.eventId ?? `copilot_user_ask_${createId()}`;
   await write(db, {
     id: userAskEventId,
     session_id: params.sessionId,

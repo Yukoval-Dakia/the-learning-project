@@ -401,12 +401,17 @@
         "method": "POST",
         "summary": "向 Copilot 发送一条用户消息。普通 chat 会自动分流为 200 SSE 或 202 durable JSON；durable:false/true 可显式固定模式",
         "query": [],
+        "headers": [
+          {
+            "name": "Idempotency-Key",
+            "value": "{{copilotIdempotencyKey}}",
+            "description": "每个新逻辑 turn 先显式更换 collection 变量 copilotIdempotencyKey；202 丢失或 503 copilot_enqueue_ambiguous 重试时保持原值"
+          }
+        ],
         "contentType": "application/json",
         "bodyExample": {
           "user_message": "帮我讲解之字主谓间用法",
           "triggered_by": "chat",
-          "chip_kind": null,
-          "skill_context": null,
           "ambient_context": {
             "route": "/today",
             "focused_entity": {
@@ -415,7 +420,7 @@
             }
           }
         },
-        "notes": "triggered_by 枚举：chat|chip。未提供 durable 的普通 chat 先由 bounded classifier 分流：inline 返回 200 text/event-stream（event: delta 逐块，event: reply 终止）；多步/多 artifact 工作返回 202 JSON { run_id, session_id, checkpoint_event_id } 并带 Location，进度经通用 job-events SSE replay。durable:false 强制 inline，durable:true 强制 durable；chip 与 skill_context 保持 inline。Zod 失败时返回普通 JSON 错误。若在 durable 首次持久化/受理前检测到客户端断开，返回 499 { error: request_aborted }，且不写 user ask/job event、不 enqueue；开始持久化后继续既有受理流程。需 x-internal-token"
+        "notes": "triggered_by 枚举：chat|chip。未提供 durable 的普通 chat 先由 bounded classifier 分流：inline 返回 200 text/event-stream（event: delta 逐块，event: reply 终止）；多步/多 artifact 工作返回 202 JSON { run_id, session_id, checkpoint_event_id } 并带 Location，进度经通用 job-events SSE replay。durable:false 强制 inline，durable:true 强制 durable；chip 与 skill_context 保持 inline。Zod 失败时返回普通 JSON 错误。客户端应为每个逻辑 turn 发送稳定 Idempotency-Key（最多 200 字符）：同 key + 同规范化输入在 backlog/rate/classifier 之前重放原 202 handle；同 key + 不同输入返回 409 idempotency_conflict。user ask + QUEUED 原子受理，pg-boss 使用稳定 job id；send 状态无法确认时返回 503 copilot_enqueue_ambiguous，须用同 key 重试，不能生成新 turn。durable 原子受理前检测到断开则返回 499 且事务回滚。需 x-internal-token"
       }
     ]
   },

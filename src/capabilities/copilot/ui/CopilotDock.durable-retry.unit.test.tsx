@@ -12,8 +12,16 @@ const { apiFetchMock, consumeDurableMock } = vi.hoisted(() => ({
 
 vi.mock('@/ui/lib/api', () => ({
   ApiError: class ApiError extends Error {
-    status = 500;
-    details: Record<string, unknown> | undefined;
+    details: Record<string, unknown>;
+    constructor(
+      message: string,
+      public status: number,
+      public code?: string,
+      details: Record<string, unknown> = {},
+    ) {
+      super(message);
+      this.details = details;
+    }
   },
   apiFetch: apiFetchMock,
   apiJson: vi.fn(async (input: string) => {
@@ -90,8 +98,12 @@ vi.mock('./subtask-events', async (importOriginal) => {
   return { ...actual, consumeDurableCopilotRun: consumeDurableMock };
 });
 
+import { ApiError } from '@/ui/lib/api';
 import { CopilotDock } from './CopilotDock';
-import { DURABLE_COPILOT_RECONNECT_STORAGE_KEY } from './durable-reconnect-storage';
+import {
+  DURABLE_COPILOT_RECONNECT_STORAGE_KEY,
+  PENDING_COPILOT_TURN_STORAGE_KEY,
+} from './durable-reconnect-storage';
 import { type CopilotRunView, DurablePickupStalledError } from './subtask-events';
 
 const partialView = {
@@ -300,6 +312,34 @@ const failedView = {
   ],
 } satisfies CopilotRunView;
 
+const ambiguousWarning =
+  '这次后台运行已经开始，但结果没有可靠保存。为避免重复执行可能已经发生的操作，我没有自动重跑；请先确认现有结果，再决定是否重新发起。';
+const ambiguousFailedView = {
+  phase: 'failed' as const,
+  lastEventId: 805,
+  replyText: ambiguousWarning,
+  failureReason: 'ambiguous_execution',
+  subtasks: [],
+  frames: [
+    {
+      event_id: 801,
+      event_type: 'copilot_run.queued',
+      payload: { session_id: 'copilot-session-ambiguous-materialization' },
+    },
+    { event_id: 802, event_type: 'copilot_run.started', payload: {} },
+    { event_id: 803, event_type: 'copilot_run.execution_started', payload: {} },
+    {
+      event_id: 805,
+      event_type: 'copilot_run.failed',
+      payload: {
+        reason: 'ambiguous_execution',
+        error: 'execution outcome could not be confirmed after worker recovery',
+        reply_md: ambiguousWarning,
+      },
+    },
+  ],
+} satisfies CopilotRunView;
+
 describe('CopilotDock accepted durable reconnect', () => {
   beforeEach(() => window.sessionStorage.clear());
 
@@ -310,21 +350,143 @@ describe('CopilotDock accepted durable reconnect', () => {
     consumeDurableMock.mockReset();
   });
 
-  it('replaces stale progress copy when a durable run reaches FAILED without reply text', async () => {
-    const runId = 'ask_failed_transfer';
-    const location = `/api/jobs/copilot_run/${runId}/events`;
-    apiFetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ run_id: runId }), {
-        status: 202,
-        headers: { Location: location, 'Content-Type': 'application/json' },
-      }),
+  it('reuses one Idempotency-Key for pre-202 retry and mints a new key for the next turn', async () => {
+    const location = '/api/jobs/copilot_run/ask_lost_202_recovered/events';
+    const inlineReply = new Response(
+      `event: reply\ndata: ${JSON.stringify({
+        reply: '补充核对完成：极端参数下仍需先固定定义域，再检查增根。',
+        session_id: 'copilot-session-after-recovery',
+        reply_event_id: 'copilot_reply_after_recovery',
+        checkpoint_event_id: 'copilot_user_ask_after_recovery',
+      })}\n\n`,
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
     );
+    apiFetchMock
+      .mockRejectedValueOnce(new Error('proxy reset before response headers'))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ run_id: 'ask_lost_202_recovered' }), {
+          status: 202,
+          headers: { Location: location, 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(inlineReply);
     consumeDurableMock.mockImplementationOnce(
-      async (options: { onUpdate?: (view: typeof failedView) => void }) => {
-        options.onUpdate?.(failedView);
-        return failedView;
+      async (options: { onUpdate?: (view: typeof completedView) => void }) => {
+        options.onUpdate?.(completedView);
+        return completedView;
       },
     );
+
+    const rendered = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    const firstQuestion =
+      '交叉核对近 45 天 36 道含参函数与电磁感应错题、三轮延迟复习和五个未教学探针，再逐题保留 validator 证据。';
+    await user.type(screen.getByTestId('copilot-composer-input'), firstQuestion);
+    await user.click(screen.getByTestId('copilot-composer-send'));
+    expect(await screen.findByRole('button', { name: '恢复' })).toBeTruthy();
+
+    // Navigation changed after the ambiguous POST. Retry must preserve the
+    // original /practice ambient body, otherwise the server correctly returns
+    // idempotency_conflict instead of recovering the lost 202.
+    rendered.rerender(<CopilotDock pathname="/subjects/math/mistakes" navigate={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: '恢复' }));
+    await screen.findByText(completedView.replyText);
+
+    const firstHeaders = new Headers(apiFetchMock.mock.calls[0]?.[1]?.headers);
+    const retryHeaders = new Headers(apiFetchMock.mock.calls[1]?.[1]?.headers);
+    const firstKey = firstHeaders.get('Idempotency-Key');
+    expect(firstKey).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(retryHeaders.get('Idempotency-Key')).toBe(firstKey);
+    expect(apiFetchMock.mock.calls[1]?.[1]?.body).toBe(apiFetchMock.mock.calls[0]?.[1]?.body);
+    expect(String(apiFetchMock.mock.calls[1]?.[1]?.body)).toContain('"route":"/practice"');
+    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
+
+    await user.type(
+      screen.getByTestId('copilot-composer-input'),
+      '再单独核对极端参数下的定义域与增根分支。',
+    );
+    await user.click(screen.getByTestId('copilot-composer-send'));
+    await screen.findByText('补充核对完成：极端参数下仍需先固定定义域，再检查增根。');
+
+    const nextHeaders = new Headers(apiFetchMock.mock.calls[2]?.[1]?.headers);
+    expect(nextHeaders.get('Idempotency-Key')).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(nextHeaders.get('Idempotency-Key')).not.toBe(firstKey);
+  });
+
+  it('keeps the exact pending turn after explicit 503 enqueue ambiguity', async () => {
+    const location = '/api/jobs/copilot_run/ask_structured_503_recovered/events';
+    apiFetchMock
+      .mockRejectedValueOnce(
+        new ApiError(
+          'durable run accepted but queue state is unknown',
+          503,
+          'copilot_enqueue_ambiguous',
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ run_id: 'ask_structured_503_recovered' }), {
+          status: 202,
+          headers: { Location: location, 'Content-Type': 'application/json' },
+        }),
+      );
+    consumeDurableMock.mockImplementationOnce(
+      async (options: { onUpdate?: (view: CopilotRunView) => void }) => {
+        options.onUpdate?.(completedView);
+        return completedView;
+      },
+    );
+
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByTestId('copilot-composer-input'),
+      '交叉核对 38 道含参作答、两轮延迟复习和四个未教学探针，再按 validator 证据生成三档迁移题。',
+    );
+    await user.click(screen.getByTestId('copilot-composer-send'));
+
+    expect(await screen.findByRole('button', { name: '恢复' })).toBeTruthy();
+    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).not.toBeNull();
+    const firstHeaders = new Headers(apiFetchMock.mock.calls[0]?.[1]?.headers);
+    const firstBody = apiFetchMock.mock.calls[0]?.[1]?.body;
+
+    await user.click(screen.getByRole('button', { name: '恢复' }));
+    await screen.findByText(completedView.replyText);
+
+    const retryHeaders = new Headers(apiFetchMock.mock.calls[1]?.[1]?.headers);
+    expect(retryHeaders.get('Idempotency-Key')).toBe(firstHeaders.get('Idempotency-Key'));
+    expect(apiFetchMock.mock.calls[1]?.[1]?.body).toBe(firstBody);
+    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).toBeNull();
+  });
+
+  it('replaces stale progress and retries a terminal FAILED run as a new keyed attempt', async () => {
+    const runId = 'ask_failed_transfer';
+    const location = `/api/jobs/copilot_run/${runId}/events`;
+    const retryRunId = 'ask_failed_transfer_retry';
+    const retryLocation = `/api/jobs/copilot_run/${retryRunId}/events`;
+    apiFetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ run_id: runId }), {
+          status: 202,
+          headers: { Location: location, 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ run_id: retryRunId }), {
+          status: 202,
+          headers: { Location: retryLocation, 'Content-Type': 'application/json' },
+        }),
+      );
+    consumeDurableMock
+      .mockImplementationOnce(async (options: { onUpdate?: (view: typeof failedView) => void }) => {
+        options.onUpdate?.(failedView);
+        return failedView;
+      })
+      .mockImplementationOnce(
+        async (options: { onUpdate?: (view: typeof completedView) => void }) => {
+          options.onUpdate?.(completedView);
+          return completedView;
+        },
+      );
 
     render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
     const user = userEvent.setup();
@@ -346,6 +508,59 @@ describe('CopilotDock accepted durable reconnect', () => {
       false,
     );
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
+
+    const failedKey = new Headers(apiFetchMock.mock.calls[0]?.[1]?.headers).get('Idempotency-Key');
+    await user.click(screen.getByRole('button', { name: '重试' }));
+    await screen.findByText(completedView.replyText);
+
+    const retryKey = new Headers(apiFetchMock.mock.calls[1]?.[1]?.headers).get('Idempotency-Key');
+    expect(retryKey).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(retryKey).not.toBe(failedKey);
+    expect(apiFetchMock.mock.calls[1]?.[1]?.body).toBe(apiFetchMock.mock.calls[0]?.[1]?.body);
+    expect(consumeDurableMock.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ location: retryLocation }),
+    );
+    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(2);
+  });
+
+  it('shows the ambiguous-execution safety warning live without a blind one-click retry', async () => {
+    const runId = 'ask_ambiguous_materialization';
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ run_id: runId }), {
+        status: 202,
+        headers: {
+          Location: `/api/jobs/copilot_run/${runId}/events`,
+          'Content-Type': 'application/json',
+        },
+      }),
+    );
+    consumeDurableMock.mockImplementationOnce(
+      async (options: { onUpdate?: (view: CopilotRunView) => void }) => {
+        // A prior live update exposed a checkpoint. The ambiguous terminal
+        // must actively remove it instead of Dock's row merge reviving it.
+        options.onUpdate?.(partialView);
+        options.onUpdate?.(ambiguousFailedView);
+        return ambiguousFailedView;
+      },
+    );
+
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByTestId('copilot-composer-input'),
+      '读取 42 次真实作答和五个未教学探针，再物化九道含参迁移题并逐题验证。',
+    );
+    await user.click(screen.getByTestId('copilot-composer-send'));
+
+    expect(await screen.findByText(ambiguousWarning)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '重试' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '重新连接' })).toBeNull();
+    expect(screen.queryByTestId('copilot-revert-button')).toBeNull();
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
+    expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
+      false,
+    );
   });
 
   it('reconnects the same run after network progress loss without a second chat POST or duplicate rows', async () => {
@@ -650,10 +865,11 @@ describe('CopilotDock accepted durable reconnect', () => {
     expect(window.sessionStorage.getItem(DURABLE_COPILOT_RECONNECT_STORAGE_KEY)).toBeNull();
   });
 
-  it('aborts a pending dispatch on unmount before a durable consumer can start', async () => {
+  it('persists a pre-202 unmount and restores it only after an explicit same-key human retry', async () => {
     let dispatchSignal: AbortSignal | undefined;
-    apiFetchMock.mockImplementationOnce(
-      async (_input: string, init?: RequestInit): Promise<Response> => {
+    const recoveredLocation = '/api/jobs/copilot_run/ask_pre_202_unmount_recovered/events';
+    apiFetchMock
+      .mockImplementationOnce(async (_input: string, init?: RequestInit): Promise<Response> => {
         dispatchSignal = init?.signal ?? undefined;
         return await new Promise((_resolve, reject) => {
           dispatchSignal?.addEventListener(
@@ -662,17 +878,29 @@ describe('CopilotDock accepted durable reconnect', () => {
             { once: true },
           );
         });
+      })
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ run_id: 'ask_pre_202_unmount_recovered' }), {
+          status: 202,
+          headers: { Location: recoveredLocation, 'Content-Type': 'application/json' },
+        }),
+      );
+    consumeDurableMock.mockImplementationOnce(
+      async (options: { onUpdate?: (view: CopilotRunView) => void }) => {
+        options.onUpdate?.(completedView);
+        return completedView;
       },
     );
 
     const rendered = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
     const user = userEvent.setup();
-    await user.type(
-      screen.getByTestId('copilot-composer-input'),
-      '请在后台交叉核对 48 道真实作答、三轮延迟复习与六个未教学探针，再生成完整迁移题组。',
-    );
+    const originalQuestion =
+      '请在后台交叉核对 48 道真实作答、三轮延迟复习与六个未教学探针，再生成完整迁移题组。';
+    await user.type(screen.getByTestId('copilot-composer-input'), originalQuestion);
     await user.click(screen.getByTestId('copilot-composer-send'));
     await waitFor(() => expect(dispatchSignal).toBeDefined());
+    const originalHeaders = new Headers(apiFetchMock.mock.calls[0]?.[1]?.headers);
+    const originalBody = apiFetchMock.mock.calls[0]?.[1]?.body;
 
     rendered.unmount();
 
@@ -680,6 +908,35 @@ describe('CopilotDock accepted durable reconnect', () => {
     await Promise.resolve();
     expect(consumeDurableMock).not.toHaveBeenCalled();
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).not.toBeNull();
+
+    render(<CopilotDock pathname="/subjects/math/mistakes" navigate={vi.fn()} />);
+    expect(await screen.findByText(originalQuestion)).toBeTruthy();
+    expect(
+      screen.getByText(
+        '上次请求的受理状态未知：它可能尚未执行，也可能已经完成。请先查看现有结果，再决定是否恢复这次请求。',
+      ),
+    ).toBeTruthy();
+    // Remount is observational. It must not silently replay a possibly-complete
+    // inline turn; the user explicitly chooses whether to resume.
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '不再恢复' })).toBeTruthy();
+
+    const recoveryUser = userEvent.setup();
+    await recoveryUser.click(screen.getByRole('button', { name: '恢复' }));
+    await screen.findByText(completedView.replyText);
+
+    expect(apiFetchMock).toHaveBeenCalledTimes(2);
+    const recoveredHeaders = new Headers(apiFetchMock.mock.calls[1]?.[1]?.headers);
+    expect(recoveredHeaders.get('Idempotency-Key')).toBe(originalHeaders.get('Idempotency-Key'));
+    expect(apiFetchMock.mock.calls[1]?.[1]?.body).toBe(originalBody);
+    expect(String(originalBody)).toContain('"route":"/practice"');
+    expect(consumeDurableMock).toHaveBeenCalledWith(
+      expect.objectContaining({ location: recoveredLocation }),
+    );
+    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
+    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).toBeNull();
   });
 
   it('treats 202 Location as accepted even when the informational JSON body is unreadable', async () => {

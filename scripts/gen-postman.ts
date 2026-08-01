@@ -6,7 +6,7 @@
  * edit that file and run `pnpm gen:postman` rather than hand-editing the
  * generated collection.
  *
- *   spec shape: { path, methods: [{ method, summary, query, contentType,
+ *   spec shape: { path, methods: [{ method, summary, query, headers, contentType,
  *                                   bodyExample, formFields, notes }] }
  *
  * Output: `postman/learning-api.postman_collection.json` (Postman v2.1).
@@ -24,10 +24,18 @@ interface QueryParam {
   example?: unknown;
 }
 
+interface HeaderParam {
+  name: string;
+  value: string;
+  description?: string;
+  disabled?: boolean;
+}
+
 interface MethodSpec {
   method: string;
   summary?: string;
   query?: QueryParam[];
+  headers?: HeaderParam[];
   contentType?: string | null;
   bodyExample?: unknown;
   formFields?: string[] | null;
@@ -135,12 +143,25 @@ function buildBody(m: MethodSpec) {
 }
 
 function buildHeaders(m: MethodSpec) {
-  const headers: Array<{ key: string; value: string }> = [];
+  const headers: Array<{
+    key: string;
+    value: string;
+    description?: string;
+    disabled?: boolean;
+  }> = [];
   if (m.bodyExample != null && (!m.contentType || m.contentType === 'application/json')) {
     headers.push({ key: 'Content-Type', value: 'application/json' });
   }
   if (m.contentType === 'application/octet-stream') {
     headers.push({ key: 'Content-Type', value: 'application/octet-stream' });
+  }
+  for (const header of m.headers ?? []) {
+    headers.push({
+      key: header.name,
+      value: header.value,
+      ...(header.description ? { description: header.description } : {}),
+      ...(header.disabled ? { disabled: true } : {}),
+    });
   }
   return headers;
 }
@@ -211,7 +232,16 @@ const collection = {
       { key: 'in', value: 'header', type: 'string' },
     ],
   },
-  variable: [{ key: 'baseUrl', value: 'http://localhost:8787', type: 'string' }],
+  variable: [
+    { key: 'baseUrl', value: 'http://localhost:8787', type: 'string' },
+    {
+      key: 'copilotIdempotencyKey',
+      value: '00000000-0000-4000-8000-000000000001',
+      type: 'string',
+      description:
+        'Set a fresh UUID before each new Copilot logical turn; keep it unchanged for retries of that turn.',
+    },
+  ],
   item: items,
 };
 
