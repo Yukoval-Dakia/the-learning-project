@@ -71,25 +71,69 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
   if (req.signal.aborted) return errorResponse(requestAbortedError());
 
   const backgroundJobsEnabled = shouldEnqueueBackgroundJobs();
-  const dispatchDecision =
+  const shouldClassifyDispatch =
     parsed.durable === undefined &&
     parsed.triggered_by === 'chat' &&
     !parsed.skill_context &&
-    backgroundJobsEnabled
-      ? await decideCopilotDispatch(
-          db,
-          {
-            user_message: parsed.user_message,
-            ...(parsed.ambient_context ? { ambient_context: parsed.ambient_context } : {}),
-          },
-          { signal: req.signal },
-        )
-      : undefined;
+    backgroundJobsEnabled;
+  const shouldReserveDurableCapacity =
+    parsed.triggered_by === 'chat' &&
+    !parsed.skill_context &&
+    backgroundJobsEnabled &&
+    (parsed.durable === true || shouldClassifyDispatch);
+  let preAcceptanceReservation = false;
+  const releasePreAcceptanceReservation = () => {
+    if (!preAcceptanceReservation) return;
+    durableDispatchReservations--;
+    preAcceptanceReservation = false;
+  };
+  let dispatchDecision: Awaited<ReturnType<typeof decideCopilotDispatch>> | undefined;
+  try {
+    if (shouldReserveDurableCapacity) {
+      // A turn that may become durable reserves backlog capacity before any
+      // paid model work. Automatic inline/error/abort releases it; automatic
+      // durable transfers this exact reservation into acceptance.
+      assertRequestActive(req.signal);
+      const outstanding = await countOutstandingDurableRuns(db);
+      assertRequestActive(req.signal);
+      if (outstanding + durableDispatchReservations >= MAX_OUTSTANDING_DURABLE_RUNS) {
+        throw new ApiError(
+          'copilot_backlog_full',
+          `durable Copilot backlog is full (max ${MAX_OUTSTANDING_DURABLE_RUNS})`,
+          429,
+          { 'Retry-After': '30' },
+        );
+      }
+      durableDispatchReservations++;
+      preAcceptanceReservation = true;
+    }
+    // Every schema-valid Copilot POST owns exactly one AI-funnel slot, including
+    // force-inline/chip/skill turns. For automatic chat, that one slot covers
+    // both the bounded classifier and the selected main run.
+    checkRateLimit();
+    if (shouldClassifyDispatch) {
+      dispatchDecision = await decideCopilotDispatch(
+        db,
+        {
+          user_message: parsed.user_message,
+          ...(parsed.ambient_context ? { ambient_context: parsed.ambient_context } : {}),
+        },
+        { signal: req.signal },
+      );
+    }
+  } catch (err) {
+    releasePreAcceptanceReservation();
+    return errorResponse(err);
+  }
   // The model judgment happens before the 200/202 acceptance boundary. If the
   // client disconnected while it was in flight, do not turn its now-ambiguous
   // failed POST into a paid durable run that a retry could duplicate.
-  if (req.signal.aborted) return errorResponse(requestAbortedError());
+  if (req.signal.aborted) {
+    releasePreAcceptanceReservation();
+    return errorResponse(requestAbortedError());
+  }
   const durableRequested = parsed.durable === true || dispatchDecision?.mode === 'durable';
+  if (!durableRequested) releasePreAcceptanceReservation();
 
   // YUK-364/YUK-757 — durable 分流。显式 durable:true 仍直接受理；未显式选择的
   // eligible free-form turn 先由 no-tool CopilotDispatchTask 做一次 bounded judgment。
@@ -124,25 +168,27 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
     // 没有 phantom 风险），所以记录 runId / sessionId 是否已知。
     let runId: string | undefined;
     let sessionId: string | undefined;
-    let reservedDispatchSlot = false;
+    let reservedDispatchSlot = preAcceptanceReservation;
+    preAcceptanceReservation = false;
     try {
       assertRequestActive(req.signal);
       // YUK-693 — bound both a short request burst and the durable backlog. The
       // process-local reservation closes concurrent count→enqueue races; the DB
       // query remains the durable source of truth across restarts/processes.
-      checkRateLimit();
-      const outstanding = await countOutstandingDurableRuns(db);
-      assertRequestActive(req.signal);
-      if (outstanding + durableDispatchReservations >= MAX_OUTSTANDING_DURABLE_RUNS) {
-        throw new ApiError(
-          'copilot_backlog_full',
-          `durable Copilot backlog is full (max ${MAX_OUTSTANDING_DURABLE_RUNS})`,
-          429,
-          { 'Retry-After': '30' },
-        );
+      if (!reservedDispatchSlot) {
+        const outstanding = await countOutstandingDurableRuns(db);
+        assertRequestActive(req.signal);
+        if (outstanding + durableDispatchReservations >= MAX_OUTSTANDING_DURABLE_RUNS) {
+          throw new ApiError(
+            'copilot_backlog_full',
+            `durable Copilot backlog is full (max ${MAX_OUTSTANDING_DURABLE_RUNS})`,
+            429,
+            { 'Retry-After': '30' },
+          );
+        }
+        durableDispatchReservations++;
+        reservedDispatchSlot = true;
       }
-      durableDispatchReservations++;
-      reservedDispatchSlot = true;
 
       // 1) 复用 inline 同一会话信封——durable run 的 user_ask / 回复事件共享 session_id。
       const conv = await Conversation.findOrCreateCopilotConversation(db, {});

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 const runMock = vi.hoisted(() => vi.fn());
@@ -58,7 +58,7 @@ vi.mock('@/server/session', () => ({
 
 import { POST } from '@/capabilities/copilot/api/chat';
 import { CopilotDurableRunResponseSchema } from '@/capabilities/copilot/api/contracts';
-import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { __resetRateLimitForTests, checkRateLimit } from '@/server/http/rate-limit';
 
 const post = (body: unknown) =>
   POST(
@@ -80,6 +80,10 @@ beforeEach(() => {
     source: 'model_triage',
     task_run_id: 'copilot_dispatch_default_inline',
   });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe('POST /api/copilot/chat — SSE via SSEStreamingApi', () => {
@@ -184,6 +188,96 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(writeUserAskMock).not.toHaveBeenCalled();
     expect(writeJobEventMock).not.toHaveBeenCalled();
     expect(bossSendMock).not.toHaveBeenCalled();
+  });
+
+  it('YUK-757 — full durable backlog rejects automatic turns before paid triage', async () => {
+    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
+    shouldEnqueueMock.mockReturnValue(true);
+    dbExecuteMock.mockResolvedValue([{ count: 5 }]);
+    dispatchMock.mockClear();
+    runMock.mockClear();
+    findOrCreateMock.mockClear();
+    writeUserAskMock.mockClear();
+    writeJobEventMock.mockClear();
+    bossSendMock.mockClear();
+
+    const res = await post({
+      user_message:
+        '读取近 30 天 12 次电磁感应错题，按四类聚类并找重复证据；再生成 8 道新题并逐题跑 validator。',
+      triggered_by: 'chat',
+    });
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('30');
+    expect(dispatchMock).not.toHaveBeenCalled();
+    expect(runMock).not.toHaveBeenCalled();
+    expect(findOrCreateMock).not.toHaveBeenCalled();
+    expect(writeUserAskMock).not.toHaveBeenCalled();
+    expect(writeJobEventMock).not.toHaveBeenCalled();
+    expect(bossSendMock).not.toHaveBeenCalled();
+
+    // Backlog refusal happened before any paid work, so it must not consume the
+    // one available AI-funnel slot. A recovered backlog can use it immediately.
+    dbExecuteMock.mockResolvedValue([{ count: 0 }]);
+    runMock.mockReset().mockResolvedValue({
+      session_id: 's_after_backlog_recovery',
+      reply_event_id: 'e_after_backlog_recovery',
+    });
+    const recovered = await post({
+      user_message: '解释为什么含参分式方程要先固定定义域。',
+      triggered_by: 'chat',
+    });
+    expect(recovered.status).toBe(200);
+    await readAll(recovered);
+    expect(dispatchMock).toHaveBeenCalledTimes(1);
+    expect(runMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('YUK-757 — an in-flight classifier reserves the final durable backlog slot', async () => {
+    shouldEnqueueMock.mockReturnValue(true);
+    dbExecuteMock.mockResolvedValue([{ count: 4 }]);
+    runMock.mockReset().mockResolvedValue({
+      session_id: 's_reserved_classifier',
+      reply_event_id: 'e_reserved_classifier',
+    });
+    let releaseDecision:
+      | ((decision: {
+          mode: 'inline';
+          reason: 'bounded_answer';
+          source: 'model_triage';
+          task_run_id: string;
+        }) => void)
+      | undefined;
+    dispatchMock.mockImplementationOnce(
+      async () =>
+        await new Promise((resolve) => {
+          releaseDecision = resolve;
+        }),
+    );
+
+    const first = post({
+      user_message: '核对最近两轮延迟复习里定义域遗漏是否属于同一错因，再决定是否需要后台处理。',
+      triggered_by: 'chat',
+    });
+    await vi.waitFor(() => expect(dispatchMock).toHaveBeenCalledTimes(1));
+
+    const second = await post({
+      user_message: '同时再核对另一组 24 道含参迁移题。',
+      triggered_by: 'chat',
+    });
+    expect(second.status).toBe(429);
+    expect(dispatchMock).toHaveBeenCalledTimes(1);
+
+    releaseDecision?.({
+      mode: 'inline',
+      reason: 'bounded_answer',
+      source: 'model_triage',
+      task_run_id: 'copilot_dispatch_reserved_classifier',
+    });
+    const firstResponse = await first;
+    expect(firstResponse.status).toBe(200);
+    await readAll(firstResponse);
+    expect(runMock).toHaveBeenCalledTimes(1);
   });
 
   it('durable:true + chat + enqueue-enabled → 202 JSON { run_id }，boss.send(copilot_run)，不开 SSE 流', async () => {
@@ -346,7 +440,59 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     );
   });
 
+  it('YUK-757 — AI funnel rejects an automatic turn before invoking paid dispatch triage', async () => {
+    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
+    shouldEnqueueMock.mockReturnValue(true);
+    checkRateLimit();
+    dispatchMock.mockClear();
+    runMock.mockClear();
+    writeUserAskMock.mockClear();
+    writeJobEventMock.mockClear();
+    bossSendMock.mockClear();
+
+    const res = await post({
+      user_message:
+        '读取近 60 天 48 道电磁感应与含参函数错题，交叉核验证据、生成 12 道迁移题并逐题跑 validator。',
+      triggered_by: 'chat',
+    });
+
+    expect(res.status).toBe(429);
+    expect(dispatchMock).not.toHaveBeenCalled();
+    expect(runMock).not.toHaveBeenCalled();
+    expect(writeUserAskMock).not.toHaveBeenCalled();
+    expect(writeJobEventMock).not.toHaveBeenCalled();
+    expect(bossSendMock).not.toHaveBeenCalled();
+  });
+
+  it('YUK-757 — one automatic inline turn consumes one shared classifier/run slot', async () => {
+    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
+    shouldEnqueueMock.mockReturnValue(true);
+    dispatchMock.mockResolvedValue({
+      mode: 'inline',
+      reason: 'bounded_answer',
+      source: 'model_triage',
+      task_run_id: 'copilot_dispatch_single_slot_inline',
+    });
+    runMock.mockResolvedValue({ session_id: 's_rate_limited_inline', reply_event_id: 'e_inline' });
+
+    const first = await post({
+      user_message: '根据最近两次延迟复习，解释为什么这一步要先检查定义域。',
+      triggered_by: 'chat',
+    });
+    expect(first.status).toBe(200);
+    await readAll(first);
+
+    const second = await post({
+      user_message: '再解释一次。',
+      triggered_by: 'chat',
+    });
+    expect(second.status).toBe(429);
+    expect(dispatchMock).toHaveBeenCalledTimes(1);
+    expect(runMock).toHaveBeenCalledTimes(1);
+  });
+
   it('YUK-757 — absent + model durable decision returns 202 and stamps bounded dispatch provenance', async () => {
+    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
     shouldEnqueueMock.mockReturnValue(true);
     dispatchMock.mockResolvedValue({
       mode: 'durable',
@@ -493,6 +639,23 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(dispatchMock).not.toHaveBeenCalled();
     expect(bossSendMock).not.toHaveBeenCalled();
     expect(runMock).toHaveBeenCalled();
+  });
+
+  it('YUK-757 — durable:false cannot bypass the shared Copilot AI-funnel limit', async () => {
+    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
+    shouldEnqueueMock.mockReturnValue(true);
+    checkRateLimit();
+    runMock.mockClear();
+
+    const res = await post({
+      user_message: '解释这一步为什么要先检查定义域。',
+      triggered_by: 'chat',
+      durable: false,
+    });
+
+    expect(res.status).toBe(429);
+    expect(dispatchMock).not.toHaveBeenCalled();
+    expect(runMock).not.toHaveBeenCalled();
   });
 
   it('C3 — durable:true 但带 skill_context（teaching）→ 降级回 inline（teaching 短路不入 durable 面）', async () => {

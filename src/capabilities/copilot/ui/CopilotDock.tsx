@@ -50,6 +50,13 @@ import { ToolUseCard } from '@/ui/primitives/ToolUseCard';
 import { useQuery } from '@tanstack/react-query';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { CopilotHeroCard } from './CopilotHeroCard';
+import {
+  type PersistedDurableCopilotReconnect,
+  clearPersistedDurableCopilotReconnect,
+  durableRunIdFromLocation,
+  loadPersistedDurableCopilotReconnect,
+  persistDurableCopilotReconnect,
+} from './durable-reconnect-storage';
 import { nextNudgeSessionAfterTurn, resolveTurnAmbientFocus } from './nudge-focus';
 import { type ReplayPrimaryView, type ReplayTurn, replayToMessages } from './replay';
 import { isOneShotSkill } from './skill-lifecycle';
@@ -132,10 +139,7 @@ interface CopilotChatResponse {
   primary_view?: ReplayPrimaryView;
 }
 
-interface DurableCopilotReconnect {
-  runId: string;
-  location: string;
-  aiMessageId: string;
+interface DurableCopilotReconnect extends PersistedDurableCopilotReconnect {
   /** Last safely folded cursor/view, so a manual retry resumes rather than replays from zero. */
   view: CopilotRunView;
 }
@@ -371,9 +375,29 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     refetchInterval: open ? 60_000 : false,
   });
 
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [sending, setSending] = useState(false);
-  const [durableRunning, setDurableRunning] = useState(false);
+  const [restoredDurableHandle] = useState<DurableCopilotReconnect | null>(() => {
+    const persisted = loadPersistedDurableCopilotReconnect();
+    return persisted ? { ...persisted, view: createCopilotRunView() } : null;
+  });
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    restoredDurableHandle
+      ? [
+          {
+            id: restoredDurableHandle.userMessageId,
+            role: 'user',
+            text: restoredDurableHandle.userMessage,
+          },
+          {
+            id: restoredDurableHandle.aiMessageId,
+            role: 'ai',
+            text: '正在重新连接这次已受理的后台任务；不会重复提交。',
+            streaming: true,
+          },
+        ]
+      : [],
+  );
+  const [sending, setSending] = useState(restoredDurableHandle !== null);
+  const [durableRunning, setDurableRunning] = useState(restoredDurableHandle !== null);
   const [error, setError] = useState<string | null>(null);
   // Per-checkpoint in-flight id for the revert POST (disables that row's button), and a
   // distinct "revert landed but the refresh failed" flag so a post-revert refetch error is
@@ -430,7 +454,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // A 202 means the paid durable run already exists. If its progress stream later
   // exhausts automatic reconnects, the error button must resume THIS handle — never
   // POST the user message again and accidentally create a second run.
-  const durableReconnectRef = useRef<DurableCopilotReconnect | null>(null);
+  const durableReconnectRef = useRef<DurableCopilotReconnect | null>(restoredDurableHandle);
+  const restoredReconnectStartedRef = useRef(false);
   const activeTransportAbortRef = useRef<AbortController | null>(null);
   useEffect(
     () => () => {
@@ -664,6 +689,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         if (durableReconnectRef.current?.runId === handle.runId) {
           durableReconnectRef.current = null;
         }
+        clearPersistedDurableCopilotReconnect(handle.runId);
         if (durable.phase === 'failed') {
           applyRunViewToMessage(
             handle.aiMessageId,
@@ -694,6 +720,14 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     [applyRunViewToMessage, reportSendError],
   );
 
+  // A 202 accepted before a page reload/unmount is restored from sessionStorage.
+  // Start from cursor zero so job_events, not browser state, rebuilds the view.
+  useEffect(() => {
+    if (!open || !restoredDurableHandle || restoredReconnectStartedRef.current) return;
+    restoredReconnectStartedRef.current = true;
+    void reconnectDurable(restoredDurableHandle);
+  }, [open, reconnectDurable, restoredDurableHandle]);
+
   // Auto-scroll the message stream to the bottom on new messages / loading.
   // `sending` is an intentional trigger dep: when it flips true the thinking
   // bubble mounts and we want to scroll to it, even though the effect body
@@ -712,8 +746,11 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     const turnAbortController = new AbortController();
     activeTransportAbortRef.current?.abort();
     activeTransportAbortRef.current = turnAbortController;
-    // A deliberate new message supersedes any stale reconnect affordance. The
-    // previous run remains recoverable through durable replay when the Dock reopens.
+    // A deliberate new message supersedes this single-run reconnect affordance.
+    // The old server run/reply stays durable, but its live progress is no longer
+    // pinned in this Dock; multi-active-run recovery belongs to YUK-596.
+    const supersededDurable = durableReconnectRef.current;
+    if (supersededDurable) clearPersistedDurableCopilotReconnect(supersededDurable.runId);
     durableReconnectRef.current = null;
     lastUserMessageRef.current = text;
     setError(null);
@@ -723,7 +760,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     setRefreshFailed(false);
     setRefreshSkipped(false);
     setInput('');
-    setMessages((prev) => [...prev, { id: nextId(), role: 'user', text }]);
+    const userMessageId = nextId();
+    setMessages((prev) => [...prev, { id: userMessageId, role: 'user', text }]);
     setSending(true);
     // AF S4 / YUK-203 U6 — when a skill context is active, route this turn to the
     // teaching/solve skill (additive optional body field; absent → unchanged
@@ -736,6 +774,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     const aiId = nextId();
     let aiCreated = false;
     let durableAccepted = false;
+    let durableHandleMissing = false;
     let durableHandle: DurableCopilotReconnect | null = null;
     let inlineReplyStarted = false;
     let inlineSubtaskVersion = 0;
@@ -780,19 +819,26 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           inlineRunView,
           '这件事需要多步处理，我已转到后台；进度会在这里持续更新。',
         );
-        if (!location) {
+        const runId = durableRunIdFromLocation(location);
+        if (!location || !runId) {
           // The current server contract always supplies Location. If a proxy
           // strips it, suppress generic re-POST retry because acceptance is
           // already known but the stable reconnect handle is unavailable.
-          lastUserMessageRef.current = '';
+          durableHandleMissing = true;
+          lastUserMessageRef.current = null;
           throw new Error('后台任务已受理，但没有返回进度地址；请稍后重新打开对话。');
         }
         durableHandle = {
-          runId: location,
+          v: 1,
+          runId,
           location,
+          userMessageId,
           aiMessageId: aiId,
+          userMessage: text,
           view: inlineRunView,
         };
+        durableReconnectRef.current = durableHandle;
+        persistDurableCopilotReconnect(durableHandle);
         setDurableRunning(true);
         const durable = await consumeDurableCopilotRun({
           location,
@@ -811,6 +857,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           applyRunViewToMessage(aiId, durable, '这次后台运行没有完成。可以换个更聚焦的问法再试。');
           reportSendError('后台运行未完成');
         }
+        if (durableReconnectRef.current?.runId === durableHandle.runId) {
+          durableReconnectRef.current = null;
+        }
+        clearPersistedDurableCopilotReconnect(durableHandle.runId);
         nudgeSessionRef.current = nextNudgeSessionAfterTurn(nudgeSessionRef.current, true);
         return;
       }
@@ -950,13 +1000,16 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         setMessages((prev) => prev.map((m) => (m.id === aiId ? { ...m, streaming: false } : m)));
         if (durableHandle) durableReconnectRef.current = durableHandle;
       }
-      const message = durableAccepted
-        ? durableReconnectErrorMessage(err)
-        : err instanceof ApiError
-          ? `请求失败（${err.status}）`
-          : err instanceof Error
-            ? err.message
-            : '请求失败';
+      let message = '请求失败';
+      if (durableHandleMissing) {
+        message = '后台任务已受理，但没有返回进度地址；请稍后重新打开对话。';
+      } else if (durableAccepted) {
+        message = durableReconnectErrorMessage(err);
+      } else if (err instanceof ApiError) {
+        message = `请求失败（${err.status}）`;
+      } else if (err instanceof Error) {
+        message = err.message;
+      }
       reportSendError(message);
     } finally {
       if (activeTransportAbortRef.current === turnAbortController) {
@@ -1331,9 +1384,11 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
               <div className="chat-error" data-testid="copilot-error" role="alert">
                 <LoomIcon name="alert" size={14} />
                 <span>{error}</span>
-                <Btn variant="ghost" size="sm" icon="refresh" onClick={retry}>
-                  {durableReconnectRef.current ? '重新连接' : '重试'}
-                </Btn>
+                {durableReconnectRef.current || lastUserMessageRef.current ? (
+                  <Btn variant="ghost" size="sm" icon="refresh" onClick={retry}>
+                    {durableReconnectRef.current ? '重新连接' : '重试'}
+                  </Btn>
+                ) : null}
               </div>
             ) : null}
             {/* F5 (TdY96) — independent conditionals, not a nested ternary. The two are mutually

@@ -3,7 +3,7 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { apiFetchMock, consumeDurableMock } = vi.hoisted(() => ({
   apiFetchMock: vi.fn(),
@@ -91,6 +91,7 @@ vi.mock('./subtask-events', async (importOriginal) => {
 });
 
 import { CopilotDock } from './CopilotDock';
+import { DURABLE_COPILOT_RECONNECT_STORAGE_KEY } from './durable-reconnect-storage';
 import { type CopilotRunView, DurablePickupStalledError } from './subtask-events';
 
 const partialView = {
@@ -251,8 +252,11 @@ const queuedRecoveryView = {
 } satisfies CopilotRunView;
 
 describe('CopilotDock accepted durable reconnect', () => {
+  beforeEach(() => window.sessionStorage.clear());
+
   afterEach(() => {
     cleanup();
+    window.sessionStorage.clear();
     apiFetchMock.mockReset();
     consumeDurableMock.mockReset();
   });
@@ -389,7 +393,41 @@ describe('CopilotDock accepted durable reconnect', () => {
     expect(screen.getByText('定位 7 道定义域遗漏与 3 道增根误判。')).toBeTruthy();
   });
 
-  it('aborts the accepted run transport when the dock unmounts without posting the turn again', async () => {
+  it('keeps an accepted-without-Location error actionable without rendering a no-op retry', async () => {
+    apiFetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          run_id: 'ask_proxy_stripped_location',
+          session_id: 'copilot-session-proxy-stripped-location',
+          checkpoint_event_id: 'ask_proxy_stripped_location',
+        }),
+        { status: 202, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByTestId('copilot-composer-input'),
+      '请后台核对 24 道含参方程、三轮延迟复习与四个迁移探针。',
+    );
+    await user.click(screen.getByTestId('copilot-composer-send'));
+
+    expect(
+      await screen.findByText('后台任务已受理，但没有返回进度地址；请稍后重新打开对话。'),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '重试' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '重新连接' })).toBeNull();
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(consumeDurableMock).not.toHaveBeenCalled();
+    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
+    expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
+    expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it('persists an accepted handle across unmount and resumes it without posting the turn again', async () => {
     const location = '/api/jobs/copilot_run/ask_unmount_transfer_audit/events';
     apiFetchMock.mockResolvedValue(
       new Response(
@@ -402,18 +440,29 @@ describe('CopilotDock accepted durable reconnect', () => {
       ),
     );
     let transportSignal: AbortSignal | undefined;
-    consumeDurableMock.mockImplementationOnce(
-      async (options: { signal?: AbortSignal }): Promise<typeof completedView> => {
-        transportSignal = options.signal;
-        return await new Promise((_resolve, reject) => {
-          options.signal?.addEventListener(
-            'abort',
-            () => reject(new DOMException('dock unmounted', 'AbortError')),
-            { once: true },
-          );
-        });
-      },
-    );
+    consumeDurableMock
+      .mockImplementationOnce(
+        async (options: { signal?: AbortSignal }): Promise<typeof completedView> => {
+          transportSignal = options.signal;
+          return await new Promise((_resolve, reject) => {
+            options.signal?.addEventListener(
+              'abort',
+              () => reject(new DOMException('dock unmounted', 'AbortError')),
+              { once: true },
+            );
+          });
+        },
+      )
+      .mockImplementationOnce(
+        async (options: {
+          location: string;
+          initialState?: CopilotRunView;
+          onUpdate?: (view: CopilotRunView) => void;
+        }) => {
+          options.onUpdate?.(completedView);
+          return completedView;
+        },
+      );
 
     const rendered = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
     const user = userEvent.setup();
@@ -427,11 +476,27 @@ describe('CopilotDock accepted durable reconnect', () => {
     rendered.unmount();
 
     expect(transportSignal?.aborted).toBe(true);
+    expect(window.sessionStorage.getItem(DURABLE_COPILOT_RECONNECT_STORAGE_KEY)).not.toBeNull();
+
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    await screen.findByText(completedView.replyText);
+
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
     expect(apiFetchMock).toHaveBeenCalledWith(
       '/api/copilot/chat',
       expect.objectContaining({ method: 'POST' }),
     );
+    expect(consumeDurableMock).toHaveBeenCalledTimes(2);
+    expect(consumeDurableMock.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        location,
+        initialState: expect.objectContaining({ lastEventId: 0, frames: [] }),
+      }),
+    );
+    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
+    expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
+    expect(screen.getAllByTestId('copilot-subtask-card')).toHaveLength(1);
+    expect(window.sessionStorage.getItem(DURABLE_COPILOT_RECONNECT_STORAGE_KEY)).toBeNull();
   });
 
   it('aborts a pending dispatch on unmount before a durable consumer can start', async () => {

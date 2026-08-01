@@ -1,4 +1,4 @@
-import { API_ERROR_RESPONSES } from '@/kernel/http-contracts';
+import { API_ERROR_RESPONSES, ApiErrorResponseSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import {
@@ -51,6 +51,7 @@ export const copilotCapability = defineCapability({
           200: CopilotChatStreamResponseSchema,
           202: CopilotDurableRunResponseSchema,
           ...API_ERROR_RESPONSES,
+          499: ApiErrorResponseSchema,
         },
         responseMediaTypes: { 200: 'text/event-stream' },
         successStatus: [200, 202],

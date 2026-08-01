@@ -847,7 +847,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "copilot", "chat"]
             },
-            "description": "向 Copilot 发送一条用户消息。普通 chat 会自动分流为 200 SSE 或 202 durable JSON；durable:false/true 可显式固定模式\n\n**Notes:** triggered_by 枚举：chat|chip。未提供 durable 的普通 chat 先由 bounded classifier 分流：inline 返回 200 text/event-stream（event: delta 逐块，event: reply 终止）；多步/多 artifact 工作返回 202 JSON { run_id, session_id, checkpoint_event_id } 并带 Location，进度经通用 job-events SSE replay。durable:false 强制 inline，durable:true 强制 durable；chip 与 skill_context 保持 inline。Zod 失败时返回普通 JSON 错误。需 x-internal-token",
+            "description": "向 Copilot 发送一条用户消息。普通 chat 会自动分流为 200 SSE 或 202 durable JSON；durable:false/true 可显式固定模式\n\n**Notes:** triggered_by 枚举：chat|chip。未提供 durable 的普通 chat 先由 bounded classifier 分流：inline 返回 200 text/event-stream（event: delta 逐块，event: reply 终止）；多步/多 artifact 工作返回 202 JSON { run_id, session_id, checkpoint_event_id } 并带 Location，进度经通用 job-events SSE replay。durable:false 强制 inline，durable:true 强制 durable；chip 与 skill_context 保持 inline。Zod 失败时返回普通 JSON 错误。若在 durable 首次持久化/受理前检测到客户端断开，返回 499 { error: request_aborted }，且不写 user ask/job event、不 enqueue；开始持久化后继续既有受理流程。需 x-internal-token",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"user_message\": \"帮我讲解之字主谓间用法\",\n  \"triggered_by\": \"chat\",\n  \"chip_kind\": null,\n  \"skill_context\": null,\n  \"ambient_context\": {\n    \"route\": \"/today\",\n    \"focused_entity\": {\n      \"kind\": \"knowledge_node\",\n      \"id\": \"k_abc123\"\n    }\n  }\n}",
