@@ -5,7 +5,7 @@
 ## WHERE TO LOOK
 | 文件 | 职责 |
 |------|------|
-| `manifest.ts` | 8 条 API 路由 + 3 个 jobs + 5 个自有 copilot tools + 7 个 event actions |
+| `manifest.ts` | 9 条 API 路由 + 3 个 jobs + 6 个自有 copilot tools + 7 个 event actions |
 | `api/chat.ts` | `/api/copilot/chat` SSE 流入口 |
 | `api/cancel-run.ts` | `/api/copilot/runs/[id]/cancel` durable Stop 原子写入面 |
 | `api/turns.ts` | `/api/copilot/turns` turns 重放 |

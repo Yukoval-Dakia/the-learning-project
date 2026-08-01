@@ -24,6 +24,9 @@
   完整 `pnpm test`；完整 suite 只交 exact-head GitHub CI。
 - 独立 initial review 无 P0/P1；唯一 P2 是未来异步 barrier callback 的结构化 `finally`
   hardening，当前唯一同步调用者安全，按 review budget 不阻塞、不扩 scope。
+- GitHub initial advisory 的实际 provenance P2 已收口：有结果的 cancelled reply 继续引用真实
+  provider `task_run_id`；同时修正 nested AGENTS 的 manifest 计数。修正后 handler real DB
+  **41 tests**、typecheck、lint 已绿；其它 future-only/trivial 建议按理由跳过。
 
 ## NEXT
 

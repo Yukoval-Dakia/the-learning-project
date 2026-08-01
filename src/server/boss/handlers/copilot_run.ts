@@ -1015,16 +1015,17 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   }
 
   cancellationControl.startPolling();
-  const cancellationMarker = (partialText?: string) => (tx: Tx) =>
+  const cancellationMarker = (partialText?: string, providerTaskRunId?: string) => (tx: Tx) =>
     persistDurableCancellationMarker(tx, {
       runId,
       sessionId: data.session_id,
       actorRef,
       ...(partialText ? { partialText } : {}),
+      ...(providerTaskRunId ? { taskRunId: providerTaskRunId } : {}),
       checkpointSafe: !cancellationControl.materializingToolStarted,
       writeCopilotReplyFn: persistReply,
     });
-  const settleObservedCancellation = async (partialText?: string) => {
+  const settleObservedCancellation = async (partialText?: string, providerTaskRunId?: string) => {
     const drained = await cancellationControl.waitForInFlight(COPILOT_CANCEL_DRAIN_GRACE_MS);
     if (!drained) {
       return handleAmbiguousExecution(db, {
@@ -1041,6 +1042,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       sessionId: data.session_id,
       actorRef,
       ...(partialText ? { partialText } : {}),
+      ...(providerTaskRunId ? { taskRunId: providerTaskRunId } : {}),
       checkpointSafe: !cancellationControl.materializingToolStarted,
       projectSuccessfulTerminal,
       projectFailedTerminal,
@@ -1079,7 +1081,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     // S3 — 排空 delta 链：所有 delta id 落定后再写 terminal。
     await drainDeltaChain(progressChain, runId);
     if ((await cancellationControl.probe()) === 'cancel_requested') {
-      return await settleObservedCancellation(result.text);
+      return await settleObservedCancellation(result.text, result.task_run_id);
     }
 
     // YUK-575 — streamTaskCollecting graceful-degrade：run 出错时它 resolve
@@ -1097,7 +1099,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         projectSuccessfulTerminal,
         projectFailedTerminal,
         writeCopilotReplyFn: persistReply,
-        createCancelledMarker: cancellationMarker(result.text),
+        createCancelledMarker: cancellationMarker(result.text, result.task_run_id),
       });
     }
 
@@ -1127,7 +1129,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
             finishReason: result.finishReason,
           };
         },
-        { createCancelled: cancellationMarker(result.text) },
+        { createCancelled: cancellationMarker(result.text, result.task_run_id) },
       );
       if (markerClaim.outcome === 'already_terminal') {
         return terminalRunResult(markerClaim.events, taskRunId);
@@ -1179,6 +1181,8 @@ interface PersistDurableCancellationArgs {
   sessionId: string;
   actorRef: string;
   partialText?: string;
+  /** Actual provider run when stream collection reached a terminal result. */
+  taskRunId?: string;
   checkpointSafe: boolean;
   writeCopilotReplyFn: typeof writeCopilotReply;
 }
@@ -1190,7 +1194,7 @@ async function persistDurableCancellationMarker(
   const replyText =
     args.partialText && args.partialText.length > 0 ? args.partialText : '已停止这次运行。';
   const error = 'copilot run cancelled by user';
-  const taskRunId = `copilot_run_cancelled_${args.runId}`;
+  const taskRunId = args.taskRunId ?? `copilot_run_cancelled_${args.runId}`;
   const { cleanedReply } = await args.writeCopilotReplyFn(tx, {
     sessionId: args.sessionId,
     userAskEventId: args.runId,

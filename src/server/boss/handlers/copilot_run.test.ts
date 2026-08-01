@@ -1621,6 +1621,7 @@ describe('runCopilotRun', () => {
     expect(replies).toHaveLength(1);
     expect(replies[0]).toMatchObject({
       outcome: 'failure',
+      task_run_id: 'tr_stop_pure_text_cross_subject',
       payload: {
         reply_md: partialReply,
         durable_failure: { reason: 'cancelled' },
@@ -1686,6 +1687,7 @@ describe('runCopilotRun', () => {
     expect(replies[0]?.payload).toMatchObject({
       durable_failure: { reason: 'cancelled', checkpoint_safe: false },
     });
+    expect(replies[0]?.task_run_id).toBe('tr_stop_materializing_without_mirror');
     expect(
       await testDb()
         .select({ id: event.id })
@@ -1744,6 +1746,7 @@ describe('runCopilotRun', () => {
     expect(replies).toHaveLength(1);
     expect(replies[0]).toMatchObject({
       outcome: 'failure',
+      task_run_id: 'tr_cancel_vs_success_settlement',
       payload: { durable_failure: { reason: 'cancelled' } },
     });
   });

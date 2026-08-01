@@ -45,6 +45,10 @@
 - 完整 `pnpm test` 未在本机运行；只允许 push 后 exact-head GitHub CI。
 - 独立 initial review：无 P0/P1。P2 advisory 是未来若把 barrier start callback 泛化为
   可抛异步逻辑，可用结构化 `finally` release；当前唯一同步调用者不抛，故不阻塞本 slice。
+- GitHub initial advisory 找到 1 个当前有价值的 provenance P2：有 partial/result 的取消 marker
+  原先使用 synthetic task-run ID。已改为优先保留真实 provider `task_run_id`，并在三条复杂
+  handler 场景断言；修正后 real DB handler **41 tests**、typecheck、lint passed。CodeRabbit
+  的 manifest 计数漂移同步修正；其余 future-only/trivial 建议不扩 scope。
 - Linear YUK-596 保持 In Progress；duplicate search 命中本票及既有关联 Copilot tickets，
   未发现需要新建的 follow-up。实现/验证 evidence 已写入 comment
   `7ab24b80-dbdd-4d27-9e16-217d026202d6`。
