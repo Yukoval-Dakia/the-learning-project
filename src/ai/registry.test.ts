@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
 import promptHashOracle from './fixtures/task-prompt-hashes.4cb5b966.json' with { type: 'json' };
-import { type TaskDef, tasks } from './registry';
+import { CopilotDispatchDecisionSchema, type TaskDef, tasks } from './registry';
 import { getTaskSystemPrompt } from './task-prompts';
 
 describe('copilot task dispatch declarations', () => {
@@ -563,6 +563,12 @@ describe('CopilotDispatchTask — YUK-757 bounded execution-mode judgment', () =
         mode: 'durable',
         reason: 'multi_artifact_work',
         rationale: 'do not admit free-form router prose',
+      }).success,
+    ).toBe(false);
+    expect(
+      CopilotDispatchDecisionSchema.safeParse({
+        mode: 'inline',
+        reason: 'multi_artifact_work',
       }).success,
     ).toBe(false);
   });

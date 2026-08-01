@@ -1026,7 +1026,7 @@ export async function streamTaskCollecting(
         const stepLatencyMs = Date.now() - stepStartTime;
         const blocks = (msg.message.content ?? []) as ContentBlock[];
         for (const block of blocks) {
-          if (block.type === 'tool_use') {
+          if (block.type === 'tool_use' && ctx.autoLogToolCalls !== false) {
             await lifecycle.recordToolCall({
               toolName: block.name,
               inputJson: (block.input ?? {}) as Record<string, unknown>,

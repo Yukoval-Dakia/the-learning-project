@@ -403,6 +403,30 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(writeToolCallLog).not.toHaveBeenCalled();
   });
 
+  it('streamTaskCollecting respects autoLogToolCalls=false for an owner-written trace', async () => {
+    mockSdk.messages = [
+      assistantThinkingWithTask('流式路径也不应重复记录 owner trace。', 'tool-stream-owned-01', {
+        id: 'tool-stream-domain-02',
+        name: 'mcp__copilot__get_attempt_details',
+        input: {
+          question_ids: ['q_fraction_domain_01', 'q_fraction_parameter_08'],
+          include_submission_snapshots: true,
+        },
+      }),
+      resultMsg,
+    ];
+
+    await streamTaskCollecting(
+      'AttributionTask',
+      { learner_window_days: 14, target_knowledge_id: 'kn_fractional_equations' },
+      { db: fakeDb, autoLogToolCalls: false },
+      () => {},
+    );
+
+    const { writeToolCallLog } = await import('@/server/ai/log');
+    expect(writeToolCallLog).not.toHaveBeenCalled();
+  });
+
   it('threads the request signal into the SDK abortController (already-aborted)', async () => {
     mockSdk.messages = [assistant('hi'), resultMsg];
     const ac = new AbortController();

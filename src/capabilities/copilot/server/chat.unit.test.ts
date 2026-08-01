@@ -662,6 +662,19 @@ describe('YUK-757 Copilot execution-mode judgment', () => {
         usage: { inputTokens: 900, outputTokens: 33 },
       },
     },
+    {
+      label: 'crossed native mode and reason',
+      result: {
+        task_run_id: 'tr_crossed_structured',
+        text: '{"mode":"inline","reason":"bounded_answer"}',
+        structured_output: {
+          mode: 'inline',
+          reason: 'multi_artifact_work',
+        },
+        finishReason: 'stop',
+        usage: { inputTokens: 920, outputTokens: 31 },
+      },
+    },
   ])('fails open to inline for $label without exposing model content', async ({ result }) => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const runAgentTaskFn = vi.fn(async () => result);
