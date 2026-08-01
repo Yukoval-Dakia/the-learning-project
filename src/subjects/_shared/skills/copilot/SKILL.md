@@ -61,6 +61,20 @@ description: Copilot 对话方法论包 —— 跨学科共享。教唯一面向
 
 优先复用其中已有的信息：能从历史直接回答就别再重复调 DomainTool 去读同样的东西（history-preference）。历史里没有的才去查。
 
+## 证据读取纪律
+
+<!-- YUK-832 evidence-reading contract -->
+
+- 事件 action 与 event id 都按工具声明的 **exact** 语义读取；不要用正则或 NLP 从 id 文本猜 action、题型或处理结果。
+- `causedByEventId` 只表示 **direct children**，不是 sibling，也不是所有 descendants。要找 sibling，必须确认它们共享同一个非空 parent，并排除 focal event。
+- 同一 `created_at` 下以 `dispatch_seq` 判断真实插入顺序；不要拿 id 字典序代替事件先后。
+- 事件及其 causal parent/children 都先检查 `correction_state`；`retracted`、`marked_wrong`、`superseded` 只能作为修正历史说明，不能当作当前有效事实。
+- 每次 bounded read 都检查 coverage / has_more / next_cursor；0 rows 只证明当前 filter 与时间 window 内没读到，不证明全局不存在。
+- `get_review_due` 的 due-now queue 为空，不等于 schedule absent；必须同时检查 future FSRS projections 及其 coverage。
+- `get_question_context` 先看 availability。`redacted_intervention_diagnostic` 与 `not_found` 不同，`not_observed` 下的兼容零值不是事实。
+- `conversation_history` 中已经由工具验证过的 event/question/knowledge id，不得只因后续一次空读就反转为「不存在」；只有更强、更新且覆盖明确的证据才能推翻。
+- 因果结论必须来自 typed payload/provenance 与明确关系字段；不要用字符串相似、正则或自由文本 NLP 代替验证。
+
 ## ambient_context 怎么用
 
 输入里若有 ambient_context，它告诉你用户当前所在的页面 route 以及可选的 focused_entity（当前聚焦的实体）。用它把回答**收拢**到用户此刻的上下文——例如用户在某个知识节点页面问「这个怎么学」，focused_entity 就是那个节点。

@@ -120,17 +120,23 @@ describe('buildMcpServerFromRegistry', () => {
     expect((mockAgentSdk.toolDefs[0].schema as Record<string, unknown>).q).toBeDefined();
   });
 
-  it('constructs the production MCP server with run_task included', async () => {
+  it('constructs the production MCP server with run_task and query_events included', async () => {
     await registerCapabilityTools(capabilities);
 
     expect(() =>
-      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['run_task'] }),
+      buildMcpServerFromRegistry({
+        ctx,
+        serverName: 'loom_v2',
+        toolNames: ['run_task', 'query_events'],
+      }),
     ).not.toThrow();
-    expect(mockAgentSdk.toolDefs).toHaveLength(1);
-    expect(mockAgentSdk.toolDefs[0].name).toBe('run_task');
-    const schema = mockAgentSdk.toolDefs[0].schema as Record<string, unknown>;
-    expect(schema.task_kind).toBeDefined();
-    expect(schema.intent).toBeDefined();
+    expect(mockAgentSdk.toolDefs.map((tool) => tool.name)).toEqual(['run_task', 'query_events']);
+    const runTaskSchema = mockAgentSdk.toolDefs[0].schema as Record<string, unknown>;
+    expect(runTaskSchema.task_kind).toBeDefined();
+    expect(runTaskSchema.intent).toBeDefined();
+    const queryEventsSchema = mockAgentSdk.toolDefs[1].schema as Record<string, unknown>;
+    expect(queryEventsSchema.filter).toBeDefined();
+    expect(queryEventsSchema.cursor).toBeDefined();
   });
 
   it('handler invokes tool + writes tool_call_log + returns MCP content shape', async () => {

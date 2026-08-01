@@ -146,7 +146,8 @@ async function resolveEffectiveActiveRows(
 function newerEventRow(a: EventRow, b: EventRow): boolean {
   return (
     a.created_at > b.created_at ||
-    (a.created_at.getTime() === b.created_at.getTime() && a.id > b.id)
+    (a.created_at.getTime() === b.created_at.getTime() &&
+      (a.dispatch_seq > b.dispatch_seq || (a.dispatch_seq === b.dispatch_seq && a.id > b.id)))
   );
 }
 
@@ -707,6 +708,7 @@ export type QuestionTimelineEntry =
   | {
       kind: 'attempt';
       event_id: string;
+      dispatch_seq: number;
       created_at: Date;
       outcome: 'success' | 'failure' | 'partial';
       duration_ms: number | null;
@@ -715,6 +717,7 @@ export type QuestionTimelineEntry =
   | {
       kind: 'review';
       event_id: string;
+      dispatch_seq: number;
       created_at: Date;
       fsrs_rating: 'again' | 'hard' | 'good';
       outcome: 'success' | 'failure';
@@ -741,7 +744,7 @@ export async function getQuestionTimeline(
     .select()
     .from(event)
     .where(and(...conditions))
-    .orderBy(desc(event.created_at))
+    .orderBy(desc(event.created_at), desc(event.dispatch_seq), desc(event.id))
     .limit(effectiveLimit * 3);
 
   if (firstRows.length === 0) return [];
@@ -755,7 +758,7 @@ export async function getQuestionTimeline(
         .select()
         .from(event)
         .where(and(...conditions))
-        .orderBy(desc(event.created_at))
+        .orderBy(desc(event.created_at), desc(event.dispatch_seq), desc(event.id))
         .limit(nextLimit)
         .offset(offset),
   );
@@ -805,6 +808,7 @@ export async function getQuestionTimeline(
       return {
         kind: 'attempt',
         event_id: row.id,
+        dispatch_seq: row.dispatch_seq,
         created_at: row.created_at,
         outcome: (row.outcome as 'success' | 'failure' | 'partial') ?? 'failure',
         duration_ms: payload.duration_ms ?? null,
@@ -819,6 +823,7 @@ export async function getQuestionTimeline(
     return {
       kind: 'review',
       event_id: row.id,
+      dispatch_seq: row.dispatch_seq,
       created_at: row.created_at,
       fsrs_rating: payload.fsrs_rating,
       outcome: (row.outcome as 'success' | 'failure') ?? 'success',

@@ -713,6 +713,35 @@ describe('getFailureAttempts', () => {
     });
   });
 
+  it('uses dispatch_seq to select the later judge when timestamps tie', async () => {
+    const db = testDb();
+    const sameTime = new Date('2026-08-01T02:51:12.154Z');
+    const attemptId = await seedAttemptEvent({ question_id: 'q_same_ms', created_at: sameTime });
+    await seedJudgeEvent({
+      id: 'z_judge_written_first',
+      attempt_event_id: attemptId,
+      primary_category: 'concept',
+      analysis_md: 'First observation, later superseded by a stronger same-millisecond judge.',
+      created_at: sameTime,
+    });
+    await seedJudgeEvent({
+      id: 'a_judge_written_second',
+      attempt_event_id: attemptId,
+      primary_category: 'memory',
+      analysis_md: 'Second observation is authoritative by insertion chronology.',
+      created_at: sameTime,
+    });
+
+    const failure = await getFailureAttemptById(db, attemptId);
+    expect(failure?.judge).toMatchObject({
+      judge_event_id: 'a_judge_written_second',
+      cause: {
+        primary_category: 'memory',
+        analysis_md: 'Second observation is authoritative by insertion chronology.',
+      },
+    });
+  });
+
   it('getFailureAttemptById returns null for corrected failure attempts', async () => {
     const db = testDb();
     const attemptId = await seedAttemptEvent({ question_id: 'q1' });

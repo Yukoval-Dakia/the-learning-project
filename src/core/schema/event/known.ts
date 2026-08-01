@@ -269,6 +269,22 @@ export const ReviewOnQuestion = z
     payload: z.object({
       fsrs_rating: z.enum(['again', 'hard', 'good']),
       fsrs_state_after: FsrsStateSchema,
+      // YUK-832 — live multi-subject FSRS provenance. These keys have been written by
+      // practice submit since the knowledge-card rollout; keeping them optional preserves
+      // historical rows while preventing parseEvent/getEventById from stripping the only
+      // evidence that says which cards were advanced by this review.
+      fsrs_subject_kind: z.enum(['question', 'knowledge']).optional(),
+      fsrs_subject_ids: z.array(z.string().min(1)).optional(),
+      fsrs_state_after_by_subject: z
+        .array(
+          z.object({
+            subject_kind: z.enum(['question', 'knowledge']),
+            subject_id: z.string().min(1),
+            state: FsrsStateSchema,
+            due_at: z.coerce.date(),
+          }),
+        )
+        .optional(),
       user_response_md: z.string().nullable(),
       // YUK-215 (PR #309 round-1, F4) — handwriting-photo answer refs. The
       // /api/review/submit write path freezes these onto the review event

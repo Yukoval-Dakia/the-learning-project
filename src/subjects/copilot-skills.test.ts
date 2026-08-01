@@ -136,4 +136,27 @@ describe('live SoT — shipped shared SKILL.md packs resolve against the real tr
     expect(content).toContain('短任务不要派');
     expect(content).toContain('只把结论交回主 Copilot');
   });
+
+  it('YUK-832 — dialogue methodology pins evidence-reader semantics and bounded claims', () => {
+    const skillFile = join(
+      process.cwd(),
+      'src',
+      'subjects',
+      COPILOT_SHARED_SUBJECT_DIR,
+      'skills',
+      COPILOT_SKILL_NAME,
+      'SKILL.md',
+    );
+    const content = readFileSync(skillFile, 'utf-8');
+    expect(content).toContain('YUK-832 evidence-reading contract');
+    expect(content).toContain('action 与 event id 都按工具声明的 **exact**');
+    expect(content).toContain('`causedByEventId` 只表示 **direct children**');
+    expect(content).toContain('共享同一个非空 parent');
+    expect(content).toContain('以 `dispatch_seq` 判断真实插入顺序');
+    expect(content).toContain('都先检查 `correction_state`');
+    expect(content).toContain('0 rows 只证明当前 filter 与时间 window');
+    expect(content).toContain('due-now queue 为空，不等于 schedule absent');
+    expect(content).toContain('不得只因后续一次空读就反转为「不存在」');
+    expect(content).toContain('不要用字符串相似、正则或自由文本 NLP 代替验证');
+  });
 });

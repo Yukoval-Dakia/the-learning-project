@@ -78,6 +78,17 @@ const MAX_EVENTS_LIMIT = 200;
 // event id to address proposals on the wire.
 export type EnvelopedEvent = EventT & {
   id: string;
+  /** Monotonic insertion chronology; authoritative when created_at timestamps tie. */
+  dispatch_seq: number;
+  // Preserve the raw envelope identity even for the generic experimental:*
+  // escape valve, whose Zod branch intentionally validates only action+payload.
+  actor_kind: string;
+  actor_ref: string;
+  action: string;
+  subject_kind: string;
+  subject_id: string;
+  outcome: string | null;
+  caused_by_event_id?: string;
   created_at: Date;
   correction_status: CorrectionStatus;
 };
@@ -92,6 +103,16 @@ async function rowsToEnvelopedEvents(db: DbLike, rows: EventRow[]): Promise<Enve
       ({
         ...parseEvent(rowToParseInput(r)),
         id: r.id,
+        dispatch_seq: r.dispatch_seq,
+        actor_kind: r.actor_kind,
+        actor_ref: r.actor_ref,
+        action: r.action,
+        subject_kind: r.subject_kind,
+        subject_id: r.subject_id,
+        outcome: r.outcome,
+        // Preserve the established API envelope: root events omit the optional
+        // link instead of widening the wire value to null.
+        caused_by_event_id: r.caused_by_event_id ?? undefined,
         created_at: r.created_at,
         correction_status: statuses.get(r.id) ?? activeCorrectionStatus(),
       }) as EnvelopedEvent,
@@ -114,7 +135,9 @@ export async function getEvents(
 
   const baseQuery = db.select().from(event);
   const filtered = conditions.length > 0 ? baseQuery.where(and(...conditions)) : baseQuery;
-  const rows = await filtered.orderBy(desc(event.created_at)).limit(limit);
+  const rows = await filtered
+    .orderBy(desc(event.created_at), desc(event.dispatch_seq), desc(event.id))
+    .limit(limit);
 
   return rowsToEnvelopedEvents(db, rows);
 }
@@ -152,7 +175,7 @@ export async function getEventChain(db: DbLike, id: string): Promise<EventChain>
     .select()
     .from(event)
     .where(and(eq(event.caused_by_event_id, id), ne(event.action, 'correct')))
-    .orderBy(desc(event.created_at));
+    .orderBy(desc(event.created_at), desc(event.dispatch_seq), desc(event.id));
   const caused_events = await rowsToEnvelopedEvents(db, reverseRows);
 
   const correctionRows = await db
@@ -161,7 +184,7 @@ export async function getEventChain(db: DbLike, id: string): Promise<EventChain>
     .where(
       and(eq(event.action, 'correct'), eq(event.subject_kind, 'event'), eq(event.subject_id, id)),
     )
-    .orderBy(desc(event.created_at), desc(event.id));
+    .orderBy(desc(event.created_at), desc(event.dispatch_seq), desc(event.id));
   const corrections = await rowsToEnvelopedEvents(db, correctionRows);
 
   return { caused_by, caused_events, corrections };

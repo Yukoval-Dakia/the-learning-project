@@ -4,7 +4,10 @@
 // items, and Dreaming-maintained memory briefs.
 
 import { QuestionKind } from '@/core/schema/business';
-import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
+import {
+  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+  InterventionSettlement,
+} from '@/core/schema/intervention';
 import { deriveSourceTier } from '@/core/schema/provenance';
 // ADR-0032 D6-R6 / D6-draftread — addressable-structure projection (read≡write
 // coordinate fix). Pure tree-clip; shared by get_question_context(include:
@@ -19,6 +22,7 @@ import {
   artifact,
   completion_evidence,
   event,
+  intervention,
   knowledge,
   knowledge_edge,
   learning_item,
@@ -530,6 +534,7 @@ const AddressableStructureSchema = z.object({
 });
 
 const GetQuestionContextOutputSchema = z.object({
+  availability: z.enum(['found', 'not_found', 'redacted_intervention_diagnostic']),
   question: z
     .object({
       id: z.string(),
@@ -544,6 +549,7 @@ const GetQuestionContextOutputSchema = z.object({
     })
     .nullable(),
   lifecycle: z.object({
+    observation_status: z.enum(['observed', 'not_observed']),
     first_attempted_at: z.string().nullable(),
     last_attempted_at: z.string().nullable(),
     attempt_counts: z.object({ success: z.number(), partial: z.number(), failure: z.number() }),
@@ -613,10 +619,12 @@ async function executeGetQuestionContext(
     .from(question)
     .where(eq(question.id, input.questionId))
     .limit(1);
-  if (q?.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+  if (!q || q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
     return GetQuestionContextOutputSchema.parse({
+      availability: q ? 'redacted_intervention_diagnostic' : 'not_found',
       question: null,
       lifecycle: {
+        observation_status: 'not_observed',
         first_attempted_at: null,
         last_attempted_at: null,
         attempt_counts: { success: 0, partial: 0, failure: 0 },
@@ -667,6 +675,7 @@ async function executeGetQuestionContext(
   }
 
   const output: GetQuestionContextOutput = {
+    availability: 'found',
     question: q
       ? {
           id: q.id,
@@ -681,6 +690,7 @@ async function executeGetQuestionContext(
         }
       : null,
     lifecycle: {
+      observation_status: 'observed',
       first_attempted_at: iso(attempts.at(-1)?.created_at),
       last_attempted_at: iso(attempts[0]?.created_at),
       attempt_counts: attemptCounts,
@@ -757,6 +767,8 @@ const GetReviewDueInputSchema = z.object({
 });
 
 const GetReviewDueOutputSchema = z.object({
+  as_of: z.string().datetime(),
+  queue_scope: z.literal('due_now_and_never_reviewed_failures'),
   rows: z.array(
     z.object({
       question_id: z.string(),
@@ -790,6 +802,36 @@ const GetReviewDueOutputSchema = z.object({
     overdue_count: z.number().int(),
     top_knowledge_ids: z.array(z.string()),
   }),
+  fsrs_projection_summary: z.object({
+    subject_scope: z.literal('material_fsrs_state_rows'),
+    total_state_count: z.number().int().nonnegative(),
+    due_now_state_count: z.number().int().nonnegative(),
+    future_state_count: z.number().int().nonnegative(),
+    earliest_future_due_at: z.string().datetime().nullable(),
+  }),
+  future_projections: z.array(
+    z.object({
+      subject_kind: z.enum(['question', 'knowledge']),
+      subject_id: z.string(),
+      due_at: z.string().datetime(),
+      last_review_event_id: z.string().nullable(),
+      state: z.unknown(),
+      timing: z.literal('future'),
+    }),
+  ),
+  future_projection_coverage: z.object({
+    returned_count: z.number().int().nonnegative(),
+    limit: z.number().int().positive(),
+    total_future_count: z.number().int().nonnegative(),
+    has_more: z.boolean(),
+    complete: z.boolean(),
+  }),
+  queue_coverage: z.object({
+    returned_count: z.number().int().nonnegative(),
+    limit: z.number().int().positive(),
+    has_more: z.boolean().nullable(),
+    complete_for_due_now_window: z.boolean().nullable(),
+  }),
 });
 
 type GetReviewDueInput = z.infer<typeof GetReviewDueInputSchema>;
@@ -818,6 +860,85 @@ export async function executeGetReviewDue(
   const input = GetReviewDueInputSchema.parse(raw);
   const limit = input.limit ?? 20;
   const now = new Date();
+  const projectionFields = {
+    subject_kind: material_fsrs_state.subject_kind,
+    subject_id: material_fsrs_state.subject_id,
+    state: material_fsrs_state.state,
+    due_at: material_fsrs_state.due_at,
+    last_review_event_id: material_fsrs_state.last_review_event_id,
+  };
+  const knowledgeProjectionConditions = [eq(material_fsrs_state.subject_kind, 'knowledge')];
+  if (input.knowledgeIds?.length) {
+    knowledgeProjectionConditions.push(inArray(material_fsrs_state.subject_id, input.knowledgeIds));
+  }
+  const knowledgeProjectionRows = await ctx.db
+    .select(projectionFields)
+    .from(material_fsrs_state)
+    .where(and(...knowledgeProjectionConditions));
+  // This inventory is schedule truth, not a question-face queue: without a
+  // knowledge filter it deliberately includes every question-keyed state,
+  // including draft/orphan subjects (no prompt is exposed). A knowledge filter
+  // needs the question join solely to resolve its knowledge membership.
+  const questionProjectionRows = input.knowledgeIds?.length
+    ? await ctx.db
+        .select(projectionFields)
+        .from(material_fsrs_state)
+        .innerJoin(question, eq(question.id, material_fsrs_state.subject_id))
+        .where(
+          and(
+            eq(material_fsrs_state.subject_kind, 'question'),
+            questionKnowledgeContainsAny(input.knowledgeIds),
+          ),
+        )
+    : await ctx.db
+        .select(projectionFields)
+        .from(material_fsrs_state)
+        .where(eq(material_fsrs_state.subject_kind, 'question'));
+  // Intervention diagnostic questions are deliberately retired after their
+  // learner-visible lifecycle, while their delayed/transfer FSRS states remain
+  // schedule truth. Resolve those orphan subject ids through the versioned
+  // intervention settlement instead of requiring a live question row.
+  let diagnosticProjectionRows: typeof questionProjectionRows = [];
+  if (input.knowledgeIds?.length) {
+    const matchingInterventions = await ctx.db
+      .select({ settlement_json: intervention.settlement_json })
+      .from(intervention)
+      .where(
+        inArray(
+          sql<string>`${intervention.snapshot_json} #>> '{conjecture,knowledge_id}'`,
+          input.knowledgeIds,
+        ),
+      );
+    const diagnosticQuestionIds = matchingInterventions.flatMap((row) => {
+      const parsed = InterventionSettlement.safeParse(row.settlement_json);
+      if (!parsed.success) return [];
+      return Object.values(parsed.data.diagnostics).map((diagnostic) => diagnostic.question_id);
+    });
+    if (diagnosticQuestionIds.length > 0) {
+      diagnosticProjectionRows = await ctx.db
+        .select(projectionFields)
+        .from(material_fsrs_state)
+        .where(
+          and(
+            eq(material_fsrs_state.subject_kind, 'question'),
+            inArray(material_fsrs_state.subject_id, [...new Set(diagnosticQuestionIds)]),
+          ),
+        );
+    }
+  }
+  const questionProjectionById = new Map(
+    [...questionProjectionRows, ...diagnosticProjectionRows].map((row) => [row.subject_id, row]),
+  );
+  const projectionRows = [...knowledgeProjectionRows, ...questionProjectionById.values()];
+  const futureProjectionRows = projectionRows
+    .filter((row) => row.due_at > now)
+    .sort((a, b) => {
+      const dueDelta = a.due_at.getTime() - b.due_at.getTime();
+      if (dueDelta !== 0) return dueDelta;
+      const kindDelta = a.subject_kind.localeCompare(b.subject_kind);
+      return kindDelta !== 0 ? kindDelta : a.subject_id.localeCompare(b.subject_id);
+    });
+  const returnedFutureProjectionRows = futureProjectionRows.slice(0, limit);
   type DueRow = {
     question_id: string;
     state: unknown;
@@ -1025,6 +1146,8 @@ export async function executeGetReviewDue(
     for (const id of row.knowledge_ids) counts.set(id, (counts.get(id) ?? 0) + 1);
   }
   return GetReviewDueOutputSchema.parse({
+    as_of: now.toISOString(),
+    queue_scope: 'due_now_and_never_reviewed_failures',
     rows,
     queue_summary: {
       total_returned: rows.length,
@@ -1034,6 +1157,37 @@ export async function executeGetReviewDue(
         .sort((a, b) => b[1] - a[1])
         .map(([id]) => id)
         .slice(0, 5),
+    },
+    fsrs_projection_summary: {
+      subject_scope: 'material_fsrs_state_rows',
+      total_state_count: projectionRows.length,
+      due_now_state_count: projectionRows.length - futureProjectionRows.length,
+      future_state_count: futureProjectionRows.length,
+      earliest_future_due_at: futureProjectionRows[0]?.due_at.toISOString() ?? null,
+    },
+    future_projections: returnedFutureProjectionRows.map((row) => ({
+      subject_kind: row.subject_kind,
+      subject_id: row.subject_id,
+      due_at: row.due_at.toISOString(),
+      last_review_event_id: row.last_review_event_id ?? null,
+      state: row.state,
+      timing: 'future',
+    })),
+    future_projection_coverage: {
+      returned_count: returnedFutureProjectionRows.length,
+      limit,
+      total_future_count: futureProjectionRows.length,
+      has_more: futureProjectionRows.length > returnedFutureProjectionRows.length,
+      complete: futureProjectionRows.length <= returnedFutureProjectionRows.length,
+    },
+    queue_coverage: {
+      returned_count: rows.length,
+      limit,
+      // The queue builder performs bounded candidate scans before eligibility
+      // joins (and the never-reviewed scan is capped), so page length alone can
+      // never prove exhaustiveness.
+      has_more: null,
+      complete_for_due_now_window: null,
     },
   });
 }
@@ -1396,13 +1550,19 @@ export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQues
   {
     name: 'get_question_context',
     description:
-      'Read one question contract plus attempts, reviews, FSRS state, linked records, variants, knowledge paths, and assets.',
+      'Read one question contract plus attempts, reviews, FSRS state, linked records, variants, knowledge paths, and assets. Check availability first: lifecycle zeros with observation_status=not_observed are compatibility placeholders for missing or protected diagnostic questions, not observed facts.',
     effect: 'read',
     inputSchema: GetQuestionContextInputSchema,
     outputSchema: GetQuestionContextOutputSchema,
     costClass: 'local',
     execute: executeGetQuestionContext,
     summarize(input, output) {
+      if (output.availability === 'redacted_intervention_diagnostic') {
+        return `question context · ${input.questionId} · redacted`;
+      }
+      if (output.availability === 'not_found') {
+        return `question context · ${input.questionId} · missing`;
+      }
       return `question context · ${input.questionId} · attempts=${Object.values(output.lifecycle.attempt_counts).reduce((a, b) => a + b, 0)} · reviews=${output.lifecycle.review_count}`;
     },
     mirrorEvent: 'when_user_visible',
@@ -1473,14 +1633,14 @@ function countAddressableNodes(node: AddressableStructure['tree']): number {
 export const getReviewDueTool: DomainTool<GetReviewDueInput, GetReviewDueOutput> = {
   name: 'get_review_due',
   description:
-    'Read the deterministic review-due queue: never-reviewed failure attempts first, then overdue FSRS cards. Never mutates FSRS.',
+    'Read the due-now queue (never-reviewed failures, then overdue FSRS cards) plus bounded future FSRS projections. A zero-row due queue does not mean no schedule exists: inspect fsrs_projection_summary and future_projection_coverage. Never mutates FSRS.',
   effect: 'read',
   inputSchema: GetReviewDueInputSchema,
   outputSchema: GetReviewDueOutputSchema,
   costClass: 'local',
   execute: executeGetReviewDue,
   summarize(_input, output) {
-    return `review due · ${output.queue_summary.total_returned} rows · ${output.queue_summary.never_reviewed_count} new · ${output.queue_summary.overdue_count} overdue`;
+    return `review · due-now=${output.queue_summary.total_returned} · future=${output.fsrs_projection_summary.future_state_count} · ${output.queue_summary.never_reviewed_count} new · ${output.queue_summary.overdue_count} overdue`;
   },
   mirrorEvent: 'when_user_visible',
 };
