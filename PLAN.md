@@ -27,11 +27,14 @@
 - GitHub initial advisory 的实际 provenance P2 已收口：有结果的 cancelled reply 继续引用真实
   provider `task_run_id`；同时修正 nested AGENTS 的 manifest 计数。修正后 handler real DB
   **41 tests**、typecheck、lint 已绿；其它 future-only/trivial 建议按理由跳过。
+- PR #1152 的迟到 review 又发现 pre-fence Stop 只写 job terminal、会让下一轮历史留下 phantom
+  user ask。已把 cancellation reply marker 泛化为 API/worker 共用，并用真实 Postgres 验证下一轮
+  causal history 含“已停止”回复。旧 head 两组 CI 虽全绿，但已作废，必须重跑新 exact head。
 
 ## NEXT
 
-1. 对齐 Linear capture gate 与 handoff，commit/push/open PR；exact-head GitHub `CI Gate`
-   全绿后自主 merge。
+1. Commit/push PR #1152 的 pre-fence history 修复；新 exact-head GitHub `CI Gate`
+   与手动 full workflow 全绿后自主 merge。
 2. 基于 merge 后 revision 跑约 30 条复杂真实 provider 对话 burn-in，封存输入/输出 digest、
    task-run/provider/model/cost；mock 只验证 seam，不冒充 actual-output 产品验收。
 3. Dock/UI 开工前逐字引用 design doc、声明 drawer、列文件并等待 owner 批准；完成后再做

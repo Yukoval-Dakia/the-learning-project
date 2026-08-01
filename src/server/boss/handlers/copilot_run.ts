@@ -23,7 +23,9 @@ import { wrapDeltaSuppressingMarker, writeCopilotReply } from '@/capabilities/co
 import {
   COPILOT_CANCEL_DRAIN_GRACE_MS,
   type CopilotRunCancellationControl,
+  type PersistCopilotRunCancellationArgs,
   createCopilotRunCancellationControl,
+  persistCopilotRunCancellationMarker,
 } from '@/capabilities/copilot/server/copilot-run-cancellation';
 import { acquireCopilotExecutionSettlementLock } from '@/capabilities/copilot/server/copilot-run-coordination';
 // YUK-575 (A1/N3) — the shared free-form run-input assembler. The durable handler
@@ -1016,7 +1018,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
 
   cancellationControl.startPolling();
   const cancellationMarker = (partialText?: string, providerTaskRunId?: string) => (tx: Tx) =>
-    persistDurableCancellationMarker(tx, {
+    persistCopilotRunCancellationMarker(tx, {
       runId,
       sessionId: data.session_id,
       actorRef,
@@ -1176,59 +1178,17 @@ async function drainDeltaChain(chain: Promise<void>, runId: string): Promise<voi
   }
 }
 
-interface PersistDurableCancellationArgs {
-  runId: string;
-  sessionId: string;
-  actorRef: string;
-  partialText?: string;
-  /** Actual provider run when stream collection reached a terminal result. */
-  taskRunId?: string;
-  checkpointSafe: boolean;
-  writeCopilotReplyFn: typeof writeCopilotReply;
-}
-
-async function persistDurableCancellationMarker(
-  tx: Tx,
-  args: PersistDurableCancellationArgs,
-): Promise<PersistedDurableReply> {
-  const replyText =
-    args.partialText && args.partialText.length > 0 ? args.partialText : '已停止这次运行。';
-  const error = 'copilot run cancelled by user';
-  const taskRunId = args.taskRunId ?? `copilot_run_cancelled_${args.runId}`;
-  const { cleanedReply } = await args.writeCopilotReplyFn(tx, {
-    sessionId: args.sessionId,
-    userAskEventId: args.runId,
-    replyText,
-    actorRef: args.actorRef,
-    taskRunId,
-    outcome: 'failure',
-    durableFailure: {
-      reason: 'cancelled',
-      error,
-      ...(args.checkpointSafe ? {} : { checkpoint_safe: false }),
-    },
-    now: new Date(),
-  });
-  return {
-    outcome: 'failure',
-    replyMd: cleanedReply,
-    taskRunId,
-    reason: 'cancelled',
-    error,
-    ...(args.checkpointSafe ? {} : { checkpointSafe: false }),
-  };
-}
-
 async function handleDurableCancellation(
   db: Db,
-  args: PersistDurableCancellationArgs & {
+  args: PersistCopilotRunCancellationArgs & {
+    writeCopilotReplyFn: typeof writeCopilotReply;
     projectSuccessfulTerminal: WriteSuccessfulTerminalProjectionFn;
     projectFailedTerminal: WriteFailedTerminalProjectionFn;
   },
 ): Promise<RunCopilotRunResult> {
   try {
     const markerClaim = await ensureCopilotOutcomeMarker(db, args.runId, (tx) =>
-      persistDurableCancellationMarker(tx, args),
+      persistCopilotRunCancellationMarker(tx, args),
     );
     if (markerClaim.outcome === 'already_terminal') {
       return terminalRunResult(markerClaim.events, `copilot_run_tool_${args.runId}`);

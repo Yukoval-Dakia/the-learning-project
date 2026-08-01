@@ -18,8 +18,9 @@
   tampered handle 返回 404。成功 contract 幂等区分 `cancel_requested`、`cancelled`、
   `already_requested`、`already_settled`。
 - pre-fence Stop 在 dispatch lock 内写唯一 `CANCEL_REQUESTED + FAILED(cancelled)`；迟到
-  worker 的 STARTED 和 execution fence 均被挡住。post-fence Stop 写 cooperative request，
-  handler 用单调 latch + AbortController + 500ms non-overlap poll 观察。
+  worker 的 STARTED 和 execution fence 均被挡住；同时与 worker 共用 cancellation reply marker，
+  下一轮 causal history 不会留下 phantom user ask。post-fence Stop 写 cooperative request，handler
+  用单调 latch + AbortController + 500ms non-overlap poll 观察。
 - SDK async PreToolUse hook 在 spawn hook 之前阻止新工具；DomainTool `beforeExecute` 也 await
   同一取消 gate。执行 barrier 覆盖 tool run、tool-call log 与 mirrored event；Stop 后等待
   materializing tool settle，timeout/未知观察 fail-closed 为 ambiguous 且 `checkpoint_safe:false`。
@@ -49,13 +50,19 @@
   原先使用 synthetic task-run ID。已改为优先保留真实 provider `task_run_id`，并在三条复杂
   handler 场景断言；修正后 real DB handler **41 tests**、typecheck、lint passed。CodeRabbit
   的 manifest 计数漂移同步修正；其余 future-only/trivial 建议不扩 scope。
+- PR #1152 迟到 review 指出 pre-fence cancellation 缺 domain reply marker。已提取 API/worker
+  共用持久化 helper，并在复杂 accepted-run DB 场景后创建下一轮 anchor，直接断言历史为
+  `user ask → 已停止这次运行`。修正后 scoped DB **2 files / 47 tests**、unit **1 file / 6 tests**、
+  typecheck、lint、build passed。旧 `844e12e1` 的 PR gate + 手动 full gate 均绿，但新 commit
+  必须重跑 exact-head gates，旧结果不作合并证据。
 - Linear YUK-596 保持 In Progress；duplicate search 命中本票及既有关联 Copilot tickets，
   未发现需要新建的 follow-up。实现/验证 evidence 已写入 comment
   `7ab24b80-dbdd-4d27-9e16-217d026202d6`。
 
 ## Current queue
 
-- Linear capture gate 后 commit/push/open PR；exact-head CI 全绿即自主 merge。
+- Commit/push PR #1152 的 pre-fence history 修复；新 exact-head PR gate + 手动 full gate
+  全绿即自主 merge。
 - merge 后跑约 30 条真实 provider 复杂对话 burn-in；封存 exact revision、输入/输出 digest、
   task-run/provider/model/cost。
 - Dock/UI 前执行 design pre-flight 并等待 owner 批准；之后才做 LIGHT/FULL gate。

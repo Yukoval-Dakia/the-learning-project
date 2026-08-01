@@ -1,7 +1,8 @@
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { job_events } from '@/db/schema';
 import type { HookCallback, HookJSONOutput, Options } from '@anthropic-ai/claude-agent-sdk';
 import { and, eq } from 'drizzle-orm';
+import { writeCopilotReply } from './chat';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { MATERIALIZING_TOOL_NAMES } from './materializing-tools';
 
@@ -9,6 +10,64 @@ export const COPILOT_CANCEL_POLL_INTERVAL_MS = 500;
 export const COPILOT_CANCEL_DRAIN_GRACE_MS = 30_000;
 
 export type CopilotCancellationProbeResult = 'clear' | 'cancel_requested' | 'unknown';
+
+export interface PersistCopilotRunCancellationArgs {
+  runId: string;
+  sessionId: string;
+  actorRef: string;
+  partialText?: string;
+  /** Actual provider run when stream collection reached a terminal result. */
+  taskRunId?: string;
+  checkpointSafe: boolean;
+  writeCopilotReplyFn?: typeof writeCopilotReply;
+}
+
+export interface PersistedCopilotRunCancellation {
+  outcome: 'failure';
+  replyMd: string;
+  taskRunId: string;
+  reason: 'cancelled';
+  error: string;
+  checkpointSafe?: boolean;
+}
+
+/**
+ * Persist the one domain reply that closes a cancelled user ask. Both a
+ * pre-fence API Stop and an in-loop worker Stop use this shape so future
+ * conversation history never contains a phantom, unanswered ask.
+ */
+export async function persistCopilotRunCancellationMarker(
+  tx: Tx,
+  args: PersistCopilotRunCancellationArgs,
+): Promise<PersistedCopilotRunCancellation> {
+  const replyText =
+    args.partialText && args.partialText.length > 0 ? args.partialText : '已停止这次运行。';
+  const error = 'copilot run cancelled by user';
+  const taskRunId = args.taskRunId ?? `copilot_run_cancelled_${args.runId}`;
+  const writeReply = args.writeCopilotReplyFn ?? writeCopilotReply;
+  const { cleanedReply } = await writeReply(tx, {
+    sessionId: args.sessionId,
+    userAskEventId: args.runId,
+    replyText,
+    actorRef: args.actorRef,
+    taskRunId,
+    outcome: 'failure',
+    durableFailure: {
+      reason: 'cancelled',
+      error,
+      ...(args.checkpointSafe ? {} : { checkpoint_safe: false }),
+    },
+    now: new Date(),
+  });
+  return {
+    outcome: 'failure',
+    replyMd: cleanedReply,
+    taskRunId,
+    reason: 'cancelled',
+    error,
+    ...(args.checkpointSafe ? {} : { checkpointSafe: false }),
+  };
+}
 
 export interface CopilotRunCancellationControl {
   readonly signal: AbortSignal;

@@ -1,3 +1,4 @@
+import { persistCopilotRunCancellationMarker } from '@/capabilities/copilot/server/copilot-run-cancellation';
 import { acquireCopilotExecutionSettlementLock } from '@/capabilities/copilot/server/copilot-run-coordination';
 import {
   COPILOT_RUN_EVENTS,
@@ -82,10 +83,19 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
       const executionStarted = events.some(
         (item) => item.event_type === COPILOT_RUN_EVENTS.EXECUTION_STARTED,
       );
+      const queued = events.find((item) => item.event_type === COPILOT_RUN_EVENTS.QUEUED);
+      const actorRef =
+        queued?.payload.triggered_by === 'chip' ? 'agent:copilot_chip' : 'agent:copilot';
       if (hasCancelRequest(events)) {
         // A pre-fence orphan request can only come from legacy/manual data: a
         // normal endpoint call writes request + terminal in this transaction.
         if (!executionStarted) {
+          await persistCopilotRunCancellationMarker(tx, {
+            runId,
+            sessionId: acceptance.sessionId,
+            actorRef,
+            checkpointSafe: true,
+          });
           await writeJobEvent(tx, {
             business_table: COPILOT_RUN_TABLE,
             business_id: runId,
@@ -112,6 +122,12 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
 
       // The shared dispatch lock makes this atomic with the paid-execution
       // fence: once this commits, the worker cannot enter model/tool execution.
+      await persistCopilotRunCancellationMarker(tx, {
+        runId,
+        sessionId: acceptance.sessionId,
+        actorRef,
+        checkpointSafe: true,
+      });
       await writeJobEvent(tx, {
         business_table: COPILOT_RUN_TABLE,
         business_id: runId,

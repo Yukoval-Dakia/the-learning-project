@@ -14,10 +14,12 @@ import { writeJobEvent } from '@/server/events/writer';
 import { and, asc, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { writeCopilotUserAsk } from '../server/chat';
 import {
   hashCopilotDurableInput,
   reserveCopilotDurableAcceptance,
 } from '../server/durable-dispatch';
+import { getCopilotTurnsBeforeAnchor } from '../server/turns';
 import { POST } from './cancel-run';
 import { CopilotCancelRunResponseSchema } from './contracts';
 
@@ -97,6 +99,43 @@ describe('POST /api/copilot/runs/:id/cancel', () => {
       cancelled_before_start: true,
       checkpoint_event_id: accepted.runId,
     });
+    const cancellationReplies = await testDb()
+      .select({ outcome: event.outcome, payload: event.payload, taskRunId: event.task_run_id })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:copilot_reply'),
+          eq(event.caused_by_event_id, accepted.runId),
+        ),
+      );
+    expect(cancellationReplies).toHaveLength(1);
+    expect(cancellationReplies[0]).toMatchObject({
+      outcome: 'failure',
+      taskRunId: `copilot_run_cancelled_${accepted.runId}`,
+      payload: {
+        reply_md: '已停止这次运行。',
+        durable_failure: {
+          reason: 'cancelled',
+          error: 'copilot run cancelled by user',
+        },
+      },
+    });
+
+    const nextRunId = await writeCopilotUserAsk(testDb(), {
+      sessionId: accepted.sessionId,
+      userMessage: '继续刚才的证据审查，但先总结上一轮状态。',
+      now: new Date(Date.now() + 1_000),
+    });
+    await expect(
+      getCopilotTurnsBeforeAnchor(testDb(), {
+        sessionId: accepted.sessionId,
+        anchorEventId: nextRunId,
+        limit: 10,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ role: 'user', text: complexRunInput.user_message }),
+      expect.objectContaining({ role: 'ai', text: '已停止这次运行。' }),
+    ]);
 
     await expect(claimCopilotExecutionFence(testDb(), accepted.runId)).resolves.toMatchObject({
       outcome: 'terminal',
