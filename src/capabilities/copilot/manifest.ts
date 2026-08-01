@@ -166,15 +166,17 @@ export const copilotCapability = defineCapability({
           import('./jobs/copilot_nudge_evaluate').then((m) => m.buildCopilotNudgeEvaluateHandler),
       },
       {
-        // YUK-596 — every-minute, zero-LLM convergence floor for accepted
-        // durable runs. It repairs persisted outcome markers and settles only
-        // queue-proven pre-execution loss or expired ambiguous executions.
+        // YUK-596 — even-minute, zero-LLM convergence floor for accepted
+        // durable runs. The two-minute cadence stays below the 15-minute
+        // liveness bound while avoiding a duplicate manifest cron declaration.
+        // It repairs persisted outcome markers and settles only queue-proven
+        // pre-execution loss or expired ambiguous executions.
         name: 'copilot_run_reconcile',
         schedule: {
-          cron: '* * * * *',
+          cron: '0-58/2 * * * *',
           tz: 'Asia/Shanghai',
           singletonKey: 'copilot_run_reconcile-sweep',
-          singletonSeconds: 60,
+          singletonSeconds: 120,
         },
         queue: 'fast',
         load: () =>

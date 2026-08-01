@@ -12,10 +12,10 @@ describe('copilot durable job declarations (YUK-596)', () => {
     expect(handlers.find((handler) => handler.name === 'copilot_run_reconcile')).toMatchObject({
       queue: 'fast',
       schedule: {
-        cron: '* * * * *',
+        cron: '0-58/2 * * * *',
         tz: 'Asia/Shanghai',
         singletonKey: 'copilot_run_reconcile-sweep',
-        singletonSeconds: 60,
+        singletonSeconds: 120,
       },
     });
   });

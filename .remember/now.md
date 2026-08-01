@@ -22,7 +22,7 @@
   completed/cancelled/failed、missing 与 lookup-unknown 证据；Judge adapter 复用且保持旧恢复语义。
 - JobDecl 支持可选 queue `heartbeatSeconds`；`copilot_run` 配 30s heartbeat，pg-boss 自动刷新，
   crash 的 active delivery 会进入 retry/failed 权威证据。
-- 新每分钟 fast singleton `copilot_run_reconcile`：每轮最多扫 20 个 outstanding run、零
+- 新偶数分钟（最多等两分钟）fast singleton `copilot_run_reconcile`：每轮最多扫 20 个 outstanding run、零
   model/tool。先修已持久化 outcome marker；created/retry/active 与 queue lookup error 零写；
   仅 QUEUED-only、无 worker-touch 的 dead/missing delivery 原子收敛到
   `pre_execution_lost`。explicit fence 或 legacy STARTED/DELTA/STEP/REPLY/FAILED(error) 均

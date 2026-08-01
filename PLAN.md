@@ -15,7 +15,7 @@
   时的 `session_id + run_id` causal anchor。
 - **当前推进 durable liveness + stale reconciliation 后端 safety slice。** 统一 Copilot
   terminal predicate 与通用 pg-boss observation；`FAILED(reason='error')` 保持 retry frame，
-  其它 FAILED fail-closed terminal。`copilot_run` 加 30s queue heartbeat；每分钟 fast
+  其它 FAILED fail-closed terminal。`copilot_run` 加 30s queue heartbeat；每两分钟 fast
   singleton 有界扫 20 个 outstanding run，零 model/tool，只修 outcome marker、QUEUED-only
   queue-proven pre-execution loss，或已过 12min+30s 的 dead explicit/legacy-touch ambiguous
   execution；legacy `FAILED(error)` 绝不误给 checkpoint。

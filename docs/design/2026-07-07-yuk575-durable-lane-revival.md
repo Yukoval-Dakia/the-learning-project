@@ -16,7 +16,8 @@
 
 > **YUK-596 liveness update (2026-08-01):** `copilot_run` now requests a
 > 30-second pg-boss queue heartbeat and shares a generic queue-observation
-> adapter with durable Judge. A one-minute, cap-20, zero-model reconciler first
+> adapter with durable Judge. An even-minute (at most two-minute), cap-20,
+> zero-model reconciler first
 > repairs persisted outcome markers, then settles only queue-proven dead runs:
 > `pre_execution_lost` is limited to QUEUED-only histories with no worker touch;
 > an explicit fence or legacy STARTED/DELTA/STEP/REPLY/FAILED(error) is treated

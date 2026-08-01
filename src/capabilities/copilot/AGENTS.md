@@ -20,7 +20,7 @@
   row→turn projection；不要另建第三套 reader/projection。
 - durable copilot run 走 `copilot_run` pg-boss job（queue='agent'），进度落 `job_events`。
 - durable 终态统一经 `copilot-run-status.ts` 判定；`FAILED(reason='error')` 是可重试帧，
-  其它 FAILED reason（含 legacy missing/unknown）按 fail-closed 终态处理。每分钟
+  其它 FAILED reason（含 legacy missing/unknown）按 fail-closed 终态处理。每两分钟
   `copilot_run_reconcile` 只依据 pg-boss 权威状态、持久化 outcome marker 与 execution
   fence / legacy worker-touch evidence 做有界修复；只有 QUEUED-only dead delivery 才能标成
   pre-execution loss。不得用 wall-clock 或 heartbeat timestamp 猜测 live queue run 已死。
