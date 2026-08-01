@@ -6,6 +6,7 @@ import { CopilotChatRequest } from '../server/chat-contracts';
 export { CopilotChatRequest };
 
 export const CopilotRouteIdParamsSchema = ApiIdParamsSchema;
+export const CopilotRunParamsSchema = ApiIdParamsSchema;
 export const CopilotCheckpointParamsSchema = z.object({ eventId: z.string().min(1) });
 export const CopilotChatHeadersSchema = z.object({
   'Idempotency-Key': z.string().min(1).max(200).optional(),
@@ -79,6 +80,12 @@ export const CopilotDurableRunResponseSchema = z.object({
   run_id: z.string(),
   session_id: z.string(),
   checkpoint_event_id: z.string(),
+});
+
+export const CopilotCancelRunResponseSchema = z.object({
+  ok: z.literal(true),
+  run_id: z.string(),
+  status: z.enum(['cancel_requested', 'cancelled', 'already_requested', 'already_settled']),
 });
 
 export const CopilotTurnsQuerySchema = z.object({

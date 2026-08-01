@@ -112,7 +112,13 @@ export interface BuildMcpServerOptions {
   /** `task_kind` recorded on each tool_call_log row (defaults to ctx.callerActor.ref). */
   taskKind?: string;
   /** Optional per-call runtime gate. Return a reason string to block execution. */
-  beforeExecute?: (tool: ToolExecutionGateInput) => string | undefined;
+  beforeExecute?: (
+    tool: ToolExecutionGateInput,
+  ) => string | undefined | Promise<string | undefined>;
+  /** Begins the in-flight effect barrier immediately before DomainTool.execute. */
+  onExecuteStart?: (tool: ToolExecutionGateInput) => Promise<void> | void;
+  /** Releases the barrier only after execution, logging and event mirroring settle. */
+  onExecuteSettled?: (tool: ToolExecutionGateInput) => Promise<void> | void;
   /**
    * Optional per-call input interceptor (P5.1 / YUK-143). Runs AFTER
    * `beforeExecute` clears and BEFORE execute, only on the happy path. Receives
@@ -160,6 +166,8 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       // for logging / mirror payloads; execInput is what runs.
       let execInput: unknown = rawArgs;
       let truncationNote: object | null = null;
+      let executionStarted = false;
+      const gateInput = { name: dt.name, effect: dt.effect };
 
       try {
         parsedInput = dt.inputSchema.parse(rawArgs);
@@ -170,7 +178,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
 
       if (errorReason === undefined) {
         try {
-          const gateReason = opts.beforeExecute?.({ name: dt.name, effect: dt.effect });
+          const gateReason = await opts.beforeExecute?.(gateInput);
           if (typeof gateReason === 'string' && gateReason.length > 0) {
             errorReason = gateReason;
           }
@@ -200,6 +208,8 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
 
       if (errorReason === undefined) {
         try {
+          await opts.onExecuteStart?.(gateInput);
+          executionStarted = true;
           output = await dt.execute(ctx, execInput as never);
         } catch (err) {
           errorReason = err instanceof Error ? err.message : String(err);
@@ -305,6 +315,21 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
             tool: dt.name,
             task_run_id: ctx.taskRunId,
             err: mirrorErr,
+          });
+        }
+      }
+
+      if (executionStarted) {
+        try {
+          await opts.onExecuteSettled?.(gateInput);
+        } catch (settleErr) {
+          // A bookkeeping observer must not turn a completed domain effect into
+          // an SDK-visible failure. Cancellation control still fails closed via
+          // its persisted materializing-tool probe at terminal projection.
+          console.error('[mcp-bridge] onExecuteSettled failed', {
+            tool: dt.name,
+            task_run_id: ctx.taskRunId,
+            err: settleErr,
           });
         }
       }

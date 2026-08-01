@@ -249,22 +249,24 @@ async function projectCopilotTurnRows(
       )
       .map((row) => row.caused_by_event_id as string),
   );
-  // An ambiguous durable recovery means paid/model or materializing work may
-  // have committed while its tool-use mirror did not. The failure marker is
-  // therefore stronger evidence than an absent mirror: after refresh, neither
-  // side of this turn may resurrect a revert anchor whose safety is unknown.
-  const ambiguousExecutionAskIds = new Set(
+  // An ambiguous recovery, or an in-loop cancellation that observed a
+  // materializing tool start, is stronger evidence than an absent mirror.
+  // After refresh neither side may resurrect an unsafe revert anchor.
+  const checkpointUnsafeAskIds = new Set(
     rows
       .filter((row) => row.action === REPLY_ACTION && row.caused_by_event_id)
       .filter((row) => {
         const payload = (row.payload ?? {}) as Record<string, unknown>;
         const durableFailure = payload.durable_failure;
-        return (
-          durableFailure !== null &&
-          typeof durableFailure === 'object' &&
-          !Array.isArray(durableFailure) &&
-          (durableFailure as Record<string, unknown>).reason === 'ambiguous_execution'
-        );
+        if (
+          durableFailure === null ||
+          typeof durableFailure !== 'object' ||
+          Array.isArray(durableFailure)
+        ) {
+          return false;
+        }
+        const failure = durableFailure as Record<string, unknown>;
+        return failure.reason === 'ambiguous_execution' || failure.checkpoint_safe === false;
       })
       .map((row) => row.caused_by_event_id as string),
   );
@@ -275,7 +277,7 @@ async function projectCopilotTurnRows(
   const anchorSuppressed = (askId: string): boolean =>
     asksWithMaterializingTool.has(askId) ||
     structuredQuestionAskIds.has(askId) ||
-    ambiguousExecutionAskIds.has(askId);
+    checkpointUnsafeAskIds.has(askId);
 
   const turns: CopilotTurn[] = [];
   for (const row of rows) {

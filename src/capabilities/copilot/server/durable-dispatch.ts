@@ -59,7 +59,7 @@ export function copilotBossJobId(runId: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-async function readAcceptanceByRunId(
+export async function readCopilotDurableAcceptanceByRunId(
   db: Db | Tx,
   runId: string,
 ): Promise<CopilotDurableAcceptance | null> {
@@ -94,7 +94,7 @@ export async function findCopilotDurableAcceptance(
   db: Db,
   idempotencyKey: string,
 ): Promise<CopilotDurableAcceptance | null> {
-  return readAcceptanceByRunId(db, copilotRunIdForIdempotencyKey(idempotencyKey));
+  return readCopilotDurableAcceptanceByRunId(db, copilotRunIdForIdempotencyKey(idempotencyKey));
 }
 
 /**
@@ -108,7 +108,7 @@ export async function reconcileCopilotDurableAcceptance(
 ): Promise<CopilotDurableAcceptance | null> {
   return db.transaction(async (tx) => {
     await acquireCopilotIdempotencyLock(tx, idempotencyKey);
-    return readAcceptanceByRunId(tx, copilotRunIdForIdempotencyKey(idempotencyKey));
+    return readCopilotDurableAcceptanceByRunId(tx, copilotRunIdForIdempotencyKey(idempotencyKey));
   });
 }
 
@@ -133,7 +133,7 @@ export async function reserveCopilotDurableAcceptance(
       : undefined;
     if (input.idempotencyKey && deterministicRunId) {
       await acquireCopilotIdempotencyLock(tx, input.idempotencyKey);
-      const existing = await readAcceptanceByRunId(tx, deterministicRunId);
+      const existing = await readCopilotDurableAcceptanceByRunId(tx, deterministicRunId);
       if (existing) {
         return {
           outcome: existing.inputHash === input.inputHash ? 'reused' : 'conflict',

@@ -4,6 +4,7 @@ import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import {
   AcceptTeachingChipBodySchema,
   AcceptTeachingChipResponseSchema,
+  CopilotCancelRunResponseSchema,
   CopilotChatHeadersSchema,
   CopilotChatRequest,
   CopilotChatStreamResponseSchema,
@@ -14,6 +15,7 @@ import {
   CopilotNudgeCompanionResponseSchema,
   CopilotNudgesResponseSchema,
   CopilotRouteIdParamsSchema,
+  CopilotRunParamsSchema,
   CopilotSummaryResponseSchema,
   CopilotTurnsQuerySchema,
   CopilotTurnsResponseSchema,
@@ -76,6 +78,15 @@ export const copilotCapability = defineCapability({
         },
         successStatus: 200,
         load: () => import('./api/revert-checkpoint').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/copilot/runs/[id]/cancel',
+        operationId: 'cancelCopilotRun',
+        request: { params: CopilotRunParamsSchema },
+        responses: { 200: CopilotCancelRunResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/cancel-run').then((m) => m.POST),
       },
       {
         method: 'GET',

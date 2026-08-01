@@ -12,10 +12,11 @@ const mockSdk = vi.hoisted(() => ({
   capturedOptions: undefined as unknown,
   messages: [] as unknown[],
   throwAfter: -1 as number, // when >= 0, throw after yielding this many messages
+  waitForAbortAfter: -1 as number,
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: vi.fn(({ options }: { options: unknown }) => {
+  query: vi.fn(({ options }: { options: { abortController: AbortController } }) => {
     mockSdk.capturedOptions = options;
     return (async function* () {
       let i = 0;
@@ -25,6 +26,16 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
         }
         yield msg;
         i += 1;
+        if (mockSdk.waitForAbortAfter === i) {
+          await new Promise<void>((resolve) => {
+            if (options.abortController.signal.aborted) resolve();
+            else
+              options.abortController.signal.addEventListener('abort', () => resolve(), {
+                once: true,
+              });
+          });
+          throw new Error('sdk stream aborted after owner Stop');
+        }
       }
     })();
   }),
@@ -177,6 +188,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     mockSdk.capturedOptions = undefined;
     mockSdk.messages = [];
     mockSdk.throwAfter = -1;
+    mockSdk.waitForAbortAfter = -1;
     logMocks.finishedShouldThrow = false;
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
@@ -442,6 +454,46 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     const captured = (mockSdk.capturedOptions as { abortController: AbortController })
       .abortController;
     expect(captured.signal.aborted).toBe(true);
+  });
+
+  it('propagates a mid-flight owner Stop, preserves the collected delta, and records failure', async () => {
+    const partial = '已核对 48 条历史回答、3 份讲义和 4/6 个薄弱点探针；9 个迁移变式尚未开始。';
+    mockSdk.messages = [assistant(partial), resultMsg];
+    mockSdk.waitForAbortAfter = 1;
+    const owner = new AbortController();
+    const deltas: string[] = [];
+
+    const running = streamTaskCollecting(
+      'AttributionTask',
+      {
+        answer_ids: Array.from({ length: 48 }, (_, index) => `answer_${index + 1}`),
+        probe_count: 6,
+        source_document_count: 3,
+        transfer_variant_count: 9,
+      },
+      { db: fakeDb, signal: owner.signal },
+      (delta) => deltas.push(delta),
+    );
+    await vi.waitFor(() => {
+      expect(deltas).toEqual([partial]);
+    });
+    owner.abort();
+
+    const result = await running;
+    expect(result).toMatchObject({
+      text: partial,
+      partial: true,
+      finishReason: 'error',
+      error: 'sdk stream aborted after owner Stop',
+    });
+    const captured = (mockSdk.capturedOptions as { abortController: AbortController })
+      .abortController;
+    expect(captured.signal.aborted).toBe(true);
+    const { writeAiTaskRunFinished } = await import('@/server/ai/log');
+    expect(writeAiTaskRunFinished).toHaveBeenLastCalledWith(
+      fakeDb,
+      expect.objectContaining({ status: 'failure', finish_reason: 'error' }),
+    );
   });
 
   it('threads an already-aborted owner signal through non-streaming runTask', async () => {

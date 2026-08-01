@@ -25,8 +25,20 @@
 > after the 12-minute execution ceiling plus 30-second settlement grace.
 > `FAILED(reason='error')` remains a retry frame; all other FAILED reasons are
 > fail-closed terminal. Created/retry/active jobs and queue lookup failures are
-> never terminalized. This is the backend safety slice; Dock consumption and
-> in-loop stop remain later YUK-596 work and still require the UI pre-flight.
+> never terminalized.
+
+> **YUK-596 Stop backend update (2026-08-02):**
+> `POST /api/copilot/runs/[id]/cancel` now writes the cross-process
+> `CANCEL_REQUESTED` truth under dispatch→settlement locks. A pre-fence Stop
+> atomically writes `FAILED(cancelled)` and prevents paid execution; an in-loop
+> Stop is observed by a 500ms non-overlapping poll, an SDK `PreToolUse` hook and
+> an awaited DomainTool gate, all sharing one caller-owned AbortSignal that also
+> reaches nested AI calls. DomainTool execute/log/mirror work is drained before
+> cancellation settles. A materializing tool start persists
+> `checkpoint_safe:false`, so a missing mirror cannot resurrect an unsafe revert
+> anchor after refresh. Success/failure settlement rechecks cancellation while
+> holding the same settlement lock, preventing contradictory DONE+FAILED races.
+> Dock consumption/button work remains later and still requires UI pre-flight.
 
 ---
 
@@ -253,10 +265,24 @@ assembleCopilotRunInput(db, {
 
 ---
 
-## 9. Interrupt / cancel / 串行（S6；stop 落 PR2）
+## 9. Interrupt / cancel / 串行（S6）
 
 - n=1 单会话 + `batchSize:1` → 天然单线程一次一 run（ADR-0041）。**S6 串行语义文档化**：copilot_run `batchSize:1` 使 run 串行——follow-up 在长 run 期间入队会**等到当前 run 结束**（可达 ceiling ~12-15min）才拾取。边跑打字 → 入队下一 checkpoint（等当前 run 完）。
-- **⚠️ S6 stop 非纯 UI（verified `hasCancelRequest` 只在 handler 入口查一次 `copilot_run.ts:130/155-177`）**：现有 `hasCancelRequest` **无 in-loop cancel** → 对进行中 run 按 stop **打不断当前 SDK loop**（只在下一 run 启动前生效）。真 stop 要 in-loop cancel——最省 = 扩 `budgetTracker.beforeExecute`（`copilot_run.ts:227`，已 per-tool-call）每次工具调用前查 DB `cancel_requested` 并 abort。**这落 PR2（N8）**——PR1 不引 stop UI，只文档化机制缺口。
+- **Stop 不是纯 UI。** app 与 worker 分进程，不能靠 API 进程内 controller registry；
+  `job_events.CANCEL_REQUESTED` 是唯一 durable 真相源。取消 route 与 execution fence 共用
+  dispatch lock、与 outcome marker 共用 settlement lock：cancel 先于 fence → 原子
+  `CANCEL_REQUESTED+FAILED(cancelled_before_start)`，绝不开始 paid work；fence 已存在 →
+  单写请求，由 live worker cooperative abort；outcome marker 已先提交 → 幂等
+  `already_settled`。
+- **运行中覆盖三层。** 500ms 非重叠 DB poll 中止无工具的纯文本生成；SDK
+  `PreToolUse` 在 Task/Tavily/其它 SDK 工具前 deny+abort；async DomainTool
+  `beforeExecute` 是本地工具最终 gate。相同 AbortSignal 传入 root runner、ToolContext 与
+  nested `run_task`/proposal LLM，避免根 loop 停止后子调用继续花费。
+- **终态与副作用边界。** 已开始的 DomainTool 从 execute 到 tool log + tool_use mirror
+  完成前维持 in-flight barrier；drain 超时诚实落 `ambiguous_execution`，不假称安全取消。
+  cancellation marker 保留已有 partial；无 partial 才写简短停止文案。materializing tool
+  一旦开始，即使 mirror 写失败，也持久化 `checkpoint_safe:false`，live/replay 都不暴露
+  revert anchor；read/propose-only Stop 仍可保留 checkpoint。
 - summarize-continue 保持 deferred（拒：自动续跑正在 loop 的 run = 收敛坑加倍）。live-steer defer。
 
 ---
