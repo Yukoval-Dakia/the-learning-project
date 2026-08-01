@@ -3,36 +3,36 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-08-01
-> **【YUK-772 已交付；NEXT YUK-805】**
+> **【YUK-805 已交付；NEXT YUK-757（等待 UI design pre-flight 批准）】**
 
 ## NOW
 
-- **YUK-772 已 Done。** PR #1145 合并到
-  `main@dca5a0ec0585398ce120a144c7612ce890ecc827`：KnownEvent 的 9 个 user-capable
-  kind 现在经共享策略在 public member parser 与 union 两层 fail-closed
-  （`actor_kind='user' ⇒ actor_ref='self'`）；6 个 agent-only 与 3 个 mixed agent lane
-  不变。experimental workflow/source provenance refs 明确留在本票外，等待独立迁移。
-- `JUDGE_PROVENANCE_SECRET` 长度 `<32` 现在 loud log + null；unset/empty 仍静默，
-  与 `INTERNAL_TOKEN` 相等仍 fail-closed，日志不泄密。单写和 valid-prefix + invalid-tail
-  batch 都验证在 parse barrier 前整体零写入。
-- 复杂古文学习数据的 event-schema 209 项、相关 DB 110 项、provenance consumer DB
-  72 项，以及 typecheck、lint、audit、build 全绿；独立 review 无 P0/P1。PR exact-head
-  CI Gate `30689854960` 在 `1a501ce5` 全绿，合并后 main CI Gate `30690217136` 也全绿；
-  3 条 review thread 均已回复并 resolve。
-  **未在本机运行完整 `pnpm test`**；无 UI、部署、migration、feature flag 或付费调用。
-- 2026-08-01 live Linear：Backlog 83、In Progress 4、Todo 1，严格未完成共 **88**；排除
-  owner 指示 parked 的 OpenCode YUK-813 / YUK-831 后，当前产品执行口径 **86**。
-  19 个 project 中 3 In Progress、2 Backlog、1 Planned、13 Completed。
+- **YUK-805 已 Done。** PR #1147 合并到
+  `main@1989ac7fe42f091db37755a4d7052d65bbeadeae`：probe 判分现在把 judge
+  invoker 的 authoritative `task_run_id` 持久化到
+  `experimental:probe_result.event.task_run_id`，可经既有松耦合列连接
+  `ai_task_runs` / `cost_ledger`，无需 migration 或 FK。
+- conjecture runbook 已改为从 probe result 出发的 probe-only 成本查询，并按 currency
+  分组；同时写明历史空关联、ledger best-effort 缺失、result 前付费失败等不可归因边界。
+- 复杂 DB 数据同时包含同一 task/provider/model 的 probe 判分与普通练习判分，验证只归因
+  probe 行；scoped DB 2 files / 48 tests、typecheck、lint、build 与相关 audits 全绿。
+  两路独立 review 与 OCR 均无 P0/P1/actionable P2；exact-head CI Gate `30691440250`
+  在 `761885ac` 全绿，合并后 main CI Gate `30691590064` 也全绿。
+  **未在本机运行完整 `pnpm test`**。
+- 2026-08-01 live Linear：Backlog 82、In Progress 4、Todo 1，严格未完成共 **87**；排除
+  owner 指示 parked 的 OpenCode YUK-813 / YUK-831 后，当前产品执行口径 **85**。
+  19 个 project 中 3 In Progress、2 Backlog、1 Planned、13 Completed。YUK-772 曾被
+  closeout PR 自动回拨为 In Progress，已按合并与 CI 现实校正回 Done。
 
 ## NEXT
 
-1. 下一独立产品 lane 启动 **YUK-805**：先验证 judge invoker 是否已暴露 authoritative
-   `task_run_id`；若已暴露，用现有 event 列把 probe result 连到 cost ledger，补复杂 DB
-   回归并把 conjecture runbook 从“全部 judge 上界”改为真·probe 专属查询，无 migration。
-2. 若 invoker 未暴露 run id，YUK-805 会从最小透传变成公共 invoker 契约扩张，按票面约束
-   回 owner 过目；否则 scoped validation、独立 review、exact-head GitHub CI 后自主合并。
-3. YUK-805 后继续处置产品 backlog/Todo；YUK-757 含前台子任务 UI，进入实施前必须走
-   design pre-flight。重复、过期或无 live consumer 的项先核证再 Canceled / Duplicate。
+1. 下一独立产品 lane 是 **YUK-757**（当前唯一 Todo）：对齐 copilot backstage spawn、
+   前台子任务可见与 durable 衔接。该票含 UI；写任何 UI 代码前必须提交 design doc
+   逐字引用、组件类型与精确文件清单并等待 owner 批准。
+2. 获批后在隔离 worktree 以最小充分范围实施；mock 可用，但题目、运行链和状态组合必须
+   足够复杂真实。只跑 scoped 本地验证，完整 `pnpm test` 留给 exact-head GitHub CI。
+3. YUK-757 后继续按产品 backlog/Todo 顺序核证；重复、过期或无 live consumer 的项先
+   对齐 Linear 再 Canceled / Duplicate，不为归零重复造轮子。
 
 ## PARKED
 
@@ -43,6 +43,7 @@
 
 ## BLOCKED-ON
 
+- **YUK-757 UI 实施**：等待 owner 对本轮 design pre-flight 的明确批准；批准前不写 UI。
 - **无人值守 auto-intervention expansion**：YUK-814 的 issue-status waiver 不等于生产
   rollout 授权；未来翻 flag 仍须 owner 明示与届时认可的 actual-product-output evidence。
 - **YUK-571 / YUK-405 / YUK-406**：等待 owner 真实内容、首次 placement 与观察窗口；agent
