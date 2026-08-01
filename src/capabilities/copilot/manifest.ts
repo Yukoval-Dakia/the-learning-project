@@ -147,6 +147,10 @@ export const copilotCapability = defineCapability({
       {
         name: 'copilot_run',
         queue: 'agent',
+        // The generic agent expiry is 2h. A 30s heartbeat lets pg-boss turn a
+        // crashed active delivery into retry/failed evidence promptly; the
+        // Copilot reconciler still never guesses from heartbeat timestamps.
+        heartbeatSeconds: 30,
         load: () =>
           import('@/server/boss/handlers/copilot_run').then((m) => m.buildCopilotRunHandler),
       },
@@ -160,6 +164,23 @@ export const copilotCapability = defineCapability({
         queue: 'fast',
         load: () =>
           import('./jobs/copilot_nudge_evaluate').then((m) => m.buildCopilotNudgeEvaluateHandler),
+      },
+      {
+        // YUK-596 — even-minute, zero-LLM convergence floor for accepted
+        // durable runs. The two-minute cadence stays below the 15-minute
+        // liveness bound while avoiding a duplicate manifest cron declaration.
+        // It repairs persisted outcome markers and settles only queue-proven
+        // pre-execution loss or expired ambiguous executions.
+        name: 'copilot_run_reconcile',
+        schedule: {
+          cron: '0-58/2 * * * *',
+          tz: 'Asia/Shanghai',
+          singletonKey: 'copilot_run_reconcile-sweep',
+          singletonSeconds: 120,
+        },
+        queue: 'fast',
+        load: () =>
+          import('./jobs/copilot_run_reconcile').then((m) => m.buildCopilotRunReconcileHandler),
       },
     ],
   },

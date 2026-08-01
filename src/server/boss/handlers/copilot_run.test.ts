@@ -1598,23 +1598,20 @@ describe('buildCopilotRunHandler', () => {
     await resetDb();
   });
 
-  it('缺字段的 job 被 warn 跳过，不崩、不写事件、不调 AI', async () => {
+  it('缺字段的 job 抛给 pg-boss 保留 retry/failed 证据，不写事件、不调 AI', async () => {
     const db = testDb();
     const handler = buildCopilotRunHandler(db);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await expect(
       handler([
         { id: 'j2', data: { run_id: '', user_message: '', triggered_by: 'chat' } },
         { id: 'j3', data: undefined },
       ] as never),
-    ).resolves.toBeUndefined();
-    expect(warn).toHaveBeenCalled();
+    ).rejects.toThrow(/missing run_id\/session_id\/user_message\/triggered_by/);
     const skipped = await computeReplay(db, {
       businessTable: COPILOT_RUN_TABLE,
       businessId: '',
       lastEventId: 0,
     });
     expect(skipped).toHaveLength(0);
-    warn.mockRestore();
   });
 });

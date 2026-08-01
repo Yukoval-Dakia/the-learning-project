@@ -111,6 +111,11 @@ export type JobScheduleDecl = {
 
 export interface JobDecl {
   name: string; // boss 队列名，形如 'dreaming_nightly'
+  /**
+   * Optional queue-level worker heartbeat. Use only for handlers whose active
+   * lease must fail over faster than the queue tier's broad expiry ceiling.
+   */
+  heartbeatSeconds?: number;
   /** cron 调度；无 schedule 的是链式/按需 job（如 rejudge） */
   schedule?: JobScheduleDecl;
   /**

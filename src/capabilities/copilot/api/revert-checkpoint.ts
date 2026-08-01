@@ -12,9 +12,10 @@ import {
   findReusableCopilotConversation,
   lockCopilotSessionSelection,
 } from '@/server/session/conversation';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from '../server/copilot-run-status';
+import { copilotRunTerminalSql } from '../server/copilot-run-terminal-sql';
 import { CopilotCheckpointParamsSchema, type CopilotCheckpointRevertRefusalT } from './contracts';
 
 // Exhaustiveness guard: a new CascadeRevertRefusal variant that isn't handled in the refusal-body
@@ -91,7 +92,7 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
           and(
             eq(job_events.business_table, COPILOT_RUN_TABLE),
             eq(job_events.business_id, checkpointEventId),
-            inArray(job_events.event_type, [COPILOT_RUN_EVENTS.DONE, COPILOT_RUN_EVENTS.FAILED]),
+            copilotRunTerminalSql(job_events.event_type, job_events.payload),
           ),
         )
         .limit(1);

@@ -282,4 +282,16 @@ describe('durable Copilot dispatch acceptance', () => {
 
     await expect(hasTerminalCopilotRun(testDb(), runId)).resolves.toBe(true);
   });
+
+  it('fails closed on a malformed/future FAILED reason instead of buying another paid run', async () => {
+    const runId = 'copilot_user_ask_future_failure_contract';
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.FAILED,
+      payload: { reason: 'future_manual_settlement', operator_ticket: 'YUK-future' },
+    });
+
+    await expect(hasTerminalCopilotRun(testDb(), runId)).resolves.toBe(true);
+  });
 });

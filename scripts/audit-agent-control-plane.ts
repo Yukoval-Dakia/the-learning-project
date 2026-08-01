@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const REQUIRED_PRE_PR_COMMANDS = [
+const REQUIRED_LOCAL_PRE_PR_COMMANDS = [
   'pnpm typecheck',
   'pnpm lint',
   'pnpm audit:schema',
@@ -10,7 +10,6 @@ const REQUIRED_PRE_PR_COMMANDS = [
   'pnpm audit:profile',
   'pnpm audit:draft-status',
   'pnpm audit:draft-status-reads',
-  'pnpm test',
   'pnpm build',
 ];
 
@@ -74,9 +73,27 @@ export function auditAgentControlPlane(root: string): string[] {
   }
 
   const workflow = read(root, 'docs/agents/development-workflow.md');
-  const prePr = workflow.match(/Before a PR, run:\s*```bash\n([\s\S]*?)```/)?.[1] ?? '';
-  for (const command of REQUIRED_PRE_PR_COMMANDS) {
-    if (!prePr.includes(command)) errors.push(`Pre-PR gate is missing: ${command}`);
+  const prePr =
+    workflow.match(
+      /Before a PR, run:[\s\S]*?Then run this local gate:\s*```bash\n([\s\S]*?)```/,
+    )?.[1] ?? '';
+  const prePrCommands = new Set(
+    prePr
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+  for (const command of REQUIRED_LOCAL_PRE_PR_COMMANDS) {
+    if (!prePrCommands.has(command)) errors.push(`Pre-PR gate is missing: ${command}`);
+  }
+  if (prePrCommands.has('pnpm test')) {
+    errors.push('Local pre-PR gate must not run the complete pnpm test suite');
+  }
+  if (!agents.includes('禁止在本机运行完整 `pnpm test`')) {
+    errors.push('AGENTS.md must prohibit the complete local pnpm test suite');
+  }
+  if (!workflow.includes('exact-head GitHub `CI Gate` runs `pnpm test`')) {
+    errors.push('Development workflow must delegate pnpm test to exact-head GitHub CI');
   }
 
   const controlFiles = [

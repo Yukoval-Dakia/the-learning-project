@@ -1,4 +1,4 @@
-import { event, learning_session } from '@/db/schema';
+import { event, job_events, learning_session } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import postgres from 'postgres';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -116,6 +116,44 @@ describe('POST /api/copilot/checkpoints/:eventId/revert', () => {
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: 'turn_not_terminal' });
     expect(await testDb().select().from(event).where(eq(event.action, 'correct'))).toEqual([]);
+  });
+
+  it('keeps a shadow with FAILED(reason=error) non-terminal until a deliberate settlement', async () => {
+    const { checkpointId } = await seedTurn();
+    await testDb()
+      .insert(job_events)
+      .values([
+        {
+          business_table: 'copilot_run',
+          business_id: checkpointId,
+          event_type: 'copilot_run.queued',
+          payload: { session_id: 'copilot_current' },
+        },
+        {
+          business_table: 'copilot_run',
+          business_id: checkpointId,
+          event_type: 'copilot_run.failed',
+          payload: {
+            reason: 'error',
+            error: 'provider reset after checking a 48-answer, six-probe transfer audit',
+          },
+        },
+      ]);
+
+    const retrying = await POST(request(checkpointId), { eventId: checkpointId });
+    expect(retrying.status).toBe(409);
+    expect(await retrying.json()).toMatchObject({ error: 'turn_shadow_not_terminal' });
+
+    await testDb()
+      .insert(job_events)
+      .values({
+        business_table: 'copilot_run',
+        business_id: checkpointId,
+        event_type: 'copilot_run.failed',
+        payload: { reason: 'exhausted', error: 'retry budget exhausted' },
+      });
+    const settled = await POST(request(checkpointId), { eventId: checkpointId });
+    expect(settled.status).toBe(200);
   });
 
   it('hides roots outside the current reusable Copilot session', async () => {

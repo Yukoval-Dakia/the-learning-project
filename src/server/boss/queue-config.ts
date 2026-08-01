@@ -78,7 +78,11 @@ export const FAST_QUEUE_OPTS = {
  * reconcile path lands it on pre-existing prod queues too — plans.js
  * `updateQueue` SETs retry_limit/retry_delay/retry_backoff via COALESCE.
  */
-function jobQueueOpts(queueName: string, expireInSeconds: number) {
+function jobQueueOpts(
+  queueName: string,
+  expireInSeconds: number,
+  overrides: { heartbeatSeconds?: number } = {},
+) {
   return {
     expireInSeconds,
     retentionSeconds: RETENTION_7D,
@@ -86,6 +90,7 @@ function jobQueueOpts(queueName: string, expireInSeconds: number) {
     retryLimit: JOB_RETRY_LIMIT,
     retryDelay: JOB_RETRY_DELAY_SECONDS,
     retryBackoff: true,
+    ...overrides,
   } as const;
 }
 
@@ -126,6 +131,7 @@ export async function createOrUpdateQueue(
     retryLimit?: number;
     retryDelay?: number;
     retryBackoff?: boolean;
+    heartbeatSeconds?: number;
   },
 ): Promise<void> {
   try {
@@ -155,7 +161,8 @@ export async function createJobQueue(
   boss: QueueAdmin,
   name: string,
   expireInSeconds: number,
+  overrides: { heartbeatSeconds?: number } = {},
 ): Promise<void> {
   await createOrUpdateQueue(boss, `${name}_dlq`, FAST_QUEUE_OPTS);
-  await createOrUpdateQueue(boss, name, jobQueueOpts(name, expireInSeconds));
+  await createOrUpdateQueue(boss, name, jobQueueOpts(name, expireInSeconds, overrides));
 }

@@ -39,16 +39,23 @@ export const COPILOT_RUN_EVENTS = {
   CANCEL_REQUESTED: 'copilot_run.cancel_requested',
 } as const;
 
-/** FAILED reasons that permanently settle a run rather than one retry attempt. */
+/** Known FAILED reasons that permanently settle a run rather than one retry attempt. */
 export const COPILOT_RUN_TERMINAL_FAILURE_REASONS = [
   'cancelled',
   'exhausted',
   'enqueue_failed',
   'ambiguous_execution',
+  'pre_execution_lost',
 ] as const;
 
+/**
+ * Legacy `reason=error` frames describe one retryable delivery attempt. Every
+ * other FAILED payload is fail-closed terminal: a future producer must opt in
+ * explicitly to retry semantics rather than accidentally buying another paid
+ * model/tool execution.
+ */
 export function isCopilotRunTerminalFailureReason(value: unknown): boolean {
-  return COPILOT_RUN_TERMINAL_FAILURE_REASONS.some((reason) => reason === value);
+  return value !== 'error';
 }
 
 export type CopilotRunEventType = (typeof COPILOT_RUN_EVENTS)[keyof typeof COPILOT_RUN_EVENTS];
@@ -66,9 +73,25 @@ export type CopilotRunStatus =
   | 'failed'
   | 'cancel_requested';
 
-/** replay 事件的最小读取形（只看 event_type，与 ingestion-phase PhaseEvent 同型）。 */
+/** replay 事件的最小读取形。FAILED 需读 reason 区分 retry frame 与终态。 */
 export interface CopilotRunStatusEvent {
   event_type: string;
+  payload?: unknown;
+}
+
+function failureReason(event: CopilotRunStatusEvent): unknown {
+  const payload = event.payload;
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  return (payload as Record<string, unknown>).reason;
+}
+
+/** One canonical in-memory terminal predicate shared by status and settlement. */
+export function isCopilotRunTerminalEvent(event: CopilotRunStatusEvent): boolean {
+  return (
+    event.event_type === COPILOT_RUN_EVENTS.DONE ||
+    (event.event_type === COPILOT_RUN_EVENTS.FAILED &&
+      isCopilotRunTerminalFailureReason(failureReason(event)))
+  );
 }
 
 /**
@@ -93,8 +116,12 @@ export function deriveCopilotRunStatus(events: CopilotRunStatusEvent[]): Copilot
         terminal = true;
         break;
       case COPILOT_RUN_EVENTS.FAILED:
-        status = 'failed';
-        terminal = true;
+        // Historical FAILED(reason=error) is one failed pg-boss attempt. The
+        // same run may legitimately emit STARTED/DELTA/DONE on redelivery.
+        if (isCopilotRunTerminalEvent(e)) {
+          status = 'failed';
+          terminal = true;
+        }
         break;
       case COPILOT_RUN_EVENTS.CANCEL_REQUESTED:
         // 标记取消请求；不立即终态——若后续有 done/failed 则以那个为准。
