@@ -38,7 +38,7 @@ async function writeAttempt(at: Date): Promise<void> {
   await writeEvent(db, {
     id: `attempt_${createId()}`,
     actor_kind: 'user',
-    actor_ref: 'user:self',
+    actor_ref: 'self',
     action: 'attempt',
     subject_kind: 'question',
     subject_id: `q_${createId()}`,
@@ -52,7 +52,7 @@ async function writeRate(at: Date): Promise<void> {
   await writeEvent(db, {
     id: `rate_${createId()}`,
     actor_kind: 'user',
-    actor_ref: 'user:self',
+    actor_ref: 'self',
     action: 'rate',
     subject_kind: 'event',
     subject_id: `evt_${createId()}`,

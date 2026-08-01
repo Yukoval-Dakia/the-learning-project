@@ -170,7 +170,7 @@ describe('AttemptOnQuestion event payload back-compat (byte-identical anchor)', 
   };
   const baseEvent = {
     actor_kind: 'user' as const,
-    actor_ref: 'owner',
+    actor_ref: 'self',
     action: 'attempt' as const,
     subject_kind: 'question' as const,
     subject_id: 'q-1',

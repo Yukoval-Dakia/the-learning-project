@@ -48,15 +48,68 @@ describe('judge preview provenance token', () => {
 describe('judgeProvenanceSigningSecret', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
-  it('is null (fail-closed) when JUDGE_PROVENANCE_SECRET is unset or empty', () => {
+  it('is silently null (fail-closed) when JUDGE_PROVENANCE_SECRET is unset or empty', () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.stubEnv('JUDGE_PROVENANCE_SECRET', undefined);
+    expect(judgeProvenanceSigningSecret()).toBeNull();
+
     vi.stubEnv('JUDGE_PROVENANCE_SECRET', '');
     expect(judgeProvenanceSigningSecret()).toBeNull();
+    expect(log).not.toHaveBeenCalled();
   });
 
-  it('returns the configured server-only secret', () => {
-    vi.stubEnv('JUDGE_PROVENANCE_SECRET', 'server-only-secret');
-    expect(judgeProvenanceSigningSecret()).toBe('server-only-secret');
+  it('rejects a distinct 31-character secret loudly without disclosing it', () => {
+    const shortSecret = 's'.repeat(31);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.stubEnv('JUDGE_PROVENANCE_SECRET', shortSecret);
+    vi.stubEnv('INTERNAL_TOKEN', 'internal-token-held-by-browser-clients');
+
+    expect(judgeProvenanceSigningSecret()).toBeNull();
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(String(log.mock.calls[0]?.[0])).toMatch(/shorter than 32 characters/);
+    expect(String(log.mock.calls[0]?.[0])).not.toContain(shortSecret);
+  });
+
+  it('returns an exact 32-character distinct server-only secret unchanged', () => {
+    const secret = 's'.repeat(32);
+    vi.stubEnv('JUDGE_PROVENANCE_SECRET', secret);
+    vi.stubEnv('INTERNAL_TOKEN', 'internal-token-held-by-browser-clients');
+
+    expect(judgeProvenanceSigningSecret()).toBe(secret);
+  });
+
+  it('returns a realistic openssl-style 64-hex secret unchanged', () => {
+    const secret = '8f9d4b0a12c37e56d8910abc4def56788f9d4b0a12c37e56d8910abc4def5678';
+    vi.stubEnv('JUDGE_PROVENANCE_SECRET', secret);
+    vi.stubEnv('INTERNAL_TOKEN', 'internal-token-held-by-browser-clients');
+
+    expect(judgeProvenanceSigningSecret()).toBe(secret);
+  });
+
+  it('rejects a sufficiently long secret that equals INTERNAL_TOKEN', () => {
+    const sharedSecret = 'shared-with-browser-clients'.repeat(2);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.stubEnv('JUDGE_PROVENANCE_SECRET', sharedSecret);
+    vi.stubEnv('INTERNAL_TOKEN', sharedSecret);
+
+    expect(judgeProvenanceSigningSecret()).toBeNull();
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(String(log.mock.calls[0]?.[0])).toMatch(/equals INTERNAL_TOKEN/);
+    expect(String(log.mock.calls[0]?.[0])).not.toContain(sharedSecret);
+  });
+
+  it('reports the length failure first when a short secret also equals INTERNAL_TOKEN', () => {
+    const sharedShortSecret = 'x'.repeat(31);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.stubEnv('JUDGE_PROVENANCE_SECRET', sharedShortSecret);
+    vi.stubEnv('INTERNAL_TOKEN', sharedShortSecret);
+
+    expect(judgeProvenanceSigningSecret()).toBeNull();
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(String(log.mock.calls[0]?.[0])).toMatch(/shorter than 32 characters/);
+    expect(String(log.mock.calls[0]?.[0])).not.toMatch(/equals INTERNAL_TOKEN/);
   });
 });
