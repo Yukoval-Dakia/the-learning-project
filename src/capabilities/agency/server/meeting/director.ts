@@ -4,8 +4,9 @@
 // nested evidence-scout AgentDefinition, then runs ONE charter agent on the Opus
 // anthropic-sub OAuth lane via runAgentTask. The director has agenda power (it picks
 // what — if anything — to investigate); it PROPOSES conjectures / leaves agent notes
-// through the director server (server-enforced single writer) and may spawn AT MOST ONE
-// scout (breadth cap = a PreToolUse hook that denies the 2nd Task).
+// through the director server (server-enforced single writer) and may conditionally
+// spawn depth-one scouts. YUK-757/YUK-572 v2 retires the speculative count=1 cap:
+// Task attempts are observed report-only until real usage justifies a numeric budget.
 //
 // Provenance / evidence-first: the run anchors on a trigger event; the tool-call reads
 // persist to tool_call_log after the run; a scan event records the director main-thread
@@ -53,15 +54,14 @@ import { buildEvidenceServer, persistToolTrace } from '@/server/agency/scout/evi
 import type { ToolTraceEntry } from '@/server/agency/scout/evidence-mcp';
 import { createFindingsCapture } from '@/server/agency/scout/report-findings';
 import { buildEvidenceScoutAgentDefinition } from '@/server/agency/scout/scout-agent';
-import { SPAWN_TOOL_NAME } from '@/server/agency/scout/tool-names';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { SPAWN_BUDGET_MODE, createSpawnContract } from '@/server/ai/spawn-contract';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
-import type { CanUseTool, HookCallbackMatcher } from '@anthropic-ai/claude-agent-sdk';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   type BuildDirectorServerOpts,
@@ -92,8 +92,6 @@ export const RESEARCH_MEETING_AGENT_MAX_CELLS = 20;
 /** Director main-thread turn budget — derived from the registry. */
 export const RESEARCH_MEETING_AGENT_MAX_TURNS =
   tasks.ResearchMeetingDirectorTask.budget.maxIterations;
-/** Breadth cap: at most one scout spawn per night (§6; structurally ≤1 is E-4-conditional). */
-export const MAX_SCOUT_SPAWNS = 1;
 /** Wall-clock budget (seconds) echoed into the director input — derived from the
  *  registry's timeout (ms), the SAME value the runner's abort timer actually uses. */
 export const RESEARCH_MEETING_AGENT_WALL_CLOCK_S =
@@ -341,7 +339,7 @@ export async function runResearchMeetingDirector(
     created_at: now,
   });
 
-  // ── Assemble the in-process servers + the nested scout + the spawn-cap hook ──
+  // ── Assemble the in-process servers + nested scout + shared v2 spawn contract ──
   const caps = createDirectorCaps();
   caps.proposeCount = priorOutputCounts.proposals;
   caps.noteCount = priorOutputCounts.notes;
@@ -369,78 +367,16 @@ export async function runResearchMeetingDirector(
     resolveSubjectProfileForKnowledgeIdsFn: deps.resolveSubjectProfileForKnowledgeIdsFn,
   });
   const scout = buildEvidenceScoutAgentDefinition({ prompt: EVIDENCE_SCOUT_CHARTER });
-
-  // Breadth cap (§6, round-3 review A1 — supersedes round-2's design): TWO independent
-  // layers attempt to deny the 2nd Task spawn — a PreToolUse hook (below) and a
-  // `canUseTool` callback (wired into the runAgentTaskFn ctx alongside `hooks`, further
-  // down) — but round-2's design ("both layers increment scoutSpawns, deny if
-  // scoutSpawns >= MAX") has a proven DOUBLE-INCREMENT DEADLOCK if the SDK consults BOTH
-  // layers for the SAME single Task call: the hook grants + increments the FIRST spawn
-  // (0→1), then canUseTool re-checks the ALREADY-incremented counter for that SAME call
-  // and denies the very call the hook just approved — under MAX_SCOUT_SPAWNS=1 the scout
-  // would NEVER successfully spawn at all (confirmed by director.db.test.ts's round-2
-  // regression test, which failed exactly this way against the round-2 implementation).
-  //
-  // FIX (stronger than the requested "hook increments, canUseTool reads-only" split —
-  // that split has the SAME flaw, since canUseTool's read would still see the hook's own
-  // just-applied increment for the identical call): both `PreToolUseHookInput`
-  // (`tool_use_id: string`, sdk.d.ts:2167-2172) and `canUseTool`'s options
-  // (`toolUseID: string`) carry a PER-CALL correlation id for what is almost certainly
-  // the SAME underlying tool invocation. `decideSpawn` below tracks WHICH calls have
-  // been granted (a Set of tool_use ids, not a bare count):
-  //   - a call whose id is ALREADY granted (the other layer approved it moments
-  //     earlier) is always RE-ALLOWED — no false re-deny of an already-approved call;
-  //   - a genuinely NEW call (unseen id) is granted only while under MAX_SCOUT_SPAWNS,
-  //     else denied — consistently, however many times it is re-asked about (a rejected
-  //     id is never added, so repeated deny-checks for that SAME id stay deny).
-  // This is sound regardless of which layer(s) the SDK actually consults, and for which
-  // calls — that consultation-order/mode question is the SAME class of uncertainty E-4
-  // has always carried (NOT settled by this fix): per our own read of sdk.d.ts,
-  // `Options.canUseTool`'s doc ("called before each tool execution…") does not confirm
-  // it fires under permissionMode:'bypassPermissions' either — the bypassPermissions doc
-  // says it "bypasses ALL permission checks", and canUseTool is ITSELF documented as a
-  // "permission handler", so it is PLAUSIBLE canUseTool is ALSO skipped under bypass
-  // (same uncertainty as the hook). E-4's dev harness (scripts/dev/yuk572-e1-e4-spawn-
-  // checks.ts, mirroring this SAME id-keyed design) must still empirically confirm at
-  // least one layer actually fires before the flag may be flipped. Depth ≤1 is
-  // unaffected either way (scout.tools omits Task — enforced in scout-agent.ts).
-  const grantedSpawnToolUseIds = new Set<string>();
-  function decideSpawn(toolUseId: string): 'allow' | 'deny' {
-    if (grantedSpawnToolUseIds.has(toolUseId)) {
-      return 'allow';
-    }
-    if (grantedSpawnToolUseIds.size >= MAX_SCOUT_SPAWNS) {
-      return 'deny';
-    }
-    grantedSpawnToolUseIds.add(toolUseId);
-    return 'allow';
-  }
-  const spawnCapMatcher: HookCallbackMatcher = {
-    hooks: [
-      async (input) => {
-        if (
-          input.hook_event_name === 'PreToolUse' &&
-          input.tool_name === 'Task' &&
-          decideSpawn(input.tool_use_id) === 'deny'
-        ) {
-          return {
-            hookSpecificOutput: {
-              hookEventName: 'PreToolUse',
-              permissionDecision: 'deny',
-              permissionDecisionReason: '侦察兵每晚上限已达（≤1）',
-            },
-          };
-        }
-        return { continue: true };
-      },
-    ],
-  };
-  const spawnCapCanUseTool: CanUseTool = async (toolName, _input, options) => {
-    if (toolName === SPAWN_TOOL_NAME && decideSpawn(options.toolUseID) === 'deny') {
-      return { behavior: 'deny', message: '侦察兵每晚上限已达（≤1）' };
-    }
-    return { behavior: 'allow' };
-  };
+  // The outer nightly handler owns the default-OFF RESEARCH_MEETING_AGENT_ENABLED
+  // switch, so reaching this function means this surface is enabled. The shared v2
+  // contract still carries an explicit kill-switch input for other consumers, makes
+  // every supplied AgentDefinition depth=1, and observes each unique Task id without a
+  // speculative count denial. Existing SDK tool_call/cost paths remain authoritative.
+  const spawnContract = createSpawnContract({
+    enabled: true,
+    agents: { 'evidence-scout': scout },
+    disabledReason: 'research-meeting subagent spawn is disabled',
+  });
 
   const input = {
     run_kind: 'agent_nightly',
@@ -449,7 +385,7 @@ export async function runResearchMeetingDirector(
     budget: {
       max_turns: RESEARCH_MEETING_AGENT_MAX_TURNS,
       max_wall_clock_s: RESEARCH_MEETING_AGENT_WALL_CLOCK_S,
-      max_scout_spawns: MAX_SCOUT_SPAWNS,
+      spawn_budget_mode: SPAWN_BUDGET_MODE,
       max_proposals: DIRECTOR_MAX_PROPOSALS,
     },
   };
@@ -466,9 +402,9 @@ export async function runResearchMeetingDirector(
         research_meeting_director: director.server,
       },
       allowedTools: [...DIRECTOR_ALLOWED_TOOLS],
-      agents: { 'evidence-scout': scout },
-      hooks: { PreToolUse: [spawnCapMatcher] },
-      canUseTool: spawnCapCanUseTool,
+      agents: spawnContract.agents,
+      hooks: spawnContract.hooks,
+      canUseTool: spawnContract.canUseTool,
     });
   } catch (err) {
     degraded = true;
@@ -487,9 +423,8 @@ export async function runResearchMeetingDirector(
   const proposalsCreated = director.readProposalIds().length;
   const notesCreated = director.readNoteIds().length;
   const trace: ToolTraceEntry[] = evidence.readToolTrace();
-  // Distinct GRANTED tool_use ids (round-3 review A1) — more accurate than a bare
-  // increment counter would be, since a rejected/deduped id is never added.
-  const scoutSpawns = grantedSpawnToolUseIds.size;
+  const spawnBudgetReport = spawnContract.readBudgetReport();
+  const scoutSpawns = spawnBudgetReport.allowedAttempts;
 
   // §3 review fix (MAJOR) — POST-LLM persistence is best-effort: a throw here must NOT
   // propagate (see the file-header degrade comment for the residual-retry-cost trade-off
@@ -516,7 +451,8 @@ export async function runResearchMeetingDirector(
     }
   }
 
-  // Spawn 留痕 (evidence-first): the granted spawns → one scout_spawned event.
+  // Spawn 留痕 (evidence-first): unique enabled Task attempts become one aggregate
+  // event. Per-call execution/cost remains in the runner's existing tool_call/cost path.
   if (scoutSpawns > 0) {
     try {
       const scoutEventAt = deps.now?.() ?? new Date();
@@ -528,7 +464,12 @@ export async function runResearchMeetingDirector(
         subject_kind: 'query',
         subject_id: triggerEventId,
         outcome: 'success',
-        payload: { subagent_type: 'evidence-scout', spawns: scoutSpawns, day_key: dayKey },
+        payload: {
+          subagent_type: 'evidence-scout',
+          spawns: scoutSpawns,
+          spawn_budget_mode: spawnBudgetReport.mode,
+          day_key: dayKey,
+        },
         caused_by_event_id: triggerEventId,
         cost_micro_usd: null,
         // Execution trace only; do not feed Mem0 or regenerate learner briefs.
@@ -613,6 +554,7 @@ export async function runResearchMeetingDirector(
         proposals_created: proposalsCreated,
         notes_created: notesCreated,
         scout_spawned: scoutSpawns,
+        spawn_budget_mode: spawnBudgetReport.mode,
         day_key: dayKey,
         ...(degradeError !== undefined ? { error: degradeError } : {}),
         ...(postRunError !== undefined ? { post_run_error: postRunError } : {}),

@@ -35,6 +35,10 @@ import {
   type OutputFormat,
   type SDKAssistantMessage,
   type SDKMessage,
+  type SDKTaskNotificationMessage,
+  type SDKTaskProgressMessage,
+  type SDKTaskStartedMessage,
+  type SDKTaskUpdatedMessage,
   type SDKUserMessage,
   query as sdkQuery,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -72,6 +76,18 @@ export interface RunTaskResult {
    */
   structured_output?: unknown;
 }
+
+/**
+ * Structural background-task lifecycle messages safe for product observers.
+ * Assistant messages (including thinking/text blocks) are intentionally absent.
+ */
+export type TaskEventMessage =
+  | SDKTaskStartedMessage
+  | SDKTaskProgressMessage
+  | SDKTaskUpdatedMessage
+  | SDKTaskNotificationMessage;
+
+export type TaskEventObserver = (event: TaskEventMessage) => Promise<void> | void;
 
 export interface TaskMiddleware {
   /**
@@ -162,17 +178,17 @@ export interface RunTaskCtx {
    * drifts from the SDK typings. Only the research-meeting director lane sets it.
    */
   agents?: Options['agents'];
-  /**
-   * YUK-572 seam: PreToolUse/… hook callbacks (used by the director spawn-cap
-   * counter+deny, §6). Same undefined-guard zero-regression contract + 1:1 SDK type
-   * re-export as `agents` above.
-   */
+  /** YUK-572 seam: SDK hook callbacks with undefined-guard zero-regression. */
   hooks?: Options['hooks'];
-  /**
-   * YUK-572 seam: optional canUseTool permission callback (spawn-cap fallback impl,
-   * §6). Same undefined-guard zero-regression contract + 1:1 SDK type re-export.
-   */
+  /** YUK-572 seam: optional SDK permission callback, re-exported 1:1. */
   canUseTool?: Options['canUseTool'];
+  /**
+   * YUK-757 structural task-lifecycle observer. Only SDK system task_started /
+   * task_progress / task_updated / task_notification messages are exposed; raw
+   * SDKMessage, assistant text, and thinking blocks never cross this seam.
+   * Observer failures are logged and fail open so visibility cannot abort paid work.
+   */
+  onTaskEvent?: TaskEventObserver;
   /**
    * YUK-575 (N5/MF-A) seam: per-call budget override for the durable copilot run.
    * The inline `CopilotTask` registry budget (maxIterations:6 / timeout:60_000) is
@@ -195,6 +211,11 @@ export interface RunTaskCtx {
    * attempt; any opt-in transient retry gets a fresh id to preserve row identity.
    */
   taskRunId?: string;
+  /**
+   * Disable input-only tool logging when an in-process MCP owner writes the
+   * authoritative input + output trace itself. Defaults to true for every runner.
+   */
+  autoLogToolCalls?: boolean;
 }
 
 export type RunAgentTaskCtx = RunTaskCtx;
@@ -211,11 +232,6 @@ export type StreamTaskCtx = RunTaskCtx & {
    * follow-up (YUK-238).
    */
   signal?: AbortSignal;
-  /**
-   * Disable the runner's input-only tool log when the in-process MCP owner writes
-   * the authoritative input + output log itself. Defaults to true.
-   */
-  autoLogToolCalls?: boolean;
 };
 
 export interface MultimodalTaskInput {
@@ -235,6 +251,32 @@ const TASK_KINDS = Object.keys(tasks) as TaskKind[];
 
 function isKnownTask(k: string): k is TaskKind {
   return (TASK_KINDS as string[]).includes(k);
+}
+
+function isTaskEventMessage(message: SDKMessage): message is TaskEventMessage {
+  if (message.type !== 'system') return false;
+  switch (message.subtype) {
+    case 'task_started':
+    case 'task_progress':
+    case 'task_updated':
+    case 'task_notification':
+      return true;
+    default:
+      return false;
+  }
+}
+
+async function notifyTaskEvent(ctx: RunTaskCtx, message: SDKMessage): Promise<void> {
+  if (ctx.onTaskEvent === undefined || !isTaskEventMessage(message)) return;
+  try {
+    await ctx.onTaskEvent(message);
+  } catch (error) {
+    console.error('[runner] task event observer failed (continuing)', {
+      subtype: message.subtype,
+      task_id: message.task_id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 function isMultimodalTaskInput(input: unknown): input is MultimodalTaskInput {
@@ -470,6 +512,10 @@ function buildQueryOptions(
   // director lane threads them.
   if (ctx.agents !== undefined) {
     options.agents = ctx.agents;
+    // Product UI has one narrative voice. Nested task lifecycle is exposed only via
+    // onTaskEvent; forwarding subagent prose would leak a second voice into the parent
+    // assistant stream. Pin false instead of relying on an SDK default that may drift.
+    options.forwardSubagentText = false;
   }
   if (ctx.hooks !== undefined) {
     options.hooks = ctx.hooks;
@@ -511,6 +557,8 @@ async function runTaskAttempt(args: {
   await lifecycle.start(actualInput);
 
   let resultText = '';
+  let stepStartTime = Date.now();
+  let iteration = 0;
   const thinking = emptyThinkingObservation();
   try {
     const q = sdkQuery({
@@ -518,8 +566,23 @@ async function runTaskAttempt(args: {
       options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
     });
     for await (const msg of q as AsyncIterable<SDKMessage>) {
+      await notifyTaskEvent(ctx, msg);
       if (msg.type === 'assistant') {
         observeAssistantThinking(msg, thinking);
+        iteration += 1;
+        const stepLatencyMs = Date.now() - stepStartTime;
+        const blocks = (msg.message.content ?? []) as ContentBlock[];
+        for (const block of blocks) {
+          if (block.type === 'tool_use' && ctx.autoLogToolCalls !== false) {
+            await lifecycle.recordToolCall({
+              toolName: block.name,
+              inputJson: (block.input ?? {}) as Record<string, unknown>,
+              iteration,
+              latencyMs: stepLatencyMs,
+            });
+          }
+        }
+        stepStartTime = Date.now();
         continue;
       }
       if (msg.type !== 'result') continue;
@@ -733,6 +796,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
           options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
         });
         for await (const msg of q as AsyncIterable<SDKMessage>) {
+          await notifyTaskEvent(ctx, msg);
           if (msg.type === 'assistant') {
             observeAssistantThinking(msg, thinking);
             const text = extractAssistantText(msg);
@@ -944,6 +1008,7 @@ export async function streamTaskCollecting(
       options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
     });
     for await (const msg of q as AsyncIterable<SDKMessage>) {
+      await notifyTaskEvent(ctx, msg);
       if (msg.type === 'assistant') {
         observeAssistantThinking(msg, thinking);
         const text = extractAssistantText(msg);

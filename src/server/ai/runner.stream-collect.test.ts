@@ -46,7 +46,8 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: vi.fn(async () => 'tool-log-id'),
 }));
 
-import { streamTaskCollecting } from './runner';
+import { type TaskEventMessage, runTask, streamTaskCollecting } from './runner';
+import { SPAWN_TOOL_NAME, createSpawnContract } from './spawn-contract';
 
 const fakeDb = {} as never;
 
@@ -61,6 +62,90 @@ function assistantThinking(thinking: string) {
   return {
     type: 'assistant',
     message: { role: 'assistant', content: [{ type: 'thinking', thinking, signature: '' }] },
+  };
+}
+
+function assistantThinkingWithTask(thinking: string, toolUseId: string) {
+  return {
+    type: 'assistant',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking, signature: 'redacted-signature' },
+        {
+          type: 'tool_use',
+          id: toolUseId,
+          name: SPAWN_TOOL_NAME,
+          input: {
+            subagent_type: 'diagnostic-scout',
+            description: '核对近七日必要条件/充分条件错题、探针与复习轨迹，只回证据结论',
+          },
+        },
+      ],
+    },
+  };
+}
+
+function taskStarted(taskId: string, toolUseId: string, description: string) {
+  return {
+    type: 'system',
+    subtype: 'task_started',
+    task_id: taskId,
+    tool_use_id: toolUseId,
+    description,
+    subagent_type: 'diagnostic-scout',
+    uuid: `uuid-start-${taskId}`,
+    session_id: 'copilot-session-structured-task-events',
+  };
+}
+
+function taskProgress(taskId: string, toolUseId: string, description: string) {
+  return {
+    type: 'system',
+    subtype: 'task_progress',
+    task_id: taskId,
+    tool_use_id: toolUseId,
+    description,
+    subagent_type: 'diagnostic-scout',
+    usage: { total_tokens: 1_842, tool_uses: 4, duration_ms: 12_400 },
+    last_tool_name: 'mcp__copilot__get_probe_history',
+    summary: '已对齐两次失败作答与一次未教学探针，正在核对反例。',
+    uuid: `uuid-progress-${taskId}`,
+    session_id: 'copilot-session-structured-task-events',
+  };
+}
+
+function taskUpdated(
+  taskId: string,
+  patch: { status: 'running' | 'completed' | 'failed'; description?: string; error?: string },
+) {
+  return {
+    type: 'system',
+    subtype: 'task_updated',
+    task_id: taskId,
+    patch,
+    uuid: `uuid-update-${taskId}-${patch.status}`,
+    session_id: 'copilot-session-structured-task-events',
+  };
+}
+
+function taskNotification(
+  taskId: string,
+  toolUseId: string,
+  status: 'completed' | 'failed' | 'stopped',
+  summary: string,
+) {
+  return {
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: taskId,
+    tool_use_id: toolUseId,
+    status,
+    output_file: `/tmp/${taskId}.result.md`,
+    summary,
+    usage: { total_tokens: 2_711, tool_uses: 6, duration_ms: 18_900 },
+    uuid: `uuid-notify-${taskId}-${status}`,
+    session_id: 'copilot-session-structured-task-events',
   };
 }
 
@@ -101,6 +186,9 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(result.usage).toEqual({ inputTokens: 7, outputTokens: 7 });
     expect(result.task_run_id).toBeTruthy();
     expect(result.partial).toBeUndefined();
+    expect('forwardSubagentText' in (mockSdk.capturedOptions as Record<string, unknown>)).toBe(
+      false,
+    );
   });
 
   it('carries thinking-block metadata without streaming or logging raw reasoning', async () => {
@@ -124,6 +212,169 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     const { writeAiTaskRunFinished } = await import('@/server/ai/log');
     const finished = (writeAiTaskRunFinished as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1];
     expect(JSON.stringify(finished)).not.toContain('hidden reasoning');
+  });
+
+  it('runTask exposes only typed task events and records native Task tool_use without raw reasoning', async () => {
+    const hiddenReasoning =
+      '先推测学习者可能被“只有才”措辞诱导，但这个内部推理绝不能进入 task observer 或 tool log。';
+    const foregroundText = '我会在前台只用 Copilot 一个声音汇总后台调查。';
+    mockSdk.messages = [
+      taskStarted('task-logic-evidence', 'tool-spawn-logic-01', '核对逻辑关系失败证据'),
+      assistantThinkingWithTask(hiddenReasoning, 'tool-spawn-logic-01'),
+      taskProgress('task-logic-evidence', 'tool-spawn-logic-01', '比对作答、探针与复习记录'),
+      assistant(foregroundText),
+      taskUpdated('task-logic-evidence', {
+        status: 'completed',
+        description: '证据核对完成，等待 Copilot 汇总',
+      }),
+      taskNotification(
+        'task-logic-evidence',
+        'tool-spawn-logic-01',
+        'completed',
+        '两次错误均把必要条件当充分条件；独立探针复现同一错误。',
+      ),
+      resultMsg,
+    ];
+    const observed: TaskEventMessage[] = [];
+    const contract = createSpawnContract({
+      enabled: true,
+      agents: {
+        'diagnostic-scout': {
+          description: '只读证据核对',
+          prompt: '核对 attempt/review/probe，一律只回结论与引用。',
+          tools: ['mcp__copilot__get_attempt_details', SPAWN_TOOL_NAME],
+        },
+      },
+    });
+
+    const result = await runTask(
+      'AttributionTask',
+      { question_id: 'q_logic_necessary_sufficient_17' },
+      {
+        db: fakeDb,
+        allowedTools: [SPAWN_TOOL_NAME, 'mcp__copilot__get_attempt_details'],
+        agents: contract.agents,
+        hooks: contract.hooks,
+        canUseTool: contract.canUseTool,
+        onTaskEvent: async (event) => {
+          await Promise.resolve();
+          observed.push(event);
+        },
+      },
+    );
+
+    expect(result.text).toBe('ignored');
+    expect(observed.map((event) => event.subtype)).toEqual([
+      'task_started',
+      'task_progress',
+      'task_updated',
+      'task_notification',
+    ]);
+    const serializedObserved = JSON.stringify(observed);
+    expect(serializedObserved).not.toContain(hiddenReasoning);
+    expect(serializedObserved).not.toContain(foregroundText);
+
+    const captured = mockSdk.capturedOptions as {
+      agents: Record<string, { tools?: string[]; disallowedTools?: string[] }>;
+      hooks: unknown;
+      canUseTool: unknown;
+      forwardSubagentText: boolean;
+    };
+    expect(captured.agents['diagnostic-scout']?.tools).toEqual([
+      'mcp__copilot__get_attempt_details',
+    ]);
+    expect(captured.agents['diagnostic-scout']?.disallowedTools).toContain(SPAWN_TOOL_NAME);
+    expect(captured.hooks).toBe(contract.hooks);
+    expect(captured.canUseTool).toBe(contract.canUseTool);
+    expect(captured.forwardSubagentText).toBe(false);
+
+    const { writeToolCallLog } = await import('@/server/ai/log');
+    expect(writeToolCallLog).toHaveBeenCalledTimes(1);
+    expect(writeToolCallLog).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        task_kind: 'AttributionTask',
+        tool_name: SPAWN_TOOL_NAME,
+        input_json: {
+          subagent_type: 'diagnostic-scout',
+          description: '核对近七日必要条件/充分条件错题、探针与复习轨迹，只回证据结论',
+        },
+        iteration: 1,
+      }),
+    );
+    expect(JSON.stringify((writeToolCallLog as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(
+      hiddenReasoning,
+    );
+  });
+
+  it('streamTaskCollecting preserves interleaved task-event order while thinking/text stay on their own channels', async () => {
+    const hiddenReasoning = '内部比较两条知识轨迹的置信度，不向 UI 或 event sink 暴露。';
+    const foregroundText = '两个后台核对任务正在推进，我会统一汇总。';
+    mockSdk.messages = [
+      taskStarted('task-symbolic', 'spawn-symbolic-01', '核对符号题证据链'),
+      taskStarted('task-applied', 'spawn-applied-02', '核对门禁情境迁移'),
+      assistantThinking(hiddenReasoning),
+      taskProgress('task-applied', 'spawn-applied-02', '检查门禁题的充分性迁移'),
+      assistant(foregroundText),
+      taskUpdated('task-symbolic', { status: 'running', description: '等待 probe 对照' }),
+      taskNotification(
+        'task-applied',
+        'spawn-applied-02',
+        'failed',
+        '题目快照缺少 parent，保守停止，不形成学习结论。',
+      ),
+      taskNotification(
+        'task-symbolic',
+        'spawn-symbolic-01',
+        'completed',
+        '符号题与独立 probe 均复现逆命题错误。',
+      ),
+      resultMsg,
+    ];
+    const observed: TaskEventMessage[] = [];
+    const deltas: string[] = [];
+
+    const result = await streamTaskCollecting(
+      'AttributionTask',
+      { learner_window_days: 7, target_knowledge_id: 'kn_logic_implication' },
+      {
+        db: fakeDb,
+        onTaskEvent: (event) => {
+          observed.push(event);
+        },
+      },
+      (delta) => deltas.push(delta),
+    );
+
+    expect(result.text).toBe(foregroundText);
+    expect(deltas).toEqual([foregroundText]);
+    expect(observed.map((event) => `${event.subtype}:${event.task_id}`)).toEqual([
+      'task_started:task-symbolic',
+      'task_started:task-applied',
+      'task_progress:task-applied',
+      'task_updated:task-symbolic',
+      'task_notification:task-applied',
+      'task_notification:task-symbolic',
+    ]);
+    const serializedObserved = JSON.stringify(observed);
+    expect(serializedObserved).not.toContain(hiddenReasoning);
+    expect(serializedObserved).not.toContain(foregroundText);
+  });
+
+  it('runTask respects autoLogToolCalls=false for an owner-written authoritative trace', async () => {
+    mockSdk.messages = [
+      assistantThinkingWithTask('不应落到 input-only tool log 的内部推理。', 'tool-owned-trace-01'),
+      resultMsg,
+    ];
+
+    await runTask(
+      'AttributionTask',
+      { q: '由 MCP owner 同时记录输入与输出的调用' },
+      { db: fakeDb, autoLogToolCalls: false },
+    );
+
+    const { writeToolCallLog } = await import('@/server/ai/log');
+    expect(writeToolCallLog).not.toHaveBeenCalled();
   });
 
   it('threads the request signal into the SDK abortController (already-aborted)', async () => {
