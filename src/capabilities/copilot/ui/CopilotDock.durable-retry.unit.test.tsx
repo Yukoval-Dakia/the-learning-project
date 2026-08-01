@@ -695,16 +695,24 @@ describe('CopilotDock accepted durable reconnect', () => {
     expect(screen.getByText('定位 7 道定义域遗漏与 3 道增根误判。')).toBeTruthy();
   });
 
-  it('keeps an accepted-without-Location error actionable without rendering a no-op retry', async () => {
+  it('reconstructs an accepted durable handle from the 202 JSON when a proxy strips Location', async () => {
+    const runId = 'ask_proxy_stripped_location';
+    const reconstructedLocation = `/api/jobs/copilot_run/${runId}/events`;
     apiFetchMock.mockResolvedValue(
       new Response(
         JSON.stringify({
-          run_id: 'ask_proxy_stripped_location',
+          run_id: runId,
           session_id: 'copilot-session-proxy-stripped-location',
-          checkpoint_event_id: 'ask_proxy_stripped_location',
+          checkpoint_event_id: runId,
         }),
         { status: 202, headers: { 'Content-Type': 'application/json' } },
       ),
+    );
+    consumeDurableMock.mockImplementationOnce(
+      async (options: { onUpdate?: (view: typeof completedView) => void }) => {
+        options.onUpdate?.(completedView);
+        return completedView;
+      },
     );
 
     render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
@@ -715,18 +723,74 @@ describe('CopilotDock accepted durable reconnect', () => {
     );
     await user.click(screen.getByTestId('copilot-composer-send'));
 
-    expect(
-      await screen.findByText('后台任务已受理，但没有返回进度地址；请稍后重新打开对话。'),
-    ).toBeTruthy();
-    expect(screen.queryByRole('button', { name: '重试' })).toBeNull();
-    expect(screen.queryByRole('button', { name: '重新连接' })).toBeNull();
+    await screen.findByText(completedView.replyText);
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
-    expect(consumeDurableMock).not.toHaveBeenCalled();
+    expect(consumeDurableMock).toHaveBeenCalledWith(
+      expect.objectContaining({ location: reconstructedLocation }),
+    );
     expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
     expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
-    expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
-      false,
+    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).toBeNull();
+  });
+
+  it('preserves the exact key and rich body for human recovery when 202 has no usable handle', async () => {
+    const recoveredRunId = 'ask_proxy_stripped_and_truncated_recovered';
+    const recoveredLocation = `/api/jobs/copilot_run/${recoveredRunId}/events`;
+    const acceptedWithoutHandle = new Response('{"run_id":"truncated-after-headers"', {
+      status: 202,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    apiFetchMock.mockResolvedValueOnce(acceptedWithoutHandle).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          run_id: recoveredRunId,
+          session_id: 'copilot-session-proxy-recovery',
+          checkpoint_event_id: recoveredRunId,
+        }),
+        {
+          status: 202,
+          headers: { Location: recoveredLocation, 'Content-Type': 'application/json' },
+        },
+      ),
     );
+    consumeDurableMock.mockImplementationOnce(
+      async (options: { onUpdate?: (view: typeof completedView) => void }) => {
+        options.onUpdate?.(completedView);
+        return completedView;
+      },
+    );
+
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByTestId('copilot-composer-input'),
+      '请后台交叉核对 48 道含参方程、六个未教学探针和九道迁移题；逐题验证定义域、退化分支与唯一解。',
+    );
+    await user.click(screen.getByTestId('copilot-composer-send'));
+
+    expect(
+      await screen.findByText('后台任务已受理，但没有返回进度地址；请用原请求恢复进度。'),
+    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: '恢复' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '不再恢复' })).toBeTruthy();
+    const pending = window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY);
+    expect(pending).not.toBeNull();
+    expect(pending).toContain('48 道含参方程');
+
+    const originalHeaders = new Headers(apiFetchMock.mock.calls[0]?.[1]?.headers);
+    const originalBody = apiFetchMock.mock.calls[0]?.[1]?.body;
+    await user.click(screen.getByRole('button', { name: '恢复' }));
+    await screen.findByText(completedView.replyText);
+
+    expect(apiFetchMock).toHaveBeenCalledTimes(2);
+    const recoveredHeaders = new Headers(apiFetchMock.mock.calls[1]?.[1]?.headers);
+    expect(recoveredHeaders.get('Idempotency-Key')).toBe(originalHeaders.get('Idempotency-Key'));
+    expect(apiFetchMock.mock.calls[1]?.[1]?.body).toBe(originalBody);
+    expect(String(originalBody)).toContain('六个未教学探针');
+    expect(consumeDurableMock).toHaveBeenCalledWith(
+      expect.objectContaining({ location: recoveredLocation }),
+    );
+    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).toBeNull();
   });
 
   it('keeps the composer honestly disabled while an inline subtask is still running', async () => {

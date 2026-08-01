@@ -34,6 +34,7 @@ import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
   hasCancelRequest,
+  isCopilotRunTerminalFailureReason,
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
 import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
@@ -204,13 +205,7 @@ interface TerminalProjectionEvent {
 
 function isCopilotDeliberateFailedEvent(event: TerminalProjectionEvent): boolean {
   if (event.event_type !== COPILOT_RUN_EVENTS.FAILED) return false;
-  const reason = event.payload?.reason;
-  return (
-    reason === 'cancelled' ||
-    reason === 'exhausted' ||
-    reason === 'enqueue_failed' ||
-    reason === 'ambiguous_execution'
-  );
+  return isCopilotRunTerminalFailureReason(event.payload?.reason);
 }
 
 interface FailedTerminalProjection {

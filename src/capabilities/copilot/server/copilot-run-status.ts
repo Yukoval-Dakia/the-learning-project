@@ -39,6 +39,18 @@ export const COPILOT_RUN_EVENTS = {
   CANCEL_REQUESTED: 'copilot_run.cancel_requested',
 } as const;
 
+/** FAILED reasons that permanently settle a run rather than one retry attempt. */
+export const COPILOT_RUN_TERMINAL_FAILURE_REASONS = [
+  'cancelled',
+  'exhausted',
+  'enqueue_failed',
+  'ambiguous_execution',
+] as const;
+
+export function isCopilotRunTerminalFailureReason(value: unknown): boolean {
+  return COPILOT_RUN_TERMINAL_FAILURE_REASONS.some((reason) => reason === value);
+}
+
 export type CopilotRunEventType = (typeof COPILOT_RUN_EVENTS)[keyof typeof COPILOT_RUN_EVENTS];
 
 /**

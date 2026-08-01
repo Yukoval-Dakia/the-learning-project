@@ -924,28 +924,43 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       // with explicit Last-Event-ID reconnects; every update patches the SAME AI
       // row, so replay cannot create duplicate cards or a ghost reply.
       if (res.status === 202) {
-        // 202 + Location is the authoritative acceptance boundary. Do not await
-        // the informational JSON body before recording the handle: if that body
-        // is truncated after headers arrive, retry must reconnect this accepted
-        // run rather than POST the user turn a second time.
+        // 202 is the authoritative acceptance boundary. Prefer Location, but a
+        // proxy may strip it while preserving the JSON run_id. Reconstruct only
+        // the same-origin canonical job-events path; if neither carrier is
+        // usable, retain the exact key + body for explicit same-key recovery.
         durableAccepted = true;
-        void res.body?.cancel().catch(() => undefined);
-        const location = res.headers.get('Location');
+        let location = res.headers.get('Location');
+        let runId = durableRunIdFromLocation(location);
+        if (runId) {
+          // A valid header is sufficient even if the informational JSON body is
+          // truncated after headers. Do not let body parsing weaken acceptance.
+          void res.body?.cancel().catch(() => undefined);
+        } else {
+          try {
+            const acceptedBody = (await res.json()) as { run_id?: unknown };
+            if (typeof acceptedBody.run_id === 'string') {
+              const reconstructedLocation = `/api/jobs/copilot_run/${encodeURIComponent(acceptedBody.run_id)}/events`;
+              if (durableRunIdFromLocation(reconstructedLocation) === acceptedBody.run_id) {
+                runId = acceptedBody.run_id;
+                location = reconstructedLocation;
+              }
+            }
+          } catch {
+            // The human-controlled recovery below replays the exact key/body.
+          }
+        }
         aiCreated = true;
         applyRunViewToMessage(
           aiId,
           inlineRunView,
           '这件事需要多步处理，我已转到后台；进度会在这里持续更新。',
         );
-        const runId = durableRunIdFromLocation(location);
         if (!location || !runId) {
-          // The current server contract always supplies Location. If a proxy
-          // strips it, suppress generic re-POST retry because acceptance is
-          // already known but the stable reconnect handle is unavailable.
+          // Acceptance is known, but the stable reconnect handle is not. Keep
+          // lastUserTurnRef + sessionStorage intact: the only safe redispatch is
+          // an explicit replay of this exact key and normalized body.
           durableHandleMissing = true;
-          lastUserTurnRef.current = null;
-          clearPersistedPendingCopilotTurn(idempotencyKey);
-          throw new Error('后台任务已受理，但没有返回进度地址；请稍后重新打开对话。');
+          throw new Error('后台任务已受理，但没有返回进度地址；请用原请求恢复进度。');
         }
         durableHandle = {
           v: 1,
@@ -1128,10 +1143,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     } catch (err) {
       // Network / stream error mid-flight. Drop any partial bubble and show the
       // existing 重试 affordance — the inline turn was best-effort. A durable
-      // 202 was already accepted server-side, so NEVER drop its row: doing so
-      // would hide a still-running job and let its eventual replay look like a
-      // ghost reply. Freeze the visible progress instead.
-      if (aiCreated && !durableAccepted) {
+      // 202 was already accepted server-side, so keep its row whenever a stable
+      // handle exists. With no usable handle, drop only the placeholder; the
+      // exact same-key recovery will rebuild one authoritative row.
+      if (aiCreated && (!durableAccepted || durableHandleMissing)) {
         setMessages((prev) => prev.filter((m) => m.id !== aiId));
       } else if (durableAccepted) {
         setMessages((prev) => prev.map((m) => (m.id === aiId ? { ...m, streaming: false } : m)));
@@ -1151,11 +1166,12 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         clearPersistedPendingCopilotTurn(idempotencyKey);
       }
       setPendingAcceptanceUnknown(
-        !dispatchResponseReceived &&
-          (!(err instanceof ApiError) || err.code === 'copilot_enqueue_ambiguous'),
+        durableHandleMissing ||
+          (!dispatchResponseReceived &&
+            (!(err instanceof ApiError) || err.code === 'copilot_enqueue_ambiguous')),
       );
       if (durableHandleMissing) {
-        message = '后台任务已受理，但没有返回进度地址；请稍后重新打开对话。';
+        message = '后台任务已受理，但没有返回进度地址；请用原请求恢复进度。';
       } else if (durableAccepted) {
         message = durableReconnectErrorMessage(err);
       } else if (err instanceof ApiError) {

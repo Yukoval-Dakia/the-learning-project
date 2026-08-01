@@ -11,6 +11,7 @@ import {
   copilotBossJobId,
   copilotRunIdForIdempotencyKey,
   findCopilotDurableAcceptance,
+  hasTerminalCopilotRun,
   hashCopilotDurableInput,
   reconcileCopilotDurableAcceptance,
   reserveCopilotDurableAcceptance,
@@ -238,5 +239,47 @@ describe('durable Copilot dispatch acceptance', () => {
       inputHash,
       bossJobId,
     });
+  });
+
+  it('keeps a retained retryable provider failure dispatchable until a deliberate terminal arrives', async () => {
+    const runId = 'copilot_user_ask_retry_48_items_6_probes';
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.QUEUED,
+      payload: {
+        session_id: 'conversation_retry_48_items_6_probes',
+        pickup_deadline_ms: Date.now() + 15_000,
+        dispatch: {
+          source: 'model_triage',
+          reason_code: 'multi_artifact_work',
+          task_run_id: 'copilot_dispatch_retry_48_items_6_probes',
+        },
+      },
+    });
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.FAILED,
+      payload: {
+        reason: 'error',
+        error: 'transient provider gateway reset after validating 31 of 48 items',
+      },
+    });
+
+    await expect(hasTerminalCopilotRun(testDb(), runId)).resolves.toBe(false);
+
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.FAILED,
+      payload: {
+        reason: 'exhausted',
+        error: 'validator retry budget exhausted on the sixth unlearned probe',
+        checkpoint_event_id: runId,
+      },
+    });
+
+    await expect(hasTerminalCopilotRun(testDb(), runId)).resolves.toBe(true);
   });
 });
