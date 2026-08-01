@@ -444,6 +444,25 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(captured.signal.aborted).toBe(true);
   });
 
+  it('threads an already-aborted owner signal through non-streaming runTask', async () => {
+    mockSdk.messages = [assistant('classifier result'), resultMsg];
+    const owner = new AbortController();
+    owner.abort();
+
+    await runTask(
+      'AttributionTask',
+      { q: 'bounded classifier input' },
+      {
+        db: fakeDb,
+        signal: owner.signal,
+      },
+    );
+
+    const captured = (mockSdk.capturedOptions as { abortController: AbortController })
+      .abortController;
+    expect(captured.signal.aborted).toBe(true);
+  });
+
   it('records failure (not success) when the stream ends without a terminal result message', async () => {
     // Assistant deltas arrive but the SDK stream ends WITHOUT a result message and
     // WITHOUT throwing. The collecting variant must NOT record this as success

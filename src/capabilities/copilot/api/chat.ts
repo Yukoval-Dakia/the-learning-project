@@ -39,6 +39,17 @@ import { Conversation } from '@/server/session';
 // moves from this counter into durable job_events once QUEUED is committed.
 let durableDispatchReservations = 0;
 
+function requestAbortedError(): ApiError {
+  // 499 is the conventional server-side status for a client-closed request.
+  // The caller is already gone; the important contract is that no new durable
+  // side effect is committed after this guard observes the abort.
+  return new ApiError('request_aborted', 'request aborted before acceptance', 499);
+}
+
+function assertRequestActive(signal: AbortSignal): void {
+  if (signal.aborted) throw requestAbortedError();
+}
+
 // 签名对齐 kernel RouteHandler 双参形（path 无参数段，_params 不用）。
 export async function POST(req: Request, _params: Record<string, string>): Promise<Response> {
   // Parse BEFORE constructing the stream：坏 body 走普通 JSON error（既有契约），
@@ -57,6 +68,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
     }
     return errorResponse(err);
   }
+  if (req.signal.aborted) return errorResponse(requestAbortedError());
 
   const backgroundJobsEnabled = shouldEnqueueBackgroundJobs();
   const dispatchDecision =
@@ -64,11 +76,19 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
     parsed.triggered_by === 'chat' &&
     !parsed.skill_context &&
     backgroundJobsEnabled
-      ? await decideCopilotDispatch(db, {
-          user_message: parsed.user_message,
-          ...(parsed.ambient_context ? { ambient_context: parsed.ambient_context } : {}),
-        })
+      ? await decideCopilotDispatch(
+          db,
+          {
+            user_message: parsed.user_message,
+            ...(parsed.ambient_context ? { ambient_context: parsed.ambient_context } : {}),
+          },
+          { signal: req.signal },
+        )
       : undefined;
+  // The model judgment happens before the 200/202 acceptance boundary. If the
+  // client disconnected while it was in flight, do not turn its now-ambiguous
+  // failed POST into a paid durable run that a retry could duplicate.
+  if (req.signal.aborted) return errorResponse(requestAbortedError());
   const durableRequested = parsed.durable === true || dispatchDecision?.mode === 'durable';
 
   // YUK-364/YUK-757 — durable 分流。显式 durable:true 仍直接受理；未显式选择的
@@ -106,11 +126,13 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
     let sessionId: string | undefined;
     let reservedDispatchSlot = false;
     try {
+      assertRequestActive(req.signal);
       // YUK-693 — bound both a short request burst and the durable backlog. The
       // process-local reservation closes concurrent count→enqueue races; the DB
       // query remains the durable source of truth across restarts/processes.
       checkRateLimit();
       const outstanding = await countOutstandingDurableRuns(db);
+      assertRequestActive(req.signal);
       if (outstanding + durableDispatchReservations >= MAX_OUTSTANDING_DURABLE_RUNS) {
         throw new ApiError(
           'copilot_backlog_full',
@@ -124,6 +146,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
 
       // 1) 复用 inline 同一会话信封——durable run 的 user_ask / 回复事件共享 session_id。
       const conv = await Conversation.findOrCreateCopilotConversation(db, {});
+      assertRequestActive(req.signal);
       sessionId = conv.sessionId;
       // 2) 写 user_ask domain event = run handle = checkpoint_id（与 inline 同一份
       //    写入逻辑，防漂移）。run_id 既是 handle 也是 job_events business_id。

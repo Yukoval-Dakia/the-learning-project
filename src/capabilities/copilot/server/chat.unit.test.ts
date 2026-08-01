@@ -573,6 +573,7 @@ describe('YUK-757 Copilot execution-mode judgment', () => {
     '读取近 30 天 12 次电磁感应错题，按“方向误判、单位遗漏、磁通量边界、图像斜率”四类聚类；每类找重复证据，再生成共 8 道新题，逐题核验唯一解、单位和退化条件，最后只 propose 调整计划。';
 
   it('prefers native structured output, ignores prose/reasoning_content, and binds the no-tool task run', async () => {
+    const owner = new AbortController();
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'sdk_return_id_is_not_router_binding',
       text: '{"mode":"inline","reason":"bounded_answer"}',
@@ -591,7 +592,11 @@ describe('YUK-757 Copilot execution-mode judgment', () => {
           focused_entity: { kind: 'knowledge', id: 'kc_electromagnetic_induction' },
         },
       },
-      { runAgentTaskFn, createTaskRunId: () => 'copilot_dispatch_complex_fixture' },
+      {
+        runAgentTaskFn,
+        createTaskRunId: () => 'copilot_dispatch_complex_fixture',
+        signal: owner.signal,
+      },
     );
 
     expect(decision).toEqual({
@@ -611,6 +616,7 @@ describe('YUK-757 Copilot execution-mode judgment', () => {
       },
       expect.objectContaining({
         taskRunId: 'copilot_dispatch_complex_fixture',
+        signal: owner.signal,
         outputFormat: expect.objectContaining({ type: 'json_schema' }),
       }),
     );

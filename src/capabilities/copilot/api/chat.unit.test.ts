@@ -339,9 +339,11 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
     expect(bossSendMock).not.toHaveBeenCalled();
     expect(runMock).toHaveBeenCalled();
-    expect(dispatchMock).toHaveBeenCalledWith(expect.objectContaining({ execute: dbExecuteMock }), {
-      user_message: 'hi',
-    });
+    expect(dispatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({ execute: dbExecuteMock }),
+      { user_message: 'hi' },
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it('YUK-757 — absent + model durable decision returns 202 and stamps bounded dispatch provenance', async () => {
@@ -375,13 +377,17 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
 
     expect(res.status).toBe(202);
     expect(res.headers.get('Location')).toBe('/api/jobs/copilot_run/copilot_user_ask_AUTO/events');
-    expect(dispatchMock).toHaveBeenCalledWith(expect.objectContaining({ execute: dbExecuteMock }), {
-      user_message: userMessage,
-      ambient_context: {
-        route: '/subjects/physics/mistakes',
-        focused_entity: { kind: 'knowledge', id: 'kc_electromagnetic_induction' },
+    expect(dispatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({ execute: dbExecuteMock }),
+      {
+        user_message: userMessage,
+        ambient_context: {
+          route: '/subjects/physics/mistakes',
+          focused_entity: { kind: 'knowledge', id: 'kc_electromagnetic_induction' },
+        },
       },
-    });
+      { signal: expect.any(AbortSignal) },
+    );
     expect(writeJobEventMock).toHaveBeenCalledWith(
       expect.objectContaining({ execute: dbExecuteMock }),
       expect.objectContaining({
@@ -405,6 +411,70 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
         },
       }),
     );
+    expect(runMock).not.toHaveBeenCalled();
+  });
+
+  it('YUK-757 — abort during model triage stops before any durable acceptance side effect', async () => {
+    shouldEnqueueMock.mockReturnValue(true);
+    findOrCreateMock.mockClear();
+    writeUserAskMock.mockClear();
+    writeJobEventMock.mockClear();
+    bossSendMock.mockClear();
+    getStartedBossMock.mockClear();
+    runMock.mockClear();
+    let releaseDecision:
+      | ((decision: {
+          mode: 'durable';
+          reason: 'multi_artifact_work';
+          source: 'model_triage';
+          task_run_id: string;
+        }) => void)
+      | undefined;
+    dispatchMock.mockImplementationOnce(
+      async () =>
+        await new Promise((resolve) => {
+          releaseDecision = resolve;
+        }),
+    );
+    const controller = new AbortController();
+    const request = new Request('http://test/api/copilot/chat', {
+      method: 'POST',
+      signal: controller.signal,
+      body: JSON.stringify({
+        user_message:
+          '读取近 60 天 48 道电磁感应与含参函数错题，交叉核验证据、生成 12 道迁移题并逐题跑 validator。',
+        triggered_by: 'chat',
+        ambient_context: {
+          route: '/subjects/physics/mistakes',
+          focused_entity: { kind: 'knowledge', id: 'kc_electromagnetic_induction' },
+        },
+      }),
+    });
+
+    const pending = POST(request, {});
+    await vi.waitFor(() => expect(dispatchMock).toHaveBeenCalledTimes(1));
+    const classifierSignal = dispatchMock.mock.calls[0]?.[2]?.signal as AbortSignal;
+    expect(classifierSignal.aborted).toBe(false);
+    controller.abort();
+    expect(classifierSignal.aborted).toBe(true);
+    releaseDecision?.({
+      mode: 'durable',
+      reason: 'multi_artifact_work',
+      source: 'model_triage',
+      task_run_id: 'copilot_dispatch_aborted_before_acceptance',
+    });
+    const response = await pending;
+
+    expect(response.status).toBe(499);
+    expect(await response.json()).toEqual({
+      error: 'request_aborted',
+      message: 'request aborted before acceptance',
+    });
+    expect(findOrCreateMock).not.toHaveBeenCalled();
+    expect(writeUserAskMock).not.toHaveBeenCalled();
+    expect(writeJobEventMock).not.toHaveBeenCalled();
+    expect(getStartedBossMock).not.toHaveBeenCalled();
+    expect(bossSendMock).not.toHaveBeenCalled();
     expect(runMock).not.toHaveBeenCalled();
   });
 

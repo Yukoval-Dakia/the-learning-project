@@ -105,6 +105,8 @@ export interface TaskMiddleware {
 
 export interface RunTaskCtx {
   db: Db;
+  /** Caller-owned cancellation propagated into the SDK run lifecycle. */
+  signal?: AbortSignal;
   /** Only vision/ingestion paths use this; runTask itself doesn't dereference. */
   r2?: R2Client;
   /** Override provider/model for testing or per-call routing escapes. */
@@ -224,16 +226,6 @@ export type RunAgentTaskCtx = RunTaskCtx;
 export type StreamTaskCtx = RunTaskCtx & {
   /** Reserved for back-compat with the old Vercel AI SDK shape; ignored. */
   tools?: Record<string, unknown>;
-  /**
-   * YUK-238 [STB-4]: the request's AbortSignal (`req.signal`). When the client
-   * disconnects mid-stream, wiring this into the SDK's abortController tears the
-   * in-flight agent run down instead of letting it burn the model budget to
-   * completion. Optional so non-HTTP callers (tests, background jobs) can omit
-   * it; the ReadableStream `cancel` callback is the second, transport-level
-   * trigger that also aborts. Threading a real signal from a route is the
-   * follow-up (YUK-238).
-   */
-  signal?: AbortSignal;
 };
 
 export interface MultimodalTaskInput {
@@ -698,6 +690,7 @@ export async function runTask(
       timeoutMs: def.budget.timeout,
       override: ctx.override,
       taskRunId: attempt === 1 ? ctx.taskRunId : undefined,
+      signal: ctx.signal,
       logScope: 'runTask',
       afterRun: ctx.middleware?.afterRun
         ? (result) => ctx.middleware?.afterRun?.(kind, result, ctx)

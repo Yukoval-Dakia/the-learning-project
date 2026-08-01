@@ -652,6 +652,7 @@ export type CopilotDispatchResult =
 export interface DecideCopilotDispatchDeps {
   runAgentTaskFn?: RunAgentTaskFn;
   createTaskRunId?: () => string;
+  signal?: AbortSignal;
 }
 
 const COPILOT_DISPATCH_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(CopilotDispatchDecisionSchema);
@@ -679,6 +680,7 @@ export async function decideCopilotDispatch(
       {
         db,
         taskRunId,
+        signal: deps.signal,
         outputFormat: COPILOT_DISPATCH_OUTPUT_FORMAT,
       },
     );
