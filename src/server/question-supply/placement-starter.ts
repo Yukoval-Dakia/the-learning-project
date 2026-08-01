@@ -7,7 +7,6 @@ import { and, eq } from 'drizzle-orm';
 import type { SendOptions } from 'pg-boss';
 import { dispatchSupplyTarget } from './dispatcher';
 import { EvidenceDemandV1, evidenceDemandToTargetContext } from './evidence-demand';
-import { markPlacementStarterClaimTerminal } from './placement-starter-store';
 import type { QuestionSupplyTarget } from './target-discovery';
 
 const PLACEMENT_STARTER_COUNT = 8;
@@ -109,8 +108,8 @@ export async function dispatchPlacementStarterClaimTx(
   const now = new Date();
   // Enqueue + status→queued run in a SAVEPOINT (nested tx) so a nonterminal single-flight 23505 on
   // the pending→queued update rolls back the enqueue (no orphan quiz_gen job) without aborting the
-  // outer tx — then we terminalize this claim below. The outer FOR UPDATE lock on the claim persists
-  // across the savepoint (YUK-452 round-2).
+  // outer tx — then we leave the claim pending for a later attempt. The outer FOR UPDATE lock on
+  // the claim persists across the savepoint (YUK-452 round-2 / YUK-776).
   try {
     return await tx.transaction(async (sp) => {
       const target = buildPlacementStarterTarget(claim);
@@ -149,17 +148,13 @@ export async function dispatchPlacementStarterClaimTx(
     });
   } catch (err) {
     if (!isNonterminalSingleFlightViolation(err)) throw err;
-    // Another claim for this goal+subject is already in flight and won the single-flight slot. This
-    // (losing/stale) claim never dispatched, so it spent nothing — terminalize it as 'cancelled'
-    // (the closest existing terminal enum state; there is no 'superseded' in the status enum / check
-    // constraint, and we must not widen the enum). The savepoint rollback already undid the enqueue
-    // and dispatch observation writes, so no paid flight and no orphan job result. Returns null (no
-    // dispatch) rather than a retry loop or a 500.
-    await markPlacementStarterClaimTerminal(tx, claim.id, 'cancelled', now, {
-      class: 'superseded',
-      code: 'nonterminal_single_flight',
-      message: 'superseded by a concurrent in-flight placement claim for the same goal+subject',
-    });
+    // Another revision still owns the paid single-flight slot. The losing claim may be the CURRENT
+    // authoritative revision, so terminalizing it would be irreversible: its deterministic
+    // (revision, subject) identity cannot be re-created after the old flight eventually finishes.
+    // Keep it pending. The savepoint already rolled back the enqueue + observations, so this is a
+    // free deferral with no orphan job; /placement/start or the recovery sweeper can retry after the
+    // winner terminalizes. A genuinely stale pending claim is cancelled by the sweeper's explicit
+    // semantic-revision guard, where authority is known rather than guessed from a 23505.
     return null;
   }
 }

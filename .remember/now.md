@@ -1,29 +1,47 @@
-# 当前 handoff — 2026-08-01 YUK-814 mock closeout
+# 当前 handoff — 2026-08-01 YUK-776 placement in-flight recovery
 
 ## Current state
 
-- 权威主线：`origin/main@931b1742`，包含 YUK-829 / PR #1139。
-- active closeout branch：`codex/yuk-814-mock-closeout`。
-- YUK-814 已按 owner 本轮明确决定，以 complex mock 作为 issue closure evidence，并在
-  Linear 从 In Progress 置 Done；stale `blockedBy: YUK-829` relation 已移除。
-- 本 lane 不修改产品 runtime，不部署，不翻 `AUTO_INTERVENTION_EXPANSION_ENABLED`。
+- delivery base：`origin/main@6f91bab96c444d68fad8a93764d609563a4d9a5a`（YUK-814 / PR
+  #1140 已合并）。
+- clean delivery worktree：
+  `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-776-placement-inflight-recovery-v2`，
+  branch `codex/yuk-776-placement-inflight-recovery-v2`。
+- 旧的 stopped worktree
+  `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-776-placement-inflight-recovery`
+  仍保留原 uncommitted partial，未修改、未强删；本 lane 只把其可用 diff 移植到 clean main
+  base 后补完。
 
-## Acceptance evidence
+## Delivered invariant
 
-- clean base revision：`931b1742395ef10bf5fbac8645ab3b54af561a98`。
-- scoped command：
-  `pnpm exec vitest run --config vitest.unit.config.ts src/server/grounding-gate/artifacts.unit.test.ts src/server/grounding-gate/intervention-review-eval.unit.test.ts src/capabilities/practice/server/intervention-author.unit.test.ts --reporter=dot`
-- 结果：3 files / 41 tests passed；未在本机运行完整 `pnpm test`。
-- complex packet：101,764 bytes / 1,137 lines / 6 full packages；数学、语文、通用推理；
-  3 expected rejects + 3 expected-pass controls。
-- packet SHA-256：
-  `85af0488411ae2099f1a804a16a999444ce7bc11eadd09c6debae6a188106530`。
-- mock canary scorer 仍覆盖 exactly 10 runs、unique intervention refs、全部 post-review、
-  monitoring refs、stop-switch retention 与 zero redlines。
+- recovery sweeper 独立扫描 `retry_scheduled`、`queued/running/verifying`、
+  `pending_dispatch`，每腿有自己的 `maxPerRun`，不会互相饿死。
+- `queued` 在 120 分钟 queue expiry 前完全不 probe；到期后仍须 owning job non-live 才收口。
+- `running/verifying` 的权威是 active attempt lease，不是 claim elapsed timestamp：future lease
+  停到精确 expiry；expired/null/missing attempt 仍须 owning job non-live 才进入 durable reap。
+- durable reap 在一个事务内 re-check claim/job/fence/lease，interrupt attempt、只 supersede
+  `authorized` questions、terminalize claim；renewed lease、rotated fence、changed job/status、
+  row-lock contention 全部 fail-closed stand down。
+- in-flight leg 在 paid pending leg 之前执行：同一 `(goal, subject)` 的 old running zombie 被
+  exhausted 后，current authoritative pending claim 同轮进入 queued；若 old job 首轮仍 live，
+  真实 dispatch savepoint 的 23505 会回滚 enqueue 但保留同一个 current claim，下一轮 old dead
+  后无需 re-materialize 即可 queued。
+- renew / mark-verifying / finish 都要求 `lease_expires_at > now`，过期 worker 不能复活旧 fence。
 
-## Honest boundary
+## Verification evidence
 
-- 这是 owner 对 **YUK-814 issue status** 的显式 waiver，不是 real prospective canary。
-- 历史 Gate C real run 的 false-pass/redline 证据仍保留；没有被覆盖或删除。
-- `satisfies_yuk_814_canary=false` 保持不变；生产 expansion flag 保持 OFF。
-- 下一条推荐 active 产品线是 YUK-776；YUK-571 仍需 owner human-in-loop。
+- scoped real-Postgres command：
+  `pnpm exec vitest run --config vitest.db.config.ts src/capabilities/practice/server/placement-starter-recovery.db.test.ts src/server/question-supply/placement-starter-attempts.db.test.ts src/server/question-supply/placement-starter-store.db.test.ts --reporter=dot`
+- 当前结果：3 files / 101 tests passed；覆盖 queue boundary、running+verifying、null/missing
+  attempt、terminal history、complex 三题 authority packet、lease/fence/job races、两个 sweeper、
+  claim/attempt NOWAIT locks、三腿独立 cap、live→dead 两轮恢复，以及生产 dispatch Tx 的
+  cross-revision 23505 保留/重试契约。
+- `pnpm typecheck`、`pnpm lint`、`pnpm build`：passed。
+- 未在本机运行完整 `pnpm test`；完整 pre-merge gate 只由 exact-head GitHub CI 执行。
+
+## Closeout boundary
+
+- 本 lane 不部署、不触发真实付费 generation、不改 placement feature flag。
+- YUK-776 合并后可置 Done；后续 product issue 在下一独立 session 继续。
+- 未发现需要另建 Linear issue 的新 P0/P1；未结算 `reservation:*` 在 terminal old claim 中保留
+  保守成本上界，不静默退款或抹除真实 provider provenance。

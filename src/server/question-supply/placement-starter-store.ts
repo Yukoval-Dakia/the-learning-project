@@ -264,12 +264,10 @@ export async function ensurePlacementStarterKnowledgeAndClaim(
       updated_at: now,
       version: 0,
     })
-    // Target-less ON CONFLICT DO NOTHING so BOTH the PK (same revision re-run, idempotent) and
-    // the placement_starter_claim_nonterminal_uq partial unique on (goal_id, subject_id) — an
-    // earlier revision's claim still in flight for this goal+subject — degrade to a silent skip
-    // rather than aborting the materialize transaction. The cross-revision skip is the intended
-    // budget guard: the in-flight batch fills the pool; a later placement/start re-materializes
-    // once it terminalizes (YUK-452 review).
+    // Target-less ON CONFLICT DO NOTHING makes same-revision re-runs idempotent. pending_dispatch
+    // is intentionally outside the cross-revision nonterminal index, so a current revision claim
+    // is persisted even while an older paid flight exists; its dispatch remains pending and
+    // retryable until that old flight terminalizes (YUK-776).
     .onConflictDoNothing();
   return { identity, insertedKnowledge: Boolean(inserted) };
 }

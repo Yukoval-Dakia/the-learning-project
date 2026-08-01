@@ -1,4 +1,4 @@
-// YUK-761 — placement starter claim recovery sweeper (「建成不通电」收口 for YUK-452 Phase B).
+// YUK-761 / YUK-776 — placement starter claim recovery sweeper.
 //
 // YUK-452 Phase B shipped the recovery INFRASTRUCTURE — `placement_starter_claim.next_reconcile_at`
 // (migration 0074) plus the partial `placement_starter_claim_recovery_idx` on
@@ -39,18 +39,22 @@
 //   terminalizing then would make the eventual delivery fail admission in
 //   `acquirePlacementAttempt` and throw away paid generation work that was still coming.
 //
-// The other three nonterminal states inside the index predicate (queued / running / verifying)
-// are NOT swept here: they are owned by a live pg-boss delivery and by the attempt lease/fence
-// machinery. Widening the sweep to them needs its own lease-expiry analysis.
+// `queued` / `running` / `verifying` — FAIL-CLOSED REAP. A valid in-flight attempt owns its claim
+//   while `lease_expires_at > now`; elapsed claim `updated_at` is not delivery authority (attempt
+//   heartbeats renew the lease independently). Once no active lease remains, the owning job is the final
+//   redelivery authority. Only when that job is also confirmed non-live may recovery atomically
+//   fence an expired attempt (`interrupted`), supersede its authorized questions, and terminalize
+//   the claim as `exhausted`. A renewed/rotated fence or a live/unreadable job always wins and is
+//   deferred. queued legitimately has no attempt, so its proof is "no active attempt + dead job".
 //
-// ── Two INDEPENDENT legs, two independent budgets (anti-starvation) ───────────────────────
-// The reap leg and the re-drive leg run their own capped queries. They must NOT share one scan:
+// ── Three INDEPENDENT legs, three independent budgets (anti-starvation) ───────────────────
+// The two reap legs and the re-drive leg run their own capped queries. They must NOT share one scan:
 // the re-drive leg is gated on PLACEMENT_PROBE_ENABLED and can accumulate a backlog of claims it
 // declines to touch, and a single shared `ORDER BY next_reconcile_at LIMIT n` would let ≥n such
 // rows monopolise every run forever — so a `retry_scheduled` zombie sorted behind them would
 // NEVER be reaped, resurrecting the blocked-revision bug this sweeper exists to fix, via its own
-// scan order. Separate queries make the reap leg structurally immune to whatever the paid leg
-// does or skips.
+// scan order. Separate queries make both reap classes structurally immune to whatever the paid
+// leg does or skips.
 //
 // ── Idempotency / anti-double-drive ───────────────────────────────────────────────────────
 // EVERY visited claim is ACQUIRED by a conditional UPDATE (`WHERE id = ? AND status = ? AND
@@ -58,11 +62,11 @@
 // paths that then decline to act (missing goal, still-live retry job) AND the paths that fail.
 // A claim that is visited but never advanced would re-occupy the per-run budget on every
 // subsequent run, which is the same starvation failure by another route. So the invariant is
-// "visited ⇒ advanced", and it admits NO exceptions: BOTH legs acquire before doing anything that
+// "visited ⇒ advanced", and it admits NO exceptions: ALL legs acquire before doing anything that
 // can fail or that reaches outside this process — the re-drive leg before its goal read, authority
-// pre-check and scope resolution (all DB reads that can throw), the reap leg before the pg-boss
-// liveness probe (which also means never querying pg-boss on behalf of a claim another sweeper
-// already owns). `guardClaim` then advances the cursor best-effort on anything that still escapes.
+// pre-check and scope resolution (all DB reads that can throw), and both reap legs before their
+// pg-boss liveness probe (which also means never querying pg-boss on behalf of a claim another
+// sweeper already owns). `guardClaim` then advances the cursor best-effort on anything that escapes.
 // A second sweeper pass in the same window matches zero rows and does nothing.
 //
 // ── Failure containment (three nested rings) ──────────────────────────────────────────────
@@ -79,17 +83,19 @@
 // bumping it on a scheduler visit would push the reap deadline out forever.
 
 import type { Db } from '@/db/client';
-import { goal, placement_starter_claim } from '@/db/schema';
+import { goal, placement_starter_attempt, placement_starter_claim } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import {
   PLACEMENT_PROBE_ENABLED,
+  PLACEMENT_QUEUE_EXPIRY_MS,
   dispatchPlacementStarterClaim,
   isPlacementStarterJobLive,
   lockPlacementSupplyScopes,
   markPlacementStarterClaimTerminal,
   resolvePlacementStarterGoalAuthority,
+  terminalizeLostPlacementDelivery,
 } from '@/kernel/placement';
-import { and, asc, eq, lte } from 'drizzle-orm';
+import { and, asc, eq, inArray, lte } from 'drizzle-orm';
 import { resolveGoalPlacementScope } from './placement-scope';
 import { selectNextPlacementItem } from './placement-select';
 
@@ -128,6 +134,8 @@ export interface PlacementStarterRecoveryResult {
   scannedPending: number;
   /** Overdue retry_scheduled claims returned by the reap leg's own scan (after its cap). */
   scannedRetry: number;
+  /** Overdue queued/running/verifying claims returned by the lease/fence leg's own scan. */
+  scannedInflight: number;
   /** pending_dispatch claims re-driven into a real quiz_gen job. */
   redispatched: number;
   /** pending_dispatch claims whose paid admission was refused (pool already has an item, or the claim was superseded). */
@@ -140,6 +148,14 @@ export interface PlacementStarterRecoveryResult {
   retryPending: number;
   /** retry_scheduled claims past grace whose quiz_gen job is STILL live — deliberately not reaped. */
   retryJobLive: number;
+  /** In-flight claims terminalized after both lease/fence and job-liveness authority were gone. */
+  inflightReaped: number;
+  /** queued claims still inside the pg-boss queue expiry window. */
+  inflightQueuePending: number;
+  /** In-flight claims deferred because an attempt still held an unexpired lease. */
+  inflightLeaseActive: number;
+  /** Lease-expired/attempt-less in-flight claims deferred because the owning job remained live. */
+  inflightJobLive: number;
   /** Claims whose acquire CAS lost to a concurrent transition (already re-driven / terminalized elsewhere). */
   lost: number;
   /** Claims skipped because their goal row no longer exists (scope is unresolvable). */
@@ -154,9 +170,9 @@ export interface PlacementStarterRecoveryResult {
   goalLockBusy: number;
   /** Claims whose handling threw outside the inner guards; cursor best-effort advanced, sweep continued. */
   claimErrors: number;
-  /** Legs whose own scan query threw; the other leg still ran. */
+  /** Legs whose own scan query threw; sibling legs still ran. */
   legErrors: number;
-  /** True when PLACEMENT_PROBE_ENABLED is off: the paid re-drive leg did not run; the reap leg did. */
+  /** True when PLACEMENT_PROBE_ENABLED is off: the paid re-drive leg did not run; reap legs did. */
   redispatchSuppressed: boolean;
   /** True when the host caught a top-level sweep failure (see runQuestionSupplyNightly). */
   errored: boolean;
@@ -179,12 +195,17 @@ export function emptyPlacementStarterRecoveryResult(
   return {
     scannedPending: 0,
     scannedRetry: 0,
+    scannedInflight: 0,
     redispatched: 0,
     admissionSkipped: 0,
     redispatchFailed: 0,
     reaped: 0,
     retryPending: 0,
     retryJobLive: 0,
+    inflightReaped: 0,
+    inflightQueuePending: 0,
+    inflightLeaseActive: 0,
+    inflightJobLive: 0,
     lost: 0,
     goalMissing: 0,
     staleRevision: 0,
@@ -240,6 +261,25 @@ async function acquireClaim(
   return rows.length === 1;
 }
 
+/** Refine the cursor after an acquire without reopening it to another sweeper. */
+async function rescheduleAcquiredClaim(
+  db: Db,
+  claim: ClaimRow,
+  acquiredUntil: Date,
+  nextReconcileAt: Date,
+): Promise<void> {
+  await db
+    .update(placement_starter_claim)
+    .set({ next_reconcile_at: nextReconcileAt })
+    .where(
+      and(
+        eq(placement_starter_claim.id, claim.id),
+        eq(placement_starter_claim.status, claim.status),
+        eq(placement_starter_claim.next_reconcile_at, acquiredUntil),
+      ),
+    );
+}
+
 /** Run one leg, containing a failure of its own scan so the sibling leg still runs. */
 async function runLeg(
   result: PlacementStarterRecoveryResult,
@@ -291,10 +331,10 @@ async function guardClaim(
 }
 
 /**
- * Terminalize a claim whose semantic goal revision is no longer authoritative. 'cancelled' with the
- * same 'superseded' class `dispatchPlacementStarterClaimTx` uses for the losing side of a
- * single-flight race — the authority only moves forward, so a stale claim is undispatchable forever
- * and must leave the scan rather than be re-examined every window. Locks the claim row and
+ * Terminalize a claim whose semantic goal revision is no longer authoritative. The authority only
+ * moves forward, so a stale claim is undispatchable forever and must leave the scan rather than be
+ * re-examined every window. This explicit authority proof is deliberately different from a bare
+ * single-flight 23505, which cannot tell whether its loser is stale or current. Locks the claim row and
  * re-checks `pending_dispatch` first: a concurrent /placement/start may have dispatched it between
  * the scan and here, and a dispatched claim is not ours to cancel.
  */
@@ -357,9 +397,31 @@ function selectDueClaims(
 }
 
 /**
- * Sweep overdue placement starter claims: reap zombie `retry_scheduled` claims, re-drive stranded
- * `pending_dispatch` claims. Safe to call concurrently and safe to re-run — see the idempotency
- * note in the module header.
+ * queued/running/verifying use one independent claim-side cursor budget. The attempt lookup stays
+ * inside the handler so queued (which normally has no attempt) remains a first-class state rather
+ * than disappearing through an inner join.
+ */
+function selectDueInflightClaims(db: Db, now: Date, limit: number) {
+  return db
+    .select()
+    .from(placement_starter_claim)
+    .where(
+      and(
+        inArray(placement_starter_claim.status, ['queued', 'running', 'verifying']),
+        lte(placement_starter_claim.next_reconcile_at, now),
+      ),
+    )
+    .orderBy(
+      asc(placement_starter_claim.next_reconcile_at),
+      asc(placement_starter_claim.created_at),
+    )
+    .limit(limit);
+}
+
+/**
+ * Sweep overdue placement starter claims: reap zombie retries and lost in-flight deliveries, then
+ * re-drive stranded pending claims. Safe to call concurrently and safe to re-run — see the
+ * idempotency note in the module header.
  */
 export async function sweepStalePlacementStarterClaims(
   db: Db,
@@ -381,15 +443,29 @@ export async function sweepStalePlacementStarterClaims(
 
   const zombieCutoff = new Date(now.getTime() - PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS);
 
-  // Each leg is isolated from the other: the whole point of splitting the scans is that the reap
-  // leg cannot be held hostage by the paid leg, and that has to hold for FAILURE too, not just for
-  // budget. A leg whose own scan query throws is counted and skipped; the other leg still runs.
+  // Each leg is isolated from its siblings: neither reap class can be held hostage by the paid
+  // leg (or by each other), and that has to hold for FAILURE too, not just for budget.
   await runLeg(result, 'retry_scheduled', async () => {
     const dueRetry = await selectDueClaims(db, 'retry_scheduled', now, maxPerRun);
     result.scannedRetry = dueRetry.length;
     for (const claim of dueRetry) {
       await guardClaim(db, claim, now, result, () =>
         sweepRetryScheduled(db, claim, now, zombieCutoff, isJobLive, result),
+      );
+    }
+  });
+
+  // MUST precede pending_dispatch. A current-revision pending claim can coexist with an older
+  // in-flight claim for the same goal+subject because pending is outside nonterminal_uq. Reaping a
+  // provably dead old delivery first lets the current claim dispatch in this same sweep. When the
+  // old job is still live, the later paid leg safely loses the unique race and leaves current
+  // pending for a future window rather than cancelling it (YUK-776).
+  await runLeg(result, 'queued_running_verifying', async () => {
+    const dueInflight = await selectDueInflightClaims(db, now, maxPerRun);
+    result.scannedInflight = dueInflight.length;
+    for (const claim of dueInflight) {
+      await guardClaim(db, claim, now, result, () =>
+        sweepInflightClaim(db, claim, now, isJobLive, result),
       );
     }
   });
@@ -411,6 +487,110 @@ export async function sweepStalePlacementStarterClaims(
   // are reserved for consequential / anomalous outcomes and are bounded by maxPerRun per leg.
   console.log('[placement-starter-recovery] sweep', result);
   return result;
+}
+
+async function sweepInflightClaim(
+  db: Db,
+  claim: ClaimRow,
+  now: Date,
+  isJobLive: typeof isPlacementStarterJobLive,
+  result: PlacementStarterRecoveryResult,
+): Promise<void> {
+  // queued has no attempt lease in the normal state. Its existing 120-minute pg-boss queue expiry
+  // is the earliest point at which recovery may treat a missing/dead job as lost; before then we
+  // park exactly on that deadline and do not even probe the external queue.
+  if (claim.status === 'queued') {
+    const expiresAt = new Date(claim.updated_at.getTime() + PLACEMENT_QUEUE_EXPIRY_MS);
+    if (expiresAt > now) {
+      const parked = new Date(Math.max(expiresAt.getTime(), now.getTime() + MIN_CURSOR_ADVANCE_MS));
+      if (await acquireClaim(db, claim, now, parked)) result.inflightQueuePending += 1;
+      else result.lost += 1;
+      return;
+    }
+  }
+
+  // Reserve the claim before any attempt read or pg-boss call. This is the same visited⇒advanced
+  // rule as the existing legs and guarantees two sweepers never probe/reap on one cursor window.
+  const backoffAt = new Date(now.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS);
+  if (!(await acquireClaim(db, claim, now, backoffAt))) {
+    result.lost += 1;
+    return;
+  }
+
+  const [attempt] = await db
+    .select({
+      attemptId: placement_starter_attempt.id,
+      fencingToken: placement_starter_attempt.fencing_token,
+      pgBossJobId: placement_starter_attempt.pg_boss_job_id,
+      leaseExpiresAt: placement_starter_attempt.lease_expires_at,
+    })
+    .from(placement_starter_attempt)
+    .where(
+      and(
+        eq(placement_starter_attempt.claim_id, claim.id),
+        inArray(placement_starter_attempt.status, ['running', 'verifying']),
+      ),
+    )
+    .limit(1);
+
+  if (attempt?.leaseExpiresAt && attempt.leaseExpiresAt > now) {
+    await rescheduleAcquiredClaim(
+      db,
+      claim,
+      backoffAt,
+      new Date(Math.max(attempt.leaseExpiresAt.getTime(), now.getTime() + MIN_CURSOR_ADVANCE_MS)),
+    );
+    result.inflightLeaseActive += 1;
+    return;
+  }
+  // A mismatched active attempt is an integrity anomaly, not authority to destroy. Do not probe
+  // only one of two jobs and guess; defer fail-closed for inspection.
+  if (attempt && attempt.pgBossJobId !== claim.pg_boss_job_id) {
+    result.lost += 1;
+    console.error(
+      `[placement-starter-recovery] claim ${claim.id} job ${claim.pg_boss_job_id} disagrees with active attempt ${attempt.attemptId} job ${attempt.pgBossJobId}; deferred`,
+    );
+    return;
+  }
+
+  let jobLive: boolean;
+  try {
+    jobLive = await isJobLive(claim.pg_boss_job_id);
+  } catch (err) {
+    jobLive = true;
+    console.error(
+      `[placement-starter-recovery] pg-boss job probe failed for in-flight claim ${claim.id} (job ${claim.pg_boss_job_id}); treating as live`,
+      err,
+    );
+  }
+  if (jobLive) {
+    result.inflightJobLive += 1;
+    return;
+  }
+
+  const reaped = await terminalizeLostPlacementDelivery(
+    db,
+    {
+      claimId: claim.id,
+      pgBossJobId: claim.pg_boss_job_id,
+      attempt: attempt
+        ? {
+            attemptId: attempt.attemptId,
+            fencingToken: attempt.fencingToken,
+            pgBossJobId: attempt.pgBossJobId,
+          }
+        : null,
+    },
+    now,
+  );
+  if (reaped) {
+    result.inflightReaped += 1;
+    console.warn(
+      `[placement-starter-recovery] reaped lost in-flight claim ${claim.id} (status ${claim.status}, job ${claim.pg_boss_job_id}) as exhausted; later revisions are unblocked`,
+    );
+  } else {
+    result.lost += 1;
+  }
 }
 
 async function sweepPendingDispatch(
@@ -476,18 +656,14 @@ async function sweepPendingDispatch(
   // dispatch the CURRENT revision's claim — it dispatches exactly the ids its own materialize just
   // produced. This sweeper is the only code that can pick up an OLD revision's claim, and doing so
   // is actively destructive: with two revisions stranded pending_dispatch (a pg-boss outage
-  // spanning a goal edit), oldest-cursor-first dispatches the STALE one, it takes the
-  // `placement_starter_claim_nonterminal_uq` slot for (goal, subject), and the CURRENT revision's
-  // claim then loses the 23505 race and is terminalized 'cancelled' by
-  // dispatchPlacementStarterClaimTx. Its id is deterministic in (revision, subject), so
-  // re-materialize is an onConflictDoNothing no-op — the current revision can NEVER get a claim
-  // again, and if the edit dropped the old revision's synthetic KC from scope, the generated batch
-  // does not even serve the new session: permanent sourcingNeeded until the goal is edited again.
+  // spanning a goal edit), oldest-cursor-first could pay to dispatch the STALE one and let it hold
+  // the `placement_starter_claim_nonterminal_uq` slot for (goal, subject). The CURRENT claim now
+  // stays pending on that conflict (YUK-776), but the paid stale batch may not serve the edited
+  // goal at all and unnecessarily delays the authoritative work.
   //
   // So: never dispatch a claim whose revision is no longer authoritative. Terminalize it as
-  // 'cancelled' with the same 'superseded' class dispatchPlacementStarterClaimTx uses — the
-  // authority only moves forward, so a stale claim is undispatchable forever and must leave the
-  // scan rather than be re-examined every window. The check happens TWICE: this first one is an
+  // 'cancelled' with an explicit 'superseded' reason — unlike a single-flight collision, the
+  // authority check proves this claim can never become dispatchable. The check happens TWICE: this first one is an
   // unlocked pre-check — cheap, and it short-circuits the overwhelmingly common case (a revision
   // superseded long ago) without opening a dispatch transaction at all. It is NOT sufficient on
   // its own: see the authoritative re-check inside the dispatch tx below.
