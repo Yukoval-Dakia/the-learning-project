@@ -5,13 +5,28 @@
 // failure modes and supports both attempt and review events. Same-question
 // history is explicitly non-causal; causal evidence comes from getEventChain.
 
-import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
-import { question } from '@/db/schema';
+import { PedagogyMethodId } from '@/core/pedagogy/method-library';
+import {
+  PREDICTION_SCORE_ACTION,
+  PROBE_NON_EVIDENCE_RESOLUTION,
+  PROBE_RESOLUTIONS,
+  PROBE_RESULT_ACTION,
+  isCanonicalEvidenceProbeOutcomeResolution,
+  isCanonicalProbeOutcomeResolution,
+} from '@/core/schema/conjecture';
+import { ConjectureProbeResponseJudgement } from '@/core/schema/conjecture-probe-response';
+import {
+  INTERVENTION_ACTIVATED_ACTION,
+  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+  INTERVENTION_PREPARATION_FAILED_ACTION,
+} from '@/core/schema/intervention';
+import { AiProposalPayload } from '@/core/schema/proposal';
+import { event, question } from '@/db/schema';
 import { type EnvelopedEvent, getEventById, getEventChain } from '@/kernel/events';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { getFailureAttemptById, getQuestionTimeline } from '@/server/events/queries';
 import { listLearningRecords } from '@/server/records/queries';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { TOOL_COURTESY_DEFAULTS } from './budgets';
 import type { DomainTool, ToolContext } from './types';
@@ -115,12 +130,114 @@ const LinkedRecordSchema = z.object({
   created_at: z.string(),
 });
 
+const ProbeResolutionSchema = z.enum([...PROBE_RESOLUTIONS, PROBE_NON_EVIDENCE_RESOLUTION]);
+
+const SafeProposalEvidenceRefSchema = z.object({
+  kind: z.enum(['event', 'question', 'knowledge', 'artifact', 'record']),
+  id: z.string(),
+});
+
+const SafeProbeQualitySchema = z.object({
+  schema_version: z.number().int().positive(),
+  passed: z.literal(true),
+  attempt_count: z.number().int().positive(),
+});
+
+const SafeResponseJudgementSchema = ConjectureProbeResponseJudgement.omit({
+  signature_match_explanation_md: true,
+  evidence_refs: true,
+});
+
 const EventEvidenceSchema = z.discriminatedUnion('kind', [
   z.object({
+    kind: z.literal('self_authored_gate_input'),
+    ordinal: z.number().int().positive(),
+    input_kind: z.string(),
+    knowledge_id: z.string(),
+    observed_error_present: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal('proposal'),
+    proposal_kind: z.string(),
+    target: z.object({
+      subject_kind: z.string(),
+      subject_id: z.string().nullable(),
+    }),
+    evidence_refs: z.array(SafeProposalEvidenceRefSchema),
+    conjecture: z
+      .object({
+        knowledge_id: z.string(),
+        cause_category: z.string(),
+        recurrence_gate_satisfied: z.boolean(),
+        discriminating: z.boolean(),
+        corrected_by_owner: z.boolean(),
+        claim_present: z.boolean(),
+        diagnostic_contract_present: z.boolean(),
+        primary_probe_contract_present: z.boolean(),
+        followup_probe_contract_present: z.boolean(),
+        probe_quality: SafeProbeQualitySchema.optional(),
+      })
+      .nullable(),
+  }),
+  z.object({
+    kind: z.literal('rate'),
+    rating: z.enum(['accept', 'dismiss', 'reverse', 'change_type', 'rollback']),
+    conjecture_id: z.string().optional(),
+    calibration_anchor: z.enum(['accept', 'edit']).optional(),
+    corrected_by_owner: z.boolean().optional(),
+    referenced_knowledge_ids: z.array(z.string()).optional(),
+  }),
+  z.object({
+    kind: z.literal('probe_result'),
+    conjecture_event_id: z.string(),
+    outcome: z.union([z.literal(0), z.literal(1)]).nullable(),
+    resolution: ProbeResolutionSchema,
+    resolution_rule_version: z.string().optional(),
+    response_judgement: SafeResponseJudgementSchema.nullable().optional(),
+    independent_probe_question_ids: z.array(z.string()).optional(),
+  }),
+  z.object({
+    kind: z.literal('prediction_score'),
+    conjecture_event_id: z.string(),
+    probe_result_event_id: z.string(),
+    probe_question_id: z.string(),
+    knowledge_id: z.string(),
+    outcome: z.union([z.literal(0), z.literal(1)]),
+    resolution: z.enum(PROBE_RESOLUTIONS),
+    discriminating: z.boolean(),
+    score_basis: z.literal('single_point'),
+    independent_probe_question_ids: z.array(z.string()).optional(),
+  }),
+  z.object({
+    kind: z.literal('intervention_preparation_failed'),
+    intervention_id: z.string(),
+    intervention_version: z.number().int().positive(),
+    conjecture_event_id: z.string(),
+    knowledge_id: z.string(),
+    failure_code: z.string(),
+  }),
+  z.object({
+    kind: z.literal('intervention_activated'),
+    intervention_id: z.string(),
+    intervention_version: z.number().int().positive(),
+    conjecture_event_id: z.string(),
+    knowledge_id: z.string(),
+    method_id: PedagogyMethodId,
+    delivery_mode: z.enum(['shadow', 'eligible']),
+    package_version: z.number().int().positive(),
+    diagnostics: z.array(
+      z.object({
+        kind: z.enum(['immediate', 'delayed', 'transfer']),
+        question_id: z.string(),
+        due_at: z.string().datetime(),
+      }),
+    ),
+  }),
+  z.object({
     kind: z.literal('judge'),
-    score: z.number().nullable(),
-    coarse_outcome: z.string().nullable(),
-    referenced_knowledge_ids: z.array(z.string()),
+    score: z.number().nullable().optional(),
+    coarse_outcome: z.string().nullable().optional(),
+    referenced_knowledge_ids: z.array(z.string()).optional(),
   }),
   z.object({
     kind: z.literal('grading_checkpoint'),
@@ -161,6 +278,26 @@ const CausalEventRefSchema = z.object({
   correction_state: z.enum(['active', 'retracted', 'marked_wrong', 'superseded']),
   correction_event_id: z.string().nullable(),
   replacement_event_id: z.string().nullable(),
+  payload_present: z.boolean(),
+  payload_projection_status: z.enum([
+    'typed_safe',
+    'typed_elsewhere',
+    'unsupported_action',
+    'invalid_payload',
+  ]),
+  redacted_payload_groups: z.array(
+    z.enum([
+      'anti_guilt_metrics',
+      'execution_metadata',
+      'free_text',
+      'future_diagnostics',
+      'image_refs',
+      'learner_answer',
+      'private_metadata',
+      'raw_payload',
+      'review_prose',
+    ]),
+  ),
   evidence: EventEvidenceSchema.nullable(),
 });
 
@@ -218,6 +355,17 @@ const DESCRIPTION = [
   '- causal_neighborhood contains the exact parent and direct children only. It does not call',
   '  same-question history causal. Check coverage and each event correction_state before treating',
   '  any parent/child evidence as current.',
+  '- payload_present reports whether persisted JSON exists. evidence is only a typed safe projection:',
+  '  evidence=null never means the stored payload was null. Inspect payload_projection_status and',
+  '  redacted_payload_groups; groups are coarse and non-exhaustive, so never claim an unprojected',
+  '  field was absent from storage. Unknown keys are denied by default and never reflected.',
+  '- Inside evidence, an omitted optional key means the validated payload did not carry that known',
+  '  safe key. null is emitted only when that canonical key was explicitly persisted as null; [] is',
+  '  emitted only for an explicitly persisted empty array. None describes redacted/unknown keys.',
+  '- sequential roots or siblings are not a caused_by chain. Only explicit caused_by_event_id edges',
+  '  establish parent/child causality.',
+  '- intervention_activated diagnostics carry canonical question ids. To prove downstream learner',
+  '  response/review, query exact action=review + subjectKind=question + that subjectId.',
   '- timeline is same-question context only, explicitly non-causal, with bounded coverage.',
   '- review evidence includes FSRS rating, subject provenance, and per-subject schedule states.',
   '- question_availability distinguishes missing data from protected diagnostic redaction.',
@@ -229,26 +377,356 @@ function causedByEventId(value: EnvelopedEvent): string | null {
     : null;
 }
 
-function eventEvidence(value: EnvelopedEvent): z.infer<typeof EventEvidenceSchema> | null {
-  if (value.action === 'judge') {
-    const payload = value.payload as {
-      score?: number;
-      coarse_outcome?: string;
-      referenced_knowledge_ids?: string[];
-    };
+type EventEvidence = z.infer<typeof EventEvidenceSchema>;
+type PayloadProjectionStatus = z.infer<typeof CausalEventRefSchema.shape.payload_projection_status>;
+type PayloadProjection = {
+  status: PayloadProjectionStatus;
+  evidence: EventEvidence | null;
+  redactedGroups: z.infer<typeof CausalEventRefSchema>['redacted_payload_groups'];
+};
+
+const SelfAuthoredGateInputPayloadSchema = z.object({
+  ordinal: z.number().int().positive(),
+  input_kind: z.string().min(1),
+  knowledge_id: z.string().min(1),
+  observed_error: z.string().min(1),
+});
+
+const RatePayloadSchema = z.object({
+  rating: z.enum(['accept', 'dismiss', 'reverse', 'change_type', 'rollback']),
+  conjecture_id: z.string().min(1).optional(),
+  calibration_anchor: z.enum(['accept', 'edit']).optional(),
+  corrected_by_owner: z.boolean().optional(),
+  referenced_knowledge_ids: z.array(z.string().min(1)).optional(),
+});
+
+const ProbeResultPayloadSchema = z
+  .object({
+    conjecture_event_id: z.string().min(1),
+    outcome: z.union([z.literal(0), z.literal(1)]).nullable(),
+    resolution: ProbeResolutionSchema,
+    resolution_rule_version: z.string().min(1).optional(),
+    answer_md: z.string().nullable().optional(),
+    answer_image_refs: z.array(z.string()).optional(),
+    response_judgement: ConjectureProbeResponseJudgement.nullable().optional(),
+    retrievability_at_judge: z.number().min(0).max(1).nullable().optional(),
+    independent_probe_question_ids: z.array(z.string().min(1)).optional(),
+  })
+  .superRefine((payload, ctx) => {
+    if (
+      !isCanonicalProbeOutcomeResolution({
+        outcome: payload.outcome,
+        resolution: payload.resolution,
+      })
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'outcome/resolution pair is not canonical',
+        path: ['resolution'],
+      });
+      return;
+    }
+    if (
+      payload.resolution === PROBE_NON_EVIDENCE_RESOLUTION &&
+      (!payload.response_judgement ||
+        payload.response_judgement.answer_result !== 'incorrect' ||
+        payload.response_judgement.target_error_match !== 'not_matched' ||
+        !payload.response_judgement.gradable)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'inconclusive results require the canonical non-evidence judgement',
+        path: ['response_judgement'],
+      });
+    }
+  });
+
+const PredictionScorePayloadSchema = z.object({
+  conjecture_event_id: z.string().min(1),
+  probe_result_event_id: z.string().min(1),
+  probe_question_id: z.string().min(1),
+  knowledge_id: z.string().min(1),
+  outcome: z.union([z.literal(0), z.literal(1)]),
+  resolution: z.enum(PROBE_RESOLUTIONS),
+  discriminating: z.boolean(),
+  predicted_p: z.number().min(0).max(1),
+  baseline_p: z.number().min(0).max(1),
+  brier_model: z.number().finite(),
+  brier_baseline: z.number().finite(),
+  log_loss_model: z.number().finite(),
+  skill_score_point: z.number().finite(),
+  retrievability_at_judge: z.number().min(0).max(1).nullable().optional(),
+  independent_probe_question_ids: z.array(z.string().min(1)).optional(),
+});
+
+const InterventionPreparationFailedPayloadSchema = z.object({
+  intervention_id: z.string().min(1),
+  intervention_version: z.number().int().positive(),
+  conjecture_event_id: z.string().min(1),
+  knowledge_id: z.string().min(1),
+  failure_code: z.string().min(1),
+});
+
+const InterventionActivatedPayloadSchema = z
+  .object({
+    intervention_id: z.string().min(1),
+    intervention_version: z.number().int().positive(),
+    conjecture_event_id: z.string().min(1),
+    knowledge_id: z.string().min(1),
+    method_id: PedagogyMethodId,
+    delivery_mode: z.enum(['shadow', 'eligible']),
+    package_version: z.number().int().positive(),
+    diagnostics: z
+      .array(
+        z.object({
+          kind: z.enum(['immediate', 'delayed', 'transfer']),
+          question_id: z.string().min(1),
+          due_at: z.string().datetime(),
+        }),
+      )
+      .length(3),
+  })
+  .superRefine((payload, ctx) => {
+    for (const kind of ['immediate', 'delayed', 'transfer'] as const) {
+      if (payload.diagnostics.filter((diagnostic) => diagnostic.kind === kind).length !== 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `diagnostics must contain exactly one ${kind}`,
+          path: ['diagnostics'],
+        });
+      }
+    }
+  });
+
+const JudgePayloadSchema = z.object({
+  score: z.number().finite().nullable().optional(),
+  coarse_outcome: z.string().min(1).nullable().optional(),
+  referenced_knowledge_ids: z.array(z.string().min(1)).optional(),
+});
+
+function invalidPayload(): PayloadProjection {
+  return { status: 'invalid_payload', evidence: null, redactedGroups: ['raw_payload'] };
+}
+
+function projectEventPayload(value: EnvelopedEvent, rawPayload: unknown): PayloadProjection {
+  if (value.action === 'experimental:self_authored_gate_input') {
+    const parsed = SelfAuthoredGateInputPayloadSchema.safeParse(rawPayload);
+    if (!parsed.success) return invalidPayload();
     return {
-      kind: 'judge',
-      score: payload.score ?? null,
-      coarse_outcome: payload.coarse_outcome ?? null,
-      referenced_knowledge_ids: payload.referenced_knowledge_ids ?? [],
+      status: 'typed_safe',
+      evidence: {
+        kind: 'self_authored_gate_input',
+        ordinal: parsed.data.ordinal,
+        input_kind: parsed.data.input_kind,
+        knowledge_id: parsed.data.knowledge_id,
+        observed_error_present: parsed.data.observed_error.length > 0,
+      },
+      redactedGroups: ['learner_answer'],
+    };
+  }
+  if (value.action === 'experimental:proposal') {
+    const wrapper = z.object({ ai_proposal: z.unknown() }).safeParse(rawPayload);
+    if (!wrapper.success) return invalidPayload();
+    const parsed = AiProposalPayload.safeParse(wrapper.data.ai_proposal);
+    if (!parsed.success) return invalidPayload();
+    const proposal = parsed.data;
+    const conjecture = proposal.kind === 'conjecture' ? proposal.proposed_change : null;
+    return {
+      status: 'typed_safe',
+      evidence: {
+        kind: 'proposal',
+        proposal_kind: proposal.kind,
+        target: proposal.target,
+        evidence_refs: proposal.evidence_refs,
+        conjecture: conjecture
+          ? {
+              knowledge_id: conjecture.knowledge_id,
+              cause_category: conjecture.cause_category,
+              recurrence_gate_satisfied: conjecture.recurrence_count >= 2,
+              discriminating: conjecture.discriminating,
+              corrected_by_owner: conjecture.corrected_by_owner,
+              claim_present: conjecture.claim_md.length > 0,
+              diagnostic_contract_present: conjecture.diagnostic_spec !== undefined,
+              primary_probe_contract_present: conjecture.probe_spec !== undefined,
+              followup_probe_contract_present: conjecture.followup_probe_spec !== undefined,
+              ...(conjecture.probe_quality
+                ? {
+                    probe_quality: {
+                      schema_version: conjecture.probe_quality.schema_version,
+                      passed: conjecture.probe_quality.passed,
+                      attempt_count: conjecture.probe_quality.attempts.length,
+                    },
+                  }
+                : {}),
+            }
+          : null,
+      },
+      // Fixed coarse groups are deliberately non-exhaustive. Unknown future
+      // keys remain denied rather than being reflected as names or values.
+      redactedGroups: [
+        'anti_guilt_metrics',
+        'execution_metadata',
+        'free_text',
+        'future_diagnostics',
+        'private_metadata',
+        'review_prose',
+      ],
+    };
+  }
+  if (value.action === 'rate') {
+    const parsed = RatePayloadSchema.safeParse(rawPayload);
+    if (!parsed.success) return invalidPayload();
+    return {
+      status: 'typed_safe',
+      evidence: {
+        kind: 'rate',
+        rating: parsed.data.rating,
+        ...(parsed.data.conjecture_id !== undefined
+          ? { conjecture_id: parsed.data.conjecture_id }
+          : {}),
+        ...(parsed.data.calibration_anchor !== undefined
+          ? { calibration_anchor: parsed.data.calibration_anchor }
+          : {}),
+        ...(parsed.data.corrected_by_owner !== undefined
+          ? { corrected_by_owner: parsed.data.corrected_by_owner }
+          : {}),
+        ...(parsed.data.referenced_knowledge_ids !== undefined
+          ? { referenced_knowledge_ids: parsed.data.referenced_knowledge_ids }
+          : {}),
+      },
+      redactedGroups: ['free_text', 'private_metadata'],
+    };
+  }
+  if (value.action === PROBE_RESULT_ACTION) {
+    const parsed = ProbeResultPayloadSchema.safeParse(rawPayload);
+    if (
+      !parsed.success ||
+      value.subject_kind !== 'question' ||
+      causedByEventId(value) !== parsed.data.conjecture_event_id
+    ) {
+      return invalidPayload();
+    }
+    return {
+      status: 'typed_safe',
+      evidence: {
+        kind: 'probe_result',
+        conjecture_event_id: parsed.data.conjecture_event_id,
+        outcome: parsed.data.outcome,
+        resolution: parsed.data.resolution,
+        ...(parsed.data.resolution_rule_version !== undefined
+          ? { resolution_rule_version: parsed.data.resolution_rule_version }
+          : {}),
+        ...(parsed.data.response_judgement !== undefined
+          ? {
+              response_judgement: parsed.data.response_judgement
+                ? {
+                    rule_version: parsed.data.response_judgement.rule_version,
+                    answer_result: parsed.data.response_judgement.answer_result,
+                    target_error_match: parsed.data.response_judgement.target_error_match,
+                    gradable: parsed.data.response_judgement.gradable,
+                    reason_code: parsed.data.response_judgement.reason_code,
+                  }
+                : null,
+            }
+          : {}),
+        ...(parsed.data.independent_probe_question_ids !== undefined
+          ? { independent_probe_question_ids: parsed.data.independent_probe_question_ids }
+          : {}),
+      },
+      redactedGroups: ['anti_guilt_metrics', 'image_refs', 'learner_answer', 'review_prose'],
+    };
+  }
+  if (value.action === PREDICTION_SCORE_ACTION) {
+    const parsed = PredictionScorePayloadSchema.safeParse(rawPayload);
+    if (
+      !parsed.success ||
+      !isCanonicalEvidenceProbeOutcomeResolution({
+        outcome: parsed.data.outcome,
+        resolution: parsed.data.resolution,
+      }) ||
+      value.subject_kind !== 'event' ||
+      value.subject_id !== parsed.data.probe_result_event_id ||
+      causedByEventId(value) !== parsed.data.probe_result_event_id
+    ) {
+      return invalidPayload();
+    }
+    return {
+      status: 'typed_safe',
+      evidence: {
+        kind: 'prediction_score',
+        conjecture_event_id: parsed.data.conjecture_event_id,
+        probe_result_event_id: parsed.data.probe_result_event_id,
+        probe_question_id: parsed.data.probe_question_id,
+        knowledge_id: parsed.data.knowledge_id,
+        outcome: parsed.data.outcome,
+        resolution: parsed.data.resolution,
+        discriminating: parsed.data.discriminating,
+        score_basis: 'single_point',
+        ...(parsed.data.independent_probe_question_ids !== undefined
+          ? { independent_probe_question_ids: parsed.data.independent_probe_question_ids }
+          : {}),
+      },
+      redactedGroups: ['anti_guilt_metrics', 'execution_metadata'],
+    };
+  }
+  if (value.action === INTERVENTION_PREPARATION_FAILED_ACTION) {
+    const parsed = InterventionPreparationFailedPayloadSchema.safeParse(rawPayload);
+    if (
+      !parsed.success ||
+      value.subject_kind !== 'event' ||
+      causedByEventId(value) !== value.subject_id
+    ) {
+      return invalidPayload();
+    }
+    return {
+      status: 'typed_safe',
+      evidence: { kind: 'intervention_preparation_failed', ...parsed.data },
+      redactedGroups: [],
+    };
+  }
+  if (value.action === INTERVENTION_ACTIVATED_ACTION) {
+    const parsed = InterventionActivatedPayloadSchema.safeParse(rawPayload);
+    if (
+      !parsed.success ||
+      value.subject_kind !== 'event' ||
+      causedByEventId(value) !== value.subject_id
+    ) {
+      return invalidPayload();
+    }
+    return {
+      status: 'typed_safe',
+      evidence: { kind: 'intervention_activated', ...parsed.data },
+      redactedGroups: ['future_diagnostics', 'private_metadata'],
+    };
+  }
+  if (value.action === 'judge') {
+    const parsed = JudgePayloadSchema.safeParse(rawPayload);
+    if (!parsed.success) return invalidPayload();
+    return {
+      status: 'typed_safe',
+      evidence: {
+        kind: 'judge',
+        ...(parsed.data.score !== undefined ? { score: parsed.data.score } : {}),
+        ...(parsed.data.coarse_outcome !== undefined
+          ? { coarse_outcome: parsed.data.coarse_outcome }
+          : {}),
+        ...(parsed.data.referenced_knowledge_ids !== undefined
+          ? { referenced_knowledge_ids: parsed.data.referenced_knowledge_ids }
+          : {}),
+      },
+      redactedGroups: ['free_text'],
     };
   }
   if (value.action === 'experimental:grading_checkpoint') {
     const payload = value.payload as { attempt_event_id: string; segment: 'theta' | 'fsrs' };
     return {
-      kind: 'grading_checkpoint',
-      attempt_event_id: payload.attempt_event_id,
-      segment: payload.segment,
+      status: 'typed_safe',
+      evidence: {
+        kind: 'grading_checkpoint',
+        attempt_event_id: payload.attempt_event_id,
+        segment: payload.segment,
+      },
+      redactedGroups: [],
     };
   }
   if (value.action === 'experimental:state_snapshot') {
@@ -267,29 +745,40 @@ function eventEvidence(value: EnvelopedEvent): z.infer<typeof EventEvidenceSchem
       }>;
     };
     return {
-      kind: 'state_snapshot',
-      attempt_event_id: payload.attempt_event_id,
-      theta_snapshots: payload.theta_snapshots.map((snapshot) => ({
-        knowledge_id: snapshot.kc_id,
-        before_present: snapshot.before !== null,
-        before_theta_hat:
-          typeof snapshot.before === 'number'
-            ? snapshot.before
-            : (snapshot.before?.theta_hat ?? null),
-        after_theta_hat: snapshot.after,
-      })),
-      fsrs_snapshots: payload.fsrs_snapshots.map((snapshot) => ({
-        subject_kind: snapshot.subject_kind,
-        subject_id: snapshot.subject_id,
-        before: snapshot.before ? fsrsStateEvidence(snapshot.before) : null,
-        after: fsrsStateEvidence(snapshot.after),
-      })),
+      status: 'typed_safe',
+      evidence: {
+        kind: 'state_snapshot',
+        attempt_event_id: payload.attempt_event_id,
+        theta_snapshots: payload.theta_snapshots.map((snapshot) => ({
+          knowledge_id: snapshot.kc_id,
+          before_present: snapshot.before !== null,
+          before_theta_hat:
+            typeof snapshot.before === 'number'
+              ? snapshot.before
+              : (snapshot.before?.theta_hat ?? null),
+          after_theta_hat: snapshot.after,
+        })),
+        fsrs_snapshots: payload.fsrs_snapshots.map((snapshot) => ({
+          subject_kind: snapshot.subject_kind,
+          subject_id: snapshot.subject_id,
+          before: snapshot.before ? fsrsStateEvidence(snapshot.before) : null,
+          after: fsrsStateEvidence(snapshot.after),
+        })),
+      },
+      redactedGroups: [],
     };
   }
-  return null;
+  if (value.action === 'attempt' || value.action === 'review') {
+    return { status: 'typed_elsewhere', evidence: null, redactedGroups: ['raw_payload'] };
+  }
+  return { status: 'unsupported_action', evidence: null, redactedGroups: ['raw_payload'] };
 }
 
-function eventRef(value: EnvelopedEvent): z.infer<typeof CausalEventRefSchema> {
+function eventRef(
+  value: EnvelopedEvent,
+  rawPayload: unknown,
+): z.infer<typeof CausalEventRefSchema> {
+  const projection = projectEventPayload(value, rawPayload);
   return {
     event_id: value.id,
     dispatch_seq: value.dispatch_seq,
@@ -302,7 +791,10 @@ function eventRef(value: EnvelopedEvent): z.infer<typeof CausalEventRefSchema> {
     correction_state: value.correction_status.state,
     correction_event_id: value.correction_status.correction_event_id,
     replacement_event_id: value.correction_status.replacement_event_id,
-    evidence: eventEvidence(value),
+    payload_present: rawPayload !== null && rawPayload !== undefined,
+    payload_projection_status: projection.status,
+    redacted_payload_groups: projection.redactedGroups,
+    evidence: projection.evidence,
   };
 }
 
@@ -440,10 +932,22 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   if (!focal) return emptyOutput(input, 'not_found', null, noCausal);
 
   const chain = await getEventChain(ctx.db, focal.id);
+  const chainEvents = [
+    focal,
+    ...(chain.caused_by ? [chain.caused_by] : []),
+    ...chain.caused_events,
+  ];
+  const rawPayloadRows = await ctx.db
+    .select({ id: event.id, payload: event.payload })
+    .from(event)
+    .where(inArray(event.id, [...new Set(chainEvents.map((entry) => entry.id))]));
+  const rawPayloadById = new Map(rawPayloadRows.map((row) => [row.id, row.payload]));
   const directChildren = chain.caused_events.slice(0, causalLimit);
   const causal: Output['causal_neighborhood'] = {
-    parent: chain.caused_by ? eventRef(chain.caused_by) : null,
-    direct_children: directChildren.map(eventRef),
+    parent: chain.caused_by
+      ? eventRef(chain.caused_by, rawPayloadById.get(chain.caused_by.id))
+      : null,
+    direct_children: directChildren.map((entry) => eventRef(entry, rawPayloadById.get(entry.id))),
     relation_semantics: 'direct_children_only',
     coverage: {
       returned_count: directChildren.length,
@@ -453,7 +957,10 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       complete: chain.caused_events.length <= directChildren.length,
     },
   };
-  const observed: z.infer<typeof ExactEventIdentitySchema> = eventRef(focal);
+  const observed: z.infer<typeof ExactEventIdentitySchema> = eventRef(
+    focal,
+    rawPayloadById.get(focal.id),
+  );
   const activity = answerActivity(focal);
   if (!activity) return emptyOutput(input, 'unsupported_event', observed, causal);
   if (focal.correction_status.state !== 'active') {

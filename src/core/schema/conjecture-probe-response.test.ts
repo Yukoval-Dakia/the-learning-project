@@ -1,5 +1,42 @@
 import { describe, expect, it } from 'vitest';
+import {
+  isCanonicalEvidenceProbeOutcomeResolution,
+  isCanonicalProbeOutcomeResolution,
+} from './conjecture';
 import { classifyConjectureProbeResponseFromJudgeMatch } from './conjecture-probe-response';
+
+describe('canonical probe outcome/resolution pairs', () => {
+  it('accepts only the persisted evidence and inconclusive matrices', () => {
+    expect(
+      isCanonicalEvidenceProbeOutcomeResolution({ outcome: 0, resolution: 'evidence_for' }),
+    ).toBe(true);
+    expect(isCanonicalEvidenceProbeOutcomeResolution({ outcome: 0, resolution: 'confirmed' })).toBe(
+      true,
+    );
+    expect(isCanonicalEvidenceProbeOutcomeResolution({ outcome: 1, resolution: 'retired' })).toBe(
+      true,
+    );
+    expect(isCanonicalEvidenceProbeOutcomeResolution({ outcome: 1, resolution: 'confirmed' })).toBe(
+      false,
+    );
+    expect(isCanonicalEvidenceProbeOutcomeResolution({ outcome: 0, resolution: 'retired' })).toBe(
+      false,
+    );
+    expect(
+      isCanonicalEvidenceProbeOutcomeResolution({ outcome: null, resolution: 'inconclusive' }),
+    ).toBe(false);
+
+    expect(isCanonicalProbeOutcomeResolution({ outcome: null, resolution: 'inconclusive' })).toBe(
+      true,
+    );
+    expect(isCanonicalProbeOutcomeResolution({ outcome: 0, resolution: 'inconclusive' })).toBe(
+      false,
+    );
+    expect(isCanonicalProbeOutcomeResolution({ outcome: null, resolution: 'confirmed' })).toBe(
+      false,
+    );
+  });
+});
 
 describe('classifyConjectureProbeResponseFromJudgeMatch', () => {
   it('accepts a gold response only when correctness and the semantic signature agree', () => {

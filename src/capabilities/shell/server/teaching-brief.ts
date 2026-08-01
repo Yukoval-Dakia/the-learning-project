@@ -14,6 +14,7 @@ import {
   PROBE_RESULT_ACTION,
   type ProbeResolution,
   TERMINAL_PROBE_RESOLUTIONS,
+  isCanonicalEvidenceProbeOutcomeResolution,
 } from '@/core/schema/conjecture';
 import { AiProposalPayload, type ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
@@ -301,16 +302,10 @@ export function validateCanonicalProbeResult(
     return { reason: 'result_subject_invalid' };
   }
   const payload = toRecord(row.payload);
-  const resolution = payload.resolution;
-  const outcome = payload.outcome;
+  const disposition = { resolution: payload.resolution, outcome: payload.outcome };
   // Keep this pair matrix aligned with the SQL bounded-window prefilters in
   // loadOutcomeBrief and logNonCanonicalCandidates below.
-  if (
-    !(
-      ((resolution === 'evidence_for' || resolution === 'confirmed') && outcome === 0) ||
-      (resolution === 'retired' && outcome === 1)
-    )
-  ) {
+  if (!isCanonicalEvidenceProbeOutcomeResolution(disposition)) {
     return { reason: 'outcome_resolution_mismatch' };
   }
   const conjectureEventId = payload.conjecture_event_id;
@@ -322,7 +317,12 @@ export function validateCanonicalProbeResult(
     return { reason: 'result_provenance_mismatch' };
   }
   return {
-    value: { resolution, outcome, conjectureEventId, probeQuestionId: row.subject_id },
+    value: {
+      resolution: disposition.resolution,
+      outcome: disposition.outcome,
+      conjectureEventId,
+      probeQuestionId: row.subject_id,
+    },
   };
 }
 

@@ -63,6 +63,7 @@ import {
   PROBE_RESULT_ACTION,
   type ProbeAnswerResolution,
   type ProbeResolution,
+  isCanonicalProbeOutcomeResolution,
 } from '@/core/schema/conjecture';
 import {
   ConjectureProbeResponseJudgement,
@@ -487,13 +488,10 @@ function parseProbeResultEvent(
   const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
   const recordedJudgement = (existing.payload as { response_judgement?: unknown })
     .response_judgement;
-  const isEvidenceResolution =
-    ((recordedResolution === 'evidence_for' || recordedResolution === 'confirmed') &&
-      recordedOutcome === 0) ||
-    (recordedResolution === 'retired' && recordedOutcome === 1);
+  const disposition = { outcome: recordedOutcome, resolution: recordedResolution };
   const isNonEvidenceResolution =
     recordedResolution === PROBE_NON_EVIDENCE_RESOLUTION && recordedOutcome === null;
-  if (!isEvidenceResolution && !isNonEvidenceResolution) {
+  if (!isCanonicalProbeOutcomeResolution(disposition)) {
     return null;
   }
   const parsedJudgement =
@@ -511,8 +509,8 @@ function parseProbeResultEvent(
     return null;
   }
   return {
-    status: recordedResolution,
-    outcome: recordedOutcome,
+    status: disposition.resolution,
+    outcome: disposition.outcome,
     probe_result_event_id: existing.id,
     response_judgement: parsedJudgement?.data ?? null,
     ...(parsedJudgement === null

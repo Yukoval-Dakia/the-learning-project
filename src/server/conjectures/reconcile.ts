@@ -53,7 +53,7 @@ import {
   PROBE_NON_EVIDENCE_RESOLUTION,
   PROBE_RESULT_PROJECTED_ACTION,
   type ProbeResolution,
-  isProbeResolution,
+  isCanonicalEvidenceProbeOutcomeResolution,
 } from '@/core/schema/conjecture';
 export {
   PREDICTION_SCORE_ACTION,
@@ -249,16 +249,16 @@ async function rebuildTypedStateForKnowledge(db: Db, knowledgeId: string): Promi
     const payload = row.payload as Record<string, unknown> | null;
     const resolution = payload?.resolution;
     const outcome = payload?.outcome;
+    const disposition = { outcome, resolution };
     if (
       !anchor ||
       payload?.conjecture_event_id !== anchor.conjectureEventId ||
-      !isProbeResolution(resolution) ||
-      (outcome !== 0 && outcome !== 1)
+      !isCanonicalEvidenceProbeOutcomeResolution(disposition)
     ) {
       return [];
     }
     const facts = factsByConjecture.get(anchor.conjectureEventId);
-    return facts ? [{ row, anchor, resolution, facts }] : [];
+    return facts ? [{ row, anchor, resolution: disposition.resolution, facts }] : [];
   });
   const latest = replayRows.at(-1);
   if (!latest) {
@@ -376,18 +376,18 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
     const conjectureEventId = p?.conjecture_event_id;
     const outcome = p?.outcome;
     const resolution = p?.resolution;
+    const disposition = { outcome, resolution };
     // Reader-level drops are logged (not just silently `continue`d) so a systemic malformed-
     // payload bug surfaces in the job log, mirroring the loop-body skip warns.
     if (typeof conjectureEventId !== 'string' || conjectureEventId.length === 0) {
       console.warn('[reconcile] dropping malformed probe_result — bad conjecture_event_id', r.id);
       continue;
     }
-    if (outcome !== 0 && outcome !== 1) {
-      console.warn('[reconcile] dropping malformed probe_result — invalid outcome', r.id);
-      continue;
-    }
-    if (!isProbeResolution(resolution)) {
-      console.warn('[reconcile] dropping malformed probe_result — invalid resolution', r.id);
+    if (!isCanonicalEvidenceProbeOutcomeResolution(disposition)) {
+      console.warn(
+        '[reconcile] dropping malformed probe_result — outcome/resolution mismatch',
+        r.id,
+      );
       continue;
     }
     const rt = p?.retrievability_at_judge;
@@ -404,8 +404,8 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
       probe_result_event_id: r.id,
       probe_question_id: r.probe_question_id,
       conjecture_event_id: conjectureEventId,
-      outcome,
-      resolution,
+      outcome: disposition.outcome,
+      resolution: disposition.resolution,
       // R(t) is a probability in [0,1]; coerce NaN / ±Infinity / out-of-range to null so a
       // malformed value can't poison the LOG event (fail-closed, like the fields above).
       retrievability_at_judge:
@@ -449,6 +449,19 @@ export async function reconcileConjecturePredictions(
   let skipped = 0;
 
   for (const pr of unscored) {
+    if (
+      !isCanonicalEvidenceProbeOutcomeResolution({
+        outcome: pr.outcome,
+        resolution: pr.resolution,
+      })
+    ) {
+      console.warn(
+        '[reconcile] skipping probe_result — outcome/resolution mismatch',
+        pr.probe_result_event_id,
+      );
+      skipped += 1;
+      continue;
+    }
     // The READ is the only fail-soft step. The default getEventById runs the row through
     // parseEvent, which THROWS on a corrupt / unparseable conjecture row (schema drift,
     // manual DB edit). Catch ONLY the read → counted skip, so one bad row can't abort the

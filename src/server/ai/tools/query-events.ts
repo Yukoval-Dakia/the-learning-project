@@ -135,6 +135,9 @@ const DESCRIPTION = [
   'Returns rows ordered by created_at DESC, dispatch_seq DESC, id DESC. dispatch_seq is the',
   'authoritative insertion chronology when timestamps tie. A zero-row result is complete only for the',
   'reported filter/time window; inspect coverage.has_more before calling any bounded read exhaustive.',
+  'This is an event log, not an entity inventory: even a complete zero-row event window cannot prove',
+  'that LearningItem or intervention entities are absent, or that any lifecycle status has count zero.',
+  'It must not override get_review_due.entity_status_coverage=not_observed.',
   'Inspect correction_state before treating a returned event as current evidence.',
 ].join('\n');
 

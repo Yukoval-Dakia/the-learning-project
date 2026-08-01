@@ -155,7 +155,20 @@ describe('live SoT — shipped shared SKILL.md packs resolve against the real tr
     expect(content).toContain('以 `dispatch_seq` 判断真实插入顺序');
     expect(content).toContain('都先检查 `correction_state`');
     expect(content).toContain('0 rows 只证明当前 filter 与时间 window');
-    expect(content).toContain('due-now queue 为空，不等于 schedule absent');
+    expect(content).toContain('due rows 为 0，不等于 queue cleared');
+    expect(content).toContain('`evidence=null` **绝不等于**数据库 payload 为 null');
+    expect(content).toContain('`redacted_payload_groups`');
+    expect(content).toContain('`null` 只表示 canonical key 明确持久化为 null');
+    expect(content).toContain('`[]` 只表示明确持久化空数组');
+    expect(content).toContain('两个 `caused_by_event_id=null` 的 root');
+    expect(content).toContain('exact `action=review` + `subjectKind=question`');
+    expect(content).toContain('`supports_exhaustive_zero_claim=false`');
+    expect(content).toContain('全局 pending / in-progress 为 0');
+    expect(content).toContain('`query_events` 是事件日志，不是 entity inventory');
+    expect(content).toContain('`query_records.processing_status`');
+    expect(content).toContain(
+      '二者都不得覆盖 `get_review_due.entity_status_coverage=not_observed`',
+    );
     expect(content).toContain('不得只因后续一次空读就反转为「不存在」');
     expect(content).toContain('不要用字符串相似、正则或自由文本 NLP 代替验证');
   });

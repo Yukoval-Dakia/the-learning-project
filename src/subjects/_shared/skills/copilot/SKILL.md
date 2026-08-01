@@ -67,10 +67,14 @@ description: Copilot 对话方法论包 —— 跨学科共享。教唯一面向
 
 - 事件 action 与 event id 都按工具声明的 **exact** 语义读取；不要用正则或 NLP 从 id 文本猜 action、题型或处理结果。
 - `causedByEventId` 只表示 **direct children**，不是 sibling，也不是所有 descendants。要找 sibling，必须确认它们共享同一个非空 parent，并排除 focal event。
+- 同 subject、相邻时间或流水线上的先后只表示相关候选，不会自动补出 `caused_by`。两个 `caused_by_event_id=null` 的 root 之间，以及共享 parent 的 siblings 之间，都不得写成「每跳都有 caused_by」的链。
 - 同一 `created_at` 下以 `dispatch_seq` 判断真实插入顺序；不要拿 id 字典序代替事件先后。
 - 事件及其 causal parent/children 都先检查 `correction_state`；`retracted`、`marked_wrong`、`superseded` 只能作为修正历史说明，不能当作当前有效事实。
 - 每次 bounded read 都检查 coverage / has_more / next_cursor；0 rows 只证明当前 filter 与时间 window 内没读到，不证明全局不存在。
-- `get_review_due` 的 due-now queue 为空，不等于 schedule absent；必须同时检查 future FSRS projections 及其 coverage。
+- `get_attempt_context` 的 `evidence` 是 deny-by-default 的安全 typed projection，不是原始 JSON。`evidence=null` **绝不等于**数据库 payload 为 null；必须同时看 `payload_present`、`payload_projection_status` 与 `redacted_payload_groups`，不得把「未安全投影」写成「未持久化」。redacted groups 是非穷尽的粗分类，没列出的字段也不能推断不存在。projection 内已知 safe optional key 省略，才表示 validated payload 未携带该 key；`null` 只表示 canonical key 明确持久化为 null，`[]` 只表示明确持久化空数组，三者不得互换。
+- `intervention_activated` 投影中的 diagnostics question id 是下游 review 的 canonical subject。要证明 learner response / review / judge / FSRS，必须继续用 exact `action=review` + `subjectKind=question` + 该 `subjectId` 查询，再沿显式 parent/direct children 读取，不能用题目 attempt 计数或 draft 状态代替。
+- `get_review_due` 返回的 due rows 为 0，不等于 queue cleared，也不等于 schedule absent。必须分别报告：本次 due actionable rows returned、material due-state count、due `completeness`、future returned/total/completeness；这些口径不能互换。只要 `complete_for_due_now_window=null`、`completeness=unknown` 或 `supports_exhaustive_zero_claim=false`，就必须明确写「穷尽性未知」，不得称 complete/empty/cleared。`entity_status_coverage` 为 `not_observed` 时，不得据此断言 LearningItem 或 intervention 的全局 pending / in-progress 为 0。
+- `query_events` 是事件日志，不是 entity inventory；即使指定 window 内 0 rows 且 event coverage complete，也不能推出 LearningItem / intervention 不存在或某 lifecycle status 数量为 0。`query_records.processing_status` 只描述 LearningRecord 的摄取/链接状态，不是 LearningItem / intervention 状态；空记录读同样不能归零。二者都不得覆盖 `get_review_due.entity_status_coverage=not_observed`。
 - `get_question_context` 先看 availability。`redacted_intervention_diagnostic` 与 `not_found` 不同，`not_observed` 下的兼容零值不是事实。
 - `conversation_history` 中已经由工具验证过的 event/question/knowledge id，不得只因后续一次空读就反转为「不存在」；只有更强、更新且覆盖明确的证据才能推翻。
 - 因果结论必须来自 typed payload/provenance 与明确关系字段；不要用字符串相似、正则或自由文本 NLP 代替验证。

@@ -442,5 +442,8 @@ describe('queryEventsTool', () => {
     expect(queryEventsTool.effect).toBe('read');
     expect(queryEventsTool.costClass).toBe('local');
     expect(queryEventsTool.mirrorEvent).toBe('when_user_visible');
+    expect(queryEventsTool.description).toContain('event log, not an entity inventory');
+    expect(queryEventsTool.description).toContain('cannot prove');
+    expect(queryEventsTool.description).toContain('entity_status_coverage=not_observed');
   });
 });

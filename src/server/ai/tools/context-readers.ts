@@ -825,12 +825,21 @@ const GetReviewDueOutputSchema = z.object({
     total_future_count: z.number().int().nonnegative(),
     has_more: z.boolean(),
     complete: z.boolean(),
+    completeness: z.enum(['complete', 'truncated']),
   }),
   queue_coverage: z.object({
     returned_count: z.number().int().nonnegative(),
     limit: z.number().int().positive(),
+    total_matching_count: z.null(),
     has_more: z.boolean().nullable(),
     complete_for_due_now_window: z.boolean().nullable(),
+    completeness: z.literal('unknown'),
+    claim_scope: z.literal('returned_actionable_rows_only'),
+    supports_exhaustive_zero_claim: z.literal(false),
+  }),
+  entity_status_coverage: z.object({
+    learning_item: z.literal('not_observed'),
+    intervention: z.literal('not_observed'),
   }),
 });
 
@@ -1179,15 +1188,27 @@ export async function executeGetReviewDue(
       total_future_count: futureProjectionRows.length,
       has_more: futureProjectionRows.length > returnedFutureProjectionRows.length,
       complete: futureProjectionRows.length <= returnedFutureProjectionRows.length,
+      completeness:
+        futureProjectionRows.length <= returnedFutureProjectionRows.length
+          ? 'complete'
+          : 'truncated',
     },
     queue_coverage: {
       returned_count: rows.length,
       limit,
+      total_matching_count: null,
       // The queue builder performs bounded candidate scans before eligibility
       // joins (and the never-reviewed scan is capped), so page length alone can
       // never prove exhaustiveness.
       has_more: null,
       complete_for_due_now_window: null,
+      completeness: 'unknown',
+      claim_scope: 'returned_actionable_rows_only',
+      supports_exhaustive_zero_claim: false,
+    },
+    entity_status_coverage: {
+      learning_item: 'not_observed',
+      intervention: 'not_observed',
     },
   });
 }
@@ -1518,7 +1539,7 @@ export async function executeMemoryBrief(
 export const queryRecordsTool: DomainTool<QueryRecordsInput, QueryRecordsOutput> = {
   name: 'query_records',
   description:
-    'Read activity-grounded LearningRecord rows with bounded filters for kind, knowledge, question, attempt, item, and text.',
+    'Read bounded activity-grounded LearningRecord rows with filters for kind, knowledge, question, attempt, item, and text. processing_status is a LearningRecord ingestion/linking state, not a LearningItem or intervention lifecycle status. rows=[] cannot prove those entities are absent or that any of their status counts are zero, and must not override get_review_due.entity_status_coverage=not_observed.',
   effect: 'read',
   inputSchema: QueryRecordsInputSchema,
   outputSchema: QueryRecordsOutputSchema,
@@ -1633,14 +1654,14 @@ function countAddressableNodes(node: AddressableStructure['tree']): number {
 export const getReviewDueTool: DomainTool<GetReviewDueInput, GetReviewDueOutput> = {
   name: 'get_review_due',
   description:
-    'Read the due-now queue (never-reviewed failures, then overdue FSRS cards) plus bounded future FSRS projections. A zero-row due queue does not mean no schedule exists: inspect fsrs_projection_summary and future_projection_coverage. Never mutates FSRS.',
+    'Read returned actionable due-now rows (never-reviewed failures, then overdue FSRS cards) plus bounded future FSRS projections. rows=[] means this call returned zero actionable rows, NOT that the queue is empty. Report due returned rows, material due-state count, due completeness, and future returned/total/completeness separately. queue_coverage.completeness=unknown and supports_exhaustive_zero_claim=false forbid complete/cleared/global-zero claims. entity_status_coverage=not_observed forbids pending/in-progress entity counts. Never mutates FSRS.',
   effect: 'read',
   inputSchema: GetReviewDueInputSchema,
   outputSchema: GetReviewDueOutputSchema,
   costClass: 'local',
   execute: executeGetReviewDue,
   summarize(_input, output) {
-    return `review · due-now=${output.queue_summary.total_returned} · future=${output.fsrs_projection_summary.future_state_count} · ${output.queue_summary.never_reviewed_count} new · ${output.queue_summary.overdue_count} overdue`;
+    return `review · due-returned=${output.queue_summary.total_returned} · due-states=${output.fsrs_projection_summary.due_now_state_count} · due-completeness=${output.queue_coverage.completeness} · future=${output.future_projection_coverage.returned_count}/${output.future_projection_coverage.total_future_count}(${output.future_projection_coverage.completeness})`;
   },
   mirrorEvent: 'when_user_visible',
 };

@@ -223,6 +223,24 @@ describe('reconcileConjecturePredictions (U8 — A13 dark-loop consumer)', () =>
     expect(upserts[0].proposed).toBe('no-evidence');
   });
 
+  it('drops a contradictory outcome/resolution pair before any read or write', async () => {
+    const getEventByIdFn = vi.fn(async () => conjectureEvent());
+    const { deps, events, upserts } = baseDeps({
+      listUnscoredProbeResultsFn: vi.fn(async () => [
+        probe({ outcome: 1, resolution: 'confirmed' }),
+      ]),
+      getEventByIdFn,
+    });
+
+    await expect(reconcileConjecturePredictions(DB, deps)).resolves.toEqual({
+      reconciled: 0,
+      skipped: 1,
+    });
+    expect(getEventByIdFn).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+    expect(upserts).toEqual([]);
+  });
+
   it('skips a probe whose conjecture event is missing (dangling ref → skip, never throw)', async () => {
     const { deps, events, upserts } = baseDeps({
       getEventByIdFn: vi.fn(async () => null),

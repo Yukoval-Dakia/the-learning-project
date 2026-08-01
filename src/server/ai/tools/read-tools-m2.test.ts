@@ -418,6 +418,11 @@ describe('Foundation D M2 read tools', () => {
     });
     expect(records.rows).toHaveLength(1);
     expect(records.rows[0].links.attempt_event_id).toBe('att_new');
+    expect(queryRecordsTool.description).toContain(
+      'processing_status is a LearningRecord ingestion/linking state',
+    );
+    expect(queryRecordsTool.description).toContain('cannot prove those entities are absent');
+    expect(queryRecordsTool.description).toContain('entity_status_coverage=not_observed');
 
     const recordContext = await getRecordContextTool.execute(ctx(), {
       recordId: 'rec_mistake',
@@ -733,13 +738,24 @@ describe('Foundation D M2 read tools', () => {
       total_future_count: 2,
       has_more: false,
       complete: true,
+      completeness: 'complete',
     });
     expect(due.queue_coverage).toMatchObject({
       returned_count: 0,
+      total_matching_count: null,
       has_more: null,
       complete_for_due_now_window: null,
+      completeness: 'unknown',
+      claim_scope: 'returned_actionable_rows_only',
+      supports_exhaustive_zero_claim: false,
     });
-    expect(getReviewDueTool.summarize({}, due)).toContain('due-now=0 · future=2');
+    expect(due.entity_status_coverage).toEqual({
+      learning_item: 'not_observed',
+      intervention: 'not_observed',
+    });
+    expect(getReviewDueTool.summarize({}, due)).toContain(
+      'due-returned=0 · due-states=0 · due-completeness=unknown · future=2/2(complete)',
+    );
   });
 
   it('keeps retired intervention diagnostic schedules visible under a knowledge filter', async () => {
@@ -838,7 +854,25 @@ describe('Foundation D M2 read tools', () => {
     expect(due.future_projection_coverage).toMatchObject({
       total_future_count: 2,
       complete: true,
+      completeness: 'complete',
     });
+    const truncated = await getReviewDueTool.execute(ctx(), {
+      limit: 1,
+      knowledgeIds: [knowledgeId],
+    });
+    expect(truncated.future_projections).toHaveLength(1);
+    expect(truncated.future_projection_coverage).toEqual({
+      returned_count: 1,
+      limit: 1,
+      total_future_count: 2,
+      has_more: true,
+      complete: false,
+      completeness: 'truncated',
+    });
+    expect(truncated.fsrs_projection_summary.total_state_count).toBe(
+      truncated.fsrs_projection_summary.due_now_state_count +
+        truncated.fsrs_projection_summary.future_state_count,
+    );
     expect(JSON.stringify(due)).not.toContain('prompt_md');
     expect(JSON.stringify(due)).not.toContain('reference_md');
   });
@@ -897,8 +931,12 @@ describe('Foundation D M2 read tools', () => {
     expect(due.queue_coverage).toEqual({
       returned_count: 0,
       limit: 1,
+      total_matching_count: null,
       has_more: null,
       complete_for_due_now_window: null,
+      completeness: 'unknown',
+      claim_scope: 'returned_actionable_rows_only',
+      supports_exhaustive_zero_claim: false,
     });
   });
 
