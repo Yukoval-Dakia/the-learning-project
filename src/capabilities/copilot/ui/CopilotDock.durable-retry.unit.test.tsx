@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -425,6 +425,70 @@ describe('CopilotDock accepted durable reconnect', () => {
     expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
       false,
     );
+  });
+
+  it('keeps the composer honestly disabled while an inline subtask is still running', async () => {
+    let releaseTerminalReply: (() => void) | undefined;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            `event: subtask\ndata: ${JSON.stringify({
+              step_kind: 'subtask',
+              subtask_id: 'audit-inline-transfer-evidence',
+              label: '核对 36 道跨章节练习、两轮延迟复习与四个未教学探针',
+              status: 'running',
+            })}\n\n`,
+          ),
+        );
+        releaseTerminalReply = () => {
+          controller.enqueue(
+            new TextEncoder().encode(
+              `event: reply\ndata: ${JSON.stringify({
+                reply: '核对完成：定义域遗漏与增根误判是两类稳定错因，下一轮分别安排迁移题。',
+                session_id: 'copilot-session-inline-transfer-audit',
+                reply_event_id: 'copilot_reply_inline_transfer_audit',
+                checkpoint_event_id: 'copilot_user_ask_inline_transfer_audit',
+              })}\n\n`,
+            ),
+          );
+          controller.close();
+        };
+      },
+    });
+    apiFetchMock.mockResolvedValue(
+      new Response(body, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      }),
+    );
+
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByTestId('copilot-composer-input'),
+      '核对我的跨章节练习与延迟复习证据，再区分定义域遗漏和增根误判。',
+    );
+    await user.click(screen.getByTestId('copilot-composer-send'));
+
+    expect(
+      await screen.findByText('核对 36 道跨章节练习、两轮延迟复习与四个未教学探针'),
+    ).toBeTruthy();
+    expect(screen.queryByTestId('copilot-thinking')).toBeNull();
+    expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
+      true,
+    );
+    expect((screen.getByTestId('copilot-composer-send') as HTMLButtonElement).disabled).toBe(true);
+
+    await act(async () => releaseTerminalReply?.());
+    await screen.findByText('核对完成：定义域遗漏与增根误判是两类稳定错因，下一轮分别安排迁移题。');
+    expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
+      false,
+    );
+    await user.type(screen.getByTestId('copilot-composer-input'), '继续生成下一档迁移题');
+    expect((screen.getByTestId('copilot-composer-send') as HTMLButtonElement).disabled).toBe(false);
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(consumeDurableMock).not.toHaveBeenCalled();
   });
 
   it('persists an accepted handle across unmount and resumes it without posting the turn again', async () => {

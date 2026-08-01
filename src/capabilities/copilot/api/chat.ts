@@ -201,6 +201,10 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
         userMessage: parsed.user_message,
         now: new Date(),
       });
+      // The ask commit is still before enqueue acceptance. If the client went
+      // away while that write was pending, stop here; the catch compensation
+      // closes the persisted ask without launching invisible paid work.
+      assertRequestActive(req.signal);
       // 3) queued 初态进度事件——消费者订阅后即见 run 已受理（worker 拾起前）。
       //    YUK-575 (N6) — 盖 pickup_deadline_ms：worker 若没在此前拾取（写 STARTED），
       //    isDurablePickupStalled 谓词据它检出 worker-down 停摆（PR2 Dock 主动 surface）。
@@ -222,6 +226,9 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
               : { source: 'request_flag' },
         },
       });
+      // QUEUED is likewise compensable until boss.send crosses the enqueue
+      // boundary. Do not knowingly submit a run whose 202 can no longer arrive.
+      assertRequestActive(req.signal);
       // 4) 投递 durable job。run 在 worker 进程跑、进度落 job_events、SSE 经泛化
       //    GET /api/jobs/copilot_run/[run_id]/events（YUK-310 caller-agnostic 路由，
       //    copilot_run 已在其 allowlist）重连；dock 消费端由 YUK-596（PR2）接。

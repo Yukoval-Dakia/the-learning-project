@@ -624,6 +624,125 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(runMock).not.toHaveBeenCalled();
   });
 
+  it('YUK-757 — abort during the durable ask commit compensates without enqueueing', async () => {
+    shouldEnqueueMock.mockReturnValue(true);
+    dispatchMock.mockResolvedValue({
+      mode: 'durable',
+      reason: 'multi_artifact_work',
+      source: 'model_triage',
+      task_run_id: 'copilot_dispatch_abort_during_ask_commit',
+    });
+    findOrCreateMock.mockReset().mockResolvedValue({
+      sessionId: 'sess_abort_during_ask_commit',
+      created: true,
+    });
+    let releaseAsk: ((runId: string) => void) | undefined;
+    writeUserAskMock.mockReset().mockImplementationOnce(
+      async () =>
+        await new Promise<string>((resolve) => {
+          releaseAsk = resolve;
+        }),
+    );
+    writeJobEventMock.mockReset().mockResolvedValue(1);
+    writeReplyMock.mockReset().mockResolvedValue('reply_abort_during_ask_commit');
+    getStartedBossMock.mockClear();
+    bossSendMock.mockClear();
+    const controller = new AbortController();
+    const pending = POST(
+      new Request('http://test/api/copilot/chat', {
+        method: 'POST',
+        signal: controller.signal,
+        body: JSON.stringify({
+          user_message:
+            '读取 48 道含参方程、两轮延迟复习与四个未教学探针，并逐题保留 validator 证据。',
+          triggered_by: 'chat',
+        }),
+      }),
+      {},
+    );
+
+    await vi.waitFor(() => expect(writeUserAskMock).toHaveBeenCalledTimes(1));
+    controller.abort();
+    releaseAsk?.('copilot_user_ask_abort_during_commit');
+    const response = await pending;
+
+    expect(response.status).toBe(499);
+    expect(writeJobEventMock).toHaveBeenCalledTimes(1);
+    expect(writeJobEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({ execute: dbExecuteMock }),
+      expect.objectContaining({
+        business_id: 'copilot_user_ask_abort_during_commit',
+        event_type: 'copilot_run.failed',
+      }),
+    );
+    expect(writeReplyMock).toHaveBeenCalledWith(
+      expect.objectContaining({ execute: dbExecuteMock }),
+      expect.objectContaining({
+        sessionId: 'sess_abort_during_ask_commit',
+        userAskEventId: 'copilot_user_ask_abort_during_commit',
+      }),
+    );
+    expect(getStartedBossMock).not.toHaveBeenCalled();
+    expect(bossSendMock).not.toHaveBeenCalled();
+  });
+
+  it('YUK-757 — abort during QUEUED commit closes the run before boss.send', async () => {
+    shouldEnqueueMock.mockReturnValue(true);
+    dispatchMock.mockResolvedValue({
+      mode: 'durable',
+      reason: 'multi_artifact_work',
+      source: 'model_triage',
+      task_run_id: 'copilot_dispatch_abort_during_queued_commit',
+    });
+    findOrCreateMock.mockReset().mockResolvedValue({
+      sessionId: 'sess_abort_during_queued_commit',
+      created: true,
+    });
+    writeUserAskMock.mockReset().mockResolvedValue('copilot_user_ask_abort_during_queued');
+    let releaseQueued: ((eventId: number) => void) | undefined;
+    writeJobEventMock
+      .mockReset()
+      .mockImplementationOnce(
+        async () =>
+          await new Promise<number>((resolve) => {
+            releaseQueued = resolve;
+          }),
+      )
+      .mockResolvedValue(2);
+    writeReplyMock.mockReset().mockResolvedValue('reply_abort_during_queued_commit');
+    getStartedBossMock.mockClear();
+    bossSendMock.mockClear();
+    const controller = new AbortController();
+    const pending = POST(
+      new Request('http://test/api/copilot/chat', {
+        method: 'POST',
+        signal: controller.signal,
+        body: JSON.stringify({
+          user_message: '后台核对 36 道跨章节练习、三轮延迟复习与四个迁移探针，再生成三档梯度。',
+          triggered_by: 'chat',
+        }),
+      }),
+      {},
+    );
+
+    await vi.waitFor(() => expect(writeJobEventMock).toHaveBeenCalledTimes(1));
+    controller.abort();
+    releaseQueued?.(1);
+    const response = await pending;
+
+    expect(response.status).toBe(499);
+    expect(writeJobEventMock).toHaveBeenCalledTimes(2);
+    expect(writeJobEventMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ event_type: 'copilot_run.queued' }),
+    );
+    expect(writeJobEventMock.mock.calls[1]?.[1]).toEqual(
+      expect.objectContaining({ event_type: 'copilot_run.failed' }),
+    );
+    expect(writeReplyMock).toHaveBeenCalled();
+    expect(getStartedBossMock).not.toHaveBeenCalled();
+    expect(bossSendMock).not.toHaveBeenCalled();
+  });
+
   it('YUK-757 — durable:false is an explicit force-inline and skips model triage', async () => {
     shouldEnqueueMock.mockReturnValue(true);
     runMock.mockReset().mockResolvedValue({ session_id: 's_force_inline', reply_event_id: 'e1' });

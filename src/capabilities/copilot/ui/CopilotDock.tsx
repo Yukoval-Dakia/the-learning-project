@@ -398,6 +398,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   );
   const [sending, setSending] = useState(restoredDurableHandle !== null);
   const [durableRunning, setDurableRunning] = useState(restoredDurableHandle !== null);
+  const [awaitingFirstFrame, setAwaitingFirstFrame] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Per-checkpoint in-flight id for the revert POST (disables that row's button), and a
   // distinct "revert landed but the refresh failed" flag so a post-revert refetch error is
@@ -664,6 +665,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       setRefreshSkipped(false);
       setSending(true);
       setDurableRunning(true);
+      setAwaitingFirstFrame(false);
       setMessages((prev) =>
         prev.map((message) =>
           message.id === handle.aiMessageId ? { ...message, streaming: true } : message,
@@ -715,6 +717,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         sendingRef.current = false;
         setSending(false);
         setDurableRunning(false);
+        setAwaitingFirstFrame(false);
       }
     },
     [applyRunViewToMessage, reportSendError],
@@ -763,6 +766,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     const userMessageId = nextId();
     setMessages((prev) => [...prev, { id: userMessageId, role: 'user', text }]);
     setSending(true);
+    setAwaitingFirstFrame(true);
     // AF S4 / YUK-203 U6 — when a skill context is active, route this turn to the
     // teaching/solve skill (additive optional body field; absent → unchanged
     // free-form chat). The Copilot session id is unchanged (single-session, §4.2).
@@ -840,6 +844,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         durableReconnectRef.current = durableHandle;
         persistDurableCopilotReconnect(durableHandle);
         setDurableRunning(true);
+        setAwaitingFirstFrame(false);
         const durable = await consumeDurableCopilotRun({
           location,
           fetchResponse: apiFetch,
@@ -886,7 +891,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             if (!aiCreated) {
               aiCreated = true;
               inlineReplyStarted = true;
-              setSending(false);
+              setAwaitingFirstFrame(false);
               setMessages((prev) => [
                 ...prev,
                 {
@@ -915,7 +920,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             ]);
             if (!aiCreated) {
               aiCreated = true;
-              setSending(false);
+              setAwaitingFirstFrame(false);
             }
             applyRunViewToMessage(
               aiId,
@@ -1018,6 +1023,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       sendingRef.current = false;
       setSending(false);
       setDurableRunning(false);
+      setAwaitingFirstFrame(false);
     }
   }, []);
 
@@ -1274,6 +1280,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           placeholder="问 Loom 任何事…"
           aria-label="问 Loom 任何事"
           data-testid="copilot-composer-input"
+          disabled={sending}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             // isComposing guard: Enter during IME composition (中文选词确认)
@@ -1366,7 +1373,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                 />
               );
             })}
-            {sending && !durableRunning ? (
+            {awaitingFirstFrame && !durableRunning ? (
               <div className="msg msg-ai" data-testid="copilot-thinking">
                 <div className="msg-avatar">
                   <LoomIcon name="sparkle" size={14} />
