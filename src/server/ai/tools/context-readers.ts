@@ -192,7 +192,14 @@ const RecordListRowSchema = z.object({
   created_at: z.string(),
 });
 
-const QueryRecordsOutputSchema = z.object({ rows: z.array(RecordListRowSchema) });
+const QueryRecordsOutputSchema = z.object({
+  rows: z.array(RecordListRowSchema),
+  claim_boundaries: z.object({
+    zero_rows_scope: z.literal('matching_learning_record_rows_only'),
+    supports_entity_inventory_claim: z.literal(false),
+    supports_lifecycle_status_count_claim: z.literal(false),
+  }),
+});
 
 type QueryRecordsInput = z.infer<typeof QueryRecordsInputSchema>;
 type QueryRecordsOutput = z.infer<typeof QueryRecordsOutputSchema>;
@@ -262,6 +269,11 @@ async function executeQueryRecords(
       },
       created_at: row.created_at.toISOString(),
     })),
+    claim_boundaries: {
+      zero_rows_scope: 'matching_learning_record_rows_only',
+      supports_entity_inventory_claim: false,
+      supports_lifecycle_status_count_claim: false,
+    },
   });
 }
 
@@ -797,6 +809,7 @@ const GetReviewDueOutputSchema = z.object({
     }),
   ),
   queue_summary: z.object({
+    count_scope: z.literal('returned_actionable_rows_only'),
     total_returned: z.number().int(),
     never_reviewed_count: z.number().int(),
     overdue_count: z.number().int(),
@@ -804,6 +817,7 @@ const GetReviewDueOutputSchema = z.object({
   }),
   fsrs_projection_summary: z.object({
     subject_scope: z.literal('material_fsrs_state_rows'),
+    supports_actionable_queue_claim: z.literal(false),
     total_state_count: z.number().int().nonnegative(),
     due_now_state_count: z.number().int().nonnegative(),
     future_state_count: z.number().int().nonnegative(),
@@ -840,6 +854,14 @@ const GetReviewDueOutputSchema = z.object({
   entity_status_coverage: z.object({
     learning_item: z.literal('not_observed'),
     intervention: z.literal('not_observed'),
+  }),
+  queue_assertion: z.object({
+    cleared: z.boolean().nullable(),
+    actionable_due_total_count: z.null(),
+    actionable_due_returned_count: z.number().int().nonnegative(),
+    queued_entity_count: z.null(),
+    in_progress_entity_count: z.null(),
+    failed_entity_count: z.null(),
   }),
 });
 
@@ -1159,6 +1181,7 @@ export async function executeGetReviewDue(
     queue_scope: 'due_now_and_never_reviewed_failures',
     rows,
     queue_summary: {
+      count_scope: 'returned_actionable_rows_only',
       total_returned: rows.length,
       never_reviewed_count: rows.filter((row) => row.reason === 'never_reviewed_failure').length,
       overdue_count: rows.filter((row) => row.reason === 'overdue').length,
@@ -1169,6 +1192,7 @@ export async function executeGetReviewDue(
     },
     fsrs_projection_summary: {
       subject_scope: 'material_fsrs_state_rows',
+      supports_actionable_queue_claim: false,
       total_state_count: projectionRows.length,
       due_now_state_count: projectionRows.length - futureProjectionRows.length,
       future_state_count: futureProjectionRows.length,
@@ -1209,6 +1233,14 @@ export async function executeGetReviewDue(
     entity_status_coverage: {
       learning_item: 'not_observed',
       intervention: 'not_observed',
+    },
+    queue_assertion: {
+      cleared: rows.length > 0 ? false : null,
+      actionable_due_total_count: null,
+      actionable_due_returned_count: rows.length,
+      queued_entity_count: null,
+      in_progress_entity_count: null,
+      failed_entity_count: null,
     },
   });
 }
@@ -1539,7 +1571,7 @@ export async function executeMemoryBrief(
 export const queryRecordsTool: DomainTool<QueryRecordsInput, QueryRecordsOutput> = {
   name: 'query_records',
   description:
-    'Read bounded activity-grounded LearningRecord rows with filters for kind, knowledge, question, attempt, item, and text. processing_status is a LearningRecord ingestion/linking state, not a LearningItem or intervention lifecycle status. rows=[] cannot prove those entities are absent or that any of their status counts are zero, and must not override get_review_due.entity_status_coverage=not_observed.',
+    'Read bounded activity-grounded LearningRecord rows with filters for kind, knowledge, question, attempt, item, and text. processing_status is a LearningRecord ingestion/linking state, not a LearningItem or intervention lifecycle status. rows=[] only means zero matching returned LearningRecord rows and cannot prove those entities are absent. claim_boundaries forbids entity inventory and lifecycle-status claims, and this tool must not override get_review_due.queue_assertion nulls or entity_status_coverage=not_observed.',
   effect: 'read',
   inputSchema: QueryRecordsInputSchema,
   outputSchema: QueryRecordsOutputSchema,
@@ -1654,7 +1686,7 @@ function countAddressableNodes(node: AddressableStructure['tree']): number {
 export const getReviewDueTool: DomainTool<GetReviewDueInput, GetReviewDueOutput> = {
   name: 'get_review_due',
   description:
-    'Read returned actionable due-now rows (never-reviewed failures, then overdue FSRS cards) plus bounded future FSRS projections. rows=[] means this call returned zero actionable rows, NOT that the queue is empty. Report due returned rows, material due-state count, due completeness, and future returned/total/completeness separately. queue_coverage.completeness=unknown and supports_exhaustive_zero_claim=false forbid complete/cleared/global-zero claims. entity_status_coverage=not_observed forbids pending/in-progress entity counts. Never mutates FSRS.',
+    'Read returned actionable due-now rows (never-reviewed failures, then overdue FSRS cards) plus bounded future FSRS projections. rows=[] means this call returned zero actionable rows, NOT that the queue is empty. Use queue_assertion as the authoritative claim surface: cleared=false is supported by at least one returned actionable row; every null is unobserved and must never be converted to 0 or true. Report due returned rows, material due-state count, due completeness, and future returned/total/completeness separately. queue_coverage.completeness=unknown and supports_exhaustive_zero_claim=false forbid complete/cleared/global-zero claims. entity_status_coverage=not_observed forbids pending/in-progress entity counts. Never mutates FSRS.',
   effect: 'read',
   inputSchema: GetReviewDueInputSchema,
   outputSchema: GetReviewDueOutputSchema,

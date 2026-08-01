@@ -85,6 +85,7 @@ async function seedJudge(attemptId: string) {
 async function seedExperimentalEvent(input: {
   id: string;
   action: string;
+  subjectKind?: string;
   subjectId?: string;
   causedByEventId?: string | null;
   createdAt: Date;
@@ -95,7 +96,7 @@ async function seedExperimentalEvent(input: {
     actor_kind: 'system',
     actor_ref: 'burnin_fixture',
     action: input.action,
-    subject_kind: 'event',
+    subject_kind: input.subjectKind ?? 'event',
     subject_id: input.subjectId ?? input.id,
     outcome: 'success',
     payload: {
@@ -166,6 +167,64 @@ describe('queryEventsTool', () => {
     });
     expect(exactId.events[0].dispatch_seq).toBeTypeOf('number');
     expect(exactId.match_semantics.event_id).toBe('exact');
+  });
+
+  it('makes a subject-kind intersection visibly non-exhaustive for cross-stage evidence', async () => {
+    const at = new Date('2026-07-31T01:33:04.175Z');
+    const subjectId = 'kc_chain_rule_canary_complex';
+    await seedExperimentalEvent({
+      id: 'gate_input_complex_a',
+      action: 'experimental:self_authored_gate_input',
+      subjectKind: 'knowledge',
+      subjectId,
+      createdAt: at,
+    });
+    await seedExperimentalEvent({
+      id: 'gate_input_complex_b',
+      action: 'experimental:self_authored_gate_input',
+      subjectKind: 'knowledge',
+      subjectId,
+      createdAt: at,
+    });
+    await seedExperimentalEvent({
+      id: 'conjecture_complex',
+      action: 'experimental:proposal',
+      subjectKind: 'mind_model',
+      subjectId,
+      createdAt: at,
+    });
+
+    const narrowed = await queryEventsTool.execute(ctx(), {
+      filter: { subjectId, subjectKind: 'knowledge', limit: 50 },
+    });
+    expect(narrowed.events.map((row) => row.id)).toEqual([
+      'gate_input_complex_b',
+      'gate_input_complex_a',
+    ]);
+    expect(narrowed.subject_scope).toEqual({
+      subject_id: subjectId,
+      subject_kind: 'knowledge',
+      all_subject_kinds_included: false,
+    });
+
+    const crossKind = await queryEventsTool.execute(ctx(), {
+      filter: { subjectId, limit: 50 },
+    });
+    expect(crossKind.events.map((row) => row.id)).toEqual([
+      'conjecture_complex',
+      'gate_input_complex_b',
+      'gate_input_complex_a',
+    ]);
+    expect(crossKind.subject_scope).toEqual({
+      subject_id: subjectId,
+      subject_kind: null,
+      all_subject_kinds_included: true,
+    });
+    expect(crossKind.claim_boundaries).toEqual({
+      zero_rows_scope: 'exact_filters_and_full_observation_window',
+      supports_entity_inventory_claim: false,
+      supports_lifecycle_status_count_claim: false,
+    });
   });
 
   it('projects correction state so an exact read cannot present retracted evidence as active', async () => {
@@ -326,8 +385,22 @@ describe('queryEventsTool', () => {
     });
     expect(second.events).toHaveLength(10);
     expect(second.coverage.has_more).toBe(true);
+    expect(second.coverage).toMatchObject({
+      complete_for_window: false,
+      remaining_window_after_cursor_complete: false,
+    });
+    expect(second.claim_boundaries.zero_rows_scope).toBe(
+      'exact_filters_and_remaining_observation_window_after_cursor',
+    );
     expect(third.events).toHaveLength(3);
-    expect(third.coverage).toMatchObject({ has_more: false, complete_for_window: true });
+    expect(third.coverage).toMatchObject({
+      has_more: false,
+      complete_for_window: false,
+      remaining_window_after_cursor_complete: true,
+    });
+    expect(third.claim_boundaries.zero_rows_scope).toBe(
+      'exact_filters_and_remaining_observation_window_after_cursor',
+    );
 
     const ids = [...first.events, ...second.events, ...third.events].map((row) => row.id);
     expect(ids).toHaveLength(23);
@@ -411,11 +484,24 @@ describe('queryEventsTool', () => {
         events: [],
         total: 3,
         filter_applied: { limit: 20 } as Record<string, unknown>,
+        subject_scope: {
+          subject_id: null,
+          subject_kind: null,
+          all_subject_kinds_included: null,
+        },
         match_semantics: {
+          filters: 'and',
           action: 'exact',
           event_id: 'exact',
+          subject_id: 'exact',
+          subject_kind: 'exact',
           caused_by: 'direct_children_only',
           sibling: 'same_non_null_parent_excludes_focal',
+        },
+        claim_boundaries: {
+          zero_rows_scope: 'exact_filters_and_full_observation_window',
+          supports_entity_inventory_claim: false,
+          supports_lifecycle_status_count_claim: false,
         },
         relation_applied: { kind: 'none', status: 'not_requested' },
         coverage: {
@@ -423,6 +509,8 @@ describe('queryEventsTool', () => {
           limit: 20,
           has_more: false,
           complete_for_window: true,
+          complete_for_window_scope: 'response_contains_full_filter_observation_window',
+          remaining_window_after_cursor_complete: null,
           next_cursor: null,
           order: 'created_at_desc_dispatch_seq_desc_id_desc',
           observed_at: '2026-08-01T08:00:00.000Z',
@@ -445,5 +533,6 @@ describe('queryEventsTool', () => {
     expect(queryEventsTool.description).toContain('event log, not an entity inventory');
     expect(queryEventsTool.description).toContain('cannot prove');
     expect(queryEventsTool.description).toContain('entity_status_coverage=not_observed');
+    expect(queryEventsTool.description).toContain('omit subjectKind');
   });
 });

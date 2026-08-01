@@ -150,6 +150,8 @@ describe('live SoT — shipped shared SKILL.md packs resolve against the real tr
     const content = readFileSync(skillFile, 'utf-8');
     expect(content).toContain('YUK-832 evidence-reading contract');
     expect(content).toContain('action 与 event id 都按工具声明的 **exact**');
+    expect(content).toContain('`subjectId` **不带 `subjectKind`**');
+    expect(content).toContain('`query_events.subject_scope.all_subject_kinds_included=false`');
     expect(content).toContain('`causedByEventId` 只表示 **direct children**');
     expect(content).toContain('共享同一个非空 parent');
     expect(content).toContain('以 `dispatch_seq` 判断真实插入顺序');
@@ -171,5 +173,14 @@ describe('live SoT — shipped shared SKILL.md packs resolve against the real tr
     );
     expect(content).toContain('不得只因后续一次空读就反转为「不存在」');
     expect(content).toContain('不要用字符串相似、正则或自由文本 NLP 代替验证');
+    expect(content).toContain('`evidence_refs` 是 supporting provenance');
+    expect(content).toContain('`get_attempt_context.claim_support.activation_policy=not_observed`');
+    expect(content).toContain('顶层 `outcome` 与 typed `evidence.outcome`');
+    expect(content).toContain('只能定位“已观测的直接分叉”');
+    expect(content).toContain('`get_review_due.queue_assertion`');
+    expect(content).toContain('`fsrs_projection_summary.supports_actionable_queue_claim=false`');
+    expect(content).toContain('只有无 cursor 且 `complete_for_window=true`');
+    expect(content).toContain('`supports_lifecycle_status_count_claim=false`');
+    expect(content).toContain('只有实际调用并收到工具结果后');
   });
 });

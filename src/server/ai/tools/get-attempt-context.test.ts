@@ -1016,6 +1016,7 @@ describe('getAttemptContextTool', () => {
       evidence: {
         kind: 'proposal',
         proposal_kind: 'conjecture',
+        evidence_ref_semantics: 'supporting_references_noncausal',
         evidence_refs: [
           { kind: 'event', id: 'gate_chain_a' },
           { kind: 'event', id: 'gate_chain_b' },
@@ -1036,6 +1037,13 @@ describe('getAttemptContextTool', () => {
           },
         },
       },
+    });
+    expect(proposal.claim_support).toEqual({
+      causal_edges: 'caused_by_event_id_only',
+      temporal_order: 'noncausal',
+      activation_policy: 'not_observed',
+      necessary_conditions: 'not_supported',
+      sufficient_conditions: 'not_supported',
     });
     expect(proposal.lookup.observed?.redacted_payload_groups).toEqual(
       expect.arrayContaining([
@@ -1707,6 +1715,13 @@ describe('getAttemptContextTool', () => {
           limit: 10,
           has_more: false,
           complete: true,
+        },
+        claim_support: {
+          causal_edges: 'caused_by_event_id_only',
+          temporal_order: 'noncausal',
+          activation_policy: 'not_observed',
+          necessary_conditions: 'not_supported',
+          sufficient_conditions: 'not_supported',
         },
         causal_neighborhood: {
           parent: null,

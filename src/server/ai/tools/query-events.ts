@@ -72,11 +72,27 @@ const OutputSchema = z.object({
   // number of all matching rows. Use coverage.has_more before claiming full coverage.
   total: z.number().int().nonnegative(),
   filter_applied: z.record(z.unknown()),
+  subject_scope: z.object({
+    subject_id: z.string().nullable(),
+    subject_kind: z.string().nullable(),
+    all_subject_kinds_included: z.boolean().nullable(),
+  }),
   match_semantics: z.object({
+    filters: z.literal('and'),
     action: z.literal('exact'),
     event_id: z.literal('exact'),
+    subject_id: z.literal('exact'),
+    subject_kind: z.literal('exact'),
     caused_by: z.literal('direct_children_only'),
     sibling: z.literal('same_non_null_parent_excludes_focal'),
+  }),
+  claim_boundaries: z.object({
+    zero_rows_scope: z.enum([
+      'exact_filters_and_full_observation_window',
+      'exact_filters_and_remaining_observation_window_after_cursor',
+    ]),
+    supports_entity_inventory_claim: z.literal(false),
+    supports_lifecycle_status_count_claim: z.literal(false),
   }),
   relation_applied: z.object({
     kind: z.enum(['none', 'direct_children', 'siblings']),
@@ -89,6 +105,8 @@ const OutputSchema = z.object({
     limit: z.number().int().positive(),
     has_more: z.boolean(),
     complete_for_window: z.boolean(),
+    complete_for_window_scope: z.literal('response_contains_full_filter_observation_window'),
+    remaining_window_after_cursor_complete: z.boolean().nullable(),
     next_cursor: CursorSchema.nullable(),
     order: z.literal('created_at_desc_dispatch_seq_desc_id_desc'),
     observed_at: z.string().datetime(),
@@ -134,7 +152,12 @@ const DESCRIPTION = [
   '',
   'Returns rows ordered by created_at DESC, dispatch_seq DESC, id DESC. dispatch_seq is the',
   'authoritative insertion chronology when timestamps tie. A zero-row result is complete only for the',
-  'reported filter/time window; inspect coverage.has_more before calling any bounded read exhaustive.',
+  'reported filter/time window when no cursor was supplied and coverage.complete_for_window=true.',
+  'A cursor response contains only the remaining rows after that cursor; has_more=false then completes',
+  'that remainder, not the full window in this response.',
+  'When tracing evidence for one subject id across a pipeline, omit subjectKind: subject kinds may',
+  'change between hops (for example knowledge → mind_model). Supplying both filters is an exact',
+  'intersection and subject_scope.all_subject_kinds_included=false says other kinds were not read.',
   'This is an event log, not an entity inventory: even a complete zero-row event window cannot prove',
   'that LearningItem or intervention entities are absent, or that any lifecycle status has count zero.',
   'It must not override get_review_due.entity_status_coverage=not_observed.',
@@ -321,18 +344,35 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       sinceDays: filter.sinceDays ?? null,
       limit,
     },
+    subject_scope: {
+      subject_id: filter.subjectId ?? null,
+      subject_kind: filter.subjectKind ?? null,
+      all_subject_kinds_included: filter.subjectId ? filter.subjectKind === undefined : null,
+    },
     match_semantics: {
+      filters: 'and',
       action: 'exact',
       event_id: 'exact',
+      subject_id: 'exact',
+      subject_kind: 'exact',
       caused_by: 'direct_children_only',
       sibling: 'same_non_null_parent_excludes_focal',
+    },
+    claim_boundaries: {
+      zero_rows_scope: input.cursor
+        ? 'exact_filters_and_remaining_observation_window_after_cursor'
+        : 'exact_filters_and_full_observation_window',
+      supports_entity_inventory_claim: false,
+      supports_lifecycle_status_count_claim: false,
     },
     relation_applied: relationApplied,
     coverage: {
       returned_count: rows.length,
       limit,
       has_more: hasMore,
-      complete_for_window: !hasMore,
+      complete_for_window: !input.cursor && !hasMore,
+      complete_for_window_scope: 'response_contains_full_filter_observation_window',
+      remaining_window_after_cursor_complete: input.cursor ? !hasMore : null,
       next_cursor:
         hasMore && lastRow
           ? {

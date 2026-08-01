@@ -159,6 +159,7 @@ const EventEvidenceSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('proposal'),
     proposal_kind: z.string(),
+    evidence_ref_semantics: z.literal('supporting_references_noncausal'),
     target: z.object({
       subject_kind: z.string(),
       subject_id: z.string().nullable(),
@@ -328,6 +329,13 @@ const OutputSchema = z.object({
     has_more: z.boolean().nullable(),
     complete: z.boolean().nullable(),
   }),
+  claim_support: z.object({
+    causal_edges: z.literal('caused_by_event_id_only'),
+    temporal_order: z.literal('noncausal'),
+    activation_policy: z.literal('not_observed'),
+    necessary_conditions: z.literal('not_supported'),
+    sufficient_conditions: z.literal('not_supported'),
+  }),
   causal_neighborhood: z.object({
     parent: CausalEventRefSchema.nullable(),
     direct_children: z.array(CausalEventRefSchema),
@@ -364,6 +372,9 @@ const DESCRIPTION = [
   '  emitted only for an explicitly persisted empty array. None describes redacted/unknown keys.',
   '- sequential roots or siblings are not a caused_by chain. Only explicit caused_by_event_id edges',
   '  establish parent/child causality.',
+  '- proposal evidence_refs are supporting provenance only, never caused_by edges. The reader does',
+  '  not expose the complete activation policy, so observed fields cannot be promoted to necessary',
+  '  conditions, a minimum sufficient set, or proof that every trigger condition was satisfied.',
   '- intervention_activated diagnostics carry canonical question ids. To prove downstream learner',
   '  response/review, query exact action=review + subjectKind=question + that subjectId.',
   '- timeline is same-question context only, explicitly non-causal, with bounded coverage.',
@@ -536,6 +547,7 @@ function projectEventPayload(value: EnvelopedEvent, rawPayload: unknown): Payloa
       evidence: {
         kind: 'proposal',
         proposal_kind: proposal.kind,
+        evidence_ref_semantics: 'supporting_references_noncausal',
         target: proposal.target,
         evidence_refs: proposal.evidence_refs,
         conjecture: conjecture
@@ -904,6 +916,13 @@ function emptyOutput(
       has_more: null,
       complete: null,
     },
+    claim_support: {
+      causal_edges: 'caused_by_event_id_only',
+      temporal_order: 'noncausal',
+      activation_policy: 'not_observed',
+      necessary_conditions: 'not_supported',
+      sufficient_conditions: 'not_supported',
+    },
     causal_neighborhood: causal,
     linked_records: [],
   });
@@ -1064,6 +1083,13 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       limit: timelineLimit,
       has_more: timelineHasMore,
       complete: timelineHasMore === null ? null : !timelineHasMore,
+    },
+    claim_support: {
+      causal_edges: 'caused_by_event_id_only',
+      temporal_order: 'noncausal',
+      activation_policy: 'not_observed',
+      necessary_conditions: 'not_supported',
+      sufficient_conditions: 'not_supported',
     },
     causal_neighborhood: causal,
     linked_records: records.map((record) => ({

@@ -418,6 +418,11 @@ describe('Foundation D M2 read tools', () => {
     });
     expect(records.rows).toHaveLength(1);
     expect(records.rows[0].links.attempt_event_id).toBe('att_new');
+    expect(records.claim_boundaries).toEqual({
+      zero_rows_scope: 'matching_learning_record_rows_only',
+      supports_entity_inventory_claim: false,
+      supports_lifecycle_status_count_claim: false,
+    });
     expect(queryRecordsTool.description).toContain(
       'processing_status is a LearningRecord ingestion/linking state',
     );
@@ -552,10 +557,19 @@ describe('Foundation D M2 read tools', () => {
 
     const due = await getReviewDueTool.execute(ctx(), { limit: 10 });
     expect(due.rows.map((row) => row.question_id)).toEqual(['q_new', 'q_due']);
+    expect(due.queue_summary.count_scope).toBe('returned_actionable_rows_only');
     expect(due.queue_summary.never_reviewed_count).toBe(1);
     expect(due.queue_summary.overdue_count).toBe(1);
     expect(due.queue_scope).toBe('due_now_and_never_reviewed_failures');
     expect(due.fsrs_projection_summary.due_now_state_count).toBeGreaterThanOrEqual(1);
+    expect(due.queue_assertion).toMatchObject({
+      cleared: false,
+      actionable_due_total_count: null,
+      actionable_due_returned_count: 2,
+      queued_entity_count: null,
+      in_progress_entity_count: null,
+      failed_entity_count: null,
+    });
 
     await testDb()
       .insert(question)
@@ -705,12 +719,14 @@ describe('Foundation D M2 read tools', () => {
     });
     expect(due.rows).toEqual([]);
     expect(due.queue_summary).toMatchObject({
+      count_scope: 'returned_actionable_rows_only',
       total_returned: 0,
       never_reviewed_count: 0,
       overdue_count: 0,
     });
     expect(due.fsrs_projection_summary).toMatchObject({
       subject_scope: 'material_fsrs_state_rows',
+      supports_actionable_queue_claim: false,
       total_state_count: 2,
       due_now_state_count: 0,
       future_state_count: 2,
@@ -752,6 +768,14 @@ describe('Foundation D M2 read tools', () => {
     expect(due.entity_status_coverage).toEqual({
       learning_item: 'not_observed',
       intervention: 'not_observed',
+    });
+    expect(due.queue_assertion).toEqual({
+      cleared: null,
+      actionable_due_total_count: null,
+      actionable_due_returned_count: 0,
+      queued_entity_count: null,
+      in_progress_entity_count: null,
+      failed_entity_count: null,
     });
     expect(getReviewDueTool.summarize({}, due)).toContain(
       'due-returned=0 · due-states=0 · due-completeness=unknown · future=2/2(complete)',
