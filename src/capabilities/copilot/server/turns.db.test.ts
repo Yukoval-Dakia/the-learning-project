@@ -117,7 +117,8 @@ async function writeDurableFailureReply(
   sessionId: string,
   inReplyTo: string,
   at: Date,
-  reason: 'ambiguous_execution' | 'exhausted',
+  reason: 'ambiguous_execution' | 'cancelled' | 'exhausted',
+  checkpointSafe?: boolean,
 ): Promise<string> {
   const id = `copilot_reply_${createId()}`;
   writtenEventIds.push(id);
@@ -138,10 +139,13 @@ async function writeDurableFailureReply(
       in_reply_to_event_id: inReplyTo,
       durable_failure: {
         reason,
+        ...(checkpointSafe === false ? { checkpoint_safe: false } : {}),
         error:
           reason === 'ambiguous_execution'
             ? 'execution outcome could not be confirmed after worker recovery'
-            : 'provider budget exhausted after validating three of five transfer probes',
+            : reason === 'cancelled'
+              ? 'copilot run cancelled by user'
+              : 'provider budget exhausted after validating three of five transfer probes',
       },
     },
     caused_by_event_id: inReplyTo,
@@ -522,6 +526,46 @@ describe('getRecentCopilotTurns', () => {
     expect(turns.find((turn) => turn.event_id === exhaustedReply)?.checkpoint_event_id).toBe(
       exhaustedAsk,
     );
+  });
+
+  it('persists Stop checkpoint safety across refresh when a materializing-tool mirror was lost', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    const unsafeAsk = await writeAsk(
+      '读取 48 条历史回答、6 个探针和 3 份讲义，再物化 9 道迁移题。',
+      sessionId,
+      new Date(now.getTime() - 4_000),
+    );
+    const unsafeReply = await writeDurableFailureReply(
+      '已开始物化第一道迁移题，随后按 Stop 停止；tool_use 镜像未能保存。',
+      sessionId,
+      unsafeAsk,
+      new Date(now.getTime() - 3_500),
+      'cancelled',
+      false,
+    );
+    const safeAsk = await writeAsk(
+      '只读取同一批证据并生成不落库的聚类摘要。',
+      sessionId,
+      new Date(now.getTime() - 2_000),
+    );
+    const safeReply = await writeDurableFailureReply(
+      '读取完成后按 Stop 停止，没有开始物化工具。',
+      sessionId,
+      safeAsk,
+      new Date(now.getTime() - 1_500),
+      'cancelled',
+      true,
+    );
+
+    const turns = await getRecentCopilotTurns(db, { now });
+
+    expect(turns.find((turn) => turn.event_id === unsafeAsk)?.checkpoint_event_id).toBeUndefined();
+    expect(
+      turns.find((turn) => turn.event_id === unsafeReply)?.checkpoint_event_id,
+    ).toBeUndefined();
+    expect(turns.find((turn) => turn.event_id === safeAsk)?.checkpoint_event_id).toBe(safeAsk);
+    expect(turns.find((turn) => turn.event_id === safeReply)?.checkpoint_event_id).toBe(safeAsk);
   });
 
   it('caps to limit turns (newest kept), returned chronologically', async () => {

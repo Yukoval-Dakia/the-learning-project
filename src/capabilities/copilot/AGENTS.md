@@ -5,8 +5,9 @@
 ## WHERE TO LOOK
 | 文件 | 职责 |
 |------|------|
-| `manifest.ts` | 7 条 API 路由 + 3 个 jobs + 5 个自有 copilot tools + 7 个 event actions |
+| `manifest.ts` | 9 条 API 路由 + 3 个 jobs + 6 个自有 copilot tools + 7 个 event actions |
 | `api/chat.ts` | `/api/copilot/chat` SSE 流入口 |
+| `api/cancel-run.ts` | `/api/copilot/runs/[id]/cancel` durable Stop 原子写入面 |
 | `api/turns.ts` | `/api/copilot/turns` turns 重放 |
 | `api/copilot-summary.ts` | `/api/today/copilot-summary` 今日摘要 |
 | `api/accept-chip.ts` | `/api/teaching-sessions/[id]/accept-chip` 教学 chip 接受 |
@@ -19,6 +20,11 @@
   用 `getRecentCopilotTurns`，durable pickup 用 `getCopilotTurnsBeforeAnchor`，两者复用同一
   row→turn projection；不要另建第三套 reader/projection。
 - durable copilot run 走 `copilot_run` pg-boss job（queue='agent'），进度落 `job_events`。
+- Stop 以 `job_events` 的 `CANCEL_REQUESTED` 为跨 app/worker 真相源。API 用固定顺序
+  dispatch→settlement advisory locks 与 execution fence / outcome marker 线性化；worker 用
+  500ms 非重叠 poll、SDK `PreToolUse` 与 async DomainTool gate 覆盖纯文本、SDK 工具和本地
+  工具，并把同一 AbortSignal 传给 nested AI。取消终态必须等 in-flight DomainTool
+  execute/log/mirror barrier；materializing tool 一旦开始即持久化 `checkpoint_safe:false`。
 - durable 终态统一经 `copilot-run-status.ts` 判定；`FAILED(reason='error')` 是可重试帧，
   其它 FAILED reason（含 legacy missing/unknown）按 fail-closed 终态处理。每两分钟
   `copilot_run_reconcile` 只依据 pg-boss 权威状态、持久化 outcome marker 与 execution

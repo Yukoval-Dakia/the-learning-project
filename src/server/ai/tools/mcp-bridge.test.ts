@@ -194,6 +194,111 @@ describe('buildMcpServerFromRegistry', () => {
     expect(log.output_json).toEqual({ error: 'quota exceeded' });
   });
 
+  it('awaits an async cancellation gate before starting a complex DomainTool', async () => {
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const runFn = vi.fn((_i: { answer_ids: string[]; transfer_count: number }) => ({
+      validated_probes: 6,
+      source_documents: 3,
+    }));
+    registerTool(
+      makeReadTool<
+        { answer_ids: string[]; transfer_count: number },
+        { validated_probes: number; source_documents: number }
+      >(
+        'demo_async_cancel_gate',
+        { answer_ids: z.array(z.string()), transfer_count: z.number().int() },
+        runFn,
+        (_input, output) => `validated ${output.validated_probes} probes`,
+      ),
+    );
+    buildMcpServerFromRegistry({
+      ctx,
+      serverName: 'loom_v2',
+      toolNames: ['demo_async_cancel_gate'],
+      beforeExecute: async () => {
+        await gate;
+        return undefined;
+      },
+    });
+
+    const execution = mockAgentSdk.toolDefs[0].handler({
+      answer_ids: Array.from({ length: 48 }, (_, index) => `answer_${index + 1}`),
+      transfer_count: 9,
+    });
+    await Promise.resolve();
+    expect(runFn).not.toHaveBeenCalled();
+
+    releaseGate();
+    await execution;
+    expect(runFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('captures an async cancellation-gate rejection without executing the tool', async () => {
+    const runFn = vi.fn(() => ({ created: true }));
+    registerTool(
+      makeReadTool<{ prompt: string }, { created: boolean }>(
+        'demo_async_cancel_rejection',
+        { prompt: z.string() },
+        runFn,
+        () => 'should not execute',
+      ),
+    );
+    buildMcpServerFromRegistry({
+      ctx,
+      serverName: 'loom_v2',
+      toolNames: ['demo_async_cancel_rejection'],
+      beforeExecute: async () => {
+        throw new Error('cancel-state query lost');
+      },
+    });
+
+    const result = (await mockAgentSdk.toolDefs[0].handler({
+      prompt: 'author three linked artifacts from nine transfer variants',
+    })) as { content: Array<{ text: string }> };
+
+    expect(runFn).not.toHaveBeenCalled();
+    expect(JSON.parse(result.content[0].text).error).toBe('cancel-state query lost');
+    expect(captured.toolCallLogs[0]).toMatchObject({ error_reason: 'cancel-state query lost' });
+  });
+
+  it('holds the execution barrier through tool logging and event mirroring', async () => {
+    const observations: string[] = [];
+    const runFn = vi.fn((_i: { prompt: string }) => {
+      observations.push('execute');
+      return { question_id: 'question_parameter_transfer_9' };
+    });
+    registerTool(
+      makeReadTool<{ prompt: string }, { question_id: string }>(
+        'demo_barrier',
+        { prompt: z.string() },
+        runFn,
+        (_input, output) => `authored ${output.question_id}`,
+      ),
+    );
+    buildMcpServerFromRegistry({
+      ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
+      serverName: 'loom_v2',
+      toolNames: ['demo_barrier'],
+      onExecuteStart: () => {
+        observations.push('start');
+      },
+      onExecuteSettled: () => {
+        expect(captured.toolCallLogs).toHaveLength(1);
+        expect(captured.events).toHaveLength(1);
+        observations.push('settled');
+      },
+    });
+
+    await mockAgentSdk.toolDefs[0].handler({
+      prompt: 'construct a unique-solution transfer item with dimensional validation',
+    });
+
+    expect(observations).toEqual(['start', 'execute', 'settled']);
+  });
+
   // P5.1 / YUK-143 + YUK-290 — interceptInput merges context_budget into both
   // the agent output and persisted tool-call log (warning observability seam).
   it('interceptInput rewrites the executed args and merges context_budget into output', async () => {

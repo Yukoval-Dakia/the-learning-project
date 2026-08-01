@@ -54,12 +54,13 @@ async function copilotReplyEvents(sessionId: string) {
 // budgetOverride），让 mock.calls[0] 携带 typed tuple。
 type AgentCtx = {
   db: unknown;
+  signal?: AbortSignal;
   mcpServers?: Record<string, unknown>;
   allowedTools?: string[];
   skills?: string[];
   budgetOverride?: { maxIterations?: number; timeoutMs?: number };
   agents?: Record<string, { tools?: string[] }>;
-  hooks?: Record<string, unknown>;
+  hooks?: { PreToolUse?: Array<{ hooks: Array<(...args: unknown[]) => Promise<unknown>> }> };
   canUseTool?: (...args: unknown[]) => unknown;
   onTaskEvent?: (event: unknown) => void | Promise<void>;
 };
@@ -255,7 +256,8 @@ describe('runCopilotRun', () => {
     const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
     expect(ctx.allowedTools).toEqual(expect.arrayContaining(['Task']));
     expect(ctx.agents).toHaveProperty(COPILOT_SUBAGENT_NAME);
-    expect(ctx.hooks).toHaveProperty('PreToolUse');
+    expect(ctx.hooks?.PreToolUse).toHaveLength(2);
+    expect(ctx.signal).toBeInstanceOf(AbortSignal);
     expect(ctx.canUseTool).toEqual(expect.any(Function));
     const researcher = ctx.agents?.[COPILOT_SUBAGENT_NAME];
     expect(researcher?.tools?.every((tool) => ctx.allowedTools?.includes(tool))).toBe(true);
@@ -327,7 +329,8 @@ describe('runCopilotRun', () => {
     const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
     expect(ctx.allowedTools).not.toContain('Task');
     expect(ctx).not.toHaveProperty('agents');
-    expect(ctx).not.toHaveProperty('hooks');
+    expect(ctx.hooks?.PreToolUse).toHaveLength(1);
+    expect(ctx.signal).toBeInstanceOf(AbortSignal);
     expect(ctx).not.toHaveProperty('canUseTool');
     expect(ctx).not.toHaveProperty('onTaskEvent');
   });
@@ -631,7 +634,6 @@ describe('runCopilotRun', () => {
     expect((await replay(runId)).map((item) => item.event_type)).toEqual([
       COPILOT_RUN_EVENTS.QUEUED,
       COPILOT_RUN_EVENTS.STARTED,
-      COPILOT_RUN_EVENTS.STARTED,
       COPILOT_RUN_EVENTS.EXECUTION_STARTED,
       COPILOT_RUN_EVENTS.REPLY,
       COPILOT_RUN_EVENTS.DONE,
@@ -712,7 +714,6 @@ describe('runCopilotRun', () => {
     expect(await copilotReplyEvents(sessionId)).toHaveLength(1);
     expect((await replay(runId)).map((item) => item.event_type)).toEqual([
       COPILOT_RUN_EVENTS.QUEUED,
-      COPILOT_RUN_EVENTS.STARTED,
       COPILOT_RUN_EVENTS.STARTED,
       COPILOT_RUN_EVENTS.EXECUTION_STARTED,
       COPILOT_RUN_EVENTS.REPLY,
@@ -1111,19 +1112,21 @@ describe('runCopilotRun', () => {
     const opts = (
       buildMcp.mock.calls[0] as unknown as [
         {
-          beforeExecute: (t: unknown) => string | undefined;
+          beforeExecute: (t: unknown) => Promise<string | undefined>;
           interceptInput: (t: unknown, args: unknown) => { truncationNote?: object | null };
         },
       ]
     )[0];
     const fakeTool = { name: 'query_knowledge', effect: 'read' };
-    for (let i = 0; i < 25; i++) expect(opts.beforeExecute(fakeTool)).toBeUndefined();
+    for (let i = 0; i < 25; i++)
+      await expect(opts.beforeExecute(fakeTool)).resolves.toBeUndefined();
     expect(opts.interceptInput(fakeTool, {}).truncationNote).toMatchObject({
       level: 'warning',
       dimensions: { toolCalls: { used: 25, hard_remaining: 35 } },
     });
-    for (let i = 25; i < 60; i++) expect(opts.beforeExecute(fakeTool)).toBeUndefined();
-    expect(opts.beforeExecute(fakeTool)).toMatch(/hard context budget reached/);
+    for (let i = 25; i < 60; i++)
+      await expect(opts.beforeExecute(fakeTool)).resolves.toBeUndefined();
+    await expect(opts.beforeExecute(fakeTool)).resolves.toMatch(/hard context budget reached/);
     // 常量对齐。
     expect(DURABLE_BUDGET).toMatchObject({
       maxIterations: 24,
@@ -1540,6 +1543,212 @@ describe('runCopilotRun', () => {
     const replies = await copilotReplyEvents('sess_partial');
     expect(replies).toHaveLength(1);
     expect(replies[0]?.payload).toMatchObject({ reply_md: '半程答复' });
+  });
+
+  it('Stop — pure-text long run aborts from persisted cancellation, preserves rich partial output, and emits one cancelled terminal', async () => {
+    const runId = 'copilot_user_ask_stop_48_answers_6_probes_3_docs_9_transfers';
+    const sessionId = 'sess_stop_pure_text_cross_subject';
+    const partialReply =
+      '已完成 48 条历史回答的三科交叉聚类，并核验 3 份讲义中的定义域、方向与量纲；6 个薄弱点探针已确认 4 个，9 个迁移变式尚未开始物化。';
+    const run = vi.fn(
+      async (_kind: string, input: unknown, ctx: AgentCtx, onDelta: (text: string) => void) => {
+        expect(input).toMatchObject({
+          evidence_shape: {
+            answer_count: 48,
+            probe_count: 6,
+            source_document_count: 3,
+            transfer_variant_count: 9,
+          },
+        });
+        onDelta(partialReply);
+        await writeJobEvent(testDb(), {
+          business_table: COPILOT_RUN_TABLE,
+          business_id: runId,
+          event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+          payload: { requested_by: 'user', stage: 'after_fourth_probe' },
+        });
+        await new Promise<void>((resolve) => {
+          if (ctx.signal?.aborted) resolve();
+          else ctx.signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+        return {
+          text: partialReply,
+          task_run_id: 'tr_stop_pure_text_cross_subject',
+          finishReason: 'error',
+          usage: { inputTokens: 18_400, outputTokens: 1_320 },
+          partial: true,
+          error: 'root SDK loop aborted after Stop',
+        };
+      },
+    );
+    const richInput = vi.fn(async () => ({
+      surface: 'copilot' as const,
+      triggered_by: 'chat' as const,
+      user_message: baseData.user_message,
+      proposal_feedback: [],
+      conversation_history: Array.from({ length: 48 }, (_, index) => ({
+        role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+        text: `historical answer evidence ${index + 1}`,
+      })),
+      evidence_shape: {
+        answer_count: 48,
+        probe_count: 6,
+        source_document_count: 3,
+        transfer_variant_count: 9,
+      },
+    }));
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: richInput as never,
+      buildMcpServerFn: mcpMock() as never,
+    });
+
+    expect(result).toEqual({ status: 'cancelled' });
+    const events = await replay(runId);
+    expect(events.filter((event) => event.event_type === COPILOT_RUN_EVENTS.FAILED)).toHaveLength(
+      1,
+    );
+    expect(events.some((event) => event.event_type === COPILOT_RUN_EVENTS.DONE)).toBe(false);
+    expect(events.at(-1)?.payload).toMatchObject({
+      reason: 'cancelled',
+      reply_md: partialReply,
+      checkpoint_event_id: runId,
+    });
+    const replies = await copilotReplyEvents(sessionId);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      outcome: 'failure',
+      task_run_id: 'tr_stop_pure_text_cross_subject',
+      payload: {
+        reply_md: partialReply,
+        durable_failure: { reason: 'cancelled' },
+      },
+    });
+  });
+
+  it('Stop — a materializing tool start suppresses the checkpoint even when its mirror is unavailable', async () => {
+    const runId = 'copilot_user_ask_stop_during_author_question';
+    const sessionId = 'sess_stop_materializing_without_mirror';
+    let mcpOptions:
+      | {
+          beforeExecute: (tool: { name: string; effect: 'write' }) => Promise<string | undefined>;
+          onExecuteStart: (tool: { name: string; effect: 'write' }) => void;
+          onExecuteSettled: () => void;
+        }
+      | undefined;
+    const buildMcp = vi.fn((options: NonNullable<typeof mcpOptions>) => {
+      mcpOptions = options;
+      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
+    });
+    const run = vi.fn(async (_kind: string, _input: unknown, ctx: AgentCtx) => {
+      const tool = { name: 'author_question', effect: 'write' as const };
+      await expect(mcpOptions?.beforeExecute(tool)).resolves.toBeUndefined();
+      mcpOptions?.onExecuteStart(tool);
+      await writeJobEvent(testDb(), {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+        payload: { requested_by: 'user', stage: 'authoring_unique_solution_transfer' },
+      });
+      await new Promise<void>((resolve) => {
+        if (ctx.signal?.aborted) resolve();
+        else ctx.signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+      // Simulate the domain write/log completing while the tool_use mirror is
+      // unavailable. The runtime latch must still fail closed for checkpoint safety.
+      mcpOptions?.onExecuteSettled();
+      return {
+        text: '已完成题干骨架，但尚未完成 9 个迁移变式的唯一解复核。',
+        task_run_id: 'tr_stop_materializing_without_mirror',
+        finishReason: 'error',
+        usage: { inputTokens: 22_000, outputTokens: 1_800 },
+        partial: true,
+        error: 'cancelled during author_question',
+      };
+    });
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: buildMcp as never,
+    });
+
+    expect(result).toEqual({ status: 'cancelled' });
+    const events = await replay(runId);
+    const failed = events.find((event) => event.event_type === COPILOT_RUN_EVENTS.FAILED);
+    expect(failed?.payload).toMatchObject({ reason: 'cancelled' });
+    expect(failed?.payload).not.toHaveProperty('checkpoint_event_id');
+    const replies = await copilotReplyEvents(sessionId);
+    expect(replies[0]?.payload).toMatchObject({
+      durable_failure: { reason: 'cancelled', checkpoint_safe: false },
+    });
+    expect(replies[0]?.task_run_id).toBe('tr_stop_materializing_without_mirror');
+    expect(
+      await testDb()
+        .select({ id: event.id })
+        .from(event)
+        .where(and(eq(event.action, 'tool_use'), eq(event.caused_by_event_id, runId))),
+    ).toEqual([]);
+  });
+
+  it('Stop — a cancellation committed before settlement wins over an SDK success result', async () => {
+    const runId = 'copilot_user_ask_cancel_vs_success_settlement';
+    const sessionId = 'sess_cancel_vs_success_settlement';
+    const owner = new AbortController();
+    const fakeControl = {
+      signal: owner.signal,
+      hasConfirmedCancellation: false,
+      materializingToolStarted: false,
+      startPolling() {},
+      dispose() {},
+      probe: async () => 'clear' as const,
+      beforeTool: async () => undefined,
+      onToolExecutionStarted() {},
+      onToolExecutionSettled() {},
+      waitForInFlight: async () => true,
+      prependSdkHook: () => ({ PreToolUse: [] }),
+    };
+    const successText = '48 条历史回答、6 个探针、3 份讲义与 9 个迁移变式已经全部处理完毕。';
+    const run = vi.fn(async () => {
+      await writeJobEvent(testDb(), {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+        payload: { requested_by: 'user', stage: 'settlement_race' },
+      });
+      return {
+        text: successText,
+        task_run_id: 'tr_cancel_vs_success_settlement',
+        finishReason: 'end_turn',
+        usage: { inputTokens: 24_000, outputTokens: 2_400 },
+      };
+    });
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+      createCancellationControlFn: (() => fakeControl) as never,
+    });
+
+    expect(result).toEqual({ status: 'cancelled' });
+    const events = await replay(runId);
+    expect(events.some((event) => event.event_type === COPILOT_RUN_EVENTS.DONE)).toBe(false);
+    expect(events.at(-1)?.payload).toMatchObject({ reason: 'cancelled' });
+    const replies = await copilotReplyEvents(sessionId);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      outcome: 'failure',
+      task_run_id: 'tr_cancel_vs_success_settlement',
+      payload: { durable_failure: { reason: 'cancelled' } },
+    });
   });
 
   it('③ 启动前已有 cancel 事件 → 早停写 failed(cancelled)，不调 AI', async () => {

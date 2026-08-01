@@ -35,7 +35,7 @@ export const COPILOT_RUN_EVENTS = {
   DONE: 'copilot_run.done',
   /** 终态：失败（含 cancelled）。 */
   FAILED: 'copilot_run.failed',
-  /** 协作取消请求（启动前查；v1 不做 live-steer，回合间早停）。 */
+  /** 协作取消请求（启动前 fence guard + 运行中 poll/hook/tool gate 共同观察）。 */
   CANCEL_REQUESTED: 'copilot_run.cancel_requested',
 } as const;
 
@@ -101,9 +101,9 @@ export function isCopilotRunTerminalEvent(event: CopilotRunStatusEvent): boolean
  *
  * 纯 + 无依赖：unit-tested in copilot-run-status.test.ts。
  *
- * YUK-364 (defer) — cancel_requested 的 float 语义、以及 reconnect 时 started-vs-
- * running 的边界，是消费端 run-card UI（后续 lane）才真正用到的呈现细节。当前无
- * UI 消费者，这些边角语义留待消费端 lane 落地时按真实需求校准，不在本 lane 收口。
+ * cancel_requested remains a floating cooperative state until the worker
+ * projects FAILED(cancelled); a previously committed DONE/terminal FAILED wins.
+ * Reconnect presentation remains a later UI lane.
  */
 export function deriveCopilotRunStatus(events: CopilotRunStatusEvent[]): CopilotRunStatus {
   let status: CopilotRunStatus = 'queued';
@@ -158,7 +158,7 @@ export function deriveCopilotRunStatus(events: CopilotRunStatusEvent[]): Copilot
   return status;
 }
 
-/** 在 replay 序列里是否已出现取消请求（handler 启动前的早停判据）。 */
+/** 在 replay 序列里是否已出现取消请求（fence、settlement 与 replay 共享判据）。 */
 export function hasCancelRequest(events: CopilotRunStatusEvent[]): boolean {
   return events.some((e) => e.event_type === COPILOT_RUN_EVENTS.CANCEL_REQUESTED);
 }

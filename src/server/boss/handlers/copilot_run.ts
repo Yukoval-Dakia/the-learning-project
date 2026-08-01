@@ -20,6 +20,14 @@ import type { Job } from 'pg-boss';
 
 import { isDurableWorkerTouchEvent } from '@/capabilities/copilot/durable-pickup';
 import { wrapDeltaSuppressingMarker, writeCopilotReply } from '@/capabilities/copilot/server/chat';
+import {
+  COPILOT_CANCEL_DRAIN_GRACE_MS,
+  type CopilotRunCancellationControl,
+  type PersistCopilotRunCancellationArgs,
+  createCopilotRunCancellationControl,
+  persistCopilotRunCancellationMarker,
+} from '@/capabilities/copilot/server/copilot-run-cancellation';
+import { acquireCopilotExecutionSettlementLock } from '@/capabilities/copilot/server/copilot-run-coordination';
 // YUK-575 (A1/N3) — the shared free-form run-input assembler. The durable handler
 // assembles the FULL run input at pickup time (YUK-596: pass run_id as a causal
 // history anchor in the job's fixed session; conversation_history / learner-state
@@ -90,7 +98,7 @@ import { writeJobEvent } from '@/server/events/writer';
 // subjectId 参数），inline + durable 直接复用同一份，零漂移。
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
 import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 
 // dispatch 入口投递的 job 体。run_id = checkpoint_id = user_ask event id（route
 // 在 enqueue 前已写 user_ask domain event，本 handler 以它做 causedByEventId 让
@@ -189,6 +197,8 @@ export interface RunCopilotRunParams {
   writeCopilotReplyFn?: typeof writeCopilotReply;
   /** Test seam for the load-bearing atomic paid-execution claim. */
   claimExecutionFenceFn?: ClaimCopilotExecutionFenceFn;
+  /** Test seam for the cross-process cancellation observer/controller. */
+  createCancellationControlFn?: typeof createCopilotRunCancellationControl;
 }
 
 export type RunCopilotRunResult =
@@ -213,7 +223,9 @@ export interface TerminalProjectionEvent {
 interface FailedTerminalProjection {
   runId: string;
   error: string;
-  reason: 'exhausted' | 'ambiguous_execution' | 'pre_execution_lost';
+  reason: 'cancelled' | 'exhausted' | 'ambiguous_execution' | 'pre_execution_lost';
+  /** Explicit fail-closed override when a materializing tool began before Stop. */
+  checkpointSafe?: boolean;
   /** User-facing terminal copy for the live job-events consumer. */
   replyMd?: string;
 }
@@ -223,12 +235,56 @@ type WriteJobEventFn = (tx: Db | Tx, input: Parameters<typeof writeJobEvent>[1])
 type ClaimCopilotExecutionFenceResult =
   | { outcome: 'claimed' }
   | { outcome: 'existing' }
+  | { outcome: 'cancelled' }
   | { outcome: 'terminal'; events: TerminalProjectionEvent[] };
 
 type ClaimCopilotExecutionFenceFn = (
   db: Db,
   runId: string,
 ) => Promise<ClaimCopilotExecutionFenceResult>;
+
+type MarkCopilotRunStartedResult =
+  | { outcome: 'started' }
+  | { outcome: 'cancelled' }
+  | { outcome: 'terminal'; events: TerminalProjectionEvent[] };
+
+/** Prevent a late worker pickup from appending STARTED behind a Stop terminal. */
+export async function markCopilotRunStarted(
+  db: Db,
+  runId: string,
+  payload: Record<string, unknown>,
+  options: { writeJobEventFn?: WriteJobEventFn } = {},
+): Promise<MarkCopilotRunStartedResult> {
+  const write = options.writeJobEventFn ?? writeJobEvent;
+  return withCopilotDurableDispatchLock(db, runId, async (tx) => {
+    const events = await tx
+      .select({ id: job_events.id, event_type: job_events.event_type, payload: job_events.payload })
+      .from(job_events)
+      .where(
+        and(eq(job_events.business_table, COPILOT_RUN_TABLE), eq(job_events.business_id, runId)),
+      )
+      .orderBy(asc(job_events.id));
+    if (hasCopilotSettlementTerminal(events)) return { outcome: 'terminal', events };
+    if (hasCancelRequest(events)) {
+      await write(tx, {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.FAILED,
+        payload: { reason: 'cancelled', cancelled_before_start: true, checkpoint_event_id: runId },
+      });
+      return { outcome: 'cancelled' };
+    }
+    if (!events.some((event) => event.event_type === COPILOT_RUN_EVENTS.STARTED)) {
+      await write(tx, {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.STARTED,
+        payload,
+      });
+    }
+    return { outcome: 'started' };
+  });
+}
 
 /**
  * Atomically claim the one paid/tool execution allowed for a run. The dispatch
@@ -253,6 +309,15 @@ export async function claimCopilotExecutionFence(
     if (hasCopilotSettlementTerminal(events)) return { outcome: 'terminal', events };
     if (events.some((event) => event.event_type === COPILOT_RUN_EVENTS.EXECUTION_STARTED)) {
       return { outcome: 'existing' };
+    }
+    if (hasCancelRequest(events)) {
+      await write(tx, {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.FAILED,
+        payload: { reason: 'cancelled', cancelled_before_start: true, checkpoint_event_id: runId },
+      });
+      return { outcome: 'cancelled' };
     }
     await write(tx, {
       business_table: COPILOT_RUN_TABLE,
@@ -376,7 +441,7 @@ export async function writeFailedTerminalProjection(
   // effects committed. Missing mirrors during a DB outage cannot make that
   // work safely revertible, so ambiguous recovery never advertises an anchor.
   const checkpointPayload =
-    projection.reason === 'ambiguous_execution'
+    projection.reason === 'ambiguous_execution' || projection.checkpointSafe === false
       ? {}
       : await durableCheckpointPayload(db, projection.runId);
   await withinExistingOrNewTransaction(db, async (tx) => {
@@ -400,8 +465,9 @@ type PersistedDurableReply =
       outcome: 'failure';
       replyMd: string;
       taskRunId: string;
-      reason: 'exhausted' | 'ambiguous_execution' | 'pre_execution_lost';
+      reason: 'cancelled' | 'exhausted' | 'ambiguous_execution' | 'pre_execution_lost';
       error: string;
+      checkpointSafe?: boolean;
     };
 
 async function findPersistedDurableReply(
@@ -433,17 +499,20 @@ async function findPersistedDurableReply(
         ? (failure as Record<string, unknown>)
         : {};
     const reason =
-      failureRecord.reason === 'ambiguous_execution'
-        ? 'ambiguous_execution'
-        : failureRecord.reason === 'pre_execution_lost'
-          ? 'pre_execution_lost'
-          : 'exhausted';
+      failureRecord.reason === 'cancelled'
+        ? 'cancelled'
+        : failureRecord.reason === 'ambiguous_execution'
+          ? 'ambiguous_execution'
+          : failureRecord.reason === 'pre_execution_lost'
+            ? 'pre_execution_lost'
+            : 'exhausted';
     return {
       outcome: 'failure',
       replyMd,
       taskRunId,
       reason,
       error: typeof failureRecord.error === 'string' ? failureRecord.error : replyMd,
+      ...(failureRecord.checkpoint_safe === false ? { checkpointSafe: false } : {}),
     };
   }
   if (row.outcome !== 'success') return null;
@@ -492,9 +561,7 @@ async function withCopilotExecutionSettlementLock<T>(
   settle: (tx: Tx, priorEvents: TerminalProjectionEvent[]) => Promise<T>,
 ): Promise<CopilotExecutionSettlement<T>> {
   return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext(${'copilot-execution-settlement'}), hashtext(${runId}))`,
-    );
+    await acquireCopilotExecutionSettlementLock(tx, runId);
     const priorEvents = await tx
       .select({ id: job_events.id, event_type: job_events.event_type, payload: job_events.payload })
       .from(job_events)
@@ -553,10 +620,20 @@ async function ensureCopilotOutcomeMarker(
   db: Db,
   runId: string,
   create: (tx: Tx) => Promise<PersistedDurableReply>,
+  options: { createCancelled?: (tx: Tx) => Promise<PersistedDurableReply> } = {},
 ): Promise<CopilotOutcomeMarkerClaim> {
-  const settlement = await withCopilotExecutionSettlementLock(db, runId, async (tx) => {
-    return (await findPersistedDurableReply(tx, runId)) ?? create(tx);
-  });
+  const settlement = await withCopilotExecutionSettlementLock(
+    db,
+    runId,
+    async (tx, lockedEvents) => {
+      const persisted = await findPersistedDurableReply(tx, runId);
+      if (persisted) return persisted;
+      if (options.createCancelled && hasCancelRequest(lockedEvents)) {
+        return options.createCancelled(tx);
+      }
+      return create(tx);
+    },
+  );
   return settlement.outcome === 'settled'
     ? { outcome: 'marker', marker: settlement.value }
     : settlement;
@@ -591,10 +668,13 @@ async function projectCopilotOutcomeMarker(
           reason: marker.reason,
           error: marker.error,
           replyMd: marker.replyMd,
+          checkpointSafe: marker.checkpointSafe,
         },
         lockedEvents,
       );
-      return { status: 'failed' as const, error: marker.error };
+      return marker.reason === 'cancelled'
+        ? ({ status: 'cancelled' } as const)
+        : ({ status: 'failed' as const, error: marker.error } as const);
     },
   );
   return settlement.outcome === 'settled'
@@ -655,10 +735,12 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     params.writeFailedTerminalProjectionFn ?? writeFailedTerminalProjection;
   const persistReply = params.writeCopilotReplyFn ?? writeCopilotReply;
   const claimExecutionFence = params.claimExecutionFenceFn ?? claimCopilotExecutionFence;
+  const createCancellationControl =
+    params.createCancellationControlFn ?? createCopilotRunCancellationControl;
 
-  // 启动前 replay 一次：F3 terminal-already-present 守卫 + 协作取消（v1：回合间
-  // 早停，不做 live-steer）。run handle 是 run_id，取消请求 / 终态事件由别处或上一
-  // 次投递写进同一 business_id。
+  // 启动前 replay 一次：F3 terminal-already-present 守卫 + pre-fence 协作取消。
+  // 运行中 Stop 由下方 cancellation control 的 poll / SDK hook / DomainTool gate
+  // 接管；run handle 是 run_id，所有请求/终态仍写进同一 business_id。
   const priorEvents = await computeReplay(db, {
     businessTable: COPILOT_RUN_TABLE,
     businessId: runId,
@@ -761,30 +843,17 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     });
   }
 
-  // F4 — 复用 copilot-run-status 的 hasCancelRequest helper（消重内联 .some()，
-  // 救活 production 零调用的 dead helper）。已请求取消则早停写 failed(cancelled)。
-  if (hasCancelRequest(priorEvents)) {
-    // E1 (TeA_H) — cancelled BEFORE start: no task ran, so no materializing tool could have fired.
-    // The anchor is kept unconditionally (no probe needed) — only paths that could have run tools (the
-    // success path + handleDurableFailure's partial path) suppress it.
-    await writeJobEvent(db, {
-      business_table: COPILOT_RUN_TABLE,
-      business_id: runId,
-      event_type: COPILOT_RUN_EVENTS.FAILED,
-      payload: { reason: 'cancelled', cancelled_before_start: true, checkpoint_event_id: runId },
-    });
-    return { status: 'cancelled' };
-  }
-
   // Worker-touch heartbeat stays early so pickup-stall detection does not
   // mislabel deterministic DB/input assembly as a dead worker. This is not the
   // paid execution fence; EXECUTION_STARTED below owns that stronger contract.
-  await writeJobEvent(db, {
-    business_table: COPILOT_RUN_TABLE,
-    business_id: runId,
-    event_type: COPILOT_RUN_EVENTS.STARTED,
-    payload: { surface, triggered_by: data.triggered_by },
+  // The dispatch lock prevents this advisory heartbeat from landing after a
+  // concurrent pre-fence Stop has already written its terminal suffix.
+  const started = await markCopilotRunStarted(db, runId, {
+    surface,
+    triggered_by: data.triggered_by,
   });
+  if (started.outcome === 'terminal') return terminalRunResult(started.events, taskRunId);
+  if (started.outcome === 'cancelled') return { status: 'cancelled' };
 
   // YUK-364 (bot-review C4) — anti-runaway 护栏（tool-call ceiling），故意 NOT 复用
   // inline 的 per-message row cap。ContextBudgetTracker 暴露两个互相独立的 seam：
@@ -813,6 +882,10 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       hard: DURABLE_BUDGET.maxToolCalls,
     },
   });
+  const cancellationControl: CopilotRunCancellationControl = createCancellationControl({
+    db,
+    runId,
+  });
 
   // ── MCP mount: 照 quiz_gen:415-435 / chat.ts:1038-1098 ────────────────────
   // copilot 全集 surface（chat surface=copilot；chip surface=user-suggested）。
@@ -822,6 +895,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   const mcpServer = buildMcpServer({
     ctx: {
       db,
+      signal: cancellationControl.signal,
       taskRunId,
       callerActor: { kind: 'agent', ref: actorRef },
       causedByEventId: runId,
@@ -831,7 +905,10 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     taskKind: 'CopilotTask',
     // C4 — tool-call hard ceiling（anti-runaway）。interceptInput 仅回传
     // warning 状态，不执行 capInput，故仍无 per-message row cap。
-    beforeExecute: (tool) => budgetTracker.beforeExecute(tool),
+    beforeExecute: async (tool) =>
+      (await cancellationControl.beforeTool()) ?? budgetTracker.beforeExecute(tool),
+    onExecuteStart: (tool) => cancellationControl.onToolExecutionStarted(tool),
+    onExecuteSettled: () => cancellationControl.onToolExecutionSettled(),
     interceptInput: (_tool, args) => ({
       args,
       truncationNote: budgetTracker.currentNotice(),
@@ -862,6 +939,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         onBudgetObservation: params.onSpawnBudgetObservation ?? observeCopilotSpawnBudget,
       })
     : undefined;
+  const sdkHooks = cancellationControl.prependSdkHook(spawnContract?.hooks);
 
   // YUK-364 (bot-review C2) — 解析 copilot 对话方法论 SKILL.md 白名单（与 inline
   // 同一份 resolveCopilotSkills；cross-subject 共享 resolver）。命中 → 传 ctx.skills
@@ -930,6 +1008,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   if (executionClaim.outcome === 'terminal') {
     return terminalRunResult(executionClaim.events, taskRunId);
   }
+  if (executionClaim.outcome === 'cancelled') return { status: 'cancelled' };
   if (executionClaim.outcome === 'existing') {
     return awaitClaimedCopilotExecution(
       params,
@@ -937,18 +1016,54 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     );
   }
 
+  cancellationControl.startPolling();
+  const cancellationMarker = (partialText?: string, providerTaskRunId?: string) => (tx: Tx) =>
+    persistCopilotRunCancellationMarker(tx, {
+      runId,
+      sessionId: data.session_id,
+      actorRef,
+      ...(partialText ? { partialText } : {}),
+      ...(providerTaskRunId ? { taskRunId: providerTaskRunId } : {}),
+      checkpointSafe: !cancellationControl.materializingToolStarted,
+      writeCopilotReplyFn: persistReply,
+    });
+  const settleObservedCancellation = async (partialText?: string, providerTaskRunId?: string) => {
+    const drained = await cancellationControl.waitForInFlight(COPILOT_CANCEL_DRAIN_GRACE_MS);
+    if (!drained) {
+      return handleAmbiguousExecution(db, {
+        runId,
+        sessionId: data.session_id,
+        actorRef,
+        projectSuccessfulTerminal,
+        projectFailedTerminal,
+        writeCopilotReplyFn: persistReply,
+      });
+    }
+    return handleDurableCancellation(db, {
+      runId,
+      sessionId: data.session_id,
+      actorRef,
+      ...(partialText ? { partialText } : {}),
+      ...(providerTaskRunId ? { taskRunId: providerTaskRunId } : {}),
+      checkpointSafe: !cancellationControl.materializingToolStarted,
+      projectSuccessfulTerminal,
+      projectFailedTerminal,
+      writeCopilotReplyFn: persistReply,
+    });
+  };
   try {
     const result: StreamCollectResult = await streamRun(
       'CopilotTask',
       runInput,
       {
         db,
+        signal: cancellationControl.signal,
         mcpServers,
         allowedTools,
+        hooks: sdkHooks,
         ...(spawnContract
           ? {
               agents: spawnContract.agents,
-              hooks: spawnContract.hooks,
               canUseTool: spawnContract.canUseTool,
             }
           : {}),
@@ -967,6 +1082,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     );
     // S3 — 排空 delta 链：所有 delta id 落定后再写 terminal。
     await drainDeltaChain(progressChain, runId);
+    if ((await cancellationControl.probe()) === 'cancel_requested') {
+      return await settleObservedCancellation(result.text, result.task_run_id);
+    }
 
     // YUK-575 — streamTaskCollecting graceful-degrade：run 出错时它 resolve
     // { partial:true, error }（plain Error 内含）而非 throw。partial = run 跑了但失败
@@ -983,6 +1101,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         projectSuccessfulTerminal,
         projectFailedTerminal,
         writeCopilotReplyFn: persistReply,
+        createCancelledMarker: cancellationMarker(result.text, result.task_run_id),
       });
     }
 
@@ -991,24 +1110,29 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     // per-run settlement lock. A projection failure remains repairable from the
     // marker, while a recovery that wins first blocks a contradictory outcome.
     try {
-      const markerClaim = await ensureCopilotOutcomeMarker(db, runId, async (tx) => {
-        const { cleanedReply } = await persistReply(tx, {
-          sessionId: data.session_id,
-          userAskEventId: runId,
-          replyText: result.text,
-          actorRef,
-          taskRunId: result.task_run_id,
-          outcome: 'success',
-          durableFinishReason: result.finishReason,
-          now: new Date(),
-        });
-        return {
-          outcome: 'success' as const,
-          replyMd: cleanedReply,
-          taskRunId: result.task_run_id,
-          finishReason: result.finishReason,
-        };
-      });
+      const markerClaim = await ensureCopilotOutcomeMarker(
+        db,
+        runId,
+        async (tx) => {
+          const { cleanedReply } = await persistReply(tx, {
+            sessionId: data.session_id,
+            userAskEventId: runId,
+            replyText: result.text,
+            actorRef,
+            taskRunId: result.task_run_id,
+            outcome: 'success',
+            durableFinishReason: result.finishReason,
+            now: new Date(),
+          });
+          return {
+            outcome: 'success' as const,
+            replyMd: cleanedReply,
+            taskRunId: result.task_run_id,
+            finishReason: result.finishReason,
+          };
+        },
+        { createCancelled: cancellationMarker(result.text, result.task_run_id) },
+      );
       if (markerClaim.outcome === 'already_terminal') {
         return terminalRunResult(markerClaim.events, taskRunId);
       }
@@ -1027,6 +1151,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     // streamTaskCollecting graceful-degrades（resolve partial，见上），故这里只捕获
     // 它之外的 throw（装配 / MCP mount / 事件写），或注入 fixture 的 throw（测 MF1/MF2）。
     await drainDeltaChain(progressChain, runId);
+    if ((await cancellationControl.probe()) === 'cancel_requested') {
+      return await settleObservedCancellation();
+    }
     return await handleDurableFailure(db, {
       err,
       runId,
@@ -1035,7 +1162,10 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       projectSuccessfulTerminal,
       projectFailedTerminal,
       writeCopilotReplyFn: persistReply,
+      createCancelledMarker: cancellationMarker(),
     });
+  } finally {
+    cancellationControl.dispose();
   }
 }
 
@@ -1045,6 +1175,33 @@ async function drainDeltaChain(chain: Promise<void>, runId: string): Promise<voi
     await chain;
   } catch (err) {
     console.error('[copilot_run] delta chain write failed for', runId, err);
+  }
+}
+
+async function handleDurableCancellation(
+  db: Db,
+  args: PersistCopilotRunCancellationArgs & {
+    writeCopilotReplyFn: typeof writeCopilotReply;
+    projectSuccessfulTerminal: WriteSuccessfulTerminalProjectionFn;
+    projectFailedTerminal: WriteFailedTerminalProjectionFn;
+  },
+): Promise<RunCopilotRunResult> {
+  try {
+    const markerClaim = await ensureCopilotOutcomeMarker(db, args.runId, (tx) =>
+      persistCopilotRunCancellationMarker(tx, args),
+    );
+    if (markerClaim.outcome === 'already_terminal') {
+      return terminalRunResult(markerClaim.events, `copilot_run_tool_${args.runId}`);
+    }
+    return await projectCopilotOutcomeMarker(
+      db,
+      args.runId,
+      `copilot_run_tool_${args.runId}`,
+      args.projectSuccessfulTerminal,
+      args.projectFailedTerminal,
+    );
+  } catch (projectionErr) {
+    throw new DurableTerminalProjectionError(args.runId, 'failure', projectionErr);
   }
 }
 
@@ -1076,6 +1233,8 @@ async function handleDurableFailure(
     projectSuccessfulTerminal: WriteSuccessfulTerminalProjectionFn;
     projectFailedTerminal: WriteFailedTerminalProjectionFn;
     writeCopilotReplyFn: typeof writeCopilotReply;
+    /** Settlement-lock race winner when Stop committed before this failure marker. */
+    createCancelledMarker?: (tx: Tx) => Promise<PersistedDurableReply>;
   },
 ): Promise<RunCopilotRunResult> {
   const {
@@ -1087,6 +1246,7 @@ async function handleDurableFailure(
     projectSuccessfulTerminal,
     projectFailedTerminal,
     writeCopilotReplyFn,
+    createCancelledMarker,
   } = args;
   const message = String((err as Error)?.message ?? err);
   const replyText =
@@ -1094,25 +1254,30 @@ async function handleDurableFailure(
       ? partialText
       : '这次后台运行没能在预算内收敛完成。可以换个更聚焦的问法再试。';
   try {
-    const markerClaim = await ensureCopilotOutcomeMarker(db, runId, async (tx) => {
-      await writeCopilotReplyFn(tx, {
-        sessionId,
-        userAskEventId: runId,
-        replyText,
-        actorRef,
-        taskRunId: `copilot_run_exhausted_${runId}`,
-        outcome: 'failure',
-        durableFailure: { reason: 'exhausted', error: message },
-        now: new Date(),
-      });
-      return {
-        outcome: 'failure' as const,
-        replyMd: replyText,
-        taskRunId: `copilot_run_exhausted_${runId}`,
-        reason: 'exhausted' as const,
-        error: message,
-      };
-    });
+    const markerClaim = await ensureCopilotOutcomeMarker(
+      db,
+      runId,
+      async (tx) => {
+        const { cleanedReply } = await writeCopilotReplyFn(tx, {
+          sessionId,
+          userAskEventId: runId,
+          replyText,
+          actorRef,
+          taskRunId: `copilot_run_exhausted_${runId}`,
+          outcome: 'failure',
+          durableFailure: { reason: 'exhausted', error: message },
+          now: new Date(),
+        });
+        return {
+          outcome: 'failure' as const,
+          replyMd: cleanedReply,
+          taskRunId: `copilot_run_exhausted_${runId}`,
+          reason: 'exhausted' as const,
+          error: message,
+        };
+      },
+      createCancelledMarker ? { createCancelled: createCancelledMarker } : {},
+    );
     if (markerClaim.outcome === 'already_terminal') {
       return terminalRunResult(markerClaim.events, `copilot_run_tool_${runId}`);
     }

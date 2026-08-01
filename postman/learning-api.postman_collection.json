@@ -930,6 +930,26 @@
             "description": "YUK-577 展开一条 nudge 对话（看看）——写 experimental:copilot_nudge_opened\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 无 body；404 若 nudge 不存在。KPI 分子（opened）；opened 后读模型排除该 nudge"
           },
           "response": []
+        },
+        {
+          "name": "POST /api/copilot/runs/:id/cancel",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/copilot/runs/:id/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "copilot", "runs", ":id", "cancel"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "请求停止一个已受理的 durable Copilot run\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 无 body。首次请求按 execution fence 原子返回 cancelled（尚未开始付费执行）或 cancel_requested（运行中）；重复请求返回 already_requested，已落 outcome/终态返回 already_settled。未知或与 canonical user ask/session 不匹配的 handle 返回 404。运行中 Stop 由 worker 轮询 + SDK PreToolUse + DomainTool gate 协作中止，最终终态仍从 job-events SSE 读取。需 x-internal-token。"
+          },
+          "response": []
         }
       ]
     },

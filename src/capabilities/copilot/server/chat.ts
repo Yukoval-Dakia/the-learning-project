@@ -460,7 +460,7 @@ export async function writeCopilotReply(
     /** Durable success metadata needed to rebuild the DONE projection. */
     durableFinishReason?: string;
     /** Durable failure metadata needed to rebuild the FAILED projection. */
-    durableFailure?: { reason: string; error: string };
+    durableFailure?: { reason: string; error: string; checkpoint_safe?: boolean };
     /** ask 的 created_at；reply 戳 now+1ms 保证 (created_at,id) 排序里 reply 在 ask 之后。 */
     now: Date;
     writeFn?: WriteEventFn;

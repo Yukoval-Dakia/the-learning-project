@@ -2,40 +2,42 @@
 
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
-> 更新于：2026-08-01
-> **【YUK-757 已交付；YUK-596 active：durable liveness PR #1151】**
+> 更新于：2026-08-02
+> **【YUK-596 active：in-loop Stop 后端 safety slice】**
 
 ## NOW
 
-- **YUK-757 已 Done。** PR #1149 exact-head CI Gate `30706461286` 全绿后 squash
-  merge 到 `main@54d9bf620cf74d07633d72233c90cb9763516643`；durable Copilot 已具备
+- **YUK-757 已 Done。** PR #1149 exact-head CI 全绿后 merge 到
+  `main@54d9bf620cf74d07633d72233c90cb9763516643`；durable Copilot 已具备
   backstage subagent、前台子任务投影、redelivery repair 与失败恢复。
-- **YUK-596 causal-history slice 已交付。** PR #1150 exact-head CI 全绿并 merge 到
-  `main@915fd5d4fd32cdceebda310879c7fd0c0138e9e5`；durable pickup 固定读取 dispatch
-  时的 `session_id + run_id` causal anchor。
-- **当前推进 durable liveness + stale reconciliation 后端 safety slice。** 统一 Copilot
-  terminal predicate 与通用 pg-boss observation；`FAILED(reason='error')` 保持 retry frame，
-  其它 FAILED fail-closed terminal。`copilot_run` 加 30s queue heartbeat；每两分钟 fast
-  singleton 有界扫 20 个 outstanding run，零 model/tool，只修 outcome marker、QUEUED-only
-  queue-proven pre-execution loss，或已过 12min+30s 的 dead explicit/legacy-touch ambiguous
-  execution；legacy `FAILED(error)` 绝不误给 checkpoint。
-- 当前 scoped 验证：real Postgres/pg-boss **8 files / 68 tests**、unit **6 files / 65
-  tests**、typecheck、lint、build 与相关 audits 已绿。**未在本机运行完整 `pnpm test`**；
-  独立 initial review 的 1 个 P1（legacy retry frame 误给 checkpoint）已修；唯一
-  verification review 无 P0/P1。功能 commit `e3d73d8d` 已推送并开 PR #1151；等待最终
-  handoff commit 后的 exact-head GitHub `CI Gate`。
-- Linear YUK-596 已现场核验为 In Progress；本 slice 不虚假关整票。最近全量快照仍是严格
-  active 86 / 排除 owner parked OpenCode 后产品 active 84，待本 slice merge 后再刷新。
+- **YUK-596 causal-history 与 liveness 已交付。** PR #1150 merge 到
+  `main@915fd5d4fd32cdceebda310879c7fd0c0138e9e5`；PR #1151 exact-head CI 全绿后
+  merge 到 `main@c6dd37bfe5aaaae63d07a86bff69bd619a523b48`。durable pickup 已绑定 causal
+  anchor，并具备 queue heartbeat、stale reconciliation 与 fail-closed ambiguous recovery。
+- **当前实施 in-loop Stop 后端。** 新增 `POST /api/copilot/runs/{id}/cancel`；pre-fence Stop
+  原子收敛，post-fence Stop cooperative abort；dispatch/settlement lock 处理迟到 worker、
+  重复点击及 cancel-vs-terminal 竞态。SDK PreToolUse 与 DomainTool async gate 共用单调取消
+  latch；materializing tool barrier 覆盖执行、日志和事件镜像，无法证明安全时禁用 checkpoint。
+- 复杂 fixture 使用 48 条历史回答、6 个探针、3 份讲义、9 个迁移变式。当前 scoped
+  验证：unit **3 files / 43 tests**、real DB **3 files / 67 tests**、typecheck、lint、build、
+  API contract/client generation、schema/capability/control-plane/partition audits 已绿。未在本机运行
+  完整 `pnpm test`；完整 suite 只交 exact-head GitHub CI。
+- 独立 initial review 无 P0/P1；唯一 P2 是未来异步 barrier callback 的结构化 `finally`
+  hardening，当前唯一同步调用者安全，按 review budget 不阻塞、不扩 scope。
+- GitHub initial advisory 的实际 provenance P2 已收口：有结果的 cancelled reply 继续引用真实
+  provider `task_run_id`；同时修正 nested AGENTS 的 manifest 计数。修正后 handler real DB
+  **41 tests**、typecheck、lint 已绿；其它 future-only/trivial 建议按理由跳过。
+- PR #1152 的迟到 review 又发现 pre-fence Stop 只写 job terminal、会让下一轮历史留下 phantom
+  user ask。已把 cancellation reply marker 泛化为 API/worker 共用，并用真实 Postgres 验证下一轮
+  causal history 含“已停止”回复。旧 head 两组 CI 虽全绿，但已作废，必须重跑新 exact head。
 
 ## NEXT
 
-1. PR #1151 exact-head GitHub `CI Gate` 执行完整 `pnpm test`，全绿即自主 merge，并回写
-   YUK-596 evidence；不等待 advisory P2/minor checks。
-2. 基于新 main 开独立 worktree推进 YUK-596 in-loop stop；复用当前 cancel/event seam，不把
-   stop 误作纯 UI。
-3. 跑约 30 条复杂、真实 provider 对话 burn-in，封存 exact revision、输入/输出 digest、
-   task-run/provider/model/cost；mock 只测 seam，不能冒充 actual-output 产品验收。
-4. Dock/UI 开工前按 design doc 逐字引用、声明 drawer、列文件并等 owner 批准；随后完成
+1. Commit/push PR #1152 的 pre-fence history 修复；新 exact-head GitHub `CI Gate`
+   与手动 full workflow 全绿后自主 merge。
+2. 基于 merge 后 revision 跑约 30 条复杂真实 provider 对话 burn-in，封存输入/输出 digest、
+   task-run/provider/model/cost；mock 只验证 seam，不冒充 actual-output 产品验收。
+3. Dock/UI 开工前逐字引用 design doc、声明 drawer、列文件并等待 owner 批准；完成后再做
    LIGHT/FULL owner gate。YUK-596 收口后按序推进 YUK-764 → 457 → 268 → 285 → 213。
 
 ## PARKED
@@ -47,10 +49,10 @@
 
 ## BLOCKED-ON
 
-- **YUK-596 当前 gate**：PR #1151 exact-head GitHub CI；本地 full `pnpm test` 禁止替代。
-- **YUK-596 后续 owner gate**：后端安全、Stop 与 burn-in 完成后选择 LIGHT（推荐，保留模型
-  自动分流）或 FULL（eligible freeform 全 durable + 更大 classifier/UX scope）。
+- **YUK-596 当前 gate**：Stop 后端 PR 的 exact-head GitHub CI；本地 full `pnpm test` 禁止替代。
+- **YUK-596 后续 owner gate**：后端安全、Stop 与真实 burn-in 完成后选择 LIGHT（推荐，保留
+  模型自动分流）或 FULL（eligible freeform 全 durable + 更大 classifier/UX scope）。
 - **YUK-571 / YUK-405 / YUK-406**：等待真实内容、首次 placement 与真实观察窗口；synthetic/
   mock 不能冒充 owner 验收。YUK-452 是 parent/epic，须按 children 现实对齐。
-- **严格 issue=0**：84 条产品 active 中仍有 future、数据触发、生产 flip 与大 epic；最终需
-  owner 做 keep/merge/cancel 裁决，不能靠连续写代码伪归零。
+- **严格 issue=0**：仍含 future、数据触发、生产 flip 与大 epic；最终需 owner 做
+  keep/merge/cancel 裁决，不能靠连续写代码伪归零。

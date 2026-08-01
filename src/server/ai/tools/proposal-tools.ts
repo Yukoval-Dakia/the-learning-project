@@ -964,7 +964,7 @@ async function attributeMistakeExecute(
   const reasoningTraceMd = rawReasoningTrace?.trim() ? rawReasoningTrace : undefined;
 
   let attributionTaskRan = false;
-  const runTaskFn = makeRunTaskFn(ctx.db);
+  const runTaskFn = makeRunTaskFn(ctx.db, { signal: ctx.signal });
   await runAttributionAndWriteJudgeEvent({
     db: ctx.db,
     attemptEventId: input.attempt_event_id,
@@ -1055,7 +1055,7 @@ async function proposeVariantExecute(
     const result = await runVariantGen({
       db: ctx.db,
       attemptEventId: input.attempt_event_id,
-      runTaskFn: makeRunTaskFn(ctx.db),
+      runTaskFn: makeRunTaskFn(ctx.db, { signal: ctx.signal }),
     });
     if (result.status !== 'proposed') {
       return {
@@ -1862,7 +1862,7 @@ async function authorQuestionExecute(
       actorRef: ctx.callerActor.ref,
       taskRunId: ctx.taskRunId,
       causedByEventId: ctx.causedByEventId,
-      runTaskFn: makeRunTaskFn(ctx.db),
+      runTaskFn: makeRunTaskFn(ctx.db, { signal: ctx.signal }),
     });
   } catch (err) {
     return {

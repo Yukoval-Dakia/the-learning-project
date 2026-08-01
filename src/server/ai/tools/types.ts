@@ -37,6 +37,8 @@ export interface ToolCallerActor {
 
 export interface ToolContext {
   db: Db;
+  /** Caller-owned cancellation propagated into any nested AI work. */
+  signal?: AbortSignal;
   taskRunId: string;
   callerActor: ToolCallerActor;
   /** When set, mirror events use this as `caused_by_event_id`. */
