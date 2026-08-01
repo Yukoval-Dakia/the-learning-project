@@ -95,6 +95,7 @@ export function deriveCopilotRunStatus(events: CopilotRunStatusEvent[]): Copilot
         break;
       case COPILOT_RUN_EVENTS.STEP:
       case COPILOT_RUN_EVENTS.REPLY:
+      case COPILOT_RUN_EVENTS.EXECUTION_STARTED:
       // YUK-575 (N2) — DELTA（流式文本增量）是「run 正在跑」的非终态信号，与 STEP/REPLY
       // 同级推到 'running'。
       case COPILOT_RUN_EVENTS.DELTA:

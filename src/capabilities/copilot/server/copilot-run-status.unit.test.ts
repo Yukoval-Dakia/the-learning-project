@@ -36,6 +36,19 @@ describe('deriveCopilotRunStatus', () => {
     ).toBe('running');
   });
 
+  it('EXECUTION_STARTED 表示已进入 paid model/tool gateway → running', () => {
+    expect(
+      deriveCopilotRunStatus([
+        { event_type: COPILOT_RUN_EVENTS.QUEUED },
+        { event_type: COPILOT_RUN_EVENTS.STARTED },
+        { event_type: COPILOT_RUN_EVENTS.EXECUTION_STARTED },
+      ]),
+    ).toBe('running');
+    expect(deriveCopilotRunStatus([{ event_type: COPILOT_RUN_EVENTS.EXECUTION_STARTED }])).toBe(
+      'running',
+    );
+  });
+
   // CodeRabbit fix — STEP/REPLY 首次出现（还没见过 STARTED）不应被降级为 'started'。
   // 「取最高非终态阶段」：STEP/REPLY 是 run 正在跑的明确信号，恒为 'running'。
   it("STEP/REPLY 首次出现（无 STARTED）→ 'running'，不降级为 'started'", () => {

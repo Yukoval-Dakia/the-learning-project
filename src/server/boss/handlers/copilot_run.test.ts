@@ -34,6 +34,7 @@ import {
   type RunCopilotRunParams,
   buildCopilotRunHandler,
   claimCopilotExecutionFence,
+  hasCopilotSettlementTerminal,
   runCopilotRun,
   writeFailedTerminalProjection,
   writeSuccessfulTerminalProjection,
@@ -1166,6 +1167,32 @@ describe('runCopilotRun', () => {
     expect(await copilotReplyEvents(sessionId)).toHaveLength(1);
     const secondEvents = await replay(runId);
     expect(secondEvents.map((e) => e.event_type)).toEqual(firstEvents.map((e) => e.event_type));
+  });
+
+  it('YUK-757 — claimed-owner polling ignores retryable error frames but wakes on deliberate settlement', () => {
+    const retryable = {
+      event_type: COPILOT_RUN_EVENTS.FAILED,
+      payload: { reason: 'error', error: 'transient provider gateway reset' },
+    };
+    expect(hasCopilotSettlementTerminal([retryable])).toBe(false);
+    expect(
+      hasCopilotSettlementTerminal([
+        retryable,
+        {
+          event_type: COPILOT_RUN_EVENTS.FAILED,
+          payload: {
+            reason: 'exhausted',
+            error: 'validator batch retry budget exhausted',
+          },
+        },
+      ]),
+    ).toBe(true);
+    expect(
+      hasCopilotSettlementTerminal([
+        retryable,
+        { event_type: COPILOT_RUN_EVENTS.DONE, payload: { task_run_id: 'tr_retry_success' } },
+      ]),
+    ).toBe(true);
   });
 
   it('C1 — 已有 FAILED(reason=error) 的 run 被重投 → 重跑（不在 skip-guard，恢复 retry）', async () => {

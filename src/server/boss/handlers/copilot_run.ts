@@ -464,14 +464,7 @@ function observeCopilotSpawnBudget(observation: SpawnBudgetObservation): void {
 const CLAIMED_EXECUTION_POLL_MS = 250;
 const CLAIMED_EXECUTION_SETTLE_GRACE_MS = 30_000;
 
-function hasCopilotTerminalEvent(events: TerminalProjectionEvent[]): boolean {
-  return events.some(
-    (item) =>
-      item.event_type === COPILOT_RUN_EVENTS.DONE || item.event_type === COPILOT_RUN_EVENTS.FAILED,
-  );
-}
-
-function hasCopilotSettlementTerminal(events: TerminalProjectionEvent[]): boolean {
+export function hasCopilotSettlementTerminal(events: TerminalProjectionEvent[]): boolean {
   return events.some(
     (event) =>
       event.event_type === COPILOT_RUN_EVENTS.DONE || isCopilotDeliberateFailedEvent(event),
@@ -624,7 +617,9 @@ async function awaitClaimedCopilotExecution(
         businessId: params.data.run_id,
         lastEventId: 0,
       });
-      if (hasCopilotTerminalEvent(events)) return runCopilotRun(params);
+      // FAILED(reason=error) is retryable. Treating it as settled would recurse
+      // straight back into this same live fence with no state change.
+      if (hasCopilotSettlementTerminal(events)) return runCopilotRun(params);
     } catch (error) {
       // A transient observation failure is not evidence that the owner died.
       // Keep waiting instead of creating a premature ambiguous terminal.

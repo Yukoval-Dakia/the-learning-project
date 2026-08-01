@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -42,6 +42,19 @@ function queuedPayload(sessionId: string) {
 describe('durable Copilot dispatch acceptance', () => {
   beforeEach(async () => {
     await resetDb();
+  });
+
+  it('hashes nested input with locale-independent code-unit key ordering', () => {
+    const input = {
+      apple: 'lowercase',
+      Apple: 'uppercase',
+      _meta: { zeta: 3, Alpha: 1, alpha: 2 },
+    };
+    const canonical =
+      '{"Apple":"uppercase","_meta":{"Alpha":1,"alpha":2,"zeta":3},"apple":"lowercase"}';
+    const expected = createHash('sha256').update(canonical).digest('hex');
+
+    expect(hashCopilotDurableInput(input)).toBe(expected);
   });
 
   it('collapses concurrent same-key rich requests into one ask and one QUEUED handle', async () => {

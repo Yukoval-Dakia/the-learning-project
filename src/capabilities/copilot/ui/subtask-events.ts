@@ -265,6 +265,14 @@ export function foldCopilotRunFrames(
         break;
       case 'copilot_run.failed':
         if (!terminalRun) {
+          // Legacy FAILED(reason=error) is an attempt-level, retryable frame.
+          // The worker may append STARTED/REPLY/DONE for the same run later;
+          // terminating here would discard the reconnect handle and hide that
+          // successful retry until a full page refresh.
+          if (item.payload.reason === 'error') {
+            phase = 'running';
+            break;
+          }
           phase = 'failed';
           if (typeof item.payload.reply_md === 'string') replyText = item.payload.reply_md;
           if (typeof item.payload.reason === 'string') failureReason = item.payload.reason;

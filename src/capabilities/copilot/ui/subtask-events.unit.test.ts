@@ -318,6 +318,61 @@ describe('durable Copilot run SSE replay', () => {
     );
   });
 
+  it('keeps a retryable provider failure non-terminal and renders the later successful retry', async () => {
+    const fetchResponse = vi
+      .fn<(input: string, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(
+        new Response(
+          sseBody([
+            frame(251, 'copilot_run.queued', {
+              session_id: 'copilot-session-provider-retry',
+            }),
+            frame(252, 'copilot_run.started', {}),
+            frame(253, 'copilot_run.failed', {
+              reason: 'error',
+              error: 'transient provider gateway reset after evidence batch 4',
+            }),
+          ]),
+          { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          sseBody([
+            frame(254, 'copilot_run.started', { retry_attempt: 2 }),
+            frame(255, 'copilot_run.delta', {
+              text: '重试后已核对 36 道含参函数与电磁感应作答，',
+            }),
+            frame(256, 'copilot_run.reply', {
+              reply_md:
+                '重试后已核对 36 道含参函数与电磁感应作答；定义域、退化分支、方向和单位证据均已闭合。',
+              checkpoint_event_id: 'ask_provider_retry',
+            }),
+            frame(257, 'copilot_run.done', { task_run_id: 'task_provider_retry_success' }),
+          ]),
+          { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+        ),
+      );
+
+    const result = await consumeDurableCopilotRun({
+      location: '/api/jobs/copilot_run/ask_provider_retry/events',
+      fetchResponse,
+      maxReconnects: 1,
+      reconnectBaseDelayMs: 0,
+    });
+
+    expect(fetchResponse).toHaveBeenCalledTimes(2);
+    expect(new Headers(fetchResponse.mock.calls[1]?.[1]?.headers).get('Last-Event-ID')).toBe('253');
+    expect(result).toMatchObject({
+      phase: 'completed',
+      lastEventId: 257,
+      replyText:
+        '重试后已核对 36 道含参函数与电磁感应作答；定义域、退化分支、方向和单位证据均已闭合。',
+      checkpointEventId: 'ask_provider_retry',
+    });
+    expect(result.failureReason).toBeUndefined();
+  });
+
   it('resumes a previously accepted run from its saved cursor without redispatching work', async () => {
     const interruptedFrames = [
       frame(310, 'copilot_run.queued', { session_id: 'copilot-session-transfer-audit' }),

@@ -5,6 +5,8 @@ import { JOB_EVENT_KIND_SET } from './event-contracts';
 
 /** SSE comment cadence: below the client's transport-idle watchdog. */
 export const JOB_EVENT_HEARTBEAT_MS = 15_000;
+/** Durable cursor catch-up: NOTIFY is a wake-up hint, never the only delivery path. */
+export const JOB_EVENT_CATCHUP_MS = 10_000;
 
 /**
  * GET /api/jobs/[kind]/[id]/events —— 通用异步 job tracker SSE 流（YUK-310）。
@@ -74,11 +76,14 @@ export async function GET(req: Request, params: Record<string, string>): Promise
       // enqueue is idempotent against this cursor.
       let lastEmittedId = lastEventId;
       let replayQueue: Promise<void> = Promise.resolve();
+      let catchup: ReturnType<typeof setInterval> | undefined;
+      let periodicCatchupPending = false;
 
       const close = () => {
         if (closed) return;
         closed = true;
         clearInterval(heartbeat);
+        if (catchup) clearInterval(catchup);
         req.signal.removeEventListener('abort', close);
         // F2/F4：清理订阅 + 关闭 controller 在同一处收口，无论正常 abort 还是异常路径。
         unsub?.();
@@ -174,6 +179,22 @@ export async function GET(req: Request, params: Record<string, string>): Promise
             close();
           });
         });
+        // LISTEN/NOTIFY can lose a notification across a listener reconnect
+        // while this HTTP stream remains healthy. Heartbeats prove only that
+        // the socket is alive, so periodically query from the durable cursor.
+        // replayQueue serializes this with notification-driven catch-up.
+        catchup = setInterval(() => {
+          if (periodicCatchupPending || closed) return;
+          periodicCatchupPending = true;
+          void enqueueReplay()
+            .catch(() => {
+              emitError();
+              close();
+            })
+            .finally(() => {
+              periodicCatchupPending = false;
+            });
+        }, JOB_EVENT_CATCHUP_MS);
         await enqueueReplay();
       } catch {
         // F2：初始 replay / subscribe 抛错（DB/连接错误）时，发一个 SSE error 事件
