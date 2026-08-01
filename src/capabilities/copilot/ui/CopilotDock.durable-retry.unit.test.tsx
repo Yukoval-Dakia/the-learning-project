@@ -184,12 +184,130 @@ describe('CopilotDock accepted durable reconnect', () => {
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
     expect(consumeDurableMock).toHaveBeenCalledTimes(2);
     expect(consumeDurableMock.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ location }));
+    expect(consumeDurableMock.mock.calls[0]?.[0].signal).toBeInstanceOf(AbortSignal);
     expect(consumeDurableMock.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({ location, initialState: partialView }),
+    );
+    expect(consumeDurableMock.mock.calls[1]?.[0].signal).toBeInstanceOf(AbortSignal);
+    expect(consumeDurableMock.mock.calls[1]?.[0].signal).not.toBe(
+      consumeDurableMock.mock.calls[0]?.[0].signal,
     );
     expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
     expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
     expect(screen.getAllByTestId('copilot-subtask-card')).toHaveLength(1);
     expect(screen.getByText('三个独立探针复现同一错误，已排除偶然失误。')).toBeTruthy();
+  });
+
+  it('aborts the accepted run transport when the dock unmounts without posting the turn again', async () => {
+    const location = '/api/jobs/copilot_run/ask_unmount_transfer_audit/events';
+    apiFetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          run_id: 'ask_unmount_transfer_audit',
+          session_id: 'copilot-session-unmount-transfer-audit',
+          checkpoint_event_id: 'ask_unmount_transfer_audit',
+        }),
+        { status: 202, headers: { Location: location, 'Content-Type': 'application/json' } },
+      ),
+    );
+    let transportSignal: AbortSignal | undefined;
+    consumeDurableMock.mockImplementationOnce(
+      async (options: { signal?: AbortSignal }): Promise<typeof completedView> => {
+        transportSignal = options.signal;
+        return await new Promise((_resolve, reject) => {
+          options.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('dock unmounted', 'AbortError')),
+            { once: true },
+          );
+        });
+      },
+    );
+
+    const rendered = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByTestId('copilot-composer-input'),
+      '请后台核对 36 道跨章节练习、两轮延迟复习与四个未教学探针，并保留每档 validator 证据。',
+    );
+    await user.click(screen.getByTestId('copilot-composer-send'));
+    await waitFor(() => expect(transportSignal).toBeDefined());
+
+    rendered.unmount();
+
+    expect(transportSignal?.aborted).toBe(true);
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/copilot/chat',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('aborts a pending dispatch on unmount before a durable consumer can start', async () => {
+    let dispatchSignal: AbortSignal | undefined;
+    apiFetchMock.mockImplementationOnce(
+      async (_input: string, init?: RequestInit): Promise<Response> => {
+        dispatchSignal = init?.signal ?? undefined;
+        return await new Promise((_resolve, reject) => {
+          dispatchSignal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('dock unmounted before 202', 'AbortError')),
+            { once: true },
+          );
+        });
+      },
+    );
+
+    const rendered = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByTestId('copilot-composer-input'),
+      '请在后台交叉核对 48 道真实作答、三轮延迟复习与六个未教学探针，再生成完整迁移题组。',
+    );
+    await user.click(screen.getByTestId('copilot-composer-send'));
+    await waitFor(() => expect(dispatchSignal).toBeDefined());
+
+    rendered.unmount();
+
+    expect(dispatchSignal?.aborted).toBe(true);
+    await Promise.resolve();
+    expect(consumeDurableMock).not.toHaveBeenCalled();
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats 202 Location as accepted even when the informational JSON body is unreadable', async () => {
+    const location = '/api/jobs/copilot_run/ask_truncated_acceptance/events';
+    const accepted = new Response('{"run_id":"ask_truncated_acceptance"', {
+      status: 202,
+      headers: { Location: location, 'Content-Type': 'application/json' },
+    });
+    const jsonMock = vi.fn(async () => {
+      throw new SyntaxError('truncated JSON after 202 headers');
+    });
+    Object.defineProperty(accepted, 'json', { value: jsonMock });
+    apiFetchMock.mockResolvedValue(accepted);
+    consumeDurableMock.mockImplementationOnce(
+      async (options: { onUpdate?: (view: typeof completedView) => void }) => {
+        options.onUpdate?.(completedView);
+        return completedView;
+      },
+    );
+
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByTestId('copilot-composer-input'),
+      '请后台核验 32 道真实作答与四组未教学探针，并按 validator 证据重建迁移梯度。',
+    );
+    await user.click(screen.getByTestId('copilot-composer-send'));
+    await screen.findByText(completedView.replyText);
+
+    expect(jsonMock).not.toHaveBeenCalled();
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(consumeDurableMock).toHaveBeenCalledTimes(1);
+    expect(consumeDurableMock.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ location }));
+    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
+    expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
+    expect(screen.getAllByTestId('copilot-subtask-card')).toHaveLength(1);
   });
 });

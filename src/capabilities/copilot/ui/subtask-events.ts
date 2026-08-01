@@ -53,6 +53,11 @@ export interface ParsedSseEvent {
   data: string;
 }
 
+interface ParseCopilotSseStreamOptions {
+  /** Fires for every raw transport chunk, including SSE keepalive comments. */
+  onActivity?: () => void;
+}
+
 const TERMINAL_SUBTASKS = new Set<CopilotSubtaskStatus>(['completed', 'failed']);
 const TERMINAL_RUN_PHASES = new Set<CopilotRunPhase>(['completed', 'failed']);
 const MAX_SUBTASK_ID_CHARS = 160;
@@ -73,6 +78,13 @@ function boundedText(value: unknown, maxChars: number): string | undefined {
   return text;
 }
 
+function clampedDisplayText(value: unknown, maxChars: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  if (text.length === 0) return undefined;
+  return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+}
+
 /**
  * Runtime-narrow the public payload. Unknown keys are intentionally discarded,
  * which keeps transcript/reasoning/prompt/tool args out of React state even if
@@ -82,7 +94,7 @@ export function parseSubtaskPayload(value: unknown): CopilotSubtaskEvent | null 
   const payload = objectRecord(value);
   if (!payload || payload.step_kind !== 'subtask') return null;
   const subtaskId = boundedText(payload.subtask_id, MAX_SUBTASK_ID_CHARS);
-  const label = boundedText(payload.label, MAX_SUBTASK_LABEL_CHARS);
+  const label = clampedDisplayText(payload.label, MAX_SUBTASK_LABEL_CHARS);
   const status = payload.status;
   if (
     !subtaskId ||
@@ -92,8 +104,8 @@ export function parseSubtaskPayload(value: unknown): CopilotSubtaskEvent | null 
     return null;
   }
 
-  const summary = boundedText(payload.summary, MAX_TERMINAL_COPY_CHARS);
-  const error = boundedText(payload.error, MAX_TERMINAL_COPY_CHARS);
+  const summary = clampedDisplayText(payload.summary, MAX_TERMINAL_COPY_CHARS);
+  const error = clampedDisplayText(payload.error, MAX_TERMINAL_COPY_CHARS);
   return {
     step_kind: 'subtask',
     subtask_id: subtaskId,
@@ -265,6 +277,7 @@ export function foldCopilotRunFrames(
 /** SSE parser shared by the inline chat response and durable job-event stream. */
 export async function* parseCopilotSseStream(
   body: ReadableStream<Uint8Array>,
+  options: ParseCopilotSseStreamOptions = {},
 ): AsyncGenerator<ParsedSseEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -307,6 +320,7 @@ export async function* parseCopilotSseStream(
         finished = true;
         break;
       }
+      if (value.byteLength > 0) options.onActivity?.();
       buffer += decoder.decode(value, { stream: true });
       buffer = buffer.replace(/\r\n/g, '\n');
       yield* drainComplete();
@@ -330,7 +344,33 @@ export interface ConsumeDurableCopilotRunOptions {
   initialState?: CopilotRunView;
   /** Number of reconnects after the initial request. */
   maxReconnects?: number;
+  /** Transport silence window; heartbeats count as activity. */
+  idleTimeoutMs?: number;
+  /** Linear reconnect backoff base (attempt N waits base×N). */
+  reconnectBaseDelayMs?: number;
   signal?: AbortSignal;
+}
+
+const DEFAULT_DURABLE_IDLE_TIMEOUT_MS = 45_000;
+const DEFAULT_RECONNECT_BASE_DELAY_MS = 500;
+
+async function waitForReconnectDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (delayMs <= 0) return;
+  await new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, delayMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 /**
@@ -343,6 +383,11 @@ export async function consumeDurableCopilotRun(
   options: ConsumeDurableCopilotRunOptions,
 ): Promise<CopilotRunView> {
   const maxReconnects = Math.max(0, options.maxReconnects ?? 3);
+  const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_DURABLE_IDLE_TIMEOUT_MS);
+  const reconnectBaseDelayMs = Math.max(
+    0,
+    options.reconnectBaseDelayMs ?? DEFAULT_RECONNECT_BASE_DELAY_MS,
+  );
   let state = options.initialState ?? createCopilotRunView();
   let reconnects = 0;
 
@@ -351,10 +396,20 @@ export async function consumeDurableCopilotRun(
     const controller = new AbortController();
     const relayAbort = () => controller.abort();
     options.signal?.addEventListener('abort', relayAbort, { once: true });
+    let idleTimedOut = false;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const armIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        idleTimedOut = true;
+        controller.abort();
+      }, idleTimeoutMs);
+    };
     const headers =
       state.lastEventId > 0 ? { 'Last-Event-ID': String(state.lastEventId) } : undefined;
 
     try {
+      armIdleTimer();
       const response = await options.fetchResponse(options.location, {
         ...(headers ? { headers } : {}),
         signal: controller.signal,
@@ -362,7 +417,9 @@ export async function consumeDurableCopilotRun(
       if (!response.ok) throw new Error(`durable stream failed (${response.status})`);
       if (!response.body) throw new Error('durable stream has no body');
 
-      for await (const event of parseCopilotSseStream(response.body)) {
+      for await (const event of parseCopilotSseStream(response.body, {
+        onActivity: armIdleTimer,
+      })) {
         if (event.event === 'error') throw new Error('durable stream failed');
         const frame = parseCopilotRunJobFrame(event.data);
         if (!frame) continue;
@@ -376,10 +433,15 @@ export async function consumeDurableCopilotRun(
     } catch (error) {
       if (options.signal?.aborted) throw error;
       if (TERMINAL_RUN_PHASES.has(state.phase)) return state;
-      if (reconnects >= maxReconnects) throw error;
+      const retryError = idleTimedOut
+        ? new Error(`durable stream idle for ${idleTimeoutMs}ms`)
+        : error;
+      if (reconnects >= maxReconnects) throw retryError;
       reconnects += 1;
+      await waitForReconnectDelay(reconnectBaseDelayMs * reconnects, options.signal);
       continue;
     } finally {
+      if (idleTimer) clearTimeout(idleTimer);
       options.signal?.removeEventListener('abort', relayAbort);
       controller.abort();
     }
@@ -388,5 +450,6 @@ export async function consumeDurableCopilotRun(
       throw new Error('durable stream closed before a terminal event');
     }
     reconnects += 1;
+    await waitForReconnectDelay(reconnectBaseDelayMs * reconnects, options.signal);
   }
 }

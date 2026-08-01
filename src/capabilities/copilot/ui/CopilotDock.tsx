@@ -125,12 +125,6 @@ interface CopilotChatResponse {
   primary_view?: ReplayPrimaryView;
 }
 
-interface DurableCopilotAccepted {
-  run_id: string;
-  session_id: string;
-  checkpoint_event_id?: string;
-}
-
 interface DurableCopilotReconnect {
   runId: string;
   location: string;
@@ -430,6 +424,14 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // exhausts automatic reconnects, the error button must resume THIS handle — never
   // POST the user message again and accidentally create a second run.
   const durableReconnectRef = useRef<DurableCopilotReconnect | null>(null);
+  const activeTransportAbortRef = useRef<AbortController | null>(null);
+  useEffect(
+    () => () => {
+      activeTransportAbortRef.current?.abort();
+      activeTransportAbortRef.current = null;
+    },
+    [],
+  );
   // Synchronous single-flight guard: `sending` state lags a re-render behind,
   // so rapid double-Enter could fire duplicate POSTs from the stale closure.
   const sendingRef = useRef(false);
@@ -622,6 +624,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     async (handle: DurableCopilotReconnect) => {
       if (sendingRef.current) return;
       sendingRef.current = true;
+      const abortController = new AbortController();
+      activeTransportAbortRef.current?.abort();
+      activeTransportAbortRef.current = abortController;
       setError(null);
       setRefreshFailed(false);
       setRefreshSkipped(false);
@@ -638,6 +643,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           location: handle.location,
           fetchResponse: apiFetch,
           initialState: handle.view,
+          signal: abortController.signal,
           onUpdate: (view) => {
             handle.view = view;
             applyRunViewToMessage(
@@ -670,6 +676,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         );
         reportSendError('后台进度连接仍未恢复；任务可能仍在运行，可以再次连接。');
       } finally {
+        if (activeTransportAbortRef.current === abortController) {
+          activeTransportAbortRef.current = null;
+        }
         sendingRef.current = false;
         setSending(false);
         setDurableRunning(false);
@@ -693,6 +702,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     const text = raw.trim();
     if (!text || sendingRef.current) return;
     sendingRef.current = true;
+    const turnAbortController = new AbortController();
+    activeTransportAbortRef.current?.abort();
+    activeTransportAbortRef.current = turnAbortController;
     // A deliberate new message supersedes any stale reconnect affordance. The
     // previous run remains recoverable through durable replay when the Dock reopens.
     durableReconnectRef.current = null;
@@ -735,6 +747,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         : undefined;
       const res = await apiFetch('/api/copilot/chat', {
         method: 'POST',
+        signal: turnAbortController.signal,
         body: JSON.stringify({
           user_message: text,
           triggered_by: 'chat',
@@ -747,28 +760,37 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       // with explicit Last-Event-ID reconnects; every update patches the SAME AI
       // row, so replay cannot create duplicate cards or a ghost reply.
       if (res.status === 202) {
-        const accepted = (await res.json()) as DurableCopilotAccepted;
-        if (!accepted.run_id) throw new Error('后台任务没有返回 run id');
+        // 202 + Location is the authoritative acceptance boundary. Do not await
+        // the informational JSON body before recording the handle: if that body
+        // is truncated after headers arrive, retry must reconnect this accepted
+        // run rather than POST the user turn a second time.
         durableAccepted = true;
-        const location =
-          res.headers.get('Location') ??
-          `/api/jobs/copilot_run/${encodeURIComponent(accepted.run_id)}/events`;
-        durableHandle = {
-          runId: accepted.run_id,
-          location,
-          aiMessageId: aiId,
-          view: inlineRunView,
-        };
+        void res.body?.cancel().catch(() => undefined);
+        const location = res.headers.get('Location');
         aiCreated = true;
-        setDurableRunning(true);
         applyRunViewToMessage(
           aiId,
           inlineRunView,
           '这件事需要多步处理，我已转到后台；进度会在这里持续更新。',
         );
+        if (!location) {
+          // The current server contract always supplies Location. If a proxy
+          // strips it, suppress generic re-POST retry because acceptance is
+          // already known but the stable reconnect handle is unavailable.
+          lastUserMessageRef.current = '';
+          throw new Error('后台任务已受理，但没有返回进度地址；请稍后重新打开对话。');
+        }
+        durableHandle = {
+          runId: location,
+          location,
+          aiMessageId: aiId,
+          view: inlineRunView,
+        };
+        setDurableRunning(true);
         const durable = await consumeDurableCopilotRun({
           location,
           fetchResponse: apiFetch,
+          signal: turnAbortController.signal,
           onUpdate: (view) => {
             if (durableHandle) durableHandle.view = view;
             applyRunViewToMessage(
@@ -930,6 +952,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             : '请求失败';
       reportSendError(message);
     } finally {
+      if (activeTransportAbortRef.current === turnAbortController) {
+        activeTransportAbortRef.current = null;
+      }
       sendingRef.current = false;
       setSending(false);
       setDurableRunning(false);

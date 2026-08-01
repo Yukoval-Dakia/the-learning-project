@@ -141,6 +141,46 @@ describe('Copilot subtask event fold', () => {
     ).toBeNull();
     expect(parseInlineSubtaskEvent('{broken-json')).toBeNull();
   });
+
+  it('keeps lifecycle identity strict while clamping overlong display copy', () => {
+    const label = `核对${'含参分式方程与定义域证据'.repeat(30)}`;
+    const summary = `完成：${'三个独立未教学探针复现同一错误；'.repeat(70)}`;
+    const parsed = parseInlineSubtaskEvent(
+      JSON.stringify({
+        step_kind: 'subtask',
+        subtask_id: 'audit-transfer-evidence',
+        label,
+        status: 'completed',
+        summary,
+      }),
+    );
+
+    expect(parsed?.label).toHaveLength(160);
+    expect(parsed?.label.endsWith('…')).toBe(true);
+    expect(parsed?.summary).toHaveLength(800);
+    expect(parsed?.summary?.endsWith('…')).toBe(true);
+    const failed = parseInlineSubtaskEvent(
+      JSON.stringify({
+        step_kind: 'subtask',
+        subtask_id: 'audit-image-evidence',
+        label: '复核图文题的几何证据链',
+        status: 'failed',
+        error: `未完成：${'原始扫描页缺少可辨识的辅助线，无法确定性复原作图条件；'.repeat(50)}`,
+      }),
+    );
+    expect(failed?.error).toHaveLength(800);
+    expect(failed?.error?.endsWith('…')).toBe(true);
+    expect(
+      parseInlineSubtaskEvent(
+        JSON.stringify({
+          step_kind: 'subtask',
+          subtask_id: 'x'.repeat(161),
+          label: '这个帧必须因折叠键不可信而被拒绝',
+          status: 'running',
+        }),
+      ),
+    ).toBeNull();
+  });
 });
 
 describe('durable Copilot run SSE replay', () => {
@@ -162,6 +202,25 @@ describe('durable Copilot run SSE replay', () => {
       { event: 'delta', data: '{"text":"先核"}' },
       { event: 'reply', data: '{"reply":"先核证据，再生成练习。"}' },
     ]);
+  });
+
+  it('counts raw keepalive chunks as transport activity without surfacing a business frame', async () => {
+    const onActivity = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(': keepalive\n\n'));
+        controller.enqueue(
+          new TextEncoder().encode('event: delta\ndata: {"text":"继续核验证据"}\n\n'),
+        );
+        controller.close();
+      },
+    });
+    const parsed = [];
+
+    for await (const event of parseCopilotSseStream(body, { onActivity })) parsed.push(event);
+
+    expect(onActivity).toHaveBeenCalledTimes(2);
+    expect(parsed).toEqual([{ event: 'delta', data: '{"text":"继续核验证据"}' }]);
   });
 
   it('reconnects with Last-Event-ID and does not duplicate a card or delta reply', async () => {
@@ -213,6 +272,7 @@ describe('durable Copilot run SSE replay', () => {
       fetchResponse,
       onUpdate: (state) => snapshots.push(`${state.phase}:${state.replyText}`),
       maxReconnects: 2,
+      reconnectBaseDelayMs: 0,
     });
 
     expect(fetchResponse).toHaveBeenCalledTimes(2);
@@ -327,5 +387,108 @@ describe('durable Copilot run SSE replay', () => {
       '我已把同分母、异分母与含参题分开核对，并用独立探针排除了偶然失误。下一组练习应先固定定义域，再处理通分。',
     );
     expect(firstFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts an idle transport and resumes the accepted run from the last durable cursor', async () => {
+    let silentSignal: AbortSignal | undefined;
+    const fetchResponse = vi
+      .fn<(input: string, init?: RequestInit) => Promise<Response>>()
+      .mockImplementationOnce(async (_input, init) => {
+        silentSignal = init?.signal ?? undefined;
+        const queued = new TextEncoder().encode(
+          `id: 501\ndata: ${JSON.stringify(
+            frame(501, 'copilot_run.step', {
+              step_kind: 'subtask',
+              subtask_id: 'rebuild-transfer-gradient',
+              label: '重建含参分式方程的三档迁移练习，并逐题复核定义域陷阱',
+              status: 'running',
+            }),
+          )}\n\n`,
+        );
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(queued);
+            silentSignal?.addEventListener(
+              'abort',
+              () => controller.error(new DOMException('transport idle', 'AbortError')),
+              { once: true },
+            );
+          },
+        });
+        return new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      })
+      .mockResolvedValueOnce(
+        new Response(
+          sseBody([
+            frame(502, 'copilot_run.step', {
+              step_kind: 'subtask',
+              subtask_id: 'rebuild-transfer-gradient',
+              label: '重建含参分式方程的三档迁移练习，并逐题复核定义域陷阱',
+              status: 'completed',
+              summary: '三档共 12 题均通过确定性 validator；最高档保留两个增根与定义域交叉陷阱。',
+            }),
+            frame(503, 'copilot_run.reply', {
+              reply_md: '练习已按迁移距离重排，并保留了可核验的定义域证据。',
+              checkpoint_event_id: 'ask_rebuild_transfer_gradient',
+            }),
+            frame(504, 'copilot_run.done', { task_run_id: 'task_rebuild_transfer_gradient' }),
+          ]),
+          { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+        ),
+      );
+
+    const result = await consumeDurableCopilotRun({
+      location: '/api/jobs/copilot_run/ask_rebuild_transfer_gradient/events',
+      fetchResponse,
+      idleTimeoutMs: 10,
+      reconnectBaseDelayMs: 0,
+      maxReconnects: 1,
+    });
+
+    expect(silentSignal?.aborted).toBe(true);
+    expect(fetchResponse).toHaveBeenCalledTimes(2);
+    expect(new Headers(fetchResponse.mock.calls[1]?.[1]?.headers).get('Last-Event-ID')).toBe('501');
+    expect(result).toEqual(
+      expect.objectContaining({
+        phase: 'completed',
+        lastEventId: 504,
+        replyText: '练习已按迁移距离重排，并保留了可核验的定义域证据。',
+        subtasks: [
+          expect.objectContaining({
+            id: 'rebuild-transfer-gradient',
+            status: 'completed',
+            summary: '三档共 12 题均通过确定性 validator；最高档保留两个增根与定义域交叉陷阱。',
+          }),
+        ],
+      }),
+    );
+  });
+
+  it('stops an in-backoff reconnect immediately when the owning UI aborts', async () => {
+    const owner = new AbortController();
+    const fetchResponse = vi
+      .fn<(input: string, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValue(
+        new Response(new Uint8Array(), {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        }),
+      );
+    const run = consumeDurableCopilotRun({
+      location: '/api/jobs/copilot_run/ask_owner_closed/events',
+      fetchResponse,
+      signal: owner.signal,
+      reconnectBaseDelayMs: 60_000,
+      maxReconnects: 3,
+    });
+
+    await vi.waitFor(() => expect(fetchResponse).toHaveBeenCalledTimes(1));
+    owner.abort();
+
+    await expect(run).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchResponse).toHaveBeenCalledTimes(1);
   });
 });
