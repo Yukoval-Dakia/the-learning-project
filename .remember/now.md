@@ -12,7 +12,8 @@
 
 - worktree：`/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-596-durable-liveness`
 - branch：`codex/yuk-596-durable-liveness`
-- commit / PR：待本 handoff 后创建。
+- functional commit：`e3d73d8d7a4b32b4d2082c091b1fa163aaee2ab5`
+- PR：[#1151](https://github.com/Yukoval-Dakia/the-learning-project/pull/1151)
 - `copilot-run-status.ts` 是 canonical terminal predicate：历史
   `FAILED(reason='error')` 是 retry frame；其它 FAILED（含 missing/unknown reason）
   fail-closed terminal。backlog、dispatch、checkpoint revert 与 handler settlement 共用 SQL/JS
@@ -50,7 +51,8 @@
 
 ## Current queue
 
-- commit/push/PR 后等 exact-head CI 全绿并自主 merge，不等待 advisory P2/minor/nit。
+- 本 handoff commit 推送后等 PR #1151 exact-head CI 全绿并自主 merge，不等待 advisory
+  P2/minor/nit。
 - merge 后新 worktree 推进 YUK-596 in-loop stop，再跑约 30 条真实 provider 复杂对话
   burn-in；封存 revision、输入/输出 digest、task-run/provider/model/cost。
 - Dock/UI 前必须重新执行 design pre-flight 并等 owner 批准；之后才做 LIGHT/FULL gate。

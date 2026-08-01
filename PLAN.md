@@ -3,7 +3,7 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-08-01
-> **【YUK-757 已交付；YUK-596 active：durable liveness 后端 safety slice】**
+> **【YUK-757 已交付；YUK-596 active：durable liveness PR #1151】**
 
 ## NOW
 
@@ -22,14 +22,15 @@
 - 当前 scoped 验证：real Postgres/pg-boss **8 files / 68 tests**、unit **6 files / 65
   tests**、typecheck、lint、build 与相关 audits 已绿。**未在本机运行完整 `pnpm test`**；
   独立 initial review 的 1 个 P1（legacy retry frame 误给 checkpoint）已修；唯一
-  verification review 无 P0/P1。还需 commit/push 与 exact-head GitHub `CI Gate`。
+  verification review 无 P0/P1。功能 commit `e3d73d8d` 已推送并开 PR #1151；等待最终
+  handoff commit 后的 exact-head GitHub `CI Gate`。
 - Linear YUK-596 已现场核验为 In Progress；本 slice 不虚假关整票。最近全量快照仍是严格
   active 86 / 排除 owner parked OpenCode 后产品 active 84，待本 slice merge 后再刷新。
 
 ## NEXT
 
-1. commit/push/PR 后以 exact-head GitHub `CI Gate` 执行完整 `pnpm test`，全绿即自主
-   merge，并回写 YUK-596 evidence；不等待 advisory P2/minor checks。
+1. PR #1151 exact-head GitHub `CI Gate` 执行完整 `pnpm test`，全绿即自主 merge，并回写
+   YUK-596 evidence；不等待 advisory P2/minor checks。
 2. 基于新 main 开独立 worktree推进 YUK-596 in-loop stop；复用当前 cancel/event seam，不把
    stop 误作纯 UI。
 3. 跑约 30 条复杂、真实 provider 对话 burn-in，封存 exact revision、输入/输出 digest、
@@ -46,8 +47,7 @@
 
 ## BLOCKED-ON
 
-- **YUK-596 当前 gate**：durable-liveness 独立 review + PR exact-head GitHub CI；本地 full
-  `pnpm test` 禁止替代。
+- **YUK-596 当前 gate**：PR #1151 exact-head GitHub CI；本地 full `pnpm test` 禁止替代。
 - **YUK-596 后续 owner gate**：后端安全、Stop 与 burn-in 完成后选择 LIGHT（推荐，保留模型
   自动分流）或 FULL（eligible freeform 全 durable + 更大 classifier/UX scope）。
 - **YUK-571 / YUK-405 / YUK-406**：等待真实内容、首次 placement 与真实观察窗口；synthetic/
