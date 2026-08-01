@@ -313,19 +313,23 @@ describe('writeEvent', () => {
         {
           id: ids[1],
           actor_kind: 'user',
-          actor_ref: 'self',
+          actor_ref: 'learner:tenant-42',
           action: 'attempt',
           subject_kind: 'question',
-          subject_id: 'q-invalid',
-          outcome: 'bogus',
+          subject_id: 'q-classical-chinese-actor-gate',
+          outcome: 'partial',
           payload: {
-            answer_md: 'x',
-            answer_image_refs: [],
-            referenced_knowledge_ids: [],
+            answer_md: '先把“之”判作宾语代词，再根据谓语回指。',
+            answer_image_refs: ['r2://answers/actor-gate/page-03.webp'],
+            referenced_knowledge_ids: ['kc-zhi-pronoun', 'kc-ellipsis-subject'],
+            duration_ms: 74_120,
+            hints_used: 2,
+            final_hint_level: 1,
+            reasoning_trace: '逐句替换后仍有一个主语省略点不确定。',
           },
         },
       ]),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/actor_ref must be 'self'/);
     expect(await db.select().from(event).where(inArray(event.id, ids))).toHaveLength(0);
   });
 
@@ -372,6 +376,45 @@ describe('writeEvent', () => {
         created_at: new Date(),
       }),
     ).rejects.toThrow();
+  });
+
+  it('rejects a non-self stable user event before touching the database', async () => {
+    const db = testDb();
+    const id = 'evt-non-self-review-rejected';
+    await expect(
+      writeEvent(db, {
+        id,
+        actor_kind: 'user',
+        actor_ref: 'learner:tenant-42',
+        action: 'review',
+        subject_kind: 'question',
+        subject_id: 'q-function-word-contrast-029',
+        outcome: 'success',
+        payload: {
+          fsrs_rating: 'hard',
+          fsrs_state_after: {
+            due: '2026-08-05T09:30:00.000Z',
+            stability: 4.72,
+            difficulty: 6.15,
+            elapsed_days: 3,
+            scheduled_days: 4,
+            learning_steps: 0,
+            reps: 7,
+            lapses: 1,
+            state: 'review',
+            last_review: '2026-08-01T09:30:00.000Z',
+          },
+          user_response_md: '“乃”表承接，“则”更偏条件后的结果。',
+          answer_image_refs: ['r2://answers/actor-gate/notebook-page-11.webp'],
+          referenced_knowledge_ids: ['kc-function-word-nai', 'kc-function-word-ze'],
+          duration_ms: 64_008,
+          stream_item_id: 'stream-item-weekly-review-029',
+          reasoning_trace: '逐句替换成现代汉语后比较逻辑连接。',
+          self_confidence: 3,
+        },
+      }),
+    ).rejects.toThrow(/actor_ref must be 'self'/);
+    expect(await db.select().from(event).where(eq(event.id, id))).toHaveLength(0);
   });
 
   it('is idempotent under duplicate id (returns existing id, no second row)', async () => {

@@ -4,9 +4,10 @@
 //   - user lane:  actor_kind='user',  actor_ref='self'  (UI rejudge / correct / revert)
 //   - agent lane: actor_kind='agent', actor_ref=<non-'self' ref> (e.g. 'dreaming',
 //                 the autonomous nightly edge-reconcile SUPERSEDE)
-// The pairing is enforced: 'user' must be 'self', 'agent' must NOT be 'self'. This
-// keeps the existing user-correction path intact while letting an autonomous
-// supersede be attributed to the agent, not mis-recorded as a user correction.
+// The pairing is enforced at two deliberately different depths: the shared
+// stable-event policy owns the user/self rule (YUK-772), while CorrectEvent owns
+// the independent agent/non-self rule. This keeps one policy boundary while
+// letting an autonomous supersede be attributed to the agent.
 
 import { describe, expect, it } from 'vitest';
 import { CorrectEvent } from './known';

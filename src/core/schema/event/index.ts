@@ -92,6 +92,13 @@ export * from './judge-pending-events';
 //
 // 顺序要点：特化 experimental schemas 必须排在通用 ExperimentalEvent 之前，否则后者的
 // payload (任意 record) 会先 match 走，结构信息丢失。
+//
+// YUK-772 的单 owner fail-closed 闸门刻意落在 KnownEvent seam。experimental
+// branches 仍有已持久化的 workflow/source provenance refs（例如 `owner`、
+// `user:self`、`block_import`、`artifact_block_tree_editor`、
+// `learning_item_detail`、`hub_dismiss_link`、`proposal:accept`）；在没有逐 branch
+// migration 前不得把它们伪装成 stable `self`。未来收紧 experimental actor refs
+// 必须作为独立迁移交付，而不是扩大 YUK-772 的读取拒绝面。
 
 export const Event = z.union([
   KnownEvent,

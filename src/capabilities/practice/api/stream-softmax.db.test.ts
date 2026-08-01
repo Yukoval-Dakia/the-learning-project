@@ -130,7 +130,7 @@ async function seedVariantCandidate(opts: { kind?: string; kc?: string }): Promi
   await testDb().insert(event).values({
     id: createId(),
     actor_kind: 'user',
-    actor_ref: 'me',
+    actor_ref: 'self',
     action: 'attempt',
     subject_kind: 'question',
     subject_id: parentId,

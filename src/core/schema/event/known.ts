@@ -22,6 +22,32 @@ const baseOptionalFields = {
   cost_micro_usd: z.number().int().optional(),
 } as const;
 
+type StableActorAttribution = { actor_kind: unknown; actor_ref: unknown };
+const STABLE_USER_ACTOR_REF_MESSAGE = "actor_ref must be 'self' when actor_kind='user'";
+
+function stableActorRefAllowed(actorKind: unknown, actorRef: unknown): boolean {
+  return actorKind !== 'user' || actorRef === 'self';
+}
+
+const StableUserActorRef = z.custom<'self'>((actorRef) => stableActorRefAllowed('user', actorRef), {
+  message: STABLE_USER_ACTOR_REF_MESSAGE,
+  fatal: false,
+});
+
+// YUK-772 / D7 — one policy function protects both the KnownEvent union and the
+// public member schemas that projections parse directly. Stable user events
+// represent the sole current owner, so every user lane is `self`; future
+// multi-user work changes this policy once rather than editing every event kind.
+function enforceStableUserActorRef(data: StableActorAttribution, ctx: z.RefinementCtx): void {
+  if (!stableActorRefAllowed(data.actor_kind, data.actor_ref)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: STABLE_USER_ACTOR_REF_MESSAGE,
+      path: ['actor_ref'],
+    });
+  }
+}
+
 /**
  * YUK-352 / YUK-469 — escalating-hint ceiling. An index and a count have different
  * inclusive bounds: indices span 0..20, so a client that traverses every level can
@@ -51,7 +77,7 @@ export type ReconstructionSignalT = z.infer<typeof ReconstructionSignal>;
 // 用户或 agent 尝试回答一道题。outcome 表对错（success / failure / partial）。
 // payload 含 answer 内容 + 可选 duration。
 
-export const AttemptOnQuestion = z.object({
+const AttemptOnQuestionSchema = z.object({
   actor_kind: z.enum(['user', 'agent']),
   actor_ref: z.string(),
   action: z.literal('attempt'),
@@ -129,6 +155,7 @@ export const AttemptOnQuestion = z.object({
   }),
   ...baseOptionalFields,
 });
+export const AttemptOnQuestion = AttemptOnQuestionSchema.superRefine(enforceStableUserActorRef);
 export type AttemptOnQuestionT = z.infer<typeof AttemptOnQuestion>;
 
 // 2. JudgeOnEvent — actor=agent / action='judge' / subject='event'
@@ -234,7 +261,7 @@ export type JudgeOnEventT = z.infer<typeof JudgeOnEvent>;
 export const ReviewOnQuestion = z
   .object({
     actor_kind: z.literal('user'),
-    actor_ref: z.string(),
+    actor_ref: StableUserActorRef,
     action: z.literal('review'),
     subject_kind: z.literal('question'),
     subject_id: z.string(),
@@ -411,7 +438,7 @@ export type MergeRepairEntryT = z.infer<typeof MergeRepairEntry>;
 
 export const RateEvent = z.object({
   actor_kind: z.literal('user'),
-  actor_ref: z.string(),
+  actor_ref: StableUserActorRef,
   action: z.literal('rate'),
   subject_kind: z.literal('event'),
   subject_id: z.string(),
@@ -476,9 +503,10 @@ export type RateEventT = z.infer<typeof RateEvent>;
 //                 the nightly edge reconcile SUPERSEDE auto-archives a contradicted
 //                 live edge with no human in the loop; mirrors the actor fields the
 //                 `generate` events on the same axis use, actor_kind='agent').
-// The pairing is enforced below: 'user' MUST be 'self' (no agent masquerading as
-// a user correction), 'agent' MUST NOT be 'self' (so an autonomous supersede is
-// never mis-recorded as a user correction). Correction consumers
+// The shared stable-actor policy is applied to this public branch and again as a
+// union backstop; this branch keeps the independent agent half (`agent` MUST NOT
+// be `self`) so an autonomous supersede is never mis-recorded as a user
+// correction. Correction consumers
 // (corrections.ts getCorrectionStatuses, inbox / proposal-status projections) read
 // only correction_kind + replacement_event_id, so they are attribution-agnostic
 // and unaffected by which lane authored the row.
@@ -503,16 +531,7 @@ export const CorrectEvent = z
     ...baseOptionalFields,
   })
   .superRefine((data, ctx) => {
-    // Attribution pairing — keep the user-correction lane (user/self) intact and
-    // reserve the agent lane for a non-self ref. A 'user' correction that is not
-    // 'self', or an 'agent' correction tagged 'self', is a mis-attribution.
-    if (data.actor_kind === 'user' && data.actor_ref !== 'self') {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "actor_ref must be 'self' when actor_kind='user'",
-        path: ['actor_ref'],
-      });
-    }
+    // CorrectEvent keeps the agent-specific half of its attribution pairing here.
     if (data.actor_kind === 'agent' && data.actor_ref === 'self') {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -534,7 +553,8 @@ export const CorrectEvent = z
         path: ['payload', 'replacement_event_id'],
       });
     }
-  });
+  })
+  .superRefine(enforceStableUserActorRef);
 export type CorrectEventT = z.infer<typeof CorrectEvent>;
 
 // 6c. CorrectArtifactEvent — actor=user / action='correct' / subject='artifact'
@@ -558,7 +578,7 @@ export type CorrectEventT = z.infer<typeof CorrectEvent>;
 export const CorrectArtifactEvent = z
   .object({
     actor_kind: z.literal('user'),
-    actor_ref: z.literal('self'),
+    actor_ref: StableUserActorRef,
     action: z.literal('correct'),
     subject_kind: z.literal('artifact'),
     subject_id: z.string(),
@@ -611,7 +631,7 @@ export type CorrectArtifactEventT = z.infer<typeof CorrectArtifactEvent>;
 
 export const SuppressArtifactLink = z.object({
   actor_kind: z.literal('user'),
-  actor_ref: z.literal('self'),
+  actor_ref: StableUserActorRef,
   action: z.literal('suppress'),
   subject_kind: z.literal('artifact'),
   subject_id: z.string(),
@@ -663,7 +683,7 @@ export type SuggestionKindT = z.infer<typeof SuggestionKind>;
 
 export const AcceptSuggestionChip = z.object({
   actor_kind: z.literal('user'),
-  actor_ref: z.literal('self'),
+  actor_ref: StableUserActorRef,
   action: z.literal('accept_suggestion'),
   subject_kind: z.literal('chip'),
   subject_id: z.string(),
@@ -747,7 +767,8 @@ export const GenerateKnowledgeEdge = z
         path: ['payload', 'reasoning'],
       });
     }
-  });
+  })
+  .superRefine(enforceStableUserActorRef);
 export type GenerateKnowledgeEdgeT = z.infer<typeof GenerateKnowledgeEdge>;
 
 // 12. ToolUseQuery — actor=agent / action='tool_use' / subject='query'
@@ -801,7 +822,7 @@ export type ToolUseQueryT = z.infer<typeof ToolUseQuery>;
 export const RateKnowledgeEdge = z
   .object({
     actor_kind: z.literal('user'),
-    actor_ref: z.literal('self'),
+    actor_ref: StableUserActorRef,
     action: z.literal('rate'),
     subject_kind: z.literal('knowledge_edge'),
     subject_id: z.string(),
@@ -850,21 +871,23 @@ export type RateKnowledgeEdgeT = z.infer<typeof RateKnowledgeEdge>;
 // parse 顺序避免误匹配）。每个 schema 用 .strict() 是不必要的，因为 z.literal() 已经
 // 保证不会跨匹配。
 
-export const KnownEvent = z.union([
-  AttemptOnQuestion,
-  JudgeOnEvent,
-  ReviewOnQuestion,
-  ProposeKnowledge,
-  ProposeKnowledgeEdge,
-  GenerateArtifact,
-  GenerateKnowledgeEdge,
-  CorrectEvent,
-  CorrectArtifactEvent,
-  SuppressArtifactLink,
-  RateEvent,
-  RateKnowledgeEdge,
-  AcceptSuggestionChip,
-  ExtractSourceDocument,
-  ToolUseQuery,
-]);
+export const KnownEvent = z
+  .union([
+    AttemptOnQuestion,
+    JudgeOnEvent,
+    ReviewOnQuestion,
+    ProposeKnowledge,
+    ProposeKnowledgeEdge,
+    GenerateArtifact,
+    GenerateKnowledgeEdge,
+    CorrectEvent,
+    CorrectArtifactEvent,
+    SuppressArtifactLink,
+    RateEvent,
+    RateKnowledgeEdge,
+    AcceptSuggestionChip,
+    ExtractSourceDocument,
+    ToolUseQuery,
+  ])
+  .superRefine(enforceStableUserActorRef);
 export type KnownEventT = z.infer<typeof KnownEvent>;

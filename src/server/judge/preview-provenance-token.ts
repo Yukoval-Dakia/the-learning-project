@@ -26,6 +26,17 @@ export type JudgePreviewProvenanceClaimsT = z.infer<typeof JudgePreviewProvenanc
 export function judgeProvenanceSigningSecret(): string | null {
   const secret = process.env.JUDGE_PROVENANCE_SECRET;
   if (!secret || secret.length === 0) return null;
+  // Match the documented `openssl rand -hex 32` setup with a conservative lower
+  // bound. Keep the secret opaque (no trim/normalisation) so issuing and verifying
+  // use the same key bytes; only reject the raw configured value when it is short.
+  if (secret.length < 32) {
+    console.error(
+      '[judge-provenance] JUDGE_PROVENANCE_SECRET is shorter than 32 characters — refusing to use ' +
+        'it. Provenance signing is DISABLED until a sufficiently long server-only secret is set ' +
+        '(openssl rand -hex 32).',
+    );
+    return null;
+  }
   // Fail closed if the provenance secret equals INTERNAL_TOKEN: every browser/API
   // caller holds INTERNAL_TOKEN, so an equal value reopens exactly the forgery
   // door this dedicated secret exists to close. Treat it as UNSET (no token
