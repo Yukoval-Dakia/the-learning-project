@@ -448,6 +448,17 @@ export async function writeCopilotReply(
     actorRef: string;
     /** 真实 task_run_id（cost-trace 链锚）。 */
     taskRunId: string;
+    /**
+     * Optional terminal outcome for durable recovery. Inline callers omit it,
+     * preserving the existing null outcome byte-for-byte. A durable success
+     * marker lets a pg-boss redelivery repair missing job terminal events
+     * without running the paid model/tools a second time.
+     */
+    outcome?: 'success' | 'failure' | 'partial';
+    /** Durable success metadata needed to rebuild the DONE projection. */
+    durableFinishReason?: string;
+    /** Durable failure metadata needed to rebuild the FAILED projection. */
+    durableFailure?: { reason: string; error: string };
     /** ask 的 created_at；reply 戳 now+1ms 保证 (created_at,id) 排序里 reply 在 ask 之后。 */
     now: Date;
     writeFn?: WriteEventFn;
@@ -471,12 +482,14 @@ export async function writeCopilotReply(
     action: REPLY_EVENT_ACTION,
     subject_kind: 'query',
     subject_id: replyEventId,
-    outcome: null,
+    outcome: params.outcome ?? null,
     payload: {
       surface: 'copilot',
       session_id: params.sessionId,
       reply_md: cleanedReply,
       task_run_id: params.taskRunId,
+      ...(params.durableFinishReason ? { durable_finish_reason: params.durableFinishReason } : {}),
+      ...(params.durableFailure ? { durable_failure: params.durableFailure } : {}),
       in_reply_to_event_id: params.userAskEventId ?? null,
       // YUK-307 (S3a additive) — persist hero nomination so Dock replay can restore
       // it. Reply METADATA only（assembleConversationHistory 的 {role,text} strip 把

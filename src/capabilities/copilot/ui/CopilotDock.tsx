@@ -631,7 +631,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         const existing = prev.find((message) => message.id === aiMessageId);
         const next: ChatMessage = {
           ...(existing ?? { id: aiMessageId, role: 'ai' as const }),
-          text: view.replyText || existing?.text || fallbackText,
+          text:
+            view.replyText ||
+            (view.phase === 'failed' ? fallbackText : existing?.text || fallbackText),
           checkpoint_event_id: view.checkpointEventId ?? existing?.checkpoint_event_id,
           subtasks: view.subtasks,
           streaming: !terminal,

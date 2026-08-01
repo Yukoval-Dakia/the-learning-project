@@ -16,8 +16,9 @@ import {
   COPILOT_RUN_TABLE,
   deriveCopilotRunStatus,
 } from '@/capabilities/copilot/server/copilot-run-status';
+import { countOutstandingDurableRuns } from '@/capabilities/copilot/server/durable-backlog';
 import { COPILOT_SUBAGENT_NAME } from '@/capabilities/copilot/server/subagents';
-import { event, job_events } from '@/db/schema';
+import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/server/ai/tools/allowlists';
 import { computeReplay } from '@/server/events/sse_replay';
@@ -31,6 +32,8 @@ import {
   type RunCopilotRunParams,
   buildCopilotRunHandler,
   runCopilotRun,
+  writeFailedTerminalProjection,
+  writeSuccessfulTerminalProjection,
 } from './copilot_run';
 
 // YUK-364 (F1) — 读 conversation-历史可见的 copilot_reply domain event（turns.ts 读
@@ -102,37 +105,6 @@ const stubRunInput: RunCopilotRunParams['resolveCopilotRunInputFn'] = async (_db
 // 一个无害占位，handler 只把它装进 mcpServers map 不解引用）。
 function mcpMock() {
   return vi.fn(() => ({ type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME }) as never);
-}
-
-// E2 seam (YUK-765) — wrap testDb() so the Nth `job_events` INSERT rejects, simulating a post-reply
-// advisory job-event write failure. Every other operation (the `event`-table writeCopilotReply, the
-// STARTED job_event, the materializing-tool SELECT) passes straight through to the real db, so the
-// reply is genuinely durable before the advisory write blows up. `returning()` is where writeJobEvent
-// awaits, so rejecting there throws from inside writeJobEvent exactly as a real DB failure would.
-function dbFailingOnNthJobEventInsert(n: number) {
-  const real = testDb();
-  let jobEventInserts = 0;
-  return new Proxy(real, {
-    get(target, prop, receiver) {
-      if (prop === 'insert') {
-        return (table: unknown) => {
-          if (table === job_events) {
-            jobEventInserts += 1;
-            if (jobEventInserts === n) {
-              return {
-                values: () => ({
-                  returning: () => Promise.reject(new Error('advisory job_event write boom')),
-                }),
-              };
-            }
-          }
-          return (target as typeof real).insert(table as never);
-        };
-      }
-      const value = Reflect.get(target, prop, receiver);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  }) as typeof real;
 }
 
 const baseData: CopilotRunJobData = {
@@ -462,38 +434,239 @@ describe('runCopilotRun', () => {
     expect(failed?.payload).toMatchObject({ reason: 'exhausted', checkpoint_event_id: runId });
   });
 
-  // YUK-765 (YUK-497 W7 · E2 / TeA_G · commit 5859dde6) — once the copilot_reply domain event is
-  // persisted the run has SUCCEEDED; the trailing SSE job_events + revert anchor are ADVISORY. A throw
-  // there must degrade IN PLACE (log + still return success), NOT fall to the outer catch →
-  // handleDurableFailure, which would chain a SECOND copilot_reply AND write a bogus FAILED terminal
-  // against the same ask. The proxy fails the DONE job-event write (3rd job_events INSERT: STARTED,
-  // REPLY, DONE) — strictly after writeCopilotReply persisted the reply to the event table.
-  it('E2 — post-reply advisory job-event failure degrades in place: no 2nd reply, no FAILED (TeA_G)', async () => {
-    const runId = 'copilot_user_ask_advisory_fail';
-    const sessionId = 'sess_advisory_fail';
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const result = await runCopilotRun({
-      db: dbFailingOnNthJobEventInsert(3),
+  it('E2 — post-reply projection failure redelivers into terminal repair without re-running paid work', async () => {
+    const runId = 'copilot_user_ask_terminal_projection_repair';
+    const sessionId = 'sess_terminal_projection_repair';
+    const reply =
+      '已核对 42 次含参分式方程作答、三轮延迟复习和五个未教学探针：稳定错因是先通分后补定义域，下一组按定义域→增根→参数退化分三档。';
+    const streamRun = streamMock(reply, {
+      taskRunId: 'tr_terminal_projection_repair',
+      finishReason: 'end_turn',
+    });
+    const projectTerminal = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('job_events transaction unavailable after reply commit'))
+      .mockImplementation(writeSuccessfulTerminalProjection);
+    const params = {
+      db: testDb(),
       data: { ...baseData, run_id: runId, session_id: sessionId },
-      streamTaskCollectingFn: streamMock('这是回答') as never,
+      streamTaskCollectingFn: streamRun as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+      writeSuccessfulTerminalProjectionFn: projectTerminal,
+    } satisfies RunCopilotRunParams;
+
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.QUEUED,
+      payload: { session_id: sessionId, admission: 'paid-durable-slot' },
+    });
+
+    await expect(runCopilotRun(params)).rejects.toThrow(
+      `durable success terminal projection failed for ${runId}`,
+    );
+
+    const persistedReplies = await copilotReplyEvents(sessionId);
+    expect(persistedReplies).toHaveLength(1);
+    expect(persistedReplies[0]).toMatchObject({
+      outcome: 'success',
+      task_run_id: 'tr_terminal_projection_repair',
+      caused_by_event_id: runId,
+      payload: {
+        reply_md: reply,
+        durable_finish_reason: 'end_turn',
+      },
+    });
+    expect((await replay(runId)).map((item) => item.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.QUEUED,
+      COPILOT_RUN_EVENTS.STARTED,
+    ]);
+    expect(await countOutstandingDurableRuns(testDb())).toBe(1);
+
+    const repaired = await runCopilotRun(params);
+    expect(repaired).toEqual({
+      status: 'done',
+      reply,
+      task_run_id: 'tr_terminal_projection_repair',
+    });
+    expect(streamRun).toHaveBeenCalledTimes(1);
+    expect(projectTerminal).toHaveBeenCalledTimes(2);
+    expect(await copilotReplyEvents(sessionId)).toHaveLength(1);
+    const repairedEvents = await replay(runId);
+    expect(repairedEvents.map((item) => item.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.QUEUED,
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.REPLY,
+      COPILOT_RUN_EVENTS.DONE,
+    ]);
+    expect(repairedEvents.some((item) => item.event_type === COPILOT_RUN_EVENTS.FAILED)).toBe(
+      false,
+    );
+    expect(repairedEvents.at(-1)?.payload).toMatchObject({
+      task_run_id: 'tr_terminal_projection_repair',
+      finish_reason: 'end_turn',
+      checkpoint_event_id: runId,
+    });
+    expect(await countOutstandingDurableRuns(testDb())).toBe(0);
+  });
+
+  it('E2 — failed terminal projection redelivers from its durable marker without re-running partial work', async () => {
+    const runId = 'copilot_user_ask_failed_projection_repair';
+    const sessionId = 'sess_failed_projection_repair';
+    const partialReply =
+      '已完成 42 次历史作答与三轮延迟复习的交叉核对；五个未教学探针只跑完三题，暂时只能确认“先通分后补定义域”这一条稳定错因。';
+    const providerError = 'provider budget exhausted after third transfer probe';
+    const streamRun = streamMock(partialReply, {
+      partial: true,
+      error: providerError,
+      taskRunId: 'tr_failed_projection_repair',
+    });
+    const projectTerminal = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('job_events FAILED write unavailable after reply commit'))
+      .mockImplementation(writeFailedTerminalProjection);
+    const params = {
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: streamRun as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+      writeFailedTerminalProjectionFn: projectTerminal,
+    } satisfies RunCopilotRunParams;
+
+    await seedToolUseMirror(runId, 'author_question');
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.QUEUED,
+      payload: { session_id: sessionId, admission: 'paid-durable-slot' },
+    });
+
+    await expect(runCopilotRun(params)).rejects.toThrow(
+      `durable failure terminal projection failed for ${runId}`,
+    );
+
+    const persistedReplies = await copilotReplyEvents(sessionId);
+    expect(persistedReplies).toHaveLength(1);
+    expect(persistedReplies[0]).toMatchObject({
+      outcome: 'failure',
+      task_run_id: `copilot_run_exhausted_${runId}`,
+      caused_by_event_id: runId,
+      payload: {
+        reply_md: partialReply,
+        durable_failure: { reason: 'exhausted', error: providerError },
+      },
+    });
+    expect((await replay(runId)).map((item) => item.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.QUEUED,
+      COPILOT_RUN_EVENTS.STARTED,
+    ]);
+    expect(await countOutstandingDurableRuns(testDb())).toBe(1);
+
+    const repaired = await runCopilotRun(params);
+    expect(repaired).toEqual({ status: 'failed', error: providerError });
+    expect(streamRun).toHaveBeenCalledTimes(1);
+    expect(projectTerminal).toHaveBeenCalledTimes(2);
+    expect(await copilotReplyEvents(sessionId)).toHaveLength(1);
+    const repairedEvents = await replay(runId);
+    expect(repairedEvents.map((item) => item.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.QUEUED,
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.FAILED,
+    ]);
+    expect(repairedEvents.at(-1)?.payload).toMatchObject({
+      reason: 'exhausted',
+      error: providerError,
+    });
+    expect(repairedEvents.at(-1)?.payload).not.toHaveProperty('checkpoint_event_id');
+    expect(await countOutstandingDurableRuns(testDb())).toBe(0);
+  });
+
+  it('E2 — repairing a persisted materializing success keeps the revert anchor suppressed', async () => {
+    const runId = 'copilot_user_ask_materialized_terminal_repair';
+    const sessionId = 'sess_materialized_terminal_repair';
+    await seedToolUseMirror(runId, 'author_question');
+    await writeEvent(testDb(), {
+      id: 'copilot_reply_materialized_terminal_repair',
+      session_id: sessionId,
+      actor_kind: 'agent',
+      actor_ref: 'agent:copilot',
+      action: 'experimental:copilot_reply',
+      subject_kind: 'query',
+      subject_id: 'copilot_reply_materialized_terminal_repair',
+      outcome: 'success',
+      payload: {
+        surface: 'copilot',
+        session_id: sessionId,
+        reply_md: '已生成 12 道三档迁移题，并用五个未教学探针逐题验证定义域、增根与参数退化。',
+        task_run_id: 'tr_materialized_terminal_repair',
+        durable_finish_reason: 'end_turn',
+        in_reply_to_event_id: runId,
+      },
+      caused_by_event_id: runId,
+      task_run_id: 'tr_materialized_terminal_repair',
+      created_at: new Date(),
+    });
+    const streamRun = streamMock('不得再次运行');
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: streamRun as never,
       resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
     });
 
-    // The reply is durable → the run still reports success.
-    expect(result).toMatchObject({ status: 'done', reply: '这是回答' });
-    // Exactly one copilot_reply — the advisory failure did NOT re-enter the phantom-reply writer.
-    const replies = await copilotReplyEvents(sessionId);
-    expect(replies).toHaveLength(1);
-    // No bogus FAILED terminal; the advisory failure never became a run failure.
+    expect(result).toEqual({
+      status: 'done',
+      reply: '已生成 12 道三档迁移题，并用五个未教学探针逐题验证定义域、增根与参数退化。',
+      task_run_id: 'tr_materialized_terminal_repair',
+    });
+    expect(streamRun).not.toHaveBeenCalled();
     const events = await replay(runId);
-    const types = events.map((e) => e.event_type);
-    expect(types).not.toContain(COPILOT_RUN_EVENTS.FAILED);
-    expect(types).toEqual([COPILOT_RUN_EVENTS.STARTED, COPILOT_RUN_EVENTS.REPLY]);
-    // The degrade path logged the non-fatal advisory error (evidence the in-place branch ran).
-    expect(errorSpy).toHaveBeenCalled();
-    errorSpy.mockRestore();
+    expect(events.map((item) => item.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.REPLY,
+      COPILOT_RUN_EVENTS.DONE,
+    ]);
+    expect(events[0]?.payload).not.toHaveProperty('checkpoint_event_id');
+    expect(events[1]?.payload).not.toHaveProperty('checkpoint_event_id');
+    expect(await copilotReplyEvents(sessionId)).toHaveLength(1);
   });
+
+  it.each([COPILOT_RUN_EVENTS.REPLY, COPILOT_RUN_EVENTS.DONE])(
+    'E2 — transactional success projection rolls back both frames when %s write fails',
+    async (failedType) => {
+      const runId = `copilot_user_ask_atomic_${failedType.split('.').at(-1)}`;
+      const writeInTransaction = vi.fn(
+        async (
+          tx: Parameters<typeof writeJobEvent>[0],
+          input: Parameters<typeof writeJobEvent>[1],
+        ) => {
+          if (input.event_type === failedType) {
+            throw new Error(`injected ${failedType} write failure`);
+          }
+          return writeJobEvent(tx, input);
+        },
+      );
+
+      await expect(
+        writeSuccessfulTerminalProjection(
+          testDb(),
+          {
+            runId,
+            replyMd: '真实复杂终稿：42 次作答、三轮延迟复习、五个未教学探针均已交叉验证。',
+            taskRunId: `tr_atomic_${failedType.split('.').at(-1)}`,
+            finishReason: 'end_turn',
+          },
+          [],
+          { writeJobEventFn: writeInTransaction },
+        ),
+      ).rejects.toThrow(`injected ${failedType} write failure`);
+
+      expect(await replay(runId)).toEqual([]);
+    },
+  );
 
   it('F1 — primary_view marker 在 domain event 与 job_events 里都被剥掉', async () => {
     const runId = 'run_primary_view';
@@ -819,9 +992,9 @@ describe('runCopilotRun', () => {
   });
 
   // YUK-575 (Fix 2 — single-shot) — durable copilot 无 transient 分诊：任何失败都是
-  // deliberate terminal → FAILED(reason='exhausted') + phantom-preventing copilot_reply +
-  // return（不 throw、不 redeliver，与 inline copilot 一致）。取代旧 ②「一律
-  // FAILED(error) + re-throw」。真 transient 自动重试延到 YUK-596。
+  // deliberate terminal → failure-marker copilot_reply + FAILED(reason='exhausted') +
+  // return（终态写成功时不 throw、不 redeliver，与 inline copilot 一致）。终态投影
+  // 失败的无重跑修复由上方 E2 覆盖；真 transient runner 自动重试延到 YUK-596。
   it('② 任何失败（这里 plain Error）→ terminal FAILED(exhausted) + copilot_reply + return（不 throw）', async () => {
     const run = vi.fn(async () => {
       throw new Error('handler bug / unknown failure');

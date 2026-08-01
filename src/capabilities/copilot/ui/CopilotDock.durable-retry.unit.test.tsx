@@ -251,6 +251,55 @@ const queuedRecoveryView = {
   ],
 } satisfies CopilotRunView;
 
+const failedView = {
+  phase: 'failed' as const,
+  lastEventId: 705,
+  replyText: '',
+  subtasks: [
+    {
+      id: 'validate-parametric-transfer',
+      label: '用五个未教学探针验证含参分式方程迁移题',
+      status: 'failed' as const,
+      error: '子任务未完成',
+      lastEventId: 704,
+    },
+  ],
+  frames: [
+    {
+      event_id: 701,
+      event_type: 'copilot_run.queued',
+      payload: { session_id: 'copilot-session-failed-transfer' },
+    },
+    { event_id: 702, event_type: 'copilot_run.started', payload: {} },
+    {
+      event_id: 703,
+      event_type: 'copilot_run.step',
+      payload: {
+        step_kind: 'subtask',
+        subtask_id: 'validate-parametric-transfer',
+        label: '用五个未教学探针验证含参分式方程迁移题',
+        status: 'running',
+      },
+    },
+    {
+      event_id: 704,
+      event_type: 'copilot_run.step',
+      payload: {
+        step_kind: 'subtask',
+        subtask_id: 'validate-parametric-transfer',
+        label: '用五个未教学探针验证含参分式方程迁移题',
+        status: 'failed',
+        error: '子任务未完成',
+      },
+    },
+    {
+      event_id: 705,
+      event_type: 'copilot_run.failed',
+      payload: { reason: 'exhausted', error: 'provider budget exhausted' },
+    },
+  ],
+} satisfies CopilotRunView;
+
 describe('CopilotDock accepted durable reconnect', () => {
   beforeEach(() => window.sessionStorage.clear());
 
@@ -259,6 +308,44 @@ describe('CopilotDock accepted durable reconnect', () => {
     window.sessionStorage.clear();
     apiFetchMock.mockReset();
     consumeDurableMock.mockReset();
+  });
+
+  it('replaces stale progress copy when a durable run reaches FAILED without reply text', async () => {
+    const runId = 'ask_failed_transfer';
+    const location = `/api/jobs/copilot_run/${runId}/events`;
+    apiFetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ run_id: runId }), {
+        status: 202,
+        headers: { Location: location, 'Content-Type': 'application/json' },
+      }),
+    );
+    consumeDurableMock.mockImplementationOnce(
+      async (options: { onUpdate?: (view: typeof failedView) => void }) => {
+        options.onUpdate?.(failedView);
+        return failedView;
+      },
+    );
+
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByTestId('copilot-composer-input'),
+      '用五个未教学探针验证含参分式方程迁移题，并把无法收敛的证据明确保留下来。',
+    );
+    await user.click(screen.getByTestId('copilot-composer-send'));
+
+    expect(
+      await screen.findByText('这次后台运行没有完成。可以换个更聚焦的问法再试。'),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText('这件事需要多步处理，我已转到后台；进度会在这里持续更新。'),
+    ).toBeNull();
+    expect(screen.getByText('用五个未教学探针验证含参分式方程迁移题')).toBeTruthy();
+    expect(screen.queryByTestId('copilot-msg-streaming')).toBeNull();
+    expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
+      false,
+    );
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('reconnects the same run after network progress loss without a second chat POST or duplicate rows', async () => {
