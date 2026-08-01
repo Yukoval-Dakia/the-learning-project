@@ -15,6 +15,7 @@
 //
 // Mirror tool-use events still flow via mcp-bridge (caller actor is agent).
 
+import { type CopilotDispatchDecision, CopilotDispatchDecisionSchema } from '@/ai/registry';
 import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
@@ -65,6 +66,7 @@ import {
 } from '@/capabilities/copilot/server/turns';
 import type { Db, Tx } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
+import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 // YUK-198 — Tavily remote MCP (web grounding) for the Copilot surface only.
 // Gated on TAVILY_API_KEY: when absent, buildTavilyMcpServer() returns null and
 // the Copilot run is byte-for-byte unchanged (no tavily server, no extra tools).
@@ -73,12 +75,19 @@ import {
   TAVILY_MCP_SERVER_NAME,
   buildTavilyMcpServer,
 } from '@/server/ai/mcp/tavily';
+import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import {
   type RunTaskResult,
   type StreamCollectResult,
+  type TaskEventMessage,
   runAgentTask,
   streamTaskCollecting,
 } from '@/server/ai/runner';
+import {
+  SPAWN_TOOL_NAME,
+  type SpawnBudgetObservation,
+  createSpawnContract,
+} from '@/server/ai/spawn-contract';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   type DomainToolSurface,
@@ -107,6 +116,12 @@ import {
   type CopilotSkillContextT,
 } from './chat-contracts';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
+import {
+  type CopilotSubtaskEvent,
+  buildCopilotSubagents,
+  createCopilotSubtaskProjector,
+  isCopilotSubagentEnabled,
+} from './subagents';
 
 export * from './chat-contracts';
 
@@ -369,16 +384,18 @@ const REPLY_EVENT_ACTION = 'experimental:copilot_reply';
 // 事件形态分叉。生成 id、写事件、返回 id。session_id 列写在 user ask 上让 idle
 // 时钟把这视为本会话的一个 user turn（codex #3356884490，与 inline 同理）。
 export async function writeCopilotUserAsk(
-  db: Db,
+  db: Db | Tx,
   params: {
     sessionId: string;
     userMessage: string;
     now: Date;
-    writeFn?: (db: Db, event: WriteEventInput) => Promise<unknown>;
+    /** Stable id for an idempotently accepted durable turn; inline callers omit it. */
+    eventId?: string;
+    writeFn?: (db: Db | Tx, event: WriteEventInput) => Promise<unknown>;
   },
 ): Promise<string> {
   const write = params.writeFn ?? writeEvent;
-  const userAskEventId = `copilot_user_ask_${createId()}`;
+  const userAskEventId = params.eventId ?? `copilot_user_ask_${createId()}`;
   await write(db, {
     id: userAskEventId,
     session_id: params.sessionId,
@@ -433,6 +450,17 @@ export async function writeCopilotReply(
     actorRef: string;
     /** 真实 task_run_id（cost-trace 链锚）。 */
     taskRunId: string;
+    /**
+     * Optional terminal outcome for durable recovery. Inline callers omit it,
+     * preserving the existing null outcome byte-for-byte. A durable success
+     * marker lets a pg-boss redelivery repair missing job terminal events
+     * without running the paid model/tools a second time.
+     */
+    outcome?: 'success' | 'failure' | 'partial';
+    /** Durable success metadata needed to rebuild the DONE projection. */
+    durableFinishReason?: string;
+    /** Durable failure metadata needed to rebuild the FAILED projection. */
+    durableFailure?: { reason: string; error: string };
     /** ask 的 created_at；reply 戳 now+1ms 保证 (created_at,id) 排序里 reply 在 ask 之后。 */
     now: Date;
     writeFn?: WriteEventFn;
@@ -456,12 +484,14 @@ export async function writeCopilotReply(
     action: REPLY_EVENT_ACTION,
     subject_kind: 'query',
     subject_id: replyEventId,
-    outcome: null,
+    outcome: params.outcome ?? null,
     payload: {
       surface: 'copilot',
       session_id: params.sessionId,
       reply_md: cleanedReply,
       task_run_id: params.taskRunId,
+      ...(params.durableFinishReason ? { durable_finish_reason: params.durableFinishReason } : {}),
+      ...(params.durableFailure ? { durable_failure: params.durableFailure } : {}),
       in_reply_to_event_id: params.userAskEventId ?? null,
       // YUK-307 (S3a additive) — persist hero nomination so Dock replay can restore
       // it. Reply METADATA only（assembleConversationHistory 的 {role,text} strip 把
@@ -494,6 +524,10 @@ type RunAgentTaskFn = (
     // skills?: string[]; this alias just exposes it so passing skills here does
     // NOT trip the TS excess-property check.
     skills?: string[];
+    agents?: Parameters<typeof runAgentTask>[2]['agents'];
+    hooks?: Parameters<typeof runAgentTask>[2]['hooks'];
+    canUseTool?: Parameters<typeof runAgentTask>[2]['canUseTool'];
+    outputFormat?: Parameters<typeof runAgentTask>[2]['outputFormat'];
   },
 ) => Promise<RunTaskResult>;
 // YUK-266 (C1) — swappable streaming agent runner. Streams text deltas to
@@ -514,6 +548,10 @@ type StreamAgentTaskFn = (
     // YUK-284 (C2) — see RunAgentTaskFn.ctx.skills. Same forward to the streaming
     // runner so the free-form streaming path loads the copilot SKILL.md too.
     skills?: string[];
+    agents?: Parameters<typeof streamTaskCollecting>[2]['agents'];
+    hooks?: Parameters<typeof streamTaskCollecting>[2]['hooks'];
+    canUseTool?: Parameters<typeof streamTaskCollecting>[2]['canUseTool'];
+    onTaskEvent?: Parameters<typeof streamTaskCollecting>[2]['onTaskEvent'];
   },
   onDelta: (text: string) => void,
 ) => Promise<StreamCollectResult>;
@@ -581,6 +619,12 @@ export interface CopilotChatDeps {
   // (reads <cwd>/src/subjects/_shared/skills/copilot/SKILL.md). Unit tests inject
   // () => ['copilot'] (命中) or () => undefined (降级) so they don't depend on disk.
   resolveCopilotSkillsFn?: typeof resolveCopilotSkills;
+  /** Test/ops seam for the default-on COPILOT_SUBAGENT_ENABLED kill switch. */
+  copilotSubagentEnabled?: boolean;
+  /** Sanitized task lifecycle sink used by inline SSE; never receives SDK prose/reasoning. */
+  onSubtaskEvent?: (event: CopilotSubtaskEvent) => Promise<void> | void;
+  /** Report-only spawn-budget observation sink. Existing tool/cost logs stay authoritative. */
+  onSpawnBudgetObservation?: (observation: SpawnBudgetObservation) => void;
   now?: () => Date;
 }
 
@@ -596,6 +640,96 @@ function selectSurface(triggeredBy: CopilotChatTriggerKind): DomainToolSurface {
 
 function selectActorRef(triggeredBy: CopilotChatTriggerKind): string {
   return triggeredBy === 'chip' ? 'agent:copilot_chip' : 'agent:copilot';
+}
+
+function observeCopilotSpawnBudget(observation: SpawnBudgetObservation): void {
+  console.info('[copilot] spawn_budget_observation', {
+    event: 'copilot_spawn_budget_observation',
+    mode: observation.mode,
+    tool_use_id: observation.toolUseId,
+    ordinal: observation.ordinal,
+    decision: observation.decision,
+  });
+}
+
+export type CopilotDispatchResult =
+  | (CopilotDispatchDecision & {
+      source: 'model_triage';
+      task_run_id: string;
+    })
+  | {
+      mode: 'inline';
+      reason: 'classifier_unavailable';
+      source: 'fallback';
+      task_run_id: string;
+    };
+
+export interface DecideCopilotDispatchDeps {
+  runAgentTaskFn?: RunAgentTaskFn;
+  createTaskRunId?: () => string;
+  signal?: AbortSignal;
+}
+
+const COPILOT_DISPATCH_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(CopilotDispatchDecisionSchema);
+
+/**
+ * Bounded model judgment that must finish before the route commits 200 SSE or
+ * 202 JSON. It never reads tools/history and fails open to the retained inline
+ * path; the durable-by-default flip remains owned by YUK-596.
+ */
+export async function decideCopilotDispatch(
+  db: Db,
+  input: Pick<CopilotChatRequestT, 'user_message' | 'ambient_context'>,
+  deps: DecideCopilotDispatchDeps = {},
+): Promise<CopilotDispatchResult> {
+  const run = deps.runAgentTaskFn ?? runAgentTask;
+  const taskRunId = deps.createTaskRunId?.() ?? `copilot_dispatch_${createId()}`;
+
+  try {
+    const result = await run(
+      'CopilotDispatchTask',
+      {
+        user_message: input.user_message,
+        ...(input.ambient_context ? { ambient_context: input.ambient_context } : {}),
+      },
+      {
+        db,
+        taskRunId,
+        signal: deps.signal,
+        outputFormat: COPILOT_DISPATCH_OUTPUT_FORMAT,
+      },
+    );
+
+    let decision: CopilotDispatchDecision;
+    if (result.structured_output !== undefined && result.structured_output !== null) {
+      // Native structured output is authoritative. Never repair or fall back to
+      // contradictory prose when this product channel is present but invalid.
+      decision = CopilotDispatchDecisionSchema.parse(result.structured_output);
+    } else {
+      const extracted = parseJsonObjectLoose(result.text, 'copilot dispatch decision', {
+        riskyRepair: 'reject',
+      });
+      if (!extracted || extracted.repaired !== false) {
+        throw new Error('dispatch decision was not strict JSON');
+      }
+      decision = CopilotDispatchDecisionSchema.parse(extracted.json);
+    }
+
+    return { ...decision, source: 'model_triage', task_run_id: taskRunId };
+  } catch (error) {
+    // Do not log the user message, model text, reasoning, or provider error body.
+    console.warn('[copilot] dispatch classifier unavailable; falling back inline', {
+      event: 'copilot_dispatch_fallback',
+      task_run_id: taskRunId,
+      error_name: error instanceof Error ? error.name : 'UnknownError',
+    });
+    return {
+      mode: 'inline',
+      reason: 'classifier_unavailable',
+      source: 'fallback',
+      task_run_id: taskRunId,
+    };
+  }
 }
 
 // YUK-266 (C1) — streaming options threaded through the shared chat impl. When
@@ -979,10 +1113,27 @@ async function runCopilotChatImpl(
     [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer,
     ...(tavilyCfg ? { [TAVILY_MCP_SERVER_NAME]: tavilyCfg } : {}),
   };
-  const allowedTools = [
+  const baseAllowedTools = [
     ...resolveMcpAllowedTools(surface),
     ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
   ];
+  const subagentEnabled = deps.copilotSubagentEnabled ?? isCopilotSubagentEnabled(process.env);
+  const allowedTools = [...baseAllowedTools, ...(subagentEnabled ? [SPAWN_TOOL_NAME] : [])];
+  const spawnContract = subagentEnabled
+    ? createSpawnContract({
+        enabled: true,
+        agents: buildCopilotSubagents({ parentAllowedTools: allowedTools }),
+        onBudgetObservation: deps.onSpawnBudgetObservation ?? observeCopilotSpawnBudget,
+      })
+    : undefined;
+  const projectSubtaskEvent = createCopilotSubtaskProjector();
+  const onTaskEvent =
+    subagentEnabled && deps.onSubtaskEvent
+      ? async (event: TaskEventMessage) => {
+          const projected = projectSubtaskEvent(event);
+          if (projected) await deps.onSubtaskEvent?.(projected);
+        }
+      : undefined;
 
   // YUK-575 (A1) — the free-form run input assembled by the shared assembler above
   // (before the ask write, read-before-write). When `freeFormRunInput` is undefined
@@ -1021,6 +1172,14 @@ async function runCopilotChatImpl(
         allowedTools,
         taskRunId,
         signal: streaming.signal,
+        ...(spawnContract
+          ? {
+              agents: spawnContract.agents,
+              hooks: spawnContract.hooks,
+              canUseTool: spawnContract.canUseTool,
+            }
+          : {}),
+        ...(onTaskEvent ? { onTaskEvent } : {}),
         // YUK-284 (C2) — spread-when-present: when the copilot SKILL.md is absent
         // (copilotSkills === undefined) the ctx omits `skills` entirely, byte-for-byte
         // the pre-C2 shape (runner ctx.skills ?? [] unchanged → no regression).
@@ -1040,6 +1199,13 @@ async function runCopilotChatImpl(
       mcpServers,
       allowedTools,
       taskRunId,
+      ...(spawnContract
+        ? {
+            agents: spawnContract.agents,
+            hooks: spawnContract.hooks,
+            canUseTool: spawnContract.canUseTool,
+          }
+        : {}),
       // YUK-284 (C2) — see streaming branch above (spread-when-present).
       ...(copilotSkills ? { skills: copilotSkills } : {}),
     });

@@ -3,6 +3,11 @@ import { computeReplay } from '@/server/events/sse_replay';
 import { subscribe } from '@/server/events/sse_router';
 import { JOB_EVENT_KIND_SET } from './event-contracts';
 
+/** SSE comment cadence: below the client's transport-idle watchdog. */
+export const JOB_EVENT_HEARTBEAT_MS = 15_000;
+/** Durable cursor catch-up: NOTIFY is a wake-up hint, never the only delivery path. */
+export const JOB_EVENT_CATCHUP_MS = 10_000;
+
 /**
  * GET /api/jobs/[kind]/[id]/events —— 通用异步 job tracker SSE 流（YUK-310）。
  *
@@ -62,18 +67,24 @@ export async function GET(req: Request, params: Record<string, string>): Promise
 
   const encoder = new TextEncoder();
 
+  let stopStream = () => {};
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let closed = false;
       let unsub: (() => void) | undefined;
-      // kody :86 — 追踪已 emit 的最大 id。live NOTIFY 用 notification.event_id - 1
-      // 当游标时，若两条写入交叠会重放已发过的帧；用 max(lastEmittedId, ...) 当游标
-      // 确保每条 id 只发一次（去重）。
+      // Track the largest emitted id. Replay work is serialized below and every
+      // enqueue is idempotent against this cursor.
       let lastEmittedId = lastEventId;
+      let replayQueue: Promise<void> = Promise.resolve();
+      let catchup: ReturnType<typeof setInterval> | undefined;
+      let periodicCatchupPending = false;
 
       const close = () => {
         if (closed) return;
         closed = true;
+        clearInterval(heartbeat);
+        if (catchup) clearInterval(catchup);
+        req.signal.removeEventListener('abort', close);
         // F2/F4：清理订阅 + 关闭 controller 在同一处收口，无论正常 abort 还是异常路径。
         unsub?.();
         try {
@@ -82,15 +93,28 @@ export async function GET(req: Request, params: Record<string, string>): Promise
           // already closed
         }
       };
+      stopStream = close;
+
+      const emitHeartbeat = () => {
+        if (closed) return;
+        try {
+          // SSE comments are transport activity, not business events: they do
+          // not advance Last-Event-ID or enter the Copilot fold.
+          controller.enqueue(encoder.encode(': keepalive\n\n'));
+        } catch {
+          close();
+        }
+      };
+      const heartbeat = setInterval(emitHeartbeat, JOB_EVENT_HEARTBEAT_MS);
 
       const emit = (id: number, data: unknown) => {
-        if (closed) return;
+        if (closed || id <= lastEmittedId) return;
         const payload = `id: ${id}\ndata: ${JSON.stringify(data)}\n\n`;
         try {
           controller.enqueue(encoder.encode(payload));
           if (id > lastEmittedId) lastEmittedId = id;
         } catch {
-          closed = true;
+          close();
         }
       };
 
@@ -110,6 +134,10 @@ export async function GET(req: Request, params: Record<string, string>): Promise
           businessId,
           lastEventId,
         });
+        // The request may have been aborted while the replay query was in
+        // flight. Do not install a live subscription after close() has already
+        // run, otherwise an unmounted client leaves an unreachable subscriber.
+        if (closed) return;
         for (const event of replay) {
           emit(event.id, {
             event_id: event.id,
@@ -117,14 +145,22 @@ export async function GET(req: Request, params: Record<string, string>): Promise
             payload: event.payload,
           });
         }
+        if (closed) return;
 
-        unsub = subscribe(businessTable, businessId, async (notification) => {
-          try {
+        // Replay-before-subscribe has an unavoidable commit window: an event
+        // can land after the SELECT snapshot but before the subscription is
+        // installed. Install the subscriber, then serialize one catch-up replay
+        // ahead of every live notification. Serial replay plus emit-level id
+        // dedupe preserves event order without losing that gap event.
+        const enqueueReplay = (): Promise<void> => {
+          replayQueue = replayQueue.then(async () => {
+            if (closed) return;
             const incoming = await computeReplay(db, {
               businessTable,
               businessId,
-              lastEventId: Math.max(lastEmittedId, notification.event_id - 1),
+              lastEventId: lastEmittedId,
             });
+            if (closed) return;
             for (const event of incoming) {
               emit(event.id, {
                 event_id: event.id,
@@ -132,12 +168,34 @@ export async function GET(req: Request, params: Record<string, string>): Promise
                 payload: event.payload,
               });
             }
-          } catch {
+          });
+          return replayQueue;
+        };
+
+        unsub = subscribe(businessTable, businessId, () => {
+          void enqueueReplay().catch(() => {
             // live-replay 查询失败：发一个 SSE error 事件并收口，不让流静默挂死。
             emitError();
             close();
-          }
+          });
         });
+        // LISTEN/NOTIFY can lose a notification across a listener reconnect
+        // while this HTTP stream remains healthy. Heartbeats prove only that
+        // the socket is alive, so periodically query from the durable cursor.
+        // replayQueue serializes this with notification-driven catch-up.
+        catchup = setInterval(() => {
+          if (periodicCatchupPending || closed) return;
+          periodicCatchupPending = true;
+          void enqueueReplay()
+            .catch(() => {
+              emitError();
+              close();
+            })
+            .finally(() => {
+              periodicCatchupPending = false;
+            });
+        }, JOB_EVENT_CATCHUP_MS);
+        await enqueueReplay();
       } catch {
         // F2：初始 replay / subscribe 抛错（DB/连接错误）时，发一个 SSE error 事件
         // 通知客户端并关闭流 —— 而非让 promise 静默 reject、流永不产数据永不关闭。
@@ -154,6 +212,9 @@ export async function GET(req: Request, params: Record<string, string>): Promise
           // already closed / errored
         }
       }
+    },
+    cancel() {
+      stopStream();
     },
   });
 

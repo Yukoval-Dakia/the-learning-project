@@ -93,6 +93,29 @@ describe('replayToMessages', () => {
     expect(replayToMessages([])).toEqual([]);
   });
 
+  it('deduplicates a replayed reply by stable event_id instead of creating a ghost message', () => {
+    const duplicated = turn({
+      role: 'ai',
+      text: '后台重建已完成，练习从通分策略迁移到含参分式方程。',
+      event_id: 'reply_durable_weekly_rebuild',
+      checkpoint_event_id: 'ask_durable_weekly_rebuild',
+    });
+
+    expect(replayToMessages([duplicated, duplicated])).toEqual([
+      {
+        id: 'reply_durable_weekly_rebuild',
+        role: 'ai',
+        text: '后台重建已完成，练习从通分策略迁移到含参分式方程。',
+        checkpoint_event_id: 'ask_durable_weekly_rebuild',
+        skill_turn: undefined,
+        session_id: undefined,
+        reply_event_id: undefined,
+        skill_context: undefined,
+        primary_view: undefined,
+      },
+    ]);
+  });
+
   // YUK-272 (C3) — a persisted quiz reply carries skill_context:{skill:'quiz'}.
   // After widening ReplaySkillContext.skill to include 'quiz', it round-trips
   // through replayToMessages without a cast (type-level + runtime forward).

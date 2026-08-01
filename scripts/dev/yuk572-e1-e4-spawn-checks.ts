@@ -1,19 +1,19 @@
 // YUK-572 PR-2 — E-1..E-4 dev validation harness (spec §10 / §2 / §6).
 //
 // These four checks are UNPROVABLE from the SDK typings (docstring aliases, no exported
-// constants, bypassPermissions vs hook-deny ambiguity) — they are runtime facts that must
-// be verified against a REAL `claude` subprocess before the RESEARCH_MEETING_AGENT_ENABLED
-// flag is flipped. E-2 / E-3 / E-4 are BLOCKING (§10): if any fails, do NOT flip the flag.
+// constants, and subprocess behavior) — they are runtime facts that must be verified
+// against a REAL `claude` subprocess before the RESEARCH_MEETING_AGENT_ENABLED flag is
+// flipped. E-2 / E-3 / E-4 are BLOCKING (§10): if any fails, do NOT flip the flag.
 //
 //   E-1  Task spawn: the director's allowlist literal 'Task' actually spawns the nested
-//        evidence-scout (the scout runs → the spawn-cap hook counts ≥1, and/or the scout
-//        writes report_findings). If the runtime tool name were 'Agent', the spawn would
-//        silently never fire.
+//        evidence-scout (the scout runs → the shared spawn contract observes ≥1 allowed
+//        Task call, and/or the scout writes report_findings). If the runtime tool name
+//        were 'Agent', the spawn would silently never fire.
 //   E-2  Usage/cost aggregation: the nested scout's usage rolls INTO the parent run's
 //        total_cost_usd (§2 — the "no-aggregation fallback" branch was deleted, so the
 //        design DEPENDS on this). Verified by a spawn-run cost > a no-spawn-run cost. On
-//        the flat OAuth lane total_cost_usd may be 0 → INCONCLUSIVE (inspect modelUsage by
-//        hand, §7); NOT a pass — see computeExitCode below (review MAJOR #1: an
+//        the flat OAuth lane total_cost_usd may be 0 → INCONCLUSIVE (inspect the printed
+//        aggregate usage + task-run rows, §7); NOT a pass — see computeExitCode below (review MAJOR #1: an
 //        inconclusive E-2 must NEVER exit 0 and silently authorize flipping the flag).
 //   E-3  mcpServers by-name resolution: the scout's AgentDefinition.mcpServers:['research_
 //        evidence'] resolves to the top-level in-process server. round-5 review minor
@@ -28,30 +28,29 @@
 //        read in every case a pure timestamp comparison can miss (e.g. a director read
 //        that happens to land in the same window before ever spawning), whereas
 //        reportFindingsCaptured has no such attribution ambiguity at all.
-//   E-4  bypassPermissions deny enforcement: under permissionMode:'bypassPermissions'
-//        (hardcoded in the runner), a deny on the 2nd Task spawn from EITHER the
-//        PreToolUse hook or the canUseTool callback (round-2 review #9 — two independent
-//        layers sharing one counter) is HONORED → the breadth cap is structural. If
-//        neither is honored, breadth is only a soft maxTurns bound (附录 A #6). Measured
-//        directly via denyTriggered (round-2 review #2), not inferred from the final
-//        spawn count (which cannot distinguish "2nd attempt denied" from "no 2nd attempt
-//        was ever made").
+//   E-4  report-only breadth: under permissionMode:'bypassPermissions' (hardcoded in the
+//        runner), the shared YUK-757/YUK-572 v2 contract observes and ALLOWS at least two
+//        distinct valid Task calls. This proves the retired ≤1 breadth cap did not survive
+//        in a stale harness-only implementation. Depth remains structurally bounded to one
+//        nested level by each child AgentDefinition's explicit tool boundary; invalid agent
+//        names/input overrides and the kill switch are covered by spawn-contract unit tests.
 //
 // This harness goes through the REAL runAgentTask (so the runner's auth env + the §2
 // agents/hooks passthrough + ctx.mcpServers are exercised exactly as production), and
-// observes the four properties from OUTSIDE: the spawn-cap hook's own counter, the shared
+// observes the four properties from OUTSIDE: the shared contract's report, the shared
 // evidence toolTrace, the report_findings capture, and the two runs' cost delta.
 //
 // Requirements (else the harness prints a clear "cannot run" and exits 1 — it never fakes
-// a pass): DATABASE_URL + a working provider for the anthropic-sub override
-// (CLAUDE_CODE_OAUTH_TOKEN) OR set AI_PROVIDER_OVERRIDE + the matching auth. Run with:
+// a pass): DATABASE_URL + CLAUDE_CODE_OAUTH_TOKEN for the per-call anthropic-sub override.
+// A global AI_PROVIDER_OVERRIDE cannot replace this credential because the explicit per-call
+// binding intentionally wins. Run with:
 //   RESEARCH_MEETING_AGENT_ENABLED=1 pnpm tsx scripts/dev/yuk572-e1-e4-spawn-checks.ts
 //
 // Exit codes: 0 = all checks pass (E-1 AND the three blocking checks E-2/E-3/E-4) — safe
 // to flip the flag. 1 = cannot run (missing env / harness crash) — no verdict reached. 2 =
 // at least one check genuinely FAILED — do not flip. 3 = E-2 is INCONCLUSIVE (flat OAuth
 // lane reports total_cost_usd=0, OR the field is entirely missing) AND E-3/E-4 are BOTH
-// independently confirmed passing — a human must inspect result.modelUsage by hand before
+// independently confirmed passing — a human must inspect the printed usage + task-run rows
 // the flag may be flipped. Round-2 review MAJOR #1: exit 3 is reserved for the case where
 // E-2's unmeasured delta is the ONLY reason the run isn't a clean pass — if E-3 or E-4
 // genuinely failed too, this exits 2 (not 3), so a developer skimming only the "E-2
@@ -59,27 +58,27 @@
 
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { CanUseTool, HookCallbackMatcher } from '@anthropic-ai/claude-agent-sdk';
 
 const REQUIRED_ENV = ['DATABASE_URL'];
 
 interface CheckReport {
   scoutSpawns: number;
+  observedSpawnAttempts: number;
+  deniedByContract: number;
   scoutReadToolCalls: number;
   reportFindingsCaptured: boolean;
-  /** count of times EITHER enforcement layer (the PreToolUse hook OR canUseTool) actually
-   *  returned a deny decision for a 2nd+ Task spawn attempt (review round-2 MAJOR #2 —
-   *  `scoutSpawns === 1` alone cannot distinguish "a 2nd spawn was attempted and denied"
-   *  from "the LLM never even tried a 2nd spawn", which would silently false-positive
-   *  E-4). Both layers share ONE counter (see the canUseTool wiring below — never two
-   *  independent ones, which could each grant a spawn and double the effective cap). */
-  denyTriggered: number;
   /** null when the SDK result did not surface cost_usd at all (a possible SDK-side
    *  regression); 0 is a DISTINCT, legitimate value (flat OAuth lane reports no per-call
    *  cost). Both block a meaningful cost-delta measurement, but review round-2 MINOR #4
    *  flagged that `?? 0` conflated the two into one diagnostic message — classifyE2
    *  reports them with different text. */
   costUsd: number | null;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    thinkingBlocks?: number;
+    thinkingCharacters?: number;
+  };
   taskRunId: string;
 }
 
@@ -115,8 +114,8 @@ export function computeExitCode(outcome: ECheckOutcome): number {
   // formula. e1 is NOT part of the blocking set (only E-2/E-3/E-4 gate the flag per the
   // file header) so it is deliberately not checked here — but in practice e1 failing
   // (Task never actually spawned the scout) also drives e3 and e4 to false (no scout
-  // ever ran to make a read-tool call or hit the spawn cap), so this branch is
-  // unreachable when e1 is false anyway; no separate e1 check is needed.
+  // ever ran to make a read-tool call or produce a second report-only observation), so
+  // this branch is unreachable when e1 is false anyway; no separate e1 check is needed.
   if (outcome.e2Inconclusive && outcome.e3 && outcome.e4) {
     return 3;
   }
@@ -141,7 +140,7 @@ export function classifyE2(spawnCost: number | null, noSpawnCost: number | null)
       reasonLine:
         '  INCONCLUSIVE  E-2  usage/cost aggregation — result.cost_usd is MISSING (undefined) ' +
         'on at least one run (a possible SDK-side regression, NOT a flat-rate zero) — ' +
-        'inspect result.modelUsage by hand (§7)',
+        'inspect the printed AUDIT usage and ai_task_runs rows by task_run_id (§7)',
     };
   }
   if (spawnCost === 0) {
@@ -150,7 +149,8 @@ export function classifyE2(spawnCost: number | null, noSpawnCost: number | null)
       e2Inconclusive: true,
       reasonLine:
         '  INCONCLUSIVE  E-2  usage/cost aggregation — total_cost_usd=0 (flat OAuth lane, a ' +
-        'legitimate zero, NOT a missing field); inspect result.modelUsage by hand (§7)',
+        'legitimate zero, NOT a missing field); inspect the printed AUDIT usage and ' +
+        'ai_task_runs rows by task_run_id (§7)',
     };
   }
   const delta = spawnCost - noSpawnCost;
@@ -176,6 +176,7 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
     { buildDirectorServer, createDirectorCaps, DIRECTOR_ALLOWED_TOOLS },
     { EVIDENCE_SCOUT_CHARTER, RESEARCH_MEETING_AGENT_ACTOR },
     { EVIDENCE_READ_TOOL_NAMES },
+    { createSpawnContract },
   ] = await Promise.all([
     import('@/db/client'),
     import('@/server/ai/runner'),
@@ -185,6 +186,7 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
     import('@/capabilities/agency/server/meeting/director-tools'),
     import('@/capabilities/agency/server/meeting/director'),
     import('@/server/agency/scout/tool-names'),
+    import('@/server/ai/spawn-contract'),
   ]);
 
   const now = new Date();
@@ -224,70 +226,25 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
   });
   const scout = buildEvidenceScoutAgentDefinition({ prompt: EVIDENCE_SCOUT_CHARTER });
 
-  // review round-3 A1 — id-keyed idempotent design (mirrors director.ts's spawn-cap
-  // fix exactly; see director.ts for the full soundness writeup + the double-increment
-  // deadlock this SUPERSEDES). `PreToolUseHookInput.tool_use_id` and canUseTool's
-  // `options.toolUseID` correlate to the SAME underlying tool call across both SDK
-  // surfaces, so decideSpawn's granted-id Set is safe against either layer being
-  // consulted once, both being consulted for the same call, or both for different
-  // calls. `denyTriggered` (round-2 #2) is the DIRECT signal a deny actually fired.
-  const grantedSpawnToolUseIds = new Set<string>();
-  let denyTriggered = 0;
   // review round-3 CodeRabbit Minor #10 — the director's OWN evidence reads share the
   // SAME evidence server + toolTrace as any spawned scout (director.ts §5: "director 与
   // scout 共享此 server"), and the director's allowlist includes the same 6 read tools.
   // Without a time-window filter, a director-side read (e.g. before ever spawning the
   // scout) would be miscounted as scout activity, false-positiving E-3 even if the
   // scout itself never got to call an evidence tool. Recorded the moment the FIRST
-  // spawn is granted (0→1 transition only); trace entries at/after this timestamp are
+  // spawn is observed as allowed; trace entries at/after this timestamp are
   // scout-attributable (the validation directive tells the director to spawn BEFORE
   // investigating, so anything before this point is unambiguously the director's own).
   let scoutSpawnedAt: string | undefined;
-  function decideSpawn(toolUseId: string): 'allow' | 'deny' {
-    if (grantedSpawnToolUseIds.has(toolUseId)) {
-      return 'allow';
-    }
-    if (grantedSpawnToolUseIds.size >= 1) {
-      return 'deny';
-    }
-    grantedSpawnToolUseIds.add(toolUseId);
-    scoutSpawnedAt = scoutSpawnedAt ?? new Date().toISOString();
-    return 'allow';
-  }
-  const spawnCapMatcher: HookCallbackMatcher = {
-    hooks: [
-      async (input) => {
-        if (input.hook_event_name === 'PreToolUse' && input.tool_name === 'Task') {
-          if (decideSpawn(input.tool_use_id) === 'deny') {
-            denyTriggered += 1;
-            return {
-              hookSpecificOutput: {
-                hookEventName: 'PreToolUse',
-                permissionDecision: 'deny',
-                permissionDecisionReason: 'E-4 validation: scout spawn cap reached (≤1)',
-              },
-            };
-          }
-        }
-        return { continue: true };
-      },
-    ],
-  };
-  // Mirrors director.ts's canUseTool layer exactly (same rationale + the same HONEST
-  // caveat about SDK-consultation-order uncertainty lives there — see director.ts's
-  // spawn-cap comment for the full writeup; this harness must exercise the identical
-  // wiring production uses so the dev validation run is representative). Note:
-  // denyTriggered can be incremented more than once for the SAME rejected 2nd call if
-  // BOTH layers independently process it — harmless for the `>= 1` pass/fail gate
-  // (E-4 only needs "at least one deny fired somewhere"), just not an exact per-call
-  // tally.
-  const spawnCapCanUseTool: CanUseTool = async (toolName, _input, options) => {
-    if (toolName === 'Task' && decideSpawn(options.toolUseID) === 'deny') {
-      denyTriggered += 1;
-      return { behavior: 'deny', message: 'E-4 validation: scout spawn cap reached (≤1)' };
-    }
-    return { behavior: 'allow' };
-  };
+  const spawnContract = createSpawnContract({
+    enabled: true,
+    agents: { 'evidence-scout': scout },
+    onBudgetObservation(observation) {
+      if (observation.decision === 'allow') {
+        scoutSpawnedAt = scoutSpawnedAt ?? new Date().toISOString();
+      }
+    },
+  });
 
   const result = await runAgentTask(
     'ResearchMeetingDirectorTask',
@@ -304,9 +261,9 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
         research_meeting_director: director.server,
       },
       allowedTools: [...DIRECTOR_ALLOWED_TOOLS],
-      agents: { 'evidence-scout': scout },
-      hooks: { PreToolUse: [spawnCapMatcher] },
-      canUseTool: spawnCapCanUseTool,
+      agents: spawnContract.agents,
+      hooks: spawnContract.hooks,
+      canUseTool: spawnContract.canUseTool,
     },
   );
 
@@ -323,12 +280,15 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
     ).length;
   }
 
+  const spawnBudget = spawnContract.readBudgetReport();
   return {
-    scoutSpawns: grantedSpawnToolUseIds.size,
+    scoutSpawns: spawnBudget.allowedAttempts,
+    observedSpawnAttempts: spawnBudget.observedAttempts,
+    deniedByContract: spawnBudget.deniedByContract + spawnBudget.deniedByKillSwitch,
     scoutReadToolCalls,
     reportFindingsCaptured: capture.value !== null,
-    denyTriggered,
     costUsd: result.cost_usd ?? null,
+    usage: result.usage,
     taskRunId: result.task_run_id,
   };
 }
@@ -342,11 +302,11 @@ async function main() {
     console.error(`[E-checks] cannot run — missing env: ${missing.join(', ')}`);
     process.exit(1);
   }
-  if (!process.env.CLAUDE_CODE_OAUTH_TOKEN && !process.env.AI_PROVIDER_OVERRIDE) {
+  if (!process.env.CLAUDE_CODE_OAUTH_TOKEN) {
     console.error(
-      '[E-checks] cannot run — the director runs on the anthropic-sub override which needs ' +
-        'CLAUDE_CODE_OAUTH_TOKEN (or set AI_PROVIDER_OVERRIDE + matching auth). Refusing to ' +
-        'report a pass without a real SDK run.',
+      '[E-checks] cannot run — the director is explicitly pinned to anthropic-sub and needs ' +
+        'CLAUDE_CODE_OAUTH_TOKEN. AI_PROVIDER_OVERRIDE cannot replace this per-call credential. ' +
+        'Refusing to report a pass without a real SDK run.',
     );
     process.exit(1);
   }
@@ -354,9 +314,11 @@ async function main() {
   console.log('[E-checks] Run 1/2 — DOUBLE-SPAWN (E-1 / E-3 / E-4)…');
   const spawnRun = await assembleAndRun(
     'VALIDATION RUN. Step 1: call get_meeting_context. Step 2: use the Task tool to spawn ' +
-      'the evidence-scout subagent to investigate the single candidate cell. Step 3: try to ' +
-      'spawn the evidence-scout a SECOND time — this MUST be denied by the system. Step 4: ' +
-      'stop. Do NOT propose anything.',
+      'the evidence-scout subagent to investigate the candidate mechanism from an error-history ' +
+      'angle. Wait for its report. Step 3: use the Task tool to spawn the evidence-scout a ' +
+      'SECOND time for an independent intervention-risk check. Both valid foreground Task calls ' +
+      'MUST be allowed and observed by the report-only contract. Step 4: stop. Do NOT propose ' +
+      'anything.',
   );
 
   console.log('[E-checks] Run 2/2 — NO-SPAWN baseline (E-2)…');
@@ -370,10 +332,10 @@ async function main() {
   // file-header bullet above for the full rationale); scoutReadToolCalls is now purely
   // auxiliary, printed for diagnostics only and never part of the e3 decision.
   const e3 = spawnRun.reportFindingsCaptured;
-  // review round-2 MAJOR #2 — denyTriggered is the DIRECT signal (either layer actually
-  // fired a deny for a 2nd+ spawn attempt), not an inference from the final spawn count
-  // (which cannot distinguish "2nd attempt denied" from "no 2nd attempt was ever made").
-  const e4 = spawnRun.denyTriggered >= 1;
+  const e4 =
+    spawnRun.observedSpawnAttempts >= 2 &&
+    spawnRun.scoutSpawns >= 2 &&
+    spawnRun.deniedByContract === 0;
   const e2 = classifyE2(spawnRun.costUsd, noSpawnRun.costUsd);
   const e2Pass = e2.e2Pass;
   const e2Inconclusive = e2.e2Inconclusive;
@@ -389,6 +351,10 @@ async function main() {
       `spawns=${spawnRun.scoutSpawns}, report_findings=${spawnRun.reportFindingsCaptured}`,
     ),
   );
+  console.log(
+    `  AUDIT  task runs — spawn=${spawnRun.taskRunId} usage=${JSON.stringify(spawnRun.usage)}; ` +
+      `no-spawn=${noSpawnRun.taskRunId} usage=${JSON.stringify(noSpawnRun.usage)}`,
+  );
   console.log(e2.reasonLine);
   console.log(
     line(
@@ -399,9 +365,9 @@ async function main() {
   );
   console.log(
     line(
-      'E-4  a spawn-cap enforcement layer (PreToolUse hook and/or canUseTool) denies the 2nd Task spawn',
+      'E-4  report-only contract observes and allows the 2nd valid Task spawn',
       e4,
-      `denyTriggered=${spawnRun.denyTriggered}, final spawn count=${spawnRun.scoutSpawns} (expected 1)`,
+      `observed=${spawnRun.observedSpawnAttempts}, allowed=${spawnRun.scoutSpawns}, denied=${spawnRun.deniedByContract} (expected observed/allowed >=2, denied=0)`,
     ),
   );
   console.log('\nBLOCKING (E-2/E-3/E-4): the flag must NOT be flipped unless all three PASS.');
@@ -409,9 +375,10 @@ async function main() {
   const exitCode = computeExitCode({ e1, e2Pass, e2Inconclusive, e3, e4 });
   if (exitCode === 3) {
     console.log(
-      '\nE-2 INCONCLUSIVE → exit 3，需人工核 cost 聚合后才能翻 flag（inspect result.modelUsage ' +
-        'by hand, §7 — do NOT flip RESEARCH_MEETING_AGENT_ENABLED until a human confirms the ' +
-        'nested scout usage actually rolled into the parent cost)。',
+      '\nE-2 INCONCLUSIVE → exit 3，需人工核聚合后才能翻 flag（inspect the printed AUDIT ' +
+        'usage and ai_task_runs rows by task_run_id, §7 — do NOT flip ' +
+        'RESEARCH_MEETING_AGENT_ENABLED until a human confirms the nested scout usage actually ' +
+        'rolled into the parent result）。',
     );
   }
   process.exit(exitCode);

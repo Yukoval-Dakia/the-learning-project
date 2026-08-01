@@ -224,6 +224,15 @@
     "file": "src/capabilities/copilot/server/nudge-config.ts",
     "notes": "gates user-facing proactive nudge surfacing. Opt-in/default OFF; parsed via shared parseFlag."
   },
+  "COPILOT_SUBAGENT_ENABLED": {
+    "kind": "env",
+    "literals": ["true", "1"],
+    "case_insensitive": true,
+    "polarity": "opt-out",
+    "reader_marker": "parseFlag(env[COPILOT_SUBAGENT_ENABLED_ENV], { defaultValue: true })",
+    "file": "src/capabilities/copilot/server/subagents.ts",
+    "notes": "YUK-757 operational kill switch for the depth-1 Copilot researcher. Opt-out/default ON; false/0 removes Task and all spawn-only runner options."
+  },
   "JUDGE_CALIBRATION_SAMPLING_ENABLED": {
     "kind": "env",
     "literals": ["true", "1"],

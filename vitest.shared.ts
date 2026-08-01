@@ -109,6 +109,9 @@ export const fastTestInclude = [
   // as stream-cancel: @anthropic-ai/claude-agent-sdk + @/server/ai/log are vi.mock'd
   // and `db` is an untouched stub, so no live Postgres is needed.
   'src/server/ai/runner.stream-collect.test.ts',
+  // YUK-757 — pure spawn permission/depth contract. It imports SDK types only;
+  // no DB client, network, or subprocess is touched.
+  'src/server/ai/spawn-contract.unit.test.ts',
   'src/server/ai/run-lifecycle.test.ts',
   // YUK-299 — runner outputFormat seam: zero-regression + structured_output
   // three-state read. Same justification as stream-cancel: @anthropic-ai/

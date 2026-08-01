@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
 import promptHashOracle from './fixtures/task-prompt-hashes.4cb5b966.json' with { type: 'json' };
-import { type TaskDef, tasks } from './registry';
+import { CopilotDispatchDecisionSchema, type TaskDef, tasks } from './registry';
 import { getTaskSystemPrompt } from './task-prompts';
 
 describe('copilot task dispatch declarations', () => {
@@ -31,13 +31,13 @@ describe('copilot task dispatch declarations', () => {
       expect(task.copilot.intentSchema.safeParse).toBeTypeOf('function');
       expect(task.copilot.prepare).toBeTypeOf('function');
     }
-    expect(Object.keys(tasks)).toHaveLength(48);
+    expect(Object.keys(tasks)).toHaveLength(49);
   });
 });
 
 describe('task prompt definitions', () => {
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(48);
+    expect(Object.keys(tasks)).toHaveLength(49);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -90,7 +90,9 @@ describe('task prompt definitions', () => {
           task === 'QuizVerifyTask' ||
           task === 'SolutionGenerateTask' ||
           task === 'SolutionGenerateVisionTask' ||
-          task === 'SelectionOrchestratorTask'
+          task === 'SelectionOrchestratorTask' ||
+          task === 'CopilotDispatchTask' ||
+          task === 'CopilotTask'
         ) {
           continue;
         }
@@ -528,6 +530,60 @@ describe('CopilotTask.systemPrompt — C2 memory + ambient clauses', () => {
   });
 });
 
+describe('CopilotTask.systemPrompt — YUK-757 backstage spawn envelope', () => {
+  it('pins one named depth-1 researcher, synchronous conclusion return, and the single Copilot voice', () => {
+    const p = getTaskSystemPrompt('CopilotTask');
+    expect(p).toContain('copilot-researcher');
+    expect(p).toContain('subagent_type');
+    expect(p).toContain('run_in_background:false');
+    expect(p).toContain('不得传 model 或 isolation');
+    expect(p).toContain('前台始终只有 Copilot 一个声音');
+    expect(p).toContain('subagent 只回结论');
+  });
+});
+
+describe('CopilotDispatchTask — YUK-757 bounded execution-mode judgment', () => {
+  it('is a fast no-tool MiMo classifier with a strict closed decision schema', () => {
+    const def = tasks.CopilotDispatchTask;
+    expect(def.defaultProvider).toBe('xiaomi');
+    expect(def.defaultModel).toBe('mimo-v2.5');
+    expect(def.needsToolCall).toBe(false);
+    expect(def.allowedTools).toEqual([]);
+    expect(def.budget.maxIterations).toBe(1);
+    expect(def.budget.timeout).toBe(10_000);
+    expect(def.structuredOutputSchema).toBeDefined();
+    expect(
+      def.structuredOutputSchema?.safeParse({
+        mode: 'durable',
+        reason: 'multi_artifact_work',
+      }).success,
+    ).toBe(true);
+    expect(
+      def.structuredOutputSchema?.safeParse({
+        mode: 'durable',
+        reason: 'multi_artifact_work',
+        rationale: 'do not admit free-form router prose',
+      }).success,
+    ).toBe(false);
+    expect(
+      CopilotDispatchDecisionSchema.safeParse({
+        mode: 'inline',
+        reason: 'multi_artifact_work',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('pins model judgment, human-in-loop fallback, and the absence of brittle heuristics', () => {
+    const p = getTaskSystemPrompt('CopilotDispatchTask');
+    expect(p).toContain('多份 artifact');
+    expect(p).toContain('短但重');
+    expect(p).toContain('长文本的单次摘要');
+    expect(p).toContain('needs_user_decision');
+    expect(p).toContain('human-in-the-loop');
+    expect(p).toContain('不要根据字数、关键词或编号数量机械判断');
+  });
+});
+
 // YUK-307 — pin the CopilotTask 【呈现提名】(primary_view) envelope clause. The
 // chat.ts streaming tail-filter and extractPrimaryView's last-marker-wins
 // semantics both depend on the marker being the reply's LAST output, so the
@@ -826,16 +882,19 @@ describe('ResearchMeetingDirectorTask registry entry', () => {
     expect(def.budget.timeout).toBe(300_000);
   });
 
-  it('charter pins the three hard boundaries (propose-only / no-settlement / scout ≤1)', () => {
+  it('charter pins propose-only / no-settlement / depth=1 and report-only spawn observation', () => {
     const p = getTaskSystemPrompt('ResearchMeetingDirectorTask');
     // 1. propose-only red line.
     expect(p).toContain('propose-only');
     // 2. never touches settlement (θ̂ / mastery / FSRS).
     expect(p).toContain('不碰结算');
     expect(p).toContain('FSRS');
-    // 3. scout depth cap = 1 (Task at most once; scout cannot re-spawn).
-    expect(p).toContain('侦察兵 ≤1');
-    expect(p).toContain('至多');
+    // 3. depth remains one while the retired count cap is report-only.
+    expect(p).toContain('depth=1');
+    expect(p).toContain('report-only');
+    expect(p).toContain('侦察兵不能再派侦察兵');
+    expect(p).not.toContain('侦察兵 ≤1');
+    expect(p).not.toContain('Task 至多调用一次');
   });
 
   it('charter advertises review ids on the detail reader', () => {

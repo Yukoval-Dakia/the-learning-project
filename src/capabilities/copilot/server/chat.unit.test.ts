@@ -1,15 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { TAVILY_MCP_ALLOWED_TOOLS, buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
+import type { TaskEventMessage } from '@/server/ai/runner';
+import { SPAWN_TOOL_NAME } from '@/server/ai/spawn-contract';
 import { resolveDomainToolNames, resolveMcpAllowedTools } from '@/server/ai/tools/allowlists';
 import { COPILOT_HISTORY_BUDGET } from '@/server/ai/tools/budgets';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import {
   CopilotChatRequest,
+  decideCopilotDispatch,
   extractPrimaryView,
   runCopilotChat,
   runCopilotChatStreaming,
 } from './chat';
+import { COPILOT_SUBAGENT_NAME } from './subagents';
 
 describe('runCopilotChat (two-surface routing)', () => {
   it('chat path uses copilot allowlist and writes experimental:copilot_user_ask', async () => {
@@ -77,7 +81,7 @@ describe('runCopilotChat (two-surface routing)', () => {
         user_message: '现在有哪些错题可以推荐',
       }),
       expect.objectContaining({
-        allowedTools: [...resolveMcpAllowedTools('copilot')],
+        allowedTools: [...resolveMcpAllowedTools('copilot'), SPAWN_TOOL_NAME],
         taskRunId: expect.stringMatching(/^copilot_task_/),
       }),
     );
@@ -315,7 +319,10 @@ describe('runCopilotChat (two-surface routing)', () => {
         chip_kind: 'out_3_variants',
       }),
       expect.objectContaining({
-        allowedTools: [...resolveMcpAllowedTools('copilot_user_suggested_mistake_action')],
+        allowedTools: [
+          ...resolveMcpAllowedTools('copilot_user_suggested_mistake_action'),
+          SPAWN_TOOL_NAME,
+        ],
       }),
     );
   });
@@ -498,8 +505,8 @@ describe('runCopilotChat (two-surface routing)', () => {
       for (const tool of TAVILY_MCP_ALLOWED_TOOLS) {
         expect(ctx.allowedTools).not.toContain(tool);
       }
-      // Domain allowlist is exactly the copilot surface set — nothing extra.
-      expect(ctx.allowedTools).toEqual([...resolveMcpAllowedTools('copilot')]);
+      // Domain allowlist plus the explicitly contracted depth-1 spawn tool.
+      expect(ctx.allowedTools).toEqual([...resolveMcpAllowedTools('copilot'), SPAWN_TOOL_NAME]);
     });
 
     it('defaults to the env-gated builder: TAVILY_API_KEY present → tavily wired', async () => {
@@ -558,6 +565,381 @@ describe('runCopilotChat (two-surface routing)', () => {
       expect(ctx.mcpServers.tavily).toBeUndefined();
       expect(buildTavilyMcpServer()).toBeNull();
     });
+  });
+});
+
+describe('YUK-757 Copilot execution-mode judgment', () => {
+  const complexBatchRequest =
+    '读取近 30 天 12 次电磁感应错题，按“方向误判、单位遗漏、磁通量边界、图像斜率”四类聚类；每类找重复证据，再生成共 8 道新题，逐题核验唯一解、单位和退化条件，最后只 propose 调整计划。';
+
+  it('prefers native structured output, ignores prose/reasoning_content, and binds the no-tool task run', async () => {
+    const owner = new AbortController();
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'sdk_return_id_is_not_router_binding',
+      text: '{"mode":"inline","reason":"bounded_answer"}',
+      structured_output: { mode: 'durable', reason: 'multi_artifact_work' },
+      reasoning_content: 'DO NOT CONSUME OR EXPOSE THIS PRIVATE ROUTER REASONING',
+      finishReason: 'stop',
+      usage: { inputTokens: 1480, outputTokens: 42 },
+    }));
+
+    const decision = await decideCopilotDispatch(
+      {} as never,
+      {
+        user_message: complexBatchRequest,
+        ambient_context: {
+          route: '/subjects/physics/mistakes',
+          focused_entity: { kind: 'knowledge', id: 'kc_electromagnetic_induction' },
+        },
+      },
+      {
+        runAgentTaskFn,
+        createTaskRunId: () => 'copilot_dispatch_complex_fixture',
+        signal: owner.signal,
+      },
+    );
+
+    expect(decision).toEqual({
+      mode: 'durable',
+      reason: 'multi_artifact_work',
+      source: 'model_triage',
+      task_run_id: 'copilot_dispatch_complex_fixture',
+    });
+    expect(runAgentTaskFn).toHaveBeenCalledWith(
+      'CopilotDispatchTask',
+      {
+        user_message: complexBatchRequest,
+        ambient_context: {
+          route: '/subjects/physics/mistakes',
+          focused_entity: { kind: 'knowledge', id: 'kc_electromagnetic_induction' },
+        },
+      },
+      expect.objectContaining({
+        taskRunId: 'copilot_dispatch_complex_fixture',
+        signal: owner.signal,
+        outputFormat: expect.objectContaining({ type: 'json_schema' }),
+      }),
+    );
+  });
+
+  it('keeps a long but bounded transformation inline via strict JSON text fallback', async () => {
+    const longAnswer = '这是一段关于楞次定律的完整解答。'.repeat(90);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'tr_long_bounded',
+      text: '{"mode":"inline","reason":"bounded_answer"}',
+      finishReason: 'stop',
+      usage: { inputTokens: 3250, outputTokens: 24 },
+    }));
+
+    const decision = await decideCopilotDispatch(
+      {} as never,
+      { user_message: `把下面解答压缩成三条，不查资料也不出题：\n${longAnswer}` },
+      { runAgentTaskFn, createTaskRunId: () => 'copilot_dispatch_bounded_fixture' },
+    );
+
+    expect(decision).toMatchObject({
+      mode: 'inline',
+      reason: 'bounded_answer',
+      source: 'model_triage',
+    });
+  });
+
+  it.each([
+    {
+      label: 'repaired JSON',
+      result: {
+        task_run_id: 'tr_repaired',
+        text: '{mode:"durable",reason:"broad_batch_work"}',
+        finishReason: 'stop',
+        usage: { inputTokens: 800, outputTokens: 30 },
+      },
+    },
+    {
+      label: 'invalid native schema',
+      result: {
+        task_run_id: 'tr_invalid_structured',
+        text: '{"mode":"durable","reason":"broad_batch_work"}',
+        structured_output: {
+          mode: 'durable',
+          reason: 'broad_batch_work',
+          rationale: 'DO NOT FALL BACK TO PROSE WHEN NATIVE OUTPUT IS INVALID',
+        },
+        finishReason: 'stop',
+        usage: { inputTokens: 900, outputTokens: 33 },
+      },
+    },
+    {
+      label: 'crossed native mode and reason',
+      result: {
+        task_run_id: 'tr_crossed_structured',
+        text: '{"mode":"inline","reason":"bounded_answer"}',
+        structured_output: {
+          mode: 'inline',
+          reason: 'multi_artifact_work',
+        },
+        finishReason: 'stop',
+        usage: { inputTokens: 920, outputTokens: 31 },
+      },
+    },
+  ])('fails open to inline for $label without exposing model content', async ({ result }) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const runAgentTaskFn = vi.fn(async () => result);
+
+    const decision = await decideCopilotDispatch(
+      {} as never,
+      { user_message: '把我所有薄弱点彻底处理掉，按你认为最好的方式开始。' },
+      { runAgentTaskFn, createTaskRunId: () => 'copilot_dispatch_fail_open_fixture' },
+    );
+
+    expect(decision).toEqual({
+      mode: 'inline',
+      reason: 'classifier_unavailable',
+      source: 'fallback',
+      task_run_id: 'copilot_dispatch_fail_open_fixture',
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('DO NOT');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('薄弱点');
+    warn.mockRestore();
+  });
+
+  it('fails open on runner rejection and logs only bounded metadata', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const runAgentTaskFn = vi.fn(async () => {
+      throw new Error('DO NOT LEAK provider body with user records');
+    });
+
+    const decision = await decideCopilotDispatch(
+      {} as never,
+      { user_message: complexBatchRequest },
+      { runAgentTaskFn, createTaskRunId: () => 'copilot_dispatch_throw_fixture' },
+    );
+
+    expect(decision.mode).toBe('inline');
+    expect(decision.source).toBe('fallback');
+    expect(warn).toHaveBeenCalledWith(
+      '[copilot] dispatch classifier unavailable; falling back inline',
+      {
+        event: 'copilot_dispatch_fallback',
+        task_run_id: 'copilot_dispatch_throw_fixture',
+        error_name: 'Error',
+      },
+    );
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('DO NOT LEAK');
+    warn.mockRestore();
+  });
+});
+
+describe('YUK-757 Copilot backstage subagents', () => {
+  function baseSubagentDeps() {
+    return {
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildTavilyMcpServerFn: () => null,
+      writeEventFn: vi.fn(async (_db, input) => input.id),
+      resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+      loadHistoryFn: async () => [],
+      findOrCreateConversationFn: async () => ({ sessionId: 'ls_subagent_unit', created: true }),
+      resolveCopilotSkillsFn: async () => ['copilot'],
+      now: () => new Date('2026-08-01T09:00:00.000Z'),
+    };
+  }
+
+  it('adds only the named depth-1 researcher to the default free-form runner surface', async () => {
+    let capturedCtx: Record<string, unknown> | undefined;
+    const runAgentTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      capturedCtx = ctx as Record<string, unknown>;
+      return {
+        task_run_id: 'task_copilot_subagent_surface',
+        text: '综合三份材料后，关键误区是把驻点当成极值点。',
+        finishReason: 'stop',
+        usage: { inputTokens: 5210, outputTokens: 844 },
+      };
+    });
+
+    await runCopilotChat(
+      {} as never,
+      {
+        user_message:
+          '把我最近三份函数单调性错题、知识图谱和讲义交叉核对，解释为什么我总把驻点当极值点。',
+        triggered_by: 'chat',
+      },
+      { ...baseSubagentDeps(), runAgentTaskFn },
+    );
+
+    expect(capturedCtx?.allowedTools).toEqual(expect.arrayContaining(['Task']));
+    expect(capturedCtx?.agents).toHaveProperty(COPILOT_SUBAGENT_NAME);
+    expect(capturedCtx?.hooks).toHaveProperty('PreToolUse');
+    expect(capturedCtx?.canUseTool).toEqual(expect.any(Function));
+
+    const researcher = (capturedCtx?.agents as Record<string, { tools?: string[] }>)[
+      COPILOT_SUBAGENT_NAME
+    ];
+    const parentTools = capturedCtx?.allowedTools as string[];
+    expect(researcher.tools?.length).toBeGreaterThan(5);
+    expect(researcher.tools?.every((tool) => parentTools.includes(tool))).toBe(true);
+    expect(researcher.tools).not.toContain('Task');
+    expect(researcher.tools).not.toContain('mcp__loom__run_task');
+    expect(researcher.tools).not.toContain('mcp__loom__author_question');
+    expect(researcher.tools).not.toContain('mcp__loom__author_artifact');
+  });
+
+  it('removes Task and all spawn options when the Copilot kill switch is off', async () => {
+    let capturedCtx: Record<string, unknown> | undefined;
+    const runAgentTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      capturedCtx = ctx as Record<string, unknown>;
+      return {
+        task_run_id: 'task_copilot_killed_spawn',
+        text: '我会在当前循环内完成。',
+        finishReason: 'stop',
+        usage: { inputTokens: 900, outputTokens: 120 },
+      };
+    });
+
+    await runCopilotChat(
+      {} as never,
+      { user_message: '深入检查这份学习记录', triggered_by: 'chat' },
+      { ...baseSubagentDeps(), runAgentTaskFn, copilotSubagentEnabled: false },
+    );
+
+    expect(capturedCtx?.allowedTools).not.toContain('Task');
+    expect(capturedCtx).not.toHaveProperty('agents');
+    expect(capturedCtx).not.toHaveProperty('hooks');
+    expect(capturedCtx).not.toHaveProperty('canUseTool');
+  });
+
+  it('projects interleaved SDK task events to safe single-voice subtask cards while main deltas stay separate', async () => {
+    const onSubtaskEvent = vi.fn();
+    const deltas: string[] = [];
+    const streamAgentTaskFn = vi.fn(
+      async (
+        _kind: string,
+        _input: unknown,
+        ctx: {
+          onTaskEvent?: (event: TaskEventMessage) => void | Promise<void>;
+        },
+        onDelta: (text: string) => void,
+      ) => {
+        await ctx.onTaskEvent?.({
+          type: 'system',
+          subtype: 'task_started',
+          task_id: 'local-workflow-hidden-1',
+          description: 'DO NOT LEAK: hidden local workflow planning',
+          subagent_type: COPILOT_SUBAGENT_NAME,
+          task_type: 'local_workflow',
+          workflow_name: 'spec',
+          skip_transcript: true,
+          uuid: '00000000-0000-4000-8000-000000000010',
+          session_id: 'sdk-session',
+        });
+        await ctx.onTaskEvent?.({
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 'local-workflow-hidden-1',
+          status: 'completed',
+          output_file: '/private/tmp/hidden-workflow.txt',
+          summary: 'DO NOT LEAK: hidden workflow transcript',
+          skip_transcript: true,
+          uuid: '00000000-0000-4000-8000-000000000015',
+          session_id: 'sdk-session',
+        });
+        await ctx.onTaskEvent?.({
+          type: 'system',
+          subtype: 'task_started',
+          task_id: 'task-diagnostic-17',
+          tool_use_id: 'toolu-diagnostic-17',
+          description: '核对两次导数判号、三道历史错题与知识节点关系',
+          subagent_type: COPILOT_SUBAGENT_NAME,
+          prompt: 'DO NOT LEAK: raw learner text and complete reasoning transcript',
+          uuid: '00000000-0000-4000-8000-000000000011',
+          session_id: 'sdk-session',
+        });
+        onDelta('我正在把证据收拢成一个解释。');
+        await ctx.onTaskEvent?.({
+          type: 'system',
+          subtype: 'task_started',
+          task_id: 'task-question-preview-8',
+          tool_use_id: 'toolu-question-preview-8',
+          description: '预览含参数三次函数题，并检查 a=0 的退化分支',
+          subagent_type: COPILOT_SUBAGENT_NAME,
+          prompt: 'DO NOT LEAK: chain of thought for the preview',
+          uuid: '00000000-0000-4000-8000-000000000012',
+          session_id: 'sdk-session',
+        });
+        await ctx.onTaskEvent?.({
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 'task-diagnostic-17',
+          tool_use_id: 'toolu-diagnostic-17',
+          status: 'completed',
+          output_file: '/private/tmp/subagent-output.txt',
+          summary: 'DO NOT LEAK: full subagent conclusion is private to parent',
+          usage: { total_tokens: 2630, tool_uses: 7, duration_ms: 21_800 },
+          uuid: '00000000-0000-4000-8000-000000000013',
+          session_id: 'sdk-session',
+        });
+        await ctx.onTaskEvent?.({
+          type: 'system',
+          subtype: 'task_updated',
+          task_id: 'task-question-preview-8',
+          patch: {
+            status: 'failed',
+            description: '预览含参数三次函数题，并检查 a=0 的退化分支',
+            error: 'DO NOT LEAK: provider stack and raw prompt',
+          },
+          uuid: '00000000-0000-4000-8000-000000000014',
+          session_id: 'sdk-session',
+        });
+        onDelta('结论：你漏掉的是导数为零后仍需检查变号。');
+        return {
+          task_run_id: 'task_copilot_stream_subtasks',
+          text: '我正在把证据收拢成一个解释。结论：你漏掉的是导数为零后仍需检查变号。',
+          finishReason: 'stop',
+          usage: { inputTokens: 7440, outputTokens: 960 },
+        };
+      },
+    );
+
+    await runCopilotChatStreaming(
+      {} as never,
+      {
+        user_message: '深挖我在导数判号上的重复误区，再预览一道能区分这个误区的题。',
+        triggered_by: 'chat',
+      },
+      (text) => deltas.push(text),
+      { ...baseSubagentDeps(), streamAgentTaskFn, onSubtaskEvent },
+    );
+
+    expect(deltas).toEqual([
+      '我正在把证据收拢成一个解释。',
+      '结论：你漏掉的是导数为零后仍需检查变号。',
+    ]);
+    expect(onSubtaskEvent.mock.calls.map(([event]) => event)).toEqual([
+      {
+        step_kind: 'subtask',
+        subtask_id: 'task-diagnostic-17',
+        label: '核对两次导数判号、三道历史错题与知识节点关系',
+        status: 'running',
+      },
+      {
+        step_kind: 'subtask',
+        subtask_id: 'task-question-preview-8',
+        label: '预览含参数三次函数题，并检查 a=0 的退化分支',
+        status: 'running',
+      },
+      {
+        step_kind: 'subtask',
+        subtask_id: 'task-diagnostic-17',
+        label: '子任务已完成',
+        status: 'completed',
+      },
+      {
+        step_kind: 'subtask',
+        subtask_id: 'task-question-preview-8',
+        label: '预览含参数三次函数题，并检查 a=0 的退化分支',
+        status: 'failed',
+        error: '子任务未完成',
+      },
+    ]);
+    expect(JSON.stringify(onSubtaskEvent.mock.calls)).not.toContain('DO NOT LEAK');
   });
 });
 

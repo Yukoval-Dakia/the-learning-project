@@ -1,9 +1,10 @@
-import { API_ERROR_RESPONSES } from '@/kernel/http-contracts';
+import { API_ERROR_RESPONSES, ApiErrorResponseSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import {
   AcceptTeachingChipBodySchema,
   AcceptTeachingChipResponseSchema,
+  CopilotChatHeadersSchema,
   CopilotChatRequest,
   CopilotChatStreamResponseSchema,
   CopilotCheckpointParamsSchema,
@@ -46,11 +47,13 @@ export const copilotCapability = defineCapability({
         method: 'POST',
         path: '/api/copilot/chat',
         operationId: 'runCopilotChat',
-        request: { body: CopilotChatRequest },
+        request: { headers: CopilotChatHeadersSchema, body: CopilotChatRequest },
         responses: {
           200: CopilotChatStreamResponseSchema,
           202: CopilotDurableRunResponseSchema,
           ...API_ERROR_RESPONSES,
+          499: ApiErrorResponseSchema,
+          503: ApiErrorResponseSchema,
         },
         responseMediaTypes: { 200: 'text/event-stream' },
         successStatus: [200, 202],

@@ -19,6 +19,8 @@ export const COPILOT_RUN_EVENTS = {
   QUEUED: 'copilot_run.queued',
   /** handler 拾起、SDK run 启动前。 */
   STARTED: 'copilot_run.started',
+  /** deterministic setup 完成、紧邻 paid model/tool gateway 的 at-most-once fence。 */
+  EXECUTION_STARTED: 'copilot_run.execution_started',
   /** 回合/进度心跳（工具步进等；v1 保留为 forward-compat 进度槽）。 */
   STEP: 'copilot_run.step',
   /**
@@ -36,6 +38,18 @@ export const COPILOT_RUN_EVENTS = {
   /** 协作取消请求（启动前查；v1 不做 live-steer，回合间早停）。 */
   CANCEL_REQUESTED: 'copilot_run.cancel_requested',
 } as const;
+
+/** FAILED reasons that permanently settle a run rather than one retry attempt. */
+export const COPILOT_RUN_TERMINAL_FAILURE_REASONS = [
+  'cancelled',
+  'exhausted',
+  'enqueue_failed',
+  'ambiguous_execution',
+] as const;
+
+export function isCopilotRunTerminalFailureReason(value: unknown): boolean {
+  return COPILOT_RUN_TERMINAL_FAILURE_REASONS.some((reason) => reason === value);
+}
 
 export type CopilotRunEventType = (typeof COPILOT_RUN_EVENTS)[keyof typeof COPILOT_RUN_EVENTS];
 
@@ -93,6 +107,7 @@ export function deriveCopilotRunStatus(events: CopilotRunStatusEvent[]): Copilot
         break;
       case COPILOT_RUN_EVENTS.STEP:
       case COPILOT_RUN_EVENTS.REPLY:
+      case COPILOT_RUN_EVENTS.EXECUTION_STARTED:
       // YUK-575 (N2) — DELTA（流式文本增量）是「run 正在跑」的非终态信号，与 STEP/REPLY
       // 同级推到 'running'。
       case COPILOT_RUN_EVENTS.DELTA:

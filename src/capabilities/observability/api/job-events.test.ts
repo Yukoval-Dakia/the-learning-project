@@ -5,7 +5,7 @@ import { writeJobEvent } from '@/server/events/writer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { JobEventStreamResponseSchema } from './event-contracts';
-import { GET } from './job-events';
+import { GET, JOB_EVENT_CATCHUP_MS, JOB_EVENT_HEARTBEAT_MS } from './job-events';
 
 // Parsed SSE frame: `id: N\ndata: {...}\n\n`.
 type Frame = { id: number; data: { event_id: number; event_type: string; payload: unknown } };
@@ -163,6 +163,219 @@ describe('GET /api/jobs/[kind]/[id]/events', () => {
     expect(frames.map((f) => f.data.event_type)).toContain('progress');
     // non-vacuous: both the replayed and the live frame are present (2 total)
     expect(frames.map((f) => f.data.event_type)).toEqual(['started', 'progress']);
+  });
+
+  it('emits id-free keepalive comments and clears the heartbeat when the client disconnects', async () => {
+    let emitHeartbeat: (() => void) | undefined;
+    let runCatchup: (() => void) | undefined;
+    const heartbeatToken = { kind: 'job-event-heartbeat' } as unknown as ReturnType<
+      typeof setInterval
+    >;
+    const catchupToken = { kind: 'job-event-catchup' } as unknown as ReturnType<typeof setInterval>;
+    const setIntervalSpy = vi
+      .spyOn(globalThis, 'setInterval')
+      .mockImplementation((handler, timeout) => {
+        if (timeout === JOB_EVENT_HEARTBEAT_MS) {
+          emitHeartbeat = handler as () => void;
+          return heartbeatToken;
+        }
+        expect(timeout).toBe(JOB_EVENT_CATCHUP_MS);
+        runCatchup = handler as () => void;
+        return catchupToken;
+      });
+    const clearIntervalSpy = vi
+      .spyOn(globalThis, 'clearInterval')
+      .mockImplementation(() => undefined);
+    const controller = new AbortController();
+    const response = await GET(
+      new Request('http://localhost/api/jobs/copilot_run/run_heartbeat/events', {
+        signal: controller.signal,
+      }),
+      { kind: 'copilot_run', id: 'run_heartbeat' },
+    );
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+
+    await vi.waitFor(() => expect(setIntervalSpy).toHaveBeenCalledTimes(2));
+    expect(emitHeartbeat).toBeTypeOf('function');
+    expect(runCatchup).toBeTypeOf('function');
+    emitHeartbeat?.();
+    const chunk = await reader.read();
+    const text = new TextDecoder().decode(chunk.value);
+
+    expect(text).toBe(': keepalive\n\n');
+    expect(parseFrames(text)).toEqual([]);
+
+    controller.abort();
+    await reader.cancel().catch(() => {});
+    expect(clearIntervalSpy).toHaveBeenCalledWith(heartbeatToken);
+    expect(clearIntervalSpy).toHaveBeenCalledWith(catchupToken);
+  });
+
+  it('periodically catches up a committed terminal when the live notification is lost', async () => {
+    let runCatchup: (() => void) | undefined;
+    const heartbeatToken = { kind: 'lost-notify-heartbeat' } as unknown as ReturnType<
+      typeof setInterval
+    >;
+    const catchupToken = { kind: 'lost-notify-catchup' } as unknown as ReturnType<
+      typeof setInterval
+    >;
+    vi.spyOn(globalThis, 'setInterval').mockImplementation((handler, timeout) => {
+      if (timeout === JOB_EVENT_CATCHUP_MS) {
+        runCatchup = handler as () => void;
+        return catchupToken;
+      }
+      expect(timeout).toBe(JOB_EVENT_HEARTBEAT_MS);
+      return heartbeatToken;
+    });
+    vi.spyOn(globalThis, 'clearInterval').mockImplementation(() => undefined);
+    const runId = 'run_lost_listen_notification';
+    const startedId = await seedEvent('copilot_run', runId, 'copilot_run.started', {
+      evidence_batches: 6,
+    });
+    const controller = new AbortController();
+    const response = await GET(
+      new Request(`http://localhost/api/jobs/copilot_run/${runId}/events`, {
+        signal: controller.signal,
+      }),
+      { kind: 'copilot_run', id: runId },
+    );
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    const first = await reader.read();
+    expect(parseFrames(new TextDecoder().decode(first.value)).map((frame) => frame.id)).toEqual([
+      startedId,
+    ]);
+    await vi.waitFor(() => expect(runCatchup).toBeTypeOf('function'));
+
+    const doneId = await seedEvent('copilot_run', runId, 'copilot_run.done', {
+      task_run_id: 'task_lost_listen_notification_recovered',
+      validator_batches: 6,
+    });
+    // Deliberately do not broadcast: this is the listener-reconnect loss case.
+    runCatchup?.();
+    const caughtUp = await reader.read();
+    expect(parseFrames(new TextDecoder().decode(caughtUp.value))).toEqual([
+      {
+        id: doneId,
+        data: {
+          event_id: doneId,
+          event_type: 'copilot_run.done',
+          payload: {
+            task_run_id: 'task_lost_listen_notification_recovered',
+            validator_batches: 6,
+          },
+        },
+      },
+    ]);
+
+    controller.abort();
+    await reader.cancel().catch(() => {});
+  });
+
+  it('does not subscribe after a disconnect that lands while initial replay is in flight', async () => {
+    let releaseReplay: ((events: []) => void) | undefined;
+    const replayPending = new Promise<[]>((resolve) => {
+      releaseReplay = resolve;
+    });
+    const replaySpy = vi
+      .spyOn(sseReplay, 'computeReplay')
+      .mockImplementationOnce(async () => await replayPending)
+      .mockResolvedValue([]);
+    const controller = new AbortController();
+    const response = await GET(
+      new Request('http://localhost/api/jobs/copilot_run/run_abort_during_replay/events', {
+        signal: controller.signal,
+      }),
+      { kind: 'copilot_run', id: 'run_abort_during_replay' },
+    );
+
+    await vi.waitFor(() => expect(replaySpy).toHaveBeenCalledTimes(1));
+    controller.abort();
+    releaseReplay?.([]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    broadcast({
+      event_id: 9_001,
+      business_table: 'copilot_run',
+      business_id: 'run_abort_during_replay',
+    });
+    await Promise.resolve();
+
+    expect(replaySpy).toHaveBeenCalledTimes(1);
+    await (response.body as ReadableStream<Uint8Array>).cancel().catch(() => {});
+  });
+
+  it('catches an event committed between initial replay and subscribe without reordering live replay', async () => {
+    type ReplayResult = Awaited<ReturnType<typeof sseReplay.computeReplay>>;
+    let releaseInitial: ((events: ReplayResult) => void) | undefined;
+    let releaseCatchUp: ((events: ReplayResult) => void) | undefined;
+    const initialPending = new Promise<ReplayResult>((resolve) => {
+      releaseInitial = resolve;
+    });
+    const catchUpPending = new Promise<ReplayResult>((resolve) => {
+      releaseCatchUp = resolve;
+    });
+    const terminal = {
+      id: 7_021,
+      business_table: 'copilot_run',
+      business_id: 'run_replay_subscribe_gap',
+      event_type: 'copilot_run.done',
+      payload: { task_run_id: 'task_replay_subscribe_gap' },
+      occurred_at: new Date('2026-08-01T08:00:00.000Z'),
+    };
+    const replaySpy = vi
+      .spyOn(sseReplay, 'computeReplay')
+      .mockImplementationOnce(async () => await initialPending)
+      .mockImplementationOnce(async () => await catchUpPending)
+      .mockResolvedValue([]);
+    const controller = new AbortController();
+    const response = await GET(
+      new Request('http://localhost/api/jobs/copilot_run/run_replay_subscribe_gap/events', {
+        signal: controller.signal,
+      }),
+      { kind: 'copilot_run', id: 'run_replay_subscribe_gap' },
+    );
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+
+    await vi.waitFor(() => expect(replaySpy).toHaveBeenCalledTimes(1));
+    // This notification lands before subscribe and is intentionally lost. The
+    // post-subscribe catch-up must still recover its durable row.
+    broadcast({
+      event_id: terminal.id,
+      business_table: terminal.business_table,
+      business_id: terminal.business_id,
+    });
+    releaseInitial?.([]);
+
+    await vi.waitFor(() => expect(replaySpy).toHaveBeenCalledTimes(2));
+    // A second notification while catch-up is pending must queue behind it,
+    // not start a concurrent replay that can advance past the gap event.
+    broadcast({
+      event_id: terminal.id,
+      business_table: terminal.business_table,
+      business_id: terminal.business_id,
+    });
+    releaseCatchUp?.([terminal]);
+
+    const firstChunk = await reader.read();
+    const frames = parseFrames(new TextDecoder().decode(firstChunk.value));
+    expect(frames).toEqual([
+      {
+        id: terminal.id,
+        data: {
+          event_id: terminal.id,
+          event_type: terminal.event_type,
+          payload: terminal.payload,
+        },
+      },
+    ]);
+    await vi.waitFor(() => expect(replaySpy).toHaveBeenCalledTimes(3));
+    expect(replaySpy.mock.calls[2]?.[1]).toEqual(
+      expect.objectContaining({ lastEventId: terminal.id }),
+    );
+
+    controller.abort();
+    await reader.cancel().catch(() => {});
   });
 
   it('400 on empty kind or empty id', async () => {

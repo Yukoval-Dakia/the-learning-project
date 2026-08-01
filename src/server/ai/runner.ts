@@ -35,6 +35,10 @@ import {
   type OutputFormat,
   type SDKAssistantMessage,
   type SDKMessage,
+  type SDKTaskNotificationMessage,
+  type SDKTaskProgressMessage,
+  type SDKTaskStartedMessage,
+  type SDKTaskUpdatedMessage,
   type SDKUserMessage,
   query as sdkQuery,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -51,6 +55,7 @@ import {
   createRunLifecycle,
   maxLifecycleAttempts,
 } from './run-lifecycle';
+import { SPAWN_TOOL_NAME } from './spawn-contract';
 
 // ============================================================================
 // Public surface
@@ -73,6 +78,18 @@ export interface RunTaskResult {
   structured_output?: unknown;
 }
 
+/**
+ * Structural background-task lifecycle messages safe for product observers.
+ * Assistant messages (including thinking/text blocks) are intentionally absent.
+ */
+export type TaskEventMessage =
+  | SDKTaskStartedMessage
+  | SDKTaskProgressMessage
+  | SDKTaskUpdatedMessage
+  | SDKTaskNotificationMessage;
+
+export type TaskEventObserver = (event: TaskEventMessage) => Promise<void> | void;
+
 export interface TaskMiddleware {
   /**
    * Called once before the model invocation. Can return a transformed
@@ -88,6 +105,8 @@ export interface TaskMiddleware {
 
 export interface RunTaskCtx {
   db: Db;
+  /** Caller-owned cancellation propagated into the SDK run lifecycle. */
+  signal?: AbortSignal;
   /** Only vision/ingestion paths use this; runTask itself doesn't dereference. */
   r2?: R2Client;
   /** Override provider/model for testing or per-call routing escapes. */
@@ -159,20 +178,20 @@ export interface RunTaskCtx {
    * (Record<string, AgentDefinition>). OMITTED (the default) ⇒ buildQueryOptions does
    * NOT write the key ⇒ the Options object is byte-identical to pre-seam (zero
    * regression). Type is re-exported 1:1 from the SDK's `Options['agents']` so it never
-   * drifts from the SDK typings. Only the research-meeting director lane sets it.
+   * drifts from the SDK typings. Only explicit nested-work lanes set it.
    */
   agents?: Options['agents'];
-  /**
-   * YUK-572 seam: PreToolUse/… hook callbacks (used by the director spawn-cap
-   * counter+deny, §6). Same undefined-guard zero-regression contract + 1:1 SDK type
-   * re-export as `agents` above.
-   */
+  /** YUK-572 seam: SDK hook callbacks with undefined-guard zero-regression. */
   hooks?: Options['hooks'];
-  /**
-   * YUK-572 seam: optional canUseTool permission callback (spawn-cap fallback impl,
-   * §6). Same undefined-guard zero-regression contract + 1:1 SDK type re-export.
-   */
+  /** YUK-572 seam: optional SDK permission callback, re-exported 1:1. */
   canUseTool?: Options['canUseTool'];
+  /**
+   * YUK-757 structural task-lifecycle observer. Only SDK system task_started /
+   * task_progress / task_updated / task_notification messages are exposed; raw
+   * SDKMessage, assistant text, and thinking blocks never cross this seam.
+   * Observer failures are logged and fail open so visibility cannot abort paid work.
+   */
+  onTaskEvent?: TaskEventObserver;
   /**
    * YUK-575 (N5/MF-A) seam: per-call budget override for the durable copilot run.
    * The inline `CopilotTask` registry budget (maxIterations:6 / timeout:60_000) is
@@ -195,27 +214,18 @@ export interface RunTaskCtx {
    * attempt; any opt-in transient retry gets a fresh id to preserve row identity.
    */
   taskRunId?: string;
+  /**
+   * Disable runner-owned tool logging. `runTask` records only the SDK-native Task
+   * spawn; MCP DomainTools keep their bridge-owned authoritative input/output row.
+   * Streaming runners retain their existing input-only logging contract.
+   */
+  autoLogToolCalls?: boolean;
 }
 
 export type RunAgentTaskCtx = RunTaskCtx;
 export type StreamTaskCtx = RunTaskCtx & {
   /** Reserved for back-compat with the old Vercel AI SDK shape; ignored. */
   tools?: Record<string, unknown>;
-  /**
-   * YUK-238 [STB-4]: the request's AbortSignal (`req.signal`). When the client
-   * disconnects mid-stream, wiring this into the SDK's abortController tears the
-   * in-flight agent run down instead of letting it burn the model budget to
-   * completion. Optional so non-HTTP callers (tests, background jobs) can omit
-   * it; the ReadableStream `cancel` callback is the second, transport-level
-   * trigger that also aborts. Threading a real signal from a route is the
-   * follow-up (YUK-238).
-   */
-  signal?: AbortSignal;
-  /**
-   * Disable the runner's input-only tool log when the in-process MCP owner writes
-   * the authoritative input + output log itself. Defaults to true.
-   */
-  autoLogToolCalls?: boolean;
 };
 
 export interface MultimodalTaskInput {
@@ -235,6 +245,32 @@ const TASK_KINDS = Object.keys(tasks) as TaskKind[];
 
 function isKnownTask(k: string): k is TaskKind {
   return (TASK_KINDS as string[]).includes(k);
+}
+
+function isTaskEventMessage(message: SDKMessage): message is TaskEventMessage {
+  if (message.type !== 'system') return false;
+  switch (message.subtype) {
+    case 'task_started':
+    case 'task_progress':
+    case 'task_updated':
+    case 'task_notification':
+      return true;
+    default:
+      return false;
+  }
+}
+
+async function notifyTaskEvent(ctx: RunTaskCtx, message: SDKMessage): Promise<void> {
+  if (ctx.onTaskEvent === undefined || !isTaskEventMessage(message)) return;
+  try {
+    await ctx.onTaskEvent(message);
+  } catch (error) {
+    console.error('[runner] task event observer failed (continuing)', {
+      subtype: message.subtype,
+      task_id: message.task_id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 function isMultimodalTaskInput(input: unknown): input is MultimodalTaskInput {
@@ -465,11 +501,15 @@ function buildQueryOptions(
   }
   // YUK-572 seam: SDK-native nested-agent / hooks / canUseTool passthrough. Same
   // undefined-guard as the outputFormat seam above — when a caller does not set these
-  // (every existing runTask/runAgentTask/streamTask caller), the keys are NOT written
-  // and Options stays byte-identical to pre-seam (零回归). Only the research-meeting
-  // director lane threads them.
+  // (every caller that does not opt into nested work), the keys are NOT written and
+  // Options stays byte-identical to pre-seam (零回归). The research-meeting director
+  // and Copilot lanes both reuse the same depth-one/report-only contract.
   if (ctx.agents !== undefined) {
     options.agents = ctx.agents;
+    // Product UI has one narrative voice. Nested task lifecycle is exposed only via
+    // onTaskEvent; forwarding subagent prose would leak a second voice into the parent
+    // assistant stream. Pin false instead of relying on an SDK default that may drift.
+    options.forwardSubagentText = false;
   }
   if (ctx.hooks !== undefined) {
     options.hooks = ctx.hooks;
@@ -511,6 +551,8 @@ async function runTaskAttempt(args: {
   await lifecycle.start(actualInput);
 
   let resultText = '';
+  let stepStartTime = Date.now();
+  let iteration = 0;
   const thinking = emptyThinkingObservation();
   try {
     const q = sdkQuery({
@@ -518,8 +560,27 @@ async function runTaskAttempt(args: {
       options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
     });
     for await (const msg of q as AsyncIterable<SDKMessage>) {
+      await notifyTaskEvent(ctx, msg);
       if (msg.type === 'assistant') {
         observeAssistantThinking(msg, thinking);
+        iteration += 1;
+        const stepLatencyMs = Date.now() - stepStartTime;
+        const blocks = (msg.message.content ?? []) as ContentBlock[];
+        for (const block of blocks) {
+          if (
+            block.type === 'tool_use' &&
+            block.name === SPAWN_TOOL_NAME &&
+            ctx.autoLogToolCalls !== false
+          ) {
+            await lifecycle.recordToolCall({
+              toolName: block.name,
+              inputJson: (block.input ?? {}) as Record<string, unknown>,
+              iteration,
+              latencyMs: stepLatencyMs,
+            });
+          }
+        }
+        stepStartTime = Date.now();
         continue;
       }
       if (msg.type !== 'result') continue;
@@ -629,6 +690,7 @@ export async function runTask(
       timeoutMs: def.budget.timeout,
       override: ctx.override,
       taskRunId: attempt === 1 ? ctx.taskRunId : undefined,
+      signal: ctx.signal,
       logScope: 'runTask',
       afterRun: ctx.middleware?.afterRun
         ? (result) => ctx.middleware?.afterRun?.(kind, result, ctx)
@@ -733,6 +795,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
           options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
         });
         for await (const msg of q as AsyncIterable<SDKMessage>) {
+          await notifyTaskEvent(ctx, msg);
           if (msg.type === 'assistant') {
             observeAssistantThinking(msg, thinking);
             const text = extractAssistantText(msg);
@@ -944,6 +1007,7 @@ export async function streamTaskCollecting(
       options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
     });
     for await (const msg of q as AsyncIterable<SDKMessage>) {
+      await notifyTaskEvent(ctx, msg);
       if (msg.type === 'assistant') {
         observeAssistantThinking(msg, thinking);
         const text = extractAssistantText(msg);
@@ -955,7 +1019,7 @@ export async function streamTaskCollecting(
         const stepLatencyMs = Date.now() - stepStartTime;
         const blocks = (msg.message.content ?? []) as ContentBlock[];
         for (const block of blocks) {
-          if (block.type === 'tool_use') {
+          if (block.type === 'tool_use' && ctx.autoLogToolCalls !== false) {
             await lifecycle.recordToolCall({
               toolName: block.name,
               inputJson: (block.input ?? {}) as Record<string, unknown>,
