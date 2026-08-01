@@ -1,10 +1,12 @@
-import { z } from 'zod';
+import type { z } from 'zod';
 
-import type { Provider } from '@/ai/registry';
+import { type Provider, tasks } from '@/ai/registry';
+import { SemanticJudgeOutput, type SemanticJudgeOutputT } from '@/core/capability/judges/semantic';
 import { Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
+import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 // F0 (PR #309 round-3) — the route resolver now lives in the dependency-light
@@ -33,19 +35,10 @@ export const FUTURE_JUDGE_ROUTES = {
   ai_flexible: 'future: fallback LLM judge needs stronger audit and cost policy',
 } as const satisfies Record<string, string>;
 
-const SemanticJudgeOutput = z.object({
-  score: z.number().min(0).max(1),
-  coarse_outcome: z.enum(['correct', 'partial', 'incorrect']),
-  confidence: z.number().min(0).max(1),
-  feedback_md: z.string().min(1),
-  evidence_json: z.object({
-    matched_points: z.array(z.string()).default([]),
-    missing_points: z.array(z.string()).default([]),
-    notes: z.string().optional(),
-  }),
-});
-
-type SemanticJudgeOutputT = z.infer<typeof SemanticJudgeOutput>;
+const semanticOutputSchema = tasks.SemanticJudgeTask.structuredOutputSchema;
+const SEMANTIC_OUTPUT_FORMAT = semanticOutputSchema
+  ? zodToJsonSchemaOutputFormat(semanticOutputSchema)
+  : undefined;
 
 export interface JudgeQuestionRow {
   id: string;
@@ -262,6 +255,23 @@ export function defaultRunTaskFn(db: Db): TaskTextRunFn {
   return makeRunTaskTextFn(db);
 }
 
+/**
+ * YUK-759 three-state dispatch:
+ * - structured_output present: validate that value and never trust conflicting text;
+ * - structured_output null/undefined: preserve the existing char-scan text path;
+ * - either path still receives the same Zod second pass and verdict normalization.
+ */
+export function parseSemanticJudgeResult(result: {
+  text: string;
+  structured_output?: unknown;
+}): ReturnType<typeof SemanticJudgeOutput.safeParse> {
+  const candidate =
+    result.structured_output !== undefined && result.structured_output !== null
+      ? result.structured_output
+      : extractJsonObject(result.text, 'semantic judge output');
+  return SemanticJudgeOutput.safeParse(candidate);
+}
+
 export async function runSemanticJudge(params: JudgeAnswerParams): Promise<JudgeResultV2T> {
   const runTaskFn = params.runTaskFn ?? defaultRunTaskFn(params.db);
   try {
@@ -275,15 +285,17 @@ export async function runSemanticJudge(params: JudgeAnswerParams): Promise<Judge
       },
       {
         subjectProfile: params.subjectProfile,
+        outputFormat: SEMANTIC_OUTPUT_FORMAT,
       },
     );
-    const parsed = SemanticJudgeOutput.safeParse(
-      extractJsonObject(result.text, 'semantic judge output'),
-    );
+    const parsed = parseSemanticJudgeResult(result);
     if (!parsed.success) {
       return unsupportedResult('semantic', 'semantic judge output unsupported', {
         validation_error: parsed.error.issues,
-        raw_text: result.text,
+        raw_text:
+          result.structured_output !== undefined && result.structured_output !== null
+            ? JSON.stringify(result.structured_output).slice(0, 4000)
+            : result.text,
       });
     }
     return normalizeSemanticResult(parsed.data);

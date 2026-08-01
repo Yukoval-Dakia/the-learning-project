@@ -1,5 +1,7 @@
 import { MultimodalDirectLlmOutput } from '@/core/capability/judges/multimodal_direct';
+import { SemanticJudgeOutput } from '@/core/capability/judges/semantic';
 import { StepsLlmOutput } from '@/core/capability/judges/steps';
+import { LlmFallbackOutput } from '@/core/capability/judges/unit_dimension/types';
 import {
   BloomLevel,
   MetaCause,
@@ -1573,6 +1575,7 @@ export const tasks = {
     kind: 'SemanticJudgeTask',
     description:
       'Judge v2 light — semantic answer scoring for prose embedded checks using rubric_json.required_points',
+    structuredOutputSchema: SemanticJudgeOutput,
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
@@ -1586,6 +1589,7 @@ export const tasks = {
     kind: 'UnitDimensionFallback',
     description:
       'Judge v2 physics fallback — parse natural-language units/dimensions when mathjs accelerator cannot parse',
+    structuredOutputSchema: LlmFallbackOutput,
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },

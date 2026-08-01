@@ -1,7 +1,12 @@
 import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
-import { type JudgeQuestionRow, judgeAnswer, resolveQuestionJudgeRoute } from './question-contract';
+import {
+  type JudgeQuestionRow,
+  judgeAnswer,
+  resolveQuestionJudgeRoute,
+  runSemanticJudge,
+} from './question-contract';
 
 // judgeAnswer for exact / keyword routes is pure (no DB / no LLM), so a
 // throwaway cast suffices for the Db param — none of the runnable routes
@@ -160,6 +165,158 @@ describe('M1 §C: semanticInput threads subjectProfile into LLM payload', () => 
   });
 });
 
+describe('YUK-759: SemanticJudgeTask structured-output migration', () => {
+  const complexQuestion: JudgeQuestionRow = {
+    id: 'q-yw-baorenanshu-argument',
+    kind: 'short_answer',
+    prompt_md:
+      '结合《报任安书》中“人固有一死，或重于泰山，或轻于鸿毛”及作者受宫刑后的选择，说明司马迁为何把完成《史记》置于个人荣辱之上。答案必须区分价值判断、行动选择与作品目的。',
+    reference_md:
+      '司马迁以死亡价值取决于所为何事为判断前提；他选择忍辱存活以完成《史记》；其目的在于究天人之际、通古今之变、成一家之言，使个人苦难转化为具有公共意义的历史书写。',
+    rubric_json: {
+      criteria: [
+        { name: '价值判断', weight: 0.3, descriptor: '说明死有轻重，价值取决于所为何事' },
+        { name: '行动选择', weight: 0.3, descriptor: '说明忍辱存活是完成著述的主动选择' },
+        { name: '作品目的', weight: 0.4, descriptor: '说明《史记》的历史认识与公共意义' },
+      ],
+      required_points: [
+        '死亡价值取决于所为何事，而非死亡本身',
+        '忍辱存活是为了完成《史记》的主动选择',
+        '著述追求究天人之际、通古今之变、成一家之言',
+      ],
+      acceptable_answers: ['以著述的公共意义超越个人受辱'],
+    },
+    choices_md: null,
+    judge_kind_override: 'semantic',
+  };
+
+  const structuredPartial = {
+    score: 0.64,
+    coarse_outcome: 'partial' as const,
+    confidence: 0.91,
+    feedback_md: '已说明忍辱著书与公共意义，但没有交代“死有轻重”的价值判断前提。',
+    evidence_json: {
+      matched_points: [
+        '忍辱存活是为了完成《史记》的主动选择',
+        '著述追求究天人之际、通古今之变、成一家之言',
+      ],
+      missing_points: ['死亡价值取决于所为何事，而非死亡本身'],
+      notes: '没有把引文中的比较标准落实到论证起点。',
+    },
+  };
+
+  const invalidStructured = {
+    ...structuredPartial,
+    score: 1.4,
+    coarse_outcome: 'mostly-correct',
+    confidence: 4,
+  };
+
+  it('threads json_schema and prefers a schema-valid structured value over conflicting text', async () => {
+    let capturedCtx: unknown;
+    const result = await runSemanticJudge({
+      db: mockDb,
+      question: complexQuestion,
+      answer_md:
+        '司马迁忍受屈辱，是为了把《史记》写完。他希望这部书能贯通古今、形成自己的历史解释，因此个人荣辱不能压倒著述的公共价值。',
+      subjectProfile: yuwenProfile,
+      runTaskFn: async (_kind, _input, ctx) => {
+        capturedCtx = ctx;
+        return {
+          text: JSON.stringify({
+            score: 0,
+            coarse_outcome: 'incorrect',
+            confidence: 0.2,
+            feedback_md: 'conflicting raw text must not win',
+            evidence_json: { matched_points: [], missing_points: ['all'] },
+          }),
+          structured_output: structuredPartial,
+        };
+      },
+    });
+
+    const outputFormat = (
+      capturedCtx as { outputFormat?: { type?: string; schema?: Record<string, unknown> } }
+    ).outputFormat;
+    expect(outputFormat?.type).toBe('json_schema');
+    expect(outputFormat?.schema).toMatchObject({
+      type: 'object',
+      properties: { score: expect.any(Object), coarse_outcome: expect.any(Object) },
+    });
+    expect(result).toMatchObject({
+      coarse_outcome: 'partial',
+      score: 0.64,
+      confidence: 0.91,
+      feedback_md: structuredPartial.feedback_md,
+      evidence_json: structuredPartial.evidence_json,
+    });
+  });
+
+  it('does not fall back to valid raw text when a present structured value violates schema', async () => {
+    const validRaw = {
+      ...structuredPartial,
+      score: 0.96,
+      coarse_outcome: 'correct' as const,
+      feedback_md: 'raw text would incorrectly hide a structured protocol failure',
+      evidence_json: { matched_points: ['all'], missing_points: [] },
+    };
+    const result = await runSemanticJudge({
+      db: mockDb,
+      question: complexQuestion,
+      answer_md: '完整作答',
+      subjectProfile: yuwenProfile,
+      runTaskFn: async () => ({
+        text: JSON.stringify(validRaw),
+        structured_output: invalidStructured,
+      }),
+    });
+
+    expect(result.coarse_outcome).toBe('unsupported');
+    expect(result.feedback_md).toContain('semantic judge output unsupported');
+    expect(result.evidence_json).toMatchObject({
+      validation_error: expect.any(Array),
+      raw_text: JSON.stringify(invalidStructured),
+    });
+  });
+
+  it('keeps the null/absent Mimo text fallback byte-equivalent to structured dispatch', async () => {
+    const complete = {
+      score: 0.96,
+      coarse_outcome: 'correct' as const,
+      confidence: 0.87,
+      feedback_md: '三层论证完整，且把引文作为价值判断前提。',
+      evidence_json: {
+        matched_points: [
+          '死亡价值取决于所为何事，而非死亡本身',
+          '忍辱存活是为了完成《史记》的主动选择',
+          '著述追求究天人之际、通古今之变、成一家之言',
+        ],
+        missing_points: [],
+      },
+    };
+    const base = {
+      db: mockDb,
+      question: complexQuestion,
+      answer_md:
+        '“重于泰山”先提出死亡应由所为何事衡量。司马迁因此没有为一时荣辱赴死，而是主动忍辱完成《史记》，以究天人、通古今、成一家之言，让个人苦难服务于公共历史书写。',
+      subjectProfile: yuwenProfile,
+    };
+    const structured = await runSemanticJudge({
+      ...base,
+      runTaskFn: async () => ({ text: 'ignored', structured_output: complete }),
+    });
+    const textFallback = await runSemanticJudge({
+      ...base,
+      runTaskFn: async () => ({
+        text: `mimo preface\n${JSON.stringify(complete)}\nend`,
+        structured_output: null,
+      }),
+    });
+
+    expect(textFallback).toEqual(structured);
+  });
+});
+
 describe('YUK-36 regression: unit_dimension LLM fallback uses registered task with runtime ctx', () => {
   it('passes UnitDimensionFallback through judgeAnswer with subjectProfile and no public db', async () => {
     const captured: { kind: string; input: unknown; ctx: unknown }[] = [];
@@ -201,6 +358,7 @@ describe('YUK-36 regression: unit_dimension LLM fallback uses registered task wi
     });
     expect(captured[0].ctx).toMatchObject({
       subjectProfile: { id: 'physics' },
+      outputFormat: { type: 'json_schema', schema: expect.any(Object) },
     });
     expect(captured[0].ctx).not.toHaveProperty('db');
   });
