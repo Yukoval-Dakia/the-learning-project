@@ -20,8 +20,9 @@ import {
 } from './api/contracts';
 
 // M5-T3 (YUK-321) — copilot 包：D14 单人格对话面（D13 权限继承框架内）。
-// 统一记忆读取面 = server/chat.ts 既有 ambient context 装配 + server/turns.ts
-// getRecentCopilotTurns（第一实例原则：不另立抽象，包边界即读取面——裁决 k）。
+// 统一记忆读取面 = server/chat.ts 既有 ambient context 装配 + server/turns.ts：
+// inline/UI replay 走 current-session reader，durable pickup 走 causal-anchor reader；
+// 两者共享同一 projection（第一实例原则：包边界即读取面——裁决 k）。
 // copilotTools 五条本包工具在 Task 3 与其余四包一并声明。
 export const copilotCapability = defineCapability({
   name: 'copilot',

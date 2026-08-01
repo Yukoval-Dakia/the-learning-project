@@ -20,9 +20,9 @@ import type { Job } from 'pg-boss';
 
 import { wrapDeltaSuppressingMarker, writeCopilotReply } from '@/capabilities/copilot/server/chat';
 // YUK-575 (A1/N3) — the shared free-form run-input assembler. The durable handler
-// assembles the FULL run input at pickup time (MF-B: pass excludeUserAskEventId=
-// run_id to drop its own already-written user_ask; conversation_history / learner-
-// state header / proposal_feedback / ambient all fresh at pickup), byte-parity with
+// assembles the FULL run input at pickup time (YUK-596: pass run_id as a causal
+// history anchor in the job's fixed session; conversation_history / learner-state
+// header / proposal_feedback / ambient all fresh at pickup), byte-parity with
 // inline. Before YUK-575 the durable run shipped a minimal {surface,triggered_by,
 // user_message} with NO session memory.
 import {
@@ -159,7 +159,7 @@ export interface RunCopilotRunParams {
   streamTaskCollectingFn?: typeof streamTaskCollecting;
   /**
    * YUK-575 (A1/N3) test seam — 默认 assembleCopilotRunInput。注入 fixture 断言
-   * pickup-time 装配参数（excludeUserAskEventId=run_id、ambient 透传等）而不打真 DB。
+   * pickup-time 装配参数（historyAnchorEventId=run_id、ambient 透传等）而不打真 DB。
    */
   resolveCopilotRunInputFn?: typeof assembleCopilotRunInput;
   /** test seam — 默认 buildMcpServerFromRegistry。 */
@@ -889,8 +889,8 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
 
   // YUK-575 (A1/N3/MF-B) — 组装 FULL run input（与 inline byte-parity）。**pickup 时**
   // 重读 conversation_history / learner-state header(YUK-574) / proposal_feedback（保
-  // 新鲜，不在 dispatch 侧冻结），传 excludeUserAskEventId=runId 排除 dispatch 已写的
-  // 当前 ask（durable 时序 = dispatch-写-then-pickup，不像 inline read-before-write）。
+  // 新鲜，不在 dispatch 侧冻结），传 historyAnchorEventId=runId，把历史固定在
+  // dispatch 的 session + 插入边界（durable 时序 = dispatch-写-then-pickup）。
   // ambient RIDE 自 job payload（S4：request-only、从不 persisted，无处可重读）。
   const runInput: CopilotRunInput = await assembleRunInput(db, {
     sessionId: data.session_id,
@@ -899,7 +899,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     ...(data.chip_kind ? { chipKind: data.chip_kind } : {}),
     ...(data.ambient ? { ambient: data.ambient } : {}),
     now: new Date(),
-    excludeUserAskEventId: runId,
+    historyAnchorEventId: runId,
   });
 
   // YUK-575 (N2/S3) — 流式 delta → job_events，FIFO promise-chain（onDelta 同步、

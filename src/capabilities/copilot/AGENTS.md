@@ -15,7 +15,9 @@
 | `ui/CopilotDock.tsx` | 全局 Copilot 抽屉（壳层在 `web/src/router.tsx` 根挂） |
 
 ## CONVENTIONS
-- 统一记忆读取面 = `server/chat.ts` ambient context + `server/turns.ts` `getRecentCopilotTurns`；不另立抽象。
+- 统一记忆读取面 = `server/chat.ts` ambient context + `server/turns.ts`：inline/UI replay
+  用 `getRecentCopilotTurns`，durable pickup 用 `getCopilotTurnsBeforeAnchor`，两者复用同一
+  row→turn projection；不要另建第三套 reader/projection。
 - durable copilot run 走 `copilot_run` pg-boss job（queue='agent'），进度落 `job_events`。
 - Copilot 自有工具：事件流读、记忆面读、artifact authoring 写。
 - chip 是 Copilot 回复里的可点击动作卡片，accept-chip 把用户选择物化为教学事件。

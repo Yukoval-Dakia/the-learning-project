@@ -5,6 +5,15 @@
 **Lane**: H（独立 worktree，branch `yuk-575-copilot-durable-revival`）。**Base**：已 FF 到 `origin/main`（`cf1ae85d`，含 YUK-576）。
 **撞车**: Lane I（YUK-577，proactive-open）同期动 CopilotDock；真共享面 = `ChatMessage` interface + 消息渲染循环（非 dwell）。
 
+> **YUK-596 implementation update (2026-08-01):** this document's
+> `excludeUserAskEventId` / `excludeEventId` cursor describes the original
+> YUK-575 mechanism. Durable pickup now binds history to the persisted run
+> user-ask plus the job's fixed session via `getCopilotTurnsBeforeAnchor`; it
+> filters causal eligibility before LIMIT. A missing legacy anchor logs and
+> falls back to the prior reusable-session predicate; an existing anchor with
+> the wrong action/session fails closed to header-only. Inline read-before-write
+> still uses `getRecentCopilotTurns`.
+
 ---
 
 ## 0. Owner 判词与重构（2026-07-07）
