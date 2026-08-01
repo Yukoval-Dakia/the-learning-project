@@ -265,12 +265,14 @@ describe('probe one-shot lifecycle (U3)', () => {
     const proposalId = await seedConjecture();
     const served = await serve(proposalId);
     if (served.status !== 'served') throw new Error('expected served');
+    const taskRunId = 'run_probe_lifecycle_chain_rule_20260801_0756';
 
     const answered = await answerProbe({
       db: testDb(),
       probeQuestionId: served.probe_question_id,
       outcome: 0,
       answer_md: 'multiplies derivatives',
+      taskRunId,
     });
     expect(answered.status).toBe('evidence_for');
     expect(answered.degradation_reason).toBe('probe_without_response_contract');
@@ -289,6 +291,7 @@ describe('probe one-shot lifecycle (U3)', () => {
       answer_md: 'multiplies derivatives',
     });
     expect(results[0].caused_by_event_id).toBe(proposalId);
+    expect(results[0].task_run_id).toBe(taskRunId);
     // YUK-515: the internal probe outcome remains queryable by A13, but is born
     // opted out of the Mem0 outbox.
     expect(results[0].ingest_at).not.toBeNull();

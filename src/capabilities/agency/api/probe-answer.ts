@@ -327,6 +327,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         outcome,
         answer_md: answerMd,
         answer_image_refs: answerImageRefs,
+        taskRunId: invoked.task_run_id,
         response_judgement: responseJudgement,
       });
 

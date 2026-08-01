@@ -18,7 +18,7 @@
 // mock the same chokepoint. serveProbeOnce (the producer half, wired in S2) is real,
 // so the probe question row is genuine.
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -29,7 +29,14 @@ import {
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { newId } from '@/core/ids';
 import { ConjectureProbeSpecV2 } from '@/core/schema/business';
-import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
+import {
+  ai_task_runs,
+  cost_ledger,
+  event,
+  knowledge,
+  material_fsrs_state,
+  question,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { writeAiProposal } from '@/server/proposals/writer';
@@ -76,18 +83,61 @@ function judgeResult(
   return { ...base, coarse_outcome, score: null, confidence: 0, feedback_md: 'unsupported' };
 }
 
-// Invoker returns `{ result, telemetry }` — only `result` is read by the route.
+// The route reads `result` plus the optional authoritative `task_run_id`; telemetry
+// is retained so the mock still resembles the production invoker envelope.
 function invokeResult(
   coarse_outcome: 'correct' | 'incorrect' | 'partial' | 'unsupported',
   probe_signature_match?: {
     match: 'gold' | 'target_error' | 'neither' | 'ambiguous';
     explanation_md: string;
   },
+  taskRunId?: string,
 ) {
   return {
     result: judgeResult(coarse_outcome, probe_signature_match),
-    telemetry: { route: 'semantic' },
+    telemetry: { route: 'multimodal_direct' },
+    ...(taskRunId ? { task_run_id: taskRunId } : {}),
   };
+}
+
+async function seedJudgeRunWithCost(params: {
+  runId: string;
+  costId: string;
+  inputHash: string;
+  cost: number;
+  tokensIn: number;
+  tokensOut: number;
+  startedAt: Date;
+}): Promise<void> {
+  const finishedAt = new Date(params.startedAt.getTime() + 1_842);
+  await testDb()
+    .insert(ai_task_runs)
+    .values({
+      id: params.runId,
+      task_kind: 'MultimodalDirectJudgeTask',
+      provider: 'xiaomi',
+      model: 'mimo-v2.5',
+      input_hash: params.inputHash,
+      status: 'success',
+      finish_reason: 'stop',
+      usage_json: { inputTokens: params.tokensIn, outputTokens: params.tokensOut },
+      cost_usd: params.cost,
+      started_at: params.startedAt,
+      finished_at: finishedAt,
+    });
+  await testDb().insert(cost_ledger).values({
+    id: params.costId,
+    task_run_id: params.runId,
+    task_kind: 'MultimodalDirectJudgeTask',
+    provider: 'xiaomi',
+    model: 'mimo-v2.5',
+    cost: params.cost,
+    currency: 'USD',
+    tokens_in: params.tokensIn,
+    tokens_out: params.tokensOut,
+    outcome: 'success',
+    occurred_at: finishedAt,
+  });
 }
 
 async function seedKnowledge(): Promise<void> {
@@ -372,6 +422,133 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
       idempotent: true,
     });
     expect(mockInvoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('attributes only the answered probe run when an ordinary judge uses the same task kind', async () => {
+    const probeId = await serveResponseAwareProbe();
+    const probeRunId = 'run_probe_chain_rule_20260801_0758';
+    const ordinaryRunId = 'run_review_chain_rule_20260801_0757';
+    await seedJudgeRunWithCost({
+      runId: probeRunId,
+      costId: 'cost_probe_chain_rule_20260801_0758',
+      inputHash: '0cc2443fd406a6bd3eb306c448e90691e11e3782a41a3120f0188b8181d145a8',
+      cost: 0.00342,
+      tokensIn: 1_468,
+      tokensOut: 219,
+      startedAt: new Date('2026-08-01T07:58:00.000Z'),
+    });
+    // Same provider/model/task kind as the probe, but this is a normal practice
+    // judgement. A task_kind-based report would incorrectly add it to probe spend.
+    await seedJudgeRunWithCost({
+      runId: ordinaryRunId,
+      costId: 'cost_review_chain_rule_20260801_0757',
+      inputHash: '37191ae5095b646e671a9607d47b6b8ed657022f866c04e1fc18c67913b8e9a1',
+      cost: 0.01128,
+      tokensIn: 2_354,
+      tokensOut: 487,
+      startedAt: new Date('2026-08-01T07:57:00.000Z'),
+    });
+    mockInvoke.mockResolvedValue(
+      invokeResult(
+        'incorrect',
+        {
+          match: 'target_error',
+          explanation_md:
+            'The learner adds the outer derivative cos(x²) to the inner derivative 2x, exactly matching the authored addition-not-composition signature.',
+        },
+        probeRunId,
+      ),
+    );
+
+    const response = await answer(
+      probeId,
+      '我把复合函数拆成两项相加，所以写成 cos(x²)+2x；外层求导和内层求导各算一项。',
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: 'evidence_for',
+      outcome: 0,
+      target_error_match: 'matched',
+    });
+    const [persisted] = await probeResultEvents(probeId);
+    expect(persisted.task_run_id).toBe(probeRunId);
+    expect(persisted.payload).toMatchObject({
+      answer_md: '我把复合函数拆成两项相加，所以写成 cos(x²)+2x；外层求导和内层求导各算一项。',
+      response_judgement: {
+        target_error_match: 'matched',
+        signature_match_explanation_md: expect.stringContaining(
+          'addition-not-composition signature',
+        ),
+      },
+    });
+
+    // This is the runbook's production query shape: begin at probe_result, then
+    // follow the authoritative run id. LEFT JOIN keeps missing-ledger rows visible;
+    // starting from event prevents same-kind ordinary practice spend from leaking in.
+    const attributed = (await testDb().execute(sql`
+      WITH probe_runs AS (
+        SELECT id AS probe_result_event_id,
+               subject_id AS probe_question_id,
+               task_run_id,
+               created_at AS probe_result_at
+        FROM event
+        WHERE action = ${PROBE_RESULT_ACTION}
+          AND subject_kind = 'question'
+      )
+      SELECT p.probe_question_id,
+             p.probe_result_event_id,
+             p.task_run_id,
+             r.status AS run_status,
+             c.task_kind,
+             c.provider,
+             c.model,
+             c.currency,
+             COUNT(c.id)::int AS ledger_rows,
+             ARRAY_REMOVE(ARRAY_AGG(c.id ORDER BY c.occurred_at, c.id), NULL) AS ledger_ids,
+             COALESCE(SUM(c.cost), 0)::float8 AS total_cost,
+             COALESCE(SUM(c.tokens_in), 0)::bigint AS total_tokens_in,
+             COALESCE(SUM(c.tokens_out), 0)::bigint AS total_tokens_out,
+             p.probe_result_at
+      FROM probe_runs p
+      LEFT JOIN ai_task_runs r ON r.id = p.task_run_id
+      LEFT JOIN cost_ledger c ON c.task_run_id = p.task_run_id
+      GROUP BY p.probe_question_id, p.probe_result_event_id, p.task_run_id,
+               r.status, c.task_kind, c.provider, c.model, c.currency, p.probe_result_at
+      ORDER BY p.probe_result_at DESC
+    `)) as unknown as Array<{
+      probe_question_id: string;
+      probe_result_event_id: string;
+      task_run_id: string;
+      run_status: string;
+      task_kind: string;
+      provider: string;
+      model: string;
+      currency: string;
+      ledger_rows: number;
+      ledger_ids: string[];
+      total_cost: number;
+      total_tokens_in: string | number;
+      total_tokens_out: string | number;
+    }>;
+
+    expect(attributed).toHaveLength(1);
+    expect(attributed[0]).toMatchObject({
+      probe_question_id: probeId,
+      probe_result_event_id: persisted.id,
+      task_run_id: probeRunId,
+      run_status: 'success',
+      task_kind: 'MultimodalDirectJudgeTask',
+      provider: 'xiaomi',
+      model: 'mimo-v2.5',
+      currency: 'USD',
+      ledger_rows: 1,
+      ledger_ids: ['cost_probe_chain_rule_20260801_0758'],
+    });
+    expect(Number(attributed[0].total_cost)).toBeCloseTo(0.00342, 8);
+    expect(Number(attributed[0].total_tokens_in)).toBe(1_468);
+    expect(Number(attributed[0].total_tokens_out)).toBe(219);
+    expect(attributed[0].ledger_ids).not.toContain('cost_review_chain_rule_20260801_0757');
   });
 
   it('response-aware probe consumes an ordinary wrong answer without writing conjecture evidence', async () => {
