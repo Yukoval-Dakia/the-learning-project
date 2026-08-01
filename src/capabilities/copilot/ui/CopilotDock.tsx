@@ -18,8 +18,8 @@
 //   • The endpoint streams over SSE (YUK-266 C1) — a "thinking" bubble covers the
 //     pre-first-byte gap, then deltas render incrementally into a live bubble with
 //     a typing caret, and the terminal reply event is the authoritative text.
-//   • The route does NOT return tool-call details (RunTaskResult is text-only),
-//     so tool-use cards are phase-deferred (no mock fixtures in production).
+//   • The route never returns child transcript/reasoning. It may expose only the
+//     structural public subtask lifecycle used by the progress cards below.
 //   • Turn persistence + replay-last-N is AF Slice 3a. Rolling summary is S3b
 //     (deferred, NOT built here).
 //   • Token never touches the client: requests go through apiJson, which adds
@@ -129,6 +129,14 @@ interface DurableCopilotAccepted {
   run_id: string;
   session_id: string;
   checkpoint_event_id?: string;
+}
+
+interface DurableCopilotReconnect {
+  runId: string;
+  location: string;
+  aiMessageId: string;
+  /** Last safely folded cursor/view, so a manual retry resumes rather than replays from zero. */
+  view: CopilotRunView;
 }
 
 // GET /api/copilot/turns response shape — see src/capabilities/copilot/server/turns.ts.
@@ -416,8 +424,12 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     setFocusedKnowledgeId(null);
     closeDrawerDwell();
   }, [closeDrawerDwell]);
-  // Holds the last user_message so the error-state "重试" button can resend it.
+  // Holds the last user_message so an INLINE/known-terminal error can be resent.
   const lastUserMessageRef = useRef<string | null>(null);
+  // A 202 means the paid durable run already exists. If its progress stream later
+  // exhausts automatic reconnects, the error button must resume THIS handle — never
+  // POST the user message again and accidentally create a second run.
+  const durableReconnectRef = useRef<DurableCopilotReconnect | null>(null);
   // Synchronous single-flight guard: `sending` state lags a re-render behind,
   // so rapid double-Enter could fire duplicate POSTs from the stale closure.
   const sendingRef = useRef(false);
@@ -577,6 +589,95 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     }
   }, [refetchTurns]);
 
+  const applyRunViewToMessage = useCallback(
+    (aiMessageId: string, view: CopilotRunView, fallbackText: string) => {
+      const terminal = view.phase === 'completed' || view.phase === 'failed';
+      setMessages((prev) => {
+        const existing = prev.find((message) => message.id === aiMessageId);
+        const next: ChatMessage = {
+          ...(existing ?? { id: aiMessageId, role: 'ai' as const }),
+          text: view.replyText || existing?.text || fallbackText,
+          checkpoint_event_id: view.checkpointEventId ?? existing?.checkpoint_event_id,
+          subtasks: view.subtasks,
+          streaming: !terminal,
+        };
+        return existing
+          ? prev.map((message) => (message.id === aiMessageId ? next : message))
+          : [...prev, next];
+      });
+    },
+    [],
+  );
+
+  const reportSendError = useCallback((msg: string) => {
+    // F2 (TdZCB) — a send failure is a fresh, actionable error. A revert that
+    // interleaved with it may have set a refresh banner; clear both so this error
+    // is never masked.
+    setRefreshFailed(false);
+    setRefreshSkipped(false);
+    setError(msg);
+  }, []);
+
+  const reconnectDurable = useCallback(
+    async (handle: DurableCopilotReconnect) => {
+      if (sendingRef.current) return;
+      sendingRef.current = true;
+      setError(null);
+      setRefreshFailed(false);
+      setRefreshSkipped(false);
+      setSending(true);
+      setDurableRunning(true);
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === handle.aiMessageId ? { ...message, streaming: true } : message,
+        ),
+      );
+
+      try {
+        const durable = await consumeDurableCopilotRun({
+          location: handle.location,
+          fetchResponse: apiFetch,
+          initialState: handle.view,
+          onUpdate: (view) => {
+            handle.view = view;
+            applyRunViewToMessage(
+              handle.aiMessageId,
+              view,
+              '正在重新连接这次后台任务；不会重复提交。',
+            );
+          },
+        });
+        handle.view = durable;
+        if (durableReconnectRef.current?.runId === handle.runId) {
+          durableReconnectRef.current = null;
+        }
+        if (durable.phase === 'failed') {
+          applyRunViewToMessage(
+            handle.aiMessageId,
+            durable,
+            '这次后台运行没有完成。可以换个更聚焦的问法再试。',
+          );
+          reportSendError('后台运行未完成');
+        }
+      } catch {
+        // Keep the accepted handle and its latest cursor. The next click resumes
+        // the same Location; it never falls through to a fresh chat dispatch.
+        durableReconnectRef.current = handle;
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === handle.aiMessageId ? { ...message, streaming: false } : message,
+          ),
+        );
+        reportSendError('后台进度连接仍未恢复；任务可能仍在运行，可以再次连接。');
+      } finally {
+        sendingRef.current = false;
+        setSending(false);
+        setDurableRunning(false);
+      }
+    },
+    [applyRunViewToMessage, reportSendError],
+  );
+
   // Auto-scroll the message stream to the bottom on new messages / loading.
   // `sending` is an intentional trigger dep: when it flips true the thinking
   // bubble mounts and we want to scroll to it, even though the effect body
@@ -587,10 +688,14 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, sending]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: helpers are stable for this component lifetime; refs carry live turn context
   const send = useCallback(async (raw: string) => {
     const text = raw.trim();
     if (!text || sendingRef.current) return;
     sendingRef.current = true;
+    // A deliberate new message supersedes any stale reconnect affordance. The
+    // previous run remains recoverable through durable replay when the Dock reopens.
+    durableReconnectRef.current = null;
     lastUserMessageRef.current = text;
     setError(null);
     // Clear the "revert landed, refresh failed/skipped" banners when starting a new send: otherwise
@@ -598,15 +703,6 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     // the generic error banner would mask a failure from THIS send (YUK-497 wave-2).
     setRefreshFailed(false);
     setRefreshSkipped(false);
-    // F2 (TdZCB) — a send failure is a fresh, actionable error. A revert that INTERLEAVED with this
-    // send (landing after it started, its refetch SKIPPED because the send is streaming) sets
-    // refreshSkipped, which the error-banner guard suppresses — masking this send's failure. So every
-    // send-failure path re-clears both refresh banners before surfacing the error.
-    const reportSendError = (msg: string) => {
-      setRefreshFailed(false);
-      setRefreshSkipped(false);
-      setError(msg);
-    };
     setInput('');
     setMessages((prev) => [...prev, { id: nextId(), role: 'user', text }]);
     setSending(true);
@@ -621,25 +717,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     const aiId = nextId();
     let aiCreated = false;
     let durableAccepted = false;
+    let durableHandle: DurableCopilotReconnect | null = null;
     let inlineReplyStarted = false;
     let inlineSubtaskVersion = 0;
     let inlineRunView = createCopilotRunView();
-    const applyRunView = (view: CopilotRunView, fallbackText: string) => {
-      const terminal = view.phase === 'completed' || view.phase === 'failed';
-      setMessages((prev) => {
-        const existing = prev.find((message) => message.id === aiId);
-        const next: ChatMessage = {
-          ...(existing ?? { id: aiId, role: 'ai' as const }),
-          text: view.replyText || existing?.text || fallbackText,
-          checkpoint_event_id: view.checkpointEventId ?? existing?.checkpoint_event_id,
-          subtasks: view.subtasks,
-          streaming: !terminal,
-        };
-        return existing
-          ? prev.map((message) => (message.id === aiId ? next : message))
-          : [...prev, next];
-      });
-    };
     try {
       // YUK-267 (C2) — ambient_context: the current route + (when a skill is
       // active) the focused entity. route is always present; focused_entity is the
@@ -672,17 +753,33 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         const location =
           res.headers.get('Location') ??
           `/api/jobs/copilot_run/${encodeURIComponent(accepted.run_id)}/events`;
+        durableHandle = {
+          runId: accepted.run_id,
+          location,
+          aiMessageId: aiId,
+          view: inlineRunView,
+        };
         aiCreated = true;
         setDurableRunning(true);
-        applyRunView(inlineRunView, '这件事需要多步处理，我已转到后台；进度会在这里持续更新。');
+        applyRunViewToMessage(
+          aiId,
+          inlineRunView,
+          '这件事需要多步处理，我已转到后台；进度会在这里持续更新。',
+        );
         const durable = await consumeDurableCopilotRun({
           location,
           fetchResponse: apiFetch,
-          onUpdate: (view) =>
-            applyRunView(view, '这件事需要多步处理，我已转到后台；进度会在这里持续更新。'),
+          onUpdate: (view) => {
+            if (durableHandle) durableHandle.view = view;
+            applyRunViewToMessage(
+              aiId,
+              view,
+              '这件事需要多步处理，我已转到后台；进度会在这里持续更新。',
+            );
+          },
         });
         if (durable.phase === 'failed') {
-          applyRunView(durable, '这次后台运行没有完成。可以换个更聚焦的问法再试。');
+          applyRunViewToMessage(aiId, durable, '这次后台运行没有完成。可以换个更聚焦的问法再试。');
           reportSendError('后台运行未完成');
         }
         nudgeSessionRef.current = nextNudgeSessionAfterTurn(nudgeSessionRef.current, true);
@@ -741,7 +838,11 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
               aiCreated = true;
               setSending(false);
             }
-            applyRunView(inlineRunView, '我正在协调这些子任务，完成后会在这里统一收口。');
+            applyRunViewToMessage(
+              aiId,
+              inlineRunView,
+              '我正在协调这些子任务，完成后会在这里统一收口。',
+            );
           } else if (evt.event === 'reply') {
             try {
               finalReply = JSON.parse(evt.data) as CopilotChatResponse;
@@ -818,6 +919,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         setMessages((prev) => prev.filter((m) => m.id !== aiId));
       } else if (durableAccepted) {
         setMessages((prev) => prev.map((m) => (m.id === aiId ? { ...m, streaming: false } : m)));
+        if (durableHandle) durableReconnectRef.current = durableHandle;
       }
       const message = durableAccepted
         ? '后台进度连接已中断；任务可能仍在运行，稍后重新打开对话可查看结果。'
@@ -835,9 +937,14 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   }, []);
 
   const retry = useCallback(() => {
+    const durable = durableReconnectRef.current;
+    if (durable) {
+      void reconnectDurable(durable);
+      return;
+    }
     const last = lastUserMessageRef.current;
     if (last) void send(last);
-  }, [send]);
+  }, [reconnectDurable, send]);
 
   // YUK-272 (C3) — quiz quick-chip. When a knowledge node is in scope, seed a quiz
   // skill turn with that real id; `send` clears the one-shot context afterwards via
@@ -1193,7 +1300,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                 <LoomIcon name="alert" size={14} />
                 <span>{error}</span>
                 <Btn variant="ghost" size="sm" icon="refresh" onClick={retry}>
-                  重试
+                  {durableReconnectRef.current ? '重新连接' : '重试'}
                 </Btn>
               </div>
             ) : null}

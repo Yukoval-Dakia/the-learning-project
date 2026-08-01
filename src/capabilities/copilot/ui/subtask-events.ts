@@ -326,6 +326,8 @@ export interface ConsumeDurableCopilotRunOptions {
   location: string;
   fetchResponse: (input: string, init?: RequestInit) => Promise<Response>;
   onUpdate?: (state: CopilotRunView) => void;
+  /** Resume cursor/view from a previously accepted run; never redispatches it. */
+  initialState?: CopilotRunView;
   /** Number of reconnects after the initial request. */
   maxReconnects?: number;
   signal?: AbortSignal;
@@ -341,7 +343,7 @@ export async function consumeDurableCopilotRun(
   options: ConsumeDurableCopilotRunOptions,
 ): Promise<CopilotRunView> {
   const maxReconnects = Math.max(0, options.maxReconnects ?? 3);
-  let state = createCopilotRunView();
+  let state = options.initialState ?? createCopilotRunView();
   let reconnects = 0;
 
   while (true) {

@@ -229,4 +229,103 @@ describe('durable Copilot run SSE replay', () => {
       false,
     );
   });
+
+  it('resumes a previously accepted run from its saved cursor without redispatching work', async () => {
+    const interruptedFrames = [
+      frame(310, 'copilot_run.queued', { session_id: 'copilot-session-transfer-audit' }),
+      frame(311, 'copilot_run.step', {
+        step_kind: 'subtask',
+        subtask_id: 'audit-transfer-evidence',
+        label: '核对 27 次分式方程作答、5 次延迟复习与 3 个未教学探针',
+        status: 'running',
+      }),
+      frame(312, 'copilot_run.delta', {
+        text: '我已把同分母、异分母与含参题分开核对，',
+      }),
+    ];
+    const interruptedPayload = new TextEncoder().encode(
+      interruptedFrames
+        .map((item) => `id: ${item.event_id}\ndata: ${JSON.stringify(item)}\n\n`)
+        .join(''),
+    );
+    let delivered = false;
+    const interruptedBody = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (!delivered) {
+          delivered = true;
+          controller.enqueue(interruptedPayload);
+          return;
+        }
+        controller.error(new Error('wifi dropped after 202 Accepted'));
+      },
+    });
+    const firstFetch = vi
+      .fn<(input: string, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValue(
+        new Response(interruptedBody, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        }),
+      );
+    let checkpoint = createCopilotRunView();
+
+    await expect(
+      consumeDurableCopilotRun({
+        location: '/api/jobs/copilot_run/ask_transfer_audit/events',
+        fetchResponse: firstFetch,
+        maxReconnects: 0,
+        onUpdate: (state) => {
+          checkpoint = state;
+        },
+      }),
+    ).rejects.toThrow('wifi dropped after 202 Accepted');
+    expect(checkpoint.lastEventId).toBe(312);
+    expect(checkpoint.subtasks).toHaveLength(1);
+
+    const resumeFetch = vi
+      .fn<(input: string, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValue(
+        new Response(
+          sseBody([
+            frame(313, 'copilot_run.step', {
+              step_kind: 'subtask',
+              subtask_id: 'audit-transfer-evidence',
+              label: '核对 27 次分式方程作答、5 次延迟复习与 3 个未教学探针',
+              status: 'completed',
+              summary: '错误集中在含参题的定义域前置检查；三个独立探针复现，证据充分。',
+            }),
+            frame(314, 'copilot_run.delta', { text: '并用独立探针排除了偶然失误。' }),
+            frame(315, 'copilot_run.reply', {
+              reply_md:
+                '我已把同分母、异分母与含参题分开核对，并用独立探针排除了偶然失误。下一组练习应先固定定义域，再处理通分。',
+              checkpoint_event_id: 'ask_transfer_audit',
+            }),
+            frame(316, 'copilot_run.done', { task_run_id: 'task_transfer_audit' }),
+          ]),
+          { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+        ),
+      );
+
+    const resumed = await consumeDurableCopilotRun({
+      location: '/api/jobs/copilot_run/ask_transfer_audit/events',
+      fetchResponse: resumeFetch,
+      initialState: checkpoint,
+    });
+
+    expect(resumeFetch).toHaveBeenCalledTimes(1);
+    expect(new Headers(resumeFetch.mock.calls[0]?.[1]?.headers).get('Last-Event-ID')).toBe('312');
+    expect(resumed.phase).toBe('completed');
+    expect(resumed.lastEventId).toBe(316);
+    expect(resumed.subtasks).toEqual([
+      expect.objectContaining({
+        id: 'audit-transfer-evidence',
+        status: 'completed',
+        summary: '错误集中在含参题的定义域前置检查；三个独立探针复现，证据充分。',
+      }),
+    ]);
+    expect(resumed.replyText).toBe(
+      '我已把同分母、异分母与含参题分开核对，并用独立探针排除了偶然失误。下一组练习应先固定定义域，再处理通分。',
+    );
+    expect(firstFetch).toHaveBeenCalledTimes(1);
+  });
 });
