@@ -9575,6 +9575,20 @@ export interface operations {
           };
         };
       };
+      /** @description HTTP 499 response */
+      499: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
       /** @description Internal error */
       500: {
         headers: {
