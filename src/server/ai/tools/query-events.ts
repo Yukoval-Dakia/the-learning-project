@@ -76,6 +76,19 @@ const OutputSchema = z.object({
     subject_id: z.string().nullable(),
     subject_kind: z.string().nullable(),
     all_subject_kinds_included: z.boolean().nullable(),
+    cross_stage_claim_status: z.enum([
+      'not_subject_scoped',
+      'blocked_subject_id_only_filter_required',
+      'blocked_more_pages_unread',
+      'requires_complete_pagination_chain',
+      'authorized_complete_window_in_response',
+    ]),
+    required_followup: z.enum([
+      'none',
+      'repeat_with_subject_id_only',
+      'follow_next_cursor_and_aggregate_from_initial_page',
+      'verify_complete_pagination_chain_from_initial_page',
+    ]),
   }),
   match_semantics: z.object({
     filters: z.literal('and'),
@@ -156,8 +169,9 @@ const DESCRIPTION = [
   'A cursor response contains only the remaining rows after that cursor; has_more=false then completes',
   'that remainder, not the full window in this response.',
   'When tracing evidence for one subject id across a pipeline, omit subjectKind: subject kinds may',
-  'change between hops (for example knowledge → mind_model). Supplying both filters is an exact',
-  'intersection and subject_scope.all_subject_kinds_included=false says other kinds were not read.',
+  'change between hops (for example knowledge → mind_model). A cross-stage negative claim requires',
+  'a subjectId-only filter (plus optional limit) and a complete first page or complete cursor chain.',
+  'subject_scope.cross_stage_claim_status and required_followup expose whether that boundary is met.',
   'This is an event log, not an entity inventory: even a complete zero-row event window cannot prove',
   'that LearningItem or intervention entities are absent, or that any lifecycle status has count zero.',
   'It must not override get_review_due.entity_status_coverage=not_observed.',
@@ -305,6 +319,38 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const hasMore = candidateRows.length > limit;
   const rows = candidateRows.slice(0, limit);
   const lastRow = rows.at(-1);
+  const hasCrossStageNarrowingFilter =
+    filter.eventId !== undefined ||
+    filter.actorKind !== undefined ||
+    filter.actorRef !== undefined ||
+    filter.action !== undefined ||
+    filter.subjectKind !== undefined ||
+    filter.outcome !== undefined ||
+    filter.causedByEventId !== undefined ||
+    filter.siblingOfEventId !== undefined ||
+    filter.sinceDays !== undefined;
+  const crossStageClaimStatus: z.infer<
+    typeof OutputSchema
+  >['subject_scope']['cross_stage_claim_status'] = !filter.subjectId
+    ? 'not_subject_scoped'
+    : hasCrossStageNarrowingFilter
+      ? 'blocked_subject_id_only_filter_required'
+      : input.cursor
+        ? 'requires_complete_pagination_chain'
+        : hasMore
+          ? 'blocked_more_pages_unread'
+          : 'authorized_complete_window_in_response';
+  const requiredCrossStageFollowup: z.infer<
+    typeof OutputSchema
+  >['subject_scope']['required_followup'] = !filter.subjectId
+    ? 'none'
+    : hasCrossStageNarrowingFilter
+      ? 'repeat_with_subject_id_only'
+      : input.cursor
+        ? 'verify_complete_pagination_chain_from_initial_page'
+        : hasMore
+          ? 'follow_next_cursor_and_aggregate_from_initial_page'
+          : 'none';
   const correctionStatuses = await getCorrectionStatuses(
     ctx.db,
     rows.map((row) => row.id),
@@ -348,6 +394,8 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       subject_id: filter.subjectId ?? null,
       subject_kind: filter.subjectKind ?? null,
       all_subject_kinds_included: filter.subjectId ? filter.subjectKind === undefined : null,
+      cross_stage_claim_status: crossStageClaimStatus,
+      required_followup: requiredCrossStageFollowup,
     },
     match_semantics: {
       filters: 'and',

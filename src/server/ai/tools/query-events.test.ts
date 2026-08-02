@@ -205,6 +205,21 @@ describe('queryEventsTool', () => {
       subject_id: subjectId,
       subject_kind: 'knowledge',
       all_subject_kinds_included: false,
+      cross_stage_claim_status: 'blocked_subject_id_only_filter_required',
+      required_followup: 'repeat_with_subject_id_only',
+    });
+
+    const actionNarrowed = await queryEventsTool.execute(ctx(), {
+      filter: {
+        subjectId,
+        action: 'experimental:self_authored_gate_input',
+        limit: 50,
+      },
+    });
+    expect(actionNarrowed.subject_scope).toMatchObject({
+      all_subject_kinds_included: true,
+      cross_stage_claim_status: 'blocked_subject_id_only_filter_required',
+      required_followup: 'repeat_with_subject_id_only',
     });
 
     const crossKind = await queryEventsTool.execute(ctx(), {
@@ -219,11 +234,36 @@ describe('queryEventsTool', () => {
       subject_id: subjectId,
       subject_kind: null,
       all_subject_kinds_included: true,
+      cross_stage_claim_status: 'authorized_complete_window_in_response',
+      required_followup: 'none',
     });
     expect(crossKind.claim_boundaries).toEqual({
       zero_rows_scope: 'exact_filters_and_full_observation_window',
       supports_entity_inventory_claim: false,
       supports_lifecycle_status_count_claim: false,
+    });
+
+    const firstPage = await queryEventsTool.execute(ctx(), {
+      filter: { subjectId, limit: 1 },
+    });
+    expect(firstPage.subject_scope).toMatchObject({
+      cross_stage_claim_status: 'blocked_more_pages_unread',
+      required_followup: 'follow_next_cursor_and_aggregate_from_initial_page',
+    });
+    const secondPage = await queryEventsTool.execute(ctx(), {
+      filter: { subjectId, limit: 1 },
+      cursor: firstPage.coverage.next_cursor ?? undefined,
+    });
+    const finalPage = await queryEventsTool.execute(ctx(), {
+      filter: { subjectId, limit: 1 },
+      cursor: secondPage.coverage.next_cursor ?? undefined,
+    });
+    expect(secondPage.subject_scope.cross_stage_claim_status).toBe(
+      'requires_complete_pagination_chain',
+    );
+    expect(finalPage.subject_scope).toMatchObject({
+      cross_stage_claim_status: 'requires_complete_pagination_chain',
+      required_followup: 'verify_complete_pagination_chain_from_initial_page',
     });
   });
 
@@ -488,6 +528,8 @@ describe('queryEventsTool', () => {
           subject_id: null,
           subject_kind: null,
           all_subject_kinds_included: null,
+          cross_stage_claim_status: 'not_subject_scoped',
+          required_followup: 'none',
         },
         match_semantics: {
           filters: 'and',

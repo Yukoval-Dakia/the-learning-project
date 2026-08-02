@@ -530,6 +530,30 @@ describe('CopilotTask.systemPrompt — C2 memory + ambient clauses', () => {
   });
 });
 
+describe('CopilotTask.systemPrompt — YUK-832 evidence-claim contract', () => {
+  it('pins scope completion, explicit causality, projection, and queue authority', () => {
+    const p = getTaskSystemPrompt('CopilotTask');
+    expect(p).toContain('【证据断言契约】');
+    expect(p).toContain('authorized_complete_window_in_response');
+    expect(p).toContain('requires_complete_pagination_chain');
+    expect(p).toContain('not_subject_scoped 永不授权');
+    expect(p).toContain('repeat_with_subject_id_only');
+    expect(p).toContain('follow_next_cursor_and_aggregate_from_initial_page');
+    expect(p).toContain('activation_policy=not_observed');
+    expect(p).toContain('necessary_conditions=not_supported');
+    expect(p).toContain('sufficient_conditions=not_supported');
+    expect(p).toContain('evidence_refs / source_ref / 时间相邻都不是因果边');
+    expect(p).toContain('只能称“已观测的直接分叉”');
+    expect(p).toContain('redacted、未投影、字段缺失与显式 null 必须分开');
+    expect(p).toContain('顶层 event outcome 与 evidence.outcome 必须写全路径');
+    expect(p).toContain('沿 exact subject 与 direct children 核到该段');
+    expect(p).toContain('queue_assertion');
+    expect(p).toContain('null 一律回答“无法裁决”');
+    expect(p).toContain('supports_lifecycle_status_count_claim=false');
+    expect(p).toContain('只有实际调用并收到结果的工具');
+  });
+});
+
 describe('CopilotTask.systemPrompt — YUK-757 backstage spawn envelope', () => {
   it('pins one named depth-1 researcher, synchronous conclusion return, and the single Copilot voice', () => {
     const p = getTaskSystemPrompt('CopilotTask');
