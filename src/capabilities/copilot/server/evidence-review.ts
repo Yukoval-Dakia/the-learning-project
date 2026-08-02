@@ -83,6 +83,18 @@ export interface CopilotEvidenceReviewDecision {
   violations?: string[];
 }
 
+function normalizeEvidenceJsonEnvelope(result: StructuredTaskResult): StructuredTaskResult {
+  if (result.structured_output !== undefined && result.structured_output !== null) return result;
+  const trimmed = result.text.trim();
+  // Xiaomi does not support the SDK structured-output protocol and actual
+  // validator runs may wrap an otherwise strict JSON object in one Markdown
+  // code fence. Accept that syntax-only envelope, but still reject prose,
+  // multiple fences, or any bytes outside the single fence. Zod + server
+  // binding remain the authority over the enclosed object.
+  const match = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i.exec(trimmed);
+  return match?.[1] === undefined ? result : { ...result, text: match[1] };
+}
+
 async function defaultRunTaskFn(
   kind: 'CopilotEvidenceReviewTask' | 'CopilotEvidenceVerificationTask',
   input: unknown,
@@ -95,7 +107,7 @@ export function parseCopilotEvidenceReviewResult(
   result: StructuredTaskResult,
 ): CopilotEvidenceReviewOutput {
   return parseStructuredTaskOutput(
-    result,
+    normalizeEvidenceJsonEnvelope(result),
     CopilotEvidenceReviewOutputSchema,
     'copilot blind evidence reference output',
     { textMode: 'strict-json' },
@@ -106,7 +118,7 @@ export function parseCopilotEvidenceVerificationResult(
   result: StructuredTaskResult,
 ): CopilotEvidenceVerificationOutput {
   return parseStructuredTaskOutput(
-    result,
+    normalizeEvidenceJsonEnvelope(result),
     CopilotEvidenceVerificationOutputSchema,
     'copilot sealed evidence comparison output',
     { textMode: 'strict-json' },

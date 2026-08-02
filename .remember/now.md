@@ -43,7 +43,13 @@
 - 当前窄化修复只给 durable blind-reference 240s；inline 与 comparator 保持 120s。FULL 最坏
   审阅为 16min，连同 primary 12min + 30s grace 的 owner ceiling 为 28.5min，仍小于 1h
   stuck-run 阈值。加入的诊断只保留固定 contract 错误类别/有界单行消息，不记录 raw output、
-  candidate 或 thinking。新 committed exact head 仍须跑 GitHub CI 与五例 actual v8。
+  candidate 或 thinking。
+- `9a7be1b6` 的 A01 actual 已让两次 blind reference 越过原 120s timeout 并完整返回，但都被
+  诊断为非 strict JSON；重复证据足够后停止 A03，其余样本未继续烧 provider。下一窄化修复
+  只接受 raw JSON 或唯一一个 syntax-only JSON fence，任何 fence 外 prose/多 fence 仍拒绝；
+  新 committed exact head 仍须跑 GitHub CI 与五例 actual v8。A01 两次 reference 分别约
+  198.30s/198.33s，均为 provider success + thinking；partial artifact SHA-256
+  `7e7d7e402a7d007c165049f8fc42534072ed068e536d3ee53eacd99da1190d7b`（本地 mode 0600）。
 
 ## Next order
 
