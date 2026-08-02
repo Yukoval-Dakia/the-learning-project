@@ -50,8 +50,8 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: vi.fn(async () => 'tool-log-id'),
 }));
 
-import { ProviderSessionAdmissionError } from './provider-session-admission';
 import { RETRY_ELAPSED_CAP_MS } from './agent-run-error';
+import { ProviderSessionAdmissionError } from './provider-session-admission';
 import { runTask, streamTask, streamTaskCollecting } from './runner';
 
 const fakeDb = {} as never;

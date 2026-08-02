@@ -16,13 +16,13 @@ import {
   writeToolCallLog,
 } from './log';
 import type { TokenCounts } from './pricing';
-import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
 import {
   ProviderSessionAdmissionError,
   type ProviderSessionAdmissionPlan,
   acquireProviderSession,
   resolveProviderSessionAdmissionPlan,
 } from './provider-session-admission';
+import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
 
 export type LifecycleUsage = AiTaskUsage;
 
@@ -221,6 +221,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
             },
           });
 
+    let outcome: { status: 'fulfilled'; value: T } | { status: 'rejected'; reason: unknown };
     try {
       if (
         this.config.providerStartDeadlineAt !== undefined &&
@@ -249,20 +250,20 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         });
       }
       this.armExecutionTimer();
-      try {
-        const value = await run();
-        if (this.admissionFailure) throw this.admissionFailure;
-        return value;
-      } catch (error) {
-        throw this.admissionFailure ?? error;
-      }
-    } finally {
-      this.clearExecutionTimer();
-      await permit?.release();
-      // Cover a heartbeat that fenced this attempt after the provider callback
-      // resolved but before release stopped the heartbeat.
+      const value = await run();
       if (this.admissionFailure) throw this.admissionFailure;
+      outcome = { status: 'fulfilled', value };
+    } catch (error) {
+      outcome = { status: 'rejected', reason: this.admissionFailure ?? error };
     }
+
+    this.clearExecutionTimer();
+    await permit?.release();
+    // Cover a heartbeat that fenced this attempt after the provider callback
+    // resolved but before release stopped the heartbeat.
+    if (this.admissionFailure) throw this.admissionFailure;
+    if (outcome.status === 'rejected') throw outcome.reason;
+    return outcome.value;
   }
 
   async start(actualInput: unknown): Promise<void> {

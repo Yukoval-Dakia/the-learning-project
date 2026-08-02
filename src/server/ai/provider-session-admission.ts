@@ -309,11 +309,18 @@ function callerStopError(
 }
 
 function isDbBudgetError(error: unknown): boolean {
-  const code =
-    error && typeof error === 'object' && 'code' in error
-      ? String((error as { code?: unknown }).code ?? '')
-      : '';
-  return code === '55P03' || code === '57014';
+  // Drizzle wraps the postgres-js error, so the SQLSTATE can live on `cause`.
+  // Bound traversal and fence cycles because adapters may attach arbitrary errors.
+  const seen = new Set<object>();
+  let current = error;
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (!current || typeof current !== 'object' || seen.has(current)) return false;
+    seen.add(current);
+    const code = 'code' in current ? String((current as { code?: unknown }).code ?? '') : '';
+    if (code === '55P03' || code === '57014') return true;
+    current = 'cause' in current ? (current as { cause?: unknown }).cause : undefined;
+  }
+  return false;
 }
 
 /**
@@ -394,7 +401,7 @@ async function tryLaneTransaction<T>(
     async (tx) => {
       const lockRows = await tx.execute<{ locked: boolean }>(sql`
         SELECT pg_try_advisory_xact_lock(
-          hashtextextended(${'provider-session-admission:' + laneId}, 0)
+          hashtextextended(${`provider-session-admission:${laneId}`}, 0)
         ) AS locked
       `);
       if (lockRows[0]?.locked !== true) return undefined;
@@ -1052,7 +1059,8 @@ export async function acquireProviderSession(
   if (deadlineAt !== undefined && !Number.isFinite(deadlineAt)) {
     throw new Error('provider session admission deadlineAt must be finite');
   }
-  const externalRemainingMs = deadlineAt === undefined ? Infinity : deadlineAt - Date.now();
+  const externalRemainingMs =
+    deadlineAt === undefined ? Number.POSITIVE_INFINITY : deadlineAt - Date.now();
   const callerWaitBudgetMs = Math.max(
     0,
     Math.min(input.plan.policy.maxWaitMs, externalRemainingMs),

@@ -45,8 +45,8 @@ import {
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import type { R2Client } from '../r2';
 import {
-  RETRY_ELAPSED_CAP_MS,
   AgentRunError,
+  RETRY_ELAPSED_CAP_MS,
   bindAgentRunError,
   isApiErrorSuccessResult,
 } from './agent-run-error';
