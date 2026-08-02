@@ -218,17 +218,28 @@ describe('streamTask — YUK-240 stuck-run observability', () => {
     vi.clearAllMocks();
   });
 
-  it('emits task_run_stuck_in_running when the success finish-write fails', async () => {
+  it('errors the stream after delivered bytes when the success finish-write fails', async () => {
     logMocks.finishedShouldThrow = true;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const afterRun = vi.fn(async () => {});
+    let release!: () => void;
+    mockSdk.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
 
     const response = streamTask(
       'AttributionTask',
       { q: 'x' },
       { db: fakeDb, middleware: { afterRun } },
     );
-    const body = await response.text();
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('expected a response body');
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toBe('hi');
+    release();
+    await expect(reader.read()).rejects.toThrow(
+      /cannot report success before durable attempt settlement/,
+    );
 
     const stuck = warn.mock.calls.find(
       (call) => (call[1] as { event?: string } | undefined)?.event === 'task_run_stuck_in_running',
@@ -239,10 +250,37 @@ describe('streamTask — YUK-240 stuck-run observability', () => {
       intended_status: 'success',
     });
     expect((stuck?.[1] as { task_run_id?: string }).task_run_id).toBeTruthy();
-    expect(body).toContain(
-      '[streamTask] [AttributionTask] cannot report success before durable attempt settlement:',
-    );
     expect(afterRun).not.toHaveBeenCalled();
+
+    warn.mockRestore();
+  });
+
+  it('errors the stream when failure settlement also fails', async () => {
+    logMocks.finishedShouldThrow = true;
+    mockSdk.terminalMessage = {
+      type: 'result',
+      subtype: 'error_max_budget_usd',
+      duration_ms: 10,
+      duration_api_ms: 8,
+      is_error: true,
+      num_turns: 1,
+      session_id: 'session-test',
+      total_cost_usd: 0.5,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      errors: ['budget exhausted'],
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const response = streamTask('AttributionTask', { q: 'x' }, { db: fakeDb });
+    await expect(response.text()).rejects.toThrow(/error_max_budget_usd/);
+
+    const stuck = warn.mock.calls.find(
+      (call) => (call[1] as { event?: string } | undefined)?.event === 'task_run_stuck_in_running',
+    );
+    expect(stuck?.[1]).toMatchObject({
+      event: 'task_run_stuck_in_running',
+      intended_status: 'failure',
+    });
 
     warn.mockRestore();
   });

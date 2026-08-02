@@ -23,13 +23,15 @@
   build/audit gate**。PR 的前一 exact-head 已由 GitHub CI 全绿；合并前 review 发现 success
   settlement fail-open 会破坏 attempt 单一真相，当前已改为 fail-closed；随后新-head review 又发现
   collecting 路径会把未落账失败降级成 partial，现已要求 success/failure settlement 任一失败都
-  reject，并补普通/流式/collecting 反证测试。新 head 仍须重新通过远端 CI。
+  reject。最新 review 继续发现 text stream 虽追加错误尾帧却仍会 clean-close；现要求已经发送的
+  bytes 可以被消费，但 terminal settlement 失败必须 error stream，不能产生正常协议完成。普通、
+  流式与 collecting 反证测试均已覆盖；新 head 仍须重新通过远端 CI。
 - **YUK-596 transport/Stop 与 actual burn-in 证据保持已交付；产品内容仍 HOLD。** YUK-832–836
   没有取消或完成，只因 owner 切换 active 主线而暂停。
 
 ## NEXT
 
-1. 提交并推送 PR #1156 的 success-settlement fail-closed 修复；只由 exact-head GitHub CI 执行
+1. 提交并推送 PR #1156 的 stream terminal-settlement fail-closed 修复；只由 exact-head GitHub CI 执行
    migration/unit/DB/typecheck/lint/build/audit gates。
 2. CI 绿且无未解决 P0/P1 后 merge，将 YUK-841 标 Done。
 3. 从合并后的 main 新建独立 worktree 启动 YUK-842 provider-lane admission；共享 schema/runtime lane

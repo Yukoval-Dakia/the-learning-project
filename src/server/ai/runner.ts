@@ -797,6 +797,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
     async start(controller) {
       const encoder = new TextEncoder();
       let resultText = '';
+      let shouldClose = true;
 
       try {
         const actualInput = ctx.middleware?.beforeRun
@@ -885,14 +886,22 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
             taskRunId: lifecycle.taskRunId,
             aborted: lifecycle.aborted,
           });
-          await lifecycle.finishFailure(boundError);
+          const settled = await lifecycle.finishFailure(boundError);
+          if (!settled) {
+            // Assistant bytes may already have reached a live reader and cannot be
+            // retracted. Error the stream so the protocol cannot still complete
+            // cleanly while its durable attempt truth remains unsettled.
+            shouldClose = false;
+            controller.error(boundError);
+            return;
+          }
         }
         const message =
           error instanceof Error ? `[streamTask] ${error.message}` : '[streamTask] unknown error';
         controller.enqueue(encoder.encode(`\n\n${message}\n`));
       } finally {
         lifecycle.dispose();
-        controller.close();
+        if (shouldClose) controller.close();
       }
     },
     cancel() {
