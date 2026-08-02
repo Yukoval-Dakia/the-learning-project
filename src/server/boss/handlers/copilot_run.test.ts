@@ -23,11 +23,11 @@ import { COPILOT_SUBAGENT_NAME } from '@/capabilities/copilot/server/subagents';
 import type { Db } from '@/db/client';
 import { ai_task_runs, event, job_events, provider_session_admission } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { createRunLifecycle } from '@/server/ai/run-lifecycle';
 import {
   acquireProviderSession,
   resolveProviderSessionAdmissionPlan,
 } from '@/server/ai/provider-session-admission';
+import { createRunLifecycle } from '@/server/ai/run-lifecycle';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/server/ai/tools/allowlists';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
