@@ -38,7 +38,7 @@ import {
   withCopilotDurableDispatchLock,
 } from '@/capabilities/copilot/server/durable-dispatch';
 import { db } from '@/db/client';
-import { HTTP_PROVIDER_SESSION_BUDGET_MS, ApiError, errorResponse } from '@/kernel/http';
+import { ApiError, HTTP_PROVIDER_SESSION_BUDGET_MS, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
 import { checkRateLimit } from '@/server/http/rate-limit';
