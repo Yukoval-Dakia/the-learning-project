@@ -47,12 +47,15 @@
   新-head review 又发现 collecting 会把未落账失败降级成 partial，现已要求 success/failure
   settlement 任一失败都 reject。最新 review 继续发现 text stream 在结算失败时追加错误尾帧后仍
   clean-close；现已改为 terminal settlement 失败就 error stream，明确区分“已发送 bytes 无法撤回”
-  与“协议不得正常完成”，并补 success/failure 两条反证。新 head 必须重新由 GitHub CI 验证；CI
-  未绿前不得宣称 YUK-841 已交付。
+  与“协议不得正常完成”，并补 success/failure 两条反证。最终 lifecycle review 又发现首次 success
+  transaction 回滚后幂等闩会阻止 failure 收口；现改为每个 status 最多一次、仅允许
+  success→failure 的有界降级，CAS + 唯一 ledger 防双写；即使 fallback failure 落账成功，collecting
+  仍 reject provider-success 文本。新 head 必须重新由 GitHub CI 验证；CI 未绿前不得宣称 YUK-841
+  已交付。
 
 ## Still required
 
-1. 提交并推送 PR #1156 的最后 stream settlement 修复。
+1. 提交并推送 PR #1156 的 bounded terminal-settlement state machine。
 2. 新 exact-head GitHub CI 全绿、无未解决 P0/P1 后 merge；Linear YUK-841 → Done。
 3. 从合并 main 新建独立 worktree 启动 YUK-842；不要与 YUK-841 共享 schema/runtime 并行。
 
@@ -60,7 +63,8 @@
 
 - 真实合同价格校准仍开放；placeholder estimate 不可用于预算可信声明。
 - UI null 展示与产品 operation 级 `cost_usd ?? 0` 聚合不在 YUK-841；本票只闭合 model-attempt truth。
-- YUK-843 承接 stuck-run reconciler 单行结算异常隔离；YUK-844 承接产品 operation unknown 成本
-  全链传播。两者均已在 Linear 捕获，不阻塞 F0-2。
+- YUK-843 承接 stuck-run reconciler 单行结算异常隔离与 ambiguous-ack 最终收敛；当前 lifecycle 保持
+  single-owner sequential terminal contract。YUK-844 承接产品 operation unknown 成本全链传播；
+  两者均已在 Linear 捕获，不阻塞 F0-2。
 - OCR/GLM、failure-correlation、image-correlation 等非 central runner ledger 保持 legacy，不能冒充已迁移。
 - YUK-832–836 保持 open/PARKED；YUK-596 transport 已交付但内容质量 HOLD。

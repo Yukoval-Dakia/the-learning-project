@@ -52,6 +52,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 // the YUK-240 stuck-run path.
 const logMocks = vi.hoisted(() => ({
   finishedShouldThrow: false,
+  finishedFailuresRemaining: 0,
+  terminalStatuses: [] as string[],
   finished: vi.fn(async (_db: unknown, _row: unknown) => {}),
   cost: vi.fn(async (_db: unknown, _row: unknown) => {}),
 }));
@@ -75,6 +77,11 @@ vi.mock('@/server/ai/log', () => ({
         outcome: string;
       },
     ) => {
+      logMocks.terminalStatuses.push(row.status);
+      if (logMocks.finishedFailuresRemaining > 0) {
+        logMocks.finishedFailuresRemaining -= 1;
+        throw new Error('db down once');
+      }
       await logMocks.finished(db, {
         id: row.id,
         status: row.status,
@@ -124,6 +131,8 @@ describe('streamTask — YUK-238 client-disconnect abort', () => {
     mockSdk.gate = undefined;
     mockSdk.terminalMessage = undefined;
     logMocks.finishedShouldThrow = false;
+    logMocks.finishedFailuresRemaining = 0;
+    logMocks.terminalStatuses = [];
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 
@@ -211,6 +220,8 @@ describe('streamTask — YUK-240 stuck-run observability', () => {
     mockSdk.gate = undefined;
     mockSdk.terminalMessage = undefined;
     logMocks.finishedShouldThrow = false;
+    logMocks.finishedFailuresRemaining = 0;
+    logMocks.terminalStatuses = [];
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 
@@ -247,10 +258,34 @@ describe('streamTask — YUK-240 stuck-run observability', () => {
     expect(stuck).toBeDefined();
     expect(stuck?.[1]).toMatchObject({
       event: 'task_run_stuck_in_running',
-      intended_status: 'success',
+      intended_status: 'failure',
     });
     expect((stuck?.[1] as { task_run_id?: string }).task_run_id).toBeTruthy();
+    expect(logMocks.terminalStatuses).toEqual(['success', 'failure']);
     expect(afterRun).not.toHaveBeenCalled();
+
+    warn.mockRestore();
+  });
+
+  it('closes with an error footer when the bounded failure fallback settles', async () => {
+    logMocks.finishedFailuresRemaining = 1;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const body = await streamTask('AttributionTask', { q: 'x' }, { db: fakeDb }).text();
+
+    expect(body).toContain('hi');
+    expect(body).toContain('cannot report success before durable attempt settlement');
+    expect(logMocks.terminalStatuses).toEqual(['success', 'failure']);
+    expect(logMocks.finished).toHaveBeenCalledTimes(1);
+    expect(logMocks.finished.mock.calls[0][1]).toMatchObject({ status: 'failure' });
+    expect(logMocks.cost).toHaveBeenCalledTimes(1);
+    expect(logMocks.cost.mock.calls[0][1]).toMatchObject({ outcome: 'failed_permanent' });
+    expect(
+      warn.mock.calls.some(
+        (call) =>
+          (call[1] as { event?: string } | undefined)?.event === 'task_run_stuck_in_running',
+      ),
+    ).toBe(false);
 
     warn.mockRestore();
   });
@@ -281,6 +316,7 @@ describe('streamTask — YUK-240 stuck-run observability', () => {
       event: 'task_run_stuck_in_running',
       intended_status: 'failure',
     });
+    expect(logMocks.terminalStatuses).toEqual(['failure']);
 
     warn.mockRestore();
   });
@@ -306,6 +342,8 @@ describe('streamTask — YUK-590 terminal failure honesty', () => {
     mockSdk.gate = undefined;
     mockSdk.terminalMessage = undefined;
     logMocks.finishedShouldThrow = false;
+    logMocks.finishedFailuresRemaining = 0;
+    logMocks.terminalStatuses = [];
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 

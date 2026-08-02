@@ -45,6 +45,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 const logMocks = vi.hoisted(() => ({
   finishedShouldThrow: false,
+  finishedFailuresRemaining: 0,
+  terminalStatuses: [] as string[],
   started: vi.fn(async (_db: unknown, _row: unknown) => {}),
   finished: vi.fn(async (_db: unknown, _row: unknown) => {}),
   cost: vi.fn(async (_db: unknown, _row: unknown) => {}),
@@ -69,6 +71,11 @@ vi.mock('@/server/ai/log', () => ({
         outcome: string;
       },
     ) => {
+      logMocks.terminalStatuses.push(row.status);
+      if (logMocks.finishedFailuresRemaining > 0) {
+        logMocks.finishedFailuresRemaining -= 1;
+        throw new Error('db down once');
+      }
       if (logMocks.finishedShouldThrow) throw new Error('db down');
       await logMocks.finished(db, {
         id: row.id,
@@ -226,6 +233,8 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     mockSdk.throwAfter = -1;
     mockSdk.waitForAbortAfter = -1;
     logMocks.finishedShouldThrow = false;
+    logMocks.finishedFailuresRemaining = 0;
+    logMocks.terminalStatuses = [];
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 
@@ -727,8 +736,24 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, () => {}),
     ).rejects.toThrow(/cannot report success before durable attempt settlement/);
 
+    expect(logMocks.terminalStatuses).toEqual(['success', 'failure']);
     expect(logMocks.finished).not.toHaveBeenCalled();
     expect(logMocks.cost).not.toHaveBeenCalled();
+  });
+
+  it('still rejects provider-success text when the bounded failure fallback settles', async () => {
+    mockSdk.messages = [assistant('must not persist'), resultMsg];
+    logMocks.finishedFailuresRemaining = 1;
+
+    await expect(
+      streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, () => {}),
+    ).rejects.toThrow(/cannot report success before durable attempt settlement/);
+
+    expect(logMocks.terminalStatuses).toEqual(['success', 'failure']);
+    expect(logMocks.finished).toHaveBeenCalledTimes(1);
+    expect(logMocks.finished.mock.calls[0][1]).toMatchObject({ status: 'failure' });
+    expect(logMocks.cost).toHaveBeenCalledTimes(1);
+    expect(logMocks.cost.mock.calls[0][1]).toMatchObject({ outcome: 'failed_permanent' });
   });
 
   it('rejects instead of returning partial when failure settlement fails', async () => {
@@ -740,6 +765,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, () => {}),
     ).rejects.toThrow(/sdk blew up mid-stream/);
 
+    expect(logMocks.terminalStatuses).toEqual(['failure']);
     expect(logMocks.finished).not.toHaveBeenCalled();
     expect(logMocks.cost).not.toHaveBeenCalled();
   });

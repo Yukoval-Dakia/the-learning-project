@@ -45,6 +45,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 const logMock = vi.hoisted(() => ({
   settlementShouldFail: false,
+  settlementResults: [] as boolean[],
+  terminalStatuses: [] as string[],
   started: vi.fn(async (_db: unknown, _row: unknown) => {}),
   finished: vi.fn(async (_db: unknown, _row: unknown) => {}),
   retried: vi.fn(async (_db: unknown, _id: string) => true),
@@ -77,7 +79,11 @@ vi.mock('@/server/ai/log', () => ({
         outcome: string;
       },
     ) => {
-      if (logMock.settlementShouldFail) return false;
+      logMock.terminalStatuses.push(row.status);
+      const queuedResult = logMock.settlementResults.shift();
+      if (queuedResult === false || (queuedResult === undefined && logMock.settlementShouldFail)) {
+        return false;
+      }
       await logMock.finished(db, {
         id: row.id,
         status: row.status,
@@ -186,6 +192,8 @@ function resetAll() {
   logMock.cost.mockClear();
   logMock.tool.mockClear();
   logMock.settlementShouldFail = false;
+  logMock.settlementResults = [];
+  logMock.terminalStatuses = [];
   process.env.XIAOMI_API_KEY = 'sk-test-key';
 }
 
@@ -398,7 +406,26 @@ describe('runTask — YUK-576 transient retry loop', () => {
 
     expect(mockSdk.capturedOptions).toHaveLength(1);
     expect(logMock.started).toHaveBeenCalledTimes(1);
+    expect(logMock.terminalStatuses).toEqual(['failure']);
     expect(logMock.retried).not.toHaveBeenCalled();
+  });
+
+  it('records one bounded failure fallback when success settlement rolls back', async () => {
+    const afterRun = vi.fn(async () => {});
+    mockSdk.messageQueues = [[successResult('must-not-return')]];
+    logMock.settlementResults = [false, true];
+
+    await expect(
+      runTask(NO_RETRY_KIND, { q: 1 }, { db: fakeDb, middleware: { afterRun } }),
+    ).rejects.toThrow(/cannot report success before durable attempt settlement/);
+
+    expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(logMock.terminalStatuses).toEqual(['success', 'failure']);
+    expect(logMock.finished).toHaveBeenCalledTimes(1);
+    expect(logMock.finished.mock.calls[0][1]).toMatchObject({ status: 'failure' });
+    expect(logMock.cost).toHaveBeenCalledTimes(1);
+    expect(logMock.cost.mock.calls[0][1]).toMatchObject({ outcome: 'failed_permanent' });
+    expect(afterRun).not.toHaveBeenCalled();
   });
 
   it('does not return success or run afterRun when the attempt truth cannot settle', async () => {
@@ -411,6 +438,7 @@ describe('runTask — YUK-576 transient retry loop', () => {
     ).rejects.toThrow(/cannot report success before durable attempt settlement/);
 
     expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(logMock.terminalStatuses).toEqual(['success', 'failure']);
     expect(afterRun).not.toHaveBeenCalled();
     expect(logMock.finished).not.toHaveBeenCalled();
     expect(logMock.cost).not.toHaveBeenCalled();

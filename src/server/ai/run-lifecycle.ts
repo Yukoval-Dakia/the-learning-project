@@ -61,6 +61,27 @@ export interface LifecycleAttemptDecision {
   elapsedMs: number;
 }
 
+type AttemptTerminalStatus = 'success' | 'failure';
+
+/** A provider result exists, but its first durable terminal projection did not settle. */
+export class AttemptSettlementError extends Error {
+  readonly taskRunId: string;
+  readonly intendedStatus: AttemptTerminalStatus;
+
+  constructor(input: {
+    kind: string;
+    taskRunId: string;
+    intendedStatus: AttemptTerminalStatus;
+  }) {
+    super(
+      `[${input.kind}] cannot report ${input.intendedStatus} before durable attempt settlement: ${input.taskRunId}`,
+    );
+    this.name = 'AttemptSettlementError';
+    this.taskRunId = input.taskRunId;
+    this.intendedStatus = input.intendedStatus;
+  }
+}
+
 function safeInputHash(input: unknown): string {
   try {
     return taskInputHash(input);
@@ -75,7 +96,9 @@ function safeInputHash(input: unknown): string {
  * SDK adapters only translate messages into `recordTerminalResult`, text
  * deltas and tool calls. This module owns the durable lifecycle invariant for
  * every adapter: started row, abort propagation, cost, terminal row and
- * after-run observation.
+ * after-run observation. Terminal methods have one sequential owner; a
+ * concurrent terminal call is unsupported and fails closed rather than joining
+ * the in-flight transaction.
  */
 export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   readonly abortController = new AbortController();
@@ -86,8 +109,10 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   private readonly timer: ReturnType<typeof setTimeout>;
   private terminal: TerminalResultEvidence | undefined;
   private costTruthCache: AttemptCostTruth | undefined;
-  private terminalWriteAttempted = false;
-  private terminalSettled = false;
+  private readonly terminalWriteAttempts = new Set<AttemptTerminalStatus>();
+  private terminalWriteInFlight = false;
+  private terminalSettledStatus: AttemptTerminalStatus | undefined;
+  private lastTerminalWriteError: unknown;
   private durableStart = false;
 
   constructor(private readonly config: LifecycleConfig<TResult>) {
@@ -231,9 +256,11 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       outcome: 'success',
     });
     if (!settled) {
-      throw new Error(
-        `[${this.kind}] cannot report success before durable attempt settlement: ${this.taskRunId}`,
-      );
+      throw new AttemptSettlementError({
+        kind: this.kind,
+        taskRunId: this.taskRunId,
+        intendedStatus: 'success',
+      });
     }
 
     if (this.config.afterRun) {
@@ -251,12 +278,23 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
 
   /** Return false when the durable attempt truth could not be settled. */
   async finishFailure(error: unknown, finishReason = 'error'): Promise<boolean> {
-    return this.writeTerminal({
+    const settled = await this.writeTerminal({
       status: 'failure',
       finishReason,
       errorMessage: error instanceof Error ? error.message : String(error),
       outcome: isTransientAgentFailure(error) ? 'failed_retryable' : 'failed_permanent',
     });
+    if (!settled && !this.terminalSettledStatus) {
+      const writeError = this.lastTerminalWriteError ?? error;
+      console.warn(`[${this.config.logScope}] task_run_stuck_in_running`, {
+        event: 'task_run_stuck_in_running',
+        task_run_id: this.taskRunId,
+        kind: this.kind,
+        intended_status: 'failure',
+        err: writeError instanceof Error ? writeError.message : String(writeError),
+      });
+    }
+    return settled;
   }
 
   /** Best-effort conservative marker: false negatives are allowed, false positives are not. */
@@ -290,14 +328,23 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   private async writeTerminal(input: {
-    status: 'success' | 'failure';
+    status: AttemptTerminalStatus;
     finishReason: string;
     errorMessage: string | undefined;
     outcome: 'success' | 'failed_retryable' | 'failed_permanent';
   }): Promise<boolean> {
     if (!this.durableStart) return false;
-    if (this.terminalWriteAttempted) return this.terminalSettled;
-    this.terminalWriteAttempted = true;
+    if (this.terminalSettledStatus) return this.terminalSettledStatus === input.status;
+    if (this.terminalWriteInFlight) return false;
+    if (this.terminalWriteAttempts.has(input.status)) return false;
+
+    // A failed success projection may be downgraded exactly once to an
+    // application failure. Never retry an ambiguous status, upgrade failure to
+    // success, or allow concurrent terminal transactions. The DB's running-row
+    // CAS and unique attempt ledger remain the final double-write guards.
+    if (this.terminalWriteAttempts.size > 0 && input.status !== 'failure') return false;
+    this.terminalWriteAttempts.add(input.status);
+    this.terminalWriteInFlight = true;
     try {
       const settled = await writeAiTaskAttemptFinished(this.config.db, {
         id: this.taskRunId,
@@ -311,22 +358,19 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       if (!settled) {
         throw new Error(`cannot settle missing or non-running AI task attempt: ${this.taskRunId}`);
       }
-      this.terminalSettled = true;
+      this.terminalSettledStatus = input.status;
+      this.lastTerminalWriteError = undefined;
       return true;
     } catch (error) {
+      this.lastTerminalWriteError = error;
       console.error(`[${this.config.logScope}] writeAiTaskAttemptFinished ${input.status} failed`, {
         task_run_id: this.taskRunId,
         kind: this.kind,
         err: error,
       });
-      console.warn(`[${this.config.logScope}] task_run_stuck_in_running`, {
-        event: 'task_run_stuck_in_running',
-        task_run_id: this.taskRunId,
-        kind: this.kind,
-        intended_status: input.status,
-        err: error instanceof Error ? error.message : String(error),
-      });
       return false;
+    } finally {
+      this.terminalWriteInFlight = false;
     }
   }
 }

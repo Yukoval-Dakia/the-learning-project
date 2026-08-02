@@ -52,6 +52,7 @@ import {
   type AiRunLifecycle,
   type LifecycleUsage,
   type TerminalResultEvidence,
+  AttemptSettlementError,
   classifyLifecycleRetry,
   createRunLifecycle,
   maxLifecycleAttempts,
@@ -1128,6 +1129,7 @@ export async function streamTaskCollecting(
     return result;
   } catch (error) {
     if (!lifecycle.started) throw error;
+    const successSettlementFailed = error instanceof AttemptSettlementError;
     const boundError = bindAgentRunError({
       error,
       kind,
@@ -1135,7 +1137,10 @@ export async function streamTaskCollecting(
       aborted: lifecycle.aborted,
     });
     const settled = await lifecycle.finishFailure(boundError);
-    if (!settled) throw boundError;
+    // A provider-success payload whose success projection failed must never be
+    // returned as graceful partial text, even if the bounded fallback records
+    // the application attempt as failure successfully.
+    if (!settled || successSettlementFailed) throw boundError;
     return {
       task_run_id: lifecycle.taskRunId,
       text: resultText,

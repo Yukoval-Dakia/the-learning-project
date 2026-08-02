@@ -25,14 +25,17 @@
   collecting 路径会把未落账失败降级成 partial，现已要求 success/failure settlement 任一失败都
   reject。最新 review 继续发现 text stream 虽追加错误尾帧却仍会 clean-close；现要求已经发送的
   bytes 可以被消费，但 terminal settlement 失败必须 error stream，不能产生正常协议完成。普通、
-  流式与 collecting 反证测试均已覆盖；新 head 仍须重新通过远端 CI。
+  流式与 collecting 反证测试均已覆盖。最终 lifecycle review 又发现首次 success transaction 回滚
+  后幂等闩会阻止 failure 收口；现改为每个 status 最多一次、仅允许 success→failure 的有界降级，
+  CAS + 唯一 ledger 防双写。即使降级落账成功，collecting 仍拒绝 provider-success 文本；新 head 仍
+  须重新通过远端 CI。
 - **YUK-596 transport/Stop 与 actual burn-in 证据保持已交付；产品内容仍 HOLD。** YUK-832–836
   没有取消或完成，只因 owner 切换 active 主线而暂停。
 
 ## NEXT
 
-1. 提交并推送 PR #1156 的 stream terminal-settlement fail-closed 修复；只由 exact-head GitHub CI 执行
-   migration/unit/DB/typecheck/lint/build/audit gates。
+1. 提交并推送 PR #1156 的 bounded terminal-settlement state machine；只由 exact-head GitHub CI
+   执行 migration/unit/DB/typecheck/lint/build/audit gates。
 2. CI 绿且无未解决 P0/P1 后 merge，将 YUK-841 标 Done。
 3. 从合并后的 main 新建独立 worktree 启动 YUK-842 provider-lane admission；共享 schema/runtime lane
    不并行。
@@ -45,7 +48,8 @@
   placeholder price 只能标 estimated，不能用于预算可信声明。
 - 产品级 `cost_usd ?? 0` 聚合与 UI 的 null→$0 展示仍是后续 operation/UI debt；本票只承诺
   model-attempt truth，不扩写成 product-operation cost truth；operation 传播已捕获为 YUK-844。
-- stuck-run reconciler 的单行结算异常隔离为 P2 可用性 follow-up，已捕获为 YUK-843。
+- stuck-run reconciler 的单行结算异常隔离与 ambiguous-ack 最终收敛为 P2 可用性 follow-up，已捕获为
+  YUK-843；当前 lifecycle 明确保持 single-owner sequential terminal contract。
 - **YUK-832–836 actual-output P1**：保留原优先级与证据，FULL active 期间暂停，不用架构 gate
   冒充产品质量 gate。
 - **YUK-813 / YUK-831 OpenCode**：按 owner 指示暂不处理。
