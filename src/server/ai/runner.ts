@@ -1162,8 +1162,12 @@ export async function streamTaskCollecting(
     const settled = await lifecycle.finishFailure(boundError);
     // A provider-success payload whose success projection failed must never be
     // returned as graceful partial text, even if the bounded fallback records
-    // the application attempt as failure successfully.
-    if (!settled || successSettlementFailed) throw boundError;
+    // the application attempt as failure successfully. Admission fencing is
+    // likewise a fail-closed control-plane verdict, not an SDK stream failure
+    // that Copilot may persist and present as a graceful partial reply.
+    if (!settled || successSettlementFailed || boundError.subtype === 'provider_admission') {
+      throw boundError;
+    }
     return {
       task_run_id: lifecycle.taskRunId,
       text: resultText,

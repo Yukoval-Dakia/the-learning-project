@@ -177,6 +177,52 @@ describe('runner central provider-session seam', () => {
     expect(admissionMocks.releases.every((release) => release.mock.calls.length === 1)).toBe(true);
   });
 
+  it('rejects collected text when admission fencing wins after the SDK result', async () => {
+    sdkMocks.queues = [[assistant('must-not-persist'), success('must-not-persist')]];
+    admissionMocks.acquire.mockImplementationOnce(
+      async (input: {
+        taskRunId: string;
+        onLeaseLost: (error: ProviderSessionAdmissionError) => void;
+      }) => {
+        const release = vi.fn(async () => {
+          input.onLeaseLost(
+            new ProviderSessionAdmissionError({
+              reason: 'lease_lost',
+              laneId: 'xiaomi',
+              taskRunId: input.taskRunId,
+            }),
+          );
+        });
+        admissionMocks.releases.push(release);
+        return {
+          mode: 'enforce' as const,
+          laneId: 'xiaomi' as const,
+          borrowedFromTaskRunId: null,
+          release,
+        };
+      },
+    );
+
+    await expect(
+      streamTaskCollecting(
+        'AttributionTask',
+        { q: 2 },
+        { db: fakeDb, taskRunId: 'fenced-collecting' },
+        () => {},
+      ),
+    ).rejects.toMatchObject({
+      subtype: 'provider_admission',
+      taskRunId: 'fenced-collecting',
+    });
+
+    expect(admissionMocks.releases).toHaveLength(1);
+    expect(admissionMocks.releases[0]).toHaveBeenCalledTimes(1);
+    expect(logMocks.terminal).toHaveBeenLastCalledWith(
+      fakeDb,
+      expect.objectContaining({ status: 'failure' }),
+    );
+  });
+
   it('never lets retry admission extend the existing elapsed provider-start gate', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const startedAt = Date.now();
