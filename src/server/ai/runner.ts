@@ -315,10 +315,8 @@ function imageDataToBase64(data: MultimodalTaskInput['images'][number]['data']):
   return Buffer.from(data).toString('base64');
 }
 
-async function* multimodalPromptIterable(
-  input: MultimodalTaskInput,
-): AsyncGenerator<SDKUserMessage> {
-  const userMessage: SDKUserMessage = {
+function materializeMultimodalUserMessage(input: MultimodalTaskInput): SDKUserMessage {
+  return {
     type: 'user',
     parent_tool_use_id: null,
     message: {
@@ -345,11 +343,21 @@ async function* multimodalPromptIterable(
       ],
     },
   };
+}
+
+async function* singleMessagePromptIterable(
+  userMessage: SDKUserMessage,
+): AsyncGenerator<SDKUserMessage> {
   yield userMessage;
 }
 
 function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage> {
-  if (isMultimodalTaskInput(input)) return multimodalPromptIterable(input);
+  if (isMultimodalTaskInput(input)) {
+    // Materialize image conversion now. An async-generator body is lazy, so
+    // doing this inside the iterable would defer ArrayBuffer -> base64 work
+    // until the SDK consumes the prompt after admission.
+    return singleMessagePromptIterable(materializeMultimodalUserMessage(input));
+  }
   if (typeof input === 'string') return input;
   return JSON.stringify(input);
 }
