@@ -85,9 +85,9 @@ describe('bound runTask adapters', () => {
       structured_output: { answer: 42 },
     });
     expect(Object.keys(result).sort()).toEqual([
-      'cost_usd',
       'cost_basis',
       'cost_ref',
+      'cost_usd',
       'structured_output',
       'task_run_id',
       'text',
