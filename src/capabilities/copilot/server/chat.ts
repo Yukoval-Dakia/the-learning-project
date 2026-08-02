@@ -298,49 +298,6 @@ export function extractPrimaryView(
   return primaryView ? { text: cleaned, primaryView } : { text: cleaned };
 }
 
-// YUK-307 — bounded delta tail-filter. react-markdown (MathMarkdown, no
-// rehype-raw) renders raw HTML as VISIBLE escaped text — the marker is NOT
-// invisible in the bubble — so reviewed deltas must be filtered server-side: from
-// the first occurrence of the marker-start token onward, nothing is emitted
-// (the prompt pins the marker as the reply's LAST output). A delta ending in a
-// partial prefix of the token holds back at most token.length-1 chars until the
-// next delta proves/disproves the marker. Worst case (a prose lookalike at the
-// very end of the stream) under-emits a few trailing chars — the terminal
-// `reply` SSE event is authoritative and reconciles (CopilotDock already
-// overwrites the live text with the cleaned terminal reply).
-// YUK-832 — inline can replay a passed, already-reviewed candidate's original
-// chunk boundaries after persistence without exposing the marker. Durable runs
-// instead project one cleaned full-text DELTA transactionally from their marker.
-function wrapDeltaSuppressingMarker(onDelta: (text: string) => void): (text: string) => void {
-  let held = '';
-  let suppressed = false;
-  return (chunk: string) => {
-    if (suppressed) return;
-    const combined = held + chunk;
-    const markerAt = combined.indexOf(PRIMARY_VIEW_MARKER_START);
-    if (markerAt !== -1) {
-      suppressed = true;
-      held = '';
-      const before = combined.slice(0, markerAt);
-      if (before.length > 0) onDelta(before);
-      return;
-    }
-    // Hold back the longest suffix of `combined` that is a proper prefix of the
-    // token (the marker may be split across deltas).
-    let holdLen = 0;
-    const maxHold = Math.min(combined.length, PRIMARY_VIEW_MARKER_START.length - 1);
-    for (let len = maxHold; len > 0; len -= 1) {
-      if (combined.endsWith(PRIMARY_VIEW_MARKER_START.slice(0, len))) {
-        holdLen = len;
-        break;
-      }
-    }
-    held = holdLen > 0 ? combined.slice(combined.length - holdLen) : '';
-    const emit = holdLen > 0 ? combined.slice(0, combined.length - holdLen) : combined;
-    if (emit.length > 0) onDelta(emit);
-  };
-}
-
 export interface CopilotChatResult {
   task_run_id: string;
   reply: string;
@@ -440,6 +397,19 @@ export interface WriteCopilotReplyResult {
   primaryView?: CopilotPrimaryView;
 }
 
+export interface PreparedCopilotReply {
+  /** Exact public/persisted bytes after reply-tail metadata removal. */
+  text: string;
+  /** Metadata extracted from the same raw candidate, retained only when selected. */
+  primaryView?: CopilotPrimaryView;
+}
+
+export interface CopilotEvidenceValidationRef {
+  status: 'pass' | 'repair' | 'failed_closed';
+  reference_task_run_ids: string[];
+  comparison_task_run_ids: string[];
+}
+
 export async function writeCopilotReply(
   db: Db | Tx,
   params: {
@@ -448,10 +418,17 @@ export async function writeCopilotReply(
     userAskEventId?: string;
     /** 模型原始终稿（含可能的 primary_view marker；本 helper 负责剥）。 */
     replyText: string;
+    /**
+     * A reply already normalized before a sealed evidence review. When present,
+     * this is the byte-authoritative payload and MUST NOT be transformed again.
+     */
+    preparedReply?: PreparedCopilotReply;
     /** copilot_reply 的 actor_ref（inline=selectActorRef；durable handler 同款）。 */
     actorRef: string;
     /** 真实 task_run_id（cost-trace 链锚）。 */
     taskRunId: string;
+    /** Sealed FULL-validator run linkage; contains no model prose or reasoning. */
+    evidenceValidation?: CopilotEvidenceValidationRef;
     /**
      * Optional terminal outcome for durable recovery. Inline callers omit it,
      * preserving the existing null outcome byte-for-byte. A durable success
@@ -476,10 +453,20 @@ export async function writeCopilotReply(
   },
 ): Promise<WriteCopilotReplyResult> {
   const write = params.writeFn ?? writeEvent;
-  // YUK-307 — 在写入前 parse + strip primary_view marker（与 inline 同一收敛点形态）。
-  const { text: cleanedReply, primaryView } = extractPrimaryView(params.replyText, {
-    taskRunId: params.taskRunId,
-  });
+  if (params.preparedReply && params.preparedReply.text !== params.replyText) {
+    throw new Error('prepared copilot reply bytes do not match replyText');
+  }
+  // YUK-832 — evidence-bearing replies are normalized BEFORE review, then pass
+  // through this convergence point byte-for-byte. Legacy/non-reviewed callers
+  // still normalize here. Never certify raw bytes and persist a transformed
+  // suffix (notably an unterminated primary_view marker) afterward.
+  const prepared =
+    params.preparedReply ??
+    extractPrimaryView(params.replyText, {
+      taskRunId: params.taskRunId,
+    });
+  const cleanedReply = prepared.text;
+  const primaryView = prepared.primaryView;
   // created_at 严格晚于 ask（now + 1ms）：整轮共享一个 now，无偏移则 ask/reply
   // 在 created_at 上打平，turns 读取器的 (created_at, id) 排序可能把 reply 排到自己
   // 的 ask 之前。reply 真在 ask 之后发生，1ms bump 既忠实又保 pair 顺序（与 inline 同）。
@@ -499,6 +486,7 @@ export async function writeCopilotReply(
       session_id: params.sessionId,
       reply_md: cleanedReply,
       task_run_id: params.taskRunId,
+      ...(params.evidenceValidation ? { evidence_validation: params.evidenceValidation } : {}),
       ...(params.durableFinishReason ? { durable_finish_reason: params.durableFinishReason } : {}),
       ...(params.durableEmitReviewedDelta ? { durable_emit_reviewed_delta: true } : {}),
       ...(params.durableFailure ? { durable_failure: params.durableFailure } : {}),
@@ -1178,7 +1166,6 @@ async function runCopilotChatImpl(
   let replyRunId: string;
   let streamError: string | undefined;
   let candidateComplete = true;
-  const candidateDeltas: string[] = [];
   if (streaming) {
     const streamResult = await streamRun(
       'CopilotTask',
@@ -1207,9 +1194,7 @@ async function runCopilotChatImpl(
       // candidate delta here so a later read tool cannot make already-emitted
       // prose impossible to retract. The reviewed, marker-cleaned reply is
       // emitted once only after durable conversation persistence succeeds.
-      (text) => {
-        candidateDeltas.push(text);
-      },
+      () => {},
     );
     replyText = streamResult.text;
     replyRunId = streamResult.task_run_id;
@@ -1237,6 +1222,11 @@ async function runCopilotChatImpl(
     replyRunId = result.task_run_id;
   }
 
+  // Strip presentation-only metadata before the sealed review. The validator,
+  // persisted domain event, terminal envelope and delayed public DELTA must all
+  // see exactly these bytes; a dangling marker may truncate only here, never
+  // after a raw suffix was certified.
+  const preparedCandidate = extractPrimaryView(replyText, { taskRunId: replyRunId });
   const evidenceReview = await reviewEvidenceReply({
     db,
     requestContext: {
@@ -1246,7 +1236,7 @@ async function runCopilotChatImpl(
       ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
       ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
     },
-    candidateReply: replyText,
+    candidateReply: preparedCandidate.text,
     candidateTaskRunId: replyRunId,
     candidateComplete,
     toolTrace,
@@ -1254,6 +1244,12 @@ async function runCopilotChatImpl(
   });
   streaming?.signal?.throwIfAborted();
   replyText = evidenceReview.replyText;
+  // primary_view is a second user-visible channel (ephemeral_html can contain
+  // substantive prose). The sealed comparator reviews reply text only, so a
+  // read-bearing turn must drop this unreviewed metadata even when text passes.
+  // No-read/skipped turns retain the established presentation behavior.
+  const selectedPrimaryView =
+    evidenceReview.status === 'skipped' ? preparedCandidate.primaryView : undefined;
 
   // YUK-307 — single convergence point for BOTH the JSON and streaming paths:
   // parse + strip the primary_view marker ONCE from the collected reply, then
@@ -1274,25 +1270,29 @@ async function runCopilotChatImpl(
     sessionId,
     userAskEventId: causedByEventId,
     replyText,
+    preparedReply: {
+      text: replyText,
+      ...(selectedPrimaryView ? { primaryView: selectedPrimaryView } : {}),
+    },
     actorRef,
     taskRunId: replyRunId,
+    ...(evidenceReview.status === 'skipped'
+      ? {}
+      : {
+          evidenceValidation: {
+            status: evidenceReview.status,
+            reference_task_run_ids: evidenceReview.referenceTaskRunIds ?? [],
+            comparison_task_run_ids: evidenceReview.comparisonTaskRunIds ?? [],
+          },
+        }),
     now,
     writeFn: write,
   });
 
-  // The terminal reply envelope remains authoritative. A passed/skipped
-  // candidate replays its original (marker-filtered) chunk boundaries; a repair
-  // or fail-closed decision emits one safe replacement. Emitting only after the
-  // domain reply commits prevents a write failure from exposing an unpersisted
-  // answer. Teaching behavior-pack replies keep their existing direct delta.
-  if (streaming) {
-    if (evidenceReview.status === 'pass' || evidenceReview.status === 'skipped') {
-      const emitCandidateDelta = wrapDeltaSuppressingMarker(streaming.onDelta);
-      for (const delta of candidateDeltas) emitCandidateDelta(delta);
-    } else if (cleanedReply.length > 0) {
-      streaming.onDelta(cleanedReply);
-    }
-  }
+  // Publish the exact reviewed/persisted bytes once, after the domain write.
+  // Replaying raw candidate chunks could retain whitespace removed with a tail
+  // marker and make the public stream differ from the sealed hash.
+  if (streaming && cleanedReply.length > 0) streaming.onDelta(cleanedReply);
 
   // YUK-497 wave-4 — suppress the revert anchor when this turn called a MATERIALIZING tool (writes a
   // question/artifact row outside the event chain that cascade-revert can't compensate). Keyed on the

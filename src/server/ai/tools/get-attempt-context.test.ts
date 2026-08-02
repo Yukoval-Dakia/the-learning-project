@@ -1343,6 +1343,36 @@ describe('getAttemptContextTool', () => {
       created_at: at,
     });
     await writeEvent(db, {
+      id: 'probe_judgement_contradicts_outcome',
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: 'experimental:probe_result',
+      subject_kind: 'question',
+      subject_id: 'q_judgement_contradiction',
+      payload: {
+        conjecture_event_id: 'conjecture_judgement_contradiction',
+        outcome: 0,
+        resolution: 'evidence_for',
+        response_judgement: {
+          rule_version: 'conjecture_probe_response_signature_v1',
+          answer_result: 'correct',
+          target_error_match: 'not_matched',
+          gradable: true,
+          reason_code: 'gold_signature_matched',
+          signature_match_explanation_md:
+            'Shape-valid gold judgement that must not certify target-error evidence.',
+          evidence_refs: [
+            'learner_response',
+            'gold_response_signature',
+            'target_error_response_signature',
+            'correctness_judge',
+          ],
+        },
+      },
+      caused_by_event_id: 'conjecture_judgement_contradiction',
+      created_at: at,
+    });
+    await writeEvent(db, {
       id: 'prediction_score_missing_breakdown',
       actor_kind: 'system',
       actor_ref: 'conjecture_reconcile',
@@ -1408,14 +1438,58 @@ describe('getAttemptContextTool', () => {
       caused_by_event_id: 'probe_activation_invalid',
       created_at: at,
     });
+    await writeEvent(db, {
+      id: 'checkpoint_payload_lineage_mismatch',
+      actor_kind: 'system',
+      actor_ref: 'attempt_snapshot',
+      action: 'experimental:grading_checkpoint',
+      subject_kind: 'event',
+      subject_id: 'attempt_lineage_envelope',
+      outcome: 'success',
+      caused_by_event_id: 'attempt_lineage_envelope',
+      payload: { attempt_event_id: 'attempt_lineage_payload', segment: 'fsrs' },
+      created_at: at,
+    });
+    await writeEvent(db, {
+      id: 'checkpoint_cause_lineage_mismatch',
+      actor_kind: 'system',
+      actor_ref: 'attempt_snapshot',
+      action: 'experimental:grading_checkpoint',
+      subject_kind: 'event',
+      subject_id: 'attempt_lineage_shared',
+      outcome: 'success',
+      caused_by_event_id: 'attempt_lineage_other_parent',
+      payload: { attempt_event_id: 'attempt_lineage_shared', segment: 'theta' },
+      created_at: at,
+    });
+    await writeEvent(db, {
+      id: 'snapshot_payload_lineage_mismatch',
+      actor_kind: 'system',
+      actor_ref: 'attempt_snapshot',
+      action: 'experimental:state_snapshot',
+      subject_kind: 'event',
+      subject_id: 'attempt_snapshot_envelope',
+      outcome: 'success',
+      caused_by_event_id: 'attempt_snapshot_envelope:checkpoint:fsrs',
+      payload: {
+        attempt_event_id: 'attempt_snapshot_payload',
+        theta_snapshots: [],
+        fsrs_snapshots: [],
+      },
+      created_at: at,
+    });
 
     for (const attemptEventId of [
       'prediction_score_malformed',
       'probe_pair_mismatch',
       'probe_inconclusive_missing_judgement',
+      'probe_judgement_contradicts_outcome',
       'prediction_score_missing_breakdown',
       'prediction_score_broken_lineage',
       'activation_duplicate_diagnostics',
+      'checkpoint_payload_lineage_mismatch',
+      'checkpoint_cause_lineage_mismatch',
+      'snapshot_payload_lineage_mismatch',
     ]) {
       const output = await getAttemptContextTool.execute(ctx(), { attemptEventId });
       expect(output.lookup.observed).toMatchObject({
@@ -1678,6 +1752,7 @@ describe('getAttemptContextTool', () => {
             created_at: '2026-08-01T00:00:00.000Z',
             payload_present: true,
             payload_projection_status: 'typed_elsewhere',
+            payload_projection_exhaustive: false,
             redacted_payload_groups: ['raw_payload'],
             evidence: null,
             correction_state: 'active',

@@ -68,6 +68,7 @@ import {
 import {
   ConjectureProbeResponseJudgement,
   type ConjectureProbeResponseJudgementT,
+  isCanonicalProbeOutcomeJudgement,
 } from '@/core/schema/conjecture-probe-response';
 import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
@@ -335,20 +336,10 @@ function assertFreshProbeResponseJudgement(params: {
     );
   }
 
-  const judgementMatchesOutcome =
-    responseJudgement?.gradable === true &&
-    ((outcome === 1 &&
-      responseJudgement.answer_result === 'correct' &&
-      responseJudgement.target_error_match === 'not_matched' &&
-      responseJudgement.reason_code === 'gold_signature_matched') ||
-      (outcome === 0 &&
-        responseJudgement.answer_result === 'incorrect' &&
-        responseJudgement.target_error_match === 'matched' &&
-        responseJudgement.reason_code === 'target_error_signature_matched') ||
-      (outcome === null &&
-        responseJudgement.answer_result === 'incorrect' &&
-        responseJudgement.target_error_match === 'not_matched' &&
-        responseJudgement.reason_code === 'response_matches_neither_signature'));
+  const judgementMatchesOutcome = isCanonicalProbeOutcomeJudgement({
+    outcome,
+    judgement: responseJudgement,
+  });
   if (!judgementMatchesOutcome) {
     throw new ApiError(
       'probe_response_judgement_mismatch',

@@ -49,8 +49,9 @@ import { Conversation } from '@/server/session';
 // moves from this counter into durable job_events once QUEUED is committed.
 let durableDispatchReservations = 0;
 
-// Inline free-form turns can spend up to 60s in the primary model and another
-// 2 × 120s in the YUK-832 selection + independent certification pipeline.
+// Inline free-form turns can spend up to 60s in the primary model and then the
+// bounded YUK-832 FULL pipeline (blind reference + confirmed comparator;
+// contract retry/fallback consume at most six 120s slots).
 // Candidate prose stays buffered until it
 // is safe, so keep the Cloudflare Tunnel connection alive with an SSE comment
 // rather than leaking an unreviewed delta. This remains comfortably below the

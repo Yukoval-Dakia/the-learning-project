@@ -22,8 +22,9 @@
 > `pre_execution_lost` is limited to QUEUED-only histories with no worker touch;
 > an explicit fence or legacy STARTED/DELTA/STEP/REPLY/FAILED(error) is treated
 > as possible execution and becomes no-checkpoint `ambiguous_execution` only
-> after the 12-minute primary execution ceiling, the YUK-832 bounded two-pass
-> evidence pipeline (at most two minutes per pass), and 30-second settlement grace.
+> after the 12-minute primary execution ceiling, the YUK-832 bounded FULL
+> evidence pipeline (at most six two-minute paid slots in the worst
+> contract-invalid + fallback path), and 30-second settlement grace.
 > `FAILED(reason='error')` remains a retry frame; all other FAILED reasons are
 > fail-closed terminal. Created/retry/active jobs and queue lookup failures are
 > never terminalized.
@@ -42,17 +43,24 @@
 > Dock consumption/button work remains later and still requires UI pre-flight.
 
 > **YUK-832 final evidence review update (2026-08-02):** free-form Copilot
-> candidate prose is now buffered rather than published as it is generated. A
-> bounded no-tool, strict-Zod review compares the current request, exact typed
-> DomainTool read results, and candidate, then selects the original bytes or one
-> repair. A separate strict-Zod verifier independently compares the selected bytes
-> with the same request/trace and can only certify or reject—它看不到首轮
-> checks/violations/task id，也不能再写第三版。只有 certify 后的文本可见；任一
-> reject/timeout/parse/provider failure 固定 fail closed。Marker 记录 primary stream 是否产生正文；随后
+> candidate prose is now buffered rather than published as it is generated. The
+> shipped intervention FULL validator state machine is generalized: a blind
+> no-tool leg never sees candidate prose and seals request-indexed facts/gaps to
+> exact typed DomainTool calls + RFC6901 pointers; a comparator then returns one
+> dense observation per server-sliced reply/request unit. Provider verdict is not
+> authority—the server binds indices, pointers, coverage and digests, derives the
+> decision, and requires two valid pass attempts. A valid fail stops immediately;
+> contract-invalid output consumes the bounded slot. The blind fallback is the
+> only possible repair and must itself obtain two fresh valid passes; there is no
+> third draft. Only confirmed text becomes visible; timeout/parse/provider/binding
+> failure is fixed fail closed. Marker 记录 primary stream 是否产生正文；随后
 > settlement projection 把一条 reviewed full-text DELTA 与 REPLY/DONE 或 FAILED
 > 放在同一事务里，严格按 DELTA→terminal 写入；redelivery/reconcile 从 marker 修复
 > 同一后缀，不重跑任一模型。STEP 卡只显示 deterministic lifecycle 文案，不转发
 > model-authored description。这 supersedes 原 N2/S3 的 raw-live-delta 细节。
+> `primary_view` 是另一条可见内容通道（尤其 `ephemeral_html`）；本轮 validator 只密封
+> reply text，因此任何读过 DomainTool 的 turn 都丢弃该 metadata。只有未触发证据审阅的
+> no-read turn 保留既有 primary-view nomination。
 
 ---
 
@@ -292,9 +300,10 @@ assembleCopilotRunInput(db, {
   `PreToolUse` 在 Task/Tavily/其它 SDK 工具前 deny+abort；async DomainTool
   `beforeExecute` 是本地工具最终 gate。相同 AbortSignal 传入 root runner、ToolContext 与
   nested `run_task`/proposal LLM，避免根 loop 停止后子调用继续花费。
-- **证据两轮同一取消边界。** 首轮 selection、轮间、独立 certification 与 marker
-  提交前都复用该 AbortSignal；取消后不启动下一轮、不把 AbortError 降级成普通
-  fail-closed 成功回复，也不持久化 raw candidate / 未认证 repair。
+- **FULL 证据管线共用取消边界。** blind reference、每个 bounded comparator attempt、
+  candidate→fallback 切换与 marker 提交前都复用该 AbortSignal 和 durable truth probe；
+  取消后不启动下一次 paid call、不把 AbortError 降级成普通 fail-closed 成功回复，也不
+  持久化 raw candidate / 未确认 fallback。
 - **终态与副作用边界。** 已开始的 DomainTool 从 execute 到 tool log + tool_use mirror
   完成前维持 in-flight barrier；drain 超时诚实落 `ambiguous_execution`，不假称安全取消。
   cancellation marker 保留已有 partial；无 partial 才写简短停止文案。materializing tool

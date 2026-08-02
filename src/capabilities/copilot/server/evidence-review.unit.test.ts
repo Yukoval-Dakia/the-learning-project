@@ -1,36 +1,121 @@
 import type { Db } from '@/db/client';
+import { AgentRunError } from '@/server/ai/agent-run-error';
+import { getReviewDueTool } from '@/server/ai/tools/context-readers';
+import { getAttemptContextTool } from '@/server/ai/tools/get-attempt-context';
 import { queryKnowledgeTool } from '@/server/ai/tools/knowledge-readers';
 import { queryEventsTool } from '@/server/ai/tools/query-events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  bindCopilotEvidenceComparison,
+  bindCopilotEvidenceReference,
+  segmentEvidenceReply,
+  segmentEvidenceRequest,
+} from './evidence-contract';
+import {
   COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
   type CopilotEvidenceReviewRunTaskFn,
   parseCopilotEvidenceReviewResult,
-  parseCopilotEvidenceVerificationResult,
   reviewCopilotEvidenceReply,
 } from './evidence-review';
 import { REALISTIC_EVIDENCE_TRACE } from './evidence-review.actual-fixture';
 
 const db = {} as Db;
+const sourceRef = {
+  call_index: 0,
+  side: 'output' as const,
+  json_pointer: '/events/0/id',
+  role: 'value' as const,
+};
+const gapSourceRef = {
+  call_index: 0,
+  side: 'output' as const,
+  json_pointer: '/claim_boundaries/supports_cross_subject_causal_descendant_claim',
+  role: 'scope' as const,
+};
 
-const allChecksPass = {
-  causality_grounded: true,
-  claim_support_respected: true,
-  scope_coverage_respected: true,
-  projection_boundaries_respected: true,
-  queue_count_boundaries_respected: true,
-  requested_chain_handled: true,
-  tool_trace_faithful: true,
-  internally_consistent: true,
-} as const;
+const unsafeCandidate = [
+  'A01：query_knowledge 返回空，所以三个 KC 从未挂载，且 input evidence_refs → conjecture → rate → probe 是完整因果链。',
+  'A03：subjectId 首页 complete_for_window=true，因此产品数据库里从未存在 intervention。',
+  'A04：redacted_payload_groups=[] 证明 schema 没有其他字段，B/C 唯一差异就是 activation。',
+  'C01：相同 timestamp 与连续 dispatch_seq 证明 review/judge/checkpoint 在同一事务完成。',
+  'C04：近 7 天 attempt=0 且页面无卡片，所以整个 queue 已清空。',
+].join('\n');
 
-const realisticEvidenceTrace = REALISTIC_EVIDENCE_TRACE;
+const blindSafeReply = [
+  'A01：query_knowledge 的 nodes=[] 只说明当前 active exact domain 没有匹配；supports_never_existed_claim=false。caused_by_event_id 才是因果边，evidence_refs 明示为 supporting_references_noncausal。',
+  'A03：probe_result sg6aqgpq6l3wp5maslkvz12j 的直接子事件 ee4x94n2wt1o8sh8z6zxn0yj 是 intervention_activated；但 activation_policy=not_observed，必要/充分条件均 not_supported，所以激活原因无法裁决。',
+  'A04：B 的 preparation_failed 投影给出 redacted_payload_groups=[]，C 的 intervention_activated 投影列出 future_diagnostics/private_metadata；两者 payload_projection_exhaustive=false，因此不能据此断言底层无其他字段或两者只有 activation 一项差异。',
+  'C01：review si6y0w14iihyogdifj7w60c1 的 judge 与 grading checkpoint 是它的直接子事件；相同 timestamp 和 dispatch_seq 只提供顺序，不证明同一事务。其 FSRS state_after 明示 due=2026-07-31T03:01:12.154Z、stability=2.3065、difficulty=2.11810397。',
+  'C04：近 7 天 exact attempt 查询 returned_count=0，due reader 也返回 0 行；但 queue_assertion.cleared=null、completeness=unknown、supports_exhaustive_zero_claim=false，且 delayed/transfer 分别投影到 2026-08-07 与 2026-08-21，因此无法裁决整个 queue 已清空。',
+  '操作边界：本轮只依据 13 条只读工具结果，没有执行 propose 或 write。',
+].join('\n');
+
+function evidenceRef(
+  callIndex: number,
+  jsonPointer: string,
+  role: 'value' | 'scope' | 'coverage' | 'relation',
+) {
+  return {
+    call_index: callIndex,
+    side: 'output' as const,
+    json_pointer: jsonPointer,
+    role,
+  };
+}
+
+function traceCoverageFor(
+  points: Array<{
+    point_index: number;
+    request_unit_indices: number[];
+    kind: 'observed_fact' | 'scope_boundary' | 'actual_gap';
+    source_refs: Array<{ call_index: number }>;
+  }>,
+  toolTrace: typeof REALISTIC_EVIDENCE_TRACE,
+) {
+  return toolTrace.map((observation, callIndex) => {
+    const covered = points.filter((point) =>
+      point.source_refs.some((ref) => ref.call_index === callIndex),
+    );
+    const successfulRead =
+      observation.effect === 'read' && observation.executed && observation.error_reason === null;
+    if (!successfulRead) {
+      return {
+        call_index: callIndex,
+        relevance: 'unusable' as const,
+        request_unit_indices: [],
+        evidence_point_indices: [],
+        rationale_md: '该 observation 不是成功只读结果，不能作为 evidence。',
+      };
+    }
+    if (covered.length === 0) {
+      return {
+        call_index: callIndex,
+        relevance: 'not_material' as const,
+        request_unit_indices: [],
+        evidence_point_indices: [],
+        rationale_md: '该成功只读结果与本次 request atoms 重复或不直接相关。',
+      };
+    }
+    return {
+      call_index: callIndex,
+      relevance: covered.every((point) => point.kind === 'scope_boundary')
+        ? ('scope_only' as const)
+        : ('material' as const),
+      request_unit_indices: Array.from(
+        new Set(covered.flatMap((point) => point.request_unit_indices)),
+      ),
+      evidence_point_indices: covered.map((point) => point.point_index),
+      rationale_md: '该成功只读结果由列出的 request atoms 与 evidence points 显式消费。',
+    };
+  });
+}
 
 function reviewParams(overrides: Partial<Parameters<typeof reviewCopilotEvidenceReply>[0]> = {}) {
   return {
     db,
     requestContext: {
-      user_message: '按事件 ID 核完 A03→A04 的因果链，再告诉我 C04 队列是否清零。',
+      user_message:
+        '按事件 ID 核验 A01/A03/A04 的因果和投影边界；再核验 C01 的 FSRS 链与 C04 queue 是否清零。只读。',
       surface: 'copilot',
       triggered_by: 'chat',
       ambient_context: {
@@ -38,17 +123,509 @@ function reviewParams(overrides: Partial<Parameters<typeof reviewCopilotEvidence
         focused_entity: { kind: 'knowledge', id: 'kc_yuk792_canary_20260731c' },
       },
     },
-    candidateReply: [
-      'A01 的 query_knowledge 返回空，所以三个 KC 从未挂载且只存在于事件日志；direct_children=[] 也证明没有 review/judge。',
-      'A03 的 proposal、rate、probe 形成完整且充分的线性因果链；exact subjectId 首页完整，说明产品数据库不存在 intervention。',
-      'A04 B/C 除结果外全部字段完全相同，因此已定位唯一根因。',
-      'C01 是系统唯一一条 review 链；相同 timestamp 与连续 dispatch_seq 证明同一事务，immediate card 已被清理。',
-      'C04 近 7 天 attempt=0，never_reviewed_count=0，所以没有 review、没有任何到期项目且整个队列已清空。',
-    ].join('\n'),
-    candidateTaskRunId: 'copilot_task_actual_a03_a04_c04',
+    candidateReply: unsafeCandidate,
+    candidateTaskRunId: 'copilot_task_actual_a01_a03_a04_c01_c04',
     candidateComplete: true,
-    toolTrace: realisticEvidenceTrace,
+    toolTrace: REALISTIC_EVIDENCE_TRACE,
     ...overrides,
+  };
+}
+
+function referenceOutput(input: unknown, options: { gaps?: boolean } = {}) {
+  const value = input as {
+    request_units: Array<{ index: number }>;
+    tool_trace?: typeof REALISTIC_EVIDENCE_TRACE;
+  };
+  const requestUnits = value.request_units;
+  const points = requestUnits.map((unit, index) => ({
+    point_index: index,
+    request_unit_indices: [unit.index],
+    kind: options.gaps ? ('actual_gap' as const) : ('observed_fact' as const),
+    statement_md: options.gaps
+      ? `请求 ${unit.index} 的确切全局结论未被本轮 typed trace 穷尽。`
+      : `请求 ${unit.index} 必须保留 exact typed evidence 与 scope boundary。`,
+    source_refs: [options.gaps ? gapSourceRef : sourceRef],
+  }));
+  return {
+    protocol_version: 1 as const,
+    evidence_points: points,
+    request_coverage: requestUnits.map((unit, index) => ({
+      request_unit_index: unit.index,
+      status: options.gaps ? ('actual_gap' as const) : ('answerable' as const),
+      evidence_point_indices: [index],
+    })),
+    trace_coverage: traceCoverageFor(points, value.tool_trace ?? REALISTIC_EVIDENCE_TRACE),
+    safe_reply: blindSafeReply,
+  };
+}
+
+function comparisonOutput(input: unknown, options: { fail?: boolean; gaps?: boolean } = {}) {
+  const value = input as {
+    request_units: Array<{ index: number }>;
+    reply_units: Array<{ index: number }>;
+    sealed_reference: {
+      evidence_points: Array<{ point_index: number }>;
+      request_coverage: Array<{ request_unit_index: number; evidence_point_indices: number[] }>;
+    };
+  };
+  const pointCount = value.sealed_reference.evidence_points.length;
+  const pointByReply = new Map<number, number[]>();
+  for (const point of value.sealed_reference.evidence_points) {
+    const replyIndex = point.point_index % value.reply_units.length;
+    pointByReply.set(replyIndex, [...(pointByReply.get(replyIndex) ?? []), point.point_index]);
+  }
+  const replyChecks = value.reply_units.map((unit) => {
+    const indices = pointByReply.get(unit.index) ?? [unit.index % pointCount];
+    if (options.fail && unit.index === 0) {
+      return {
+        reply_unit_index: unit.index,
+        status: 'unsupported' as const,
+        evidence_point_indices: indices,
+        source_refs: [],
+        reason_codes: ['noncausal_relation' as const],
+      };
+    }
+    return {
+      reply_unit_index: unit.index,
+      status: options.gaps ? ('explicit_gap' as const) : ('supported' as const),
+      evidence_point_indices: indices,
+      source_refs: [],
+      reason_codes: options.gaps ? (['actual_gap_disclosed'] as const) : (['supported'] as const),
+    };
+  });
+  return {
+    protocol_version: 1 as const,
+    reply_checks: replyChecks,
+    request_checks: value.request_units.map((unit) => {
+      const coverage = value.sealed_reference.request_coverage[unit.index];
+      const requiredPoints = coverage?.evidence_point_indices ?? [];
+      const replyIndices = replyChecks
+        .filter((check) =>
+          requiredPoints.some((point) => check.evidence_point_indices.includes(point)),
+        )
+        .map((check) => check.reply_unit_index);
+      if (options.fail && unit.index === 0) {
+        return {
+          request_unit_index: unit.index,
+          status: 'missing' as const,
+          reply_unit_indices: [],
+          evidence_point_indices: [],
+          reason_codes: ['requested_chain_incomplete' as const],
+        };
+      }
+      return {
+        request_unit_index: unit.index,
+        status: options.gaps ? ('explicit_gap' as const) : ('answered' as const),
+        reply_unit_indices: replyIndices,
+        evidence_point_indices: requiredPoints,
+        reason_codes: options.gaps ? (['actual_gap_disclosed'] as const) : (['supported'] as const),
+      };
+    }),
+  };
+}
+
+/**
+ * Case-specific blind ledger over the real A01/A03/A04/C01/C04 trace. Unlike
+ * the mechanical retry fixtures above, every claim binds to the exact typed
+ * scalar/empty projection that supports it.
+ */
+function realisticReferenceOutput(input: unknown) {
+  const value = input as {
+    request_units: Array<{ index: number }>;
+    tool_trace?: typeof REALISTIC_EVIDENCE_TRACE;
+  };
+  const requestUnits = value.request_units;
+  expect(requestUnits.map((unit) => unit.index)).toEqual([0, 1, 2, 3, 4, 5]);
+  const evidencePoints = [
+    {
+      point_index: 0,
+      request_unit_indices: [0],
+      kind: 'scope_boundary' as const,
+      statement_md:
+        'A01 的 active exact-domain lookup 返回空，但 typed boundary 不支持从未存在或全局不存在。',
+      source_refs: [
+        evidenceRef(1, '/nodes', 'coverage'),
+        evidenceRef(1, '/claim_boundaries/supports_never_existed_claim', 'scope'),
+        evidenceRef(1, '/claim_boundaries/supports_global_node_absence_claim', 'scope'),
+      ],
+    },
+    {
+      point_index: 1,
+      request_unit_indices: [0],
+      kind: 'observed_fact' as const,
+      statement_md: 'A01 的 evidence_refs 是 noncausal supporting references；因果只认 caused_by。',
+      source_refs: [
+        evidenceRef(2, '/lookup/observed/evidence/evidence_ref_semantics', 'relation'),
+        evidenceRef(2, '/lookup/observed/caused_by_event_id', 'relation'),
+        evidenceRef(2, '/claim_support/causal_edges', 'relation'),
+      ],
+    },
+    {
+      point_index: 2,
+      request_unit_indices: [1],
+      kind: 'observed_fact' as const,
+      statement_md: 'A03 直接观测 probe_result 的 intervention_activated 子事件及其 event id。',
+      source_refs: [
+        evidenceRef(4, '/causal_neighborhood/direct_children/0/event_id', 'value'),
+        evidenceRef(4, '/causal_neighborhood/direct_children/0/action', 'relation'),
+      ],
+    },
+    {
+      point_index: 3,
+      request_unit_indices: [1],
+      kind: 'actual_gap' as const,
+      statement_md:
+        'A03 的 typed support 不提供 intervention 激活的必要条件、充分条件或观测到的 policy。',
+      source_refs: [
+        evidenceRef(4, '/claim_support/activation_policy', 'scope'),
+        evidenceRef(4, '/claim_support/necessary_conditions', 'scope'),
+        evidenceRef(4, '/claim_support/sufficient_conditions', 'scope'),
+      ],
+    },
+    {
+      point_index: 4,
+      request_unit_indices: [2],
+      kind: 'scope_boundary' as const,
+      statement_md:
+        'A04 的空 redaction list 与非空 redaction list 都来自 non-exhaustive typed projections。',
+      source_refs: [
+        evidenceRef(
+          3,
+          '/causal_neighborhood/direct_children/0/redacted_payload_groups',
+          'coverage',
+        ),
+        evidenceRef(
+          3,
+          '/causal_neighborhood/direct_children/0/payload_projection_exhaustive',
+          'scope',
+        ),
+        evidenceRef(
+          4,
+          '/causal_neighborhood/direct_children/0/redacted_payload_groups/0',
+          'coverage',
+        ),
+        evidenceRef(
+          4,
+          '/causal_neighborhood/direct_children/0/payload_projection_exhaustive',
+          'scope',
+        ),
+      ],
+    },
+    {
+      point_index: 5,
+      request_unit_indices: [3],
+      kind: 'observed_fact' as const,
+      statement_md:
+        'C01 的 judge 与 grading checkpoint 都是 review 的直接子事件；typed temporal order 明示 noncausal。',
+      source_refs: [
+        evidenceRef(8, '/lookup/observed/event_id', 'value'),
+        evidenceRef(8, '/causal_neighborhood/direct_children/0/event_id', 'relation'),
+        evidenceRef(8, '/causal_neighborhood/direct_children/1/event_id', 'relation'),
+        evidenceRef(8, '/claim_support/temporal_order', 'scope'),
+      ],
+    },
+    {
+      point_index: 6,
+      request_unit_indices: [3],
+      kind: 'observed_fact' as const,
+      statement_md: 'C01 的 review state_after 给出具体 due、stability 与 difficulty。',
+      source_refs: [
+        evidenceRef(8, '/attempt/fsrs/state_after/due', 'value'),
+        evidenceRef(8, '/attempt/fsrs/state_after/stability', 'value'),
+        evidenceRef(8, '/attempt/fsrs/state_after/difficulty', 'value'),
+      ],
+    },
+    {
+      point_index: 7,
+      request_unit_indices: [4],
+      kind: 'observed_fact' as const,
+      statement_md:
+        'C04 的近 7 天 attempt exact filter returned_count=0，且 due reader 返回空 rows；typed scope 不支持 lifecycle inventory claim。',
+      source_refs: [
+        evidenceRef(10, '/coverage/returned_count', 'value'),
+        evidenceRef(10, '/claim_boundaries/zero_rows_scope', 'scope'),
+        evidenceRef(10, '/claim_boundaries/supports_lifecycle_status_count_claim', 'scope'),
+        evidenceRef(12, '/rows', 'value'),
+      ],
+    },
+    {
+      point_index: 8,
+      request_unit_indices: [4],
+      kind: 'actual_gap' as const,
+      statement_md:
+        'C04 的 queue cleared 未裁决、coverage unknown 且存在 delayed/transfer future projections。',
+      source_refs: [
+        evidenceRef(12, '/queue_assertion/cleared', 'scope'),
+        evidenceRef(12, '/queue_coverage/completeness', 'coverage'),
+        evidenceRef(12, '/queue_coverage/supports_exhaustive_zero_claim', 'scope'),
+        evidenceRef(12, '/future_projections/0/due_at', 'value'),
+        evidenceRef(12, '/future_projections/1/due_at', 'value'),
+      ],
+    },
+    {
+      point_index: 9,
+      request_unit_indices: [5],
+      kind: 'observed_fact' as const,
+      statement_md: '本轮 13 个观测均来自只读 reader trace；没有 propose/write 结果。',
+      source_refs: [
+        evidenceRef(0, '/total', 'value'),
+        evidenceRef(5, '/events/0/id', 'value'),
+        evidenceRef(12, '/as_of', 'value'),
+      ],
+    },
+  ];
+  return {
+    protocol_version: 1 as const,
+    evidence_points: evidencePoints,
+    request_coverage: [
+      { request_unit_index: 0, status: 'answerable' as const, evidence_point_indices: [0, 1] },
+      { request_unit_index: 1, status: 'actual_gap' as const, evidence_point_indices: [2, 3] },
+      { request_unit_index: 2, status: 'answerable' as const, evidence_point_indices: [4] },
+      { request_unit_index: 3, status: 'answerable' as const, evidence_point_indices: [5, 6] },
+      { request_unit_index: 4, status: 'actual_gap' as const, evidence_point_indices: [7, 8] },
+      { request_unit_index: 5, status: 'answerable' as const, evidence_point_indices: [9] },
+    ],
+    trace_coverage: traceCoverageFor(evidencePoints, value.tool_trace ?? REALISTIC_EVIDENCE_TRACE),
+    safe_reply: blindSafeReply,
+  };
+}
+
+function realisticComparisonOutput(input: unknown, options: { unsafe: boolean }) {
+  const value = input as {
+    request_units: Array<{ index: number }>;
+    reply_units: Array<{ index: number }>;
+  };
+  expect(value.request_units.map((unit) => unit.index)).toEqual([0, 1, 2, 3, 4, 5]);
+  if (options.unsafe) {
+    expect(value.reply_units.map((unit) => unit.index)).toEqual([0, 1, 2, 3, 4]);
+    return {
+      protocol_version: 1 as const,
+      reply_checks: [
+        {
+          reply_unit_index: 0,
+          status: 'unsupported' as const,
+          evidence_point_indices: [0, 1],
+          source_refs: [],
+          reason_codes: ['noncausal_relation' as const],
+        },
+        {
+          reply_unit_index: 1,
+          status: 'unsupported' as const,
+          evidence_point_indices: [2, 3],
+          source_refs: [],
+          reason_codes: ['incomplete_scope_or_pagination' as const],
+        },
+        {
+          reply_unit_index: 2,
+          status: 'unsupported' as const,
+          evidence_point_indices: [4],
+          source_refs: [],
+          reason_codes: ['projection_boundary_crossed' as const],
+        },
+        {
+          reply_unit_index: 3,
+          status: 'unsupported' as const,
+          evidence_point_indices: [5, 6],
+          source_refs: [],
+          reason_codes: ['internal_contradiction' as const],
+        },
+        {
+          reply_unit_index: 4,
+          status: 'unsupported' as const,
+          evidence_point_indices: [7, 8],
+          source_refs: [],
+          reason_codes: ['queue_or_count_unknown_promoted' as const],
+        },
+      ],
+      request_checks: [
+        {
+          request_unit_index: 0,
+          status: 'answered' as const,
+          reply_unit_indices: [0],
+          evidence_point_indices: [0, 1],
+          reason_codes: ['supported' as const],
+        },
+        {
+          request_unit_index: 1,
+          status: 'answered' as const,
+          reply_unit_indices: [1],
+          evidence_point_indices: [2, 3],
+          reason_codes: ['supported' as const],
+        },
+        {
+          request_unit_index: 2,
+          status: 'answered' as const,
+          reply_unit_indices: [2],
+          evidence_point_indices: [4],
+          reason_codes: ['supported' as const],
+        },
+        {
+          request_unit_index: 3,
+          status: 'answered' as const,
+          reply_unit_indices: [3],
+          evidence_point_indices: [5, 6],
+          reason_codes: ['supported' as const],
+        },
+        {
+          request_unit_index: 4,
+          status: 'answered' as const,
+          reply_unit_indices: [4],
+          evidence_point_indices: [7, 8],
+          reason_codes: ['supported' as const],
+        },
+        {
+          request_unit_index: 5,
+          status: 'missing' as const,
+          reply_unit_indices: [],
+          evidence_point_indices: [9],
+          reason_codes: ['requested_chain_incomplete' as const],
+        },
+      ],
+    };
+  }
+
+  expect(value.reply_units.map((unit) => unit.index)).toEqual([
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+  ]);
+  return {
+    protocol_version: 1 as const,
+    reply_checks: [
+      {
+        reply_unit_index: 0,
+        status: 'supported' as const,
+        evidence_point_indices: [0],
+        source_refs: [],
+        reason_codes: ['supported' as const],
+      },
+      {
+        reply_unit_index: 1,
+        status: 'supported' as const,
+        evidence_point_indices: [0],
+        source_refs: [],
+        reason_codes: ['supported' as const],
+      },
+      {
+        reply_unit_index: 2,
+        status: 'supported' as const,
+        evidence_point_indices: [1],
+        source_refs: [],
+        reason_codes: ['supported' as const],
+      },
+      {
+        reply_unit_index: 3,
+        status: 'supported' as const,
+        evidence_point_indices: [2],
+        source_refs: [],
+        reason_codes: ['supported' as const],
+      },
+      {
+        reply_unit_index: 4,
+        status: 'explicit_gap' as const,
+        evidence_point_indices: [3],
+        source_refs: [],
+        reason_codes: ['actual_gap_disclosed' as const],
+      },
+      {
+        reply_unit_index: 5,
+        status: 'supported' as const,
+        evidence_point_indices: [4],
+        source_refs: [],
+        reason_codes: ['supported' as const],
+      },
+      {
+        reply_unit_index: 6,
+        status: 'supported' as const,
+        evidence_point_indices: [4],
+        source_refs: [],
+        reason_codes: ['supported' as const],
+      },
+      {
+        reply_unit_index: 7,
+        status: 'supported' as const,
+        evidence_point_indices: [5],
+        source_refs: [],
+        reason_codes: ['supported' as const],
+      },
+      {
+        reply_unit_index: 8,
+        status: 'supported' as const,
+        evidence_point_indices: [5],
+        source_refs: [],
+        reason_codes: ['supported' as const],
+      },
+      {
+        reply_unit_index: 9,
+        status: 'supported' as const,
+        evidence_point_indices: [6],
+        source_refs: [],
+        reason_codes: ['supported' as const],
+      },
+      {
+        reply_unit_index: 10,
+        status: 'supported' as const,
+        evidence_point_indices: [7],
+        source_refs: [],
+        reason_codes: ['supported' as const],
+      },
+      {
+        reply_unit_index: 11,
+        status: 'explicit_gap' as const,
+        evidence_point_indices: [8],
+        source_refs: [],
+        reason_codes: ['actual_gap_disclosed' as const],
+      },
+      {
+        reply_unit_index: 12,
+        status: 'supported' as const,
+        evidence_point_indices: [9],
+        source_refs: [],
+        reason_codes: ['supported' as const],
+      },
+    ],
+    request_checks: [
+      {
+        request_unit_index: 0,
+        status: 'answered' as const,
+        reply_unit_indices: [0, 1, 2],
+        evidence_point_indices: [0, 1],
+        reason_codes: ['supported' as const],
+      },
+      {
+        request_unit_index: 1,
+        status: 'explicit_gap' as const,
+        reply_unit_indices: [3, 4],
+        evidence_point_indices: [2, 3],
+        reason_codes: ['actual_gap_disclosed' as const],
+      },
+      {
+        request_unit_index: 2,
+        status: 'answered' as const,
+        reply_unit_indices: [5, 6],
+        evidence_point_indices: [4],
+        reason_codes: ['supported' as const],
+      },
+      {
+        request_unit_index: 3,
+        status: 'answered' as const,
+        reply_unit_indices: [7, 8, 9],
+        evidence_point_indices: [5, 6],
+        reason_codes: ['supported' as const],
+      },
+      {
+        request_unit_index: 4,
+        status: 'explicit_gap' as const,
+        reply_unit_indices: [10, 11],
+        evidence_point_indices: [7, 8],
+        reason_codes: ['actual_gap_disclosed' as const],
+      },
+      {
+        request_unit_index: 5,
+        status: 'answered' as const,
+        reply_unit_indices: [12],
+        evidence_point_indices: [9],
+        reason_codes: ['supported' as const],
+      },
+    ],
   };
 }
 
@@ -56,21 +633,28 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('Copilot evidence review', () => {
-  it('keeps realistic query fixtures valid against the current typed reader schemas', () => {
-    for (const observation of realisticEvidenceTrace) {
+describe('Copilot FULL evidence review', () => {
+  it('keeps the 13-observation, 30KB+ realistic tool trace valid against every reader schema', () => {
+    expect(REALISTIC_EVIDENCE_TRACE).toHaveLength(13);
+    expect(JSON.stringify(REALISTIC_EVIDENCE_TRACE).length).toBeGreaterThan(30_000);
+    for (const observation of REALISTIC_EVIDENCE_TRACE) {
       if (observation.name === 'query_events') {
         expect(queryEventsTool.outputSchema.safeParse(observation.output).success).toBe(true);
       }
       if (observation.name === 'query_knowledge') {
         expect(queryKnowledgeTool.outputSchema.safeParse(observation.output).success).toBe(true);
       }
+      if (observation.name === 'get_attempt_context') {
+        expect(getAttemptContextTool.outputSchema.safeParse(observation.output).success).toBe(true);
+      }
+      if (observation.name === 'get_review_due') {
+        expect(getReviewDueTool.outputSchema.safeParse(observation.output).success).toBe(true);
+      }
     }
   });
 
-  it('skips the paid second pass when this turn produced no DomainTool read result', async () => {
+  it('skips paid validation when no successful DomainTool read was observed', async () => {
     const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>();
-
     const result = await reviewCopilotEvidenceReply(
       reviewParams({
         candidateReply: '我可以帮你把问题收窄。',
@@ -78,8 +662,8 @@ describe('Copilot evidence review', () => {
           {
             name: 'propose_knowledge_edge',
             effect: 'propose',
-            input: { from_id: 'kc_a', to_id: 'kc_b', relation: 'prerequisite' },
-            output: { proposal_id: 'proposal_01', status: 'pending_owner_acceptance' },
+            input: { from_id: 'kc_a', to_id: 'kc_b' },
+            output: { proposal_id: 'proposal_01' },
             error_reason: null,
             executed: true,
           },
@@ -92,402 +676,1092 @@ describe('Copilot evidence review', () => {
     expect(runTaskFn).not.toHaveBeenCalled();
   });
 
-  it('preserves candidate bytes only after two independent passes over the exact trace', async () => {
-    const candidate =
-      'A03 的 rate 与 probe 只是 proposal 的直接子节点；A04 有字段被 redacted，不能断言全部字段相同；C04 的 exact attempt=0，但 review=1，queue_assertion.cleared=null。';
-    const signal = new AbortController().signal;
-    const runTaskFn = vi
-      .fn<CopilotEvidenceReviewRunTaskFn>()
-      .mockResolvedValueOnce({
-        task_run_id: 'review_native_01',
-        text: '{"verdict":"repair","safe_reply":"这段 text 不得获胜"}',
-        structured_output: { verdict: 'pass', checks: allChecksPass },
-      })
-      .mockResolvedValueOnce({
-        task_run_id: 'review_verify_01',
+  it('preserves original bytes only after blind reference plus two bound passes', async () => {
+    const candidate = blindSafeReply;
+    let comparisonOrdinal = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
+      if (kind === 'CopilotEvidenceReviewTask') {
+        return {
+          task_run_id: 'reference-1',
+          text: '',
+          structured_output: realisticReferenceOutput(input),
+        };
+      }
+      comparisonOrdinal += 1;
+      return {
+        task_run_id: `comparison-${comparisonOrdinal}`,
         text: '',
-        structured_output: { verdict: 'certify', checks: allChecksPass },
-      });
-
-    const result = await reviewCopilotEvidenceReply(
-      reviewParams({ candidateReply: candidate, signal, runTaskFn }),
-    );
-
-    expect(result).toEqual({
-      status: 'pass',
-      replyText: candidate,
-      reviewTaskRunId: 'review_native_01',
-      verificationTaskRunId: 'review_verify_01',
+        structured_output: realisticComparisonOutput(input, { unsafe: false }),
+      };
     });
-    expect(runTaskFn).toHaveBeenCalledTimes(2);
-    const [kind, input, ctx] = runTaskFn.mock
-      .calls[0] as Parameters<CopilotEvidenceReviewRunTaskFn>;
-    expect(kind).toBe('CopilotEvidenceReviewTask');
-    expect(input).toMatchObject({
-      candidate_task_run_id: 'copilot_task_actual_a03_a04_c04',
-      candidate_complete: true,
-      review_round: 'initial',
-      tool_trace: realisticEvidenceTrace,
-    });
-    expect(input).not.toHaveProperty('conversation_history');
-    expect(ctx.signal).toBe(signal);
-    expect(ctx.outputFormat).toBeDefined();
-    expect(runTaskFn.mock.calls[1]?.[0]).toBe('CopilotEvidenceVerificationTask');
-    expect(runTaskFn.mock.calls[1]?.[1]).toMatchObject({
-      final_reply: candidate,
-      final_text_kind: 'original',
-      source_complete: true,
-      tool_trace: realisticEvidenceTrace,
-    });
-    expect(runTaskFn.mock.calls[1]?.[1]).not.toHaveProperty('candidate_task_run_id');
-    expect(runTaskFn.mock.calls[1]?.[1]).not.toHaveProperty('selected_by_initial_verdict');
-  });
-
-  it('shows a realistic repair only after a second pass validates it', async () => {
-    const safeReply = [
-      'A03 只能确认 sg6aqgpq6l3wp5maslkvz12j 与 weitr0eg3au983xxf4bpowkr 都是 conjecture_yuk792_canary_20260731c 的直接子节点；两者互不是因果前后。',
-      'proposal 的 caused_by_event_id=null，evidence_refs 的语义是 supporting_references_noncausal；necessary_conditions / sufficient_conditions 均为 not_supported，不能声称必要、充分或完整线性因果链。',
-      'A04 的 q2lm07istehqzj8ar2slphpy 与 sg6aqgpq6l3wp5maslkvz12j 顶层 outcome 都是 null，投影内 evidence.outcome 都是 0；但 learner_answer、review_prose 等字段被 redacted，不能断言全部字段相同或定位唯一根因。',
-      'query_knowledge 的 active effective-domain 查询返回空，只表示本次 domain/node scope 没有 active match，不证明节点从未存在、从未挂载或只存在于 event log。相同 timestamp 与 dispatch_seq 只支持插入顺序，不证明同一事务；180 天完整窗口也不支持“系统唯一”。',
-      'C04 的 exact action=attempt 查询返回 0 行，但 exact action=review 返回 si6y0w14iihyogdifj7w60c1；零行不能跨 action 扩张。get_review_due 的 rows=[] 只覆盖 returned_actionable_rows，queue_assertion.cleared=null，且仍有 2 条 future_projections，因此无法裁决整个队列是否清空。',
-    ].join('\n');
-    const violations = [
-      'noncausal_relation',
-      'unsupported_necessity_or_sufficiency',
-      'incomplete_scope_or_pagination',
-      'projection_boundary_crossed',
-      'queue_or_count_unknown_promoted',
-      'requested_chain_incomplete',
-      'internal_contradiction',
-    ] as const;
-    const runTaskFn = vi
-      .fn<CopilotEvidenceReviewRunTaskFn>()
-      .mockResolvedValueOnce({
-        task_run_id: 'review_mimo_01',
-        text: JSON.stringify({
-          verdict: 'repair',
-          checks: {
-            ...allChecksPass,
-            causality_grounded: false,
-            claim_support_respected: false,
-            scope_coverage_respected: false,
-            projection_boundaries_respected: false,
-            queue_count_boundaries_respected: false,
-            requested_chain_handled: false,
-            internally_consistent: false,
-          },
-          violations,
-          safe_reply: safeReply,
-        }),
-      })
-      .mockResolvedValueOnce({
-        task_run_id: 'review_mimo_verify_01',
-        text: JSON.stringify({ verdict: 'certify', checks: allChecksPass }),
-      });
-
-    const result = await reviewCopilotEvidenceReply(reviewParams({ runTaskFn }));
-
-    expect(result).toEqual({
-      status: 'repair',
-      replyText: safeReply,
-      reviewTaskRunId: 'review_mimo_01',
-      verificationTaskRunId: 'review_mimo_verify_01',
-      violations,
-    });
-    expect(runTaskFn.mock.calls[1]?.[0]).toBe('CopilotEvidenceVerificationTask');
-    expect(runTaskFn.mock.calls[1]?.[1]).toMatchObject({
-      final_reply: safeReply,
-      final_text_kind: 'repair',
-      source_complete: true,
-    });
-  });
-
-  it('fails closed instead of showing an unverified repair of a complex bounded trace', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const unsafeRepair = [
-      'get_review_due 返回 0，所以当前没有任何到期项目。',
-      'subjectId 完整窗口没有 intervention，因此产品数据库中不存在 intervention。',
-    ].join('\n');
-    const runTaskFn = vi
-      .fn<CopilotEvidenceReviewRunTaskFn>()
-      .mockResolvedValueOnce({
-        task_run_id: 'review_unsafe_repair_01',
-        text: JSON.stringify({
-          verdict: 'repair',
-          checks: { ...allChecksPass, scope_coverage_respected: false },
-          violations: ['incomplete_scope_or_pagination'],
-          safe_reply: unsafeRepair,
-        }),
-      })
-      .mockResolvedValueOnce({
-        task_run_id: 'review_unsafe_repair_verify_01',
-        text: JSON.stringify({
-          verdict: 'reject',
-          checks: {
-            ...allChecksPass,
-            scope_coverage_respected: false,
-            queue_count_boundaries_respected: false,
-          },
-          violations: ['incomplete_scope_or_pagination', 'queue_or_count_unknown_promoted'],
-        }),
-      });
-
-    const result = await reviewCopilotEvidenceReply(reviewParams({ runTaskFn }));
-
-    expect(result).toEqual({
-      status: 'failed_closed',
-      replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
-    });
-    expect(JSON.stringify(result)).not.toContain(unsafeRepair);
-  });
-
-  it('fails closed when a repair evades material request parts despite a rich trace', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const evasiveRepair = '现有证据不足，A03/A04 链和 C04 队列都无法裁决。';
-    const runTaskFn = vi
-      .fn<CopilotEvidenceReviewRunTaskFn>()
-      .mockResolvedValueOnce({
-        text: JSON.stringify({
-          verdict: 'repair',
-          checks: { ...allChecksPass, requested_chain_handled: false },
-          violations: ['requested_chain_incomplete'],
-          safe_reply: evasiveRepair,
-        }),
-      })
-      .mockResolvedValueOnce({
-        text: JSON.stringify({
-          verdict: 'reject',
-          checks: { ...allChecksPass, requested_chain_handled: false },
-          violations: ['requested_chain_incomplete'],
-        }),
-      });
-
-    const result = await reviewCopilotEvidenceReply(reviewParams({ runTaskFn }));
-
-    expect(result).toEqual({
-      status: 'failed_closed',
-      replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
-    });
-    expect(runTaskFn.mock.calls[1]?.[1]).toMatchObject({
-      final_reply: evasiveRepair,
-      tool_trace: realisticEvidenceTrace,
-    });
-  });
-
-  it('fails closed when final certification returns invalid non-JSON text', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const candidate = '只报告 exact filter 的三行。';
-    const runTaskFn = vi
-      .fn<CopilotEvidenceReviewRunTaskFn>()
-      .mockResolvedValueOnce({
-        text: JSON.stringify({ verdict: 'pass', checks: allChecksPass }),
-      })
-      .mockResolvedValueOnce({ text: '认证通过，但这不是 JSON。' });
 
     const result = await reviewCopilotEvidenceReply(
       reviewParams({ candidateReply: candidate, runTaskFn }),
     );
 
-    expect(result).toEqual({
-      status: 'failed_closed',
-      replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
+    expect(result).toMatchObject({
+      status: 'pass',
+      replyText: candidate,
+      reviewTaskRunId: 'reference-1',
+      verificationTaskRunId: 'comparison-2',
+      referenceTaskRunIds: ['reference-1'],
+      comparisonTaskRunIds: ['comparison-1', 'comparison-2'],
     });
-    expect(JSON.stringify(result)).not.toContain(candidate);
-  });
-
-  it('preserves source_complete=false when certifying a repair that discloses partial execution', async () => {
-    const disclosedRepair = [
-      '本轮主任务中途停止；A03 已核到 proposal 的两个直接子事件，二者是 sibling 而非前后因果；其余 review/judge 后段未核验，无法裁决完整链。',
-      'A04 已返回的两个 probe_result 顶层 outcome 都为 null、evidence.outcome 都为 0，但存在 redacted 字段，不能裁决唯一差异。',
-      'C04 exact action=attempt 的 7 天窗口为 0 行，exact action=review 返回 si6y0w14iihyogdifj7w60c1；queue_assertion.cleared=null，另有 2 条 future_projections，因此无法裁决整个队列是否清空。',
-    ].join('\n');
-    const runTaskFn = vi
-      .fn<CopilotEvidenceReviewRunTaskFn>()
-      .mockResolvedValueOnce({
-        text: JSON.stringify({
-          verdict: 'repair',
-          checks: { ...allChecksPass, requested_chain_handled: false },
-          violations: ['requested_chain_incomplete'],
-          safe_reply: disclosedRepair,
-        }),
-      })
-      .mockResolvedValueOnce({
-        text: JSON.stringify({ verdict: 'certify', checks: allChecksPass }),
-      });
-
-    const result = await reviewCopilotEvidenceReply(
-      reviewParams({ candidateComplete: false, runTaskFn }),
-    );
-
-    expect(result).toMatchObject({ status: 'repair', replyText: disclosedRepair });
+    expect(runTaskFn).toHaveBeenCalledTimes(3);
+    expect(runTaskFn.mock.calls[0]?.[1]).not.toHaveProperty('candidate_reply');
+    expect(runTaskFn.mock.calls[0]?.[1]).not.toHaveProperty('final_reply');
     expect(runTaskFn.mock.calls[1]?.[1]).toMatchObject({
-      final_reply: disclosedRepair,
-      final_text_kind: 'repair',
-      source_complete: false,
+      selected_text_kind: 'original',
+      tool_trace: REALISTIC_EVIDENCE_TRACE,
     });
+    expect(runTaskFn.mock.calls[1]?.[1]).toEqual(runTaskFn.mock.calls[2]?.[1]);
   });
 
-  it('propagates cancellation between selection and certification without starting round two', async () => {
-    const controller = new AbortController();
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async () => {
-      controller.abort(new DOMException('owner stopped', 'AbortError'));
+  it('rejects the complex unsafe original and exposes the blind reply only after two fresh passes', async () => {
+    let comparisonOrdinal = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
+      if (kind === 'CopilotEvidenceReviewTask') {
+        return {
+          task_run_id: 'reference-realistic',
+          text: '',
+          structured_output: realisticReferenceOutput(input),
+        };
+      }
+      const selectedKind = (input as { selected_text_kind: string }).selected_text_kind;
+      comparisonOrdinal += 1;
       return {
-        text: JSON.stringify({ verdict: 'pass', checks: allChecksPass }),
+        task_run_id: `comparison-${comparisonOrdinal}`,
+        text: '',
+        structured_output: realisticComparisonOutput(input, {
+          unsafe: selectedKind === 'original',
+        }),
       };
     });
 
-    await expect(
-      reviewCopilotEvidenceReply(reviewParams({ signal: controller.signal, runTaskFn })),
-    ).rejects.toMatchObject({ name: 'AbortError' });
-    expect(runTaskFn).toHaveBeenCalledTimes(1);
-  });
-
-  it('runs the durable-truth gate between selection and paid certification', async () => {
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async () => ({
-      text: JSON.stringify({ verdict: 'pass', checks: allChecksPass }),
-    }));
-    const beforeVerification = vi.fn(async () => {
-      throw new DOMException('owner stopped in durable truth', 'AbortError');
-    });
-
-    await expect(
-      reviewCopilotEvidenceReply(reviewParams({ runTaskFn, beforeVerification })),
-    ).rejects.toMatchObject({ name: 'AbortError' });
-    expect(beforeVerification).toHaveBeenCalledTimes(1);
-    expect(runTaskFn).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([
-    {
-      name: 'prose around JSON',
-      output: `审阅结果：\n${JSON.stringify({ verdict: 'pass', checks: allChecksPass })}`,
-    },
-    { name: 'markdown fence', output: '```json\n{"verdict":"pass"}\n```' },
-    { name: 'malformed JSON', output: '{"verdict":"pass"' },
-  ])('fails closed on $name instead of brace-scanning or repairing', async ({ output }) => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async () => ({ text: output }));
-
     const result = await reviewCopilotEvidenceReply(reviewParams({ runTaskFn }));
 
-    expect(result).toEqual({
-      status: 'failed_closed',
-      replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
+    expect(result).toMatchObject({
+      status: 'repair',
+      replyText: blindSafeReply,
+      violations: [
+        'noncausal_relation',
+        'incomplete_scope_or_pagination',
+        'projection_boundary_crossed',
+        'internal_contradiction',
+        'queue_or_count_unknown_promoted',
+        'requested_chain_incomplete',
+      ],
+      referenceTaskRunIds: ['reference-realistic'],
+      comparisonTaskRunIds: ['comparison-1', 'comparison-2', 'comparison-3'],
+      verificationTaskRunId: 'comparison-3',
+    });
+    expect(runTaskFn).toHaveBeenCalledTimes(4);
+    expect(runTaskFn.mock.calls[2]?.[1]).toEqual(runTaskFn.mock.calls[3]?.[1]);
+    expect(JSON.stringify(runTaskFn.mock.calls[0]?.[1])).not.toContain(unsafeCandidate);
+  });
+
+  it('retries a contract-invalid blind ledger once with identical input', async () => {
+    const runTaskFn = vi
+      .fn<CopilotEvidenceReviewRunTaskFn>()
+      .mockResolvedValueOnce({
+        task_run_id: 'reference-invalid',
+        text: '',
+        structured_output: { protocol_version: 1, evidence_points: [] },
+      })
+      .mockImplementation(async (kind, input) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return {
+            task_run_id: 'reference-valid',
+            text: '',
+            structured_output: referenceOutput(input),
+          };
+        }
+        const ordinal = runTaskFn.mock.calls.filter((call) => call[0] === kind).length;
+        return {
+          task_run_id: `comparison-valid-${ordinal}`,
+          text: '',
+          structured_output: comparisonOutput(input),
+        };
+      });
+
+    const result = await reviewCopilotEvidenceReply(
+      reviewParams({ candidateReply: blindSafeReply, runTaskFn }),
+    );
+
+    expect(result.status).toBe('pass');
+    expect(runTaskFn.mock.calls[0]?.[1]).toEqual(runTaskFn.mock.calls[1]?.[1]);
+    expect(result.referenceTaskRunIds).toEqual(['reference-invalid', 'reference-valid']);
+  });
+
+  it('keeps a failed paid blind-reference run id when the next attempt succeeds', async () => {
+    let referenceAttempt = 0;
+    let comparisonAttempt = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
+      if (kind === 'CopilotEvidenceReviewTask') {
+        referenceAttempt += 1;
+        if (referenceAttempt === 1) {
+          throw new AgentRunError({
+            kind,
+            taskRunId: 'reference-provider-failed',
+            subtype: 'api_error_result',
+            apiErrorStatus: 503,
+            errors: ['upstream unavailable'],
+          });
+        }
+        return {
+          task_run_id: 'reference-provider-recovered',
+          text: '',
+          structured_output: referenceOutput(input),
+        };
+      }
+      comparisonAttempt += 1;
+      return {
+        task_run_id: `comparison-after-reference-recovery-${comparisonAttempt}`,
+        text: '',
+        structured_output: comparisonOutput(input),
+      };
+    });
+
+    const result = await reviewCopilotEvidenceReply(
+      reviewParams({ candidateReply: blindSafeReply, runTaskFn }),
+    );
+
+    expect(result).toMatchObject({
+      status: 'pass',
+      referenceTaskRunIds: ['reference-provider-failed', 'reference-provider-recovered'],
+      comparisonTaskRunIds: [
+        'comparison-after-reference-recovery-1',
+        'comparison-after-reference-recovery-2',
+      ],
     });
   });
 
-  it.each([
-    {
-      name: 'all-true repair',
-      structured_output: {
-        verdict: 'repair',
-        checks: allChecksPass,
-        violations: ['internal_contradiction'],
-        safe_reply: '不该通过',
-      },
-    },
-    {
-      name: 'blank repair',
-      structured_output: {
-        verdict: 'repair',
-        checks: { ...allChecksPass, internally_consistent: false },
-        violations: ['internal_contradiction'],
-        safe_reply: '   ',
-      },
-    },
-    {
-      name: 'repair with presentation marker',
-      structured_output: {
-        verdict: 'repair',
-        checks: { ...allChecksPass, projection_boundaries_respected: false },
-        violations: ['projection_boundary_crossed'],
-        safe_reply: '安全文本<!--primary_view:{"source":"artifact"}-->',
-      },
-    },
-  ])('fails closed on $name', async ({ structured_output }) => {
+  it('does not let one valid pass wash away a contract-invalid comparator attempt', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async () => ({
-      text: '',
-      structured_output,
-    }));
+    let comparatorAttempt = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
+      if (kind === 'CopilotEvidenceReviewTask') {
+        return { task_run_id: 'reference', text: '', structured_output: referenceOutput(input) };
+      }
+      comparatorAttempt += 1;
+      return comparatorAttempt === 1
+        ? {
+            task_run_id: 'comparison-invalid',
+            text: '',
+            structured_output: { protocol_version: 1, reply_checks: [], request_checks: [] },
+          }
+        : {
+            task_run_id: 'comparison-pass',
+            text: '',
+            structured_output: comparisonOutput(input),
+          };
+    });
+
+    const result = await reviewCopilotEvidenceReply(
+      reviewParams({ candidateReply: blindSafeReply, runTaskFn }),
+    );
+
+    expect(result).toMatchObject({
+      status: 'failed_closed',
+      replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
+      referenceTaskRunIds: ['reference'],
+      comparisonTaskRunIds: ['comparison-invalid', 'comparison-pass'],
+    });
+  });
+
+  it('keeps a failed paid comparator id when a later pass cannot confirm it', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let comparatorAttempt = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
+      if (kind === 'CopilotEvidenceReviewTask') {
+        return { task_run_id: 'reference', text: '', structured_output: referenceOutput(input) };
+      }
+      comparatorAttempt += 1;
+      if (comparatorAttempt === 1) {
+        throw new AgentRunError({
+          kind,
+          taskRunId: 'comparison-provider-failed',
+          subtype: 'stream_no_terminal',
+          errors: ['stream ended without terminal'],
+        });
+      }
+      return {
+        task_run_id: 'comparison-provider-recovered',
+        text: '',
+        structured_output: comparisonOutput(input),
+      };
+    });
+
+    const result = await reviewCopilotEvidenceReply(
+      reviewParams({ candidateReply: blindSafeReply, runTaskFn }),
+    );
+
+    expect(result).toMatchObject({
+      status: 'failed_closed',
+      referenceTaskRunIds: ['reference'],
+      comparisonTaskRunIds: ['comparison-provider-failed', 'comparison-provider-recovered'],
+    });
+  });
+
+  it('fails closed when the blind fallback itself is rejected', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let comparisonOrdinal = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
+      if (kind === 'CopilotEvidenceReviewTask') {
+        return { task_run_id: 'reference', text: '', structured_output: referenceOutput(input) };
+      }
+      comparisonOrdinal += 1;
+      return {
+        task_run_id: `comparison-${comparisonOrdinal}`,
+        text: '',
+        structured_output: comparisonOutput(input, { fail: true }),
+      };
+    });
 
     const result = await reviewCopilotEvidenceReply(reviewParams({ runTaskFn }));
 
     expect(result.replyText).toBe(COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY);
-    expect(result.status).toBe('failed_closed');
+    expect(JSON.stringify(result)).not.toContain(blindSafeReply);
   });
 
-  it('fails closed if a partial evidence candidate is incorrectly passed unchanged', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async () => ({
-      text: '',
-      structured_output: { verdict: 'pass', checks: allChecksPass },
-    }));
-
-    const result = await reviewCopilotEvidenceReply(
-      reviewParams({ candidateComplete: false, runTaskFn }),
-    );
-
-    expect(result).toEqual({
-      status: 'failed_closed',
-      replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
-    });
-  });
-
-  it('fails closed on runner failure and oversized evidence without leaking candidate prose', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const failedRunner = vi.fn<CopilotEvidenceReviewRunTaskFn>(async () => {
-      throw new Error('provider body with private data');
-    });
-
-    const runnerFailure = await reviewCopilotEvidenceReply(
-      reviewParams({ runTaskFn: failedRunner }),
-    );
-    const oversized = await reviewCopilotEvidenceReply(
-      reviewParams({ candidateReply: 'x'.repeat(64_001), runTaskFn: failedRunner }),
-    );
-
-    expect(runnerFailure.replyText).toBe(COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY);
-    expect(oversized.replyText).toBe(COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY);
-    expect(failedRunner).toHaveBeenCalledTimes(1);
-  });
-
-  it('fails closed on an internal task timeout AbortError when the caller signal is still live', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('propagates cancellation between paid calls', async () => {
     const controller = new AbortController();
-    const timedOutRunner = vi.fn<CopilotEvidenceReviewRunTaskFn>(async () => {
-      throw new DOMException('task budget elapsed', 'AbortError');
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (_kind, input) => {
+      controller.abort(new DOMException('owner stopped', 'AbortError'));
+      return {
+        task_run_id: 'reference-before-stop',
+        text: '',
+        structured_output: referenceOutput(input),
+      };
     });
 
-    const result = await reviewCopilotEvidenceReply(
-      reviewParams({ signal: controller.signal, runTaskFn: timedOutRunner }),
-    );
-
-    expect(controller.signal.aborted).toBe(false);
-    expect(result).toEqual({
-      status: 'failed_closed',
-      replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
-    });
+    await expect(
+      reviewCopilotEvidenceReply(
+        reviewParams({ signal: controller.signal, runTaskFn, candidateReply: blindSafeReply }),
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
   });
 
-  it('does not fall back to valid text when native structured output is present but invalid', () => {
+  it('runs durable truth before every paid validation call', async () => {
+    const beforeVerification = vi.fn(async () => {
+      throw new DOMException('owner stopped in durable truth', 'AbortError');
+    });
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>();
+
+    await expect(
+      reviewCopilotEvidenceReply(
+        reviewParams({ beforeVerification, runTaskFn, candidateReply: blindSafeReply }),
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(beforeVerification).toHaveBeenCalledTimes(1);
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('treats provider AbortError as a paid failure unless the caller signal is aborted', async () => {
+    const liveSignal = new AbortController().signal;
+    const referenceRunTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async () => {
+      throw new DOMException('provider task budget elapsed', 'AbortError');
+    });
+
+    const referenceResult = await reviewCopilotEvidenceReply(
+      reviewParams({ signal: liveSignal, runTaskFn: referenceRunTaskFn }),
+    );
+    expect(referenceResult).toMatchObject({
+      status: 'failed_closed',
+      replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
+      referenceTaskRunIds: [],
+    });
+    expect(referenceRunTaskFn).toHaveBeenCalledTimes(2);
+
+    const comparisonRunTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
+      if (kind === 'CopilotEvidenceReviewTask') {
+        return { task_run_id: 'reference', text: '', structured_output: referenceOutput(input) };
+      }
+      throw new DOMException('sdk stream budget elapsed', 'AbortError');
+    });
+    const comparisonResult = await reviewCopilotEvidenceReply(
+      reviewParams({ runTaskFn: comparisonRunTaskFn, candidateReply: blindSafeReply }),
+    );
+    expect(comparisonResult).toMatchObject({
+      status: 'failed_closed',
+      replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
+      referenceTaskRunIds: ['reference'],
+      comparisonTaskRunIds: [],
+    });
+    expect(comparisonRunTaskFn).toHaveBeenCalledTimes(3);
+  });
+
+  it('fails closed on oversized or structurally empty replies without leaking prose', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>();
+    const oversized = await reviewCopilotEvidenceReply(
+      reviewParams({ candidateReply: 'x'.repeat(64_001), runTaskFn }),
+    );
+
+    expect(oversized.replyText).toBe(COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY);
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('strictly rejects prose around a blind-reference JSON object', () => {
+    const requestUnits = segmentEvidenceRequest(reviewParams().requestContext);
+    const output = referenceOutput({ request_units: requestUnits });
     expect(() =>
-      parseCopilotEvidenceReviewResult({
-        text: JSON.stringify({ verdict: 'pass', checks: allChecksPass }),
-        structured_output: { verdict: 'pass', checks: { causality_grounded: true } },
-      }),
+      parseCopilotEvidenceReviewResult({ text: `结果如下：\n${JSON.stringify(output)}` }),
     ).toThrow();
   });
+});
 
-  it('rejects an all-true certification rejection as internally invalid', () => {
+describe('sealed evidence contract', () => {
+  it('atomizes five labeled request subparts instead of letting one dense row hide four omissions', () => {
+    const units = segmentEvidenceRequest({
+      user_message: '请分别核验 A01、A03、A04、C01、C04。',
+    });
+    expect(units.map((unit) => unit.text)).toEqual([
+      '请分别核验 A01、',
+      'A03、',
+      'A04、',
+      'C01、',
+      'C04。',
+    ]);
+  });
+
+  it('atomizes ordinary comma, 顿号, numbered, and Markdown-list requests without issue labels', () => {
+    expect(
+      segmentEvidenceRequest({ user_message: '请分别核验姓名、时间、状态、原因。' }).map(
+        (unit) => unit.text,
+      ),
+    ).toEqual(['请分别核验姓名、', '时间、', '状态、', '原因。']);
+    expect(
+      segmentEvidenceRequest({ user_message: 'Check 1) name, 2) time, 3) status.' }).map(
+        (unit) => unit.text,
+      ),
+    ).toEqual(['Check 1) name,', '2) time,', '3) status.']);
+    expect(
+      segmentEvidenceRequest({ user_message: '- 核验姓名\n- 核验时间\n- 核验状态' }).map(
+        (unit) => unit.text,
+      ),
+    ).toEqual(['- 核验姓名', '- 核验时间', '- 核验状态']);
+  });
+
+  it('can seal the 60th durable read and rejects a ledger that omits the final trace call', () => {
+    const requestUnits = segmentEvidenceRequest({ user_message: '核验 LAST59。' });
+    const toolTrace = Array.from({ length: 60 }, (_, index) => ({
+      name: 'query_events',
+      effect: 'read' as const,
+      input: { index },
+      output: { value: `event_${index}` },
+      error_reason: null,
+      executed: true,
+    }));
+    const value = {
+      protocol_version: 1 as const,
+      evidence_points: [
+        {
+          point_index: 0,
+          request_unit_indices: [0],
+          kind: 'observed_fact' as const,
+          statement_md: '第 60 次 read 返回 event_59。',
+          source_refs: [evidenceRef(59, '/value', 'value')],
+        },
+      ],
+      request_coverage: [
+        { request_unit_index: 0, status: 'answerable' as const, evidence_point_indices: [0] },
+      ],
+      trace_coverage: toolTrace.map((_observation, callIndex) => ({
+        call_index: callIndex,
+        relevance: callIndex === 59 ? ('material' as const) : ('not_material' as const),
+        request_unit_indices: callIndex === 59 ? [0] : [],
+        evidence_point_indices: callIndex === 59 ? [0] : [],
+        rationale_md:
+          callIndex === 59 ? '最后一次 read 直接回答请求。' : '此前 read 与 LAST59 不直接相关。',
+      })),
+      safe_reply: '第 60 次 read 返回 event_59。',
+    };
+
+    expect(
+      bindCopilotEvidenceReference({ value, requestUnits, toolTrace }).output.trace_coverage,
+    ).toHaveLength(60);
     expect(() =>
-      parseCopilotEvidenceVerificationResult({
-        text: JSON.stringify({
-          verdict: 'reject',
-          checks: allChecksPass,
-          violations: ['internal_contradiction'],
-        }),
+      bindCopilotEvidenceReference({
+        value: { ...value, trace_coverage: value.trace_coverage.slice(0, 59) },
+        requestUnits,
+        toolTrace,
       }),
-    ).toThrow('must contain at least one failed check');
+    ).toThrow('trace_coverage');
+  });
+
+  it('derives fail when an actual gap is mislabeled as supported/answered', () => {
+    const requestUnits = segmentEvidenceRequest({ user_message: '核验缺失范围。' });
+    const toolTrace = [
+      {
+        name: 'query_events',
+        effect: 'read' as const,
+        input: { limit: 20 },
+        output: { completeness: null },
+        error_reason: null,
+        executed: true,
+      },
+    ];
+    const reference = bindCopilotEvidenceReference({
+      value: {
+        protocol_version: 1,
+        evidence_points: [
+          {
+            point_index: 0,
+            request_unit_indices: [0],
+            kind: 'actual_gap',
+            statement_md: '完整性未被观测。',
+            source_refs: [evidenceRef(0, '/completeness', 'scope')],
+          },
+        ],
+        request_coverage: [
+          { request_unit_index: 0, status: 'actual_gap', evidence_point_indices: [0] },
+        ],
+        trace_coverage: [
+          {
+            call_index: 0,
+            relevance: 'material',
+            request_unit_indices: [0],
+            evidence_point_indices: [0],
+            rationale_md: 'null completeness 是请求的承重缺口。',
+          },
+        ],
+        safe_reply: '完整性未被观测，因此无法裁决。',
+      },
+      requestUnits,
+      toolTrace,
+    });
+    const replyUnits = segmentEvidenceReply('完整性已经确认。');
+    const result = bindCopilotEvidenceComparison({
+      value: {
+        protocol_version: 1,
+        reply_checks: [
+          {
+            reply_unit_index: 0,
+            status: 'supported',
+            evidence_point_indices: [0],
+            source_refs: [],
+            reason_codes: ['supported'],
+          },
+        ],
+        request_checks: [
+          {
+            request_unit_index: 0,
+            status: 'answered',
+            reply_unit_indices: [0],
+            evidence_point_indices: [0],
+            reason_codes: ['supported'],
+          },
+        ],
+      },
+      requestUnits,
+      replyUnits,
+      selectedReplySha256: 'e'.repeat(64),
+      reference,
+      toolTrace,
+      sourceComplete: true,
+    });
+
+    expect(result).toMatchObject({
+      verdict: 'fail',
+      violations: ['requested_chain_incomplete'],
+    });
+  });
+
+  it('rejects an actual-gap request that binds only a scope boundary and can never be certified', () => {
+    const requestUnits = segmentEvidenceRequest({ user_message: '核验完整队列。' });
+    const toolTrace = [
+      {
+        name: 'get_review_due',
+        effect: 'read' as const,
+        input: { limit: 100 },
+        output: { completeness: 'exact_filter_only' },
+        error_reason: null,
+        executed: true,
+      },
+    ];
+
+    expect(() =>
+      bindCopilotEvidenceReference({
+        value: {
+          protocol_version: 1,
+          evidence_points: [
+            {
+              point_index: 0,
+              request_unit_indices: [0],
+              kind: 'scope_boundary',
+              statement_md: '读取只覆盖 exact filter。',
+              source_refs: [evidenceRef(0, '/completeness', 'scope')],
+            },
+          ],
+          request_coverage: [
+            { request_unit_index: 0, status: 'actual_gap', evidence_point_indices: [0] },
+          ],
+          trace_coverage: [
+            {
+              call_index: 0,
+              relevance: 'scope_only',
+              request_unit_indices: [0],
+              evidence_point_indices: [0],
+              rationale_md: '该读取只提供 scope。',
+            },
+          ],
+          safe_reply: '当前只知道读取范围。',
+        },
+        requestUnits,
+        toolTrace,
+      }),
+    ).toThrow('actual-gap');
+  });
+
+  it('does not let answerable facts or failure reason codes masquerade as a valid gap', () => {
+    const requestUnits = segmentEvidenceRequest({ user_message: '核验 exact scope。' });
+    const toolTrace = [
+      {
+        name: 'query_events',
+        effect: 'read' as const,
+        input: { limit: 20 },
+        output: { scope: 'exact_filter_only' },
+        error_reason: null,
+        executed: true,
+      },
+    ];
+    const reference = bindCopilotEvidenceReference({
+      value: {
+        protocol_version: 1,
+        evidence_points: [
+          {
+            point_index: 0,
+            request_unit_indices: [0],
+            kind: 'scope_boundary',
+            statement_md: '当前 scope 是 exact_filter_only。',
+            source_refs: [evidenceRef(0, '/scope', 'scope')],
+          },
+        ],
+        request_coverage: [
+          { request_unit_index: 0, status: 'answerable', evidence_point_indices: [0] },
+        ],
+        trace_coverage: [
+          {
+            call_index: 0,
+            relevance: 'scope_only',
+            request_unit_indices: [0],
+            evidence_point_indices: [0],
+            rationale_md: '该 scope 直接限定请求。',
+          },
+        ],
+        safe_reply: '当前 scope 是 exact_filter_only。',
+      },
+      requestUnits,
+      toolTrace,
+    });
+    const replyUnits = segmentEvidenceReply('当前 scope 无法裁决。');
+    const result = bindCopilotEvidenceComparison({
+      value: {
+        protocol_version: 1,
+        reply_checks: [
+          {
+            reply_unit_index: 0,
+            status: 'explicit_gap',
+            evidence_point_indices: [0],
+            source_refs: [],
+            reason_codes: ['actual_gap_disclosed'],
+          },
+        ],
+        request_checks: [
+          {
+            request_unit_index: 0,
+            status: 'explicit_gap',
+            reply_unit_indices: [0],
+            evidence_point_indices: [0],
+            reason_codes: ['actual_gap_disclosed', 'internal_contradiction'],
+          },
+        ],
+      },
+      requestUnits,
+      replyUnits,
+      selectedReplySha256: 'f'.repeat(64),
+      reference,
+      toolTrace,
+      sourceComplete: true,
+    });
+
+    expect(result.verdict).toBe('fail');
+    expect(result.violations).toEqual(
+      expect.arrayContaining(['requested_chain_incomplete', 'internal_contradiction']),
+    );
+
+    const answeredThroughGap = bindCopilotEvidenceComparison({
+      value: {
+        protocol_version: 1,
+        reply_checks: [
+          {
+            reply_unit_index: 0,
+            status: 'explicit_gap',
+            evidence_point_indices: [0],
+            source_refs: [],
+            reason_codes: ['actual_gap_disclosed'],
+          },
+        ],
+        request_checks: [
+          {
+            request_unit_index: 0,
+            status: 'answered',
+            reply_unit_indices: [0],
+            evidence_point_indices: [0],
+            reason_codes: ['supported'],
+          },
+        ],
+      },
+      requestUnits,
+      replyUnits,
+      selectedReplySha256: '1'.repeat(64),
+      reference,
+      toolTrace,
+      sourceComplete: true,
+    });
+    expect(answeredThroughGap).toMatchObject({
+      verdict: 'fail',
+      violations: ['requested_chain_incomplete'],
+    });
+  });
+
+  it('does not let a Markdown separator stand in for a material answer', () => {
+    const requestUnits = segmentEvidenceRequest({ user_message: '核验 event id。' });
+    const toolTrace = [
+      {
+        name: 'query_events',
+        effect: 'read' as const,
+        input: { limit: 1 },
+        output: { event_id: 'evt_real_01' },
+        error_reason: null,
+        executed: true,
+      },
+    ];
+    const reference = bindCopilotEvidenceReference({
+      value: {
+        protocol_version: 1,
+        evidence_points: [
+          {
+            point_index: 0,
+            request_unit_indices: [0],
+            kind: 'observed_fact',
+            statement_md: '读取返回 evt_real_01。',
+            source_refs: [evidenceRef(0, '/event_id', 'value')],
+          },
+        ],
+        request_coverage: [
+          { request_unit_index: 0, status: 'answerable', evidence_point_indices: [0] },
+        ],
+        trace_coverage: [
+          {
+            call_index: 0,
+            relevance: 'material',
+            request_unit_indices: [0],
+            evidence_point_indices: [0],
+            rationale_md: 'event id 直接回答请求。',
+          },
+        ],
+        safe_reply: 'event id 是 evt_real_01。',
+      },
+      requestUnits,
+      toolTrace,
+    });
+    const replyUnits = segmentEvidenceReply('---');
+    expect(() =>
+      bindCopilotEvidenceComparison({
+        value: {
+          protocol_version: 1,
+          reply_checks: [
+            {
+              reply_unit_index: 0,
+              status: 'supported',
+              evidence_point_indices: [0],
+              source_refs: [],
+              reason_codes: ['supported'],
+            },
+          ],
+          request_checks: [
+            {
+              request_unit_index: 0,
+              status: 'answered',
+              reply_unit_indices: [0],
+              evidence_point_indices: [0],
+              reason_codes: ['supported'],
+            },
+          ],
+        },
+        requestUnits,
+        replyUnits,
+        selectedReplySha256: '0'.repeat(64),
+        reference,
+        toolTrace,
+        sourceComplete: true,
+      }),
+    ).toThrow('syntax-only reply unit cannot carry material evidence');
+
+    const result = bindCopilotEvidenceComparison({
+      value: {
+        protocol_version: 1,
+        reply_checks: [
+          {
+            reply_unit_index: 0,
+            status: 'supported',
+            evidence_point_indices: [],
+            source_refs: [],
+            reason_codes: ['non_evidentiary'],
+          },
+        ],
+        request_checks: [
+          {
+            request_unit_index: 0,
+            status: 'answered',
+            reply_unit_indices: [0],
+            evidence_point_indices: [0],
+            reason_codes: ['supported'],
+          },
+        ],
+      },
+      requestUnits,
+      replyUnits,
+      selectedReplySha256: '2'.repeat(64),
+      reference,
+      toolTrace,
+      sourceComplete: true,
+    });
+
+    expect(result).toMatchObject({
+      verdict: 'fail',
+      violations: ['requested_chain_incomplete'],
+    });
+  });
+
+  it.each([
+    '-',
+    '*',
+    '+',
+    '1.',
+    '2)',
+    '#',
+    '######',
+    '>',
+    '> >',
+    '```',
+    '```ts',
+    '~~~json',
+    '```\n```',
+    '[]()',
+    '<!-- hidden comparator carrier -->',
+    '<span></span>',
+    '&nbsp;',
+    '\u200B',
+  ])('rejects another empty rendered Markdown carrier: %j', (replyText) => {
+    const requestUnits = segmentEvidenceRequest({ user_message: '核验 event id。' });
+    const toolTrace = [
+      {
+        name: 'query_events',
+        effect: 'read' as const,
+        input: { limit: 1 },
+        output: { event_id: 'evt_real_01' },
+        error_reason: null,
+        executed: true,
+      },
+    ];
+    const reference = bindCopilotEvidenceReference({
+      value: {
+        protocol_version: 1,
+        evidence_points: [
+          {
+            point_index: 0,
+            request_unit_indices: [0],
+            kind: 'observed_fact',
+            statement_md: '读取返回 evt_real_01。',
+            source_refs: [evidenceRef(0, '/event_id', 'value')],
+          },
+        ],
+        request_coverage: [
+          { request_unit_index: 0, status: 'answerable', evidence_point_indices: [0] },
+        ],
+        trace_coverage: [
+          {
+            call_index: 0,
+            relevance: 'material',
+            request_unit_indices: [0],
+            evidence_point_indices: [0],
+            rationale_md: 'event id 直接回答请求。',
+          },
+        ],
+        safe_reply: 'event id 是 evt_real_01。',
+      },
+      requestUnits,
+      toolTrace,
+    });
+    const replyUnits = segmentEvidenceReply(replyText);
+    expect(replyUnits.every((unit) => unit.syntax_only)).toBe(true);
+
+    expect(() =>
+      bindCopilotEvidenceComparison({
+        value: {
+          protocol_version: 1,
+          reply_checks: replyUnits.map((unit) => ({
+            reply_unit_index: unit.index,
+            status: 'supported',
+            evidence_point_indices: [0],
+            source_refs: [],
+            reason_codes: ['supported'],
+          })),
+          request_checks: [
+            {
+              request_unit_index: 0,
+              status: 'answered',
+              reply_unit_indices: replyUnits.map((unit) => unit.index),
+              evidence_point_indices: [0],
+              reason_codes: ['supported'],
+            },
+          ],
+        },
+        requestUnits,
+        replyUnits,
+        selectedReplySha256: '5'.repeat(64),
+        reference,
+        toolTrace,
+        sourceComplete: true,
+      }),
+    ).toThrow('syntax-only reply unit cannot carry material evidence');
+  });
+
+  it('keeps visible list, heading, quote, and code content reviewable', () => {
+    const units = segmentEvidenceReply(
+      ['- event evt_01', '# Queue coverage', '> Unknown beyond exact filter', 'const x = 1'].join(
+        '\n',
+      ),
+    );
+    expect(units).toHaveLength(4);
+    expect(units.every((unit) => unit.syntax_only === false)).toBe(true);
+  });
+
+  it('does not let a Markdown separator disclose an actual gap', () => {
+    const requestUnits = segmentEvidenceRequest({ user_message: '核验完整队列。' });
+    const toolTrace = [
+      {
+        name: 'get_review_due',
+        effect: 'read' as const,
+        input: { limit: 100 },
+        output: { completeness: 'unknown' },
+        error_reason: null,
+        executed: true,
+      },
+    ];
+    const reference = bindCopilotEvidenceReference({
+      value: {
+        protocol_version: 1,
+        evidence_points: [
+          {
+            point_index: 0,
+            request_unit_indices: [0],
+            kind: 'actual_gap',
+            statement_md: '当前 reader 不保证完整 queue coverage。',
+            source_refs: [evidenceRef(0, '/completeness', 'coverage')],
+          },
+        ],
+        request_coverage: [
+          { request_unit_index: 0, status: 'actual_gap', evidence_point_indices: [0] },
+        ],
+        trace_coverage: [
+          {
+            call_index: 0,
+            relevance: 'material',
+            request_unit_indices: [0],
+            evidence_point_indices: [0],
+            rationale_md: 'coverage 字段直接界定无法裁决的范围。',
+          },
+        ],
+        safe_reply: '当前无法裁决完整队列。',
+      },
+      requestUnits,
+      toolTrace,
+    });
+    const replyUnits = segmentEvidenceReply('---');
+
+    expect(() =>
+      bindCopilotEvidenceComparison({
+        value: {
+          protocol_version: 1,
+          reply_checks: [
+            {
+              reply_unit_index: 0,
+              status: 'explicit_gap',
+              evidence_point_indices: [0],
+              source_refs: [],
+              reason_codes: ['actual_gap_disclosed'],
+            },
+          ],
+          request_checks: [
+            {
+              request_unit_index: 0,
+              status: 'explicit_gap',
+              reply_unit_indices: [0],
+              evidence_point_indices: [0],
+              reason_codes: ['actual_gap_disclosed'],
+            },
+          ],
+        },
+        requestUnits,
+        replyUnits,
+        selectedReplySha256: '3'.repeat(64),
+        reference,
+        toolTrace,
+        sourceComplete: true,
+      }),
+    ).toThrow('syntax-only reply unit cannot disclose a gap');
+  });
+
+  it('preserves observed facts while explicitly disclosing the remaining request gap', () => {
+    const requestUnits = segmentEvidenceRequest({ user_message: '核验激活事件及其原因。' });
+    const toolTrace = [
+      {
+        name: 'get_attempt_context',
+        effect: 'read' as const,
+        input: { event_id: 'evt_activated_01' },
+        output: { event_id: 'evt_activated_01', activation_policy: 'not_observed' },
+        error_reason: null,
+        executed: true,
+      },
+    ];
+    const reference = bindCopilotEvidenceReference({
+      value: {
+        protocol_version: 1,
+        evidence_points: [
+          {
+            point_index: 0,
+            request_unit_indices: [0],
+            kind: 'observed_fact',
+            statement_md: '直接观测到 evt_activated_01。',
+            source_refs: [evidenceRef(0, '/event_id', 'value')],
+          },
+          {
+            point_index: 1,
+            request_unit_indices: [0],
+            kind: 'actual_gap',
+            statement_md: '激活原因未被 reader 观测。',
+            source_refs: [evidenceRef(0, '/activation_policy', 'scope')],
+          },
+        ],
+        request_coverage: [
+          { request_unit_index: 0, status: 'actual_gap', evidence_point_indices: [0, 1] },
+        ],
+        trace_coverage: [
+          {
+            call_index: 0,
+            relevance: 'material',
+            request_unit_indices: [0],
+            evidence_point_indices: [0, 1],
+            rationale_md: '同一 typed read 同时提供事件事实与原因边界。',
+          },
+        ],
+        safe_reply: '已读到 evt_activated_01；但激活原因当前不可裁决。',
+      },
+      requestUnits,
+      toolTrace,
+    });
+    const replyUnits = segmentEvidenceReply('已读到 evt_activated_01；但激活原因当前不可裁决。');
+    const result = bindCopilotEvidenceComparison({
+      value: {
+        protocol_version: 1,
+        reply_checks: [
+          {
+            reply_unit_index: 0,
+            status: 'supported',
+            evidence_point_indices: [0],
+            source_refs: [],
+            reason_codes: ['supported'],
+          },
+          {
+            reply_unit_index: 1,
+            status: 'explicit_gap',
+            evidence_point_indices: [1],
+            source_refs: [],
+            reason_codes: ['actual_gap_disclosed'],
+          },
+        ],
+        request_checks: [
+          {
+            request_unit_index: 0,
+            status: 'explicit_gap',
+            reply_unit_indices: [0, 1],
+            evidence_point_indices: [0, 1],
+            reason_codes: ['actual_gap_disclosed'],
+          },
+        ],
+      },
+      requestUnits,
+      replyUnits,
+      selectedReplySha256: '4'.repeat(64),
+      reference,
+      toolTrace,
+      sourceComplete: true,
+    });
+
+    expect(result).toMatchObject({ verdict: 'pass', violations: [] });
+  });
+
+  it('binds dense request/reply indices and real RFC6901 pointers', () => {
+    const requestUnits = segmentEvidenceRequest(reviewParams().requestContext);
+    const reference = bindCopilotEvidenceReference({
+      value: realisticReferenceOutput({ request_units: requestUnits }),
+      requestUnits,
+      toolTrace: REALISTIC_EVIDENCE_TRACE,
+    });
+    const replyUnits = segmentEvidenceReply(blindSafeReply);
+    const comparison = bindCopilotEvidenceComparison({
+      value: realisticComparisonOutput(
+        {
+          request_units: requestUnits,
+          reply_units: replyUnits,
+          sealed_reference: reference.output,
+        },
+        { unsafe: false },
+      ),
+      requestUnits,
+      replyUnits,
+      selectedReplySha256: 'a'.repeat(64),
+      reference,
+      toolTrace: REALISTIC_EVIDENCE_TRACE,
+      sourceComplete: true,
+    });
+
+    expect(comparison.verdict).toBe('pass');
+  });
+
+  it('rejects a nonexistent pointer instead of trusting model-authored evidence text', () => {
+    const requestUnits = segmentEvidenceRequest(reviewParams().requestContext);
+    const invalid = referenceOutput({ request_units: requestUnits });
+    const firstPoint = invalid.evidence_points[0];
+    const firstRef = firstPoint?.source_refs[0];
+    if (!firstRef) throw new Error('fixture source ref missing');
+    firstRef.json_pointer = '/events/999/id';
+
+    expect(() =>
+      bindCopilotEvidenceReference({
+        value: invalid,
+        requestUnits,
+        toolTrace: REALISTIC_EVIDENCE_TRACE,
+      }),
+    ).toThrow('pointer');
+  });
+
+  it('keeps 110 realistic Markdown units dense and rejects more than 192', () => {
+    const rows = Array.from(
+      { length: 110 },
+      (_, index) =>
+        `| ${index} | event_${index} | 2026-08-02T00:${String(index % 60).padStart(2, '0')}:00Z | value=${index} |`,
+    );
+    const units = segmentEvidenceReply(rows.join('\n'));
+    expect(units).toHaveLength(110);
+    expect(units.map((unit) => unit.index)).toEqual(Array.from({ length: 110 }, (_, i) => i));
+    expect(() =>
+      segmentEvidenceReply(Array.from({ length: 193 }, () => 'claim').join('\n')),
+    ).toThrow('192');
   });
 });

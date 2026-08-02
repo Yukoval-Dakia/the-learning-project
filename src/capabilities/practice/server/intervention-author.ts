@@ -35,7 +35,6 @@ import {
   validateInterventionPackageDeterministically,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
-import { ai_task_runs } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
@@ -47,12 +46,15 @@ import {
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import {
+  persistValidatorRunBinding,
+  runConfirmedStructuredReview,
+} from '@/server/ai/sealed-validation';
+import {
   type IndependentSolutionResult,
   runIndependentSolution,
   runQuestionContentValidation,
 } from '@/server/quiz/verify-framework';
 import type { SubjectProfile } from '@/subjects/profile';
-import { and, eq } from 'drizzle-orm';
 
 export interface InterventionAuthorDeps {
   runTaskFn?: TaskTextRunFn;
@@ -68,32 +70,6 @@ const reviewOutputSchema = tasks.InterventionPackageReviewTask.structuredOutputS
 const REVIEW_OUTPUT_FORMAT = reviewOutputSchema
   ? zodToJsonSchemaOutputFormat(reviewOutputSchema)
   : undefined;
-
-async function persistValidatorRunBinding(
-  db: Db,
-  input: {
-    taskRunId: string;
-    taskKind: 'SolutionGenerateTask' | 'QuizVerifyTask' | 'InterventionPackageReviewTask';
-    taskInputSha256: string;
-    promptFingerprint: string;
-    resultDigest?: string | null;
-  },
-): Promise<void> {
-  await db
-    .update(ai_task_runs)
-    .set({
-      prompt_fingerprint: input.promptFingerprint,
-      ...(input.resultDigest !== undefined ? { result_digest: input.resultDigest } : {}),
-    })
-    .where(
-      and(
-        eq(ai_task_runs.id, input.taskRunId),
-        eq(ai_task_runs.task_kind, input.taskKind),
-        eq(ai_task_runs.input_hash, input.taskInputSha256),
-        eq(ai_task_runs.status, 'success'),
-      ),
-    );
-}
 
 function parseTaskOutput<T>(
   result: TaskTextResult,
@@ -306,15 +282,24 @@ async function runInterventionIndependentSolutions(input: {
       const attemptTaskRunIds =
         attempt.status === 'solved' ? [attempt.task_run_id] : (attempt.task_run_ids ?? []);
       for (const taskRunId of attemptTaskRunIds) {
-        await persistValidatorRunBinding(input.db, {
-          taskRunId,
-          taskKind: 'SolutionGenerateTask',
-          taskInputSha256: blindTaskInputSha256,
-          promptFingerprint: solverPromptFingerprint,
-          ...(attempt.status === 'solved' && taskRunId === attempt.task_run_id
-            ? { resultDigest: attempt.solver_output_sha256 }
-            : {}),
-        });
+        try {
+          await persistValidatorRunBinding(input.db, {
+            taskRunId,
+            taskKind: 'SolutionGenerateTask',
+            taskInputSha256: blindTaskInputSha256,
+            promptFingerprint: solverPromptFingerprint,
+            ...(attempt.status === 'solved' && taskRunId === attempt.task_run_id
+              ? { resultDigest: attempt.solver_output_sha256 }
+              : {}),
+          });
+        } catch (error) {
+          return {
+            status: 'invalid',
+            failureCode: `independent_solution_binding_failed:${kind}`,
+            taskRunIds: [...taskRunIds, ...attemptTaskRunIds],
+            failureDetail: error instanceof Error ? error.message : String(error),
+          };
+        }
       }
       if (attempt.status === 'solved') {
         if (attempt.task_input_sha256 !== blindTaskInputSha256) {
@@ -472,13 +457,22 @@ async function runInterventionQuestionContentValidations(input: {
       };
     }
     if (!taskRunIds.includes(taskRunId)) taskRunIds.push(taskRunId);
-    await persistValidatorRunBinding(input.db, {
-      taskRunId,
-      taskKind: 'QuizVerifyTask',
-      taskInputSha256: validation.task_input_sha256,
-      promptFingerprint,
-      resultDigest: validation.output_sha256,
-    });
+    try {
+      await persistValidatorRunBinding(input.db, {
+        taskRunId,
+        taskKind: 'QuizVerifyTask',
+        taskInputSha256: validation.task_input_sha256,
+        promptFingerprint,
+        resultDigest: validation.output_sha256,
+      });
+    } catch (error) {
+      return {
+        status: 'invalid',
+        failureCode: `question_content_validation_binding_failed:${kind}`,
+        taskRunIds,
+        failureDetail: error instanceof Error ? error.message : String(error),
+      };
+    }
     diagnostics.push({
       kind,
       task_input: validation.task_input,
@@ -747,152 +741,172 @@ async function runPackageReview(
   const reviewTaskInputSha256 = sha256CanonicalJson(reviewTaskInput);
   const promptFingerprint = taskPromptFingerprint('InterventionPackageReviewTask', subjectProfile);
   const reviewAttemptTaskRunIds: string[] = [];
-  const reviewAttempts: Array<
-    | { task_run_id: string; outcome: 'contract_invalid' }
-    | { task_run_id: string; outcome: 'valid'; result: InterventionPackageReviewModelOutputFullT }
-  > = [];
   let failureDetail = '';
+  let fatal: { failureCode: string; taskRunIds: string[]; failureDetail?: string } | undefined;
+  const confirmed = await runConfirmedStructuredReview<InterventionPackageReviewModelOutputFullT>({
+    maxAttempts: MAX_INTERVENTION_REVIEW_ATTEMPTS,
+    runAttempt: async (reviewAttempt) => {
+      if (fatal) return { outcome: 'contract_invalid', detail: fatal.failureCode };
+      const guardFailure = await beforeEachPaidCall();
+      if (guardFailure) {
+        fatal = {
+          failureCode: guardFailure,
+          taskRunIds: [...reviewAttemptTaskRunIds],
+          ...(failureDetail ? { failureDetail } : {}),
+        };
+        return { outcome: 'contract_invalid', detail: guardFailure };
+      }
+      let result: TaskTextResult;
+      try {
+        result = await runTaskFn('InterventionPackageReviewTask', reviewTaskInput, {
+          subjectProfile,
+          ...(REVIEW_OUTPUT_FORMAT ? { outputFormat: REVIEW_OUTPUT_FORMAT } : {}),
+        });
+      } catch (error) {
+        const failedTaskRunIds = [...reviewAttemptTaskRunIds];
+        if (error instanceof AgentRunError && !failedTaskRunIds.includes(error.taskRunId)) {
+          failedTaskRunIds.push(error.taskRunId);
+        }
+        fatal = {
+          failureCode: 'review_runner_failure',
+          taskRunIds: failedTaskRunIds,
+          failureDetail: error instanceof Error ? error.message : String(error),
+        };
+        return { outcome: 'contract_invalid', detail: 'review_runner_failure' };
+      }
+      if (!result.task_run_id) {
+        fatal = {
+          failureCode: 'review_task_run_id_missing',
+          taskRunIds: [...reviewAttemptTaskRunIds],
+        };
+        return { outcome: 'contract_invalid', detail: 'review_task_run_id_missing' };
+      }
+      reviewAttemptTaskRunIds.push(result.task_run_id);
 
-  for (
-    let reviewAttempt = 1;
-    reviewAttempt <= MAX_INTERVENTION_REVIEW_ATTEMPTS;
-    reviewAttempt += 1
-  ) {
-    const guardFailure = await beforeEachPaidCall();
-    if (guardFailure) {
-      return {
-        status: 'invalid',
-        failureCode: guardFailure,
-        taskRunIds: reviewAttemptTaskRunIds,
-        ...(failureDetail ? { failureDetail } : {}),
-      };
-    }
-    let result: TaskTextResult;
-    try {
-      result = await runTaskFn('InterventionPackageReviewTask', reviewTaskInput, {
-        subjectProfile,
-        ...(REVIEW_OUTPUT_FORMAT ? { outputFormat: REVIEW_OUTPUT_FORMAT } : {}),
-      });
-    } catch (error) {
-      // A lifecycle-started runner error already owns a durable paid-attempt id.
-      // Return it as an invalid validator attempt so the enclosing package slot
-      // is appended and consumed; do not let pg-boss redelivery reset the same
-      // author/solver/comparator budget. Custom runners without an id still
-      // consume the package slot rather than escaping into an unbounded retry.
-      const failedTaskRunIds = [...reviewAttemptTaskRunIds];
-      if (error instanceof AgentRunError && !failedTaskRunIds.includes(error.taskRunId)) {
-        failedTaskRunIds.push(error.taskRunId);
+      let review: InterventionPackageReviewModelOutputFullT;
+      try {
+        review = parseTaskOutput(result, 'intervention package review', (value) =>
+          bindInterventionPackageReviewDecision(
+            value,
+            independentAudit,
+            questionContentValidationAudit,
+            reviewTaskInput.review_requirements,
+            packageValue,
+          ),
+        );
+      } catch (error) {
+        const issues =
+          isRecord(error) && Array.isArray(error.issues)
+            ? error.issues
+                .slice(0, 4)
+                .map((issue) =>
+                  isRecord(issue)
+                    ? `${Array.isArray(issue.path) ? issue.path.join('.') : '<root>'}:${String(issue.code ?? 'invalid')}`
+                    : 'invalid',
+                )
+                .join(', ')
+            : error instanceof Error
+              ? error.name
+              : 'invalid';
+        failureDetail = `comparator output did not satisfy the FULL review contract (${issues})`;
+        console.warn('[intervention-author] comparator contract rejected', {
+          attempt: reviewAttempt,
+          issues,
+        });
+        try {
+          await persistValidatorRunBinding(db, {
+            taskRunId: result.task_run_id,
+            taskKind: 'InterventionPackageReviewTask',
+            taskInputSha256: reviewTaskInputSha256,
+            promptFingerprint,
+            resultDigest: null,
+          });
+        } catch (bindingError) {
+          fatal = {
+            failureCode: 'review_binding_failed',
+            taskRunIds: [...reviewAttemptTaskRunIds],
+            failureDetail:
+              bindingError instanceof Error ? bindingError.message : String(bindingError),
+          };
+          return {
+            outcome: 'contract_invalid',
+            task_run_id: result.task_run_id,
+            detail: 'review_binding_failed',
+          };
+        }
+        return {
+          outcome: 'contract_invalid',
+          task_run_id: result.task_run_id,
+          detail: issues,
+        };
+      }
+
+      try {
+        await persistValidatorRunBinding(db, {
+          taskRunId: result.task_run_id,
+          taskKind: 'InterventionPackageReviewTask',
+          taskInputSha256: reviewTaskInputSha256,
+          promptFingerprint,
+          resultDigest: sha256CanonicalJson(review),
+        });
+      } catch (bindingError) {
+        fatal = {
+          failureCode: 'review_binding_failed',
+          taskRunIds: [...reviewAttemptTaskRunIds],
+          failureDetail:
+            bindingError instanceof Error ? bindingError.message : String(bindingError),
+        };
+        return {
+          outcome: 'contract_invalid',
+          task_run_id: result.task_run_id,
+          detail: 'review_binding_failed',
+        };
       }
       return {
-        status: 'invalid',
-        failureCode: 'review_runner_failure',
-        taskRunIds: failedTaskRunIds,
-        failureDetail: error instanceof Error ? error.message : String(error),
-      };
-    }
-    if (!result.task_run_id) {
-      return {
-        status: 'invalid',
-        failureCode: 'review_task_run_id_missing',
-        taskRunIds: reviewAttemptTaskRunIds,
-      };
-    }
-    reviewAttemptTaskRunIds.push(result.task_run_id);
-    await persistValidatorRunBinding(db, {
-      taskRunId: result.task_run_id,
-      taskKind: 'InterventionPackageReviewTask',
-      taskInputSha256: reviewTaskInputSha256,
-      promptFingerprint,
-    });
-
-    let review: InterventionPackageReviewModelOutputFullT;
-    try {
-      review = parseTaskOutput(result, 'intervention package review', (value) =>
-        bindInterventionPackageReviewDecision(
-          value,
-          independentAudit,
-          questionContentValidationAudit,
-          reviewTaskInput.review_requirements,
-          packageValue,
-        ),
-      );
-    } catch (error) {
-      const issues =
-        isRecord(error) && Array.isArray(error.issues)
-          ? error.issues
-              .slice(0, 4)
-              .map((issue) =>
-                isRecord(issue)
-                  ? `${Array.isArray(issue.path) ? issue.path.join('.') : '<root>'}:${String(issue.code ?? 'invalid')}`
-                  : 'invalid',
-              )
-              .join(', ')
-          : error instanceof Error
-            ? error.name
-            : 'invalid';
-      failureDetail = `comparator output did not satisfy the FULL review contract (${issues})`;
-      console.warn('[intervention-author] comparator contract rejected', {
-        attempt: reviewAttempt,
-        issues,
-      });
-      reviewAttempts.push({ task_run_id: result.task_run_id, outcome: 'contract_invalid' });
-      await persistValidatorRunBinding(db, {
-        taskRunId: result.task_run_id,
-        taskKind: 'InterventionPackageReviewTask',
-        taskInputSha256: reviewTaskInputSha256,
-        promptFingerprint,
-        resultDigest: null,
-      });
-      if (reviewAttempt < MAX_INTERVENTION_REVIEW_ATTEMPTS) continue;
-      return {
-        status: 'invalid',
-        failureCode: 'review_output_invalid',
-        taskRunIds: reviewAttemptTaskRunIds,
-        failureDetail,
-      };
-    }
-
-    await persistValidatorRunBinding(db, {
-      taskRunId: result.task_run_id,
-      taskKind: 'InterventionPackageReviewTask',
-      taskInputSha256: reviewTaskInputSha256,
-      promptFingerprint,
-      resultDigest: sha256CanonicalJson(review),
-    });
-    reviewAttempts.push({ task_run_id: result.task_run_id, outcome: 'valid', result: review });
-    if (review.verdict === 'pass' && reviewAttempt < MAX_INTERVENTION_REVIEW_ATTEMPTS) {
-      continue;
-    }
-    if (
-      review.verdict === 'pass' &&
-      reviewAttempts.some(
-        (attempt) => attempt.outcome !== 'valid' || attempt.result.verdict !== 'pass',
-      )
-    ) {
-      return {
-        status: 'invalid',
-        failureCode: 'review_output_invalid',
-        taskRunIds: reviewAttemptTaskRunIds,
-        failureDetail: 'a valid pass was not confirmed within the bounded comparator attempts',
-      };
-    }
-    return {
-      status: 'ok',
-      review: CurrentInterventionPackageReviewAudit.parse({
-        audit_protocol_version: INTERVENTION_REVIEW_AUDIT_PROTOCOL_VERSION,
-        review_version: INTERVENTION_CONTRACT_VERSION,
-        package_digest_sha256: packageDigest,
-        review_task_run_id: result.task_run_id,
-        review_attempt_task_run_ids: reviewAttemptTaskRunIds,
-        review_task_input_sha256: reviewTaskInputSha256,
-        independent_solution_audit: independentAudit,
-        question_content_validation_audit: questionContentValidationAudit,
-        review_attempts: reviewAttempts,
+        outcome: 'valid',
+        task_run_id: result.task_run_id,
+        verdict: review.verdict,
         result: review,
-      }),
+      };
+    },
+  });
+  if (fatal) return { status: 'invalid', ...fatal };
+  if (confirmed.status === 'invalid') {
+    return {
+      status: 'invalid',
+      failureCode: 'review_output_invalid',
+      taskRunIds: reviewAttemptTaskRunIds,
+      failureDetail:
+        failureDetail || 'a valid pass was not confirmed within the bounded comparator attempts',
     };
   }
-  throw new Error('unreachable comparator retry state');
+
+  const finalAttempt = [...confirmed.attempts]
+    .reverse()
+    .find((attempt) => attempt.outcome === 'valid');
+  if (!finalAttempt || finalAttempt.outcome !== 'valid') {
+    throw new Error('confirmed intervention review lacks a valid final attempt');
+  }
+  const reviewAttempts = confirmed.attempts.map((attempt) =>
+    attempt.outcome === 'valid'
+      ? { task_run_id: attempt.task_run_id, outcome: 'valid' as const, result: attempt.result }
+      : { task_run_id: attempt.task_run_id ?? 'missing', outcome: 'contract_invalid' as const },
+  );
+  return {
+    status: 'ok',
+    review: CurrentInterventionPackageReviewAudit.parse({
+      audit_protocol_version: INTERVENTION_REVIEW_AUDIT_PROTOCOL_VERSION,
+      review_version: INTERVENTION_CONTRACT_VERSION,
+      package_digest_sha256: packageDigest,
+      review_task_run_id: finalAttempt.task_run_id,
+      review_attempt_task_run_ids: reviewAttemptTaskRunIds,
+      review_task_input_sha256: reviewTaskInputSha256,
+      independent_solution_audit: independentAudit,
+      question_content_validation_audit: questionContentValidationAudit,
+      review_attempts: reviewAttempts,
+      result: confirmed.result,
+    }),
+  };
 }
 
 /**

@@ -4,34 +4,53 @@ import {
   type CopilotEvidenceVerificationOutput,
   CopilotEvidenceVerificationOutputSchema,
 } from '@/ai/registry';
+import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 import type { Db } from '@/db/client';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import { AgentRunError } from '@/server/ai/agent-run-error';
 import {
   type StructuredTaskResult,
   parseStructuredTaskOutput,
 } from '@/server/ai/judges/judge-output-parse';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
+import { taskPromptFingerprint } from '@/server/ai/provenance';
 import { type RunTaskCtx, runTask } from '@/server/ai/runner';
+import {
+  persistValidatorRunBinding,
+  runConfirmedStructuredReview,
+} from '@/server/ai/sealed-validation';
 import type { ToolExecutionResultObservation } from '@/server/ai/tools/mcp-bridge';
+import {
+  type BoundCopilotEvidenceComparison,
+  type BoundCopilotEvidenceReference,
+  bindCopilotEvidenceComparison,
+  bindCopilotEvidenceReference,
+  safeValidationErrorDetail,
+  segmentEvidenceReply,
+  segmentEvidenceRequest,
+} from './evidence-contract';
 
 export const COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY =
   '这轮证据审阅未能完成，现有结果无法裁决。为避免把推测当成事实，我无法安全复述本轮结论；已执行的工具动作记录不会因此回滚，请在对应页面核对后重试。';
 
-/** Mirrors CopilotEvidenceReviewTask.budget.timeout in the task registry. */
+/** Mirrors both evidence-task timeout budgets in the task registry. */
 export const COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS = 120_000;
-export const COPILOT_EVIDENCE_REVIEW_MAX_PASSES = 2;
+export const COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS = 2;
+export const COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS = 2;
+// Worst case: two blind-reference contract attempts, one failed original
+// comparison, then two fallback confirmations. Keep one extra slot because a
+// contract-invalid original pass attempt still consumes the bounded pair.
+export const COPILOT_EVIDENCE_REVIEW_MAX_PASSES =
+  COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS + COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS * 2;
 export const COPILOT_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS =
   COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS * COPILOT_EVIDENCE_REVIEW_MAX_PASSES;
 
-// The main Copilot surface already has a hard 25-call ceiling. This second pass
-// receives only typed DomainTool projections, but an individual projection can
-// still be large. Refuse oversized review input instead of silently truncating
-// away the exact boundary that should govern the final claim.
 const MAX_CANDIDATE_CHARS = 64_000;
 const MAX_SERIALIZED_TRACE_CHARS = 160_000;
-const MAX_SERIALIZED_REVIEW_INPUT_CHARS = 256_000;
+const MAX_SERIALIZED_REVIEW_INPUT_CHARS = 320_000;
 
-const REVIEW_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(CopilotEvidenceReviewOutputSchema);
-const VERIFICATION_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(
+const REFERENCE_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(CopilotEvidenceReviewOutputSchema);
+const COMPARISON_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(
   CopilotEvidenceVerificationOutputSchema,
 );
 
@@ -48,8 +67,12 @@ export type CopilotEvidenceReviewRunTaskFn = (
 export interface CopilotEvidenceReviewDecision {
   status: 'skipped' | 'pass' | 'repair' | 'failed_closed';
   replyText: string;
+  /** Compatibility alias for the final successful blind-reference run. */
   reviewTaskRunId?: string;
+  /** Compatibility alias for the final successful comparator run. */
   verificationTaskRunId?: string;
+  referenceTaskRunIds?: string[];
+  comparisonTaskRunIds?: string[];
   violations?: string[];
 }
 
@@ -64,40 +87,30 @@ async function defaultRunTaskFn(
 export function parseCopilotEvidenceReviewResult(
   result: StructuredTaskResult,
 ): CopilotEvidenceReviewOutput {
-  const parsed = parseStructuredTaskOutput(
+  return parseStructuredTaskOutput(
     result,
     CopilotEvidenceReviewOutputSchema,
-    'copilot evidence review output',
+    'copilot blind evidence reference output',
     { textMode: 'strict-json' },
   );
-  if (parsed.verdict === 'repair' && Object.values(parsed.checks).every(Boolean)) {
-    throw new Error('copilot evidence review repair must contain at least one failed check');
-  }
-  if (parsed.verdict === 'repair' && parsed.safe_reply.trim().length === 0) {
-    throw new Error('copilot evidence review repair must contain a non-empty safe reply');
-  }
-  if (parsed.verdict === 'repair' && parsed.safe_reply.includes('<!--primary_view')) {
-    throw new Error('copilot evidence review repair must not nominate a primary view');
-  }
-  return parsed;
 }
 
 export function parseCopilotEvidenceVerificationResult(
   result: StructuredTaskResult,
 ): CopilotEvidenceVerificationOutput {
-  const parsed = parseStructuredTaskOutput(
+  return parseStructuredTaskOutput(
     result,
     CopilotEvidenceVerificationOutputSchema,
-    'copilot evidence verification output',
+    'copilot sealed evidence comparison output',
     { textMode: 'strict-json' },
   );
-  if (parsed.verdict === 'reject' && Object.values(parsed.checks).every(Boolean)) {
-    throw new Error('copilot evidence verification reject must contain at least one failed check');
-  }
-  return parsed;
 }
 
-function failClosed(reason: string, candidateTaskRunId: string): CopilotEvidenceReviewDecision {
+function failClosed(
+  reason: string,
+  candidateTaskRunId: string,
+  audit: Pick<CopilotEvidenceReviewDecision, 'referenceTaskRunIds' | 'comparisonTaskRunIds'> = {},
+): CopilotEvidenceReviewDecision {
   console.warn('[copilot-evidence-review] fail closed', {
     event: 'copilot_evidence_review_fail_closed',
     candidate_task_run_id: candidateTaskRunId,
@@ -106,122 +119,317 @@ function failClosed(reason: string, candidateTaskRunId: string): CopilotEvidence
   return {
     status: 'failed_closed',
     replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
+    ...audit,
   };
 }
 
-async function runReviewRound(params: {
-  db: Db;
-  requestContext: unknown;
-  candidateReply: string;
-  candidateTaskRunId: string;
-  candidateComplete: boolean;
-  toolTrace: readonly ToolExecutionResultObservation[];
-  signal?: AbortSignal;
-  runTaskFn: CopilotEvidenceReviewRunTaskFn;
-}): Promise<
-  | { ok: true; parsed: CopilotEvidenceReviewOutput; result: CopilotEvidenceReviewRunResult }
-  | { ok: false; reason: string }
-> {
-  const reviewInput = {
-    request_context: params.requestContext,
-    candidate_reply: params.candidateReply,
-    candidate_task_run_id: params.candidateTaskRunId,
-    candidate_complete: params.candidateComplete,
-    review_round: 'initial',
-    tool_trace: params.toolTrace,
-  };
-  let serializedReviewInput: string;
+function ensureSerializableBounded(value: unknown, label: string): string {
+  let serialized: string;
   try {
-    serializedReviewInput = JSON.stringify(reviewInput);
+    serialized = JSON.stringify(value);
   } catch {
-    return { ok: false, reason: 'initial_input_not_serializable' };
+    throw new Error(`${label}_not_serializable`);
   }
-  if (serializedReviewInput.length > MAX_SERIALIZED_REVIEW_INPUT_CHARS) {
-    return { ok: false, reason: 'initial_input_too_large' };
+  if (serialized.length > MAX_SERIALIZED_REVIEW_INPUT_CHARS) {
+    throw new Error(`${label}_too_large`);
   }
-
-  let result: CopilotEvidenceReviewRunResult;
-  try {
-    result = await params.runTaskFn('CopilotEvidenceReviewTask', reviewInput, {
-      db: params.db,
-      ...(params.signal ? { signal: params.signal } : {}),
-      outputFormat: REVIEW_OUTPUT_FORMAT,
-    });
-  } catch (error) {
-    if (params.signal?.aborted) throw error;
-    return {
-      ok: false,
-      reason: `initial_task_failed:${error instanceof Error ? error.name : 'unknown'}`,
-    };
-  }
-
-  try {
-    return { ok: true, parsed: parseCopilotEvidenceReviewResult(result), result };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: `initial_output_invalid:${error instanceof Error ? error.name : 'unknown'}`,
-    };
-  }
+  return serialized;
 }
 
-async function runVerificationRound(params: {
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+async function bindRunResult(params: {
+  db: Db;
+  kind: 'CopilotEvidenceReviewTask' | 'CopilotEvidenceVerificationTask';
+  taskInputSha256: string;
+  taskRunId: string;
+  resultDigest: string | null;
+}): Promise<void> {
+  // Lightweight routing tests intentionally pass a DB-less structural stub.
+  // Production Db always exposes update(), so every paid run is bound there.
+  if (typeof (params.db as { update?: unknown }).update !== 'function') return;
+  await persistValidatorRunBinding(params.db, {
+    taskRunId: params.taskRunId,
+    taskKind: params.kind,
+    taskInputSha256: params.taskInputSha256,
+    promptFingerprint: taskPromptFingerprint(params.kind),
+    resultDigest: params.resultDigest,
+  });
+}
+
+async function beforePaidCall(params: {
+  signal?: AbortSignal;
+  beforeVerification?: () => Promise<void>;
+}): Promise<void> {
+  params.signal?.throwIfAborted();
+  await params.beforeVerification?.();
+  params.signal?.throwIfAborted();
+}
+
+async function runBlindReference(params: {
   db: Db;
   requestContext: unknown;
-  finalReply: string;
-  finalTextKind: 'original' | 'repair';
+  requestUnits: ReturnType<typeof segmentEvidenceRequest>;
   sourceComplete: boolean;
   toolTrace: readonly ToolExecutionResultObservation[];
   signal?: AbortSignal;
+  beforeVerification?: () => Promise<void>;
   runTaskFn: CopilotEvidenceReviewRunTaskFn;
 }): Promise<
-  | {
-      ok: true;
-      parsed: CopilotEvidenceVerificationOutput;
-      result: CopilotEvidenceReviewRunResult;
-    }
-  | { ok: false; reason: string }
+  | { ok: true; reference: BoundCopilotEvidenceReference; taskRunIds: string[] }
+  | { ok: false; reason: string; taskRunIds: string[] }
 > {
-  const verificationInput = {
+  const taskInput = {
+    protocol_version: 1,
     request_context: params.requestContext,
-    final_reply: params.finalReply,
-    final_text_kind: params.finalTextKind,
+    request_units: params.requestUnits,
     source_complete: params.sourceComplete,
     tool_trace: params.toolTrace,
   };
-  let serializedVerificationInput: string;
-  try {
-    serializedVerificationInput = JSON.stringify(verificationInput);
-  } catch {
-    return { ok: false, reason: 'verification_input_not_serializable' };
-  }
-  if (serializedVerificationInput.length > MAX_SERIALIZED_REVIEW_INPUT_CHARS) {
-    return { ok: false, reason: 'verification_input_too_large' };
-  }
+  ensureSerializableBounded(taskInput, 'reference_input');
+  const taskInputSha256 = sha256CanonicalJson(taskInput);
+  const taskRunIds: string[] = [];
+  let lastDetail = '';
 
-  let result: CopilotEvidenceReviewRunResult;
-  try {
-    result = await params.runTaskFn('CopilotEvidenceVerificationTask', verificationInput, {
-      db: params.db,
-      ...(params.signal ? { signal: params.signal } : {}),
-      outputFormat: VERIFICATION_OUTPUT_FORMAT,
-    });
-  } catch (error) {
-    if (params.signal?.aborted) throw error;
-    return {
-      ok: false,
-      reason: `verification_task_failed:${error instanceof Error ? error.name : 'unknown'}`,
-    };
-  }
+  for (let attempt = 1; attempt <= COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await beforePaidCall(params);
+    } catch (error) {
+      if (params.signal?.aborted || isAbortError(error)) throw error;
+      return {
+        ok: false,
+        reason: `reference_preflight_failed:${error instanceof Error ? error.name : 'unknown'}`,
+        taskRunIds,
+      };
+    }
+    let result: CopilotEvidenceReviewRunResult;
+    try {
+      result = await params.runTaskFn('CopilotEvidenceReviewTask', taskInput, {
+        db: params.db,
+        ...(params.signal ? { signal: params.signal } : {}),
+        outputFormat: REFERENCE_OUTPUT_FORMAT,
+      });
+    } catch (error) {
+      // Only an abort observed on the caller-owned signal is authoritative
+      // cancellation. Provider/SDK timeouts may also surface as AbortError;
+      // those are paid-attempt failures and must stay inside the FULL gate.
+      if (params.signal?.aborted) throw error;
+      if (error instanceof AgentRunError && !taskRunIds.includes(error.taskRunId)) {
+        taskRunIds.push(error.taskRunId);
+      }
+      lastDetail = `reference_task_failed:${error instanceof Error ? error.name : 'unknown'}`;
+      continue;
+    }
+    if (!result.task_run_id) {
+      lastDetail = 'reference_task_run_id_missing';
+      continue;
+    }
+    taskRunIds.push(result.task_run_id);
 
-  try {
-    return { ok: true, parsed: parseCopilotEvidenceVerificationResult(result), result };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: `verification_output_invalid:${error instanceof Error ? error.name : 'unknown'}`,
-    };
+    let reference: BoundCopilotEvidenceReference;
+    try {
+      const parsed = parseCopilotEvidenceReviewResult(result);
+      reference = bindCopilotEvidenceReference({
+        value: parsed,
+        requestUnits: params.requestUnits,
+        toolTrace: params.toolTrace,
+      });
+    } catch (error) {
+      lastDetail = `reference_output_invalid:${safeValidationErrorDetail(error)}`;
+      console.warn('[copilot-evidence-review] blind reference contract rejected', {
+        attempt,
+        issues: safeValidationErrorDetail(error),
+      });
+      try {
+        await bindRunResult({
+          db: params.db,
+          kind: 'CopilotEvidenceReviewTask',
+          taskInputSha256,
+          taskRunId: result.task_run_id,
+          resultDigest: null,
+        });
+      } catch (bindingError) {
+        return {
+          ok: false,
+          reason: `reference_binding_failed:${bindingError instanceof Error ? bindingError.name : 'unknown'}`,
+          taskRunIds,
+        };
+      }
+      continue;
+    }
+
+    try {
+      await bindRunResult({
+        db: params.db,
+        kind: 'CopilotEvidenceReviewTask',
+        taskInputSha256,
+        taskRunId: result.task_run_id,
+        resultDigest: reference.digest_sha256,
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        reason: `reference_binding_failed:${error instanceof Error ? error.name : 'unknown'}`,
+        taskRunIds,
+      };
+    }
+    return { ok: true, reference, taskRunIds };
   }
+  return {
+    ok: false,
+    reason: lastDetail || 'reference_attempt_budget_exhausted',
+    taskRunIds,
+  };
+}
+
+async function runConfirmedComparison(params: {
+  db: Db;
+  requestUnits: ReturnType<typeof segmentEvidenceRequest>;
+  selectedReply: string;
+  selectedTextKind: 'original' | 'blind_reference';
+  sourceComplete: boolean;
+  reference: BoundCopilotEvidenceReference;
+  toolTrace: readonly ToolExecutionResultObservation[];
+  signal?: AbortSignal;
+  beforeVerification?: () => Promise<void>;
+  runTaskFn: CopilotEvidenceReviewRunTaskFn;
+}): Promise<
+  | {
+      status: 'decided';
+      verdict: 'pass' | 'fail';
+      comparison: BoundCopilotEvidenceComparison;
+      taskRunIds: string[];
+    }
+  | { status: 'invalid'; reason: string; taskRunIds: string[] }
+> {
+  const replyUnits = segmentEvidenceReply(params.selectedReply);
+  const selectedReplySha256 = sha256CanonicalJson({ text: params.selectedReply });
+  const taskInput = {
+    protocol_version: 1,
+    request_units: params.requestUnits,
+    reply_units: replyUnits,
+    selected_reply_sha256: selectedReplySha256,
+    selected_text_kind: params.selectedTextKind,
+    source_complete: params.sourceComplete,
+    sealed_reference: {
+      digest_sha256: params.reference.digest_sha256,
+      evidence_points: params.reference.output.evidence_points,
+      request_coverage: params.reference.output.request_coverage,
+      trace_coverage: params.reference.output.trace_coverage,
+    },
+    tool_trace: params.toolTrace,
+  };
+  ensureSerializableBounded(taskInput, 'comparison_input');
+  const taskInputSha256 = sha256CanonicalJson(taskInput);
+
+  const result = await runConfirmedStructuredReview<BoundCopilotEvidenceComparison>({
+    maxAttempts: COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS,
+    runAttempt: async (attempt) => {
+      try {
+        await beforePaidCall(params);
+      } catch (error) {
+        if (params.signal?.aborted || isAbortError(error)) throw error;
+        return {
+          outcome: 'contract_invalid' as const,
+          detail: `comparison_preflight_failed:${error instanceof Error ? error.name : 'unknown'}`,
+        };
+      }
+      let taskResult: CopilotEvidenceReviewRunResult;
+      try {
+        taskResult = await params.runTaskFn('CopilotEvidenceVerificationTask', taskInput, {
+          db: params.db,
+          ...(params.signal ? { signal: params.signal } : {}),
+          outputFormat: COMPARISON_OUTPUT_FORMAT,
+        });
+      } catch (error) {
+        if (params.signal?.aborted) throw error;
+        return {
+          outcome: 'contract_invalid' as const,
+          ...(error instanceof AgentRunError ? { task_run_id: error.taskRunId } : {}),
+          detail: `comparison_task_failed:${error instanceof Error ? error.name : 'unknown'}`,
+        };
+      }
+      if (!taskResult.task_run_id) {
+        return { outcome: 'contract_invalid' as const, detail: 'comparison_task_run_id_missing' };
+      }
+
+      let comparison: BoundCopilotEvidenceComparison;
+      try {
+        const parsed = parseCopilotEvidenceVerificationResult(taskResult);
+        comparison = bindCopilotEvidenceComparison({
+          value: parsed,
+          requestUnits: params.requestUnits,
+          replyUnits,
+          reference: params.reference,
+          toolTrace: params.toolTrace,
+          sourceComplete: params.sourceComplete,
+          selectedReplySha256,
+        });
+      } catch (error) {
+        const detail = safeValidationErrorDetail(error);
+        console.warn('[copilot-evidence-review] comparator contract rejected', {
+          attempt,
+          issues: detail,
+        });
+        try {
+          await bindRunResult({
+            db: params.db,
+            kind: 'CopilotEvidenceVerificationTask',
+            taskInputSha256,
+            taskRunId: taskResult.task_run_id,
+            resultDigest: null,
+          });
+        } catch (bindingError) {
+          return {
+            outcome: 'contract_invalid' as const,
+            task_run_id: taskResult.task_run_id,
+            detail: `comparison_binding_failed:${bindingError instanceof Error ? bindingError.name : 'unknown'}`,
+          };
+        }
+        return {
+          outcome: 'contract_invalid' as const,
+          task_run_id: taskResult.task_run_id,
+          detail,
+        };
+      }
+
+      try {
+        await bindRunResult({
+          db: params.db,
+          kind: 'CopilotEvidenceVerificationTask',
+          taskInputSha256,
+          taskRunId: taskResult.task_run_id,
+          resultDigest: comparison.digest_sha256,
+        });
+      } catch (bindingError) {
+        return {
+          outcome: 'contract_invalid' as const,
+          task_run_id: taskResult.task_run_id,
+          detail: `comparison_binding_failed:${bindingError instanceof Error ? bindingError.name : 'unknown'}`,
+        };
+      }
+      return {
+        outcome: 'valid' as const,
+        task_run_id: taskResult.task_run_id,
+        verdict: comparison.verdict,
+        result: comparison,
+      };
+    },
+  });
+  const taskRunIds = result.attempts.flatMap((attempt) =>
+    attempt.task_run_id ? [attempt.task_run_id] : [],
+  );
+  if (result.status === 'invalid') {
+    return { status: 'invalid', reason: result.reason, taskRunIds };
+  }
+  return {
+    status: 'decided',
+    verdict: result.verdict,
+    comparison: result.result,
+    taskRunIds,
+  };
 }
 
 export async function reviewCopilotEvidenceReply(params: {
@@ -229,11 +437,10 @@ export async function reviewCopilotEvidenceReply(params: {
   requestContext: unknown;
   candidateReply: string;
   candidateTaskRunId: string;
-  /** False when the primary stream returned a graceful-degrade partial. */
   candidateComplete?: boolean;
   toolTrace: readonly ToolExecutionResultObservation[];
   signal?: AbortSignal;
-  /** Optional durable-truth probe immediately before starting paid verification. */
+  /** Optional durable-truth probe before every paid validation call. */
   beforeVerification?: () => Promise<void>;
   runTaskFn?: CopilotEvidenceReviewRunTaskFn;
 }): Promise<CopilotEvidenceReviewDecision> {
@@ -242,6 +449,9 @@ export async function reviewCopilotEvidenceReply(params: {
   }
   if (params.candidateReply.length > MAX_CANDIDATE_CHARS) {
     return failClosed('candidate_too_large', params.candidateTaskRunId);
+  }
+  if (params.toolTrace.length > COPILOT_EVIDENCE_MAX_TRACE_CALLS) {
+    return failClosed('trace_call_count_exceeds_contract', params.candidateTaskRunId);
   }
 
   let serializedTrace: string;
@@ -255,70 +465,128 @@ export async function reviewCopilotEvidenceReply(params: {
   }
 
   const run = params.runTaskFn ?? defaultRunTaskFn;
-  const candidateComplete = params.candidateComplete ?? true;
-  params.signal?.throwIfAborted();
-  const initial = await runReviewRound({
-    db: params.db,
-    requestContext: params.requestContext,
-    candidateReply: params.candidateReply,
-    candidateTaskRunId: params.candidateTaskRunId,
-    candidateComplete,
-    toolTrace: params.toolTrace,
-    ...(params.signal ? { signal: params.signal } : {}),
-    runTaskFn: run,
-  });
-  if (!initial.ok) return failClosed(initial.reason, params.candidateTaskRunId);
-  params.signal?.throwIfAborted();
-  await params.beforeVerification?.();
-  params.signal?.throwIfAborted();
-
-  const { parsed, result } = initial;
-
-  if (parsed.verdict === 'pass') {
-    if (!candidateComplete) {
-      return failClosed('partial_candidate_passed_review', params.candidateTaskRunId);
-    }
+  const sourceComplete = params.candidateComplete ?? true;
+  let requestUnits: ReturnType<typeof segmentEvidenceRequest>;
+  try {
+    requestUnits = segmentEvidenceRequest(params.requestContext);
+  } catch (error) {
+    return failClosed(
+      `request_units_invalid:${error instanceof Error ? error.message : 'unknown'}`,
+      params.candidateTaskRunId,
+    );
   }
 
-  // A repair is model-authored prose too. It is never user-visible merely
-  // because the same task that found a violation also rewrote it. Re-run the
-  // generic contract independently over the selected bytes and the exact same
-  // typed trace. The separate verifier has no rewrite field and may only
-  // certify or reject; every non-certification fails closed.
-  const selectedReply = parsed.verdict === 'pass' ? params.candidateReply : parsed.safe_reply;
-  const verification = await runVerificationRound({
+  params.signal?.throwIfAborted();
+  const reference = await runBlindReference({
     db: params.db,
     requestContext: params.requestContext,
-    finalReply: selectedReply,
-    finalTextKind: parsed.verdict === 'pass' ? 'original' : 'repair',
-    sourceComplete: candidateComplete,
+    requestUnits,
+    sourceComplete,
     toolTrace: params.toolTrace,
     ...(params.signal ? { signal: params.signal } : {}),
+    ...(params.beforeVerification ? { beforeVerification: params.beforeVerification } : {}),
     runTaskFn: run,
   });
-  if (!verification.ok) return failClosed(verification.reason, params.candidateTaskRunId);
-  params.signal?.throwIfAborted();
-  if (verification.parsed.verdict !== 'certify') {
-    return failClosed('verification_rejected_selected_reply', params.candidateTaskRunId);
+  if (!reference.ok) {
+    return failClosed(reference.reason, params.candidateTaskRunId, {
+      referenceTaskRunIds: reference.taskRunIds,
+    });
   }
 
-  if (parsed.verdict === 'pass') {
+  let original: Awaited<ReturnType<typeof runConfirmedComparison>>;
+  try {
+    original = await runConfirmedComparison({
+      db: params.db,
+      requestUnits,
+      selectedReply: params.candidateReply,
+      selectedTextKind: 'original',
+      sourceComplete,
+      reference: reference.reference,
+      toolTrace: params.toolTrace,
+      ...(params.signal ? { signal: params.signal } : {}),
+      ...(params.beforeVerification ? { beforeVerification: params.beforeVerification } : {}),
+      runTaskFn: run,
+    });
+  } catch (error) {
+    if (params.signal?.aborted || isAbortError(error)) throw error;
+    return failClosed(
+      `original_comparison_failed:${error instanceof Error ? error.message : 'unknown'}`,
+      params.candidateTaskRunId,
+      { referenceTaskRunIds: reference.taskRunIds },
+    );
+  }
+  if (original.status === 'invalid') {
+    return failClosed(`original_comparison_${original.reason}`, params.candidateTaskRunId, {
+      referenceTaskRunIds: reference.taskRunIds,
+      comparisonTaskRunIds: original.taskRunIds,
+    });
+  }
+  if (original.verdict === 'pass') {
+    const verificationTaskRunId = original.taskRunIds.at(-1);
+    const reviewTaskRunId = reference.taskRunIds.at(-1);
     return {
       status: 'pass',
       replyText: params.candidateReply,
-      ...(result.task_run_id ? { reviewTaskRunId: result.task_run_id } : {}),
-      ...(verification.result.task_run_id
-        ? { verificationTaskRunId: verification.result.task_run_id }
-        : {}),
+      referenceTaskRunIds: reference.taskRunIds,
+      comparisonTaskRunIds: original.taskRunIds,
+      ...(reviewTaskRunId ? { reviewTaskRunId } : {}),
+      ...(verificationTaskRunId ? { verificationTaskRunId } : {}),
     };
   }
+
+  const fallbackReply = reference.reference.output.safe_reply;
+  if (fallbackReply.length > MAX_CANDIDATE_CHARS) {
+    return failClosed('reference_reply_too_large', params.candidateTaskRunId, {
+      referenceTaskRunIds: reference.taskRunIds,
+      comparisonTaskRunIds: original.taskRunIds,
+    });
+  }
+  let fallback: Awaited<ReturnType<typeof runConfirmedComparison>>;
+  try {
+    fallback = await runConfirmedComparison({
+      db: params.db,
+      requestUnits,
+      selectedReply: fallbackReply,
+      selectedTextKind: 'blind_reference',
+      sourceComplete,
+      reference: reference.reference,
+      toolTrace: params.toolTrace,
+      ...(params.signal ? { signal: params.signal } : {}),
+      ...(params.beforeVerification ? { beforeVerification: params.beforeVerification } : {}),
+      runTaskFn: run,
+    });
+  } catch (error) {
+    if (params.signal?.aborted || isAbortError(error)) throw error;
+    return failClosed(
+      `fallback_comparison_failed:${error instanceof Error ? error.message : 'unknown'}`,
+      params.candidateTaskRunId,
+      {
+        referenceTaskRunIds: reference.taskRunIds,
+        comparisonTaskRunIds: original.taskRunIds,
+      },
+    );
+  }
+  if (fallback.status !== 'decided' || fallback.verdict !== 'pass') {
+    const reason =
+      fallback.status === 'invalid'
+        ? `fallback_comparison_${fallback.reason}`
+        : 'fallback_comparison_rejected';
+    return failClosed(reason, params.candidateTaskRunId, {
+      referenceTaskRunIds: reference.taskRunIds,
+      comparisonTaskRunIds: [...original.taskRunIds, ...fallback.taskRunIds],
+    });
+  }
+
+  const comparisonTaskRunIds = [...original.taskRunIds, ...fallback.taskRunIds];
+  const reviewTaskRunId = reference.taskRunIds.at(-1);
+  const verificationTaskRunId = fallback.taskRunIds.at(-1);
   return {
     status: 'repair',
-    replyText: parsed.safe_reply,
-    violations: parsed.violations,
-    ...(result.task_run_id ? { reviewTaskRunId: result.task_run_id } : {}),
-    ...(verification.result.task_run_id
-      ? { verificationTaskRunId: verification.result.task_run_id }
-      : {}),
+    replyText: fallbackReply,
+    violations: original.comparison.violations,
+    referenceTaskRunIds: reference.taskRunIds,
+    comparisonTaskRunIds,
+    ...(reviewTaskRunId ? { reviewTaskRunId } : {}),
+    ...(verificationTaskRunId ? { verificationTaskRunId } : {}),
   };
 }

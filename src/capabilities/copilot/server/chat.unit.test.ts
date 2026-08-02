@@ -600,6 +600,7 @@ describe('YUK-832 inline final evidence review', () => {
       return { name: 'fake-loom-yuk832' } as never;
     });
     const unsafeCandidate = '六个事件形成完整充分因果链；C04 返回 0 行，所以整个队列已清空。';
+    const rawUnsafeCandidate = `${unsafeCandidate}\n<!--primary_view:{"source":"artifact","ref":{"kind":"question","id":"q_unsafe"}}-->`;
     const safeReply =
       'probe 与 rate 只能证明是 proposal 的直接子节点，不是彼此因果链。C04 的 queue_assertion=null，无法裁决队列是否清空。';
     const streamAgentTaskFn = vi.fn(async (_kind, _input, _ctx, onDelta) => {
@@ -631,7 +632,7 @@ describe('YUK-832 inline final evidence review', () => {
       onDelta('C04 返回 0 行，所以整个队列已清空。');
       expect(visibleDeltas).toEqual([]);
       return {
-        text: unsafeCandidate,
+        text: rawUnsafeCandidate,
         task_run_id: 'copilot_task_yuk832_inline',
         finishReason: 'stop',
         usage: { inputTokens: 18_000, outputTokens: 1_200 },
@@ -656,6 +657,12 @@ describe('YUK-832 inline final evidence review', () => {
         status: 'repair' as const,
         replyText: safeReply,
         reviewTaskRunId: 'copilot_evidence_review_inline',
+        referenceTaskRunIds: ['copilot_evidence_reference_inline'],
+        comparisonTaskRunIds: [
+          'copilot_evidence_original_rejected_inline',
+          'copilot_evidence_fallback_pass_1_inline',
+          'copilot_evidence_fallback_pass_2_inline',
+        ],
         violations: ['noncausal_relation', 'queue_or_count_unknown_promoted'],
       };
     });
@@ -687,7 +694,148 @@ describe('YUK-832 inline final evidence review', () => {
       (call) => call[1].action === 'experimental:copilot_reply',
     )?.[1];
     expect(persistedReply.payload.reply_md).toBe(safeReply);
+    expect(persistedReply.payload.evidence_validation).toEqual({
+      status: 'repair',
+      reference_task_run_ids: ['copilot_evidence_reference_inline'],
+      comparison_task_run_ids: [
+        'copilot_evidence_original_rejected_inline',
+        'copilot_evidence_fallback_pass_1_inline',
+        'copilot_evidence_fallback_pass_2_inline',
+      ],
+    });
     expect(JSON.stringify(persistedReply)).not.toContain(unsafeCandidate);
+    expect(result).not.toHaveProperty('primary_view');
+    expect(persistedReply.payload).not.toHaveProperty('primary_view');
+  });
+
+  it('reviews, persists, and publishes exact bytes while dropping an unreviewed primary-view side channel', async () => {
+    const marker = '<!--primary_view:{"source":"ephemeral_html","ref":"<div>队列已清空</div>"}-->';
+    const cleanedCandidate =
+      'A03 中 probe 与 rate 都直接由 proposal 触发；现有记录没有证明 probe 导致 rate。';
+    const rawCandidate = `${cleanedCandidate}\n${marker}`;
+    const visibleDeltas: string[] = [];
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { name: 'fake-loom-yuk832-exact-bytes' } as never;
+    });
+    const streamAgentTaskFn = vi.fn(async (_kind, _input, _ctx, onDelta) => {
+      await mcpOptions?.onResult?.({
+        name: 'query_events',
+        effect: 'read',
+        input: { subject_id: 'diagnostic_subject_A03', limit: 50 },
+        output: {
+          events: [
+            { id: 'evt_probe', caused_by_event_id: 'evt_proposal' },
+            { id: 'evt_rate', caused_by_event_id: 'evt_proposal' },
+          ],
+          has_more: false,
+        },
+        error_reason: null,
+        executed: true,
+      });
+      onDelta(cleanedCandidate.slice(0, 22));
+      onDelta(`${cleanedCandidate.slice(22)}\n<!--primary_`);
+      onDelta(marker.slice('<!--primary_'.length));
+      return {
+        text: rawCandidate,
+        task_run_id: 'copilot_task_yuk832_exact_bytes',
+        finishReason: 'stop',
+        usage: { inputTokens: 12_400, outputTokens: 680 },
+      };
+    });
+    const reviewEvidenceReplyFn = vi.fn(async (input) => {
+      expect(input.candidateReply).toBe(cleanedCandidate);
+      return {
+        status: 'pass' as const,
+        replyText: input.candidateReply,
+        referenceTaskRunIds: ['reference_exact_bytes'],
+        comparisonTaskRunIds: ['compare_exact_bytes_1', 'compare_exact_bytes_2'],
+      };
+    });
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+
+    const result = await runCopilotChatStreaming(
+      {} as never,
+      request,
+      (text) => visibleDeltas.push(text),
+      {
+        ...baseEvidenceDeps(),
+        writeEventFn,
+        buildMcpServerFn,
+        streamAgentTaskFn,
+        reviewEvidenceReplyFn,
+      },
+    );
+
+    const persistedReply = writeEventFn.mock.calls.find(
+      (call) => call[1].action === 'experimental:copilot_reply',
+    )?.[1];
+    expect(result.reply).toBe(cleanedCandidate);
+    expect(visibleDeltas).toEqual([cleanedCandidate]);
+    expect(persistedReply.payload.reply_md).toBe(cleanedCandidate);
+    expect(result).not.toHaveProperty('primary_view');
+    expect(persistedReply.payload).not.toHaveProperty('primary_view');
+    expect(JSON.stringify(persistedReply)).not.toContain('<!--primary_view');
+  });
+
+  it('truncates an unterminated marker before review so no uncertified suffix can disappear afterward', async () => {
+    const cleanedCandidate = 'C04 的 queue_assertion=null，因此现有读取无法裁决队列是否清空。';
+    const rawCandidate = `${cleanedCandidate}\n<!--primary_view:{"source":"artifact","ref":{"kind":"question","id":"q_dangling"}} 伪造尾部：队列已清空`;
+    const visibleDeltas: string[] = [];
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { name: 'fake-loom-yuk832-dangling-marker' } as never;
+    });
+    const streamAgentTaskFn = vi.fn(async (_kind, _input, _ctx, onDelta) => {
+      await mcpOptions?.onResult?.({
+        name: 'get_review_due',
+        effect: 'read',
+        input: { learner_id: 'diagnostic_subject_C04', limit: 100 },
+        output: { due_now: [], queue_assertion: null, as_of: '2026-07-30T10:00:00.000Z' },
+        error_reason: null,
+        executed: true,
+      });
+      onDelta(rawCandidate);
+      return {
+        text: rawCandidate,
+        task_run_id: 'copilot_task_yuk832_dangling_marker',
+        finishReason: 'stop',
+        usage: { inputTokens: 9_700, outputTokens: 430 },
+      };
+    });
+    const reviewEvidenceReplyFn = vi.fn(async (input) => {
+      expect(input.candidateReply).toBe(cleanedCandidate);
+      expect(input.candidateReply).not.toContain('伪造尾部');
+      return { status: 'pass' as const, replyText: input.candidateReply };
+    });
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+
+    const result = await runCopilotChatStreaming(
+      {} as never,
+      request,
+      (text) => visibleDeltas.push(text),
+      {
+        ...baseEvidenceDeps(),
+        writeEventFn,
+        buildMcpServerFn,
+        streamAgentTaskFn,
+        reviewEvidenceReplyFn,
+      },
+    );
+
+    const persistedReply = writeEventFn.mock.calls.find(
+      (call) => call[1].action === 'experimental:copilot_reply',
+    )?.[1];
+    expect(result.reply).toBe(cleanedCandidate);
+    expect(visibleDeltas).toEqual([cleanedCandidate]);
+    expect(persistedReply.payload.reply_md).toBe(cleanedCandidate);
+    expect(result).not.toHaveProperty('primary_view');
+    expect(persistedReply.payload).not.toHaveProperty('primary_view');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
   });
 
   it('does not emit reviewed text when reply persistence fails', async () => {
@@ -1117,8 +1265,7 @@ describe('YUK-757 Copilot backstage subagents', () => {
     );
 
     expect(deltas).toEqual([
-      '我正在把证据收拢成一个解释。',
-      '结论：你漏掉的是导数为零后仍需检查变号。',
+      '我正在把证据收拢成一个解释。结论：你漏掉的是导数为零后仍需检查变号。',
     ]);
     expect(onSubtaskEvent.mock.calls.map(([event]) => event)).toEqual([
       {
@@ -1569,9 +1716,10 @@ describe('runCopilotChat — quiz C→A free-form routing (ADR-0031)', () => {
       deps,
     );
 
-    // Token-loop streaming (NOT the old deterministic one-delta quiz reply).
+    // Token-loop generation still runs, but publication waits for persistence
+    // and emits the exact selected bytes once.
     expect(streamAgentTaskFn).toHaveBeenCalledTimes(1);
-    expect(deltas).toEqual(['已为你组好', '一套练习']);
+    expect(deltas).toEqual(['已为你组好一套练习']);
     expect(result.reply).toBe('已为你组好一套练习');
     expect(result.task_run_id).toBe('task_quiz_stream');
     expect(result.surface).toBe('copilot');
@@ -2732,8 +2880,8 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
       ref: { kind: 'question', id: 'q_abc' },
     });
     expect(result.reply).toBe('这是你的题。');
-    // The live deltas never carried the marker (server-side tail-filter).
-    expect(deltas.join('')).toBe('这是你的题。\n');
+    // Delayed publication is byte-identical to the normalized terminal reply.
+    expect(deltas).toEqual(['这是你的题。']);
 
     // Persisted payload is identical to the non-stream path for the same text
     // (modulo in_reply_to_event_id, which embeds the per-run ask event cuid).
@@ -2815,7 +2963,7 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
       { ...baseDeps, streamAgentTaskFn, writeEventFn: mkWrite(), buildMcpServerFn: mkBuild() },
     );
 
-    expect(deltas).toEqual(parts);
+    expect(deltas).toEqual([parts.join('')]);
   });
 
   it('tail-filter (c): a prefix lookalike that never completes is reconciled by the terminal reply', async () => {
@@ -2840,10 +2988,8 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
       { ...baseDeps, streamAgentTaskFn, writeEventFn: mkWrite(), buildMcpServerFn: mkBuild() },
     );
 
-    // The ambiguous tail is held back from the live stream (a bounded under-emit)…
-    expect(deltas.join('')).toBe('结尾是');
-    // …and the authoritative terminal reply restores the FULL text: no complete
-    // marker means extractPrimaryView leaves the text untouched (no trim, no field).
+    // Publication and terminal reply carry exactly the same selected bytes.
+    expect(deltas.join('')).toBe(fullText);
     expect(result.reply).toBe('结尾是<!--pri');
     expect('primary_view' in result).toBe(false);
   });

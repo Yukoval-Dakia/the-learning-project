@@ -20,7 +20,12 @@
 import type { Job } from 'pg-boss';
 
 import { isDurableWorkerTouchEvent } from '@/capabilities/copilot/durable-pickup';
-import { writeCopilotReply } from '@/capabilities/copilot/server/chat';
+import {
+  type CopilotEvidenceValidationRef,
+  type PreparedCopilotReply,
+  extractPrimaryView,
+  writeCopilotReply,
+} from '@/capabilities/copilot/server/chat';
 import {
   COPILOT_CANCEL_DRAIN_GRACE_MS,
   type CopilotRunCancellationControl,
@@ -49,6 +54,7 @@ import {
 import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
 import {
   COPILOT_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
+  type CopilotEvidenceReviewDecision,
   reviewCopilotEvidenceReply,
 } from '@/capabilities/copilot/server/evidence-review';
 import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
@@ -57,6 +63,7 @@ import {
   createCopilotSubtaskProjector,
   isCopilotSubagentEnabled,
 } from '@/capabilities/copilot/server/subagents';
+import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 // YUK-364 (bot-review C5) — 共享 Tavily 远程 MCP（web grounding），与 inline copilot
@@ -152,7 +159,7 @@ export interface CopilotRunJobData {
 // 安全帽不是目标——健康流靠模型返回 final reply 自然收，天花板只挡病态 loop。
 export const DURABLE_BUDGET = {
   maxIterations: 24,
-  maxToolCalls: 60,
+  maxToolCalls: COPILOT_EVIDENCE_MAX_TRACE_CALLS,
   timeoutMs: 12 * 60_000,
 } as const;
 
@@ -551,6 +558,17 @@ function observeCopilotSpawnBudget(observation: SpawnBudgetObservation): void {
     ordinal: observation.ordinal,
     decision: observation.decision,
   });
+}
+
+function evidenceValidationRef(
+  decision: CopilotEvidenceReviewDecision,
+): CopilotEvidenceValidationRef | undefined {
+  if (decision.status === 'skipped') return undefined;
+  return {
+    status: decision.status,
+    reference_task_run_ids: decision.referenceTaskRunIds ?? [],
+    comparison_task_run_ids: decision.comparisonTaskRunIds ?? [],
+  };
 }
 
 const CLAIMED_EXECUTION_POLL_MS = 250;
@@ -1126,6 +1144,12 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       return await settleObservedCancellation(cancellationReply, result.task_run_id);
     }
 
+    // Normalize reply-tail presentation metadata before sealed review. The
+    // validator, durable marker and projected DELTA/REPLY must bind the exact
+    // same bytes; no post-review marker stripping is allowed.
+    const preparedCandidate = extractPrimaryView(result.text, {
+      taskRunId: result.task_run_id,
+    });
     const evidenceReview = await reviewEvidenceReply({
       db,
       requestContext: {
@@ -1135,7 +1159,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         ...(data.chip_kind ? { chip_kind: data.chip_kind } : {}),
         ...(data.ambient ? { ambient_context: data.ambient } : {}),
       },
-      candidateReply: result.text,
+      candidateReply: preparedCandidate.text,
       candidateTaskRunId: result.task_run_id,
       toolTrace,
       signal: cancellationControl.signal,
@@ -1146,6 +1170,16 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       candidateComplete: !result.partial,
     });
     const reviewedReply = evidenceReview.replyText;
+    // The validator seals text, not the presentation side channel. Drop every
+    // primary_view on read-bearing pass/repair/fail-closed decisions; otherwise
+    // unreviewed ephemeral_html or an unbound artifact ref could contradict the
+    // certified prose. Pure-text/no-read skipped turns keep legacy behavior.
+    const reviewedPreparedReply: PreparedCopilotReply = {
+      text: reviewedReply,
+      ...(evidenceReview.status === 'skipped' && preparedCandidate.primaryView
+        ? { primaryView: preparedCandidate.primaryView }
+        : {}),
+    };
     // A Stop that wins only under the settlement lock must obey the same
     // evidence boundary as the explicit post-review probe below. Read-bearing
     // candidate/repair text is never a cancellation partial; pure-text turns
@@ -1154,8 +1188,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       ? undefined
       : reviewedReply;
 
-    // Stop can arrive while the second pass is running. The same AbortSignal
-    // reaches the reviewer; re-probe before any domain reply or public suffix.
+    // Stop can arrive during any blind-reference/comparator paid call. The same
+    // AbortSignal reaches the FULL validator; re-probe before any domain reply
+    // or public suffix.
     if ((await cancellationControl.probe()) === 'cancel_requested') {
       return await settleObservedCancellation(reviewedCancellationReply, result.task_run_id);
     }
@@ -1171,10 +1206,13 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         runId,
         sessionId: data.session_id,
         actorRef,
+        taskRunId: result.task_run_id,
         partialText: reviewedReply,
+        preparedReply: reviewedPreparedReply,
         projectSuccessfulTerminal,
         projectFailedTerminal,
         writeCopilotReplyFn: persistReply,
+        evidenceValidation: evidenceValidationRef(evidenceReview),
         createCancelledMarker: cancellationMarker(reviewedCancellationReply, result.task_run_id),
         emitReviewedDelta: candidateDeltaObserved,
       });
@@ -1193,8 +1231,10 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
             sessionId: data.session_id,
             userAskEventId: runId,
             replyText: reviewedReply,
+            preparedReply: reviewedPreparedReply,
             actorRef,
             taskRunId: result.task_run_id,
+            evidenceValidation: evidenceValidationRef(evidenceReview),
             outcome: 'success',
             durableFinishReason: result.finishReason,
             durableEmitReviewedDelta: candidateDeltaObserved,
@@ -1306,11 +1346,16 @@ async function handleDurableFailure(
     runId: string;
     sessionId: string;
     actorRef: string;
+    /** Real primary provider run when graceful-degrade returned a partial. */
+    taskRunId?: string;
     /** streamTaskCollecting graceful-degrade 的半程文本（若有），作 phantom-reply 正文。 */
     partialText?: string;
+    /** Byte-authoritative reviewed projection for an evidence-bearing partial. */
+    preparedReply?: PreparedCopilotReply;
     projectSuccessfulTerminal: WriteSuccessfulTerminalProjectionFn;
     projectFailedTerminal: WriteFailedTerminalProjectionFn;
     writeCopilotReplyFn: typeof writeCopilotReply;
+    evidenceValidation?: CopilotEvidenceValidationRef;
     /** Settlement-lock race winner when Stop committed before this failure marker. */
     createCancelledMarker?: (tx: Tx) => Promise<PersistedDurableReply>;
     /** Persisted recovery flag for one reviewed full-text DELTA before FAILED. */
@@ -1322,14 +1367,18 @@ async function handleDurableFailure(
     runId,
     sessionId,
     actorRef,
+    taskRunId,
     partialText,
+    preparedReply,
     projectSuccessfulTerminal,
     projectFailedTerminal,
     writeCopilotReplyFn,
+    evidenceValidation,
     createCancelledMarker,
     emitReviewedDelta,
   } = args;
   const message = String((err as Error)?.message ?? err);
+  const failureTaskRunId = taskRunId ?? `copilot_run_exhausted_${runId}`;
   const replyText =
     partialText && partialText.length > 0
       ? partialText
@@ -1343,8 +1392,10 @@ async function handleDurableFailure(
           sessionId,
           userAskEventId: runId,
           replyText,
+          ...(preparedReply?.text === replyText ? { preparedReply } : {}),
           actorRef,
-          taskRunId: `copilot_run_exhausted_${runId}`,
+          taskRunId: failureTaskRunId,
+          evidenceValidation,
           outcome: 'failure',
           durableFailure: { reason: 'exhausted', error: message },
           durableEmitReviewedDelta: emitReviewedDelta,
@@ -1353,7 +1404,7 @@ async function handleDurableFailure(
         return {
           outcome: 'failure' as const,
           replyMd: cleanedReply,
-          taskRunId: `copilot_run_exhausted_${runId}`,
+          taskRunId: failureTaskRunId,
           reason: 'exhausted' as const,
           error: message,
           ...(emitReviewedDelta ? { emitReviewedDelta: true } : {}),

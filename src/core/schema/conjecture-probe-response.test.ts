@@ -3,7 +3,10 @@ import {
   isCanonicalEvidenceProbeOutcomeResolution,
   isCanonicalProbeOutcomeResolution,
 } from './conjecture';
-import { classifyConjectureProbeResponseFromJudgeMatch } from './conjecture-probe-response';
+import {
+  classifyConjectureProbeResponseFromJudgeMatch,
+  isCanonicalProbeOutcomeJudgement,
+} from './conjecture-probe-response';
 
 describe('canonical probe outcome/resolution pairs', () => {
   it('accepts only the persisted evidence and inconclusive matrices', () => {
@@ -125,5 +128,49 @@ describe('classifyConjectureProbeResponseFromJudgeMatch', () => {
       gradable: false,
       reason_code: 'correctness_signature_conflict',
     });
+  });
+});
+
+describe('isCanonicalProbeOutcomeJudgement', () => {
+  const base = {
+    rule_version: 'conjecture_probe_response_signature_v1' as const,
+    signature_match_explanation_md: 'Bound semantic comparison.',
+    evidence_refs: [
+      'learner_response' as const,
+      'gold_response_signature' as const,
+      'target_error_response_signature' as const,
+      'correctness_judge' as const,
+    ],
+  };
+
+  it('accepts only the canonical gold, target-error, and neither tuples', () => {
+    const gold = {
+      ...base,
+      answer_result: 'correct' as const,
+      target_error_match: 'not_matched' as const,
+      gradable: true,
+      reason_code: 'gold_signature_matched' as const,
+    };
+    const targetError = {
+      ...base,
+      answer_result: 'incorrect' as const,
+      target_error_match: 'matched' as const,
+      gradable: true,
+      reason_code: 'target_error_signature_matched' as const,
+    };
+    const neither = {
+      ...base,
+      answer_result: 'incorrect' as const,
+      target_error_match: 'not_matched' as const,
+      gradable: true,
+      reason_code: 'response_matches_neither_signature' as const,
+    };
+
+    expect(isCanonicalProbeOutcomeJudgement({ outcome: 1, judgement: gold })).toBe(true);
+    expect(isCanonicalProbeOutcomeJudgement({ outcome: 0, judgement: targetError })).toBe(true);
+    expect(isCanonicalProbeOutcomeJudgement({ outcome: null, judgement: neither })).toBe(true);
+    expect(isCanonicalProbeOutcomeJudgement({ outcome: 0, judgement: gold })).toBe(false);
+    expect(isCanonicalProbeOutcomeJudgement({ outcome: 1, judgement: targetError })).toBe(false);
+    expect(isCanonicalProbeOutcomeJudgement({ outcome: null, judgement: null })).toBe(false);
   });
 });

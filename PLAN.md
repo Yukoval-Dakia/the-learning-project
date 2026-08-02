@@ -3,7 +3,7 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-08-02
-> **【YUK-596 active：actual-output P1 repair wave】**
+> **【YUK-832 active：sealed evidence reply certification】**
 
 ## NOW
 
@@ -23,14 +23,21 @@
 - **Transport PASS，产品内容 HOLD。** A–E 独立复核发现并 capture YUK-832–836：reader
   coverage/causality、artifact/直出 validator、human-in-loop capability 与 correction history。
   详情及 digests 见 `docs/planning/2026-08-02-yuk-596-actual-burnin.md`。
+- **YUK-832 候选实现已通过本地定向门禁。** Copilot read-bearing reply 先建立 blind typed
+  ledger，再由独立 comparator 连续两次确认；request/reply/trace/source refs、exact bytes、
+  validator provenance、partial failure primary run 与 typed reader lineage 均 server-bind。
+  当前仍等待 clean exact-head actual-provider v8 与 GitHub CI，未宣称交付。
 - 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
 
 ## NEXT
 
-1. 按依赖顺序修 YUK-832 → YUK-833/835（共享 validator core）→ YUK-834 → YUK-836。
-2. 每条用同一复杂 fixture 做 targeted mock/DB loop，再做最小 actual-provider 重放；完整 suite
+1. 在 clean committed YUK-832 exact head 上跑 5 例 actual-provider v8；逐例审计 primary +
+   reference/comparator runs、thinking、digests、exact bytes 与无旁支 validator。
+2. actual 5/5 且人工 grounding/coverage/honesty 均 2/2/2 后，跑 exact-head GitHub CI，
+   merge 并对齐 Linear；随后推进 YUK-833/835 → YUK-834 → YUK-836。
+3. 每条继续用同一复杂 fixture 做 targeted mock/DB loop，再做最小 actual-provider 重放；完整 suite
    只在 exact-head GitHub CI。
-3. 产品 P1 清零后，Dock/UI 开工前逐字引用 design doc、声明 drawer、列文件并等待 owner 批准。
+4. 产品 P1 清零后，Dock/UI 开工前逐字引用 design doc、声明 drawer、列文件并等待 owner 批准。
 
 ## PARKED
 
@@ -41,7 +48,9 @@
 
 ## BLOCKED-ON
 
-- **YUK-596 当前 gate**：YUK-832–836 actual-output P1；transport/Stop 已 pass，不能用它替代
+- **YUK-832 当前 gate**：clean exact-head actual-provider v8 + 人工 2/2/2 + GitHub CI；mock、
+  本地 build 或旧 head CI 都不能替代。
+- **YUK-596 产品 gate**：YUK-832–836 actual-output P1；transport/Stop 已 pass，不能用它替代
   产品内容正确性。
 - **YUK-596 后续 owner gate**：产品 P1 与 actual rerun 完成后，先做 UI design pre-flight；
   owner 批准前不写 UI，也不翻 durable-default 扩量。

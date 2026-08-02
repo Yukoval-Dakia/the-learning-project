@@ -14,7 +14,11 @@ import {
   isCanonicalEvidenceProbeOutcomeResolution,
   isCanonicalProbeOutcomeResolution,
 } from '@/core/schema/conjecture';
-import { ConjectureProbeResponseJudgement } from '@/core/schema/conjecture-probe-response';
+import {
+  ConjectureProbeResponseJudgement,
+  isCanonicalProbeOutcomeJudgement,
+} from '@/core/schema/conjecture-probe-response';
+import { GradingCheckpointExperimental, StateSnapshotExperimental } from '@/core/schema/event';
 import {
   INTERVENTION_ACTIVATED_ACTION,
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
@@ -286,6 +290,7 @@ const CausalEventRefSchema = z.object({
     'unsupported_action',
     'invalid_payload',
   ]),
+  payload_projection_exhaustive: z.literal(false),
   redacted_payload_groups: z.array(
     z.enum([
       'anti_guilt_metrics',
@@ -364,8 +369,9 @@ const DESCRIPTION = [
   '  same-question history causal. Check coverage and each event correction_state before treating',
   '  any parent/child evidence as current.',
   '- payload_present reports whether persisted JSON exists. evidence is only a typed safe projection:',
-  '  evidence=null never means the stored payload was null. Inspect payload_projection_status and',
-  '  redacted_payload_groups; groups are coarse and non-exhaustive, so never claim an unprojected',
+  '  evidence=null never means the stored payload was null. payload_projection_exhaustive=false is',
+  '  explicit for every event. Inspect payload_projection_status and redacted_payload_groups;',
+  '  groups are coarse and non-exhaustive, so never claim an unprojected',
   '  field was absent from storage. Unknown keys are denied by default and never reflected.',
   '- Inside evidence, an omitted optional key means the validated payload did not carry that known',
   '  safe key. null is emitted only when that canonical key was explicitly persisted as null; [] is',
@@ -439,14 +445,28 @@ const ProbeResultPayloadSchema = z
     }
     if (
       payload.resolution === PROBE_NON_EVIDENCE_RESOLUTION &&
-      (!payload.response_judgement ||
-        payload.response_judgement.answer_result !== 'incorrect' ||
-        payload.response_judgement.target_error_match !== 'not_matched' ||
-        !payload.response_judgement.gradable)
+      !isCanonicalProbeOutcomeJudgement({
+        outcome: payload.outcome,
+        judgement: payload.response_judgement,
+      })
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'inconclusive results require the canonical non-evidence judgement',
+        path: ['response_judgement'],
+      });
+      return;
+    }
+    if (
+      payload.response_judgement &&
+      !isCanonicalProbeOutcomeJudgement({
+        outcome: payload.outcome,
+        judgement: payload.response_judgement,
+      })
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'response judgement contradicts the persisted probe outcome',
         path: ['response_judgement'],
       });
     }
@@ -730,7 +750,15 @@ function projectEventPayload(value: EnvelopedEvent, rawPayload: unknown): Payloa
     };
   }
   if (value.action === 'experimental:grading_checkpoint') {
-    const payload = value.payload as { attempt_event_id: string; segment: 'theta' | 'fsrs' };
+    const parsed = GradingCheckpointExperimental.safeParse({ ...value, payload: rawPayload });
+    if (
+      !parsed.success ||
+      parsed.data.subject_id !== parsed.data.payload.attempt_event_id ||
+      causedByEventId(value) !== parsed.data.payload.attempt_event_id
+    ) {
+      return invalidPayload();
+    }
+    const payload = parsed.data.payload;
     return {
       status: 'typed_safe',
       evidence: {
@@ -742,20 +770,11 @@ function projectEventPayload(value: EnvelopedEvent, rawPayload: unknown): Payloa
     };
   }
   if (value.action === 'experimental:state_snapshot') {
-    const payload = value.payload as {
-      attempt_event_id: string;
-      theta_snapshots: Array<{
-        kc_id: string;
-        before: number | { theta_hat: number } | null;
-        after: number;
-      }>;
-      fsrs_snapshots: Array<{
-        subject_kind: 'question' | 'knowledge';
-        subject_id: string;
-        before: Parameters<typeof fsrsStateEvidence>[0] | null;
-        after: Parameters<typeof fsrsStateEvidence>[0];
-      }>;
-    };
+    const parsed = StateSnapshotExperimental.safeParse({ ...value, payload: rawPayload });
+    if (!parsed.success || parsed.data.subject_id !== parsed.data.payload.attempt_event_id) {
+      return invalidPayload();
+    }
+    const payload = parsed.data.payload;
     return {
       status: 'typed_safe',
       evidence: {
@@ -805,6 +824,7 @@ function eventRef(
     replacement_event_id: value.correction_status.replacement_event_id,
     payload_present: rawPayload !== null && rawPayload !== undefined,
     payload_projection_status: projection.status,
+    payload_projection_exhaustive: false,
     redacted_payload_groups: projection.redactedGroups,
     evidence: projection.evidence,
   };

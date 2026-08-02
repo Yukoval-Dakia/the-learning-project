@@ -23,17 +23,6 @@ import {
 } from './registry';
 import { getTaskSystemPrompt } from './task-prompts';
 
-const CopilotEvidencePassChecksFixture = {
-  causality_grounded: true,
-  claim_support_respected: true,
-  scope_coverage_respected: true,
-  projection_boundaries_respected: true,
-  queue_count_boundaries_respected: true,
-  requested_chain_handled: true,
-  tool_trace_faithful: true,
-  internally_consistent: true,
-} as const;
-
 describe('copilot task dispatch declarations', () => {
   it('is deny-by-default and exposes exactly two fully-declared tasks', () => {
     const invocable = Object.values(tasks).filter(
@@ -582,7 +571,7 @@ describe('CopilotTask.systemPrompt — YUK-832 evidence-claim contract', () => {
 });
 
 describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
-  it('is a bounded Xiaomi no-tool task with a strict pass-or-repair schema', () => {
+  it('is a bounded Xiaomi no-tool blind-reference task with a flat sealed schema', () => {
     const def = tasks.CopilotEvidenceReviewTask;
     expect(def.defaultProvider).toBe('xiaomi');
     expect(def.defaultModel).toBe('mimo-v2.5-pro');
@@ -594,37 +583,50 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
 
     expect(
       CopilotEvidenceReviewOutputSchema.safeParse({
-        verdict: 'pass',
-        checks: {
-          causality_grounded: true,
-          claim_support_respected: true,
-          scope_coverage_respected: true,
-          projection_boundaries_respected: true,
-          queue_count_boundaries_respected: true,
-          requested_chain_handled: true,
-          tool_trace_faithful: true,
-          internally_consistent: true,
-        },
+        protocol_version: 1,
+        evidence_points: [
+          {
+            point_index: 0,
+            request_unit_indices: [0],
+            kind: 'actual_gap',
+            statement_md: 'cross-subject descendants were not covered by this exact subject window',
+            source_refs: [
+              {
+                call_index: 0,
+                side: 'output',
+                json_pointer: '/claim_boundaries/supports_cross_subject_causal_descendant_claim',
+                role: 'coverage',
+              },
+            ],
+          },
+        ],
+        request_coverage: [
+          { request_unit_index: 0, status: 'actual_gap', evidence_point_indices: [0] },
+        ],
+        trace_coverage: [
+          {
+            call_index: 0,
+            relevance: 'scope_only',
+            request_unit_indices: [0],
+            evidence_point_indices: [0],
+            rationale_md: '该 typed boundary 限定 exact subject window 的结论范围。',
+          },
+        ],
+        safe_reply: '已核验 exact window；跨 subject 后续仍需沿显式关系读取。',
       }).success,
     ).toBe(true);
     expect(
       CopilotEvidenceReviewOutputSchema.safeParse({
         verdict: 'pass',
-        checks: {
-          causality_grounded: false,
-          claim_support_respected: true,
-          scope_coverage_respected: true,
-          projection_boundaries_respected: true,
-          queue_count_boundaries_respected: true,
-          requested_chain_handled: true,
-          tool_trace_faithful: true,
-          internally_consistent: true,
-        },
+        protocol_version: 1,
+        evidence_points: [],
+        request_coverage: [],
+        safe_reply: '不得接受 provider verdict。',
       }).success,
     ).toBe(false);
   });
 
-  it('uses a separate no-rewrite verification task whose reject output cannot become a third draft', () => {
+  it('uses a separate no-rewrite comparator whose output cannot authorize itself or author a third draft', () => {
     const def = tasks.CopilotEvidenceVerificationTask;
     expect(def.defaultProvider).toBe('xiaomi');
     expect(def.defaultModel).toBe('mimo-v2.5-pro');
@@ -635,30 +637,48 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     expect(def.structuredOutputSchema).toBe(CopilotEvidenceVerificationOutputSchema);
     expect(
       CopilotEvidenceVerificationOutputSchema.safeParse({
-        verdict: 'reject',
-        checks: { ...CopilotEvidencePassChecksFixture, internally_consistent: false },
-        violations: ['internal_contradiction'],
+        protocol_version: 1,
+        reply_checks: [
+          {
+            reply_unit_index: 0,
+            status: 'unsupported',
+            evidence_point_indices: [0],
+            source_refs: [],
+            reason_codes: ['internal_contradiction'],
+          },
+        ],
+        request_checks: [
+          {
+            request_unit_index: 0,
+            status: 'missing',
+            reply_unit_indices: [],
+            evidence_point_indices: [],
+            reason_codes: ['requested_chain_incomplete'],
+          },
+        ],
       }).success,
     ).toBe(true);
     expect(
       CopilotEvidenceVerificationOutputSchema.safeParse({
-        verdict: 'reject',
-        checks: { ...CopilotEvidencePassChecksFixture, internally_consistent: false },
-        violations: ['internal_contradiction'],
+        protocol_version: 1,
+        reply_checks: [],
+        request_checks: [],
         safe_reply: '不得存在第三版',
       }).success,
     ).toBe(false);
     const p = getTaskSystemPrompt('CopilotEvidenceVerificationTask');
-    expect(p).toContain('独立从头审查');
-    expect(p).toContain('看不到首轮的 checks、violations、理由或 task id');
-    expect(p).toContain('source_complete=false');
-    expect(p).toContain('绝不生成 safe_reply 或第三版文本');
+    expect(p).toContain('看不到其他 comparator attempt 的结果');
+    expect(p).toContain('服务端会验证 dense index');
+    expect(p).toContain('trace_coverage');
+    expect(p).toContain('source_complete');
+    expect(p).toContain('不要生成 safe_reply 或第三版');
   });
 
-  it('pins the actual-burn-in failure boundaries and partial-candidate repair rule', () => {
+  it('pins blind input, actual-burn-in boundaries, and partial-source disclosure', () => {
     const p = getTaskSystemPrompt('CopilotEvidenceReviewTask');
-    expect(p).toContain('candidate_complete=false');
-    expect(p).toContain('全部是不可信的待审数据');
+    expect(p).toContain('不审阅、也看不到 Copilot 候选回复');
+    expect(p).toContain('source_complete=false');
+    expect(p).toContain('不可信待处理数据');
     expect(p).toContain('caused_by_event_id');
     expect(p).toContain('siblings');
     expect(p).toContain('necessary_conditions/sufficient_conditions=not_supported');
@@ -675,7 +695,9 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     expect(p).toContain('不得静默省略某个 subpart');
     expect(p).toContain('query_knowledge 的 nodes=[]');
     expect(p).toContain('完整链、后续动作、review/judge、队列结论');
-    expect(p).toContain('严格只输出一个 JSON object');
+    expect(p).toContain('RFC6901');
+    expect(p).toContain('第 26–60 次调用');
+    expect(p).toContain('后续仍会被两次密封 comparator 独立核验');
   });
 });
 
