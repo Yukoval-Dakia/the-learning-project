@@ -15,6 +15,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Provider } from '@/ai/registry';
 import type { Db, Tx } from '@/db/client';
+import { provider_session_admission } from '@/db/schema';
 import { isKnownProvider } from '@/server/ai/providers';
 import { sql } from 'drizzle-orm';
 
@@ -609,30 +610,20 @@ async function insertWaitingOrRejected(
   `);
   const queueFull = Number(waiterRows[0]?.count ?? 0) >= input.plan.policy.maxQueuedSessions;
   const status = queueFull ? 'rejected' : 'waiting';
-  await tx.execute(sql`
-    INSERT INTO provider_session_admission (
-      task_run_id,
-      lane_id,
-      policy_fingerprint,
-      mode,
+  await tx
+    .insert(provider_session_admission)
+    .values({
+      task_run_id: input.taskRunId,
+      lane_id: input.plan.laneId,
+      policy_fingerprint: input.plan.policy.fingerprint,
+      mode: input.plan.mode,
       status,
-      requested_at,
-      wait_deadline_at,
-      terminal_at,
-      terminal_reason
-    ) VALUES (
-      ${input.taskRunId},
-      ${input.plan.laneId},
-      ${input.plan.policy.fingerprint},
-      ${input.plan.mode},
-      ${status},
-      clock_timestamp(),
-      clock_timestamp() + (${remainingCallerWaitMs(input)}::double precision * interval '1 millisecond'),
-      ${queueFull ? sql`clock_timestamp()` : sql`NULL`},
-      ${queueFull ? 'queue_full' : null}
-    )
-    ON CONFLICT (task_run_id) DO NOTHING
-  `);
+      requested_at: sql`clock_timestamp()`,
+      wait_deadline_at: sql`clock_timestamp() + (${remainingCallerWaitMs(input)}::double precision * interval '1 millisecond')`,
+      terminal_at: queueFull ? sql`clock_timestamp()` : null,
+      terminal_reason: queueFull ? 'queue_full' : null,
+    })
+    .onConflictDoNothing({ target: provider_session_admission.task_run_id });
   return status;
 }
 
@@ -641,41 +632,27 @@ async function insertObservedAcquired(
   input: AdmissionRequest,
   borrowedFromTaskRunId: string | null,
 ): Promise<AdmissionRow> {
-  await tx.execute(sql`
-    INSERT INTO provider_session_admission (
-      task_run_id,
-      lane_id,
-      policy_fingerprint,
-      mode,
-      status,
-      borrowed_from_task_run_id,
-      claim_token,
-      requested_at,
-      wait_deadline_at,
-      acquired_at,
-      heartbeat_at,
-      lease_expires_at,
-      hard_reclaim_at
-    ) VALUES (
-      ${input.taskRunId},
-      ${input.plan.laneId},
-      ${input.plan.policy.fingerprint},
-      'observe',
-      'acquired',
-      ${borrowedFromTaskRunId},
-      ${input.claimToken},
-      clock_timestamp(),
-      clock_timestamp() + (${remainingCallerWaitMs(input)}::double precision * interval '1 millisecond'),
-      clock_timestamp(),
-      clock_timestamp(),
-      clock_timestamp() + (${PROVIDER_SESSION_LEASE_TTL_MS}::double precision * interval '1 millisecond'),
-      clock_timestamp() + (
+  await tx
+    .insert(provider_session_admission)
+    .values({
+      task_run_id: input.taskRunId,
+      lane_id: input.plan.laneId,
+      policy_fingerprint: input.plan.policy.fingerprint,
+      mode: 'observe',
+      status: 'acquired',
+      borrowed_from_task_run_id: borrowedFromTaskRunId,
+      claim_token: input.claimToken,
+      requested_at: sql`clock_timestamp()`,
+      wait_deadline_at: sql`clock_timestamp() + (${remainingCallerWaitMs(input)}::double precision * interval '1 millisecond')`,
+      acquired_at: sql`clock_timestamp()`,
+      heartbeat_at: sql`clock_timestamp()`,
+      lease_expires_at: sql`clock_timestamp() + (${PROVIDER_SESSION_LEASE_TTL_MS}::double precision * interval '1 millisecond')`,
+      hard_reclaim_at: sql`clock_timestamp() + (
         ${input.executionTimeoutMs + PROVIDER_SESSION_ABORT_GRACE_MS}::double precision
         * interval '1 millisecond'
-      )
-    )
-    ON CONFLICT (task_run_id) DO NOTHING
-  `);
+      )`,
+    })
+    .onConflictDoNothing({ target: provider_session_admission.task_run_id });
   const row = await readAdmissionRow(tx, input.taskRunId);
   if (!row) throw new Error(`observed admission row missing after insert: ${input.taskRunId}`);
   requireRowIdentity(row, input);

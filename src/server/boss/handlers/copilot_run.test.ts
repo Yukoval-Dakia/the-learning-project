@@ -56,6 +56,7 @@ type AgentCtx = {
   db: unknown;
   taskRunId?: string;
   signal?: AbortSignal;
+  lifecycleAbortController?: AbortController;
   mcpServers?: Record<string, unknown>;
   allowedTools?: string[];
   skills?: string[];
@@ -1116,11 +1117,14 @@ describe('runCopilotRun', () => {
     const opts = (
       buildMcp.mock.calls[0] as unknown as [
         {
+          ctx: { signal?: AbortSignal };
           beforeExecute: (t: unknown) => Promise<string | undefined>;
           interceptInput: (t: unknown, args: unknown) => { truncationNote?: object | null };
         },
       ]
     )[0];
+    expect(ctx.lifecycleAbortController).toBeInstanceOf(AbortController);
+    expect(opts.ctx.signal).toBe(ctx.lifecycleAbortController?.signal);
     const fakeTool = { name: 'query_knowledge', effect: 'read' };
     for (let i = 0; i < 25; i++)
       await expect(opts.beforeExecute(fakeTool)).resolves.toBeUndefined();

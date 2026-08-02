@@ -51,6 +51,13 @@ interface LifecycleConfig<TResult extends LifecycleResult> {
   kind: TaskKind;
   taskRunId: string;
   timeoutMs: number;
+  /**
+   * Optional controller shared with in-process tools spawned by this attempt.
+   * The lifecycle remains its owner: provider timeout, lease fencing and caller
+   * cancellation all abort this exact controller so borrowed child work cannot
+   * outlive the parent admission permit.
+   */
+  abortController?: AbortController;
   override?: { provider?: ResolvedProvider['provider']; model?: string };
   /** Active outer central attempt when a DomainTool starts a nested task. */
   parentTaskRunId?: string;
@@ -111,7 +118,7 @@ function safeInputHash(input: unknown): string {
  * the in-flight transaction.
  */
 export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
-  readonly abortController = new AbortController();
+  readonly abortController: AbortController;
   readonly resolved: ResolvedProvider;
   readonly taskRunId: string;
   readonly kind: TaskKind;
@@ -128,6 +135,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   private durableStart = false;
 
   constructor(private readonly config: LifecycleConfig<TResult>) {
+    this.abortController = config.abortController ?? new AbortController();
     this.taskRunId = config.taskRunId;
     this.kind = config.kind;
     this.resolved = resolveTaskProvider(config.kind, config.override);

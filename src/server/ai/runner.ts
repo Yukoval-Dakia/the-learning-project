@@ -116,6 +116,12 @@ export interface RunTaskCtx {
   db: Db;
   /** Caller-owned cancellation propagated into the SDK run lifecycle. */
   signal?: AbortSignal;
+  /**
+   * Stable controller shared with an in-process MCP ToolContext. The runner
+   * owns its lifecycle semantics and aborts it on timeout/fencing/caller stop,
+   * so a nested central task sees the exact parent-attempt cancellation signal.
+   */
+  lifecycleAbortController?: AbortController;
   /** Only vision/ingestion paths use this; runTask itself doesn't dereference. */
   r2?: R2Client;
   /** Override provider/model for testing or per-call routing escapes. */
@@ -696,6 +702,7 @@ export async function runTask(
       db: ctx.db,
       kind,
       timeoutMs: def.budget.timeout,
+      abortController: ctx.lifecycleAbortController,
       override: ctx.override,
       parentTaskRunId: ctx.parentTaskRunId,
       // A retry may only wait inside the unused remainder of the existing 10s
@@ -794,6 +801,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
     db: ctx.db,
     kind,
     timeoutMs: def.budget.timeout,
+    abortController: ctx.lifecycleAbortController,
     override: ctx.override,
     parentTaskRunId: ctx.parentTaskRunId,
     taskRunId: ctx.taskRunId,
@@ -1040,6 +1048,7 @@ export async function streamTaskCollecting(
     db: ctx.db,
     kind,
     timeoutMs: ctx.budgetOverride?.timeoutMs ?? def.budget.timeout,
+    abortController: ctx.lifecycleAbortController,
     override: ctx.override,
     parentTaskRunId: ctx.parentTaskRunId,
     taskRunId: ctx.taskRunId,

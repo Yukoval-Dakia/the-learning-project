@@ -512,6 +512,8 @@ type RunAgentTaskFn = (
   input: unknown,
   ctx: {
     db: Db;
+    signal?: AbortSignal;
+    lifecycleAbortController?: AbortController;
     // YUK-198 — widened to allow remote McpHttpServerConfig (Tavily) alongside
     // the in-process SdkMcpServer (loom). Mirrors runner ctx.mcpServers, which
     // is the SDK's Options['mcpServers'].
@@ -545,6 +547,7 @@ type StreamAgentTaskFn = (
     mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
     allowedTools?: string[];
     signal?: AbortSignal;
+    lifecycleAbortController?: AbortController;
     /** Caller-owned id shared with the in-process MCP tool log. */
     taskRunId?: string;
     // YUK-284 (C2) — see RunAgentTaskFn.ctx.skills. Same forward to the streaming
@@ -1079,15 +1082,18 @@ async function runCopilotChatImpl(
   // accumulator Dreaming/Coach hold. Both chat + chip surfaces run the same
   // user-facing CopilotTask, so both get the Copilot budget.
   const budgetTracker = new ContextBudgetTracker(resolveContextBudget(surface));
+  // The MCP server is constructed before the central runner creates its
+  // lifecycle. Share this controller with both sides so timeout, lease fencing,
+  // and request cancellation abort nested run_task work before the parent permit
+  // is released. The request signal alone is insufficient: non-streaming calls
+  // have none, and the runner's execution timeout is an internal lifecycle event.
+  const lifecycleAbortController = new AbortController();
 
   const mcpServer = buildMcpServer({
     ctx: {
       db,
       taskRunId,
-      // A nested central task borrows this outer session's admission slot. It
-      // must share the request abort signal as well, otherwise disconnect could
-      // release the parent while an unfenced borrowed child keeps running.
-      ...(streaming?.signal ? { signal: streaming.signal } : {}),
+      signal: lifecycleAbortController.signal,
       callerActor: { kind: 'agent', ref: actorRef },
       causedByEventId,
     },
@@ -1178,6 +1184,7 @@ async function runCopilotChatImpl(
         allowedTools,
         taskRunId,
         signal: streaming.signal,
+        lifecycleAbortController,
         ...(spawnContract
           ? {
               agents: spawnContract.agents,
@@ -1205,6 +1212,7 @@ async function runCopilotChatImpl(
       mcpServers,
       allowedTools,
       taskRunId,
+      lifecycleAbortController,
       ...(spawnContract
         ? {
             agents: spawnContract.agents,

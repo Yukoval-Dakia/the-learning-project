@@ -886,6 +886,11 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     db,
     runId,
   });
+  // One exact signal spans the outer provider attempt and every nested central
+  // task invoked through its in-process MCP tools. The cancellation poll remains
+  // the caller signal; the runner additionally aborts this controller on its own
+  // timeout or provider-lease fencing before releasing the parent permit.
+  const lifecycleAbortController = new AbortController();
 
   // ── MCP mount: 照 quiz_gen:415-435 / chat.ts:1038-1098 ────────────────────
   // copilot 全集 surface（chat surface=copilot；chip surface=user-suggested）。
@@ -895,7 +900,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   const mcpServer = buildMcpServer({
     ctx: {
       db,
-      signal: cancellationControl.signal,
+      signal: lifecycleAbortController.signal,
       taskRunId,
       callerActor: { kind: 'agent', ref: actorRef },
       causedByEventId: runId,
@@ -1062,6 +1067,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         // their active parent and borrow its concurrency slot.
         taskRunId,
         signal: cancellationControl.signal,
+        lifecycleAbortController,
         mcpServers,
         allowedTools,
         hooks: sdkHooks,

@@ -89,8 +89,11 @@ describe('runCopilotChat (two-surface routing)', () => {
     const mcpCtx = (buildMcpServerFn.mock.calls[0] as unknown as [BuildMcpServerOptions])[0].ctx;
     const runnerCtx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
       taskRunId?: string;
+      lifecycleAbortController?: AbortController;
     };
     expect(runnerCtx?.taskRunId).toBe(mcpCtx?.taskRunId);
+    expect(runnerCtx.lifecycleAbortController).toBeInstanceOf(AbortController);
+    expect(mcpCtx.signal).toBe(runnerCtx.lifecycleAbortController?.signal);
   });
 
   // AF S3a / YUK-203 U3 — the conversation envelope is resolved once per turn;
@@ -1608,10 +1611,12 @@ describe('runCopilotChatStreaming (C1 — SSE streaming entrypoint)', () => {
     const runnerCtx = (streamAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
       taskRunId?: string;
       signal?: AbortSignal;
+      lifecycleAbortController?: AbortController;
     };
     expect(runnerCtx?.taskRunId).toBe(mcpCtx?.taskRunId);
     expect(runnerCtx?.signal).toBe(controller.signal);
-    expect(mcpCtx?.signal).toBe(controller.signal);
+    expect(runnerCtx.lifecycleAbortController).toBeInstanceOf(AbortController);
+    expect(mcpCtx?.signal).toBe(runnerCtx.lifecycleAbortController?.signal);
 
     // Result equals what the non-stream path would return — real task_run_id + reply.
     expect(result.task_run_id).toBe('task_stream_real');
