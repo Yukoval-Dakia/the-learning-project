@@ -246,7 +246,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
           cause: new Error('provider retry start window elapsed before SDK invocation'),
         });
       }
-      await this.start(inputHash);
+      await this.startWithInputHash(inputHash);
       // Admission can return just inside the retry window while the durable
       // start write blocks past it. Recheck at the final pre-SDK seam so the
       // existing elapsed gate is never expanded by control-plane DB latency.
@@ -278,7 +278,11 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     return outcome.value;
   }
 
-  async start(inputHash: string): Promise<void> {
+  async start(actualInput: unknown): Promise<void> {
+    await this.startWithInputHash(safeInputHash(actualInput));
+  }
+
+  private async startWithInputHash(inputHash: string): Promise<void> {
     try {
       await writeAiTaskRunStarted(this.config.db, {
         id: this.taskRunId,
