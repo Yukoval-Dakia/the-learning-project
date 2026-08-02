@@ -23,7 +23,7 @@
 > an explicit fence or legacy STARTED/DELTA/STEP/REPLY/FAILED(error) is treated
 > as possible execution and becomes no-checkpoint `ambiguous_execution` only
 > after the 12-minute primary execution ceiling, the YUK-832 bounded FULL
-> evidence pipeline (at most two five-minute blind-reference slots plus four
+> evidence pipeline (at most two six-minute blind-reference slots plus four
 > two-minute comparison slots in the worst contract-invalid + fallback path),
 > and 30-second settlement grace.
 > `FAILED(reason='error')` remains a retry frame; all other FAILED reasons are
@@ -300,7 +300,7 @@ assembleCopilotRunInput(db, {
 
 ## 9. Interrupt / cancel / 串行（S6）
 
-- n=1 单会话 + `batchSize:1` → 天然单线程一次一 run（ADR-0041）。**S6 串行语义文档化**：copilot_run `batchSize:1` 使 run 串行——follow-up 在长 run 期间入队会**等到当前 run 结束**（主任务 12min + FULL 审阅最坏 18min + 30s settlement grace，即 30.5min ceiling）才拾取。边跑打字 → 入队下一 checkpoint（等当前 run 完）。
+- n=1 单会话 + `batchSize:1` → 天然单线程一次一 run（ADR-0041）。**S6 串行语义文档化**：copilot_run `batchSize:1` 使 run 串行——follow-up 在长 run 期间入队会**等到当前 run 结束**（主任务 12min + FULL 审阅最坏 20min + 30s settlement grace，即 32.5min ceiling）才拾取。边跑打字 → 入队下一 checkpoint（等当前 run 完）。
 - **Stop 不是纯 UI。** app 与 worker 分进程，不能靠 API 进程内 controller registry；
   `job_events.CANCEL_REQUESTED` 是唯一 durable 真相源。取消 route 与 execution fence 共用
   dispatch lock、与 outcome marker 共用 settlement lock：cancel 先于 fence → 原子

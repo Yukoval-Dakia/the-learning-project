@@ -40,8 +40,8 @@
 - exact-head actual-provider v8 五例全部安全 fail closed 且没有 candidate 泄漏。A01/A03/A04
   的复杂 blind-reference 多次撞 120s；A03/C01/C04 也有成功 provider 输出被 strict contract
   拒绝。原始结果在本地 mode 0600 artifact，不提交。
-- 当前窄化修复只给 durable blind-reference 300s；inline 与 comparator 保持 120s。FULL 最坏
-  审阅为 18min，连同 primary 12min + 30s grace 的 owner ceiling 为 30.5min，仍小于 1h
+- 当前窄化修复只给 durable blind-reference 360s；inline 与 comparator 保持 120s。FULL 最坏
+  审阅为 20min，连同 primary 12min + 30s grace 的 owner ceiling 为 32.5min，仍小于 1h
   stuck-run 阈值。加入的诊断只保留固定 contract 错误类别/有界单行消息，不记录 raw output、
   candidate 或 thinking。
 - `9a7be1b6` 的 A01 actual 已让两次 blind reference 越过原 120s timeout 并完整返回，但都被
@@ -66,7 +66,10 @@
   6–9 的 evidence indices 留空，server 继续 fail closed。artifact SHA-256
   `8f9aff79f8e5fcf6f362722c7e9f78d726d76589e7338c7ed90e88cdfc88d329`（本地 mode 0600）。
   当前只把 schema 已有的 coverage non-empty + exact ledger-set 条件逐字写入通用 prompt，不增加
-  attempt、不接受空 coverage。更早的 A01 两次 reference 分别约
+  attempt、不接受空 coverage。`0bcd6494` A01 primary 77.04s、首条 reference 158.75s；第二条
+  收到 pointer feedback，但在 302.01s 撞到 300s 尾部，未返回新契约证据。artifact SHA-256
+  `683d3cd4f467f81d121a05e89208b3911e0715c4a909306ca26807473dc80271`（本地 mode 0600）。
+  现只把 durable reference 调到 360s；更早的 A01 两次 reference 分别约
   198.30s/198.33s，均为 provider success + thinking；partial artifact SHA-256
   `7e7d7e402a7d007c165049f8fc42534072ed068e536d3ee53eacd99da1190d7b`（本地 mode 0600）。
 

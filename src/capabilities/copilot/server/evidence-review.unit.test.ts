@@ -653,7 +653,7 @@ afterEach(() => {
 });
 
 describe('Copilot FULL evidence review', () => {
-  it('uses a 300s durable reference tail while keeping comparator and inline budgets unchanged', async () => {
+  it('uses a 360s durable reference tail while keeping comparator and inline budgets unchanged', async () => {
     let comparisonOrdinal = 0;
     const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
       if (kind === 'CopilotEvidenceReviewTask') {
@@ -691,7 +691,7 @@ describe('Copilot FULL evidence review', () => {
     });
     expect(runTaskFn.mock.calls[1]?.[2]).not.toHaveProperty('budgetOverride');
     expect(runTaskFn.mock.calls[2]?.[2]).not.toHaveProperty('budgetOverride');
-    expect(COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS).toBe(300_000);
+    expect(COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS).toBe(360_000);
     expect(COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS).toBe(120_000);
     expect(COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS).toBe(
       COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS * COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS +

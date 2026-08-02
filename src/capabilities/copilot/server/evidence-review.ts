@@ -40,7 +40,7 @@ export const COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS = 120_000;
  * validator tail. Keep this override reference-only until actual comparator
  * evidence demonstrates that its existing budget is insufficient.
  */
-export const COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS = 300_000;
+export const COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS = 360_000;
 export const COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS = 2;
 export const COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS = 2;
 // Worst case: two blind-reference contract attempts, one failed original

@@ -37,12 +37,14 @@
   完整返回并触发反馈；第二条在 242.01s 被 240s 上限截断。当前只把 durable reference 尾部
   调到 300s；`b1290371` 第二条已在 253s 完整返回并修掉首条 pointer error，但新输出把 4 个
   request coverage 标为 answerable 却给空 evidence indices，server 正确拒绝。当前只把 schema
-  已有的“非空 + 与 ledger exact-set 相等”条件写入通用 prompt，不加第三次 attempt、不放宽 binding。
+  已有的“非空 + 与 ledger exact-set 相等”条件写入通用 prompt；`0bcd6494` 的第二条又在 302.01s
+  撞到 300s 尾部，未产生输出。当前只调到 360s；FULL 最坏 20min、owner ceiling 32.5min，
+  不加第三次 attempt、不放宽 binding。
 - 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
 
 ## NEXT
 
-1. 完成 validator request-coverage exact-set prompt 的 commit/push 与 exact-head GitHub CI；包装 prose
+1. 完成 validator 360s durable-reference 尾部的 commit/push 与 exact-head GitHub CI；包装 prose
    丢弃，不改 inline/comparator 预算与 server binding。
 2. 先在 clean committed exact head 重跑 A01；自动 gate 通过后才重跑 5 例 actual-provider v8，逐例审计 primary +
    reference/comparator runs、thinking、digests、exact bytes 与无旁支 validator。
