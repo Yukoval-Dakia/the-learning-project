@@ -1,71 +1,71 @@
-# 当前 handoff — 2026-08-02 Architecture Deepening FULL / YUK-841
+# 当前 handoff — 2026-08-02 Architecture Deepening FULL / YUK-842
 
 ## Owner direction and tracker
 
-- Owner 明确：「直接启动 FULL」；补充硬约束：「gate 不要在本地跑」。
+- Owner：「直接启动 FULL」；硬约束：「gate 不要在本地跑」。
 - Linear project：`Architecture Deepening FULL — 语义、成本与运行所有权`（In Progress）。
-- F0 milestone `Truth, contracts, ratchets`：
-  - YUK-840 Done：PR #1155 merged，main `24add632`；
-  - YUK-841 In Review：AI attempt 单一成本真相，PR #1156；
-  - YUK-842 Todo / blocked by YUK-841：跨进程 provider-lane admission。
+- F0：YUK-840 Done、YUK-841 Done（PR #1156 / main `292350958`）、YUK-842 In Progress。
 
 ## Active checkout
 
-- worktree：`/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-841-attempt-cost-truth`
-- branch：`codex/yuk-841-attempt-cost-truth`
-- base：`origin/main@24add632b8941d0e4ebfeddb337761e7a1e38c29`
-- 原 checkout 与 YUK-840 worktree 均未触碰。
+- worktree：`/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-842-provider-admission`
+- branch：`codex/yuk-842-provider-admission`
+- base：`origin/main@292350958fea4cbc1adb64b08659064b06916eaa`
+- PR：#1157；首轮 exact-head CI 暴露 import/type inference、retry constant import 与 cancellation
+  regression，均已按远端日志静态修正，等待新 head CI。
+- 原 checkout 有 owner 的 CI/PLAN/research 未提交修改，未触碰。
 
-## YUK-841 implementation
+## Implemented boundary
 
-- `attempt-cost.ts` 定义唯一 `AttemptCostTruth`：
-  - Anthropic direct finite nonnegative SDK value（含 0）→ reported；
-  - Xiaomi 0/undefined + known versioned pricebook → estimated；unknown model → unknown；
-  - subscription lane → estimated 0 + explicit contract ref；
-  - no terminal → unknown，绝不以 0 代替。
-- 三个 runner API 背后的四个 terminal interpreter 都在任何 SDK result 上先记录 usage/cost，再做
-  success/error 分类；`SDKResultError`、success+is_error、no-terminal 都有 terminal attempt ledger。
-- `RunTaskResult` 保持 `cost_usd?: number`，追加必需 basis/ref；unknown result 为 undefined。
-- `writeAiTaskAttemptFinished` 在 transaction 内以 `id + status=running` 更新 run，用 RETURNING 的
-  task/provider/model 插入唯一 `entry_kind=attempt` ledger；ledger fault 回滚 run update。
-- start row 写失败 fail-closed，不获取 provider 成本；stuck-run reconcile 复用同一 atomic finalizer，
-  落 failure + unknown attempt ledger。
-- migration `0087_yuk841_attempt_cost_truth.sql`：ledger cost nullable、legacy/attempt discriminator、
-  basis/ref checks、attempt partial unique；历史行只默认 legacy，不做来源推断。
-- admin run/detail/cost 与 `/api/cost/today` 暴露 nullable amount、basis/ref、reported/estimated/legacy
-  breakdown、unknown/legacy counts；classified run 的 canonical 与 ledger 金额都只取 attempt
-  projection，legacy correlation 仍保留在 row/job 诊断关联中但不再把 unknown 变成 0 或造成双计。
-- Postman inventory/collection 与 generated API client 已由仓库生成器同步；本票未写 UI。
+- `provider_session_admission` 是 operational lease + start-reservation ledger；terminal row 在七天后
+  只获得 lane-local opportunistic pruning eligibility，不承诺后台 TTL。application archive excluded
+  且 import wipe-only；full `pg_dump` restore 后必须显式 truncate；resetDb/migration-smoke 均同步。
+- `provider-session-admission.ts`：per-provider lane policy JSON；`off | observe | enforce`；短
+  `pg_try_advisory_xact_lock` transaction；DB-clock FIFO/queue/rate/concurrency CAS；claim heartbeat、
+  lease expiry、hard reclaim、policy mismatch fail-closed、bounded lane-local pruning batch。
+- admitted unit 是完整 central Claude Agent SDK `sdkQuery()` session，不是 wire request。一个 session
+  可含 turns、nested SDK agents、tool loop 与 `CLAUDE_CODE_MAX_RETRIES` 内部尝试。
+- admission wait 在 durable `ai_task_runs` start 与 model timer 之前；timeout/cancel 只有 admission
+  row，不制造 YUK-841 unknown cost attempt。permit 在 terminal settlement/afterRun 前 release。
+- runner 的 runTask、streamTask、streamTaskCollecting 三处真实 query seam 全接入；只有真正执行新
+  provider attempt 的 Loom retry / pg-boss redelivery 才使用新 admission id；replay/fence 不 re-admit，
+  且没有新增 retry layer。retry admission 受首次 attempt 的绝对 elapsed deadline 约束。
+- same-lane nested DomainTool task 通过 `parentTaskRunId` 加入 active session family：一个 root 只允许
+  一条 active descendant chain 共享槽，parallel sibling 等待或占新 root；parent 先结束时 active
+  child 接管槽。每个 child 仍独立计 start reservation/lease/metrics；ResearchMeetingDirector
+  预分配 outer task id，避免 synthetic id 断链。
+- `observe` 唯一允许 bounded fail-open；`enforce` 对 DB/lease/policy ambiguity fail-closed。短 token 只
+  fence DB owner，不 fence provider，故 lost active family root/branch 在 release/hard_reclaim 前继续
+  占容量。
+- wait/release 使用 monotonic deadline、transaction-local `lock_timeout` / `statement_timeout`、有界
+  backoff 与 per-process lane single-flight；timeout/cancel 走独立短 CAS，失败时由后续 lane tick 收口。
 
-## Validation boundary
+## Evidence and tests authored
 
-- Owner 约束后，本轮没有运行任何本地 test/typecheck/lint/build/audit gate。
-- 只执行了静态只读检查、仓库 generator 与 Biome formatter；这些不是验证证据。
-- 三路独立 reviewer 已对当前真实 diff 完成 runtime、DB/API、consumer/test 只读审查；均无未解决
-  P0/P1，P2/minor advisory。
-- PR 前一 exact-head 的完整 migration/unit/DB/typecheck/lint/build/audit 已由 GitHub CI 全绿；随后
-  合并前 review 发现 success settlement 失败仍可能向调用方表现为成功，当前已改为 fail-closed；
-  新-head review 又发现 collecting 会把未落账失败降级成 partial，现已要求 success/failure
-  settlement 任一失败都 reject。最新 review 继续发现 text stream 在结算失败时追加错误尾帧后仍
-  clean-close；现已改为 terminal settlement 失败就 error stream，明确区分“已发送 bytes 无法撤回”
-  与“协议不得正常完成”，并补 success/failure 两条反证。最终 lifecycle review 又发现首次 success
-  transaction 回滚后幂等闩会阻止 failure 收口；现改为每个 status 最多一次、仅允许
-  success→failure 的有界降级，CAS + 唯一 ledger 防双写；即使 fallback failure 落账成功，collecting
-  仍 reject provider-success 文本。新 head 必须重新由 GitHub CI 验证；CI 未绿前不得宣称 YUK-841
-  已交付。
+- DB：两个 independent clients 共用 cap、FIFO、queue-full、duplicate owner、cross-lane row identity、
+  lease-expired quarantine/hard reclaim、single descendant chain、parallel sibling、parent-first promotion、
+  terminal+family-child start reservation、policy mismatch、row-lock DB timeout 与 DB-linearized wait timeout。
+- Unit：strict config、off rollback、observe/enforce failure behavior；lifecycle wait 前不 start/timer；
+  admission timeout不建 attempt；三 runner seam、retry absolute deadline/re-admit/release-before-settle。
+- Migration：table/index/CHECK/backup/restore/reset lockstep。
+- Runbook：全进程 `off → observe → application-level drain → enforce`、metrics SQL、failure/restore/
+  rollback；observe fail-open 后若 abort/kill/stop 有歧义，同样强制 stop time + deployed max timeout
+  + 30s，不能靠 admission-table zero snapshot 直接 enforce。
 
-## Still required
+## Validation boundary and next action
 
-1. 提交并推送 PR #1156 的 bounded terminal-settlement state machine。
-2. 新 exact-head GitHub CI 全绿、无未解决 P0/P1 后 merge；Linear YUK-841 → Done。
-3. 从合并 main 新建独立 worktree 启动 YUK-842；不要与 YUK-841 共享 schema/runtime 并行。
+- 没有运行任何本地 test/typecheck/lint/build/audit gate。
+- 只运行 formatter、`git diff --check` 与只读静态检查；它们不是验证证据。
+- 下一步：提交并推送首轮远端 CI 修正 → PR #1157 新 head exact-head GitHub CI；仅 P0/P1 阻塞。
+- Phase 0 exit 仍需 merge 后一个真实 provider observation；不能用 mock/synthetic 冒充。
 
-## Explicit non-goals / debt
+## Explicit residual scope
 
-- 真实合同价格校准仍开放；placeholder estimate 不可用于预算可信声明。
-- UI null 展示与产品 operation 级 `cost_usd ?? 0` 聚合不在 YUK-841；本票只闭合 model-attempt truth。
-- YUK-843 承接 stuck-run reconciler 单行结算异常隔离与 ambiguous-ack 最终收敛；当前 lifecycle 保持
-  single-owner sequential terminal contract。YUK-844 承接产品 operation unknown 成本全链传播；
-  两者均已在 Linear 捕获，不阻塞 F0-2。
-- OCR/GLM、failure-correlation、image-correlation 等非 central runner ledger 保持 legacy，不能冒充已迁移。
-- YUK-832–836 保持 open/PARKED；YUK-596 transport 已交付但内容质量 HOLD。
+- DashScope embeddings、Mem0 fan-out、direct GLM reconcile、GLM/Tencent OCR、manual preflight 不走
+  `AiRunLifecycle`，不在 YUK-842 session gate 内；已建 YUK-845 承接，完成前不得宣称产品级 provider
+  HTTP capacity 已治理。
+- application archive import 需要保留 admission-off 的 admin Hono、阻断 ingress、停 worker 并 drain；
+  full `pg_dump` restore 则停 app/worker，migrate 后 truncate admission 表。若任何 owner 未确认正常
+  drain，必须在 abort/stop/wipe 前把 active row 的最大 `hard_reclaim_at` 记到 DB 外，并从 process
+  stop time 强制等待 deployed max execution timeout + 30s（DB snapshot 只能延长不能缩短）。两条
+  路径还须等待最后一次 provider traffic + 60s；单次 DB zero snapshot 不能关闭 wait→acquire race。

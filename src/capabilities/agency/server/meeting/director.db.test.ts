@@ -54,6 +54,7 @@ import {
   runResearchMeetingAgentNightly,
 } from '../../jobs/research_meeting_agent_nightly';
 import {
+  type DirectorDeps,
   EVIDENCE_SCOUT_CHARTER,
   RESEARCH_MEETING_AGENT_ACTOR,
   SCAN_ACTION,
@@ -280,6 +281,45 @@ describe('evidence scout charter', () => {
 });
 
 describe('runResearchMeetingDirector — pipeline', () => {
+  it('owns one outer lifecycle controller and propagates only its signal to nested probes', async () => {
+    type OuterRunner = NonNullable<DirectorDeps['runAgentTaskFn']>;
+    type NestedRunner = NonNullable<DirectorDeps['runTaskFn']>;
+    type OuterContext = Parameters<OuterRunner>[2];
+    type NestedContext = Parameters<NestedRunner>[2];
+
+    let outerContext: OuterContext | undefined;
+    const nestedContexts: NestedContext[] = [];
+    const defaultProbeRunner = baseDeps().runTaskFn as NestedRunner;
+    const runTaskFn: NestedRunner = async (kind, input, ctx) => {
+      nestedContexts.push(ctx);
+      return defaultProbeRunner(kind, input, ctx);
+    };
+    const runAgentTaskFn: OuterRunner = async (_kind, _input, ctx) => {
+      outerContext = ctx;
+      await callTool('propose_conjecture', validProposeArgs);
+      return {
+        task_run_id: 'director_lifecycle_wiring',
+        cost_usd: 0.01,
+      };
+    };
+
+    const result = await runResearchMeetingDirector(
+      testDb(),
+      baseDeps({ runAgentTaskFn, runTaskFn }),
+    );
+
+    expect(result.proposals_created).toBe(1);
+    const controller = outerContext?.lifecycleAbortController;
+    expect(controller).toBeInstanceOf(AbortController);
+    expect(outerContext?.taskRunId).toBeTruthy();
+    expect(nestedContexts).toHaveLength(2);
+    for (const ctx of nestedContexts) {
+      expect(ctx?.parentTaskRunId).toBe(outerContext?.taskRunId);
+      expect(ctx?.signal).toBe(controller?.signal);
+      expect(ctx?.lifecycleAbortController).toBeUndefined();
+    }
+  });
+
   it('seeds write caps from durable outputs of earlier same-day director triggers', async () => {
     const priorTriggerId = 'research_meeting_agent_prior_trigger';
     await testDb()

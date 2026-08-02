@@ -5,6 +5,7 @@ import {
   MAX_INLINE_ASSETS,
   MEM0_COLLECTION_COLUMNS,
   MEM0_COLLECTION_DEFAULT,
+  RESTORE_WIPE_ONLY_TABLES,
   SCHEMA_VERSION,
   mem0CollectionTable,
 } from './constants';
@@ -266,7 +267,14 @@ describe('export constants', () => {
       'event_subscription_effect',
       'hub_sync_reconciliation',
       'job_events',
+      'provider_session_admission',
     ]);
+  });
+
+  it('wipes YUK-842 operational admission state without backing it up', () => {
+    expect(BACKUP_EXCLUDED_TABLES.has('provider_session_admission')).toBe(true);
+    expect(RESTORE_WIPE_ONLY_TABLES).toContain('provider_session_admission');
+    expect(FK_ORDER as readonly string[]).not.toContain('provider_session_admission');
   });
 
   it('FK_ORDER and BACKUP_EXCLUDED_TABLES are disjoint', () => {

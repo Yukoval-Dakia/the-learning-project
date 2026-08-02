@@ -9,7 +9,7 @@
 //   YUK-575: N2 流式 delta FIFO（S3）/ N3+S4 ambient 装配往返 / N5+MF-A budget /
 //            MF1/MF2 transient·exhausted 分诊 + 幂等守卫 / S6 static 约束。
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { writeCopilotReply } from '@/capabilities/copilot/server/chat';
 import {
@@ -20,8 +20,14 @@ import {
 import { countOutstandingDurableRuns } from '@/capabilities/copilot/server/durable-backlog';
 import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
 import { COPILOT_SUBAGENT_NAME } from '@/capabilities/copilot/server/subagents';
-import { event, job_events } from '@/db/schema';
+import type { Db } from '@/db/client';
+import { ai_task_runs, event, job_events, provider_session_admission } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import {
+  acquireProviderSession,
+  resolveProviderSessionAdmissionPlan,
+} from '@/server/ai/provider-session-admission';
+import { createRunLifecycle } from '@/server/ai/run-lifecycle';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/server/ai/tools/allowlists';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
@@ -54,7 +60,9 @@ async function copilotReplyEvents(sessionId: string) {
 // budgetOverride），让 mock.calls[0] 携带 typed tuple。
 type AgentCtx = {
   db: unknown;
+  taskRunId?: string;
   signal?: AbortSignal;
+  lifecycleAbortController?: AbortController;
   mcpServers?: Record<string, unknown>;
   allowedTools?: string[];
   skills?: string[];
@@ -132,6 +140,10 @@ describe('runCopilotRun', () => {
     await resetDb();
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('① happy path — 写 started→reply→done 序列，computeReplay 末态 done', async () => {
     const run = streamMock('这是回答');
     const result = await runCopilotRun({
@@ -143,6 +155,9 @@ describe('runCopilotRun', () => {
     });
 
     expect(result).toEqual({ status: 'done', reply: '这是回答', task_run_id: 'tr_x' });
+    expect(run.mock.calls[0]?.[2]).toMatchObject({
+      taskRunId: `copilot_run_tool_${baseData.run_id}`,
+    });
 
     const events = await replay(baseData.run_id);
     const types = events.map((e) => e.event_type);
@@ -1112,11 +1127,14 @@ describe('runCopilotRun', () => {
     const opts = (
       buildMcp.mock.calls[0] as unknown as [
         {
+          ctx: { signal?: AbortSignal };
           beforeExecute: (t: unknown) => Promise<string | undefined>;
           interceptInput: (t: unknown, args: unknown) => { truncationNote?: object | null };
         },
       ]
     )[0];
+    expect(ctx.lifecycleAbortController).toBeInstanceOf(AbortController);
+    expect(opts.ctx.signal).toBe(ctx.lifecycleAbortController?.signal);
     const fakeTool = { name: 'query_knowledge', effect: 'read' };
     for (let i = 0; i < 25; i++)
       await expect(opts.beforeExecute(fakeTool)).resolves.toBeUndefined();
@@ -1208,15 +1226,23 @@ describe('runCopilotRun', () => {
       payload: { reason: 'error', error: 'mimo 500' },
     });
     const run = streamMock('重试成功的回答');
+    const buildMcpServer = mcpMock();
     const result = await runCopilotRun({
       db: testDb(),
       data: { ...baseData, run_id: runId, session_id: sessionId },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
+      buildMcpServerFn: buildMcpServer as never,
     });
     expect(result).toMatchObject({ status: 'done', reply: '重试成功的回答' });
     expect(run).toHaveBeenCalledTimes(1);
+    const retryTaskRunId = `copilot_run_tool_${runId}_retry_1`;
+    expect(run.mock.calls[0]?.[2]).toMatchObject({ taskRunId: retryTaskRunId });
+    expect(buildMcpServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ctx: expect.objectContaining({ taskRunId: retryTaskRunId }),
+      }),
+    );
     const events = await replay(runId);
     expect(events.map((e) => e.event_type)).toEqual([
       COPILOT_RUN_EVENTS.FAILED,
@@ -1226,6 +1252,144 @@ describe('runCopilotRun', () => {
       COPILOT_RUN_EVENTS.DONE,
     ]);
     expect(deriveCopilotRunStatus(events)).toBe('done');
+  });
+
+  it('YUK-842 — a second durable retry acquires and starts a fresh attempt without reopening either prior ledger', async () => {
+    vi.stubEnv('XIAOMI_API_KEY', 'sk-test-key');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
+    vi.stubEnv('AI_PROVIDER_MODEL', '');
+    vi.stubEnv('AI_PROVIDER_SESSION_ADMISSION_MODE', 'enforce');
+    vi.stubEnv(
+      'AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON',
+      JSON.stringify({
+        xiaomi: {
+          maxConcurrentSessions: 4,
+          maxSessionStartsPerMinute: 30,
+          maxQueuedSessions: 8,
+          maxWaitMs: 2_000,
+        },
+      }),
+    );
+
+    const runId = 'run_second_retry_fresh_attempt';
+    const baseTaskRunId = `copilot_run_tool_${runId}`;
+    const firstRetryTaskRunId = `${baseTaskRunId}_retry_1`;
+    const secondRetryTaskRunId = `${baseTaskRunId}_retry_2`;
+    const admissionPlan = resolveProviderSessionAdmissionPlan('xiaomi');
+    if (admissionPlan.mode !== 'enforce') throw new Error('expected enforce admission plan');
+
+    const seedTerminalAttempt = async (taskRunId: string) => {
+      await testDb()
+        .insert(ai_task_runs)
+        .values({
+          id: taskRunId,
+          task_kind: 'CopilotTask',
+          provider: 'xiaomi',
+          model: 'mimo-v2.5-pro',
+          input_hash: `legacy:${taskRunId}`,
+          status: 'failure',
+          finish_reason: 'error',
+          usage_json: { inputTokens: 1, outputTokens: 0 },
+          error_message: 'legacy retryable failure',
+          started_at: new Date('2026-08-02T00:00:00.000Z'),
+          finished_at: new Date('2026-08-02T00:00:01.000Z'),
+        });
+      const controller = new AbortController();
+      const permit = await acquireProviderSession({
+        db: testDb(),
+        kind: 'CopilotTask',
+        taskRunId,
+        executionTimeoutMs: 1_000,
+        signal: controller.signal,
+        plan: admissionPlan,
+        onLeaseLost: () => controller.abort(),
+      });
+      await permit.release();
+    };
+    await seedTerminalAttempt(baseTaskRunId);
+    await seedTerminalAttempt(firstRetryTaskRunId);
+    for (const error of ['first provider failure', 'second provider failure']) {
+      await writeJobEvent(testDb(), {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.FAILED,
+        payload: { reason: 'error', error },
+      });
+    }
+
+    const buildMcpServer = mcpMock();
+    const run = vi.fn(async (_kind: string, input: unknown, ctx: AgentCtx) => {
+      const lifecycle = createRunLifecycle({
+        db: ctx.db as Db,
+        kind: 'CopilotTask',
+        taskRunId: ctx.taskRunId,
+        timeoutMs: 1_000,
+        abortController: ctx.lifecycleAbortController,
+        signal: ctx.signal,
+        logScope: 'copilot-retry-admission-test',
+      });
+      try {
+        await lifecycle.withProviderSession(input, async () => {
+          lifecycle.recordTerminalResult({
+            usage: { inputTokens: 2, outputTokens: 1 },
+            tokenCounts: { inputTokens: 2, outputTokens: 1 },
+            finishReason: 'end_turn',
+          });
+        });
+        const result = {
+          task_run_id: lifecycle.taskRunId,
+          text: '第二次重试成功',
+          finishReason: lifecycle.finishReason,
+          usage: lifecycle.usage,
+          cost_usd: lifecycle.costUsd,
+          cost_basis: lifecycle.costBasis,
+          cost_ref: lifecycle.costRef,
+        };
+        await lifecycle.finishSuccess(result);
+        return result;
+      } finally {
+        lifecycle.dispose();
+      }
+    });
+
+    await expect(
+      runCopilotRun({
+        db: testDb(),
+        data: { ...baseData, run_id: runId, session_id: 'sess_second_retry_fresh_attempt' },
+        streamTaskCollectingFn: run as never,
+        resolveCopilotRunInputFn: stubRunInput,
+        buildMcpServerFn: buildMcpServer as never,
+      }),
+    ).resolves.toMatchObject({ status: 'done', task_run_id: secondRetryTaskRunId });
+    expect(run.mock.calls[0]?.[2]).toMatchObject({ taskRunId: secondRetryTaskRunId });
+    expect(buildMcpServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ctx: expect.objectContaining({ taskRunId: secondRetryTaskRunId }),
+      }),
+    );
+
+    for (const taskRunId of [baseTaskRunId, firstRetryTaskRunId]) {
+      const [attempt] = await testDb()
+        .select({ status: ai_task_runs.status, finishReason: ai_task_runs.finish_reason })
+        .from(ai_task_runs)
+        .where(eq(ai_task_runs.id, taskRunId));
+      const [admission] = await testDb()
+        .select({ status: provider_session_admission.status })
+        .from(provider_session_admission)
+        .where(eq(provider_session_admission.task_run_id, taskRunId));
+      expect(attempt).toEqual({ status: 'failure', finishReason: 'error' });
+      expect(admission).toEqual({ status: 'released' });
+    }
+    const [retriedAttempt] = await testDb()
+      .select({ status: ai_task_runs.status })
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.id, secondRetryTaskRunId));
+    const [retriedAdmission] = await testDb()
+      .select({ status: provider_session_admission.status })
+      .from(provider_session_admission)
+      .where(eq(provider_session_admission.task_run_id, secondRetryTaskRunId));
+    expect(retriedAttempt).toEqual({ status: 'success' });
+    expect(retriedAdmission).toEqual({ status: 'released' });
   });
 
   it("YUK-757 — retryable error does not suppress the retried attempt's exhausted terminal", async () => {

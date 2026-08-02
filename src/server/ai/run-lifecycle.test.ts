@@ -117,6 +117,24 @@ describe('AI run lifecycle terminal settlement state machine', () => {
     };
   }
 
+  it('owns the tool-shared controller and forwards caller cancellation into it', () => {
+    const caller = new AbortController();
+    const shared = new AbortController();
+    const lifecycle = createRunLifecycle({
+      db: {} as never,
+      kind: 'AttributionTask',
+      taskRunId: 'run-shared-lifecycle-signal',
+      timeoutMs: 1_000,
+      signal: caller.signal,
+      abortController: shared,
+      logScope: 'run-lifecycle-test',
+    });
+
+    expect(lifecycle.abortController).toBe(shared);
+    caller.abort();
+    expect(shared.signal.aborted).toBe(true);
+  });
+
   it('allows one success-to-failure fallback with identical terminal evidence', async () => {
     lifecycleLogMocks.terminal.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     const { lifecycle, afterRun } = createStartedLifecycle();

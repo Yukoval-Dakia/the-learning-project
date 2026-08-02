@@ -3,10 +3,10 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 538,
+      "total": 537,
       "byOwnerPair": {
         "agency -> agency": 7,
-        "agency -> ai": 31,
+        "agency -> ai": 30,
         "agency -> boss": 11,
         "agency -> conjectures": 2,
         "agency -> events": 4,
