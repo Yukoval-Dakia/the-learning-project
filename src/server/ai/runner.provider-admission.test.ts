@@ -249,33 +249,27 @@ describe('runner central provider-session seam', () => {
         release,
       };
     });
-    sdkMocks.query.mockImplementation(
-      ({ prompt }: { prompt: string | AsyncIterable<unknown> }) => {
-        sequence.push('sdk');
-        return (async function* () {
-          if (typeof prompt !== 'string') {
-            for await (const message of prompt) {
-              sequence.push('consume');
-              expect(message).toMatchObject({
-                message: {
-                  content: [
-                    { type: 'text', text: 'inspect' },
-                    { type: 'image', source: { type: 'base64', data: 'AQID' } },
-                  ],
-                },
-              });
-            }
+    sdkMocks.query.mockImplementation(({ prompt }: { prompt: string | AsyncIterable<unknown> }) => {
+      sequence.push('sdk');
+      return (async function* () {
+        if (typeof prompt !== 'string') {
+          for await (const message of prompt) {
+            sequence.push('consume');
+            expect(message).toMatchObject({
+              message: {
+                content: [
+                  { type: 'text', text: 'inspect' },
+                  { type: 'image', source: { type: 'base64', data: 'AQID' } },
+                ],
+              },
+            });
           }
-          yield success('vision');
-        })();
-      },
-    );
+        }
+        yield success('vision');
+      })();
+    });
 
-    await runTask(
-      'AttributionTask',
-      { text: 'inspect', images: [image] },
-      { db: fakeDb },
-    );
+    await runTask('AttributionTask', { text: 'inspect', images: [image] }, { db: fakeDb });
 
     expect(sequence).not.toContain('image-data:after-acquire');
     expect(sequence.at(-3)).toBe('acquire');
