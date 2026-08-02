@@ -134,7 +134,7 @@
                 }
               ]
             },
-            "description": "查询过去 N 天的 AI 调用成本聚合\n\n**Query:**\n- `days` (optional) e.g. `30`\n\n**Notes:** days 默认 30；返回 getAdminCost 聚合结果"
+            "description": "查询过去 N 天的 AI 调用成本聚合\n\n**Query:**\n- `days` (optional) e.g. `30`\n\n**Notes:** days 默认 30；按币种返回 cost，并附 reported_cost、estimated_cost、legacy_cost、unknown_attempts、legacy_rows；by_truth 按 currency/entry_kind/cost_basis/cost_ref 提供可审计聚合；unknown 不进入金额 SUM"
           },
           "response": []
         },
@@ -218,7 +218,7 @@
                 }
               ]
             },
-            "description": "分页列出 AI task runs，支持 status / task_kind 过滤\n\n**Query:**\n- `limit` (optional) e.g. `50`\n- `status` (optional) e.g. `failure`\n- `task_kind` (optional) e.g. `VariantVerifyTask`\n\n**Notes:** status 允许值：running、success、failure；limit 默认 50"
+            "description": "分页列出 AI task runs，支持 status / task_kind 过滤\n\n**Query:**\n- `limit` (optional) e.g. `50`\n- `status` (optional) e.g. `failure`\n- `task_kind` (optional) e.g. `VariantVerifyTask`\n\n**Notes:** status 允许值：running、success、failure；limit 默认 50；cost_usd 可为 null，并附 cost_basis / cost_ref"
           },
           "response": []
         },
@@ -238,7 +238,7 @@
                 }
               ]
             },
-            "description": "获取单个 AI task run 的详细时间线\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** :id 为 task_run_id；不存在返回 404"
+            "description": "获取单个 AI task run 的详细时间线\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** :id 为 task_run_id；不存在返回 404；run 与 attempt ledger 保留 nullable cost；timeline 对 unknown amount 省略 cost，但保留 cost_basis / cost_ref"
           },
           "response": []
         },
@@ -966,7 +966,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "cost", "today"]
             },
-            "description": "返回今日（BJT 午夜起）的花费汇总，用于 /today cost ribbon\n\n**Notes:** 按 BJT（UTC+8）午夜划窗口；返回 {window, today:{by_currency,tokens_in,tokens_out,ledger_rows,tool_calls,by_task}}。YUK-359：花费按币种分组（by_currency / by_task[].by_currency），不跨币种求和。YUK-330：每币种金额键名为 cost（与 /api/_/admin/cost 统一，原 cost-today 用 spend）"
+            "description": "返回今日（BJT 午夜起）的花费汇总，用于 /today cost ribbon\n\n**Notes:** 按 BJT（UTC+8）午夜划窗口；按币种返回 cost、reported_cost、estimated_cost、legacy_cost、unknown_attempts、legacy_rows；by_truth 按 currency/entry_kind/cost_basis/cost_ref 提供可审计聚合；unknown 不进入金额 SUM，且不跨币种求和"
           },
           "response": []
         }

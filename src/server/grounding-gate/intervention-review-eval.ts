@@ -13,7 +13,7 @@ import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 const InterventionReviewRegressionCase = z
@@ -101,6 +101,8 @@ export async function collectTaskRunProvenance(
           status: ai_task_runs.status,
           usage: ai_task_runs.usage_json,
           cost_usd: ai_task_runs.cost_usd,
+          cost_basis: ai_task_runs.cost_basis,
+          cost_ref: ai_task_runs.cost_ref,
         })
         .from(ai_task_runs)
         .where(eq(ai_task_runs.id, taskRunId))
@@ -116,12 +118,17 @@ export async function collectTaskRunProvenance(
           model: cost_ledger.model,
           cost: cost_ledger.cost,
           currency: cost_ledger.currency,
+          entry_kind: cost_ledger.entry_kind,
+          cost_basis: cost_ledger.cost_basis,
+          cost_ref: cost_ledger.cost_ref,
           tokens_in: cost_ledger.tokens_in,
           tokens_out: cost_ledger.tokens_out,
           outcome: cost_ledger.outcome,
         })
         .from(cost_ledger)
-        .where(eq(cost_ledger.task_run_id, taskRunId));
+        // YUK-841: provenance is about the authoritative model attempt, not
+        // loose-coupled legacy correlation rows that may legally share this ID.
+        .where(and(eq(cost_ledger.task_run_id, taskRunId), eq(cost_ledger.entry_kind, 'attempt')));
       if (run.status !== 'success') issues.push(`task_run_not_success:${taskRunId}`);
       if (run.provider !== 'xiaomi' || run.model !== 'mimo-v2.5-pro') {
         issues.push(`task_run_wrong_route:${taskRunId}`);
@@ -153,6 +160,15 @@ export async function collectTaskRunProvenance(
       }
       if (runCosts.length === 0) issues.push(`task_run_cost_missing:${taskRunId}`);
       if (runCosts.length > 1) issues.push(`task_run_cost_duplicate:${taskRunId}`);
+      const authoritativeCost = runCosts[0];
+      if (
+        authoritativeCost &&
+        (run.cost_usd !== authoritativeCost.cost ||
+          run.cost_basis !== authoritativeCost.cost_basis ||
+          run.cost_ref !== authoritativeCost.cost_ref)
+      ) {
+        issues.push(`task_run_cost_projection_mismatch:${taskRunId}`);
+      }
       for (const cost of runCosts) {
         if (
           cost.task_kind !== expected.taskKind ||

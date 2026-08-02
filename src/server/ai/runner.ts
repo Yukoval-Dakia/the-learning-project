@@ -51,6 +51,7 @@ import type { ResolvedProvider } from './providers';
 import {
   type AiRunLifecycle,
   type LifecycleUsage,
+  type TerminalResultEvidence,
   classifyLifecycleRetry,
   createRunLifecycle,
   maxLifecycleAttempts,
@@ -66,9 +67,11 @@ export interface RunTaskResult {
   text: string;
   finishReason: string;
   usage: LifecycleUsage;
-  /** Total cost in USD, as reported by the agent SDK. 0 when running
-   *  against an endpoint that doesn't surface cost (xiaomi mimo). */
+  /** Known USD amount; absent when this attempt has no trustworthy price. */
   cost_usd?: number;
+  /** Evidence class and immutable reference for cost_usd. */
+  cost_basis: 'reported' | 'estimated' | 'unknown';
+  cost_ref: string;
   /**
    * YUK-299 seam: the structured product the SDK fills in when `ctx.outputFormat`
    * is set AND the endpoint supports it. undefined ⇒ outputFormat not set /
@@ -546,9 +549,9 @@ async function runTaskAttempt(args: {
   actualInput: unknown;
   ctx: RunTaskCtx;
   lifecycle: AiRunLifecycle<RunTaskResult>;
+  onSdkQueryStarted?: () => Promise<void>;
 }): Promise<RunTaskResult> {
   const { kind, actualInput, ctx, lifecycle } = args;
-  await lifecycle.start(actualInput);
 
   let resultText = '';
   let stepStartTime = Date.now();
@@ -559,6 +562,7 @@ async function runTaskAttempt(args: {
       prompt: promptFromInput(actualInput),
       options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
     });
+    await args.onSdkQueryStarted?.();
     for await (const msg of q as AsyncIterable<SDKMessage>) {
       await notifyTaskEvent(ctx, msg);
       if (msg.type === 'assistant') {
@@ -584,6 +588,7 @@ async function runTaskAttempt(args: {
         continue;
       }
       if (msg.type !== 'result') continue;
+      lifecycle.recordTerminalResult(terminalEvidenceFromSdkResult(msg, thinking));
       if (msg.subtype === 'success') {
         if (isApiErrorSuccessResult(msg)) {
           console.warn('[runTask] task_run_success_with_error_flag', {
@@ -600,26 +605,7 @@ async function runTaskAttempt(args: {
             errors: [msg.result ?? ''],
           });
         }
-        const usage = msg.usage;
         resultText = msg.result ?? '';
-        lifecycle.recordTerminalSuccess({
-          usage: usageWithThinking(
-            {
-              inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
-              outputTokens: usage?.output_tokens ?? 0,
-            },
-            thinking,
-          ),
-          tokenCounts: {
-            inputTokens: usage?.input_tokens ?? 0,
-            outputTokens: usage?.output_tokens ?? 0,
-            cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
-            cacheCreationTokens: usage?.cache_creation_input_tokens ?? 0,
-          },
-          costUsd: msg.total_cost_usd,
-          finishReason: msg.stop_reason ?? 'stop',
-          structuredOutput: msg.structured_output,
-        });
       } else {
         if (msg.subtype === 'error_max_structured_output_retries') {
           console.warn(`[${kind}] structured-output retries exhausted`, {
@@ -636,7 +622,7 @@ async function runTaskAttempt(args: {
       break;
     }
 
-    if (!lifecycle.sawTerminalSuccess) {
+    if (!lifecycle.sawTerminalResult) {
       if (lifecycle.aborted) {
         throw new Error(`[${kind}] Agent SDK run aborted (budget timeout) with no terminal result`);
       }
@@ -654,6 +640,8 @@ async function runTaskAttempt(args: {
       finishReason: lifecycle.finishReason,
       usage: lifecycle.usage,
       cost_usd: lifecycle.costUsd,
+      cost_basis: lifecycle.costBasis,
+      cost_ref: lifecycle.costRef,
       structured_output: lifecycle.structuredOutput,
     };
     await lifecycle.finishSuccess(result);
@@ -683,6 +671,7 @@ export async function runTask(
   const firstAttemptStartedAt = Date.now();
 
   let lastErr: unknown;
+  let retrySource: AiRunLifecycle<RunTaskResult> | undefined;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const lifecycle = createRunLifecycle<RunTaskResult>({
       db: ctx.db,
@@ -696,6 +685,15 @@ export async function runTask(
         ? (result) => ctx.middleware?.afterRun?.(kind, result, ctx)
         : undefined,
     });
+    try {
+      await lifecycle.start(actualInput);
+    } catch (error) {
+      lifecycle.dispose();
+      // No durable row means no model attempt identity. The previous failure
+      // stays conservatively `error`; never manufacture a phantom settlement
+      // or claim that its planned retry happened.
+      throw error;
+    }
     // Invocation-level guard: keep the warning correlated with the first run
     // row, but never repeat it if this task later gains transient retries.
     if (attempt === 1 && def.needsToolCall && !ctx.mcpServers) {
@@ -705,7 +703,18 @@ export async function runTask(
       });
     }
     try {
-      return await runTaskAttempt({ kind, actualInput, ctx, lifecycle });
+      return await runTaskAttempt({
+        kind,
+        actualInput,
+        ctx,
+        lifecycle,
+        onSdkQueryStarted: retrySource
+          ? async () => {
+              await retrySource?.markRetried();
+              retrySource = undefined;
+            }
+          : undefined,
+      });
     } catch (err) {
       const boundError = bindAgentRunError({
         error: err,
@@ -720,8 +729,13 @@ export async function runTask(
         firstAttemptStartedAt,
         error: boundError,
       });
-      await lifecycle.finishFailure(boundError, retry.willRetry ? 'error_retried' : 'error');
+      // Settle the full truth before another provider call is allowed. The
+      // actual-retry marker is a later, conservative transition performed only
+      // after the next sdkQuery invocation exists.
+      const settled = await lifecycle.finishFailure(boundError, 'error');
+      if (!settled) throw boundError;
       if (!retry.willRetry) throw boundError;
+      retrySource = lifecycle;
       console.warn('[runTask] task_run_transient_retry', {
         event: 'task_run_transient_retry',
         kind,
@@ -820,6 +834,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
             continue;
           }
           if (msg.type !== 'result') continue;
+          lifecycle.recordTerminalResult(terminalEvidenceFromSdkResult(msg, thinking));
           if (isApiErrorSuccessResult(msg)) {
             throw new AgentRunError({
               kind,
@@ -837,28 +852,10 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
               errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
             });
           }
-          const usage = msg.usage;
-          lifecycle.recordTerminalSuccess({
-            usage: usageWithThinking(
-              {
-                inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
-                outputTokens: usage?.output_tokens ?? 0,
-              },
-              thinking,
-            ),
-            tokenCounts: {
-              inputTokens: usage?.input_tokens ?? 0,
-              outputTokens: usage?.output_tokens ?? 0,
-              cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
-              cacheCreationTokens: usage?.cache_creation_input_tokens ?? 0,
-            },
-            costUsd: msg.total_cost_usd,
-            finishReason: msg.stop_reason ?? 'stop',
-          });
           break;
         }
 
-        if (!lifecycle.sawTerminalSuccess) {
+        if (!lifecycle.sawTerminalResult) {
           if (lifecycle.aborted) {
             throw new Error(`[${kind}] Agent SDK run aborted with no terminal result`);
           }
@@ -876,10 +873,20 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
           finishReason: lifecycle.finishReason,
           usage: lifecycle.usage,
           cost_usd: lifecycle.costUsd,
+          cost_basis: lifecycle.costBasis,
+          cost_ref: lifecycle.costRef,
         };
         await lifecycle.finishSuccess(result);
       } catch (error) {
-        await lifecycle.finishFailure(error);
+        if (lifecycle.started) {
+          const boundError = bindAgentRunError({
+            error,
+            kind,
+            taskRunId: lifecycle.taskRunId,
+            aborted: lifecycle.aborted,
+          });
+          await lifecycle.finishFailure(boundError);
+        }
         const message =
           error instanceof Error ? `[streamTask] ${error.message}` : '[streamTask] unknown error';
         controller.enqueue(encoder.encode(`\n\n${message}\n`));
@@ -941,6 +948,32 @@ function usageWithThinking(
     ...usage,
     thinkingBlocks: observation.blocks,
     thinkingCharacters: observation.characters,
+  };
+}
+
+/** Capture billed terminal evidence before interpreting success/error semantics. */
+function terminalEvidenceFromSdkResult(
+  msg: Extract<SDKMessage, { type: 'result' }>,
+  thinking: ThinkingObservation,
+): TerminalResultEvidence {
+  const usage = msg.usage;
+  return {
+    usage: usageWithThinking(
+      {
+        inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
+        outputTokens: usage?.output_tokens ?? 0,
+      },
+      thinking,
+    ),
+    tokenCounts: {
+      inputTokens: usage?.input_tokens ?? 0,
+      outputTokens: usage?.output_tokens ?? 0,
+      cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
+      cacheCreationTokens: usage?.cache_creation_input_tokens ?? 0,
+    },
+    costUsd: typeof msg.total_cost_usd === 'number' ? msg.total_cost_usd : undefined,
+    finishReason: msg.stop_reason ?? (msg.subtype === 'success' ? 'stop' : msg.subtype),
+    structuredOutput: msg.subtype === 'success' ? msg.structured_output : undefined,
   };
 }
 
@@ -1032,25 +1065,8 @@ export async function streamTaskCollecting(
         continue;
       }
       if (msg.type !== 'result') continue;
+      lifecycle.recordTerminalResult(terminalEvidenceFromSdkResult(msg, thinking));
       if (msg.subtype === 'success') {
-        const usage = msg.usage;
-        lifecycle.recordTerminalSuccess({
-          usage: usageWithThinking(
-            {
-              inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
-              outputTokens: usage?.output_tokens ?? 0,
-            },
-            thinking,
-          ),
-          tokenCounts: {
-            inputTokens: usage?.input_tokens ?? 0,
-            outputTokens: usage?.output_tokens ?? 0,
-            cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
-            cacheCreationTokens: usage?.cache_creation_input_tokens ?? 0,
-          },
-          costUsd: msg.total_cost_usd,
-          finishReason: msg.stop_reason ?? 'stop',
-        });
         if (isApiErrorSuccessResult(msg)) {
           console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
             event: 'task_run_success_with_error_flag',
@@ -1067,15 +1083,26 @@ export async function streamTaskCollecting(
           });
         }
       } else {
-        const apiStatus =
-          'api_error_status' in msg && msg.api_error_status ? ` http=${msg.api_error_status}` : '';
-        throw new Error(`[${kind}] Agent SDK errored: subtype=${msg.subtype}${apiStatus}`);
+        throw new AgentRunError({
+          kind,
+          taskRunId: lifecycle.taskRunId,
+          subtype: msg.subtype,
+          errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
+        });
       }
       break;
     }
 
-    if (!lifecycle.sawTerminalSuccess) {
-      throw new Error(`[${kind}] Agent SDK stream ended without a terminal result message`);
+    if (!lifecycle.sawTerminalResult) {
+      if (lifecycle.aborted) {
+        throw new Error(`[${kind}] Agent SDK run aborted with no terminal result`);
+      }
+      throw new AgentRunError({
+        kind,
+        taskRunId: lifecycle.taskRunId,
+        subtype: 'stream_no_terminal',
+        errors: [],
+      });
     }
 
     const result: StreamCollectResult = {
@@ -1084,17 +1111,28 @@ export async function streamTaskCollecting(
       finishReason: lifecycle.finishReason,
       usage: lifecycle.usage,
       cost_usd: lifecycle.costUsd,
+      cost_basis: lifecycle.costBasis,
+      cost_ref: lifecycle.costRef,
     };
     await lifecycle.finishSuccess(result);
     return result;
   } catch (error) {
-    await lifecycle.finishFailure(error);
+    if (!lifecycle.started) throw error;
+    const boundError = bindAgentRunError({
+      error,
+      kind,
+      taskRunId: lifecycle.taskRunId,
+      aborted: lifecycle.aborted,
+    });
+    await lifecycle.finishFailure(boundError);
     return {
       task_run_id: lifecycle.taskRunId,
       text: resultText,
       finishReason: 'error',
       usage: lifecycle.usage,
       cost_usd: lifecycle.costUsd,
+      cost_basis: lifecycle.costBasis,
+      cost_ref: lifecycle.costRef,
       partial: true,
       error: error instanceof Error ? error.message : String(error),
     };

@@ -865,7 +865,9 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
       .from(cost_ledger)
       .where(eq(cost_ledger.task_kind, 'MindModelInductionTask'));
     expect(costs).toHaveLength(RESEARCH_MEETING_SAMPLES);
-    expect(costs.every((row) => row.cost > 0 && row.outcome === 'success')).toBe(true);
+    expect(
+      costs.every((row) => row.cost !== null && row.cost > 0 && row.outcome === 'success'),
+    ).toBe(true);
   });
 
   it('preserves reconciliation counts when the proposal transaction fails and retries', async () => {

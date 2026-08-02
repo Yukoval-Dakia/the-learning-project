@@ -54,6 +54,7 @@ export interface DreamingNightlyResult {
 
 type ProposalSnapshotRow = Pick<ProposalInboxRow, 'id' | 'status'> &
   Partial<Pick<ProposalInboxRow, 'kind' | 'target'>>;
+type DreamingRunResult = Pick<RunTaskResult, 'task_run_id' | 'cost_usd'>;
 type RunAgentTaskFn = (
   kind: string,
   input: unknown,
@@ -62,7 +63,7 @@ type RunAgentTaskFn = (
     mcpServers?: Record<string, SdkMcpServer>;
     allowedTools?: string[];
   },
-) => Promise<RunTaskResult>;
+) => Promise<DreamingRunResult>;
 type ListProposalInboxRowsFn = (db: Db) => Promise<ProposalSnapshotRow[]>;
 type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;

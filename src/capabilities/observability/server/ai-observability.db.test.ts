@@ -82,6 +82,8 @@ describe('AI observability admin read model', () => {
       id: 'run_1',
       task_kind: 'AttributionTask',
       ledger_cost_usd: 0.02,
+      cost_basis: null,
+      cost_ref: null,
       ledger_rows: 1,
       tool_call_count: 2,
       pgboss_job_ids: ['job_alpha'],
@@ -199,6 +201,13 @@ describe('AI observability admin read model', () => {
     expect(cost.days_window).toBe(7);
     expect(cost.days).toHaveLength(1);
     expect(cost.days[0].cost).toBeCloseTo(0.06);
+    expect(cost.days[0]).toMatchObject({
+      reported_cost: 0,
+      estimated_cost: 0,
+      unknown_attempts: 0,
+      legacy_rows: 3,
+    });
+    expect(cost.days[0].legacy_cost).toBeCloseTo(0.06);
     expect(cost.days[0].calls).toBe(3);
     expect(cost.by_task).toEqual([
       expect.objectContaining({ task_kind: 'AttributionTask', cost: expect.closeTo(0.03, 5) }),
@@ -250,6 +259,98 @@ describe('AI observability admin read model', () => {
         }),
       ]),
     );
+  });
+
+  it('keeps unknown attempts out of sums and exposes reported/estimated/legacy groups', async () => {
+    await seedCost({
+      id: 'reported',
+      task_run_id: 'reported_run',
+      cost: 0.1,
+      entry_kind: 'attempt',
+      cost_basis: 'reported',
+      cost_ref: 'sdk:total_cost_usd',
+      occurred_at: new Date(),
+    });
+    await seedCost({
+      id: 'estimated',
+      task_run_id: 'estimated_run',
+      cost: 0.2,
+      entry_kind: 'attempt',
+      cost_basis: 'estimated',
+      cost_ref: 'pricebook:test',
+      occurred_at: new Date(),
+    });
+    await seedCost({
+      id: 'unknown',
+      task_run_id: 'unknown_run',
+      cost: null,
+      entry_kind: 'attempt',
+      cost_basis: 'unknown',
+      cost_ref: 'unpriced:test/model',
+      occurred_at: new Date(),
+    });
+    await seedCost({ id: 'legacy', task_run_id: 'legacy_run', cost: 0.3, occurred_at: new Date() });
+
+    const cost = await getAdminCost(db, { days: 7 });
+    expect(cost.days).toHaveLength(1);
+    expect(cost.days[0]).toMatchObject({
+      unknown_attempts: 1,
+      legacy_rows: 1,
+      calls: 4,
+    });
+    expect(cost.days[0].cost).toBeCloseTo(0.6, 5);
+    expect(cost.days[0].reported_cost).toBeCloseTo(0.1, 5);
+    expect(cost.days[0].estimated_cost).toBeCloseTo(0.2, 5);
+    expect(cost.days[0].legacy_cost).toBeCloseTo(0.3, 5);
+    expect(cost.by_truth).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entry_kind: 'attempt',
+          cost_basis: 'reported',
+          cost_ref: 'sdk:total_cost_usd',
+          cost: expect.closeTo(0.1, 5),
+          unknown_attempts: 0,
+        }),
+        expect.objectContaining({
+          entry_kind: 'attempt',
+          cost_basis: 'estimated',
+          cost_ref: 'pricebook:test',
+          cost: expect.closeTo(0.2, 5),
+          unknown_attempts: 0,
+        }),
+        expect.objectContaining({
+          entry_kind: 'attempt',
+          cost_basis: 'unknown',
+          cost_ref: 'unpriced:test/model',
+          cost: 0,
+          unknown_attempts: 1,
+        }),
+        expect.objectContaining({
+          entry_kind: 'legacy',
+          cost_basis: null,
+          cost_ref: null,
+          cost: expect.closeTo(0.3, 5),
+        }),
+      ]),
+    );
+  });
+
+  it('does not backfill a classified unknown run from a legacy correlation row', async () => {
+    await seedRun({
+      id: 'unknown_run',
+      cost_usd: null,
+      cost_basis: 'unknown',
+      cost_ref: 'unpriced:xiaomi/mimo-future',
+    });
+    await seedCost({ id: 'correlation', task_run_id: 'unknown_run', cost: 0 });
+
+    const [row] = await listAdminRuns(db);
+    expect(row).toMatchObject({
+      id: 'unknown_run',
+      cost_usd: null,
+      cost_basis: 'unknown',
+      cost_ref: 'unpriced:xiaomi/mimo-future',
+    });
   });
 
   it('normalizes invalid cost windows to the default', async () => {

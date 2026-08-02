@@ -2793,17 +2793,40 @@ export interface operations {
               calls: number;
               cost: number;
               currency: string;
+              estimated_cost: number;
+              legacy_cost: number;
+              legacy_rows: number;
+              reported_cost: number;
               task_kind: string;
               tokens_in: number;
               tokens_out: number;
+              unknown_attempts: number;
+            }[];
+            by_truth: {
+              calls: number;
+              cost: number;
+              /** @enum {string|null} */
+              cost_basis: 'reported' | 'estimated' | 'unknown' | null;
+              cost_ref: string | null;
+              currency: string;
+              /** @enum {string} */
+              entry_kind: 'legacy' | 'attempt';
+              tokens_in: number;
+              tokens_out: number;
+              unknown_attempts: number;
             }[];
             days: {
               calls: number;
               cost: number;
               currency: string;
               day: string;
+              estimated_cost: number;
+              legacy_cost: number;
+              legacy_rows: number;
+              reported_cost: number;
               tokens_in: number;
               tokens_out: number;
+              unknown_attempts: number;
             }[];
             days_window: number;
           };
@@ -3585,7 +3608,10 @@ export interface operations {
         content: {
           'application/json': {
             data: {
-              cost_usd: number;
+              /** @enum {string|null} */
+              cost_basis: 'reported' | 'estimated' | 'unknown' | null;
+              cost_ref: string | null;
+              cost_usd: number | null;
               duration_ms: number | null;
               error_message: string | null;
               finish_reason: string | null;
@@ -3593,7 +3619,7 @@ export interface operations {
               finished_at: string | null;
               id: string;
               input_hash: string;
-              ledger_cost_usd: number;
+              ledger_cost_usd: number | null;
               ledger_rows: number;
               model: string;
               pgboss_job_ids: string[];
@@ -3615,7 +3641,10 @@ export interface operations {
               next_cursor: string | null;
             };
             rows: {
-              cost_usd: number;
+              /** @enum {string|null} */
+              cost_basis: 'reported' | 'estimated' | 'unknown' | null;
+              cost_ref: string | null;
+              cost_usd: number | null;
               duration_ms: number | null;
               error_message: string | null;
               finish_reason: string | null;
@@ -3623,7 +3652,7 @@ export interface operations {
               finished_at: string | null;
               id: string;
               input_hash: string;
-              ledger_cost_usd: number;
+              ledger_cost_usd: number | null;
               ledger_rows: number;
               model: string;
               pgboss_job_ids: string[];
@@ -3762,8 +3791,13 @@ export interface operations {
         content: {
           'application/json': {
             ledger: {
-              cost: number;
+              cost: number | null;
+              /** @enum {string|null} */
+              cost_basis: 'reported' | 'estimated' | 'unknown' | null;
+              cost_ref: string | null;
               currency: string;
+              /** @enum {string} */
+              entry_kind: 'legacy' | 'attempt';
               id: string;
               model: string;
               /** Format: date-time */
@@ -3777,7 +3811,10 @@ export interface operations {
               tokens_out: number;
             }[];
             run: {
-              cost_usd: number;
+              /** @enum {string|null} */
+              cost_basis: 'reported' | 'estimated' | 'unknown' | null;
+              cost_ref: string | null;
+              cost_usd: number | null;
               duration_ms: number | null;
               error_message: string | null;
               finish_reason: string | null;
@@ -3785,7 +3822,7 @@ export interface operations {
               finished_at: string | null;
               id: string;
               input_hash: string;
-              ledger_cost_usd: number;
+              ledger_cost_usd: number | null;
               ledger_rows: number;
               model: string;
               pgboss_job_ids: string[];
@@ -3804,6 +3841,9 @@ export interface operations {
               /** Format: date-time */
               at: string;
               cost?: number;
+              /** @enum {string|null} */
+              cost_basis?: 'reported' | 'estimated' | 'unknown' | null;
+              cost_ref?: string | null;
               id?: string;
               iteration?: number;
               label: string;
@@ -10531,19 +10571,44 @@ export interface operations {
               by_currency: {
                 cost: number;
                 currency: string;
+                estimated_cost: number;
+                legacy_cost: number;
+                legacy_rows: number;
+                reported_cost: number;
+                unknown_attempts: number;
               }[];
               by_task: {
                 by_currency: {
                   cost: number;
                   currency: string;
+                  estimated_cost: number;
+                  legacy_cost: number;
+                  legacy_rows: number;
+                  reported_cost: number;
+                  unknown_attempts: number;
                 }[];
                 calls: number;
                 task_kind: string;
               }[];
+              by_truth: {
+                calls: number;
+                cost: number;
+                /** @enum {string|null} */
+                cost_basis: 'reported' | 'estimated' | 'unknown' | null;
+                cost_ref: string | null;
+                currency: string;
+                /** @enum {string} */
+                entry_kind: 'legacy' | 'attempt';
+                tokens_in: number;
+                tokens_out: number;
+                unknown_attempts: number;
+              }[];
               ledger_rows: number;
+              legacy_rows: number;
               tokens_in: number;
               tokens_out: number;
               tool_calls: number;
+              unknown_attempts: number;
             };
             window: {
               from: number;

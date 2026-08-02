@@ -29,6 +29,8 @@ export function makeRunTaskTextFn(db: Db, baseCtx: RunTaskCallCtx = {}): BoundRu
       text: result.text,
       task_run_id: result.task_run_id,
       cost_usd: result.cost_usd,
+      cost_basis: result.cost_basis,
+      cost_ref: result.cost_ref,
       structured_output: result.structured_output,
     };
   };

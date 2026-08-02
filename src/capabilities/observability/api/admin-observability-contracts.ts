@@ -26,12 +26,14 @@ export const AdminRunSchema = z.object({
   status: z.string(),
   finish_reason: z.string().nullable(),
   usage_json: z.object({ inputTokens: z.number(), outputTokens: z.number() }),
-  cost_usd: z.number(),
+  cost_usd: z.number().nullable(),
+  cost_basis: z.enum(['reported', 'estimated', 'unknown']).nullable(),
+  cost_ref: z.string().nullable(),
   error_message: z.string().nullable(),
   started_at: z.string().datetime(),
   finished_at: z.string().datetime().nullable(),
   duration_ms: z.number().nullable(),
-  ledger_cost_usd: z.number(),
+  ledger_cost_usd: z.number().nullable(),
   ledger_rows: z.number().int().nonnegative(),
   tool_call_count: z.number().int().nonnegative(),
   pgboss_job_ids: z.array(z.string()),
@@ -53,8 +55,11 @@ const CostLedgerRowSchema = z.object({
   task_kind: z.string(),
   provider: z.string(),
   model: z.string(),
-  cost: z.number(),
+  cost: z.number().nullable(),
   currency: z.string(),
+  entry_kind: z.enum(['legacy', 'attempt']),
+  cost_basis: z.enum(['reported', 'estimated', 'unknown']).nullable(),
+  cost_ref: z.string().nullable(),
   tokens_in: z.number().int(),
   tokens_out: z.number().int(),
   outcome: z.string(),
@@ -87,6 +92,8 @@ const AdminRunTimelineEventSchema = z.object({
   iteration: z.number().int().optional(),
   latency_ms: z.number().optional(),
   cost: z.number().optional(),
+  cost_basis: z.enum(['reported', 'estimated', 'unknown']).nullable().optional(),
+  cost_ref: z.string().nullable().optional(),
   tokens_in: z.number().int().optional(),
   tokens_out: z.number().int().optional(),
   outcome: z.string().optional(),
@@ -100,18 +107,40 @@ export const AdminRunDetailResponseSchema = z.object({
   timeline: z.array(AdminRunTimelineEventSchema),
 });
 
+const CostBreakdownFields = {
+  cost: z.number(),
+  reported_cost: z.number(),
+  estimated_cost: z.number(),
+  legacy_cost: z.number(),
+  unknown_attempts: z.number().int().nonnegative(),
+  legacy_rows: z.number().int().nonnegative(),
+};
+
 const AdminCostRowFields = {
   currency: z.string(),
-  cost: z.number(),
+  ...CostBreakdownFields,
   tokens_in: z.number().int(),
   tokens_out: z.number().int(),
   calls: z.number().int().nonnegative(),
 };
 
+const CostTruthRowSchema = z.object({
+  currency: z.string(),
+  entry_kind: z.enum(['legacy', 'attempt']),
+  cost_basis: z.enum(['reported', 'estimated', 'unknown']).nullable(),
+  cost_ref: z.string().nullable(),
+  cost: z.number(),
+  tokens_in: z.number().int(),
+  tokens_out: z.number().int(),
+  calls: z.number().int().nonnegative(),
+  unknown_attempts: z.number().int().nonnegative(),
+});
+
 export const AdminCostResponseSchema = z.object({
   days_window: z.number().int().positive(),
   days: z.array(z.object({ day: z.string(), ...AdminCostRowFields })),
   by_task: z.array(z.object({ task_kind: z.string(), ...AdminCostRowFields })),
+  by_truth: z.array(CostTruthRowSchema),
 });
 
 const AdminFailureSampleSchema = z.object({
@@ -136,7 +165,7 @@ export const AdminFailuresResponseSchema = z.object({
   limit: z.number().int().positive().max(200),
 });
 
-const CurrencyCostSchema = z.object({ currency: z.string(), cost: z.number() });
+const CurrencyCostSchema = z.object({ currency: z.string(), ...CostBreakdownFields });
 
 export const CostTodayResponseSchema = z.object({
   window: z.object({
@@ -149,7 +178,10 @@ export const CostTodayResponseSchema = z.object({
     tokens_in: z.number().int(),
     tokens_out: z.number().int(),
     ledger_rows: z.number().int().nonnegative(),
+    unknown_attempts: z.number().int().nonnegative(),
+    legacy_rows: z.number().int().nonnegative(),
     tool_calls: z.number().int().nonnegative(),
+    by_truth: z.array(CostTruthRowSchema),
     by_task: z.array(
       z.object({
         task_kind: z.string(),

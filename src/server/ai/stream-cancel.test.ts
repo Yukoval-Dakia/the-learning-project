@@ -52,15 +52,50 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 // the YUK-240 stuck-run path.
 const logMocks = vi.hoisted(() => ({
   finishedShouldThrow: false,
+  finished: vi.fn(async (_db: unknown, _row: unknown) => {}),
+  cost: vi.fn(async (_db: unknown, _row: unknown) => {}),
 }));
 
 vi.mock('@/server/ai/log', () => ({
   logMissingMcpServersWarning: vi.fn(),
   writeAiTaskRunStarted: vi.fn(async () => {}),
-  writeAiTaskRunFinished: vi.fn(async () => {
-    if (logMocks.finishedShouldThrow) throw new Error('db down');
-  }),
-  writeCostLedger: vi.fn(async () => {}),
+  writeAiTaskRunFinished: logMocks.finished,
+  writeAiTaskRunRetried: vi.fn(async () => true),
+  writeCostLedger: logMocks.cost,
+  writeAiTaskAttemptFinished: vi.fn(
+    async (
+      db: unknown,
+      row: {
+        id: string;
+        status: string;
+        finish_reason: string;
+        usage: unknown;
+        cost_truth: { amountUsd: number | null; basis: string; ref: string };
+        error_message?: string;
+        outcome: string;
+      },
+    ) => {
+      await logMocks.finished(db, {
+        id: row.id,
+        status: row.status,
+        finish_reason: row.finish_reason,
+        usage: row.usage,
+        cost_usd: row.cost_truth.amountUsd ?? undefined,
+        cost_basis: row.cost_truth.basis,
+        cost_ref: row.cost_truth.ref,
+        error_message: row.error_message,
+      });
+      if (logMocks.finishedShouldThrow) throw new Error('db down');
+      await logMocks.cost(db, {
+        task_run_id: row.id,
+        cost: row.cost_truth.amountUsd,
+        cost_basis: row.cost_truth.basis,
+        cost_ref: row.cost_truth.ref,
+        outcome: row.outcome,
+      });
+      return true;
+    },
+  ),
   writeToolCallLog: vi.fn(async () => 'tool-log-id'),
 }));
 
@@ -256,7 +291,14 @@ describe('streamTask — YUK-590 terminal failure honesty', () => {
         error_message: expect.stringContaining('error_max_budget_usd'),
       }),
     );
-    expect(writeCostLedger).not.toHaveBeenCalled();
+    expect(writeCostLedger).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        cost: 0.5,
+        cost_basis: 'reported',
+        outcome: 'failed_permanent',
+      }),
+    );
     expect(body).toContain('error_max_budget_usd');
   });
 
@@ -281,7 +323,10 @@ describe('streamTask — YUK-590 terminal failure honesty', () => {
         error_message: expect.stringContaining('api_error_result http=429'),
       }),
     );
-    expect(writeCostLedger).not.toHaveBeenCalled();
+    expect(writeCostLedger).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ cost_basis: 'estimated', outcome: 'failed_retryable' }),
+    );
     expect(body).toContain('api_error_result http=429');
   });
 });

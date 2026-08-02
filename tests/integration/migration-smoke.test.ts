@@ -1608,3 +1608,161 @@ describe('migration smoke — YUK-792 intervention settlement backfill', () => {
     expect(shadow.diagnostics.transfer.due_at).toBe('2026-07-22T02:20:30.123Z');
   });
 });
+
+describe('migration smoke — YUK-841 attempt cost truth', () => {
+  const BASELINE_TAG = '0086_yuk792_intervention_settlement';
+  const MIGRATION_TAG = '0087_yuk841_attempt_cost_truth';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    let reachedBaseline = false;
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(client, migration.sql);
+      if (migration.tag === BASELINE_TAG) {
+        reachedBaseline = true;
+        break;
+      }
+    }
+    if (!reachedBaseline) throw new Error(`baseline migration ${BASELINE_TAG} not found`);
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('keeps old rows legacy and enforces nullable unknown + one ledger per attempt', async () => {
+    await client`
+      INSERT INTO ai_task_runs (
+        id, task_kind, provider, model, input_hash, status, cost_usd, started_at, finished_at
+      ) VALUES (
+        'legacy_run', 'LegacyTask', 'legacy', 'legacy-model', 'legacy-hash',
+        'success', 0, now(), now()
+      )
+    `;
+    await client`
+      INSERT INTO cost_ledger (
+        id, task_run_id, task_kind, provider, model, cost, currency,
+        tokens_in, tokens_out, outcome, occurred_at
+      ) VALUES
+        ('legacy_a', 'shared_run', 'LegacyTask', 'legacy', 'legacy-model', 0, 'USD', 1, 2, 'success', now()),
+        ('legacy_b', 'shared_run', 'LegacyTask', 'legacy', 'legacy-model', 0.5, 'USD', 3, 4, 'success', now())
+    `;
+
+    const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
+    if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
+    await applyMigrationFile(client, migration.sql);
+
+    const legacy = await client<
+      { id: string; entry_kind: string; cost_basis: string | null; cost_ref: string | null }[]
+    >`
+      SELECT id, entry_kind, cost_basis, cost_ref
+      FROM cost_ledger
+      WHERE id IN ('legacy_a', 'legacy_b')
+      ORDER BY id
+    `;
+    expect(legacy).toEqual([
+      { id: 'legacy_a', entry_kind: 'legacy', cost_basis: null, cost_ref: null },
+      { id: 'legacy_b', entry_kind: 'legacy', cost_basis: null, cost_ref: null },
+    ]);
+    const [legacyRun] = await client<
+      { id: string; cost_usd: number | null; cost_basis: string | null; cost_ref: string | null }[]
+    >`
+      SELECT id, cost_usd, cost_basis, cost_ref
+      FROM ai_task_runs
+      WHERE id = 'legacy_run'
+    `;
+    expect(legacyRun).toEqual({
+      id: 'legacy_run',
+      cost_usd: 0,
+      cost_basis: null,
+      cost_ref: null,
+    });
+
+    await client`
+      INSERT INTO ai_task_runs (
+        id, task_kind, provider, model, input_hash, status,
+        cost_usd, cost_basis, cost_ref, started_at, finished_at
+      ) VALUES
+        ('run_reported', 'AttemptTask', 'anthropic', 'claude', 'reported-hash', 'success',
+         0, 'reported', 'sdk:total_cost_usd', now(), now()),
+        ('run_unknown', 'AttemptTask', 'xiaomi', 'unknown-model', 'unknown-hash', 'failure',
+         NULL, 'unknown', 'unpriced:xiaomi/unknown-model', now(), now())
+    `;
+
+    await expect(
+      client`
+        INSERT INTO ai_task_runs (
+          id, task_kind, provider, model, input_hash, status,
+          cost_usd, cost_basis, cost_ref, started_at, finished_at
+        ) VALUES (
+          'run_half_truth', 'AttemptTask', 'xiaomi', 'mimo-v2.5-pro', 'half-hash', 'failure',
+          NULL, NULL, 'pricebook:half', now(), now()
+        )
+      `,
+    ).rejects.toMatchObject({ code: '23514', constraint_name: 'ai_task_runs_cost_truth_ck' });
+
+    await expect(
+      client`
+        INSERT INTO ai_task_runs (
+          id, task_kind, provider, model, input_hash, status,
+          cost_usd, cost_basis, cost_ref, started_at, finished_at
+        ) VALUES (
+          'run_unknown_zero', 'AttemptTask', 'xiaomi', 'mimo-future', 'unknown-zero-hash', 'failure',
+          0, 'unknown', 'unpriced:xiaomi/mimo-future', now(), now()
+        )
+      `,
+    ).rejects.toMatchObject({ code: '23514', constraint_name: 'ai_task_runs_cost_truth_ck' });
+
+    await expect(
+      client`
+        INSERT INTO ai_task_runs (
+          id, task_kind, provider, model, input_hash, status,
+          cost_usd, cost_basis, cost_ref, started_at, finished_at
+        ) VALUES (
+          'run_reported_null', 'AttemptTask', 'anthropic', 'claude', 'reported-null-hash', 'failure',
+          NULL, 'reported', 'sdk:total_cost_usd', now(), now()
+        )
+      `,
+    ).rejects.toMatchObject({ code: '23514', constraint_name: 'ai_task_runs_cost_truth_ck' });
+
+    await client`
+      INSERT INTO cost_ledger (
+        id, task_run_id, task_kind, provider, model, cost, currency,
+        entry_kind, cost_basis, cost_ref, tokens_in, tokens_out, outcome, occurred_at
+      ) VALUES
+        ('attempt_reported', 'attempt_run_1', 'AttemptTask', 'anthropic', 'claude', 0, 'USD',
+         'attempt', 'reported', 'sdk:total_cost_usd', 0, 0, 'success', now()),
+        ('attempt_unknown', 'attempt_run_2', 'AttemptTask', 'xiaomi', 'unknown-model', NULL, 'USD',
+         'attempt', 'unknown', 'unpriced:xiaomi/unknown-model', 0, 0, 'failed_permanent', now())
+    `;
+
+    await expect(
+      client`
+        INSERT INTO cost_ledger (
+          id, task_run_id, task_kind, provider, model, cost, currency,
+          entry_kind, cost_basis, cost_ref, tokens_in, tokens_out, outcome, occurred_at
+        ) VALUES (
+          'attempt_duplicate', 'attempt_run_1', 'AttemptTask', 'anthropic', 'claude', 1, 'USD',
+          'attempt', 'reported', 'sdk:total_cost_usd', 1, 1, 'success', now()
+        )
+      `,
+    ).rejects.toMatchObject({ code: '23505', constraint_name: 'cost_ledger_attempt_task_run_uq' });
+
+    await expect(
+      client`
+        INSERT INTO cost_ledger (
+          id, task_run_id, task_kind, provider, model, cost, currency,
+          entry_kind, cost_basis, cost_ref, tokens_in, tokens_out, outcome, occurred_at
+        ) VALUES (
+          'attempt_invalid_unknown', 'attempt_run_3', 'AttemptTask', 'xiaomi', 'unknown-model', 0, 'USD',
+          'attempt', 'unknown', 'unpriced:xiaomi/unknown-model', 0, 0, 'failed_permanent', now()
+        )
+      `,
+    ).rejects.toMatchObject({ code: '23514', constraint_name: 'cost_ledger_attempt_truth_ck' });
+  });
+});
