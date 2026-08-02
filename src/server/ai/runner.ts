@@ -315,10 +315,8 @@ function imageDataToBase64(data: MultimodalTaskInput['images'][number]['data']):
   return Buffer.from(data).toString('base64');
 }
 
-async function* multimodalPromptIterable(
-  input: MultimodalTaskInput,
-): AsyncGenerator<SDKUserMessage> {
-  const userMessage: SDKUserMessage = {
+function materializeMultimodalUserMessage(input: MultimodalTaskInput): SDKUserMessage {
+  return {
     type: 'user',
     parent_tool_use_id: null,
     message: {
@@ -345,11 +343,21 @@ async function* multimodalPromptIterable(
       ],
     },
   };
+}
+
+async function* singleMessagePromptIterable(
+  userMessage: SDKUserMessage,
+): AsyncGenerator<SDKUserMessage> {
   yield userMessage;
 }
 
 function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage> {
-  if (isMultimodalTaskInput(input)) return multimodalPromptIterable(input);
+  if (isMultimodalTaskInput(input)) {
+    // Materialize image conversion now. An async-generator body is lazy, so
+    // doing this inside the iterable would defer ArrayBuffer -> base64 work
+    // until the SDK consumes the prompt after admission.
+    return singleMessagePromptIterable(materializeMultimodalUserMessage(input));
+  }
   if (typeof input === 'string') return input;
   return JSON.stringify(input);
 }
@@ -575,6 +583,13 @@ async function runTaskAttempt(args: {
   let resultText = '';
   let iteration = 0;
   const thinking = emptyThinkingObservation();
+  // Purely local preparation can perform cold-start filesystem work (notably
+  // the one-time isolated skill mirror). Keep it outside the distributed
+  // lease: blocking this event loop after acquire can delay the first
+  // heartbeat beyond its DB-derived deadline even though no provider work has
+  // started yet.
+  const sdkPrompt = promptFromInput(actualInput);
+  const sdkOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
   await lifecycle.withProviderSession(actualInput, async () => {
     let stepStartTime = Date.now();
     if (args.warnMissingMcp) {
@@ -584,8 +599,8 @@ async function runTaskAttempt(args: {
       });
     }
     const q = sdkQuery({
-      prompt: promptFromInput(actualInput),
-      options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
+      prompt: sdkPrompt,
+      options: sdkOptions,
     });
     await args.onSdkQueryStarted?.();
     for await (const msg of q as AsyncIterable<SDKMessage>) {
@@ -824,11 +839,18 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
         const actualInput = ctx.middleware?.beforeRun
           ? await ctx.middleware.beforeRun(kind, input, ctx)
           : input;
+        const sdkPrompt = promptFromInput(actualInput);
+        const sdkOptions = buildQueryOptions(
+          kind,
+          ctx,
+          lifecycle.abortController,
+          lifecycle.resolved,
+        );
         await lifecycle.withProviderSession(actualInput, async () => {
           let stepStartTime = Date.now();
           const q = sdkQuery({
-            prompt: promptFromInput(actualInput),
-            options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
+            prompt: sdkPrompt,
+            options: sdkOptions,
           });
           for await (const msg of q as AsyncIterable<SDKMessage>) {
             await notifyTaskEvent(ctx, msg);
@@ -1066,11 +1088,13 @@ export async function streamTaskCollecting(
     const actualInput = ctx.middleware?.beforeRun
       ? await ctx.middleware.beforeRun(kind, input, ctx)
       : input;
+    const sdkPrompt = promptFromInput(actualInput);
+    const sdkOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
     await lifecycle.withProviderSession(actualInput, async () => {
       let stepStartTime = Date.now();
       const q = sdkQuery({
-        prompt: promptFromInput(actualInput),
-        options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
+        prompt: sdkPrompt,
+        options: sdkOptions,
       });
       for await (const msg of q as AsyncIterable<SDKMessage>) {
         await notifyTaskEvent(ctx, msg);

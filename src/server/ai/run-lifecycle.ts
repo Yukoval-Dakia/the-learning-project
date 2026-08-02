@@ -211,6 +211,10 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
    * runtime or create an unknown-cost YUK-841 attempt that never called the SDK.
    */
   async withProviderSession<T>(actualInput: unknown, run: () => Promise<T>): Promise<T> {
+    // Canonicalization may synchronously hash binary input. Prepare it before
+    // acquiring the lease so large local inputs cannot starve its heartbeat;
+    // the durable attempt row itself still starts only after admission.
+    const inputHash = safeInputHash(actualInput);
     const permit =
       this.admissionPlan.mode === 'off'
         ? undefined
@@ -242,7 +246,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
           cause: new Error('provider retry start window elapsed before SDK invocation'),
         });
       }
-      await this.start(actualInput);
+      await this.startWithInputHash(inputHash);
       // Admission can return just inside the retry window while the durable
       // start write blocks past it. Recheck at the final pre-SDK seam so the
       // existing elapsed gate is never expanded by control-plane DB latency.
@@ -275,13 +279,17 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   async start(actualInput: unknown): Promise<void> {
+    await this.startWithInputHash(safeInputHash(actualInput));
+  }
+
+  private async startWithInputHash(inputHash: string): Promise<void> {
     try {
       await writeAiTaskRunStarted(this.config.db, {
         id: this.taskRunId,
         task_kind: this.kind,
         provider: this.resolved.provider,
         model: this.resolved.model,
-        input_hash: safeInputHash(actualInput),
+        input_hash: inputHash,
         started_at: new Date(),
       });
       this.durableStart = true;

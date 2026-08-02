@@ -177,6 +177,105 @@ describe('runner central provider-session seam', () => {
     expect(admissionMocks.releases.every((release) => release.mock.calls.length === 1)).toBe(true);
   });
 
+  it('prepares local SDK inputs before acquiring every central session lease', async () => {
+    const sequence: string[] = [];
+    sdkMocks.queues = [
+      [success('run')],
+      [assistant('stream'), success('stream')],
+      [assistant('collecting'), success('collecting')],
+    ];
+    admissionMocks.acquire.mockImplementation(async () => {
+      sequence.push('acquire');
+      const release = vi.fn(async () => {});
+      admissionMocks.releases.push(release);
+      return {
+        mode: 'enforce' as const,
+        laneId: 'xiaomi' as const,
+        borrowedFromTaskRunId: null,
+        release,
+      };
+    });
+    sdkMocks.query.mockImplementation(() => {
+      sequence.push('sdk');
+      const messages = sdkMocks.queues.shift() ?? [];
+      return (async function* () {
+        for (const message of messages) yield message;
+      })();
+    });
+    const context = (label: string) => ({
+      db: fakeDb,
+      get allowedTools() {
+        sequence.push(`prepare:${label}`);
+        return [];
+      },
+    });
+
+    await runTask('AttributionTask', { q: 1 }, context('run'));
+    await streamTask('AttributionTask', { q: 2 }, context('stream')).text();
+    await streamTaskCollecting('AttributionTask', { q: 3 }, context('collecting'), () => {});
+
+    expect(sequence).toEqual([
+      'prepare:run',
+      'acquire',
+      'sdk',
+      'prepare:stream',
+      'acquire',
+      'sdk',
+      'prepare:collecting',
+      'acquire',
+      'sdk',
+    ]);
+  });
+
+  it('materializes multimodal bytes before acquiring the central session lease', async () => {
+    const sequence: string[] = [];
+    let acquired = false;
+    const image = {
+      mediaType: 'image/png',
+      get data() {
+        sequence.push(acquired ? 'image-data:after-acquire' : 'image-data:before-acquire');
+        return new Uint8Array([1, 2, 3]);
+      },
+    };
+    admissionMocks.acquire.mockImplementation(async () => {
+      acquired = true;
+      sequence.push('acquire');
+      const release = vi.fn(async () => {});
+      admissionMocks.releases.push(release);
+      return {
+        mode: 'enforce' as const,
+        laneId: 'xiaomi' as const,
+        borrowedFromTaskRunId: null,
+        release,
+      };
+    });
+    sdkMocks.query.mockImplementation(({ prompt }: { prompt: string | AsyncIterable<unknown> }) => {
+      sequence.push('sdk');
+      return (async function* () {
+        if (typeof prompt !== 'string') {
+          for await (const message of prompt) {
+            sequence.push('consume');
+            expect(message).toMatchObject({
+              message: {
+                content: [
+                  { type: 'text', text: 'inspect' },
+                  { type: 'image', source: { type: 'base64', data: 'AQID' } },
+                ],
+              },
+            });
+          }
+        }
+        yield success('vision');
+      })();
+    });
+
+    await runTask('AttributionTask', { text: 'inspect', images: [image] }, { db: fakeDb });
+
+    expect(sequence).not.toContain('image-data:after-acquire');
+    expect(sequence.at(-3)).toBe('acquire');
+    expect(sequence.slice(-2)).toEqual(['sdk', 'consume']);
+  });
+
   it('rejects collected text when admission fencing wins after the SDK result', async () => {
     sdkMocks.queues = [[assistant('must-not-persist'), success('must-not-persist')]];
     admissionMocks.acquire.mockImplementationOnce(
