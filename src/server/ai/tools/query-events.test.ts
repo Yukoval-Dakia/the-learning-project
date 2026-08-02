@@ -169,7 +169,7 @@ describe('queryEventsTool', () => {
     expect(exactId.match_semantics.event_id).toBe('exact');
   });
 
-  it('makes a subject-kind intersection visibly non-exhaustive for cross-stage evidence', async () => {
+  it('keeps an exact subject window separate from causal descendants whose subject changes', async () => {
     const at = new Date('2026-07-31T01:33:04.175Z');
     const subjectId = 'kc_chain_rule_canary_complex';
     await seedExperimentalEvent({
@@ -193,6 +193,14 @@ describe('queryEventsTool', () => {
       subjectId,
       createdAt: at,
     });
+    await seedExperimentalEvent({
+      id: 'probe_for_conjecture_complex',
+      action: 'experimental:probe_question',
+      subjectKind: 'question',
+      subjectId: 'q_probe_for_conjecture_complex',
+      causedByEventId: 'conjecture_complex',
+      createdAt: at,
+    });
 
     const narrowed = await queryEventsTool.execute(ctx(), {
       filter: { subjectId, subjectKind: 'knowledge', limit: 50 },
@@ -205,6 +213,7 @@ describe('queryEventsTool', () => {
       subject_id: subjectId,
       subject_kind: 'knowledge',
       all_subject_kinds_included: false,
+      causal_descendants_included: false,
       cross_stage_claim_status: 'blocked_subject_id_only_filter_required',
       required_followup: 'repeat_with_subject_id_only',
     });
@@ -234,13 +243,37 @@ describe('queryEventsTool', () => {
       subject_id: subjectId,
       subject_kind: null,
       all_subject_kinds_included: true,
-      cross_stage_claim_status: 'authorized_complete_window_in_response',
-      required_followup: 'none',
+      causal_descendants_included: false,
+      cross_stage_claim_status: 'blocked_cross_subject_relation_followup_required',
+      required_followup: 'follow_causal_relations_from_returned_events',
     });
     expect(crossKind.claim_boundaries).toEqual({
       zero_rows_scope: 'exact_filters_and_full_observation_window',
       supports_entity_inventory_claim: false,
       supports_lifecycle_status_count_claim: false,
+      supports_cross_subject_causal_descendant_claim: false,
+    });
+
+    const incorrectlyIntersectedRelation = await queryEventsTool.execute(ctx(), {
+      filter: {
+        subjectId,
+        causedByEventId: 'conjecture_complex',
+        limit: 50,
+      },
+    });
+    expect(incorrectlyIntersectedRelation.events).toEqual([]);
+    expect(incorrectlyIntersectedRelation.subject_scope).toMatchObject({
+      cross_stage_claim_status: 'blocked_relation_without_subject_filter_required',
+      required_followup: 'repeat_with_relation_only_without_subject_id',
+    });
+
+    const relationOnly = await queryEventsTool.execute(ctx(), {
+      filter: { causedByEventId: 'conjecture_complex', limit: 50 },
+    });
+    expect(relationOnly.events.map((row) => row.id)).toEqual(['probe_for_conjecture_complex']);
+    expect(relationOnly.events[0]).toMatchObject({
+      subject_id: 'q_probe_for_conjecture_complex',
+      caused_by_event_id: 'conjecture_complex',
     });
 
     const firstPage = await queryEventsTool.execute(ctx(), {
@@ -248,7 +281,7 @@ describe('queryEventsTool', () => {
     });
     expect(firstPage.subject_scope).toMatchObject({
       cross_stage_claim_status: 'blocked_more_pages_unread',
-      required_followup: 'follow_next_cursor_and_aggregate_from_initial_page',
+      required_followup: 'follow_next_cursor_aggregate_then_follow_causal_relations',
     });
     const secondPage = await queryEventsTool.execute(ctx(), {
       filter: { subjectId, limit: 1 },
@@ -263,7 +296,7 @@ describe('queryEventsTool', () => {
     );
     expect(finalPage.subject_scope).toMatchObject({
       cross_stage_claim_status: 'requires_complete_pagination_chain',
-      required_followup: 'verify_complete_pagination_chain_from_initial_page',
+      required_followup: 'verify_complete_pagination_chain_then_follow_causal_relations',
     });
   });
 
@@ -517,6 +550,22 @@ describe('queryEventsTool', () => {
     await expect(queryEventsTool.execute(ctx(), { filter: { limit: 100 } })).rejects.toThrow();
   });
 
+  it('rejects blank exact string filters instead of treating them as omitted', async () => {
+    for (const field of [
+      'eventId',
+      'actorRef',
+      'action',
+      'subjectKind',
+      'subjectId',
+      'causedByEventId',
+      'siblingOfEventId',
+    ] as const) {
+      await expect(
+        queryEventsTool.execute(ctx(), { filter: { [field]: '   ' } } as never),
+      ).rejects.toThrow();
+    }
+  });
+
   it('summarize formats folded line', () => {
     const summary = queryEventsTool.summarize(
       { filter: { action: 'attempt', sinceDays: 7 } },
@@ -528,6 +577,7 @@ describe('queryEventsTool', () => {
           subject_id: null,
           subject_kind: null,
           all_subject_kinds_included: null,
+          causal_descendants_included: null,
           cross_stage_claim_status: 'not_subject_scoped',
           required_followup: 'none',
         },
@@ -544,6 +594,7 @@ describe('queryEventsTool', () => {
           zero_rows_scope: 'exact_filters_and_full_observation_window',
           supports_entity_inventory_claim: false,
           supports_lifecycle_status_count_claim: false,
+          supports_cross_subject_causal_descendant_claim: false,
         },
         relation_applied: { kind: 'none', status: 'not_requested' },
         coverage: {
@@ -573,8 +624,10 @@ describe('queryEventsTool', () => {
     expect(queryEventsTool.costClass).toBe('local');
     expect(queryEventsTool.mirrorEvent).toBe('when_user_visible');
     expect(queryEventsTool.description).toContain('event log, not an entity inventory');
+    expect(queryEventsTool.description).toContain('filter.subjectId is exact');
+    expect(queryEventsTool.description).toContain('never includes causal children');
     expect(queryEventsTool.description).toContain('cannot prove');
     expect(queryEventsTool.description).toContain('entity_status_coverage=not_observed');
-    expect(queryEventsTool.description).toContain('omit subjectKind');
+    expect(queryEventsTool.description).toContain('Omitting subjectKind');
   });
 });

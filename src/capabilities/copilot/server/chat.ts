@@ -1252,6 +1252,7 @@ async function runCopilotChatImpl(
     toolTrace,
     ...(streaming?.signal ? { signal: streaming.signal } : {}),
   });
+  streaming?.signal?.throwIfAborted();
   replyText = evidenceReview.replyText;
 
   // YUK-307 — single convergence point for BOTH the JSON and streaming paths:

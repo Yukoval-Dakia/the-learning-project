@@ -50,7 +50,8 @@ import { Conversation } from '@/server/session';
 let durableDispatchReservations = 0;
 
 // Inline free-form turns can spend up to 60s in the primary model and another
-// 120s in the YUK-832 evidence review. Candidate prose stays buffered until it
+// 2 × 120s in the YUK-832 selection + independent certification pipeline.
+// Candidate prose stays buffered until it
 // is safe, so keep the Cloudflare Tunnel connection alive with an SSE comment
 // rather than leaking an unreviewed delta. This remains comfortably below the
 // observed ~100s cloudflared idle boundary.

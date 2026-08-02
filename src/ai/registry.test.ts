@@ -17,10 +17,22 @@ import promptHashOracle from './fixtures/task-prompt-hashes.4cb5b966.json' with 
 import {
   CopilotDispatchDecisionSchema,
   CopilotEvidenceReviewOutputSchema,
+  CopilotEvidenceVerificationOutputSchema,
   type TaskDef,
   tasks,
 } from './registry';
 import { getTaskSystemPrompt } from './task-prompts';
+
+const CopilotEvidencePassChecksFixture = {
+  causality_grounded: true,
+  claim_support_respected: true,
+  scope_coverage_respected: true,
+  projection_boundaries_respected: true,
+  queue_count_boundaries_respected: true,
+  requested_chain_handled: true,
+  tool_trace_faithful: true,
+  internally_consistent: true,
+} as const;
 
 describe('copilot task dispatch declarations', () => {
   it('is deny-by-default and exposes exactly two fully-declared tasks', () => {
@@ -36,13 +48,13 @@ describe('copilot task dispatch declarations', () => {
       expect(task.copilot.intentSchema.safeParse).toBeTypeOf('function');
       expect(task.copilot.prepare).toBeTypeOf('function');
     }
-    expect(Object.keys(tasks)).toHaveLength(50);
+    expect(Object.keys(tasks)).toHaveLength(51);
   });
 });
 
 describe('task prompt definitions', () => {
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(50);
+    expect(Object.keys(tasks)).toHaveLength(51);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -98,6 +110,7 @@ describe('task prompt definitions', () => {
           task === 'SelectionOrchestratorTask' ||
           task === 'CopilotDispatchTask' ||
           task === 'CopilotEvidenceReviewTask' ||
+          task === 'CopilotEvidenceVerificationTask' ||
           task === 'CopilotTask'
         ) {
           continue;
@@ -540,11 +553,13 @@ describe('CopilotTask.systemPrompt — YUK-832 evidence-claim contract', () => {
   it('pins scope completion, explicit causality, projection, and queue authority', () => {
     const p = getTaskSystemPrompt('CopilotTask');
     expect(p).toContain('【证据断言契约】');
-    expect(p).toContain('authorized_complete_window_in_response');
+    expect(p).toContain('causal_descendants_included=false');
+    expect(p).toContain('follow_causal_relations_from_returned_events');
+    expect(p).toContain('subjectId 的 exact window');
     expect(p).toContain('requires_complete_pagination_chain');
     expect(p).toContain('not_subject_scoped 永不授权');
     expect(p).toContain('repeat_with_subject_id_only');
-    expect(p).toContain('follow_next_cursor_and_aggregate_from_initial_page');
+    expect(p).toContain('follow_next_cursor_aggregate_then_follow_causal_relations');
     expect(p).toContain('activation_policy=not_observed');
     expect(p).toContain('necessary_conditions=not_supported');
     expect(p).toContain('sufficient_conditions=not_supported');
@@ -556,7 +571,13 @@ describe('CopilotTask.systemPrompt — YUK-832 evidence-claim contract', () => {
     expect(p).toContain('queue_assertion');
     expect(p).toContain('null 一律回答“无法裁决”');
     expect(p).toContain('supports_lifecycle_status_count_claim=false');
+    expect(p).toContain('count_scope=returned_actionable_rows_only');
+    expect(p).toContain('相同时间戳不能证明同一事务');
+    expect(p).toContain('query_knowledge 空结果');
     expect(p).toContain('只有实际调用并收到结果的工具');
+    expect(p).toContain('逐个回答请求中的 material subpart');
+    expect(p).toContain('repeat_with_relation_only_without_subject_id');
+    expect(p).toContain('returned_nodes_complete_after_expansion=false');
   });
 });
 
@@ -603,6 +624,37 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     ).toBe(false);
   });
 
+  it('uses a separate no-rewrite verification task whose reject output cannot become a third draft', () => {
+    const def = tasks.CopilotEvidenceVerificationTask;
+    expect(def.defaultProvider).toBe('xiaomi');
+    expect(def.defaultModel).toBe('mimo-v2.5-pro');
+    expect(def.needsToolCall).toBe(false);
+    expect(def.allowedTools).toEqual([]);
+    expect(def.budget.maxIterations).toBe(1);
+    expect(def.budget.timeout).toBe(120_000);
+    expect(def.structuredOutputSchema).toBe(CopilotEvidenceVerificationOutputSchema);
+    expect(
+      CopilotEvidenceVerificationOutputSchema.safeParse({
+        verdict: 'reject',
+        checks: { ...CopilotEvidencePassChecksFixture, internally_consistent: false },
+        violations: ['internal_contradiction'],
+      }).success,
+    ).toBe(true);
+    expect(
+      CopilotEvidenceVerificationOutputSchema.safeParse({
+        verdict: 'reject',
+        checks: { ...CopilotEvidencePassChecksFixture, internally_consistent: false },
+        violations: ['internal_contradiction'],
+        safe_reply: '不得存在第三版',
+      }).success,
+    ).toBe(false);
+    const p = getTaskSystemPrompt('CopilotEvidenceVerificationTask');
+    expect(p).toContain('独立从头审查');
+    expect(p).toContain('看不到首轮的 checks、violations、理由或 task id');
+    expect(p).toContain('source_complete=false');
+    expect(p).toContain('绝不生成 safe_reply 或第三版文本');
+  });
+
   it('pins the actual-burn-in failure boundaries and partial-candidate repair rule', () => {
     const p = getTaskSystemPrompt('CopilotEvidenceReviewTask');
     expect(p).toContain('candidate_complete=false');
@@ -610,12 +662,19 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     expect(p).toContain('caused_by_event_id');
     expect(p).toContain('siblings');
     expect(p).toContain('necessary_conditions/sufficient_conditions=not_supported');
-    expect(p).toContain('authorized_complete_window_in_response');
+    expect(p).toContain('causal_descendants_included=false');
+    expect(p).toContain('exact subject_id window');
     expect(p).toContain('redacted、unprojected/当前投影未提供');
     expect(p).toContain('event.outcome 与 evidence.outcome');
     expect(p).toContain('queue_assertion');
     expect(p).toContain('supports_lifecycle_status_count_claim=false');
-    expect(p).toContain('用户要求完整链、后续动作或 review/judge');
+    expect(p).toContain('count_scope=returned_actionable_rows_only');
+    expect(p).toContain('system / ever / never / only / unique');
+    expect(p).toContain('相同时间戳与连续 dispatch_seq 不能证明同一事务');
+    expect(p).toContain('逐个对照 request_context 中每个 material subpart');
+    expect(p).toContain('不得静默省略某个 subpart');
+    expect(p).toContain('query_knowledge 的 nodes=[]');
+    expect(p).toContain('完整链、后续动作、review/judge、队列结论');
     expect(p).toContain('严格只输出一个 JSON object');
   });
 });

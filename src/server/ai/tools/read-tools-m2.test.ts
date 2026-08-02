@@ -367,6 +367,89 @@ describe('Foundation D M2 read tools', () => {
     expect(expandedQuery.nodes.map((node) => node.id)).toEqual(['k_zhi', 'k_root', 'k_er']);
     expect(expandedQuery.nodes[0].stats?.recent_failure_count_30d).toBe(1);
 
+    const truncatedExpansion = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      nodeId: 'k_zhi',
+      include: ['neighbors'],
+      limit: 1,
+    });
+    expect(truncatedExpansion.nodes.map((node) => node.id)).toEqual(['k_zhi']);
+    expect(truncatedExpansion.edges).toEqual([]);
+    expect(truncatedExpansion.coverage).toMatchObject({
+      seed_match_count: 1,
+      selected_seed_expansion_candidate_count: 2,
+      returned_node_count: 1,
+      returned_nodes_complete_after_expansion: false,
+      edges_complete_between_returned_nodes_for_requested_relation_types: true,
+    });
+    expect(truncatedExpansion.claim_boundaries).toMatchObject({
+      edge_scope: 'between_returned_active_nodes_for_requested_relation_types',
+      supports_global_edge_absence_claim: false,
+      supports_unrequested_relation_absence_claim: false,
+      supports_complete_expansion_claim: false,
+    });
+
+    const emptyRelationFilter = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      nodeId: 'k_zhi',
+      include: ['neighbors'],
+      relationTypes: [],
+    });
+    expect(emptyRelationFilter.query_scope.relation_types).toBeNull();
+    expect(emptyRelationFilter.edges.map((edge) => edge.id)).toEqual(['edge_zhi_er']);
+
+    await testDb()
+      .insert(knowledge)
+      .values(
+        Array.from({ length: 8 }, (_, index) => ({
+          id: `k_extra_${index}`,
+          name: `额外知识点 ${index}`,
+          domain: null,
+          parent_id: 'k_root',
+          created_at: BASE,
+          updated_at: BASE,
+        })),
+      );
+    const truncatedSeeds = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      limit: 10,
+    });
+    expect(truncatedSeeds.coverage).toMatchObject({
+      seed_match_count: 11,
+      selected_seed_expansion_candidate_count: 10,
+      returned_node_count: 10,
+      seed_matches_complete: false,
+      returned_nodes_complete_after_expansion: false,
+    });
+    expect(truncatedSeeds.claim_boundaries.supports_complete_expansion_claim).toBe(false);
+
+    const nodeIdMistakenForDomain = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'k_zhi',
+      nodeId: 'k_zhi',
+      include: ['ancestors', 'children', 'neighbors'],
+    });
+    expect(nodeIdMistakenForDomain).toMatchObject({
+      nodes: [],
+      edges: [],
+      query_scope: {
+        subject_domain: 'k_zhi',
+        subject_id_semantics: 'active_effective_domain',
+        node_id: 'k_zhi',
+        query: null,
+        active_only: true,
+      },
+      lookup_status: 'no_active_node_match_in_subject_domain',
+      coverage: {
+        seed_match_count: 0,
+        seed_matches_complete: true,
+      },
+      claim_boundaries: {
+        supports_global_node_absence_claim: false,
+        supports_never_existed_claim: false,
+        supports_archived_node_absence_claim: false,
+      },
+    });
+
     const subgraph = await expandKnowledgeSubgraphTool.execute(ctx(), {
       centerNodeId: 'k_zhi',
       depth: 1,
@@ -400,6 +483,22 @@ describe('Foundation D M2 read tools', () => {
       include: ['neighbors'],
     });
     expect(subgraphWithArchivedEdge.nodes.map((node) => node.id)).not.toContain('k_archived');
+
+    const archivedLookup = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      nodeId: 'k_archived',
+    });
+    expect(archivedLookup.lookup_status).toBe('no_active_node_match_in_subject_domain');
+    expect(archivedLookup.claim_boundaries.supports_never_existed_claim).toBe(false);
+
+    for (const invalid of [
+      { subjectId: 'yuwen', nodeId: '   ' },
+      { subjectId: 'yuwen', query: '   ' },
+      { subjectId: '   ', nodeId: 'k_zhi' },
+      { subjectId: 'yuwen', nodeId: 'k_zhi', query: '之' },
+    ]) {
+      await expect(queryKnowledgeTool.execute(ctx(), invalid)).rejects.toThrow();
+    }
 
     const paths = await findKnowledgePathsTool.execute(ctx(), {
       fromKnowledgeId: 'k_zhi',

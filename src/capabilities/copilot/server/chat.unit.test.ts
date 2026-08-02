@@ -608,7 +608,9 @@ describe('YUK-832 inline final evidence review', () => {
         effect: 'read',
         input: { subject_id: 'diagnostic_subject_A03', limit: 50 },
         output: {
-          query_contract: { scope_coverage: 'authorized_complete_window_in_response' },
+          query_contract: {
+            scope_coverage: 'blocked_cross_subject_relation_followup_required',
+          },
           events: [
             {
               id: 'evt_probe_a03',
@@ -731,6 +733,46 @@ describe('YUK-832 inline final evidence review', () => {
       }),
     ).rejects.toThrow('reply write lost');
     expect(visibleDeltas).toEqual([]);
+  });
+
+  it('does not persist or emit a certified reply when the client aborts before persistence', async () => {
+    const controller = new AbortController();
+    const visibleDeltas: string[] = [];
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+    const candidate = '本轮只返回本次 exact filter 的证据。';
+    const streamAgentTaskFn = vi.fn(async (_kind, _input, _ctx, onDelta) => {
+      onDelta(candidate);
+      return {
+        text: candidate,
+        task_run_id: 'copilot_task_yuk832_abort_before_persist',
+        finishReason: 'stop',
+        usage: { inputTokens: 8_000, outputTokens: 160 },
+      };
+    });
+
+    await expect(
+      runCopilotChatStreaming(
+        {} as never,
+        request,
+        (text) => visibleDeltas.push(text),
+        {
+          ...baseEvidenceDeps(),
+          writeEventFn,
+          buildMcpServerFn: () => ({ name: 'fake-yuk832-abort-before-persist' }) as never,
+          streamAgentTaskFn,
+          reviewEvidenceReplyFn: async () => {
+            controller.abort(new DOMException('client disconnected', 'AbortError'));
+            return { status: 'pass', replyText: candidate };
+          },
+        },
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(visibleDeltas).toEqual([]);
+    expect(
+      writeEventFn.mock.calls.some((call) => call[1].action === 'experimental:copilot_reply'),
+    ).toBe(false);
   });
 });
 

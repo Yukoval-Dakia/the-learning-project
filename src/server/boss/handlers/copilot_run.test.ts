@@ -191,7 +191,9 @@ describe('runCopilotRun', () => {
           effect: 'read',
           input: { subject_id: 'diagnostic_subject_A03', limit: 50 },
           output: {
-            query_contract: { scope_coverage: 'authorized_complete_window_in_response' },
+            query_contract: {
+              scope_coverage: 'blocked_cross_subject_relation_followup_required',
+            },
             events: [
               {
                 id: 'evt_rate_a03',
@@ -1763,6 +1765,120 @@ describe('runCopilotRun', () => {
         durable_failure: { reason: 'cancelled' },
       },
     });
+  });
+
+  it('Stop — read-bearing cancellation after certification persists neither candidate nor selected repair', async () => {
+    const runId = 'copilot_user_ask_stop_between_certification_and_marker';
+    const sessionId = 'sess_stop_between_certification_and_marker';
+    const unsafeCandidate = 'exact subjectId 里是 0，所以产品数据库不存在 intervention。';
+    const selectedRepair = '本轮 subjectId 窗口未返回 intervention，但完整因果后段仍未核验。';
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcp = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
+    });
+    const run = vi.fn(async () => {
+      await mcpOptions?.onResult?.({
+        name: 'query_events',
+        effect: 'read',
+        input: { filter: { subjectId: 'kc_chain_rule', limit: 50 } },
+        output: {
+          events: [],
+          subject_scope: {
+            causal_descendants_included: false,
+            cross_stage_claim_status: 'blocked_cross_subject_relation_followup_required',
+          },
+        },
+        error_reason: null,
+        executed: true,
+      });
+      return {
+        text: unsafeCandidate,
+        task_run_id: 'tr_stop_between_certification_and_marker',
+        finishReason: 'end_turn',
+        usage: { inputTokens: 12_000, outputTokens: 600 },
+      };
+    });
+    const reviewEvidenceReplyFn = vi.fn(async () => {
+      await writeJobEvent(testDb(), {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+        payload: { requested_by: 'user', stage: 'after_certification_before_marker' },
+      });
+      return {
+        status: 'repair' as const,
+        replyText: selectedRepair,
+        reviewTaskRunId: 'tr_review_before_stop',
+        verificationTaskRunId: 'tr_certification_before_stop',
+        violations: ['incomplete_scope_or_pagination'],
+      };
+    });
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: buildMcp as never,
+      reviewEvidenceReplyFn,
+    });
+
+    expect(result).toEqual({ status: 'cancelled' });
+    const serialized = JSON.stringify(await replay(runId));
+    expect(serialized).not.toContain(unsafeCandidate);
+    expect(serialized).not.toContain(selectedRepair);
+    const replies = await copilotReplyEvents(sessionId);
+    expect(JSON.stringify(replies)).not.toContain(unsafeCandidate);
+    expect(JSON.stringify(replies)).not.toContain(selectedRepair);
+  });
+
+  it('Stop — pure-text cancellation observed after review preserves the reviewed partial', async () => {
+    const runId = 'copilot_user_ask_stop_after_pure_text_review';
+    const sessionId = 'sess_stop_after_pure_text_review';
+    const reviewedPartial =
+      '已完成三份材料的前两份对照：定义域约束一致，第二份在参数退化处多一个边界分支；第三份尚未完成。';
+    const run = vi.fn(async () => ({
+      text: reviewedPartial,
+      task_run_id: 'tr_stop_after_pure_text_review',
+      finishReason: 'end_turn',
+      usage: { inputTokens: 8_000, outputTokens: 420 },
+    }));
+    const reviewEvidenceReplyFn = vi.fn(async () => {
+      await writeJobEvent(testDb(), {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+        payload: { requested_by: 'user', stage: 'after_pure_text_review' },
+      });
+      return { status: 'skipped' as const, replyText: reviewedPartial };
+    });
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+      reviewEvidenceReplyFn,
+    });
+
+    expect(result).toEqual({ status: 'cancelled' });
+    const events = await replay(runId);
+    expect(events.at(-1)?.payload).toMatchObject({
+      reason: 'cancelled',
+      reply_md: reviewedPartial,
+    });
+    expect(await copilotReplyEvents(sessionId)).toEqual([
+      expect.objectContaining({
+        outcome: 'failure',
+        task_run_id: 'tr_stop_after_pure_text_review',
+        payload: expect.objectContaining({
+          reply_md: reviewedPartial,
+          durable_failure: expect.objectContaining({ reason: 'cancelled' }),
+        }),
+      }),
+    ]);
   });
 
   it('Stop — a materializing tool start suppresses the checkpoint even when its mirror is unavailable', async () => {

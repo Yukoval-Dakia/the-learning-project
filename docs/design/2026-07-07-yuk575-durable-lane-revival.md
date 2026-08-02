@@ -22,8 +22,8 @@
 > `pre_execution_lost` is limited to QUEUED-only histories with no worker touch;
 > an explicit fence or legacy STARTED/DELTA/STEP/REPLY/FAILED(error) is treated
 > as possible execution and becomes no-checkpoint `ambiguous_execution` only
-> after the 12-minute primary execution ceiling, the YUK-832 bounded two-minute
-> final evidence review, and 30-second settlement grace.
+> after the 12-minute primary execution ceiling, the YUK-832 bounded two-pass
+> evidence pipeline (at most two minutes per pass), and 30-second settlement grace.
 > `FAILED(reason='error')` remains a retry frame; all other FAILED reasons are
 > fail-closed terminal. Created/retry/active jobs and queue lookup failures are
 > never terminalized.
@@ -44,9 +44,11 @@
 > **YUK-832 final evidence review update (2026-08-02):** free-form Copilot
 > candidate prose is now buffered rather than published as it is generated. A
 > bounded no-tool, strict-Zod review compares the current request, exact typed
-> DomainTool read results, and candidate. Pass preserves original bytes; repair
-> replaces them with a standalone safe reply; timeout/parse/provider failures
-> fail closed. Marker 记录 primary stream 是否产生正文；随后
+> DomainTool read results, and candidate, then selects the original bytes or one
+> repair. A separate strict-Zod verifier independently compares the selected bytes
+> with the same request/trace and can only certify or reject—它看不到首轮
+> checks/violations/task id，也不能再写第三版。只有 certify 后的文本可见；任一
+> reject/timeout/parse/provider failure 固定 fail closed。Marker 记录 primary stream 是否产生正文；随后
 > settlement projection 把一条 reviewed full-text DELTA 与 REPLY/DONE 或 FAILED
 > 放在同一事务里，严格按 DELTA→terminal 写入；redelivery/reconcile 从 marker 修复
 > 同一后缀，不重跑任一模型。STEP 卡只显示 deterministic lifecycle 文案，不转发
@@ -279,7 +281,7 @@ assembleCopilotRunInput(db, {
 
 ## 9. Interrupt / cancel / 串行（S6）
 
-- n=1 单会话 + `batchSize:1` → 天然单线程一次一 run（ADR-0041）。**S6 串行语义文档化**：copilot_run `batchSize:1` 使 run 串行——follow-up 在长 run 期间入队会**等到当前 run 结束**（可达 ceiling ~12-15min）才拾取。边跑打字 → 入队下一 checkpoint（等当前 run 完）。
+- n=1 单会话 + `batchSize:1` → 天然单线程一次一 run（ADR-0041）。**S6 串行语义文档化**：copilot_run `batchSize:1` 使 run 串行——follow-up 在长 run 期间入队会**等到当前 run 结束**（可达 ceiling ~12-17min）才拾取。边跑打字 → 入队下一 checkpoint（等当前 run 完）。
 - **Stop 不是纯 UI。** app 与 worker 分进程，不能靠 API 进程内 controller registry；
   `job_events.CANCEL_REQUESTED` 是唯一 durable 真相源。取消 route 与 execution fence 共用
   dispatch lock、与 outcome marker 共用 settlement lock：cancel 先于 fence → 原子
@@ -290,6 +292,9 @@ assembleCopilotRunInput(db, {
   `PreToolUse` 在 Task/Tavily/其它 SDK 工具前 deny+abort；async DomainTool
   `beforeExecute` 是本地工具最终 gate。相同 AbortSignal 传入 root runner、ToolContext 与
   nested `run_task`/proposal LLM，避免根 loop 停止后子调用继续花费。
+- **证据两轮同一取消边界。** 首轮 selection、轮间、独立 certification 与 marker
+  提交前都复用该 AbortSignal；取消后不启动下一轮、不把 AbortError 降级成普通
+  fail-closed 成功回复，也不持久化 raw candidate / 未认证 repair。
 - **终态与副作用边界。** 已开始的 DomainTool 从 execute 到 tool log + tool_use mirror
   完成前维持 in-flight barrier；drain 超时诚实落 `ambiguous_execution`，不假称安全取消。
   cancellation marker 保留已有 partial；无 partial 才写简短停止文案。materializing tool

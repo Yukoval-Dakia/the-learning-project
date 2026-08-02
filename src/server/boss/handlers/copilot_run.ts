@@ -48,7 +48,7 @@ import {
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
 import {
-  COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS,
+  COPILOT_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
   reviewCopilotEvidenceReply,
 } from '@/capabilities/copilot/server/evidence-review';
 import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
@@ -556,7 +556,9 @@ function observeCopilotSpawnBudget(observation: SpawnBudgetObservation): void {
 const CLAIMED_EXECUTION_POLL_MS = 250;
 export const CLAIMED_EXECUTION_SETTLE_GRACE_MS = 30_000;
 export const DURABLE_OWNER_SETTLEMENT_BUDGET_MS =
-  DURABLE_BUDGET.timeoutMs + COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS + CLAIMED_EXECUTION_SETTLE_GRACE_MS;
+  DURABLE_BUDGET.timeoutMs +
+  COPILOT_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS +
+  CLAIMED_EXECUTION_SETTLE_GRACE_MS;
 
 export function hasCopilotSettlementTerminal(events: TerminalProjectionEvent[]): boolean {
   return events.some(isCopilotRunTerminalEvent);
@@ -1137,14 +1139,25 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       candidateTaskRunId: result.task_run_id,
       toolTrace,
       signal: cancellationControl.signal,
+      beforeVerification: async () => {
+        await cancellationControl.probe();
+        cancellationControl.signal.throwIfAborted();
+      },
       candidateComplete: !result.partial,
     });
     const reviewedReply = evidenceReview.replyText;
+    // A Stop that wins only under the settlement lock must obey the same
+    // evidence boundary as the explicit post-review probe below. Read-bearing
+    // candidate/repair text is never a cancellation partial; pure-text turns
+    // keep the established partial-reply UX.
+    const reviewedCancellationReply = toolTrace.some((entry) => entry.effect === 'read')
+      ? undefined
+      : reviewedReply;
 
     // Stop can arrive while the second pass is running. The same AbortSignal
     // reaches the reviewer; re-probe before any domain reply or public suffix.
     if ((await cancellationControl.probe()) === 'cancel_requested') {
-      return await settleObservedCancellation(reviewedReply, result.task_run_id);
+      return await settleObservedCancellation(reviewedCancellationReply, result.task_run_id);
     }
 
     // YUK-575 — streamTaskCollecting graceful-degrade：run 出错时它 resolve
@@ -1162,7 +1175,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         projectSuccessfulTerminal,
         projectFailedTerminal,
         writeCopilotReplyFn: persistReply,
-        createCancelledMarker: cancellationMarker(reviewedReply, result.task_run_id),
+        createCancelledMarker: cancellationMarker(reviewedCancellationReply, result.task_run_id),
         emitReviewedDelta: candidateDeltaObserved,
       });
     }
@@ -1194,7 +1207,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
             finishReason: result.finishReason,
           };
         },
-        { createCancelled: cancellationMarker(reviewedReply, result.task_run_id) },
+        {
+          createCancelled: cancellationMarker(reviewedCancellationReply, result.task_run_id),
+        },
       );
       if (markerClaim.outcome === 'already_terminal') {
         return terminalRunResult(markerClaim.events, taskRunId);
