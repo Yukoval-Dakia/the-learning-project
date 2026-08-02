@@ -2009,11 +2009,10 @@ export const tasks = {
       'YUK-832 — blind append-only reference leg for the shared FULL validator. It never sees candidate prose; small internal tool submissions are canonicalized by the server into request/trace coverage and exact DomainTool JSON pointers.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    // Protocol ceiling, not a target: 96 points / 12 per append = 8 turns;
-    // 60 trace calls / 12 per classification = 5; safe reply + explicit
-    // completion + the SDK terminal turn = 3. Actual A01 proved 4 turns is
-    // structurally insufficient even when every submission is valid.
-    budget: { ...DEFAULT_BUDGET, maxIterations: 16, timeout: 120_000 },
+    // Accepted records need at most 16 turns. Actual A01 then reached that
+    // exact ceiling after bounded tool rejections, so reserve eight correction
+    // turns; the per-call wall clock remains the authoritative paid backstop.
+    budget: { ...DEFAULT_BUDGET, maxIterations: 24, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: [...COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS],
@@ -2028,10 +2027,9 @@ export const tasks = {
       'YUK-832 — append-only sealed comparator for one selected reply. It submits small per-reply observations; the server derives dense request coverage and the verdict, then requires two valid passes.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    // 192 bounded reply units / 12 per append = 16 turns, followed by explicit
-    // completion and the SDK terminal turn. Models normally stop far earlier;
-    // the 120s wall-clock timeout remains the paid-call backstop.
-    budget: { ...DEFAULT_BUDGET, maxIterations: 18, timeout: 120_000 },
+    // Accepted records need at most 18 turns. Share the blind leg's 24-turn
+    // correction ceiling; the per-call wall clock remains the paid backstop.
+    budget: { ...DEFAULT_BUDGET, maxIterations: 24, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: [...COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS],

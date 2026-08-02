@@ -44,12 +44,15 @@
   先于产品 ceiling 到期，本次不算产品 verdict。partial artifact SHA-256
   `55ca0f71287615ce59fc3d758690786d79e03735d90c066c055c6d59ce3dfe97`（mode 0600）；遗留 job/run
   已按产品取消语义终态化。现仅把 durable comparator 对齐 360s，并同步实际 harness 观察窗；
-  inline 仍 120s，attempt 数与契约不变。
+  inline 仍 120s，attempt 数与契约不变。`ef5789a7` + 52min monitor 的 A01 随后正常终态：第一条
+  blind 撞 360s，第二条在 263s 先撞精确 `maxTurns=16`；artifact SHA-256
+  `94f7d9743a71190642d62cb51913de2e93afd7991a2a5b4e4e1e763ecff4e073`（mode 0600）。现只把
+  两个 FULL task 的 turn ceiling 统一为 24，paid wall-clock 不变，并记录无原文的提交进度计数。
 - 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
 
 ## NEXT
 
-1. 验证 actual A01 暴露的 360s durable comparator 与 48.5min harness monitor；保持两次 bounded
+1. 验证 actual A01 暴露的 24-turn correction ceiling；保持 360s paid wall-clock、两次 bounded
    attempt、既有 fail-closed binding、blind isolation、inline 120s 与 confirmed comparator 状态机。
 2. 新 exact-head CI 全绿后，在 clean committed exact head 重跑 A01；自动 gate 通过后才重跑 5 例 actual-provider v8，逐例审计 primary +
    reference/comparator runs、thinking、digests、exact bytes 与无旁支 validator。

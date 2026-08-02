@@ -1108,6 +1108,7 @@ describe('Copilot FULL evidence review', () => {
   });
 
   it('keeps a failed paid blind-reference run id when the next attempt succeeds', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     let referenceAttempt = 0;
     let comparisonAttempt = 0;
     const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
@@ -1154,6 +1155,19 @@ describe('Copilot FULL evidence review', () => {
         'comparison-after-reference-recovery-2',
       ],
     });
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[copilot-evidence-review] blind reference task failed',
+      {
+        attempt: 1,
+        failure_kind: 'api_error_result',
+        progress: {
+          evidence_point_count: 0,
+          not_material_call_count: 0,
+          safe_reply_set: false,
+          completed: false,
+        },
+      },
+    );
   });
 
   it('does not let one valid pass wash away a contract-invalid comparator attempt', async () => {
@@ -1197,7 +1211,7 @@ describe('Copilot FULL evidence review', () => {
   });
 
   it('keeps a failed paid comparator id when a later pass cannot confirm it', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     let comparatorAttempt = 0;
     const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
       async (kind, input, _ctx, submission) => {
@@ -1231,6 +1245,14 @@ describe('Copilot FULL evidence review', () => {
       status: 'failed_closed',
       referenceTaskRunIds: ['reference'],
       comparisonTaskRunIds: ['comparison-provider-failed', 'comparison-provider-recovered'],
+    });
+    expect(warnSpy).toHaveBeenCalledWith('[copilot-evidence-review] comparator task failed', {
+      attempt: 1,
+      failure_kind: 'stream_no_terminal',
+      progress: {
+        reply_check_count: 0,
+        completed: false,
+      },
     });
   });
 

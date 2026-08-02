@@ -581,10 +581,10 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     expect(def.defaultModel).toBe('mimo-v2.5-pro');
     expect(def.needsToolCall).toBe(true);
     expect(def.allowedTools).toEqual([...COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS]);
-    // Actual A01 proved four SDK turns cannot complete the declared protocol.
-    // The bound covers 8 evidence chunks + 5 trace-classification chunks +
-    // safe reply + explicit completion + the SDK terminal turn.
-    expect(def.budget.maxIterations).toBe(16);
+    // Accepted records need at most 16 turns; actual A01 then proved an exact
+    // 16-turn ceiling leaves no bounded correction room for rejected chunks.
+    // The 24-turn ceiling remains subordinate to the durable wall clock.
+    expect(def.budget.maxIterations).toBe(24);
     expect(def.budget.timeout).toBe(120_000);
     expect(def).not.toHaveProperty('structuredOutputSchema');
 
@@ -639,9 +639,9 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     expect(def.defaultModel).toBe('mimo-v2.5-pro');
     expect(def.needsToolCall).toBe(true);
     expect(def.allowedTools).toEqual([...COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS]);
-    // 192 bounded reply units / 12 per append = 16 append turns, followed by
-    // explicit completion and the SDK terminal turn.
-    expect(def.budget.maxIterations).toBe(18);
+    // Accepted records need at most 18 turns. Use the same 24-turn bounded
+    // correction ceiling as the blind leg; wall-clock timeout remains final.
+    expect(def.budget.maxIterations).toBe(24);
     expect(def.budget.timeout).toBe(120_000);
     expect(def).not.toHaveProperty('structuredOutputSchema');
     expect(

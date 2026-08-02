@@ -102,7 +102,13 @@
   SHA-256 `55ca0f71287615ce59fc3d758690786d79e03735d90c066c055c6d59ce3dfe97`（mode 0600）。已用
   产品取消语义把遗留 boss job、durable run、domain reply 与悬挂 AI run 全部终态化。现只把
   durable comparator tail 对齐 blind 为 360s；inline 仍 120s，attempt 数与绑定不变；actual harness
-  monitor 需对齐新的 48.5min owner ceiling。
+  monitor 需对齐新的 48.5min owner ceiling。`ef5789a7` + 52min monitor 的第四个隔离 A01 已正常
+  走到产品终态：第一条 blind 撞 360s budget；第二条在 263s 先撞精确 `maxTurns=16`，未进入
+  comparator。artifact SHA-256
+  `94f7d9743a71190642d62cb51913de2e93afd7991a2a5b4e4e1e763ecff4e073`（mode 0600）。16 turns
+  只够所有 accepted chunks 一次成功，没有给内部工具拒绝后的修正留轮次；现把两个 FULL task
+  的 SDK ceiling 统一为 24，不增加 360s paid wall-clock。失败诊断新增的只有 point/not-material/
+  safe-reply/reply-check 完成计数，不记录 raw output、candidate 或 thinking。
 
 ## Next order
 

@@ -124,6 +124,11 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
 
+function paidTaskFailureKind(error: unknown): string {
+  if (error instanceof AgentRunError) return error.subtype;
+  return error instanceof Error ? error.name : 'unknown';
+}
+
 async function bindRunResult(params: {
   db: Db;
   kind: 'CopilotEvidenceReviewTask' | 'CopilotEvidenceVerificationTask';
@@ -243,7 +248,19 @@ async function runBlindReference(params: {
       if (error instanceof AgentRunError && !taskRunIds.includes(error.taskRunId)) {
         taskRunIds.push(error.taskRunId);
       }
-      lastDetail = `reference_task_failed:${error instanceof Error ? error.name : 'unknown'}`;
+      const progress = submission.progress();
+      const failureKind = paidTaskFailureKind(error);
+      lastDetail =
+        `reference_task_failed:${failureKind}` +
+        `:points=${progress.evidence_point_count}` +
+        `:not_material=${progress.not_material_call_count}` +
+        `:safe_reply=${Number(progress.safe_reply_set)}` +
+        `:completed=${Number(progress.completed)}`;
+      console.warn('[copilot-evidence-review] blind reference task failed', {
+        attempt,
+        failure_kind: failureKind,
+        progress,
+      });
       continue;
     }
     if (!result.task_run_id) {
@@ -400,10 +417,20 @@ async function runConfirmedComparison(params: {
         );
       } catch (error) {
         if (params.signal?.aborted) throw error;
+        const progress = submission.progress();
+        const failureKind = paidTaskFailureKind(error);
+        console.warn('[copilot-evidence-review] comparator task failed', {
+          attempt,
+          failure_kind: failureKind,
+          progress,
+        });
         return {
           outcome: 'contract_invalid' as const,
           ...(error instanceof AgentRunError ? { task_run_id: error.taskRunId } : {}),
-          detail: `comparison_task_failed:${error instanceof Error ? error.name : 'unknown'}`,
+          detail:
+            `comparison_task_failed:${failureKind}` +
+            `:reply_checks=${progress.reply_check_count}` +
+            `:completed=${Number(progress.completed)}`,
         };
       }
       if (!taskResult.task_run_id) {
