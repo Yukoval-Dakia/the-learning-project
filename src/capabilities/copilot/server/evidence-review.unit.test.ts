@@ -1155,19 +1155,16 @@ describe('Copilot FULL evidence review', () => {
         'comparison-after-reference-recovery-2',
       ],
     });
-    expect(warnSpy).toHaveBeenCalledWith(
-      '[copilot-evidence-review] blind reference task failed',
-      {
-        attempt: 1,
-        failure_kind: 'api_error_result',
-        progress: {
-          evidence_point_count: 0,
-          not_material_call_count: 0,
-          safe_reply_set: false,
-          completed: false,
-        },
+    expect(warnSpy).toHaveBeenCalledWith('[copilot-evidence-review] blind reference task failed', {
+      attempt: 1,
+      failure_kind: 'api_error_result',
+      progress: {
+        evidence_point_count: 0,
+        not_material_call_count: 0,
+        safe_reply_set: false,
+        completed: false,
       },
-    );
+    });
   });
 
   it('does not let one valid pass wash away a contract-invalid comparator attempt', async () => {
