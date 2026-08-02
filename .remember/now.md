@@ -48,8 +48,11 @@
   诊断为非 strict JSON；重复证据足够后停止 A03，其余样本未继续烧 provider。下一窄化修复
   先尝试只接受唯一一个 syntax-only JSON fence，但 `1d48d4d3` actual 的首个 A01 reference
   仍不匹配，随即 Stop，未继续重复烧 provider。现改为复用项目既有 structured-task 单 JSON
-  对象提取器：wrapper prose 丢弃，多对象/Zod/server binding 仍拒绝。新 committed exact head
-  仍须跑 GitHub CI 与五例 actual v8。A01 两次 reference 分别约
+  对象提取器：`6fbf9c1e` actual 成功进入 Zod，暴露 provider 自创 protocol_version/type/status
+  和额外字段；首例即 Stop。根因是 Xiaomi 不接收 SDK native outputFormat，而 prompt 没给 exact
+  JSON shape；现已把两个 validator 的 numeric protocol、字段、数组与 enum 逐字写入 prompt。
+  wrapper prose 丢弃，多对象/Zod/server binding 仍拒绝。新 committed exact head 仍须跑 GitHub
+  CI 与五例 actual v8。A01 两次 reference 分别约
   198.30s/198.33s，均为 provider success + thinking；partial artifact SHA-256
   `7e7d7e402a7d007c165049f8fc42534072ed068e536d3ee53eacd99da1190d7b`（本地 mode 0600）。
 

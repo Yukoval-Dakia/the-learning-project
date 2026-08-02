@@ -698,6 +698,21 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     expect(p).toContain('RFC6901');
     expect(p).toContain('第 26–60 次调用');
     expect(p).toContain('后续仍会被两次密封 comparator 独立核验');
+    expect(p).toContain('Xiaomi 当前不接收 SDK native outputFormat');
+    expect(p).toContain('{"protocol_version":1,"evidence_points"');
+    expect(p).toContain('request status 只能取 answerable / actual_gap');
+    expect(p).toContain('relevance 只能取 material / scope_only / not_material / unusable');
+    expect(p).toContain('"status":"answerable"');
+    expect(p).toContain('"relevance":"material"');
+    expect(p).toContain('不得改名、包一层 data/result');
+    const comparator = getTaskSystemPrompt('CopilotEvidenceVerificationTask');
+    expect(comparator).toContain('{"protocol_version":1,"reply_checks"');
+    expect(comparator).toContain('reply status 只能取 supported / explicit_gap / unsupported');
+    expect(comparator).toContain('request status 只能取 answered / explicit_gap / missing');
+    expect(comparator).toContain('reason_codes 每项只能取 supported / actual_gap_disclosed');
+    expect(comparator).toContain('"status":"supported"');
+    expect(comparator).toContain('"status":"answered"');
+    expect(comparator).toContain('不得改名、包一层 data/result');
   });
 });
 
