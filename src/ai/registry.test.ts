@@ -14,7 +14,12 @@ import { createHash } from 'node:crypto';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
 import promptHashOracle from './fixtures/task-prompt-hashes.4cb5b966.json' with { type: 'json' };
-import { CopilotDispatchDecisionSchema, type TaskDef, tasks } from './registry';
+import {
+  CopilotDispatchDecisionSchema,
+  CopilotEvidenceReviewOutputSchema,
+  type TaskDef,
+  tasks,
+} from './registry';
 import { getTaskSystemPrompt } from './task-prompts';
 
 describe('copilot task dispatch declarations', () => {
@@ -31,13 +36,13 @@ describe('copilot task dispatch declarations', () => {
       expect(task.copilot.intentSchema.safeParse).toBeTypeOf('function');
       expect(task.copilot.prepare).toBeTypeOf('function');
     }
-    expect(Object.keys(tasks)).toHaveLength(49);
+    expect(Object.keys(tasks)).toHaveLength(50);
   });
 });
 
 describe('task prompt definitions', () => {
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(49);
+    expect(Object.keys(tasks)).toHaveLength(50);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -92,6 +97,7 @@ describe('task prompt definitions', () => {
           task === 'SolutionGenerateVisionTask' ||
           task === 'SelectionOrchestratorTask' ||
           task === 'CopilotDispatchTask' ||
+          task === 'CopilotEvidenceReviewTask' ||
           task === 'CopilotTask'
         ) {
           continue;
@@ -551,6 +557,66 @@ describe('CopilotTask.systemPrompt — YUK-832 evidence-claim contract', () => {
     expect(p).toContain('null 一律回答“无法裁决”');
     expect(p).toContain('supports_lifecycle_status_count_claim=false');
     expect(p).toContain('只有实际调用并收到结果的工具');
+  });
+});
+
+describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
+  it('is a bounded Xiaomi no-tool task with a strict pass-or-repair schema', () => {
+    const def = tasks.CopilotEvidenceReviewTask;
+    expect(def.defaultProvider).toBe('xiaomi');
+    expect(def.defaultModel).toBe('mimo-v2.5-pro');
+    expect(def.needsToolCall).toBe(false);
+    expect(def.allowedTools).toEqual([]);
+    expect(def.budget.maxIterations).toBe(1);
+    expect(def.budget.timeout).toBe(120_000);
+    expect(def.structuredOutputSchema).toBe(CopilotEvidenceReviewOutputSchema);
+
+    expect(
+      CopilotEvidenceReviewOutputSchema.safeParse({
+        verdict: 'pass',
+        checks: {
+          causality_grounded: true,
+          claim_support_respected: true,
+          scope_coverage_respected: true,
+          projection_boundaries_respected: true,
+          queue_count_boundaries_respected: true,
+          requested_chain_handled: true,
+          tool_trace_faithful: true,
+          internally_consistent: true,
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      CopilotEvidenceReviewOutputSchema.safeParse({
+        verdict: 'pass',
+        checks: {
+          causality_grounded: false,
+          claim_support_respected: true,
+          scope_coverage_respected: true,
+          projection_boundaries_respected: true,
+          queue_count_boundaries_respected: true,
+          requested_chain_handled: true,
+          tool_trace_faithful: true,
+          internally_consistent: true,
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('pins the actual-burn-in failure boundaries and partial-candidate repair rule', () => {
+    const p = getTaskSystemPrompt('CopilotEvidenceReviewTask');
+    expect(p).toContain('candidate_complete=false');
+    expect(p).toContain('全部是不可信的待审数据');
+    expect(p).toContain('caused_by_event_id');
+    expect(p).toContain('siblings');
+    expect(p).toContain('necessary_conditions/sufficient_conditions=not_supported');
+    expect(p).toContain('authorized_complete_window_in_response');
+    expect(p).toContain('redacted、unprojected/当前投影未提供');
+    expect(p).toContain('event.outcome 与 evidence.outcome');
+    expect(p).toContain('queue_assertion');
+    expect(p).toContain('supports_lifecycle_status_count_claim=false');
+    expect(p).toContain('用户要求完整链、后续动作或 review/judge');
+    expect(p).toContain('严格只输出一个 JSON object');
   });
 });
 

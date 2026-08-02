@@ -8,7 +8,7 @@ import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
-import { defaultStructuredRunTaskFn, extractJsonObject } from './judge-output-parse';
+import { defaultStructuredRunTaskFn, parseStructuredTaskOutput } from './judge-output-parse';
 import type { JudgeQuestionRow } from './question-contract';
 
 const CAPABILITY_REF = { id: 'steps', version: '1.0.0' };
@@ -107,12 +107,7 @@ export function parseStepsResult(result: {
   text: string;
   structured_output?: unknown;
 }): StepsLlmOutputT {
-  if (result.structured_output !== undefined && result.structured_output !== null) {
-    return StepsLlmOutput.parse(result.structured_output);
-  }
-  // YUK-230 thread 7 — shared helper; the 'steps judge output' label keeps the thrown
-  // message byte-identical to the pre-consolidation text (evidence_json.error contract).
-  return StepsLlmOutput.parse(extractJsonObject(result.text, 'steps judge output'));
+  return parseStructuredTaskOutput(result, StepsLlmOutput, 'steps judge output');
 }
 
 function composeJudgeResult(

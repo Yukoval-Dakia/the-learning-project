@@ -22,7 +22,8 @@
 > `pre_execution_lost` is limited to QUEUED-only histories with no worker touch;
 > an explicit fence or legacy STARTED/DELTA/STEP/REPLY/FAILED(error) is treated
 > as possible execution and becomes no-checkpoint `ambiguous_execution` only
-> after the 12-minute execution ceiling plus 30-second settlement grace.
+> after the 12-minute primary execution ceiling, the YUK-832 bounded two-minute
+> final evidence review, and 30-second settlement grace.
 > `FAILED(reason='error')` remains a retry frame; all other FAILED reasons are
 > fail-closed terminal. Created/retry/active jobs and queue lookup failures are
 > never terminalized.
@@ -39,6 +40,17 @@
 > anchor after refresh. Success/failure settlement rechecks cancellation while
 > holding the same settlement lock, preventing contradictory DONE+FAILED races.
 > Dock consumption/button work remains later and still requires UI pre-flight.
+
+> **YUK-832 final evidence review update (2026-08-02):** free-form Copilot
+> candidate prose is now buffered rather than published as it is generated. A
+> bounded no-tool, strict-Zod review compares the current request, exact typed
+> DomainTool read results, and candidate. Pass preserves original bytes; repair
+> replaces them with a standalone safe reply; timeout/parse/provider failures
+> fail closed. Marker 记录 primary stream 是否产生正文；随后
+> settlement projection 把一条 reviewed full-text DELTA 与 REPLY/DONE 或 FAILED
+> 放在同一事务里，严格按 DELTA→terminal 写入；redelivery/reconcile 从 marker 修复
+> 同一后缀，不重跑任一模型。STEP 卡只显示 deterministic lifecycle 文案，不转发
+> model-authored description。这 supersedes 原 N2/S3 的 raw-live-delta 细节。
 
 ---
 

@@ -7,6 +7,7 @@
 // pre-consolidation text (the golden replay + evidence_json.error contracts depend on it).
 
 import type { RunTaskCtx } from '@/server/ai/runner';
+import type { ZodType } from 'zod';
 
 /** The structured task result the vision judges consume from runTask. */
 export interface StructuredTaskResult {
@@ -40,4 +41,31 @@ export function extractJsonObject(text: string, label: string): unknown {
     throw new Error(`${label} did not contain a JSON object`);
   }
   return JSON.parse(text.slice(start, end + 1));
+}
+
+/**
+ * Shared structured-validator result parser. Native SDK structured_output wins
+ * when present; providers without that protocol use the same strict JSON object
+ * extraction and the same Zod second pass. Callers retain a specific label so
+ * parse failures remain diagnosable without persisting raw model output.
+ */
+export function parseStructuredTaskOutput<T>(
+  result: StructuredTaskResult,
+  schema: ZodType<T>,
+  label: string,
+  options: { textMode?: 'extract-object' | 'strict-json' } = {},
+): T {
+  let raw: unknown;
+  if (result.structured_output !== undefined && result.structured_output !== null) {
+    raw = result.structured_output;
+  } else if (options.textMode === 'strict-json') {
+    try {
+      raw = JSON.parse(result.text.trim());
+    } catch {
+      throw new Error(`${label} was not strict JSON`);
+    }
+  } else {
+    raw = extractJsonObject(result.text, label);
+  }
+  return schema.parse(raw);
 }

@@ -140,6 +140,7 @@ describe('buildMcpServerFromRegistry', () => {
   });
 
   it('handler invokes tool + writes tool_call_log + returns MCP content shape', async () => {
+    const observedResults: unknown[] = [];
     registerTool(
       makeReadTool<{ q: string }, { len: number }>(
         'demo_x',
@@ -149,7 +150,14 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['demo_x'] });
+    buildMcpServerFromRegistry({
+      ctx,
+      serverName: 'loom_v2',
+      toolNames: ['demo_x'],
+      onResult: (result) => {
+        observedResults.push(result);
+      },
+    });
     const def = mockAgentSdk.toolDefs[0];
     const result = (await def.handler({ q: 'hello' })) as {
       content: Array<{ type: string; text: string }>;
@@ -166,6 +174,16 @@ describe('buildMcpServerFromRegistry', () => {
     expect(log.tool_name).toBe('demo_x');
     expect(log.effect).toBe('read');
     expect(log.error_reason).toBeUndefined();
+    expect(observedResults).toEqual([
+      {
+        name: 'demo_x',
+        effect: 'read',
+        input: { q: 'hello' },
+        output: { len: 5 },
+        error_reason: null,
+        executed: true,
+      },
+    ]);
   });
 
   it('lets callers block execution before a DomainTool runs', async () => {
@@ -309,6 +327,7 @@ describe('buildMcpServerFromRegistry', () => {
   // the agent output and persisted tool-call log (warning observability seam).
   it('interceptInput rewrites the executed args and merges context_budget into output', async () => {
     const runFn = vi.fn((i: { limit: number }) => ({ rows: i.limit }));
+    const observedResults: unknown[] = [];
     registerTool(
       makeReadTool<{ limit: number }, { rows: number }>(
         'demo_capped',
@@ -326,6 +345,9 @@ describe('buildMcpServerFromRegistry', () => {
         args: { ...(args as object), limit: 3 },
         truncationNote: { applied_limit: 3, requested_limit: 10, truncated: true },
       }),
+      onResult: (result) => {
+        observedResults.push(result);
+      },
     });
     const result = (await mockAgentSdk.toolDefs[0].handler({ limit: 10 })) as {
       content: Array<{ type: string; text: string }>;
@@ -346,6 +368,56 @@ describe('buildMcpServerFromRegistry', () => {
     expect(log.output_json).toMatchObject({
       context_budget: { applied_limit: 3, requested_limit: 10, truncated: true },
     });
+    // YUK-832 review sees the exact executed input and agent-visible typed
+    // output, while the authority log intentionally retains the original ask.
+    expect(observedResults).toEqual([
+      {
+        name: 'demo_capped',
+        effect: 'read',
+        input: { limit: 3 },
+        output: {
+          rows: 3,
+          context_budget: { applied_limit: 3, requested_limit: 10, truncated: true },
+        },
+        error_reason: null,
+        executed: true,
+      },
+    ]);
+  });
+
+  it('does not turn a completed tool into a failure when the result observer throws', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    registerTool(
+      makeReadTool<{ subject_id: string }, { events: Array<{ id: string }>; has_more: false }>(
+        'demo_observer_failure',
+        { subject_id: z.string() },
+        () => ({ events: [{ id: 'evt_observer_01' }], has_more: false }),
+        () => 'one exact event',
+      ),
+    );
+
+    buildMcpServerFromRegistry({
+      ctx,
+      serverName: 'loom_v2',
+      toolNames: ['demo_observer_failure'],
+      onResult: () => {
+        throw new Error('review buffer unavailable');
+      },
+    });
+
+    const result = (await mockAgentSdk.toolDefs[0].handler({
+      subject_id: 'diagnostic_subject_observer_failure',
+    })) as { content: Array<{ text: string }> };
+
+    expect(JSON.parse(result.content[0].text).output).toEqual({
+      events: [{ id: 'evt_observer_01' }],
+      has_more: false,
+    });
+    expect(captured.toolCallLogs[0]).toMatchObject({ error_reason: undefined });
+    expect(consoleError).toHaveBeenCalledWith(
+      '[mcp-bridge] onResult failed',
+      expect.objectContaining({ tool: 'demo_observer_failure', task_run_id: 'tr_test' }),
+    );
   });
 
   // P5.1 / YUK-143 FIX 1 — budget-exhaustion soft-stop. When interceptInput

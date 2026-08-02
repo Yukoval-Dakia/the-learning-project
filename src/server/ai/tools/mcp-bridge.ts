@@ -77,6 +77,20 @@ export interface ToolExecutionGateInput {
 }
 
 /**
+ * Exact DomainTool result observed by the caller that mounted this in-process
+ * MCP server. This is an in-memory product seam, not a second execution or a
+ * replacement for tool_call_log: Copilot uses it to review the candidate reply
+ * against the same typed projections the model actually received before that
+ * reply becomes user-visible.
+ */
+export interface ToolExecutionResultObservation extends ToolExecutionGateInput {
+  input: unknown;
+  output: unknown;
+  error_reason: string | null;
+  executed: boolean;
+}
+
+/**
  * Result of the optional per-call input interceptor (P5.1 / YUK-143). Lets the
  * Copilot context-budget tracker account a tool call and surface warning/hard
  * state. `args` is what the tool actually runs with; `truncationNote` (historic
@@ -119,6 +133,8 @@ export interface BuildMcpServerOptions {
   onExecuteStart?: (tool: ToolExecutionGateInput) => Promise<void> | void;
   /** Releases the barrier only after execution, logging and event mirroring settle. */
   onExecuteSettled?: (tool: ToolExecutionGateInput) => Promise<void> | void;
+  /** Observes the exact agent-visible result after input interception and output decoration. */
+  onResult?: (result: ToolExecutionResultObservation) => Promise<void> | void;
   /**
    * Optional per-call input interceptor (P5.1 / YUK-143). Runs AFTER
    * `beforeExecute` clears and BEFORE execute, only on the happy path. Receives
@@ -226,6 +242,27 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
         } else {
           output = { value: output, context_budget: truncationNote };
         }
+      }
+
+      try {
+        await opts.onResult?.({
+          ...gateInput,
+          // The context interceptor may cap a typed input before execution.
+          // Review the exact input that produced this output, not the larger
+          // request the model originally attempted.
+          input: execInput,
+          output: errorReason ? { error: errorReason } : output,
+          error_reason: errorReason ?? null,
+          executed: executionStarted,
+        });
+      } catch (observationErr) {
+        // A reply-review observer is bookkeeping only. It must never turn an
+        // already-completed DomainTool effect into an SDK-visible failure.
+        console.error('[mcp-bridge] onResult failed', {
+          tool: dt.name,
+          task_run_id: ctx.taskRunId,
+          err: observationErr,
+        });
       }
 
       if (errorReason === undefined) {

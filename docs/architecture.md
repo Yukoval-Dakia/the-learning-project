@@ -103,7 +103,7 @@ Question (统一题库，single source of truth)
 
 ### 5.1 Task 注册
 
-> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-08-01）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 49 个 task）。
+> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-08-02）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 50 个 task）。
 
 **当前 registry**（runner + registry 都通；实际触发看 route / pg-boss handler）：
 
@@ -150,6 +150,7 @@ Question (统一题库，single source of truth)
 | `DreamingTask` | mimo-v2.5-pro | pg-boss nightly (Foundation D) | 是 | — | 夜间学习信号 → inbox proposals（DomainTools）|
 | `CoachTask` | mimo-v2.5-pro | pg-boss `coach_daily` / `coach_weekly` (T-D6) | 是 | — | TodayPlan JSON（propose_* 写 inbox）|
 | `CopilotDispatchTask` | mimo-v2.5 | `/api/chat` free-form pre-response dispatch（YUK-757） | 否 | — | 无工具、单轮、严格结构化地把明确的多阶段研究/多产物/大批量请求送入既有 durable `copilot_run`；澄清、owner 决策与有界回答保持 inline；失败时保守 inline，不输出 rationale/confidence |
+| `CopilotEvidenceReviewTask` | mimo-v2.5-pro | Copilot free-form turn 使用 DomainTool read 后、回复持久化/可见前（YUK-832） | 否 | — | 无工具、单轮、严格 Zod 的最终证据审阅；只比较当前请求、精确 typed tool trace 与 candidate，pass 保留原字节，repair 产独立安全回复，异常 fail closed |
 | `CopilotTask` | mimo-v2.5-pro | `/api/chat` inline + pg-boss `copilot_run`（AF S4 / YUK-203 / YUK-757） | 是 | — | 唯一面向用户的对话式学习助手；默认可在后台派只读 `copilot-researcher`（共享 depth=1/report-only contract，显式 kill switch），只把结构化进度卡与最终结论带回同一 Copilot 声音，不暴露子任务 transcript / reasoning |
 | `QuestionAuthorTask` | mimo-v2.5-pro | `author_question` DomainTool knowledge\|material seed（ADR-0031 / YUK-304） | 否 | — | 单道原创 draft 题（StructuredQuestion 树）+ `question_draft` proposal（单次 structured output，无工具循环；取代 YUK-275 的 `QuizIntentParseTask` C 形态解析器）|
 | `ItemPriorTask` | mimo-v2.5-pro | pg-boss `item_prior_backfill`（B1-W1 / ADR-0035 慢热阶段①） | 否 | — | 给新题估冷启先验难度 b（logit 尺度，抽教学特征路线）+ confidence → `item_calibration`（source=`llm_prior`）|

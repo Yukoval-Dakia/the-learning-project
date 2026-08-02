@@ -11,10 +11,7 @@ import {
   reserveCopilotDurableAcceptance,
 } from '@/capabilities/copilot/server/durable-dispatch';
 import { event, job_events } from '@/db/schema';
-import {
-  CLAIMED_EXECUTION_SETTLE_GRACE_MS,
-  DURABLE_BUDGET,
-} from '@/server/boss/handlers/copilot_run';
+import { DURABLE_OWNER_SETTLEMENT_BUDGET_MS } from '@/server/boss/handlers/copilot_run';
 import { writeJobEvent } from '@/server/events/writer';
 import { and, asc, eq } from 'drizzle-orm';
 import type { JobWithMetadata, QueueStats } from 'pg-boss';
@@ -128,9 +125,7 @@ describe('copilot_run_reconcile (YUK-596)', () => {
     await testDb()
       .update(job_events)
       .set({
-        occurred_at: new Date(
-          NOW.getTime() - DURABLE_BUDGET.timeoutMs - CLAIMED_EXECUTION_SETTLE_GRACE_MS - 60_000,
-        ),
+        occurred_at: new Date(NOW.getTime() - DURABLE_OWNER_SETTLEMENT_BUDGET_MS - 60_000),
       })
       .where(
         and(
@@ -165,9 +160,7 @@ describe('copilot_run_reconcile (YUK-596)', () => {
     await testDb()
       .update(job_events)
       .set({
-        occurred_at: new Date(
-          NOW.getTime() - DURABLE_BUDGET.timeoutMs - CLAIMED_EXECUTION_SETTLE_GRACE_MS - 60_000,
-        ),
+        occurred_at: new Date(NOW.getTime() - DURABLE_OWNER_SETTLEMENT_BUDGET_MS - 60_000),
       })
       .where(
         and(

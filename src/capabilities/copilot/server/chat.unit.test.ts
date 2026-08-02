@@ -568,6 +568,172 @@ describe('runCopilotChat (two-surface routing)', () => {
   });
 });
 
+describe('YUK-832 inline final evidence review', () => {
+  const request = {
+    user_message:
+      '核完 diagnostic_subject_A03 的 proposal→probe/review/judge 链，并判断 C04 due queue 是否清空。',
+    triggered_by: 'chat' as const,
+    ambient_context: {
+      route: '/admin/runs',
+      focused_entity: { kind: 'subject', id: 'diagnostic_subject_A03' },
+    },
+  };
+
+  function baseEvidenceDeps() {
+    return {
+      findOrCreateConversationFn: async () => ({ sessionId: 'ls_yuk832', created: true }),
+      resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+      loadHistoryFn: async () => [],
+      resolveCopilotSkillsFn: async () => undefined,
+      buildTavilyMcpServerFn: () => null,
+      copilotSubagentEnabled: false,
+      now: () => new Date('2026-08-02T00:00:00.000Z'),
+    };
+  }
+
+  it('keeps raw chunks invisible, persists the repair, then emits only reviewed prose', async () => {
+    const visibleDeltas: string[] = [];
+    const order: string[] = [];
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { name: 'fake-loom-yuk832' } as never;
+    });
+    const unsafeCandidate = '六个事件形成完整充分因果链；C04 返回 0 行，所以整个队列已清空。';
+    const safeReply =
+      'probe 与 rate 只能证明是 proposal 的直接子节点，不是彼此因果链。C04 的 queue_assertion=null，无法裁决队列是否清空。';
+    const streamAgentTaskFn = vi.fn(async (_kind, _input, _ctx, onDelta) => {
+      await mcpOptions?.onResult?.({
+        name: 'query_events',
+        effect: 'read',
+        input: { subject_id: 'diagnostic_subject_A03', limit: 50 },
+        output: {
+          query_contract: { scope_coverage: 'authorized_complete_window_in_response' },
+          events: [
+            {
+              id: 'evt_probe_a03',
+              caused_by_event_id: 'evt_proposal_a03',
+              evidence: {
+                activation_policy: 'not_observed',
+                necessary_conditions: 'not_supported',
+                sufficient_conditions: 'not_supported',
+              },
+            },
+          ],
+          has_more: false,
+        },
+        error_reason: null,
+        executed: true,
+      });
+      onDelta('六个事件形成完整充分因果链；');
+      onDelta('C04 返回 0 行，所以整个队列已清空。');
+      expect(visibleDeltas).toEqual([]);
+      return {
+        text: unsafeCandidate,
+        task_run_id: 'copilot_task_yuk832_inline',
+        finishReason: 'stop',
+        usage: { inputTokens: 18_000, outputTokens: 1_200 },
+      };
+    });
+    const reviewEvidenceReplyFn = vi.fn(async (input) => {
+      order.push('review');
+      expect(visibleDeltas).toEqual([]);
+      expect(input).toMatchObject({
+        candidateReply: unsafeCandidate,
+        candidateComplete: true,
+        toolTrace: [expect.objectContaining({ name: 'query_events', effect: 'read' })],
+        requestContext: {
+          user_message: request.user_message,
+          surface: 'copilot',
+          triggered_by: 'chat',
+          ambient_context: request.ambient_context,
+        },
+      });
+      expect(input.requestContext).not.toHaveProperty('conversation_history');
+      return {
+        status: 'repair' as const,
+        replyText: safeReply,
+        reviewTaskRunId: 'copilot_evidence_review_inline',
+        violations: ['noncausal_relation', 'queue_or_count_unknown_promoted'],
+      };
+    });
+    const writeEventFn = vi.fn(async (_db, input) => {
+      if (input.action === 'experimental:copilot_reply') order.push('persist');
+      return input.id;
+    });
+
+    const result = await runCopilotChatStreaming(
+      {} as never,
+      request,
+      (text) => {
+        order.push('delta');
+        visibleDeltas.push(text);
+      },
+      {
+        ...baseEvidenceDeps(),
+        writeEventFn,
+        buildMcpServerFn,
+        streamAgentTaskFn,
+        reviewEvidenceReplyFn,
+      },
+    );
+
+    expect(order).toEqual(['review', 'persist', 'delta']);
+    expect(visibleDeltas).toEqual([safeReply]);
+    expect(result.reply).toBe(safeReply);
+    const persistedReply = writeEventFn.mock.calls.find(
+      (call) => call[1].action === 'experimental:copilot_reply',
+    )?.[1];
+    expect(persistedReply.payload.reply_md).toBe(safeReply);
+    expect(JSON.stringify(persistedReply)).not.toContain(unsafeCandidate);
+  });
+
+  it('does not emit reviewed text when reply persistence fails', async () => {
+    const visibleDeltas: string[] = [];
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { name: 'fake-loom-yuk832-write-failure' } as never;
+    });
+    const streamAgentTaskFn = vi.fn(async (_kind, _input, _ctx, onDelta) => {
+      await mcpOptions?.onResult?.({
+        name: 'query_due_reviews',
+        effect: 'read',
+        input: { limit: 100 },
+        output: { due_now: [], queue_assertion: null },
+        error_reason: null,
+        executed: true,
+      });
+      onDelta('队列已清空');
+      return {
+        text: '队列已清空',
+        task_run_id: 'copilot_task_yuk832_write_failure',
+        finishReason: 'stop',
+        usage: { inputTokens: 9_000, outputTokens: 300 },
+      };
+    });
+    const writeEventFn = vi.fn(async (_db, input) => {
+      if (input.action === 'experimental:copilot_reply') throw new Error('reply write lost');
+      return input.id;
+    });
+
+    await expect(
+      runCopilotChatStreaming({} as never, request, (text) => visibleDeltas.push(text), {
+        ...baseEvidenceDeps(),
+        writeEventFn,
+        buildMcpServerFn,
+        streamAgentTaskFn,
+        reviewEvidenceReplyFn: async () => ({
+          status: 'repair',
+          replyText: 'queue_assertion=null，无法裁决队列是否清空。',
+          violations: ['queue_or_count_unknown_promoted'],
+        }),
+      }),
+    ).rejects.toThrow('reply write lost');
+    expect(visibleDeltas).toEqual([]);
+  });
+});
+
 describe('YUK-757 Copilot execution-mode judgment', () => {
   const complexBatchRequest =
     '读取近 30 天 12 次电磁感应错题，按“方向误判、单位遗漏、磁通量边界、图像斜率”四类聚类；每类找重复证据，再生成共 8 道新题，逐题核验唯一解、单位和退化条件，最后只 propose 调整计划。';
@@ -916,13 +1082,13 @@ describe('YUK-757 Copilot backstage subagents', () => {
       {
         step_kind: 'subtask',
         subtask_id: 'task-diagnostic-17',
-        label: '核对两次导数判号、三道历史错题与知识节点关系',
+        label: '正在深入核对证据',
         status: 'running',
       },
       {
         step_kind: 'subtask',
         subtask_id: 'task-question-preview-8',
-        label: '预览含参数三次函数题，并检查 a=0 的退化分支',
+        label: '正在深入核对证据',
         status: 'running',
       },
       {
@@ -934,7 +1100,7 @@ describe('YUK-757 Copilot backstage subagents', () => {
       {
         step_kind: 'subtask',
         subtask_id: 'task-question-preview-8',
-        label: '预览含参数三次函数题，并检查 a=0 的退化分支',
+        label: '子任务未完成',
         status: 'failed',
         error: '子任务未完成',
       },

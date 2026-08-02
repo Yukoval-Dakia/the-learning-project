@@ -72,7 +72,7 @@ vi.mock('@/server/session', () => ({
   Conversation: { findOrCreateCopilotConversation: findOrCreateMock },
 }));
 
-import { POST } from '@/capabilities/copilot/api/chat';
+import { COPILOT_INLINE_SSE_HEARTBEAT_MS, POST } from '@/capabilities/copilot/api/chat';
 import { CopilotDurableRunResponseSchema } from '@/capabilities/copilot/api/contracts';
 import { __resetRateLimitForTests, checkRateLimit } from '@/server/http/rate-limit';
 
@@ -144,6 +144,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
 });
 
@@ -163,6 +164,35 @@ describe('POST /api/copilot/chat — SSE via SSEStreamingApi', () => {
         'event: delta\ndata: {"text":"好"}\n\n' +
         'event: reply\ndata: {"session_id":"s1","reply_event_id":"e1"}\n\n',
     );
+  });
+
+  it('YUK-832 — evidence review 静默窗用 SSE comment 保活，不泄露 candidate', async () => {
+    vi.useFakeTimers();
+    shouldEnqueueMock.mockReturnValue(false);
+    let finishRun!: (value: { session_id: string; reply_event_id: string }) => void;
+    runMock.mockReset().mockImplementation(
+      async () =>
+        new Promise<{ session_id: string; reply_event_id: string }>((resolve) => {
+          finishRun = resolve;
+        }),
+    );
+
+    const res = await post({ user_message: '核对完整证据链。', triggered_by: 'chat' });
+    const reader = res.body?.getReader();
+    expect(reader).toBeDefined();
+    const firstRead = reader?.read();
+
+    await vi.advanceTimersByTimeAsync(COPILOT_INLINE_SSE_HEARTBEAT_MS);
+    const first = await firstRead;
+    expect(new TextDecoder().decode(first?.value)).toBe(': keepalive\n\n');
+    expect(runMock).toHaveBeenCalledTimes(1);
+
+    finishRun({ session_id: 's-safe', reply_event_id: 'e-safe' });
+    const terminal = await reader?.read();
+    expect(new TextDecoder().decode(terminal?.value)).toBe(
+      'event: reply\ndata: {"session_id":"s-safe","reply_event_id":"e-safe"}\n\n',
+    );
+    expect((await reader?.read())?.done).toBe(true);
   });
 
   it('YUK-757 — inline 子任务帧与 Copilot delta 共用 FIFO，且只出白名单字段', async () => {

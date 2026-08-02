@@ -28,7 +28,7 @@ import type { SubjectProfile } from '@/subjects/profile';
 import {
   type StructuredTaskResult,
   defaultStructuredRunTaskFn,
-  extractJsonObject,
+  parseStructuredTaskOutput,
 } from './judge-output-parse';
 // Reuse the steps@1 R2 image fetcher verbatim — no R2 logic duplicated here.
 import { defaultImageFetch } from './steps-judge';
@@ -79,11 +79,10 @@ export type SourceGroundingVerifyResult =
 export function parseSourceGroundingResult(
   result: StructuredTaskResult,
 ): SourceGroundingVerifyOutputT {
-  if (result.structured_output !== undefined && result.structured_output !== null) {
-    return SourceGroundingVerifyOutput.parse(result.structured_output);
-  }
-  return SourceGroundingVerifyOutput.parse(
-    extractJsonObject(result.text, 'source_grounding_verify output'),
+  return parseStructuredTaskOutput(
+    result,
+    SourceGroundingVerifyOutput,
+    'source_grounding_verify output',
   );
 }
 

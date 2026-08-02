@@ -49,6 +49,13 @@ import { Conversation } from '@/server/session';
 // moves from this counter into durable job_events once QUEUED is committed.
 let durableDispatchReservations = 0;
 
+// Inline free-form turns can spend up to 60s in the primary model and another
+// 120s in the YUK-832 evidence review. Candidate prose stays buffered until it
+// is safe, so keep the Cloudflare Tunnel connection alive with an SSE comment
+// rather than leaking an unreviewed delta. This remains comfortably below the
+// observed ~100s cloudflared idle boundary.
+export const COPILOT_INLINE_SSE_HEARTBEAT_MS = 15_000;
+
 function requestAbortedError(): ApiError {
   // 499 is the conventional server-side status for a client-closed request.
   // The caller is already gone; the important contract is that no new durable
@@ -466,6 +473,15 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       chain = chain.then(() => sse.writeSSE({ event, data: JSON.stringify(payload) }));
       return chain;
     };
+    const writeHeartbeat = () => {
+      chain = chain.then(async () => {
+        await sse.write(': keepalive\n\n');
+      });
+      return chain;
+    };
+    const heartbeat = setInterval(() => {
+      void writeHeartbeat();
+    }, COPILOT_INLINE_SSE_HEARTBEAT_MS);
     try {
       const result = await runCopilotChatStreaming(
         db,
@@ -492,6 +508,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       });
       await writeFrame('reply', { error: 'Internal Server Error' });
     } finally {
+      clearInterval(heartbeat);
       await chain.catch(() => undefined);
       await sse.close();
     }
