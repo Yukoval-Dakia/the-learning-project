@@ -47,6 +47,9 @@ export const runTaskTool: DomainTool<RunTaskInput, RunTaskOutput> = {
     const result = await makeRunTaskFn(ctx.db, {
       signal: ctx.signal,
       parentTaskRunId: ctx.taskRunId,
+      ...(ctx.providerSessionDeadlineAt !== undefined
+        ? { providerSessionDeadlineAt: ctx.providerSessionDeadlineAt }
+        : {}),
     })(input.task_kind, prepared.input, prepared.ctx);
     return {
       task_kind: input.task_kind,

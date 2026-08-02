@@ -47,7 +47,11 @@ describe('provider session admission configuration', () => {
         maxWaitMs: 20_000,
       },
     });
-    expect(xiaomi.policy?.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    // Golden fingerprint locks the distributed fixed timing semantics as well
+    // as the operator-supplied lane policy.
+    expect(xiaomi.policy?.fingerprint).toBe(
+      '1e45a883b7de12ec61504f44b3fcaa9f284f900ea5acd88677582debf1f6bde1',
+    );
     expect(resolveProviderSessionAdmissionPlan('anthropic', env)).toEqual({
       mode: 'off',
       laneId: 'anthropic',

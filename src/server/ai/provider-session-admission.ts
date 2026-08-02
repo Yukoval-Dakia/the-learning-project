@@ -1,9 +1,10 @@
 /**
- * Cross-process admission for central Claude Agent SDK query sessions (YUK-842).
+ * Cross-process admission for central Claude Agent SDK sessions (YUK-842).
  *
- * The admitted unit is deliberately a whole `sdkQuery()` session, not an HTTP
- * request. One session can contain multiple turns, nested SDK agents and the
- * Claude CLI's bounded internal retries. Keeping that name honest is important:
+ * The admitted unit is deliberately a whole `startup()` + `WarmQuery.query()`
+ * session, not an HTTP request. One session can contain multiple turns, nested
+ * SDK agents and the Claude CLI's bounded internal retries. Keeping that name
+ * honest is important:
  * this module caps concurrent central session families/active branches and
  * session-start reservations per minute; it does not claim raw open-query count
  * or wire-level provider RPM.
@@ -92,8 +93,11 @@ const RAW_POLICY_KEYS = new Set<keyof RawLanePolicy>([
 ]);
 
 export const PROVIDER_SESSION_RATE_WINDOW_MS = 60_000;
+export const PROVIDER_SESSION_INITIAL_LEASE_TTL_MS = 45_000;
 export const PROVIDER_SESSION_LEASE_TTL_MS = 15_000;
 export const PROVIDER_SESSION_HEARTBEAT_MS = 5_000;
+export const PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS =
+  PROVIDER_SESSION_INITIAL_LEASE_TTL_MS - PROVIDER_SESSION_HEARTBEAT_MS;
 export const PROVIDER_SESSION_ABORT_GRACE_MS = 30_000;
 export const PROVIDER_SESSION_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const PROVIDER_SESSION_HEARTBEAT_RETRY_MS = 500;
@@ -131,12 +135,25 @@ function policyFingerprint(input: Omit<ProviderSessionLanePolicy, 'fingerprint'>
         maxQueuedSessions: input.maxQueuedSessions,
         maxWaitMs: input.maxWaitMs,
         rateWindowMs: PROVIDER_SESSION_RATE_WINDOW_MS,
-        leaseTtlMs: PROVIDER_SESSION_LEASE_TTL_MS,
+        sdkStartupTimeoutMs: PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS,
+        initialLeaseTtlMs: PROVIDER_SESSION_INITIAL_LEASE_TTL_MS,
+        renewalLeaseTtlMs: PROVIDER_SESSION_LEASE_TTL_MS,
         heartbeatMs: PROVIDER_SESSION_HEARTBEAT_MS,
+        leaseProtocolVersion: 2,
+        providerStartLeaseMarginMs: LEASE_OPERATION_BUDGET_MS,
         abortGraceMs: PROVIDER_SESSION_ABORT_GRACE_MS,
       }),
     )
     .digest('hex');
+}
+
+function hardReclaimHorizonMs(executionTimeoutMs: number): number {
+  // SDK startup is intentionally outside the model execution timer. Its
+  // bounded phase must therefore be represented in the DB's absolute reclaim
+  // horizon, or a live provider attempt could outlast its capacity fence.
+  return (
+    PROVIDER_SESSION_INITIAL_LEASE_TTL_MS + executionTimeoutMs + PROVIDER_SESSION_ABORT_GRACE_MS
+  );
 }
 
 function parsePolicies(raw: string | undefined): Map<Provider, ProviderSessionLanePolicy> {
@@ -273,6 +290,10 @@ export interface ProviderSessionPermit {
   readonly mode: ProviderSessionAdmissionMode;
   readonly laneId: Provider;
   readonly borrowedFromTaskRunId: string | null;
+  /** Synchronously fence provider work after an event-loop stall. */
+  assertProviderStartAllowed(): void;
+  /** Replace the startup lease with the shorter steady execution lease. */
+  completeStartup(): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -280,6 +301,8 @@ const NOOP_PERMIT = (laneId: Provider): ProviderSessionPermit => ({
   mode: 'off',
   laneId,
   borrowedFromTaskRunId: null,
+  assertProviderStartAllowed() {},
+  async completeStartup() {},
   async release() {},
 });
 
@@ -686,9 +709,9 @@ async function insertObservedAcquired(
       wait_deadline_at: sql`clock_timestamp() + (${remainingCallerWaitMs(input)}::double precision * interval '1 millisecond')`,
       acquired_at: sql`clock_timestamp()`,
       heartbeat_at: sql`clock_timestamp()`,
-      lease_expires_at: sql`clock_timestamp() + (${PROVIDER_SESSION_LEASE_TTL_MS}::double precision * interval '1 millisecond')`,
+      lease_expires_at: sql`clock_timestamp() + (${PROVIDER_SESSION_INITIAL_LEASE_TTL_MS}::double precision * interval '1 millisecond')`,
       hard_reclaim_at: sql`clock_timestamp() + (
-        ${input.executionTimeoutMs + PROVIDER_SESSION_ABORT_GRACE_MS}::double precision
+        ${hardReclaimHorizonMs(input.executionTimeoutMs)}::double precision
         * interval '1 millisecond'
       )`,
     })
@@ -713,10 +736,11 @@ async function acquireWaitingRow(
            acquired_at = clock_timestamp(),
            heartbeat_at = clock_timestamp(),
            lease_expires_at = clock_timestamp() + (
-             ${PROVIDER_SESSION_LEASE_TTL_MS}::double precision * interval '1 millisecond'
+             ${PROVIDER_SESSION_INITIAL_LEASE_TTL_MS}::double precision
+             * interval '1 millisecond'
            ),
            hard_reclaim_at = clock_timestamp() + (
-             ${input.executionTimeoutMs + PROVIDER_SESSION_ABORT_GRACE_MS}::double precision
+             ${hardReclaimHorizonMs(input.executionTimeoutMs)}::double precision
              * interval '1 millisecond'
            )
      WHERE task_run_id = ${input.taskRunId}
@@ -970,6 +994,60 @@ type LeaseRenewalResult =
   | { kind: 'fence_lost' }
   | { kind: 'indeterminate'; underlyingSettled: Promise<void> };
 
+type StartupCompletionResult =
+  | { kind: 'completed'; leaseRemainingMs: number }
+  | { kind: 'fence_lost' }
+  | { kind: 'indeterminate'; underlyingSettled: Promise<void> };
+
+async function completeStartupLease(
+  input: AdmissionRequest,
+  claimToken: string,
+  knownLeaseDeadlineMonotonicAt: number,
+): Promise<StartupCompletionResult> {
+  let markUnderlyingSettled!: () => void;
+  const underlyingSettled = new Promise<void>((resolve) => {
+    markUnderlyingSettled = resolve;
+  });
+  const rows = await boundedAdmissionTransaction(
+    input.db,
+    Math.min(performance.now() + LEASE_OPERATION_BUDGET_MS, knownLeaseDeadlineMonotonicAt),
+    (tx) =>
+      tx.execute<{ task_run_id: string; lease_remaining_ms: number | string }>(sql`
+        UPDATE provider_session_admission
+           SET heartbeat_at = clock_timestamp(),
+               lease_expires_at = LEAST(
+                 hard_reclaim_at,
+                 clock_timestamp() + (
+                   ${PROVIDER_SESSION_LEASE_TTL_MS}::double precision
+                   * interval '1 millisecond'
+                 )
+               )
+         WHERE task_run_id = ${input.taskRunId}
+           AND lane_id = ${input.plan.laneId}
+           AND policy_fingerprint = ${input.plan.policy.fingerprint}
+           AND mode = ${input.plan.mode}
+           AND claim_token = ${claimToken}
+           AND status = 'acquired'
+           AND lease_expires_at > clock_timestamp()
+           AND hard_reclaim_at > clock_timestamp()
+        RETURNING task_run_id,
+                  GREATEST(
+                    0,
+                    EXTRACT(EPOCH FROM (lease_expires_at - clock_timestamp())) * 1000
+                  ) AS lease_remaining_ms
+      `),
+    markUnderlyingSettled,
+  );
+  if (rows === undefined) return { kind: 'indeterminate', underlyingSettled };
+  const row = rows[0];
+  if (!row) return { kind: 'fence_lost' };
+  const leaseRemainingMs = Number(row.lease_remaining_ms);
+  if (!Number.isFinite(leaseRemainingMs) || leaseRemainingMs <= 0) {
+    return { kind: 'fence_lost' };
+  }
+  return { kind: 'completed', leaseRemainingMs };
+}
+
 async function renewLease(
   input: AdmissionRequest,
   claimToken: string,
@@ -988,8 +1066,12 @@ async function renewLease(
            SET heartbeat_at = clock_timestamp(),
                lease_expires_at = LEAST(
                  hard_reclaim_at,
-                 clock_timestamp() + (
-                   ${PROVIDER_SESSION_LEASE_TTL_MS}::double precision * interval '1 millisecond'
+                 GREATEST(
+                   lease_expires_at,
+                   clock_timestamp() + (
+                     ${PROVIDER_SESSION_LEASE_TTL_MS}::double precision
+                     * interval '1 millisecond'
+                   )
                  )
                )
          WHERE task_run_id = ${input.taskRunId}
@@ -1018,15 +1100,25 @@ async function renewLease(
   return { kind: 'renewed', leaseRemainingMs };
 }
 
+interface HeartbeatControl {
+  assertProviderStartAllowed(): void;
+  completeStartup(): Promise<void>;
+  stop(): void;
+}
+
 function startHeartbeat(
   input: AdmissionRequest,
   claimToken: string,
   initialLeaseDeadlineMonotonicAt: number,
-): () => void {
+): HeartbeatControl {
   let stopped = false;
+  let lostError: ProviderSessionAdmissionError | undefined;
   let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
   let leaseDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
   let knownLeaseDeadlineMonotonicAt = initialLeaseDeadlineMonotonicAt;
+  let leaseDeadlineRevision = 0;
+  let leasePhase: 'startup' | 'transitioning' | 'steady' = 'startup';
+  let startupTransitionInFlight = false;
 
   const clearTimers = () => {
     if (heartbeatTimer) clearTimeout(heartbeatTimer);
@@ -1034,8 +1126,8 @@ function startHeartbeat(
     heartbeatTimer = undefined;
     leaseDeadlineTimer = undefined;
   };
-  const loseLease = (cause: unknown) => {
-    if (stopped) return;
+  const loseLease = (cause: unknown): ProviderSessionAdmissionError | undefined => {
+    if (stopped) return lostError;
     stopped = true;
     clearTimers();
     eventLog(
@@ -1046,23 +1138,24 @@ function startHeartbeat(
         reason: cause instanceof Error ? cause.message : String(cause),
       },
     );
-    if (input.plan.mode !== 'enforce') return;
+    if (input.plan.mode !== 'enforce') return undefined;
+    lostError = new ProviderSessionAdmissionError({
+      reason: 'lease_lost',
+      laneId: input.plan.laneId,
+      taskRunId: input.taskRunId,
+      cause,
+    });
     try {
-      input.onLeaseLost(
-        new ProviderSessionAdmissionError({
-          reason: 'lease_lost',
-          laneId: input.plan.laneId,
-          taskRunId: input.taskRunId,
-          cause,
-        }),
-      );
+      input.onLeaseLost(lostError);
     } catch (handlerError) {
       eventLog('error', 'provider_session_lease_lost_handler_error', input, {
         reason: handlerError instanceof Error ? handlerError.message : String(handlerError),
       });
     }
+    return lostError;
   };
   const armLeaseDeadline = () => {
+    if (stopped) return;
     if (leaseDeadlineTimer) clearTimeout(leaseDeadlineTimer);
     const remainingMs = knownLeaseDeadlineMonotonicAt - performance.now();
     if (remainingMs <= 0) {
@@ -1076,14 +1169,30 @@ function startHeartbeat(
   };
   const schedule = (delayMs: number) => {
     if (stopped) return;
+    const scheduledRevision = leaseDeadlineRevision;
+    const scheduledPhase = leasePhase;
     heartbeatTimer = setTimeout(async () => {
-      if (stopped) return;
+      heartbeatTimer = undefined;
+      if (
+        stopped ||
+        scheduledRevision !== leaseDeadlineRevision ||
+        scheduledPhase !== leasePhase ||
+        leasePhase === 'transitioning'
+      ) {
+        return;
+      }
       const renewalStartedAt = performance.now();
       try {
         const renewal = await renewLease(input, claimToken, knownLeaseDeadlineMonotonicAt);
         // Release may have stopped this heartbeat while the DB round trip was
         // in flight. In that case a zero-row renew is expected, not lease loss.
-        if (stopped) return;
+        if (
+          stopped ||
+          scheduledRevision !== leaseDeadlineRevision ||
+          scheduledPhase !== leasePhase
+        ) {
+          return;
+        }
         if (renewal.kind === 'fence_lost') {
           loseLease(new Error('lease fence no longer owned'));
           return;
@@ -1092,6 +1201,10 @@ function startHeartbeat(
           // DB returns the actual remaining lease after LEAST(hard_reclaim_at,
           // now+TTL). Anchor it to the operation start, not response completion,
           // so driver/network latency can only shorten this local deadline.
+          // Startup completion deliberately shrinks the initial 45s lease. A
+          // heartbeat that began before or during that transition may return
+          // the older, longer deadline after the transition CAS commits. Its
+          // revision is stale and must not overwrite the shorter local fence.
           knownLeaseDeadlineMonotonicAt = renewalStartedAt + renewal.leaseRemainingMs;
           armLeaseDeadline();
           schedule(PROVIDER_SESSION_HEARTBEAT_MS);
@@ -1107,11 +1220,23 @@ function startHeartbeat(
         // to obtain a connection, observe its expired budget, and settle first.
         // The independent lease-deadline timer remains the fail-closed bound.
         await renewal.underlyingSettled;
-        if (stopped) return;
+        if (
+          stopped ||
+          scheduledRevision !== leaseDeadlineRevision ||
+          scheduledPhase !== leasePhase
+        ) {
+          return;
+        }
         schedule(Math.max(0, retryNotBefore - performance.now()));
         return;
       } catch (cause) {
-        if (stopped) return;
+        if (
+          stopped ||
+          scheduledRevision !== leaseDeadlineRevision ||
+          scheduledPhase !== leasePhase
+        ) {
+          return;
+        }
         // A DB/network error is not proof that another owner took the fence.
         // Keep the prior DB-derived deadline and retry briefly; the independent
         // deadline timer remains the fail-closed bound.
@@ -1123,12 +1248,158 @@ function startHeartbeat(
       schedule(PROVIDER_SESSION_HEARTBEAT_RETRY_MS);
     }, delayMs);
   };
+
+  const startupControlPlaneError = (cause: unknown) =>
+    cause instanceof ProviderSessionAdmissionError
+      ? cause
+      : new ProviderSessionAdmissionError({
+          reason: 'control_plane_unavailable',
+          laneId: input.plan.laneId,
+          taskRunId: input.taskRunId,
+          cause,
+        });
+
+  const failStartupTransitionClosed = (cause: unknown): ProviderSessionAdmissionError => {
+    const error = startupControlPlaneError(cause);
+    if (!stopped) {
+      stopped = true;
+      clearTimers();
+      lostError = error;
+      eventLog('error', 'provider_session_startup_completion_unavailable', input, {
+        reason: error.message,
+      });
+      try {
+        input.onLeaseLost(error);
+      } catch (handlerError) {
+        eventLog('error', 'provider_session_lease_lost_handler_error', input, {
+          reason: handlerError instanceof Error ? handlerError.message : String(handlerError),
+        });
+      }
+    }
+    return lostError ?? error;
+  };
+
+  const scheduleStartupTransitionRetry = (underlyingSettled?: Promise<void>): void => {
+    const enqueue = () => {
+      if (stopped || leasePhase !== 'transitioning') return;
+      heartbeatTimer = setTimeout(
+        () => void attemptStartupTransition(false),
+        PROVIDER_SESSION_HEARTBEAT_RETRY_MS,
+      );
+    };
+    if (underlyingSettled) {
+      void underlyingSettled.then(enqueue, enqueue);
+      return;
+    }
+    enqueue();
+  };
+
+  async function attemptStartupTransition(failClosed: boolean): Promise<void> {
+    if (stopped || leasePhase !== 'transitioning' || startupTransitionInFlight) {
+      if (lostError) throw lostError;
+      return;
+    }
+    startupTransitionInFlight = true;
+    const completionStartedAt = performance.now();
+    try {
+      const completion = await completeStartupLease(
+        input,
+        claimToken,
+        knownLeaseDeadlineMonotonicAt,
+      );
+      if (stopped || leasePhase !== 'transitioning') {
+        if (lostError) throw lostError;
+        return;
+      }
+      if (completion.kind === 'fence_lost') {
+        const error = loseLease(new Error('startup completion fence no longer owned'));
+        if (error) throw error;
+        return;
+      }
+      if (completion.kind === 'indeterminate') {
+        const error = startupControlPlaneError(
+          new Error('startup completion lease transition was not confirmed'),
+        );
+        if (failClosed) throw failStartupTransitionClosed(error);
+        eventLog('warn', 'provider_session_startup_completion_deferred', input, {
+          reason: error.message,
+          known_lease_remaining_ms: Math.max(0, knownLeaseDeadlineMonotonicAt - performance.now()),
+        });
+        scheduleStartupTransitionRetry(completion.underlyingSettled);
+        return;
+      }
+
+      knownLeaseDeadlineMonotonicAt = completionStartedAt + completion.leaseRemainingMs;
+      leasePhase = 'steady';
+      leaseDeadlineRevision += 1;
+      armLeaseDeadline();
+      schedule(PROVIDER_SESSION_HEARTBEAT_MS);
+      eventLog('log', 'provider_session_startup_completed', input, {
+        steady_lease_remaining_ms: Math.max(0, knownLeaseDeadlineMonotonicAt - performance.now()),
+      });
+    } catch (cause) {
+      if (stopped && lostError) throw lostError;
+      if (failClosed) throw failStartupTransitionClosed(cause);
+      const error = startupControlPlaneError(cause);
+      eventLog('warn', 'provider_session_startup_completion_deferred', input, {
+        reason: error.message,
+        known_lease_remaining_ms: Math.max(0, knownLeaseDeadlineMonotonicAt - performance.now()),
+      });
+      scheduleStartupTransitionRetry();
+    } finally {
+      startupTransitionInFlight = false;
+    }
+  }
+
   armLeaseDeadline();
   schedule(PROVIDER_SESSION_HEARTBEAT_MS);
-  return () => {
-    if (stopped) return;
-    stopped = true;
-    clearTimers();
+  return {
+    assertProviderStartAllowed() {
+      if (lostError) throw lostError;
+      if (
+        !stopped &&
+        knownLeaseDeadlineMonotonicAt - performance.now() <= LEASE_OPERATION_BUDGET_MS
+      ) {
+        const error = loseLease(
+          new Error(
+            'provider session has no confirmed lease-operation margin after event-loop stall',
+          ),
+        );
+        if (error) throw error;
+      }
+    },
+    async completeStartup() {
+      if (leasePhase === 'steady' || stopped) {
+        if (lostError) throw lostError;
+        return;
+      }
+      if (leasePhase === 'transitioning') return;
+
+      // From this point an ambiguous DB outcome may already have committed the
+      // shorter lease. Adopt that conservative deadline locally before issuing
+      // the CAS, and invalidate every heartbeat response already in flight.
+      const transitionStartedAt = performance.now();
+      leasePhase = 'transitioning';
+      leaseDeadlineRevision += 1;
+      if (heartbeatTimer) clearTimeout(heartbeatTimer);
+      heartbeatTimer = undefined;
+      knownLeaseDeadlineMonotonicAt = Math.min(
+        knownLeaseDeadlineMonotonicAt,
+        transitionStartedAt + PROVIDER_SESSION_LEASE_TTL_MS,
+      );
+      armLeaseDeadline();
+      await attemptStartupTransition(input.plan.mode === 'enforce');
+      if (input.plan.mode === 'observe' && leasePhase === 'transitioning') {
+        eventLog('warn', 'provider_session_observe_failed_open', input, {
+          reason: 'startup completion is pending control-plane recovery',
+        });
+      }
+    },
+    stop() {
+      if (stopped) return;
+      stopped = true;
+      clearTimers();
+    },
   };
 }
 
@@ -1202,7 +1473,10 @@ export async function acquireProviderSession(
     callerDeadlineMonotonicAt: performance.now() + callerWaitBudgetMs,
   };
   if (
-    request.plan.policy.maxWaitMs + request.executionTimeoutMs + PROVIDER_SESSION_ABORT_GRACE_MS >=
+    request.plan.policy.maxWaitMs +
+      PROVIDER_SESSION_INITIAL_LEASE_TTL_MS +
+      request.executionTimeoutMs +
+      PROVIDER_SESSION_ABORT_GRACE_MS >=
     STUCK_RUN_SAFETY_BOUND_MS
   ) {
     throw new ProviderSessionAdmissionError({
@@ -1210,7 +1484,7 @@ export async function acquireProviderSession(
       laneId: request.plan.laneId,
       taskRunId: request.taskRunId,
       cause: new Error(
-        'admission wait + execution timeout + abort grace must stay below the 1h stuck-run threshold',
+        'admission wait + SDK startup + execution timeout + abort grace must stay below the 1h stuck-run threshold',
       ),
     });
   }
@@ -1244,8 +1518,12 @@ export async function acquireProviderSession(
         eventLog('log', 'provider_session_acquired', request, {
           wait_ms: result.waitMs,
           borrowed_from_task_run_id: result.borrowedFromTaskRunId,
+          initial_lease_remaining_ms: Math.max(
+            0,
+            result.leaseDeadlineMonotonicAt - performance.now(),
+          ),
         });
-        const stopHeartbeat = startHeartbeat(
+        const heartbeat = startHeartbeat(
           request,
           result.claimToken,
           result.leaseDeadlineMonotonicAt,
@@ -1255,10 +1533,16 @@ export async function acquireProviderSession(
           mode: request.plan.mode,
           laneId: request.plan.laneId,
           borrowedFromTaskRunId: result.borrowedFromTaskRunId,
+          assertProviderStartAllowed() {
+            heartbeat.assertProviderStartAllowed();
+          },
+          async completeStartup() {
+            await heartbeat.completeStartup();
+          },
           async release() {
             if (released) return;
             released = true;
-            stopHeartbeat();
+            heartbeat.stop();
             await releaseLease(request, result.claimToken, result.borrowedFromTaskRunId);
           },
         };

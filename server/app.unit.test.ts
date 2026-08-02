@@ -1,4 +1,8 @@
 import type { CapabilityManifest } from '@/kernel/manifest';
+import {
+  HTTP_PROVIDER_SESSION_BUDGET_MS,
+  currentHttpProviderSessionDeadlineAt,
+} from '@/server/http/provider-session-deadline';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { buildHonoApp, toHonoPath } from './app';
@@ -18,6 +22,12 @@ const fakeCapability: CapabilityManifest = {
         method: 'GET',
         path: '/api/fake/[id]/detail',
         load: async () => async (_req, params) => Response.json({ id: params.id }),
+      },
+      {
+        method: 'GET',
+        path: '/api/fake/provider-session-deadline',
+        load: async () => async () =>
+          Response.json({ deadlineAt: currentHttpProviderSessionDeadlineAt() }),
       },
       // 纯元数据路由（无 load）——不被挂载。
       { method: 'POST', path: '/api/fake/meta-only' },
@@ -41,7 +51,10 @@ describe('toHonoPath', () => {
 });
 
 describe('buildHonoApp', () => {
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
 
   it('serves /api/health without a token', async () => {
     vi.stubEnv('INTERNAL_TOKEN', 'test-token');
@@ -110,6 +123,20 @@ describe('buildHonoApp', () => {
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: 'fake' });
+  });
+
+  it('gives authenticated API handlers one request-scoped provider deadline', async () => {
+    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
+    vi.spyOn(Date, 'now').mockReturnValue(12_345);
+    const app = buildHonoApp([fakeCapability]);
+
+    const res = await app.request('/api/fake/provider-session-deadline', {
+      headers: { 'x-internal-token': 'test-token' },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ deadlineAt: 12_345 + HTTP_PROVIDER_SESSION_BUDGET_MS });
+    expect(currentHttpProviderSessionDeadlineAt()).toBeUndefined();
   });
 
   it('serves the generated OpenAPI document behind token auth', async () => {

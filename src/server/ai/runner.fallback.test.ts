@@ -30,14 +30,19 @@ const mockSdk = vi.hoisted(() => ({
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: vi.fn(({ options }: { options: unknown }) => {
+  startup: vi.fn(async ({ options }: { options: unknown }) => {
     mockSdk.capturedOptions.push(options);
     const attempt = mockSdk.capturedOptions.length;
     const messages = mockSdk.messageQueues.shift() ?? [];
-    return (async function* () {
-      mockSdk.beforeYield?.(attempt);
-      for (const m of messages) yield m;
-    })();
+    return {
+      query: vi.fn(() =>
+        (async function* () {
+          mockSdk.beforeYield?.(attempt);
+          for (const m of messages) yield m;
+        })(),
+      ),
+      close: vi.fn(),
+    };
   }),
   createSdkMcpServer: vi.fn(() => ({ type: 'sdk', name: '', instance: {} })),
   tool: vi.fn((name: string, description: string) => ({ name, description })),

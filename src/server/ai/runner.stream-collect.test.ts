@@ -16,28 +16,33 @@ const mockSdk = vi.hoisted(() => ({
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: vi.fn(({ options }: { options: { abortController: AbortController } }) => {
+  startup: vi.fn(async ({ options }: { options: { abortController: AbortController } }) => {
     mockSdk.capturedOptions = options;
-    return (async function* () {
-      let i = 0;
-      for (const msg of mockSdk.messages) {
-        if (mockSdk.throwAfter >= 0 && i >= mockSdk.throwAfter) {
-          throw new Error('sdk blew up mid-stream');
-        }
-        yield msg;
-        i += 1;
-        if (mockSdk.waitForAbortAfter === i) {
-          await new Promise<void>((resolve) => {
-            if (options.abortController.signal.aborted) resolve();
-            else
-              options.abortController.signal.addEventListener('abort', () => resolve(), {
-                once: true,
+    return {
+      query: vi.fn(() =>
+        (async function* () {
+          let i = 0;
+          for (const msg of mockSdk.messages) {
+            if (mockSdk.throwAfter >= 0 && i >= mockSdk.throwAfter) {
+              throw new Error('sdk blew up mid-stream');
+            }
+            yield msg;
+            i += 1;
+            if (mockSdk.waitForAbortAfter === i) {
+              await new Promise<void>((resolve) => {
+                if (options.abortController.signal.aborted) resolve();
+                else
+                  options.abortController.signal.addEventListener('abort', () => resolve(), {
+                    once: true,
+                  });
               });
-          });
-          throw new Error('sdk stream aborted after owner Stop');
-        }
-      }
-    })();
+              throw new Error('sdk stream aborted after owner Stop');
+            }
+          }
+        })(),
+      ),
+      close: vi.fn(),
+    };
   }),
   createSdkMcpServer: vi.fn(() => ({ type: 'sdk', name: '', instance: {} })),
   tool: vi.fn((name: string, description: string) => ({ name, description })),

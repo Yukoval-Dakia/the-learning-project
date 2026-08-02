@@ -44,6 +44,8 @@ type RunAgentTaskFn = (
 
 export interface RunTeachingSkillParams {
   db: Db;
+  /** Absolute edge deadline shared with the enclosing Copilot request. */
+  providerSessionDeadlineAt?: number;
   /** The Copilot session this turn belongs to (already resolved by runCopilotChat). */
   sessionId: string;
   /** The teaching ref id — a learning_item id (skill_context.ref.id). */
@@ -97,7 +99,7 @@ export async function runTeachingSkill(
   params: RunTeachingSkillParams,
   deps: RunTeachingSkillDeps = {},
 ): Promise<TeachingSkillResult> {
-  const { db, sessionId, learningItemId, userMessage } = params;
+  const { db, sessionId, learningItemId, userMessage, providerSessionDeadlineAt } = params;
   const run = deps.runAgentTaskFn ?? runAgentTask;
 
   const context = await loadTeachingContext(db, learningItemId);
@@ -118,6 +120,7 @@ export async function runTeachingSkill(
     subjectProfile: context.subjectProfile,
     // R5/R6/OQ5: empty tool list → no memory, no tool budget, single structured turn.
     allowedTools: [],
+    ...(providerSessionDeadlineAt !== undefined ? { providerSessionDeadlineAt } : {}),
   });
 
   const turn = parseTurnOutput(result.text);

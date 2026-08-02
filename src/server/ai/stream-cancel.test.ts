@@ -18,30 +18,38 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // signal abort can fire mid-flight.
 const mockSdk = vi.hoisted(() => ({
   capturedOptions: undefined as unknown,
+  startupGate: undefined as undefined | Promise<void>,
+  warmClose: vi.fn(),
   gate: undefined as undefined | Promise<void>,
   terminalMessage: undefined as undefined | Record<string, unknown>,
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: vi.fn(({ options }: { options: unknown }) => {
+  startup: vi.fn(async ({ options }: { options: unknown }) => {
     mockSdk.capturedOptions = options;
-    return (async function* () {
-      // Emit one assistant delta, then optionally block on `gate` so the test
-      // can interact with the still-open stream before it closes.
-      yield {
-        type: 'assistant',
-        message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
-      };
-      if (mockSdk.gate) await mockSdk.gate;
-      yield mockSdk.terminalMessage ?? {
-        type: 'result',
-        subtype: 'success',
-        result: 'hi',
-        stop_reason: 'end_turn',
-        total_cost_usd: 0,
-        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0 },
-      };
-    })();
+    if (mockSdk.startupGate) await mockSdk.startupGate;
+    return {
+      query: vi.fn(() =>
+        (async function* () {
+          // Emit one assistant delta, then optionally block on `gate` so the test
+          // can interact with the still-open stream before it closes.
+          yield {
+            type: 'assistant',
+            message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+          };
+          if (mockSdk.gate) await mockSdk.gate;
+          yield mockSdk.terminalMessage ?? {
+            type: 'result',
+            subtype: 'success',
+            result: 'hi',
+            stop_reason: 'end_turn',
+            total_cost_usd: 0,
+            usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0 },
+          };
+        })(),
+      ),
+      close: mockSdk.warmClose,
+    };
   }),
   createSdkMcpServer: vi.fn(() => ({ type: 'sdk', name: '', instance: {} })),
   tool: vi.fn((name: string, description: string) => ({ name, description })),
@@ -51,6 +59,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 // no real client is needed. The `finished` mock can be told to throw to drive
 // the YUK-240 stuck-run path.
 const logMocks = vi.hoisted(() => ({
+  started: vi.fn(async () => {}),
   finishedShouldThrow: false,
   finishedFailuresRemaining: 0,
   terminalStatuses: [] as string[],
@@ -60,7 +69,7 @@ const logMocks = vi.hoisted(() => ({
 
 vi.mock('@/server/ai/log', () => ({
   logMissingMcpServersWarning: vi.fn(),
-  writeAiTaskRunStarted: vi.fn(async () => {}),
+  writeAiTaskRunStarted: logMocks.started,
   writeAiTaskRunFinished: logMocks.finished,
   writeAiTaskRunRetried: vi.fn(async () => true),
   writeCostLedger: logMocks.cost,
@@ -128,11 +137,14 @@ function capturedAbortController(): AbortController {
 describe('streamTask — YUK-238 client-disconnect abort', () => {
   beforeEach(() => {
     mockSdk.capturedOptions = undefined;
+    mockSdk.startupGate = undefined;
+    mockSdk.warmClose.mockClear();
     mockSdk.gate = undefined;
     mockSdk.terminalMessage = undefined;
     logMocks.finishedShouldThrow = false;
     logMocks.finishedFailuresRemaining = 0;
     logMocks.terminalStatuses = [];
+    logMocks.started.mockClear();
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 
@@ -163,6 +175,24 @@ describe('streamTask — YUK-238 client-disconnect abort', () => {
 
     // Let the generator finish so no promise dangles.
     release();
+  });
+
+  it('closes an initialized warm CLI without touching a cancelled stream', async () => {
+    let releaseStartup!: () => void;
+    mockSdk.startupGate = new Promise<void>((resolve) => {
+      releaseStartup = resolve;
+    });
+
+    const response = streamTask('AttributionTask', { q: 'x' }, { db: fakeDb });
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('expected a response body');
+    await vi.waitFor(() => expect(mockSdk.capturedOptions).toBeDefined());
+
+    await reader.cancel();
+    expect(capturedAbortController().signal.aborted).toBe(true);
+    releaseStartup();
+    await vi.waitFor(() => expect(mockSdk.warmClose).toHaveBeenCalledTimes(1));
+    expect(logMocks.terminalStatuses).toEqual([]);
   });
 
   it('aborts the SDK run when ctx.signal (req.signal) fires mid-stream', async () => {
@@ -202,7 +232,9 @@ describe('streamTask — YUK-238 client-disconnect abort', () => {
       { db: fakeDb, signal: reqAbort.signal },
     );
     await drain(response);
-    expect(capturedAbortController().signal.aborted).toBe(true);
+    expect(mockSdk.capturedOptions).toBeUndefined();
+    expect(logMocks.started).not.toHaveBeenCalled();
+    expect(logMocks.terminalStatuses).toEqual([]);
   });
 
   it('does not abort on a normal full read (no disconnect)', async () => {
@@ -217,11 +249,14 @@ describe('streamTask — YUK-238 client-disconnect abort', () => {
 describe('streamTask — YUK-240 stuck-run observability', () => {
   beforeEach(() => {
     mockSdk.capturedOptions = undefined;
+    mockSdk.startupGate = undefined;
+    mockSdk.warmClose.mockClear();
     mockSdk.gate = undefined;
     mockSdk.terminalMessage = undefined;
     logMocks.finishedShouldThrow = false;
     logMocks.finishedFailuresRemaining = 0;
     logMocks.terminalStatuses = [];
+    logMocks.started.mockClear();
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 

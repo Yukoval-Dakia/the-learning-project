@@ -178,8 +178,9 @@ Before reopening ingress, wait until all applicable bounds have passed:
 1. 60 seconds since the last pre-restore provider traffic (start-reservation window).
 2. The captured `restore_quarantine_until`.
 3. Unless application-level normal drain was positively confirmed, process stop time plus the deployed
-   maximum execution timeout and 30s abort grace. This worst-case fallback is mandatory for every
-   abort/kill/ambiguous stop; a shorter DB snapshot may extend it but may never shorten it.
+   45s SDK startup budget, maximum execution timeout, and 30s abort grace. This worst-case fallback is
+   mandatory for every abort/kill/ambiguous stop; a shorter DB snapshot may extend it but may never
+   shorten it.
 
 Abort is not proof that an already sent provider request stopped. If the admission table/state was
 already lost, a central caller ran off/unlisted, or no trustworthy application-level drain signal
@@ -257,8 +258,9 @@ To restore a custom-format dump, first block ingress/dispatch and record the tim
 traffic. Run the waiting/active/quarantined query from the application-import section and persist its
 maximum `hard_reclaim_at` outside Postgres before aborting or stopping any owner. Unless a separate
 application-level signal positively confirms normal drain, also record process stop time and use the
-deployed maximum execution timeout + 30s fallback. The dump includes operational admission rows, so
-they must be discarded after migrations and before app/worker restart. Confirm `DUMP` and the compose
+deployed 45s SDK startup budget + maximum execution timeout + 30s fallback. The dump includes
+operational admission rows, so they must be discarded after migrations and before app/worker restart.
+Confirm `DUMP` and the compose
 project before running:
 
 ```bash
@@ -278,7 +280,8 @@ docker compose exec -T postgres psql \
   -c 'TRUNCATE TABLE provider_session_admission'
 
 # Wait for the >=60s rate bound, any captured restore_quarantine_until, and—unless
-# application-level drain was confirmed—stop time + deployed max timeout + 30s.
+# application-level drain was confirmed—stop time + 45s startup budget + deployed
+# max execution timeout + 30s abort grace.
 # If either bound is unknown, remain fail-closed and do not run this start command.
 docker compose up -d app worker
 docker compose ps

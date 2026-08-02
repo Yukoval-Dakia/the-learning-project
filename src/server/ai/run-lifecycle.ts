@@ -61,8 +61,10 @@ interface LifecycleConfig<TResult extends LifecycleResult> {
   override?: { provider?: ResolvedProvider['provider']; model?: string };
   /** Active outer central attempt when a DomainTool starts a nested task. */
   parentTaskRunId?: string;
-  /** Absolute wall-clock bound for starting this provider attempt (retry gate). */
+  /** Absolute bound for beginning a retry attempt; execution keeps its own budget. */
   providerStartDeadlineAt?: number;
+  /** Absolute wall-clock bound shared by admission, SDK startup and execution. */
+  providerSessionDeadlineAt?: number;
   signal?: AbortSignal;
   logScope: string;
   afterRun?: (result: TResult) => Promise<void> | void;
@@ -76,6 +78,15 @@ export interface LifecycleRetryContext {
 export interface LifecycleAttemptDecision {
   willRetry: boolean;
   elapsedMs: number;
+}
+
+export interface ProviderSessionExecution<T> {
+  /** Start the exact task-configured SDK transport without submitting a prompt. */
+  prepare(): Promise<void>;
+  /** Submit the prompt and consume the provider-backed session. */
+  run(): Promise<T>;
+  /** Close either the unused warm transport or the active query. */
+  close(): Promise<void> | void;
 }
 
 type AttemptTerminalStatus = 'success' | 'failure';
@@ -204,13 +215,30 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     return this.durableStart;
   }
 
+  /** Clamp a provider phase's own timeout to the remaining caller wall clock. */
+  providerPhaseTimeoutMs(maxTimeoutMs: number): number {
+    const remainingMs = Math.min(
+      maxTimeoutMs,
+      this.config.providerStartDeadlineAt === undefined
+        ? Number.POSITIVE_INFINITY
+        : this.config.providerStartDeadlineAt - Date.now(),
+      this.config.providerSessionDeadlineAt === undefined
+        ? Number.POSITIVE_INFINITY
+        : this.config.providerSessionDeadlineAt - Date.now(),
+    );
+    return Math.max(1, remainingMs);
+  }
+
   /**
    * Own the complete provider-session boundary without holding the permit during
    * terminal DB settlement. Admission wait precedes the durable model-attempt
    * row and the execution timer, so queue time can never masquerade as model
    * runtime or create an unknown-cost YUK-841 attempt that never called the SDK.
    */
-  async withProviderSession<T>(actualInput: unknown, run: () => Promise<T>): Promise<T> {
+  async withProviderSession<T>(
+    actualInput: unknown,
+    execution: ProviderSessionExecution<T>,
+  ): Promise<T> {
     // Canonicalization may synchronously hash binary input. Prepare it before
     // acquiring the lease so large local inputs cannot starve its heartbeat;
     // the durable attempt row itself still starts only after admission.
@@ -226,50 +254,117 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
             executionTimeoutMs: this.config.timeoutMs,
             signal: this.abortController.signal,
             plan: this.admissionPlan,
-            deadlineAt: this.config.providerStartDeadlineAt,
+            deadlineAt:
+              this.config.providerStartDeadlineAt === undefined
+                ? this.config.providerSessionDeadlineAt
+                : this.config.providerSessionDeadlineAt === undefined
+                  ? this.config.providerStartDeadlineAt
+                  : Math.min(
+                      this.config.providerStartDeadlineAt,
+                      this.config.providerSessionDeadlineAt,
+                    ),
             onLeaseLost: (error) => {
               this.admissionFailure ??= error;
               this.abortController.abort();
             },
           });
 
+    const assertProviderStartAllowed = (phase: string) => {
+      permit?.assertProviderStartAllowed();
+      if (this.admissionFailure) throw this.admissionFailure;
+      if (this.abortController.signal.aborted) {
+        throw new ProviderSessionAdmissionError({
+          reason: 'cancelled',
+          laneId: this.resolved.provider,
+          taskRunId: this.taskRunId,
+          cause: new Error(`provider attempt cancelled ${phase}`),
+        });
+      }
+      if (
+        this.config.providerStartDeadlineAt !== undefined &&
+        Date.now() >= this.config.providerStartDeadlineAt
+      ) {
+        throw new ProviderSessionAdmissionError({
+          reason: 'wait_timeout',
+          laneId: this.resolved.provider,
+          taskRunId: this.taskRunId,
+          cause: new Error(`provider retry start window elapsed ${phase}`),
+        });
+      }
+      if (
+        this.config.providerSessionDeadlineAt !== undefined &&
+        Date.now() >= this.config.providerSessionDeadlineAt
+      ) {
+        throw new ProviderSessionAdmissionError({
+          reason: 'wait_timeout',
+          laneId: this.resolved.provider,
+          taskRunId: this.taskRunId,
+          cause: new Error(`provider session wall-clock window elapsed ${phase}`),
+        });
+      }
+    };
+
+    const assertProviderSessionCompletionAllowed = () => {
+      // Recheck the lease and cancellation after the SDK iterator finishes.
+      // Cooperative abort is not proof that a provider/CLI stopped, and an
+      // event-loop stall can let a terminal continuation run before its timer.
+      // Do not recheck providerStartDeadlineAt here: it is only a gate for
+      // beginning a retry and must never truncate a query already in flight.
+      permit?.assertProviderStartAllowed();
+      if (this.admissionFailure) throw this.admissionFailure;
+      const sessionDeadlineElapsed =
+        this.config.providerSessionDeadlineAt !== undefined &&
+        Date.now() >= this.config.providerSessionDeadlineAt;
+      if (sessionDeadlineElapsed) this.abortController.abort();
+      if (this.abortController.signal.aborted) {
+        // This can be the ordinary model budget or caller cancellation, not an
+        // admission/control-plane failure. Keep it as a plain error so the
+        // runner's existing `aborted` binding preserves budget_timeout truth.
+        throw new Error(
+          sessionDeadlineElapsed
+            ? 'provider session wall-clock budget elapsed during query'
+            : 'provider attempt aborted during query',
+        );
+      }
+    };
+
     let outcome: { status: 'fulfilled'; value: T } | { status: 'rejected'; reason: unknown };
     try {
-      if (
-        this.config.providerStartDeadlineAt !== undefined &&
-        Date.now() >= this.config.providerStartDeadlineAt
-      ) {
-        throw new ProviderSessionAdmissionError({
-          reason: 'wait_timeout',
-          laneId: this.resolved.provider,
-          taskRunId: this.taskRunId,
-          cause: new Error('provider retry start window elapsed before SDK invocation'),
-        });
-      }
+      assertProviderStartAllowed('before SDK startup');
+      await execution.prepare();
+      // SDK startup performs the task-configured CLI initialize handshake but
+      // submits no prompt. Keep that uninterruptible cold-start work inside the
+      // admission slot and outside model-attempt runtime/cost accounting.
+      assertProviderStartAllowed('during SDK startup');
+      await permit?.completeStartup();
+      assertProviderStartAllowed('after startup lease transition');
       await this.startWithInputHash(inputHash);
       // Admission can return just inside the retry window while the durable
-      // start write blocks past it. Recheck at the final pre-SDK seam so the
-      // existing elapsed gate is never expanded by control-plane DB latency.
-      if (
-        this.config.providerStartDeadlineAt !== undefined &&
-        Date.now() >= this.config.providerStartDeadlineAt
-      ) {
-        throw new ProviderSessionAdmissionError({
-          reason: 'wait_timeout',
-          laneId: this.resolved.provider,
-          taskRunId: this.taskRunId,
-          cause: new Error('provider retry start window elapsed during durable start'),
-        });
-      }
+      // start write blocks past it. Recheck the lease, cancellation and wall
+      // clock at the final pre-prompt seam.
+      assertProviderStartAllowed('during durable start');
       this.armExecutionTimer();
-      const value = await run();
-      if (this.admissionFailure) throw this.admissionFailure;
+      assertProviderStartAllowed('before provider query');
+      const value = await execution.run();
+      assertProviderSessionCompletionAllowed();
       outcome = { status: 'fulfilled', value };
     } catch (error) {
       outcome = { status: 'rejected', reason: this.admissionFailure ?? error };
     }
 
     this.clearExecutionTimer();
+    try {
+      await execution.close();
+    } catch (error) {
+      // Cleanup is best-effort and must not overwrite the provider/admission
+      // truth. Keep the permit until this attempt has at least tried to close
+      // its local CLI resource.
+      console.warn(`[${this.config.logScope}] provider session cleanup failed`, {
+        task_run_id: this.taskRunId,
+        kind: this.kind,
+        err: error,
+      });
+    }
     await permit?.release();
     // Cover a heartbeat that fenced this attempt after the provider callback
     // resolved but before release stopped the heartbeat.
@@ -427,7 +522,16 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
 
   private armExecutionTimer(): void {
     if (this.timer) return;
-    this.timer = setTimeout(() => this.abortController.abort(), this.config.timeoutMs);
+    const deadlineRemainingMs =
+      this.config.providerSessionDeadlineAt === undefined
+        ? Number.POSITIVE_INFINITY
+        : Math.max(0, this.config.providerSessionDeadlineAt - Date.now());
+    const timeoutMs = Math.min(this.config.timeoutMs, deadlineRemainingMs);
+    if (timeoutMs <= 0) {
+      this.abortController.abort();
+      return;
+    }
+    this.timer = setTimeout(() => this.abortController.abort(), timeoutMs);
   }
 
   private clearExecutionTimer(): void {

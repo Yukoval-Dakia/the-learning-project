@@ -1,5 +1,8 @@
 // 内核 http facade（YUK-311 / YUK-770）— ApiError/errorResponse 本体现居 kernel，
 // capability 包的 API handler 统一从 @/kernel/http 取错误整形 + 响应契约。
+/** Shared sync-HTTP provider budget; the Hono root leaves 10s transport headroom. */
+export const HTTP_PROVIDER_SESSION_BUDGET_MS = 90_000;
+
 export class ApiError extends Error {
   constructor(
     public readonly code: string,

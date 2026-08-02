@@ -180,8 +180,17 @@ query/session after provider/lane resolution and before model-attempt execution:
 
 No Redis, new service, per-job semaphores, intelligent routing, or manifest field explosion.
 
-The admitted unit is not a wire request: one `sdkQuery()` may contain several model turns, SDK-native
-subagents, and the Claude CLI's bounded internal retries. Direct DashScope embeddings, Mem0 fan-out,
+The admitted unit is not a wire request: one admitted `startup()` + `WarmQuery.query()` session may
+contain several model turns, SDK-native subagents, and the Claude CLI's bounded internal retries.
+CLI initialization remains inside admission but before the durable attempt/model timer; a distinct
+startup lease and hard-reclaim budget protect that phase. A claim-token CAS explicitly transitions
+the 45s startup lease to the 15s steady lease before durable start/prompt, and the protocol version is
+part of the distributed fingerprint. The Hono composition root shares one 90s absolute deadline
+across every central runner call in an authenticated request, including sequential, parallel and
+nested sessions; explicit caller deadlines may tighten but never widen it. Copilot additionally
+threads a fallback built from the same kernel budget through dispatch classification, main execution
+and nested central tasks; the production runner retains the earlier request-scope timestamp.
+Direct DashScope embeddings, Mem0 fan-out,
 GLM/OCR clients, Tencent OCR, and support preflights do not yet use `AiRunLifecycle`; inventorying and
 migrating those paths is YUK-845. Until then, this gate must not be reported as product-wide provider
 HTTP capacity control.
@@ -194,8 +203,8 @@ Phase 1 cannot begin until:
 - dependency and cost/admission contracts have independent reviews with no unresolved P0/P1;
 - one actual provider observation proves cost basis and admission events are emitted; it need not prove a
   product quality improvement;
-- rollback paths are written, and old app/worker behavior remains available by configuration where the
-  runtime change is risky.
+- rollback paths are written: admission coordination remains configuration-reversible, while the SDK
+  lifecycle itself remains recoverable through the recorded prior app/worker image.
 
 ## Phase 1 — Practice-owned failure learning
 

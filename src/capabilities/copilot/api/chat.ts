@@ -38,7 +38,7 @@ import {
   withCopilotDurableDispatchLock,
 } from '@/capabilities/copilot/server/durable-dispatch';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/kernel/http';
+import { HTTP_PROVIDER_SESSION_BUDGET_MS, ApiError, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
 import { checkRateLimit } from '@/server/http/rate-limit';
@@ -48,6 +48,12 @@ import { Conversation } from '@/server/session';
 // Closes the count-then-enqueue race inside the single Hono API process. A slot
 // moves from this counter into durable job_events once QUEUED is committed.
 let durableDispatchReservations = 0;
+
+// One edge request can perform a bounded dispatch judgment and then an inline
+// Copilot run. Admission wait, SDK startup and model execution must share this
+// absolute budget so the retained synchronous path stays below cloudflared's
+// 100s idle window instead of adding each phase's independent maximum.
+export const COPILOT_INLINE_PROVIDER_SESSION_BUDGET_MS = HTTP_PROVIDER_SESSION_BUDGET_MS;
 
 function requestAbortedError(): ApiError {
   // 499 is the conventional server-side status for a client-closed request.
@@ -185,6 +191,7 @@ async function dispatchAcceptedRun(
 
 // 签名对齐 kernel RouteHandler 双参形（path 无参数段，_params 不用）。
 export async function POST(req: Request, _params: Record<string, string>): Promise<Response> {
+  const providerSessionDeadlineAt = Date.now() + COPILOT_INLINE_PROVIDER_SESSION_BUDGET_MS;
   // Parse BEFORE constructing the stream：坏 body 走普通 JSON error（既有契约），
   // 绝不开半截 SSE 流。
   let parsed: ReturnType<typeof CopilotChatRequest.parse>;
@@ -306,7 +313,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
           user_message: parsed.user_message,
           ...(parsed.ambient_context ? { ambient_context: parsed.ambient_context } : {}),
         },
-        { signal: req.signal },
+        { signal: req.signal, providerSessionDeadlineAt },
       );
     }
   } catch (err) {
@@ -475,6 +482,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
           // Task lifecycle is projected onto a strict public payload allowlist
           // in the service layer. It shares this FIFO with main-voice deltas.
           onSubtaskEvent: (event) => writeFrame('subtask', event),
+          providerSessionDeadlineAt,
         },
         req.signal,
       );

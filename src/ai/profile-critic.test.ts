@@ -29,11 +29,15 @@ vi.mock('@/server/ai/log', () => ({
 const mockSdk = vi.hoisted(() => ({ messages: [] as unknown[] }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: vi.fn(() => {
-    const iter = (async function* () {
-      for (const m of mockSdk.messages) yield m;
-    })();
-    return iter;
+  startup: vi.fn(async () => {
+    return {
+      query: vi.fn(() =>
+        (async function* () {
+          for (const m of mockSdk.messages) yield m;
+        })(),
+      ),
+      close: vi.fn(),
+    };
   }),
   createSdkMcpServer: vi.fn(() => ({ type: 'sdk', name: '', instance: {} })),
   tool: vi.fn((name: string, description: string) => ({ name, description })),

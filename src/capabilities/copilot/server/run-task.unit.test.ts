@@ -124,6 +124,7 @@ describe('run_task', () => {
       expect(callCtx).toEqual({
         subjectProfile: undefined,
         parentTaskRunId: 'tool-run',
+        providerSessionDeadlineAt: 567_890,
         db,
       });
       return {
@@ -138,7 +139,10 @@ describe('run_task', () => {
 
     try {
       await expect(
-        runTaskTool.execute(ctx, { task_kind: 'GoalScopeTask', intent: { goal_title: 'Learn' } }),
+        runTaskTool.execute(
+          { ...ctx, providerSessionDeadlineAt: 567_890 },
+          { task_kind: 'GoalScopeTask', intent: { goal_title: 'Learn' } },
+        ),
       ).resolves.toEqual({
         task_kind: 'GoalScopeTask',
         text: 'generated',
