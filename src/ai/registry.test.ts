@@ -707,6 +707,8 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     expect(p).toContain('json_pointer 的最终值只能是 scalar/null/显式空容器');
     expect(p).toContain('非空 object/array 一律会被 server 拒绝');
     expect(p).toContain('不得改名、包一层 data/result');
+    expect(p).toContain('contract_feedback');
+    expect(p).toContain('不是新证据，也不含上次输出');
     const comparator = getTaskSystemPrompt('CopilotEvidenceVerificationTask');
     expect(comparator).toContain('{"protocol_version":1,"reply_checks"');
     expect(comparator).toContain('reply status 只能取 supported / explicit_gap / unsupported');
@@ -717,6 +719,7 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     expect(comparator).toContain('不得改名、包一层 data/result');
     expect(comparator).toContain('source_refs 可以是 []');
     expect(comparator).toContain('绝不能指向非空 object/array');
+    expect(comparator).toContain('不含上次 verdict/output，也不是证据');
   });
 });
 

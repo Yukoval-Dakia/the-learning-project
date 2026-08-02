@@ -30,15 +30,17 @@
   structured-task 单 JSON 对象提取器后，`6fbf9c1e` actual 已进入 Zod 并暴露 provider 自创
   protocol/type/status；确认首例后 Stop。当前给 Xiaomi no-native-outputFormat prompt 补 exact
   schema shape 后，`55151d5d` actual 已通过 schema 并收窄到 source pointer 指向非空容器；
-  首例即 Stop。当前把 scalar/null/显式空容器终点写成 hard rule；多对象/Zod/server binding
-  仍 fail closed，须在新 committed exact head 重放。
+  首例即 Stop。`f9e49f1c` 把 scalar/null/显式空容器终点写成 hard rule 后，A01 首个 actual
+  reference 仍重复同一 binding 错误，证明静态 prompt 不足，已 Stop。当前让既有第二次 attempt
+  只收到 server 生成的有界固定契约错误，不含前次输出或新证据；每次 input/hash 独立绑定，
+  多对象/Zod/server binding 仍 fail closed，须在新 committed exact head 重放。
 - 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
 
 ## NEXT
 
-1. 完成 validator scalar-pointer hard rule 的定向验证、commit/push 与 exact-head GitHub CI；
-   包装 prose 丢弃，不改 inline/comparator 预算与 server binding。
-2. 在 clean committed YUK-832 exact head 上重跑 5 例 actual-provider v8；逐例审计 primary +
+1. 完成 validator bounded contract-feedback 的 commit/push 与 exact-head GitHub CI；包装 prose
+   丢弃，不改 inline/comparator 预算与 server binding。
+2. 先在 clean committed exact head 重跑 A01；自动 gate 通过后才重跑 5 例 actual-provider v8，逐例审计 primary +
    reference/comparator runs、thinking、digests、exact bytes 与无旁支 validator。
 3. actual 5/5 且人工 grounding/coverage/honesty 均 2/2/2 后，
    merge 并对齐 Linear；随后推进 YUK-833/835 → YUK-834 → YUK-836。
@@ -55,7 +57,7 @@
 
 ## BLOCKED-ON
 
-- **YUK-832 当前 gate**：exact schema prompt exact-head GitHub CI + actual-provider v8 +
+- **YUK-832 当前 gate**：bounded contract-feedback exact-head GitHub CI + actual-provider v8 +
   人工 2/2/2；mock、本地 build 或旧 head CI 都不能替代。
 - **YUK-596 产品 gate**：YUK-832–836 actual-output P1；transport/Stop 已 pass，不能用它替代
   产品内容正确性。

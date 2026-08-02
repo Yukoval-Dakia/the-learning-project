@@ -837,7 +837,7 @@ describe('Copilot FULL evidence review', () => {
     expect(JSON.stringify(runTaskFn.mock.calls[0]?.[1])).not.toContain(unsafeCandidate);
   });
 
-  it('retries a contract-invalid blind ledger once with identical input', async () => {
+  it('retries a contract-invalid blind ledger with bounded server feedback only', async () => {
     const runTaskFn = vi
       .fn<CopilotEvidenceReviewRunTaskFn>()
       .mockResolvedValueOnce({
@@ -866,8 +866,56 @@ describe('Copilot FULL evidence review', () => {
     );
 
     expect(result.status).toBe('pass');
-    expect(runTaskFn.mock.calls[0]?.[1]).toEqual(runTaskFn.mock.calls[1]?.[1]);
+    const firstInput = runTaskFn.mock.calls[0]?.[1] as Record<string, unknown>;
+    const secondInput = runTaskFn.mock.calls[1]?.[1] as Record<string, unknown>;
+    const { contract_feedback: feedback, ...secondBase } = secondInput;
+    expect(secondBase).toEqual(firstInput);
+    expect(feedback).toEqual({
+      previous_attempt: 1,
+      rejection: expect.stringContaining('invalid'),
+    });
+    expect(JSON.stringify(feedback)).not.toContain(unsafeCandidate);
     expect(result.referenceTaskRunIds).toEqual(['reference-invalid', 'reference-valid']);
+  });
+
+  it('feeds a fixed scalar-pointer rejection into the second realistic blind attempt', async () => {
+    let referenceAttempt = 0;
+    let comparisonAttempt = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
+      if (kind === 'CopilotEvidenceReviewTask') {
+        referenceAttempt += 1;
+        const output = realisticReferenceOutput(input);
+        if (referenceAttempt === 1) {
+          const sourceRef = output.evidence_points[2]?.source_refs[0];
+          if (!sourceRef) throw new Error('realistic fixture is missing its third source ref');
+          sourceRef.json_pointer = '/causal_neighborhood/direct_children/0';
+        }
+        return {
+          task_run_id: `reference-pointer-${referenceAttempt}`,
+          text: '',
+          structured_output: output,
+        };
+      }
+      comparisonAttempt += 1;
+      return {
+        task_run_id: `comparison-after-pointer-${comparisonAttempt}`,
+        text: '',
+        structured_output: realisticComparisonOutput(input, { unsafe: false }),
+      };
+    });
+
+    const result = await reviewCopilotEvidenceReply(
+      reviewParams({ candidateReply: blindSafeReply, runTaskFn }),
+    );
+
+    expect(result.status).toBe('pass');
+    expect(runTaskFn.mock.calls[1]?.[1]).toMatchObject({
+      contract_feedback: {
+        previous_attempt: 1,
+        rejection: 'Error:evidence source pointer must resolve to a scalar or explicit empty value',
+      },
+    });
+    expect(result.referenceTaskRunIds).toEqual(['reference-pointer-1', 'reference-pointer-2']);
   });
 
   it('keeps a failed paid blind-reference run id when the next attempt succeeds', async () => {
@@ -943,6 +991,12 @@ describe('Copilot FULL evidence review', () => {
       replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
       referenceTaskRunIds: ['reference'],
       comparisonTaskRunIds: ['comparison-invalid', 'comparison-pass'],
+    });
+    expect(runTaskFn.mock.calls[2]?.[1]).toMatchObject({
+      contract_feedback: {
+        previous_attempt: 1,
+        rejection: 'reply_checks:too_small, request_checks:too_small',
+      },
     });
   });
 

@@ -58,9 +58,12 @@
 > the existing shared structured-task parser extracts one JSON object from a raw,
 > Markdown-fenced, or prose-wrapped response; wrapper prose is discarded and never
 > becomes authority. Multiple top-level objects, Zod failure, or any server-binding
-> mismatch remain contract-invalid. Because Xiaomi does not receive the SDK native
-> outputFormat, both no-tool prompts also carry the exact numeric protocol version,
-> field names, array shapes, and enum values that Zod enforces. Marker 记录 primary
+> mismatch remain contract-invalid. A second bounded attempt may receive only the
+> server-generated fixed Zod/binding rejection (at most 240 characters); it never
+> receives the prior output/verdict, candidate, thinking, or new evidence, and its
+> actual input is separately hashed and bound. Because Xiaomi does not receive the
+> SDK native outputFormat, both no-tool prompts also carry the exact numeric protocol
+> version, field names, array shapes, and enum values that Zod enforces. Marker 记录 primary
 > stream 是否产生正文；随后
 > settlement projection 把一条 reviewed full-text DELTA 与 REPLY/DONE 或 FAILED
 > 放在同一事务里，严格按 DELTA→terminal 写入；redelivery/reconcile 从 marker 修复

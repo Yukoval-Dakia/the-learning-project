@@ -52,9 +52,12 @@
   和额外字段；首例即 Stop。根因是 Xiaomi 不接收 SDK native outputFormat，而 prompt 没给 exact
   JSON shape；现已把两个 validator 的 numeric protocol、字段、数组与 enum 逐字写入 prompt。
   `55151d5d` 的 A01 actual 已通过 schema，随后被 server 正确拒绝，因为 source pointer 指向
-  非空 object/array；首例即 Stop。现把 pointer 只能终止在 scalar/null/显式空容器写成 hard
-  rule，并让 comparator 优先只引用 sealed point。wrapper prose 丢弃，多对象/Zod/server
-  binding 仍拒绝。新 committed exact head 仍须跑 GitHub CI 与五例 actual v8。A01 两次
+  非空 object/array；首例即 Stop。`f9e49f1c` 把 pointer 只能终止在 scalar/null/显式空容器写成
+  hard rule 并让 comparator 优先只引用 sealed point，但首个 actual reference 仍重复同一
+  binding 错误，随即 Stop。现让既有第二次 attempt 只收到 server 生成的 240-char 固定契约错误，
+  不含前次 output/verdict、candidate、thinking 或新证据，并按每次实际 input 重新 hash/bind；
+  wrapper prose 丢弃，多对象/Zod/server binding 仍拒绝。新 committed exact head 仍须跑 GitHub
+  CI，先过 A01 自动 gate 再跑五例 actual v8。A01 两次
   reference 分别约
   198.30s/198.33s，均为 provider success + thinking；partial artifact SHA-256
   `7e7d7e402a7d007c165049f8fc42534072ed068e536d3ee53eacd99da1190d7b`（本地 mode 0600）。

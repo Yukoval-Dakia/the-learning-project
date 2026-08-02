@@ -187,19 +187,30 @@ async function runBlindReference(params: {
   | { ok: true; reference: BoundCopilotEvidenceReference; taskRunIds: string[] }
   | { ok: false; reason: string; taskRunIds: string[] }
 > {
-  const taskInput = {
+  const baseTaskInput = {
     protocol_version: 1,
     request_context: params.requestContext,
     request_units: params.requestUnits,
     source_complete: params.sourceComplete,
     tool_trace: params.toolTrace,
   };
-  ensureSerializableBounded(taskInput, 'reference_input');
-  const taskInputSha256 = sha256CanonicalJson(taskInput);
+  ensureSerializableBounded(baseTaskInput, 'reference_input');
   const taskRunIds: string[] = [];
   let lastDetail = '';
+  let contractFeedback: string | undefined;
 
   for (let attempt = 1; attempt <= COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS; attempt += 1) {
+    const taskInput = contractFeedback
+      ? {
+          ...baseTaskInput,
+          contract_feedback: {
+            previous_attempt: attempt - 1,
+            rejection: contractFeedback,
+          },
+        }
+      : baseTaskInput;
+    ensureSerializableBounded(taskInput, 'reference_input');
+    const taskInputSha256 = sha256CanonicalJson(taskInput);
     try {
       await beforePaidCall(params);
     } catch (error) {
@@ -246,10 +257,12 @@ async function runBlindReference(params: {
         toolTrace: params.toolTrace,
       });
     } catch (error) {
-      lastDetail = `reference_output_invalid:${safeValidationErrorDetail(error)}`;
+      const detail = safeValidationErrorDetail(error);
+      lastDetail = `reference_output_invalid:${detail}`;
+      contractFeedback = detail.slice(0, 240);
       console.warn('[copilot-evidence-review] blind reference contract rejected', {
         attempt,
-        issues: safeValidationErrorDetail(error),
+        issues: detail,
       });
       try {
         await bindRunResult({
@@ -316,7 +329,7 @@ async function runConfirmedComparison(params: {
 > {
   const replyUnits = segmentEvidenceReply(params.selectedReply);
   const selectedReplySha256 = sha256CanonicalJson({ text: params.selectedReply });
-  const taskInput = {
+  const baseTaskInput = {
     protocol_version: 1,
     request_units: params.requestUnits,
     reply_units: replyUnits,
@@ -331,12 +344,23 @@ async function runConfirmedComparison(params: {
     },
     tool_trace: params.toolTrace,
   };
-  ensureSerializableBounded(taskInput, 'comparison_input');
-  const taskInputSha256 = sha256CanonicalJson(taskInput);
+  ensureSerializableBounded(baseTaskInput, 'comparison_input');
+  let contractFeedback: string | undefined;
 
   const result = await runConfirmedStructuredReview<BoundCopilotEvidenceComparison>({
     maxAttempts: COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS,
     runAttempt: async (attempt) => {
+      const taskInput = contractFeedback
+        ? {
+            ...baseTaskInput,
+            contract_feedback: {
+              previous_attempt: attempt - 1,
+              rejection: contractFeedback,
+            },
+          }
+        : baseTaskInput;
+      ensureSerializableBounded(taskInput, 'comparison_input');
+      const taskInputSha256 = sha256CanonicalJson(taskInput);
       try {
         await beforePaidCall(params);
       } catch (error) {
@@ -382,6 +406,7 @@ async function runConfirmedComparison(params: {
         });
       } catch (error) {
         const detail = safeValidationErrorDetail(error);
+        contractFeedback = detail.slice(0, 240);
         console.warn('[copilot-evidence-review] comparator contract rejected', {
           attempt,
           issues: detail,
