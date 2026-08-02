@@ -39,12 +39,14 @@
   request coverage 标为 answerable 却给空 evidence indices，server 正确拒绝。当前只把 schema
   已有的“非空 + 与 ledger exact-set 相等”条件写入通用 prompt；`0bcd6494` 的第二条又在 302.01s
   撞到 300s 尾部，未产生输出。当前只调到 360s；FULL 最坏 20min、owner ceiling 32.5min，
+  `19e72433` 两条已在 203.46s/168.59s 完整返回，transport 足够；第一条 JSON syntax invalid，
+  第二条把 3 个 json_pointer 写成空字符串。当前只给 SyntaxError 固定反馈并逐字禁止 root pointer，
   不加第三次 attempt、不放宽 binding。
 - 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
 
 ## NEXT
 
-1. 完成 validator 360s durable-reference 尾部的 commit/push 与 exact-head GitHub CI；包装 prose
+1. 完成 validator fixed syntax feedback + non-root pointer prompt 的 commit/push 与 exact-head GitHub CI；包装 prose
    丢弃，不改 inline/comparator 预算与 server binding。
 2. 先在 clean committed exact head 重跑 A01；自动 gate 通过后才重跑 5 例 actual-provider v8，逐例审计 primary +
    reference/comparator runs、thinking、digests、exact bytes 与无旁支 validator。

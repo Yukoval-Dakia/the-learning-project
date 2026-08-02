@@ -709,6 +709,9 @@ describe('Copilot FULL evidence review', () => {
       'Error:trace coverage backref mismatch',
     );
     expect(safeValidationErrorDetail(new Error(`bounded ${'x'.repeat(400)}`))).toHaveLength(240);
+    expect(safeValidationErrorDetail(new SyntaxError('do not expose parser details'))).toBe(
+      'SyntaxError:output JSON syntax invalid',
+    );
     expect(safeValidationErrorDetail(new TypeError('do not expose this detail'))).toBe('TypeError');
   });
 

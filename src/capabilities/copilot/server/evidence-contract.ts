@@ -640,6 +640,7 @@ export function safeValidationErrorDetail(error: unknown): string {
     // fixed invariant errors; neither message contains provider output. Keep a
     // bounded single-line message for paid-run diagnosis without persisting
     // raw JSON, user prose, safe_reply, or reasoning.
+    if (error.name === 'SyntaxError') return 'SyntaxError:output JSON syntax invalid';
     if (error.name === 'Error') {
       const message = error.message
         .replace(/\p{Cc}+/gu, ' ')

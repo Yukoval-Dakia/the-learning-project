@@ -69,7 +69,12 @@
   attempt、不接受空 coverage。`0bcd6494` A01 primary 77.04s、首条 reference 158.75s；第二条
   收到 pointer feedback，但在 302.01s 撞到 300s 尾部，未返回新契约证据。artifact SHA-256
   `683d3cd4f467f81d121a05e89208b3911e0715c4a909306ca26807473dc80271`（本地 mode 0600）。
-  现只把 durable reference 调到 360s；更早的 A01 两次 reference 分别约
+  `19e72433` A01 primary 121.85s；两条 reference 在 203.46s/168.59s 完整返回，证明 360s 足够。
+  第一条 parser SyntaxError，反馈此前只有名字；第二条 JSON 可解析但 3 个 json_pointer 是空字符串，
+  server 正确拒绝。artifact SHA-256
+  `1dda0d6b892f3a76effa9bf86e1244ca612d15fc37229dd780c9cec0218ba891`（本地 mode 0600）。
+  现把 SyntaxError 映射为固定 `output JSON syntax invalid`，并逐字禁止 `json_pointer=""`；
+  不做语法/内容自动修复。更早的 A01 两次 reference 分别约
   198.30s/198.33s，均为 provider success + thinking；partial artifact SHA-256
   `7e7d7e402a7d007c165049f8fc42534072ed068e536d3ee53eacd99da1190d7b`（本地 mode 0600）。
 

@@ -708,6 +708,8 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     expect(p).toContain('"status":"answerable"');
     expect(p).toContain('"relevance":"material"');
     expect(p).toContain('json_pointer 的最终值只能是 scalar/null/显式空容器');
+    expect(p).toContain('绝不能是空字符串 ""');
+    expect(p).toContain('以 / 开头');
     expect(p).toContain('非空 object/array 一律会被 server 拒绝');
     expect(p).toContain('不得改名、包一层 data/result');
     expect(p).toContain('contract_feedback');
