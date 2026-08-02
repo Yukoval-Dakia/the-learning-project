@@ -40,7 +40,9 @@
    CI 执行。
 3. CI 全绿且无 unresolved P0/P1 后 merge，Linear YUK-842 → Done。
 4. 按 runbook 先全 app/worker `off → observe`，取得一个真实 provider admission + YUK-841 cost-basis
-   observation；enforce 必须 quiesce 后全进程同 policy 切换，不能滚动混用 observe/off。
+   observation；enforce 必须由 application-level normal drain 关闭旧 session。若 abort/kill/stop
+   有歧义，则从 stop time 等 deployed max timeout + 30s；之后才可全进程同 policy 切换，不能滚动
+   混用 observe/off。
 5. Phase 0 exit 后启动 Phase 1 practice-owned failure-learning vertical；删除旧 knowledge/central
    handler/tool 双轨。
 

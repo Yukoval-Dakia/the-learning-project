@@ -47,10 +47,14 @@ root slot to avoid outer→tool→inner deadlock; parallel siblings cannot share
    session emit requested/acquired/released rows and matching structured logs.
 4. Confirm no manual/support process will call the central runner with mode off during the canary.
    Direct embedding, Mem0, GLM/OCR, Tencent OCR, and preflight clients are outside this gate.
-5. Before `enforce`, pause new ingress/job dispatch, drain or abort active central sessions, and verify
-   there is no mixed binary/policy population. Restart app and worker together with `enforce`, then
-   resume traffic. A rolling observe→enforce switch is not a global cap: an old observe process can
-   still start sessions, so it is forbidden.
+5. Before `enforce`, pause new ingress/job dispatch and require application-level normal drain; an
+   admission-table snapshot alone is insufficient because observe may have failed open. If any owner
+   is aborted, killed, or ambiguously stopped, keep traffic closed until process stop time plus the
+   deployed maximum execution timeout and 30s abort grace; a captured `hard_reclaim_at` may only
+   extend that bound. If the maximum timeout cannot be proven, remain off. Verify there is no mixed
+   binary/policy population, restart app and worker together with `enforce`, then resume traffic. A
+   rolling observe→enforce switch is not a global cap: an old observe process can still start
+   sessions, so it is forbidden.
 6. Canary one configured provider lane first. Product defaults remain runnable because mode defaults
    to off and unlisted lanes bypass explicitly.
 

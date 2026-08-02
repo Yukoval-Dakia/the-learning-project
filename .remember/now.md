@@ -46,7 +46,9 @@
 - Unit：strict config、off rollback、observe/enforce failure behavior；lifecycle wait 前不 start/timer；
   admission timeout不建 attempt；三 runner seam、retry absolute deadline/re-admit/release-before-settle。
 - Migration：table/index/CHECK/backup/restore/reset lockstep。
-- Runbook：全进程 `off → observe → quiesce → enforce`、metrics SQL、failure/restore/rollback。
+- Runbook：全进程 `off → observe → application-level drain → enforce`、metrics SQL、failure/restore/
+  rollback；observe fail-open 后若 abort/kill/stop 有歧义，同样强制 stop time + deployed max timeout
+  + 30s，不能靠 admission-table zero snapshot 直接 enforce。
 
 ## Validation boundary and next action
 
