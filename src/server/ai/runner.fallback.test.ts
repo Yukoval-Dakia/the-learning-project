@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockSdk = vi.hoisted(() => ({
   capturedOptions: [] as unknown[],
+  queryCalls: 0,
   // One message-array per query() invocation (per attempt), consumed in order.
   messageQueues: [] as unknown[][],
   // Optional per-attempt hook run before yielding (e.g. advance fake time).
@@ -35,12 +36,13 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
     const attempt = mockSdk.capturedOptions.length;
     const messages = mockSdk.messageQueues.shift() ?? [];
     return {
-      query: vi.fn(() =>
-        (async function* () {
+      query: vi.fn(() => {
+        mockSdk.queryCalls += 1;
+        return (async function* () {
           mockSdk.beforeYield?.(attempt);
           for (const m of messages) yield m;
-        })(),
-      ),
+        })();
+      }),
       close: vi.fn(),
     };
   }),
@@ -189,6 +191,7 @@ const JUDGE_KIND = 'StepsJudgeTask';
 
 function resetAll() {
   mockSdk.capturedOptions = [];
+  mockSdk.queryCalls = 0;
   mockSdk.messageQueues = [];
   mockSdk.beforeYield = undefined;
   logMock.started.mockClear();
@@ -312,6 +315,7 @@ describe('runTask — YUK-576 transient retry loop', () => {
 
     expect(result.text).toBe('ok');
     expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(mockSdk.queryCalls).toBe(1);
     expect(logMock.started).toHaveBeenCalledTimes(1);
     expect(logMock.finished).toHaveBeenCalledTimes(1);
     expect(logMock.cost).toHaveBeenCalledTimes(1);
@@ -394,7 +398,11 @@ describe('runTask — YUK-576 transient retry loop', () => {
       runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true }),
     ).rejects.toThrow('retry start row unavailable');
 
-    expect(mockSdk.capturedOptions).toHaveLength(1);
+    // The retry may prewarm its exact SDK transport before the durable start
+    // write, but it must not submit a second provider prompt when that write
+    // fails. `capturedOptions` counts startup(), not WarmQuery.query().
+    expect(mockSdk.capturedOptions).toHaveLength(2);
+    expect(mockSdk.queryCalls).toBe(1);
     const first = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     expect(first.finish_reason).toBe('error');
     expect(logMock.retried).not.toHaveBeenCalled();

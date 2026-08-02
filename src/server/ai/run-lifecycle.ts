@@ -273,12 +273,11 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       permit?.assertProviderStartAllowed();
       if (this.admissionFailure) throw this.admissionFailure;
       if (this.abortController.signal.aborted) {
-        throw new ProviderSessionAdmissionError({
-          reason: 'cancelled',
-          laneId: this.resolved.provider,
-          taskRunId: this.taskRunId,
-          cause: new Error(`provider attempt cancelled ${phase}`),
-        });
+        // Caller cancellation and the ordinary model timer are not admission
+        // failures. Keep them as plain errors so an already-aborted request
+        // cannot manufacture provider_admission truth before any attempt row,
+        // and a started attempt still binds to budget_timeout.
+        throw new Error(`provider attempt aborted ${phase}`);
       }
       if (
         this.config.providerStartDeadlineAt !== undefined &&
@@ -295,12 +294,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         this.config.providerSessionDeadlineAt !== undefined &&
         Date.now() >= this.config.providerSessionDeadlineAt
       ) {
-        throw new ProviderSessionAdmissionError({
-          reason: 'wait_timeout',
-          laneId: this.resolved.provider,
-          taskRunId: this.taskRunId,
-          cause: new Error(`provider session wall-clock window elapsed ${phase}`),
-        });
+        this.abortController.abort();
+        throw new Error(`provider session wall-clock budget elapsed ${phase}`);
       }
     };
 

@@ -417,9 +417,7 @@ describe('AiRunLifecycle provider-session ordering', () => {
       { q: 'x' },
       { prepare: async () => {}, run, close },
     );
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(logMocks.started).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(logMocks.started).toHaveBeenCalledTimes(1));
     vi.setSystemTime(startedAt + 500);
     startWrite.resolve(undefined);
 
