@@ -270,6 +270,9 @@ export interface BuildDirectorServerOpts {
   getMasteryProjectionFn?: GetMasteryProjectionFn;
   evidenceRefsExistFn?: EvidenceRefsExistFn;
   runTaskFn?: TaskTextRunFn;
+  /** Outer director-attempt cancellation. Nested probe tasks inherit this signal,
+   * but never the owning controller, so a child timeout cannot abort its parent. */
+  parentLifecycleSignal: AbortSignal;
   resolveSubjectProfileForKnowledgeIdsFn?: typeof resolveSubjectProfileForKnowledgeIds;
   /** Same failure-attempt snapshot as the deterministic lane, read once at meeting
    * start. Only conjecture history is re-read fresh by the write handler below. */
@@ -387,7 +390,16 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
   const writeAgentNoteFn = opts.writeAgentNoteFn ?? writeAgentNote;
   const getMasteryProjectionFn = opts.getMasteryProjectionFn ?? getMasteryProjection;
   const evidenceRefsExistFn = opts.evidenceRefsExistFn ?? evidenceRefsExist;
-  const runTaskFn = opts.runTaskFn ?? makeRunTaskFn(db, { parentTaskRunId: toolContextTaskRunId });
+  const baseRunTaskFn = opts.runTaskFn ?? makeRunTaskFn(db);
+  // Keep the nested-run lineage and cancellation contract inside this module's
+  // interface. Injected adapters cannot accidentally drop either field, while a
+  // child only receives the signal and therefore cannot abort the parent controller.
+  const runTaskFn: TaskTextRunFn = (kind, input, ctx) =>
+    baseRunTaskFn(kind, input, {
+      ...ctx,
+      parentTaskRunId: toolContextTaskRunId,
+      signal: opts.parentLifecycleSignal,
+    });
   const loadConjectureHistoryFn = opts.loadConjectureHistoryFn ?? loadConjectureHistory;
   const resolveSubjectProfileForKnowledgeIdsFn =
     opts.resolveSubjectProfileForKnowledgeIdsFn ?? resolveSubjectProfileForKnowledgeIds;
@@ -437,6 +449,9 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
         'PROPOSE (not write) one conjecture about how the owner thinks plus a frozen DiagnosticSpec V2. New proposals must use schema_version=2 and set causal_direction_required=true for causal claims; V1 exists only to read historical rows. Do not author probes: the server runs the shared author + independent-review quality gate before writing. At most 3 per night; pending, lifecycle, and freshness gates still apply.',
         ProposeConjectureShape,
         async (args) => {
+          if (opts.parentLifecycleSignal.aborted) {
+            return textResult({ ok: false, reason: '父级 Director run 已取消，停止提案' });
+          }
           // round-3 review CodeRabbit Major (A2) — TOCTOU fix. Claude can emit multiple
           // tool_use blocks in one turn; if the MCP bridge dispatches them by invoking
           // each handler back-to-back (each handler's synchronous prefix runs to
@@ -687,6 +702,9 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             });
           } catch (err) {
             releaseReservation();
+            if (opts.parentLifecycleSignal.aborted) {
+              return textResult({ ok: false, reason: '父级 Director run 已取消，停止提案' });
+            }
             const taskKind =
               err instanceof ConjectureProbeQualityOperationalError ? err.taskKind : 'unknown';
             retryableProbeErrors.set(
@@ -704,6 +722,10 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
           // The same identity reached a real quality conclusion, so its earlier outage
           // (if any) is resolved. Other identities remain latched for worker recovery.
           retryableProbeErrors.delete(key);
+          if (opts.parentLifecycleSignal.aborted) {
+            releaseReservation();
+            return textResult({ ok: false, reason: '父级 Director run 已取消，停止提案' });
+          }
           if (probeQuality.outcome === 'rejected') {
             releaseReservation();
             return textResult({
@@ -732,6 +754,16 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
               );
               baselineP = 0.5;
             }
+          }
+
+          // The nested quality run can finish at the same instant that the outer
+          // director times out or loses its provider lease. Recheck at the final
+          // pre-write seam so a completed child cannot START publishing after the
+          // parent has already degraded and released its admission permit. A write
+          // already in flight retains the proposal writer's own transaction semantics.
+          if (opts.parentLifecycleSignal.aborted) {
+            releaseReservation();
+            return textResult({ ok: false, reason: '父级 Director run 已取消，停止提案' });
           }
 
           const input: WriteAiProposalInput = {
@@ -802,6 +834,9 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
         'Leave a SOFT hint (not a fact) for dreaming / coach / the next research meeting. At most 2 per night. summary_md is truncated to 1200 chars; refs must be first-hand event ids (agent_note ids are stripped).',
         LeaveAgentNoteShape,
         async (args) => {
+          if (opts.parentLifecycleSignal.aborted) {
+            return textResult({ ok: false, reason: '父级 Director run 已取消，停止写入软提示' });
+          }
           if (caps.noteCount >= DIRECTOR_MAX_NOTES) {
             return textResult({ ok: false, reason: `本晚软提示上限 ${DIRECTOR_MAX_NOTES} 已达` });
           }

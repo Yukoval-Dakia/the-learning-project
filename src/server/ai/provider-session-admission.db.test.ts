@@ -4,9 +4,10 @@ import { provider_session_admission } from '@/db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
+  PROVIDER_SESSION_HEARTBEAT_MS,
   type ProviderSessionAdmissionPlan,
   acquireProviderSession,
 } from './provider-session-admission';
@@ -87,6 +88,34 @@ async function waitForStatus(taskRunId: string, status: string): Promise<void> {
   throw new Error(`admission ${taskRunId} did not reach status=${status}`);
 }
 
+async function readHeartbeat(taskRunId: string): Promise<Date> {
+  const rows = await testDb()
+    .select({ heartbeatAt: provider_session_admission.heartbeat_at })
+    .from(provider_session_admission)
+    .where(eq(provider_session_admission.task_run_id, taskRunId));
+  const heartbeatAt = rows[0]?.heartbeatAt;
+  if (!heartbeatAt) throw new Error(`admission ${taskRunId} has no heartbeat`);
+  return heartbeatAt;
+}
+
+async function waitForHeartbeatAfter(taskRunId: string, prior: Date): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if ((await readHeartbeat(taskRunId)).getTime() > prior.getTime()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`admission ${taskRunId} heartbeat did not advance`);
+}
+
+async function waitForAbort(signal: AbortSignal): Promise<void> {
+  const deadline = Date.now() + PROVIDER_SESSION_HEARTBEAT_MS + 2_000;
+  while (Date.now() < deadline) {
+    if (signal.aborted) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error('provider session heartbeat did not fence the lost owner');
+}
+
 beforeEach(async () => {
   await resetDb();
 });
@@ -158,6 +187,68 @@ describe('YUK-842 cross-process provider SDK-session admission', () => {
       .from(provider_session_admission)
       .where(eq(provider_session_admission.task_run_id, 'duplicate-session'));
     expect(rows).toEqual([{ status: 'acquired' }]);
+  });
+
+  it('retries an indeterminate heartbeat within the live lease but fences an explicit claim loss', async () => {
+    const a = openIndependentDb();
+    await startAcquire({ db: a.db, taskRunId: 'heartbeat-indeterminate' });
+    const controller = controllers.at(-1);
+    if (!controller) throw new Error('heartbeat test controller missing');
+    const initialHeartbeat = await readHeartbeat('heartbeat-indeterminate');
+    const transactionSpy = vi.spyOn(a.db, 'transaction');
+
+    let unblock!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+    let markBlocked!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      markBlocked = resolve;
+    });
+    // This independent handle has max=1. Occupying it across the first 5s
+    // heartbeat forces boundedAdmissionTransaction to return indeterminate;
+    // the persisted lease itself remains live in Postgres.
+    const blocker = a.db.transaction(async () => {
+      markBlocked();
+      await hold;
+    });
+    try {
+      try {
+        await blocked;
+        const heartbeatQueuedDeadline = Date.now() + PROVIDER_SESSION_HEARTBEAT_MS + 2_000;
+        while (transactionSpy.mock.calls.length < 2 && Date.now() < heartbeatQueuedDeadline) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(transactionSpy).toHaveBeenCalledTimes(2);
+        // Start this wait only after observing the heartbeat transaction enter the
+        // pool queue. It therefore proves the 1s operation budget elapsed even if
+        // the CI event loop delivered the original 5s timer late.
+        await new Promise((resolve) => setTimeout(resolve, 1_200));
+        expect(controller.signal.aborted).toBe(false);
+        // One call holds the only pool connection; one heartbeat is queued behind
+        // it. No short retry may enqueue a third transaction until that underlying
+        // expired callback has actually settled.
+        expect(transactionSpy).toHaveBeenCalledTimes(2);
+      } finally {
+        unblock();
+        await blocker;
+      }
+
+      await waitForHeartbeatAfter('heartbeat-indeterminate', initialHeartbeat);
+      expect(controller.signal.aborted).toBe(false);
+
+      // A completed zero-row CAS is different from an indeterminate DB budget:
+      // it proves this claim token no longer owns the lease and must fence now.
+      await testDb().execute(sql`
+        UPDATE provider_session_admission
+           SET claim_token = gen_random_uuid()
+         WHERE task_run_id = 'heartbeat-indeterminate'
+      `);
+      await waitForAbort(controller.signal);
+      expect(controller.signal.aborted).toBe(true);
+    } finally {
+      transactionSpy.mockRestore();
+    }
   });
 
   it('fails closed instead of operating on a same-id waiter from another lane', async () => {

@@ -137,6 +137,32 @@ describe('provider session admission failure policy', () => {
     );
   });
 
+  it('releases lane single-flight ownership when transaction construction throws synchronously', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const transaction = vi.fn(() => {
+      throw new Error('pool already closed');
+    });
+    const run = (taskRunId: string) =>
+      acquireProviderSession({
+        db: { transaction } as never,
+        kind: 'AttributionTask',
+        taskRunId,
+        executionTimeoutMs: 1_000,
+        signal: new AbortController().signal,
+        plan: { mode: 'enforce', laneId: 'xiaomi', policy },
+        onLeaseLost: vi.fn(),
+      });
+
+    await expect(run('sync-transaction-failure-a')).rejects.toMatchObject({
+      reason: 'control_plane_unavailable',
+    });
+    await expect(run('sync-transaction-failure-b')).rejects.toMatchObject({
+      reason: 'control_plane_unavailable',
+    });
+    expect(transaction).toHaveBeenCalledTimes(2);
+  });
+
   it('bounds persistent lane-lock starvation and only observe fails open', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});

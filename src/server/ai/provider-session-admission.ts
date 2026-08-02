@@ -96,6 +96,7 @@ export const PROVIDER_SESSION_LEASE_TTL_MS = 15_000;
 export const PROVIDER_SESSION_HEARTBEAT_MS = 5_000;
 export const PROVIDER_SESSION_ABORT_GRACE_MS = 30_000;
 export const PROVIDER_SESSION_RETENTION_MS = 7 * 24 * 60 * 60_000;
+const PROVIDER_SESSION_HEARTBEAT_RETRY_MS = 500;
 const DEFAULT_MAX_QUEUED_SESSIONS = 32;
 const DEFAULT_MAX_WAIT_MS = 30_000;
 const MAX_WAIT_MS = 5 * 60_000;
@@ -234,6 +235,7 @@ interface AdmissionRow extends Record<string, unknown> {
   borrowed_from_task_run_id: string | null;
   terminal_reason: string | null;
   wait_ms: number | string | null;
+  lease_remaining_ms: number | string | null;
 }
 
 type TickResult =
@@ -244,6 +246,7 @@ type TickResult =
       claimToken: string;
       borrowedFromTaskRunId: string | null;
       waitMs: number;
+      leaseDeadlineMonotonicAt: number;
     }
   | {
       kind: 'terminal';
@@ -396,20 +399,29 @@ async function tryLaneTransaction<T>(
 ): Promise<T | undefined> {
   if (localLaneTickInFlight.has(laneId)) return undefined;
   localLaneTickInFlight.add(laneId);
-  return boundedAdmissionTransaction(
-    db,
-    monotonicDeadlineAt,
-    async (tx) => {
-      const lockRows = await tx.execute<{ locked: boolean }>(sql`
-        SELECT pg_try_advisory_xact_lock(
-          hashtextextended(${`provider-session-admission:${laneId}`}, 0)
-        ) AS locked
-      `);
-      if (lockRows[0]?.locked !== true) return undefined;
-      return fn(tx);
-    },
-    () => localLaneTickInFlight.delete(laneId),
-  );
+  try {
+    return await boundedAdmissionTransaction(
+      db,
+      monotonicDeadlineAt,
+      async (tx) => {
+        const lockRows = await tx.execute<{ locked: boolean }>(sql`
+          SELECT pg_try_advisory_xact_lock(
+            hashtextextended(${`provider-session-admission:${laneId}`}, 0)
+          ) AS locked
+        `);
+        if (lockRows[0]?.locked !== true) return undefined;
+        return fn(tx);
+      },
+      () => localLaneTickInFlight.delete(laneId),
+    );
+  } catch (error) {
+    // `db.transaction()` is allowed to throw synchronously (for example after
+    // pool shutdown), before boundedAdmissionTransaction can attach its
+    // underlying-settlement cleanup. Never poison this lane for the process
+    // lifetime merely because one transaction could not be constructed.
+    localLaneTickInFlight.delete(laneId);
+    throw error;
+  }
 }
 
 async function expireAndTrim(tx: Tx, laneId: Provider): Promise<void> {
@@ -446,7 +458,16 @@ async function expireAndTrim(tx: Tx, laneId: Provider): Promise<void> {
   `);
 }
 
-async function readAdmissionRow(tx: Tx, taskRunId: string): Promise<AdmissionRow | undefined> {
+interface AdmissionRowSnapshot {
+  row: AdmissionRow | undefined;
+  measuredAtMonotonic: number;
+}
+
+async function readAdmissionRow(tx: Tx, taskRunId: string): Promise<AdmissionRowSnapshot> {
+  // Anchor the DB-reported remaining lease immediately before the statement that
+  // measures it. Earlier work in the same lane transaction must not consume a
+  // freshly-created lease in the local monotonic timeline.
+  const measuredAtMonotonic = performance.now();
   const rows = await tx.execute<AdmissionRow>(sql`
     SELECT lane_id,
            policy_fingerprint,
@@ -458,12 +479,19 @@ async function readAdmissionRow(tx: Tx, taskRunId: string): Promise<AdmissionRow
            CASE
              WHEN acquired_at IS NULL THEN NULL
              ELSE EXTRACT(EPOCH FROM (acquired_at - requested_at)) * 1000
-           END AS wait_ms
+           END AS wait_ms,
+           CASE
+             WHEN lease_expires_at IS NULL THEN NULL
+             ELSE GREATEST(
+               0,
+               EXTRACT(EPOCH FROM (lease_expires_at - clock_timestamp())) * 1000
+             )
+           END AS lease_remaining_ms
       FROM provider_session_admission
      WHERE task_run_id = ${taskRunId}
      LIMIT 1
   `);
-  return rows[0];
+  return { row: rows[0], measuredAtMonotonic };
 }
 
 function requireRowIdentity(row: AdmissionRow, input: AdmissionRequest): void {
@@ -499,6 +527,18 @@ function terminalReason(row: AdmissionRow): TickResult | undefined {
 function requireClaimToken(row: AdmissionRow, taskRunId: string): string {
   if (!row.claim_token) throw new Error(`acquired admission has no claim token: ${taskRunId}`);
   return row.claim_token;
+}
+
+function requireLeaseDeadlineMonotonicAt(
+  row: AdmissionRow,
+  measuredAtMonotonic: number,
+  input: AdmissionRequest,
+): number {
+  const remainingMs = Number(row.lease_remaining_ms);
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+    throw new Error(`acquired admission has no live lease: ${input.taskRunId}`);
+  }
+  return measuredAtMonotonic + remainingMs;
 }
 
 function requireOwnedClaimToken(row: AdmissionRow, input: AdmissionRequest): string {
@@ -631,7 +671,7 @@ async function insertObservedAcquired(
   tx: Tx,
   input: AdmissionRequest,
   borrowedFromTaskRunId: string | null,
-): Promise<AdmissionRow> {
+): Promise<{ row: AdmissionRow; measuredAtMonotonic: number }> {
   await tx
     .insert(provider_session_admission)
     .values({
@@ -653,17 +693,18 @@ async function insertObservedAcquired(
       )`,
     })
     .onConflictDoNothing({ target: provider_session_admission.task_run_id });
-  const row = await readAdmissionRow(tx, input.taskRunId);
+  const snapshot = await readAdmissionRow(tx, input.taskRunId);
+  const row = snapshot.row;
   if (!row) throw new Error(`observed admission row missing after insert: ${input.taskRunId}`);
   requireRowIdentity(row, input);
-  return row;
+  return { row, measuredAtMonotonic: snapshot.measuredAtMonotonic };
 }
 
 async function acquireWaitingRow(
   tx: Tx,
   input: AdmissionRequest,
   borrowedFromTaskRunId: string | null,
-): Promise<AdmissionRow> {
+): Promise<{ row: AdmissionRow; measuredAtMonotonic: number }> {
   await tx.execute(sql`
     UPDATE provider_session_admission
        SET status = 'acquired',
@@ -700,10 +741,11 @@ async function acquireWaitingRow(
        AND status = 'waiting'
        AND wait_deadline_at <= clock_timestamp()
   `);
-  const row = await readAdmissionRow(tx, input.taskRunId);
+  const snapshot = await readAdmissionRow(tx, input.taskRunId);
+  const row = snapshot.row;
   if (!row) throw new Error(`admission row missing after acquire: ${input.taskRunId}`);
   requireRowIdentity(row, input);
-  return row;
+  return { row, measuredAtMonotonic: snapshot.measuredAtMonotonic };
 }
 
 async function parentCanLendSlot(tx: Tx, input: AdmissionRequest): Promise<boolean> {
@@ -799,19 +841,26 @@ async function tick(input: AdmissionRequest): Promise<TickResult> {
     async (tx) => {
       await expireAndTrim(tx, input.plan.laneId);
 
-      let row = await readAdmissionRow(tx, input.taskRunId);
+      let snapshot = await readAdmissionRow(tx, input.taskRunId);
+      let row = snapshot.row;
       if (row) requireRowIdentity(row, input);
       if (!row) {
         if (input.plan.mode === 'observe') {
           const borrowedFromTaskRunId = (await parentCanLendSlot(tx, input))
             ? (input.parentTaskRunId ?? null)
             : null;
-          row = await insertObservedAcquired(tx, input, borrowedFromTaskRunId);
+          snapshot = await insertObservedAcquired(tx, input, borrowedFromTaskRunId);
+          row = snapshot.row;
           return {
             kind: 'acquired',
             claimToken: requireOwnedClaimToken(row, input),
             borrowedFromTaskRunId: row.borrowed_from_task_run_id,
             waitMs: Number(row.wait_ms ?? 0),
+            leaseDeadlineMonotonicAt: requireLeaseDeadlineMonotonicAt(
+              row,
+              snapshot.measuredAtMonotonic,
+              input,
+            ),
           } satisfies TickResult;
         }
         if (await policyMismatchExists(tx, input.plan.laneId, input.plan.policy.fingerprint)) {
@@ -820,7 +869,8 @@ async function tick(input: AdmissionRequest): Promise<TickResult> {
           return { kind: 'terminal', reason: 'policy_mismatch' } satisfies TickResult;
         }
         const inserted = await insertWaitingOrRejected(tx, input);
-        row = await readAdmissionRow(tx, input.taskRunId);
+        snapshot = await readAdmissionRow(tx, input.taskRunId);
+        row = snapshot.row;
         if (row) requireRowIdentity(row, input);
         if (inserted === 'rejected' || row?.status === 'rejected') {
           return { kind: 'terminal', reason: 'queue_full' } satisfies TickResult;
@@ -839,6 +889,11 @@ async function tick(input: AdmissionRequest): Promise<TickResult> {
           claimToken: requireOwnedClaimToken(row, input),
           borrowedFromTaskRunId: row.borrowed_from_task_run_id,
           waitMs: Number(row.wait_ms ?? 0),
+          leaseDeadlineMonotonicAt: requireLeaseDeadlineMonotonicAt(
+            row,
+            snapshot.measuredAtMonotonic,
+            input,
+          ),
         } satisfies TickResult;
       }
 
@@ -864,7 +919,8 @@ async function tick(input: AdmissionRequest): Promise<TickResult> {
         return { kind: 'waiting' } satisfies TickResult;
       }
 
-      row = await acquireWaitingRow(tx, input, borrowedFromTaskRunId);
+      snapshot = await acquireWaitingRow(tx, input, borrowedFromTaskRunId);
+      row = snapshot.row;
       const acquireTerminal = terminalReason(row);
       if (acquireTerminal) return acquireTerminal;
       if (row.status !== 'acquired') return { kind: 'waiting' } satisfies TickResult;
@@ -873,6 +929,11 @@ async function tick(input: AdmissionRequest): Promise<TickResult> {
         claimToken: requireOwnedClaimToken(row, input),
         borrowedFromTaskRunId: row.borrowed_from_task_run_id,
         waitMs: Number(row.wait_ms ?? 0),
+        leaseDeadlineMonotonicAt: requireLeaseDeadlineMonotonicAt(
+          row,
+          snapshot.measuredAtMonotonic,
+          input,
+        ),
       } satisfies TickResult;
     },
   );
@@ -904,12 +965,25 @@ function waitForNextPoll(
   });
 }
 
-async function renewLease(input: AdmissionRequest, claimToken: string): Promise<boolean> {
+type LeaseRenewalResult =
+  | { kind: 'renewed'; leaseRemainingMs: number }
+  | { kind: 'fence_lost' }
+  | { kind: 'indeterminate'; underlyingSettled: Promise<void> };
+
+async function renewLease(
+  input: AdmissionRequest,
+  claimToken: string,
+  knownLeaseDeadlineMonotonicAt: number,
+): Promise<LeaseRenewalResult> {
+  let markUnderlyingSettled!: () => void;
+  const underlyingSettled = new Promise<void>((resolve) => {
+    markUnderlyingSettled = resolve;
+  });
   const rows = await boundedAdmissionTransaction(
     input.db,
-    performance.now() + LEASE_OPERATION_BUDGET_MS,
+    Math.min(performance.now() + LEASE_OPERATION_BUDGET_MS, knownLeaseDeadlineMonotonicAt),
     (tx) =>
-      tx.execute<{ task_run_id: string }>(sql`
+      tx.execute<{ task_run_id: string; lease_remaining_ms: number | string }>(sql`
         UPDATE provider_session_admission
            SET heartbeat_at = clock_timestamp(),
                lease_expires_at = LEAST(
@@ -926,55 +1000,135 @@ async function renewLease(input: AdmissionRequest, claimToken: string): Promise<
            AND status = 'acquired'
            AND lease_expires_at > clock_timestamp()
            AND hard_reclaim_at > clock_timestamp()
-        RETURNING task_run_id
+        RETURNING task_run_id,
+                  GREATEST(
+                    0,
+                    EXTRACT(EPOCH FROM (lease_expires_at - clock_timestamp())) * 1000
+                  ) AS lease_remaining_ms
       `),
+    markUnderlyingSettled,
   );
-  return rows?.length === 1;
+  if (rows === undefined) return { kind: 'indeterminate', underlyingSettled };
+  const row = rows[0];
+  if (!row) return { kind: 'fence_lost' };
+  const leaseRemainingMs = Number(row.lease_remaining_ms);
+  if (!Number.isFinite(leaseRemainingMs) || leaseRemainingMs <= 0) {
+    return { kind: 'fence_lost' };
+  }
+  return { kind: 'renewed', leaseRemainingMs };
 }
 
-function startHeartbeat(input: AdmissionRequest, claimToken: string): () => void {
+function startHeartbeat(
+  input: AdmissionRequest,
+  claimToken: string,
+  initialLeaseDeadlineMonotonicAt: number,
+): () => void {
   let stopped = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const schedule = () => {
+  let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
+  let leaseDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  let knownLeaseDeadlineMonotonicAt = initialLeaseDeadlineMonotonicAt;
+
+  const clearTimers = () => {
+    if (heartbeatTimer) clearTimeout(heartbeatTimer);
+    if (leaseDeadlineTimer) clearTimeout(leaseDeadlineTimer);
+    heartbeatTimer = undefined;
+    leaseDeadlineTimer = undefined;
+  };
+  const loseLease = (cause: unknown) => {
     if (stopped) return;
-    timer = setTimeout(async () => {
+    stopped = true;
+    clearTimers();
+    eventLog(
+      input.plan.mode === 'enforce' ? 'error' : 'warn',
+      'provider_session_lease_lost',
+      input,
+      {
+        reason: cause instanceof Error ? cause.message : String(cause),
+      },
+    );
+    if (input.plan.mode !== 'enforce') return;
+    try {
+      input.onLeaseLost(
+        new ProviderSessionAdmissionError({
+          reason: 'lease_lost',
+          laneId: input.plan.laneId,
+          taskRunId: input.taskRunId,
+          cause,
+        }),
+      );
+    } catch (handlerError) {
+      eventLog('error', 'provider_session_lease_lost_handler_error', input, {
+        reason: handlerError instanceof Error ? handlerError.message : String(handlerError),
+      });
+    }
+  };
+  const armLeaseDeadline = () => {
+    if (leaseDeadlineTimer) clearTimeout(leaseDeadlineTimer);
+    const remainingMs = knownLeaseDeadlineMonotonicAt - performance.now();
+    if (remainingMs <= 0) {
+      loseLease(new Error('lease renewal was not confirmed before the known lease deadline'));
+      return;
+    }
+    leaseDeadlineTimer = setTimeout(
+      () => loseLease(new Error('lease renewal was not confirmed before the known lease deadline')),
+      remainingMs,
+    );
+  };
+  const schedule = (delayMs: number) => {
+    if (stopped) return;
+    heartbeatTimer = setTimeout(async () => {
       if (stopped) return;
+      const renewalStartedAt = performance.now();
       try {
-        const renewed = await renewLease(input, claimToken);
+        const renewal = await renewLease(input, claimToken, knownLeaseDeadlineMonotonicAt);
         // Release may have stopped this heartbeat while the DB round trip was
         // in flight. In that case a zero-row renew is expected, not lease loss.
         if (stopped) return;
-        if (!renewed) throw new Error('lease fence no longer owned');
+        if (renewal.kind === 'fence_lost') {
+          loseLease(new Error('lease fence no longer owned'));
+          return;
+        }
+        if (renewal.kind === 'renewed') {
+          // DB returns the actual remaining lease after LEAST(hard_reclaim_at,
+          // now+TTL). Anchor it to the operation start, not response completion,
+          // so driver/network latency can only shorten this local deadline.
+          knownLeaseDeadlineMonotonicAt = renewalStartedAt + renewal.leaseRemainingMs;
+          armLeaseDeadline();
+          schedule(PROVIDER_SESSION_HEARTBEAT_MS);
+          return;
+        }
+        eventLog('warn', 'provider_session_lease_renewal_deferred', input, {
+          reason: 'lease operation budget exceeded',
+          known_lease_remaining_ms: Math.max(0, knownLeaseDeadlineMonotonicAt - performance.now()),
+        });
+        const retryNotBefore = performance.now() + PROVIDER_SESSION_HEARTBEAT_RETRY_MS;
+        // A pool-queue timeout returns before postgres-js gets a connection. Do
+        // not enqueue another heartbeat behind that stale callback; wait for it
+        // to obtain a connection, observe its expired budget, and settle first.
+        // The independent lease-deadline timer remains the fail-closed bound.
+        await renewal.underlyingSettled;
+        if (stopped) return;
+        schedule(Math.max(0, retryNotBefore - performance.now()));
+        return;
       } catch (cause) {
         if (stopped) return;
-        eventLog(
-          input.plan.mode === 'enforce' ? 'error' : 'warn',
-          'provider_session_lease_lost',
-          input,
-          {
-            reason: cause instanceof Error ? cause.message : String(cause),
-          },
-        );
-        if (input.plan.mode === 'enforce') {
-          input.onLeaseLost(
-            new ProviderSessionAdmissionError({
-              reason: 'lease_lost',
-              laneId: input.plan.laneId,
-              taskRunId: input.taskRunId,
-              cause,
-            }),
-          );
-        }
-        stopped = true;
-        return;
+        // A DB/network error is not proof that another owner took the fence.
+        // Keep the prior DB-derived deadline and retry briefly; the independent
+        // deadline timer remains the fail-closed bound.
+        eventLog('warn', 'provider_session_lease_renewal_deferred', input, {
+          reason: cause instanceof Error ? cause.message : String(cause),
+          known_lease_remaining_ms: Math.max(0, knownLeaseDeadlineMonotonicAt - performance.now()),
+        });
       }
-      schedule();
-    }, PROVIDER_SESSION_HEARTBEAT_MS);
+      schedule(PROVIDER_SESSION_HEARTBEAT_RETRY_MS);
+    }, delayMs);
   };
-  schedule();
+  armLeaseDeadline();
+  schedule(PROVIDER_SESSION_HEARTBEAT_MS);
   return () => {
+    if (stopped) return;
     stopped = true;
-    if (timer) clearTimeout(timer);
+    clearTimers();
   };
 }
 
@@ -1091,7 +1245,11 @@ export async function acquireProviderSession(
           wait_ms: result.waitMs,
           borrowed_from_task_run_id: result.borrowedFromTaskRunId,
         });
-        const stopHeartbeat = startHeartbeat(request, result.claimToken);
+        const stopHeartbeat = startHeartbeat(
+          request,
+          result.claimToken,
+          result.leaseDeadlineMonotonicAt,
+        );
         let released = false;
         return {
           mode: request.plan.mode,

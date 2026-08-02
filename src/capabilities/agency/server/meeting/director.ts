@@ -56,7 +56,6 @@ import { createFindingsCapture } from '@/server/agency/scout/report-findings';
 import { buildEvidenceScoutAgentDefinition } from '@/server/agency/scout/scout-agent';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { SPAWN_BUDGET_MODE, createSpawnContract } from '@/server/ai/spawn-contract';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
@@ -345,6 +344,7 @@ export async function runResearchMeetingDirector(
   caps.proposeCount = priorOutputCounts.proposals;
   caps.noteCount = priorOutputCounts.notes;
   const capture = createFindingsCapture();
+  const lifecycleAbortController = new AbortController();
   const evidence = buildEvidenceServer({
     db,
     now,
@@ -364,7 +364,8 @@ export async function runResearchMeetingDirector(
     getMasteryProjectionFn,
     failureAttempts: failures,
     loadConjectureHistoryFn,
-    runTaskFn: runTaskFn ?? makeRunTaskFn(db, { parentTaskRunId: toolContextTaskRunId }),
+    runTaskFn,
+    parentLifecycleSignal: lifecycleAbortController.signal,
     resolveSubjectProfileForKnowledgeIdsFn: deps.resolveSubjectProfileForKnowledgeIdsFn,
   });
   const scout = buildEvidenceScoutAgentDefinition({ prompt: EVIDENCE_SCOUT_CHARTER });
@@ -407,6 +408,7 @@ export async function runResearchMeetingDirector(
       hooks: spawnContract.hooks,
       canUseTool: spawnContract.canUseTool,
       taskRunId: toolContextTaskRunId,
+      lifecycleAbortController,
     });
   } catch (err) {
     degraded = true;
