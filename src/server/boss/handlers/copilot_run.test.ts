@@ -20,6 +20,7 @@ import {
 import { countOutstandingDurableRuns } from '@/capabilities/copilot/server/durable-backlog';
 import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
 import {
+  COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
   COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
   COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
 } from '@/capabilities/copilot/server/evidence-review';
@@ -249,6 +250,7 @@ describe('runCopilotRun', () => {
         toolTrace: [expect.objectContaining({ name: 'query_events', effect: 'read' })],
         attemptTimeouts: {
           referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+          comparisonMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
         },
       });
       expect(input.requestContext).not.toHaveProperty('conversation_history');

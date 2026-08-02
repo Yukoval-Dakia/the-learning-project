@@ -36,12 +36,14 @@ export const COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY =
 
 /** Mirrors both inline evidence-task timeout budgets in the task registry. */
 export const COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS = 120_000;
-/**
- * Complex durable traces can legitimately need more than the synchronous
- * validator tail. Keep this override reference-only until actual comparator
- * evidence demonstrates that its existing budget is insufficient.
- */
+/** Complex durable traces can legitimately need more than the synchronous tail. */
 export const COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS = 360_000;
+/**
+ * Actual A01 on c8bd8761 bound its blind reference, then both independent
+ * comparators hit the 120s wall-clock ceiling. Keep inline at 120s and widen
+ * only this durable comparator tail; attempt count and binding stay unchanged.
+ */
+export const COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS = 240_000;
 export const COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS = 2;
 export const COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS = 2;
 // Worst case: two blind-reference contract attempts, one failed original
@@ -51,7 +53,7 @@ export const COPILOT_EVIDENCE_REVIEW_MAX_PASSES =
   COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS + COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS * 2;
 export const COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS =
   COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS * COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS +
-  COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS * COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS * 2;
+  COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS * COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS * 2;
 
 const MAX_CANDIDATE_CHARS = 64_000;
 const MAX_SERIALIZED_TRACE_CHARS = 160_000;

@@ -22,6 +22,7 @@ import {
   segmentEvidenceRequest,
 } from './evidence-contract';
 import {
+  COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
   COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
   COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
   COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS,
@@ -774,7 +775,7 @@ afterEach(() => {
 });
 
 describe('Copilot FULL evidence review', () => {
-  it('uses a 360s durable reference tail while keeping comparator and inline budgets unchanged', async () => {
+  it('uses actual-proven durable tails while keeping the inline validator budget unchanged', async () => {
     let comparisonOrdinal = 0;
     const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
       async (kind, input, _ctx, submission) => {
@@ -805,7 +806,10 @@ describe('Copilot FULL evidence review', () => {
       reviewParams({
         candidateReply: durableTimeoutSafeReply,
         toolTrace: DURABLE_TIMEOUT_TRACE,
-        attemptTimeouts: { referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS },
+        attemptTimeouts: {
+          referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+          comparisonMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
+        },
         runTaskFn,
       }),
     );
@@ -835,18 +839,25 @@ describe('Copilot FULL evidence review', () => {
       ]),
     });
     expect(JSON.stringify(runTaskFn.mock.calls[0]?.[1]).length).toBeLessThan(200_000);
-    expect(runTaskFn.mock.calls[1]?.[2]).not.toHaveProperty('budgetOverride');
-    expect(runTaskFn.mock.calls[2]?.[2]).not.toHaveProperty('budgetOverride');
+    expect(runTaskFn.mock.calls[1]?.[2].budgetOverride).toEqual({
+      timeoutMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
+    });
+    expect(runTaskFn.mock.calls[2]?.[2].budgetOverride).toEqual({
+      timeoutMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
+    });
     expect(runTaskFn.mock.calls[1]?.[2]).toMatchObject({
       allowedTools: [...COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS],
       autoLogToolCalls: false,
     });
     expect(runTaskFn.mock.calls[1]?.[2]).not.toHaveProperty('outputFormat');
     expect(COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS).toBe(360_000);
+    expect(COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS).toBe(240_000);
     expect(COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS).toBe(120_000);
     expect(COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS).toBe(
       COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS * COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS +
-        COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS * COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS * 2,
+        COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS *
+          COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS *
+          2,
     );
   });
 

@@ -41,8 +41,9 @@
 - exact-head actual-provider v8 五例全部安全 fail closed 且没有 candidate 泄漏。A01/A03/A04
   的复杂 blind-reference 多次撞 120s；A03/C01/C04 也有成功 provider 输出被 strict contract
   拒绝。原始结果在本地 mode 0600 artifact，不提交。
-- durable blind-reference 保持 2×360s；inline 与 comparator 保持 120s。FULL 最坏
-  审阅为 20min，连同 primary 12min + 30s grace 的 owner ceiling 为 32.5min，仍小于 1h
+- durable blind-reference 保持 2×360s；inline 保持 120s，actual 证明不足后仅 durable comparator
+  调为 4×240s。FULL 最坏审阅为 28min，连同 primary 12min + 30s grace 的 owner ceiling 为
+  40.5min，仍小于 1h
   stuck-run 阈值。加入的诊断只保留固定 contract 错误类别/有界单行消息，不记录 raw output、
   candidate 或 thinking。
 - `9a7be1b6` 的 A01 actual 已让两次 blind reference 越过原 120s timeout 并完整返回，但都被
@@ -91,7 +92,12 @@
   未进入 comparator，系统安全 fail closed，随即 Stop；artifact SHA-256
   `95855eef09b80d30634df35dc459340ba1e8d29dc4b08dbd4b8661ada27da7fa`（mode 0600）。现按协议
   封闭最大值把 reference ceiling 改为 16（8 point chunks + 5 trace chunks + 3 收尾 turns），
-  comparator 改为 18（16 reply chunks + complete + terminal）；timeout、attempt 数与绑定不变。
+  comparator 改为 18（16 reply chunks + complete + terminal）。`c8bd8761` exact-head CI 全绿后的
+  第二个隔离 A01 已让 blind reference 首次成功：9 thinking blocks、result digest 与 ledger 均绑定；
+  随后两条 comparator 都在 122s 左右撞 120s `budget_timeout`，未产生可绑定比较结果，系统再次
+  fail closed 并 Stop。artifact SHA-256
+  `c72ed9063eee759530b39b35df13c0e75585cea6041ef62665972f25a4dd1fb5`（mode 0600）。现只把
+  durable comparator tail 调到 240s；inline 仍 120s，attempt 数与绑定不变。
 
 ## Next order
 

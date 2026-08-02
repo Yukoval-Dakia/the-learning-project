@@ -37,12 +37,16 @@
   `95855eef09b80d30634df35dc459340ba1e8d29dc4b08dbd4b8661ada27da7fa`（mode 0600）。这证明
   小提交方向已消除大 JSON 绑定失败，但 4-turn 注册表预算与“分批追加 + explicit complete + terminal”
   协议自相矛盾；现按封闭协议上限改为 reference 16、comparator 18，不增加 paid attempt。
+  `c8bd8761` 的 blind reference 随后成功绑定（9 thinking blocks）；两条 comparator 则均在约 122s
+  撞原 120s ceiling。artifact SHA-256
+  `c72ed9063eee759530b39b35df13c0e75585cea6041ef62665972f25a4dd1fb5`（mode 0600）。按代码既有
+  actual gate，只把 durable comparator 调到 240s；inline 仍 120s，attempt 数与契约不变。
 - 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
 
 ## NEXT
 
-1. 验证 actual A01 暴露的 turn-ceiling 修复；保持两次 bounded attempt、既有 fail-closed binding、
-   blind isolation、120s/360s timeout 与 confirmed comparator 状态机。
+1. 验证 actual A01 暴露的 durable comparator timeout；保持两次 bounded attempt、既有
+   fail-closed binding、blind isolation、inline 120s 与 confirmed comparator 状态机。
 2. 新 exact-head CI 全绿后，在 clean committed exact head 重跑 A01；自动 gate 通过后才重跑 5 例 actual-provider v8，逐例审计 primary +
    reference/comparator runs、thinking、digests、exact bytes 与无旁支 validator。
 3. actual 5/5 且人工 grounding/coverage/honesty 均 2/2/2 后，

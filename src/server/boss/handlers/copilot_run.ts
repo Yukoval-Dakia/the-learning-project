@@ -53,6 +53,7 @@ import {
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
 import {
+  COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
   COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
   COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
   type CopilotEvidenceReviewDecision,
@@ -1166,6 +1167,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       signal: cancellationControl.signal,
       attemptTimeouts: {
         referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+        comparisonMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
       },
       beforeVerification: async () => {
         await cancellationControl.probe();
