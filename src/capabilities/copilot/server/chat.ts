@@ -1084,6 +1084,10 @@ async function runCopilotChatImpl(
     ctx: {
       db,
       taskRunId,
+      // A nested central task borrows this outer session's admission slot. It
+      // must share the request abort signal as well, otherwise disconnect could
+      // release the parent while an unfenced borrowed child keeps running.
+      ...(streaming?.signal ? { signal: streaming.signal } : {}),
       callerActor: { kind: 'agent', ref: actorRef },
       causedByEventId,
     },

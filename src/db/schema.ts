@@ -903,6 +903,160 @@ export const ai_task_runs = pgTable(
   ],
 );
 
+// YUK-842 — cross-process provider-lane admission for complete SDK query sessions.
+// One row is both the live lease state and the start-reservation ledger for one
+// preallocated model-attempt identity. task_run_id and borrowed_from_task_run_id are intentional
+// loose refs: waiting/timeout rows precede ai_task_runs, while the durable model attempt is created
+// only after acquire. Admission correctness must not depend on a hard FK during restore. Rows are
+// operational. Terminal rows become eligible after a seven-day diagnostic horizon for opportunistic
+// pruning in bounded lane-local batches; there is no background TTL.
+//
+// One active same-lane descendant chain may share an active session-family root's concurrency slot
+// while every child keeps its own row, start reservation, lease, and metrics. Parallel siblings must
+// consume another root or wait. Cross-row facts remain runtime CAS invariants; the row-local CHECK
+// only prevents impossible shapes and self-borrowing.
+export const provider_session_admission = pgTable(
+  'provider_session_admission',
+  {
+    // Primary-key uniqueness is the one-admission-row-per-attempt contract. Deliberately no FK.
+    task_run_id: text('task_run_id').primaryKey(),
+    lane_id: text('lane_id').notNull(),
+    policy_fingerprint: text('policy_fingerprint').notNull(),
+    mode: text('mode', { enum: ['observe', 'enforce'] }).notNull(),
+    status: text('status', {
+      enum: [
+        'waiting',
+        'acquired',
+        'released',
+        'timed_out',
+        'cancelled',
+        'rejected',
+        'lease_expired',
+      ],
+    }).notNull(),
+    // Loose parent-attempt correlation. Runtime permits it only for an active same-lane parent.
+    borrowed_from_task_run_id: text('borrowed_from_task_run_id'),
+    claim_token: uuid('claim_token'),
+    requested_at: timestamp('requested_at', { withTimezone: true }).notNull(),
+    wait_deadline_at: timestamp('wait_deadline_at', { withTimezone: true }).notNull(),
+    acquired_at: timestamp('acquired_at', { withTimezone: true }),
+    heartbeat_at: timestamp('heartbeat_at', { withTimezone: true }),
+    lease_expires_at: timestamp('lease_expires_at', { withTimezone: true }),
+    // A lost short lease is not safe to recycle at an unfenceable external provider until this bound.
+    hard_reclaim_at: timestamp('hard_reclaim_at', { withTimezone: true }),
+    terminal_at: timestamp('terminal_at', { withTimezone: true }),
+    terminal_reason: text('terminal_reason'),
+  },
+  (t) => [
+    // Active rows feed family-root capacity accounting. One descendant chain is free only while an
+    // active ancestor owns its family slot; parallel branches consume roots. When an ancestor ends,
+    // its still-active child becomes the counted root.
+    // A short-lease loss is terminal for ownership but remains quarantined through hard_reclaim_at.
+    index('provider_session_admission_lane_active_idx')
+      .on(t.lane_id, t.hard_reclaim_at, t.borrowed_from_task_run_id)
+      .where(sql`${t.status} IN ('acquired','lease_expired')`),
+    // Short-lease expiry scan; heartbeat/release remain token-fenced CAS updates.
+    index('provider_session_admission_lane_lease_idx')
+      .on(t.lane_id, t.lease_expires_at)
+      .where(sql`${t.status} = 'acquired'`),
+    // Sliding start-reservation rate counts every acquired row, including family children and
+    // terminal rows.
+    index('provider_session_admission_lane_start_idx')
+      .on(t.lane_id, t.acquired_at)
+      .where(sql`${t.acquired_at} IS NOT NULL`),
+    index('provider_session_admission_lane_waiting_idx')
+      .on(t.lane_id, t.requested_at, t.task_run_id)
+      .where(sql`${t.status} = 'waiting'`),
+    index('provider_session_admission_borrowed_from_idx')
+      .on(t.borrowed_from_task_run_id)
+      .where(sql`${t.borrowed_from_task_run_id} IS NOT NULL`),
+    // Supports opportunistic lane-local pruning: at most 100 eligible rows per later lane tick.
+    index('provider_session_admission_lane_terminal_idx')
+      .on(t.lane_id, t.terminal_at)
+      .where(sql`${t.terminal_at} IS NOT NULL`),
+    check('provider_session_admission_mode_ck', sql`${t.mode} IN ('observe','enforce')`),
+    check(
+      'provider_session_admission_status_ck',
+      sql`${t.status} IN ('waiting','acquired','released','timed_out','cancelled','rejected','lease_expired')`,
+    ),
+    check(
+      'provider_session_admission_identifiers_ck',
+      sql`${t.task_run_id} = btrim(${t.task_run_id})
+        AND ${t.task_run_id} <> ''
+        AND ${t.lane_id} = btrim(${t.lane_id})
+        AND ${t.lane_id} <> ''
+        AND ${t.policy_fingerprint} = btrim(${t.policy_fingerprint})
+        AND ${t.policy_fingerprint} <> ''
+        AND (${t.borrowed_from_task_run_id} IS NULL OR (
+          ${t.borrowed_from_task_run_id} = btrim(${t.borrowed_from_task_run_id})
+          AND ${t.borrowed_from_task_run_id} <> ''
+        ))`,
+    ),
+    check(
+      'provider_session_admission_acquisition_shape_ck',
+      sql`(
+          ${t.claim_token} IS NULL
+          AND ${t.acquired_at} IS NULL
+          AND ${t.heartbeat_at} IS NULL
+          AND ${t.lease_expires_at} IS NULL
+          AND ${t.hard_reclaim_at} IS NULL
+        ) OR (
+          ${t.claim_token} IS NOT NULL
+          AND ${t.acquired_at} IS NOT NULL
+          AND ${t.heartbeat_at} IS NOT NULL
+          AND ${t.lease_expires_at} IS NOT NULL
+          AND ${t.hard_reclaim_at} IS NOT NULL
+        )`,
+    ),
+    check(
+      'provider_session_admission_status_shape_ck',
+      sql`(
+          ${t.status} IN ('waiting','timed_out','rejected') AND ${t.acquired_at} IS NULL
+        ) OR (
+          ${t.status} IN ('acquired','released','lease_expired') AND ${t.acquired_at} IS NOT NULL
+        ) OR ${t.status} = 'cancelled'`,
+    ),
+    check(
+      'provider_session_admission_terminal_shape_ck',
+      sql`(
+          ${t.status} IN ('waiting','acquired')
+          AND ${t.terminal_at} IS NULL
+          AND ${t.terminal_reason} IS NULL
+        ) OR (
+          ${t.status} IN ('released','timed_out','cancelled','rejected','lease_expired')
+          AND ${t.terminal_at} IS NOT NULL
+          AND ${t.terminal_reason} IS NOT NULL
+          AND btrim(${t.terminal_reason}) <> ''
+        )`,
+    ),
+    check(
+      'provider_session_admission_borrow_shape_ck',
+      sql`${t.borrowed_from_task_run_id} IS NULL OR (
+        ${t.borrowed_from_task_run_id} <> ${t.task_run_id}
+        AND ${t.acquired_at} IS NOT NULL
+        AND ${t.status} IN ('acquired','released','cancelled','lease_expired')
+      )`,
+    ),
+    check(
+      'provider_session_admission_timeline_ck',
+      sql`${t.wait_deadline_at} > ${t.requested_at}
+        AND (${t.acquired_at} IS NULL OR (
+          ${t.acquired_at} >= ${t.requested_at}
+          AND ${t.acquired_at} < ${t.wait_deadline_at}
+          AND ${t.heartbeat_at} >= ${t.acquired_at}
+          AND ${t.lease_expires_at} > ${t.heartbeat_at}
+          AND ${t.hard_reclaim_at} >= ${t.lease_expires_at}
+        ))
+        AND (${t.terminal_at} IS NULL OR (
+          ${t.terminal_at} >= ${t.requested_at}
+          AND (${t.acquired_at} IS NULL OR ${t.terminal_at} >= ${t.acquired_at})
+        ))
+        AND (${t.status} <> 'timed_out' OR ${t.terminal_at} >= ${t.wait_deadline_at})
+        AND (${t.status} <> 'lease_expired' OR ${t.terminal_at} >= ${t.lease_expires_at})`,
+    ),
+  ],
+);
+
 export const tool_call_log = pgTable('tool_call_log', {
   id: text('id').primaryKey(),
   // Intentional loose coupling — NO hard FK to ai_task_runs.id. task_run_id is

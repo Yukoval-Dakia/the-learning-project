@@ -17,6 +17,12 @@ import {
 } from './log';
 import type { TokenCounts } from './pricing';
 import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
+import {
+  ProviderSessionAdmissionError,
+  type ProviderSessionAdmissionPlan,
+  acquireProviderSession,
+  resolveProviderSessionAdmissionPlan,
+} from './provider-session-admission';
 
 export type LifecycleUsage = AiTaskUsage;
 
@@ -46,6 +52,10 @@ interface LifecycleConfig<TResult extends LifecycleResult> {
   taskRunId: string;
   timeoutMs: number;
   override?: { provider?: ResolvedProvider['provider']; model?: string };
+  /** Active outer central attempt when a DomainTool starts a nested task. */
+  parentTaskRunId?: string;
+  /** Absolute wall-clock bound for starting this provider attempt (retry gate). */
+  providerStartDeadlineAt?: number;
   signal?: AbortSignal;
   logScope: string;
   afterRun?: (result: TResult) => Promise<void> | void;
@@ -106,7 +116,9 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   readonly taskRunId: string;
   readonly kind: TaskKind;
 
-  private readonly timer: ReturnType<typeof setTimeout>;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private readonly admissionPlan: ProviderSessionAdmissionPlan;
+  private admissionFailure: ProviderSessionAdmissionError | undefined;
   private terminal: TerminalResultEvidence | undefined;
   private costTruthCache: AttemptCostTruth | undefined;
   private readonly terminalWriteAttempts = new Set<AttemptTerminalStatus>();
@@ -119,7 +131,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     this.taskRunId = config.taskRunId;
     this.kind = config.kind;
     this.resolved = resolveTaskProvider(config.kind, config.override);
-    this.timer = setTimeout(() => this.abortController.abort(), config.timeoutMs);
+    this.admissionPlan = resolveProviderSessionAdmissionPlan(this.resolved.provider);
 
     if (config.signal) {
       if (config.signal.aborted) {
@@ -182,6 +194,83 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
 
   get started(): boolean {
     return this.durableStart;
+  }
+
+  /**
+   * Own the complete provider-session boundary without holding the permit during
+   * terminal DB settlement. Admission wait precedes the durable model-attempt
+   * row and the execution timer, so queue time can never masquerade as model
+   * runtime or create an unknown-cost YUK-841 attempt that never called the SDK.
+   */
+  async withProviderSession<T>(actualInput: unknown, run: () => Promise<T>): Promise<T> {
+    const permit =
+      this.admissionPlan.mode === 'off'
+        ? undefined
+        : await acquireProviderSession({
+            db: this.config.db,
+            kind: this.kind,
+            taskRunId: this.taskRunId,
+            parentTaskRunId: this.config.parentTaskRunId,
+            executionTimeoutMs: this.config.timeoutMs,
+            signal: this.abortController.signal,
+            plan: this.admissionPlan,
+            deadlineAt: this.config.providerStartDeadlineAt,
+            onLeaseLost: (error) => {
+              this.admissionFailure ??= error;
+              this.abortController.abort();
+            },
+          });
+
+    try {
+      if (
+        this.config.providerStartDeadlineAt !== undefined &&
+        Date.now() >= this.config.providerStartDeadlineAt
+      ) {
+        throw new ProviderSessionAdmissionError({
+          reason: 'wait_timeout',
+          laneId: this.resolved.provider,
+          taskRunId: this.taskRunId,
+          cause: new Error('provider retry start window elapsed before SDK invocation'),
+        });
+      }
+      await this.start(actualInput);
+      // Admission can return just inside the retry window while the durable
+      // start write blocks past it. Recheck at the final pre-SDK seam so the
+      // existing elapsed gate is never expanded by control-plane DB latency.
+      if (
+        this.config.providerStartDeadlineAt !== undefined &&
+        Date.now() >= this.config.providerStartDeadlineAt
+      ) {
+        throw new ProviderSessionAdmissionError({
+          reason: 'wait_timeout',
+          laneId: this.resolved.provider,
+          taskRunId: this.taskRunId,
+          cause: new Error('provider retry start window elapsed during durable start'),
+        });
+      }
+      if (this.abortController.signal.aborted) {
+        throw new ProviderSessionAdmissionError({
+          reason: 'cancelled',
+          laneId: this.resolved.provider,
+          taskRunId: this.taskRunId,
+          cause: new Error('provider attempt cancelled before SDK invocation'),
+        });
+      }
+      this.armExecutionTimer();
+      try {
+        const value = await run();
+        if (this.admissionFailure) throw this.admissionFailure;
+        return value;
+      } catch (error) {
+        throw this.admissionFailure ?? error;
+      }
+    } finally {
+      this.clearExecutionTimer();
+      await permit?.release();
+      // Cover a heartbeat that fenced this attempt after the provider callback
+      // resolved but before release stopped the heartbeat.
+      if (this.admissionFailure) throw this.admissionFailure;
+    }
   }
 
   async start(actualInput: unknown): Promise<void> {
@@ -319,12 +408,23 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   dispose(): void {
-    clearTimeout(this.timer);
+    this.clearExecutionTimer();
   }
 
   abort(): void {
-    clearTimeout(this.timer);
+    this.clearExecutionTimer();
     this.abortController.abort();
+  }
+
+  private armExecutionTimer(): void {
+    if (this.timer) return;
+    this.timer = setTimeout(() => this.abortController.abort(), this.config.timeoutMs);
+  }
+
+  private clearExecutionTimer(): void {
+    if (!this.timer) return;
+    clearTimeout(this.timer);
+    this.timer = undefined;
   }
 
   private async writeTerminal(input: {

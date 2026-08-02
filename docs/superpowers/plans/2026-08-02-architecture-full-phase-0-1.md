@@ -166,18 +166,25 @@ structure ships.
 
 ### F0-3 · YUK-842 — cross-process provider-lane admission
 
-Use the existing Postgres/pg-boss shared plane. Admission wraps each real upstream SDK request after
-provider/lane resolution and before attempt execution:
+Use the existing Postgres/pg-boss shared plane. Admission wraps each central Claude Agent SDK
+query/session after provider/lane resolution and before model-attempt execution:
 
-- global concurrency and bounded request rate by provider lane;
+- global active session-family/parallel-branch cap and bounded session-start-reservation rate by
+  provider lane; one same-lane nested descendant chain may borrow its root slot to avoid self-deadlock;
 - lease, timeout, stale recovery, and crash safety;
 - explicit wait/acquire/release/timeout metrics linked to attempt identity;
-- app routes and every worker queue share the same capacity;
+- app routes and every worker queue that call the central model-attempt runtime share the same capacity;
 - interaction with SDK retry and pg-boss redelivery is tested so hidden multiplicative retries are not
   introduced;
 - production failure behavior is bounded and documented; no infinite upstream fail-open.
 
 No Redis, new service, per-job semaphores, intelligent routing, or manifest field explosion.
+
+The admitted unit is not a wire request: one `sdkQuery()` may contain several model turns, SDK-native
+subagents, and the Claude CLI's bounded internal retries. Direct DashScope embeddings, Mem0 fan-out,
+GLM/OCR clients, Tencent OCR, and support preflights do not yet use `AiRunLifecycle`; inventorying and
+migrating those paths is YUK-845. Until then, this gate must not be reported as product-wide provider
+HTTP capacity control.
 
 ### Phase 0 exit gate
 

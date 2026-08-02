@@ -1057,6 +1057,10 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       runInput,
       {
         db,
+        // The MCP ToolContext uses this same preallocated id. Keeping the outer
+        // lifecycle identity identical lets same-lane nested runTask calls prove
+        // their active parent and borrow its concurrency slot.
+        taskRunId,
         signal: cancellationControl.signal,
         mcpServers,
         allowedTools,

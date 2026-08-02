@@ -1,0 +1,431 @@
+import type { Db } from '@/db/client';
+import * as schema from '@/db/schema';
+import { provider_session_admission } from '@/db/schema';
+import { resetDb, testDb } from '@/tests/helpers/db';
+import { eq, sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  type ProviderSessionAdmissionPlan,
+  acquireProviderSession,
+} from './provider-session-admission';
+
+const BASE_POLICY = {
+  laneId: 'xiaomi' as const,
+  maxConcurrentSessions: 1,
+  maxSessionStartsPerMinute: 100,
+  maxQueuedSessions: 10,
+  maxWaitMs: 2_000,
+  fingerprint: 'test-policy-v1',
+};
+
+type EnforcedPlan = Exclude<ProviderSessionAdmissionPlan, { mode: 'off' }>;
+
+interface IndependentDb {
+  db: Db;
+  close(): Promise<void>;
+}
+
+const opened: IndependentDb[] = [];
+const controllers: AbortController[] = [];
+const permits: Array<{ release(): Promise<void> }> = [];
+const pending: Promise<unknown>[] = [];
+
+function openIndependentDb(): IndependentDb {
+  const url = process.env.TEST_DATABASE_URL;
+  if (!url) throw new Error('TEST_DATABASE_URL not set');
+  const client = postgres(url, { max: 1 });
+  const handle = {
+    db: drizzle(client, { schema }) as unknown as Db,
+    close: () => client.end(),
+  };
+  opened.push(handle);
+  return handle;
+}
+
+function plan(overrides: Partial<typeof BASE_POLICY> = {}): EnforcedPlan {
+  return { mode: 'enforce', laneId: 'xiaomi', policy: { ...BASE_POLICY, ...overrides } };
+}
+
+function startAcquire(input: {
+  db: Db;
+  taskRunId: string;
+  admissionPlan?: EnforcedPlan;
+  parentTaskRunId?: string;
+  executionTimeoutMs?: number;
+}) {
+  const controller = new AbortController();
+  controllers.push(controller);
+  const promise = acquireProviderSession({
+    db: input.db,
+    kind: 'AttributionTask',
+    taskRunId: input.taskRunId,
+    parentTaskRunId: input.parentTaskRunId,
+    executionTimeoutMs: input.executionTimeoutMs ?? 1_000,
+    signal: controller.signal,
+    plan: input.admissionPlan ?? plan(),
+    onLeaseLost: () => controller.abort(),
+  }).then((permit) => {
+    permits.push(permit);
+    return permit;
+  });
+  pending.push(promise);
+  return promise;
+}
+
+async function waitForStatus(taskRunId: string, status: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const rows = await testDb()
+      .select({ status: provider_session_admission.status })
+      .from(provider_session_admission)
+      .where(eq(provider_session_admission.task_run_id, taskRunId));
+    if (rows[0]?.status === status) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`admission ${taskRunId} did not reach status=${status}`);
+}
+
+beforeEach(async () => {
+  await resetDb();
+});
+
+afterEach(async () => {
+  for (const controller of controllers.splice(0)) controller.abort();
+  await Promise.allSettled(permits.splice(0).map((permit) => permit.release()));
+  await Promise.allSettled(pending.splice(0));
+  await Promise.allSettled(opened.splice(0).map((handle) => handle.close()));
+});
+
+describe('YUK-842 cross-process provider SDK-session admission', () => {
+  it('shares one concurrency cap across two independent DB clients', async () => {
+    const a = openIndependentDb();
+    const b = openIndependentDb();
+    const first = await startAcquire({ db: a.db, taskRunId: 'session-a' });
+    const secondPromise = startAcquire({ db: b.db, taskRunId: 'session-b' });
+
+    await waitForStatus('session-b', 'waiting');
+    await first.release();
+    const second = await secondPromise;
+
+    expect(second.borrowedFromTaskRunId).toBeNull();
+    await waitForStatus('session-b', 'acquired');
+  });
+
+  it('admits ordinary waiters in persisted FIFO order', async () => {
+    const a = openIndependentDb();
+    const b = openIndependentDb();
+    const holder = await startAcquire({ db: a.db, taskRunId: 'fifo-holder' });
+    const firstPromise = startAcquire({ db: a.db, taskRunId: 'fifo-first' });
+    await waitForStatus('fifo-first', 'waiting');
+    const secondPromise = startAcquire({ db: b.db, taskRunId: 'fifo-second' });
+    await waitForStatus('fifo-second', 'waiting');
+
+    await holder.release();
+    const first = await firstPromise;
+    await waitForStatus('fifo-first', 'acquired');
+    await waitForStatus('fifo-second', 'waiting');
+    await first.release();
+    await secondPromise;
+    await waitForStatus('fifo-second', 'acquired');
+  });
+
+  it('rejects above the configured durable queue bound', async () => {
+    const a = openIndependentDb();
+    const b = openIndependentDb();
+    const queuePlan = plan({ maxQueuedSessions: 1 });
+    await startAcquire({ db: a.db, taskRunId: 'queue-holder', admissionPlan: queuePlan });
+    startAcquire({ db: a.db, taskRunId: 'queue-waiter', admissionPlan: queuePlan });
+    await waitForStatus('queue-waiter', 'waiting');
+
+    await expect(
+      startAcquire({ db: b.db, taskRunId: 'queue-rejected', admissionPlan: queuePlan }),
+    ).rejects.toMatchObject({ reason: 'queue_full' });
+    await waitForStatus('queue-rejected', 'rejected');
+  });
+
+  it('never lets a duplicate process inherit another owner claim', async () => {
+    const a = openIndependentDb();
+    const b = openIndependentDb();
+    await startAcquire({ db: a.db, taskRunId: 'duplicate-session' });
+
+    await expect(startAcquire({ db: b.db, taskRunId: 'duplicate-session' })).rejects.toMatchObject({
+      reason: 'control_plane_unavailable',
+    });
+    const rows = await testDb()
+      .select({ status: provider_session_admission.status })
+      .from(provider_session_admission)
+      .where(eq(provider_session_admission.task_run_id, 'duplicate-session'));
+    expect(rows).toEqual([{ status: 'acquired' }]);
+  });
+
+  it('fails closed instead of operating on a same-id waiter from another lane', async () => {
+    const a = openIndependentDb();
+    const b = openIndependentDb();
+    await startAcquire({ db: a.db, taskRunId: 'cross-lane-holder' });
+    startAcquire({ db: a.db, taskRunId: 'cross-lane-collision' });
+    await waitForStatus('cross-lane-collision', 'waiting');
+    const anthropicPlan: EnforcedPlan = {
+      mode: 'enforce',
+      laneId: 'anthropic',
+      policy: {
+        ...BASE_POLICY,
+        laneId: 'anthropic',
+        fingerprint: 'anthropic-policy-v1',
+      },
+    };
+
+    await expect(
+      startAcquire({
+        db: b.db,
+        taskRunId: 'cross-lane-collision',
+        admissionPlan: anthropicPlan,
+      }),
+    ).rejects.toMatchObject({ reason: 'control_plane_unavailable' });
+    const rows = await testDb()
+      .select({ laneId: provider_session_admission.lane_id })
+      .from(provider_session_admission)
+      .where(eq(provider_session_admission.task_run_id, 'cross-lane-collision'));
+    expect(rows).toEqual([{ laneId: 'xiaomi' }]);
+  });
+
+  it('quarantines an expired owner until hard reclaim, then recovers capacity', async () => {
+    const a = openIndependentDb();
+    const b = openIndependentDb();
+    await startAcquire({ db: a.db, taskRunId: 'stale-owner' });
+    await testDb().execute(sql`
+      UPDATE provider_session_admission
+         SET requested_at = clock_timestamp() - interval '3 seconds',
+             acquired_at = clock_timestamp() - interval '2500 milliseconds',
+             heartbeat_at = clock_timestamp() - interval '2 seconds',
+             lease_expires_at = clock_timestamp() - interval '1 second'
+       WHERE task_run_id = 'stale-owner'
+    `);
+
+    const successorPromise = startAcquire({ db: b.db, taskRunId: 'stale-successor' });
+    await waitForStatus('stale-owner', 'lease_expired');
+    await waitForStatus('stale-successor', 'waiting');
+
+    await testDb().execute(sql`
+      UPDATE provider_session_admission
+         SET hard_reclaim_at = clock_timestamp() - interval '1 millisecond'
+       WHERE task_run_id = 'stale-owner'
+    `);
+    await successorPromise;
+    await waitForStatus('stale-successor', 'acquired');
+  });
+
+  it('borrows an active same-lane parent slot without releasing the parent capacity', async () => {
+    const a = openIndependentDb();
+    const b = openIndependentDb();
+    const parent = await startAcquire({ db: a.db, taskRunId: 'outer-session' });
+    const child = await startAcquire({
+      db: b.db,
+      taskRunId: 'inner-session',
+      parentTaskRunId: 'outer-session',
+    });
+
+    expect(child.borrowedFromTaskRunId).toBe('outer-session');
+    const outsiderPromise = startAcquire({ db: b.db, taskRunId: 'unrelated-session' });
+    await waitForStatus('unrelated-session', 'waiting');
+    await child.release();
+    await waitForStatus('unrelated-session', 'waiting');
+
+    await parent.release();
+    const outsider = await outsiderPromise;
+    expect(outsider.borrowedFromTaskRunId).toBeNull();
+  });
+
+  it('serializes parallel borrowed siblings when the family owns the only slot', async () => {
+    const a = openIndependentDb();
+    const b = openIndependentDb();
+    await startAcquire({ db: a.db, taskRunId: 'parallel-parent' });
+    const firstChild = await startAcquire({
+      db: b.db,
+      taskRunId: 'parallel-child-a',
+      parentTaskRunId: 'parallel-parent',
+    });
+    const secondChildPromise = startAcquire({
+      db: a.db,
+      taskRunId: 'parallel-child-b',
+      parentTaskRunId: 'parallel-parent',
+    });
+
+    await waitForStatus('parallel-child-b', 'waiting');
+    await firstChild.release();
+    const secondChild = await secondChildPromise;
+    expect(secondChild.borrowedFromTaskRunId).toBe('parallel-parent');
+  });
+
+  it('makes a borrowed child occupy the family slot when its parent releases first', async () => {
+    const a = openIndependentDb();
+    const b = openIndependentDb();
+    const parent = await startAcquire({ db: a.db, taskRunId: 'parent-first-parent' });
+    const child = await startAcquire({
+      db: b.db,
+      taskRunId: 'parent-first-child',
+      parentTaskRunId: 'parent-first-parent',
+    });
+
+    await parent.release();
+    const outsiderPromise = startAcquire({ db: a.db, taskRunId: 'parent-first-outsider' });
+    await waitForStatus('parent-first-outsider', 'waiting');
+    await child.release();
+    const outsider = await outsiderPromise;
+    expect(outsider.borrowedFromTaskRunId).toBeNull();
+  });
+
+  it('charges a released start reservation to the persisted rate window', async () => {
+    const a = openIndependentDb();
+    const ratePlan = plan({ maxConcurrentSessions: 5, maxSessionStartsPerMinute: 1 });
+    const first = await startAcquire({
+      db: a.db,
+      taskRunId: 'rate-first',
+      admissionPlan: ratePlan,
+    });
+    await first.release();
+
+    const secondPromise = startAcquire({
+      db: a.db,
+      taskRunId: 'rate-second',
+      admissionPlan: ratePlan,
+    });
+    await waitForStatus('rate-second', 'waiting');
+    await testDb().execute(sql`
+      UPDATE provider_session_admission
+         SET requested_at = clock_timestamp() - interval '62 seconds',
+             acquired_at = clock_timestamp() - interval '61 seconds',
+             heartbeat_at = clock_timestamp() - interval '61 seconds',
+             lease_expires_at = clock_timestamp() - interval '60 seconds',
+             hard_reclaim_at = clock_timestamp() - interval '59 seconds',
+             terminal_at = clock_timestamp() - interval '59 seconds'
+       WHERE task_run_id = 'rate-first'
+    `);
+    await secondPromise;
+    await waitForStatus('rate-second', 'acquired');
+  });
+
+  it('charges a borrowed child as its own persisted start reservation', async () => {
+    const a = openIndependentDb();
+    const ratePlan = plan({ maxSessionStartsPerMinute: 2 });
+    const parent = await startAcquire({
+      db: a.db,
+      taskRunId: 'borrowed-rate-parent',
+      admissionPlan: ratePlan,
+    });
+    const child = await startAcquire({
+      db: a.db,
+      taskRunId: 'borrowed-rate-child',
+      parentTaskRunId: 'borrowed-rate-parent',
+      admissionPlan: ratePlan,
+    });
+    await child.release();
+    await parent.release();
+
+    const nextPromise = startAcquire({
+      db: a.db,
+      taskRunId: 'borrowed-rate-next',
+      admissionPlan: ratePlan,
+    });
+    await waitForStatus('borrowed-rate-next', 'waiting');
+    await testDb().execute(sql`
+      UPDATE provider_session_admission
+         SET requested_at = clock_timestamp() - interval '62 seconds',
+             acquired_at = clock_timestamp() - interval '61 seconds',
+             heartbeat_at = clock_timestamp() - interval '61 seconds',
+             lease_expires_at = clock_timestamp() - interval '60 seconds',
+             hard_reclaim_at = clock_timestamp() - interval '59 seconds',
+             terminal_at = clock_timestamp() - interval '59 seconds'
+       WHERE task_run_id IN ('borrowed-rate-parent', 'borrowed-rate-child')
+    `);
+    await nextPromise;
+    await waitForStatus('borrowed-rate-next', 'acquired');
+  });
+
+  it('fails closed on overlapping active policy fingerprints', async () => {
+    const a = openIndependentDb();
+    const b = openIndependentDb();
+    await startAcquire({ db: a.db, taskRunId: 'old-policy' });
+
+    await expect(
+      startAcquire({
+        db: b.db,
+        taskRunId: 'new-policy',
+        admissionPlan: plan({ fingerprint: 'test-policy-v2' }),
+      }),
+    ).rejects.toMatchObject({ reason: 'policy_mismatch' });
+    await waitForStatus('new-policy', 'rejected');
+  });
+
+  it('linearizes bounded wait timeout in the DB and never acquires afterward', async () => {
+    const a = openIndependentDb();
+    const b = openIndependentDb();
+    const timeoutPlan = plan({ maxWaitMs: 250 });
+    await startAcquire({
+      db: a.db,
+      taskRunId: 'timeout-holder',
+      admissionPlan: timeoutPlan,
+    });
+
+    await expect(
+      startAcquire({
+        db: b.db,
+        taskRunId: 'timeout-waiter',
+        admissionPlan: timeoutPlan,
+      }),
+    ).rejects.toMatchObject({ reason: 'wait_timeout' });
+    const rows = await testDb()
+      .select({ status: provider_session_admission.status })
+      .from(provider_session_admission)
+      .where(eq(provider_session_admission.task_run_id, 'timeout-waiter'));
+    expect(rows).toEqual([{ status: 'timed_out' }]);
+  });
+
+  it('bounds a lane sweep blocked on a row lock at the DB layer', async () => {
+    const a = openIndependentDb();
+    const b = openIndependentDb();
+    await startAcquire({ db: a.db, taskRunId: 'db-lock-stale-owner' });
+    await testDb().execute(sql`
+      UPDATE provider_session_admission
+         SET requested_at = clock_timestamp() - interval '3 seconds',
+             acquired_at = clock_timestamp() - interval '2500 milliseconds',
+             heartbeat_at = clock_timestamp() - interval '2 seconds',
+             lease_expires_at = clock_timestamp() - interval '1 second'
+       WHERE task_run_id = 'db-lock-stale-owner'
+    `);
+
+    let unlock!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      unlock = resolve;
+    });
+    let locked!: () => void;
+    const rowLocked = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    const blocker = a.db.transaction(async (tx) => {
+      await tx.execute(sql`
+        SELECT task_run_id
+          FROM provider_session_admission
+         WHERE task_run_id = 'db-lock-stale-owner'
+         FOR UPDATE
+      `);
+      locked();
+      await hold;
+    });
+    await rowLocked;
+
+    try {
+      await expect(
+        startAcquire({
+          db: b.db,
+          taskRunId: 'db-lock-bounded-waiter',
+          admissionPlan: plan({ maxWaitMs: 400 }),
+        }),
+      ).rejects.toMatchObject({ reason: 'wait_timeout' });
+    } finally {
+      unlock();
+      await blocker;
+    }
+  });
+});

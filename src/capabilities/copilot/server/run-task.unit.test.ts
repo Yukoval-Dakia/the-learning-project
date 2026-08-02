@@ -121,7 +121,11 @@ describe('run_task', () => {
       events.push('runner');
       expect(kind).toBe('GoalScopeTask');
       expect(input).toEqual({ prepared: { goal_title: 'Learn' } });
-      expect(callCtx).toEqual({ subjectProfile: undefined, db });
+      expect(callCtx).toEqual({
+        subjectProfile: undefined,
+        parentTaskRunId: 'tool-run',
+        db,
+      });
       return {
         text: 'generated',
         task_run_id: 'run-1',

@@ -24,6 +24,7 @@
 //     retries — never retry an uncertain failure into a double bill).
 
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { ProviderSessionAdmissionError } from './provider-session-admission';
 
 /** SDKResultError['subtype'] union, spelled out (sdk.d.ts:3538-3556). */
 type SdkResultErrorSubtype =
@@ -40,6 +41,8 @@ export type AgentFailureSubtype =
   | 'stream_no_terminal'
   /** Lifecycle budget elapsed before a terminal result was observed. */
   | 'budget_timeout'
+  /** Cross-process session lease/control-plane failure after durable start. */
+  | 'provider_admission'
   /** Non-SDK exception after the attempt acquired a durable task-run id. */
   | 'runner_error';
 
@@ -104,6 +107,14 @@ export function bindAgentRunError(input: {
   aborted: boolean;
 }): AgentRunError {
   if (input.error instanceof AgentRunError) return input.error;
+  if (input.error instanceof ProviderSessionAdmissionError) {
+    return new AgentRunError({
+      kind: input.kind,
+      taskRunId: input.taskRunId,
+      subtype: 'provider_admission',
+      errors: [input.error.message],
+    });
+  }
   return new AgentRunError({
     kind: input.kind,
     taskRunId: input.taskRunId,

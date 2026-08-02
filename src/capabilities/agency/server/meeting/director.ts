@@ -251,7 +251,7 @@ export async function runResearchMeetingDirector(
     deps.listPendingConjecturesFn ??
     ((d: Db) => listProposalInboxRows(d, { status: 'pending', kind: 'conjecture' }));
   const runAgentTaskFn = deps.runAgentTaskFn ?? runAgentTask;
-  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
+  const runTaskFn = deps.runTaskFn;
   const writeEventFn = deps.writeEventFn ?? writeEvent;
   const persistToolTraceFn = deps.persistToolTraceFn ?? persistToolTrace;
   const loadConjectureHistoryFn = deps.loadConjectureHistoryFn ?? loadConjectureHistory;
@@ -364,7 +364,7 @@ export async function runResearchMeetingDirector(
     getMasteryProjectionFn,
     failureAttempts: failures,
     loadConjectureHistoryFn,
-    runTaskFn,
+    runTaskFn: runTaskFn ?? makeRunTaskFn(db, { parentTaskRunId: toolContextTaskRunId }),
     resolveSubjectProfileForKnowledgeIdsFn: deps.resolveSubjectProfileForKnowledgeIdsFn,
   });
   const scout = buildEvidenceScoutAgentDefinition({ prompt: EVIDENCE_SCOUT_CHARTER });
@@ -406,6 +406,7 @@ export async function runResearchMeetingDirector(
       agents: spawnContract.agents,
       hooks: spawnContract.hooks,
       canUseTool: spawnContract.canUseTool,
+      taskRunId: toolContextTaskRunId,
     });
   } catch (err) {
     degraded = true;
@@ -433,9 +434,9 @@ export async function runResearchMeetingDirector(
   // run itself succeeded but a persistence write hiccuped.
   let postRunError: string | undefined;
 
-  // Persist the evidence read trace to tool_call_log (best-effort). On a degraded run
-  // (no SDK task_run_id) fall back to the synthetic tool-context run id so the reads are
-  // still correlatable.
+  // Persist the evidence read trace to tool_call_log (best-effort). The preallocated
+  // tool-context id is also the outer SDK task id; retain it on a degraded pre-start run
+  // so every read remains correlatable.
   const traceRunId = taskResult?.task_run_id ?? toolContextTaskRunId;
   if (trace.length > 0) {
     try {

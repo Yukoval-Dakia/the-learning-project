@@ -260,10 +260,9 @@ export interface BuildDirectorServerOpts {
    *  the deterministic lane's proposals included; §0.D shadow-with-suppression). */
   knownConjectureKeys: Set<string>;
   caps: DirectorCaps;
-  /** provenance: the run's trigger event id (caused_by) + the synthetic tool-context run
-   *  id (proposal.task_run_id / note.source_task_run_id — the real SDK task_run_id is
-   *  minted inside runAgentTask and unavailable at build time, so we mint a synthetic
-   *  one up front, mirroring dreaming's toolContextTaskRunId). */
+  /** provenance: the run's trigger event id (caused_by) + the preallocated outer SDK
+   *  task id used by both runAgentTask and its tool context. Sharing the real id lets
+   *  nested same-lane runTask calls borrow the outer admission slot safely. */
   triggerEventId: string;
   toolContextTaskRunId: string;
   writeAiProposalFn?: WriteAiProposalFn;
@@ -388,7 +387,7 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
   const writeAgentNoteFn = opts.writeAgentNoteFn ?? writeAgentNote;
   const getMasteryProjectionFn = opts.getMasteryProjectionFn ?? getMasteryProjection;
   const evidenceRefsExistFn = opts.evidenceRefsExistFn ?? evidenceRefsExist;
-  const runTaskFn = opts.runTaskFn ?? makeRunTaskFn(db);
+  const runTaskFn = opts.runTaskFn ?? makeRunTaskFn(db, { parentTaskRunId: toolContextTaskRunId });
   const loadConjectureHistoryFn = opts.loadConjectureHistoryFn ?? loadConjectureHistory;
   const resolveSubjectProfileForKnowledgeIdsFn =
     opts.resolveSubjectProfileForKnowledgeIdsFn ?? resolveSubjectProfileForKnowledgeIds;

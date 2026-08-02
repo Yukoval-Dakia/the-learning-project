@@ -54,6 +54,7 @@ async function copilotReplyEvents(sessionId: string) {
 // budgetOverride），让 mock.calls[0] 携带 typed tuple。
 type AgentCtx = {
   db: unknown;
+  taskRunId?: string;
   signal?: AbortSignal;
   mcpServers?: Record<string, unknown>;
   allowedTools?: string[];
@@ -143,6 +144,9 @@ describe('runCopilotRun', () => {
     });
 
     expect(result).toEqual({ status: 'done', reply: '这是回答', task_run_id: 'tr_x' });
+    expect(run.mock.calls[0]?.[2]).toMatchObject({
+      taskRunId: `copilot_run_tool_${baseData.run_id}`,
+    });
 
     const events = await replay(baseData.run_id);
     const types = events.map((e) => e.event_type);

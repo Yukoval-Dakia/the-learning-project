@@ -113,12 +113,17 @@ export const fastTestInclude = [
   // no DB client, network, or subprocess is touched.
   'src/server/ai/spawn-contract.unit.test.ts',
   'src/server/ai/run-lifecycle.test.ts',
+  'src/server/ai/run-lifecycle.admission.test.ts',
+  // YUK-842 — pure config/failure-policy unit. DB coordination lives in the
+  // sibling *.db.test.ts and remains in the container partition.
+  'src/server/ai/provider-session-admission.test.ts',
   // YUK-299 — runner outputFormat seam: zero-regression + structured_output
   // three-state read. Same justification as stream-cancel: @anthropic-ai/
   // claude-agent-sdk + @/server/ai/log are vi.mock'd and `db` is an untouched stub
   // → no live Postgres. src/server/ai/** has no unit glob, so this MUST be listed
   // or the db config's src/**/*.test.ts glob would sweep it into the container.
   'src/server/ai/runner.seam.test.ts',
+  'src/server/ai/runner.provider-admission.test.ts',
   // YUK-750 — bound runner adapter contract. Pure no-DB: runner is mocked and
   // the Db value is an untouched structural stub.
   'src/server/ai/runner-fn.unit.test.ts',

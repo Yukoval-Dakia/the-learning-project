@@ -44,11 +44,10 @@ export const runTaskTool: DomainTool<RunTaskInput, RunTaskOutput> = {
     const intent = copilot.intentSchema.parse(input.intent);
     const prepare = await copilot.prepare();
     const prepared = await prepare(ctx, intent);
-    const result = await makeRunTaskFn(ctx.db, { signal: ctx.signal })(
-      input.task_kind,
-      prepared.input,
-      prepared.ctx,
-    );
+    const result = await makeRunTaskFn(ctx.db, {
+      signal: ctx.signal,
+      parentTaskRunId: ctx.taskRunId,
+    })(input.task_kind, prepared.input, prepared.ctx);
     return {
       task_kind: input.task_kind,
       text: result.text,

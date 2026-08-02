@@ -1590,12 +1590,14 @@ describe('runCopilotChatStreaming (C1 — SSE streaming entrypoint)', () => {
     );
     const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
     const deltas: string[] = [];
+    const controller = new AbortController();
 
     const result = await runCopilotChatStreaming(
       db,
       { user_message: '解释一下「之」', triggered_by: 'chat' },
       (t) => deltas.push(t),
       { ...baseDeps, buildMcpServerFn, runAgentTaskFn, streamAgentTaskFn, writeEventFn },
+      controller.signal,
     );
 
     // onDelta fired with the chunk; the free-form token loop ran via the stream seam.
@@ -1605,8 +1607,11 @@ describe('runCopilotChatStreaming (C1 — SSE streaming entrypoint)', () => {
     const mcpCtx = (buildMcpServerFn.mock.calls[0] as unknown as [BuildMcpServerOptions])[0].ctx;
     const runnerCtx = (streamAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
       taskRunId?: string;
+      signal?: AbortSignal;
     };
     expect(runnerCtx?.taskRunId).toBe(mcpCtx?.taskRunId);
+    expect(runnerCtx?.signal).toBe(controller.signal);
+    expect(mcpCtx?.signal).toBe(controller.signal);
 
     // Result equals what the non-stream path would return — real task_run_id + reply.
     expect(result.task_run_id).toBe('task_stream_real');

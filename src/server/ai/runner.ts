@@ -219,6 +219,12 @@ export interface RunTaskCtx {
    */
   taskRunId?: string;
   /**
+   * Active outer central attempt for a nested DomainTool run. Same-lane children
+   * borrow the parent's session-concurrency slot so maxConcurrency=1 cannot
+   * deadlock outer query → tool → inner query. The DB validates the parent lease.
+   */
+  parentTaskRunId?: string;
+  /**
    * Disable runner-owned tool logging. `runTask` records only the SDK-native Task
    * spawn; MCP DomainTools keep their bridge-owned authoritative input/output row.
    * Streaming runners retain their existing input-only logging contract.
@@ -551,14 +557,21 @@ async function runTaskAttempt(args: {
   ctx: RunTaskCtx;
   lifecycle: AiRunLifecycle<RunTaskResult>;
   onSdkQueryStarted?: () => Promise<void>;
+  warnMissingMcp?: boolean;
 }): Promise<RunTaskResult> {
   const { kind, actualInput, ctx, lifecycle } = args;
 
   let resultText = '';
-  let stepStartTime = Date.now();
   let iteration = 0;
   const thinking = emptyThinkingObservation();
-  try {
+  await lifecycle.withProviderSession(actualInput, async () => {
+    let stepStartTime = Date.now();
+    if (args.warnMissingMcp) {
+      logMissingMcpServersWarning({
+        task_run_id: lifecycle.taskRunId,
+        task_kind: kind,
+      });
+    }
     const q = sdkQuery({
       prompt: promptFromInput(actualInput),
       options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
@@ -634,22 +647,22 @@ async function runTaskAttempt(args: {
         errors: [],
       });
     }
+  });
 
-    const result: RunTaskResult = {
-      task_run_id: lifecycle.taskRunId,
-      text: resultText,
-      finishReason: lifecycle.finishReason,
-      usage: lifecycle.usage,
-      cost_usd: lifecycle.costUsd,
-      cost_basis: lifecycle.costBasis,
-      cost_ref: lifecycle.costRef,
-      structured_output: lifecycle.structuredOutput,
-    };
-    await lifecycle.finishSuccess(result);
-    return result;
-  } finally {
-    // The outer retry owner disposes after it has classified a thrown error.
-  }
+  // The provider permit is released before attempt settlement / afterRun. A DB
+  // observation write must never occupy scarce upstream session capacity.
+  const result: RunTaskResult = {
+    task_run_id: lifecycle.taskRunId,
+    text: resultText,
+    finishReason: lifecycle.finishReason,
+    usage: lifecycle.usage,
+    cost_usd: lifecycle.costUsd,
+    cost_basis: lifecycle.costBasis,
+    cost_ref: lifecycle.costRef,
+    structured_output: lifecycle.structuredOutput,
+  };
+  await lifecycle.finishSuccess(result);
+  return result;
 }
 
 export async function runTask(
@@ -679,6 +692,12 @@ export async function runTask(
       kind,
       timeoutMs: def.budget.timeout,
       override: ctx.override,
+      parentTaskRunId: ctx.parentTaskRunId,
+      // A retry may only wait inside the unused remainder of the existing 10s
+      // sync-route gate. Admission must not silently expand the 100s worst-case
+      // edge bound into maxWait + another full model budget.
+      providerStartDeadlineAt:
+        retrySource !== undefined ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS : undefined,
       taskRunId: attempt === 1 ? ctx.taskRunId : undefined,
       signal: ctx.signal,
       logScope: 'runTask',
@@ -687,28 +706,12 @@ export async function runTask(
         : undefined,
     });
     try {
-      await lifecycle.start(actualInput);
-    } catch (error) {
-      lifecycle.dispose();
-      // No durable row means no model attempt identity. The previous failure
-      // stays conservatively `error`; never manufacture a phantom settlement
-      // or claim that its planned retry happened.
-      throw error;
-    }
-    // Invocation-level guard: keep the warning correlated with the first run
-    // row, but never repeat it if this task later gains transient retries.
-    if (attempt === 1 && def.needsToolCall && !ctx.mcpServers) {
-      logMissingMcpServersWarning({
-        task_run_id: lifecycle.taskRunId,
-        task_kind: kind,
-      });
-    }
-    try {
       return await runTaskAttempt({
         kind,
         actualInput,
         ctx,
         lifecycle,
+        warnMissingMcp: attempt === 1 && def.needsToolCall && !ctx.mcpServers,
         onSdkQueryStarted: retrySource
           ? async () => {
               await retrySource?.markRetried();
@@ -717,6 +720,10 @@ export async function runTask(
           : undefined,
       });
     } catch (err) {
+      // Admission timeout/rejection happens before durable model-attempt start.
+      // It has an admission row but no YUK-841 cost attempt and is never retried
+      // by the runner's provider-transient loop.
+      if (!lifecycle.started) throw err;
       const boundError = bindAgentRunError({
         error: err,
         kind,
@@ -783,6 +790,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
     kind,
     timeoutMs: def.budget.timeout,
     override: ctx.override,
+    parentTaskRunId: ctx.parentTaskRunId,
     taskRunId: ctx.taskRunId,
     signal: ctx.signal,
     logScope: 'streamTask',
@@ -790,7 +798,6 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
       ? (result) => ctx.middleware?.afterRun?.(kind, result, ctx)
       : undefined,
   });
-  let stepStartTime = Date.now();
   let iteration = 0;
   const thinking = emptyThinkingObservation();
 
@@ -804,70 +811,71 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
         const actualInput = ctx.middleware?.beforeRun
           ? await ctx.middleware.beforeRun(kind, input, ctx)
           : input;
-        await lifecycle.start(actualInput);
-
-        const q = sdkQuery({
-          prompt: promptFromInput(actualInput),
-          options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
-        });
-        for await (const msg of q as AsyncIterable<SDKMessage>) {
-          await notifyTaskEvent(ctx, msg);
-          if (msg.type === 'assistant') {
-            observeAssistantThinking(msg, thinking);
-            const text = extractAssistantText(msg);
-            if (text) {
-              controller.enqueue(encoder.encode(text));
-              resultText += text;
-            }
-            iteration += 1;
-            const stepLatencyMs = Date.now() - stepStartTime;
-            const blocks = (msg.message.content ?? []) as ContentBlock[];
-            for (const block of blocks) {
-              if (block.type === 'tool_use' && ctx.autoLogToolCalls !== false) {
-                await lifecycle.recordToolCall({
-                  toolName: block.name,
-                  inputJson: (block.input ?? {}) as Record<string, unknown>,
-                  iteration,
-                  latencyMs: stepLatencyMs,
-                });
-              }
-            }
-            stepStartTime = Date.now();
-            continue;
-          }
-          if (msg.type !== 'result') continue;
-          lifecycle.recordTerminalResult(terminalEvidenceFromSdkResult(msg, thinking));
-          if (isApiErrorSuccessResult(msg)) {
-            throw new AgentRunError({
-              kind,
-              taskRunId: lifecycle.taskRunId,
-              subtype: 'api_error_result',
-              apiErrorStatus: msg.api_error_status ?? null,
-              errors: [msg.result ?? ''],
-            });
-          }
-          if (msg.subtype !== 'success') {
-            throw new AgentRunError({
-              kind,
-              taskRunId: lifecycle.taskRunId,
-              subtype: msg.subtype,
-              errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
-            });
-          }
-          break;
-        }
-
-        if (!lifecycle.sawTerminalResult) {
-          if (lifecycle.aborted) {
-            throw new Error(`[${kind}] Agent SDK run aborted with no terminal result`);
-          }
-          throw new AgentRunError({
-            kind,
-            taskRunId: lifecycle.taskRunId,
-            subtype: 'stream_no_terminal',
-            errors: [],
+        await lifecycle.withProviderSession(actualInput, async () => {
+          let stepStartTime = Date.now();
+          const q = sdkQuery({
+            prompt: promptFromInput(actualInput),
+            options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
           });
-        }
+          for await (const msg of q as AsyncIterable<SDKMessage>) {
+            await notifyTaskEvent(ctx, msg);
+            if (msg.type === 'assistant') {
+              observeAssistantThinking(msg, thinking);
+              const text = extractAssistantText(msg);
+              if (text) {
+                controller.enqueue(encoder.encode(text));
+                resultText += text;
+              }
+              iteration += 1;
+              const stepLatencyMs = Date.now() - stepStartTime;
+              const blocks = (msg.message.content ?? []) as ContentBlock[];
+              for (const block of blocks) {
+                if (block.type === 'tool_use' && ctx.autoLogToolCalls !== false) {
+                  await lifecycle.recordToolCall({
+                    toolName: block.name,
+                    inputJson: (block.input ?? {}) as Record<string, unknown>,
+                    iteration,
+                    latencyMs: stepLatencyMs,
+                  });
+                }
+              }
+              stepStartTime = Date.now();
+              continue;
+            }
+            if (msg.type !== 'result') continue;
+            lifecycle.recordTerminalResult(terminalEvidenceFromSdkResult(msg, thinking));
+            if (isApiErrorSuccessResult(msg)) {
+              throw new AgentRunError({
+                kind,
+                taskRunId: lifecycle.taskRunId,
+                subtype: 'api_error_result',
+                apiErrorStatus: msg.api_error_status ?? null,
+                errors: [msg.result ?? ''],
+              });
+            }
+            if (msg.subtype !== 'success') {
+              throw new AgentRunError({
+                kind,
+                taskRunId: lifecycle.taskRunId,
+                subtype: msg.subtype,
+                errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
+              });
+            }
+            break;
+          }
+
+          if (!lifecycle.sawTerminalResult) {
+            if (lifecycle.aborted) {
+              throw new Error(`[${kind}] Agent SDK run aborted with no terminal result`);
+            }
+            throw new AgentRunError({
+              kind,
+              taskRunId: lifecycle.taskRunId,
+              subtype: 'stream_no_terminal',
+              errors: [],
+            });
+          }
+        });
 
         const result: RunTaskResult = {
           task_run_id: lifecycle.taskRunId,
@@ -1028,6 +1036,7 @@ export async function streamTaskCollecting(
     kind,
     timeoutMs: ctx.budgetOverride?.timeoutMs ?? def.budget.timeout,
     override: ctx.override,
+    parentTaskRunId: ctx.parentTaskRunId,
     taskRunId: ctx.taskRunId,
     signal: ctx.signal,
     logScope: 'streamTaskCollecting',
@@ -1035,7 +1044,6 @@ export async function streamTaskCollecting(
       ? (result) => ctx.middleware?.afterRun?.(kind, result, ctx)
       : undefined,
   });
-  let stepStartTime = Date.now();
   let iteration = 0;
   let resultText = '';
   const thinking = emptyThinkingObservation();
@@ -1044,77 +1052,78 @@ export async function streamTaskCollecting(
     const actualInput = ctx.middleware?.beforeRun
       ? await ctx.middleware.beforeRun(kind, input, ctx)
       : input;
-    await lifecycle.start(actualInput);
-
-    const q = sdkQuery({
-      prompt: promptFromInput(actualInput),
-      options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
-    });
-    for await (const msg of q as AsyncIterable<SDKMessage>) {
-      await notifyTaskEvent(ctx, msg);
-      if (msg.type === 'assistant') {
-        observeAssistantThinking(msg, thinking);
-        const text = extractAssistantText(msg);
-        if (text) {
-          onDelta(text);
-          resultText += text;
+    await lifecycle.withProviderSession(actualInput, async () => {
+      let stepStartTime = Date.now();
+      const q = sdkQuery({
+        prompt: promptFromInput(actualInput),
+        options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
+      });
+      for await (const msg of q as AsyncIterable<SDKMessage>) {
+        await notifyTaskEvent(ctx, msg);
+        if (msg.type === 'assistant') {
+          observeAssistantThinking(msg, thinking);
+          const text = extractAssistantText(msg);
+          if (text) {
+            onDelta(text);
+            resultText += text;
+          }
+          iteration += 1;
+          const stepLatencyMs = Date.now() - stepStartTime;
+          const blocks = (msg.message.content ?? []) as ContentBlock[];
+          for (const block of blocks) {
+            if (block.type === 'tool_use' && ctx.autoLogToolCalls !== false) {
+              await lifecycle.recordToolCall({
+                toolName: block.name,
+                inputJson: (block.input ?? {}) as Record<string, unknown>,
+                iteration,
+                latencyMs: stepLatencyMs,
+              });
+            }
+          }
+          stepStartTime = Date.now();
+          continue;
         }
-        iteration += 1;
-        const stepLatencyMs = Date.now() - stepStartTime;
-        const blocks = (msg.message.content ?? []) as ContentBlock[];
-        for (const block of blocks) {
-          if (block.type === 'tool_use' && ctx.autoLogToolCalls !== false) {
-            await lifecycle.recordToolCall({
-              toolName: block.name,
-              inputJson: (block.input ?? {}) as Record<string, unknown>,
-              iteration,
-              latencyMs: stepLatencyMs,
+        if (msg.type !== 'result') continue;
+        lifecycle.recordTerminalResult(terminalEvidenceFromSdkResult(msg, thinking));
+        if (msg.subtype === 'success') {
+          if (isApiErrorSuccessResult(msg)) {
+            console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
+              event: 'task_run_success_with_error_flag',
+              task_run_id: lifecycle.taskRunId,
+              kind,
+              api_error_status: msg.api_error_status ?? null,
+            });
+            throw new AgentRunError({
+              kind,
+              taskRunId: lifecycle.taskRunId,
+              subtype: 'api_error_result',
+              apiErrorStatus: msg.api_error_status ?? null,
+              errors: msg.result ? [msg.result] : [],
             });
           }
-        }
-        stepStartTime = Date.now();
-        continue;
-      }
-      if (msg.type !== 'result') continue;
-      lifecycle.recordTerminalResult(terminalEvidenceFromSdkResult(msg, thinking));
-      if (msg.subtype === 'success') {
-        if (isApiErrorSuccessResult(msg)) {
-          console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
-            event: 'task_run_success_with_error_flag',
-            task_run_id: lifecycle.taskRunId,
-            kind,
-            api_error_status: msg.api_error_status ?? null,
-          });
+        } else {
           throw new AgentRunError({
             kind,
             taskRunId: lifecycle.taskRunId,
-            subtype: 'api_error_result',
-            apiErrorStatus: msg.api_error_status ?? null,
-            errors: msg.result ? [msg.result] : [],
+            subtype: msg.subtype,
+            errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
           });
         }
-      } else {
+        break;
+      }
+
+      if (!lifecycle.sawTerminalResult) {
+        if (lifecycle.aborted) {
+          throw new Error(`[${kind}] Agent SDK run aborted with no terminal result`);
+        }
         throw new AgentRunError({
           kind,
           taskRunId: lifecycle.taskRunId,
-          subtype: msg.subtype,
-          errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
+          subtype: 'stream_no_terminal',
+          errors: [],
         });
       }
-      break;
-    }
-
-    if (!lifecycle.sawTerminalResult) {
-      if (lifecycle.aborted) {
-        throw new Error(`[${kind}] Agent SDK run aborted with no terminal result`);
-      }
-      throw new AgentRunError({
-        kind,
-        taskRunId: lifecycle.taskRunId,
-        subtype: 'stream_no_terminal',
-        errors: [],
-      });
-    }
+    });
 
     const result: StreamCollectResult = {
       task_run_id: lifecycle.taskRunId,
