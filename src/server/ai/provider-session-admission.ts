@@ -849,16 +849,16 @@ async function tick(input: AdmissionRequest): Promise<TickResult> {
           const borrowedFromTaskRunId = (await parentCanLendSlot(tx, input))
             ? (input.parentTaskRunId ?? null)
             : null;
-          snapshot = await insertObservedAcquired(tx, input, borrowedFromTaskRunId);
-          row = snapshot.row;
+          const observedSnapshot = await insertObservedAcquired(tx, input, borrowedFromTaskRunId);
+          const observedRow = observedSnapshot.row;
           return {
             kind: 'acquired',
-            claimToken: requireOwnedClaimToken(row, input),
-            borrowedFromTaskRunId: row.borrowed_from_task_run_id,
-            waitMs: Number(row.wait_ms ?? 0),
+            claimToken: requireOwnedClaimToken(observedRow, input),
+            borrowedFromTaskRunId: observedRow.borrowed_from_task_run_id,
+            waitMs: Number(observedRow.wait_ms ?? 0),
             leaseDeadlineMonotonicAt: requireLeaseDeadlineMonotonicAt(
-              row,
-              snapshot.measuredAtMonotonic,
+              observedRow,
+              observedSnapshot.measuredAtMonotonic,
               input,
             ),
           } satisfies TickResult;
@@ -919,19 +919,19 @@ async function tick(input: AdmissionRequest): Promise<TickResult> {
         return { kind: 'waiting' } satisfies TickResult;
       }
 
-      snapshot = await acquireWaitingRow(tx, input, borrowedFromTaskRunId);
-      row = snapshot.row;
-      const acquireTerminal = terminalReason(row);
+      const acquiredSnapshot = await acquireWaitingRow(tx, input, borrowedFromTaskRunId);
+      const acquiredRow = acquiredSnapshot.row;
+      const acquireTerminal = terminalReason(acquiredRow);
       if (acquireTerminal) return acquireTerminal;
-      if (row.status !== 'acquired') return { kind: 'waiting' } satisfies TickResult;
+      if (acquiredRow.status !== 'acquired') return { kind: 'waiting' } satisfies TickResult;
       return {
         kind: 'acquired',
-        claimToken: requireOwnedClaimToken(row, input),
-        borrowedFromTaskRunId: row.borrowed_from_task_run_id,
-        waitMs: Number(row.wait_ms ?? 0),
+        claimToken: requireOwnedClaimToken(acquiredRow, input),
+        borrowedFromTaskRunId: acquiredRow.borrowed_from_task_run_id,
+        waitMs: Number(acquiredRow.wait_ms ?? 0),
         leaseDeadlineMonotonicAt: requireLeaseDeadlineMonotonicAt(
-          row,
-          snapshot.measuredAtMonotonic,
+          acquiredRow,
+          acquiredSnapshot.measuredAtMonotonic,
           input,
         ),
       } satisfies TickResult;
