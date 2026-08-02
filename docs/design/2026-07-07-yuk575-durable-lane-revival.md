@@ -63,7 +63,15 @@
 > binding mismatch remain contract-invalid/fail closed. A second bounded attempt may
 > receive only the server-generated fixed submission rejection (at most 240
 > characters); it never receives the prior records/verdict, candidate, thinking, or
-> new evidence, and its actual input is separately hashed and bound. Marker 记录 primary
+> new evidence, and its actual input is separately hashed and bound. The Agent SDK
+> turn ceilings cover the whole bounded protocol rather than an optimistic happy path:
+> blind reference is at most 16 turns (8 evidence chunks + 5 trace-classification
+> chunks + safe reply + explicit completion + terminal), while comparison is at most
+> 18 turns (16 reply-check chunks + explicit completion + terminal). These are ceilings,
+> not required work; the existing 360s durable-reference and 120s comparator wall-clock
+> aborts remain authoritative. Actual A01 on `9c43ab8e` proved the previous four-turn
+> ceiling structurally insufficient when both blind attempts ended with
+> `error_max_turns`; the gate failed closed before comparison. Marker 记录 primary
 > stream 是否产生正文；随后
 > settlement projection 把一条 reviewed full-text DELTA 与 REPLY/DONE 或 FAILED
 > 放在同一事务里，严格按 DELTA→terminal 写入；redelivery/reconcile 从 marker 修复

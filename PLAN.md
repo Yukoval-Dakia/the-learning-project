@@ -31,14 +31,19 @@
 - **Owner 已批准试 FULL 小提交协议。** 不增加第三次整段重写；blind leg 改为 append-only
   evidence/not-material/safe-reply 工具，comparator 改为逐 reply check 工具。server 用短 source id
   还原 JSON Pointer，并生成 point/request/trace coverage、request checks、digest 与 verdict；模型
-  不再输出最终大 JSON。当前 21-call/55KB+ 复杂 mock unit + provenance DB loop 已通过，尚未 commit。
+  不再输出最终大 JSON。`9c43ab8e` 的 targeted gate 与 exact-head CI Gate 30739496669 已全绿。
+  首个隔离 A01 正确安全 fail closed：primary 成功并有 thinking，但两条 blind reference 都在
+  `maxTurns=4` 精确终止，未进入 comparator。artifact SHA-256
+  `95855eef09b80d30634df35dc459340ba1e8d29dc4b08dbd4b8661ada27da7fa`（mode 0600）。这证明
+  小提交方向已消除大 JSON 绑定失败，但 4-turn 注册表预算与“分批追加 + explicit complete + terminal”
+  协议自相矛盾；现按封闭协议上限改为 reference 16、comparator 18，不增加 paid attempt。
 - 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
 
 ## NEXT
 
-1. 收紧 FULL 小提交协议回归、文档与本地 scoped gate；保持两次 bounded attempt、既有
-   fail-closed binding、blind isolation 和 confirmed comparator 状态机。
-2. 先在 clean committed exact head 重跑 A01；自动 gate 通过后才重跑 5 例 actual-provider v8，逐例审计 primary +
+1. 验证 actual A01 暴露的 turn-ceiling 修复；保持两次 bounded attempt、既有 fail-closed binding、
+   blind isolation、120s/360s timeout 与 confirmed comparator 状态机。
+2. 新 exact-head CI 全绿后，在 clean committed exact head 重跑 A01；自动 gate 通过后才重跑 5 例 actual-provider v8，逐例审计 primary +
    reference/comparator runs、thinking、digests、exact bytes 与无旁支 validator。
 3. actual 5/5 且人工 grounding/coverage/honesty 均 2/2/2 后，
    merge 并对齐 Linear；随后推进 YUK-833/835 → YUK-834 → YUK-836。

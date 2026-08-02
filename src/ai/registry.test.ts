@@ -581,7 +581,10 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     expect(def.defaultModel).toBe('mimo-v2.5-pro');
     expect(def.needsToolCall).toBe(true);
     expect(def.allowedTools).toEqual([...COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS]);
-    expect(def.budget.maxIterations).toBe(4);
+    // Actual A01 proved four SDK turns cannot complete the declared protocol.
+    // The bound covers 8 evidence chunks + 5 trace-classification chunks +
+    // safe reply + explicit completion + the SDK terminal turn.
+    expect(def.budget.maxIterations).toBe(16);
     expect(def.budget.timeout).toBe(120_000);
     expect(def).not.toHaveProperty('structuredOutputSchema');
 
@@ -636,7 +639,9 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     expect(def.defaultModel).toBe('mimo-v2.5-pro');
     expect(def.needsToolCall).toBe(true);
     expect(def.allowedTools).toEqual([...COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS]);
-    expect(def.budget.maxIterations).toBe(4);
+    // 192 bounded reply units / 12 per append = 16 append turns, followed by
+    // explicit completion and the SDK terminal turn.
+    expect(def.budget.maxIterations).toBe(18);
     expect(def.budget.timeout).toBe(120_000);
     expect(def).not.toHaveProperty('structuredOutputSchema');
     expect(

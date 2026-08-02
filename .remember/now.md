@@ -36,7 +36,8 @@
 
 ## YUK-832 current gate
 
-- PR #1154 `8db403af` exact-head CI/CodeQL 已全绿；无未解决 P0/P1。
+- PR #1154 当前 FULL head `9c43ab8e` 的 exact-head CI Gate 30739496669 与 CodeQL 已全绿；
+  无未解决 P0/P1。
 - exact-head actual-provider v8 五例全部安全 fail closed 且没有 candidate 泄漏。A01/A03/A04
   的复杂 blind-reference 多次撞 120s；A03/C01/C04 也有成功 provider 输出被 strict contract
   拒绝。原始结果在本地 mode 0600 artifact，不提交。
@@ -84,7 +85,13 @@
   append-only 小工具：blind 只提交 evidence points、未使用 read 与 safe reply；comparator
   只提交逐 reply checks。server 生成短 source-id catalog，独立还原 JSON Pointer，并派生全部
   dense coverage、request checks、digest 与 verdict；模型不再输出最终大 JSON。21-call/55KB+
-  复杂 fixture 的 unit 与 exact-input provenance DB loop 已通过，尚未 commit/push/actual。
+  复杂 fixture 的 unit 与 exact-input provenance DB loop 已通过并提交。`9c43ab8e` 首个隔离 A01
+  primary 成功且有 6 个 thinking blocks；两条 blind reference 均准确撞 `error_max_turns`，因为
+  注册表只给 4 turns，而协议要求分批 append、set safe reply、explicit complete 后再正常 terminal。
+  未进入 comparator，系统安全 fail closed，随即 Stop；artifact SHA-256
+  `95855eef09b80d30634df35dc459340ba1e8d29dc4b08dbd4b8661ada27da7fa`（mode 0600）。现按协议
+  封闭最大值把 reference ceiling 改为 16（8 point chunks + 5 trace chunks + 3 收尾 turns），
+  comparator 改为 18（16 reply chunks + complete + terminal）；timeout、attempt 数与绑定不变。
 
 ## Next order
 

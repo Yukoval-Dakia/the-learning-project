@@ -2009,7 +2009,11 @@ export const tasks = {
       'YUK-832 — blind append-only reference leg for the shared FULL validator. It never sees candidate prose; small internal tool submissions are canonicalized by the server into request/trace coverage and exact DomainTool JSON pointers.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 4, timeout: 120_000 },
+    // Protocol ceiling, not a target: 96 points / 12 per append = 8 turns;
+    // 60 trace calls / 12 per classification = 5; safe reply + explicit
+    // completion + the SDK terminal turn = 3. Actual A01 proved 4 turns is
+    // structurally insufficient even when every submission is valid.
+    budget: { ...DEFAULT_BUDGET, maxIterations: 16, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: [...COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS],
@@ -2024,7 +2028,10 @@ export const tasks = {
       'YUK-832 — append-only sealed comparator for one selected reply. It submits small per-reply observations; the server derives dense request coverage and the verdict, then requires two valid passes.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 4, timeout: 120_000 },
+    // 192 bounded reply units / 12 per append = 16 turns, followed by explicit
+    // completion and the SDK terminal turn. Models normally stop far earlier;
+    // the 120s wall-clock timeout remains the paid-call backstop.
+    budget: { ...DEFAULT_BUDGET, maxIterations: 18, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: [...COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS],
