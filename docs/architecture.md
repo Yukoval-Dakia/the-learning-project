@@ -99,7 +99,21 @@ Question (统一题库，single source of truth)
 
 ## 五、AI 任务层（LLM Task Layer）
 
-独立模块。所有 AI 调用按「任务」抽象，**不**按 `chat()` 抽象——避免丢掉 provider 特色能力（prompt caching / batch API / structured output / multimodal）。
+所有 AI 调用按「任务」抽象，**不**按 `chat()` 抽象——避免丢掉 provider 特色能力（prompt caching / batch API / structured output / multimodal）。
+
+> **FULL 执行注（2026-08-02，YUK-840）**：当前 `src/ai/registry.ts` 是可运行的中央
+> catalog，但还不是完成的产品语义所有权边界。ADR-0051 已锁定目标：capability 拥有完整
+> product operation 与 typed task contract，中央 runtime 只拥有 provider/SDK/budget/retry/
+> admission/model-attempt logging；registry 在迁移期退化为静态 composition projection。
+> 当前代码的执行附录见
+> `docs/superpowers/plans/2026-08-02-architecture-full-phase-0-1.md`。这项迁移尚未完成，
+> 不得把 public seam 或 shared `AiRunLifecycle` 误报成语义所有权已闭合。
+
+架构债由 `pnpm audit:capability-boundaries` 递减约束。基线单位是去重后的
+`(source file, resolved target module)`：capability → server 538、server → capability deep
+70、cross-capability value 63；后者目前包含一个由 agency/ingestion/knowledge/notes/practice
+组成的非平凡 SCC。任何下降必须在同一变更收紧
+`scripts/capability-boundary-baseline.json`，不能留下回涨额度。
 
 ### 5.1 Task 注册
 
