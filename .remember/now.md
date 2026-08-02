@@ -36,8 +36,9 @@
 
 ## YUK-832 current gate
 
-- PR #1154 / branch `codex/yuk-832-evidence-readers`；LIGHT 前一基线 `ac66f110` 的 exact-head
-  CI Gate 与 CodeQL 全绿，新 LIGHT head 待 push 后重跑。
+- PR #1154 / branch `codex/yuk-832-evidence-readers`；LIGHT commit
+  `7979514d28333d9c6f9cdcd68286280e509ae134` 的 exact-head GitHub `CI Gate` run
+  `30746982322`（含完整 test matrix）与 CodeQL 全绿。本机未运行完整 `pnpm test`。
 - 隔离 A01 r8 在 2026-08-02 完成 clean terminal，evidence status=`failed_closed`：primary 成功；
   reference #1 在 480s timeout，reference #2 在 440s 成功绑定；两个 comparator 均在 360s
   timeout。第二条 reference 使用 1,080,790 input / 21,874 output / USD 1.537776；三个失败
@@ -62,14 +63,33 @@
   Tavily remote-MCP 不在该判断面。
 - 本地已通过 172 个 targeted unit、2 个 provenance DB tests、typecheck、lint、agent-control-plane /
   capability-boundary audits 与 production build；完整 `pnpm test` 仍只交 exact-head GitHub CI。
+- clean committed head 只运行了一次隔离 A01 r9，随后停止，没有其他昂贵样本：
+  - primary success：95.321s，189,904 input / 6,251 output，USD 0.816931；
+  - reference 首次 success：324.608s，759,722 input / 25,048 output，USD 1.502762，digest bound；
+    相对 r8 成功 reference 为 input -29.7%、wall time -26.2%、cost -2.3%，并消除了 r8 的前置
+    482s timeout attempt；
+  - comparator #1/#2 均在约 362s timeout，合计 3,778,904 input；失败 run/ledger 分别记录
+    USD 0.24765047 / 0.181446，证明 LIGHT failure accounting 生效；
+  - 最终 `failed_closed`、clean terminal、无不安全产品输出。artifact：
+    `/tmp/tlp-burnin-20260802/results-yuk832-7979514d-actual-v10-a01-r9.jsonl`，SHA-256
+    `ee7d562967cc95e829979bc4ed1f9d0ff1e65693237a774b4af4725de0d06d35`，mode 0600。
+- r9 总 ledger USD 2.74878947；不可与 r8 的 USD 2.196909 直接比较绝对节省，因为 r8 漏记全部
+  failed paid attempts。按 run wall time，r9 约比 r8 少十分钟/约三分之一，但 comparator 仍未通过，
+  产品保持 HOLD，不再重复 A01。
+- r9 沿用了 v10 harness，因此其中两条 ledger 失败是旧断言把所有 failure 都要求“无 ledger”；
+  这不是产品失败。已另存 mode 0600 `harness-v11.ts`，让成功 run 对应 `success` ledger、带已观测
+  usage/cost 的失败 run 对应 `failed_retryable|failed_permanent` ledger，并已独立 typecheck；不改写
+  v10 或 r9 artifact，也不据此重跑 provider。其余四条失败仍是 comparator 未绑定导致的真实产品 gate。
 
 ## Next order
 
-1. YUK-832：提交 LIGHT → exact-head CI → 单次 clean A01 actual 成本/产品复验。
+1. YUK-832：提交 r9 handoff 后保持 In Progress / product HOLD；不重复 A01。FULL 只在 owner
+   重新提升 Backlog YUK-839 时执行。
 2. YUK-833 + YUK-835：共享一个泛化 validator core，分别接 artifact persistence 与 direct reply。
 3. YUK-834：effect/capability/scope/rollback owner gate。
 4. YUK-836：prior-turn correction contract。
-5. 同一复杂 mock + actual-provider rerun；targeted local checks，完整 `pnpm test` 仅 GitHub CI。
+5. 修复后才用同一复杂 mock + actual-provider rerun；targeted local checks，完整 `pnpm test` 仅
+   GitHub CI。
 6. 上述 P1 清零后提交 UI design pre-flight；owner 明确批准前不写 UI、不翻 expansion。
 
 ## Runtime cleanup
