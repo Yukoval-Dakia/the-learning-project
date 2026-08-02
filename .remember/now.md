@@ -33,7 +33,8 @@
 - migration `0087_yuk841_attempt_cost_truth.sql`：ledger cost nullable、legacy/attempt discriminator、
   basis/ref checks、attempt partial unique；历史行只默认 legacy，不做来源推断。
 - admin run/detail/cost 与 `/api/cost/today` 暴露 nullable amount、basis/ref、reported/estimated/legacy
-  breakdown、unknown/legacy counts；classified unknown 不再从 legacy correlation row fallback 成 0。
+  breakdown、unknown/legacy counts；classified run 的 canonical 与 ledger 金额都只取 attempt
+  projection，legacy correlation 仍保留在 row/job 诊断关联中但不再把 unknown 变成 0 或造成双计。
 - Postman inventory/collection 与 generated API client 已由仓库生成器同步；本票未写 UI。
 
 ## Validation boundary

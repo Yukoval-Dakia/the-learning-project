@@ -230,7 +230,15 @@ function projectRun(
   ledgerRows: Array<typeof cost_ledger.$inferSelect>,
   toolCallCount: number,
 ): AdminRunListRow {
-  const knownLedgerCosts = ledgerRows
+  // Once a run has classified attempt truth, only its attempt projection may
+  // contribute money. Keep legacy correlation rows in ledger_rows/job links
+  // for diagnosis, but never let them turn unknown into zero or double-count a
+  // reported/estimated attempt. Pre-YUK-841 runs still use their legacy rows.
+  const costProjectionRows =
+    row.cost_basis === null
+      ? ledgerRows
+      : ledgerRows.filter((entry) => entry.entry_kind === 'attempt');
+  const knownLedgerCosts = costProjectionRows
     .map((entry) => entry.cost)
     .filter((cost): cost is number => cost !== null);
   const ledgerCost =

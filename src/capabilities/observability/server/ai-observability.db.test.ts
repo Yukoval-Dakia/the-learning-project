@@ -338,11 +338,30 @@ describe('AI observability admin read model', () => {
   it('does not backfill a classified unknown run from a legacy correlation row', async () => {
     await seedRun({
       id: 'unknown_run',
+      provider: 'xiaomi',
+      model: 'mimo-future',
       cost_usd: null,
       cost_basis: 'unknown',
       cost_ref: 'unpriced:xiaomi/mimo-future',
     });
-    await seedCost({ id: 'correlation', task_run_id: 'unknown_run', cost: 0 });
+    await seedCost({
+      id: 'attempt',
+      task_run_id: 'unknown_run',
+      provider: 'xiaomi',
+      model: 'mimo-future',
+      entry_kind: 'attempt',
+      cost: null,
+      cost_basis: 'unknown',
+      cost_ref: 'unpriced:xiaomi/mimo-future',
+      pgboss_job_id: null,
+    });
+    await seedCost({
+      id: 'correlation',
+      task_run_id: 'unknown_run',
+      provider: 'xiaomi',
+      model: 'mimo-future',
+      cost: 0,
+    });
 
     const [row] = await listAdminRuns(db);
     expect(row).toMatchObject({
@@ -350,6 +369,8 @@ describe('AI observability admin read model', () => {
       cost_usd: null,
       cost_basis: 'unknown',
       cost_ref: 'unpriced:xiaomi/mimo-future',
+      ledger_cost_usd: null,
+      ledger_rows: 2,
     });
   });
 

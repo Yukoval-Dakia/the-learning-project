@@ -18,7 +18,8 @@
   `AttemptCostTruth(reported | estimated | unknown)` 投影到 result、`ai_task_runs` 与唯一 attempt
   ledger；run terminal update + ledger insert 共用 transaction，stuck reconcile 走同一 finalizer。
 - schema/migration、admin run/detail/cost、`/api/cost/today`、Postman 与 generated API client 已同步；
-  历史与非 runner ledger 保持显式 `legacy`，unknown amount 为 NULL 且不进入金额 SUM。
+  历史与非 runner ledger 保持显式 `legacy`，unknown amount 为 NULL 且不进入金额 SUM；classified run
+  的 ledger 金额只取 attempt projection，legacy correlation 只保留作诊断关联。
 - 本轮仅做了代码编辑、只读检查、生成器和 formatter；**未运行任何本地 test/typecheck/lint/
   build/audit gate**。PR 的前一 exact-head 已由 GitHub CI 全绿；合并前 review 发现 success
   settlement fail-open 会破坏 attempt 单一真相，当前已改为 fail-closed；随后新-head review 又发现
