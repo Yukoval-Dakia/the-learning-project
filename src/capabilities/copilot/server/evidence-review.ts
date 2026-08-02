@@ -36,8 +36,12 @@ export const COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY =
 
 /** Mirrors both inline evidence-task timeout budgets in the task registry. */
 export const COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS = 120_000;
-/** Complex durable traces can legitimately need more than the synchronous tail. */
-export const COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS = 360_000;
+/**
+ * Complex durable traces can legitimately need more than the synchronous tail.
+ * Actual A01 on 4708378a reached 31 accepted points, six classified calls, and
+ * the safe reply at 360s but had not completed the final seal/terminal turns.
+ */
+export const COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS = 480_000;
 /**
  * Actual A01 on c8bd8761 hit 120s on both independent comparators; 3ad1f0f9
  * then hit 240s on the first comparator. Keep inline at 120s and align only

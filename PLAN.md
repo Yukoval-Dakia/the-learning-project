@@ -47,13 +47,17 @@
   inline 仍 120s，attempt 数与契约不变。`ef5789a7` + 52min monitor 的 A01 随后正常终态：第一条
   blind 撞 360s，第二条在 263s 先撞精确 `maxTurns=16`；artifact SHA-256
   `94f7d9743a71190642d62cb51913de2e93afd7991a2a5b4e4e1e763ecff4e073`（mode 0600）。现只把
-  两个 FULL task 的 turn ceiling 统一为 24，paid wall-clock 不变，并记录无原文的提交进度计数。
+  两个 FULL task 的 turn ceiling 统一为 24，并记录无原文的提交进度计数。`4708378a` 的 exact-head
+  CI Gate 30743228355 / CodeQL 30743227276 全绿；A01 两条 blind 均未耗尽 turns，但都撞 360s。
+  第二条已接受 31 points、6 not-material 与 safe reply，只缺最后 seal/terminal；artifact SHA-256
+  `2ec670ea6756a0adc4626d63c139254016e75a7a1476d3436fa9f918f532e2a2`（mode 0600）。现仅把 durable
+  reference 延到 480s；comparator 360s、attempt/binding 不变，FULL/owner ceilings 为 40m/52.5m。
 - 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
 
 ## NEXT
 
-1. 验证 actual A01 暴露的 24-turn correction ceiling；保持 360s paid wall-clock、两次 bounded
-   attempt、既有 fail-closed binding、blind isolation、inline 120s 与 confirmed comparator 状态机。
+1. 验证 actual A01 暴露的 480s durable reference tail；保持 24-turn correction ceiling、两次
+   bounded attempt、既有 fail-closed binding、blind isolation、inline 120s 与 confirmed comparator 状态机。
 2. 新 exact-head CI 全绿后，在 clean committed exact head 重跑 A01；自动 gate 通过后才重跑 5 例 actual-provider v8，逐例审计 primary +
    reference/comparator runs、thinking、digests、exact bytes 与无旁支 validator。
 3. actual 5/5 且人工 grounding/coverage/honesty 均 2/2/2 后，

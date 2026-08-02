@@ -850,7 +850,7 @@ describe('Copilot FULL evidence review', () => {
       autoLogToolCalls: false,
     });
     expect(runTaskFn.mock.calls[1]?.[2]).not.toHaveProperty('outputFormat');
-    expect(COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS).toBe(360_000);
+    expect(COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS).toBe(480_000);
     expect(COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS).toBe(360_000);
     expect(COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS).toBe(120_000);
     expect(COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS).toBe(

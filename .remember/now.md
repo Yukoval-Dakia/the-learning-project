@@ -108,7 +108,13 @@
   `94f7d9743a71190642d62cb51913de2e93afd7991a2a5b4e4e1e763ecff4e073`（mode 0600）。16 turns
   只够所有 accepted chunks 一次成功，没有给内部工具拒绝后的修正留轮次；现把两个 FULL task
   的 SDK ceiling 统一为 24，不增加 360s paid wall-clock。失败诊断新增的只有 point/not-material/
-  safe-reply/reply-check 完成计数，不记录 raw output、candidate 或 thinking。
+  safe-reply/reply-check 完成计数，不记录 raw output、candidate 或 thinking。`4708378a` exact-head
+  CI Gate 30743228355 / CodeQL 30743227276 全绿后，第五个隔离 A01 的两条 blind 都未耗尽 24 turns，
+  而是依次在 360s 终止；第一条已收 29 points/3 not-material，第二条已收 31 points/6 not-material
+  与 safe reply，只缺 completion。artifact SHA-256
+  `2ec670ea6756a0adc4626d63c139254016e75a7a1476d3436fa9f918f532e2a2`（mode 0600），产品 clean terminal。
+  这项有界进度证据只授权把 durable reference 延到 480s；comparator 仍 360s，attempt/binding 不变，
+  FULL 最坏 40min、owner ceiling 52.5min，仍低于一小时 stale gate。
 
 ## Next order
 
