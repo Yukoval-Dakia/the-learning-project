@@ -294,11 +294,7 @@ export const alphaUse = betaUse;
   it('does not treat nested public, ui-public, or manifest modules as entrypoints', () => {
     const root = makeFixture();
     write(root, 'src/capabilities/beta/public/internal.ts', 'export const internal = true;\n');
-    write(
-      root,
-      'src/capabilities/beta/ui-public/internal.ts',
-      'export const internalUi = true;\n',
-    );
+    write(root, 'src/capabilities/beta/ui-public/internal.ts', 'export const internalUi = true;\n');
     write(
       root,
       'src/capabilities/beta/manifest/internal.ts',
