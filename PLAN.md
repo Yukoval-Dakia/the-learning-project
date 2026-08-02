@@ -16,16 +16,15 @@
   `audit:capability-boundaries`。语义边 baseline 为 capability→server 538、server→capability
   deep 70、cross-capability value 63；value 图有 1 个五 owner SCC。
 - 在 owner 提醒「gate 不要在本地跑」前，定向 audit、10 个 unit tests、typecheck、lint、build
-  已完成且绿；此后不再运行本地 gate。独立 review、commit/push/PR/exact-head CI 尚未完成，
-  因此 **YUK-840 未交付**。
+  已完成且绿；此后没有再运行本地 gate。两路独立只读 review 已清零 P0/P1；修复后
+  exact-head CI 尚未运行，因此 **YUK-840 未交付**。
 - **YUK-596 transport/Stop 与 actual burn-in 证据保持已交付；产品内容仍 HOLD。** YUK-832–836
   没有取消或完成，只因 owner 切换 active 主线而暂停。
 
 ## NEXT
 
-1. 收口 YUK-840 文档、PLAN/.remember；不再运行本地 gate。
-2. 派独立 reviewer 只读真实 diff；清零 P0/P1 后 commit/push/open PR，由 exact-head GitHub CI
-   执行完整 gate。
+1. 提交已 review 的 nested-entrypoint 修复与回归用例，push/open PR；不再运行本地 gate。
+2. 由 exact-head GitHub CI 执行完整 gate；绿前不 merge，不将 YUK-840 标 Done。
 3. YUK-840 merge 后启动 YUK-841 单一 attempt 成本真相；完成后再启动 YUK-842 provider-lane
    admission。共享 schema/runtime lane 不并行。
 4. F0 全部通过后，按 execution addendum 建 Phase 1 milestone/issues，迁 practice-owned

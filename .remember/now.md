@@ -42,12 +42,18 @@
 - owner 提醒前已完成 typecheck、全仓 lint 与 build，均 PASS。
 - **Owner 追加指示：gate 不要在本地跑。** 此后不再重跑本地 gate；完整验证只交给
   exact-head GitHub CI。
+- 两路独立只读 review 发现并已修复 1 类 P1：nested `public/ui-public/manifest`
+  子路径不得伪装成 top-level entrypoint。修复后两位 reviewer 都确认无未解决
+  P0/P1。
+- 新增 server→capability deep、无 SCC 的单向 cross-capability value 与三类 nested
+  entrypoint characterization；移除 unit suite 内重复的全仓 baseline scan。这些 review 后改动
+  **没有在本地跑 gate**，由 exact-head CI 验证。
 
 ## Still required before delivery
 
-1. 独立 reviewer 只读真实 diff；修复全部 P0/P1，不运行本地 gate。
-2. commit/push/open PR；由 exact-head GitHub CI 执行完整 gate，绿后才能将 YUK-840 标 Done。
-3. Linear capture gate：如 review 发现新 actionable follow-up，先查重再落票；否则明确无新增。
+1. commit/push/open PR；由 exact-head GitHub CI 执行完整 gate，绿后才能将 YUK-840 标 Done。
+2. Linear capture gate：review 未留下 P0/P1；重复 AST parse 仅为 P2 经济性建议且已通过
+   移除重复 repo scan 缩小开销，不新建 follow-up。
 
 ## Displaced but still open
 

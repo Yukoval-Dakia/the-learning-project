@@ -220,12 +220,15 @@ function withoutExtension(name: string): string {
 function locateModule(projectRoot: string, path: string): ModuleLocation | undefined {
   const capabilityRoot = resolve(projectRoot, 'src/capabilities');
   if (isWithin(capabilityRoot, path)) {
-    const [owner, entrypoint] = relative(capabilityRoot, path).split(sep);
-    if (!owner || !entrypoint) return undefined;
+    const [owner, ...entrypointParts] = relative(capabilityRoot, path).split(sep);
+    if (!owner || entrypointParts.length === 0) return undefined;
+    const lastPart = entrypointParts.at(-1);
+    if (!lastPart) return undefined;
+    entrypointParts[entrypointParts.length - 1] = withoutExtension(lastPart);
     return {
       layer: 'capability',
       owner,
-      entrypoint: withoutExtension(entrypoint),
+      entrypoint: entrypointParts.join('/'),
     };
   }
 

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -173,6 +173,28 @@ export const alphaUse = beta;
     );
   });
 
+  it('rejects a new server-to-capability deep edge', () => {
+    const root = makeFixture();
+    const baseline = snapshot(root);
+    write(root, 'src/capabilities/beta/public/internal.ts', 'export const internal = true;\n');
+    write(
+      root,
+      'src/server/boss/nested.ts',
+      `import { internal } from '@/capabilities/beta/public/internal';
+export const nested = internal;
+`,
+    );
+
+    expect(compareDependencySnapshot(snapshot(root), baseline)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'boss -> beta',
+          reason: expect.stringContaining('server -> capability deep architecture regression'),
+        }),
+      ]),
+    );
+  });
+
   it('rejects a cross-bucket replacement even when the total is unchanged', () => {
     const root = makeFixture();
     const baseline = snapshot(root);
@@ -223,6 +245,32 @@ export const alphaGamma = gamma;
     );
   });
 
+  it('rejects a new one-way cross-capability value edge without requiring a cycle', () => {
+    const root = makeFixture();
+    write(root, 'src/capabilities/gamma/public.ts', 'export const gamma = true;\n');
+    const baseline = snapshot(root);
+    write(
+      root,
+      'src/capabilities/gamma/server/use.ts',
+      `import { beta } from '@/capabilities/beta/public';
+export const gammaUse = beta;
+`,
+    );
+
+    const violations = compareDependencySnapshot(snapshot(root), baseline);
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'gamma -> beta',
+          reason: expect.stringContaining('cross-capability value architecture regression'),
+        }),
+      ]),
+    );
+    expect(violations.map((violation) => violation.source)).not.toContain(
+      'crossCapabilityValue.nontrivialSccs',
+    );
+  });
+
   it('keeps the original public-entrypoint seam enforcement', () => {
     const root = makeFixture();
     write(
@@ -243,6 +291,50 @@ export const alphaUse = betaUse;
     );
   });
 
+  it('does not treat nested public, ui-public, or manifest modules as entrypoints', () => {
+    const root = makeFixture();
+    write(root, 'src/capabilities/beta/public/internal.ts', 'export const internal = true;\n');
+    write(
+      root,
+      'src/capabilities/beta/ui-public/internal.ts',
+      'export const internalUi = true;\n',
+    );
+    write(
+      root,
+      'src/capabilities/beta/manifest/internal.ts',
+      'export const internalManifest = true;\n',
+    );
+    write(
+      root,
+      'src/capabilities/alpha/server/nested-public.ts',
+      `import { internal } from '@/capabilities/beta/public/internal';
+export const nestedPublic = internal;
+`,
+    );
+    write(
+      root,
+      'src/capabilities/alpha/ui/nested-ui.ts',
+      `import { internalUi } from '@/capabilities/beta/ui-public/internal';
+export const nestedUi = internalUi;
+`,
+    );
+    write(
+      root,
+      'src/capabilities/index.ts',
+      `import { internalManifest } from '@/capabilities/beta/manifest/internal';
+export const manifests = [internalManifest];
+`,
+    );
+
+    expect(auditCapabilityBoundaries(root).violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: '@/capabilities/beta/public/internal' }),
+        expect.objectContaining({ source: '@/capabilities/beta/ui-public/internal' }),
+        expect.objectContaining({ source: '@/capabilities/beta/manifest/internal' }),
+      ]),
+    );
+  });
+
   it('serializes a canonical, stable snapshot', () => {
     const root = makeFixture();
     const first = snapshot(root);
@@ -251,17 +343,5 @@ export const alphaUse = betaUse;
     expect(serializeDependencySnapshot(first)).toBe(serializeDependencySnapshot(second));
     const pairs = Object.keys(first.debts.crossCapabilityValue.byOwnerPair);
     expect(pairs).toEqual([...pairs].sort());
-  });
-
-  it('matches the checked-in repository baseline', () => {
-    const projectRoot = resolve(import.meta.dirname, '..');
-    const baseline = JSON.parse(
-      readFileSync(resolve(import.meta.dirname, 'capability-boundary-baseline.json'), 'utf8'),
-    ) as DependencySnapshot;
-
-    expect(auditCapabilityBoundaries(projectRoot, baseline)).toMatchObject({
-      ok: true,
-      violations: [],
-    });
   });
 });
