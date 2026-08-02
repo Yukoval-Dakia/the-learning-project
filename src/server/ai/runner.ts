@@ -992,9 +992,10 @@ function terminalEvidenceFromSdkResult(
 // cost/terminal/after-run ownership is shared through run-lifecycle.ts.
 //
 // GRACEFUL DEGRADE (red line): if the SDK stream throws AFTER some text was
-// collected, this still resolves with the collected text + a `partial: true` flag
-// (mirroring streamTask's catch that appends an error marker but still finishes), so
-// the caller can persist whatever was produced and a turn is never lost.
+// collected and the failure truth settles durably, this resolves with the collected
+// text + a `partial: true` flag (mirroring streamTask's catch that appends an error
+// marker but still finishes). A terminal-settlement failure rejects instead: the
+// caller must never persist partial model output against an unsettled attempt id.
 export interface StreamCollectResult extends RunTaskResult {
   /** Set when the stream errored mid-flight; `text` is whatever was collected. */
   partial?: boolean;
@@ -1124,7 +1125,8 @@ export async function streamTaskCollecting(
       taskRunId: lifecycle.taskRunId,
       aborted: lifecycle.aborted,
     });
-    await lifecycle.finishFailure(boundError);
+    const settled = await lifecycle.finishFailure(boundError);
+    if (!settled) throw boundError;
     return {
       task_run_id: lifecycle.taskRunId,
       text: resultText,

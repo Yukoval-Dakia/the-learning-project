@@ -21,8 +21,9 @@
   历史与非 runner ledger 保持显式 `legacy`，unknown amount 为 NULL 且不进入金额 SUM。
 - 本轮仅做了代码编辑、只读检查、生成器和 formatter；**未运行任何本地 test/typecheck/lint/
   build/audit gate**。PR 的前一 exact-head 已由 GitHub CI 全绿；合并前 review 发现 success
-  settlement fail-open 会破坏 attempt 单一真相，当前已改为 fail-closed 并补普通/流式反证测试，
-  新 head 仍须重新通过远端 CI。三路独立只读 review 均无其它未解决 P0/P1。
+  settlement fail-open 会破坏 attempt 单一真相，当前已改为 fail-closed；随后新-head review 又发现
+  collecting 路径会把未落账失败降级成 partial，现已要求 success/failure settlement 任一失败都
+  reject，并补普通/流式/collecting 反证测试。新 head 仍须重新通过远端 CI。
 - **YUK-596 transport/Stop 与 actual burn-in 证据保持已交付；产品内容仍 HOLD。** YUK-832–836
   没有取消或完成，只因 owner 切换 active 主线而暂停。
 

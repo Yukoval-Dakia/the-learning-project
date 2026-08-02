@@ -718,4 +718,29 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(result.error).toContain('sdk blew up');
     expect(result.finishReason).toBe('error');
   });
+
+  it('rejects instead of returning partial when success settlement fails', async () => {
+    mockSdk.messages = [assistant('must not persist'), resultMsg];
+    logMocks.finishedShouldThrow = true;
+
+    await expect(
+      streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, () => {}),
+    ).rejects.toThrow(/cannot report success before durable attempt settlement/);
+
+    expect(logMocks.finished).not.toHaveBeenCalled();
+    expect(logMocks.cost).not.toHaveBeenCalled();
+  });
+
+  it('rejects instead of returning partial when failure settlement fails', async () => {
+    mockSdk.messages = [assistant('must not persist'), resultMsg];
+    mockSdk.throwAfter = 1;
+    logMocks.finishedShouldThrow = true;
+
+    await expect(
+      streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, () => {}),
+    ).rejects.toThrow(/sdk blew up mid-stream/);
+
+    expect(logMocks.finished).not.toHaveBeenCalled();
+    expect(logMocks.cost).not.toHaveBeenCalled();
+  });
 });

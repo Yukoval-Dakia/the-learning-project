@@ -43,8 +43,10 @@
 - 三路独立 reviewer 已对当前真实 diff 完成 runtime、DB/API、consumer/test 只读审查；均无未解决
   P0/P1，P2/minor advisory。
 - PR 前一 exact-head 的完整 migration/unit/DB/typecheck/lint/build/audit 已由 GitHub CI 全绿；随后
-  合并前 review 发现 success settlement 失败仍可能向调用方表现为成功，当前已改为 fail-closed，
-  并补普通/流式反证测试。新 head 必须重新由 GitHub CI 验证；CI 未绿前不得宣称 YUK-841 已交付。
+  合并前 review 发现 success settlement 失败仍可能向调用方表现为成功，当前已改为 fail-closed；
+  新-head review 又发现 collecting 会把未落账失败降级成 partial，现已要求 success/failure
+  settlement 任一失败都 reject，并补普通/流式/collecting 反证测试。新 head 必须重新由
+  GitHub CI 验证；CI 未绿前不得宣称 YUK-841 已交付。
 
 ## Still required
 
