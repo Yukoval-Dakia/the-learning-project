@@ -61,7 +61,12 @@
   第二条已收到固定反馈但在 242.01s 被 240s 上限截断。artifact SHA-256
   `a1337940a00ccfb10418f13aa2fbeac0b9c34e13d3fe6eddb91936b1731caf72`（本地 mode 0600）。
   现只把 durable reference 调到 300s；新 committed exact head 仍须跑 GitHub CI，先过 A01
-  自动 gate 再跑五例 actual v8。更早的 A01 两次 reference 分别约
+  自动 gate 再跑五例 actual v8。`b1290371` A01 primary 96s；第一条 reference 171s 后因 absent
+  source pointer 被拒；第二条收到反馈并在 253s 完整返回，已修掉 pointer，但把 request coverage
+  6–9 的 evidence indices 留空，server 继续 fail closed。artifact SHA-256
+  `8f9aff79f8e5fcf6f362722c7e9f78d726d76589e7338c7ed90e88cdfc88d329`（本地 mode 0600）。
+  当前只把 schema 已有的 coverage non-empty + exact ledger-set 条件逐字写入通用 prompt，不增加
+  attempt、不接受空 coverage。更早的 A01 两次 reference 分别约
   198.30s/198.33s，均为 provider success + thinking；partial artifact SHA-256
   `7e7d7e402a7d007c165049f8fc42534072ed068e536d3ee53eacd99da1190d7b`（本地 mode 0600）。
 

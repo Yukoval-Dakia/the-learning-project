@@ -701,6 +701,9 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     expect(p).toContain('Xiaomi 当前不接收 SDK native outputFormat');
     expect(p).toContain('{"protocol_version":1,"evidence_points"');
     expect(p).toContain('request status 只能取 answerable / actual_gap');
+    expect(p).toContain('绝不能是 []');
+    expect(p).toContain('完全同集合，不多、不少');
+    expect(p).toContain('至少绑定一个 kind=actual_gap point');
     expect(p).toContain('relevance 只能取 material / scope_only / not_material / unusable');
     expect(p).toContain('"status":"answerable"');
     expect(p).toContain('"relevance":"material"');

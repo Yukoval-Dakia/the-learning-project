@@ -35,12 +35,14 @@
   只收到 server 生成的有界固定契约错误，不含前次输出或新证据；每次 input/hash 独立绑定，
   多对象/Zod/server binding 仍 fail closed。`41503da5` actual 的第一条 reference 在 218.88s
   完整返回并触发反馈；第二条在 242.01s 被 240s 上限截断。当前只把 durable reference 尾部
-  调到 300s；FULL 最坏 18min、owner ceiling 30.5min，仍低于 1h stuck-run gate。
+  调到 300s；`b1290371` 第二条已在 253s 完整返回并修掉首条 pointer error，但新输出把 4 个
+  request coverage 标为 answerable 却给空 evidence indices，server 正确拒绝。当前只把 schema
+  已有的“非空 + 与 ledger exact-set 相等”条件写入通用 prompt，不加第三次 attempt、不放宽 binding。
 - 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
 
 ## NEXT
 
-1. 完成 validator 300s durable-reference 窄修复的 commit/push 与 exact-head GitHub CI；包装 prose
+1. 完成 validator request-coverage exact-set prompt 的 commit/push 与 exact-head GitHub CI；包装 prose
    丢弃，不改 inline/comparator 预算与 server binding。
 2. 先在 clean committed exact head 重跑 A01；自动 gate 通过后才重跑 5 例 actual-provider v8，逐例审计 primary +
    reference/comparator runs、thinking、digests、exact bytes 与无旁支 validator。
