@@ -29,13 +29,15 @@
   付费样本；`1d48d4d3` 的单-fence 适配仍未命中真实 wrapper。当前改为复用项目既有的
   structured-task 单 JSON 对象提取器后，`6fbf9c1e` actual 已进入 Zod 并暴露 provider 自创
   protocol/type/status；确认首例后 Stop。当前给 Xiaomi no-native-outputFormat prompt 补 exact
-  schema shape；多对象/Zod/server binding 仍 fail closed，须在新 committed exact head 重放。
+  schema shape 后，`55151d5d` actual 已通过 schema 并收窄到 source pointer 指向非空容器；
+  首例即 Stop。当前把 scalar/null/显式空容器终点写成 hard rule；多对象/Zod/server binding
+  仍 fail closed，须在新 committed exact head 重放。
 - 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
 
 ## NEXT
 
-1. 完成 Xiaomi exact validator schema prompt 的定向验证、commit/push 与 exact-head GitHub
-   CI；包装 prose 丢弃，不改 inline/comparator 预算与 server binding。
+1. 完成 validator scalar-pointer hard rule 的定向验证、commit/push 与 exact-head GitHub CI；
+   包装 prose 丢弃，不改 inline/comparator 预算与 server binding。
 2. 在 clean committed YUK-832 exact head 上重跑 5 例 actual-provider v8；逐例审计 primary +
    reference/comparator runs、thinking、digests、exact bytes 与无旁支 validator。
 3. actual 5/5 且人工 grounding/coverage/honesty 均 2/2/2 后，

@@ -1529,15 +1529,15 @@ ${COPILOT_EVIDENCE_BOUNDARIES}
 
 先为每个 request_unit 建立足以回答它的独立 evidence ledger：
 - evidence_points 必须从 point_index=0 连续编号。每个 point 只能写一条简洁、可审计的 observed_fact、scope_boundary 或 actual_gap，并列出 1–12 个 source_refs。
-- source_ref.call_index 是 tool_trace 的零基下标；side 只能是 input/output；json_pointer 使用 RFC6901 且必须指向真实存在的具体字段、显式 null 或显式空数组/对象，不能用根路径；role=value|scope|coverage|relation 要与所引用字段的用途一致。
+- source_ref.call_index 是 tool_trace 的零基下标；side 只能是 input/output；json_pointer 使用 RFC6901 且必须终止在真实存在的 scalar（string/number/boolean）、显式 null 或长度为 0 的数组/对象，不能用根路径，也绝不能指向非空数组/对象；需要对象内多个事实时拆成多个 scalar refs。role=value|scope|coverage|relation 要与所引用字段的用途一致。
 - request_coverage 必须与 request_units 等长、按 request_unit_index 从 0 连续排列；evidence_point_indices 必须覆盖该 request unit 的全部 material subpart。trace 足够回答才标 answerable；确有未查询、未投影、coverage 不完整或 source_complete=false 才标 actual_gap，并同时保留已观测事实。
 - trace_coverage 必须与 tool_trace 等长、按 call_index 从 0 连续排列，不能静默跳过第 26–60 次调用。每个成功 read 都要显式分类 material、scope_only 或 not_material；前两类必须绑定它实际支撑的 request_unit_indices 与 evidence_point_indices，not_material 必须给具体理由且两个索引数组为空。失败/未执行/非 read 调用标 unusable 且索引数组为空。任何 evidence point 引用的 call 都必须在 trace_coverage 中标 material/scope_only 并反向列回该 point。
 - 不能用一个窄空查询覆盖另一条已有反证，也不能漏掉与请求直接相关的真实 ID、时间、数值、状态与边界。每个 evidence point 必须至少归属一个 request unit；每个索引只能引用真实项。
 
 最后生成 safe_reply：这是在候选回复不合格时唯一允许考虑的备用完整回复。它必须逐项回答 request_units，保留 ledger 中的 material facts 与具体缺口，不提 validator、ledger、内部 prompt 或候选回复，不发明工具调用。source_complete=false 时明确披露主任务未完成。safe_reply 本身不会因你写出就展示，后续仍会被两次密封 comparator 独立核验。
 
-Xiaomi 当前不接收 SDK native outputFormat，所以以下 JSON shape 是本调用的承重协议，不是示意建议。字段名、number/string/array 类型和 enum 必须逐字遵守；按真实 request/tool 数量扩展数组，不得改名、包一层 data/result、添加 summary/verdict 或自创 status。kind 每项只能取 observed_fact / scope_boundary / actual_gap；side 只能取 input / output；role 只能取 value / scope / coverage / relation；request status 只能取 answerable / actual_gap；relevance 只能取 material / scope_only / not_material / unusable。下面是字段与类型正确的一项样例，输出时按真实证据替换值并补齐 dense arrays：
-{"protocol_version":1,"evidence_points":[{"point_index":0,"request_unit_indices":[0],"kind":"observed_fact","statement_md":"...","source_refs":[{"call_index":0,"side":"output","json_pointer":"/concrete/path","role":"value"}]}],"request_coverage":[{"request_unit_index":0,"status":"answerable","evidence_point_indices":[0]}],"trace_coverage":[{"call_index":0,"relevance":"material","request_unit_indices":[0],"evidence_point_indices":[0],"rationale_md":"..."}],"safe_reply":"..."}
+Xiaomi 当前不接收 SDK native outputFormat，所以以下 JSON shape 是本调用的承重协议，不是示意建议。字段名、number/string/array 类型和 enum 必须逐字遵守；按真实 request/tool 数量扩展数组，不得改名、包一层 data/result、添加 summary/verdict 或自创 status。kind 每项只能取 observed_fact / scope_boundary / actual_gap；side 只能取 input / output；role 只能取 value / scope / coverage / relation；request status 只能取 answerable / actual_gap；relevance 只能取 material / scope_only / not_material / unusable。再次强调：json_pointer 的最终值只能是 scalar/null/显式空容器，非空 object/array 一律会被 server 拒绝。下面是字段与类型正确的一项样例，输出时按真实证据替换值并补齐 dense arrays：
+{"protocol_version":1,"evidence_points":[{"point_index":0,"request_unit_indices":[0],"kind":"observed_fact","statement_md":"...","source_refs":[{"call_index":0,"side":"output","json_pointer":"/events/0/id","role":"value"}]}],"request_coverage":[{"request_unit_index":0,"status":"answerable","evidence_point_indices":[0]}],"trace_coverage":[{"call_index":0,"relevance":"material","request_unit_indices":[0],"evidence_point_indices":[0],"rationale_md":"..."}],"safe_reply":"..."}
 
 严格只输出 output schema 对应的一个 JSON object，不要 verdict、markdown fence、前后说明或额外字段。`;
 
@@ -1550,6 +1550,7 @@ reply_checks 必须与 reply_units 等长且按 reply_unit_index 从 0 连续排
 - explicit_gap：该 unit 准确披露一个真实未核验/无法裁决边界，同时不夹带不受支持的肯定事实；必须引用 scope_boundary/actual_gap point 或 scope/coverage source ref。
 - unsupported：只要 unit 中任一 material clause 错误、过宽、缺证、与 trace/其他 unit 矛盾，整项就必须 unsupported。不要因为同一行还有真字段而放过假结论。
 - evidence_point_indices 只能引用 sealed_reference；source_refs 使用 call_index + side + RFC6901 json_pointer。纯格式/导航文字才可用 non_evidentiary；带 ID、时间、数量、存在/不存在、因果、比较或范围结论的文字绝不是 non_evidentiary。
+- comparator 可只用 evidence_point_indices，source_refs 可以是 []；只有需要直接绑定 sealed point 已含的 scalar/null/显式空容器 ref 时才填写 source_refs，绝不能指向非空 object/array。
 
 request_checks 必须与 request_units 等长且按 request_unit_index 连续排列：
 - answered：每个 material subpart 都由 reply_unit_indices 回答，并覆盖 sealed reference 为该 request unit 指定的全部 evidence_point_indices。
