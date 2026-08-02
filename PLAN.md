@@ -10,7 +10,7 @@
 - **Owner 已明确「直接启动 FULL」。** 新 Linear project
   `Architecture Deepening FULL — 语义、成本与运行所有权` 已 In Progress；F0 依赖为
   YUK-840 → YUK-841 → YUK-842。
-- **YUK-840 在隔离 worktree 实施中。** branch `codex/yuk-840-full-f0`，base
+- **YUK-840 已进入 In Review。** PR #1155，branch `codex/yuk-840-full-f0`，base
   `origin/main@19a97b89`；原 checkout 的用户/其它 lane 改动未触碰。
 - Phase 0 已本地落下 ADR-0051、current-code Phase 0/1 execution addendum，以及加深后的
   `audit:capability-boundaries`。语义边 baseline 为 capability→server 538、server→capability
@@ -23,8 +23,8 @@
 
 ## NEXT
 
-1. 提交已 review 的 nested-entrypoint 修复与回归用例，push/open PR；不再运行本地 gate。
-2. 由 exact-head GitHub CI 执行完整 gate；绿前不 merge，不将 YUK-840 标 Done。
+1. 等待 PR #1155 exact-head GitHub CI 执行完整 gate；不在本地重跑。
+2. CI 绿且无新 validated P0/P1 后 merge，再将 YUK-840 标 Done。
 3. YUK-840 merge 后启动 YUK-841 单一 attempt 成本真相；完成后再启动 YUK-842 provider-lane
    admission。共享 schema/runtime lane 不并行。
 4. F0 全部通过后，按 execution addendum 建 Phase 1 milestone/issues，迁 practice-owned

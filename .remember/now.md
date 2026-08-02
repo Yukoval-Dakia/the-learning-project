@@ -15,6 +15,7 @@
 - worktree：`/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-840-full-f0`
 - branch：`codex/yuk-840-full-f0`
 - base：`origin/main@19a97b893dfc9aae62701f00451010fd2be71c7b`
+- PR：`#1155` / `https://github.com/Yukoval-Dakia/the-learning-project/pull/1155`
 - 原 checkout `codex/yuk-812-agent-control-plane` 的脏改与其它 worktree 均未触碰。
 
 ## YUK-840 local implementation
@@ -51,7 +52,8 @@
 
 ## Still required before delivery
 
-1. commit/push/open PR；由 exact-head GitHub CI 执行完整 gate，绿后才能将 YUK-840 标 Done。
+1. PR #1155 已打开，YUK-840 已 In Review；由 exact-head GitHub CI 执行完整 gate，绿后
+   才能 merge 并将 YUK-840 标 Done。
 2. Linear capture gate：review 未留下 P0/P1；重复 AST parse 仅为 P2 经济性建议且已通过
    移除重复 repo scan 缩小开销，不新建 follow-up。
 
