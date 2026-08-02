@@ -50,9 +50,9 @@ import { populateIsolatedSkills } from './populate-skills';
 import type { ResolvedProvider } from './providers';
 import {
   type AiRunLifecycle,
+  AttemptSettlementError,
   type LifecycleUsage,
   type TerminalResultEvidence,
-  AttemptSettlementError,
   classifyLifecycleRetry,
   createRunLifecycle,
   maxLifecycleAttempts,
