@@ -11,7 +11,7 @@
   YUK-840 → YUK-841 → YUK-842；所有验证只接受 exact-head GitHub CI。
 - **YUK-840 已 Done。** PR #1155 merged，main commit
   `24add632b8941d0e4ebfeddb337761e7a1e38c29`；dependency ratchet 与 ADR-0051 已交付。
-- **YUK-841 In Progress。** 独立 worktree
+- **YUK-841 In Review，PR #1156。** 独立 worktree
   `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-841-attempt-cost-truth`，branch
   `codex/yuk-841-attempt-cost-truth`，base `origin/main@24add632`。
 - 当前实现把 SDK terminal evidence 先于 success/error 分类捕获，并用一个
@@ -20,15 +20,16 @@
 - schema/migration、admin run/detail/cost、`/api/cost/today`、Postman 与 generated API client 已同步；
   历史与非 runner ledger 保持显式 `legacy`，unknown amount 为 NULL 且不进入金额 SUM。
 - 本轮仅做了代码编辑、只读检查、生成器和 formatter；**未运行任何本地 test/typecheck/lint/
-  build/audit gate**。三路独立只读 review 已审当前真实 diff，均无未解决 P0/P1；P2/minor
-  保持 advisory。
+  build/audit gate**。PR 的前一 exact-head 已由 GitHub CI 全绿；合并前 review 发现 success
+  settlement fail-open 会破坏 attempt 单一真相，当前已改为 fail-closed 并补普通/流式反证测试，
+  新 head 仍须重新通过远端 CI。三路独立只读 review 均无其它未解决 P0/P1。
 - **YUK-596 transport/Stop 与 actual burn-in 证据保持已交付；产品内容仍 HOLD。** YUK-832–836
   没有取消或完成，只因 owner 切换 active 主线而暂停。
 
 ## NEXT
 
-1. 提交并推送 YUK-841，开 PR；只由 exact-head GitHub CI 执行 migration/unit/DB/typecheck/lint/
-   build/audit gates。
+1. 提交并推送 PR #1156 的 success-settlement fail-closed 修复；只由 exact-head GitHub CI 执行
+   migration/unit/DB/typecheck/lint/build/audit gates。
 2. CI 绿且无未解决 P0/P1 后 merge，将 YUK-841 标 Done。
 3. 从合并后的 main 新建独立 worktree 启动 YUK-842 provider-lane admission；共享 schema/runtime lane
    不并行。
@@ -40,7 +41,8 @@
 - YUK-841 明确非目标：真实合同价格校准、UI、OCR/GLM 等非 `AiRunLifecycle` writer 全面迁移。
   placeholder price 只能标 estimated，不能用于预算可信声明。
 - 产品级 `cost_usd ?? 0` 聚合与 UI 的 null→$0 展示仍是后续 operation/UI debt；本票只承诺
-  model-attempt truth，不扩写成 product-operation cost truth。
+  model-attempt truth，不扩写成 product-operation cost truth；operation 传播已捕获为 YUK-844。
+- stuck-run reconciler 的单行结算异常隔离为 P2 可用性 follow-up，已捕获为 YUK-843。
 - **YUK-832–836 actual-output P1**：保留原优先级与证据，FULL active 期间暂停，不用架构 gate
   冒充产品质量 gate。
 - **YUK-813 / YUK-831 OpenCode**：按 owner 指示暂不处理。

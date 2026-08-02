@@ -49,7 +49,10 @@ function successResult(text: string, cost_usd = 0.001) {
   };
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe('runTask (Claude Agent SDK adapter)', () => {
   beforeEach(async () => {
@@ -175,7 +178,7 @@ describe('runTask (Claude Agent SDK adapter)', () => {
   });
 
   it('preserves Anthropic direct reported zero as real evidence', async () => {
-    process.env.ANTHROPIC_API_KEY = 'sk-anthropic-test';
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-anthropic-test');
     mockSdk.messages = [successResult('free-tier', 0)];
 
     const result = await runTask(

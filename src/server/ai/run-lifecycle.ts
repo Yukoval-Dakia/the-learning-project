@@ -224,12 +224,17 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       throw new Error(`[${this.kind}] cannot finish success without a terminal SDK result`);
     }
 
-    await this.writeTerminal({
+    const settled = await this.writeTerminal({
       status: 'success',
       finishReason: this.terminal.finishReason,
       errorMessage: undefined,
       outcome: 'success',
     });
+    if (!settled) {
+      throw new Error(
+        `[${this.kind}] cannot report success before durable attempt settlement: ${this.taskRunId}`,
+      );
+    }
 
     if (this.config.afterRun) {
       try {

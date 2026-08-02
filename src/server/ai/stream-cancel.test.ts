@@ -221,9 +221,14 @@ describe('streamTask — YUK-240 stuck-run observability', () => {
   it('emits task_run_stuck_in_running when the success finish-write fails', async () => {
     logMocks.finishedShouldThrow = true;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const afterRun = vi.fn(async () => {});
 
-    const response = streamTask('AttributionTask', { q: 'x' }, { db: fakeDb });
-    await drain(response);
+    const response = streamTask(
+      'AttributionTask',
+      { q: 'x' },
+      { db: fakeDb, middleware: { afterRun } },
+    );
+    const body = await response.text();
 
     const stuck = warn.mock.calls.find(
       (call) => (call[1] as { event?: string } | undefined)?.event === 'task_run_stuck_in_running',
@@ -234,6 +239,10 @@ describe('streamTask — YUK-240 stuck-run observability', () => {
       intended_status: 'success',
     });
     expect((stuck?.[1] as { task_run_id?: string }).task_run_id).toBeTruthy();
+    expect(body).toContain(
+      '[streamTask] [AttributionTask] cannot report success before durable attempt settlement:',
+    );
+    expect(afterRun).not.toHaveBeenCalled();
 
     warn.mockRestore();
   });

@@ -401,6 +401,21 @@ describe('runTask — YUK-576 transient retry loop', () => {
     expect(logMock.retried).not.toHaveBeenCalled();
   });
 
+  it('does not return success or run afterRun when the attempt truth cannot settle', async () => {
+    const afterRun = vi.fn(async () => {});
+    mockSdk.messageQueues = [[successResult('must-not-return')]];
+    logMock.settlementShouldFail = true;
+
+    await expect(
+      runTask(NO_RETRY_KIND, { q: 1 }, { db: fakeDb, middleware: { afterRun } }),
+    ).rejects.toThrow(/cannot report success before durable attempt settlement/);
+
+    expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(afterRun).not.toHaveBeenCalled();
+    expect(logMock.finished).not.toHaveBeenCalled();
+    expect(logMock.cost).not.toHaveBeenCalled();
+  });
+
   it('opt-in + permanent api error (400 fixture) → throws immediately, no retry, finish_reason=error', async () => {
     mockSdk.messageQueues = [[API_ERROR_400_RESULT]];
 
