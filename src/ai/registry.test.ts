@@ -11,6 +11,10 @@
 // not "wording was tweaked".
 
 import { createHash } from 'node:crypto';
+import {
+  COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS,
+  COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS,
+} from '@/core/copilot-evidence';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
 import promptHashOracle from './fixtures/task-prompt-hashes.4cb5b966.json' with { type: 'json' };
@@ -571,15 +575,15 @@ describe('CopilotTask.systemPrompt — YUK-832 evidence-claim contract', () => {
 });
 
 describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
-  it('is a bounded Xiaomi no-tool blind-reference task with a flat sealed schema', () => {
+  it('is a bounded Xiaomi append-only blind-reference task with a server-owned sealed schema', () => {
     const def = tasks.CopilotEvidenceReviewTask;
     expect(def.defaultProvider).toBe('xiaomi');
     expect(def.defaultModel).toBe('mimo-v2.5-pro');
-    expect(def.needsToolCall).toBe(false);
-    expect(def.allowedTools).toEqual([]);
-    expect(def.budget.maxIterations).toBe(1);
+    expect(def.needsToolCall).toBe(true);
+    expect(def.allowedTools).toEqual([...COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS]);
+    expect(def.budget.maxIterations).toBe(4);
     expect(def.budget.timeout).toBe(120_000);
-    expect(def.structuredOutputSchema).toBe(CopilotEvidenceReviewOutputSchema);
+    expect(def).not.toHaveProperty('structuredOutputSchema');
 
     expect(
       CopilotEvidenceReviewOutputSchema.safeParse({
@@ -626,15 +630,15 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     ).toBe(false);
   });
 
-  it('uses a separate no-rewrite comparator whose output cannot authorize itself or author a third draft', () => {
+  it('uses a separate append-only comparator whose output cannot authorize itself or author a third draft', () => {
     const def = tasks.CopilotEvidenceVerificationTask;
     expect(def.defaultProvider).toBe('xiaomi');
     expect(def.defaultModel).toBe('mimo-v2.5-pro');
-    expect(def.needsToolCall).toBe(false);
-    expect(def.allowedTools).toEqual([]);
-    expect(def.budget.maxIterations).toBe(1);
+    expect(def.needsToolCall).toBe(true);
+    expect(def.allowedTools).toEqual([...COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS]);
+    expect(def.budget.maxIterations).toBe(4);
     expect(def.budget.timeout).toBe(120_000);
-    expect(def.structuredOutputSchema).toBe(CopilotEvidenceVerificationOutputSchema);
+    expect(def).not.toHaveProperty('structuredOutputSchema');
     expect(
       CopilotEvidenceVerificationOutputSchema.safeParse({
         protocol_version: 1,
@@ -668,7 +672,7 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     ).toBe(false);
     const p = getTaskSystemPrompt('CopilotEvidenceVerificationTask');
     expect(p).toContain('看不到其他 comparator attempt 的结果');
-    expect(p).toContain('服务端会验证 dense index');
+    expect(p).toContain('服务端会生成 request_checks 并派生 pass/fail');
     expect(p).toContain('trace_coverage');
     expect(p).toContain('source_complete');
     expect(p).toContain('不要生成 safe_reply 或第三版');
@@ -695,35 +699,23 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     expect(p).toContain('不得静默省略某个 subpart');
     expect(p).toContain('query_knowledge 的 nodes=[]');
     expect(p).toContain('完整链、后续动作、review/judge、队列结论');
-    expect(p).toContain('RFC6901');
-    expect(p).toContain('第 26–60 次调用');
-    expect(p).toContain('后续仍会被两次密封 comparator 独立核验');
-    expect(p).toContain('Xiaomi 当前不接收 SDK native outputFormat');
-    expect(p).toContain('{"protocol_version":1,"evidence_points"');
-    expect(p).toContain('request status 只能取 answerable / actual_gap');
-    expect(p).toContain('绝不能是 []');
-    expect(p).toContain('完全同集合，不多、不少');
-    expect(p).toContain('至少绑定一个 kind=actual_gap point');
-    expect(p).toContain('relevance 只能取 material / scope_only / not_material / unusable');
-    expect(p).toContain('"status":"answerable"');
-    expect(p).toContain('"relevance":"material"');
-    expect(p).toContain('json_pointer 的最终值只能是 scalar/null/显式空容器');
-    expect(p).toContain('绝不能是空字符串 ""');
-    expect(p).toContain('以 / 开头');
-    expect(p).toContain('非空 object/array 一律会被 server 拒绝');
-    expect(p).toContain('不得改名、包一层 data/result');
+    expect(p).toContain('append_evidence_points');
+    expect(p).toContain('mark_trace_calls_not_material');
+    expect(p).toContain('set_safe_reply');
+    expect(p).toContain('complete_reference');
+    expect(p).toContain('不要生成最终大 JSON');
+    expect(p).toContain('不得在提交记录中输出 call_index、side 或 JSON Pointer');
+    expect(p).toContain('服务端会从 source_id 还原并生成连续 point_index');
+    expect(p).toContain('后续一轮单独调用 complete_reference');
+    expect(p).toContain('不得清空、替换或覆盖已接受记录');
     expect(p).toContain('contract_feedback');
     expect(p).toContain('不是新证据，也不含上次输出');
     const comparator = getTaskSystemPrompt('CopilotEvidenceVerificationTask');
-    expect(comparator).toContain('{"protocol_version":1,"reply_checks"');
-    expect(comparator).toContain('reply status 只能取 supported / explicit_gap / unsupported');
-    expect(comparator).toContain('request status 只能取 answered / explicit_gap / missing');
-    expect(comparator).toContain('reason_codes 每项只能取 supported / actual_gap_disclosed');
-    expect(comparator).toContain('"status":"supported"');
-    expect(comparator).toContain('"status":"answered"');
-    expect(comparator).toContain('不得改名、包一层 data/result');
-    expect(comparator).toContain('source_refs 可以是 []');
-    expect(comparator).toContain('绝不能指向非空 object/array');
+    expect(comparator).toContain('append_reply_checks');
+    expect(comparator).toContain('complete_comparison');
+    expect(comparator).toContain('不要输出 source_refs、call_index、side 或 JSON Pointer');
+    expect(comparator).toContain('服务端会从这些小记录派生 dense request_checks');
+    expect(comparator).toContain('不要输出大 JSON、总 verdict、request_checks');
     expect(comparator).toContain('不含上次 verdict/output，也不是证据');
   });
 });

@@ -45,25 +45,25 @@
 
 > **YUK-832 final evidence review update (2026-08-02):** free-form Copilot
 > candidate prose is now buffered rather than published as it is generated. The
-> shipped intervention FULL validator state machine is generalized: a blind
-> no-tool leg never sees candidate prose and seals request-indexed facts/gaps to
-> exact typed DomainTool calls + RFC6901 pointers; a comparator then returns one
-> dense observation per server-sliced reply/request unit. Provider verdict is not
-> authority—the server binds indices, pointers, coverage and digests, derives the
-> decision, and requires two valid pass attempts. A valid fail stops immediately;
-> contract-invalid output consumes the bounded slot. The blind fallback is the
-> only possible repair and must itself obtain two fresh valid passes; there is no
-> third draft. Only confirmed text becomes visible; timeout/parse/provider/binding
-> failure is fixed fail closed. For providers without native structured output,
-> the existing shared structured-task parser extracts one JSON object from a raw,
-> Markdown-fenced, or prose-wrapped response; wrapper prose is discarded and never
-> becomes authority. Multiple top-level objects, Zod failure, or any server-binding
-> mismatch remain contract-invalid. A second bounded attempt may receive only the
-> server-generated fixed Zod/binding rejection (at most 240 characters); it never
-> receives the prior output/verdict, candidate, thinking, or new evidence, and its
-> actual input is separately hashed and bound. Because Xiaomi does not receive the
-> SDK native outputFormat, both no-tool prompts also carry the exact numeric protocol
-> version, field names, array shapes, and enum values that Zod enforces. Marker 记录 primary
+> shipped intervention FULL validator state machine is generalized: a blind leg
+> never sees candidate prose and receives the immutable typed DomainTool trace plus
+> a server-generated short source-id catalog. It uses only bounded append-only
+> internal submission tools to add evidence points, mark unused successful reads,
+> and set one fallback; the server resolves source ids to exact RFC6901 pointers and
+> derives dense point/request/trace coverage. A comparator similarly appends small
+> per-reply checks; the server derives request checks, coverage, digest and verdict.
+> Neither provider leg emits or authorizes one large cross-indexed JSON object.
+> The internal tools are local collectors, not DomainTools: they cannot read or
+> mutate product state, and accepted records freeze only after an explicit complete
+> call. Provider verdict is not authority; the shared confirmed-review state machine
+> still requires two valid pass attempts, while a valid fail stops immediately.
+> The blind fallback is the only possible repair and must itself obtain two fresh
+> valid passes; there is no third draft. Missing/duplicate/out-of-range records,
+> unknown source ids, incomplete completion, provider failure, timeout or canonical
+> binding mismatch remain contract-invalid/fail closed. A second bounded attempt may
+> receive only the server-generated fixed submission rejection (at most 240
+> characters); it never receives the prior records/verdict, candidate, thinking, or
+> new evidence, and its actual input is separately hashed and bound. Marker 记录 primary
 > stream 是否产生正文；随后
 > settlement projection 把一条 reviewed full-text DELTA 与 REPLY/DONE 或 FAILED
 > 放在同一事务里，严格按 DELTA→terminal 写入；redelivery/reconcile 从 marker 修复

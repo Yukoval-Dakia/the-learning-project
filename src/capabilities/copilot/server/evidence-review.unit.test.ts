@@ -1,3 +1,12 @@
+import {
+  CopilotEvidenceReviewOutputSchema,
+  CopilotEvidenceVerificationOutputSchema,
+} from '@/ai/registry';
+import {
+  COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS,
+  COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS,
+  COPILOT_EVIDENCE_SUBMISSION_SERVER_NAME,
+} from '@/core/copilot-evidence';
 import type { Db } from '@/db/client';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { getReviewDueTool } from '@/server/ai/tools/context-readers';
@@ -20,11 +29,14 @@ import {
   COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
   COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS,
   type CopilotEvidenceReviewRunTaskFn,
-  parseCopilotEvidenceReviewResult,
-  parseCopilotEvidenceVerificationResult,
   reviewCopilotEvidenceReply,
 } from './evidence-review';
 import { REALISTIC_EVIDENCE_TRACE } from './evidence-review.actual-fixture';
+import type {
+  ComparisonEvidenceSubmission,
+  CopilotEvidenceSourceCatalogCall,
+  ReferenceEvidenceSubmission,
+} from './evidence-submission';
 
 const db = {} as Db;
 const sourceRef = {
@@ -648,6 +660,115 @@ function realisticComparisonOutput(input: unknown, options: { unsafe: boolean })
   };
 }
 
+function chunk<T>(values: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function submitReferenceOutput(
+  input: unknown,
+  submission: ReferenceEvidenceSubmission | undefined,
+  output: unknown,
+): void {
+  if (!submission) throw new Error('reference submission seam missing');
+  const parsed = CopilotEvidenceReviewOutputSchema.safeParse(output);
+  if (!parsed.success) return;
+  const sourceCatalog = (input as { source_catalog: CopilotEvidenceSourceCatalogCall[] })
+    .source_catalog;
+  const sourceIdByRef = new Map(
+    sourceCatalog.flatMap((call) =>
+      (['input', 'output'] as const).flatMap((side) =>
+        call[side].map(
+          ([sourceId, jsonPointer]) =>
+            [`${call.call_index}:${side}:${jsonPointer}`, sourceId] as const,
+        ),
+      ),
+    ),
+  );
+  const points = parsed.data.evidence_points.map((point) => ({
+    request_unit_indices: point.request_unit_indices,
+    kind: point.kind,
+    statement_md: point.statement_md,
+    sources: point.source_refs.map((source) => ({
+      source_id:
+        sourceIdByRef.get(`${source.call_index}:${source.side}:${source.json_pointer}`) ??
+        's999999',
+      role: source.role,
+    })),
+  }));
+  for (const pointsChunk of chunk(points, 12)) {
+    submission.appendEvidencePoints({ points: pointsChunk });
+  }
+  const notMaterial = parsed.data.trace_coverage.flatMap((coverage) =>
+    coverage.relevance === 'not_material'
+      ? [{ call_index: coverage.call_index, rationale_md: coverage.rationale_md }]
+      : [],
+  );
+  for (const calls of chunk(notMaterial, 12)) {
+    submission.markTraceCallsNotMaterial({ calls });
+  }
+  submission.setSafeReply({ safe_reply: parsed.data.safe_reply });
+  submission.completeReference();
+}
+
+function submitComparisonOutput(
+  input: unknown,
+  submission: ComparisonEvidenceSubmission | undefined,
+  output: unknown,
+): void {
+  if (!submission) throw new Error('comparison submission seam missing');
+  const parsed = CopilotEvidenceVerificationOutputSchema.safeParse(output);
+  if (!parsed.success) return;
+  const sealedCoverage = (
+    input as {
+      sealed_reference: {
+        request_coverage: Array<{
+          request_unit_index: number;
+          evidence_point_indices: number[];
+        }>;
+      };
+    }
+  ).sealed_reference.request_coverage;
+  const checks = parsed.data.reply_checks.map((check) => ({
+    reply_unit_index: check.reply_unit_index,
+    request_unit_indices:
+      check.reason_codes.length === 1 && check.reason_codes[0] === 'non_evidentiary'
+        ? []
+        : sealedCoverage
+            .filter((coverage) =>
+              coverage.evidence_point_indices.some((point) =>
+                check.evidence_point_indices.includes(point),
+              ),
+            )
+            .map((coverage) => coverage.request_unit_index),
+    status: check.status,
+    evidence_point_indices: check.evidence_point_indices,
+    reason_codes: check.reason_codes,
+  }));
+  for (const checksChunk of chunk(checks, 12)) {
+    submission.appendReplyChecks({ checks: checksChunk });
+  }
+  submission.completeComparison();
+}
+
+function submitTaskOutput(
+  kind: 'CopilotEvidenceReviewTask' | 'CopilotEvidenceVerificationTask',
+  input: unknown,
+  submission: ReferenceEvidenceSubmission | ComparisonEvidenceSubmission | undefined,
+  output: unknown,
+  taskRunId: string,
+) {
+  if (kind === 'CopilotEvidenceReviewTask') {
+    submitReferenceOutput(input, submission as ReferenceEvidenceSubmission | undefined, output);
+  } else {
+    submitComparisonOutput(input, submission as ComparisonEvidenceSubmission | undefined, output);
+  }
+  return { task_run_id: taskRunId, text: '' };
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -655,24 +776,30 @@ afterEach(() => {
 describe('Copilot FULL evidence review', () => {
   it('uses a 360s durable reference tail while keeping comparator and inline budgets unchanged', async () => {
     let comparisonOrdinal = 0;
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
-      if (kind === 'CopilotEvidenceReviewTask') {
-        return {
-          task_run_id: 'durable-reference',
-          text: '',
-          structured_output: realisticReferenceOutput(input, {
-            observationCount: DURABLE_TIMEOUT_TRACE.length,
-            safeReply: durableTimeoutSafeReply,
-          }),
-        };
-      }
-      comparisonOrdinal += 1;
-      return {
-        task_run_id: `durable-comparison-${comparisonOrdinal}`,
-        text: '',
-        structured_output: realisticComparisonOutput(input, { unsafe: false }),
-      };
-    });
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return submitTaskOutput(
+            kind,
+            input,
+            submission,
+            realisticReferenceOutput(input, {
+              observationCount: DURABLE_TIMEOUT_TRACE.length,
+              safeReply: durableTimeoutSafeReply,
+            }),
+            'durable-reference',
+          );
+        }
+        comparisonOrdinal += 1;
+        return submitTaskOutput(
+          kind,
+          input,
+          submission,
+          realisticComparisonOutput(input, { unsafe: false }),
+          `durable-comparison-${comparisonOrdinal}`,
+        );
+      },
+    );
 
     const result = await reviewCopilotEvidenceReply(
       reviewParams({
@@ -689,8 +816,32 @@ describe('Copilot FULL evidence review', () => {
     expect(runTaskFn.mock.calls[0]?.[2].budgetOverride).toEqual({
       timeoutMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
     });
+    expect(runTaskFn.mock.calls[0]?.[2]).toMatchObject({
+      allowedTools: [...COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS],
+      autoLogToolCalls: false,
+      mcpServers: { [COPILOT_EVIDENCE_SUBMISSION_SERVER_NAME]: expect.any(Object) },
+    });
+    expect(runTaskFn.mock.calls[0]?.[2]).not.toHaveProperty('outputFormat');
+    expect(runTaskFn.mock.calls[0]?.[1]).toMatchObject({
+      submission_protocol: {
+        kind: 'append_only_tools',
+        server_derives: expect.arrayContaining(['json_pointers', 'request_coverage']),
+      },
+      source_catalog: expect.arrayContaining([
+        expect.objectContaining({
+          call_index: 0,
+          input: expect.arrayContaining([['s0', expect.stringMatching(/^\//)]]),
+        }),
+      ]),
+    });
+    expect(JSON.stringify(runTaskFn.mock.calls[0]?.[1]).length).toBeLessThan(200_000);
     expect(runTaskFn.mock.calls[1]?.[2]).not.toHaveProperty('budgetOverride');
     expect(runTaskFn.mock.calls[2]?.[2]).not.toHaveProperty('budgetOverride');
+    expect(runTaskFn.mock.calls[1]?.[2]).toMatchObject({
+      allowedTools: [...COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS],
+      autoLogToolCalls: false,
+    });
+    expect(runTaskFn.mock.calls[1]?.[2]).not.toHaveProperty('outputFormat');
     expect(COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS).toBe(360_000);
     expect(COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS).toBe(120_000);
     expect(COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS).toBe(
@@ -760,21 +911,27 @@ describe('Copilot FULL evidence review', () => {
   it('preserves original bytes only after blind reference plus two bound passes', async () => {
     const candidate = blindSafeReply;
     let comparisonOrdinal = 0;
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
-      if (kind === 'CopilotEvidenceReviewTask') {
-        return {
-          task_run_id: 'reference-1',
-          text: '',
-          structured_output: realisticReferenceOutput(input),
-        };
-      }
-      comparisonOrdinal += 1;
-      return {
-        task_run_id: `comparison-${comparisonOrdinal}`,
-        text: '',
-        structured_output: realisticComparisonOutput(input, { unsafe: false }),
-      };
-    });
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return submitTaskOutput(
+            kind,
+            input,
+            submission,
+            realisticReferenceOutput(input),
+            'reference-1',
+          );
+        }
+        comparisonOrdinal += 1;
+        return submitTaskOutput(
+          kind,
+          input,
+          submission,
+          realisticComparisonOutput(input, { unsafe: false }),
+          `comparison-${comparisonOrdinal}`,
+        );
+      },
+    );
 
     const result = await reviewCopilotEvidenceReply(
       reviewParams({ candidateReply: candidate, runTaskFn }),
@@ -800,24 +957,30 @@ describe('Copilot FULL evidence review', () => {
 
   it('rejects the complex unsafe original and exposes the blind reply only after two fresh passes', async () => {
     let comparisonOrdinal = 0;
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
-      if (kind === 'CopilotEvidenceReviewTask') {
-        return {
-          task_run_id: 'reference-realistic',
-          text: '',
-          structured_output: realisticReferenceOutput(input),
-        };
-      }
-      const selectedKind = (input as { selected_text_kind: string }).selected_text_kind;
-      comparisonOrdinal += 1;
-      return {
-        task_run_id: `comparison-${comparisonOrdinal}`,
-        text: '',
-        structured_output: realisticComparisonOutput(input, {
-          unsafe: selectedKind === 'original',
-        }),
-      };
-    });
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return submitTaskOutput(
+            kind,
+            input,
+            submission,
+            realisticReferenceOutput(input),
+            'reference-realistic',
+          );
+        }
+        const selectedKind = (input as { selected_text_kind: string }).selected_text_kind;
+        comparisonOrdinal += 1;
+        return submitTaskOutput(
+          kind,
+          input,
+          submission,
+          realisticComparisonOutput(input, {
+            unsafe: selectedKind === 'original',
+          }),
+          `comparison-${comparisonOrdinal}`,
+        );
+      },
+    );
 
     const result = await reviewCopilotEvidenceReply(reviewParams({ runTaskFn }));
 
@@ -842,28 +1005,33 @@ describe('Copilot FULL evidence review', () => {
   });
 
   it('retries a contract-invalid blind ledger with bounded server feedback only', async () => {
-    const runTaskFn = vi
-      .fn<CopilotEvidenceReviewRunTaskFn>()
-      .mockResolvedValueOnce({
-        task_run_id: 'reference-invalid',
-        text: '',
-        structured_output: { protocol_version: 1, evidence_points: [] },
-      })
-      .mockImplementation(async (kind, input) => {
+    let referenceAttempt = 0;
+    let comparisonOrdinal = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
         if (kind === 'CopilotEvidenceReviewTask') {
-          return {
-            task_run_id: 'reference-valid',
-            text: '',
-            structured_output: referenceOutput(input),
-          };
+          referenceAttempt += 1;
+          if (referenceAttempt === 1) {
+            return { task_run_id: 'reference-invalid', text: '' };
+          }
+          return submitTaskOutput(
+            kind,
+            input,
+            submission,
+            referenceOutput(input),
+            'reference-valid',
+          );
         }
-        const ordinal = runTaskFn.mock.calls.filter((call) => call[0] === kind).length;
-        return {
-          task_run_id: `comparison-valid-${ordinal}`,
-          text: '',
-          structured_output: comparisonOutput(input),
-        };
-      });
+        comparisonOrdinal += 1;
+        return submitTaskOutput(
+          kind,
+          input,
+          submission,
+          comparisonOutput(input),
+          `comparison-valid-${comparisonOrdinal}`,
+        );
+      },
+    );
 
     const result = await reviewCopilotEvidenceReply(
       reviewParams({ candidateReply: blindSafeReply, runTaskFn }),
@@ -876,37 +1044,43 @@ describe('Copilot FULL evidence review', () => {
     expect(secondBase).toEqual(firstInput);
     expect(feedback).toEqual({
       previous_attempt: 1,
-      rejection: expect.stringContaining('invalid'),
+      rejection: 'evidence_points_missing',
     });
     expect(JSON.stringify(feedback)).not.toContain(unsafeCandidate);
     expect(result.referenceTaskRunIds).toEqual(['reference-invalid', 'reference-valid']);
   });
 
-  it('feeds a fixed scalar-pointer rejection into the second realistic blind attempt', async () => {
+  it('feeds an unknown short source id rejection into the second blind attempt', async () => {
     let referenceAttempt = 0;
     let comparisonAttempt = 0;
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
-      if (kind === 'CopilotEvidenceReviewTask') {
-        referenceAttempt += 1;
-        const output = realisticReferenceOutput(input);
-        if (referenceAttempt === 1) {
-          const sourceRef = output.evidence_points[2]?.source_refs[0];
-          if (!sourceRef) throw new Error('realistic fixture is missing its third source ref');
-          sourceRef.json_pointer = '/causal_neighborhood/direct_children/0';
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          referenceAttempt += 1;
+          const output = realisticReferenceOutput(input);
+          if (referenceAttempt === 1) {
+            const sourceRef = output.evidence_points[2]?.source_refs[0];
+            if (!sourceRef) throw new Error('realistic fixture is missing its third source ref');
+            sourceRef.json_pointer = '/path/not/in/server/source/catalog';
+          }
+          return submitTaskOutput(
+            kind,
+            input,
+            submission,
+            output,
+            `reference-source-id-${referenceAttempt}`,
+          );
         }
-        return {
-          task_run_id: `reference-pointer-${referenceAttempt}`,
-          text: '',
-          structured_output: output,
-        };
-      }
-      comparisonAttempt += 1;
-      return {
-        task_run_id: `comparison-after-pointer-${comparisonAttempt}`,
-        text: '',
-        structured_output: realisticComparisonOutput(input, { unsafe: false }),
-      };
-    });
+        comparisonAttempt += 1;
+        return submitTaskOutput(
+          kind,
+          input,
+          submission,
+          realisticComparisonOutput(input, { unsafe: false }),
+          `comparison-after-source-id-${comparisonAttempt}`,
+        );
+      },
+    );
 
     const result = await reviewCopilotEvidenceReply(
       reviewParams({ candidateReply: blindSafeReply, runTaskFn }),
@@ -916,40 +1090,46 @@ describe('Copilot FULL evidence review', () => {
     expect(runTaskFn.mock.calls[1]?.[1]).toMatchObject({
       contract_feedback: {
         previous_attempt: 1,
-        rejection: 'Error:evidence source pointer must resolve to a scalar or explicit empty value',
+        rejection: 'evidence_points_missing',
       },
     });
-    expect(result.referenceTaskRunIds).toEqual(['reference-pointer-1', 'reference-pointer-2']);
+    expect(result.referenceTaskRunIds).toEqual(['reference-source-id-1', 'reference-source-id-2']);
   });
 
   it('keeps a failed paid blind-reference run id when the next attempt succeeds', async () => {
     let referenceAttempt = 0;
     let comparisonAttempt = 0;
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
-      if (kind === 'CopilotEvidenceReviewTask') {
-        referenceAttempt += 1;
-        if (referenceAttempt === 1) {
-          throw new AgentRunError({
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          referenceAttempt += 1;
+          if (referenceAttempt === 1) {
+            throw new AgentRunError({
+              kind,
+              taskRunId: 'reference-provider-failed',
+              subtype: 'api_error_result',
+              apiErrorStatus: 503,
+              errors: ['upstream unavailable'],
+            });
+          }
+          return submitTaskOutput(
             kind,
-            taskRunId: 'reference-provider-failed',
-            subtype: 'api_error_result',
-            apiErrorStatus: 503,
-            errors: ['upstream unavailable'],
-          });
+            input,
+            submission,
+            referenceOutput(input),
+            'reference-provider-recovered',
+          );
         }
-        return {
-          task_run_id: 'reference-provider-recovered',
-          text: '',
-          structured_output: referenceOutput(input),
-        };
-      }
-      comparisonAttempt += 1;
-      return {
-        task_run_id: `comparison-after-reference-recovery-${comparisonAttempt}`,
-        text: '',
-        structured_output: comparisonOutput(input),
-      };
-    });
+        comparisonAttempt += 1;
+        return submitTaskOutput(
+          kind,
+          input,
+          submission,
+          comparisonOutput(input),
+          `comparison-after-reference-recovery-${comparisonAttempt}`,
+        );
+      },
+    );
 
     const result = await reviewCopilotEvidenceReply(
       reviewParams({ candidateReply: blindSafeReply, runTaskFn }),
@@ -968,23 +1148,24 @@ describe('Copilot FULL evidence review', () => {
   it('does not let one valid pass wash away a contract-invalid comparator attempt', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     let comparatorAttempt = 0;
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
-      if (kind === 'CopilotEvidenceReviewTask') {
-        return { task_run_id: 'reference', text: '', structured_output: referenceOutput(input) };
-      }
-      comparatorAttempt += 1;
-      return comparatorAttempt === 1
-        ? {
-            task_run_id: 'comparison-invalid',
-            text: '',
-            structured_output: { protocol_version: 1, reply_checks: [], request_checks: [] },
-          }
-        : {
-            task_run_id: 'comparison-pass',
-            text: '',
-            structured_output: comparisonOutput(input),
-          };
-    });
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return submitTaskOutput(kind, input, submission, referenceOutput(input), 'reference');
+        }
+        comparatorAttempt += 1;
+        if (comparatorAttempt === 1) {
+          return { task_run_id: 'comparison-invalid', text: '' };
+        }
+        return submitTaskOutput(
+          kind,
+          input,
+          submission,
+          comparisonOutput(input),
+          'comparison-pass',
+        );
+      },
+    );
 
     const result = await reviewCopilotEvidenceReply(
       reviewParams({ candidateReply: blindSafeReply, runTaskFn }),
@@ -999,7 +1180,7 @@ describe('Copilot FULL evidence review', () => {
     expect(runTaskFn.mock.calls[2]?.[1]).toMatchObject({
       contract_feedback: {
         previous_attempt: 1,
-        rejection: 'reply_checks:too_small, request_checks:too_small',
+        rejection: 'reply_checks_incomplete',
       },
     });
   });
@@ -1007,25 +1188,29 @@ describe('Copilot FULL evidence review', () => {
   it('keeps a failed paid comparator id when a later pass cannot confirm it', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     let comparatorAttempt = 0;
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
-      if (kind === 'CopilotEvidenceReviewTask') {
-        return { task_run_id: 'reference', text: '', structured_output: referenceOutput(input) };
-      }
-      comparatorAttempt += 1;
-      if (comparatorAttempt === 1) {
-        throw new AgentRunError({
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return submitTaskOutput(kind, input, submission, referenceOutput(input), 'reference');
+        }
+        comparatorAttempt += 1;
+        if (comparatorAttempt === 1) {
+          throw new AgentRunError({
+            kind,
+            taskRunId: 'comparison-provider-failed',
+            subtype: 'stream_no_terminal',
+            errors: ['stream ended without terminal'],
+          });
+        }
+        return submitTaskOutput(
           kind,
-          taskRunId: 'comparison-provider-failed',
-          subtype: 'stream_no_terminal',
-          errors: ['stream ended without terminal'],
-        });
-      }
-      return {
-        task_run_id: 'comparison-provider-recovered',
-        text: '',
-        structured_output: comparisonOutput(input),
-      };
-    });
+          input,
+          submission,
+          comparisonOutput(input),
+          'comparison-provider-recovered',
+        );
+      },
+    );
 
     const result = await reviewCopilotEvidenceReply(
       reviewParams({ candidateReply: blindSafeReply, runTaskFn }),
@@ -1041,17 +1226,21 @@ describe('Copilot FULL evidence review', () => {
   it('fails closed when the blind fallback itself is rejected', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     let comparisonOrdinal = 0;
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
-      if (kind === 'CopilotEvidenceReviewTask') {
-        return { task_run_id: 'reference', text: '', structured_output: referenceOutput(input) };
-      }
-      comparisonOrdinal += 1;
-      return {
-        task_run_id: `comparison-${comparisonOrdinal}`,
-        text: '',
-        structured_output: comparisonOutput(input, { fail: true }),
-      };
-    });
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return submitTaskOutput(kind, input, submission, referenceOutput(input), 'reference');
+        }
+        comparisonOrdinal += 1;
+        return submitTaskOutput(
+          kind,
+          input,
+          submission,
+          comparisonOutput(input, { fail: true }),
+          `comparison-${comparisonOrdinal}`,
+        );
+      },
+    );
 
     const result = await reviewCopilotEvidenceReply(reviewParams({ runTaskFn }));
 
@@ -1061,14 +1250,18 @@ describe('Copilot FULL evidence review', () => {
 
   it('propagates cancellation between paid calls', async () => {
     const controller = new AbortController();
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (_kind, input) => {
-      controller.abort(new DOMException('owner stopped', 'AbortError'));
-      return {
-        task_run_id: 'reference-before-stop',
-        text: '',
-        structured_output: referenceOutput(input),
-      };
-    });
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        controller.abort(new DOMException('owner stopped', 'AbortError'));
+        return submitTaskOutput(
+          kind,
+          input,
+          submission,
+          referenceOutput(input),
+          'reference-before-stop',
+        );
+      },
+    );
 
     await expect(
       reviewCopilotEvidenceReply(
@@ -1109,12 +1302,14 @@ describe('Copilot FULL evidence review', () => {
     });
     expect(referenceRunTaskFn).toHaveBeenCalledTimes(2);
 
-    const comparisonRunTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
-      if (kind === 'CopilotEvidenceReviewTask') {
-        return { task_run_id: 'reference', text: '', structured_output: referenceOutput(input) };
-      }
-      throw new DOMException('sdk stream budget elapsed', 'AbortError');
-    });
+    const comparisonRunTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return submitTaskOutput(kind, input, submission, referenceOutput(input), 'reference');
+        }
+        throw new DOMException('sdk stream budget elapsed', 'AbortError');
+      },
+    );
     const comparisonResult = await reviewCopilotEvidenceReply(
       reviewParams({ runTaskFn: comparisonRunTaskFn, candidateReply: blindSafeReply }),
     );
@@ -1138,69 +1333,31 @@ describe('Copilot FULL evidence review', () => {
     expect(runTaskFn).not.toHaveBeenCalled();
   });
 
-  it('extracts the one bound JSON object from provider prose without treating prose as authority', () => {
-    const requestUnits = segmentEvidenceRequest(reviewParams().requestContext);
-    const output = referenceOutput({ request_units: requestUnits });
-    expect(
-      parseCopilotEvidenceReviewResult({ text: `结果如下：\n${JSON.stringify(output)}` }),
-    ).toEqual(output);
-    expect(
-      parseCopilotEvidenceReviewResult({ text: `${JSON.stringify(output)}\n以上是 ledger。` }),
-    ).toEqual(output);
-  });
+  it('fails closed before a paid call when a reader observation is not canonical JSON data', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>();
+    const result = await reviewCopilotEvidenceReply(
+      reviewParams({
+        candidateReply: 'exact_event_01 存在。',
+        toolTrace: [
+          {
+            name: 'query_events',
+            effect: 'read',
+            input: { filter: { eventId: 'exact_event_01' } },
+            output: { event_id: undefined },
+            error_reason: null,
+            executed: true,
+          },
+        ],
+        runTaskFn,
+      }),
+    );
 
-  it('accepts one JSON object through raw/fence/prose wrappers but rejects multiple objects', () => {
-    const requestUnits = segmentEvidenceRequest(reviewParams().requestContext);
-    const reference = referenceOutput({
-      request_units: requestUnits,
-      tool_trace: DURABLE_TIMEOUT_TRACE,
+    expect(result).toMatchObject({
+      status: 'failed_closed',
+      replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
     });
-    expect(
-      parseCopilotEvidenceReviewResult({
-        text: `\n\`\`\`json\n${JSON.stringify(reference)}\n\`\`\`\n`,
-      }),
-    ).toEqual(reference);
-
-    const replyUnits = segmentEvidenceReply(durableTimeoutSafeReply);
-    const comparison = comparisonOutput({
-      request_units: requestUnits,
-      reply_units: replyUnits,
-      sealed_reference: {
-        evidence_points: reference.evidence_points,
-        request_coverage: reference.request_coverage,
-      },
-    });
-    expect(
-      parseCopilotEvidenceVerificationResult({
-        text: `\`\`\`\n${JSON.stringify(comparison)}\n\`\`\``,
-      }),
-    ).toEqual(comparison);
-    expect(
-      parseCopilotEvidenceReviewResult({
-        text: `ledger follows\n\`\`\`json\n${JSON.stringify(reference)}\n\`\`\``,
-      }),
-    ).toEqual(reference);
-    expect(
-      parseCopilotEvidenceReviewResult({
-        text: `\`\`\`json\n${JSON.stringify(reference)}\n\`\`\`\ntrailing prose`,
-      }),
-    ).toEqual(reference);
-    expect(() =>
-      parseCopilotEvidenceReviewResult({
-        text: `\`\`\`json\n${JSON.stringify(reference)}\n\`\`\`\n\`\`\`json\n${JSON.stringify(reference)}\n\`\`\``,
-      }),
-    ).toThrow();
-    expect(() =>
-      parseCopilotEvidenceReviewResult({
-        text: `\`\`\`json\n${JSON.stringify(reference)}\n${JSON.stringify(reference)}\n\`\`\``,
-      }),
-    ).toThrow();
-    expect(
-      parseCopilotEvidenceReviewResult({
-        text: 'malicious prose\n```json\n{}\n```',
-        structured_output: reference,
-      }),
-    ).toEqual(reference);
+    expect(runTaskFn).not.toHaveBeenCalled();
   });
 });
 

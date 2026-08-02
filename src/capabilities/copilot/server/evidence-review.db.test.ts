@@ -7,8 +7,35 @@ import {
   type CopilotEvidenceReviewRunTaskFn,
   reviewCopilotEvidenceReply,
 } from './evidence-review';
+import type {
+  CopilotEvidenceSourceCatalogCall,
+  ReferenceEvidenceSubmission,
+} from './evidence-submission';
 
 const db = testDb();
+
+function submitSimpleReference(
+  input: unknown,
+  submission: ReferenceEvidenceSubmission | undefined,
+): void {
+  if (!submission) throw new Error('reference submission missing');
+  const sourceId = (input as { source_catalog: CopilotEvidenceSourceCatalogCall[] }).source_catalog
+    .flatMap((call) => call.output)
+    .find(([, jsonPointer]) => jsonPointer === '/event_id')?.[0];
+  if (!sourceId) throw new Error('event id source missing');
+  submission.appendEvidencePoints({
+    points: [
+      {
+        request_unit_indices: [0],
+        kind: 'observed_fact',
+        statement_md: '只读结果返回了 exact event id。',
+        sources: [{ source_id: sourceId, role: 'value' }],
+      },
+    ],
+  });
+  submission.setSafeReply({ safe_reply: '只读结果返回 exact_event_01。' });
+  submission.completeReference();
+}
 
 describe('Copilot evidence validator provenance binding', () => {
   beforeEach(async () => {
@@ -28,42 +55,12 @@ describe('Copilot evidence validator provenance binding', () => {
       started_at: new Date('2026-08-02T00:00:00.000Z'),
       finished_at: new Date('2026-08-02T00:00:20.000Z'),
     });
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async () => ({
-      task_run_id: 'reference_with_wrong_input_hash',
-      text: '',
-      structured_output: {
-        protocol_version: 1,
-        evidence_points: [
-          {
-            point_index: 0,
-            request_unit_indices: [0],
-            kind: 'observed_fact',
-            statement_md: '只读结果返回了 exact event id。',
-            source_refs: [
-              {
-                call_index: 0,
-                side: 'output',
-                json_pointer: '/event_id',
-                role: 'value',
-              },
-            ],
-          },
-        ],
-        request_coverage: [
-          { request_unit_index: 0, status: 'answerable', evidence_point_indices: [0] },
-        ],
-        trace_coverage: [
-          {
-            call_index: 0,
-            relevance: 'material',
-            request_unit_indices: [0],
-            evidence_point_indices: [0],
-            rationale_md: '该 exact event id 直接回答 request atom。',
-          },
-        ],
-        safe_reply: '只读结果返回 exact_event_01。',
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (_kind, input, _ctx, submission) => {
+        submitSimpleReference(input, submission as ReferenceEvidenceSubmission | undefined);
+        return { task_run_id: 'reference_with_wrong_input_hash', text: '' };
       },
-    }));
+    );
 
     const result = await reviewCopilotEvidenceReply({
       db,
@@ -94,68 +91,32 @@ describe('Copilot evidence validator provenance binding', () => {
   it('binds a repaired blind attempt to its feedback-bearing paid input', async () => {
     let referenceAttempt = 0;
     const observedInputs: unknown[] = [];
-    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
-      observedInputs.push(input);
-      if (kind === 'CopilotEvidenceVerificationTask') return { text: '' };
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        observedInputs.push(input);
+        if (kind === 'CopilotEvidenceVerificationTask') return { text: '' };
 
-      referenceAttempt += 1;
-      const taskRunId = `reference_feedback_${referenceAttempt}`;
-      await db.insert(ai_task_runs).values({
-        id: taskRunId,
-        task_kind: kind,
-        provider: 'xiaomi',
-        model: 'mimo-v2.5-pro',
-        input_hash: sha256CanonicalJson(input),
-        status: 'success',
-        finish_reason: 'stop',
-        usage_json: { inputTokens: 14_000, outputTokens: 2_400 },
-        started_at: new Date(`2026-08-02T00:01:0${referenceAttempt}.000Z`),
-        finished_at: new Date(`2026-08-02T00:01:2${referenceAttempt}.000Z`),
-      });
-      if (referenceAttempt === 1) {
-        return {
-          task_run_id: taskRunId,
-          text: '',
-          structured_output: { protocol_version: 2 },
-        };
-      }
-      return {
-        task_run_id: taskRunId,
-        text: '',
-        structured_output: {
-          protocol_version: 1,
-          evidence_points: [
-            {
-              point_index: 0,
-              request_unit_indices: [0],
-              kind: 'observed_fact',
-              statement_md: '只读结果返回了 exact event id。',
-              source_refs: [
-                {
-                  call_index: 0,
-                  side: 'output',
-                  json_pointer: '/event_id',
-                  role: 'value',
-                },
-              ],
-            },
-          ],
-          request_coverage: [
-            { request_unit_index: 0, status: 'answerable', evidence_point_indices: [0] },
-          ],
-          trace_coverage: [
-            {
-              call_index: 0,
-              relevance: 'material',
-              request_unit_indices: [0],
-              evidence_point_indices: [0],
-              rationale_md: '该 exact event id 直接回答 request atom。',
-            },
-          ],
-          safe_reply: '只读结果返回 exact_event_01。',
-        },
-      };
-    });
+        referenceAttempt += 1;
+        const taskRunId = `reference_feedback_${referenceAttempt}`;
+        await db.insert(ai_task_runs).values({
+          id: taskRunId,
+          task_kind: kind,
+          provider: 'xiaomi',
+          model: 'mimo-v2.5-pro',
+          input_hash: sha256CanonicalJson(input),
+          status: 'success',
+          finish_reason: 'stop',
+          usage_json: { inputTokens: 14_000, outputTokens: 2_400 },
+          started_at: new Date(`2026-08-02T00:01:0${referenceAttempt}.000Z`),
+          finished_at: new Date(`2026-08-02T00:01:2${referenceAttempt}.000Z`),
+        });
+        if (referenceAttempt === 1) {
+          return { task_run_id: taskRunId, text: '' };
+        }
+        submitSimpleReference(input, submission as ReferenceEvidenceSubmission | undefined);
+        return { task_run_id: taskRunId, text: '' };
+      },
+    );
 
     const result = await reviewCopilotEvidenceReply({
       db,
@@ -182,7 +143,7 @@ describe('Copilot evidence validator provenance binding', () => {
     expect(observedInputs[1]).toMatchObject({
       contract_feedback: {
         previous_attempt: 1,
-        rejection: expect.stringContaining('protocol_version'),
+        rejection: 'evidence_points_missing',
       },
     });
     expect(sha256CanonicalJson(observedInputs[0])).not.toBe(sha256CanonicalJson(observedInputs[1]));

@@ -23,31 +23,21 @@
 - **Transport PASS，产品内容 HOLD。** A–E 独立复核发现并 capture YUK-832–836：reader
   coverage/causality、artifact/直出 validator、human-in-loop capability 与 correction history。
   详情及 digests 见 `docs/planning/2026-08-02-yuk-596-actual-burnin.md`。
-- **YUK-832 exact-head transport/CI 已通过，产品内容仍 HOLD。** PR #1154 的
-  `9a7be1b6` exact-head CI/CodeQL 全绿。该 head 的 A01 actual 重放已证明 240s 窄化修复越过
-  原 120s timeout，但两次完整返回都因非 strict JSON envelope 被拒；确认重复后主动停止其余
-  付费样本；`1d48d4d3` 的单-fence 适配仍未命中真实 wrapper。当前改为复用项目既有的
-  structured-task 单 JSON 对象提取器后，`6fbf9c1e` actual 已进入 Zod 并暴露 provider 自创
-  protocol/type/status；确认首例后 Stop。当前给 Xiaomi no-native-outputFormat prompt 补 exact
-  schema shape 后，`55151d5d` actual 已通过 schema 并收窄到 source pointer 指向非空容器；
-  首例即 Stop。`f9e49f1c` 把 scalar/null/显式空容器终点写成 hard rule 后，A01 首个 actual
-  reference 仍重复同一 binding 错误，证明静态 prompt 不足，已 Stop。当前让既有第二次 attempt
-  只收到 server 生成的有界固定契约错误，不含前次输出或新证据；每次 input/hash 独立绑定，
-  多对象/Zod/server binding 仍 fail closed。`41503da5` actual 的第一条 reference 在 218.88s
-  完整返回并触发反馈；第二条在 242.01s 被 240s 上限截断。当前只把 durable reference 尾部
-  调到 300s；`b1290371` 第二条已在 253s 完整返回并修掉首条 pointer error，但新输出把 4 个
-  request coverage 标为 answerable 却给空 evidence indices，server 正确拒绝。当前只把 schema
-  已有的“非空 + 与 ledger exact-set 相等”条件写入通用 prompt；`0bcd6494` 的第二条又在 302.01s
-  撞到 300s 尾部，未产生输出。当前只调到 360s；FULL 最坏 20min、owner ceiling 32.5min，
-  `19e72433` 两条已在 203.46s/168.59s 完整返回，transport 足够；第一条 JSON syntax invalid，
-  第二条把 3 个 json_pointer 写成空字符串。当前只给 SyntaxError 固定反馈并逐字禁止 root pointer，
-  不加第三次 attempt、不放宽 binding。
+- **YUK-832 transport/CI 已通过，产品内容仍 HOLD。** PR #1154 的 `9a7be1b6`
+  exact-head CI/CodeQL 全绿；后续 A01 actual 已证明 360s 足够，瓶颈不是 transport，而是要求
+  provider 一次生成 12k–18k tokens 的交叉索引大 JSON。`647cc42e` 隔离 r2 的两条 reference
+  依次触发 source_refs>12 与 absent pointer；artifact SHA-256
+  `0d8ea034ad3da9462a00b7c9e0d1fdea1bc7e71006b12c9a8f89ff3dd9055459`（mode 0600）。
+- **Owner 已批准试 FULL 小提交协议。** 不增加第三次整段重写；blind leg 改为 append-only
+  evidence/not-material/safe-reply 工具，comparator 改为逐 reply check 工具。server 用短 source id
+  还原 JSON Pointer，并生成 point/request/trace coverage、request checks、digest 与 verdict；模型
+  不再输出最终大 JSON。当前 21-call/55KB+ 复杂 mock unit + provenance DB loop 已通过，尚未 commit。
 - 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
 
 ## NEXT
 
-1. 完成 validator fixed syntax feedback + non-root pointer prompt 的 commit/push 与 exact-head GitHub CI；包装 prose
-   丢弃，不改 inline/comparator 预算与 server binding。
+1. 收紧 FULL 小提交协议回归、文档与本地 scoped gate；保持两次 bounded attempt、既有
+   fail-closed binding、blind isolation 和 confirmed comparator 状态机。
 2. 先在 clean committed exact head 重跑 A01；自动 gate 通过后才重跑 5 例 actual-provider v8，逐例审计 primary +
    reference/comparator runs、thinking、digests、exact bytes 与无旁支 validator。
 3. actual 5/5 且人工 grounding/coverage/honesty 均 2/2/2 后，
@@ -65,7 +55,7 @@
 
 ## BLOCKED-ON
 
-- **YUK-832 当前 gate**：bounded contract-feedback exact-head GitHub CI + actual-provider v8 +
+- **YUK-832 当前 gate**：FULL 小提交 exact-head GitHub CI + actual-provider v8 +
   人工 2/2/2；mock、本地 build 或旧 head CI 都不能替代。
 - **YUK-596 产品 gate**：YUK-832–836 actual-output P1；transport/Stop 已 pass，不能用它替代
   产品内容正确性。

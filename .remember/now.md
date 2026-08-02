@@ -40,7 +40,7 @@
 - exact-head actual-provider v8 五例全部安全 fail closed 且没有 candidate 泄漏。A01/A03/A04
   的复杂 blind-reference 多次撞 120s；A03/C01/C04 也有成功 provider 输出被 strict contract
   拒绝。原始结果在本地 mode 0600 artifact，不提交。
-- 当前窄化修复只给 durable blind-reference 360s；inline 与 comparator 保持 120s。FULL 最坏
+- durable blind-reference 保持 2×360s；inline 与 comparator 保持 120s。FULL 最坏
   审阅为 20min，连同 primary 12min + 30s grace 的 owner ceiling 为 32.5min，仍小于 1h
   stuck-run 阈值。加入的诊断只保留固定 contract 错误类别/有界单行消息，不记录 raw output、
   candidate 或 thinking。
@@ -73,10 +73,18 @@
   第一条 parser SyntaxError，反馈此前只有名字；第二条 JSON 可解析但 3 个 json_pointer 是空字符串，
   server 正确拒绝。artifact SHA-256
   `1dda0d6b892f3a76effa9bf86e1244ca612d15fc37229dd780c9cec0218ba891`（本地 mode 0600）。
-  现把 SyntaxError 映射为固定 `output JSON syntax invalid`，并逐字禁止 `json_pointer=""`；
-  不做语法/内容自动修复。更早的 A01 两次 reference 分别约
+  `647cc42e` 首次 A01 误入已结束 session，不算新证据；隔离 r2 后 primary 88.81s、两条
+  reference 155.77s/259.00s，依次因 source_refs>12 与 absent pointer 被拒。artifact SHA-256
+  `0d8ea034ad3da9462a00b7c9e0d1fdea1bc7e71006b12c9a8f89ff3dd9055459`（mode 0600）。它和前序
+  syntax/coverage/pointer 失败共同证明瓶颈是一次性 12k–18k tokens 交叉索引大 JSON，而非
+  provider 没有 reasoning 或 timeout。更早的 A01 两次 reference 分别约
   198.30s/198.33s，均为 provider success + thinking；partial artifact SHA-256
   `7e7d7e402a7d007c165049f8fc42534072ed068e536d3ee53eacd99da1190d7b`（本地 mode 0600）。
+- Owner 已批准试 FULL：撤回未提交的第三次整段重写草稿，保留两次 attempt。当前改为内部
+  append-only 小工具：blind 只提交 evidence points、未使用 read 与 safe reply；comparator
+  只提交逐 reply checks。server 生成短 source-id catalog，独立还原 JSON Pointer，并派生全部
+  dense coverage、request checks、digest 与 verdict；模型不再输出最终大 JSON。21-call/55KB+
+  复杂 fixture 的 unit 与 exact-input provenance DB loop 已通过，尚未 commit/push/actual。
 
 ## Next order
 

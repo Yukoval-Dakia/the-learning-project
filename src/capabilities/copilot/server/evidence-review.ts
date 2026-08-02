@@ -1,18 +1,13 @@
 import {
-  type CopilotEvidenceReviewOutput,
-  CopilotEvidenceReviewOutputSchema,
-  type CopilotEvidenceVerificationOutput,
-  CopilotEvidenceVerificationOutputSchema,
-} from '@/ai/registry';
-import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
+  COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS,
+  COPILOT_EVIDENCE_MAX_TRACE_CALLS,
+  COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS,
+  COPILOT_EVIDENCE_SUBMISSION_SERVER_NAME,
+} from '@/core/copilot-evidence';
 import type { Db } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { AgentRunError } from '@/server/ai/agent-run-error';
-import {
-  type StructuredTaskResult,
-  parseStructuredTaskOutput,
-} from '@/server/ai/judges/judge-output-parse';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
+import type { StructuredTaskResult } from '@/server/ai/judges/judge-output-parse';
 import { taskPromptFingerprint } from '@/server/ai/provenance';
 import { type RunTaskCtx, runTask } from '@/server/ai/runner';
 import {
@@ -23,12 +18,18 @@ import type { ToolExecutionResultObservation } from '@/server/ai/tools/mcp-bridg
 import {
   type BoundCopilotEvidenceComparison,
   type BoundCopilotEvidenceReference,
-  bindCopilotEvidenceComparison,
-  bindCopilotEvidenceReference,
-  safeValidationErrorDetail,
   segmentEvidenceReply,
   segmentEvidenceRequest,
 } from './evidence-contract';
+import {
+  type ComparisonEvidenceSubmission,
+  type ReferenceEvidenceSubmission,
+  buildCopilotEvidenceSourceCatalog,
+  createComparisonEvidenceSubmission,
+  createReferenceEvidenceSubmission,
+  projectCopilotEvidenceSourceCatalog,
+  sourceCatalogDigest,
+} from './evidence-submission';
 
 export const COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY =
   '这轮证据审阅未能完成，现有结果无法裁决。为避免把推测当成事实，我无法安全复述本轮结论；已执行的工具动作记录不会因此回滚，请在对应页面核对后重试。';
@@ -56,11 +57,6 @@ const MAX_CANDIDATE_CHARS = 64_000;
 const MAX_SERIALIZED_TRACE_CHARS = 160_000;
 const MAX_SERIALIZED_REVIEW_INPUT_CHARS = 320_000;
 
-const REFERENCE_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(CopilotEvidenceReviewOutputSchema);
-const COMPARISON_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(
-  CopilotEvidenceVerificationOutputSchema,
-);
-
 export interface CopilotEvidenceReviewRunResult extends StructuredTaskResult {
   task_run_id?: string;
 }
@@ -69,6 +65,7 @@ export type CopilotEvidenceReviewRunTaskFn = (
   kind: 'CopilotEvidenceReviewTask' | 'CopilotEvidenceVerificationTask',
   input: unknown,
   ctx: RunTaskCtx,
+  submission: ReferenceEvidenceSubmission | ComparisonEvidenceSubmission,
 ) => Promise<CopilotEvidenceReviewRunResult>;
 
 export interface CopilotEvidenceReviewDecision {
@@ -89,26 +86,6 @@ async function defaultRunTaskFn(
   ctx: RunTaskCtx,
 ): Promise<CopilotEvidenceReviewRunResult> {
   return runTask(kind, input, ctx);
-}
-
-export function parseCopilotEvidenceReviewResult(
-  result: StructuredTaskResult,
-): CopilotEvidenceReviewOutput {
-  return parseStructuredTaskOutput(
-    result,
-    CopilotEvidenceReviewOutputSchema,
-    'copilot blind evidence reference output',
-  );
-}
-
-export function parseCopilotEvidenceVerificationResult(
-  result: StructuredTaskResult,
-): CopilotEvidenceVerificationOutput {
-  return parseStructuredTaskOutput(
-    result,
-    CopilotEvidenceVerificationOutputSchema,
-    'copilot sealed evidence comparison output',
-  );
 }
 
 function failClosed(
@@ -187,14 +164,27 @@ async function runBlindReference(params: {
   | { ok: true; reference: BoundCopilotEvidenceReference; taskRunIds: string[] }
   | { ok: false; reason: string; taskRunIds: string[] }
 > {
+  const sourceCatalog = buildCopilotEvidenceSourceCatalog(params.toolTrace);
   const baseTaskInput = {
     protocol_version: 1,
     request_context: params.requestContext,
     request_units: params.requestUnits,
     source_complete: params.sourceComplete,
     tool_trace: params.toolTrace,
+    source_catalog: projectCopilotEvidenceSourceCatalog(sourceCatalog, params.toolTrace.length),
   };
-  ensureSerializableBounded(baseTaskInput, 'reference_input');
+  const sourceCatalogSha256 = sourceCatalogDigest(sourceCatalog);
+  const referenceTaskInput = {
+    ...baseTaskInput,
+    submission_protocol: {
+      kind: 'append_only_tools',
+      source_catalog_sha256: sourceCatalogSha256,
+      max_evidence_points_per_call: 12,
+      max_not_material_calls_per_call: 12,
+      server_derives: ['point_indices', 'request_coverage', 'trace_coverage', 'json_pointers'],
+    },
+  };
+  ensureSerializableBounded(referenceTaskInput, 'reference_input');
   const taskRunIds: string[] = [];
   let lastDetail = '';
   let contractFeedback: string | undefined;
@@ -202,13 +192,13 @@ async function runBlindReference(params: {
   for (let attempt = 1; attempt <= COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS; attempt += 1) {
     const taskInput = contractFeedback
       ? {
-          ...baseTaskInput,
+          ...referenceTaskInput,
           contract_feedback: {
             previous_attempt: attempt - 1,
             rejection: contractFeedback,
           },
         }
-      : baseTaskInput;
+      : referenceTaskInput;
     ensureSerializableBounded(taskInput, 'reference_input');
     const taskInputSha256 = sha256CanonicalJson(taskInput);
     try {
@@ -222,15 +212,27 @@ async function runBlindReference(params: {
       };
     }
     let result: CopilotEvidenceReviewRunResult;
+    const submission = createReferenceEvidenceSubmission({
+      requestUnits: params.requestUnits,
+      toolTrace: params.toolTrace,
+      sourceCatalog,
+    });
     try {
-      result = await params.runTaskFn('CopilotEvidenceReviewTask', taskInput, {
-        db: params.db,
-        ...(params.signal ? { signal: params.signal } : {}),
-        ...(params.attemptTimeoutMs !== undefined
-          ? { budgetOverride: { timeoutMs: params.attemptTimeoutMs } }
-          : {}),
-        outputFormat: REFERENCE_OUTPUT_FORMAT,
-      });
+      result = await params.runTaskFn(
+        'CopilotEvidenceReviewTask',
+        taskInput,
+        {
+          db: params.db,
+          ...(params.signal ? { signal: params.signal } : {}),
+          ...(params.attemptTimeoutMs !== undefined
+            ? { budgetOverride: { timeoutMs: params.attemptTimeoutMs } }
+            : {}),
+          mcpServers: { [COPILOT_EVIDENCE_SUBMISSION_SERVER_NAME]: submission.mcpServer },
+          allowedTools: [...COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS],
+          autoLogToolCalls: false,
+        },
+        submission,
+      );
     } catch (error) {
       // Only an abort observed on the caller-owned signal is authoritative
       // cancellation. Provider/SDK timeouts may also surface as AbortError;
@@ -248,16 +250,10 @@ async function runBlindReference(params: {
     }
     taskRunIds.push(result.task_run_id);
 
-    let reference: BoundCopilotEvidenceReference;
-    try {
-      const parsed = parseCopilotEvidenceReviewResult(result);
-      reference = bindCopilotEvidenceReference({
-        value: parsed,
-        requestUnits: params.requestUnits,
-        toolTrace: params.toolTrace,
-      });
-    } catch (error) {
-      const detail = safeValidationErrorDetail(error);
+    const reference = submission.completedReference();
+    if (!reference) {
+      const completion = submission.completeReference();
+      const detail = completion.ok ? 'submission_completion_missing' : completion.reason;
       lastDetail = `reference_output_invalid:${detail}`;
       contractFeedback = detail.slice(0, 240);
       console.warn('[copilot-evidence-review] blind reference contract rejected', {
@@ -343,6 +339,11 @@ async function runConfirmedComparison(params: {
       trace_coverage: params.reference.output.trace_coverage,
     },
     tool_trace: params.toolTrace,
+    submission_protocol: {
+      kind: 'append_only_tools',
+      max_reply_checks_per_call: 12,
+      server_derives: ['request_checks', 'verdict', 'result_digest'],
+    },
   };
   ensureSerializableBounded(baseTaskInput, 'comparison_input');
   let contractFeedback: string | undefined;
@@ -371,15 +372,30 @@ async function runConfirmedComparison(params: {
         };
       }
       let taskResult: CopilotEvidenceReviewRunResult;
+      const submission = createComparisonEvidenceSubmission({
+        requestUnits: params.requestUnits,
+        replyUnits,
+        selectedReply: params.selectedReply,
+        reference: params.reference,
+        toolTrace: params.toolTrace,
+        sourceComplete: params.sourceComplete,
+      });
       try {
-        taskResult = await params.runTaskFn('CopilotEvidenceVerificationTask', taskInput, {
-          db: params.db,
-          ...(params.signal ? { signal: params.signal } : {}),
-          ...(params.attemptTimeoutMs !== undefined
-            ? { budgetOverride: { timeoutMs: params.attemptTimeoutMs } }
-            : {}),
-          outputFormat: COMPARISON_OUTPUT_FORMAT,
-        });
+        taskResult = await params.runTaskFn(
+          'CopilotEvidenceVerificationTask',
+          taskInput,
+          {
+            db: params.db,
+            ...(params.signal ? { signal: params.signal } : {}),
+            ...(params.attemptTimeoutMs !== undefined
+              ? { budgetOverride: { timeoutMs: params.attemptTimeoutMs } }
+              : {}),
+            mcpServers: { [COPILOT_EVIDENCE_SUBMISSION_SERVER_NAME]: submission.mcpServer },
+            allowedTools: [...COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS],
+            autoLogToolCalls: false,
+          },
+          submission,
+        );
       } catch (error) {
         if (params.signal?.aborted) throw error;
         return {
@@ -392,20 +408,10 @@ async function runConfirmedComparison(params: {
         return { outcome: 'contract_invalid' as const, detail: 'comparison_task_run_id_missing' };
       }
 
-      let comparison: BoundCopilotEvidenceComparison;
-      try {
-        const parsed = parseCopilotEvidenceVerificationResult(taskResult);
-        comparison = bindCopilotEvidenceComparison({
-          value: parsed,
-          requestUnits: params.requestUnits,
-          replyUnits,
-          reference: params.reference,
-          toolTrace: params.toolTrace,
-          sourceComplete: params.sourceComplete,
-          selectedReplySha256,
-        });
-      } catch (error) {
-        const detail = safeValidationErrorDetail(error);
+      const comparison = submission.completedComparison();
+      if (!comparison) {
+        const completion = submission.completeComparison();
+        const detail = completion.ok ? 'submission_completion_missing' : completion.reason;
         contractFeedback = detail.slice(0, 240);
         console.warn('[copilot-evidence-review] comparator contract rejected', {
           attempt,
@@ -517,19 +523,28 @@ export async function reviewCopilotEvidenceReply(params: {
   }
 
   params.signal?.throwIfAborted();
-  const reference = await runBlindReference({
-    db: params.db,
-    requestContext: params.requestContext,
-    requestUnits,
-    sourceComplete,
-    toolTrace: params.toolTrace,
-    ...(params.signal ? { signal: params.signal } : {}),
-    ...(params.beforeVerification ? { beforeVerification: params.beforeVerification } : {}),
-    ...(params.attemptTimeouts?.referenceMs !== undefined
-      ? { attemptTimeoutMs: params.attemptTimeouts.referenceMs }
-      : {}),
-    runTaskFn: run,
-  });
+  let reference: Awaited<ReturnType<typeof runBlindReference>>;
+  try {
+    reference = await runBlindReference({
+      db: params.db,
+      requestContext: params.requestContext,
+      requestUnits,
+      sourceComplete,
+      toolTrace: params.toolTrace,
+      ...(params.signal ? { signal: params.signal } : {}),
+      ...(params.beforeVerification ? { beforeVerification: params.beforeVerification } : {}),
+      ...(params.attemptTimeouts?.referenceMs !== undefined
+        ? { attemptTimeoutMs: params.attemptTimeouts.referenceMs }
+        : {}),
+      runTaskFn: run,
+    });
+  } catch (error) {
+    if (params.signal?.aborted || isAbortError(error)) throw error;
+    return failClosed(
+      `reference_setup_failed:${error instanceof Error ? error.name : 'unknown'}`,
+      params.candidateTaskRunId,
+    );
+  }
   if (!reference.ok) {
     return failClosed(reference.reason, params.candidateTaskRunId, {
       referenceTaskRunIds: reference.taskRunIds,

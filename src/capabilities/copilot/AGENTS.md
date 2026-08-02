@@ -31,6 +31,9 @@
   fence / legacy worker-touch evidence 做有界修复；只有 QUEUED-only dead delivery 才能标成
   pre-execution loss。不得用 wall-clock 或 heartbeat timestamp 猜测 live queue run 已死。
 - Copilot 自有工具：事件流读、记忆面读、artifact authoring 写。
+- YUK-832 FULL evidence reviewer 的 submission tools 是 validator 内部 append-only collector，
+  只收小记录并由 server 生成 canonical ledger；它们不是 Copilot/DomainTool 产品能力，不进入
+  manifest registry、tool mirror 或用户可见工具面。
 - chip 是 Copilot 回复里的可点击动作卡片，accept-chip 把用户选择物化为教学事件。
 
 ## ANTI-PATTERNS
