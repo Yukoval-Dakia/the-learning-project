@@ -1,50 +1,64 @@
-# 当前 handoff — 2026-08-02 YUK-596 actual-output P1 repair wave
+# 当前 handoff — 2026-08-02 Architecture Deepening FULL / YUK-840
 
-## Delivered
+## Owner direction and tracker
 
-- YUK-757 / PR #1149：durable subtask/backstage contract，merge 到 `main@54d9bf62`。
-- YUK-596 causal-history / PR #1150：merge 到 `main@915fd5d4`。
-- YUK-596 liveness / PR #1151：exact-head CI 后 merge 到 `main@c6dd37bf`。
-- YUK-596 in-loop Stop / PR #1152：exact-head PR gate + manual full workflow 后 merge 到
-  `main@ae82906510da102cc0ebae68ae08993999cdc888`。
+- Owner 明确：「直接启动 FULL」。
+- Linear project：`Architecture Deepening FULL — 语义、成本与运行所有权`（In Progress）。
+- F0 milestone `Truth, contracts, ratchets`：
+  - YUK-840 In Progress：phase spec + 双向 dependency ratchet；
+  - YUK-841 Todo / blocked by YUK-840：AI attempt 单一成本真相；
+  - YUK-842 Todo / blocked by YUK-841：跨进程 provider-lane admission。
+- YUK-767 已记录 owner 信号升级；多用户 schema/auth 保持独立范围。
 
-## Actual burn-in
+## Active checkout
 
-- worktree：`/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-596-burnin`
-- branch：`codex/yuk-596-burnin-evidence`
-- base：`main@ae82906510da102cc0ebae68ae08993999cdc888`
-- 30 个复杂 actual-provider cases，25 done + 5 designed cancel；30/30 mechanical assertions pass。
-- provider/model：`xiaomi/mimo-v2.5-pro`；25 successful ledger runs；2,100,674 input tokens、
-  118,004 output tokens、USD 6.685758。
-- 29 ai runs 中 25 有 thinking aggregate：85 blocks / 181,364 chars；没有 raw reasoning_content。
-- 240 DomainTool calls：229 read、9 propose、2 write。
-- F01–F05 Stop 独立 review 无 P0/P1；F05 在 materializing write 后 cancel，正确保留写入并
-  fail-closed 为 `checkpoint_safe:false`。
-- 完整报告与 artifact digests：
-  `docs/planning/2026-08-02-yuk-596-actual-burnin.md`。
+- worktree：`/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-840-full-f0`
+- branch：`codex/yuk-840-full-f0`
+- base：`origin/main@19a97b893dfc9aae62701f00451010fd2be71c7b`
+- PR：`#1155` / `https://github.com/Yukoval-Dakia/the-learning-project/pull/1155`
+- 原 checkout `codex/yuk-812-agent-control-plane` 的脏改与其它 worktree 均未触碰。
 
-## Product findings
+## YUK-840 local implementation
 
-- **YUK-832**：event/action exact filter、sibling causality、bounded coverage 与 due/future read
-  让 Copilot 反转已核验事实。
-- **YUK-833**：`author_artifact` 只做 schema/HTML size，矛盾题组可直接写入；需复用泛化
-  validator 做 author/update pre-write gate。
-- **YUK-834**：模型把 destructive/不存在能力降为 LIGHT，虚构 rollback/SQL，并扩张 owner scope。
-- **YUK-835**：直出题解/题包未运行 Solution/Quiz/Teaching validator，却声称自检通过。
-- **YUK-836**：correction request 忽略直接上一轮并反转已注入 session 事实。
-- YUK-814 的 owner mock waiver 保持不变；没有重开 YUK-814。
+- ADR-0051：capability owns product operation；AI runtime owns model attempt；静态 modular monolith
+  保持；首个竖切为 practice-owned failure learning。
+- Phase 0/1 execution addendum：锁定 F0 串行依赖、Phase 1 current/target/delete map、exit gates 与
+  out-of-scope。
+- `audit:capability-boundaries` 已从单向 access seam 加深为同一 AST scan：
+  - capability→server 538 semantic edges；
+  - server→capability deep 70；
+  - cross-capability value 63；
+  - nontrivial SCC = agency/ingestion/knowledge/notes/practice。
+- baseline 是约 140 个 owner-pair 桶，不是逐 import allowlist；actual 必须与 baseline 精确一致。
+  增长失败；下降也要求同一 diff 收紧 baseline，防止留下回涨 headroom。
+- parser 区分 type/value，alias/relative 归一化；mixed/side-effect/literal dynamic/require 是 value；
+  non-literal dynamic import/require fail closed。
+- package 增加 print-only `audit:capability-boundaries:snapshot`；默认 CI audit 名称不变。
 
-## Next order
+## Validation so far
 
-1. YUK-832：先修 read contracts；后续审计与 validator 都依赖可信 evidence。
-2. YUK-833 + YUK-835：共享一个泛化 validator core，分别接 artifact persistence 与 direct reply。
-3. YUK-834：effect/capability/scope/rollback owner gate。
-4. YUK-836：prior-turn correction contract。
-5. 同一复杂 mock + actual-provider rerun；targeted local checks，完整 `pnpm test` 仅 GitHub CI。
-6. 上述 P1 清零后提交 UI design pre-flight；owner 明确批准前不写 UI、不翻 expansion。
+- `pnpm audit:capability-boundaries`：PASS，538 / 70 / 63 exact。
+- `pnpm vitest run --config vitest.unit.config.ts scripts/audit-capability-boundaries.test.ts`：
+  1 file / 10 tests PASS。
+- owner 提醒前已完成 typecheck、全仓 lint 与 build，均 PASS。
+- **Owner 追加指示：gate 不要在本地跑。** 此后不再重跑本地 gate；完整验证只交给
+  exact-head GitHub CI。
+- 两路独立只读 review 发现并已修复 1 类 P1：nested `public/ui-public/manifest`
+  子路径不得伪装成 top-level entrypoint。修复后两位 reviewer 都确认无未解决
+  P0/P1。
+- 新增 server→capability deep、无 SCC 的单向 cross-capability value 与三类 nested
+  entrypoint characterization；移除 unit suite 内重复的全仓 baseline scan。这些 review 后改动
+  **没有在本地跑 gate**，由 exact-head CI 验证。
 
-## Runtime cleanup
+## Still required before delivery
 
-- burn-in API/worker 已 SIGINT clean stop；clone Postgres volume 暂保留，供 P1 actual rerun。
-- 原始 cases/results 位于本地 mode 0600 `/tmp/tlp-burnin-20260802/`，不提交。
-- 原始 repo worktree 仍有用户/其他 lane 的未提交内容；不要 reset、sync 或覆盖。
+1. PR #1155 已打开，YUK-840 已 In Review；由 exact-head GitHub CI 执行完整 gate，绿后
+   才能 merge 并将 YUK-840 标 Done。
+2. Linear capture gate：review 未留下 P0/P1；重复 AST parse 仅为 P2 经济性建议且已通过
+   移除重复 repo scan 缩小开销，不新建 follow-up。
+
+## Displaced but still open
+
+- YUK-596 transport/Stop 与 30-case burn-in 已交付；内容质量仍 HOLD。
+- YUK-832–836 保持 open/PARKED，未因 FULL 启动而取消、完成或降级。
+- FULL 当前不触 UI；任何后续 UI 仍需 owner design pre-flight 批准。

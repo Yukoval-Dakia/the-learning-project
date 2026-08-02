@@ -3,49 +3,47 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-08-02
-> **【YUK-596 active：actual-output P1 repair wave】**
+> **【YUK-840 active：Architecture Deepening FULL / Phase 0】**
 
 ## NOW
 
-- **YUK-757 已 Done。** PR #1149 exact-head CI 全绿后 merge 到
-  `main@54d9bf620cf74d07633d72233c90cb9763516643`；durable Copilot 已具备
-  backstage subagent、前台子任务投影、redelivery repair 与失败恢复。
-- **YUK-596 causal-history 与 liveness 已交付。** PR #1150 merge 到
-  `main@915fd5d4fd32cdceebda310879c7fd0c0138e9e5`；PR #1151 exact-head CI 全绿后
-  merge 到 `main@c6dd37bfe5aaaae63d07a86bff69bd619a523b48`。durable pickup 已绑定 causal
-  anchor，并具备 queue heartbeat、stale reconciliation 与 fail-closed ambiguous recovery。
-- **YUK-596 Stop 后端已交付。** PR #1152 在新 exact head 的 PR gate + 手动 full workflow
-  全绿后 merge 到 `main@ae82906510da102cc0ebae68ae08993999cdc888`；pre-fence marker、
-  cooperative abort、materializing barrier 与 fail-closed checkpoint 均在真实 Postgres 覆盖。
-- **30 例 actual-provider burn-in 已完成。** 25 done + 5 designed cancel，30/30 durable/terminal/
-  domain-reply 自动契约通过；F01–F05 独立 review 无 P0/P1。真实 provider 为
-  `xiaomi/mimo-v2.5-pro`，25 个成功 ledger runs，记录成本 USD 6.685758。
-- **Transport PASS，产品内容 HOLD。** A–E 独立复核发现并 capture YUK-832–836：reader
-  coverage/causality、artifact/直出 validator、human-in-loop capability 与 correction history。
-  详情及 digests 见 `docs/planning/2026-08-02-yuk-596-actual-burnin.md`。
-- 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
+- **Owner 已明确「直接启动 FULL」。** 新 Linear project
+  `Architecture Deepening FULL — 语义、成本与运行所有权` 已 In Progress；F0 依赖为
+  YUK-840 → YUK-841 → YUK-842。
+- **YUK-840 已进入 In Review。** PR #1155，branch `codex/yuk-840-full-f0`，base
+  `origin/main@19a97b89`；原 checkout 的用户/其它 lane 改动未触碰。
+- Phase 0 已本地落下 ADR-0051、current-code Phase 0/1 execution addendum，以及加深后的
+  `audit:capability-boundaries`。语义边 baseline 为 capability→server 538、server→capability
+  deep 70、cross-capability value 63；value 图有 1 个五 owner SCC。
+- 在 owner 提醒「gate 不要在本地跑」前，定向 audit、10 个 unit tests、typecheck、lint、build
+  已完成且绿；此后没有再运行本地 gate。两路独立只读 review 已清零 P0/P1；修复后
+  exact-head CI 尚未运行，因此 **YUK-840 未交付**。
+- **YUK-596 transport/Stop 与 actual burn-in 证据保持已交付；产品内容仍 HOLD。** YUK-832–836
+  没有取消或完成，只因 owner 切换 active 主线而暂停。
 
 ## NEXT
 
-1. 按依赖顺序修 YUK-832 → YUK-833/835（共享 validator core）→ YUK-834 → YUK-836。
-2. 每条用同一复杂 fixture 做 targeted mock/DB loop，再做最小 actual-provider 重放；完整 suite
-   只在 exact-head GitHub CI。
-3. 产品 P1 清零后，Dock/UI 开工前逐字引用 design doc、声明 drawer、列文件并等待 owner 批准。
+1. 等待 PR #1155 exact-head GitHub CI 执行完整 gate；不在本地重跑。
+2. CI 绿且无新 validated P0/P1 后 merge，再将 YUK-840 标 Done。
+3. YUK-840 merge 后启动 YUK-841 单一 attempt 成本真相；完成后再启动 YUK-842 provider-lane
+   admission。共享 schema/runtime lane 不并行。
+4. F0 全部通过后，按 execution addendum 建 Phase 1 milestone/issues，迁 practice-owned
+   failure-learning vertical；必须删除旧 knowledge/central handler/tool 双轨。
 
 ## PARKED
 
-- **YUK-813 / YUK-831 OpenCode**：按 owner 指示暂不处理；从产品执行队列排除，但仍计入
-  Linear 严格 issue=0。
-- **YUK-815 / YUK-816**：Grounding 后续协作与档案面；等待 Copilot 主产品链收口。
+- **YUK-832–836 actual-output P1**：保留原优先级与证据，FULL active 期间暂停，不用架构 gate
+  冒充产品质量 gate。
+- **YUK-813 / YUK-831 OpenCode**：按 owner 指示暂不处理。
+- **YUK-815 / YUK-816**：Grounding 后续协作与档案面；等待 active 主线重新排期。
 - future/refinement backlog 不自动扩实施范围；到达时先核证 live consumer、重复与过期项。
 
 ## BLOCKED-ON
 
-- **YUK-596 当前 gate**：YUK-832–836 actual-output P1；transport/Stop 已 pass，不能用它替代
-  产品内容正确性。
-- **YUK-596 后续 owner gate**：产品 P1 与 actual rerun 完成后，先做 UI design pre-flight；
-  owner 批准前不写 UI，也不翻 durable-default 扩量。
-- **YUK-571 / YUK-405 / YUK-406**：等待真实内容、首次 placement 与真实观察窗口；synthetic/
-  mock 不能冒充 owner 验收。YUK-452 是 parent/epic，须按 children 现实对齐。
-- **严格 issue=0**：仍含 future、数据触发、生产 flip 与大 epic；最终需 owner 做
-  keep/merge/cancel 裁决，不能靠连续写代码伪归零。
+- **YUK-841** blocked by YUK-840；**YUK-842** blocked by YUK-841；Phase 1 blocked by F0 exact-head
+  completion 与一个真实 provider observation。
+- FULL 不触 UI；未来任何 UI 工作仍须 design-doc 逐字引用、组件类型与文件清单 pre-flight，
+  owner 批准前不得写 UI。
+- **YUK-571 / YUK-405 / YUK-406** 仍等待真实内容、首次 placement 与 owner 观察窗口；
+  synthetic/mock 不能冒充验收。
+- 严格 issue=0 仍含 future、数据触发、生产 flip 与大 epic；不能靠连续写代码伪归零。

@@ -86,6 +86,13 @@ pnpm audit:judge-golden
 pnpm audit:judge-prompts
 ```
 
+`audit:capability-boundaries` 同时检查 public/ui-public access seam 与三张架构债
+ratchet（capability→server、server→capability deep、cross-capability value/SCC）。
+机器可读报告用 `pnpm audit:capability-boundaries -- --json`；有意删除依赖后用
+`pnpm audit:capability-boundaries:snapshot` 打印 canonical baseline，再在同一变更中收紧
+`scripts/capability-boundary-baseline.json`。snapshot 命令只打印，不直接覆盖文件；禁止为了让
+新增依赖通过而上调 baseline。
+
 Before a PR, run:
 
 First run the scoped tests that match the diff. Then run this local gate:
