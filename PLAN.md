@@ -26,14 +26,15 @@
 - **YUK-832 exact-head transport/CI 已通过，产品内容仍 HOLD。** PR #1154 的
   `9a7be1b6` exact-head CI/CodeQL 全绿。该 head 的 A01 actual 重放已证明 240s 窄化修复越过
   原 120s timeout，但两次完整返回都因非 strict JSON envelope 被拒；确认重复后主动停止其余
-  付费样本。当前再只接受「raw JSON 或唯一一个无外部字节的 JSON code fence」，prose/多
-  fence 仍 fail closed；须在新 committed exact head 重放，未宣称交付。
+  付费样本；`1d48d4d3` 的单-fence 适配仍未命中真实 wrapper。当前改为复用项目既有的
+  structured-task 单 JSON 对象提取器，包装 prose 不参与裁决，多对象/Zod/server binding 仍
+  fail closed；须在新 committed exact head 重放，未宣称交付。
 - 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
 
 ## NEXT
 
-1. 完成 single-fence JSON envelope 的定向验证、独立 review、commit/push 与 exact-head
-   GitHub CI；不接受 prose，不改 inline/comparator 预算。
+1. 完成 shared single-object JSON extractor 复用的定向验证、commit/push 与 exact-head
+   GitHub CI；包装 prose 丢弃，不改 inline/comparator 预算与 server binding。
 2. 在 clean committed YUK-832 exact head 上重跑 5 例 actual-provider v8；逐例审计 primary +
    reference/comparator runs、thinking、digests、exact bytes 与无旁支 validator。
 3. actual 5/5 且人工 grounding/coverage/honesty 均 2/2/2 后，
@@ -51,8 +52,8 @@
 
 ## BLOCKED-ON
 
-- **YUK-832 当前 gate**：新 JSON envelope exact-head GitHub CI + actual-provider v8 + 人工
-  2/2/2；mock、本地 build 或旧 head CI 都不能替代。
+- **YUK-832 当前 gate**：shared JSON extractor exact-head GitHub CI + actual-provider v8 +
+  人工 2/2/2；mock、本地 build 或旧 head CI 都不能替代。
 - **YUK-596 产品 gate**：YUK-832–836 actual-output P1；transport/Stop 已 pass，不能用它替代
   产品内容正确性。
 - **YUK-596 后续 owner gate**：产品 P1 与 actual rerun 完成后，先做 UI design pre-flight；

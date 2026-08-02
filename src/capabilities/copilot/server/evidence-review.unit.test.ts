@@ -701,9 +701,9 @@ describe('Copilot FULL evidence review', () => {
   it('keeps fixed parser and binder diagnostics single-line and bounded without exposing unknown errors', () => {
     expect(
       safeValidationErrorDetail(
-        new Error('copilot blind evidence reference output was not strict JSON'),
+        new Error('copilot blind evidence reference output did not contain a JSON object'),
       ),
-    ).toBe('Error:copilot blind evidence reference output was not strict JSON');
+    ).toBe('Error:copilot blind evidence reference output did not contain a JSON object');
     expect(safeValidationErrorDetail(new Error('trace coverage\nbackref mismatch'))).toBe(
       'Error:trace coverage backref mismatch',
     );
@@ -1080,15 +1080,18 @@ describe('Copilot FULL evidence review', () => {
     expect(runTaskFn).not.toHaveBeenCalled();
   });
 
-  it('strictly rejects prose around a blind-reference JSON object', () => {
+  it('extracts the one bound JSON object from provider prose without treating prose as authority', () => {
     const requestUnits = segmentEvidenceRequest(reviewParams().requestContext);
     const output = referenceOutput({ request_units: requestUnits });
-    expect(() =>
+    expect(
       parseCopilotEvidenceReviewResult({ text: `结果如下：\n${JSON.stringify(output)}` }),
-    ).toThrow();
+    ).toEqual(output);
+    expect(
+      parseCopilotEvidenceReviewResult({ text: `${JSON.stringify(output)}\n以上是 ledger。` }),
+    ).toEqual(output);
   });
 
-  it('accepts one syntax-only JSON fence for both validator legs but rejects bytes outside it', () => {
+  it('accepts one JSON object through raw/fence/prose wrappers but rejects multiple objects', () => {
     const requestUnits = segmentEvidenceRequest(reviewParams().requestContext);
     const reference = referenceOutput({
       request_units: requestUnits,
@@ -1114,26 +1117,26 @@ describe('Copilot FULL evidence review', () => {
         text: `\`\`\`\n${JSON.stringify(comparison)}\n\`\`\``,
       }),
     ).toEqual(comparison);
-    expect(() =>
+    expect(
       parseCopilotEvidenceReviewResult({
         text: `ledger follows\n\`\`\`json\n${JSON.stringify(reference)}\n\`\`\``,
       }),
-    ).toThrow('copilot blind evidence reference output was not strict JSON');
-    expect(() =>
+    ).toEqual(reference);
+    expect(
       parseCopilotEvidenceReviewResult({
         text: `\`\`\`json\n${JSON.stringify(reference)}\n\`\`\`\ntrailing prose`,
       }),
-    ).toThrow('copilot blind evidence reference output was not strict JSON');
+    ).toEqual(reference);
     expect(() =>
       parseCopilotEvidenceReviewResult({
         text: `\`\`\`json\n${JSON.stringify(reference)}\n\`\`\`\n\`\`\`json\n${JSON.stringify(reference)}\n\`\`\``,
       }),
-    ).toThrow('copilot blind evidence reference output was not strict JSON');
+    ).toThrow();
     expect(() =>
       parseCopilotEvidenceReviewResult({
         text: `\`\`\`json\n${JSON.stringify(reference)}\n${JSON.stringify(reference)}\n\`\`\``,
       }),
-    ).toThrow('copilot blind evidence reference output was not strict JSON');
+    ).toThrow();
     expect(
       parseCopilotEvidenceReviewResult({
         text: 'malicious prose\n```json\n{}\n```',

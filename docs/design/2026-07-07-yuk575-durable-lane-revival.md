@@ -55,9 +55,10 @@
 > only possible repair and must itself obtain two fresh valid passes; there is no
 > third draft. Only confirmed text becomes visible; timeout/parse/provider/binding
 > failure is fixed fail closed. For providers without native structured output,
-> raw JSON or exactly one syntax-only Markdown JSON fence is accepted; prose,
-> multiple fences, or bytes outside that envelope remain contract-invalid. Marker
-> 记录 primary stream 是否产生正文；随后
+> the existing shared structured-task parser extracts one JSON object from a raw,
+> Markdown-fenced, or prose-wrapped response; wrapper prose is discarded and never
+> becomes authority. Multiple top-level objects, Zod failure, or any server-binding
+> mismatch remain contract-invalid. Marker 记录 primary stream 是否产生正文；随后
 > settlement projection 把一条 reviewed full-text DELTA 与 REPLY/DONE 或 FAILED
 > 放在同一事务里，严格按 DELTA→terminal 写入；redelivery/reconcile 从 marker 修复
 > 同一后缀，不重跑任一模型。STEP 卡只显示 deterministic lifecycle 文案，不转发
