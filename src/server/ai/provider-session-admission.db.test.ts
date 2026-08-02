@@ -416,7 +416,7 @@ describe('YUK-842 cross-process provider SDK-session admission', () => {
     });
     await permit.completeStartup();
     const initial = await readLeaseSnapshot('steady-renewal-horizon');
-    const forcedRows = await testDb().execute<{ lease_expires_at: Date }>(sql`
+    const forcedRows = await testDb().execute<{ lease_expires_at: Date | string }>(sql`
       UPDATE provider_session_admission
          SET lease_expires_at = clock_timestamp() + interval '12 seconds'
        WHERE task_run_id = 'steady-renewal-horizon'
@@ -424,8 +424,16 @@ describe('YUK-842 cross-process provider SDK-session admission', () => {
          AND hard_reclaim_at > clock_timestamp() + interval '12 seconds'
       RETURNING lease_expires_at
     `);
-    const forcedExpiry = forcedRows[0]?.lease_expires_at;
-    if (!forcedExpiry) throw new Error('steady renewal fixture did not update the live lease');
+    const forcedExpiryRaw = forcedRows[0]?.lease_expires_at;
+    if (!forcedExpiryRaw) throw new Error('steady renewal fixture did not update the live lease');
+    // Raw execute() preserves the postgres.js timestamp string, unlike the
+    // Drizzle column projection used by readLeaseSnapshot(). Normalize the
+    // fixture instead of lying about the driver result type.
+    const forcedExpiry =
+      forcedExpiryRaw instanceof Date ? forcedExpiryRaw : new Date(forcedExpiryRaw);
+    if (Number.isNaN(forcedExpiry.getTime())) {
+      throw new Error('steady renewal fixture returned an invalid lease expiry');
+    }
 
     const renewed = await waitForHeartbeatAfter('steady-renewal-horizon', initial.heartbeatAt);
     expectDurationNear(
