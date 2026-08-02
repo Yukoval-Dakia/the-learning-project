@@ -33,8 +33,14 @@ import {
 export const COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY =
   '这轮证据审阅未能完成，现有结果无法裁决。为避免把推测当成事实，我无法安全复述本轮结论；已执行的工具动作记录不会因此回滚，请在对应页面核对后重试。';
 
-/** Mirrors both evidence-task timeout budgets in the task registry. */
+/** Mirrors both inline evidence-task timeout budgets in the task registry. */
 export const COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS = 120_000;
+/**
+ * Complex durable traces can legitimately need more than the synchronous
+ * validator tail. Keep this override reference-only until actual comparator
+ * evidence demonstrates that its existing budget is insufficient.
+ */
+export const COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS = 240_000;
 export const COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS = 2;
 export const COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS = 2;
 // Worst case: two blind-reference contract attempts, one failed original
@@ -42,8 +48,9 @@ export const COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS = 2;
 // contract-invalid original pass attempt still consumes the bounded pair.
 export const COPILOT_EVIDENCE_REVIEW_MAX_PASSES =
   COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS + COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS * 2;
-export const COPILOT_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS =
-  COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS * COPILOT_EVIDENCE_REVIEW_MAX_PASSES;
+export const COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS =
+  COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS * COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS +
+  COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS * COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS * 2;
 
 const MAX_CANDIDATE_CHARS = 64_000;
 const MAX_SERIALIZED_TRACE_CHARS = 160_000;
@@ -176,6 +183,7 @@ async function runBlindReference(params: {
   toolTrace: readonly ToolExecutionResultObservation[];
   signal?: AbortSignal;
   beforeVerification?: () => Promise<void>;
+  attemptTimeoutMs?: number;
   runTaskFn: CopilotEvidenceReviewRunTaskFn;
 }): Promise<
   | { ok: true; reference: BoundCopilotEvidenceReference; taskRunIds: string[] }
@@ -209,6 +217,9 @@ async function runBlindReference(params: {
       result = await params.runTaskFn('CopilotEvidenceReviewTask', taskInput, {
         db: params.db,
         ...(params.signal ? { signal: params.signal } : {}),
+        ...(params.attemptTimeoutMs !== undefined
+          ? { budgetOverride: { timeoutMs: params.attemptTimeoutMs } }
+          : {}),
         outputFormat: REFERENCE_OUTPUT_FORMAT,
       });
     } catch (error) {
@@ -294,6 +305,7 @@ async function runConfirmedComparison(params: {
   toolTrace: readonly ToolExecutionResultObservation[];
   signal?: AbortSignal;
   beforeVerification?: () => Promise<void>;
+  attemptTimeoutMs?: number;
   runTaskFn: CopilotEvidenceReviewRunTaskFn;
 }): Promise<
   | {
@@ -341,6 +353,9 @@ async function runConfirmedComparison(params: {
         taskResult = await params.runTaskFn('CopilotEvidenceVerificationTask', taskInput, {
           db: params.db,
           ...(params.signal ? { signal: params.signal } : {}),
+          ...(params.attemptTimeoutMs !== undefined
+            ? { budgetOverride: { timeoutMs: params.attemptTimeoutMs } }
+            : {}),
           outputFormat: COMPARISON_OUTPUT_FORMAT,
         });
       } catch (error) {
@@ -442,6 +457,8 @@ export async function reviewCopilotEvidenceReply(params: {
   signal?: AbortSignal;
   /** Optional durable-truth probe before every paid validation call. */
   beforeVerification?: () => Promise<void>;
+  /** Internal per-leg wall-clock overrides; omitted callers retain registry budgets. */
+  attemptTimeouts?: { referenceMs?: number; comparisonMs?: number };
   runTaskFn?: CopilotEvidenceReviewRunTaskFn;
 }): Promise<CopilotEvidenceReviewDecision> {
   if (!params.toolTrace.some((entry) => entry.effect === 'read')) {
@@ -485,6 +502,9 @@ export async function reviewCopilotEvidenceReply(params: {
     toolTrace: params.toolTrace,
     ...(params.signal ? { signal: params.signal } : {}),
     ...(params.beforeVerification ? { beforeVerification: params.beforeVerification } : {}),
+    ...(params.attemptTimeouts?.referenceMs !== undefined
+      ? { attemptTimeoutMs: params.attemptTimeouts.referenceMs }
+      : {}),
     runTaskFn: run,
   });
   if (!reference.ok) {
@@ -505,6 +525,9 @@ export async function reviewCopilotEvidenceReply(params: {
       toolTrace: params.toolTrace,
       ...(params.signal ? { signal: params.signal } : {}),
       ...(params.beforeVerification ? { beforeVerification: params.beforeVerification } : {}),
+      ...(params.attemptTimeouts?.comparisonMs !== undefined
+        ? { attemptTimeoutMs: params.attemptTimeouts.comparisonMs }
+        : {}),
       runTaskFn: run,
     });
   } catch (error) {
@@ -553,6 +576,9 @@ export async function reviewCopilotEvidenceReply(params: {
       toolTrace: params.toolTrace,
       ...(params.signal ? { signal: params.signal } : {}),
       ...(params.beforeVerification ? { beforeVerification: params.beforeVerification } : {}),
+      ...(params.attemptTimeouts?.comparisonMs !== undefined
+        ? { attemptTimeoutMs: params.attemptTimeouts.comparisonMs }
+        : {}),
       runTaskFn: run,
     });
   } catch (error) {

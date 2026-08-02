@@ -53,7 +53,8 @@ import {
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
 import {
-  COPILOT_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
+  COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+  COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
   type CopilotEvidenceReviewDecision,
   reviewCopilotEvidenceReply,
 } from '@/capabilities/copilot/server/evidence-review';
@@ -575,7 +576,7 @@ const CLAIMED_EXECUTION_POLL_MS = 250;
 export const CLAIMED_EXECUTION_SETTLE_GRACE_MS = 30_000;
 export const DURABLE_OWNER_SETTLEMENT_BUDGET_MS =
   DURABLE_BUDGET.timeoutMs +
-  COPILOT_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS +
+  COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS +
   CLAIMED_EXECUTION_SETTLE_GRACE_MS;
 
 export function hasCopilotSettlementTerminal(events: TerminalProjectionEvent[]): boolean {
@@ -1163,6 +1164,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       candidateTaskRunId: result.task_run_id,
       toolTrace,
       signal: cancellationControl.signal,
+      attemptTimeouts: {
+        referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+      },
       beforeVerification: async () => {
         await cancellationControl.probe();
         cancellationControl.signal.throwIfAborted();

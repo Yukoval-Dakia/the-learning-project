@@ -635,5 +635,19 @@ export function safeValidationErrorDetail(error: unknown): string {
       })
       .join(', ');
   }
-  return error instanceof Error ? error.name : 'invalid';
+  if (error instanceof Error) {
+    // This helper is called only around the strict parser and this module's
+    // fixed invariant errors; neither message contains provider output. Keep a
+    // bounded single-line message for paid-run diagnosis without persisting
+    // raw JSON, user prose, safe_reply, or reasoning.
+    if (error.name === 'Error') {
+      const message = error.message
+        .replace(/\p{Cc}+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      return message ? `Error:${message}`.slice(0, 240) : 'Error';
+    }
+    return error.name;
+  }
+  return 'invalid';
 }

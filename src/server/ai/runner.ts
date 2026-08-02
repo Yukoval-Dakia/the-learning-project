@@ -203,7 +203,8 @@ export interface RunTaskCtx {
    * The THIRD durable knob — the tool-call ceiling (maxToolCalls) — is NOT here: it
    * lives in the ContextBudgetTracker (budgets.ts, surface-keyed) and is overridden
    * at the handler when constructing the tracker (MF-A). OMITTED (the default) ⇒
-   * buildQueryOptions / the stream abort timer read `def.budget` verbatim ⇒
+   * buildQueryOptions / the runTask and collecting lifecycle timers read
+   * `def.budget` verbatim ⇒
    * byte-identical to pre-seam (zero regression); only the copilot_run handler sets
    * it. It is consumed into maxTurns / the timer and is never an Options key.
    */
@@ -687,7 +688,7 @@ export async function runTask(
     const lifecycle = createRunLifecycle<RunTaskResult>({
       db: ctx.db,
       kind,
-      timeoutMs: def.budget.timeout,
+      timeoutMs: ctx.budgetOverride?.timeoutMs ?? def.budget.timeout,
       override: ctx.override,
       taskRunId: attempt === 1 ? ctx.taskRunId : undefined,
       signal: ctx.signal,

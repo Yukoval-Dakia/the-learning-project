@@ -8,11 +8,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   bindCopilotEvidenceComparison,
   bindCopilotEvidenceReference,
+  safeValidationErrorDetail,
   segmentEvidenceReply,
   segmentEvidenceRequest,
 } from './evidence-contract';
 import {
+  COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+  COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
+  COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS,
+  COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS,
   COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
+  COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS,
   type CopilotEvidenceReviewRunTaskFn,
   parseCopilotEvidenceReviewResult,
   reviewCopilotEvidenceReply,
@@ -49,6 +55,15 @@ const blindSafeReply = [
   'C04：近 7 天 exact attempt 查询 returned_count=0，due reader 也返回 0 行；但 queue_assertion.cleared=null、completeness=unknown、supports_exhaustive_zero_claim=false，且 delayed/transfer 分别投影到 2026-08-07 与 2026-08-21，因此无法裁决整个 queue 已清空。',
   '操作边界：本轮只依据 13 条只读工具结果，没有执行 propose 或 write。',
 ].join('\n');
+
+// Mirrors the actual A01 timeout shape: 21 successful read observations and a
+// 55KB+ compact trace. The repeated calls model deliberate cross-checks over
+// the same typed surfaces rather than padding a tiny toy fixture.
+const DURABLE_TIMEOUT_TRACE = [
+  ...REALISTIC_EVIDENCE_TRACE,
+  ...REALISTIC_EVIDENCE_TRACE.slice(0, 8),
+];
+const durableTimeoutSafeReply = blindSafeReply.replace('13 条只读工具结果', '21 条只读工具结果');
 
 function evidenceRef(
   callIndex: number,
@@ -229,7 +244,10 @@ function comparisonOutput(input: unknown, options: { fail?: boolean; gaps?: bool
  * the mechanical retry fixtures above, every claim binds to the exact typed
  * scalar/empty projection that supports it.
  */
-function realisticReferenceOutput(input: unknown) {
+function realisticReferenceOutput(
+  input: unknown,
+  options: { observationCount?: number; safeReply?: string } = {},
+) {
   const value = input as {
     request_units: Array<{ index: number }>;
     tool_trace?: typeof REALISTIC_EVIDENCE_TRACE;
@@ -366,7 +384,7 @@ function realisticReferenceOutput(input: unknown) {
       point_index: 9,
       request_unit_indices: [5],
       kind: 'observed_fact' as const,
-      statement_md: '本轮 13 个观测均来自只读 reader trace；没有 propose/write 结果。',
+      statement_md: `本轮 ${options.observationCount ?? 13} 个观测均来自只读 reader trace；没有 propose/write 结果。`,
       source_refs: [
         evidenceRef(0, '/total', 'value'),
         evidenceRef(5, '/events/0/id', 'value'),
@@ -386,7 +404,7 @@ function realisticReferenceOutput(input: unknown) {
       { request_unit_index: 5, status: 'answerable' as const, evidence_point_indices: [9] },
     ],
     trace_coverage: traceCoverageFor(evidencePoints, value.tool_trace ?? REALISTIC_EVIDENCE_TRACE),
-    safe_reply: blindSafeReply,
+    safe_reply: options.safeReply ?? blindSafeReply,
   };
 }
 
@@ -634,6 +652,64 @@ afterEach(() => {
 });
 
 describe('Copilot FULL evidence review', () => {
+  it('uses a 240s durable reference tail while keeping comparator and inline budgets unchanged', async () => {
+    let comparisonOrdinal = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind, input) => {
+      if (kind === 'CopilotEvidenceReviewTask') {
+        return {
+          task_run_id: 'durable-reference',
+          text: '',
+          structured_output: realisticReferenceOutput(input, {
+            observationCount: DURABLE_TIMEOUT_TRACE.length,
+            safeReply: durableTimeoutSafeReply,
+          }),
+        };
+      }
+      comparisonOrdinal += 1;
+      return {
+        task_run_id: `durable-comparison-${comparisonOrdinal}`,
+        text: '',
+        structured_output: realisticComparisonOutput(input, { unsafe: false }),
+      };
+    });
+
+    const result = await reviewCopilotEvidenceReply(
+      reviewParams({
+        candidateReply: durableTimeoutSafeReply,
+        toolTrace: DURABLE_TIMEOUT_TRACE,
+        attemptTimeouts: { referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS },
+        runTaskFn,
+      }),
+    );
+
+    expect(DURABLE_TIMEOUT_TRACE).toHaveLength(21);
+    expect(JSON.stringify(DURABLE_TIMEOUT_TRACE).length).toBeGreaterThan(55_000);
+    expect(result.status).toBe('pass');
+    expect(runTaskFn.mock.calls[0]?.[2].budgetOverride).toEqual({
+      timeoutMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+    });
+    expect(runTaskFn.mock.calls[1]?.[2]).not.toHaveProperty('budgetOverride');
+    expect(runTaskFn.mock.calls[2]?.[2]).not.toHaveProperty('budgetOverride');
+    expect(COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS).toBe(120_000);
+    expect(COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS).toBe(
+      COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS * COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS +
+        COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS * COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS * 2,
+    );
+  });
+
+  it('keeps fixed parser and binder diagnostics single-line and bounded without exposing unknown errors', () => {
+    expect(
+      safeValidationErrorDetail(
+        new Error('copilot blind evidence reference output was not strict JSON'),
+      ),
+    ).toBe('Error:copilot blind evidence reference output was not strict JSON');
+    expect(safeValidationErrorDetail(new Error('trace coverage\nbackref mismatch'))).toBe(
+      'Error:trace coverage backref mismatch',
+    );
+    expect(safeValidationErrorDetail(new Error(`bounded ${'x'.repeat(400)}`))).toHaveLength(240);
+    expect(safeValidationErrorDetail(new TypeError('do not expose this detail'))).toBe('TypeError');
+  });
+
   it('keeps the 13-observation, 30KB+ realistic tool trace valid against every reader schema', () => {
     expect(REALISTIC_EVIDENCE_TRACE).toHaveLength(13);
     expect(JSON.stringify(REALISTIC_EVIDENCE_TRACE).length).toBeGreaterThan(30_000);

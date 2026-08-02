@@ -34,6 +34,17 @@
 - **YUK-836**：correction request 忽略直接上一轮并反转已注入 session 事实。
 - YUK-814 的 owner mock waiver 保持不变；没有重开 YUK-814。
 
+## YUK-832 current gate
+
+- PR #1154 `8db403af` exact-head CI/CodeQL 已全绿；无未解决 P0/P1。
+- exact-head actual-provider v8 五例全部安全 fail closed 且没有 candidate 泄漏。A01/A03/A04
+  的复杂 blind-reference 多次撞 120s；A03/C01/C04 也有成功 provider 输出被 strict contract
+  拒绝。原始结果在本地 mode 0600 artifact，不提交。
+- 当前窄化修复只给 durable blind-reference 240s；inline 与 comparator 保持 120s。FULL 最坏
+  审阅为 16min，连同 primary 12min + 30s grace 的 owner ceiling 为 28.5min，仍小于 1h
+  stuck-run 阈值。加入的诊断只保留固定 contract 错误类别/有界单行消息，不记录 raw output、
+  candidate 或 thinking。新 committed exact head 仍须跑 GitHub CI 与五例 actual v8。
+
 ## Next order
 
 1. YUK-832：先修 read contracts；后续审计与 validator 都依赖可信 evidence。

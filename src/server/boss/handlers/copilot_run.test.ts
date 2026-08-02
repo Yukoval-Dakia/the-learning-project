@@ -19,6 +19,10 @@ import {
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { countOutstandingDurableRuns } from '@/capabilities/copilot/server/durable-backlog';
 import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
+import {
+  COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+  COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
+} from '@/capabilities/copilot/server/evidence-review';
 import { COPILOT_SUBAGENT_NAME } from '@/capabilities/copilot/server/subagents';
 import { event, job_events } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -30,6 +34,7 @@ import { and, eq } from 'drizzle-orm';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { STUCK_RUN_THRESHOLD_MS } from './ai_task_run_reconcile';
 import {
+  CLAIMED_EXECUTION_SETTLE_GRACE_MS,
   type CopilotRunJobData,
   DURABLE_BUDGET,
   DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
@@ -242,6 +247,9 @@ describe('runCopilotRun', () => {
           triggered_by: 'chat',
         },
         toolTrace: [expect.objectContaining({ name: 'query_events', effect: 'read' })],
+        attemptTimeouts: {
+          referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+        },
       });
       expect(input.requestContext).not.toHaveProperty('conversation_history');
       expect(
@@ -1567,6 +1575,11 @@ describe('runCopilotRun', () => {
   // YUK-575 (S6) — 承重约束：durable abort budget 必须 < stuck-in-running sweeper 阈值，
   // 否则 sweeper 误收敛 live durable run 成 failure。
   it('S6 — DURABLE_BUDGET.timeoutMs < STUCK_RUN_THRESHOLD_MS', () => {
+    expect(DURABLE_OWNER_SETTLEMENT_BUDGET_MS).toBe(
+      DURABLE_BUDGET.timeoutMs +
+        COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS +
+        CLAIMED_EXECUTION_SETTLE_GRACE_MS,
+    );
     expect(DURABLE_BUDGET.timeoutMs).toBeLessThan(STUCK_RUN_THRESHOLD_MS);
     expect(DURABLE_OWNER_SETTLEMENT_BUDGET_MS).toBeLessThan(STUCK_RUN_THRESHOLD_MS);
   });

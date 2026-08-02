@@ -517,7 +517,7 @@ describe('runTask — YUK-365 subscription-OAuth env block', () => {
 
 // YUK-575 (N5/S2) — the durable copilot run budget override seam. maxIterations →
 // SDK maxTurns (buildQueryOptions, shared by runTask + streamTaskCollecting);
-// timeoutMs → the streamTaskCollecting abort timer (the durable handler's run fn).
+// timeoutMs → runTask + streamTaskCollecting timers (sealed validators + durable primary).
 // The third durable knob (maxToolCalls) is NOT here — it lives in the handler's
 // ContextBudgetTracker (MF-A). undefined-guard: non-durable callers keep def.budget.
 describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () => {
@@ -566,6 +566,17 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
     );
     const opts = mockSdk.capturedOptions as Record<string, unknown>;
     expect(opts.maxTurns).toBe(6);
+  });
+
+  it('runTask: budgetOverride.timeoutMs → abort timer uses the explicit validator tail', async () => {
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+    await runTask(
+      COPILOT,
+      { user_message: 'hi', triggered_by: 'chat' },
+      { db: fakeDb, budgetOverride: { timeoutMs: 240_000 } },
+    );
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 240_000);
+    expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 60_000);
   });
 
   it('streamTaskCollecting: budgetOverride.timeoutMs → abort timer uses the override (~12min, not 60s)', async () => {
