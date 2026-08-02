@@ -1,7 +1,8 @@
 // AI task runner — Claude Agent SDK adapter.
 //
-// All paths go through @anthropic-ai/claude-agent-sdk's `query()` (spawned
-// `claude` CLI subprocess, talked to over JSON-RPC). The SDK gives us:
+// All paths go through @anthropic-ai/claude-agent-sdk's `startup()` followed
+// by one `WarmQuery.query()` (spawned `claude` CLI subprocess, talked to over
+// JSON-RPC). The SDK gives us:
 //   - native tool-call loop with mcpServers / allowedTools
 //   - PreToolUse / PostToolUse / SessionStart hook events
 //   - SDKMemoryRecallMessage events (auto-memory + auto-dream)
@@ -33,6 +34,7 @@ import type { SubjectProfile } from '@/subjects/profile';
 import {
   type Options,
   type OutputFormat,
+  type Query,
   type SDKAssistantMessage,
   type SDKMessage,
   type SDKTaskNotificationMessage,
@@ -40,9 +42,11 @@ import {
   type SDKTaskStartedMessage,
   type SDKTaskUpdatedMessage,
   type SDKUserMessage,
-  query as sdkQuery,
+  type WarmQuery,
+  startup as sdkStartup,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
+import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
 import type { R2Client } from '../r2';
 import {
   AgentRunError,
@@ -52,6 +56,7 @@ import {
 } from './agent-run-error';
 import { logMissingMcpServersWarning } from './log';
 import { populateIsolatedSkills } from './populate-skills';
+import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission';
 import type { ResolvedProvider } from './providers';
 import {
   type AiRunLifecycle,
@@ -143,6 +148,14 @@ export interface RunTaskCtx {
    * wall-clock bound).
    */
   enableTransientRetry?: boolean;
+  /**
+   * Optional absolute wall-clock deadline for the whole provider session:
+   * admission wait, SDK startup and model execution share this one budget.
+   * Hono requests inherit the composition-root deadline automatically; callers
+   * use this explicit seam for work that may outlive the handler. Durable workers
+   * omit it and retain the task's full execution budget.
+   */
+  providerSessionDeadlineAt?: number;
   /** Memory-layer hook surface. */
   middleware?: TaskMiddleware;
   /**
@@ -210,8 +223,9 @@ export interface RunTaskCtx {
   /**
    * YUK-575 (N5/MF-A) seam: per-call budget override for the durable copilot run.
    * The inline `CopilotTask` registry budget (maxIterations:6 / timeout:60_000) is
-   * the SYNC-request-window budget and MUST stay bounded (< cloudflared idle-100s)
-   * for the retained inline fallback. A durable pg-boss run needs a much larger
+   * the model-execution share of the retained sync path; the Hono composition
+   * root's absolute provider-session deadline keeps admission + startup + execution
+   * below cloudflared idle-100s. A durable pg-boss run needs a much larger
    * ceiling but MUST NOT mutate the shared registry default (YUK-458 revert lesson:
    * a raised inline budget only turned error_max_turns into an inline-request abort).
    * NARROW: only `maxIterations` (→ SDK maxTurns) and `timeoutMs` (→ the abort timer).
@@ -555,6 +569,53 @@ function buildQueryOptions(
   return options;
 }
 
+/**
+ * Start the exact task-configured CLI inside admission without sending a
+ * prompt, then create the durable attempt/timer immediately before the one
+ * allowed query. Cleanup remains part of the admitted session boundary.
+ */
+async function withPreparedSdkQuery<TResult extends RunTaskResult, TValue>(
+  lifecycle: AiRunLifecycle<TResult>,
+  actualInput: unknown,
+  prompt: string | AsyncIterable<SDKUserMessage>,
+  options: Options,
+  consume: (query: Query) => Promise<TValue>,
+): Promise<TValue> {
+  let warmQuery: WarmQuery | undefined;
+  let activeQuery: Query | undefined;
+
+  return lifecycle.withProviderSession(actualInput, {
+    async prepare() {
+      warmQuery = await sdkStartup({
+        options,
+        initializeTimeoutMs: lifecycle.providerPhaseTimeoutMs(
+          PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS,
+        ),
+      });
+    },
+    async run() {
+      if (!warmQuery) throw new Error('SDK startup completed without a warm query handle');
+      activeQuery = warmQuery.query(prompt);
+      return consume(activeQuery);
+    },
+    async close() {
+      const query = activeQuery;
+      activeQuery = undefined;
+      const warm = warmQuery;
+      warmQuery = undefined;
+      if (query) {
+        try {
+          await query.return(undefined);
+        } catch {
+          query.close();
+        }
+        return;
+      }
+      warm?.close();
+    },
+  });
+}
+
 // ============================================================================
 // runTask — default path. Goes through the Claude Agent SDK like the other
 // entry points; tasks without `allowedTools` declared in registry just get
@@ -590,7 +651,7 @@ async function runTaskAttempt(args: {
   // started yet.
   const sdkPrompt = promptFromInput(actualInput);
   const sdkOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
-  await lifecycle.withProviderSession(actualInput, async () => {
+  await withPreparedSdkQuery(lifecycle, actualInput, sdkPrompt, sdkOptions, async (q) => {
     let stepStartTime = Date.now();
     if (args.warnMissingMcp) {
       logMissingMcpServersWarning({
@@ -598,12 +659,8 @@ async function runTaskAttempt(args: {
         task_kind: kind,
       });
     }
-    const q = sdkQuery({
-      prompt: sdkPrompt,
-      options: sdkOptions,
-    });
     await args.onSdkQueryStarted?.();
-    for await (const msg of q as AsyncIterable<SDKMessage>) {
+    for await (const msg of q) {
       await notifyTaskEvent(ctx, msg);
       if (msg.type === 'assistant') {
         observeAssistantThinking(msg, thinking);
@@ -709,6 +766,17 @@ export async function runTask(
 
   const maxAttempts = maxLifecycleAttempts(kind, ctx);
   const firstAttemptStartedAt = Date.now();
+  const retryingSyncDeadlineAt =
+    maxAttempts > 1 ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS + def.budget.timeout : undefined;
+  const callerProviderSessionDeadlineAt = resolveProviderSessionDeadlineAt(
+    ctx.providerSessionDeadlineAt,
+  );
+  const providerSessionDeadlineAt =
+    callerProviderSessionDeadlineAt === undefined
+      ? retryingSyncDeadlineAt
+      : retryingSyncDeadlineAt === undefined
+        ? callerProviderSessionDeadlineAt
+        : Math.min(callerProviderSessionDeadlineAt, retryingSyncDeadlineAt);
 
   let lastErr: unknown;
   let retrySource: AiRunLifecycle<RunTaskResult> | undefined;
@@ -725,6 +793,7 @@ export async function runTask(
       // edge bound into maxWait + another full model budget.
       providerStartDeadlineAt:
         retrySource !== undefined ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS : undefined,
+      providerSessionDeadlineAt,
       taskRunId: attempt === 1 ? ctx.taskRunId : undefined,
       signal: ctx.signal,
       logScope: 'runTask',
@@ -766,7 +835,7 @@ export async function runTask(
       });
       // Settle the full truth before another provider call is allowed. The
       // actual-retry marker is a later, conservative transition performed only
-      // after the next sdkQuery invocation exists.
+      // after the next WarmQuery has actually submitted its prompt.
       const settled = await lifecycle.finishFailure(boundError, 'error');
       if (!settled) throw boundError;
       if (!retry.willRetry) throw boundError;
@@ -819,6 +888,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
     abortController: ctx.lifecycleAbortController,
     override: ctx.override,
     parentTaskRunId: ctx.parentTaskRunId,
+    providerSessionDeadlineAt: resolveProviderSessionDeadlineAt(ctx.providerSessionDeadlineAt),
     taskRunId: ctx.taskRunId,
     signal: ctx.signal,
     logScope: 'streamTask',
@@ -828,6 +898,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
   });
   let iteration = 0;
   const thinking = emptyThinkingObservation();
+  let clientCancelled = false;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -846,13 +917,9 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
           lifecycle.abortController,
           lifecycle.resolved,
         );
-        await lifecycle.withProviderSession(actualInput, async () => {
+        await withPreparedSdkQuery(lifecycle, actualInput, sdkPrompt, sdkOptions, async (q) => {
           let stepStartTime = Date.now();
-          const q = sdkQuery({
-            prompt: sdkPrompt,
-            options: sdkOptions,
-          });
-          for await (const msg of q as AsyncIterable<SDKMessage>) {
+          for await (const msg of q) {
             await notifyTaskEvent(ctx, msg);
             if (msg.type === 'assistant') {
               observeAssistantThinking(msg, thinking);
@@ -936,19 +1003,24 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
             // retracted. Error the stream so the protocol cannot still complete
             // cleanly while its durable attempt truth remains unsettled.
             shouldClose = false;
-            controller.error(boundError);
+            if (!clientCancelled) controller.error(boundError);
             return;
           }
+        }
+        if (clientCancelled) {
+          shouldClose = false;
+          return;
         }
         const message =
           error instanceof Error ? `[streamTask] ${error.message}` : '[streamTask] unknown error';
         controller.enqueue(encoder.encode(`\n\n${message}\n`));
       } finally {
         lifecycle.dispose();
-        if (shouldClose) controller.close();
+        if (shouldClose && !clientCancelled) controller.close();
       }
     },
     cancel() {
+      clientCancelled = true;
       lifecycle.abort();
     },
   });
@@ -1073,6 +1145,7 @@ export async function streamTaskCollecting(
     abortController: ctx.lifecycleAbortController,
     override: ctx.override,
     parentTaskRunId: ctx.parentTaskRunId,
+    providerSessionDeadlineAt: resolveProviderSessionDeadlineAt(ctx.providerSessionDeadlineAt),
     taskRunId: ctx.taskRunId,
     signal: ctx.signal,
     logScope: 'streamTaskCollecting',
@@ -1090,13 +1163,9 @@ export async function streamTaskCollecting(
       : input;
     const sdkPrompt = promptFromInput(actualInput);
     const sdkOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
-    await lifecycle.withProviderSession(actualInput, async () => {
+    await withPreparedSdkQuery(lifecycle, actualInput, sdkPrompt, sdkOptions, async (q) => {
       let stepStartTime = Date.now();
-      const q = sdkQuery({
-        prompt: sdkPrompt,
-        options: sdkOptions,
-      });
-      for await (const msg of q as AsyncIterable<SDKMessage>) {
+      for await (const msg of q) {
         await notifyTaskEvent(ctx, msg);
         if (msg.type === 'assistant') {
           observeAssistantThinking(msg, thinking);

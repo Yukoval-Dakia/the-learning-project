@@ -2,7 +2,7 @@
 //
 // Pre-fix the runner was a two-tier mix of raw @anthropic-ai/sdk (single turn)
 // + Claude Agent SDK (tool-call). Codex called this out as drift from "全切
-// SDK"; the runner now goes through `@anthropic-ai/claude-agent-sdk.query`
+// SDK"; the runner now goes through Agent SDK `startup()` + `WarmQuery.query()`
 // uniformly. We mock the SDK at module boundary so unit tests don't spawn
 // the `claude` binary.
 
@@ -19,13 +19,17 @@ const mockSdk = vi.hoisted(() => ({
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: vi.fn(({ prompt, options }: { prompt: unknown; options: unknown }) => {
+  startup: vi.fn(async ({ options }: { options: unknown }) => {
     mockSdk.capturedOptions = options;
-    mockSdk.capturedPrompt = prompt;
-    const iter = (async function* () {
-      for (const m of mockSdk.messages) yield m;
-    })();
-    return iter;
+    return {
+      query: vi.fn((prompt: unknown) => {
+        mockSdk.capturedPrompt = prompt;
+        return (async function* () {
+          for (const m of mockSdk.messages) yield m;
+        })();
+      }),
+      close: vi.fn(),
+    };
   }),
   createSdkMcpServer: vi.fn((opts: unknown) => ({
     type: 'sdk',

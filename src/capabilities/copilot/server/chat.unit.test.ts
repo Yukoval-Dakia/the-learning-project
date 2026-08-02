@@ -599,6 +599,7 @@ describe('YUK-757 Copilot execution-mode judgment', () => {
         runAgentTaskFn,
         createTaskRunId: () => 'copilot_dispatch_complex_fixture',
         signal: owner.signal,
+        providerSessionDeadlineAt: 123_456,
       },
     );
 
@@ -620,6 +621,7 @@ describe('YUK-757 Copilot execution-mode judgment', () => {
       expect.objectContaining({
         taskRunId: 'copilot_dispatch_complex_fixture',
         signal: owner.signal,
+        providerSessionDeadlineAt: 123_456,
         outputFormat: expect.objectContaining({ type: 'json_schema' }),
       }),
     );
@@ -1021,6 +1023,7 @@ describe('runCopilotChat — skill routing (U6)', () => {
         runAgentTaskFn,
         buildMcpServerFn,
         materializeAskCheckFn,
+        providerSessionDeadlineAt: 234_567,
       },
     );
 
@@ -1028,7 +1031,11 @@ describe('runCopilotChat — skill routing (U6)', () => {
     expect(result.surface).toBe('copilot');
     // The skill ran against the resolved Copilot session id (no replyEventId param).
     expect(runTeachingSkillFn).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: 'ls_copilot', learningItemId: 'li_unit' }),
+      expect.objectContaining({
+        sessionId: 'ls_copilot',
+        learningItemId: 'li_unit',
+        providerSessionDeadlineAt: 234_567,
+      }),
     );
     expect(runTeachingSkillFn.mock.calls[0]?.[0]).not.toHaveProperty('replyEventId');
     // The free-form CopilotTask loop never ran.
@@ -1599,7 +1606,14 @@ describe('runCopilotChatStreaming (C1 — SSE streaming entrypoint)', () => {
       db,
       { user_message: '解释一下「之」', triggered_by: 'chat' },
       (t) => deltas.push(t),
-      { ...baseDeps, buildMcpServerFn, runAgentTaskFn, streamAgentTaskFn, writeEventFn },
+      {
+        ...baseDeps,
+        buildMcpServerFn,
+        runAgentTaskFn,
+        streamAgentTaskFn,
+        writeEventFn,
+        providerSessionDeadlineAt: 345_678,
+      },
       controller.signal,
     );
 
@@ -1612,11 +1626,14 @@ describe('runCopilotChatStreaming (C1 — SSE streaming entrypoint)', () => {
       taskRunId?: string;
       signal?: AbortSignal;
       lifecycleAbortController?: AbortController;
+      providerSessionDeadlineAt?: number;
     };
     expect(runnerCtx?.taskRunId).toBe(mcpCtx?.taskRunId);
     expect(runnerCtx?.signal).toBe(controller.signal);
     expect(runnerCtx.lifecycleAbortController).toBeInstanceOf(AbortController);
+    expect(runnerCtx.providerSessionDeadlineAt).toBe(345_678);
     expect(mcpCtx?.signal).toBe(runnerCtx.lifecycleAbortController?.signal);
+    expect(mcpCtx?.providerSessionDeadlineAt).toBe(345_678);
 
     // Result equals what the non-stream path would return — real task_run_id + reply.
     expect(result.task_run_id).toBe('task_stream_real');

@@ -26,12 +26,14 @@ vi.mock('./provider-session-admission', async (importOriginal) => {
 });
 
 const sdkMocks = vi.hoisted(() => ({
+  startup: vi.fn(),
   query: vi.fn(),
   queues: [] as unknown[][],
+  warmCloses: [] as Array<ReturnType<typeof vi.fn>>,
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: sdkMocks.query,
+  startup: sdkMocks.startup,
   createSdkMcpServer: vi.fn(() => ({ type: 'sdk', name: '', instance: {} })),
   tool: vi.fn((name: string, description: string) => ({ name, description })),
 }));
@@ -50,6 +52,7 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: vi.fn(async () => 'tool-log-id'),
 }));
 
+import { runWithHttpProviderSessionDeadline } from '../http/provider-session-deadline';
 import { RETRY_ELAPSED_CAP_MS } from './agent-run-error';
 import { ProviderSessionAdmissionError } from './provider-session-admission';
 import { runTask, streamTask, streamTaskCollecting } from './runner';
@@ -97,10 +100,18 @@ describe('runner central provider-session seam', () => {
         mode: 'enforce' as const,
         laneId: 'xiaomi' as const,
         borrowedFromTaskRunId: null,
+        assertProviderStartAllowed: vi.fn(),
+        completeStartup: vi.fn(async () => {}),
         release,
       };
     });
     sdkMocks.queues = [];
+    sdkMocks.warmCloses = [];
+    sdkMocks.startup.mockReset().mockImplementation(async () => {
+      const close = vi.fn();
+      sdkMocks.warmCloses.push(close);
+      return { query: sdkMocks.query, close };
+    });
     sdkMocks.query.mockReset().mockImplementation(() => {
       const messages = sdkMocks.queues.shift() ?? [];
       return (async function* () {
@@ -131,6 +142,10 @@ describe('runner central provider-session seam', () => {
         mode: 'enforce' as const,
         laneId: 'xiaomi' as const,
         borrowedFromTaskRunId: null,
+        assertProviderStartAllowed: vi.fn(),
+        completeStartup: vi.fn(async () => {
+          sequence.push('steady');
+        }),
         release,
       };
     });
@@ -174,7 +189,55 @@ describe('runner central provider-session seam', () => {
 
     expect(collected.text).toBe('collecting');
     expect(admissionMocks.acquire).toHaveBeenCalledTimes(2);
+    expect(sdkMocks.startup).toHaveBeenCalledTimes(2);
     expect(admissionMocks.releases.every((release) => release.mock.calls.length === 1)).toBe(true);
+  });
+
+  it('inherits one HTTP deadline across run, text stream, and collecting stream', async () => {
+    const requestDeadlineAt = Date.now() + 90_000;
+    sdkMocks.queues = [
+      [success('run')],
+      [assistant('text-stream'), success('text-stream')],
+      [assistant('collecting'), success('collecting')],
+    ];
+
+    await runWithHttpProviderSessionDeadline(requestDeadlineAt, async () => {
+      await runTask(
+        'AttributionTask',
+        { q: 1 },
+        { db: fakeDb, providerSessionDeadlineAt: requestDeadlineAt + 10_000 },
+      );
+      await streamTask('AttributionTask', { q: 2 }, { db: fakeDb }).text();
+      await streamTaskCollecting('AttributionTask', { q: 3 }, { db: fakeDb }, () => {});
+    });
+
+    expect(admissionMocks.acquire).toHaveBeenCalledTimes(3);
+    expect(admissionMocks.acquire.mock.calls.map(([input]) => input.deadlineAt)).toEqual([
+      requestDeadlineAt,
+      requestDeadlineAt,
+      requestDeadlineAt,
+    ]);
+  });
+
+  it('keeps a terminal result after the model timer classified as budget timeout', async () => {
+    vi.useFakeTimers();
+    sdkMocks.query.mockImplementationOnce(() =>
+      (async function* () {
+        vi.runOnlyPendingTimers();
+        yield success('late-success');
+      })(),
+    );
+
+    await expect(runTask('AttributionTask', { q: 1 }, { db: fakeDb })).rejects.toMatchObject({
+      subtype: 'budget_timeout',
+    });
+    expect(logMocks.started).toHaveBeenCalledTimes(1);
+    expect(logMocks.terminal).toHaveBeenLastCalledWith(
+      fakeDb,
+      expect.objectContaining({ status: 'failure' }),
+    );
+    expect(admissionMocks.releases).toHaveLength(1);
+    expect(admissionMocks.releases[0]).toHaveBeenCalledTimes(1);
   });
 
   it('prepares local SDK inputs before acquiring every central session lease', async () => {
@@ -192,6 +255,10 @@ describe('runner central provider-session seam', () => {
         mode: 'enforce' as const,
         laneId: 'xiaomi' as const,
         borrowedFromTaskRunId: null,
+        assertProviderStartAllowed: vi.fn(),
+        completeStartup: vi.fn(async () => {
+          sequence.push('steady');
+        }),
         release,
       };
     });
@@ -202,6 +269,17 @@ describe('runner central provider-session seam', () => {
         for (const message of messages) yield message;
       })();
     });
+    sdkMocks.startup.mockImplementation(async () => {
+      sequence.push('startup');
+      const close = vi.fn();
+      sdkMocks.warmCloses.push(close);
+      return { query: sdkMocks.query, close };
+    });
+    for (let index = 0; index < 3; index += 1) {
+      logMocks.started.mockImplementationOnce(async () => {
+        sequence.push('start');
+      });
+    }
     const context = (label: string) => ({
       db: fakeDb,
       get allowedTools() {
@@ -217,14 +295,53 @@ describe('runner central provider-session seam', () => {
     expect(sequence).toEqual([
       'prepare:run',
       'acquire',
+      'startup',
+      'steady',
+      'start',
       'sdk',
       'prepare:stream',
       'acquire',
+      'startup',
+      'steady',
+      'start',
       'sdk',
       'prepare:collecting',
       'acquire',
+      'startup',
+      'steady',
+      'start',
       'sdk',
     ]);
+  });
+
+  it('clamps SDK initialization to the remaining absolute session budget', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const startedAt = Date.now();
+    sdkMocks.queues = [[success('bounded')]];
+    admissionMocks.acquire.mockImplementationOnce(async () => {
+      vi.setSystemTime(startedAt + 250);
+      const release = vi.fn(async () => {});
+      admissionMocks.releases.push(release);
+      return {
+        mode: 'enforce' as const,
+        laneId: 'xiaomi' as const,
+        borrowedFromTaskRunId: null,
+        assertProviderStartAllowed: vi.fn(),
+        completeStartup: vi.fn(async () => {}),
+        release,
+      };
+    });
+
+    await expect(
+      runTask(
+        'AttributionTask',
+        { q: 1 },
+        { db: fakeDb, providerSessionDeadlineAt: startedAt + 900 },
+      ),
+    ).resolves.toMatchObject({ text: 'bounded' });
+    expect(sdkMocks.startup).toHaveBeenCalledWith(
+      expect.objectContaining({ initializeTimeoutMs: 650 }),
+    );
   });
 
   it('materializes multimodal bytes before acquiring the central session lease', async () => {
@@ -246,10 +363,16 @@ describe('runner central provider-session seam', () => {
         mode: 'enforce' as const,
         laneId: 'xiaomi' as const,
         borrowedFromTaskRunId: null,
+        assertProviderStartAllowed: vi.fn(),
+        completeStartup: vi.fn(async () => {}),
         release,
       };
     });
-    sdkMocks.query.mockImplementation(({ prompt }: { prompt: string | AsyncIterable<unknown> }) => {
+    sdkMocks.startup.mockImplementation(async () => {
+      sequence.push('startup');
+      return { query: sdkMocks.query, close: vi.fn() };
+    });
+    sdkMocks.query.mockImplementation((prompt: string | AsyncIterable<unknown>) => {
       sequence.push('sdk');
       return (async function* () {
         if (typeof prompt !== 'string') {
@@ -272,8 +395,8 @@ describe('runner central provider-session seam', () => {
     await runTask('AttributionTask', { text: 'inspect', images: [image] }, { db: fakeDb });
 
     expect(sequence).not.toContain('image-data:after-acquire');
-    expect(sequence.at(-3)).toBe('acquire');
-    expect(sequence.slice(-2)).toEqual(['sdk', 'consume']);
+    expect(sequence.at(-4)).toBe('acquire');
+    expect(sequence.slice(-3)).toEqual(['startup', 'sdk', 'consume']);
   });
 
   it('rejects collected text when admission fencing wins after the SDK result', async () => {
@@ -297,6 +420,8 @@ describe('runner central provider-session seam', () => {
           mode: 'enforce' as const,
           laneId: 'xiaomi' as const,
           borrowedFromTaskRunId: null,
+          assertProviderStartAllowed: vi.fn(),
+          completeStartup: vi.fn(async () => {}),
           release,
         };
       },
@@ -336,6 +461,8 @@ describe('runner central provider-session seam', () => {
         mode: 'enforce' as const,
         laneId: 'xiaomi' as const,
         borrowedFromTaskRunId: null,
+        assertProviderStartAllowed: vi.fn(),
+        completeStartup: vi.fn(async () => {}),
         release,
       };
     });
@@ -367,8 +494,38 @@ describe('runner central provider-session seam', () => {
         () => {},
       ),
     ).rejects.toMatchObject({ reason: 'wait_timeout' });
+    expect(sdkMocks.startup).not.toHaveBeenCalled();
     expect(sdkMocks.query).not.toHaveBeenCalled();
     expect(logMocks.started).not.toHaveBeenCalled();
     expect(logMocks.terminal).not.toHaveBeenCalled();
+  });
+
+  it('releases admission without a durable attempt when SDK startup fails', async () => {
+    sdkMocks.startup.mockRejectedValueOnce(new Error('SDK initialize failed'));
+
+    await expect(
+      runTask('AttributionTask', { q: 1 }, { db: fakeDb, taskRunId: 'startup-failed' }),
+    ).rejects.toThrow('SDK initialize failed');
+
+    expect(sdkMocks.query).not.toHaveBeenCalled();
+    expect(logMocks.started).not.toHaveBeenCalled();
+    expect(logMocks.terminal).not.toHaveBeenCalled();
+    expect(admissionMocks.releases).toHaveLength(1);
+    expect(admissionMocks.releases[0]).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes an unused warm CLI before releasing when durable start fails', async () => {
+    logMocks.started.mockRejectedValueOnce(new Error('durable start unavailable'));
+
+    await expect(
+      runTask('AttributionTask', { q: 1 }, { db: fakeDb, taskRunId: 'durable-start-failed' }),
+    ).rejects.toThrow('durable start unavailable');
+
+    expect(sdkMocks.startup).toHaveBeenCalledTimes(1);
+    expect(sdkMocks.query).not.toHaveBeenCalled();
+    expect(sdkMocks.warmCloses).toHaveLength(1);
+    expect(sdkMocks.warmCloses[0]).toHaveBeenCalledTimes(1);
+    expect(admissionMocks.releases).toHaveLength(1);
+    expect(admissionMocks.releases[0]).toHaveBeenCalledTimes(1);
   });
 });

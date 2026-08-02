@@ -521,6 +521,7 @@ type RunAgentTaskFn = (
     allowedTools?: string[];
     /** Caller-owned id shared with the in-process MCP tool log. */
     taskRunId?: string;
+    providerSessionDeadlineAt?: number;
     // YUK-284 (C2) — Agent Skill whitelist forwarded to the runner (ctx.skills,
     // runner.ts:120). Present on the free-form CopilotTask path so the dialogue
     // methodology SKILL.md loads. The underlying RunTaskCtx already declares
@@ -550,6 +551,7 @@ type StreamAgentTaskFn = (
     lifecycleAbortController?: AbortController;
     /** Caller-owned id shared with the in-process MCP tool log. */
     taskRunId?: string;
+    providerSessionDeadlineAt?: number;
     // YUK-284 (C2) — see RunAgentTaskFn.ctx.skills. Same forward to the streaming
     // runner so the free-form streaming path loads the copilot SKILL.md too.
     skills?: string[];
@@ -630,6 +632,8 @@ export interface CopilotChatDeps {
   onSubtaskEvent?: (event: CopilotSubtaskEvent) => Promise<void> | void;
   /** Report-only spawn-budget observation sink. Existing tool/cost logs stay authoritative. */
   onSpawnBudgetObservation?: (observation: SpawnBudgetObservation) => void;
+  /** Route-owned absolute edge deadline shared with the runner lifecycle. */
+  providerSessionDeadlineAt?: number;
   now?: () => Date;
 }
 
@@ -673,6 +677,7 @@ export interface DecideCopilotDispatchDeps {
   runAgentTaskFn?: RunAgentTaskFn;
   createTaskRunId?: () => string;
   signal?: AbortSignal;
+  providerSessionDeadlineAt?: number;
 }
 
 const COPILOT_DISPATCH_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(CopilotDispatchDecisionSchema);
@@ -701,6 +706,9 @@ export async function decideCopilotDispatch(
         db,
         taskRunId,
         signal: deps.signal,
+        ...(deps.providerSessionDeadlineAt !== undefined
+          ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+          : {}),
         outputFormat: COPILOT_DISPATCH_OUTPUT_FORMAT,
       },
     );
@@ -916,6 +924,9 @@ async function runCopilotChatImpl(
       sessionId,
       learningItemId: skillContext.ref.id,
       userMessage: req.user_message,
+      ...(deps.providerSessionDeadlineAt !== undefined
+        ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+        : {}),
     });
     const replyMd = skillResult.text_md;
     // PR #305 review comment #3: use the real task_run_id from the skill runner.
@@ -1094,6 +1105,9 @@ async function runCopilotChatImpl(
       db,
       taskRunId,
       signal: lifecycleAbortController.signal,
+      ...(deps.providerSessionDeadlineAt !== undefined
+        ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+        : {}),
       callerActor: { kind: 'agent', ref: actorRef },
       causedByEventId,
     },
@@ -1185,6 +1199,9 @@ async function runCopilotChatImpl(
         taskRunId,
         signal: streaming.signal,
         lifecycleAbortController,
+        ...(deps.providerSessionDeadlineAt !== undefined
+          ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+          : {}),
         ...(spawnContract
           ? {
               agents: spawnContract.agents,
@@ -1213,6 +1230,9 @@ async function runCopilotChatImpl(
       allowedTools,
       taskRunId,
       lifecycleAbortController,
+      ...(deps.providerSessionDeadlineAt !== undefined
+        ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+        : {}),
       ...(spawnContract
         ? {
             agents: spawnContract.agents,

@@ -967,6 +967,9 @@ async function attributeMistakeExecute(
   const runTaskFn = makeRunTaskFn(ctx.db, {
     signal: ctx.signal,
     parentTaskRunId: ctx.taskRunId,
+    ...(ctx.providerSessionDeadlineAt !== undefined
+      ? { providerSessionDeadlineAt: ctx.providerSessionDeadlineAt }
+      : {}),
   });
   await runAttributionAndWriteJudgeEvent({
     db: ctx.db,
@@ -1061,6 +1064,9 @@ async function proposeVariantExecute(
       runTaskFn: makeRunTaskFn(ctx.db, {
         signal: ctx.signal,
         parentTaskRunId: ctx.taskRunId,
+        ...(ctx.providerSessionDeadlineAt !== undefined
+          ? { providerSessionDeadlineAt: ctx.providerSessionDeadlineAt }
+          : {}),
       }),
     });
     if (result.status !== 'proposed') {
@@ -1871,6 +1877,9 @@ async function authorQuestionExecute(
       runTaskFn: makeRunTaskFn(ctx.db, {
         signal: ctx.signal,
         parentTaskRunId: ctx.taskRunId,
+        ...(ctx.providerSessionDeadlineAt !== undefined
+          ? { providerSessionDeadlineAt: ctx.providerSessionDeadlineAt }
+          : {}),
       }),
     });
   } catch (err) {

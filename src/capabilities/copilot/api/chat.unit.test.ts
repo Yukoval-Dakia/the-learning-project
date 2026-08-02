@@ -72,7 +72,7 @@ vi.mock('@/server/session', () => ({
   Conversation: { findOrCreateCopilotConversation: findOrCreateMock },
 }));
 
-import { POST } from '@/capabilities/copilot/api/chat';
+import { COPILOT_INLINE_PROVIDER_SESSION_BUDGET_MS, POST } from '@/capabilities/copilot/api/chat';
 import { CopilotDurableRunResponseSchema } from '@/capabilities/copilot/api/contracts';
 import { __resetRateLimitForTests, checkRateLimit } from '@/server/http/rate-limit';
 
@@ -144,6 +144,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
 });
 
@@ -837,6 +838,8 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
   });
 
   it('durable absent + model inline decision → 同步 SSE framing byte-identical', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const requestStartedAt = Date.now();
     shouldEnqueueMock.mockReturnValue(true);
     bossSendMock.mockClear();
     runMock.mockClear();
@@ -849,7 +852,15 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(dispatchMock).toHaveBeenCalledWith(
       expect.objectContaining({ execute: dbExecuteMock }),
       { user_message: 'hi' },
-      { signal: expect.any(AbortSignal) },
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        providerSessionDeadlineAt: requestStartedAt + COPILOT_INLINE_PROVIDER_SESSION_BUDGET_MS,
+      }),
+    );
+    expect(runMock.mock.calls[0]?.[3]).toEqual(
+      expect.objectContaining({
+        providerSessionDeadlineAt: requestStartedAt + COPILOT_INLINE_PROVIDER_SESSION_BUDGET_MS,
+      }),
     );
   });
 
@@ -947,7 +958,10 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
           focused_entity: { kind: 'knowledge', id: 'kc_electromagnetic_induction' },
         },
       },
-      { signal: expect.any(AbortSignal) },
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        providerSessionDeadlineAt: expect.any(Number),
+      }),
     );
     expect(writeJobEventMock).toHaveBeenCalledWith(
       expect.objectContaining({ execute: dbExecuteMock }),

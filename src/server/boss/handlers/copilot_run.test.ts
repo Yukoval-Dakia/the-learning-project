@@ -67,6 +67,7 @@ type AgentCtx = {
   allowedTools?: string[];
   skills?: string[];
   budgetOverride?: { maxIterations?: number; timeoutMs?: number };
+  providerSessionDeadlineAt?: number;
   agents?: Record<string, { tools?: string[] }>;
   hooks?: { PreToolUse?: Array<{ hooks: Array<(...args: unknown[]) => Promise<unknown>> }> };
   canUseTool?: (...args: unknown[]) => unknown;
@@ -1123,6 +1124,7 @@ describe('runCopilotRun', () => {
       maxIterations: DURABLE_BUDGET.maxIterations,
       timeoutMs: DURABLE_BUDGET.timeoutMs,
     });
+    expect(ctx.providerSessionDeadlineAt).toBeUndefined();
     // MF-A + YUK-290：25 只是 warning，60 才是 hard ceiling。
     const opts = (
       buildMcp.mock.calls[0] as unknown as [
@@ -1329,12 +1331,16 @@ describe('runCopilotRun', () => {
         logScope: 'copilot-retry-admission-test',
       });
       try {
-        await lifecycle.withProviderSession(input, async () => {
-          lifecycle.recordTerminalResult({
-            usage: { inputTokens: 2, outputTokens: 1 },
-            tokenCounts: { inputTokens: 2, outputTokens: 1 },
-            finishReason: 'end_turn',
-          });
+        await lifecycle.withProviderSession(input, {
+          prepare: async () => {},
+          run: async () => {
+            lifecycle.recordTerminalResult({
+              usage: { inputTokens: 2, outputTokens: 1 },
+              tokenCounts: { inputTokens: 2, outputTokens: 1 },
+              finishReason: 'end_turn',
+            });
+          },
+          close: async () => {},
         });
         const result = {
           task_run_id: lifecycle.taskRunId,

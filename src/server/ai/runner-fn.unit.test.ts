@@ -66,6 +66,17 @@ describe('bound runTask adapters', () => {
     );
   });
 
+  it('allows either bound or call context to tighten but never widen the deadline', async () => {
+    runTask.mockResolvedValueOnce(fullResult).mockResolvedValueOnce(fullResult);
+    const bound = makeRunTaskFn(db, { providerSessionDeadlineAt: 900 });
+
+    await bound('VariantGenTask', {}, { providerSessionDeadlineAt: 1_000 });
+    await bound('VariantGenTask', {}, { providerSessionDeadlineAt: 800 });
+
+    expect(runTask.mock.calls.at(-2)?.[2]).toMatchObject({ providerSessionDeadlineAt: 900 });
+    expect(runTask.mock.calls.at(-1)?.[2]).toMatchObject({ providerSessionDeadlineAt: 800 });
+  });
+
   it('projects the runner result to the TaskTextResult provenance seam', async () => {
     runTask.mockResolvedValueOnce(fullResult);
 

@@ -4,68 +4,76 @@
 
 - Owner：「直接启动 FULL」；硬约束：「gate 不要在本地跑」。
 - Linear project：`Architecture Deepening FULL — 语义、成本与运行所有权`（In Progress）。
-- F0：YUK-840 Done、YUK-841 Done（PR #1156 / main `292350958`）、YUK-842 In Progress。
+- F0：YUK-840 Done、YUK-841 Done；YUK-842 因 production observe 暴露 SDK cold-start
+  lease-loss，仍为 In Progress。
 
-## Active checkout
+## Delivered and production state
 
-- worktree：`/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-842-provider-admission`
-- branch：`codex/yuk-842-provider-admission`
-- base：`origin/main@292350958fea4cbc1adb64b08659064b06916eaa`
-- PR：#1157；首轮 exact-head CI 暴露 import/type inference、retry constant import 与 cancellation
-  regression，均已按远端日志静态修正，等待新 head CI。
-- 原 checkout 有 owner 的 CI/PLAN/research 未提交修改，未触碰。
+- 原始 admission PR #1157 已 merge：main `34af0f75b8b7bfc1ac6b49826f9c6ba94c1012c8`；
+  exact-head CI 全绿，独立审查无 P0/P1。
+- 本地 prompt/config 物化修复 PR #1158 已 merge：main
+  `c76ccf57edb88b7af48643fd61858534d9ddfbfb`；exact-head CI 全绿，独立审查无 P0/P1。
+- production app/worker 当前同镜像
+  `sha256:a7839883cc0a948b96e5c0ae7b21877be1b5ba0389e1a46637c7d40f0215b807`，
+  都是 `observe`，policy 为 xiaomi concurrency=4 / starts=30 / queue=32 / wait=30s；health 正常、
+  restart=0。Postgres/tunnel 未重启，migration 0088 已应用。
+- rollback：pre-hotfix tag `the-learning-project-app:yuk842-prehotfix-20260803-0529` 指向旧 observe
+  image；更早 preobserve tag 也保留。
+- 尚未切 `enforce`，不得把当前状态写成 admission 已发布完成。
 
-## Implemented boundary
+## Production evidence and second root cause
 
-- `provider_session_admission` 是 operational lease + start-reservation ledger；terminal row 在七天后
-  只获得 lane-local opportunistic pruning eligibility，不承诺后台 TTL。application archive excluded
-  且 import wipe-only；full `pg_dump` restore 后必须显式 truncate；resetDb/migration-smoke 均同步。
-- `provider-session-admission.ts`：per-provider lane policy JSON；`off | observe | enforce`；短
-  `pg_try_advisory_xact_lock` transaction；DB-clock FIFO/queue/rate/concurrency CAS；claim heartbeat、
-  lease expiry、hard reclaim、policy mismatch fail-closed、bounded lane-local pruning batch。
-- admitted unit 是完整 central Claude Agent SDK `sdkQuery()` session，不是 wire request。一个 session
-  可含 turns、nested SDK agents、tool loop 与 `CLAUDE_CODE_MAX_RETRIES` 内部尝试。
-- admission wait 在 durable `ai_task_runs` start 与 model timer 之前；timeout/cancel 只有 admission
-  row，不制造 YUK-841 unknown cost attempt。permit 在 terminal settlement/afterRun 前 release。
-- runner 的 runTask、streamTask、streamTaskCollecting 三处真实 query seam 全接入；只有真正执行新
-  provider attempt 的 Loom retry / pg-boss redelivery 才使用新 admission id；replay/fence 不 re-admit，
-  且没有新增 retry layer。retry admission 受首次 attempt 的绝对 elapsed deadline 约束。
-- same-lane nested DomainTool task 通过 `parentTaskRunId` 加入 active session family：一个 root 只允许
-  一条 active descendant chain 共享槽，parallel sibling 等待或占新 root；parent 先结束时 active
-  child 接管槽。每个 child 仍独立计 start reservation/lease/metrics；ResearchMeetingDirector
-  预分配 outer task id，避免 synthetic id 断链。
-- `observe` 唯一允许 bounded fail-open；`enforce` 对 DB/lease/policy ambiguity fail-closed。短 token 只
-  fence DB owner，不 fence provider，故 lost active family root/branch 在 release/hard_reclaim 前继续
-  占容量。
-- wait/release 使用 monotonic deadline、transaction-local `lock_timeout` / `statement_timeout`、有界
-  backoff 与 per-process lane single-flight；timeout/cancel 走独立短 CAS，失败时由后续 lane tick 收口。
+- 两次真实 API-originated Copilot 请求都 HTTP 200 且用户结果被 observe fail-open 保护。
+- 第一次证明 acquire 后的一次性 skill/config 物化会阻塞 heartbeat；PR #1158 已把这些工作移到
+  admission 前。
+- PR #1158 部署后的第一次冷请求仍在 acquire 后约 16.2s 才恢复 event loop，原 15s lease 到期并
+  记录 `lease_lost`。prompt/options 已完成，剩余 stall 位于 SDK `query()` 同步 CLI spawn/initialize。
+- SDK 0.3.220 的正式 seam 是 `startup({options, initializeTimeoutMs}) → WarmQuery`；`startup()` 只
+  spawn/initialize，不发送 prompt，`WarmQuery.query(prompt)` 才写 prompt。CLI binary 约 272MB。
+- 原 lifecycle 还在 `sdkQuery()` 前启动 model timer；16s event-loop stall 也会饿死 10s task timer，
+  因而仅延长 lease 不能闭合 runner correctness。
 
-## Evidence and tests authored
+## Active checkout and implementation
 
-- DB：两个 independent clients 共用 cap、FIFO、queue-full、duplicate owner、cross-lane row identity、
-  lease-expired quarantine/hard reclaim、single descendant chain、parallel sibling、parent-first promotion、
-  terminal+family-child start reservation、policy mismatch、row-lock DB timeout 与 DB-linearized wait timeout。
-- Unit：strict config、off rollback、observe/enforce failure behavior；lifecycle wait 前不 start/timer；
-  admission timeout不建 attempt；三 runner seam、retry absolute deadline/re-admit/release-before-settle。
-- Migration：table/index/CHECK/backup/restore/reset lockstep。
-- Runbook：全进程 `off → observe → application-level drain → enforce`、metrics SQL、failure/restore/
-  rollback；observe fail-open 后若 abort/kill/stop 有歧义，同样强制 stop time + deployed max timeout
-  + 30s，不能靠 admission-table zero snapshot 直接 enforce。
+- worktree：`/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-842-startup-lease`
+- branch：`codex/yuk-842-startup-lease`
+- base：`origin/main@c76ccf57edb88b7af48643fd61858534d9ddfbfb`
+- 当前未提交实现的生命周期：
+  `local materialize → acquire → sdk startup(no prompt) → startup-to-steady CAS → final lease/cancel/deadline fence →`
+  `ai_task_runs start + model timer → WarmQuery.query(prompt) → cleanup → release → settlement`。
+- fixed timing：40s SDK initialize timeout；45s initial lease；15s steady/renewal horizon；5s heartbeat；
+  provider start 保留 1s confirmed-lease margin；startup-complete claim CAS 明确缩到 steady lease，
+  此后 heartbeat renewal 单调不缩短；lease protocol v2 进入 fingerprint；
+  `hard_reclaim_at = acquire + 45s startup + execution timeout + 30s`。这些语义全部进入 policy
+  fingerprint。
+- permit 增加同步 provider-start assert，覆盖 event-loop stall 后 timer callback 尚未来得及执行的
+  microtask race。unused WarmQuery 与 active Query 都在 release 前清理；stream client cancel 不再触碰
+  已取消 controller。
+- Hono 组合根从鉴权后为每个 API request 建立同一个 90s absolute deadline；全部 central runner
+  串行、并行与嵌套调用自动取 request/caller 较早值。Copilot route 用同一 kernel budget 建显式 fallback
+  并传给 classifier、teaching/free-form 主调用与 ToolContext nested central task；SDK 返回后再次检查
+  lease/abort/deadline，迟到 success 不能越界。durable worker 无 HTTP scope。
+- observe/enforce acquisition writer、short execution hard bound、non-shrinking renewal、steady 15s
+  renewal、startup/durable deadline、startup failure/cleanup、三 runner seam 与全仓 SDK mocks 已更新。
+- runbook、architecture、restore CLI、phase plan、PLAN 同步 startup budget 与恢复边界。
 
 ## Validation boundary and next action
 
-- 没有运行任何本地 test/typecheck/lint/build/audit gate。
-- 只运行 formatter、`git diff --check` 与只读静态检查；它们不是验证证据。
-- 下一步：提交并推送首轮远端 CI 修正 → PR #1157 新 head exact-head GitHub CI；仅 P0/P1 阻塞。
-- Phase 0 exit 仍需 merge 后一个真实 provider observation；不能用 mock/synthetic 冒充。
+- 没有运行任何本地 test/typecheck/lint/build/audit gate；只做代码编辑和静态只读检查。
+- 下一步：独立只读 review 当前 diff → commit/push → 创建 PR → 只看 exact-head GitHub CI。
+- 任何远端失败都在新 head 修复并重跑；只有 exact-head 全绿、无 unresolved P0/P1 才 merge。
+- merge 后先确认 `ai_task_runs` running=0、pg-boss active/retry=0，再只重建 app/worker并保持
+  `observe`。冷启动后必须分别取得真实 API 与 worker session 的 heartbeat/no-loss/released/cost
+  evidence；证据闭合后才把 YUK-842 设 Done 并启动 Phase 1。
+- PR #1154 接受合并，但其旧 head 与 YUK-840/841/842 有 9 个冲突且真实 A01 comparator 仍 timeout；
+  先完成 YUK-842 exact-image observe 部署，再把 #1154 合并到最终 runner、跑新 head CI 后 merge，
+  YUK-832 继续产品 HOLD 且不随本次 rollout 部署。
 
 ## Explicit residual scope
 
-- DashScope embeddings、Mem0 fan-out、direct GLM reconcile、GLM/Tencent OCR、manual preflight 不走
-  `AiRunLifecycle`，不在 YUK-842 session gate 内；已建 YUK-845 承接，完成前不得宣称产品级 provider
-  HTTP capacity 已治理。
-- application archive import 需要保留 admission-off 的 admin Hono、阻断 ingress、停 worker 并 drain；
-  full `pg_dump` restore 则停 app/worker，migrate 后 truncate admission 表。若任何 owner 未确认正常
-  drain，必须在 abort/stop/wipe 前把 active row 的最大 `hard_reclaim_at` 记到 DB 外，并从 process
-  stop time 强制等待 deployed max execution timeout + 30s（DB snapshot 只能延长不能缩短）。两条
-  路径还须等待最后一次 provider traffic + 60s；单次 DB zero snapshot 不能关闭 wait→acquire race。
+- YUK-845 承接 DashScope embeddings、Mem0 fan-out、direct GLM/OCR、Tencent OCR 与 manual preflight；
+  当前不能宣称产品级 HTTP capacity 已统一治理。
+- production `enforce` 仍需更长 observe 证据、全调用进程同 binary/fingerprint、application-level
+  quiesce/drain 与 restore protocol；本轮冷证据干净也不自动授权切 enforce。
+- 若任何 owner abort/kill/stop 不可证明正常 drain，恢复/切换等待下界是 process stop time + 45s
+  startup budget + deployed max execution timeout + 30s abort grace；DB `hard_reclaim_at` 只能延长。

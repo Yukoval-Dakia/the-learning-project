@@ -17,7 +17,18 @@ export function makeRunTaskFn(db: Db, baseCtx: RunTaskCallCtx = {}): BoundRunTas
     const { runTask } = await import('@/server/ai/runner');
     const { db: _baseDb, enableTransientRetry: _baseRetry, ...safeBaseCtx } = baseCtx as RunTaskCtx;
     const { db: _callDb, enableTransientRetry: _callRetry, ...safeCallCtx } = callCtx as RunTaskCtx;
-    return runTask(kind, input, { ...safeBaseCtx, ...safeCallCtx, db });
+    const providerSessionDeadlineAt =
+      safeBaseCtx.providerSessionDeadlineAt === undefined
+        ? safeCallCtx.providerSessionDeadlineAt
+        : safeCallCtx.providerSessionDeadlineAt === undefined
+          ? safeBaseCtx.providerSessionDeadlineAt
+          : Math.min(safeBaseCtx.providerSessionDeadlineAt, safeCallCtx.providerSessionDeadlineAt);
+    return runTask(kind, input, {
+      ...safeBaseCtx,
+      ...safeCallCtx,
+      ...(providerSessionDeadlineAt !== undefined ? { providerSessionDeadlineAt } : {}),
+      db,
+    });
   };
 }
 

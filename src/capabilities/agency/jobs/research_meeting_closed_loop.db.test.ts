@@ -14,7 +14,7 @@
 // The failure MODE is "the test double is more complete than the production implementation".
 // The only way to see it is to keep every production seam real and replace exactly ONE port.
 //
-// THE ONE PORT: `@anthropic-ai/claude-agent-sdk`'s `query` (the process boundary to the model).
+// THE ONE PORT: the Agent SDK startup/query process boundary to the model.
 // Everything downstream of it is production code: runTask (provider resolution, ai_task_runs +
 // cost_ledger writes, structured-output dispatch), induceConjecture's self-consistency,
 // writeAiProposal, acceptConjectureProposal, serveProbeOnce, the probe-answer HTTP route,
@@ -39,7 +39,7 @@ import { and, eq, or, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ── THE SINGLE REPLACED PORT ────────────────────────────────────────────────────
-// `runTask` talks to the model through `query()` from the Agent SDK. Faking it (and
+// `runTask` talks to the model through startup + WarmQuery.query from the Agent SDK. Faking it (and
 // nothing else) keeps every prompt-building, provider-resolution, parsing, persistence
 // and routing decision in production hands, while making the run deterministic + free.
 const sdk = vi.hoisted(() => ({
@@ -50,29 +50,32 @@ const sdk = vi.hoisted(() => ({
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: ({ prompt }: { prompt: unknown }) =>
-    (async function* () {
-      // `promptFromInput` hands a plain string for text tasks and an async iterable of
-      // SDKUserMessage for multimodal ones (the vision judge). Flatten both to the text
-      // the model would actually read — that is what the seam assertions inspect.
-      let text = '';
-      if (typeof prompt === 'string') {
-        text = prompt;
-      } else {
-        const iterable = prompt as AsyncIterable<{
-          message: { content: Array<{ type: string; text?: string }> };
-        }>;
-        for await (const msg of iterable) {
-          for (const block of msg.message.content) {
-            if (block.type === 'text' && typeof block.text === 'string') text += block.text;
+  startup: async () => ({
+    query: (prompt: unknown) =>
+      (async function* () {
+        // `promptFromInput` hands a plain string for text tasks and an async iterable of
+        // SDKUserMessage for multimodal ones (the vision judge). Flatten both to the text
+        // the model would actually read — that is what the seam assertions inspect.
+        let text = '';
+        if (typeof prompt === 'string') {
+          text = prompt;
+        } else {
+          const iterable = prompt as AsyncIterable<{
+            message: { content: Array<{ type: string; text?: string }> };
+          }>;
+          for await (const msg of iterable) {
+            for (const block of msg.message.content) {
+              if (block.type === 'text' && typeof block.text === 'string') text += block.text;
+            }
           }
         }
-      }
-      sdk.prompts.push(text);
-      const responder = sdk.respond;
-      if (!responder) throw new Error('[closed-loop] no fake model installed for this test');
-      yield responder(text);
-    })(),
+        sdk.prompts.push(text);
+        const responder = sdk.respond;
+        if (!responder) throw new Error('[closed-loop] no fake model installed for this test');
+        yield responder(text);
+      })(),
+    close: () => {},
+  }),
   createSdkMcpServer: () => ({ type: 'sdk', name: '', instance: {} }),
   tool: (name: string, description: string) => ({ name, description }),
 }));
