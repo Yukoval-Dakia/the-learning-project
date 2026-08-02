@@ -81,6 +81,7 @@ import { capabilities } from '@/capabilities';
 import { PROBE_QUESTION_SOURCE } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { ai_task_runs, cost_ledger, event, kc_typed_state, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { ANTHROPIC_SUB_CONTRACT_REF } from '@/server/ai/pricing';
 import {
   PREDICTION_SCORE_ACTION,
   PROBE_RESULT_PROJECTED_ACTION,
@@ -426,7 +427,9 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     // plausible-looking on a multi-cell night, so pin the silent-failure count at zero.
     expect(firstRun.cells_failed).toBe(0);
     expect(firstRun.reconciled).toBe(0); // nothing to settle on night one
-    expect(firstRun.cost_usd).toBeGreaterThan(0); // real cost accounting, not a stub
+    // The induction lane is pinned to the flat subscription contract. Its authoritative
+    // attempt truth is therefore an explicit estimated $0, not a fabricated per-call cost.
+    expect(firstRun.cost_usd).toBe(0);
 
     // The induction genuinely ran N samples through the real runner.
     expect(await taskKindCounts()).toMatchObject({
@@ -866,7 +869,14 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
       .where(eq(cost_ledger.task_kind, 'MindModelInductionTask'));
     expect(costs).toHaveLength(RESEARCH_MEETING_SAMPLES);
     expect(
-      costs.every((row) => row.cost !== null && row.cost > 0 && row.outcome === 'success'),
+      costs.every(
+        (row) =>
+          row.entry_kind === 'attempt' &&
+          row.cost === 0 &&
+          row.cost_basis === 'estimated' &&
+          row.cost_ref === ANTHROPIC_SUB_CONTRACT_REF &&
+          row.outcome === 'success',
+      ),
     ).toBe(true);
   });
 

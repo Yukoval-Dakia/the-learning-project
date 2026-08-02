@@ -151,7 +151,7 @@ describe('writeAiTaskAttemptFinished', () => {
         cost_truth: { basis: 'reported', amountUsd: 0.1, ref: 'sdk:total_cost_usd' },
         outcome: 'failed_permanent',
       }),
-    ).rejects.toMatchObject({ code: '23505' });
+    ).rejects.toMatchObject({ cause: { code: '23505' } });
 
     const [run] = await db
       .select()
