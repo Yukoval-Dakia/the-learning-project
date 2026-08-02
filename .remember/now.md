@@ -40,8 +40,8 @@
 - exact-head actual-provider v8 五例全部安全 fail closed 且没有 candidate 泄漏。A01/A03/A04
   的复杂 blind-reference 多次撞 120s；A03/C01/C04 也有成功 provider 输出被 strict contract
   拒绝。原始结果在本地 mode 0600 artifact，不提交。
-- 当前窄化修复只给 durable blind-reference 240s；inline 与 comparator 保持 120s。FULL 最坏
-  审阅为 16min，连同 primary 12min + 30s grace 的 owner ceiling 为 28.5min，仍小于 1h
+- 当前窄化修复只给 durable blind-reference 300s；inline 与 comparator 保持 120s。FULL 最坏
+  审阅为 18min，连同 primary 12min + 30s grace 的 owner ceiling 为 30.5min，仍小于 1h
   stuck-run 阈值。加入的诊断只保留固定 contract 错误类别/有界单行消息，不记录 raw output、
   candidate 或 thinking。
 - `9a7be1b6` 的 A01 actual 已让两次 blind reference 越过原 120s timeout 并完整返回，但都被
@@ -56,9 +56,12 @@
   hard rule 并让 comparator 优先只引用 sealed point，但首个 actual reference 仍重复同一
   binding 错误，随即 Stop。现让既有第二次 attempt 只收到 server 生成的 240-char 固定契约错误，
   不含前次 output/verdict、candidate、thinking 或新证据，并按每次实际 input 重新 hash/bind；
-  wrapper prose 丢弃，多对象/Zod/server binding 仍拒绝。新 committed exact head 仍须跑 GitHub
-  CI，先过 A01 自动 gate 再跑五例 actual v8。A01 两次
-  reference 分别约
+  wrapper prose 丢弃，多对象/Zod/server binding 仍拒绝。`41503da5` A01 primary 在 133.31s
+  完成；第一条 reference 在 218.88s 完整返回并因 request coverage 6–9 缺 evidence point 被拒，
+  第二条已收到固定反馈但在 242.01s 被 240s 上限截断。artifact SHA-256
+  `a1337940a00ccfb10418f13aa2fbeac0b9c34e13d3fe6eddb91936b1731caf72`（本地 mode 0600）。
+  现只把 durable reference 调到 300s；新 committed exact head 仍须跑 GitHub CI，先过 A01
+  自动 gate 再跑五例 actual v8。更早的 A01 两次 reference 分别约
   198.30s/198.33s，均为 provider success + thinking；partial artifact SHA-256
   `7e7d7e402a7d007c165049f8fc42534072ed068e536d3ee53eacd99da1190d7b`（本地 mode 0600）。
 

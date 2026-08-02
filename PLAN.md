@@ -33,12 +33,14 @@
   首例即 Stop。`f9e49f1c` 把 scalar/null/显式空容器终点写成 hard rule 后，A01 首个 actual
   reference 仍重复同一 binding 错误，证明静态 prompt 不足，已 Stop。当前让既有第二次 attempt
   只收到 server 生成的有界固定契约错误，不含前次输出或新证据；每次 input/hash 独立绑定，
-  多对象/Zod/server binding 仍 fail closed，须在新 committed exact head 重放。
+  多对象/Zod/server binding 仍 fail closed。`41503da5` actual 的第一条 reference 在 218.88s
+  完整返回并触发反馈；第二条在 242.01s 被 240s 上限截断。当前只把 durable reference 尾部
+  调到 300s；FULL 最坏 18min、owner ceiling 30.5min，仍低于 1h stuck-run gate。
 - 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
 
 ## NEXT
 
-1. 完成 validator bounded contract-feedback 的 commit/push 与 exact-head GitHub CI；包装 prose
+1. 完成 validator 300s durable-reference 窄修复的 commit/push 与 exact-head GitHub CI；包装 prose
    丢弃，不改 inline/comparator 预算与 server binding。
 2. 先在 clean committed exact head 重跑 A01；自动 gate 通过后才重跑 5 例 actual-provider v8，逐例审计 primary +
    reference/comparator runs、thinking、digests、exact bytes 与无旁支 validator。
