@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ANTHROPIC_SUB_CONTRACT_REF, ATTEMPT_PRICEBOOK_VERSION } from './pricing';
 import { resolveAttemptCostTruth } from './attempt-cost';
+import { ANTHROPIC_SUB_CONTRACT_REF, ATTEMPT_PRICEBOOK_VERSION } from './pricing';
 
 const tokens = { inputTokens: 1000, outputTokens: 500 };
 
