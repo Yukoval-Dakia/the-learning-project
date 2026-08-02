@@ -27,7 +27,7 @@ import {
   buildCopilotEvidenceSourceCatalog,
   createComparisonEvidenceSubmission,
   createReferenceEvidenceSubmission,
-  projectCopilotEvidenceSourceCatalog,
+  projectCopilotEvidenceModelTrace,
   sourceCatalogDigest,
 } from './evidence-submission';
 
@@ -176,13 +176,13 @@ async function runBlindReference(params: {
   | { ok: false; reason: string; taskRunIds: string[] }
 > {
   const sourceCatalog = buildCopilotEvidenceSourceCatalog(params.toolTrace);
+  const evidenceTrace = projectCopilotEvidenceModelTrace(params.toolTrace, sourceCatalog);
   const baseTaskInput = {
     protocol_version: 1,
     request_context: params.requestContext,
     request_units: params.requestUnits,
     source_complete: params.sourceComplete,
-    tool_trace: params.toolTrace,
-    source_catalog: projectCopilotEvidenceSourceCatalog(sourceCatalog, params.toolTrace.length),
+    evidence_trace: evidenceTrace,
   };
   const sourceCatalogSha256 = sourceCatalogDigest(sourceCatalog);
   const referenceTaskInput = {
@@ -348,6 +348,7 @@ async function runConfirmedComparison(params: {
 > {
   const replyUnits = segmentEvidenceReply(params.selectedReply);
   const selectedReplySha256 = sha256CanonicalJson({ text: params.selectedReply });
+  const sourceCatalog = buildCopilotEvidenceSourceCatalog(params.toolTrace);
   const baseTaskInput = {
     protocol_version: 1,
     request_units: params.requestUnits,
@@ -361,7 +362,7 @@ async function runConfirmedComparison(params: {
       request_coverage: params.reference.output.request_coverage,
       trace_coverage: params.reference.output.trace_coverage,
     },
-    tool_trace: params.toolTrace,
+    evidence_trace: projectCopilotEvidenceModelTrace(params.toolTrace, sourceCatalog),
     submission_protocol: {
       kind: 'append_only_tools',
       max_reply_checks_per_call: 12,

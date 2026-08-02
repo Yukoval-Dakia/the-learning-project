@@ -8,20 +8,38 @@ import {
   reviewCopilotEvidenceReply,
 } from './evidence-review';
 import type {
-  CopilotEvidenceSourceCatalogCall,
+  CopilotEvidenceModelTraceCall,
   ReferenceEvidenceSubmission,
 } from './evidence-submission';
 
 const db = testDb();
+
+function findTaggedSourceId(value: unknown, exactValue: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    if (/^s(?:0|[1-9]\d*)$/.test(String(value[0])) && Object.is(value[1], exactValue)) {
+      return String(value[0]);
+    }
+    for (const item of value) {
+      const found = findTaggedSourceId(item, exactValue);
+      if (found) return found;
+    }
+  } else if (value !== null && typeof value === 'object') {
+    for (const item of Object.values(value)) {
+      const found = findTaggedSourceId(item, exactValue);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
 
 function submitSimpleReference(
   input: unknown,
   submission: ReferenceEvidenceSubmission | undefined,
 ): void {
   if (!submission) throw new Error('reference submission missing');
-  const sourceId = (input as { source_catalog: CopilotEvidenceSourceCatalogCall[] }).source_catalog
-    .flatMap((call) => call.output)
-    .find(([, jsonPointer]) => jsonPointer === '/event_id')?.[0];
+  const evidenceTrace = (input as { evidence_trace: CopilotEvidenceModelTraceCall[] })
+    .evidence_trace;
+  const sourceId = findTaggedSourceId(evidenceTrace[0]?.output, 'exact_event_01');
   if (!sourceId) throw new Error('event id source missing');
   submission.appendEvidencePoints({
     points: [

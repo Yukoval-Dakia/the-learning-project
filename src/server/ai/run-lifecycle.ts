@@ -32,6 +32,8 @@ export interface TerminalSuccess {
   structuredOutput?: unknown;
 }
 
+export type ObservedRunUsage = Pick<TerminalSuccess, 'usage' | 'tokenCounts' | 'costUsd'>;
+
 interface LifecycleConfig<TResult extends LifecycleResult> {
   db: Db;
   kind: TaskKind;
@@ -77,6 +79,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
 
   private readonly timer: ReturnType<typeof setTimeout>;
   private terminal: TerminalSuccess | undefined;
+  private observedUsage: ObservedRunUsage | undefined;
+  private costWriteAttempted = false;
   private terminalWriteAttempted = false;
 
   constructor(private readonly config: LifecycleConfig<TResult>) {
@@ -95,15 +99,18 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   get usage(): LifecycleUsage {
-    return this.terminal?.usage ?? { inputTokens: 0, outputTokens: 0 };
+    return this.terminal?.usage ?? this.observedUsage?.usage ?? { inputTokens: 0, outputTokens: 0 };
   }
 
   get tokenCounts(): TokenCounts {
-    return this.terminal?.tokenCounts ?? { inputTokens: 0, outputTokens: 0 };
+    return (
+      this.terminal?.tokenCounts ??
+      this.observedUsage?.tokenCounts ?? { inputTokens: 0, outputTokens: 0 }
+    );
   }
 
   get costUsd(): number | undefined {
-    return this.terminal?.costUsd;
+    return this.terminal?.costUsd ?? this.observedUsage?.costUsd;
   }
 
   get finishReason(): string {
@@ -143,6 +150,16 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
 
   recordTerminalSuccess(terminal: TerminalSuccess): void {
     this.terminal = terminal;
+    this.observedUsage = terminal;
+  }
+
+  /**
+   * Keep the latest aggregate SDK usage even when no success terminal arrives.
+   * Result-error messages carry authoritative aggregate usage; budget aborts can
+   * still contribute the assistant turns observed before the stream was cut.
+   */
+  recordObservedUsage(observation: ObservedRunUsage): void {
+    this.observedUsage = observation;
   }
 
   async recordToolCall(input: {
@@ -177,28 +194,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       throw new Error(`[${this.kind}] cannot finish success without a terminal SDK result`);
     }
 
-    try {
-      await writeCostLedger(this.config.db, {
-        task_run_id: this.taskRunId,
-        task_kind: this.kind,
-        provider: this.resolved.provider,
-        model: this.resolved.model,
-        cost: effectiveCostUsd(
-          this.resolved.model,
-          this.terminal.tokenCounts,
-          this.terminal.costUsd,
-        ),
-        currency: 'USD',
-        tokens_in: this.terminal.usage.inputTokens,
-        tokens_out: this.terminal.usage.outputTokens,
-      });
-    } catch (error) {
-      console.error(`[${this.config.logScope}] writeCostLedger failed`, {
-        task_run_id: this.taskRunId,
-        kind: this.kind,
-        err: error,
-      });
-    }
+    await this.writeObservedCost('success');
 
     await this.writeTerminal({
       status: 'success',
@@ -220,10 +216,27 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   async finishFailure(error: unknown, finishReason = 'error'): Promise<void> {
+    const failureOutcome = isTransientAgentFailure(error)
+      ? ('failed_retryable' as const)
+      : ('failed_permanent' as const);
+    const observedCost = this.hasObservedBillableUsage()
+      ? effectiveCostUsd(this.resolved.model, this.tokenCounts, this.costUsd)
+      : undefined;
+    if (observedCost !== undefined) {
+      const effectiveObservation = {
+        usage: this.usage,
+        tokenCounts: this.tokenCounts,
+        costUsd: observedCost,
+      };
+      this.observedUsage = effectiveObservation;
+      if (this.terminal) this.terminal = { ...this.terminal, costUsd: observedCost };
+    }
+    await this.writeObservedCost(failureOutcome);
     await this.writeTerminal({
       status: 'failure',
       finishReason,
       errorMessage: error instanceof Error ? error.message : String(error),
+      costUsd: observedCost,
     });
   }
 
@@ -240,6 +253,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     status: 'success' | 'failure';
     finishReason: string;
     errorMessage: string | undefined;
+    costUsd?: number;
   }): Promise<void> {
     if (this.terminalWriteAttempted) return;
     this.terminalWriteAttempted = true;
@@ -249,7 +263,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         status: input.status,
         finish_reason: input.finishReason,
         usage: this.usage,
-        cost_usd: this.costUsd,
+        cost_usd: input.costUsd ?? this.costUsd,
         error_message: input.errorMessage,
       });
     } catch (error) {
@@ -264,6 +278,46 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         kind: this.kind,
         intended_status: input.status,
         err: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private hasObservedBillableUsage(): boolean {
+    return (
+      this.usage.inputTokens > 0 ||
+      this.usage.outputTokens > 0 ||
+      (this.costUsd !== undefined && this.costUsd > 0)
+    );
+  }
+
+  private async writeObservedCost(
+    outcome: 'success' | 'failed_retryable' | 'failed_permanent',
+  ): Promise<void> {
+    if (this.costWriteAttempted) return;
+    this.costWriteAttempted = true;
+    // A process/config failure before any provider turn is not a paid run. Keep
+    // it visible in ai_task_runs without manufacturing a zero-cost ledger row.
+    // Successful terminals retain the pre-existing one-row accounting contract,
+    // including genuinely zero-marginal subscription runs.
+    if (outcome !== 'success' && !this.hasObservedBillableUsage()) return;
+    try {
+      await writeCostLedger(this.config.db, {
+        task_run_id: this.taskRunId,
+        task_kind: this.kind,
+        provider: this.resolved.provider,
+        model: this.resolved.model,
+        cost: effectiveCostUsd(this.resolved.model, this.tokenCounts, this.costUsd),
+        currency: 'USD',
+        tokens_in: this.usage.inputTokens,
+        tokens_out: this.usage.outputTokens,
+        outcome,
+      });
+    } catch (error) {
+      console.error(`[${this.config.logScope}] writeCostLedger failed`, {
+        task_run_id: this.taskRunId,
+        kind: this.kind,
+        outcome,
+        err: error,
       });
     }
   }

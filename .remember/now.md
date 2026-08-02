@@ -36,89 +36,36 @@
 
 ## YUK-832 current gate
 
-- PR #1154 当前 FULL head `9c43ab8e` 的 exact-head CI Gate 30739496669 与 CodeQL 已全绿；
-  无未解决 P0/P1。
-- exact-head actual-provider v8 五例全部安全 fail closed 且没有 candidate 泄漏。A01/A03/A04
-  的复杂 blind-reference 多次撞 120s；A03/C01/C04 也有成功 provider 输出被 strict contract
-  拒绝。原始结果在本地 mode 0600 artifact，不提交。
-- durable blind-reference 保持 2×360s；inline 保持 120s，actual 证明不足后仅 durable comparator
-  调为 4×360s。FULL 最坏审阅为 36min，连同 primary 12min + 30s grace 的 owner ceiling 为
-  48.5min，仍小于 1h
-  stuck-run 阈值。加入的诊断只保留固定 contract 错误类别/有界单行消息，不记录 raw output、
-  candidate 或 thinking。
-- `9a7be1b6` 的 A01 actual 已让两次 blind reference 越过原 120s timeout 并完整返回，但都被
-  诊断为非 strict JSON；重复证据足够后停止 A03，其余样本未继续烧 provider。下一窄化修复
-  先尝试只接受唯一一个 syntax-only JSON fence，但 `1d48d4d3` actual 的首个 A01 reference
-  仍不匹配，随即 Stop，未继续重复烧 provider。现改为复用项目既有 structured-task 单 JSON
-  对象提取器：`6fbf9c1e` actual 成功进入 Zod，暴露 provider 自创 protocol_version/type/status
-  和额外字段；首例即 Stop。根因是 Xiaomi 不接收 SDK native outputFormat，而 prompt 没给 exact
-  JSON shape；现已把两个 validator 的 numeric protocol、字段、数组与 enum 逐字写入 prompt。
-  `55151d5d` 的 A01 actual 已通过 schema，随后被 server 正确拒绝，因为 source pointer 指向
-  非空 object/array；首例即 Stop。`f9e49f1c` 把 pointer 只能终止在 scalar/null/显式空容器写成
-  hard rule 并让 comparator 优先只引用 sealed point，但首个 actual reference 仍重复同一
-  binding 错误，随即 Stop。现让既有第二次 attempt 只收到 server 生成的 240-char 固定契约错误，
-  不含前次 output/verdict、candidate、thinking 或新证据，并按每次实际 input 重新 hash/bind；
-  wrapper prose 丢弃，多对象/Zod/server binding 仍拒绝。`41503da5` A01 primary 在 133.31s
-  完成；第一条 reference 在 218.88s 完整返回并因 request coverage 6–9 缺 evidence point 被拒，
-  第二条已收到固定反馈但在 242.01s 被 240s 上限截断。artifact SHA-256
-  `a1337940a00ccfb10418f13aa2fbeac0b9c34e13d3fe6eddb91936b1731caf72`（本地 mode 0600）。
-  现只把 durable reference 调到 300s；新 committed exact head 仍须跑 GitHub CI，先过 A01
-  自动 gate 再跑五例 actual v8。`b1290371` A01 primary 96s；第一条 reference 171s 后因 absent
-  source pointer 被拒；第二条收到反馈并在 253s 完整返回，已修掉 pointer，但把 request coverage
-  6–9 的 evidence indices 留空，server 继续 fail closed。artifact SHA-256
-  `8f9aff79f8e5fcf6f362722c7e9f78d726d76589e7338c7ed90e88cdfc88d329`（本地 mode 0600）。
-  当前只把 schema 已有的 coverage non-empty + exact ledger-set 条件逐字写入通用 prompt，不增加
-  attempt、不接受空 coverage。`0bcd6494` A01 primary 77.04s、首条 reference 158.75s；第二条
-  收到 pointer feedback，但在 302.01s 撞到 300s 尾部，未返回新契约证据。artifact SHA-256
-  `683d3cd4f467f81d121a05e89208b3911e0715c4a909306ca26807473dc80271`（本地 mode 0600）。
-  `19e72433` A01 primary 121.85s；两条 reference 在 203.46s/168.59s 完整返回，证明 360s 足够。
-  第一条 parser SyntaxError，反馈此前只有名字；第二条 JSON 可解析但 3 个 json_pointer 是空字符串，
-  server 正确拒绝。artifact SHA-256
-  `1dda0d6b892f3a76effa9bf86e1244ca612d15fc37229dd780c9cec0218ba891`（本地 mode 0600）。
-  `647cc42e` 首次 A01 误入已结束 session，不算新证据；隔离 r2 后 primary 88.81s、两条
-  reference 155.77s/259.00s，依次因 source_refs>12 与 absent pointer 被拒。artifact SHA-256
-  `0d8ea034ad3da9462a00b7c9e0d1fdea1bc7e71006b12c9a8f89ff3dd9055459`（mode 0600）。它和前序
-  syntax/coverage/pointer 失败共同证明瓶颈是一次性 12k–18k tokens 交叉索引大 JSON，而非
-  provider 没有 reasoning 或 timeout。更早的 A01 两次 reference 分别约
-  198.30s/198.33s，均为 provider success + thinking；partial artifact SHA-256
-  `7e7d7e402a7d007c165049f8fc42534072ed068e536d3ee53eacd99da1190d7b`（本地 mode 0600）。
-- Owner 已批准试 FULL：撤回未提交的第三次整段重写草稿，保留两次 attempt。当前改为内部
-  append-only 小工具：blind 只提交 evidence points、未使用 read 与 safe reply；comparator
-  只提交逐 reply checks。server 生成短 source-id catalog，独立还原 JSON Pointer，并派生全部
-  dense coverage、request checks、digest 与 verdict；模型不再输出最终大 JSON。21-call/55KB+
-  复杂 fixture 的 unit 与 exact-input provenance DB loop 已通过并提交。`9c43ab8e` 首个隔离 A01
-  primary 成功且有 6 个 thinking blocks；两条 blind reference 均准确撞 `error_max_turns`，因为
-  注册表只给 4 turns，而协议要求分批 append、set safe reply、explicit complete 后再正常 terminal。
-  未进入 comparator，系统安全 fail closed，随即 Stop；artifact SHA-256
-  `95855eef09b80d30634df35dc459340ba1e8d29dc4b08dbd4b8661ada27da7fa`（mode 0600）。现按协议
-  封闭最大值把 reference ceiling 改为 16（8 point chunks + 5 trace chunks + 3 收尾 turns），
-  comparator 改为 18（16 reply chunks + complete + terminal）。`c8bd8761` exact-head CI 全绿后的
-  第二个隔离 A01 已让 blind reference 首次成功：9 thinking blocks、result digest 与 ledger 均绑定；
-  随后两条 comparator 都在 122s 左右撞 120s `budget_timeout`，未产生可绑定比较结果，系统再次
-  fail closed 并 Stop。artifact SHA-256
-  `c72ed9063eee759530b39b35df13c0e75585cea6041ef62665972f25a4dd1fb5`（mode 0600）。`3ad1f0f9`
-  的第三个隔离 A01 仍成功绑定 blind；第一条 comparator 在 242s 撞 240s budget，第二条尚运行时
-  旧 harness 的 14min monitor 先到期并停止 worker，因此本次不是产品 verdict。partial artifact
-  SHA-256 `55ca0f71287615ce59fc3d758690786d79e03735d90c066c055c6d59ce3dfe97`（mode 0600）。已用
-  产品取消语义把遗留 boss job、durable run、domain reply 与悬挂 AI run 全部终态化。现只把
-  durable comparator tail 对齐 blind 为 360s；inline 仍 120s，attempt 数与绑定不变；actual harness
-  monitor 需对齐新的 48.5min owner ceiling。`ef5789a7` + 52min monitor 的第四个隔离 A01 已正常
-  走到产品终态：第一条 blind 撞 360s budget；第二条在 263s 先撞精确 `maxTurns=16`，未进入
-  comparator。artifact SHA-256
-  `94f7d9743a71190642d62cb51913de2e93afd7991a2a5b4e4e1e763ecff4e073`（mode 0600）。16 turns
-  只够所有 accepted chunks 一次成功，没有给内部工具拒绝后的修正留轮次；现把两个 FULL task
-  的 SDK ceiling 统一为 24，不增加 360s paid wall-clock。失败诊断新增的只有 point/not-material/
-  safe-reply/reply-check 完成计数，不记录 raw output、candidate 或 thinking。`4708378a` exact-head
-  CI Gate 30743228355 / CodeQL 30743227276 全绿后，第五个隔离 A01 的两条 blind 都未耗尽 24 turns，
-  而是依次在 360s 终止；第一条已收 29 points/3 not-material，第二条已收 31 points/6 not-material
-  与 safe reply，只缺 completion。artifact SHA-256
-  `2ec670ea6756a0adc4626d63c139254016e75a7a1476d3436fa9f918f532e2a2`（mode 0600），产品 clean terminal。
-  这项有界进度证据只授权把 durable reference 延到 480s；comparator 仍 360s，attempt/binding 不变，
-  FULL 最坏 40min、owner ceiling 52.5min，仍低于一小时 stale gate。
+- PR #1154 / branch `codex/yuk-832-evidence-readers`；LIGHT 前一基线 `ac66f110` 的 exact-head
+  CI Gate 与 CodeQL 全绿，新 LIGHT head 待 push 后重跑。
+- 隔离 A01 r8 在 2026-08-02 完成 clean terminal，evidence status=`failed_closed`：primary 成功；
+  reference #1 在 480s timeout，reference #2 在 440s 成功绑定；两个 comparator 均在 360s
+  timeout。第二条 reference 使用 1,080,790 input / 21,874 output / USD 1.537776；三个失败
+  attempt 仍是 0 usage/null cost。artifact：
+  `/tmp/tlp-burnin-20260802/results-yuk832-ac66f110-actual-v10-a01-r8.jsonl`，SHA-256
+  `f150ba6f47e887c55c196b79a5587f493bf6f5a297d138b2cce20a80f3be2e58`，mode 0600。
+- r8 有界证据：24 次产品 read trace、精确 observation reconstruction 61,364 chars、旧模型侧
+  raw trace + pointer catalog 约 152 KB；tool I/O 总计约 535ms。成本主因是每轮重复大 context、
+  timeout 后丢失 accepted progress、explicit complete 尾轮与失败成本不可见，不是 SDK thinking
+  未开启；成功 primary/reference 均记录 thinking aggregate，仍不记录 raw reasoning_content。
+- Owner 决策：**LIGHT 走，FULL 挂单**。当前 LIGHT 已实现：
+  1. 每个 exact leaf 内嵌 `[source_id, exact_value]` 的紧凑 `evidence_trace`，原始 trace/catalog
+     仅留 server 做 binding/digest；21-call / 1,761-leaf 夹具从 147,403 降至 75,207 chars（-49%）。
+  2. reference/comparator 最后一批完整 append 自动原子 seal，explicit complete 仅作幂等恢复。
+  3. SDK result-error 与 abort 前 assistant-turn usage 进入 failure run + `cost_ledger`，不再把 paid
+     timeout 伪装成 0/null；raw thinking 仍只留 block/character aggregate。
+- FULL 已建 Linear **YUK-839**（Backlog）：跨 attempt 可恢复 sealed checkpoint，绑定 input hash /
+  source-catalog digest / protocol，保留 blind isolation、两个独立 comparator pass、TTL/并发/幂等；
+  不混入 LIGHT。YUK-837 继续单独负责 Tavily exact-result capture。
+- `read` 判断只覆盖 Copilot 产品 DomainTools：无 read attempt 才 skip；失败 read 也触发 validator
+  但自动标 unusable，只有 `executed=true && error_reason=null` 能引用。submission MCP tools 与
+  Tavily remote-MCP 不在该判断面。
+- 本地已通过 172 个 targeted unit、2 个 provenance DB tests、typecheck、lint、agent-control-plane /
+  capability-boundary audits 与 production build；完整 `pnpm test` 仍只交 exact-head GitHub CI。
 
 ## Next order
 
-1. YUK-832：先修 read contracts；后续审计与 validator 都依赖可信 evidence。
+1. YUK-832：提交 LIGHT → exact-head CI → 单次 clean A01 actual 成本/产品复验。
 2. YUK-833 + YUK-835：共享一个泛化 validator core，分别接 artifact persistence 与 direct reply。
 3. YUK-834：effect/capability/scope/rollback owner gate。
 4. YUK-836：prior-turn correction contract。

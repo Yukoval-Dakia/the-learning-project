@@ -256,7 +256,15 @@ describe('streamTask — YUK-590 terminal failure honesty', () => {
         error_message: expect.stringContaining('error_max_budget_usd'),
       }),
     );
-    expect(writeCostLedger).not.toHaveBeenCalled();
+    expect(writeCostLedger).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        outcome: 'failed_permanent',
+        cost: 0.5,
+        tokens_in: 1,
+        tokens_out: 1,
+      }),
+    );
     expect(body).toContain('error_max_budget_usd');
   });
 
@@ -281,7 +289,14 @@ describe('streamTask — YUK-590 terminal failure honesty', () => {
         error_message: expect.stringContaining('api_error_result http=429'),
       }),
     );
-    expect(writeCostLedger).not.toHaveBeenCalled();
+    expect(writeCostLedger).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        outcome: 'failed_retryable',
+        tokens_in: 1,
+        tokens_out: 0,
+      }),
+    );
     expect(body).toContain('api_error_result http=429');
   });
 });

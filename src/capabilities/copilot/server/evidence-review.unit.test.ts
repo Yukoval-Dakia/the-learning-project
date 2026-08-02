@@ -35,7 +35,7 @@ import {
 import { REALISTIC_EVIDENCE_TRACE } from './evidence-review.actual-fixture';
 import type {
   ComparisonEvidenceSubmission,
-  CopilotEvidenceSourceCatalogCall,
+  CopilotEvidenceModelTraceCall,
   ReferenceEvidenceSubmission,
 } from './evidence-submission';
 
@@ -99,14 +99,20 @@ function traceCoverageFor(
     kind: 'observed_fact' | 'scope_boundary' | 'actual_gap';
     source_refs: Array<{ call_index: number }>;
   }>,
-  toolTrace: typeof REALISTIC_EVIDENCE_TRACE,
+  toolTrace: ReadonlyArray<
+    | (typeof REALISTIC_EVIDENCE_TRACE)[number]
+    | Pick<CopilotEvidenceModelTraceCall, 'effect' | 'status'>
+  >,
 ) {
   return toolTrace.map((observation, callIndex) => {
     const covered = points.filter((point) =>
       point.source_refs.some((ref) => ref.call_index === callIndex),
     );
     const successfulRead =
-      observation.effect === 'read' && observation.executed && observation.error_reason === null;
+      observation.effect === 'read' &&
+      ('status' in observation
+        ? observation.status === 'successful_read'
+        : observation.executed && observation.error_reason === null);
     if (!successfulRead) {
       return {
         call_index: callIndex,
@@ -163,7 +169,7 @@ function reviewParams(overrides: Partial<Parameters<typeof reviewCopilotEvidence
 function referenceOutput(input: unknown, options: { gaps?: boolean } = {}) {
   const value = input as {
     request_units: Array<{ index: number }>;
-    tool_trace?: typeof REALISTIC_EVIDENCE_TRACE;
+    evidence_trace?: CopilotEvidenceModelTraceCall[];
   };
   const requestUnits = value.request_units;
   const points = requestUnits.map((unit, index) => ({
@@ -183,7 +189,7 @@ function referenceOutput(input: unknown, options: { gaps?: boolean } = {}) {
       status: options.gaps ? ('actual_gap' as const) : ('answerable' as const),
       evidence_point_indices: [index],
     })),
-    trace_coverage: traceCoverageFor(points, value.tool_trace ?? REALISTIC_EVIDENCE_TRACE),
+    trace_coverage: traceCoverageFor(points, value.evidence_trace ?? REALISTIC_EVIDENCE_TRACE),
     safe_reply: blindSafeReply,
   };
 }
@@ -264,7 +270,7 @@ function realisticReferenceOutput(
 ) {
   const value = input as {
     request_units: Array<{ index: number }>;
-    tool_trace?: typeof REALISTIC_EVIDENCE_TRACE;
+    evidence_trace?: CopilotEvidenceModelTraceCall[];
   };
   const requestUnits = value.request_units;
   expect(requestUnits.map((unit) => unit.index)).toEqual([0, 1, 2, 3, 4, 5]);
@@ -417,7 +423,10 @@ function realisticReferenceOutput(
       { request_unit_index: 4, status: 'actual_gap' as const, evidence_point_indices: [7, 8] },
       { request_unit_index: 5, status: 'answerable' as const, evidence_point_indices: [9] },
     ],
-    trace_coverage: traceCoverageFor(evidencePoints, value.tool_trace ?? REALISTIC_EVIDENCE_TRACE),
+    trace_coverage: traceCoverageFor(
+      evidencePoints,
+      value.evidence_trace ?? REALISTIC_EVIDENCE_TRACE,
+    ),
     safe_reply: options.safeReply ?? blindSafeReply,
   };
 }
@@ -669,6 +678,36 @@ function chunk<T>(values: T[], size: number): T[][] {
   return chunks;
 }
 
+function decodeJsonPointer(pointer: string): string[] {
+  if (!pointer.startsWith('/')) return [];
+  return pointer
+    .slice(1)
+    .split('/')
+    .map((segment) => segment.replaceAll('~1', '/').replaceAll('~0', '~'));
+}
+
+function taggedSourceId(
+  input: unknown,
+  callIndex: number,
+  side: 'input' | 'output',
+  jsonPointer: string,
+): string | undefined {
+  const calls = (input as { evidence_trace?: CopilotEvidenceModelTraceCall[] }).evidence_trace;
+  let current: unknown = calls?.[callIndex]?.[side];
+  for (const segment of decodeJsonPointer(jsonPointer)) {
+    if (Array.isArray(current)) {
+      current = current[Number(segment)];
+    } else if (current !== null && typeof current === 'object') {
+      current = (current as Record<string, unknown>)[segment];
+    } else {
+      return undefined;
+    }
+  }
+  return Array.isArray(current) && /^s(?:0|[1-9]\d*)$/.test(String(current[0]))
+    ? String(current[0])
+    : undefined;
+}
+
 function submitReferenceOutput(
   input: unknown,
   submission: ReferenceEvidenceSubmission | undefined,
@@ -677,26 +716,13 @@ function submitReferenceOutput(
   if (!submission) throw new Error('reference submission seam missing');
   const parsed = CopilotEvidenceReviewOutputSchema.safeParse(output);
   if (!parsed.success) return;
-  const sourceCatalog = (input as { source_catalog: CopilotEvidenceSourceCatalogCall[] })
-    .source_catalog;
-  const sourceIdByRef = new Map(
-    sourceCatalog.flatMap((call) =>
-      (['input', 'output'] as const).flatMap((side) =>
-        call[side].map(
-          ([sourceId, jsonPointer]) =>
-            [`${call.call_index}:${side}:${jsonPointer}`, sourceId] as const,
-        ),
-      ),
-    ),
-  );
   const points = parsed.data.evidence_points.map((point) => ({
     request_unit_indices: point.request_unit_indices,
     kind: point.kind,
     statement_md: point.statement_md,
     sources: point.source_refs.map((source) => ({
       source_id:
-        sourceIdByRef.get(`${source.call_index}:${source.side}:${source.json_pointer}`) ??
-        's999999',
+        taggedSourceId(input, source.call_index, source.side, source.json_pointer) ?? 's999999',
       role: source.role,
     })),
   }));
@@ -831,14 +857,18 @@ describe('Copilot FULL evidence review', () => {
         kind: 'append_only_tools',
         server_derives: expect.arrayContaining(['json_pointers', 'request_coverage']),
       },
-      source_catalog: expect.arrayContaining([
+      evidence_trace: expect.arrayContaining([
         expect.objectContaining({
           call_index: 0,
-          input: expect.arrayContaining([['s0', expect.stringMatching(/^\//)]]),
+          status: 'successful_read',
+          input: expect.any(Object),
+          output: expect.any(Object),
         }),
       ]),
     });
-    expect(JSON.stringify(runTaskFn.mock.calls[0]?.[1]).length).toBeLessThan(200_000);
+    expect(runTaskFn.mock.calls[0]?.[1]).not.toHaveProperty('tool_trace');
+    expect(runTaskFn.mock.calls[0]?.[1]).not.toHaveProperty('source_catalog');
+    expect(JSON.stringify(runTaskFn.mock.calls[0]?.[1]).length).toBeLessThan(120_000);
     expect(runTaskFn.mock.calls[1]?.[2].budgetOverride).toEqual({
       timeoutMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
     });
@@ -896,7 +926,7 @@ describe('Copilot FULL evidence review', () => {
     }
   });
 
-  it('skips paid validation when no successful DomainTool read was observed', async () => {
+  it('skips paid validation when no DomainTool read was attempted', async () => {
     const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>();
     const result = await reviewCopilotEvidenceReply(
       reviewParams({
@@ -917,6 +947,52 @@ describe('Copilot FULL evidence review', () => {
 
     expect(result).toEqual({ status: 'skipped', replyText: '我可以帮你把问题收窄。' });
     expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('does not treat a failed DomainTool read as evidence but still runs the fail-closed validator', async () => {
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind) => {
+      throw new AgentRunError({
+        kind,
+        taskRunId: `failed-read-validator-${runTaskFn.mock.calls.length}`,
+        subtype: 'api_error_result',
+        apiErrorStatus: 503,
+        errors: ['upstream unavailable'],
+      });
+    });
+
+    const result = await reviewCopilotEvidenceReply(
+      reviewParams({
+        candidateReply: '读取失败，因此我不能把结果当成证据。',
+        toolTrace: [
+          {
+            name: 'query_events',
+            effect: 'read',
+            input: { filter: { eventId: 'exact_event_01' } },
+            output: null,
+            error_reason: 'upstream unavailable',
+            executed: false,
+          },
+        ],
+        runTaskFn,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      status: 'failed_closed',
+      replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
+    });
+    expect(runTaskFn).toHaveBeenCalledTimes(COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS);
+    const modelTrace = (runTaskFn.mock.calls[0]?.[1] as { evidence_trace: unknown[] })
+      .evidence_trace;
+    expect(modelTrace).toEqual([
+      expect.objectContaining({
+        call_index: 0,
+        status: 'unusable',
+        effect: 'read',
+        executed: false,
+        error_reason: 'upstream unavailable',
+      }),
+    ]);
   });
 
   it('preserves original bytes only after blind reference plus two bound passes', async () => {
@@ -961,8 +1037,11 @@ describe('Copilot FULL evidence review', () => {
     expect(runTaskFn.mock.calls[0]?.[1]).not.toHaveProperty('final_reply');
     expect(runTaskFn.mock.calls[1]?.[1]).toMatchObject({
       selected_text_kind: 'original',
-      tool_trace: REALISTIC_EVIDENCE_TRACE,
+      evidence_trace: expect.arrayContaining([
+        expect.objectContaining({ call_index: 0, status: 'successful_read' }),
+      ]),
     });
+    expect(runTaskFn.mock.calls[1]?.[1]).not.toHaveProperty('tool_trace');
     expect(runTaskFn.mock.calls[1]?.[1]).toEqual(runTaskFn.mock.calls[2]?.[1]);
   });
 

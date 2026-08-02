@@ -69,6 +69,40 @@ function assistant(text: string) {
   };
 }
 
+function assistantWithUsage(
+  text: string,
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  },
+) {
+  return {
+    type: 'assistant',
+    message: { role: 'assistant', content: [{ type: 'text', text }], usage },
+  };
+}
+
+function assistantThinkingWithUsage(
+  thinking: string,
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  },
+) {
+  return {
+    type: 'assistant',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'thinking', thinking, signature: '' }],
+      usage,
+    },
+  };
+}
+
 function assistantThinking(thinking: string) {
   return {
     type: 'assistant',
@@ -540,8 +574,75 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       status: 'failure',
       finish_reason: 'error',
     });
-    // No terminal result ⇒ no cost ledger write (success-only side effect).
+    // No assistant/result usage ⇒ no cost ledger row is manufactured.
     expect(writeCostLedger).not.toHaveBeenCalled();
+  });
+
+  it('keeps a paid lower bound when a large multi-turn stream dies before its terminal result', async () => {
+    const hiddenThinking =
+      '逐项核对 21 条只读 observation、六个 request atoms 与十个 evidence points；这里只保留计数。';
+    mockSdk.messages = [
+      assistantWithUsage('已整理第一批证据点。', {
+        input_tokens: 40_000,
+        output_tokens: 2_000,
+        cache_read_input_tokens: 5_000,
+        cache_creation_input_tokens: 1_000,
+      }),
+      assistantThinkingWithUsage(hiddenThinking, {
+        input_tokens: 55_000,
+        output_tokens: 3_000,
+        cache_read_input_tokens: 7_000,
+        cache_creation_input_tokens: 2_000,
+      }),
+      resultMsg,
+    ];
+    mockSdk.throwAfter = 2;
+
+    const result = await streamTaskCollecting(
+      'AttributionTask',
+      {
+        request_unit_count: 6,
+        successful_read_count: 21,
+        evidence_leaf_count: 2_184,
+      },
+      { db: fakeDb },
+      () => {},
+    );
+
+    expect(result).toMatchObject({
+      partial: true,
+      finishReason: 'error',
+      usage: {
+        inputTokens: 107_000,
+        outputTokens: 5_000,
+        thinkingBlocks: 1,
+        thinkingCharacters: hiddenThinking.length,
+      },
+    });
+    expect(result.cost_usd).toBeGreaterThan(0);
+
+    const { writeAiTaskRunFinished, writeCostLedger } = await import('@/server/ai/log');
+    expect(writeAiTaskRunFinished).toHaveBeenLastCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        status: 'failure',
+        usage: expect.objectContaining({ inputTokens: 107_000, outputTokens: 5_000 }),
+        cost_usd: expect.any(Number),
+      }),
+    );
+    expect(writeCostLedger).toHaveBeenCalledTimes(1);
+    expect(writeCostLedger).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        outcome: 'failed_permanent',
+        tokens_in: 107_000,
+        tokens_out: 5_000,
+        cost: expect.any(Number),
+      }),
+    );
+    expect(
+      JSON.stringify((writeAiTaskRunFinished as ReturnType<typeof vi.fn>).mock.calls),
+    ).not.toContain(hiddenThinking);
   });
 
   it('records success+is_error usage and cost as a graceful partial failure without success accounting', async () => {
@@ -592,18 +693,31 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
         error_message: expect.stringContaining('api_error_result http=429'),
       }),
     );
-    expect(writeCostLedger).not.toHaveBeenCalled();
+    expect(writeCostLedger).toHaveBeenCalledTimes(1);
+    expect(writeCostLedger).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        outcome: 'failed_retryable',
+        cost: 0.25,
+        tokens_in: 14,
+        tokens_out: 3,
+      }),
+    );
   });
 
   it('does not add an empty error detail when success+is_error omits result', async () => {
     mockSdk.messages = [
+      assistantWithUsage('已完成部分核验。', {
+        input_tokens: 12_000,
+        output_tokens: 800,
+        cache_read_input_tokens: 2_000,
+      }),
       {
         type: 'result',
         subtype: 'success',
         is_error: true,
         api_error_status: 500,
         total_cost_usd: 0.1,
-        usage: { input_tokens: 2, output_tokens: 1 },
       },
     ];
 
@@ -616,6 +730,17 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
 
     expect(result.error).toBe(
       '[AttributionTask] Agent SDK errored: subtype=api_error_result http=500',
+    );
+    expect(result.usage).toEqual({ inputTokens: 14_000, outputTokens: 800 });
+    const { writeCostLedger } = await import('@/server/ai/log');
+    expect(writeCostLedger).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        outcome: 'failed_retryable',
+        cost: 0.1,
+        tokens_in: 14_000,
+        tokens_out: 800,
+      }),
     );
   });
 

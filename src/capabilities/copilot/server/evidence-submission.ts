@@ -164,6 +164,23 @@ export interface CopilotEvidenceSourceCatalogCall {
   output: Array<[source_id: string, json_pointer: string]>;
 }
 
+export interface CopilotEvidenceModelTraceCall {
+  call_index: number;
+  tool_name: string;
+  effect: ToolExecutionResultObservation['effect'];
+  status: 'successful_read' | 'unusable';
+  /**
+   * Successful reads retain the exact JSON shape, but every scalar/null/explicit
+   * empty value is replaced by [source_id, exact_value]. The server keeps the
+   * full trace + RFC6901 catalog for binding; the model does not need both large
+   * representations on every SDK turn.
+   */
+  input?: unknown;
+  output?: unknown;
+  executed?: boolean;
+  error_reason?: string | null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -252,6 +269,96 @@ export function projectCopilotEvidenceSourceCatalog(
         : [],
     ),
   }));
+}
+
+function sourceCatalogKey(
+  callIndex: number,
+  side: 'input' | 'output',
+  jsonPointer: string,
+): string {
+  return `${callIndex}:${side}:${jsonPointer}`;
+}
+
+function tagEvidenceLeaves(
+  value: unknown,
+  path: string,
+  sourceIds: ReadonlyMap<string, string>,
+  callIndex: number,
+  side: 'input' | 'output',
+): unknown {
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      const sourceId = sourceIds.get(sourceCatalogKey(callIndex, side, path));
+      if (!sourceId) throw new Error('model_trace_source_id_missing');
+      return [sourceId, []];
+    }
+    return value.map((item, index) =>
+      tagEvidenceLeaves(item, `${path}/${index}`, sourceIds, callIndex, side),
+    );
+  }
+  if (isRecord(value)) {
+    const keys = Object.keys(value).sort();
+    if (keys.length === 0) {
+      const sourceId = sourceIds.get(sourceCatalogKey(callIndex, side, path));
+      if (!sourceId) throw new Error('model_trace_source_id_missing');
+      return [sourceId, {}];
+    }
+    return Object.fromEntries(
+      keys.map((key) => [
+        key,
+        tagEvidenceLeaves(
+          value[key],
+          `${path}/${encodePointerSegment(key)}`,
+          sourceIds,
+          callIndex,
+          side,
+        ),
+      ]),
+    );
+  }
+  const sourceId = sourceIds.get(sourceCatalogKey(callIndex, side, path));
+  if (!sourceId) throw new Error('model_trace_source_id_missing');
+  return [sourceId, value];
+}
+
+/**
+ * Model-facing lossless projection of successful product reads.
+ *
+ * The old input sent both the full nested trace and a second 90KB-ish pointer
+ * catalog. This projection embeds each short source id beside its exact leaf
+ * value, preserving the readable JSON structure while the server privately
+ * retains the canonical pointer map used by binders and digests.
+ */
+export function projectCopilotEvidenceModelTrace(
+  toolTrace: readonly ToolExecutionResultObservation[],
+  catalog: readonly CopilotEvidenceSourceCatalogEntry[],
+): CopilotEvidenceModelTraceCall[] {
+  const sourceIds = new Map(
+    catalog.map((source) => [
+      sourceCatalogKey(source.call_index, source.side, source.json_pointer),
+      source.source_id,
+    ]),
+  );
+  return toolTrace.map((observation, callIndex) => {
+    if (!isSuccessfulRead(observation)) {
+      return {
+        call_index: callIndex,
+        tool_name: observation.name,
+        effect: observation.effect,
+        status: 'unusable' as const,
+        executed: observation.executed,
+        error_reason: observation.error_reason,
+      };
+    }
+    return {
+      call_index: callIndex,
+      tool_name: observation.name,
+      effect: observation.effect,
+      status: 'successful_read' as const,
+      input: tagEvidenceLeaves(observation.input, '', sourceIds, callIndex, 'input'),
+      output: tagEvidenceLeaves(observation.output, '', sourceIds, callIndex, 'output'),
+    };
+  });
 }
 
 function uniqueBoundedIndices(values: readonly number[], upperExclusive: number): boolean {
@@ -367,6 +474,7 @@ export function createReferenceEvidenceSubmission(input: {
         ok: true,
         accepted_point_indices: pending.map((point) => point.point_index),
         evidence_point_count: points.length,
+        ...tryAutoCompleteReference(),
       };
     });
 
@@ -398,7 +506,11 @@ export function createReferenceEvidenceSubmission(input: {
       for (const call of parsed.calls) {
         notMaterialCalls.set(call.call_index, call.rationale_md);
       }
-      return { ok: true, not_material_call_count: notMaterialCalls.size };
+      return {
+        ok: true,
+        not_material_call_count: notMaterialCalls.size,
+        ...tryAutoCompleteReference(),
+      };
     });
 
   const setSafeReply = (raw: SetSafeReplyInput): SubmissionResult =>
@@ -410,7 +522,7 @@ export function createReferenceEvidenceSubmission(input: {
         throw new Error('safe_reply_contains_primary_view_marker');
       }
       safeReply = parsed.safe_reply;
-      return { ok: true };
+      return { ok: true, ...tryAutoCompleteReference() };
     });
 
   const completeReference = (): SubmissionResult =>
@@ -494,6 +606,21 @@ export function createReferenceEvidenceSubmission(input: {
       };
     });
 
+  const tryAutoCompleteReference = (): Record<string, unknown> => {
+    if (completed) {
+      return { auto_completed: true, digest_sha256: completed.digest_sha256 };
+    }
+    // Do not turn an accepted append into an error merely because later chunks
+    // are still absent. The bounded reason lets the model add only the missing
+    // records; once all server-derived obligations are present, the same append
+    // atomically seals the canonical record and removes one paid tool round-trip.
+    if (points.length === 0 || safeReply === undefined) return { auto_completed: false };
+    const completion = completeReference();
+    return completion.ok
+      ? { auto_completed: true, ...completion }
+      : { auto_completed: false, completion_pending_reason: completion.reason };
+  };
+
   const mcpServer = createSdkMcpServer({
     name: COPILOT_EVIDENCE_SUBMISSION_SERVER_NAME,
     tools: [
@@ -511,13 +638,13 @@ export function createReferenceEvidenceSubmission(input: {
       ),
       tool(
         COPILOT_EVIDENCE_SUBMISSION_TOOLS.setSafeReply,
-        'Set the one complete fallback reply after the evidence points are submitted.',
+        'Set the one complete fallback reply after the evidence points are submitted. A complete ledger is sealed by this same call; stop when auto_completed=true.',
         SetSafeReplySchema.shape,
         async (args) => mcpTextResult(setSafeReply(args)),
       ),
       tool(
         COPILOT_EVIDENCE_SUBMISSION_TOOLS.completeReference,
-        'Finalize and seal the blind reference. Call only after prior tool results succeeded.',
+        'Idempotent recovery finalizer for a blind reference that did not already return auto_completed=true.',
         {},
         async () => mcpTextResult(completeReference()),
       ),
@@ -634,7 +761,11 @@ export function createComparisonEvidenceSubmission(input: {
         }
       }
       for (const check of parsed.checks) checks.set(check.reply_unit_index, check);
-      return { ok: true, reply_check_count: checks.size };
+      return {
+        ok: true,
+        reply_check_count: checks.size,
+        ...tryAutoCompleteComparison(),
+      };
     });
 
   const completeComparison = (): SubmissionResult =>
@@ -716,18 +847,33 @@ export function createComparisonEvidenceSubmission(input: {
       };
     });
 
+  const tryAutoCompleteComparison = (): Record<string, unknown> => {
+    if (completed) {
+      return {
+        auto_completed: true,
+        verdict: completed.verdict,
+        digest_sha256: completed.digest_sha256,
+      };
+    }
+    if (checks.size !== input.replyUnits.length) return { auto_completed: false };
+    const completion = completeComparison();
+    return completion.ok
+      ? { auto_completed: true, ...completion }
+      : { auto_completed: false, completion_pending_reason: completion.reason };
+  };
+
   const mcpServer = createSdkMcpServer({
     name: COPILOT_EVIDENCE_SUBMISSION_SERVER_NAME,
     tools: [
       tool(
         COPILOT_EVIDENCE_SUBMISSION_TOOLS.appendReplyChecks,
-        `Append 1-${MAX_REPLY_CHECK_CHUNK} per-reply checks. The server derives request coverage and the verdict.`,
+        `Append 1-${MAX_REPLY_CHECK_CHUNK} per-reply checks. The server derives request coverage and the verdict; the final complete chunk seals automatically and returns auto_completed=true.`,
         AppendReplyChecksSchema.shape,
         async (args) => mcpTextResult(appendReplyChecks(args)),
       ),
       tool(
         COPILOT_EVIDENCE_SUBMISSION_TOOLS.completeComparison,
-        'Finalize the sealed comparison. Call only after every reply unit has one accepted check.',
+        'Idempotent recovery finalizer for a comparison that did not already return auto_completed=true.',
         {},
         async () => mcpTextResult(completeComparison()),
       ),

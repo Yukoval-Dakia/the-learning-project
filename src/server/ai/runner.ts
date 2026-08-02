@@ -555,6 +555,7 @@ async function runTaskAttempt(args: {
   let stepStartTime = Date.now();
   let iteration = 0;
   const thinking = emptyThinkingObservation();
+  const observedUsage = emptySdkUsageAccumulator();
   try {
     const q = sdkQuery({
       prompt: promptFromInput(actualInput),
@@ -564,6 +565,8 @@ async function runTaskAttempt(args: {
       await notifyTaskEvent(ctx, msg);
       if (msg.type === 'assistant') {
         observeAssistantThinking(msg, thinking);
+        accumulateSdkUsage(msg.message.usage, observedUsage);
+        lifecycle.recordObservedUsage(observedRunUsage(observedUsage, thinking));
         iteration += 1;
         const stepLatencyMs = Date.now() - stepStartTime;
         const blocks = (msg.message.content ?? []) as ContentBlock[];
@@ -585,6 +588,13 @@ async function runTaskAttempt(args: {
         continue;
       }
       if (msg.type !== 'result') continue;
+      const terminalUsage = observedRunUsageFromSdk(
+        msg.usage,
+        thinking,
+        msg.total_cost_usd,
+        observedUsage,
+      );
+      lifecycle.recordObservedUsage(terminalUsage);
       if (msg.subtype === 'success') {
         if (isApiErrorSuccessResult(msg)) {
           console.warn('[runTask] task_run_success_with_error_flag', {
@@ -601,23 +611,9 @@ async function runTaskAttempt(args: {
             errors: [msg.result ?? ''],
           });
         }
-        const usage = msg.usage;
         resultText = msg.result ?? '';
         lifecycle.recordTerminalSuccess({
-          usage: usageWithThinking(
-            {
-              inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
-              outputTokens: usage?.output_tokens ?? 0,
-            },
-            thinking,
-          ),
-          tokenCounts: {
-            inputTokens: usage?.input_tokens ?? 0,
-            outputTokens: usage?.output_tokens ?? 0,
-            cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
-            cacheCreationTokens: usage?.cache_creation_input_tokens ?? 0,
-          },
-          costUsd: msg.total_cost_usd,
+          ...terminalUsage,
           finishReason: msg.stop_reason ?? 'stop',
           structuredOutput: msg.structured_output,
         });
@@ -779,6 +775,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
   let stepStartTime = Date.now();
   let iteration = 0;
   const thinking = emptyThinkingObservation();
+  const observedUsage = emptySdkUsageAccumulator();
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -799,6 +796,8 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
           await notifyTaskEvent(ctx, msg);
           if (msg.type === 'assistant') {
             observeAssistantThinking(msg, thinking);
+            accumulateSdkUsage(msg.message.usage, observedUsage);
+            lifecycle.recordObservedUsage(observedRunUsage(observedUsage, thinking));
             const text = extractAssistantText(msg);
             if (text) {
               controller.enqueue(encoder.encode(text));
@@ -821,6 +820,13 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
             continue;
           }
           if (msg.type !== 'result') continue;
+          const terminalUsage = observedRunUsageFromSdk(
+            msg.usage,
+            thinking,
+            msg.total_cost_usd,
+            observedUsage,
+          );
+          lifecycle.recordObservedUsage(terminalUsage);
           if (isApiErrorSuccessResult(msg)) {
             throw new AgentRunError({
               kind,
@@ -838,22 +844,8 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
               errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
             });
           }
-          const usage = msg.usage;
           lifecycle.recordTerminalSuccess({
-            usage: usageWithThinking(
-              {
-                inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
-                outputTokens: usage?.output_tokens ?? 0,
-              },
-              thinking,
-            ),
-            tokenCounts: {
-              inputTokens: usage?.input_tokens ?? 0,
-              outputTokens: usage?.output_tokens ?? 0,
-              cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
-              cacheCreationTokens: usage?.cache_creation_input_tokens ?? 0,
-            },
-            costUsd: msg.total_cost_usd,
+            ...terminalUsage,
             finishReason: msg.stop_reason ?? 'stop',
           });
           break;
@@ -945,6 +937,87 @@ function usageWithThinking(
   };
 }
 
+interface RawSdkUsage {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+}
+
+interface SdkUsageAccumulator {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}
+
+function emptySdkUsageAccumulator(): SdkUsageAccumulator {
+  return { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+}
+
+/** Sum per-assistant-turn usage so an abort without SDKResult still has a paid lower bound. */
+function accumulateSdkUsage(
+  usage: RawSdkUsage | undefined,
+  aggregate: SdkUsageAccumulator,
+): boolean {
+  if (
+    !usage ||
+    ![
+      usage.input_tokens,
+      usage.output_tokens,
+      usage.cache_read_input_tokens,
+      usage.cache_creation_input_tokens,
+    ].some((value) => typeof value === 'number')
+  ) {
+    return false;
+  }
+  aggregate.inputTokens += usage.input_tokens ?? 0;
+  aggregate.outputTokens += usage.output_tokens ?? 0;
+  aggregate.cacheReadTokens += usage.cache_read_input_tokens ?? 0;
+  aggregate.cacheCreationTokens += usage.cache_creation_input_tokens ?? 0;
+  return true;
+}
+
+function observedRunUsage(
+  aggregate: SdkUsageAccumulator,
+  thinking: ThinkingObservation,
+  costUsd?: number,
+) {
+  return {
+    usage: usageWithThinking(
+      {
+        inputTokens: aggregate.inputTokens + aggregate.cacheReadTokens,
+        outputTokens: aggregate.outputTokens,
+      },
+      thinking,
+    ),
+    tokenCounts: {
+      inputTokens: aggregate.inputTokens,
+      outputTokens: aggregate.outputTokens,
+      cacheReadTokens: aggregate.cacheReadTokens,
+      cacheCreationTokens: aggregate.cacheCreationTokens,
+    },
+    ...(costUsd !== undefined ? { costUsd } : {}),
+  };
+}
+
+/** SDK result usage is aggregate and authoritative, replacing assistant-turn observations. */
+function observedRunUsageFromSdk(
+  usage: RawSdkUsage | undefined,
+  thinking: ThinkingObservation,
+  costUsd?: number,
+  fallback?: SdkUsageAccumulator,
+) {
+  const aggregate = emptySdkUsageAccumulator();
+  if (!accumulateSdkUsage(usage, aggregate) && fallback) {
+    aggregate.inputTokens = fallback.inputTokens;
+    aggregate.outputTokens = fallback.outputTokens;
+    aggregate.cacheReadTokens = fallback.cacheReadTokens;
+    aggregate.cacheCreationTokens = fallback.cacheCreationTokens;
+  }
+  return observedRunUsage(aggregate, thinking, costUsd);
+}
+
 // ============================================================================
 // streamTaskCollecting — YUK-266 (C1). A collecting variant of streamTask:
 // streams text deltas to an `onDelta(chunk)` callback (one call per
@@ -996,6 +1069,7 @@ export async function streamTaskCollecting(
   let iteration = 0;
   let resultText = '';
   const thinking = emptyThinkingObservation();
+  const observedUsage = emptySdkUsageAccumulator();
 
   try {
     const actualInput = ctx.middleware?.beforeRun
@@ -1011,6 +1085,8 @@ export async function streamTaskCollecting(
       await notifyTaskEvent(ctx, msg);
       if (msg.type === 'assistant') {
         observeAssistantThinking(msg, thinking);
+        accumulateSdkUsage(msg.message.usage, observedUsage);
+        lifecycle.recordObservedUsage(observedRunUsage(observedUsage, thinking));
         const text = extractAssistantText(msg);
         if (text) {
           onDelta(text);
@@ -1033,25 +1109,14 @@ export async function streamTaskCollecting(
         continue;
       }
       if (msg.type !== 'result') continue;
+      const terminalUsage = observedRunUsageFromSdk(
+        msg.usage,
+        thinking,
+        msg.total_cost_usd,
+        observedUsage,
+      );
+      lifecycle.recordObservedUsage(terminalUsage);
       if (msg.subtype === 'success') {
-        const usage = msg.usage;
-        lifecycle.recordTerminalSuccess({
-          usage: usageWithThinking(
-            {
-              inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
-              outputTokens: usage?.output_tokens ?? 0,
-            },
-            thinking,
-          ),
-          tokenCounts: {
-            inputTokens: usage?.input_tokens ?? 0,
-            outputTokens: usage?.output_tokens ?? 0,
-            cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
-            cacheCreationTokens: usage?.cache_creation_input_tokens ?? 0,
-          },
-          costUsd: msg.total_cost_usd,
-          finishReason: msg.stop_reason ?? 'stop',
-        });
         if (isApiErrorSuccessResult(msg)) {
           console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
             event: 'task_run_success_with_error_flag',
@@ -1067,6 +1132,10 @@ export async function streamTaskCollecting(
             errors: msg.result ? [msg.result] : [],
           });
         }
+        lifecycle.recordTerminalSuccess({
+          ...terminalUsage,
+          finishReason: msg.stop_reason ?? 'stop',
+        });
       } else {
         const apiStatus =
           'api_error_status' in msg && msg.api_error_status ? ` http=${msg.api_error_status}` : '';

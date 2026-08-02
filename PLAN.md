@@ -23,59 +23,46 @@
 - **Transport PASS，产品内容 HOLD。** A–E 独立复核发现并 capture YUK-832–836：reader
   coverage/causality、artifact/直出 validator、human-in-loop capability 与 correction history。
   详情及 digests 见 `docs/planning/2026-08-02-yuk-596-actual-burnin.md`。
-- **YUK-832 transport/CI 已通过，产品内容仍 HOLD。** PR #1154 的 `9a7be1b6`
-  exact-head CI/CodeQL 全绿；后续 A01 actual 已证明 360s 足够，瓶颈不是 transport，而是要求
-  provider 一次生成 12k–18k tokens 的交叉索引大 JSON。`647cc42e` 隔离 r2 的两条 reference
-  依次触发 source_refs>12 与 absent pointer；artifact SHA-256
-  `0d8ea034ad3da9462a00b7c9e0d1fdea1bc7e71006b12c9a8f89ff3dd9055459`（mode 0600）。
-- **Owner 已批准试 FULL 小提交协议。** 不增加第三次整段重写；blind leg 改为 append-only
-  evidence/not-material/safe-reply 工具，comparator 改为逐 reply check 工具。server 用短 source id
-  还原 JSON Pointer，并生成 point/request/trace coverage、request checks、digest 与 verdict；模型
-  不再输出最终大 JSON。`9c43ab8e` 的 targeted gate 与 exact-head CI Gate 30739496669 已全绿。
-  首个隔离 A01 正确安全 fail closed：primary 成功并有 thinking，但两条 blind reference 都在
-  `maxTurns=4` 精确终止，未进入 comparator。artifact SHA-256
-  `95855eef09b80d30634df35dc459340ba1e8d29dc4b08dbd4b8661ada27da7fa`（mode 0600）。这证明
-  小提交方向已消除大 JSON 绑定失败，但 4-turn 注册表预算与“分批追加 + explicit complete + terminal”
-  协议自相矛盾；现按封闭协议上限改为 reference 16、comparator 18，不增加 paid attempt。
-  `c8bd8761` 的 blind reference 随后成功绑定（9 thinking blocks）；两条 comparator 则均在约 122s
-  撞原 120s ceiling。artifact SHA-256
-  `c72ed9063eee759530b39b35df13c0e75585cea6041ef62665972f25a4dd1fb5`（mode 0600）。`3ad1f0f9`
-  再次成功绑定 blind，但第一条 comparator 又在 242s 撞 240s；随后旧 harness 14min monitor
-  先于产品 ceiling 到期，本次不算产品 verdict。partial artifact SHA-256
-  `55ca0f71287615ce59fc3d758690786d79e03735d90c066c055c6d59ce3dfe97`（mode 0600）；遗留 job/run
-  已按产品取消语义终态化。现仅把 durable comparator 对齐 360s，并同步实际 harness 观察窗；
-  inline 仍 120s，attempt 数与契约不变。`ef5789a7` + 52min monitor 的 A01 随后正常终态：第一条
-  blind 撞 360s，第二条在 263s 先撞精确 `maxTurns=16`；artifact SHA-256
-  `94f7d9743a71190642d62cb51913de2e93afd7991a2a5b4e4e1e763ecff4e073`（mode 0600）。现只把
-  两个 FULL task 的 turn ceiling 统一为 24，并记录无原文的提交进度计数。`4708378a` 的 exact-head
-  CI Gate 30743228355 / CodeQL 30743227276 全绿；A01 两条 blind 均未耗尽 turns，但都撞 360s。
-  第二条已接受 31 points、6 not-material 与 safe reply，只缺最后 seal/terminal；artifact SHA-256
-  `2ec670ea6756a0adc4626d63c139254016e75a7a1476d3436fa9f918f532e2a2`（mode 0600）。现仅把 durable
-  reference 延到 480s；comparator 360s、attempt/binding 不变，FULL/owner ceilings 为 40m/52.5m。
+- **YUK-832 r8 已给出成本根因。** `ac66f110` exact-head CI/CodeQL 全绿后的隔离 A01
+  正常 clean terminal，但安全 fail closed：primary 成功；第一条 blind reference 在 480s timeout，
+  第二条 440s 成功绑定（1,080,790 input / 21,874 output / USD 1.537776）；两条 comparator
+  均在 360s timeout。三个失败 paid attempt 仍记为 0 tokens / null cost，且 retry 丢失已接受进度。
+  artifact SHA-256 `f150ba6f47e887c55c196b79a5587f493bf6f5a297d138b2cce20a80f3be2e58`
+  （本地 mode 0600）。这证明继续抬 budget 不经济；tool I/O 只有约 535ms，成本在重复大 context、
+  timeout 后从零重做与 explicit completion 尾轮。
+- **Owner 选择 LIGHT；FULL 已挂 YUK-839。** LIGHT 在 PR #1154 当前 worktree 实现三项：模型侧
+  `evidence_trace` 将 21-call / 1,761-leaf 夹具从 147,403 chars 降到 75,207（-49%），server
+  仍私有保留原始 trace/catalog 做 pointer binding；最后一个完整 append 原子 auto-seal；失败
+  result 或中途 abort 的已观测 usage/cost 写入 `ai_task_runs` + `cost_ledger`。FULL 的跨 attempt
+  sealed checkpoint/恢复、TTL/并发与 digest 绑定独立留在 Backlog YUK-839，不混入 LIGHT。
+- **`read` gate 语义已钉住。** 它只指 Copilot 产品 DomainTool trace 的 `effect=read`：没有
+  read attempt 才跳过 paid validator；只要尝试过 read（即使失败）就进入 FULL 并 fail closed；只有
+  `executed=true && error_reason=null` 的成功 read 可被引用。validator 内部 submission tools 与
+  Tavily remote-MCP 不属于这个判断面。
 - 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
 
 ## NEXT
 
-1. 验证 actual A01 暴露的 480s durable reference tail；保持 24-turn correction ceiling、两次
-   bounded attempt、既有 fail-closed binding、blind isolation、inline 120s 与 confirmed comparator 状态机。
-2. 新 exact-head CI 全绿后，在 clean committed exact head 重跑 A01；自动 gate 通过后才重跑 5 例 actual-provider v8，逐例审计 primary +
-   reference/comparator runs、thinking、digests、exact bytes 与无旁支 validator。
-3. actual 5/5 且人工 grounding/coverage/honesty 均 2/2/2 后，
-   merge 并对齐 Linear；随后推进 YUK-833/835 → YUK-834 → YUK-836。
-4. 每条继续用同一复杂 fixture 做 targeted mock/DB loop，再做最小 actual-provider 重放；完整 suite
-   只在 exact-head GitHub CI。
-5. 产品 P1 清零后，Dock/UI 开工前逐字引用 design doc、声明 drawer、列文件并等待 owner 批准。
+1. 提交并 push LIGHT，等待新 exact-head GitHub `CI Gate` / CodeQL；本机只保留 scoped tests、
+   provenance DB loop、typecheck/lint/audits/build。
+2. CI 全绿后，在 clean committed exact head 只重跑一次隔离 A01，比较 reference/comparator
+   input tokens、wall time、失败记账与 pass/repair；不再用连续加 budget 代替产品证据。
+3. A01 自动 gate + 人工 grounding/coverage/honesty 均通过后，才重跑其余 actual-provider 样本；
+   未过则据新证据做下一窄化，不重复烧同一种失败。
+4. YUK-832 actual gate 收口后推进 YUK-833/835 → YUK-834 → YUK-836；产品 P1 清零后再做
+   Dock/UI design pre-flight。
 
 ## PARKED
 
 - **YUK-813 / YUK-831 OpenCode**：按 owner 指示暂不处理；从产品执行队列排除，但仍计入
   Linear 严格 issue=0。
 - **YUK-815 / YUK-816**：Grounding 后续协作与档案面；等待 Copilot 主产品链收口。
+- **YUK-839 FULL checkpoint**：owner 已批准挂单；LIGHT actual 数据证明需要前不扩入当前 PR。
 - future/refinement backlog 不自动扩实施范围；到达时先核证 live consumer、重复与过期项。
 
 ## BLOCKED-ON
 
-- **YUK-832 当前 gate**：FULL 小提交 exact-head GitHub CI + actual-provider v8 +
+- **YUK-832 当前 gate**：LIGHT 新 exact-head GitHub CI + 单次 actual A01 成本/产品复验 +
   人工 2/2/2；mock、本地 build 或旧 head CI 都不能替代。
 - **YUK-596 产品 gate**：YUK-832–836 actual-output P1；transport/Stop 已 pass，不能用它替代
   产品内容正确性。

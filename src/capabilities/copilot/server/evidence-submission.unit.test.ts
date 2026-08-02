@@ -5,6 +5,7 @@ import {
   buildCopilotEvidenceSourceCatalog,
   createComparisonEvidenceSubmission,
   createReferenceEvidenceSubmission,
+  projectCopilotEvidenceModelTrace,
   projectCopilotEvidenceSourceCatalog,
 } from './evidence-submission';
 
@@ -23,10 +24,26 @@ describe('Copilot evidence incremental submission', () => {
     const requestUnits = segmentEvidenceRequest(requestContext);
     const sourceCatalog = buildCopilotEvidenceSourceCatalog(COMPLEX_TRACE);
     const compactCatalog = projectCopilotEvidenceSourceCatalog(sourceCatalog, COMPLEX_TRACE.length);
+    const modelTrace = projectCopilotEvidenceModelTrace(COMPLEX_TRACE, sourceCatalog);
     const outputSources = sourceCatalog.filter((source) => source.side === 'output');
     expect(outputSources.length).toBeGreaterThan(100);
     expect(JSON.stringify(compactCatalog).length).toBeLessThan(
       JSON.stringify(sourceCatalog).length * 0.6,
+    );
+    const oldModelInputChars = JSON.stringify({
+      tool_trace: COMPLEX_TRACE,
+      source_catalog: compactCatalog,
+    }).length;
+    expect(JSON.stringify(modelTrace).length).toBeLessThan(oldModelInputChars * 0.6);
+    const firstEventId = sourceCatalog.find(
+      (source) =>
+        source.call_index === 0 &&
+        source.side === 'output' &&
+        source.json_pointer === '/events/0/id',
+    );
+    expect(firstEventId).toBeDefined();
+    expect(JSON.stringify(modelTrace[0]?.output)).toContain(
+      JSON.stringify([firstEventId?.source_id, 'conjecture_yuk792_canary_20260731c']),
     );
 
     const submission = createReferenceEvidenceSubmission({
@@ -73,8 +90,10 @@ describe('Copilot evidence incremental submission', () => {
         safe_reply:
           'A01、A03、A04、C01、C04 均只按本轮 typed reader 的实际字段与范围作答；任何未穷尽投影、非因果引用或未知队列计数都明确保留为缺口。本轮 21 次 observation 均为只读，没有 propose/write。',
       }),
-    ).toEqual({ ok: true });
+    ).toMatchObject({ ok: true, auto_completed: true });
 
+    // Explicit completion remains an idempotent compatibility/recovery tool;
+    // the final accepted append already performed the canonical seal.
     const completed = submission.completeReference();
     expect(completed).toMatchObject({
       ok: true,
@@ -140,7 +159,7 @@ describe('Copilot evidence incremental submission', () => {
           reason_codes: ['supported' as const],
         })),
       }),
-    ).toMatchObject({ ok: true });
+    ).toMatchObject({ ok: true, auto_completed: true, verdict: 'pass' });
     expect(comparison.completeComparison()).toMatchObject({ ok: true, verdict: 'pass' });
     expect(comparison.completedComparison()?.output.request_checks).toEqual([
       {
