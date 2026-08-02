@@ -11,6 +11,8 @@
 - worktree：`/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-842-provider-admission`
 - branch：`codex/yuk-842-provider-admission`
 - base：`origin/main@292350958fea4cbc1adb64b08659064b06916eaa`
+- PR：#1157；首轮 exact-head CI 暴露 import/type inference、retry constant import 与 cancellation
+  regression，均已按远端日志静态修正，等待新 head CI。
 - 原 checkout 有 owner 的 CI/PLAN/research 未提交修改，未触碰。
 
 ## Implemented boundary
@@ -54,7 +56,7 @@
 
 - 没有运行任何本地 test/typecheck/lint/build/audit gate。
 - 只运行 formatter、`git diff --check` 与只读静态检查；它们不是验证证据。
-- 下一步：独立审阅 current diff → commit/push/PR → exact-head GitHub CI。仅 P0/P1 阻塞。
+- 下一步：提交并推送首轮远端 CI 修正 → PR #1157 新 head exact-head GitHub CI；仅 P0/P1 阻塞。
 - Phase 0 exit 仍需 merge 后一个真实 provider observation；不能用 mock/synthetic 冒充。
 
 ## Explicit residual scope

@@ -38,7 +38,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 const logMocks = vi.hoisted(() => ({
   started: vi.fn(async () => {}),
-  terminal: vi.fn(async () => true),
+  terminal: vi.fn(async (_db: unknown, _row: { status: string }) => true),
   retried: vi.fn(async () => true),
 }));
 
@@ -134,7 +134,7 @@ describe('runner central provider-session seam', () => {
         release,
       };
     });
-    logMocks.terminal.mockImplementation(async (_db, row: { status: string }) => {
+    logMocks.terminal.mockImplementation(async (_db: unknown, row: { status: string }) => {
       sequence.push(`settle:${row.status}`);
       return true;
     });

@@ -44,7 +44,12 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import type { R2Client } from '../r2';
-import { AgentRunError, bindAgentRunError, isApiErrorSuccessResult } from './agent-run-error';
+import {
+  RETRY_ELAPSED_CAP_MS,
+  AgentRunError,
+  bindAgentRunError,
+  isApiErrorSuccessResult,
+} from './agent-run-error';
 import { logMissingMcpServersWarning } from './log';
 import { populateIsolatedSkills } from './populate-skills';
 import type { ResolvedProvider } from './providers';

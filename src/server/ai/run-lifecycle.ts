@@ -248,14 +248,6 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
           cause: new Error('provider retry start window elapsed during durable start'),
         });
       }
-      if (this.abortController.signal.aborted) {
-        throw new ProviderSessionAdmissionError({
-          reason: 'cancelled',
-          laneId: this.resolved.provider,
-          taskRunId: this.taskRunId,
-          cause: new Error('provider attempt cancelled before SDK invocation'),
-        });
-      }
       this.armExecutionTimer();
       try {
         const value = await run();

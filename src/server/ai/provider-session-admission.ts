@@ -224,7 +224,7 @@ type AdmissionStatus =
   | 'rejected'
   | 'lease_expired';
 
-interface AdmissionRow {
+interface AdmissionRow extends Record<string, unknown> {
   lane_id: Provider;
   policy_fingerprint: string;
   mode: Exclude<ProviderSessionAdmissionMode, 'off'>;

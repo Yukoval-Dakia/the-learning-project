@@ -35,15 +35,14 @@
 
 ## NEXT
 
-1. 收口当前真实 diff 的独立 runtime/DB/retry/rollout review，只修 P0/P1。
-2. 提交、推送并开 YUK-842 PR；migration/unit/DB/typecheck/lint/build/audit 只由 exact-head GitHub
-   CI 执行。
-3. CI 全绿且无 unresolved P0/P1 后 merge，Linear YUK-842 → Done。
-4. 按 runbook 先全 app/worker `off → observe`，取得一个真实 provider admission + YUK-841 cost-basis
+1. 推送 PR #1157 的首轮 exact-head CI 修正；migration/unit/DB/typecheck/lint/build/audit 继续只由
+   GitHub CI 执行，本地不跑 gate。
+2. 新 head CI 全绿且无 unresolved P0/P1 后 merge，Linear YUK-842 → Done。
+3. 按 runbook 先全 app/worker `off → observe`，取得一个真实 provider admission + YUK-841 cost-basis
    observation；enforce 必须由 application-level normal drain 关闭旧 session。若 abort/kill/stop
    有歧义，则从 stop time 等 deployed max timeout + 30s；之后才可全进程同 policy 切换，不能滚动
    混用 observe/off。
-5. Phase 0 exit 后启动 Phase 1 practice-owned failure-learning vertical；删除旧 knowledge/central
+4. Phase 0 exit 后启动 Phase 1 practice-owned failure-learning vertical；删除旧 knowledge/central
    handler/tool 双轨。
 
 ## PARKED
@@ -58,7 +57,8 @@
 
 ## BLOCKED-ON
 
-- YUK-842 merge blocked by exact-head CI 与 independent review；Phase 1 blocked by F0 exit gate。
+- YUK-842 independent review 已无 unresolved P0/P1；merge blocked by PR #1157 新 head exact-head CI。
+  Phase 1 blocked by F0 exit gate。
 - production enforce blocked by全调用进程同版本/同 policy、observe 证据、quiesce/drain 与 restore
   protocol；混合版本无法形成全局 cap。
 - FULL 不触 UI；未来 UI 仍须 design-doc 逐字引用、组件类型与文件清单 pre-flight。
