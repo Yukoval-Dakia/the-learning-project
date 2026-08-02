@@ -24,7 +24,7 @@
 > as possible execution and becomes no-checkpoint `ambiguous_execution` only
 > after the 12-minute primary execution ceiling, the YUK-832 bounded FULL
 > evidence pipeline (at most two six-minute blind-reference slots plus four
-> four-minute comparison slots in the worst contract-invalid + fallback path),
+> six-minute comparison slots in the worst contract-invalid + fallback path),
 > and 30-second settlement grace.
 > `FAILED(reason='error')` remains a retry frame; all other FAILED reasons are
 > fail-closed terminal. Created/retry/active jobs and queue lookup failures are
@@ -68,14 +68,18 @@
 > blind reference is at most 16 turns (8 evidence chunks + 5 trace-classification
 > chunks + safe reply + explicit completion + terminal), while comparison is at most
 > 18 turns (16 reply-check chunks + explicit completion + terminal). These are ceilings,
-> not required work; the 360s durable-reference and 240s durable-comparator wall-clock
+> not required work; the 360s durable-reference and 360s durable-comparator wall-clock
 > aborts remain authoritative, while inline comparison stays at 120s. Actual A01 on
 > `9c43ab8e` proved the previous four-turn
 > ceiling structurally insufficient when both blind attempts ended with
 > `error_max_turns`; the gate failed closed before comparison. A second exact-head A01
 > on `c8bd8761` then bound the blind reference successfully, but both independent
 > comparators hit the original 120s wall-clock limit. That actual evidence authorizes
-> only the durable 240s comparator override; attempt count and binding do not change.
+> only a durable comparator override; `3ad1f0f9` then proved 240s still insufficient
+> when its first comparator hit that ceiling after the blind reference bound. The
+> durable tail therefore aligns to the already-proven 360s blind budget; attempt count
+> and binding do not change. Actual harness observation must cover the resulting 48.5m
+> owner ceiling rather than the stale 14m pre-FULL window.
 > Marker 记录 primary
 > stream 是否产生正文；随后
 > settlement projection 把一条 reviewed full-text DELTA 与 REPLY/DONE 或 FAILED
@@ -313,7 +317,7 @@ assembleCopilotRunInput(db, {
 
 ## 9. Interrupt / cancel / 串行（S6）
 
-- n=1 单会话 + `batchSize:1` → 天然单线程一次一 run（ADR-0041）。**S6 串行语义文档化**：copilot_run `batchSize:1` 使 run 串行——follow-up 在长 run 期间入队会**等到当前 run 结束**（主任务 12min + FULL 审阅最坏 28min + 30s settlement grace，即 40.5min ceiling）才拾取。边跑打字 → 入队下一 checkpoint（等当前 run 完）。
+- n=1 单会话 + `batchSize:1` → 天然单线程一次一 run（ADR-0041）。**S6 串行语义文档化**：copilot_run `batchSize:1` 使 run 串行——follow-up 在长 run 期间入队会**等到当前 run 结束**（主任务 12min + FULL 审阅最坏 36min + 30s settlement grace，即 48.5min ceiling）才拾取。边跑打字 → 入队下一 checkpoint（等当前 run 完）。
 - **Stop 不是纯 UI。** app 与 worker 分进程，不能靠 API 进程内 controller registry；
   `job_events.CANCEL_REQUESTED` 是唯一 durable 真相源。取消 route 与 execution fence 共用
   dispatch lock、与 outcome marker 共用 settlement lock：cancel 先于 fence → 原子

@@ -39,14 +39,18 @@
   协议自相矛盾；现按封闭协议上限改为 reference 16、comparator 18，不增加 paid attempt。
   `c8bd8761` 的 blind reference 随后成功绑定（9 thinking blocks）；两条 comparator 则均在约 122s
   撞原 120s ceiling。artifact SHA-256
-  `c72ed9063eee759530b39b35df13c0e75585cea6041ef62665972f25a4dd1fb5`（mode 0600）。按代码既有
-  actual gate，只把 durable comparator 调到 240s；inline 仍 120s，attempt 数与契约不变。
+  `c72ed9063eee759530b39b35df13c0e75585cea6041ef62665972f25a4dd1fb5`（mode 0600）。`3ad1f0f9`
+  再次成功绑定 blind，但第一条 comparator 又在 242s 撞 240s；随后旧 harness 14min monitor
+  先于产品 ceiling 到期，本次不算产品 verdict。partial artifact SHA-256
+  `55ca0f71287615ce59fc3d758690786d79e03735d90c066c055c6d59ce3dfe97`（mode 0600）；遗留 job/run
+  已按产品取消语义终态化。现仅把 durable comparator 对齐 360s，并同步实际 harness 观察窗；
+  inline 仍 120s，attempt 数与契约不变。
 - 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
 
 ## NEXT
 
-1. 验证 actual A01 暴露的 durable comparator timeout；保持两次 bounded attempt、既有
-   fail-closed binding、blind isolation、inline 120s 与 confirmed comparator 状态机。
+1. 验证 actual A01 暴露的 360s durable comparator 与 48.5min harness monitor；保持两次 bounded
+   attempt、既有 fail-closed binding、blind isolation、inline 120s 与 confirmed comparator 状态机。
 2. 新 exact-head CI 全绿后，在 clean committed exact head 重跑 A01；自动 gate 通过后才重跑 5 例 actual-provider v8，逐例审计 primary +
    reference/comparator runs、thinking、digests、exact bytes 与无旁支 validator。
 3. actual 5/5 且人工 grounding/coverage/honesty 均 2/2/2 后，

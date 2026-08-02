@@ -42,8 +42,8 @@
   的复杂 blind-reference 多次撞 120s；A03/C01/C04 也有成功 provider 输出被 strict contract
   拒绝。原始结果在本地 mode 0600 artifact，不提交。
 - durable blind-reference 保持 2×360s；inline 保持 120s，actual 证明不足后仅 durable comparator
-  调为 4×240s。FULL 最坏审阅为 28min，连同 primary 12min + 30s grace 的 owner ceiling 为
-  40.5min，仍小于 1h
+  调为 4×360s。FULL 最坏审阅为 36min，连同 primary 12min + 30s grace 的 owner ceiling 为
+  48.5min，仍小于 1h
   stuck-run 阈值。加入的诊断只保留固定 contract 错误类别/有界单行消息，不记录 raw output、
   candidate 或 thinking。
 - `9a7be1b6` 的 A01 actual 已让两次 blind reference 越过原 120s timeout 并完整返回，但都被
@@ -96,8 +96,13 @@
   第二个隔离 A01 已让 blind reference 首次成功：9 thinking blocks、result digest 与 ledger 均绑定；
   随后两条 comparator 都在 122s 左右撞 120s `budget_timeout`，未产生可绑定比较结果，系统再次
   fail closed 并 Stop。artifact SHA-256
-  `c72ed9063eee759530b39b35df13c0e75585cea6041ef62665972f25a4dd1fb5`（mode 0600）。现只把
-  durable comparator tail 调到 240s；inline 仍 120s，attempt 数与绑定不变。
+  `c72ed9063eee759530b39b35df13c0e75585cea6041ef62665972f25a4dd1fb5`（mode 0600）。`3ad1f0f9`
+  的第三个隔离 A01 仍成功绑定 blind；第一条 comparator 在 242s 撞 240s budget，第二条尚运行时
+  旧 harness 的 14min monitor 先到期并停止 worker，因此本次不是产品 verdict。partial artifact
+  SHA-256 `55ca0f71287615ce59fc3d758690786d79e03735d90c066c055c6d59ce3dfe97`（mode 0600）。已用
+  产品取消语义把遗留 boss job、durable run、domain reply 与悬挂 AI run 全部终态化。现只把
+  durable comparator tail 对齐 blind 为 360s；inline 仍 120s，attempt 数与绑定不变；actual harness
+  monitor 需对齐新的 48.5min owner ceiling。
 
 ## Next order
 
