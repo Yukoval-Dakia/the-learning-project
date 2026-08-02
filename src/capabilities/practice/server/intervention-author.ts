@@ -281,6 +281,7 @@ async function runInterventionIndependentSolutions(input: {
       });
       const attemptTaskRunIds =
         attempt.status === 'solved' ? [attempt.task_run_id] : (attempt.task_run_ids ?? []);
+      let attemptBindingFailure = '';
       for (const taskRunId of attemptTaskRunIds) {
         try {
           await persistValidatorRunBinding(input.db, {
@@ -293,12 +294,20 @@ async function runInterventionIndependentSolutions(input: {
               : {}),
           });
         } catch (error) {
-          return {
-            status: 'invalid',
-            failureCode: `independent_solution_binding_failed:${kind}`,
-            taskRunIds: [...taskRunIds, ...attemptTaskRunIds],
-            failureDetail: error instanceof Error ? error.message : String(error),
-          };
+          const detail = error instanceof Error ? error.message : String(error);
+          // An unusable solver output is already terminally fail-closed. Keep
+          // that primary domain reason (and its bounded retry behavior) even
+          // when a custom/test runner also failed to persist the reported run.
+          // A structurally solved output still requires an exact durable bind.
+          if (attempt.status === 'solved') {
+            return {
+              status: 'invalid',
+              failureCode: `independent_solution_binding_failed:${kind}`,
+              taskRunIds: [...taskRunIds, ...attemptTaskRunIds],
+              failureDetail: detail,
+            };
+          }
+          attemptBindingFailure = `reported solver run could not be bound (${detail})`;
         }
       }
       if (attempt.status === 'solved') {
@@ -316,7 +325,7 @@ async function runInterventionIndependentSolutions(input: {
       }
       taskRunIds.push(...attemptTaskRunIds);
       solverAttemptTaskRunIds.push(...attemptTaskRunIds);
-      failureDetail = attempt.reason;
+      failureDetail = [attempt.reason, attemptBindingFailure].filter(Boolean).join('; ');
       if (!attempt.retryable || solverAttempt === MAX_INTERVENTION_SOLVER_ATTEMPTS_PER_DIAGNOSTIC) {
         break;
       }
@@ -713,6 +722,7 @@ async function runPackageReview(
   independentAudit: InterventionIndependentSolutionAuditT,
   questionContentValidationAudit: InterventionQuestionContentValidationAuditT,
   beforeEachPaidCall: () => Promise<string | null>,
+  reviewRunBindingPolicy: 'require_now' | 'defer_to_preparation_record',
 ): Promise<
   | { status: 'ok'; review: InterventionPackageReviewAuditT }
   | { status: 'invalid'; failureCode: string; taskRunIds: string[]; failureDetail?: string }
@@ -822,17 +832,12 @@ async function runPackageReview(
             resultDigest: null,
           });
         } catch (bindingError) {
-          fatal = {
-            failureCode: 'review_binding_failed',
-            taskRunIds: [...reviewAttemptTaskRunIds],
-            failureDetail:
-              bindingError instanceof Error ? bindingError.message : String(bindingError),
-          };
-          return {
-            outcome: 'contract_invalid',
-            task_run_id: result.task_run_id,
-            detail: 'review_binding_failed',
-          };
+          const bindingDetail =
+            bindingError instanceof Error ? bindingError.message : String(bindingError);
+          // The comparator output is already contract-invalid, so binding is a
+          // secondary provenance defect rather than a replacement failure
+          // category. Preserve the established bounded-review result.
+          failureDetail = `${failureDetail}; reported comparator run could not be bound (${bindingDetail})`;
         }
         return {
           outcome: 'contract_invalid',
@@ -850,17 +855,28 @@ async function runPackageReview(
           resultDigest: sha256CanonicalJson(review),
         });
       } catch (bindingError) {
-        fatal = {
-          failureCode: 'review_binding_failed',
-          taskRunIds: [...reviewAttemptTaskRunIds],
-          failureDetail:
-            bindingError instanceof Error ? bindingError.message : String(bindingError),
-        };
-        return {
-          outcome: 'contract_invalid',
+        const bindingDetail =
+          bindingError instanceof Error ? bindingError.message : String(bindingError);
+        if (reviewRunBindingPolicy === 'require_now') {
+          fatal = {
+            failureCode: 'review_binding_failed',
+            taskRunIds: [...reviewAttemptTaskRunIds],
+            failureDetail: bindingDetail,
+          };
+          return {
+            outcome: 'contract_invalid',
+            task_run_id: result.task_run_id,
+            detail: 'review_binding_failed',
+          };
+        }
+        // Preparation has a second, authoritative provenance boundary in
+        // bindAttemptToRecord. Let it retain the full reviewed audit and emit
+        // agency:review_task_run_invalid instead of collapsing the attempt to
+        // an author failure. All other callers require the bind immediately.
+        console.warn('[intervention-author] deferring comparator run binding failure', {
           task_run_id: result.task_run_id,
-          detail: 'review_binding_failed',
-        };
+          detail: bindingDetail,
+        });
       }
       return {
         outcome: 'valid',
@@ -909,22 +925,29 @@ async function runPackageReview(
   };
 }
 
-/**
- * FULL validator for an already-authored package: three strict blind solves and
- * three release-strict grounding checks via the shared question validators,
- * followed by a bounded sealed-output comparator/confirmation.
- */
-export async function reviewInterventionPackageCandidate(input: {
+type InterventionPackageCandidateReviewInput = {
   db: Db;
   runTaskFn: TaskTextRunFn;
   context: InterventionAuthoringContextT;
   packageValue: InterventionPackageT;
   subjectProfile: ResolvedSubjectProfile;
   beforeEachPaidCall?: () => Promise<string | null>;
-}): Promise<
+};
+
+type InterventionPackageCandidateReviewResult =
   | { status: 'ok'; review: InterventionPackageReviewAuditT }
-  | { status: 'invalid'; failureCode: string; taskRunIds: string[]; failureDetail?: string }
-> {
+  | { status: 'invalid'; failureCode: string; taskRunIds: string[]; failureDetail?: string };
+
+/**
+ * FULL validator for an already-authored package: three strict blind solves and
+ * three release-strict grounding checks via the shared question validators,
+ * followed by a bounded sealed-output comparator/confirmation.
+ */
+async function reviewInterventionPackageCandidateWithPolicy(
+  input: InterventionPackageCandidateReviewInput & {
+    reviewRunBindingPolicy: 'require_now' | 'defer_to_preparation_record';
+  },
+): Promise<InterventionPackageCandidateReviewResult> {
   const beforeEachPaidCall = input.beforeEachPaidCall ?? (async () => null);
   // Claim discovery is deterministic and bounded. Run it before any paid solve
   // so an adversarially repetitive answer surface cannot spend six calls and
@@ -979,6 +1002,7 @@ export async function reviewInterventionPackageCandidate(input: {
     independentlySolved.audit,
     contentValidated.audit,
     beforeEachPaidCall,
+    input.reviewRunBindingPolicy,
   );
   if (reviewed.status === 'invalid') {
     return {
@@ -993,6 +1017,15 @@ export async function reviewInterventionPackageCandidate(input: {
     };
   }
   return reviewed;
+}
+
+export async function reviewInterventionPackageCandidate(
+  input: InterventionPackageCandidateReviewInput,
+): Promise<InterventionPackageCandidateReviewResult> {
+  return reviewInterventionPackageCandidateWithPolicy({
+    ...input,
+    reviewRunBindingPolicy: 'require_now',
+  });
 }
 
 /**
@@ -1053,12 +1086,15 @@ export async function authorInterventionPackage(
   let nextGuard: Awaited<ReturnType<typeof guardInterventionPreparationStage>> | null = reviewGuard;
   // Comparator is a separate invocation, but it no longer self-certifies its
   // blind solve. The shared FULL validator performs three strict solves first.
-  const reviewed = await reviewInterventionPackageCandidate({
+  const reviewed = await reviewInterventionPackageCandidateWithPolicy({
     db,
     runTaskFn,
     context: reviewGuard.context,
     packageValue: authored.package,
     subjectProfile,
+    // This authoring result is immediately rebound to the authoritative
+    // intervention record by prepareInterventionWave before activation.
+    reviewRunBindingPolicy: 'defer_to_preparation_record',
     beforeEachPaidCall: async () => {
       const guard =
         nextGuard ??
