@@ -873,6 +873,11 @@ export const ai_task_runs = pgTable(
       .notNull()
       .default({ inputTokens: 0, outputTokens: 0 }),
     cost_usd: real('cost_usd'),
+    // YUK-841 — one attempt has one explicit cost truth. Legacy rows keep both
+    // fields NULL; new runner attempts persist reported / estimated / unknown
+    // together with the evidence reference used to classify the amount.
+    cost_basis: text('cost_basis'),
+    cost_ref: text('cost_ref'),
     error_message: text('error_message'),
     started_at: timestamp('started_at', { withTimezone: true }).notNull(),
     finished_at: timestamp('finished_at', { withTimezone: true }),
@@ -880,6 +885,21 @@ export const ai_task_runs = pgTable(
   (t) => [
     index('ai_task_runs_task_kind_idx').on(t.task_kind, t.started_at.desc()),
     index('ai_task_runs_status_idx').on(t.status, t.started_at.desc()),
+    check(
+      'ai_task_runs_cost_truth_ck',
+      sql`(
+        ${t.cost_basis} IS NULL AND ${t.cost_ref} IS NULL
+      ) OR (
+        ${t.cost_basis} IS NOT NULL
+        AND ${t.cost_basis} IN ('reported','estimated','unknown')
+        AND ${t.cost_ref} IS NOT NULL
+        AND btrim(${t.cost_ref}) <> ''
+        AND (
+          (${t.cost_basis} = 'unknown' AND ${t.cost_usd} IS NULL)
+          OR (${t.cost_basis} IN ('reported','estimated') AND ${t.cost_usd} IS NOT NULL AND ${t.cost_usd} >= 0)
+        )
+      )`,
+    ),
   ],
 );
 
@@ -928,18 +948,54 @@ export const cost_ledger = pgTable(
     task_kind: text('task_kind').notNull(),
     provider: text('provider').notNull(),
     model: text('model').notNull(),
-    cost: real('cost').notNull(),
+    // Nullable only for entry_kind='attempt' + cost_basis='unknown'. Legacy
+    // writers remain numeric and are deliberately not back-classified.
+    cost: real('cost'),
     // YUK-359: `cost` 是原始计费值（evidence-first，不写入折算）；币种由本列标记。
     // 历史行 + runner(mimo USD) 默认 'USD'；GLM-OCR / memory(GLM/百炼) 写 'CNY'。
     // 读路径必须按 currency 分组聚合，绝不裸 SUM 混币（cost-today / ai-observability）。
     currency: text('currency').notNull().default('USD'),
+    // YUK-841 — pre-cutover and non-runner correlation rows remain `legacy`.
+    // The central AI runner is the only writer of `attempt` rows.
+    entry_kind: text('entry_kind').notNull().default('legacy'),
+    cost_basis: text('cost_basis'),
+    cost_ref: text('cost_ref'),
     tokens_in: integer('tokens_in').notNull(),
     tokens_out: integer('tokens_out').notNull(),
     outcome: text('outcome').notNull().default('success'),
     pgboss_job_id: text('pgboss_job_id'),
     occurred_at: timestamp('occurred_at', { withTimezone: true }).notNull(),
   },
-  (t) => [index('cost_ledger_task_run_idx').on(t.task_run_id)],
+  (t) => [
+    index('cost_ledger_task_run_idx').on(t.task_run_id),
+    uniqueIndex('cost_ledger_attempt_task_run_uq')
+      .on(t.task_run_id)
+      .where(sql`${t.entry_kind} = 'attempt'`),
+    check('cost_ledger_entry_kind_ck', sql`${t.entry_kind} IN ('legacy','attempt')`),
+    check(
+      'cost_ledger_cost_basis_ck',
+      sql`${t.cost_basis} IS NULL OR ${t.cost_basis} IN ('reported','estimated','unknown')`,
+    ),
+    check(
+      'cost_ledger_attempt_truth_ck',
+      sql`(
+        ${t.entry_kind} = 'legacy'
+        AND ${t.cost} IS NOT NULL
+        AND ${t.cost_basis} IS NULL
+        AND ${t.cost_ref} IS NULL
+      ) OR (
+        ${t.entry_kind} = 'attempt'
+        AND ${t.task_run_id} IS NOT NULL
+        AND ${t.cost_basis} IS NOT NULL
+        AND ${t.cost_ref} IS NOT NULL
+        AND btrim(${t.cost_ref}) <> ''
+        AND (
+          (${t.cost_basis} = 'unknown' AND ${t.cost} IS NULL)
+          OR (${t.cost_basis} IN ('reported','estimated') AND ${t.cost} IS NOT NULL AND ${t.cost} >= 0)
+        )
+      )`,
+    ),
+  ],
 );
 
 // pg-boss 之上的"业务事件流"：每次状态迁移同事务 INSERT 一行 + pg_notify。

@@ -4,13 +4,18 @@ import { taskInputHash } from '@/server/judge/judge-execution-provenance';
 import { createId } from '@paralleldrive/cuid2';
 import { RETRY_ELAPSED_CAP_MS, isTransientAgentFailure } from './agent-run-error';
 import {
+  type AttemptCostTruth,
+  resolveAttemptCostTruth,
+  unknownAttemptCostTruth,
+} from './attempt-cost';
+import {
   type AiTaskUsage,
-  writeAiTaskRunFinished,
+  writeAiTaskAttemptFinished,
+  writeAiTaskRunRetried,
   writeAiTaskRunStarted,
-  writeCostLedger,
   writeToolCallLog,
 } from './log';
-import { type TokenCounts, effectiveCostUsd } from './pricing';
+import type { TokenCounts } from './pricing';
 import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
 
 export type LifecycleUsage = AiTaskUsage;
@@ -21,10 +26,13 @@ export interface LifecycleResult {
   finishReason: string;
   usage: LifecycleUsage;
   cost_usd?: number;
+  cost_basis: AttemptCostTruth['basis'];
+  cost_ref: string;
   structured_output?: unknown;
 }
 
-export interface TerminalSuccess {
+/** Usage/cost evidence carried by either SDKResultSuccess or SDKResultError. */
+export interface TerminalResultEvidence {
   usage: LifecycleUsage;
   tokenCounts: TokenCounts;
   costUsd?: number;
@@ -53,6 +61,27 @@ export interface LifecycleAttemptDecision {
   elapsedMs: number;
 }
 
+type AttemptTerminalStatus = 'success' | 'failure';
+
+/** A provider result exists, but its first durable terminal projection did not settle. */
+export class AttemptSettlementError extends Error {
+  readonly taskRunId: string;
+  readonly intendedStatus: AttemptTerminalStatus;
+
+  constructor(input: {
+    kind: string;
+    taskRunId: string;
+    intendedStatus: AttemptTerminalStatus;
+  }) {
+    super(
+      `[${input.kind}] cannot report ${input.intendedStatus} before durable attempt settlement: ${input.taskRunId}`,
+    );
+    this.name = 'AttemptSettlementError';
+    this.taskRunId = input.taskRunId;
+    this.intendedStatus = input.intendedStatus;
+  }
+}
+
 function safeInputHash(input: unknown): string {
   try {
     return taskInputHash(input);
@@ -64,10 +93,12 @@ function safeInputHash(input: unknown): string {
 /**
  * One task attempt's state owner.
  *
- * SDK adapters only translate messages into `recordTerminalSuccess`, text
+ * SDK adapters only translate messages into `recordTerminalResult`, text
  * deltas and tool calls. This module owns the durable lifecycle invariant for
  * every adapter: started row, abort propagation, cost, terminal row and
- * after-run observation.
+ * after-run observation. Terminal methods have one sequential owner; a
+ * concurrent terminal call is unsupported and fails closed rather than joining
+ * the in-flight transaction.
  */
 export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   readonly abortController = new AbortController();
@@ -76,8 +107,13 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   readonly kind: TaskKind;
 
   private readonly timer: ReturnType<typeof setTimeout>;
-  private terminal: TerminalSuccess | undefined;
-  private terminalWriteAttempted = false;
+  private terminal: TerminalResultEvidence | undefined;
+  private costTruthCache: AttemptCostTruth | undefined;
+  private readonly terminalWriteAttempts = new Set<AttemptTerminalStatus>();
+  private terminalWriteInFlight = false;
+  private terminalSettledStatus: AttemptTerminalStatus | undefined;
+  private lastTerminalWriteError: unknown;
+  private durableStart = false;
 
   constructor(private readonly config: LifecycleConfig<TResult>) {
     this.taskRunId = config.taskRunId;
@@ -102,8 +138,30 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     return this.terminal?.tokenCounts ?? { inputTokens: 0, outputTokens: 0 };
   }
 
+  get costTruth(): AttemptCostTruth {
+    if (!this.costTruthCache) {
+      this.costTruthCache = this.terminal
+        ? resolveAttemptCostTruth({
+            provider: this.resolved.provider,
+            model: this.resolved.model,
+            tokens: this.terminal.tokenCounts,
+            reportedCostUsd: this.terminal.costUsd,
+          })
+        : unknownAttemptCostTruth(this.resolved.provider, this.resolved.model);
+    }
+    return this.costTruthCache;
+  }
+
   get costUsd(): number | undefined {
-    return this.terminal?.costUsd;
+    return this.costTruth.amountUsd ?? undefined;
+  }
+
+  get costBasis(): AttemptCostTruth['basis'] {
+    return this.costTruth.basis;
+  }
+
+  get costRef(): string {
+    return this.costTruth.ref;
   }
 
   get finishReason(): string {
@@ -114,12 +172,16 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     return this.terminal?.structuredOutput;
   }
 
-  get sawTerminalSuccess(): boolean {
+  get sawTerminalResult(): boolean {
     return this.terminal !== undefined;
   }
 
   get aborted(): boolean {
     return this.abortController.signal.aborted;
+  }
+
+  get started(): boolean {
+    return this.durableStart;
   }
 
   async start(actualInput: unknown): Promise<void> {
@@ -132,17 +194,27 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         input_hash: safeInputHash(actualInput),
         started_at: new Date(),
       });
+      this.durableStart = true;
     } catch (error) {
       console.error(`[${this.config.logScope}] writeAiTaskRunStarted failed`, {
         task_run_id: this.taskRunId,
         kind: this.kind,
         err: error,
       });
+      // Tracking is a load-bearing boundary: never acquire provider cost when
+      // the durable attempt identity could not be created.
+      throw error;
     }
   }
 
-  recordTerminalSuccess(terminal: TerminalSuccess): void {
+  recordTerminalResult(terminal: TerminalResultEvidence): void {
     this.terminal = terminal;
+    this.costTruthCache = resolveAttemptCostTruth({
+      provider: this.resolved.provider,
+      model: this.resolved.model,
+      tokens: terminal.tokenCounts,
+      reportedCostUsd: terminal.costUsd,
+    });
   }
 
   async recordToolCall(input: {
@@ -177,34 +249,19 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       throw new Error(`[${this.kind}] cannot finish success without a terminal SDK result`);
     }
 
-    try {
-      await writeCostLedger(this.config.db, {
-        task_run_id: this.taskRunId,
-        task_kind: this.kind,
-        provider: this.resolved.provider,
-        model: this.resolved.model,
-        cost: effectiveCostUsd(
-          this.resolved.model,
-          this.terminal.tokenCounts,
-          this.terminal.costUsd,
-        ),
-        currency: 'USD',
-        tokens_in: this.terminal.usage.inputTokens,
-        tokens_out: this.terminal.usage.outputTokens,
-      });
-    } catch (error) {
-      console.error(`[${this.config.logScope}] writeCostLedger failed`, {
-        task_run_id: this.taskRunId,
-        kind: this.kind,
-        err: error,
-      });
-    }
-
-    await this.writeTerminal({
+    const settled = await this.writeTerminal({
       status: 'success',
       finishReason: this.terminal.finishReason,
       errorMessage: undefined,
+      outcome: 'success',
     });
+    if (!settled) {
+      throw new AttemptSettlementError({
+        kind: this.kind,
+        taskRunId: this.taskRunId,
+        intendedStatus: 'success',
+      });
+    }
 
     if (this.config.afterRun) {
       try {
@@ -219,12 +276,46 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     }
   }
 
-  async finishFailure(error: unknown, finishReason = 'error'): Promise<void> {
-    await this.writeTerminal({
+  /** Return false when the durable attempt truth could not be settled. */
+  async finishFailure(error: unknown, finishReason = 'error'): Promise<boolean> {
+    const settled = await this.writeTerminal({
       status: 'failure',
       finishReason,
       errorMessage: error instanceof Error ? error.message : String(error),
+      outcome: isTransientAgentFailure(error) ? 'failed_retryable' : 'failed_permanent',
     });
+    if (!settled && !this.terminalSettledStatus) {
+      const writeError = this.lastTerminalWriteError ?? error;
+      console.warn(`[${this.config.logScope}] task_run_stuck_in_running`, {
+        event: 'task_run_stuck_in_running',
+        task_run_id: this.taskRunId,
+        kind: this.kind,
+        intended_status: 'failure',
+        err: writeError instanceof Error ? writeError.message : String(writeError),
+      });
+    }
+    return settled;
+  }
+
+  /** Best-effort conservative marker: false negatives are allowed, false positives are not. */
+  async markRetried(): Promise<void> {
+    try {
+      const marked = await writeAiTaskRunRetried(this.config.db, this.taskRunId);
+      if (!marked) {
+        console.warn(`[${this.config.logScope}] task_run_retry_marker_not_written`, {
+          event: 'task_run_retry_marker_not_written',
+          task_run_id: this.taskRunId,
+          kind: this.kind,
+        });
+      }
+    } catch (error) {
+      console.warn(`[${this.config.logScope}] task_run_retry_marker_not_written`, {
+        event: 'task_run_retry_marker_not_written',
+        task_run_id: this.taskRunId,
+        kind: this.kind,
+        err: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   dispose(): void {
@@ -237,34 +328,49 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   private async writeTerminal(input: {
-    status: 'success' | 'failure';
+    status: AttemptTerminalStatus;
     finishReason: string;
     errorMessage: string | undefined;
-  }): Promise<void> {
-    if (this.terminalWriteAttempted) return;
-    this.terminalWriteAttempted = true;
+    outcome: 'success' | 'failed_retryable' | 'failed_permanent';
+  }): Promise<boolean> {
+    if (!this.durableStart) return false;
+    if (this.terminalSettledStatus) return this.terminalSettledStatus === input.status;
+    if (this.terminalWriteInFlight) return false;
+    if (this.terminalWriteAttempts.has(input.status)) return false;
+
+    // A failed success projection may be downgraded exactly once to an
+    // application failure. Never retry an ambiguous status, upgrade failure to
+    // success, or allow concurrent terminal transactions. The DB's running-row
+    // CAS and unique attempt ledger remain the final double-write guards.
+    if (this.terminalWriteAttempts.size > 0 && input.status !== 'failure') return false;
+    this.terminalWriteAttempts.add(input.status);
+    this.terminalWriteInFlight = true;
     try {
-      await writeAiTaskRunFinished(this.config.db, {
+      const settled = await writeAiTaskAttemptFinished(this.config.db, {
         id: this.taskRunId,
         status: input.status,
         finish_reason: input.finishReason,
         usage: this.usage,
-        cost_usd: this.costUsd,
+        cost_truth: this.costTruth,
+        outcome: input.outcome,
         error_message: input.errorMessage,
       });
+      if (!settled) {
+        throw new Error(`cannot settle missing or non-running AI task attempt: ${this.taskRunId}`);
+      }
+      this.terminalSettledStatus = input.status;
+      this.lastTerminalWriteError = undefined;
+      return true;
     } catch (error) {
-      console.error(`[${this.config.logScope}] writeAiTaskRunFinished ${input.status} failed`, {
+      this.lastTerminalWriteError = error;
+      console.error(`[${this.config.logScope}] writeAiTaskAttemptFinished ${input.status} failed`, {
         task_run_id: this.taskRunId,
         kind: this.kind,
         err: error,
       });
-      console.warn(`[${this.config.logScope}] task_run_stuck_in_running`, {
-        event: 'task_run_stuck_in_running',
-        task_run_id: this.taskRunId,
-        kind: this.kind,
-        intended_status: input.status,
-        err: error instanceof Error ? error.message : String(error),
-      });
+      return false;
+    } finally {
+      this.terminalWriteInFlight = false;
     }
   }
 }

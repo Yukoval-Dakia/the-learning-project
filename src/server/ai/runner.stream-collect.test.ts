@@ -45,15 +45,58 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 const logMocks = vi.hoisted(() => ({
   finishedShouldThrow: false,
+  finishedFailuresRemaining: 0,
+  terminalStatuses: [] as string[],
+  started: vi.fn(async (_db: unknown, _row: unknown) => {}),
+  finished: vi.fn(async (_db: unknown, _row: unknown) => {}),
+  cost: vi.fn(async (_db: unknown, _row: unknown) => {}),
 }));
 
 vi.mock('@/server/ai/log', () => ({
   logMissingMcpServersWarning: vi.fn(),
-  writeAiTaskRunStarted: vi.fn(async () => {}),
-  writeAiTaskRunFinished: vi.fn(async () => {
-    if (logMocks.finishedShouldThrow) throw new Error('db down');
-  }),
-  writeCostLedger: vi.fn(async () => {}),
+  writeAiTaskRunStarted: logMocks.started,
+  writeAiTaskRunFinished: logMocks.finished,
+  writeAiTaskRunRetried: vi.fn(async () => true),
+  writeCostLedger: logMocks.cost,
+  writeAiTaskAttemptFinished: vi.fn(
+    async (
+      db: unknown,
+      row: {
+        id: string;
+        status: string;
+        finish_reason: string;
+        usage: unknown;
+        cost_truth: { amountUsd: number | null; basis: string; ref: string };
+        error_message?: string;
+        outcome: string;
+      },
+    ) => {
+      logMocks.terminalStatuses.push(row.status);
+      if (logMocks.finishedFailuresRemaining > 0) {
+        logMocks.finishedFailuresRemaining -= 1;
+        throw new Error('db down once');
+      }
+      if (logMocks.finishedShouldThrow) throw new Error('db down');
+      await logMocks.finished(db, {
+        id: row.id,
+        status: row.status,
+        finish_reason: row.finish_reason,
+        usage: row.usage,
+        cost_usd: row.cost_truth.amountUsd ?? undefined,
+        cost_basis: row.cost_truth.basis,
+        cost_ref: row.cost_truth.ref,
+        error_message: row.error_message,
+      });
+      await logMocks.cost(db, {
+        task_run_id: row.id,
+        cost: row.cost_truth.amountUsd,
+        cost_basis: row.cost_truth.basis,
+        cost_ref: row.cost_truth.ref,
+        outcome: row.outcome,
+      });
+      return true;
+    },
+  ),
   writeToolCallLog: vi.fn(async () => 'tool-log-id'),
 }));
 
@@ -190,6 +233,8 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     mockSdk.throwAfter = -1;
     mockSdk.waitForAbortAfter = -1;
     logMocks.finishedShouldThrow = false;
+    logMocks.finishedFailuresRemaining = 0;
+    logMocks.terminalStatuses = [];
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 
@@ -531,7 +576,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(result.text).toBe('orphan chunk');
     expect(result.partial).toBe(true);
     expect(result.finishReason).toBe('error');
-    expect(result.error).toContain('without a terminal result');
+    expect(result.error).toContain('stream_no_terminal');
 
     // The finished row must be recorded as a failure — never success.
     const { writeAiTaskRunFinished, writeCostLedger } = await import('@/server/ai/log');
@@ -540,8 +585,46 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       status: 'failure',
       finish_reason: 'error',
     });
-    // No terminal result ⇒ no cost ledger write (success-only side effect).
-    expect(writeCostLedger).not.toHaveBeenCalled();
+    expect(writeCostLedger).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        cost: null,
+        cost_basis: 'unknown',
+        outcome: 'failed_retryable',
+      }),
+    );
+  });
+
+  it('classifies an aborted empty stream as permanent instead of retryable', async () => {
+    const owner = new AbortController();
+    owner.abort();
+    mockSdk.messages = [];
+
+    const result = await streamTaskCollecting(
+      'AttributionTask',
+      { q: 'x' },
+      { db: fakeDb, signal: owner.signal },
+      () => {},
+    );
+
+    expect(result.partial).toBe(true);
+    expect(result.error).toContain('aborted');
+    const { writeCostLedger } = await import('@/server/ai/log');
+    expect(writeCostLedger).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ cost_basis: 'unknown', outcome: 'failed_permanent' }),
+    );
+  });
+
+  it('propagates a start-write failure without returning a phantom partial task run', async () => {
+    logMocks.started.mockRejectedValueOnce(new Error('start row unavailable'));
+
+    await expect(
+      streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, () => {}),
+    ).rejects.toThrow('start row unavailable');
+
+    expect(logMocks.finished).not.toHaveBeenCalled();
+    expect(logMocks.cost).not.toHaveBeenCalled();
   });
 
   it('records success+is_error usage and cost as a graceful partial failure without success accounting', async () => {
@@ -592,7 +675,14 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
         error_message: expect.stringContaining('api_error_result http=429'),
       }),
     );
-    expect(writeCostLedger).not.toHaveBeenCalled();
+    expect(writeCostLedger).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        cost: 0.25,
+        cost_basis: 'reported',
+        outcome: 'failed_retryable',
+      }),
+    );
   });
 
   it('does not add an empty error detail when success+is_error omits result', async () => {
@@ -636,5 +726,47 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(result.partial).toBe(true);
     expect(result.error).toContain('sdk blew up');
     expect(result.finishReason).toBe('error');
+  });
+
+  it('rejects instead of returning partial when success settlement fails', async () => {
+    mockSdk.messages = [assistant('must not persist'), resultMsg];
+    logMocks.finishedShouldThrow = true;
+
+    await expect(
+      streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, () => {}),
+    ).rejects.toThrow(/cannot report success before durable attempt settlement/);
+
+    expect(logMocks.terminalStatuses).toEqual(['success', 'failure']);
+    expect(logMocks.finished).not.toHaveBeenCalled();
+    expect(logMocks.cost).not.toHaveBeenCalled();
+  });
+
+  it('still rejects provider-success text when the bounded failure fallback settles', async () => {
+    mockSdk.messages = [assistant('must not persist'), resultMsg];
+    logMocks.finishedFailuresRemaining = 1;
+
+    await expect(
+      streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, () => {}),
+    ).rejects.toThrow(/cannot report success before durable attempt settlement/);
+
+    expect(logMocks.terminalStatuses).toEqual(['success', 'failure']);
+    expect(logMocks.finished).toHaveBeenCalledTimes(1);
+    expect(logMocks.finished.mock.calls[0][1]).toMatchObject({ status: 'failure' });
+    expect(logMocks.cost).toHaveBeenCalledTimes(1);
+    expect(logMocks.cost.mock.calls[0][1]).toMatchObject({ outcome: 'failed_permanent' });
+  });
+
+  it('rejects instead of returning partial when failure settlement fails', async () => {
+    mockSdk.messages = [assistant('must not persist'), resultMsg];
+    mockSdk.throwAfter = 1;
+    logMocks.finishedShouldThrow = true;
+
+    await expect(
+      streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, () => {}),
+    ).rejects.toThrow(/sdk blew up mid-stream/);
+
+    expect(logMocks.terminalStatuses).toEqual(['failure']);
+    expect(logMocks.finished).not.toHaveBeenCalled();
+    expect(logMocks.cost).not.toHaveBeenCalled();
   });
 });

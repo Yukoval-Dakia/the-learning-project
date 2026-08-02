@@ -1,64 +1,71 @@
-# 当前 handoff — 2026-08-02 Architecture Deepening FULL / YUK-840
+# 当前 handoff — 2026-08-02 Architecture Deepening FULL / YUK-841
 
 ## Owner direction and tracker
 
-- Owner 明确：「直接启动 FULL」。
+- Owner 明确：「直接启动 FULL」；补充硬约束：「gate 不要在本地跑」。
 - Linear project：`Architecture Deepening FULL — 语义、成本与运行所有权`（In Progress）。
 - F0 milestone `Truth, contracts, ratchets`：
-  - YUK-840 In Progress：phase spec + 双向 dependency ratchet；
-  - YUK-841 Todo / blocked by YUK-840：AI attempt 单一成本真相；
+  - YUK-840 Done：PR #1155 merged，main `24add632`；
+  - YUK-841 In Review：AI attempt 单一成本真相，PR #1156；
   - YUK-842 Todo / blocked by YUK-841：跨进程 provider-lane admission。
-- YUK-767 已记录 owner 信号升级；多用户 schema/auth 保持独立范围。
 
 ## Active checkout
 
-- worktree：`/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-840-full-f0`
-- branch：`codex/yuk-840-full-f0`
-- base：`origin/main@19a97b893dfc9aae62701f00451010fd2be71c7b`
-- PR：`#1155` / `https://github.com/Yukoval-Dakia/the-learning-project/pull/1155`
-- 原 checkout `codex/yuk-812-agent-control-plane` 的脏改与其它 worktree 均未触碰。
+- worktree：`/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-841-attempt-cost-truth`
+- branch：`codex/yuk-841-attempt-cost-truth`
+- base：`origin/main@24add632b8941d0e4ebfeddb337761e7a1e38c29`
+- 原 checkout 与 YUK-840 worktree 均未触碰。
 
-## YUK-840 local implementation
+## YUK-841 implementation
 
-- ADR-0051：capability owns product operation；AI runtime owns model attempt；静态 modular monolith
-  保持；首个竖切为 practice-owned failure learning。
-- Phase 0/1 execution addendum：锁定 F0 串行依赖、Phase 1 current/target/delete map、exit gates 与
-  out-of-scope。
-- `audit:capability-boundaries` 已从单向 access seam 加深为同一 AST scan：
-  - capability→server 538 semantic edges；
-  - server→capability deep 70；
-  - cross-capability value 63；
-  - nontrivial SCC = agency/ingestion/knowledge/notes/practice。
-- baseline 是约 140 个 owner-pair 桶，不是逐 import allowlist；actual 必须与 baseline 精确一致。
-  增长失败；下降也要求同一 diff 收紧 baseline，防止留下回涨 headroom。
-- parser 区分 type/value，alias/relative 归一化；mixed/side-effect/literal dynamic/require 是 value；
-  non-literal dynamic import/require fail closed。
-- package 增加 print-only `audit:capability-boundaries:snapshot`；默认 CI audit 名称不变。
+- `attempt-cost.ts` 定义唯一 `AttemptCostTruth`：
+  - Anthropic direct finite nonnegative SDK value（含 0）→ reported；
+  - Xiaomi 0/undefined + known versioned pricebook → estimated；unknown model → unknown；
+  - subscription lane → estimated 0 + explicit contract ref；
+  - no terminal → unknown，绝不以 0 代替。
+- 三个 runner API 背后的四个 terminal interpreter 都在任何 SDK result 上先记录 usage/cost，再做
+  success/error 分类；`SDKResultError`、success+is_error、no-terminal 都有 terminal attempt ledger。
+- `RunTaskResult` 保持 `cost_usd?: number`，追加必需 basis/ref；unknown result 为 undefined。
+- `writeAiTaskAttemptFinished` 在 transaction 内以 `id + status=running` 更新 run，用 RETURNING 的
+  task/provider/model 插入唯一 `entry_kind=attempt` ledger；ledger fault 回滚 run update。
+- start row 写失败 fail-closed，不获取 provider 成本；stuck-run reconcile 复用同一 atomic finalizer，
+  落 failure + unknown attempt ledger。
+- migration `0087_yuk841_attempt_cost_truth.sql`：ledger cost nullable、legacy/attempt discriminator、
+  basis/ref checks、attempt partial unique；历史行只默认 legacy，不做来源推断。
+- admin run/detail/cost 与 `/api/cost/today` 暴露 nullable amount、basis/ref、reported/estimated/legacy
+  breakdown、unknown/legacy counts；classified run 的 canonical 与 ledger 金额都只取 attempt
+  projection，legacy correlation 仍保留在 row/job 诊断关联中但不再把 unknown 变成 0 或造成双计。
+- Postman inventory/collection 与 generated API client 已由仓库生成器同步；本票未写 UI。
 
-## Validation so far
+## Validation boundary
 
-- `pnpm audit:capability-boundaries`：PASS，538 / 70 / 63 exact。
-- `pnpm vitest run --config vitest.unit.config.ts scripts/audit-capability-boundaries.test.ts`：
-  1 file / 10 tests PASS。
-- owner 提醒前已完成 typecheck、全仓 lint 与 build，均 PASS。
-- **Owner 追加指示：gate 不要在本地跑。** 此后不再重跑本地 gate；完整验证只交给
-  exact-head GitHub CI。
-- 两路独立只读 review 发现并已修复 1 类 P1：nested `public/ui-public/manifest`
-  子路径不得伪装成 top-level entrypoint。修复后两位 reviewer 都确认无未解决
-  P0/P1。
-- 新增 server→capability deep、无 SCC 的单向 cross-capability value 与三类 nested
-  entrypoint characterization；移除 unit suite 内重复的全仓 baseline scan。这些 review 后改动
-  **没有在本地跑 gate**，由 exact-head CI 验证。
+- Owner 约束后，本轮没有运行任何本地 test/typecheck/lint/build/audit gate。
+- 只执行了静态只读检查、仓库 generator 与 Biome formatter；这些不是验证证据。
+- 三路独立 reviewer 已对当前真实 diff 完成 runtime、DB/API、consumer/test 只读审查；均无未解决
+  P0/P1，P2/minor advisory。
+- PR 前一 exact-head 的完整 migration/unit/DB/typecheck/lint/build/audit 已由 GitHub CI 全绿；随后
+  合并前 review 发现 success settlement 失败仍可能向调用方表现为成功，当前已改为 fail-closed；
+  新-head review 又发现 collecting 会把未落账失败降级成 partial，现已要求 success/failure
+  settlement 任一失败都 reject。最新 review 继续发现 text stream 在结算失败时追加错误尾帧后仍
+  clean-close；现已改为 terminal settlement 失败就 error stream，明确区分“已发送 bytes 无法撤回”
+  与“协议不得正常完成”，并补 success/failure 两条反证。最终 lifecycle review 又发现首次 success
+  transaction 回滚后幂等闩会阻止 failure 收口；现改为每个 status 最多一次、仅允许
+  success→failure 的有界降级，CAS + 唯一 ledger 防双写；即使 fallback failure 落账成功，collecting
+  仍 reject provider-success 文本。新 head 必须重新由 GitHub CI 验证；CI 未绿前不得宣称 YUK-841
+  已交付。
 
-## Still required before delivery
+## Still required
 
-1. PR #1155 已打开，YUK-840 已 In Review；由 exact-head GitHub CI 执行完整 gate，绿后
-   才能 merge 并将 YUK-840 标 Done。
-2. Linear capture gate：review 未留下 P0/P1；重复 AST parse 仅为 P2 经济性建议且已通过
-   移除重复 repo scan 缩小开销，不新建 follow-up。
+1. 提交并推送 PR #1156 的 bounded terminal-settlement state machine。
+2. 新 exact-head GitHub CI 全绿、无未解决 P0/P1 后 merge；Linear YUK-841 → Done。
+3. 从合并 main 新建独立 worktree 启动 YUK-842；不要与 YUK-841 共享 schema/runtime 并行。
 
-## Displaced but still open
+## Explicit non-goals / debt
 
-- YUK-596 transport/Stop 与 30-case burn-in 已交付；内容质量仍 HOLD。
-- YUK-832–836 保持 open/PARKED，未因 FULL 启动而取消、完成或降级。
-- FULL 当前不触 UI；任何后续 UI 仍需 owner design pre-flight 批准。
+- 真实合同价格校准仍开放；placeholder estimate 不可用于预算可信声明。
+- UI null 展示与产品 operation 级 `cost_usd ?? 0` 聚合不在 YUK-841；本票只闭合 model-attempt truth。
+- YUK-843 承接 stuck-run reconciler 单行结算异常隔离与 ambiguous-ack 最终收敛；当前 lifecycle 保持
+  single-owner sequential terminal contract。YUK-844 承接产品 operation unknown 成本全链传播；
+  两者均已在 Linear 捕获，不阻塞 F0-2。
+- OCR/GLM、failure-correlation、image-correlation 等非 central runner ledger 保持 legacy，不能冒充已迁移。
+- YUK-832–836 保持 open/PARKED；YUK-596 transport 已交付但内容质量 HOLD。

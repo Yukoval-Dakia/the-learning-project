@@ -122,7 +122,14 @@ describe('run_task', () => {
       expect(kind).toBe('GoalScopeTask');
       expect(input).toEqual({ prepared: { goal_title: 'Learn' } });
       expect(callCtx).toEqual({ subjectProfile: undefined, db });
-      return { text: 'generated', task_run_id: 'run-1', cost_usd: 0.12, finishReason: 'end_turn' };
+      return {
+        text: 'generated',
+        task_run_id: 'run-1',
+        cost_usd: 0.12,
+        cost_basis: 'reported',
+        cost_ref: 'sdk:total_cost_usd',
+        finishReason: 'end_turn',
+      };
     });
 
     try {
@@ -133,6 +140,8 @@ describe('run_task', () => {
         text: 'generated',
         task_run_id: 'run-1',
         cost_usd: 0.12,
+        cost_basis: 'reported',
+        cost_ref: 'sdk:total_cost_usd',
         finish_reason: 'end_turn',
       });
       expect(events).toEqual(['schema', 'prepare', 'runner']);

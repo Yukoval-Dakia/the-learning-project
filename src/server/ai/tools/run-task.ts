@@ -17,7 +17,9 @@ export const RunTaskOutputSchema = z.object({
   task_kind: z.string(),
   text: z.string(),
   task_run_id: z.string().nullable(),
-  cost_usd: z.number(),
+  cost_usd: z.number().nullable(),
+  cost_basis: z.enum(['reported', 'estimated', 'unknown']),
+  cost_ref: z.string(),
   finish_reason: z.string().nullable(),
 });
 
@@ -51,7 +53,9 @@ export const runTaskTool: DomainTool<RunTaskInput, RunTaskOutput> = {
       task_kind: input.task_kind,
       text: result.text,
       task_run_id: result.task_run_id ?? null,
-      cost_usd: result.cost_usd ?? 0,
+      cost_usd: result.cost_usd ?? null,
+      cost_basis: result.cost_basis,
+      cost_ref: result.cost_ref,
       finish_reason: result.finishReason ?? null,
     };
   },

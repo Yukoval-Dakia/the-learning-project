@@ -506,6 +506,7 @@ export async function writeCopilotReply(
   return primaryView ? { replyEventId, cleanedReply, primaryView } : { replyEventId, cleanedReply };
 }
 
+type CopilotRunnerResult = Pick<RunTaskResult, 'task_run_id' | 'text' | 'structured_output'>;
 type RunAgentTaskFn = (
   kind: string,
   input: unknown,
@@ -529,12 +530,13 @@ type RunAgentTaskFn = (
     canUseTool?: Parameters<typeof runAgentTask>[2]['canUseTool'];
     outputFormat?: Parameters<typeof runAgentTask>[2]['outputFormat'];
   },
-) => Promise<RunTaskResult>;
+) => Promise<CopilotRunnerResult>;
 // YUK-266 (C1) — swappable streaming agent runner. Streams text deltas to
 // `onDelta` then resolves the full StreamCollectResult (text + task_run_id + the
 // optional partial/error degrade flags). Defaults to streamTaskCollecting; unit
 // tests inject a vi.fn that calls onDelta then resolves a fixture so the {}-stub
 // db is never touched. Mirrors RunAgentTaskFn's ctx shape + adds the onDelta arg.
+type CopilotStreamResult = Pick<StreamCollectResult, 'task_run_id' | 'text' | 'partial' | 'error'>;
 type StreamAgentTaskFn = (
   kind: string,
   input: unknown,
@@ -554,7 +556,7 @@ type StreamAgentTaskFn = (
     onTaskEvent?: Parameters<typeof streamTaskCollecting>[2]['onTaskEvent'];
   },
   onDelta: (text: string) => void,
-) => Promise<StreamCollectResult>;
+) => Promise<CopilotStreamResult>;
 type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 // YUK-198 — swappable Tavily MCP builder. Defaults to the env-gated
 // buildTavilyMcpServer; unit tests inject a fixture (or null) instead of

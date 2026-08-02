@@ -26,6 +26,8 @@ describe('bound runTask adapters', () => {
     finishReason: 'end_turn',
     usage: { inputTokens: 2, outputTokens: 3 },
     cost_usd: 0.01,
+    cost_basis: 'reported',
+    cost_ref: 'sdk:total_cost_usd',
     structured_output: { answer: 42 },
   };
 
@@ -78,9 +80,13 @@ describe('bound runTask adapters', () => {
       text: 'answer',
       task_run_id: 'run-1',
       cost_usd: 0.01,
+      cost_basis: 'reported',
+      cost_ref: 'sdk:total_cost_usd',
       structured_output: { answer: 42 },
     });
     expect(Object.keys(result).sort()).toEqual([
+      'cost_basis',
+      'cost_ref',
       'cost_usd',
       'structured_output',
       'task_run_id',

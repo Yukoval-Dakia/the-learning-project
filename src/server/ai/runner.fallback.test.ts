@@ -44,8 +44,12 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const logMock = vi.hoisted(() => ({
+  settlementShouldFail: false,
+  settlementResults: [] as boolean[],
+  terminalStatuses: [] as string[],
   started: vi.fn(async (_db: unknown, _row: unknown) => {}),
   finished: vi.fn(async (_db: unknown, _row: unknown) => {}),
+  retried: vi.fn(async (_db: unknown, _id: string) => true),
   cost: vi.fn(async (_db: unknown, _row: unknown) => {}),
   tool: vi.fn(async (_db: unknown, _row: unknown) => 'tool-log-id'),
 }));
@@ -54,7 +58,52 @@ vi.mock('@/server/ai/log', () => ({
   logMissingMcpServersWarning: vi.fn(),
   writeAiTaskRunStarted: logMock.started,
   writeAiTaskRunFinished: logMock.finished,
+  writeAiTaskRunRetried: vi.fn(async (db: unknown, id: string) => {
+    const call = logMock.finished.mock.calls.find(([, row]) => (row as { id?: string }).id === id);
+    if (!call) return false;
+    (call[1] as { finish_reason?: string }).finish_reason = 'error_retried';
+    await logMock.retried(db, id);
+    return true;
+  }),
   writeCostLedger: logMock.cost,
+  writeAiTaskAttemptFinished: vi.fn(
+    async (
+      db: unknown,
+      row: {
+        id: string;
+        status: string;
+        finish_reason: string;
+        usage: unknown;
+        cost_truth: { amountUsd: number | null; basis: string; ref: string };
+        error_message?: string;
+        outcome: string;
+      },
+    ) => {
+      logMock.terminalStatuses.push(row.status);
+      const queuedResult = logMock.settlementResults.shift();
+      if (queuedResult === false || (queuedResult === undefined && logMock.settlementShouldFail)) {
+        return false;
+      }
+      await logMock.finished(db, {
+        id: row.id,
+        status: row.status,
+        finish_reason: row.finish_reason,
+        usage: row.usage,
+        cost_usd: row.cost_truth.amountUsd ?? undefined,
+        cost_basis: row.cost_truth.basis,
+        cost_ref: row.cost_truth.ref,
+        error_message: row.error_message,
+      });
+      await logMock.cost(db, {
+        task_run_id: row.id,
+        cost: row.cost_truth.amountUsd,
+        cost_basis: row.cost_truth.basis,
+        cost_ref: row.cost_truth.ref,
+        outcome: row.outcome,
+      });
+      return true;
+    },
+  ),
   writeToolCallLog: logMock.tool,
 }));
 
@@ -139,8 +188,12 @@ function resetAll() {
   mockSdk.beforeYield = undefined;
   logMock.started.mockClear();
   logMock.finished.mockClear();
+  logMock.retried.mockClear();
   logMock.cost.mockClear();
   logMock.tool.mockClear();
+  logMock.settlementShouldFail = false;
+  logMock.settlementResults = [];
+  logMock.terminalStatuses = [];
   process.env.XIAOMI_API_KEY = 'sk-test-key';
 }
 
@@ -273,7 +326,10 @@ describe('runTask — YUK-576 transient retry loop', () => {
     expect(finished.status).toBe('failure');
     expect(finished.finish_reason).toBe('error');
     expect(finished.error_message).toContain('API Error: 500');
-    expect(logMock.cost).not.toHaveBeenCalled();
+    expect(logMock.cost).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ outcome: 'failed_retryable' }),
+    );
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('task_run_success_with_error_flag'),
       expect.objectContaining({ api_error_status: 500 }),
@@ -297,10 +353,17 @@ describe('runTask — YUK-576 transient retry loop', () => {
     const finish1 = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     expect(finish1.status).toBe('failure');
     expect(finish1.finish_reason).toBe('error_retried');
-    // Attempt 2 finished success; exactly one ledger row (success attempts only).
+    expect(logMock.retried).toHaveBeenCalledTimes(1);
+    // Attempt 2 finished success; each SDK invocation owns one attempt ledger.
     const finish2 = logMock.finished.mock.calls[1][1] as Record<string, unknown>;
     expect(finish2.status).toBe('success');
-    expect(logMock.cost).toHaveBeenCalledTimes(1);
+    expect(logMock.cost).toHaveBeenCalledTimes(2);
+    const startedIds = logMock.started.mock.calls.map(([, row]) => (row as { id: string }).id);
+    const ledgerIds = logMock.cost.mock.calls.map(
+      ([, row]) => (row as { task_run_id: string }).task_run_id,
+    );
+    expect(new Set(startedIds).size).toBe(2);
+    expect(ledgerIds).toEqual(startedIds);
     // R3 breadcrumb fired.
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('task_run_transient_retry'),
@@ -314,6 +377,71 @@ describe('runTask — YUK-576 transient retry loop', () => {
     expect(o2.model).toBe(o1.model);
     expect(o2.env.ANTHROPIC_BASE_URL).toBe(o1.env.ANTHROPIC_BASE_URL);
     expect(o2.env.ANTHROPIC_API_KEY).toBe(o1.env.ANTHROPIC_API_KEY);
+  });
+
+  it('keeps the first failure as error when the planned retry cannot create its durable row', async () => {
+    mockSdk.messageQueues = [[API_ERROR_CONN_RESULT], [successResult('never-started')]];
+    logMock.started
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('retry start row unavailable'));
+
+    await expect(
+      runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true }),
+    ).rejects.toThrow('retry start row unavailable');
+
+    expect(mockSdk.capturedOptions).toHaveLength(1);
+    const first = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
+    expect(first.finish_reason).toBe('error');
+    expect(logMock.retried).not.toHaveBeenCalled();
+    expect(logMock.cost).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start another provider query when the failed attempt truth cannot settle', async () => {
+    mockSdk.messageQueues = [[API_ERROR_CONN_RESULT], [successResult('must-not-run')]];
+    logMock.settlementShouldFail = true;
+
+    await expect(
+      runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true }),
+    ).rejects.toThrow(/socket connection was closed/);
+
+    expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(logMock.started).toHaveBeenCalledTimes(1);
+    expect(logMock.terminalStatuses).toEqual(['failure']);
+    expect(logMock.retried).not.toHaveBeenCalled();
+  });
+
+  it('records one bounded failure fallback when success settlement rolls back', async () => {
+    const afterRun = vi.fn(async () => {});
+    mockSdk.messageQueues = [[successResult('must-not-return')]];
+    logMock.settlementResults = [false, true];
+
+    await expect(
+      runTask(NO_RETRY_KIND, { q: 1 }, { db: fakeDb, middleware: { afterRun } }),
+    ).rejects.toThrow(/cannot report success before durable attempt settlement/);
+
+    expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(logMock.terminalStatuses).toEqual(['success', 'failure']);
+    expect(logMock.finished).toHaveBeenCalledTimes(1);
+    expect(logMock.finished.mock.calls[0][1]).toMatchObject({ status: 'failure' });
+    expect(logMock.cost).toHaveBeenCalledTimes(1);
+    expect(logMock.cost.mock.calls[0][1]).toMatchObject({ outcome: 'failed_permanent' });
+    expect(afterRun).not.toHaveBeenCalled();
+  });
+
+  it('does not return success or run afterRun when the attempt truth cannot settle', async () => {
+    const afterRun = vi.fn(async () => {});
+    mockSdk.messageQueues = [[successResult('must-not-return')]];
+    logMock.settlementShouldFail = true;
+
+    await expect(
+      runTask(NO_RETRY_KIND, { q: 1 }, { db: fakeDb, middleware: { afterRun } }),
+    ).rejects.toThrow(/cannot report success before durable attempt settlement/);
+
+    expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(logMock.terminalStatuses).toEqual(['success', 'failure']);
+    expect(afterRun).not.toHaveBeenCalled();
+    expect(logMock.finished).not.toHaveBeenCalled();
+    expect(logMock.cost).not.toHaveBeenCalled();
   });
 
   it('opt-in + permanent api error (400 fixture) → throws immediately, no retry, finish_reason=error', async () => {
@@ -374,7 +502,7 @@ describe('runTask — YUK-576 transient retry loop', () => {
     const finish2 = logMock.finished.mock.calls[1][1] as Record<string, unknown>;
     expect(finish1.finish_reason).toBe('error_retried');
     expect(finish2.finish_reason).toBe('error');
-    expect(logMock.cost).not.toHaveBeenCalled(); // no success attempt → no ledger rows
+    expect(logMock.cost).toHaveBeenCalledTimes(2);
   });
 
   it('transient failure WITHOUT opt-in → no retry (ctx gate, mustFix#6)', async () => {
@@ -470,7 +598,14 @@ describe('runTask — GLOBAL stream_no_terminal guard (YUK-576, deliberate behav
 
     const finish = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     expect(finish.status).toBe('failure');
-    expect(logMock.cost).not.toHaveBeenCalled(); // no ledger row for a non-run
+    expect(logMock.cost).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        cost: null,
+        cost_basis: 'unknown',
+        outcome: 'failed_retryable',
+      }),
+    );
   });
 
   it('opt-in: stream_no_terminal is transient → retried once', async () => {

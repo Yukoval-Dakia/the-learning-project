@@ -143,11 +143,12 @@ export interface ResearchMeetingDirectorResult {
   outcome: 'success' | 'partial' | 'failure';
 }
 
+type DirectorRunResult = Pick<RunTaskResult, 'task_run_id' | 'cost_usd'>;
 type RunAgentTaskFn = (
   kind: string,
   input: unknown,
   ctx: RunAgentTaskCtx,
-) => Promise<RunTaskResult>;
+) => Promise<DirectorRunResult>;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
 type GetFailureAttemptsFn = typeof getFailureAttempts;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
@@ -390,7 +391,7 @@ export async function runResearchMeetingDirector(
     },
   };
 
-  let taskResult: RunTaskResult | undefined;
+  let taskResult: DirectorRunResult | undefined;
   let degraded = false;
   let degradeError: string | undefined;
   try {

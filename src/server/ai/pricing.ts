@@ -1,4 +1,6 @@
-// YUK-359 — local cost fallback for endpoints that don't surface total_cost_usd.
+// YUK-359 / YUK-841 — versioned local estimate for endpoints that don't expose
+// trustworthy total_cost_usd. The amount and its basis must travel together;
+// zero is never used as a synonym for "unknown".
 //
 // The xiaomi/mimo endpoint does NOT return SDKResultSuccess.total_cost_usd (see
 // runner.ts comment), so cost_ledger.cost was hardcoded to 0 for ~99% of calls.
@@ -6,8 +8,9 @@
 // mirroring the GLM-OCR precedent (tencent_ocr_extract.ts calculateGlmOcrCost:
 // module-local function + hardcoded rate + comment).
 //
-// Returns USD. Unknown models → 0 (no guessing; an unpriced model is observably
-// 0, not a fabricated number — consistent with the project's evidence-first line).
+// Unknown models are classified as { basis:'unknown', amountUsd:null } by the
+// attempt-cost module. localCostUsd() remains the arithmetic primitive for
+// known pricebook entries only.
 //
 // ⚠️ UNIT PRICES ARE PLACEHOLDERS PENDING OWNER CONFIRMATION (phase-deferred per
 // CLAUDE.md "占位代码必须留注释"). mimo is a self-hosted xiaomi endpoint with no
@@ -38,27 +41,20 @@ const MIMO_BASE: ModelPricing = {
   cacheCreationPerM: 0.375, // PLACEHOLDER — typically ~1.25× input
 };
 
-// YUK-365 — Opus 4.8 via the Claude Max subscription lane (provider
-// 'anthropic-sub', AI_PROVIDER_OVERRIDE). Subscription usage is a FLAT monthly
-// fee with NO per-token charge, so the marginal per-call cost is 0 — recording 0
-// is the honest number, not a guess (consistent with the evidence-first line:
-// the cost is real, it's just not attributable per-token). If the owner ever
-// routes this lane at the pay-as-you-go Anthropic API instead, the SDK surfaces
-// total_cost_usd and effectiveCostUsd() prefers that reported value over this 0.
-const ANTHROPIC_SUB_FLAT: ModelPricing = {
-  inputPerM: 0, // flat subscription — no per-token input charge
-  outputPerM: 0, // flat subscription — no per-token output charge
-  cacheReadPerM: 0,
-  cacheCreationPerM: 0,
-};
+/** Version is embedded in every estimate ref so historical rows stay explainable. */
+export const ATTEMPT_PRICEBOOK_VERSION = '2026-08-02-placeholder-v1';
+export const ANTHROPIC_SUB_CONTRACT_REF = 'contract:claude-max-subscription/2026-08-02';
 
-// Model ids hit at runtime. The two mimo ids cover the default (xiaomi) routing;
-// claude-opus-4-8 covers the YUK-365 subscription-OAuth lane.
+// Model ids covered by this token pricebook. Subscription allocation is a
+// separate contract in attempt-cost.ts and deliberately does not live here.
 const PRICING_BY_MODEL: Record<string, ModelPricing> = {
   'mimo-v2.5': MIMO_BASE,
   'mimo-v2.5-pro': MIMO_BASE,
-  'claude-opus-4-8': ANTHROPIC_SUB_FLAT,
 };
+
+export function hasLocalPricing(model: string): boolean {
+  return Object.hasOwn(PRICING_BY_MODEL, model);
+}
 
 export interface TokenCounts {
   inputTokens: number;
@@ -70,13 +66,13 @@ export interface TokenCounts {
 }
 
 /**
- * Compute USD cost for a model run from token counts. Unknown model → 0.
+ * Compute USD cost for a model run from token counts. Unknown model → null.
  * Cache fields default to 0 (mimo may not report them; arithmetic degrades to
  * input+output two-bucket pricing, semantics intact).
  */
-export function localCostUsd(model: string, tokens: TokenCounts): number {
+export function localCostUsd(model: string, tokens: TokenCounts): number | null {
   const p = PRICING_BY_MODEL[model];
-  if (!p) return 0;
+  if (!p) return null;
   const cacheRead = tokens.cacheReadTokens ?? 0;
   const cacheCreation = tokens.cacheCreationTokens ?? 0;
   return (
@@ -101,19 +97,4 @@ export function glmChatCostCny(promptTokens: number, completionTokens: number): 
     (promptTokens * GLM_CHAT_INPUT_PER_M_CNY + completionTokens * GLM_CHAT_OUTPUT_PER_M_CNY) /
     1_000_000
   );
-}
-
-/**
- * The cost to record in cost_ledger (USD): trust the endpoint's reported cost
- * when it surfaces one (> 0), else fall back to local token×price. This is the
- * runner's single decision point — mimo reports 0/undefined → local fallback;
- * an endpoint that does report (e.g. real Anthropic) → its number wins.
- */
-export function effectiveCostUsd(
-  model: string,
-  tokens: TokenCounts,
-  reportedCostUsd: number | undefined,
-): number {
-  if (reportedCostUsd != null && reportedCostUsd > 0) return reportedCostUsd;
-  return localCostUsd(model, tokens);
 }

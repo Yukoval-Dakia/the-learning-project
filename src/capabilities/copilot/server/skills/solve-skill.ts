@@ -37,7 +37,7 @@ type RunAgentTaskFn = (
   kind: string,
   input: unknown,
   ctx: Parameters<typeof runAgentTask>[2],
-) => Promise<RunTaskResult>;
+) => Promise<Pick<RunTaskResult, 'task_run_id' | 'text'>>;
 
 export interface RunSolveSkillParams {
   db: Db;

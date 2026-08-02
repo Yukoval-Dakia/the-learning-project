@@ -122,6 +122,7 @@ export interface CoachRunResult {
 }
 
 type ProposalSnapshotRow = Pick<ProposalInboxRow, 'id' | 'status'>;
+type CoachTaskRunResult = Pick<RunTaskResult, 'task_run_id' | 'text' | 'cost_usd'>;
 type RunAgentTaskFn = (
   kind: string,
   input: unknown,
@@ -130,7 +131,7 @@ type RunAgentTaskFn = (
     mcpServers?: Record<string, SdkMcpServer>;
     allowedTools?: string[];
   },
-) => Promise<RunTaskResult>;
+) => Promise<CoachTaskRunResult>;
 type ListProposalInboxRowsFn = (db: Db) => Promise<ProposalSnapshotRow[]>;
 type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
