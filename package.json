@@ -51,6 +51,7 @@
     "audit:dependencies": "pnpm audit --prod --audit-level=high",
     "audit:api-contracts": "tsx scripts/audit-api-contracts.ts",
     "audit:capability-boundaries": "tsx scripts/audit-capability-boundaries.ts",
+    "audit:capability-boundaries:snapshot": "tsx scripts/audit-capability-boundaries.ts --print-dependency-baseline",
     "audit:partition": "tsx scripts/audit-test-partition.ts",
     "audit:profile": "tsx scripts/audit-profile.ts",
     "audit:learner-copy": "tsx scripts/audit-learner-copy.ts",

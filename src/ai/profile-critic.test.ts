@@ -10,6 +10,7 @@ import { getTaskSystemPrompt } from './task-prompts';
 // partition). The SDK boundary is mocked so no `claude` binary is spawned.
 const trace = vi.hoisted(() => ({
   started: vi.fn(async () => {}),
+  settled: vi.fn(async () => true),
   finished: vi.fn(async () => {}),
   cost: vi.fn(async () => {}),
   toolCall: vi.fn(async () => {}),
@@ -18,6 +19,8 @@ const trace = vi.hoisted(() => ({
 vi.mock('@/server/ai/log', () => ({
   logMissingMcpServersWarning: vi.fn(),
   writeAiTaskRunStarted: trace.started,
+  writeAiTaskAttemptFinished: trace.settled,
+  writeAiTaskRunRetried: vi.fn(async () => true),
   writeAiTaskRunFinished: trace.finished,
   writeCostLedger: trace.cost,
   writeToolCallLog: trace.toolCall,
@@ -26,11 +29,15 @@ vi.mock('@/server/ai/log', () => ({
 const mockSdk = vi.hoisted(() => ({ messages: [] as unknown[] }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: vi.fn(() => {
-    const iter = (async function* () {
-      for (const m of mockSdk.messages) yield m;
-    })();
-    return iter;
+  startup: vi.fn(async () => {
+    return {
+      query: vi.fn(() =>
+        (async function* () {
+          for (const m of mockSdk.messages) yield m;
+        })(),
+      ),
+      close: vi.fn(),
+    };
   }),
   createSdkMcpServer: vi.fn(() => ({ type: 'sdk', name: '', instance: {} })),
   tool: vi.fn((name: string, description: string) => ({ name, description })),
@@ -76,6 +83,7 @@ describe('ProfileCriticTask via runner (RL6 proposal-only + trace-written)', () 
     savedXiaomiKey = process.env.XIAOMI_API_KEY;
     process.env.XIAOMI_API_KEY = 'sk-test-key';
     trace.started.mockClear();
+    trace.settled.mockClear();
     trace.finished.mockClear();
     trace.cost.mockClear();
   });
@@ -104,10 +112,9 @@ describe('ProfileCriticTask via runner (RL6 proposal-only + trace-written)', () 
     );
 
     // Affirmative trace-written assertion (evidence-first; the trace is NOT a
-    // domain mutation): each ai-run trace fn fired once.
+    // domain mutation): start + the atomic terminal/ledger finalizer each fire once.
     expect(trace.started).toHaveBeenCalledTimes(1);
-    expect(trace.cost).toHaveBeenCalledTimes(1);
-    expect(trace.finished).toHaveBeenCalledTimes(1);
+    expect(trace.settled).toHaveBeenCalledTimes(1);
 
     // RL6 proposal-only: the Critic never serializes/writes profile.ts and never
     // mutates a domain row. (The serializer is only ever called by the --write

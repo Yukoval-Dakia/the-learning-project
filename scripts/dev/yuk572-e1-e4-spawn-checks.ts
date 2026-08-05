@@ -190,6 +190,8 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
   ]);
 
   const now = new Date();
+  const toolContextTaskRunId = `e_check_tool_${now.getTime()}`;
+  const lifecycleAbortController = new AbortController();
   const capture = createFindingsCapture();
   const evidence = buildEvidenceServer({
     db,
@@ -222,7 +224,8 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
     failureAttempts: [],
     caps: createDirectorCaps(),
     triggerEventId: `e_check_trigger_${now.getTime()}`,
-    toolContextTaskRunId: `e_check_tool_${now.getTime()}`,
+    toolContextTaskRunId,
+    parentLifecycleSignal: lifecycleAbortController.signal,
   });
   const scout = buildEvidenceScoutAgentDefinition({ prompt: EVIDENCE_SCOUT_CHARTER });
 
@@ -264,6 +267,8 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
       agents: spawnContract.agents,
       hooks: spawnContract.hooks,
       canUseTool: spawnContract.canUseTool,
+      taskRunId: toolContextTaskRunId,
+      lifecycleAbortController,
     },
   );
 

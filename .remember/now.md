@@ -1,38 +1,39 @@
-# 当前 handoff — 2026-08-02 YUK-596 actual-output P1 repair wave
+# 当前 handoff — 2026-08-03 Architecture Deepening FULL / PR #1154 reconciliation
 
-## Delivered
+## Owner direction and tracker
 
-- YUK-757 / PR #1149：durable subtask/backstage contract，merge 到 `main@54d9bf62`。
-- YUK-596 causal-history / PR #1150：merge 到 `main@915fd5d4`。
-- YUK-596 liveness / PR #1151：exact-head CI 后 merge 到 `main@c6dd37bf`。
-- YUK-596 in-loop Stop / PR #1152：exact-head PR gate + manual full workflow 后 merge 到
-  `main@ae82906510da102cc0ebae68ae08993999cdc888`。
+- Owner：「直接启动 FULL」；硬约束：「gate 不要在本地跑」。
+- Linear project：`Architecture Deepening FULL — 语义、成本与运行所有权`（In Progress）。
+- F0：YUK-840、YUK-841、YUK-842 均 Done；当前收口 PR #1154 的 LIGHT evidence
+  certification 代码，YUK-832 产品 gate 仍 HOLD。
 
-## Actual burn-in
+## Delivered and production state
 
-- worktree：`/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-596-burnin`
-- branch：`codex/yuk-596-burnin-evidence`
-- base：`main@ae82906510da102cc0ebae68ae08993999cdc888`
-- 30 个复杂 actual-provider cases，25 done + 5 designed cancel；30/30 mechanical assertions pass。
-- provider/model：`xiaomi/mimo-v2.5-pro`；25 successful ledger runs；2,100,674 input tokens、
-  118,004 output tokens、USD 6.685758。
-- 29 ai runs 中 25 有 thinking aggregate：85 blocks / 181,364 chars；没有 raw reasoning_content。
-- 240 DomainTool calls：229 read、9 propose、2 write。
-- F01–F05 Stop 独立 review 无 P0/P1；F05 在 materializing write 后 cancel，正确保留写入并
-  fail-closed 为 `checkpoint_safe:false`。
-- 完整报告与 artifact digests：
-  `docs/planning/2026-08-02-yuk-596-actual-burnin.md`。
+- 原始 admission PR #1157 已 merge：main `34af0f75b8b7bfc1ac6b49826f9c6ba94c1012c8`；
+  exact-head CI 全绿，独立审查无 P0/P1。
+- 本地 prompt/config 物化修复 PR #1158 已 merge：main
+  `c76ccf57edb88b7af48643fd61858534d9ddfbfb`；exact-head CI 全绿，独立审查无 P0/P1。
+- startup/steady lease 修复 PR #1159 已 merge：main
+  `d4782f36cc36d1b47de1ff4842e50b27d9b60fc5`；exact-head CI 与独立审批全绿。
+- production app/worker 当前同镜像
+  `sha256:f4add25574b89df2fbc3e579fd90704aeddf3daf1a6ccee1c6a678838b5d2687`，
+  都是 `observe`，policy 为 xiaomi concurrency=4 / starts=30 / queue=32 / wait=30s；health 正常、
+  restart=0。Postgres/tunnel 未重启，migration 0088 已应用。
+- rollback：`the-learning-project-app:yuk842-prestartup-202608030000` 指向部署前 observe image
+  `sha256:a7839883...`；exact merged image 另有 `yuk842-d4782f36cc36` tag。
+- 尚未切 `enforce`；本轮也不会部署 #1154 combined image。
 
-## Product findings
+## Production evidence and second root cause
 
-- **YUK-832**：event/action exact filter、sibling causality、bounded coverage 与 due/future read
-  让 Copilot 反转已核验事实。
-- **YUK-833**：`author_artifact` 只做 schema/HTML size，矛盾题组可直接写入；需复用泛化
-  validator 做 author/update pre-write gate。
-- **YUK-834**：模型把 destructive/不存在能力降为 LIGHT，虚构 rollback/SQL，并扩张 owner scope。
-- **YUK-835**：直出题解/题包未运行 Solution/Quiz/Teaching validator，却声称自检通过。
-- **YUK-836**：correction request 忽略直接上一轮并反转已注入 session 事实。
-- YUK-814 的 owner mock waiver 保持不变；没有重开 YUK-814。
+- 两次真实 API-originated Copilot 请求都 HTTP 200 且用户结果被 observe fail-open 保护。
+- 第一次证明 acquire 后的一次性 skill/config 物化会阻塞 heartbeat；PR #1158 已把这些工作移到
+  admission 前。
+- PR #1158 部署后的第一次冷请求仍在 acquire 后约 16.2s 才恢复 event loop，原 15s lease 到期并
+  记录 `lease_lost`。prompt/options 已完成，剩余 stall 位于 SDK `query()` 同步 CLI spawn/initialize。
+- SDK 0.3.220 的正式 seam 是 `startup({options, initializeTimeoutMs}) → WarmQuery`；`startup()` 只
+  spawn/initialize，不发送 prompt，`WarmQuery.query(prompt)` 才写 prompt。CLI binary 约 272MB。
+- 原 lifecycle 还在 `sdkQuery()` 前启动 model timer；16s event-loop stall 也会饿死 10s task timer，
+  因而仅延长 lease 不能闭合 runner correctness。
 
 ## YUK-832 current gate
 
@@ -91,9 +92,22 @@
 5. 修复后才用同一复杂 mock + actual-provider rerun；targeted local checks，完整 `pnpm test` 仅
    GitHub CI。
 6. 上述 P1 清零后提交 UI design pre-flight；owner 明确批准前不写 UI、不翻 expansion。
+## Validation boundary and next action
 
-## Runtime cleanup
+- YUK-842 cold evidence 已闭合：API/worker 主 attempt 都 released/success/cost-truth matched；真实
+  MemoryBrief heartbeat 跨过 15s，最终 AI/job/admission `0|0|0`，Linear 已 Done。
+- PR #1154 正在普通 merge `origin/main@d4782f36`；必须同时保留 90s HTTP absolute deadline、
+  startup/steady permit、atomic attempt settlement 与 evidence buffer/review/fail-closed。
+- 当前 merge 后只跑 exact-head GitHub CI；不运行本地 test/typecheck/lint/build/audit gate。
+- unresolved high/major review 必须在真实合并代码上修复或用 child-only loom read 等确定性测试证伪；
+  exact-head 全绿、无 P0/P1 后才 merge。
+- #1154 只合并代码，不部署 combined image；YUK-832 保持 HOLD，YUK-839 checkpoint 仍 parked。
 
-- burn-in API/worker 已 SIGINT clean stop；clone Postgres volume 暂保留，供 P1 actual rerun。
-- 原始 cases/results 位于本地 mode 0600 `/tmp/tlp-burnin-20260802/`，不提交。
-- 原始 repo worktree 仍有用户/其他 lane 的未提交内容；不要 reset、sync 或覆盖。
+## Explicit residual scope
+
+- YUK-845 承接 DashScope embeddings、Mem0 fan-out、direct GLM/OCR、Tencent OCR 与 manual preflight；
+  当前不能宣称产品级 HTTP capacity 已统一治理。
+- production `enforce` 仍需更长 observe 证据、全调用进程同 binary/fingerprint、application-level
+  quiesce/drain 与 restore protocol；本轮冷证据干净也不自动授权切 enforce。
+- 若任何 owner abort/kill/stop 不可证明正常 drain，恢复/切换等待下界是 process stop time + 45s
+  startup budget + deployed max execution timeout + 30s abort grace；DB `hard_reclaim_at` 只能延长。

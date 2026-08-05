@@ -2,11 +2,19 @@
 
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
-> 更新于：2026-08-02
-> **【YUK-832 active：sealed evidence reply certification】**
+> 更新于：2026-08-03
+> **【PR #1154 active：merge YUK-842 lifecycle + sealed evidence certification】**
 
 ## NOW
 
+- **Architecture FULL Phase 0 实现已闭合。** YUK-840/841/842 均 Done；YUK-842 PR #1159
+  exact-head CI 全绿并 merge 为 `main@d4782f36`。exact merged image `sha256:f4add255...`
+  只替换 production app/worker，仍为 `observe`；真实 API/worker attempt、cost ledger、pg-boss 与
+  20s heartbeat 证据闭合，最终 running/runnable/live-admission=`0|0|0`。
+- **PR #1154 正在收口。** branch `codex/yuk-832-evidence-readers` 普通 merge 最新 `origin/main`；
+  resolution 必须同时保留 YUK-842 startup/steady permit、90s HTTP absolute deadline、atomic cost
+  settlement，以及 #1154 的 toolTrace、全文 buffer、blind review/comparator fail-closed 与 failure usage
+  lower bound。合并代码不部署，YUK-832 产品仍 HOLD。
 - **YUK-757 已 Done。** PR #1149 exact-head CI 全绿后 merge 到
   `main@54d9bf620cf74d07633d72233c90cb9763516643`；durable Copilot 已具备
   backstage subagent、前台子任务投影、redelivery repair 与失败恢复。
@@ -47,16 +55,17 @@
   read attempt 才跳过 paid validator；只要尝试过 read（即使失败）就进入 FULL 并 fail closed；只有
   `executed=true && error_reason=null` 的成功 read 可被引用。validator 内部 submission tools 与
   Tavily remote-MCP 不属于这个判断面。
-- 未在本机运行完整 `pnpm test`；后续仍只用 targeted local loop + exact-head GitHub CI。
+- 本轮不在本机运行 test/typecheck/lint/build/audit gate；合并验证只接受新 head 的 GitHub CI。
 
 ## NEXT
 
-1. 提交本次 r9 handoff 并等待 docs-only exact-head GitHub CI；PR #1154 保持开放，YUK-832 保持
-   In Progress / product HOLD，不用 mock、旧 head 或重复 A01 冒充通过。
-2. FULL 恢复只在 owner 重新提升 YUK-839 时执行；当前不增加 budget、不重跑 A01 或其他
-   actual-provider 样本。
-3. 按产品顺序推进 YUK-833/835 → YUK-834 → YUK-836；产品 P1 清零后再做 Dock/UI design
-   pre-flight。
+1. 完成 #1154 的 10 个 merge conflict，并在合并后的真实代码上修复或证伪 unresolved high/major
+   review；child loom DomainTool read 必须有确定性测试证明进入同一 sealed review gate。
+2. 普通 merge commit + push；只跑 exact-head GitHub CI 与独立 review。全绿且无 unresolved P0/P1
+   后 merge #1154，但不部署 combined image，YUK-832 保持 In Progress / product HOLD。
+3. FULL checkpoint 仍只在 owner 重新提升 YUK-839 时执行；当前不增加 provider budget、不重复 A01。
+4. #1154 合并后关闭 Phase 0，再启动 Phase 1 practice-owned failure-learning vertical；UI 仍需独立
+   design pre-flight。
 
 ## PARKED
 

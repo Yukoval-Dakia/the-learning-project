@@ -121,18 +121,35 @@ describe('run_task', () => {
       events.push('runner');
       expect(kind).toBe('GoalScopeTask');
       expect(input).toEqual({ prepared: { goal_title: 'Learn' } });
-      expect(callCtx).toEqual({ subjectProfile: undefined, db });
-      return { text: 'generated', task_run_id: 'run-1', cost_usd: 0.12, finishReason: 'end_turn' };
+      expect(callCtx).toEqual({
+        subjectProfile: undefined,
+        parentTaskRunId: 'tool-run',
+        providerSessionDeadlineAt: 567_890,
+        db,
+      });
+      return {
+        text: 'generated',
+        task_run_id: 'run-1',
+        cost_usd: 0.12,
+        cost_basis: 'reported',
+        cost_ref: 'sdk:total_cost_usd',
+        finishReason: 'end_turn',
+      };
     });
 
     try {
       await expect(
-        runTaskTool.execute(ctx, { task_kind: 'GoalScopeTask', intent: { goal_title: 'Learn' } }),
+        runTaskTool.execute(
+          { ...ctx, providerSessionDeadlineAt: 567_890 },
+          { task_kind: 'GoalScopeTask', intent: { goal_title: 'Learn' } },
+        ),
       ).resolves.toEqual({
         task_kind: 'GoalScopeTask',
         text: 'generated',
         task_run_id: 'run-1',
         cost_usd: 0.12,
+        cost_basis: 'reported',
+        cost_ref: 'sdk:total_cost_usd',
         finish_reason: 'end_turn',
       });
       expect(events).toEqual(['schema', 'prepare', 'runner']);

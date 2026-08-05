@@ -23,12 +23,14 @@ export interface AdminRunListRow {
   status: string;
   finish_reason: string | null;
   usage_json: { inputTokens: number; outputTokens: number };
-  cost_usd: number;
+  cost_usd: number | null;
+  cost_basis: 'reported' | 'estimated' | 'unknown' | null;
+  cost_ref: string | null;
   error_message: string | null;
   started_at: Date;
   finished_at: Date | null;
   duration_ms: number | null;
-  ledger_cost_usd: number;
+  ledger_cost_usd: number | null;
   ledger_rows: number;
   tool_call_count: number;
   pgboss_job_ids: string[];
@@ -51,6 +53,8 @@ export interface AdminRunTimelineEvent {
   iteration?: number;
   latency_ms?: number;
   cost?: number;
+  cost_basis?: 'reported' | 'estimated' | 'unknown' | null;
+  cost_ref?: string | null;
   tokens_in?: number;
   tokens_out?: number;
   outcome?: string;
@@ -70,6 +74,11 @@ export interface AdminCostDayRow {
   day: string;
   currency: string;
   cost: number;
+  reported_cost: number;
+  estimated_cost: number;
+  legacy_cost: number;
+  unknown_attempts: number;
+  legacy_rows: number;
   tokens_in: number;
   tokens_out: number;
   calls: number;
@@ -79,15 +88,33 @@ export interface AdminCostTaskRow {
   task_kind: string;
   currency: string;
   cost: number;
+  reported_cost: number;
+  estimated_cost: number;
+  legacy_cost: number;
+  unknown_attempts: number;
+  legacy_rows: number;
   tokens_in: number;
   tokens_out: number;
   calls: number;
+}
+
+export interface AdminCostTruthRow {
+  currency: string;
+  entry_kind: 'legacy' | 'attempt';
+  cost_basis: 'reported' | 'estimated' | 'unknown' | null;
+  cost_ref: string | null;
+  cost: number;
+  tokens_in: number;
+  tokens_out: number;
+  calls: number;
+  unknown_attempts: number;
 }
 
 export interface AdminCostResponse {
   days_window: number;
   days: AdminCostDayRow[];
   by_task: AdminCostTaskRow[];
+  by_truth: AdminCostTruthRow[];
 }
 
 export interface AdminFailureSample {
@@ -203,7 +230,19 @@ function projectRun(
   ledgerRows: Array<typeof cost_ledger.$inferSelect>,
   toolCallCount: number,
 ): AdminRunListRow {
-  const ledgerCost = ledgerRows.reduce((sum, entry) => sum + entry.cost, 0);
+  // Once a run has classified attempt truth, only its attempt projection may
+  // contribute money. Keep legacy correlation rows in ledger_rows/job links
+  // for diagnosis, but never let them turn unknown into zero or double-count a
+  // reported/estimated attempt. Pre-YUK-841 runs still use their legacy rows.
+  const costProjectionRows =
+    row.cost_basis === null
+      ? ledgerRows
+      : ledgerRows.filter((entry) => entry.entry_kind === 'attempt');
+  const knownLedgerCosts = costProjectionRows
+    .map((entry) => entry.cost)
+    .filter((cost): cost is number => cost !== null);
+  const ledgerCost =
+    knownLedgerCosts.length > 0 ? knownLedgerCosts.reduce((sum, cost) => sum + cost, 0) : null;
   return {
     id: row.id,
     task_kind: row.task_kind,
@@ -213,7 +252,16 @@ function projectRun(
     status: row.status,
     finish_reason: row.finish_reason,
     usage_json: row.usage_json,
-    cost_usd: row.cost_usd ?? ledgerCost,
+    // A classified terminal attempt is authoritative even when the amount is
+    // unknown/null. Only pre-YUK-841 rows (basis NULL) may use legacy fallback.
+    cost_usd: row.cost_basis !== null ? row.cost_usd : (row.cost_usd ?? ledgerCost),
+    cost_basis:
+      row.cost_basis === 'reported' ||
+      row.cost_basis === 'estimated' ||
+      row.cost_basis === 'unknown'
+        ? row.cost_basis
+        : null,
+    cost_ref: row.cost_ref,
     error_message: row.error_message,
     started_at: row.started_at,
     finished_at: row.finished_at,
@@ -336,7 +384,14 @@ export async function getAdminRunTimeline(
         at: entry.occurred_at,
         label: entry.outcome,
         id: entry.id,
-        cost: entry.cost,
+        cost: entry.cost ?? undefined,
+        cost_basis:
+          entry.cost_basis === 'reported' ||
+          entry.cost_basis === 'estimated' ||
+          entry.cost_basis === 'unknown'
+            ? entry.cost_basis
+            : null,
+        cost_ref: entry.cost_ref,
         tokens_in: entry.tokens_in,
         tokens_out: entry.tokens_out,
         outcome: entry.outcome,
@@ -352,6 +407,13 @@ export async function getAdminRunTimeline(
       id: runRow.id,
       outcome: runRow.finish_reason ?? runRow.status,
       cost: runRow.cost_usd ?? undefined,
+      cost_basis:
+        runRow.cost_basis === 'reported' ||
+        runRow.cost_basis === 'estimated' ||
+        runRow.cost_basis === 'unknown'
+          ? runRow.cost_basis
+          : null,
+      cost_ref: runRow.cost_ref,
     });
   }
   timeline.sort(
@@ -382,6 +444,11 @@ export async function getAdminCost(
       day: sql<string>`date_trunc('day', ${cost_ledger.occurred_at})::date::text`,
       currency: cost_ledger.currency,
       cost: sql<number>`COALESCE(SUM(${cost_ledger.cost}), 0)::real`,
+      reported_cost: sql<number>`COALESCE(SUM(${cost_ledger.cost}) FILTER (WHERE ${cost_ledger.cost_basis} = 'reported'), 0)::real`,
+      estimated_cost: sql<number>`COALESCE(SUM(${cost_ledger.cost}) FILTER (WHERE ${cost_ledger.cost_basis} = 'estimated'), 0)::real`,
+      legacy_cost: sql<number>`COALESCE(SUM(${cost_ledger.cost}) FILTER (WHERE ${cost_ledger.entry_kind} = 'legacy'), 0)::real`,
+      unknown_attempts: sql<number>`COUNT(*) FILTER (WHERE ${cost_ledger.entry_kind} = 'attempt' AND ${cost_ledger.cost_basis} = 'unknown')::int`,
+      legacy_rows: sql<number>`COUNT(*) FILTER (WHERE ${cost_ledger.entry_kind} = 'legacy')::int`,
       tokens_in: sql<number>`COALESCE(SUM(${cost_ledger.tokens_in}), 0)::int`,
       tokens_out: sql<number>`COALESCE(SUM(${cost_ledger.tokens_out}), 0)::int`,
       calls: sql<number>`COUNT(*)::int`,
@@ -396,6 +463,11 @@ export async function getAdminCost(
       task_kind: cost_ledger.task_kind,
       currency: cost_ledger.currency,
       cost: sql<number>`COALESCE(SUM(${cost_ledger.cost}), 0)::real`,
+      reported_cost: sql<number>`COALESCE(SUM(${cost_ledger.cost}) FILTER (WHERE ${cost_ledger.cost_basis} = 'reported'), 0)::real`,
+      estimated_cost: sql<number>`COALESCE(SUM(${cost_ledger.cost}) FILTER (WHERE ${cost_ledger.cost_basis} = 'estimated'), 0)::real`,
+      legacy_cost: sql<number>`COALESCE(SUM(${cost_ledger.cost}) FILTER (WHERE ${cost_ledger.entry_kind} = 'legacy'), 0)::real`,
+      unknown_attempts: sql<number>`COUNT(*) FILTER (WHERE ${cost_ledger.entry_kind} = 'attempt' AND ${cost_ledger.cost_basis} = 'unknown')::int`,
+      legacy_rows: sql<number>`COUNT(*) FILTER (WHERE ${cost_ledger.entry_kind} = 'legacy')::int`,
       tokens_in: sql<number>`COALESCE(SUM(${cost_ledger.tokens_in}), 0)::int`,
       tokens_out: sql<number>`COALESCE(SUM(${cost_ledger.tokens_out}), 0)::int`,
       calls: sql<number>`COUNT(*)::int`,
@@ -403,9 +475,40 @@ export async function getAdminCost(
     .from(cost_ledger)
     .where(gte(cost_ledger.occurred_at, from))
     .groupBy(cost_ledger.task_kind, cost_ledger.currency)
-    .orderBy(desc(sql`SUM(${cost_ledger.cost})`), cost_ledger.task_kind, cost_ledger.currency);
+    .orderBy(
+      desc(sql`COALESCE(SUM(${cost_ledger.cost}), 0)`),
+      cost_ledger.task_kind,
+      cost_ledger.currency,
+    );
 
-  return { days_window: days, days: dailyRows, by_task: taskRows };
+  const truthRows = await db
+    .select({
+      currency: cost_ledger.currency,
+      entry_kind: sql<'legacy' | 'attempt'>`${cost_ledger.entry_kind}`,
+      cost_basis: sql<'reported' | 'estimated' | 'unknown' | null>`${cost_ledger.cost_basis}`,
+      cost_ref: cost_ledger.cost_ref,
+      cost: sql<number>`COALESCE(SUM(${cost_ledger.cost}), 0)::real`,
+      tokens_in: sql<number>`COALESCE(SUM(${cost_ledger.tokens_in}), 0)::int`,
+      tokens_out: sql<number>`COALESCE(SUM(${cost_ledger.tokens_out}), 0)::int`,
+      calls: sql<number>`COUNT(*)::int`,
+      unknown_attempts: sql<number>`COUNT(*) FILTER (WHERE ${cost_ledger.entry_kind} = 'attempt' AND ${cost_ledger.cost_basis} = 'unknown')::int`,
+    })
+    .from(cost_ledger)
+    .where(gte(cost_ledger.occurred_at, from))
+    .groupBy(
+      cost_ledger.currency,
+      cost_ledger.entry_kind,
+      cost_ledger.cost_basis,
+      cost_ledger.cost_ref,
+    )
+    .orderBy(
+      cost_ledger.currency,
+      cost_ledger.entry_kind,
+      cost_ledger.cost_basis,
+      cost_ledger.cost_ref,
+    );
+
+  return { days_window: days, days: dailyRows, by_task: taskRows, by_truth: truthRows };
 }
 
 export async function getAdminFailureClusters(

@@ -4,13 +4,24 @@ import { taskInputHash } from '@/server/judge/judge-execution-provenance';
 import { createId } from '@paralleldrive/cuid2';
 import { RETRY_ELAPSED_CAP_MS, isTransientAgentFailure } from './agent-run-error';
 import {
+  type AttemptCostTruth,
+  resolveAttemptCostTruth,
+  unknownAttemptCostTruth,
+} from './attempt-cost';
+import {
   type AiTaskUsage,
-  writeAiTaskRunFinished,
+  writeAiTaskAttemptFinished,
+  writeAiTaskRunRetried,
   writeAiTaskRunStarted,
-  writeCostLedger,
   writeToolCallLog,
 } from './log';
-import { type TokenCounts, effectiveCostUsd } from './pricing';
+import type { TokenCounts } from './pricing';
+import {
+  ProviderSessionAdmissionError,
+  type ProviderSessionAdmissionPlan,
+  acquireProviderSession,
+  resolveProviderSessionAdmissionPlan,
+} from './provider-session-admission';
 import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
 
 export type LifecycleUsage = AiTaskUsage;
@@ -21,10 +32,13 @@ export interface LifecycleResult {
   finishReason: string;
   usage: LifecycleUsage;
   cost_usd?: number;
+  cost_basis: AttemptCostTruth['basis'];
+  cost_ref: string;
   structured_output?: unknown;
 }
 
-export interface TerminalSuccess {
+/** Usage/cost evidence carried by either SDKResultSuccess or SDKResultError. */
+export interface TerminalResultEvidence {
   usage: LifecycleUsage;
   tokenCounts: TokenCounts;
   costUsd?: number;
@@ -32,14 +46,30 @@ export interface TerminalSuccess {
   structuredOutput?: unknown;
 }
 
-export type ObservedRunUsage = Pick<TerminalSuccess, 'usage' | 'tokenCounts' | 'costUsd'>;
+export type ObservedRunUsage = Pick<
+  TerminalResultEvidence,
+  'usage' | 'tokenCounts' | 'costUsd'
+>;
 
 interface LifecycleConfig<TResult extends LifecycleResult> {
   db: Db;
   kind: TaskKind;
   taskRunId: string;
   timeoutMs: number;
+  /**
+   * Optional controller shared with in-process tools spawned by this attempt.
+   * The lifecycle remains its owner: provider timeout, lease fencing and caller
+   * cancellation all abort this exact controller so borrowed child work cannot
+   * outlive the parent admission permit.
+   */
+  abortController?: AbortController;
   override?: { provider?: ResolvedProvider['provider']; model?: string };
+  /** Active outer central attempt when a DomainTool starts a nested task. */
+  parentTaskRunId?: string;
+  /** Absolute bound for beginning a retry attempt; execution keeps its own budget. */
+  providerStartDeadlineAt?: number;
+  /** Absolute wall-clock bound shared by admission, SDK startup and execution. */
+  providerSessionDeadlineAt?: number;
   signal?: AbortSignal;
   logScope: string;
   afterRun?: (result: TResult) => Promise<void> | void;
@@ -55,6 +85,36 @@ export interface LifecycleAttemptDecision {
   elapsedMs: number;
 }
 
+export interface ProviderSessionExecution<T> {
+  /** Start the exact task-configured SDK transport without submitting a prompt. */
+  prepare(): Promise<void>;
+  /** Submit the prompt and consume the provider-backed session. */
+  run(): Promise<T>;
+  /** Close either the unused warm transport or the active query. */
+  close(): Promise<void> | void;
+}
+
+type AttemptTerminalStatus = 'success' | 'failure';
+
+/** A provider result exists, but its first durable terminal projection did not settle. */
+export class AttemptSettlementError extends Error {
+  readonly taskRunId: string;
+  readonly intendedStatus: AttemptTerminalStatus;
+
+  constructor(input: {
+    kind: string;
+    taskRunId: string;
+    intendedStatus: AttemptTerminalStatus;
+  }) {
+    super(
+      `[${input.kind}] cannot report ${input.intendedStatus} before durable attempt settlement: ${input.taskRunId}`,
+    );
+    this.name = 'AttemptSettlementError';
+    this.taskRunId = input.taskRunId;
+    this.intendedStatus = input.intendedStatus;
+  }
+}
+
 function safeInputHash(input: unknown): string {
   try {
     return taskInputHash(input);
@@ -66,28 +126,37 @@ function safeInputHash(input: unknown): string {
 /**
  * One task attempt's state owner.
  *
- * SDK adapters only translate messages into `recordTerminalSuccess`, text
+ * SDK adapters only translate messages into `recordTerminalResult`, text
  * deltas and tool calls. This module owns the durable lifecycle invariant for
  * every adapter: started row, abort propagation, cost, terminal row and
- * after-run observation.
+ * after-run observation. Terminal methods have one sequential owner; a
+ * concurrent terminal call is unsupported and fails closed rather than joining
+ * the in-flight transaction.
  */
 export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
-  readonly abortController = new AbortController();
+  readonly abortController: AbortController;
   readonly resolved: ResolvedProvider;
   readonly taskRunId: string;
   readonly kind: TaskKind;
 
-  private readonly timer: ReturnType<typeof setTimeout>;
-  private terminal: TerminalSuccess | undefined;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private readonly admissionPlan: ProviderSessionAdmissionPlan;
+  private admissionFailure: ProviderSessionAdmissionError | undefined;
+  private terminal: TerminalResultEvidence | undefined;
   private observedUsage: ObservedRunUsage | undefined;
-  private costWriteAttempted = false;
-  private terminalWriteAttempted = false;
+  private costTruthCache: AttemptCostTruth | undefined;
+  private readonly terminalWriteAttempts = new Set<AttemptTerminalStatus>();
+  private terminalWriteInFlight = false;
+  private terminalSettledStatus: AttemptTerminalStatus | undefined;
+  private lastTerminalWriteError: unknown;
+  private durableStart = false;
 
   constructor(private readonly config: LifecycleConfig<TResult>) {
+    this.abortController = config.abortController ?? new AbortController();
     this.taskRunId = config.taskRunId;
     this.kind = config.kind;
     this.resolved = resolveTaskProvider(config.kind, config.override);
-    this.timer = setTimeout(() => this.abortController.abort(), config.timeoutMs);
+    this.admissionPlan = resolveProviderSessionAdmissionPlan(this.resolved.provider);
 
     if (config.signal) {
       if (config.signal.aborted) {
@@ -109,8 +178,31 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     );
   }
 
+  get costTruth(): AttemptCostTruth {
+    if (!this.costTruthCache) {
+      const evidence = this.terminal ?? this.observedUsage;
+      this.costTruthCache = evidence
+        ? resolveAttemptCostTruth({
+            provider: this.resolved.provider,
+            model: this.resolved.model,
+            tokens: evidence.tokenCounts,
+            reportedCostUsd: evidence.costUsd,
+          })
+        : unknownAttemptCostTruth(this.resolved.provider, this.resolved.model);
+    }
+    return this.costTruthCache;
+  }
+
   get costUsd(): number | undefined {
-    return this.terminal?.costUsd ?? this.observedUsage?.costUsd;
+    return this.costTruth.amountUsd ?? undefined;
+  }
+
+  get costBasis(): AttemptCostTruth['basis'] {
+    return this.costTruth.basis;
+  }
+
+  get costRef(): string {
+    return this.costTruth.ref;
   }
 
   get finishReason(): string {
@@ -121,7 +213,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     return this.terminal?.structuredOutput;
   }
 
-  get sawTerminalSuccess(): boolean {
+  get sawTerminalResult(): boolean {
     return this.terminal !== undefined;
   }
 
@@ -129,37 +221,210 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     return this.abortController.signal.aborted;
   }
 
+  get started(): boolean {
+    return this.durableStart;
+  }
+
+  /** Clamp a provider phase's own timeout to the remaining caller wall clock. */
+  providerPhaseTimeoutMs(maxTimeoutMs: number): number {
+    const remainingMs = Math.min(
+      maxTimeoutMs,
+      this.config.providerStartDeadlineAt === undefined
+        ? Number.POSITIVE_INFINITY
+        : this.config.providerStartDeadlineAt - Date.now(),
+      this.config.providerSessionDeadlineAt === undefined
+        ? Number.POSITIVE_INFINITY
+        : this.config.providerSessionDeadlineAt - Date.now(),
+    );
+    return Math.max(1, remainingMs);
+  }
+
+  /**
+   * Own the complete provider-session boundary without holding the permit during
+   * terminal DB settlement. Admission wait precedes the durable model-attempt
+   * row and the execution timer, so queue time can never masquerade as model
+   * runtime or create an unknown-cost YUK-841 attempt that never called the SDK.
+   */
+  async withProviderSession<T>(
+    actualInput: unknown,
+    execution: ProviderSessionExecution<T>,
+  ): Promise<T> {
+    // Canonicalization may synchronously hash binary input. Prepare it before
+    // acquiring the lease so large local inputs cannot starve its heartbeat;
+    // the durable attempt row itself still starts only after admission.
+    const inputHash = safeInputHash(actualInput);
+    const permit =
+      this.admissionPlan.mode === 'off'
+        ? undefined
+        : await acquireProviderSession({
+            db: this.config.db,
+            kind: this.kind,
+            taskRunId: this.taskRunId,
+            parentTaskRunId: this.config.parentTaskRunId,
+            executionTimeoutMs: this.config.timeoutMs,
+            signal: this.abortController.signal,
+            plan: this.admissionPlan,
+            deadlineAt:
+              this.config.providerStartDeadlineAt === undefined
+                ? this.config.providerSessionDeadlineAt
+                : this.config.providerSessionDeadlineAt === undefined
+                  ? this.config.providerStartDeadlineAt
+                  : Math.min(
+                      this.config.providerStartDeadlineAt,
+                      this.config.providerSessionDeadlineAt,
+                    ),
+            onLeaseLost: (error) => {
+              this.admissionFailure ??= error;
+              this.abortController.abort();
+            },
+          });
+
+    const assertProviderStartAllowed = (phase: string) => {
+      permit?.assertProviderStartAllowed();
+      if (this.admissionFailure) throw this.admissionFailure;
+      if (this.abortController.signal.aborted) {
+        // Caller cancellation and the ordinary model timer are not admission
+        // failures. Keep them as plain errors so an already-aborted request
+        // cannot manufacture provider_admission truth before any attempt row,
+        // and a started attempt still binds to budget_timeout.
+        throw new Error(`provider attempt aborted ${phase}`);
+      }
+      if (
+        this.config.providerStartDeadlineAt !== undefined &&
+        Date.now() >= this.config.providerStartDeadlineAt
+      ) {
+        throw new ProviderSessionAdmissionError({
+          reason: 'wait_timeout',
+          laneId: this.resolved.provider,
+          taskRunId: this.taskRunId,
+          cause: new Error(`provider retry start window elapsed ${phase}`),
+        });
+      }
+      if (
+        this.config.providerSessionDeadlineAt !== undefined &&
+        Date.now() >= this.config.providerSessionDeadlineAt
+      ) {
+        this.abortController.abort();
+        throw new Error(`provider session wall-clock budget elapsed ${phase}`);
+      }
+    };
+
+    const assertProviderSessionCompletionAllowed = () => {
+      // Recheck the lease and cancellation after the SDK iterator finishes.
+      // Cooperative abort is not proof that a provider/CLI stopped, and an
+      // event-loop stall can let a terminal continuation run before its timer.
+      // Do not recheck providerStartDeadlineAt here: it is only a gate for
+      // beginning a retry and must never truncate a query already in flight.
+      permit?.assertProviderStartAllowed();
+      if (this.admissionFailure) throw this.admissionFailure;
+      const sessionDeadlineElapsed =
+        this.config.providerSessionDeadlineAt !== undefined &&
+        Date.now() >= this.config.providerSessionDeadlineAt;
+      if (sessionDeadlineElapsed) this.abortController.abort();
+      if (this.abortController.signal.aborted) {
+        // This can be the ordinary model budget or caller cancellation, not an
+        // admission/control-plane failure. Keep it as a plain error so the
+        // runner's existing `aborted` binding preserves budget_timeout truth.
+        throw new Error(
+          sessionDeadlineElapsed
+            ? 'provider session wall-clock budget elapsed during query'
+            : 'provider attempt aborted during query',
+        );
+      }
+    };
+
+    let outcome: { status: 'fulfilled'; value: T } | { status: 'rejected'; reason: unknown };
+    try {
+      assertProviderStartAllowed('before SDK startup');
+      await execution.prepare();
+      // SDK startup performs the task-configured CLI initialize handshake but
+      // submits no prompt. Keep that uninterruptible cold-start work inside the
+      // admission slot and outside model-attempt runtime/cost accounting.
+      assertProviderStartAllowed('during SDK startup');
+      await permit?.completeStartup();
+      assertProviderStartAllowed('after startup lease transition');
+      await this.startWithInputHash(inputHash);
+      // Admission can return just inside the retry window while the durable
+      // start write blocks past it. Recheck the lease, cancellation and wall
+      // clock at the final pre-prompt seam.
+      assertProviderStartAllowed('during durable start');
+      this.armExecutionTimer();
+      assertProviderStartAllowed('before provider query');
+      const value = await execution.run();
+      assertProviderSessionCompletionAllowed();
+      outcome = { status: 'fulfilled', value };
+    } catch (error) {
+      outcome = { status: 'rejected', reason: this.admissionFailure ?? error };
+    }
+
+    this.clearExecutionTimer();
+    try {
+      await execution.close();
+    } catch (error) {
+      // Cleanup is best-effort and must not overwrite the provider/admission
+      // truth. Keep the permit until this attempt has at least tried to close
+      // its local CLI resource.
+      console.warn(`[${this.config.logScope}] provider session cleanup failed`, {
+        task_run_id: this.taskRunId,
+        kind: this.kind,
+        err: error,
+      });
+    }
+    await permit?.release();
+    // Cover a heartbeat that fenced this attempt after the provider callback
+    // resolved but before release stopped the heartbeat.
+    if (this.admissionFailure) throw this.admissionFailure;
+    if (outcome.status === 'rejected') throw outcome.reason;
+    return outcome.value;
+  }
+
   async start(actualInput: unknown): Promise<void> {
+    await this.startWithInputHash(safeInputHash(actualInput));
+  }
+
+  private async startWithInputHash(inputHash: string): Promise<void> {
     try {
       await writeAiTaskRunStarted(this.config.db, {
         id: this.taskRunId,
         task_kind: this.kind,
         provider: this.resolved.provider,
         model: this.resolved.model,
-        input_hash: safeInputHash(actualInput),
+        input_hash: inputHash,
         started_at: new Date(),
       });
+      this.durableStart = true;
     } catch (error) {
       console.error(`[${this.config.logScope}] writeAiTaskRunStarted failed`, {
         task_run_id: this.taskRunId,
         kind: this.kind,
         err: error,
       });
+      // Tracking is a load-bearing boundary: never acquire provider cost when
+      // the durable attempt identity could not be created.
+      throw error;
     }
   }
 
-  recordTerminalSuccess(terminal: TerminalSuccess): void {
+  recordTerminalResult(terminal: TerminalResultEvidence): void {
     this.terminal = terminal;
     this.observedUsage = terminal;
+    this.costTruthCache = resolveAttemptCostTruth({
+      provider: this.resolved.provider,
+      model: this.resolved.model,
+      tokens: terminal.tokenCounts,
+      reportedCostUsd: terminal.costUsd,
+    });
   }
 
   /**
-   * Keep the latest aggregate SDK usage even when no success terminal arrives.
+   * Keep the latest aggregate SDK usage even when no terminal result arrives.
    * Result-error messages carry authoritative aggregate usage; budget aborts can
    * still contribute the assistant turns observed before the stream was cut.
    */
   recordObservedUsage(observation: ObservedRunUsage): void {
+    if (this.terminal) return;
     this.observedUsage = observation;
+    this.costTruthCache = undefined;
   }
 
   async recordToolCall(input: {
@@ -194,13 +459,19 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       throw new Error(`[${this.kind}] cannot finish success without a terminal SDK result`);
     }
 
-    await this.writeObservedCost('success');
-
-    await this.writeTerminal({
+    const settled = await this.writeTerminal({
       status: 'success',
       finishReason: this.terminal.finishReason,
       errorMessage: undefined,
+      outcome: 'success',
     });
+    if (!settled) {
+      throw new AttemptSettlementError({
+        kind: this.kind,
+        taskRunId: this.taskRunId,
+        intendedStatus: 'success',
+      });
+    }
 
     if (this.config.afterRun) {
       try {
@@ -215,110 +486,121 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     }
   }
 
-  async finishFailure(error: unknown, finishReason = 'error'): Promise<void> {
-    const failureOutcome = isTransientAgentFailure(error)
-      ? ('failed_retryable' as const)
-      : ('failed_permanent' as const);
-    const observedCost = this.hasObservedBillableUsage()
-      ? effectiveCostUsd(this.resolved.model, this.tokenCounts, this.costUsd)
-      : undefined;
-    if (observedCost !== undefined) {
-      const effectiveObservation = {
-        usage: this.usage,
-        tokenCounts: this.tokenCounts,
-        costUsd: observedCost,
-      };
-      this.observedUsage = effectiveObservation;
-      if (this.terminal) this.terminal = { ...this.terminal, costUsd: observedCost };
-    }
-    await this.writeObservedCost(failureOutcome);
-    await this.writeTerminal({
+  /** Return false when the durable attempt truth could not be settled. */
+  async finishFailure(error: unknown, finishReason = 'error'): Promise<boolean> {
+    const settled = await this.writeTerminal({
       status: 'failure',
       finishReason,
       errorMessage: error instanceof Error ? error.message : String(error),
-      costUsd: observedCost,
+      outcome: isTransientAgentFailure(error) ? 'failed_retryable' : 'failed_permanent',
     });
-  }
-
-  dispose(): void {
-    clearTimeout(this.timer);
-  }
-
-  abort(): void {
-    clearTimeout(this.timer);
-    this.abortController.abort();
-  }
-
-  private async writeTerminal(input: {
-    status: 'success' | 'failure';
-    finishReason: string;
-    errorMessage: string | undefined;
-    costUsd?: number;
-  }): Promise<void> {
-    if (this.terminalWriteAttempted) return;
-    this.terminalWriteAttempted = true;
-    try {
-      await writeAiTaskRunFinished(this.config.db, {
-        id: this.taskRunId,
-        status: input.status,
-        finish_reason: input.finishReason,
-        usage: this.usage,
-        cost_usd: input.costUsd ?? this.costUsd,
-        error_message: input.errorMessage,
-      });
-    } catch (error) {
-      console.error(`[${this.config.logScope}] writeAiTaskRunFinished ${input.status} failed`, {
-        task_run_id: this.taskRunId,
-        kind: this.kind,
-        err: error,
-      });
+    if (!settled && !this.terminalSettledStatus) {
+      const writeError = this.lastTerminalWriteError ?? error;
       console.warn(`[${this.config.logScope}] task_run_stuck_in_running`, {
         event: 'task_run_stuck_in_running',
         task_run_id: this.taskRunId,
         kind: this.kind,
-        intended_status: input.status,
+        intended_status: 'failure',
+        err: writeError instanceof Error ? writeError.message : String(writeError),
+      });
+    }
+    return settled;
+  }
+
+  /** Best-effort conservative marker: false negatives are allowed, false positives are not. */
+  async markRetried(): Promise<void> {
+    try {
+      const marked = await writeAiTaskRunRetried(this.config.db, this.taskRunId);
+      if (!marked) {
+        console.warn(`[${this.config.logScope}] task_run_retry_marker_not_written`, {
+          event: 'task_run_retry_marker_not_written',
+          task_run_id: this.taskRunId,
+          kind: this.kind,
+        });
+      }
+    } catch (error) {
+      console.warn(`[${this.config.logScope}] task_run_retry_marker_not_written`, {
+        event: 'task_run_retry_marker_not_written',
+        task_run_id: this.taskRunId,
+        kind: this.kind,
         err: error instanceof Error ? error.message : String(error),
       });
     }
   }
 
-  private hasObservedBillableUsage(): boolean {
-    return (
-      this.usage.inputTokens > 0 ||
-      this.usage.outputTokens > 0 ||
-      (this.costUsd !== undefined && this.costUsd > 0)
-    );
+  dispose(): void {
+    this.clearExecutionTimer();
   }
 
-  private async writeObservedCost(
-    outcome: 'success' | 'failed_retryable' | 'failed_permanent',
-  ): Promise<void> {
-    if (this.costWriteAttempted) return;
-    this.costWriteAttempted = true;
-    // A process/config failure before any provider turn is not a paid run. Keep
-    // it visible in ai_task_runs without manufacturing a zero-cost ledger row.
-    // Successful terminals retain the pre-existing one-row accounting contract,
-    // including genuinely zero-marginal subscription runs.
-    if (outcome !== 'success' && !this.hasObservedBillableUsage()) return;
+  abort(): void {
+    this.clearExecutionTimer();
+    this.abortController.abort();
+  }
+
+  private armExecutionTimer(): void {
+    if (this.timer) return;
+    const deadlineRemainingMs =
+      this.config.providerSessionDeadlineAt === undefined
+        ? Number.POSITIVE_INFINITY
+        : Math.max(0, this.config.providerSessionDeadlineAt - Date.now());
+    const timeoutMs = Math.min(this.config.timeoutMs, deadlineRemainingMs);
+    if (timeoutMs <= 0) {
+      this.abortController.abort();
+      return;
+    }
+    this.timer = setTimeout(() => this.abortController.abort(), timeoutMs);
+  }
+
+  private clearExecutionTimer(): void {
+    if (!this.timer) return;
+    clearTimeout(this.timer);
+    this.timer = undefined;
+  }
+
+  private async writeTerminal(input: {
+    status: AttemptTerminalStatus;
+    finishReason: string;
+    errorMessage: string | undefined;
+    outcome: 'success' | 'failed_retryable' | 'failed_permanent';
+  }): Promise<boolean> {
+    if (!this.durableStart) return false;
+    if (this.terminalSettledStatus) return this.terminalSettledStatus === input.status;
+    if (this.terminalWriteInFlight) return false;
+    if (this.terminalWriteAttempts.has(input.status)) return false;
+
+    // A failed success projection may be downgraded exactly once to an
+    // application failure. Never retry an ambiguous status, upgrade failure to
+    // success, or allow concurrent terminal transactions. The DB's running-row
+    // CAS and unique attempt ledger remain the final double-write guards.
+    if (this.terminalWriteAttempts.size > 0 && input.status !== 'failure') return false;
+    this.terminalWriteAttempts.add(input.status);
+    this.terminalWriteInFlight = true;
     try {
-      await writeCostLedger(this.config.db, {
-        task_run_id: this.taskRunId,
-        task_kind: this.kind,
-        provider: this.resolved.provider,
-        model: this.resolved.model,
-        cost: effectiveCostUsd(this.resolved.model, this.tokenCounts, this.costUsd),
-        currency: 'USD',
-        tokens_in: this.usage.inputTokens,
-        tokens_out: this.usage.outputTokens,
-        outcome,
+      const settled = await writeAiTaskAttemptFinished(this.config.db, {
+        id: this.taskRunId,
+        status: input.status,
+        finish_reason: input.finishReason,
+        usage: this.usage,
+        cost_truth: this.costTruth,
+        outcome: input.outcome,
+        error_message: input.errorMessage,
       });
+      if (!settled) {
+        throw new Error(`cannot settle missing or non-running AI task attempt: ${this.taskRunId}`);
+      }
+      this.terminalSettledStatus = input.status;
+      this.lastTerminalWriteError = undefined;
+      return true;
     } catch (error) {
-      console.error(`[${this.config.logScope}] writeCostLedger failed`, {
+      this.lastTerminalWriteError = error;
+      console.error(`[${this.config.logScope}] writeAiTaskAttemptFinished ${input.status} failed`, {
         task_run_id: this.taskRunId,
         kind: this.kind,
-        outcome,
         err: error,
       });
+      return false;
+    } finally {
+      this.terminalWriteInFlight = false;
     }
   }
 }

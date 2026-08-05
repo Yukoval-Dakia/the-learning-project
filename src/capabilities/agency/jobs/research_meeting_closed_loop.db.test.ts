@@ -14,7 +14,7 @@
 // The failure MODE is "the test double is more complete than the production implementation".
 // The only way to see it is to keep every production seam real and replace exactly ONE port.
 //
-// THE ONE PORT: `@anthropic-ai/claude-agent-sdk`'s `query` (the process boundary to the model).
+// THE ONE PORT: the Agent SDK startup/query process boundary to the model.
 // Everything downstream of it is production code: runTask (provider resolution, ai_task_runs +
 // cost_ledger writes, structured-output dispatch), induceConjecture's self-consistency,
 // writeAiProposal, acceptConjectureProposal, serveProbeOnce, the probe-answer HTTP route,
@@ -39,7 +39,7 @@ import { and, eq, or, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ── THE SINGLE REPLACED PORT ────────────────────────────────────────────────────
-// `runTask` talks to the model through `query()` from the Agent SDK. Faking it (and
+// `runTask` talks to the model through startup + WarmQuery.query from the Agent SDK. Faking it (and
 // nothing else) keeps every prompt-building, provider-resolution, parsing, persistence
 // and routing decision in production hands, while making the run deterministic + free.
 const sdk = vi.hoisted(() => ({
@@ -50,29 +50,32 @@ const sdk = vi.hoisted(() => ({
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: ({ prompt }: { prompt: unknown }) =>
-    (async function* () {
-      // `promptFromInput` hands a plain string for text tasks and an async iterable of
-      // SDKUserMessage for multimodal ones (the vision judge). Flatten both to the text
-      // the model would actually read — that is what the seam assertions inspect.
-      let text = '';
-      if (typeof prompt === 'string') {
-        text = prompt;
-      } else {
-        const iterable = prompt as AsyncIterable<{
-          message: { content: Array<{ type: string; text?: string }> };
-        }>;
-        for await (const msg of iterable) {
-          for (const block of msg.message.content) {
-            if (block.type === 'text' && typeof block.text === 'string') text += block.text;
+  startup: async () => ({
+    query: (prompt: unknown) =>
+      (async function* () {
+        // `promptFromInput` hands a plain string for text tasks and an async iterable of
+        // SDKUserMessage for multimodal ones (the vision judge). Flatten both to the text
+        // the model would actually read — that is what the seam assertions inspect.
+        let text = '';
+        if (typeof prompt === 'string') {
+          text = prompt;
+        } else {
+          const iterable = prompt as AsyncIterable<{
+            message: { content: Array<{ type: string; text?: string }> };
+          }>;
+          for await (const msg of iterable) {
+            for (const block of msg.message.content) {
+              if (block.type === 'text' && typeof block.text === 'string') text += block.text;
+            }
           }
         }
-      }
-      sdk.prompts.push(text);
-      const responder = sdk.respond;
-      if (!responder) throw new Error('[closed-loop] no fake model installed for this test');
-      yield responder(text);
-    })(),
+        sdk.prompts.push(text);
+        const responder = sdk.respond;
+        if (!responder) throw new Error('[closed-loop] no fake model installed for this test');
+        yield responder(text);
+      })(),
+    close: () => {},
+  }),
   createSdkMcpServer: () => ({ type: 'sdk', name: '', instance: {} }),
   tool: (name: string, description: string) => ({ name, description }),
 }));
@@ -81,6 +84,7 @@ import { capabilities } from '@/capabilities';
 import { PROBE_QUESTION_SOURCE } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { ai_task_runs, cost_ledger, event, kc_typed_state, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { ANTHROPIC_SUB_CONTRACT_REF } from '@/server/ai/pricing';
 import {
   PREDICTION_SCORE_ACTION,
   PROBE_RESULT_PROJECTED_ACTION,
@@ -426,7 +430,9 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     // plausible-looking on a multi-cell night, so pin the silent-failure count at zero.
     expect(firstRun.cells_failed).toBe(0);
     expect(firstRun.reconciled).toBe(0); // nothing to settle on night one
-    expect(firstRun.cost_usd).toBeGreaterThan(0); // real cost accounting, not a stub
+    // The induction lane is pinned to the flat subscription contract. Its authoritative
+    // attempt truth is therefore an explicit estimated $0, not a fabricated per-call cost.
+    expect(firstRun.cost_usd).toBe(0);
 
     // The induction genuinely ran N samples through the real runner.
     expect(await taskKindCounts()).toMatchObject({
@@ -865,7 +871,16 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
       .from(cost_ledger)
       .where(eq(cost_ledger.task_kind, 'MindModelInductionTask'));
     expect(costs).toHaveLength(RESEARCH_MEETING_SAMPLES);
-    expect(costs.every((row) => row.cost > 0 && row.outcome === 'success')).toBe(true);
+    expect(
+      costs.every(
+        (row) =>
+          row.entry_kind === 'attempt' &&
+          row.cost === 0 &&
+          row.cost_basis === 'estimated' &&
+          row.cost_ref === ANTHROPIC_SUB_CONTRACT_REF &&
+          row.outcome === 'success',
+      ),
+    ).toBe(true);
   });
 
   it('preserves reconciliation counts when the proposal transaction fails and retries', async () => {

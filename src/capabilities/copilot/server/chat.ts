@@ -504,11 +504,14 @@ export async function writeCopilotReply(
   return primaryView ? { replyEventId, cleanedReply, primaryView } : { replyEventId, cleanedReply };
 }
 
+type CopilotRunnerResult = Pick<RunTaskResult, 'task_run_id' | 'text' | 'structured_output'>;
 type RunAgentTaskFn = (
   kind: string,
   input: unknown,
   ctx: {
     db: Db;
+    signal?: AbortSignal;
+    lifecycleAbortController?: AbortController;
     // YUK-198 — widened to allow remote McpHttpServerConfig (Tavily) alongside
     // the in-process SdkMcpServer (loom). Mirrors runner ctx.mcpServers, which
     // is the SDK's Options['mcpServers'].
@@ -516,6 +519,7 @@ type RunAgentTaskFn = (
     allowedTools?: string[];
     /** Caller-owned id shared with the in-process MCP tool log. */
     taskRunId?: string;
+    providerSessionDeadlineAt?: number;
     // YUK-284 (C2) — Agent Skill whitelist forwarded to the runner (ctx.skills,
     // runner.ts:120). Present on the free-form CopilotTask path so the dialogue
     // methodology SKILL.md loads. The underlying RunTaskCtx already declares
@@ -527,12 +531,13 @@ type RunAgentTaskFn = (
     canUseTool?: Parameters<typeof runAgentTask>[2]['canUseTool'];
     outputFormat?: Parameters<typeof runAgentTask>[2]['outputFormat'];
   },
-) => Promise<RunTaskResult>;
+) => Promise<CopilotRunnerResult>;
 // YUK-266 (C1) — swappable streaming agent runner. Streams text deltas to
 // `onDelta` then resolves the full StreamCollectResult (text + task_run_id + the
 // optional partial/error degrade flags). Defaults to streamTaskCollecting; unit
 // tests inject a vi.fn that calls onDelta then resolves a fixture so the {}-stub
 // db is never touched. Mirrors RunAgentTaskFn's ctx shape + adds the onDelta arg.
+type CopilotStreamResult = Pick<StreamCollectResult, 'task_run_id' | 'text' | 'partial' | 'error'>;
 type StreamAgentTaskFn = (
   kind: string,
   input: unknown,
@@ -541,8 +546,10 @@ type StreamAgentTaskFn = (
     mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
     allowedTools?: string[];
     signal?: AbortSignal;
+    lifecycleAbortController?: AbortController;
     /** Caller-owned id shared with the in-process MCP tool log. */
     taskRunId?: string;
+    providerSessionDeadlineAt?: number;
     // YUK-284 (C2) — see RunAgentTaskFn.ctx.skills. Same forward to the streaming
     // runner so the free-form streaming path loads the copilot SKILL.md too.
     skills?: string[];
@@ -552,7 +559,7 @@ type StreamAgentTaskFn = (
     onTaskEvent?: Parameters<typeof streamTaskCollecting>[2]['onTaskEvent'];
   },
   onDelta: (text: string) => void,
-) => Promise<StreamCollectResult>;
+) => Promise<CopilotStreamResult>;
 type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 // YUK-198 — swappable Tavily MCP builder. Defaults to the env-gated
 // buildTavilyMcpServer; unit tests inject a fixture (or null) instead of
@@ -625,6 +632,8 @@ export interface CopilotChatDeps {
   onSubtaskEvent?: (event: CopilotSubtaskEvent) => Promise<void> | void;
   /** Report-only spawn-budget observation sink. Existing tool/cost logs stay authoritative. */
   onSpawnBudgetObservation?: (observation: SpawnBudgetObservation) => void;
+  /** Route-owned absolute edge deadline shared with the runner lifecycle. */
+  providerSessionDeadlineAt?: number;
   now?: () => Date;
 }
 
@@ -668,6 +677,7 @@ export interface DecideCopilotDispatchDeps {
   runAgentTaskFn?: RunAgentTaskFn;
   createTaskRunId?: () => string;
   signal?: AbortSignal;
+  providerSessionDeadlineAt?: number;
 }
 
 const COPILOT_DISPATCH_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(CopilotDispatchDecisionSchema);
@@ -696,6 +706,9 @@ export async function decideCopilotDispatch(
         db,
         taskRunId,
         signal: deps.signal,
+        ...(deps.providerSessionDeadlineAt !== undefined
+          ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+          : {}),
         outputFormat: COPILOT_DISPATCH_OUTPUT_FORMAT,
       },
     );
@@ -912,6 +925,9 @@ async function runCopilotChatImpl(
       sessionId,
       learningItemId: skillContext.ref.id,
       userMessage: req.user_message,
+      ...(deps.providerSessionDeadlineAt !== undefined
+        ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+        : {}),
     });
     const replyMd = skillResult.text_md;
     // PR #305 review comment #3: use the real task_run_id from the skill runner.
@@ -1079,11 +1095,21 @@ async function runCopilotChatImpl(
   // user-facing CopilotTask, so both get the Copilot budget.
   const budgetTracker = new ContextBudgetTracker(resolveContextBudget(surface));
   const toolTrace: ToolExecutionResultObservation[] = [];
+  // The MCP server is constructed before the central runner creates its
+  // lifecycle. Share this controller with both sides so timeout, lease fencing,
+  // and request cancellation abort nested run_task work before the parent permit
+  // is released. The request signal alone is insufficient: non-streaming calls
+  // have none, and the runner's execution timeout is an internal lifecycle event.
+  const lifecycleAbortController = new AbortController();
 
   const mcpServer = buildMcpServer({
     ctx: {
       db,
       taskRunId,
+      signal: lifecycleAbortController.signal,
+      ...(deps.providerSessionDeadlineAt !== undefined
+        ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+        : {}),
       callerActor: { kind: 'agent', ref: actorRef },
       causedByEventId,
     },
@@ -1176,6 +1202,10 @@ async function runCopilotChatImpl(
         allowedTools,
         taskRunId,
         signal: streaming.signal,
+        lifecycleAbortController,
+        ...(deps.providerSessionDeadlineAt !== undefined
+          ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+          : {}),
         ...(spawnContract
           ? {
               agents: spawnContract.agents,
@@ -1208,6 +1238,10 @@ async function runCopilotChatImpl(
       mcpServers,
       allowedTools,
       taskRunId,
+      lifecycleAbortController,
+      ...(deps.providerSessionDeadlineAt !== undefined
+        ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+        : {}),
       ...(spawnContract
         ? {
             agents: spawnContract.agents,
@@ -1241,6 +1275,9 @@ async function runCopilotChatImpl(
     candidateComplete,
     toolTrace,
     ...(streaming?.signal ? { signal: streaming.signal } : {}),
+    ...(deps.providerSessionDeadlineAt !== undefined
+      ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+      : {}),
   });
   streaming?.signal?.throwIfAborted();
   replyText = evidenceReview.replyText;

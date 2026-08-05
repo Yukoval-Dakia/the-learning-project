@@ -13,6 +13,10 @@ import {
   validateComposition,
 } from '@/kernel/manifest';
 import { generateOpenApiDocument } from '@/kernel/openapi';
+import {
+  HTTP_PROVIDER_SESSION_BUDGET_MS,
+  runWithHttpProviderSessionDeadline,
+} from '@/server/http/provider-session-deadline';
 import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
 
@@ -82,6 +86,14 @@ export function buildHonoApp(capabilities: CapabilityManifest[]): Hono {
     }
     return next();
   });
+
+  // One request owns one absolute provider-session budget. Every central runner
+  // call below this composition root (including sequential/nested calls) sees
+  // the same deadline through AsyncLocalStorage. Worker entrypoints have no
+  // Hono scope and retain their durable task budgets.
+  app.use('/api/*', (_c, next) =>
+    runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, next),
+  );
 
   app.get('/api/health', (c) => c.json({ ok: true }));
   // YUK-624：TokenGate 的轻量验证端点。它位于 /api/* middleware 之后，

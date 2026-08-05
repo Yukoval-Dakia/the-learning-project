@@ -143,6 +143,7 @@ interface Harness {
   notes: WriteAgentNoteInput[];
   caps: ReturnType<typeof createDirectorCaps>;
   director: ReturnType<typeof buildDirectorServer>;
+  nestedTaskContexts: unknown[];
 }
 
 function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
@@ -150,6 +151,7 @@ function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
   mockSdk.registeredNames.length = 0;
   const proposals: WriteAiProposalInput[] = [];
   const notes: WriteAgentNoteInput[] = [];
+  const nestedTaskContexts: unknown[] = [];
   const caps = createDirectorCaps();
   const director = buildDirectorServer({
     db: {} as never,
@@ -175,7 +177,9 @@ function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
     getMasteryProjectionFn: async () => new Map<string, MasteryProjection>(),
     evidenceRefsExistFn: async () => true,
     resolveSubjectProfileForKnowledgeIdsFn: async () => resolveSubjectProfile('general'),
-    runTaskFn: async (kind) => {
+    parentLifecycleSignal: new AbortController().signal,
+    runTaskFn: async (kind, _input, ctx) => {
+      nestedTaskContexts.push(ctx);
       if (kind === 'ConjectureProbeAuthorTask') {
         return {
           text: '',
@@ -222,7 +226,7 @@ function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
     },
     ...opts,
   });
-  return { proposals, notes, caps, director };
+  return { proposals, notes, caps, director, nestedTaskContexts };
 }
 
 beforeEach(() => {
@@ -295,6 +299,38 @@ describe('propose_conjecture — server-enforced single writer', () => {
     });
     expect(change.probe_quality).toMatchObject({ passed: true });
     expect(change.probe_spec?.expected_target_error_answer_md).toBe('A 足以推出 B。');
+  });
+
+  it('forces parent lineage and cancellation into nested quality runs and blocks a late write', async () => {
+    const controller = new AbortController();
+    const h = build({
+      parentLifecycleSignal: controller.signal,
+      meetingContext: meetingContext({
+        candidate_cells: [cell({ baseline_p: null })],
+      }),
+      getMasteryProjectionFn: async () => {
+        controller.abort();
+        return new Map<string, MasteryProjection>();
+      },
+    });
+
+    const res = await callTool('propose_conjecture', validProposeArgs());
+
+    expect(res).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('已取消'),
+    });
+    expect(h.proposals).toHaveLength(0);
+    expect(h.caps.proposeCount).toBe(0);
+    expect(h.director.readRetryableProbeError()).toBeNull();
+    expect(h.nestedTaskContexts).toHaveLength(2);
+    for (const ctx of h.nestedTaskContexts) {
+      expect(ctx).toMatchObject({ parentTaskRunId: 'toolrun_1' });
+      expect((ctx as { signal?: AbortSignal }).signal).toBe(controller.signal);
+      expect((ctx as { lifecycleAbortController?: AbortController }).lifecycleAbortController).toBe(
+        undefined,
+      );
+    }
   });
 
   it('fails closed after two structurally non-independent probe packages and releases the cap', async () => {

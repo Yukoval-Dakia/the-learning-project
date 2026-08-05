@@ -288,6 +288,11 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // restore and the `on conflict do nothing` restore insert would drop the archived
   // rows anyway. (Excluded, not FK_ORDER → no SCHEMA_VERSION bump.)
   'hub_sync_reconciliation',
+  // YUK-842: provider query-session admission leases + start-reservation ledger. Terminal rows
+  // become eligible for opportunistic lane-local pruning after seven days; there is no TTL.
+  // Restoring operational rows would resurrect stale claims, family relationships, and rate-window
+  // history, so this remains wipe-only even without FKs.
+  'provider_session_admission',
   // YUK-751 durable subscription dispatcher recovery state. All three tables are
   // reconstructed by manifest reconciliation + event-log discovery; restoring stale
   // checkpoints, claims, deliveries, or debounce reservations would be incorrect.
@@ -328,6 +333,7 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
 // parent wipe and need no entry here.
 // Order matters (child → parent): effect → delivery → checkpoint, and node → run.
 export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
+  'provider_session_admission',
   'event_subscription_effect',
   'event_subscription_delivery',
   'event_subscription_checkpoint',

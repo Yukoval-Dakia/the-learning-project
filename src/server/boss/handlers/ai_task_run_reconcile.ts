@@ -9,8 +9,8 @@
 // that reconcile job.
 //
 // Semantics — OBSERVATION-STATE CONVERGENCE ONLY:
-//   - touches ONLY ai_task_runs rows; no domain writes, no job re-emission, no
-//     LLM re-run (the run's business side effects are owned elsewhere).
+//   - touches ONLY the central attempt observation pair (ai_task_runs + its
+//     attempt cost_ledger row); no domain writes, job re-emission, or LLM re-run.
 //   - terminal status is 'failure' (NOT 'error'): the write vocabulary is the
 //     closed enum {running, success, failure} (log.ts AiTaskRunFinishEntry) —
 //     'error' would be invisible to the admin failure surface
@@ -40,10 +40,12 @@
 
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
+import { unknownAttemptCostTruth } from '@/server/ai/attempt-cost';
+import { writeAiTaskAttemptFinished } from '@/server/ai/log';
 import { and, eq, lt } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
-/** 1h — 12× the largest task budget.timeout (300s); see module doc. */
+/** 1h — 5× the largest effective per-call timeout (12min); see module doc. */
 export const STUCK_RUN_THRESHOLD_MS = 3_600_000;
 
 /** finish_reason discriminator for sweeper-converged rows. */
@@ -63,17 +65,35 @@ export async function reconcileStuckAiTaskRuns(
   now: Date = new Date(),
 ): Promise<ReconcileResult> {
   const cutoff = new Date(now.getTime() - STUCK_RUN_THRESHOLD_MS);
-  const converged = await db
-    .update(ai_task_runs)
-    .set({
+  const staleRuns = await db
+    .select({
+      id: ai_task_runs.id,
+      task_kind: ai_task_runs.task_kind,
+      provider: ai_task_runs.provider,
+      model: ai_task_runs.model,
+    })
+    .from(ai_task_runs)
+    .where(and(eq(ai_task_runs.status, 'running'), lt(ai_task_runs.started_at, cutoff)))
+    .orderBy(ai_task_runs.started_at, ai_task_runs.id);
+
+  const converged: Array<{ id: string; task_kind: string }> = [];
+  for (const run of staleRuns) {
+    const settled = await writeAiTaskAttemptFinished(db, {
+      id: run.id,
       status: 'failure',
       finish_reason: RECONCILED_STUCK_FINISH_REASON,
-      finished_at: now,
+      usage: { inputTokens: 0, outputTokens: 0 },
+      cost_truth: unknownAttemptCostTruth(run.provider, run.model),
+      // The sweeper cannot distinguish a pre-provider process death from a
+      // post-provider terminal-write fault. Retrying an unknown may double-bill
+      // or repeat side effects, so follow the runner's whitelist-only policy.
+      outcome: 'failed_permanent',
       error_message:
         'reconciled by stuck-run sweeper: no terminal write within threshold (process died or finish-write failed)',
-    })
-    .where(and(eq(ai_task_runs.status, 'running'), lt(ai_task_runs.started_at, cutoff)))
-    .returning({ id: ai_task_runs.id, task_kind: ai_task_runs.task_kind });
+      finished_at: now,
+    });
+    if (settled) converged.push({ id: run.id, task_kind: run.task_kind });
+  }
 
   if (converged.length > 0) {
     console.warn('[ai_task_run_reconcile] converged stuck runs', {

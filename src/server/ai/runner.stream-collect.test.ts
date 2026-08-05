@@ -13,31 +13,47 @@ const mockSdk = vi.hoisted(() => ({
   messages: [] as unknown[],
   throwAfter: -1 as number, // when >= 0, throw after yielding this many messages
   waitForAbortAfter: -1 as number,
+  waitForAbortBeforeMessages: false,
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: vi.fn(({ options }: { options: { abortController: AbortController } }) => {
+  startup: vi.fn(async ({ options }: { options: { abortController: AbortController } }) => {
     mockSdk.capturedOptions = options;
-    return (async function* () {
-      let i = 0;
-      for (const msg of mockSdk.messages) {
-        if (mockSdk.throwAfter >= 0 && i >= mockSdk.throwAfter) {
-          throw new Error('sdk blew up mid-stream');
-        }
-        yield msg;
-        i += 1;
-        if (mockSdk.waitForAbortAfter === i) {
-          await new Promise<void>((resolve) => {
-            if (options.abortController.signal.aborted) resolve();
-            else
-              options.abortController.signal.addEventListener('abort', () => resolve(), {
-                once: true,
+    return {
+      query: vi.fn(() =>
+        (async function* () {
+          if (mockSdk.waitForAbortBeforeMessages) {
+            await new Promise<void>((resolve) => {
+              if (options.abortController.signal.aborted) resolve();
+              else
+                options.abortController.signal.addEventListener('abort', () => resolve(), {
+                  once: true,
+                });
+            });
+            throw new Error('sdk stream aborted before first message');
+          }
+          let i = 0;
+          for (const msg of mockSdk.messages) {
+            if (mockSdk.throwAfter >= 0 && i >= mockSdk.throwAfter) {
+              throw new Error('sdk blew up mid-stream');
+            }
+            yield msg;
+            i += 1;
+            if (mockSdk.waitForAbortAfter === i) {
+              await new Promise<void>((resolve) => {
+                if (options.abortController.signal.aborted) resolve();
+                else
+                  options.abortController.signal.addEventListener('abort', () => resolve(), {
+                    once: true,
+                  });
               });
-          });
-          throw new Error('sdk stream aborted after owner Stop');
-        }
-      }
-    })();
+              throw new Error('sdk stream aborted after owner Stop');
+            }
+          }
+        })(),
+      ),
+      close: vi.fn(),
+    };
   }),
   createSdkMcpServer: vi.fn(() => ({ type: 'sdk', name: '', instance: {} })),
   tool: vi.fn((name: string, description: string) => ({ name, description })),
@@ -45,15 +61,63 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 const logMocks = vi.hoisted(() => ({
   finishedShouldThrow: false,
+  finishedFailuresRemaining: 0,
+  terminalStatuses: [] as string[],
+  started: vi.fn(async (_db: unknown, _row: unknown) => {}),
+  finished: vi.fn(async (_db: unknown, _row: unknown) => {}),
+  cost: vi.fn(async (_db: unknown, _row: unknown) => {}),
 }));
 
 vi.mock('@/server/ai/log', () => ({
   logMissingMcpServersWarning: vi.fn(),
-  writeAiTaskRunStarted: vi.fn(async () => {}),
-  writeAiTaskRunFinished: vi.fn(async () => {
-    if (logMocks.finishedShouldThrow) throw new Error('db down');
-  }),
-  writeCostLedger: vi.fn(async () => {}),
+  writeAiTaskRunStarted: logMocks.started,
+  writeAiTaskRunFinished: logMocks.finished,
+  writeAiTaskRunRetried: vi.fn(async () => true),
+  writeCostLedger: logMocks.cost,
+  writeAiTaskAttemptFinished: vi.fn(
+    async (
+      db: unknown,
+      row: {
+        id: string;
+        status: string;
+        finish_reason: string;
+        usage: unknown;
+        cost_truth: { amountUsd: number | null; basis: string; ref: string };
+        error_message?: string;
+        outcome: string;
+      },
+    ) => {
+      logMocks.terminalStatuses.push(row.status);
+      if (logMocks.finishedFailuresRemaining > 0) {
+        logMocks.finishedFailuresRemaining -= 1;
+        throw new Error('db down once');
+      }
+      if (logMocks.finishedShouldThrow) throw new Error('db down');
+      await logMocks.finished(db, {
+        id: row.id,
+        status: row.status,
+        finish_reason: row.finish_reason,
+        usage: row.usage,
+        cost_usd: row.cost_truth.amountUsd ?? undefined,
+        cost_basis: row.cost_truth.basis,
+        cost_ref: row.cost_truth.ref,
+        error_message: row.error_message,
+      });
+      const usage = row.usage as
+        | { inputTokens?: number; outputTokens?: number }
+        | undefined;
+      await logMocks.cost(db, {
+        task_run_id: row.id,
+        cost: row.cost_truth.amountUsd,
+        cost_basis: row.cost_truth.basis,
+        cost_ref: row.cost_truth.ref,
+        tokens_in: usage?.inputTokens ?? 0,
+        tokens_out: usage?.outputTokens ?? 0,
+        outcome: row.outcome,
+      });
+      return true;
+    },
+  ),
   writeToolCallLog: vi.fn(async () => 'tool-log-id'),
 }));
 
@@ -223,7 +287,10 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     mockSdk.messages = [];
     mockSdk.throwAfter = -1;
     mockSdk.waitForAbortAfter = -1;
+    mockSdk.waitForAbortBeforeMessages = false;
     logMocks.finishedShouldThrow = false;
+    logMocks.finishedFailuresRemaining = 0;
+    logMocks.terminalStatuses = [];
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 
@@ -473,21 +540,24 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(writeToolCallLog).not.toHaveBeenCalled();
   });
 
-  it('threads the request signal into the SDK abortController (already-aborted)', async () => {
+  it('rejects an already-aborted collecting request before SDK startup', async () => {
     mockSdk.messages = [assistant('hi'), resultMsg];
     const ac = new AbortController();
     ac.abort();
 
-    await streamTaskCollecting(
-      'AttributionTask',
-      { q: 'x' },
-      { db: fakeDb, signal: ac.signal },
-      () => {},
-    );
+    await expect(
+      streamTaskCollecting(
+        'AttributionTask',
+        { q: 'x' },
+        { db: fakeDb, signal: ac.signal },
+        () => {},
+      ),
+    ).rejects.toThrow('provider attempt aborted before SDK startup');
 
-    const captured = (mockSdk.capturedOptions as { abortController: AbortController })
-      .abortController;
-    expect(captured.signal.aborted).toBe(true);
+    expect(mockSdk.capturedOptions).toBeUndefined();
+    expect(logMocks.started).not.toHaveBeenCalled();
+    expect(logMocks.terminalStatuses).toEqual([]);
+    expect(logMocks.cost).not.toHaveBeenCalled();
   });
 
   it('propagates a mid-flight owner Stop, preserves the collected delta, and records failure', async () => {
@@ -530,23 +600,26 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     );
   });
 
-  it('threads an already-aborted owner signal through non-streaming runTask', async () => {
+  it('rejects an already-aborted non-streaming request before SDK startup', async () => {
     mockSdk.messages = [assistant('classifier result'), resultMsg];
     const owner = new AbortController();
     owner.abort();
 
-    await runTask(
-      'AttributionTask',
-      { q: 'bounded classifier input' },
-      {
-        db: fakeDb,
-        signal: owner.signal,
-      },
-    );
+    await expect(
+      runTask(
+        'AttributionTask',
+        { q: 'bounded classifier input' },
+        {
+          db: fakeDb,
+          signal: owner.signal,
+        },
+      ),
+    ).rejects.toThrow('provider attempt aborted before SDK startup');
 
-    const captured = (mockSdk.capturedOptions as { abortController: AbortController })
-      .abortController;
-    expect(captured.signal.aborted).toBe(true);
+    expect(mockSdk.capturedOptions).toBeUndefined();
+    expect(logMocks.started).not.toHaveBeenCalled();
+    expect(logMocks.terminalStatuses).toEqual([]);
+    expect(logMocks.cost).not.toHaveBeenCalled();
   });
 
   it('records failure (not success) when the stream ends without a terminal result message', async () => {
@@ -565,7 +638,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(result.text).toBe('orphan chunk');
     expect(result.partial).toBe(true);
     expect(result.finishReason).toBe('error');
-    expect(result.error).toContain('without a terminal result');
+    expect(result.error).toContain('stream_no_terminal');
 
     // The finished row must be recorded as a failure — never success.
     const { writeAiTaskRunFinished, writeCostLedger } = await import('@/server/ai/log');
@@ -574,8 +647,48 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       status: 'failure',
       finish_reason: 'error',
     });
-    // No assistant/result usage ⇒ no cost ledger row is manufactured.
-    expect(writeCostLedger).not.toHaveBeenCalled();
+    expect(writeCostLedger).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        cost: null,
+        cost_basis: 'unknown',
+        outcome: 'failed_retryable',
+      }),
+    );
+  });
+
+  it('classifies an abort after durable start but before the first message as permanent', async () => {
+    const owner = new AbortController();
+    mockSdk.messages = [];
+    mockSdk.waitForAbortBeforeMessages = true;
+
+    const running = streamTaskCollecting(
+      'AttributionTask',
+      { q: 'x' },
+      { db: fakeDb, signal: owner.signal },
+      () => {},
+    );
+    await vi.waitFor(() => expect(logMocks.started).toHaveBeenCalledTimes(1));
+    owner.abort();
+
+    const result = await running;
+    expect(result.partial).toBe(true);
+    expect(result.error).toContain('aborted');
+    expect(logMocks.cost).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ cost_basis: 'unknown', outcome: 'failed_permanent' }),
+    );
+  });
+
+  it('propagates a start-write failure without returning a phantom partial task run', async () => {
+    logMocks.started.mockRejectedValueOnce(new Error('start row unavailable'));
+
+    await expect(
+      streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, () => {}),
+    ).rejects.toThrow('start row unavailable');
+
+    expect(logMocks.finished).not.toHaveBeenCalled();
+    expect(logMocks.cost).not.toHaveBeenCalled();
   });
 
   it('keeps a paid lower bound when a large multi-turn stream dies before its terminal result', async () => {
@@ -701,6 +814,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
         cost: 0.25,
         tokens_in: 14,
         tokens_out: 3,
+        cost_basis: 'reported',
       }),
     );
   });
@@ -761,5 +875,47 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(result.partial).toBe(true);
     expect(result.error).toContain('sdk blew up');
     expect(result.finishReason).toBe('error');
+  });
+
+  it('rejects instead of returning partial when success settlement fails', async () => {
+    mockSdk.messages = [assistant('must not persist'), resultMsg];
+    logMocks.finishedShouldThrow = true;
+
+    await expect(
+      streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, () => {}),
+    ).rejects.toThrow(/cannot report success before durable attempt settlement/);
+
+    expect(logMocks.terminalStatuses).toEqual(['success', 'failure']);
+    expect(logMocks.finished).not.toHaveBeenCalled();
+    expect(logMocks.cost).not.toHaveBeenCalled();
+  });
+
+  it('still rejects provider-success text when the bounded failure fallback settles', async () => {
+    mockSdk.messages = [assistant('must not persist'), resultMsg];
+    logMocks.finishedFailuresRemaining = 1;
+
+    await expect(
+      streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, () => {}),
+    ).rejects.toThrow(/cannot report success before durable attempt settlement/);
+
+    expect(logMocks.terminalStatuses).toEqual(['success', 'failure']);
+    expect(logMocks.finished).toHaveBeenCalledTimes(1);
+    expect(logMocks.finished.mock.calls[0][1]).toMatchObject({ status: 'failure' });
+    expect(logMocks.cost).toHaveBeenCalledTimes(1);
+    expect(logMocks.cost.mock.calls[0][1]).toMatchObject({ outcome: 'failed_permanent' });
+  });
+
+  it('rejects instead of returning partial when failure settlement fails', async () => {
+    mockSdk.messages = [assistant('must not persist'), resultMsg];
+    mockSdk.throwAfter = 1;
+    logMocks.finishedShouldThrow = true;
+
+    await expect(
+      streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, () => {}),
+    ).rejects.toThrow(/sdk blew up mid-stream/);
+
+    expect(logMocks.terminalStatuses).toEqual(['failure']);
+    expect(logMocks.finished).not.toHaveBeenCalled();
+    expect(logMocks.cost).not.toHaveBeenCalled();
   });
 });

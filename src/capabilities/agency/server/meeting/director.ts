@@ -56,7 +56,6 @@ import { createFindingsCapture } from '@/server/agency/scout/report-findings';
 import { buildEvidenceScoutAgentDefinition } from '@/server/agency/scout/scout-agent';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { SPAWN_BUDGET_MODE, createSpawnContract } from '@/server/ai/spawn-contract';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
@@ -143,11 +142,12 @@ export interface ResearchMeetingDirectorResult {
   outcome: 'success' | 'partial' | 'failure';
 }
 
+type DirectorRunResult = Pick<RunTaskResult, 'task_run_id' | 'cost_usd'>;
 type RunAgentTaskFn = (
   kind: string,
   input: unknown,
   ctx: RunAgentTaskCtx,
-) => Promise<RunTaskResult>;
+) => Promise<DirectorRunResult>;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
 type GetFailureAttemptsFn = typeof getFailureAttempts;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
@@ -250,7 +250,7 @@ export async function runResearchMeetingDirector(
     deps.listPendingConjecturesFn ??
     ((d: Db) => listProposalInboxRows(d, { status: 'pending', kind: 'conjecture' }));
   const runAgentTaskFn = deps.runAgentTaskFn ?? runAgentTask;
-  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
+  const runTaskFn = deps.runTaskFn;
   const writeEventFn = deps.writeEventFn ?? writeEvent;
   const persistToolTraceFn = deps.persistToolTraceFn ?? persistToolTrace;
   const loadConjectureHistoryFn = deps.loadConjectureHistoryFn ?? loadConjectureHistory;
@@ -344,6 +344,7 @@ export async function runResearchMeetingDirector(
   caps.proposeCount = priorOutputCounts.proposals;
   caps.noteCount = priorOutputCounts.notes;
   const capture = createFindingsCapture();
+  const lifecycleAbortController = new AbortController();
   const evidence = buildEvidenceServer({
     db,
     now,
@@ -364,6 +365,7 @@ export async function runResearchMeetingDirector(
     failureAttempts: failures,
     loadConjectureHistoryFn,
     runTaskFn,
+    parentLifecycleSignal: lifecycleAbortController.signal,
     resolveSubjectProfileForKnowledgeIdsFn: deps.resolveSubjectProfileForKnowledgeIdsFn,
   });
   const scout = buildEvidenceScoutAgentDefinition({ prompt: EVIDENCE_SCOUT_CHARTER });
@@ -390,7 +392,7 @@ export async function runResearchMeetingDirector(
     },
   };
 
-  let taskResult: RunTaskResult | undefined;
+  let taskResult: DirectorRunResult | undefined;
   let degraded = false;
   let degradeError: string | undefined;
   try {
@@ -405,6 +407,8 @@ export async function runResearchMeetingDirector(
       agents: spawnContract.agents,
       hooks: spawnContract.hooks,
       canUseTool: spawnContract.canUseTool,
+      taskRunId: toolContextTaskRunId,
+      lifecycleAbortController,
     });
   } catch (err) {
     degraded = true;
@@ -432,9 +436,9 @@ export async function runResearchMeetingDirector(
   // run itself succeeded but a persistence write hiccuped.
   let postRunError: string | undefined;
 
-  // Persist the evidence read trace to tool_call_log (best-effort). On a degraded run
-  // (no SDK task_run_id) fall back to the synthetic tool-context run id so the reads are
-  // still correlatable.
+  // Persist the evidence read trace to tool_call_log (best-effort). The preallocated
+  // tool-context id is also the outer SDK task id; retain it on a degraded pre-start run
+  // so every read remains correlatable.
   const traceRunId = taskResult?.task_run_id ?? toolContextTaskRunId;
   if (trace.length > 0) {
     try {

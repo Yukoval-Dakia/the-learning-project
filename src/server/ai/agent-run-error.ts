@@ -24,6 +24,7 @@
 //     retries — never retry an uncertain failure into a double bill).
 
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { ProviderSessionAdmissionError } from './provider-session-admission';
 
 /** SDKResultError['subtype'] union, spelled out (sdk.d.ts:3538-3556). */
 type SdkResultErrorSubtype =
@@ -40,6 +41,8 @@ export type AgentFailureSubtype =
   | 'stream_no_terminal'
   /** Lifecycle budget elapsed before a terminal result was observed. */
   | 'budget_timeout'
+  /** Cross-process session lease/control-plane failure after durable start. */
+  | 'provider_admission'
   /** Non-SDK exception after the attempt acquired a durable task-run id. */
   | 'runner_error';
 
@@ -48,9 +51,11 @@ export type AgentFailureSubtype =
  * retried when it arrived within this window from the FIRST attempt's start.
  * Fixed constant (NOT a budget.timeout ratio): a ratio would silently widen the
  * sync-route wall-clock as budgets grow — exactly the failure mode the gate
- * exists to block. Worst-case wall clock for the opted-in judges =
- * cap + one full budget.timeout = 10s + 90s = 100s, aligned with the
- * cloudflared edge idle-disconnect bound (design doc §3.4).
+ * exists to block. The runner also turns `first attempt + this cap + one full
+ * budget.timeout` into the opted-in judge's absolute provider-session deadline,
+ * so admission wait and SDK startup consume the same 10s + 90s = 100s bound
+ * instead of being added outside it (design doc §3.4). The retry-start deadline
+ * remains a separate seam and never truncates an attempt that already started.
  */
 export const RETRY_ELAPSED_CAP_MS = 10_000;
 
@@ -104,6 +109,14 @@ export function bindAgentRunError(input: {
   aborted: boolean;
 }): AgentRunError {
   if (input.error instanceof AgentRunError) return input.error;
+  if (input.error instanceof ProviderSessionAdmissionError) {
+    return new AgentRunError({
+      kind: input.kind,
+      taskRunId: input.taskRunId,
+      subtype: 'provider_admission',
+      errors: [input.error.message],
+    });
+  }
   return new AgentRunError({
     kind: input.kind,
     taskRunId: input.taskRunId,

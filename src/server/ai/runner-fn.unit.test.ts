@@ -26,6 +26,8 @@ describe('bound runTask adapters', () => {
     finishReason: 'end_turn',
     usage: { inputTokens: 2, outputTokens: 3 },
     cost_usd: 0.01,
+    cost_basis: 'reported',
+    cost_ref: 'sdk:total_cost_usd',
     structured_output: { answer: 42 },
   };
 
@@ -64,6 +66,17 @@ describe('bound runTask adapters', () => {
     );
   });
 
+  it('allows either bound or call context to tighten but never widen the deadline', async () => {
+    runTask.mockResolvedValueOnce(fullResult).mockResolvedValueOnce(fullResult);
+    const bound = makeRunTaskFn(db, { providerSessionDeadlineAt: 900 });
+
+    await bound('VariantGenTask', {}, { providerSessionDeadlineAt: 1_000 });
+    await bound('VariantGenTask', {}, { providerSessionDeadlineAt: 800 });
+
+    expect(runTask.mock.calls.at(-2)?.[2]).toMatchObject({ providerSessionDeadlineAt: 900 });
+    expect(runTask.mock.calls.at(-1)?.[2]).toMatchObject({ providerSessionDeadlineAt: 800 });
+  });
+
   it('projects the runner result to the TaskTextResult provenance seam', async () => {
     runTask.mockResolvedValueOnce(fullResult);
 
@@ -78,9 +91,13 @@ describe('bound runTask adapters', () => {
       text: 'answer',
       task_run_id: 'run-1',
       cost_usd: 0.01,
+      cost_basis: 'reported',
+      cost_ref: 'sdk:total_cost_usd',
       structured_output: { answer: 42 },
     });
     expect(Object.keys(result).sort()).toEqual([
+      'cost_basis',
+      'cost_ref',
       'cost_usd',
       'structured_output',
       'task_run_id',

@@ -120,6 +120,30 @@ aws s3 sync \
 > Destructive database operation. Stop writers, verify the target host and archive, and keep
 > a compose-level Postgres dump before continuing.
 
+YUK-842 provider gate: the import endpoint requires Hono to remain running, so this is not a generic
+"stop every process" restore. First block user ingress and pause job dispatch, then wait for central
+SDK sessions to finish normally. Before aborting, killing, or stopping any remaining owner, inspect
+and record its quarantine bound while the operational table still exists:
+
+```sql
+select count(*) filter (where status in ('acquired', 'lease_expired')) as active_or_quarantined,
+       count(*) filter (where status = 'waiting') as waiting,
+       max(hard_reclaim_at) as restore_quarantine_until
+from provider_session_admission
+where (status = 'waiting' and wait_deadline_at > clock_timestamp())
+   or (status in ('acquired', 'lease_expired') and hard_reclaim_at > clock_timestamp());
+```
+
+Zero waiting and zero active/quarantined rows are necessary but not sufficient: a single DB snapshot
+cannot prove that an already-running caller is not between its wait loop and acquire transaction.
+Only an application-level in-flight drain signal, after ingress/dispatch have been blocked, may prove
+normal drain. Persist any returned maximum outside Postgres before abort/stop/import; it remains a
+mandatory lower bound even after the table is wiped. Then stop worker and restart/retain only the
+admin Hono process with
+`AI_PROVIDER_SESSION_ADMISSION_MODE=off`. Record the time of the last provider traffic. Do not allow
+normal API traffic while the import is running. The archive excludes and transactionally wipes
+`provider_session_admission`.
+
 Import validates the ZIP, schema version, table names, columns, and row shapes before mutation.
 The database replacement itself runs in one transaction: a failure rolls back atomically and
 leaves Postgres unchanged. An archive with inline assets writes R2 after the database commit;
@@ -148,6 +172,21 @@ If `schema_version` differs from the running Hono API, import returns HTTP 400 w
 `error: "schema_version_mismatch"`. Shape errors also return HTTP 400 before any database
 mutation. A mid-transaction failure returns HTTP 500 and explicitly reports that the database
 was left unchanged.
+
+Before reopening ingress, wait until all applicable bounds have passed:
+
+1. 60 seconds since the last pre-restore provider traffic (start-reservation window).
+2. The captured `restore_quarantine_until`.
+3. Unless application-level normal drain was positively confirmed, process stop time plus the deployed
+   45s SDK startup budget, maximum execution timeout, and 30s abort grace. This worst-case fallback is
+   mandatory for every abort/kill/ambiguous stop; a shorter DB snapshot may extend it but may never
+   shorten it.
+
+Abort is not proof that an already sent provider request stopped. If the admission table/state was
+already lost, a central caller ran off/unlisted, or no trustworthy application-level drain signal
+exists, use the same stop-time worst-case bound. If the deployed maximum timeout cannot be proven,
+keep ingress/dispatch closed. Once safe, restart app and worker together with one identical admission
+mode/policy.
 
 ## R2 orphan audit
 
@@ -215,8 +254,14 @@ docker compose exec -T postgres pg_restore -l < "$DUMP" >/dev/null
 The repository also provides `pnpm db:dump` for a plain-SQL dump to `/tmp` and
 `pnpm db:restore < /tmp/<dump>.sql` for its matching restore path.
 
-To restore a custom-format dump, first stop application writers. The following command replaces
-the target database objects; confirm `DUMP` and the compose project before running it:
+To restore a custom-format dump, first block ingress/dispatch and record the time of the last provider
+traffic. Run the waiting/active/quarantined query from the application-import section and persist its
+maximum `hard_reclaim_at` outside Postgres before aborting or stopping any owner. Unless a separate
+application-level signal positively confirms normal drain, also record process stop time and use the
+deployed 45s SDK startup budget + maximum execution timeout + 30s fallback. The dump includes
+operational admission rows, so they must be discarded after migrations and before app/worker restart.
+Confirm `DUMP` and the compose
+project before running:
 
 ```bash
 docker compose stop app worker
@@ -227,7 +272,18 @@ docker compose exec -T postgres pg_restore \
   --clean --if-exists --no-owner --single-transaction --exit-on-error \
   < "$DUMP"
 
-docker compose up -d migrate app worker
+docker compose run --rm migrate
+docker compose exec -T postgres psql \
+  -v ON_ERROR_STOP=1 \
+  -U "${POSTGRES_USER:-loom}" \
+  -d "${POSTGRES_DB:-loom}" \
+  -c 'TRUNCATE TABLE provider_session_admission'
+
+# Wait for the >=60s rate bound, any captured restore_quarantine_until, and—unless
+# application-level drain was confirmed—stop time + 45s startup budget + deployed
+# max execution timeout + 30s abort grace.
+# If either bound is unknown, remain fail-closed and do not run this start command.
+docker compose up -d app worker
 docker compose ps
 ```
 

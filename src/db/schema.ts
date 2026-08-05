@@ -873,6 +873,11 @@ export const ai_task_runs = pgTable(
       .notNull()
       .default({ inputTokens: 0, outputTokens: 0 }),
     cost_usd: real('cost_usd'),
+    // YUK-841 — one attempt has one explicit cost truth. Legacy rows keep both
+    // fields NULL; new runner attempts persist reported / estimated / unknown
+    // together with the evidence reference used to classify the amount.
+    cost_basis: text('cost_basis'),
+    cost_ref: text('cost_ref'),
     error_message: text('error_message'),
     started_at: timestamp('started_at', { withTimezone: true }).notNull(),
     finished_at: timestamp('finished_at', { withTimezone: true }),
@@ -880,6 +885,175 @@ export const ai_task_runs = pgTable(
   (t) => [
     index('ai_task_runs_task_kind_idx').on(t.task_kind, t.started_at.desc()),
     index('ai_task_runs_status_idx').on(t.status, t.started_at.desc()),
+    check(
+      'ai_task_runs_cost_truth_ck',
+      sql`(
+        ${t.cost_basis} IS NULL AND ${t.cost_ref} IS NULL
+      ) OR (
+        ${t.cost_basis} IS NOT NULL
+        AND ${t.cost_basis} IN ('reported','estimated','unknown')
+        AND ${t.cost_ref} IS NOT NULL
+        AND btrim(${t.cost_ref}) <> ''
+        AND (
+          (${t.cost_basis} = 'unknown' AND ${t.cost_usd} IS NULL)
+          OR (${t.cost_basis} IN ('reported','estimated') AND ${t.cost_usd} IS NOT NULL AND ${t.cost_usd} >= 0)
+        )
+      )`,
+    ),
+  ],
+);
+
+// YUK-842 — cross-process provider-lane admission for complete SDK query sessions.
+// One row is both the live lease state and the start-reservation ledger for one
+// preallocated model-attempt identity. task_run_id and borrowed_from_task_run_id are intentional
+// loose refs: waiting/timeout rows precede ai_task_runs, while the durable model attempt is created
+// only after acquire. Admission correctness must not depend on a hard FK during restore. Rows are
+// operational. Terminal rows become eligible after a seven-day diagnostic horizon for opportunistic
+// pruning in bounded lane-local batches; there is no background TTL.
+//
+// One active same-lane descendant chain may share an active session-family root's concurrency slot
+// while every child keeps its own row, start reservation, lease, and metrics. Parallel siblings must
+// consume another root or wait. Cross-row facts remain runtime CAS invariants; the row-local CHECK
+// only prevents impossible shapes and self-borrowing.
+export const provider_session_admission = pgTable(
+  'provider_session_admission',
+  {
+    // Primary-key uniqueness is the one-admission-row-per-attempt contract. Deliberately no FK.
+    task_run_id: text('task_run_id').primaryKey(),
+    lane_id: text('lane_id').notNull(),
+    policy_fingerprint: text('policy_fingerprint').notNull(),
+    mode: text('mode', { enum: ['observe', 'enforce'] }).notNull(),
+    status: text('status', {
+      enum: [
+        'waiting',
+        'acquired',
+        'released',
+        'timed_out',
+        'cancelled',
+        'rejected',
+        'lease_expired',
+      ],
+    }).notNull(),
+    // Loose parent-attempt correlation. Runtime permits it only for an active same-lane parent.
+    borrowed_from_task_run_id: text('borrowed_from_task_run_id'),
+    claim_token: uuid('claim_token'),
+    requested_at: timestamp('requested_at', { withTimezone: true }).notNull(),
+    wait_deadline_at: timestamp('wait_deadline_at', { withTimezone: true }).notNull(),
+    acquired_at: timestamp('acquired_at', { withTimezone: true }),
+    heartbeat_at: timestamp('heartbeat_at', { withTimezone: true }),
+    lease_expires_at: timestamp('lease_expires_at', { withTimezone: true }),
+    // A lost short lease is not safe to recycle at an unfenceable external provider until this bound.
+    hard_reclaim_at: timestamp('hard_reclaim_at', { withTimezone: true }),
+    terminal_at: timestamp('terminal_at', { withTimezone: true }),
+    terminal_reason: text('terminal_reason'),
+  },
+  (t) => [
+    // Active rows feed family-root capacity accounting. One descendant chain is free only while an
+    // active ancestor owns its family slot; parallel branches consume roots. When an ancestor ends,
+    // its still-active child becomes the counted root.
+    // A short-lease loss is terminal for ownership but remains quarantined through hard_reclaim_at.
+    index('provider_session_admission_lane_active_idx')
+      .on(t.lane_id, t.hard_reclaim_at, t.borrowed_from_task_run_id)
+      .where(sql`${t.status} IN ('acquired','lease_expired')`),
+    // Short-lease expiry scan; heartbeat/release remain token-fenced CAS updates.
+    index('provider_session_admission_lane_lease_idx')
+      .on(t.lane_id, t.lease_expires_at)
+      .where(sql`${t.status} = 'acquired'`),
+    // Sliding start-reservation rate counts every acquired row, including family children and
+    // terminal rows.
+    index('provider_session_admission_lane_start_idx')
+      .on(t.lane_id, t.acquired_at)
+      .where(sql`${t.acquired_at} IS NOT NULL`),
+    index('provider_session_admission_lane_waiting_idx')
+      .on(t.lane_id, t.requested_at, t.task_run_id)
+      .where(sql`${t.status} = 'waiting'`),
+    index('provider_session_admission_borrowed_from_idx')
+      .on(t.borrowed_from_task_run_id)
+      .where(sql`${t.borrowed_from_task_run_id} IS NOT NULL`),
+    // Supports opportunistic lane-local pruning: at most 100 eligible rows per later lane tick.
+    index('provider_session_admission_lane_terminal_idx')
+      .on(t.lane_id, t.terminal_at)
+      .where(sql`${t.terminal_at} IS NOT NULL`),
+    check('provider_session_admission_mode_ck', sql`${t.mode} IN ('observe','enforce')`),
+    check(
+      'provider_session_admission_status_ck',
+      sql`${t.status} IN ('waiting','acquired','released','timed_out','cancelled','rejected','lease_expired')`,
+    ),
+    check(
+      'provider_session_admission_identifiers_ck',
+      sql`${t.task_run_id} = btrim(${t.task_run_id})
+        AND ${t.task_run_id} <> ''
+        AND ${t.lane_id} = btrim(${t.lane_id})
+        AND ${t.lane_id} <> ''
+        AND ${t.policy_fingerprint} = btrim(${t.policy_fingerprint})
+        AND ${t.policy_fingerprint} <> ''
+        AND (${t.borrowed_from_task_run_id} IS NULL OR (
+          ${t.borrowed_from_task_run_id} = btrim(${t.borrowed_from_task_run_id})
+          AND ${t.borrowed_from_task_run_id} <> ''
+        ))`,
+    ),
+    check(
+      'provider_session_admission_acquisition_shape_ck',
+      sql`(
+          ${t.claim_token} IS NULL
+          AND ${t.acquired_at} IS NULL
+          AND ${t.heartbeat_at} IS NULL
+          AND ${t.lease_expires_at} IS NULL
+          AND ${t.hard_reclaim_at} IS NULL
+        ) OR (
+          ${t.claim_token} IS NOT NULL
+          AND ${t.acquired_at} IS NOT NULL
+          AND ${t.heartbeat_at} IS NOT NULL
+          AND ${t.lease_expires_at} IS NOT NULL
+          AND ${t.hard_reclaim_at} IS NOT NULL
+        )`,
+    ),
+    check(
+      'provider_session_admission_status_shape_ck',
+      sql`(
+          ${t.status} IN ('waiting','timed_out','rejected') AND ${t.acquired_at} IS NULL
+        ) OR (
+          ${t.status} IN ('acquired','released','lease_expired') AND ${t.acquired_at} IS NOT NULL
+        ) OR ${t.status} = 'cancelled'`,
+    ),
+    check(
+      'provider_session_admission_terminal_shape_ck',
+      sql`(
+          ${t.status} IN ('waiting','acquired')
+          AND ${t.terminal_at} IS NULL
+          AND ${t.terminal_reason} IS NULL
+        ) OR (
+          ${t.status} IN ('released','timed_out','cancelled','rejected','lease_expired')
+          AND ${t.terminal_at} IS NOT NULL
+          AND ${t.terminal_reason} IS NOT NULL
+          AND btrim(${t.terminal_reason}) <> ''
+        )`,
+    ),
+    check(
+      'provider_session_admission_borrow_shape_ck',
+      sql`${t.borrowed_from_task_run_id} IS NULL OR (
+        ${t.borrowed_from_task_run_id} <> ${t.task_run_id}
+        AND ${t.acquired_at} IS NOT NULL
+        AND ${t.status} IN ('acquired','released','cancelled','lease_expired')
+      )`,
+    ),
+    check(
+      'provider_session_admission_timeline_ck',
+      sql`${t.wait_deadline_at} > ${t.requested_at}
+        AND (${t.acquired_at} IS NULL OR (
+          ${t.acquired_at} >= ${t.requested_at}
+          AND ${t.acquired_at} < ${t.wait_deadline_at}
+          AND ${t.heartbeat_at} >= ${t.acquired_at}
+          AND ${t.lease_expires_at} > ${t.heartbeat_at}
+          AND ${t.hard_reclaim_at} >= ${t.lease_expires_at}
+        ))
+        AND (${t.terminal_at} IS NULL OR (
+          ${t.terminal_at} >= ${t.requested_at}
+          AND (${t.acquired_at} IS NULL OR ${t.terminal_at} >= ${t.acquired_at})
+        ))
+        AND (${t.status} <> 'timed_out' OR ${t.terminal_at} >= ${t.wait_deadline_at})
+        AND (${t.status} <> 'lease_expired' OR ${t.terminal_at} >= ${t.lease_expires_at})`,
+    ),
   ],
 );
 
@@ -928,18 +1102,54 @@ export const cost_ledger = pgTable(
     task_kind: text('task_kind').notNull(),
     provider: text('provider').notNull(),
     model: text('model').notNull(),
-    cost: real('cost').notNull(),
+    // Nullable only for entry_kind='attempt' + cost_basis='unknown'. Legacy
+    // writers remain numeric and are deliberately not back-classified.
+    cost: real('cost'),
     // YUK-359: `cost` 是原始计费值（evidence-first，不写入折算）；币种由本列标记。
     // 历史行 + runner(mimo USD) 默认 'USD'；GLM-OCR / memory(GLM/百炼) 写 'CNY'。
     // 读路径必须按 currency 分组聚合，绝不裸 SUM 混币（cost-today / ai-observability）。
     currency: text('currency').notNull().default('USD'),
+    // YUK-841 — pre-cutover and non-runner correlation rows remain `legacy`.
+    // The central AI runner is the only writer of `attempt` rows.
+    entry_kind: text('entry_kind').notNull().default('legacy'),
+    cost_basis: text('cost_basis'),
+    cost_ref: text('cost_ref'),
     tokens_in: integer('tokens_in').notNull(),
     tokens_out: integer('tokens_out').notNull(),
     outcome: text('outcome').notNull().default('success'),
     pgboss_job_id: text('pgboss_job_id'),
     occurred_at: timestamp('occurred_at', { withTimezone: true }).notNull(),
   },
-  (t) => [index('cost_ledger_task_run_idx').on(t.task_run_id)],
+  (t) => [
+    index('cost_ledger_task_run_idx').on(t.task_run_id),
+    uniqueIndex('cost_ledger_attempt_task_run_uq')
+      .on(t.task_run_id)
+      .where(sql`${t.entry_kind} = 'attempt'`),
+    check('cost_ledger_entry_kind_ck', sql`${t.entry_kind} IN ('legacy','attempt')`),
+    check(
+      'cost_ledger_cost_basis_ck',
+      sql`${t.cost_basis} IS NULL OR ${t.cost_basis} IN ('reported','estimated','unknown')`,
+    ),
+    check(
+      'cost_ledger_attempt_truth_ck',
+      sql`(
+        ${t.entry_kind} = 'legacy'
+        AND ${t.cost} IS NOT NULL
+        AND ${t.cost_basis} IS NULL
+        AND ${t.cost_ref} IS NULL
+      ) OR (
+        ${t.entry_kind} = 'attempt'
+        AND ${t.task_run_id} IS NOT NULL
+        AND ${t.cost_basis} IS NOT NULL
+        AND ${t.cost_ref} IS NOT NULL
+        AND btrim(${t.cost_ref}) <> ''
+        AND (
+          (${t.cost_basis} = 'unknown' AND ${t.cost} IS NULL)
+          OR (${t.cost_basis} IN ('reported','estimated') AND ${t.cost} IS NOT NULL AND ${t.cost} >= 0)
+        )
+      )`,
+    ),
+  ],
 );
 
 // pg-boss 之上的"业务事件流"：每次状态迁移同事务 INSERT 一行 + pg_notify。

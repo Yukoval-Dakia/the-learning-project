@@ -781,7 +781,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   const runId = data.run_id;
   const surface = selectSurface(data.triggered_by);
   const actorRef = selectActorRef(data.triggered_by);
-  const taskRunId = `copilot_run_tool_${runId}`;
+  const baseTaskRunId = `copilot_run_tool_${runId}`;
   const projectSuccessfulTerminal =
     params.writeSuccessfulTerminalProjectionFn ?? writeSuccessfulTerminalProjection;
   const projectFailedTerminal =
@@ -800,6 +800,17 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     businessId: runId,
     lastEventId: 0,
   });
+  // Legacy FAILED(reason=error) frames explicitly authorize another paid
+  // delivery. Each such delivery needs a fresh model-attempt identity: both
+  // ai_task_runs and provider_session_admission are terminal ledgers keyed by
+  // task_run_id and must never be reopened. The replay count is deterministic
+  // across overlapping/redelivered workers; the execution fence below still
+  // guarantees that only one owner can use this candidate identity.
+  const retryableFailureCount = priorEvents.filter(
+    (event) => event.event_type === COPILOT_RUN_EVENTS.FAILED && !isCopilotRunTerminalEvent(event),
+  ).length;
+  const taskRunId =
+    retryableFailureCount === 0 ? baseTaskRunId : `${baseTaskRunId}_retry_${retryableFailureCount}`;
 
   // YUK-364 (bot-review C1) — terminal-already-present 守卫（防成功后重投的重复
   // 副作用），但**只对 DONE（成功终态）+ cancelled（用户意图终态）跳过**，对普通
@@ -939,6 +950,11 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     runId,
   });
   const toolTrace: ToolExecutionResultObservation[] = [];
+  // One exact signal spans the outer provider attempt and every nested central
+  // task invoked through its in-process MCP tools. The cancellation poll remains
+  // the caller signal; the runner additionally aborts this controller on its own
+  // timeout or provider-lease fencing before releasing the parent permit.
+  const lifecycleAbortController = new AbortController();
 
   // ── MCP mount: 照 quiz_gen:415-435 / chat.ts:1038-1098 ────────────────────
   // copilot 全集 surface（chat surface=copilot；chip surface=user-suggested）。
@@ -948,7 +964,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   const mcpServer = buildMcpServer({
     ctx: {
       db,
-      signal: cancellationControl.signal,
+      signal: lifecycleAbortController.signal,
       taskRunId,
       callerActor: { kind: 'agent', ref: actorRef },
       causedByEventId: runId,
@@ -1111,7 +1127,12 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       runInput,
       {
         db,
+        // The MCP ToolContext uses this same preallocated id. Keeping the outer
+        // lifecycle identity identical lets same-lane nested runTask calls prove
+        // their active parent and borrow its concurrency slot.
+        taskRunId,
         signal: cancellationControl.signal,
+        lifecycleAbortController,
         mcpServers,
         allowedTools,
         hooks: sdkHooks,

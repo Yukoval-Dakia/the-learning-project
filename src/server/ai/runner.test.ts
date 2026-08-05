@@ -2,10 +2,12 @@
 //
 // Pre-fix the runner was a two-tier mix of raw @anthropic-ai/sdk (single turn)
 // + Claude Agent SDK (tool-call). Codex called this out as drift from "全切
-// SDK"; the runner now goes through `@anthropic-ai/claude-agent-sdk.query`
+// SDK"; the runner now goes through Agent SDK `startup()` + `WarmQuery.query()`
 // uniformly. We mock the SDK at module boundary so unit tests don't spawn
 // the `claude` binary.
 
+import { ai_task_runs, cost_ledger } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { memR2 } from '../../../tests/helpers/r2';
@@ -17,13 +19,17 @@ const mockSdk = vi.hoisted(() => ({
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: vi.fn(({ prompt, options }: { prompt: unknown; options: unknown }) => {
+  startup: vi.fn(async ({ options }: { options: unknown }) => {
     mockSdk.capturedOptions = options;
-    mockSdk.capturedPrompt = prompt;
-    const iter = (async function* () {
-      for (const m of mockSdk.messages) yield m;
-    })();
-    return iter;
+    return {
+      query: vi.fn((prompt: unknown) => {
+        mockSdk.capturedPrompt = prompt;
+        return (async function* () {
+          for (const m of mockSdk.messages) yield m;
+        })();
+      }),
+      close: vi.fn(),
+    };
   }),
   createSdkMcpServer: vi.fn((opts: unknown) => ({
     type: 'sdk',
@@ -47,7 +53,10 @@ function successResult(text: string, cost_usd = 0.001) {
   };
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe('runTask (Claude Agent SDK adapter)', () => {
   beforeEach(async () => {
@@ -72,6 +81,10 @@ describe('runTask (Claude Agent SDK adapter)', () => {
     expect(result.usage.inputTokens).toBe(100);
     expect(result.usage.outputTokens).toBe(50);
     expect(result.cost_usd).toBe(0.001);
+    expect(result).toMatchObject({
+      cost_basis: 'reported',
+      cost_ref: 'sdk:total_cost_usd',
+    });
 
     const { ai_task_runs, cost_ledger } = await import('@/db/schema');
     const { eq } = await import('drizzle-orm');
@@ -81,8 +94,13 @@ describe('runTask (Claude Agent SDK adapter)', () => {
       .where(eq(cost_ledger.task_kind, 'AttributionTask'));
     expect(rows).toHaveLength(1);
     // codex P1 fix: cost_ledger.cost is USD float, NOT micro-USD ints.
-    expect(rows[0].cost).toBeCloseTo(0.001, 6);
+    expect(rows[0].cost ?? Number.NaN).toBeCloseTo(0.001, 6);
     expect(rows[0].task_run_id).toBe(result.task_run_id);
+    expect(rows[0]).toMatchObject({
+      entry_kind: 'attempt',
+      cost_basis: 'reported',
+      cost_ref: 'sdk:total_cost_usd',
+    });
 
     const runRows = await testDb()
       .select()
@@ -95,11 +113,93 @@ describe('runTask (Claude Agent SDK adapter)', () => {
       model: 'mimo-v2.5-pro',
       status: 'success',
       finish_reason: 'end_turn',
+      cost_basis: 'reported',
+      cost_ref: 'sdk:total_cost_usd',
     });
     expect(runRows[0].input_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(runRows[0].usage_json).toEqual({ inputTokens: 100, outputTokens: 50 });
     expect(runRows[0].cost_usd).toBeCloseTo(0.001, 6);
     expect(runRows[0].finished_at).toBeTruthy();
+  });
+
+  it('projects Xiaomi zero as the same estimate in result, run, and ledger', async () => {
+    mockSdk.messages = [successResult('estimated', 0)];
+
+    const result = await runTask('AttributionTask', {}, { db: testDb(), r2: memR2() });
+    const [run] = await testDb()
+      .select()
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.id, result.task_run_id));
+    const [ledger] = await testDb()
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_run_id, result.task_run_id));
+
+    expect(result.cost_basis).toBe('estimated');
+    expect(result.cost_usd).toBeGreaterThan(0);
+    expect(result.cost_ref).toContain('pricebook:');
+    expect(run).toMatchObject({
+      cost_usd: result.cost_usd,
+      cost_basis: result.cost_basis,
+      cost_ref: result.cost_ref,
+    });
+    expect(ledger).toMatchObject({
+      entry_kind: 'attempt',
+      cost: result.cost_usd,
+      cost_basis: result.cost_basis,
+      cost_ref: result.cost_ref,
+    });
+  });
+
+  it('keeps an unpriced Xiaomi model unknown instead of projecting zero', async () => {
+    mockSdk.messages = [successResult('unknown', 0)];
+
+    const result = await runTask(
+      'AttributionTask',
+      {},
+      {
+        db: testDb(),
+        r2: memR2(),
+        override: { provider: 'xiaomi', model: 'mimo-future' },
+      },
+    );
+    const [run] = await testDb()
+      .select()
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.id, result.task_run_id));
+    const [ledger] = await testDb()
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_run_id, result.task_run_id));
+
+    expect(result).toMatchObject({
+      cost_basis: 'unknown',
+      cost_ref: 'unpriced:xiaomi/mimo-future',
+    });
+    expect(result.cost_usd).toBeUndefined();
+    expect(run).toMatchObject({ cost_usd: null, cost_basis: 'unknown' });
+    expect(ledger).toMatchObject({ cost: null, cost_basis: 'unknown' });
+  });
+
+  it('preserves Anthropic direct reported zero as real evidence', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-anthropic-test');
+    mockSdk.messages = [successResult('free-tier', 0)];
+
+    const result = await runTask(
+      'AttributionTask',
+      {},
+      {
+        db: testDb(),
+        r2: memR2(),
+        override: { provider: 'anthropic', model: 'claude-sonnet-test' },
+      },
+    );
+
+    expect(result).toMatchObject({
+      cost_usd: 0,
+      cost_basis: 'reported',
+      cost_ref: 'sdk:total_cost_usd',
+    });
   });
 
   it('passes systemPrompt + model + env via options + tools from registry', async () => {
@@ -219,23 +319,68 @@ describe('runTask (Claude Agent SDK adapter)', () => {
     expect(JSON.stringify(mockSdk.capturedPrompt)).toContain('memory-context');
   });
 
-  it('throws on SDK error result', async () => {
-    mockSdk.messages = [{ type: 'result', subtype: 'error_during_execution' }];
+  it('captures SDK error terminal usage/cost and writes a failure attempt ledger', async () => {
+    mockSdk.messages = [
+      {
+        type: 'result',
+        subtype: 'error_max_budget_usd',
+        stop_reason: null,
+        total_cost_usd: 0,
+        usage: { input_tokens: 80, output_tokens: 20, cache_read_input_tokens: 5 },
+        errors: ['budget reached'],
+      },
+    ];
 
     await expect(runTask('AttributionTask', {}, { db: testDb(), r2: memR2() })).rejects.toThrow(
-      /error_during_execution/,
+      /error_max_budget_usd/,
     );
 
-    const { ai_task_runs } = await import('@/db/schema');
-    const { eq } = await import('drizzle-orm');
     const runRows = await testDb()
       .select()
       .from(ai_task_runs)
       .where(eq(ai_task_runs.task_kind, 'AttributionTask'));
     expect(runRows).toHaveLength(1);
     expect(runRows[0].status).toBe('failure');
-    expect(runRows[0].error_message).toContain('error_during_execution');
+    expect(runRows[0].usage_json).toEqual({ inputTokens: 85, outputTokens: 20 });
+    expect(runRows[0].cost_basis).toBe('estimated');
+    expect(runRows[0].error_message).toContain('error_max_budget_usd');
     expect(runRows[0].finished_at).toBeTruthy();
+    const ledger = await testDb()
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_run_id, runRows[0].id));
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({
+      entry_kind: 'attempt',
+      cost_basis: 'estimated',
+      tokens_in: 85,
+      tokens_out: 20,
+      outcome: 'failed_permanent',
+    });
+  });
+
+  it('writes an unknown retryable attempt ledger when the SDK has no terminal message', async () => {
+    mockSdk.messages = [];
+
+    await expect(runTask('AttributionTask', {}, { db: testDb(), r2: memR2() })).rejects.toThrow(
+      /stream_no_terminal/,
+    );
+
+    const [run] = await testDb()
+      .select()
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.task_kind, 'AttributionTask'));
+    const [ledger] = await testDb()
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_run_id, run.id));
+    expect(run).toMatchObject({ status: 'failure', cost_usd: null, cost_basis: 'unknown' });
+    expect(ledger).toMatchObject({
+      entry_kind: 'attempt',
+      cost: null,
+      cost_basis: 'unknown',
+      outcome: 'failed_retryable',
+    });
   });
 
   it('runAgentTask is an alias of runTask', async () => {
@@ -495,7 +640,7 @@ describe('streamTask middleware + cost', () => {
       .from(cost_ledger)
       .where(eq(cost_ledger.task_kind, 'AttributionTask'));
     expect(rows).toHaveLength(1);
-    expect(rows[0].cost).toBeCloseTo(0.005, 6);
+    expect(rows[0].cost ?? Number.NaN).toBeCloseTo(0.005, 6);
     const taskRunId = rows[0].task_run_id;
     expect(taskRunId).toBeTruthy();
     if (!taskRunId) throw new Error('expected cost_ledger.task_run_id');

@@ -4,11 +4,11 @@
 // the finally block — the ai_task_runs row then sticks at status='running'
 // forever. The sweeper converges OBSERVATION STATE ONLY: no domain writes, no
 // job re-emission, no LLM re-run (design doc §5.2). Threshold 1h vs the largest
-// budget.timeout (300s) = 12× margin — a >1h 'running' row cannot be a live run
-// (cooperative abort bounds real run lifetime), so false convergence of a live
-// run is structurally excluded.
+// effective per-call timeout (12min) = 5× margin — a >1h 'running' row cannot
+// be a live run (cooperative abort bounds real run lifetime), so false
+// convergence of a live run is structurally excluded.
 
-import { ai_task_runs } from '@/db/schema';
+import { ai_task_runs, cost_ledger } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -73,6 +73,20 @@ describe('reconcileStuckAiTaskRuns (YUK-576 §5)', () => {
     expect(row.finish_reason).toBe(RECONCILED_STUCK_FINISH_REASON);
     expect(row.finished_at).not.toBeNull();
     expect(row.error_message).toContain('sweeper');
+    expect(row).toMatchObject({
+      cost_usd: null,
+      cost_basis: 'unknown',
+      cost_ref: 'unpriced:test/test-model',
+    });
+    const ledger = await db.select().from(cost_ledger).where(eq(cost_ledger.task_run_id, id));
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({
+      entry_kind: 'attempt',
+      cost: null,
+      cost_basis: 'unknown',
+      cost_ref: 'unpriced:test/test-model',
+      outcome: 'failed_permanent',
+    });
   });
 
   it('leaves a fresh running row (< threshold) untouched — no live-run false convergence', async () => {
@@ -115,5 +129,6 @@ describe('reconcileStuckAiTaskRuns (YUK-576 §5)', () => {
 
     expect(first.reconciled).toBe(1);
     expect(second.reconciled).toBe(0);
+    expect(await db.select().from(cost_ledger)).toHaveLength(1);
   });
 });

@@ -1608,3 +1608,412 @@ describe('migration smoke — YUK-792 intervention settlement backfill', () => {
     expect(shadow.diagnostics.transfer.due_at).toBe('2026-07-22T02:20:30.123Z');
   });
 });
+
+describe('migration smoke — YUK-841 attempt cost truth', () => {
+  const BASELINE_TAG = '0086_yuk792_intervention_settlement';
+  const MIGRATION_TAG = '0087_yuk841_attempt_cost_truth';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    let reachedBaseline = false;
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(client, migration.sql);
+      if (migration.tag === BASELINE_TAG) {
+        reachedBaseline = true;
+        break;
+      }
+    }
+    if (!reachedBaseline) throw new Error(`baseline migration ${BASELINE_TAG} not found`);
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('keeps old rows legacy and enforces nullable unknown + one ledger per attempt', async () => {
+    await client`
+      INSERT INTO ai_task_runs (
+        id, task_kind, provider, model, input_hash, status, cost_usd, started_at, finished_at
+      ) VALUES (
+        'legacy_run', 'LegacyTask', 'legacy', 'legacy-model', 'legacy-hash',
+        'success', 0, now(), now()
+      )
+    `;
+    await client`
+      INSERT INTO cost_ledger (
+        id, task_run_id, task_kind, provider, model, cost, currency,
+        tokens_in, tokens_out, outcome, occurred_at
+      ) VALUES
+        ('legacy_a', 'shared_run', 'LegacyTask', 'legacy', 'legacy-model', 0, 'USD', 1, 2, 'success', now()),
+        ('legacy_b', 'shared_run', 'LegacyTask', 'legacy', 'legacy-model', 0.5, 'USD', 3, 4, 'success', now())
+    `;
+
+    const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
+    if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
+    await applyMigrationFile(client, migration.sql);
+
+    const legacy = await client<
+      { id: string; entry_kind: string; cost_basis: string | null; cost_ref: string | null }[]
+    >`
+      SELECT id, entry_kind, cost_basis, cost_ref
+      FROM cost_ledger
+      WHERE id IN ('legacy_a', 'legacy_b')
+      ORDER BY id
+    `;
+    expect(legacy).toEqual([
+      { id: 'legacy_a', entry_kind: 'legacy', cost_basis: null, cost_ref: null },
+      { id: 'legacy_b', entry_kind: 'legacy', cost_basis: null, cost_ref: null },
+    ]);
+    const [legacyRun] = await client<
+      { id: string; cost_usd: number | null; cost_basis: string | null; cost_ref: string | null }[]
+    >`
+      SELECT id, cost_usd, cost_basis, cost_ref
+      FROM ai_task_runs
+      WHERE id = 'legacy_run'
+    `;
+    expect(legacyRun).toEqual({
+      id: 'legacy_run',
+      cost_usd: 0,
+      cost_basis: null,
+      cost_ref: null,
+    });
+
+    await client`
+      INSERT INTO ai_task_runs (
+        id, task_kind, provider, model, input_hash, status,
+        cost_usd, cost_basis, cost_ref, started_at, finished_at
+      ) VALUES
+        ('run_reported', 'AttemptTask', 'anthropic', 'claude', 'reported-hash', 'success',
+         0, 'reported', 'sdk:total_cost_usd', now(), now()),
+        ('run_unknown', 'AttemptTask', 'xiaomi', 'unknown-model', 'unknown-hash', 'failure',
+         NULL, 'unknown', 'unpriced:xiaomi/unknown-model', now(), now())
+    `;
+
+    await expect(
+      client`
+        INSERT INTO ai_task_runs (
+          id, task_kind, provider, model, input_hash, status,
+          cost_usd, cost_basis, cost_ref, started_at, finished_at
+        ) VALUES (
+          'run_half_truth', 'AttemptTask', 'xiaomi', 'mimo-v2.5-pro', 'half-hash', 'failure',
+          NULL, NULL, 'pricebook:half', now(), now()
+        )
+      `,
+    ).rejects.toMatchObject({ code: '23514', constraint_name: 'ai_task_runs_cost_truth_ck' });
+
+    await expect(
+      client`
+        INSERT INTO ai_task_runs (
+          id, task_kind, provider, model, input_hash, status,
+          cost_usd, cost_basis, cost_ref, started_at, finished_at
+        ) VALUES (
+          'run_unknown_zero', 'AttemptTask', 'xiaomi', 'mimo-future', 'unknown-zero-hash', 'failure',
+          0, 'unknown', 'unpriced:xiaomi/mimo-future', now(), now()
+        )
+      `,
+    ).rejects.toMatchObject({ code: '23514', constraint_name: 'ai_task_runs_cost_truth_ck' });
+
+    await expect(
+      client`
+        INSERT INTO ai_task_runs (
+          id, task_kind, provider, model, input_hash, status,
+          cost_usd, cost_basis, cost_ref, started_at, finished_at
+        ) VALUES (
+          'run_reported_null', 'AttemptTask', 'anthropic', 'claude', 'reported-null-hash', 'failure',
+          NULL, 'reported', 'sdk:total_cost_usd', now(), now()
+        )
+      `,
+    ).rejects.toMatchObject({ code: '23514', constraint_name: 'ai_task_runs_cost_truth_ck' });
+
+    await client`
+      INSERT INTO cost_ledger (
+        id, task_run_id, task_kind, provider, model, cost, currency,
+        entry_kind, cost_basis, cost_ref, tokens_in, tokens_out, outcome, occurred_at
+      ) VALUES
+        ('attempt_reported', 'attempt_run_1', 'AttemptTask', 'anthropic', 'claude', 0, 'USD',
+         'attempt', 'reported', 'sdk:total_cost_usd', 0, 0, 'success', now()),
+        ('attempt_unknown', 'attempt_run_2', 'AttemptTask', 'xiaomi', 'unknown-model', NULL, 'USD',
+         'attempt', 'unknown', 'unpriced:xiaomi/unknown-model', 0, 0, 'failed_permanent', now())
+    `;
+
+    await expect(
+      client`
+        INSERT INTO cost_ledger (
+          id, task_run_id, task_kind, provider, model, cost, currency,
+          entry_kind, cost_basis, cost_ref, tokens_in, tokens_out, outcome, occurred_at
+        ) VALUES (
+          'attempt_duplicate', 'attempt_run_1', 'AttemptTask', 'anthropic', 'claude', 1, 'USD',
+          'attempt', 'reported', 'sdk:total_cost_usd', 1, 1, 'success', now()
+        )
+      `,
+    ).rejects.toMatchObject({ code: '23505', constraint_name: 'cost_ledger_attempt_task_run_uq' });
+
+    await expect(
+      client`
+        INSERT INTO cost_ledger (
+          id, task_run_id, task_kind, provider, model, cost, currency,
+          entry_kind, cost_basis, cost_ref, tokens_in, tokens_out, outcome, occurred_at
+        ) VALUES (
+          'attempt_invalid_unknown', 'attempt_run_3', 'AttemptTask', 'xiaomi', 'unknown-model', 0, 'USD',
+          'attempt', 'unknown', 'unpriced:xiaomi/unknown-model', 0, 0, 'failed_permanent', now()
+        )
+      `,
+    ).rejects.toMatchObject({ code: '23514', constraint_name: 'cost_ledger_attempt_truth_ck' });
+  });
+});
+
+describe('migration smoke — YUK-842 provider query-session admission foundation', () => {
+  const BASELINE_TAG = '0087_yuk841_attempt_cost_truth';
+  const MIGRATION_TAG = '0088_yuk842_provider_session_admission';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    let reachedBaseline = false;
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(client, migration.sql);
+      if (migration.tag === BASELINE_TAG) {
+        reachedBaseline = true;
+        break;
+      }
+    }
+    if (!reachedBaseline) throw new Error(`baseline migration ${BASELINE_TAG} not found`);
+    const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
+    if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
+    await applyMigrationFile(client, migration.sql);
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('creates the loose-ref operational table and lane/rate/pruning indexes', async () => {
+    const columns = await client<{ column_name: string }[]>`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'provider_session_admission'
+    `;
+    expect(new Set(columns.map((row) => row.column_name))).toEqual(
+      new Set([
+        'task_run_id',
+        'lane_id',
+        'policy_fingerprint',
+        'mode',
+        'status',
+        'borrowed_from_task_run_id',
+        'claim_token',
+        'requested_at',
+        'wait_deadline_at',
+        'acquired_at',
+        'heartbeat_at',
+        'lease_expires_at',
+        'hard_reclaim_at',
+        'terminal_at',
+        'terminal_reason',
+      ]),
+    );
+
+    const indexes = await client<{ indexname: string; indexdef: string }[]>`
+      SELECT indexname, indexdef
+      FROM pg_indexes
+      WHERE schemaname = 'public' AND tablename = 'provider_session_admission'
+    `;
+    const byName = new Map(indexes.map((row) => [row.indexname, row.indexdef]));
+    for (const name of [
+      'provider_session_admission_pkey',
+      'provider_session_admission_lane_active_idx',
+      'provider_session_admission_lane_lease_idx',
+      'provider_session_admission_lane_start_idx',
+      'provider_session_admission_lane_waiting_idx',
+      'provider_session_admission_borrowed_from_idx',
+      'provider_session_admission_lane_terminal_idx',
+    ]) {
+      expect(byName.has(name), name).toBe(true);
+    }
+    expect(byName.get('provider_session_admission_lane_active_idx')).toMatch(
+      /status.*acquired.*lease_expired/i,
+    );
+    expect(byName.get('provider_session_admission_lane_terminal_idx')).toMatch(
+      /\(lane_id, terminal_at\)/i,
+    );
+
+    const foreignKeys = await client<{ constraint_name: string }[]>`
+      SELECT constraint_name
+      FROM information_schema.table_constraints
+      WHERE table_schema = 'public'
+        AND table_name = 'provider_session_admission'
+        AND constraint_type = 'FOREIGN KEY'
+    `;
+    expect(foreignKeys).toEqual([]);
+  });
+
+  it('accepts waiting, acquired, borrowed, released, and hard-reclaim quarantine shapes', async () => {
+    await client`
+      INSERT INTO provider_session_admission (
+        task_run_id, lane_id, policy_fingerprint, mode, status,
+        requested_at, wait_deadline_at
+      ) VALUES (
+        'run_waiting', 'xiaomi:primary', 'policy:v1', 'observe', 'waiting',
+        '2026-08-03T00:00:00Z', '2026-08-03T00:01:00Z'
+      )
+    `;
+    await client`
+      INSERT INTO provider_session_admission (
+        task_run_id, lane_id, policy_fingerprint, mode, status, claim_token,
+        requested_at, wait_deadline_at, acquired_at, heartbeat_at,
+        lease_expires_at, hard_reclaim_at
+      ) VALUES (
+        'run_parent', 'xiaomi:primary', 'policy:v1', 'enforce', 'acquired',
+        '00000000-0000-4000-8000-000000000001',
+        '2026-08-03T00:00:00Z', '2026-08-03T00:01:00Z',
+        '2026-08-03T00:00:01Z', '2026-08-03T00:00:02Z',
+        '2026-08-03T00:00:32Z', '2026-08-03T00:06:00Z'
+      )
+    `;
+    await client`
+      INSERT INTO provider_session_admission (
+        task_run_id, lane_id, policy_fingerprint, mode, status,
+        borrowed_from_task_run_id, claim_token,
+        requested_at, wait_deadline_at, acquired_at, heartbeat_at,
+        lease_expires_at, hard_reclaim_at
+      ) VALUES (
+        'run_child_active', 'xiaomi:primary', 'policy:v1', 'enforce', 'acquired',
+        'run_parent', '00000000-0000-4000-8000-000000000002',
+        '2026-08-03T00:00:03Z', '2026-08-03T00:01:03Z',
+        '2026-08-03T00:00:04Z', '2026-08-03T00:00:05Z',
+        '2026-08-03T00:00:35Z', '2026-08-03T00:06:03Z'
+      )
+    `;
+    await client`
+      INSERT INTO provider_session_admission (
+        task_run_id, lane_id, policy_fingerprint, mode, status,
+        borrowed_from_task_run_id, claim_token,
+        requested_at, wait_deadline_at, acquired_at, heartbeat_at,
+        lease_expires_at, hard_reclaim_at, terminal_at, terminal_reason
+      ) VALUES
+        (
+          'run_child_released', 'xiaomi:primary', 'policy:v1', 'enforce', 'released',
+          'run_parent', '00000000-0000-4000-8000-000000000003',
+          '2026-08-03T00:00:06Z', '2026-08-03T00:01:06Z',
+          '2026-08-03T00:00:07Z', '2026-08-03T00:00:08Z',
+          '2026-08-03T00:00:38Z', '2026-08-03T00:06:06Z',
+          '2026-08-03T00:00:20Z', 'session_finished'
+        ),
+        (
+          'run_child_expired', 'xiaomi:primary', 'policy:v1', 'enforce', 'lease_expired',
+          'run_parent', '00000000-0000-4000-8000-000000000004',
+          '2026-08-03T00:00:09Z', '2026-08-03T00:01:09Z',
+          '2026-08-03T00:00:10Z', '2026-08-03T00:00:11Z',
+          '2026-08-03T00:00:41Z', '2026-08-03T00:06:09Z',
+          '2026-08-03T00:00:42Z', 'heartbeat_lost'
+        )
+    `;
+
+    const rows = await client<{ task_run_id: string; borrowed_from_task_run_id: string | null }[]>`
+      SELECT task_run_id, borrowed_from_task_run_id
+      FROM provider_session_admission
+      ORDER BY task_run_id
+    `;
+    expect(rows).toHaveLength(5);
+    expect(rows.find((row) => row.task_run_id === 'run_child_active')).toMatchObject({
+      borrowed_from_task_run_id: 'run_parent',
+    });
+  });
+
+  it('rejects impossible acquisition, terminal, timeline, and borrowing shapes', async () => {
+    await expect(
+      client`
+        INSERT INTO provider_session_admission (
+          task_run_id, lane_id, policy_fingerprint, mode, status,
+          borrowed_from_task_run_id, requested_at, wait_deadline_at
+        ) VALUES (
+          'bad_wait_borrow', 'xiaomi:primary', 'policy:v1', 'enforce', 'waiting',
+          'run_parent', '2026-08-03T01:00:00Z', '2026-08-03T01:01:00Z'
+        )
+      `,
+    ).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'provider_session_admission_borrow_shape_ck',
+    });
+
+    await expect(
+      client`
+        INSERT INTO provider_session_admission (
+          task_run_id, lane_id, policy_fingerprint, mode, status, claim_token,
+          requested_at, wait_deadline_at, acquired_at, heartbeat_at, lease_expires_at
+        ) VALUES (
+          'bad_partial_lease', 'xiaomi:primary', 'policy:v1', 'enforce', 'acquired',
+          '00000000-0000-4000-8000-000000000005',
+          '2026-08-03T01:00:00Z', '2026-08-03T01:01:00Z',
+          '2026-08-03T01:00:01Z', '2026-08-03T01:00:02Z', '2026-08-03T01:00:32Z'
+        )
+      `,
+    ).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'provider_session_admission_acquisition_shape_ck',
+    });
+
+    await expect(
+      client`
+        INSERT INTO provider_session_admission (
+          task_run_id, lane_id, policy_fingerprint, mode, status, claim_token,
+          requested_at, wait_deadline_at, acquired_at, heartbeat_at,
+          lease_expires_at, hard_reclaim_at, terminal_at
+        ) VALUES (
+          'bad_terminal_shape', 'xiaomi:primary', 'policy:v1', 'enforce', 'released',
+          '00000000-0000-4000-8000-000000000007',
+          '2026-08-03T01:00:00Z', '2026-08-03T01:01:00Z',
+          '2026-08-03T01:00:01Z', '2026-08-03T01:00:02Z',
+          '2026-08-03T01:00:32Z', '2026-08-03T01:06:00Z', '2026-08-03T01:00:10Z'
+        )
+      `,
+    ).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'provider_session_admission_terminal_shape_ck',
+    });
+
+    await expect(
+      client`
+        INSERT INTO provider_session_admission (
+          task_run_id, lane_id, policy_fingerprint, mode, status,
+          requested_at, wait_deadline_at, terminal_at, terminal_reason
+        ) VALUES (
+          'bad_early_timeout', 'xiaomi:primary', 'policy:v1', 'enforce', 'timed_out',
+          '2026-08-03T01:00:00Z', '2026-08-03T01:01:00Z',
+          '2026-08-03T01:00:30Z', 'wait_timeout'
+        )
+      `,
+    ).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'provider_session_admission_timeline_ck',
+    });
+
+    await expect(
+      client`
+        INSERT INTO provider_session_admission (
+          task_run_id, lane_id, policy_fingerprint, mode, status, claim_token,
+          borrowed_from_task_run_id, requested_at, wait_deadline_at,
+          acquired_at, heartbeat_at, lease_expires_at, hard_reclaim_at
+        ) VALUES (
+          'bad_self_borrow', 'xiaomi:primary', 'policy:v1', 'enforce', 'acquired',
+          '00000000-0000-4000-8000-000000000006', 'bad_self_borrow',
+          '2026-08-03T01:00:00Z', '2026-08-03T01:01:00Z',
+          '2026-08-03T01:00:01Z', '2026-08-03T01:00:02Z',
+          '2026-08-03T01:00:32Z', '2026-08-03T01:06:00Z'
+        )
+      `,
+    ).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'provider_session_admission_borrow_shape_ck',
+    });
+  });
+});

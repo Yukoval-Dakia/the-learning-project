@@ -67,6 +67,7 @@ describe('runTeachingSkill (U6 teaching skill — single session)', () => {
         sessionId,
         learningItemId: 'li_skill_explain',
         userMessage: '帮我讲讲',
+        providerSessionDeadlineAt: 456_789,
       },
       { runAgentTaskFn },
     );
@@ -83,7 +84,10 @@ describe('runTeachingSkill (U6 teaching skill — single session)', () => {
     expect(runAgentTaskFn).toHaveBeenCalledWith(
       'TeachingTurnTask',
       expect.anything(),
-      expect.objectContaining({ allowedTools: [] }),
+      expect.objectContaining({
+        allowedTools: [],
+        providerSessionDeadlineAt: 456_789,
+      }),
     );
   });
 

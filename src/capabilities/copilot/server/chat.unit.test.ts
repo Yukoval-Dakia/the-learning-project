@@ -89,8 +89,11 @@ describe('runCopilotChat (two-surface routing)', () => {
     const mcpCtx = (buildMcpServerFn.mock.calls[0] as unknown as [BuildMcpServerOptions])[0].ctx;
     const runnerCtx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
       taskRunId?: string;
+      lifecycleAbortController?: AbortController;
     };
     expect(runnerCtx?.taskRunId).toBe(mcpCtx?.taskRunId);
+    expect(runnerCtx.lifecycleAbortController).toBeInstanceOf(AbortController);
+    expect(mcpCtx.signal).toBe(runnerCtx.lifecycleAbortController?.signal);
   });
 
   // AF S3a / YUK-203 U3 — the conversation envelope is resolved once per turn;
@@ -952,6 +955,7 @@ describe('YUK-757 Copilot execution-mode judgment', () => {
         runAgentTaskFn,
         createTaskRunId: () => 'copilot_dispatch_complex_fixture',
         signal: owner.signal,
+        providerSessionDeadlineAt: 123_456,
       },
     );
 
@@ -973,6 +977,7 @@ describe('YUK-757 Copilot execution-mode judgment', () => {
       expect.objectContaining({
         taskRunId: 'copilot_dispatch_complex_fixture',
         signal: owner.signal,
+        providerSessionDeadlineAt: 123_456,
         outputFormat: expect.objectContaining({ type: 'json_schema' }),
       }),
     );
@@ -1373,6 +1378,7 @@ describe('runCopilotChat — skill routing (U6)', () => {
         runAgentTaskFn,
         buildMcpServerFn,
         materializeAskCheckFn,
+        providerSessionDeadlineAt: 234_567,
       },
     );
 
@@ -1380,7 +1386,11 @@ describe('runCopilotChat — skill routing (U6)', () => {
     expect(result.surface).toBe('copilot');
     // The skill ran against the resolved Copilot session id (no replyEventId param).
     expect(runTeachingSkillFn).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: 'ls_copilot', learningItemId: 'li_unit' }),
+      expect.objectContaining({
+        sessionId: 'ls_copilot',
+        learningItemId: 'li_unit',
+        providerSessionDeadlineAt: 234_567,
+      }),
     );
     expect(runTeachingSkillFn.mock.calls[0]?.[0]).not.toHaveProperty('replyEventId');
     // The free-form CopilotTask loop never ran.
@@ -1946,12 +1956,21 @@ describe('runCopilotChatStreaming (C1 — SSE streaming entrypoint)', () => {
     );
     const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
     const deltas: string[] = [];
+    const controller = new AbortController();
 
     const result = await runCopilotChatStreaming(
       db,
       { user_message: '解释一下「之」', triggered_by: 'chat' },
       (t) => deltas.push(t),
-      { ...baseDeps, buildMcpServerFn, runAgentTaskFn, streamAgentTaskFn, writeEventFn },
+      {
+        ...baseDeps,
+        buildMcpServerFn,
+        runAgentTaskFn,
+        streamAgentTaskFn,
+        writeEventFn,
+        providerSessionDeadlineAt: 345_678,
+      },
+      controller.signal,
     );
 
     // onDelta fired with the chunk; the free-form token loop ran via the stream seam.
@@ -1961,8 +1980,16 @@ describe('runCopilotChatStreaming (C1 — SSE streaming entrypoint)', () => {
     const mcpCtx = (buildMcpServerFn.mock.calls[0] as unknown as [BuildMcpServerOptions])[0].ctx;
     const runnerCtx = (streamAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
       taskRunId?: string;
+      signal?: AbortSignal;
+      lifecycleAbortController?: AbortController;
+      providerSessionDeadlineAt?: number;
     };
     expect(runnerCtx?.taskRunId).toBe(mcpCtx?.taskRunId);
+    expect(runnerCtx?.signal).toBe(controller.signal);
+    expect(runnerCtx.lifecycleAbortController).toBeInstanceOf(AbortController);
+    expect(runnerCtx.providerSessionDeadlineAt).toBe(345_678);
+    expect(mcpCtx?.signal).toBe(runnerCtx.lifecycleAbortController?.signal);
+    expect(mcpCtx?.providerSessionDeadlineAt).toBe(345_678);
 
     // Result equals what the non-stream path would return — real task_run_id + reply.
     expect(result.task_run_id).toBe('task_stream_real');

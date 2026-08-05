@@ -7,6 +7,8 @@ export interface TaskTextResult {
   text: string;
   task_run_id?: string;
   cost_usd?: number;
+  cost_basis?: 'reported' | 'estimated' | 'unknown';
+  cost_ref?: string;
   /**
    * YUK-299 seam: Agent SDK structured-output passthrough. runTask's full
    * RunTaskResult (runner.ts) is a structural superset of this interface, so a

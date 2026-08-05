@@ -23,11 +23,16 @@ const mockSdk = vi.hoisted(() => ({
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: vi.fn(({ options }: { options: unknown }) => {
+  startup: vi.fn(async ({ options }: { options: unknown }) => {
     mockSdk.capturedOptions = options;
-    return (async function* () {
-      for (const m of mockSdk.messages) yield m;
-    })();
+    return {
+      query: vi.fn(() =>
+        (async function* () {
+          for (const m of mockSdk.messages) yield m;
+        })(),
+      ),
+      close: vi.fn(),
+    };
   }),
   createSdkMcpServer: vi.fn(() => ({ type: 'sdk', name: '', instance: {} })),
   tool: vi.fn((name: string, description: string) => ({ name, description })),
@@ -46,7 +51,41 @@ vi.mock('@/server/ai/log', () => ({
   logMissingMcpServersWarning: vi.fn(),
   writeAiTaskRunStarted: logMock.started,
   writeAiTaskRunFinished: logMock.finished,
+  writeAiTaskRunRetried: vi.fn(async () => true),
   writeCostLedger: logMock.cost,
+  writeAiTaskAttemptFinished: vi.fn(
+    async (
+      db: unknown,
+      row: {
+        id: string;
+        status: string;
+        finish_reason: string;
+        usage: unknown;
+        cost_truth: { amountUsd: number | null; basis: string; ref: string };
+        error_message?: string;
+        outcome: string;
+      },
+    ) => {
+      await logMock.finished(db, {
+        id: row.id,
+        status: row.status,
+        finish_reason: row.finish_reason,
+        usage: row.usage,
+        cost_usd: row.cost_truth.amountUsd ?? undefined,
+        cost_basis: row.cost_truth.basis,
+        cost_ref: row.cost_truth.ref,
+        error_message: row.error_message,
+      });
+      await logMock.cost(db, {
+        task_run_id: row.id,
+        cost: row.cost_truth.amountUsd,
+        cost_basis: row.cost_truth.basis,
+        cost_ref: row.cost_truth.ref,
+        outcome: row.outcome,
+      });
+      return true;
+    },
+  ),
   writeToolCallLog: logMock.tool,
 }));
 

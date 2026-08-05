@@ -42,21 +42,25 @@ const mockAgentSdk = vi.hoisted(() => ({
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: vi.fn(({ prompt, options }: { prompt: unknown; options: unknown }) => {
+  startup: vi.fn(async ({ options }: { options: unknown }) => {
     mockAgentSdk.capturedQueryOptions = options;
-    mockAgentSdk.capturedQueryPrompt = prompt;
-    // Emit a single success result so streamTask completes the stream.
-    const iter = (async function* () {
-      yield {
-        type: 'result',
-        subtype: 'success',
-        result: '',
-        stop_reason: 'end_turn',
-        total_cost_usd: 0,
-        usage: { input_tokens: 0, output_tokens: 0 },
-      };
-    })();
-    return iter;
+    return {
+      query: vi.fn((prompt: unknown) => {
+        mockAgentSdk.capturedQueryPrompt = prompt;
+        // Emit a single success result so streamTask completes the stream.
+        return (async function* () {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            result: '',
+            stop_reason: 'end_turn',
+            total_cost_usd: 0,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        })();
+      }),
+      close: vi.fn(),
+    };
   }),
   createSdkMcpServer: vi.fn((opts: unknown) => {
     mockAgentSdk.capturedMcpServerOptions = opts;
