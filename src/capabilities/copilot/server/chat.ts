@@ -27,7 +27,6 @@ import {
   assembleCopilotRunInput,
 } from '@/capabilities/copilot/server/copilot-run-input';
 import { reviewCopilotEvidenceReply } from '@/capabilities/copilot/server/evidence-review';
-import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 // YUK-574 — session-anchored learner-state header (assemble-once + invalidation).
 // The Facet A (YUK-174) per-turn `proposal_feedback` digest is MIGRATED into this
 // same session-anchored block (folded in, same invalidation rules, proposal
@@ -66,6 +65,7 @@ import {
   EPHEMERAL_HTML_REF_MAX_CHARS,
   getRecentCopilotTurns,
 } from '@/capabilities/copilot/server/turns';
+import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 import type { Db, Tx } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
