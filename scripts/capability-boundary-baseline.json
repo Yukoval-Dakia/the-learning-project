@@ -157,15 +157,7 @@
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },
-      "nontrivialSccs": [
-        [
-          "agency",
-          "ingestion",
-          "knowledge",
-          "notes",
-          "practice"
-        ]
-      ]
+      "nontrivialSccs": [["agency", "ingestion", "knowledge", "notes", "practice"]]
     }
   }
 }
