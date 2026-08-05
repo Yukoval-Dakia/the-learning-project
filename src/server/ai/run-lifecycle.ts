@@ -46,10 +46,7 @@ export interface TerminalResultEvidence {
   structuredOutput?: unknown;
 }
 
-export type ObservedRunUsage = Pick<
-  TerminalResultEvidence,
-  'usage' | 'tokenCounts' | 'costUsd'
->;
+export type ObservedRunUsage = Pick<TerminalResultEvidence, 'usage' | 'tokenCounts' | 'costUsd'>;
 
 interface LifecycleConfig<TResult extends LifecycleResult> {
   db: Db;

@@ -102,9 +102,7 @@ vi.mock('@/server/ai/log', () => ({
         error_message: row.error_message,
       });
       if (logMocks.finishedShouldThrow) throw new Error('db down');
-      const usage = row.usage as
-        | { inputTokens?: number; outputTokens?: number }
-        | undefined;
+      const usage = row.usage as { inputTokens?: number; outputTokens?: number } | undefined;
       await logMocks.cost(db, {
         task_run_id: row.id,
         cost: row.cost_truth.amountUsd,

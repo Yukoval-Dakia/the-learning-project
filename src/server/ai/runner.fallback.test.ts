@@ -101,11 +101,14 @@ vi.mock('@/server/ai/log', () => ({
         cost_ref: row.cost_truth.ref,
         error_message: row.error_message,
       });
+      const usage = row.usage as { inputTokens?: number; outputTokens?: number } | undefined;
       await logMock.cost(db, {
         task_run_id: row.id,
         cost: row.cost_truth.amountUsd,
         cost_basis: row.cost_truth.basis,
         cost_ref: row.cost_truth.ref,
+        tokens_in: usage?.inputTokens ?? 0,
+        tokens_out: usage?.outputTokens ?? 0,
         outcome: row.outcome,
       });
       return true;
@@ -380,7 +383,7 @@ describe('runTask — YUK-576 transient retry loop', () => {
       fakeDb,
       expect.objectContaining({
         status: 'failure',
-        usage: { inputTokens: 107_000, outputTokens: 5_500 },
+        usage: { inputTokens: 107_000, outputTokens: 5_500, thinkingOutputTokens: 0 },
         cost_usd: 0.42,
       }),
     );

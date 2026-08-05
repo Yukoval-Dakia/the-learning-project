@@ -666,8 +666,9 @@ async function runTaskAttempt(args: {
       await notifyTaskEvent(ctx, msg);
       if (msg.type === 'assistant') {
         observeAssistantThinking(msg, thinking);
-        accumulateSdkUsage(msg.message.usage, observedUsage);
-        lifecycle.recordObservedUsage(observedRunUsage(observedUsage, thinking));
+        if (accumulateSdkUsage(msg.message.usage, observedUsage)) {
+          lifecycle.recordObservedUsage(observedRunUsage(observedUsage, thinking));
+        }
         iteration += 1;
         const stepLatencyMs = Date.now() - stepStartTime;
         const blocks = (msg.message.content ?? []) as ContentBlock[];
@@ -928,8 +929,9 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
             await notifyTaskEvent(ctx, msg);
             if (msg.type === 'assistant') {
               observeAssistantThinking(msg, thinking);
-              accumulateSdkUsage(msg.message.usage, observedUsage);
-              lifecycle.recordObservedUsage(observedRunUsage(observedUsage, thinking));
+              if (accumulateSdkUsage(msg.message.usage, observedUsage)) {
+                lifecycle.recordObservedUsage(observedRunUsage(observedUsage, thinking));
+              }
               const text = extractAssistantText(msg);
               if (text) {
                 controller.enqueue(encoder.encode(text));
@@ -1252,8 +1254,9 @@ export async function streamTaskCollecting(
         await notifyTaskEvent(ctx, msg);
         if (msg.type === 'assistant') {
           observeAssistantThinking(msg, thinking);
-          accumulateSdkUsage(msg.message.usage, observedUsage);
-          lifecycle.recordObservedUsage(observedRunUsage(observedUsage, thinking));
+          if (accumulateSdkUsage(msg.message.usage, observedUsage)) {
+            lifecycle.recordObservedUsage(observedRunUsage(observedUsage, thinking));
+          }
           const text = extractAssistantText(msg);
           if (text) {
             onDelta(text);

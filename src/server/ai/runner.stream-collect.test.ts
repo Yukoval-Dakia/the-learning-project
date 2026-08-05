@@ -103,9 +103,7 @@ vi.mock('@/server/ai/log', () => ({
         cost_ref: row.cost_truth.ref,
         error_message: row.error_message,
       });
-      const usage = row.usage as
-        | { inputTokens?: number; outputTokens?: number }
-        | undefined;
+      const usage = row.usage as { inputTokens?: number; outputTokens?: number } | undefined;
       await logMocks.cost(db, {
         task_run_id: row.id,
         cost: row.cost_truth.amountUsd,
