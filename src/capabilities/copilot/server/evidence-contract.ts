@@ -72,6 +72,10 @@ function pushUnit(units: EvidenceTextUnit[], source: string, start: number, end:
   });
 }
 
+function isAsciiDigit(char: string | undefined): boolean {
+  return char !== undefined && char >= '0' && char <= '9';
+}
+
 function lineRanges(text: string): Array<{ start: number; end: number }> {
   const ranges: Array<{ start: number; end: number }> = [];
   let start = 0;
@@ -161,7 +165,12 @@ export function segmentEvidenceRequest(requestContext: unknown): EvidenceTextUni
       // Ordinary product requests often enumerate independent asks with comma
       // or 顿号 rather than issue labels. Split them deterministically here so
       // the blind reviewer cannot self-declare omitted siblings out of scope.
-      if (!'。！？!?；;，,、'.includes(text[index] ?? '')) continue;
+      // Keep ASCII thousands separators intact (e.g. 1,761).
+      const char = text[index] ?? '';
+      if (!'。！？!?；;，,、'.includes(char)) continue;
+      if (char === ',' && isAsciiDigit(text[index - 1]) && isAsciiDigit(text[index + 1])) {
+        continue;
+      }
       pushRequestRange(units, text, segmentStart, index + 1);
       segmentStart = index + 1;
     }

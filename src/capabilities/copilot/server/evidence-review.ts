@@ -170,6 +170,7 @@ async function runBlindReference(params: {
   signal?: AbortSignal;
   beforeVerification?: () => Promise<void>;
   attemptTimeoutMs?: number;
+  providerSessionDeadlineAt?: number;
   runTaskFn: CopilotEvidenceReviewRunTaskFn;
 }): Promise<
   | { ok: true; reference: BoundCopilotEvidenceReference; taskRunIds: string[] }
@@ -237,6 +238,9 @@ async function runBlindReference(params: {
           ...(params.signal ? { signal: params.signal } : {}),
           ...(params.attemptTimeoutMs !== undefined
             ? { budgetOverride: { timeoutMs: params.attemptTimeoutMs } }
+            : {}),
+          ...(params.providerSessionDeadlineAt !== undefined
+            ? { providerSessionDeadlineAt: params.providerSessionDeadlineAt }
             : {}),
           mcpServers: { [COPILOT_EVIDENCE_SUBMISSION_SERVER_NAME]: submission.mcpServer },
           allowedTools: [...COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS],
@@ -336,6 +340,7 @@ async function runConfirmedComparison(params: {
   signal?: AbortSignal;
   beforeVerification?: () => Promise<void>;
   attemptTimeoutMs?: number;
+  providerSessionDeadlineAt?: number;
   runTaskFn: CopilotEvidenceReviewRunTaskFn;
 }): Promise<
   | {
@@ -413,6 +418,9 @@ async function runConfirmedComparison(params: {
             ...(params.signal ? { signal: params.signal } : {}),
             ...(params.attemptTimeoutMs !== undefined
               ? { budgetOverride: { timeoutMs: params.attemptTimeoutMs } }
+              : {}),
+            ...(params.providerSessionDeadlineAt !== undefined
+              ? { providerSessionDeadlineAt: params.providerSessionDeadlineAt }
               : {}),
             mcpServers: { [COPILOT_EVIDENCE_SUBMISSION_SERVER_NAME]: submission.mcpServer },
             allowedTools: [...COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS],
@@ -522,6 +530,8 @@ export async function reviewCopilotEvidenceReply(params: {
   beforeVerification?: () => Promise<void>;
   /** Internal per-leg wall-clock overrides; omitted callers retain registry budgets. */
   attemptTimeouts?: { referenceMs?: number; comparisonMs?: number };
+  /** One absolute HTTP request budget reused by every inline validation attempt. */
+  providerSessionDeadlineAt?: number;
   runTaskFn?: CopilotEvidenceReviewRunTaskFn;
 }): Promise<CopilotEvidenceReviewDecision> {
   if (!params.toolTrace.some((entry) => entry.effect === 'read')) {
@@ -570,6 +580,9 @@ export async function reviewCopilotEvidenceReply(params: {
       ...(params.attemptTimeouts?.referenceMs !== undefined
         ? { attemptTimeoutMs: params.attemptTimeouts.referenceMs }
         : {}),
+      ...(params.providerSessionDeadlineAt !== undefined
+        ? { providerSessionDeadlineAt: params.providerSessionDeadlineAt }
+        : {}),
       runTaskFn: run,
     });
   } catch (error) {
@@ -599,6 +612,9 @@ export async function reviewCopilotEvidenceReply(params: {
       ...(params.beforeVerification ? { beforeVerification: params.beforeVerification } : {}),
       ...(params.attemptTimeouts?.comparisonMs !== undefined
         ? { attemptTimeoutMs: params.attemptTimeouts.comparisonMs }
+        : {}),
+      ...(params.providerSessionDeadlineAt !== undefined
+        ? { providerSessionDeadlineAt: params.providerSessionDeadlineAt }
         : {}),
       runTaskFn: run,
     });
@@ -650,6 +666,9 @@ export async function reviewCopilotEvidenceReply(params: {
       ...(params.beforeVerification ? { beforeVerification: params.beforeVerification } : {}),
       ...(params.attemptTimeouts?.comparisonMs !== undefined
         ? { attemptTimeoutMs: params.attemptTimeouts.comparisonMs }
+        : {}),
+      ...(params.providerSessionDeadlineAt !== undefined
+        ? { providerSessionDeadlineAt: params.providerSessionDeadlineAt }
         : {}),
       runTaskFn: run,
     });

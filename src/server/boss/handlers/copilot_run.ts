@@ -984,6 +984,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       softStop: null,
     }),
     onResult: (result) => {
+      // Reserve the sealed-review contract ceiling: rejected 61st callbacks must
+      // not append after the 60-call budget and trip fail-closed on length alone.
+      if (toolTrace.length >= COPILOT_EVIDENCE_MAX_TRACE_CALLS) return;
       toolTrace.push(result);
     },
   });

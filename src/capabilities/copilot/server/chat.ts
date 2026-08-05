@@ -27,6 +27,7 @@ import {
   assembleCopilotRunInput,
 } from '@/capabilities/copilot/server/copilot-run-input';
 import { reviewCopilotEvidenceReply } from '@/capabilities/copilot/server/evidence-review';
+import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 // YUK-574 — session-anchored learner-state header (assemble-once + invalidation).
 // The Facet A (YUK-174) per-turn `proposal_feedback` digest is MIGRATED into this
 // same session-anchored block (folded in, same invalidation rules, proposal
@@ -1129,6 +1130,9 @@ async function runCopilotChatImpl(
       return { args: capped, truncationNote: contextBudget, softStop };
     },
     onResult: (result) => {
+      // Reserve the sealed-review contract ceiling: rejected 61st callbacks must
+      // not append after the 60-call budget and trip fail-closed on length alone.
+      if (toolTrace.length >= COPILOT_EVIDENCE_MAX_TRACE_CALLS) return;
       toolTrace.push(result);
     },
   });

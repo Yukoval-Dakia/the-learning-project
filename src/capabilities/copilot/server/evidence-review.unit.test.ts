@@ -880,6 +880,9 @@ describe('Copilot FULL evidence review', () => {
       autoLogToolCalls: false,
     });
     expect(runTaskFn.mock.calls[1]?.[2]).not.toHaveProperty('outputFormat');
+    for (const call of runTaskFn.mock.calls) {
+      expect(call[2]).not.toHaveProperty('providerSessionDeadlineAt');
+    }
     expect(COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS).toBe(480_000);
     expect(COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS).toBe(360_000);
     expect(COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS).toBe(120_000);
@@ -997,6 +1000,7 @@ describe('Copilot FULL evidence review', () => {
 
   it('preserves original bytes only after blind reference plus two bound passes', async () => {
     const candidate = blindSafeReply;
+    const providerSessionDeadlineAt = 1_785_715_900_000;
     let comparisonOrdinal = 0;
     const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
       async (kind, input, _ctx, submission) => {
@@ -1021,7 +1025,7 @@ describe('Copilot FULL evidence review', () => {
     );
 
     const result = await reviewCopilotEvidenceReply(
-      reviewParams({ candidateReply: candidate, runTaskFn }),
+      reviewParams({ candidateReply: candidate, providerSessionDeadlineAt, runTaskFn }),
     );
 
     expect(result).toMatchObject({
@@ -1033,6 +1037,9 @@ describe('Copilot FULL evidence review', () => {
       comparisonTaskRunIds: ['comparison-1', 'comparison-2'],
     });
     expect(runTaskFn).toHaveBeenCalledTimes(3);
+    for (const call of runTaskFn.mock.calls) {
+      expect(call[2].providerSessionDeadlineAt).toBe(providerSessionDeadlineAt);
+    }
     expect(runTaskFn.mock.calls[0]?.[1]).not.toHaveProperty('candidate_reply');
     expect(runTaskFn.mock.calls[0]?.[1]).not.toHaveProperty('final_reply');
     expect(runTaskFn.mock.calls[1]?.[1]).toMatchObject({
@@ -1500,6 +1507,14 @@ describe('sealed evidence contract', () => {
         (unit) => unit.text,
       ),
     ).toEqual(['- 核验姓名', '- 核验时间', '- 核验状态']);
+  });
+
+  it('keeps ASCII thousands separators inside a single request unit', () => {
+    expect(
+      segmentEvidenceRequest({
+        user_message: '核验队列里还剩 1,761 条未复习，并说明是否清零。',
+      }).map((unit) => unit.text),
+    ).toEqual(['核验队列里还剩 1,761 条未复习，', '并说明是否清零。']);
   });
 
   it('can seal the 60th durable read and rejects a ledger that omits the final trace call', () => {

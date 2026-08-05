@@ -816,7 +816,10 @@ const GetReviewDueOutputSchema = z.object({
     top_knowledge_ids: z.array(z.string()),
   }),
   fsrs_projection_summary: z.object({
-    subject_scope: z.literal('material_fsrs_state_rows'),
+    subject_scope: z.enum([
+      'material_fsrs_state_rows',
+      'material_fsrs_state_rows_filtered_by_knowledge_ids',
+    ]),
     supports_actionable_queue_claim: z.literal(false),
     total_state_count: z.number().int().nonnegative(),
     due_now_state_count: z.number().int().nonnegative(),
@@ -1191,7 +1194,9 @@ export async function executeGetReviewDue(
         .slice(0, 5),
     },
     fsrs_projection_summary: {
-      subject_scope: 'material_fsrs_state_rows',
+      subject_scope: input.knowledgeIds?.length
+        ? 'material_fsrs_state_rows_filtered_by_knowledge_ids'
+        : 'material_fsrs_state_rows',
       supports_actionable_queue_claim: false,
       total_state_count: projectionRows.length,
       due_now_state_count: projectionRows.length - futureProjectionRows.length,

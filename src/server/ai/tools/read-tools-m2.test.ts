@@ -966,6 +966,7 @@ describe('Foundation D M2 read tools', () => {
     });
     expect(due.rows).toEqual([]);
     expect(due.fsrs_projection_summary).toMatchObject({
+      subject_scope: 'material_fsrs_state_rows_filtered_by_knowledge_ids',
       total_state_count: 2,
       due_now_state_count: 0,
       future_state_count: 2,
