@@ -3,7 +3,7 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 537,
+      "total": 547,
       "byOwnerPair": {
         "agency -> agency": 7,
         "agency -> ai": 30,
@@ -20,7 +20,7 @@
         "agency -> runtime-env": 1,
         "agency -> subjects": 2,
         "copilot -> advisory-locks": 1,
-        "copilot -> ai": 21,
+        "copilot -> ai": 30,
         "copilot -> boss": 7,
         "copilot -> events": 5,
         "copilot -> http": 1,
@@ -71,7 +71,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 14,
         "practice -> advisory-locks": 3,
-        "practice -> ai": 30,
+        "practice -> ai": 31,
         "practice -> boss": 11,
         "practice -> calibration": 3,
         "practice -> coldstart": 1,
@@ -98,7 +98,7 @@
       }
     },
     "serverToCapabilityDeep": {
-      "total": 70,
+      "total": 71,
       "byOwnerPair": {
         "agency -> agency": 3,
         "agency -> notes": 1,
@@ -107,7 +107,7 @@
         "ai -> practice": 3,
         "artifacts -> notes": 3,
         "boss -> agency": 1,
-        "boss -> copilot": 9,
+        "boss -> copilot": 10,
         "boss -> ingestion": 3,
         "boss -> knowledge": 1,
         "boss -> notes": 2,
@@ -157,7 +157,15 @@
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },
-      "nontrivialSccs": [["agency", "ingestion", "knowledge", "notes", "practice"]]
+      "nontrivialSccs": [
+        [
+          "agency",
+          "ingestion",
+          "knowledge",
+          "notes",
+          "practice"
+        ]
+      ]
     }
   }
 }
