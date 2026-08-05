@@ -383,7 +383,7 @@ describe('runTask — YUK-576 transient retry loop', () => {
       fakeDb,
       expect.objectContaining({
         status: 'failure',
-        usage: { inputTokens: 107_000, outputTokens: 5_500, thinkingOutputTokens: 0 },
+        usage: { inputTokens: 107_000, outputTokens: 5_500 },
         cost_usd: 0.42,
       }),
     );
