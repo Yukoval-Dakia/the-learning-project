@@ -101,11 +101,14 @@ vi.mock('@/server/ai/log', () => ({
         cost_ref: row.cost_truth.ref,
         error_message: row.error_message,
       });
+      const usage = row.usage as { inputTokens?: number; outputTokens?: number } | undefined;
       await logMock.cost(db, {
         task_run_id: row.id,
         cost: row.cost_truth.amountUsd,
         cost_basis: row.cost_truth.basis,
         cost_ref: row.cost_truth.ref,
+        tokens_in: usage?.inputTokens ?? 0,
+        tokens_out: usage?.outputTokens ?? 0,
         outcome: row.outcome,
       });
       return true;
@@ -166,6 +169,19 @@ const API_ERROR_CONN_RESULT = {
     'API Error: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()',
   session_id: '77639a77-aaa3-4c10-8948-5dd6d91e208d',
   uuid: '4c05c3ed-834d-4157-90f5-ac0ee12d1521',
+} as const;
+
+const PAID_API_ERROR_503_RESULT = {
+  ...API_ERROR_500_RESULT,
+  api_error_status: 503,
+  result: 'API Error: 503 after a long evidence-validation attempt',
+  total_cost_usd: 0.42,
+  usage: {
+    input_tokens: 96_000,
+    cache_creation_input_tokens: 3_000,
+    cache_read_input_tokens: 11_000,
+    output_tokens: 5_500,
+  },
 } as const;
 
 function successResult(text = 'ok') {
@@ -342,6 +358,34 @@ describe('runTask — YUK-576 transient retry loop', () => {
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('task_run_success_with_error_flag'),
       expect.objectContaining({ api_error_status: 500 }),
+    );
+  });
+
+  it('records paid usage and cost for a failed non-streaming validator attempt', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockSdk.messageQueues = [[PAID_API_ERROR_503_RESULT]];
+
+    await expect(runTask(NO_RETRY_KIND, { observation_count: 21 }, { db: fakeDb })).rejects.toThrow(
+      /subtype=api_error_result http=503/,
+    );
+
+    expect(logMock.cost).toHaveBeenCalledTimes(1);
+    expect(logMock.cost).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        outcome: 'failed_retryable',
+        cost: 0.42,
+        tokens_in: 107_000,
+        tokens_out: 5_500,
+      }),
+    );
+    expect(logMock.finished).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        status: 'failure',
+        usage: { inputTokens: 107_000, outputTokens: 5_500 },
+        cost_usd: 0.42,
+      }),
     );
   });
 

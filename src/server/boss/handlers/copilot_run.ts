@@ -3,8 +3,9 @@
 // 把 copilot 从同步面（src/capabilities/copilot/server/chat.ts 的 inline
 // streamTaskCollecting）桥到异步 durable pg-boss 面：route dispatch（durable
 // 标记）→ boss.send('copilot_run', {...}) → 本 handler 在 worker 进程跑一个
-// CopilotTask run，边跑边把进度/终稿写进 job_events，SSE 消费者经 computeReplay
-// 订阅（消费端 UI 是后续 lane）。
+// CopilotTask run，边跑边写安全 STEP 进度；模型正文先缓冲并经 YUK-832 最终证据
+// 审阅，outcome marker 提交后才把审阅终稿写进 job_events。SSE 消费者经
+// computeReplay 订阅。
 //
 // 蓝本：src/server/boss/handlers/quiz_gen.ts 的 runQuizGen——MCP mount
 // (buildMcpServerFromRegistry) + ToolContext(causedByEventId=triggerEventId) +
@@ -19,7 +20,12 @@
 import type { Job } from 'pg-boss';
 
 import { isDurableWorkerTouchEvent } from '@/capabilities/copilot/durable-pickup';
-import { wrapDeltaSuppressingMarker, writeCopilotReply } from '@/capabilities/copilot/server/chat';
+import {
+  type CopilotEvidenceValidationRef,
+  type PreparedCopilotReply,
+  extractPrimaryView,
+  writeCopilotReply,
+} from '@/capabilities/copilot/server/chat';
 import {
   COPILOT_CANCEL_DRAIN_GRACE_MS,
   type CopilotRunCancellationControl,
@@ -46,12 +52,20 @@ import {
   isCopilotRunTerminalEvent,
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
+import {
+  COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
+  COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+  COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
+  type CopilotEvidenceReviewDecision,
+  reviewCopilotEvidenceReply,
+} from '@/capabilities/copilot/server/evidence-review';
 import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
 import {
   buildCopilotSubagents,
   createCopilotSubtaskProjector,
   isCopilotSubagentEnabled,
 } from '@/capabilities/copilot/server/subagents';
+import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 // YUK-364 (bot-review C5) — 共享 Tavily 远程 MCP（web grounding），与 inline copilot
@@ -84,7 +98,11 @@ import {
 // 预算，所以 row cap 不适用；但仍需一个 tool-call 上限防 durable run 狂刷工具/proposal。
 import { resolveContextBudget } from '@/server/ai/tools/budgets';
 import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
-import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+import {
+  type SdkMcpServer,
+  type ToolExecutionResultObservation,
+  buildMcpServerFromRegistry,
+} from '@/server/ai/tools/mcp-bridge';
 import {
   type BossJobObservation,
   type BossJobObserver,
@@ -143,7 +161,7 @@ export interface CopilotRunJobData {
 // 安全帽不是目标——健康流靠模型返回 final reply 自然收，天花板只挡病态 loop。
 export const DURABLE_BUDGET = {
   maxIterations: 24,
-  maxToolCalls: 60,
+  maxToolCalls: COPILOT_EVIDENCE_MAX_TRACE_CALLS,
   timeoutMs: 12 * 60_000,
 } as const;
 
@@ -166,9 +184,9 @@ export interface RunCopilotRunParams {
   db: Db;
   data: CopilotRunJobData;
   /**
-   * test seam — 默认 streamTaskCollecting（YUK-575 N2：durable run 边跑边流式 delta
-   * 进 job_events）。real streamTaskCollecting graceful-degrades（resolve partial，
-   * 不 throw）；注入一个 THROW 的 fixture 可测 MF1/MF2 的 catch 分诊路径。
+   * test seam — 默认 streamTaskCollecting。YUK-832 起 candidate delta 只在内存收集，
+   * 证据审阅 + outcome marker 提交后才发布安全 delta。real streamTaskCollecting
+   * graceful-degrades（resolve partial，不 throw）；注入 THROW fixture 可测 catch 路径。
    */
   streamTaskCollectingFn?: typeof streamTaskCollecting;
   /**
@@ -195,6 +213,8 @@ export interface RunCopilotRunParams {
   writeFailedTerminalProjectionFn?: WriteFailedTerminalProjectionFn;
   /** Test seam for the domain outcome marker written after paid execution. */
   writeCopilotReplyFn?: typeof writeCopilotReply;
+  /** YUK-832 — no-tool final evidence validator; injectable for product-level tests. */
+  reviewEvidenceReplyFn?: typeof reviewCopilotEvidenceReply;
   /** Test seam for the load-bearing atomic paid-execution claim. */
   claimExecutionFenceFn?: ClaimCopilotExecutionFenceFn;
   /** Test seam for the cross-process cancellation observer/controller. */
@@ -460,7 +480,9 @@ export async function writeFailedTerminalProjection(
 }
 
 type PersistedDurableReply =
-  | ({ outcome: 'success' } & Omit<SuccessfulTerminalProjection, 'runId'>)
+  | (({ outcome: 'success' } & Omit<SuccessfulTerminalProjection, 'runId'>) & {
+      emitReviewedDelta?: boolean;
+    })
   | {
       outcome: 'failure';
       replyMd: string;
@@ -468,6 +490,7 @@ type PersistedDurableReply =
       reason: 'cancelled' | 'exhausted' | 'ambiguous_execution' | 'pre_execution_lost';
       error: string;
       checkpointSafe?: boolean;
+      emitReviewedDelta?: boolean;
     };
 
 async function findPersistedDurableReply(
@@ -513,6 +536,7 @@ async function findPersistedDurableReply(
       reason,
       error: typeof failureRecord.error === 'string' ? failureRecord.error : replyMd,
       ...(failureRecord.checkpoint_safe === false ? { checkpointSafe: false } : {}),
+      ...(payload.durable_emit_reviewed_delta === true ? { emitReviewedDelta: true } : {}),
     };
   }
   if (row.outcome !== 'success') return null;
@@ -524,6 +548,7 @@ async function findPersistedDurableReply(
       typeof payload.durable_finish_reason === 'string'
         ? payload.durable_finish_reason
         : 'recovered',
+    ...(payload.durable_emit_reviewed_delta === true ? { emitReviewedDelta: true } : {}),
   };
 }
 
@@ -537,8 +562,23 @@ function observeCopilotSpawnBudget(observation: SpawnBudgetObservation): void {
   });
 }
 
+function evidenceValidationRef(
+  decision: CopilotEvidenceReviewDecision,
+): CopilotEvidenceValidationRef | undefined {
+  if (decision.status === 'skipped') return undefined;
+  return {
+    status: decision.status,
+    reference_task_run_ids: decision.referenceTaskRunIds ?? [],
+    comparison_task_run_ids: decision.comparisonTaskRunIds ?? [],
+  };
+}
+
 const CLAIMED_EXECUTION_POLL_MS = 250;
 export const CLAIMED_EXECUTION_SETTLE_GRACE_MS = 30_000;
+export const DURABLE_OWNER_SETTLEMENT_BUDGET_MS =
+  DURABLE_BUDGET.timeoutMs +
+  COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS +
+  CLAIMED_EXECUTION_SETTLE_GRACE_MS;
 
 export function hasCopilotSettlementTerminal(events: TerminalProjectionEvent[]): boolean {
   return events.some(isCopilotRunTerminalEvent);
@@ -653,6 +693,19 @@ async function projectCopilotOutcomeMarker(
     async (tx, lockedEvents) => {
       const marker = await findPersistedDurableReply(tx, runId);
       if (!marker) throw new Error(`durable outcome marker missing for ${runId}`);
+      // YUK-832: the domain marker records whether the primary stream produced
+      // user-facing text. Publish one reviewed full-text DELTA inside this same
+      // settlement transaction, immediately before the terminal projection.
+      // An owner crash after marker commit is therefore repaired identically by
+      // redelivery/reconcile, and no interleaving can produce REPLY,DONE,DELTA.
+      if (marker.emitReviewedDelta && marker.replyMd.length > 0) {
+        await writeJobEvent(tx, {
+          business_table: COPILOT_RUN_TABLE,
+          business_id: runId,
+          event_type: COPILOT_RUN_EVENTS.DELTA,
+          payload: { text: marker.replyMd },
+        });
+      }
       if (marker.outcome === 'success') {
         await projectSuccessfulTerminal(tx, { runId, ...marker }, lockedEvents);
         return {
@@ -684,8 +737,8 @@ async function projectCopilotOutcomeMarker(
 
 /**
  * An overlapping physical delivery must neither execute nor declare the live
- * owner ambiguous. Wait within the 2h pg-boss lease for the 12m owner budget to
- * settle, then re-enter through the normal replay guards. If the owner crashed,
+ * owner ambiguous. Wait within the 2h pg-boss lease for the primary + final
+ * review + settlement owner budget, then re-enter through normal replay guards. If the owner crashed,
  * the expired fence becomes an honest ambiguous terminal; if it committed an
  * outcome/terminal, replay repairs or returns it without paid work.
  */
@@ -734,6 +787,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   const projectFailedTerminal =
     params.writeFailedTerminalProjectionFn ?? writeFailedTerminalProjection;
   const persistReply = params.writeCopilotReplyFn ?? writeCopilotReply;
+  const reviewEvidenceReply = params.reviewEvidenceReplyFn ?? reviewCopilotEvidenceReply;
   const claimExecutionFence = params.claimExecutionFenceFn ?? claimCopilotExecutionFence;
   const createCancellationControl =
     params.createCancellationControlFn ?? createCopilotRunCancellationControl;
@@ -838,9 +892,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   );
   if (priorExecutionFence) {
     const ownerDeadlineMs =
-      priorExecutionFence.occurred_at.getTime() +
-      DURABLE_BUDGET.timeoutMs +
-      CLAIMED_EXECUTION_SETTLE_GRACE_MS;
+      priorExecutionFence.occurred_at.getTime() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS;
     if (Date.now() < ownerDeadlineMs) {
       return awaitClaimedCopilotExecution(params, ownerDeadlineMs);
     }
@@ -897,6 +949,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     db,
     runId,
   });
+  const toolTrace: ToolExecutionResultObservation[] = [];
   // One exact signal spans the outer provider attempt and every nested central
   // task invoked through its in-process MCP tools. The cancellation poll remains
   // the caller signal; the runner additionally aborts this controller on its own
@@ -930,6 +983,12 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       truncationNote: budgetTracker.currentNotice(),
       softStop: null,
     }),
+    onResult: (result) => {
+      // Reserve the sealed-review contract ceiling: rejected 61st callbacks must
+      // not append after the 60-call budget and trip fail-closed on length alone.
+      if (toolTrace.length >= COPILOT_EVIDENCE_MAX_TRACE_CALLS) return;
+      toolTrace.push(result);
+    },
   });
 
   // YUK-364 (bot-review C5) — env-gated Tavily 远程 MCP（web grounding），照 inline
@@ -979,10 +1038,10 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     historyAnchorEventId: runId,
   });
 
-  // YUK-575 (N2/S3) — 流式 delta → job_events，FIFO promise-chain（onDelta 同步、
-  // writeJobEvent 异步；fire-and-forget 会乱序 id）。terminal REPLY/DONE 前 await 排空
-  // → 每条 delta id 严格早于 REPLY/DONE。primary_view marker 从 live delta 剥掉（与
-  // inline 同一份 wrapDeltaSuppressingMarker；终稿 REPLY 携 cleaned 文本）。
+  // YUK-575 (N2/S3) — STEP 进度继续用 FIFO promise-chain 落 job_events。
+  // YUK-832 将模型正文完整缓冲：只有在 no-tool typed validator
+  // pass/repair 并持久化 outcome marker 后，才能写安全 DELTA。
+  // 否则后续 read tool 会使已经可见的伪因果文本无法撤回。
   let progressChain: Promise<void> = Promise.resolve();
   const enqueueProgress = (eventType: string, payload: Record<string, unknown>) => {
     progressChain = progressChain.then(async () => {
@@ -1001,9 +1060,10 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     });
     return progressChain;
   };
-  const onDelta = wrapDeltaSuppressingMarker((text: string) => {
-    void enqueueProgress(COPILOT_RUN_EVENTS.DELTA, { text });
-  });
+  let candidateDeltaObserved = false;
+  const onDelta = (text: string) => {
+    if (text.length > 0) candidateDeltaObserved = true;
+  };
   const projectSubtaskEvent = createCopilotSubtaskProjector();
   const onTaskEvent = subagentEnabled
     ? async (event: TaskEventMessage) => {
@@ -1026,10 +1086,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   }
   if (executionClaim.outcome === 'cancelled') return { status: 'cancelled' };
   if (executionClaim.outcome === 'existing') {
-    return awaitClaimedCopilotExecution(
-      params,
-      Date.now() + DURABLE_BUDGET.timeoutMs + CLAIMED_EXECUTION_SETTLE_GRACE_MS,
-    );
+    return awaitClaimedCopilotExecution(params, Date.now() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS);
   }
 
   cancellationControl.startPolling();
@@ -1104,7 +1161,68 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     // S3 — 排空 delta 链：所有 delta id 落定后再写 terminal。
     await drainDeltaChain(progressChain, runId);
     if ((await cancellationControl.probe()) === 'cancel_requested') {
-      return await settleObservedCancellation(result.text, result.task_run_id);
+      // The raw candidate has not passed evidence review and must not become a
+      // cancellation partial after a read. A pure-text/no-reader partial keeps
+      // the established Stop UX because no evidence-review claim is involved.
+      const cancellationReply = toolTrace.some((entry) => entry.effect === 'read')
+        ? undefined
+        : result.text;
+      return await settleObservedCancellation(cancellationReply, result.task_run_id);
+    }
+
+    // Normalize reply-tail presentation metadata before sealed review. The
+    // validator, durable marker and projected DELTA/REPLY must bind the exact
+    // same bytes; no post-review marker stripping is allowed.
+    const preparedCandidate = extractPrimaryView(result.text, {
+      taskRunId: result.task_run_id,
+    });
+    const evidenceReview = await reviewEvidenceReply({
+      db,
+      requestContext: {
+        user_message: data.user_message,
+        surface,
+        triggered_by: data.triggered_by,
+        ...(data.chip_kind ? { chip_kind: data.chip_kind } : {}),
+        ...(data.ambient ? { ambient_context: data.ambient } : {}),
+      },
+      candidateReply: preparedCandidate.text,
+      candidateTaskRunId: result.task_run_id,
+      toolTrace,
+      signal: cancellationControl.signal,
+      attemptTimeouts: {
+        referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+        comparisonMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
+      },
+      beforeVerification: async () => {
+        await cancellationControl.probe();
+        cancellationControl.signal.throwIfAborted();
+      },
+      candidateComplete: !result.partial,
+    });
+    const reviewedReply = evidenceReview.replyText;
+    // The validator seals text, not the presentation side channel. Drop every
+    // primary_view on read-bearing pass/repair/fail-closed decisions; otherwise
+    // unreviewed ephemeral_html or an unbound artifact ref could contradict the
+    // certified prose. Pure-text/no-read skipped turns keep legacy behavior.
+    const reviewedPreparedReply: PreparedCopilotReply = {
+      text: reviewedReply,
+      ...(evidenceReview.status === 'skipped' && preparedCandidate.primaryView
+        ? { primaryView: preparedCandidate.primaryView }
+        : {}),
+    };
+    // A Stop that wins only under the settlement lock must obey the same
+    // evidence boundary as the explicit post-review probe below. Read-bearing
+    // candidate/repair text is never a cancellation partial; pure-text turns
+    // keep the established partial-reply UX.
+    const reviewedCancellationReply = toolTrace.some((entry) => entry.effect === 'read')
+      ? undefined
+      : reviewedReply;
+
+    // Stop can arrive during any blind-reference/comparator paid call. The same
+    // AbortSignal reaches the FULL validator; re-probe before any domain reply
+    // or public suffix.
+    if ((await cancellationControl.probe()) === 'cancel_requested') {
+      return await settleObservedCancellation(reviewedCancellationReply, result.task_run_id);
     }
 
     // YUK-575 — streamTaskCollecting graceful-degrade：run 出错时它 resolve
@@ -1118,11 +1236,15 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         runId,
         sessionId: data.session_id,
         actorRef,
-        partialText: result.text,
+        taskRunId: result.task_run_id,
+        partialText: reviewedReply,
+        preparedReply: reviewedPreparedReply,
         projectSuccessfulTerminal,
         projectFailedTerminal,
         writeCopilotReplyFn: persistReply,
-        createCancelledMarker: cancellationMarker(result.text, result.task_run_id),
+        evidenceValidation: evidenceValidationRef(evidenceReview),
+        createCancelledMarker: cancellationMarker(reviewedCancellationReply, result.task_run_id),
+        emitReviewedDelta: candidateDeltaObserved,
       });
     }
 
@@ -1138,11 +1260,14 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
           const { cleanedReply } = await persistReply(tx, {
             sessionId: data.session_id,
             userAskEventId: runId,
-            replyText: result.text,
+            replyText: reviewedReply,
+            preparedReply: reviewedPreparedReply,
             actorRef,
             taskRunId: result.task_run_id,
+            evidenceValidation: evidenceValidationRef(evidenceReview),
             outcome: 'success',
             durableFinishReason: result.finishReason,
+            durableEmitReviewedDelta: candidateDeltaObserved,
             now: new Date(),
           });
           return {
@@ -1152,7 +1277,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
             finishReason: result.finishReason,
           };
         },
-        { createCancelled: cancellationMarker(result.text, result.task_run_id) },
+        {
+          createCancelled: cancellationMarker(reviewedCancellationReply, result.task_run_id),
+        },
       );
       if (markerClaim.outcome === 'already_terminal') {
         return terminalRunResult(markerClaim.events, taskRunId);
@@ -1249,13 +1376,20 @@ async function handleDurableFailure(
     runId: string;
     sessionId: string;
     actorRef: string;
+    /** Real primary provider run when graceful-degrade returned a partial. */
+    taskRunId?: string;
     /** streamTaskCollecting graceful-degrade 的半程文本（若有），作 phantom-reply 正文。 */
     partialText?: string;
+    /** Byte-authoritative reviewed projection for an evidence-bearing partial. */
+    preparedReply?: PreparedCopilotReply;
     projectSuccessfulTerminal: WriteSuccessfulTerminalProjectionFn;
     projectFailedTerminal: WriteFailedTerminalProjectionFn;
     writeCopilotReplyFn: typeof writeCopilotReply;
+    evidenceValidation?: CopilotEvidenceValidationRef;
     /** Settlement-lock race winner when Stop committed before this failure marker. */
     createCancelledMarker?: (tx: Tx) => Promise<PersistedDurableReply>;
+    /** Persisted recovery flag for one reviewed full-text DELTA before FAILED. */
+    emitReviewedDelta?: boolean;
   },
 ): Promise<RunCopilotRunResult> {
   const {
@@ -1263,13 +1397,18 @@ async function handleDurableFailure(
     runId,
     sessionId,
     actorRef,
+    taskRunId,
     partialText,
+    preparedReply,
     projectSuccessfulTerminal,
     projectFailedTerminal,
     writeCopilotReplyFn,
+    evidenceValidation,
     createCancelledMarker,
+    emitReviewedDelta,
   } = args;
   const message = String((err as Error)?.message ?? err);
+  const failureTaskRunId = taskRunId ?? `copilot_run_exhausted_${runId}`;
   const replyText =
     partialText && partialText.length > 0
       ? partialText
@@ -1283,18 +1422,22 @@ async function handleDurableFailure(
           sessionId,
           userAskEventId: runId,
           replyText,
+          ...(preparedReply?.text === replyText ? { preparedReply } : {}),
           actorRef,
-          taskRunId: `copilot_run_exhausted_${runId}`,
+          taskRunId: failureTaskRunId,
+          evidenceValidation,
           outcome: 'failure',
           durableFailure: { reason: 'exhausted', error: message },
+          durableEmitReviewedDelta: emitReviewedDelta,
           now: new Date(),
         });
         return {
           outcome: 'failure' as const,
           replyMd: cleanedReply,
-          taskRunId: `copilot_run_exhausted_${runId}`,
+          taskRunId: failureTaskRunId,
           reason: 'exhausted' as const,
           error: message,
+          ...(emitReviewedDelta ? { emitReviewedDelta: true } : {}),
         };
       },
       createCancelledMarker ? { createCancelled: createCancelledMarker } : {},
@@ -1514,9 +1657,7 @@ export async function reconcileCopilotDurableRun(
         explicitFence ?? [...events].reverse().find(isDurableWorkerTouchEvent);
       if (possibleExecutionEvidence) {
         const ownerDeadlineMs =
-          possibleExecutionEvidence.occurred_at.getTime() +
-          DURABLE_BUDGET.timeoutMs +
-          CLAIMED_EXECUTION_SETTLE_GRACE_MS;
+          possibleExecutionEvidence.occurred_at.getTime() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS;
         return now.getTime() > ownerDeadlineMs
           ? { observation: 'ambiguous_candidate' }
           : { observation: 'execution_settling' };

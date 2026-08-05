@@ -35,6 +35,37 @@ export type ProbeResolution = (typeof PROBE_RESOLUTIONS)[number];
  */
 export const PROBE_NON_EVIDENCE_RESOLUTION = 'inconclusive' as const;
 export type ProbeAnswerResolution = ProbeResolution | typeof PROBE_NON_EVIDENCE_RESOLUTION;
+
+/**
+ * Canonical persisted qualitative evidence pairs. Keep every JavaScript reader
+ * on this pure predicate; SQL prefilters may mirror it, but must not invent a
+ * second in-process interpretation.
+ */
+export function isCanonicalEvidenceProbeOutcomeResolution(pair: {
+  outcome: unknown;
+  resolution: unknown;
+}): pair is { outcome: 0 | 1; resolution: ProbeResolution } {
+  const { outcome, resolution } = pair;
+  return (
+    (outcome === 0 && (resolution === 'evidence_for' || resolution === 'confirmed')) ||
+    (outcome === 1 && resolution === 'retired')
+  );
+}
+
+/**
+ * A fully consumed but non-evidentiary probe is canonical only as
+ * `outcome=null` + `resolution=inconclusive`.
+ */
+export function isCanonicalProbeOutcomeResolution(pair: {
+  outcome: unknown;
+  resolution: unknown;
+}): pair is { outcome: 0 | 1 | null; resolution: ProbeAnswerResolution } {
+  const { outcome, resolution } = pair;
+  return (
+    isCanonicalEvidenceProbeOutcomeResolution(pair) ||
+    (outcome === null && resolution === PROBE_NON_EVIDENCE_RESOLUTION)
+  );
+}
 /** Resolutions that permanently settle one accepted conjecture version. */
 export const TERMINAL_PROBE_RESOLUTIONS = [
   'confirmed',

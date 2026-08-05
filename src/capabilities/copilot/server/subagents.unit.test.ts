@@ -133,13 +133,13 @@ describe('toCopilotSubtaskEvent', () => {
     expect(toCopilotSubtaskEvent(started)).toEqual({
       step_kind: 'subtask',
       subtask_id: 'task-fenxi-42',
-      label: '交叉核对三份函数单调性错题与两版知识节点',
+      label: '正在深入核对证据',
       status: 'running',
     });
     expect(toCopilotSubtaskEvent(progress)).toEqual({
       step_kind: 'subtask',
       subtask_id: 'task-fenxi-42',
-      label: '已核对错题、讲义和知识图谱，正在比较误区模式',
+      label: '正在深入核对证据',
       status: 'running',
     });
     expect(toCopilotSubtaskEvent(completed)).toEqual({
@@ -159,7 +159,7 @@ describe('toCopilotSubtaskEvent', () => {
     expect(serialized).not.toContain('transcript');
   });
 
-  it('maps terminal failure monotonically and sanitizes hostile multiline labels', () => {
+  it('maps terminal failure monotonically without exposing model-authored labels', () => {
     const updated = {
       ...base,
       subtype: 'task_updated',
@@ -174,11 +174,12 @@ describe('toCopilotSubtaskEvent', () => {
     expect(toCopilotSubtaskEvent(updated)).toEqual({
       step_kind: 'subtask',
       subtask_id: 'task-preview-9',
-      label: '生成含参数圆锥曲线题预览 <script>steal()</script> 并核对退化情形',
+      label: '子任务未完成',
       status: 'failed',
       error: '子任务未完成',
     });
     expect(JSON.stringify(toCopilotSubtaskEvent(updated))).not.toContain('provider error');
+    expect(JSON.stringify(toCopilotSubtaskEvent(updated))).not.toContain('<script>');
   });
 });
 
@@ -256,14 +257,14 @@ describe('createCopilotSubtaskProjector', () => {
     expect(project(validStarted)).toEqual({
       step_kind: 'subtask',
       subtask_id: validStarted.task_id,
-      label: validStarted.description,
+      label: '正在深入核对证据',
       status: 'running',
     });
     expect(project({ ...validProgress, subagent_type: 'foreign-agent' })).toBeNull();
     expect(project(validProgress)).toEqual({
       step_kind: 'subtask',
       subtask_id: validStarted.task_id,
-      label: validProgress.description,
+      label: '正在深入核对证据',
       status: 'running',
     });
     expect(project(completed)).toEqual({

@@ -58,7 +58,7 @@ export async function getCorrectionStatuses(
         inArray(event.subject_id, ids),
       ),
     )
-    .orderBy(asc(event.created_at), asc(event.id));
+    .orderBy(asc(event.created_at), asc(event.dispatch_seq), asc(event.id));
 
   for (const row of rows) {
     const parsed = CorrectEvent.safeParse(rowToCorrectEventInput(row));

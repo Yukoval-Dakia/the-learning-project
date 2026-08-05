@@ -102,11 +102,14 @@ vi.mock('@/server/ai/log', () => ({
         error_message: row.error_message,
       });
       if (logMocks.finishedShouldThrow) throw new Error('db down');
+      const usage = row.usage as { inputTokens?: number; outputTokens?: number } | undefined;
       await logMocks.cost(db, {
         task_run_id: row.id,
         cost: row.cost_truth.amountUsd,
         cost_basis: row.cost_truth.basis,
         cost_ref: row.cost_truth.ref,
+        tokens_in: usage?.inputTokens ?? 0,
+        tokens_out: usage?.outputTokens ?? 0,
         outcome: row.outcome,
       });
       return true;
@@ -414,9 +417,11 @@ describe('streamTask — YUK-590 terminal failure honesty', () => {
     expect(writeCostLedger).toHaveBeenCalledWith(
       fakeDb,
       expect.objectContaining({
-        cost: 0.5,
-        cost_basis: 'reported',
         outcome: 'failed_permanent',
+        cost: 0.5,
+        tokens_in: 1,
+        tokens_out: 1,
+        cost_basis: 'reported',
       }),
     );
     expect(body).toContain('error_max_budget_usd');
@@ -445,7 +450,12 @@ describe('streamTask — YUK-590 terminal failure honesty', () => {
     );
     expect(writeCostLedger).toHaveBeenCalledWith(
       fakeDb,
-      expect.objectContaining({ cost_basis: 'estimated', outcome: 'failed_retryable' }),
+      expect.objectContaining({
+        outcome: 'failed_retryable',
+        tokens_in: 1,
+        tokens_out: 0,
+        cost_basis: 'estimated',
+      }),
     );
     expect(body).toContain('api_error_result http=429');
   });

@@ -232,7 +232,8 @@ export interface RunTaskCtx {
    * The THIRD durable knob — the tool-call ceiling (maxToolCalls) — is NOT here: it
    * lives in the ContextBudgetTracker (budgets.ts, surface-keyed) and is overridden
    * at the handler when constructing the tracker (MF-A). OMITTED (the default) ⇒
-   * buildQueryOptions / the stream abort timer read `def.budget` verbatim ⇒
+   * buildQueryOptions / the runTask and collecting lifecycle timers read
+   * `def.budget` verbatim ⇒
    * byte-identical to pre-seam (zero regression); only the copilot_run handler sets
    * it. It is consumed into maxTurns / the timer and is never an Options key.
    */
@@ -644,6 +645,7 @@ async function runTaskAttempt(args: {
   let resultText = '';
   let iteration = 0;
   const thinking = emptyThinkingObservation();
+  const observedUsage = emptySdkUsageAccumulator();
   // Purely local preparation can perform cold-start filesystem work (notably
   // the one-time isolated skill mirror). Keep it outside the distributed
   // lease: blocking this event loop after acquire can delay the first
@@ -664,6 +666,9 @@ async function runTaskAttempt(args: {
       await notifyTaskEvent(ctx, msg);
       if (msg.type === 'assistant') {
         observeAssistantThinking(msg, thinking);
+        if (accumulateSdkUsage(msg.message.usage, observedUsage)) {
+          lifecycle.recordObservedUsage(observedRunUsage(observedUsage, thinking));
+        }
         iteration += 1;
         const stepLatencyMs = Date.now() - stepStartTime;
         const blocks = (msg.message.content ?? []) as ContentBlock[];
@@ -685,7 +690,7 @@ async function runTaskAttempt(args: {
         continue;
       }
       if (msg.type !== 'result') continue;
-      lifecycle.recordTerminalResult(terminalEvidenceFromSdkResult(msg, thinking));
+      lifecycle.recordTerminalResult(terminalEvidenceFromSdkResult(msg, thinking, observedUsage));
       if (msg.subtype === 'success') {
         if (isApiErrorSuccessResult(msg)) {
           console.warn('[runTask] task_run_success_with_error_flag', {
@@ -784,7 +789,7 @@ export async function runTask(
     const lifecycle = createRunLifecycle<RunTaskResult>({
       db: ctx.db,
       kind,
-      timeoutMs: def.budget.timeout,
+      timeoutMs: ctx.budgetOverride?.timeoutMs ?? def.budget.timeout,
       abortController: ctx.lifecycleAbortController,
       override: ctx.override,
       parentTaskRunId: ctx.parentTaskRunId,
@@ -898,6 +903,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
   });
   let iteration = 0;
   const thinking = emptyThinkingObservation();
+  const observedUsage = emptySdkUsageAccumulator();
   let clientCancelled = false;
 
   const stream = new ReadableStream<Uint8Array>({
@@ -923,6 +929,9 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
             await notifyTaskEvent(ctx, msg);
             if (msg.type === 'assistant') {
               observeAssistantThinking(msg, thinking);
+              if (accumulateSdkUsage(msg.message.usage, observedUsage)) {
+                lifecycle.recordObservedUsage(observedRunUsage(observedUsage, thinking));
+              }
               const text = extractAssistantText(msg);
               if (text) {
                 controller.enqueue(encoder.encode(text));
@@ -945,7 +954,9 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
               continue;
             }
             if (msg.type !== 'result') continue;
-            lifecycle.recordTerminalResult(terminalEvidenceFromSdkResult(msg, thinking));
+            lifecycle.recordTerminalResult(
+              terminalEvidenceFromSdkResult(msg, thinking, observedUsage),
+            );
             if (isApiErrorSuccessResult(msg)) {
               throw new AgentRunError({
                 kind,
@@ -1076,25 +1087,98 @@ function usageWithThinking(
   };
 }
 
-/** Capture billed terminal evidence before interpreting success/error semantics. */
-function terminalEvidenceFromSdkResult(
-  msg: Extract<SDKMessage, { type: 'result' }>,
-  thinking: ThinkingObservation,
-): TerminalResultEvidence {
-  const usage = msg.usage;
+interface RawSdkUsage {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+}
+
+interface SdkUsageAccumulator {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}
+
+function emptySdkUsageAccumulator(): SdkUsageAccumulator {
+  return { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+}
+
+/** Sum per-assistant-turn usage so an abort without SDKResult still has a paid lower bound. */
+function accumulateSdkUsage(
+  usage: RawSdkUsage | undefined,
+  aggregate: SdkUsageAccumulator,
+): boolean {
+  if (
+    !usage ||
+    ![
+      usage.input_tokens,
+      usage.output_tokens,
+      usage.cache_read_input_tokens,
+      usage.cache_creation_input_tokens,
+    ].some((value) => typeof value === 'number')
+  ) {
+    return false;
+  }
+  aggregate.inputTokens += usage.input_tokens ?? 0;
+  aggregate.outputTokens += usage.output_tokens ?? 0;
+  aggregate.cacheReadTokens += usage.cache_read_input_tokens ?? 0;
+  aggregate.cacheCreationTokens += usage.cache_creation_input_tokens ?? 0;
+  return true;
+}
+
+/** Latest assistant-turn aggregate, reported mid-stream so an abort keeps its paid lower bound. */
+function observedRunUsage(aggregate: SdkUsageAccumulator, thinking: ThinkingObservation) {
   return {
     usage: usageWithThinking(
       {
-        inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
-        outputTokens: usage?.output_tokens ?? 0,
+        inputTokens: aggregate.inputTokens + aggregate.cacheReadTokens,
+        outputTokens: aggregate.outputTokens,
       },
       thinking,
     ),
     tokenCounts: {
-      inputTokens: usage?.input_tokens ?? 0,
-      outputTokens: usage?.output_tokens ?? 0,
-      cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
-      cacheCreationTokens: usage?.cache_creation_input_tokens ?? 0,
+      inputTokens: aggregate.inputTokens,
+      outputTokens: aggregate.outputTokens,
+      cacheReadTokens: aggregate.cacheReadTokens,
+      cacheCreationTokens: aggregate.cacheCreationTokens,
+    },
+  };
+}
+
+/**
+ * Capture billed terminal evidence before interpreting success/error semantics.
+ * SDK result usage is aggregate and authoritative when present; an orphan
+ * terminal without usage falls back to the accumulated assistant-turn
+ * observations so the attempt keeps its paid lower bound instead of
+ * collapsing to a zero estimate.
+ */
+function terminalEvidenceFromSdkResult(
+  msg: Extract<SDKMessage, { type: 'result' }>,
+  thinking: ThinkingObservation,
+  observed?: SdkUsageAccumulator,
+): TerminalResultEvidence {
+  const aggregate = emptySdkUsageAccumulator();
+  if (!accumulateSdkUsage(msg.usage, aggregate) && observed) {
+    aggregate.inputTokens = observed.inputTokens;
+    aggregate.outputTokens = observed.outputTokens;
+    aggregate.cacheReadTokens = observed.cacheReadTokens;
+    aggregate.cacheCreationTokens = observed.cacheCreationTokens;
+  }
+  return {
+    usage: usageWithThinking(
+      {
+        inputTokens: aggregate.inputTokens + aggregate.cacheReadTokens,
+        outputTokens: aggregate.outputTokens,
+      },
+      thinking,
+    ),
+    tokenCounts: {
+      inputTokens: aggregate.inputTokens,
+      outputTokens: aggregate.outputTokens,
+      cacheReadTokens: aggregate.cacheReadTokens,
+      cacheCreationTokens: aggregate.cacheCreationTokens,
     },
     costUsd: typeof msg.total_cost_usd === 'number' ? msg.total_cost_usd : undefined,
     finishReason: msg.stop_reason ?? (msg.subtype === 'success' ? 'stop' : msg.subtype),
@@ -1156,6 +1240,7 @@ export async function streamTaskCollecting(
   let iteration = 0;
   let resultText = '';
   const thinking = emptyThinkingObservation();
+  const observedUsage = emptySdkUsageAccumulator();
 
   try {
     const actualInput = ctx.middleware?.beforeRun
@@ -1169,6 +1254,9 @@ export async function streamTaskCollecting(
         await notifyTaskEvent(ctx, msg);
         if (msg.type === 'assistant') {
           observeAssistantThinking(msg, thinking);
+          if (accumulateSdkUsage(msg.message.usage, observedUsage)) {
+            lifecycle.recordObservedUsage(observedRunUsage(observedUsage, thinking));
+          }
           const text = extractAssistantText(msg);
           if (text) {
             onDelta(text);
@@ -1191,7 +1279,7 @@ export async function streamTaskCollecting(
           continue;
         }
         if (msg.type !== 'result') continue;
-        lifecycle.recordTerminalResult(terminalEvidenceFromSdkResult(msg, thinking));
+        lifecycle.recordTerminalResult(terminalEvidenceFromSdkResult(msg, thinking, observedUsage));
         if (msg.subtype === 'success') {
           if (isApiErrorSuccessResult(msg)) {
             console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {

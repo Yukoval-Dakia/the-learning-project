@@ -136,4 +136,59 @@ describe('live SoT — shipped shared SKILL.md packs resolve against the real tr
     expect(content).toContain('短任务不要派');
     expect(content).toContain('只把结论交回主 Copilot');
   });
+
+  it('YUK-832 — dialogue methodology pins evidence-reader semantics and bounded claims', () => {
+    const skillFile = join(
+      process.cwd(),
+      'src',
+      'subjects',
+      COPILOT_SHARED_SUBJECT_DIR,
+      'skills',
+      COPILOT_SKILL_NAME,
+      'SKILL.md',
+    );
+    const content = readFileSync(skillFile, 'utf-8');
+    expect(content).toContain('YUK-832 evidence-reading contract');
+    expect(content).toContain('action 与 event id 都按工具声明的 **exact**');
+    expect(content).toContain('`subjectId` **不带 `subjectKind`**');
+    expect(content).toContain('`query_events.subject_scope.all_subject_kinds_included=false`');
+    expect(content).toContain('`causal_descendants_included=false`');
+    expect(content).toContain('exact subject window 不包含这些 descendant');
+    expect(content).toContain('`causedByEventId` 只表示 **direct children**');
+    expect(content).toContain('共享同一个非空 parent');
+    expect(content).toContain('以 `dispatch_seq` 判断真实插入顺序');
+    expect(content).toContain('都先检查 `correction_state`');
+    expect(content).toContain('0 rows 只证明当前 filter 与时间 window');
+    expect(content).toContain('due rows 为 0，不等于 queue cleared');
+    expect(content).toContain('`evidence=null` **绝不等于**数据库 payload 为 null');
+    expect(content).toContain('`redacted_payload_groups`');
+    expect(content).toContain('`null` 只表示 canonical key 明确持久化为 null');
+    expect(content).toContain('`[]` 只表示明确持久化空数组');
+    expect(content).toContain('两个 `caused_by_event_id=null` 的 root');
+    expect(content).toContain('exact `action=review` + `subjectKind=question`');
+    expect(content).toContain('`supports_exhaustive_zero_claim=false`');
+    expect(content).toContain('全局 pending / in-progress 为 0');
+    expect(content).toContain('`count_scope=returned_actionable_rows_only`');
+    expect(content).toContain('`query_events` 是事件日志，不是 entity inventory');
+    expect(content).toContain('`query_records.processing_status`');
+    expect(content).toContain(
+      '二者都不得覆盖 `get_review_due.entity_status_coverage=not_observed`',
+    );
+    expect(content).toContain('不得只因后续一次空读就反转为「不存在」');
+    expect(content).toContain('相同时间戳与连续 `dispatch_seq` 不能证明同一数据库事务');
+    expect(content).toContain('`query_knowledge` 返回空 nodes / edges');
+    expect(content).toContain('`returned_nodes_complete_after_expansion=false`');
+    expect(content).toContain('`repeat_with_relation_only_without_subject_id`');
+    expect(content).toContain('必须保留工具已经返回且与请求直接相关的 material facts');
+    expect(content).toContain('不要用字符串相似、正则或自由文本 NLP 代替验证');
+    expect(content).toContain('`evidence_refs` 是 supporting provenance');
+    expect(content).toContain('`get_attempt_context.claim_support.activation_policy=not_observed`');
+    expect(content).toContain('顶层 `outcome` 与 typed `evidence.outcome`');
+    expect(content).toContain('只能定位“已观测的直接分叉”');
+    expect(content).toContain('`get_review_due.queue_assertion`');
+    expect(content).toContain('`fsrs_projection_summary.supports_actionable_queue_claim=false`');
+    expect(content).toContain('只有无 cursor 且 `complete_for_window=true`');
+    expect(content).toContain('`supports_lifecycle_status_count_claim=false`');
+    expect(content).toContain('只有实际调用并收到工具结果后');
+  });
 });

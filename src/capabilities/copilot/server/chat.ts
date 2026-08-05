@@ -26,6 +26,7 @@ import {
   type CopilotRunInput,
   assembleCopilotRunInput,
 } from '@/capabilities/copilot/server/copilot-run-input';
+import { reviewCopilotEvidenceReply } from '@/capabilities/copilot/server/evidence-review';
 // YUK-574 — session-anchored learner-state header (assemble-once + invalidation).
 // The Facet A (YUK-174) per-turn `proposal_feedback` digest is MIGRATED into this
 // same session-anchored block (folded in, same invalidation rules, proposal
@@ -64,6 +65,7 @@ import {
   EPHEMERAL_HTML_REF_MAX_CHARS,
   getRecentCopilotTurns,
 } from '@/capabilities/copilot/server/turns';
+import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 import type { Db, Tx } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
@@ -96,7 +98,11 @@ import {
 } from '@/server/ai/tools/allowlists';
 import { resolveContextBudget } from '@/server/ai/tools/budgets';
 import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
-import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+import {
+  type SdkMcpServer,
+  type ToolExecutionResultObservation,
+  buildMcpServerFromRegistry,
+} from '@/server/ai/tools/mcp-bridge';
 // AF S3a / YUK-203 U3 — durable conversation envelope. runCopilotChat now
 // find-or-creates a learning_session(type='conversation') so turns persist and
 // the drawer can replay-last-N (AF spec §1.5 + §7 S3a). Session ownership stays
@@ -293,52 +299,6 @@ export function extractPrimaryView(
   return primaryView ? { text: cleaned, primaryView } : { text: cleaned };
 }
 
-// YUK-307 — bounded streaming tail-filter. react-markdown (MathMarkdown, no
-// rehype-raw) renders raw HTML as VISIBLE escaped text — the marker is NOT
-// invisible in the live bubble — so deltas must be filtered server-side: from
-// the first occurrence of the marker-start token onward, nothing is emitted
-// (the prompt pins the marker as the reply's LAST output). A delta ending in a
-// partial prefix of the token holds back at most token.length-1 chars until the
-// next delta proves/disproves the marker. Worst case (a prose lookalike at the
-// very end of the stream) under-emits a few trailing chars — the terminal
-// `reply` SSE event is authoritative and reconciles (CopilotDock already
-// overwrites the live text with the cleaned terminal reply).
-// YUK-575 (N2) — exported so the durable copilot_run handler suppresses the
-// primary_view marker from its live delta stream exactly like the inline path (the
-// terminal REPLY carries the cleaned text; a raw marker must not flash in the live
-// bubble). Single source, no drift.
-export function wrapDeltaSuppressingMarker(
-  onDelta: (text: string) => void,
-): (text: string) => void {
-  let held = '';
-  let suppressed = false;
-  return (chunk: string) => {
-    if (suppressed) return;
-    const combined = held + chunk;
-    const markerAt = combined.indexOf(PRIMARY_VIEW_MARKER_START);
-    if (markerAt !== -1) {
-      suppressed = true;
-      held = '';
-      const before = combined.slice(0, markerAt);
-      if (before.length > 0) onDelta(before);
-      return;
-    }
-    // Hold back the longest suffix of `combined` that is a proper prefix of the
-    // token (the marker may be split across deltas).
-    let holdLen = 0;
-    const maxHold = Math.min(combined.length, PRIMARY_VIEW_MARKER_START.length - 1);
-    for (let len = maxHold; len > 0; len -= 1) {
-      if (combined.endsWith(PRIMARY_VIEW_MARKER_START.slice(0, len))) {
-        holdLen = len;
-        break;
-      }
-    }
-    held = holdLen > 0 ? combined.slice(combined.length - holdLen) : '';
-    const emit = holdLen > 0 ? combined.slice(0, combined.length - holdLen) : combined;
-    if (emit.length > 0) onDelta(emit);
-  };
-}
-
 export interface CopilotChatResult {
   task_run_id: string;
   reply: string;
@@ -438,6 +398,19 @@ export interface WriteCopilotReplyResult {
   primaryView?: CopilotPrimaryView;
 }
 
+export interface PreparedCopilotReply {
+  /** Exact public/persisted bytes after reply-tail metadata removal. */
+  text: string;
+  /** Metadata extracted from the same raw candidate, retained only when selected. */
+  primaryView?: CopilotPrimaryView;
+}
+
+export interface CopilotEvidenceValidationRef {
+  status: 'pass' | 'repair' | 'failed_closed';
+  reference_task_run_ids: string[];
+  comparison_task_run_ids: string[];
+}
+
 export async function writeCopilotReply(
   db: Db | Tx,
   params: {
@@ -446,10 +419,17 @@ export async function writeCopilotReply(
     userAskEventId?: string;
     /** 模型原始终稿（含可能的 primary_view marker；本 helper 负责剥）。 */
     replyText: string;
+    /**
+     * A reply already normalized before a sealed evidence review. When present,
+     * this is the byte-authoritative payload and MUST NOT be transformed again.
+     */
+    preparedReply?: PreparedCopilotReply;
     /** copilot_reply 的 actor_ref（inline=selectActorRef；durable handler 同款）。 */
     actorRef: string;
     /** 真实 task_run_id（cost-trace 链锚）。 */
     taskRunId: string;
+    /** Sealed FULL-validator run linkage; contains no model prose or reasoning. */
+    evidenceValidation?: CopilotEvidenceValidationRef;
     /**
      * Optional terminal outcome for durable recovery. Inline callers omit it,
      * preserving the existing null outcome byte-for-byte. A durable success
@@ -459,6 +439,13 @@ export async function writeCopilotReply(
     outcome?: 'success' | 'failure' | 'partial';
     /** Durable success metadata needed to rebuild the DONE projection. */
     durableFinishReason?: string;
+    /**
+     * Durable YUK-832 projection contract. When true, recovery must publish one
+     * reviewed full-text DELTA in the same transaction and immediately before
+     * REPLY/DONE or FAILED. The marker makes that suffix recoverable after an
+     * owner crash; legacy markers omit it and keep their previous projection.
+     */
+    durableEmitReviewedDelta?: boolean;
     /** Durable failure metadata needed to rebuild the FAILED projection. */
     durableFailure?: { reason: string; error: string; checkpoint_safe?: boolean };
     /** ask 的 created_at；reply 戳 now+1ms 保证 (created_at,id) 排序里 reply 在 ask 之后。 */
@@ -467,10 +454,20 @@ export async function writeCopilotReply(
   },
 ): Promise<WriteCopilotReplyResult> {
   const write = params.writeFn ?? writeEvent;
-  // YUK-307 — 在写入前 parse + strip primary_view marker（与 inline 同一收敛点形态）。
-  const { text: cleanedReply, primaryView } = extractPrimaryView(params.replyText, {
-    taskRunId: params.taskRunId,
-  });
+  if (params.preparedReply && params.preparedReply.text !== params.replyText) {
+    throw new Error('prepared copilot reply bytes do not match replyText');
+  }
+  // YUK-832 — evidence-bearing replies are normalized BEFORE review, then pass
+  // through this convergence point byte-for-byte. Legacy/non-reviewed callers
+  // still normalize here. Never certify raw bytes and persist a transformed
+  // suffix (notably an unterminated primary_view marker) afterward.
+  const prepared =
+    params.preparedReply ??
+    extractPrimaryView(params.replyText, {
+      taskRunId: params.taskRunId,
+    });
+  const cleanedReply = prepared.text;
+  const primaryView = prepared.primaryView;
   // created_at 严格晚于 ask（now + 1ms）：整轮共享一个 now，无偏移则 ask/reply
   // 在 created_at 上打平，turns 读取器的 (created_at, id) 排序可能把 reply 排到自己
   // 的 ask 之前。reply 真在 ask 之后发生，1ms bump 既忠实又保 pair 顺序（与 inline 同）。
@@ -490,7 +487,9 @@ export async function writeCopilotReply(
       session_id: params.sessionId,
       reply_md: cleanedReply,
       task_run_id: params.taskRunId,
+      ...(params.evidenceValidation ? { evidence_validation: params.evidenceValidation } : {}),
       ...(params.durableFinishReason ? { durable_finish_reason: params.durableFinishReason } : {}),
+      ...(params.durableEmitReviewedDelta ? { durable_emit_reviewed_delta: true } : {}),
       ...(params.durableFailure ? { durable_failure: params.durableFailure } : {}),
       in_reply_to_event_id: params.userAskEventId ?? null,
       // YUK-307 (S3a additive) — persist hero nomination so Dock replay can restore
@@ -598,6 +597,8 @@ export interface CopilotChatDeps {
   // ignores it. Unit tests inject a vi.fn so the {}-stub db is never touched.
   streamAgentTaskFn?: StreamAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
+  /** YUK-832 — no-tool final evidence validator; injectable for product-level tests. */
+  reviewEvidenceReplyFn?: typeof reviewCopilotEvidenceReply;
   // YUK-198 — defaults to buildTavilyMcpServer (reads TAVILY_API_KEY). Returns
   // null when unconfigured → Tavily is not registered and no extra allowedTools
   // are added (back-compat no-op).
@@ -745,11 +746,11 @@ export async function decideCopilotDispatch(
   }
 }
 
-// YUK-266 (C1) — streaming options threaded through the shared chat impl. When
-// present, the free-form path streams text deltas via `onDelta` (through
-// streamAgentTaskFn) and the skill path pushes ONE delta (the full deterministic
-// reply) so the transport stays uniform. `signal` is the request AbortSignal for
-// client-disconnect teardown. Absent → the unchanged non-streaming behaviour.
+// YUK-266/YUK-832 — streaming options threaded through the shared chat impl.
+// Free-form candidate chunks are buffered until evidence review + reply
+// persistence, then replayed (pass/skip) or replaced once (repair/fail-closed).
+// The deterministic skill path still pushes one immediate full-reply delta.
+// `signal` is the request AbortSignal for client-disconnect teardown.
 interface CopilotStreamOptions {
   onDelta: (text: string) => void;
   signal?: AbortSignal;
@@ -765,6 +766,7 @@ async function runCopilotChatImpl(
   const run = deps.runAgentTaskFn ?? runAgentTask;
   const streamRun = deps.streamAgentTaskFn ?? streamTaskCollecting;
   const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
+  const reviewEvidenceReply = deps.reviewEvidenceReplyFn ?? reviewCopilotEvidenceReply;
   const buildTavily = deps.buildTavilyMcpServerFn ?? buildTavilyMcpServer;
   const write = deps.writeEventFn ?? writeEvent;
   // YUK-574 — the session-anchored learner-state resolver (assemble-once +
@@ -1093,6 +1095,7 @@ async function runCopilotChatImpl(
   // accumulator Dreaming/Coach hold. Both chat + chip surfaces run the same
   // user-facing CopilotTask, so both get the Copilot budget.
   const budgetTracker = new ContextBudgetTracker(resolveContextBudget(surface));
+  const toolTrace: ToolExecutionResultObservation[] = [];
   // The MCP server is constructed before the central runner creates its
   // lifecycle. Share this controller with both sides so timeout, lease fencing,
   // and request cancellation abort nested run_task work before the parent permit
@@ -1125,6 +1128,12 @@ async function runCopilotChatImpl(
       // soft-stop string so the bridge skips execute (graceful stop, never a
       // limit:0 → Zod throw). Otherwise pass the (possibly capped) args + note.
       return { args: capped, truncationNote: contextBudget, softStop };
+    },
+    onResult: (result) => {
+      // Reserve the sealed-review contract ceiling: rejected 61st callbacks must
+      // not append after the 60-call budget and trip fail-closed on length alone.
+      if (toolTrace.length >= COPILOT_EVIDENCE_MAX_TRACE_CALLS) return;
+      toolTrace.push(result);
     },
   });
 
@@ -1178,16 +1187,15 @@ async function runCopilotChatImpl(
     ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
   };
 
-  // YUK-266 (C1) — the free-form path runs the CopilotTask token loop. When
-  // streaming, route through streamAgentTaskFn (streamTaskCollecting) so text
-  // deltas reach the client as they are produced, then collect the full text +
-  // real task_run_id; the reply-event persistence below is byte-identical to the
-  // non-stream path (S3a contract). When NOT streaming, the unchanged
-  // runAgentTask path returns one final result. The streaming runner degrades
-  // gracefully (resolves a partial result on SDK error) rather than throwing.
+  // YUK-266/YUK-832 — the free-form path runs the CopilotTask token loop. The
+  // streaming runner still collects original chunk boundaries and gracefully
+  // resolves partial output, but no candidate prose reaches the client until the
+  // typed evidence review and reply persistence below succeed. Non-streaming uses
+  // the same convergence gate with runAgentTask.
   let replyText: string;
   let replyRunId: string;
   let streamError: string | undefined;
+  let candidateComplete = true;
   if (streaming) {
     const streamResult = await streamRun(
       'CopilotTask',
@@ -1215,14 +1223,19 @@ async function runCopilotChatImpl(
         // the pre-C2 shape (runner ctx.skills ?? [] unchanged → no regression).
         ...(copilotSkills ? { skills: copilotSkills } : {}),
       },
-      // YUK-307 — suppress the primary_view marker from live deltas (react-markdown
-      // renders raw HTML comments as visible escaped text). The terminal `reply`
-      // event carries the cleaned full text and reconciles any held-back tail.
-      wrapDeltaSuppressingMarker(streaming.onDelta),
+      // YUK-832 — a candidate that used evidence readers is not trustworthy
+      // until the no-tool typed validator passes or repairs it. Buffer every
+      // candidate delta here so a later read tool cannot make already-emitted
+      // prose impossible to retract. The reviewed, marker-cleaned reply is
+      // emitted once only after durable conversation persistence succeeds.
+      () => {},
     );
     replyText = streamResult.text;
     replyRunId = streamResult.task_run_id;
-    if (streamResult.partial) streamError = streamResult.error;
+    if (streamResult.partial) {
+      candidateComplete = false;
+      streamError = streamResult.error;
+    }
   } else {
     const result = await run('CopilotTask', runInput, {
       db,
@@ -1247,6 +1260,38 @@ async function runCopilotChatImpl(
     replyRunId = result.task_run_id;
   }
 
+  // Strip presentation-only metadata before the sealed review. The validator,
+  // persisted domain event, terminal envelope and delayed public DELTA must all
+  // see exactly these bytes; a dangling marker may truncate only here, never
+  // after a raw suffix was certified.
+  const preparedCandidate = extractPrimaryView(replyText, { taskRunId: replyRunId });
+  const evidenceReview = await reviewEvidenceReply({
+    db,
+    requestContext: {
+      user_message: req.user_message,
+      surface,
+      triggered_by: req.triggered_by,
+      ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
+      ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
+    },
+    candidateReply: preparedCandidate.text,
+    candidateTaskRunId: replyRunId,
+    candidateComplete,
+    toolTrace,
+    ...(streaming?.signal ? { signal: streaming.signal } : {}),
+    ...(deps.providerSessionDeadlineAt !== undefined
+      ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+      : {}),
+  });
+  streaming?.signal?.throwIfAborted();
+  replyText = evidenceReview.replyText;
+  // primary_view is a second user-visible channel (ephemeral_html can contain
+  // substantive prose). The sealed comparator reviews reply text only, so a
+  // read-bearing turn must drop this unreviewed metadata even when text passes.
+  // No-read/skipped turns retain the established presentation behavior.
+  const selectedPrimaryView =
+    evidenceReview.status === 'skipped' ? preparedCandidate.primaryView : undefined;
+
   // YUK-307 — single convergence point for BOTH the JSON and streaming paths:
   // parse + strip the primary_view marker ONCE from the collected reply, then
   // persist the reply turn. From here on, ONLY cleanedReply is used (persisted
@@ -1266,11 +1311,29 @@ async function runCopilotChatImpl(
     sessionId,
     userAskEventId: causedByEventId,
     replyText,
+    preparedReply: {
+      text: replyText,
+      ...(selectedPrimaryView ? { primaryView: selectedPrimaryView } : {}),
+    },
     actorRef,
     taskRunId: replyRunId,
+    ...(evidenceReview.status === 'skipped'
+      ? {}
+      : {
+          evidenceValidation: {
+            status: evidenceReview.status,
+            reference_task_run_ids: evidenceReview.referenceTaskRunIds ?? [],
+            comparison_task_run_ids: evidenceReview.comparisonTaskRunIds ?? [],
+          },
+        }),
     now,
     writeFn: write,
   });
+
+  // Publish the exact reviewed/persisted bytes once, after the domain write.
+  // Replaying raw candidate chunks could retain whitespace removed with a tail
+  // marker and make the public stream differ from the sealed hash.
+  if (streaming && cleanedReply.length > 0) streaming.onDelta(cleanedReply);
 
   // YUK-497 wave-4 — suppress the revert anchor when this turn called a MATERIALIZING tool (writes a
   // question/artifact row outside the event chain that cascade-revert can't compensate). Keyed on the
@@ -1329,14 +1392,12 @@ export async function runCopilotChat(
   return runCopilotChatImpl(db, req, deps, undefined);
 }
 
-// YUK-266 (C1) — streaming entrypoint. Identical turn-persistence contract to
-// runCopilotChat (the SAME single experimental:copilot_reply event is written with
-// the full text + real task_run_id), but text deltas are streamed to `onDelta` as
-// they are produced and the resolved CopilotChatResult is the terminal payload the
-// route emits as the `reply` SSE event. Streaming failure degrades gracefully:
-// whatever text was collected is still persisted + returned (with an `error` note),
-// so a turn is never lost. `signal` (req.signal) tears the SDK run down on client
-// disconnect.
+// YUK-266/YUK-832 — streaming entrypoint. It writes the same single
+// experimental:copilot_reply as runCopilotChat. Free-form candidate chunks are
+// buffered until evidence review + persistence, then safe deltas are emitted and
+// the resolved CopilotChatResult becomes the terminal `reply` event. A partial
+// evidence-bearing candidate cannot pass unchanged; review failure is fail-closed.
+// `signal` (req.signal) tears both primary and review runs down on disconnect.
 export async function runCopilotChatStreaming(
   db: Db,
   req: CopilotChatRequestT,

@@ -24,9 +24,9 @@ export const COPILOT_RUN_EVENTS = {
   /** 回合/进度心跳（工具步进等；v1 保留为 forward-compat 进度槽）。 */
   STEP: 'copilot_run.step',
   /**
-   * YUK-575 (N2) — 流式文本增量。durable handler 边跑边把每个 assistant chunk 写成
-   * 一条 delta 事件（FIFO promise-chain，terminal 前排空 → delta id 严格早于
-   * REPLY/DONE，S3）。消费端（dock，PR2/YUK-596）据它实时渲染流式文本。非终态。
+   * YUK-575/YUK-832 — 文本增量。durable handler 先缓冲 candidate；最终证据审阅后，
+   * marker 记下是否有正文，settlement projection 再把一条 reviewed full-text delta 与
+   * REPLY/DONE 或 FAILED 同事务写入（严格在 terminal 前且可由 redelivery 修复）。非终态。
    */
   DELTA: 'copilot_run.delta',
   /** 终稿 reply 文本就位（done 的前序，分开以便流式消费者先渲染 reply 再收 done）。 */

@@ -249,6 +249,11 @@ describe('queryMistakesTool', () => {
     expect(output.total).toBe(0);
     expect(output.mistakes).toEqual([]);
     expect(output.filter_applied.limit).toBe(20);
+    expect(output.claim_boundaries).toEqual({
+      zero_rows_scope: 'matching_failure_attempt_rows_only',
+      supports_entity_inventory_claim: false,
+      supports_lifecycle_status_count_claim: false,
+    });
   });
 
   it('summarize formats folded UI string', () => {
@@ -274,6 +279,11 @@ describe('queryMistakesTool', () => {
           since_days: null,
           limit: 20,
         },
+        claim_boundaries: {
+          zero_rows_scope: 'matching_failure_attempt_rows_only',
+          supports_entity_inventory_claim: false,
+          supports_lifecycle_status_count_claim: false,
+        },
       },
     );
     expect(summary).toContain('mistakes');
@@ -296,6 +306,11 @@ describe('queryMistakesTool', () => {
           since_days: null,
           limit: 20,
         },
+        claim_boundaries: {
+          zero_rows_scope: 'matching_failure_attempt_rows_only',
+          supports_entity_inventory_claim: false,
+          supports_lifecycle_status_count_claim: false,
+        },
       },
     );
 
@@ -306,6 +321,7 @@ describe('queryMistakesTool', () => {
     expect(queryMistakesTool.mirrorEvent).toBe('when_user_visible');
     expect(queryMistakesTool.effect).toBe('read');
     expect(queryMistakesTool.costClass).toBe('local');
+    expect(queryMistakesTool.description).toContain('cannot prove a current queue');
   });
 
   it.todo('returns successful empty result for unsupported subject (no crash)');

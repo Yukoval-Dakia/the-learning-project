@@ -115,18 +115,18 @@ describe('correction status projection', () => {
     });
   });
 
-  it('applies corrections by created_at then id, so restore can reactivate an event', async () => {
+  it('uses dispatch_seq when correction timestamps tie, so a later restore reactivates', async () => {
     const db = testDb();
     await seedAttempt('evt_target');
     const sameTime = new Date(BASE_TIME.getTime() + 1_000);
     await seedCorrection({
-      id: 'evt_correct_1_retract',
+      id: 'z_evt_correct_retract_written_first',
       target_event_id: 'evt_target',
       correction_kind: 'retract',
       created_at: sameTime,
     });
     await seedCorrection({
-      id: 'evt_correct_2_restore',
+      id: 'a_evt_correct_restore_written_second',
       target_event_id: 'evt_target',
       correction_kind: 'restore',
       created_at: sameTime,

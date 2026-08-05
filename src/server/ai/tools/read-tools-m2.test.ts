@@ -1,9 +1,13 @@
 import { capabilities } from '@/capabilities';
-import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
+import {
+  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+  buildInterventionSettlement,
+} from '@/core/schema/intervention';
 import {
   artifact,
   completion_evidence,
   event,
+  intervention,
   knowledge,
   knowledge_edge,
   learning_item,
@@ -363,6 +367,89 @@ describe('Foundation D M2 read tools', () => {
     expect(expandedQuery.nodes.map((node) => node.id)).toEqual(['k_zhi', 'k_root', 'k_er']);
     expect(expandedQuery.nodes[0].stats?.recent_failure_count_30d).toBe(1);
 
+    const truncatedExpansion = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      nodeId: 'k_zhi',
+      include: ['neighbors'],
+      limit: 1,
+    });
+    expect(truncatedExpansion.nodes.map((node) => node.id)).toEqual(['k_zhi']);
+    expect(truncatedExpansion.edges).toEqual([]);
+    expect(truncatedExpansion.coverage).toMatchObject({
+      seed_match_count: 1,
+      selected_seed_expansion_candidate_count: 2,
+      returned_node_count: 1,
+      returned_nodes_complete_after_expansion: false,
+      edges_complete_between_returned_nodes_for_requested_relation_types: true,
+    });
+    expect(truncatedExpansion.claim_boundaries).toMatchObject({
+      edge_scope: 'between_returned_active_nodes_for_requested_relation_types',
+      supports_global_edge_absence_claim: false,
+      supports_unrequested_relation_absence_claim: false,
+      supports_complete_expansion_claim: false,
+    });
+
+    const emptyRelationFilter = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      nodeId: 'k_zhi',
+      include: ['neighbors'],
+      relationTypes: [],
+    });
+    expect(emptyRelationFilter.query_scope.relation_types).toBeNull();
+    expect(emptyRelationFilter.edges.map((edge) => edge.id)).toEqual(['edge_zhi_er']);
+
+    await testDb()
+      .insert(knowledge)
+      .values(
+        Array.from({ length: 8 }, (_, index) => ({
+          id: `k_extra_${index}`,
+          name: `额外知识点 ${index}`,
+          domain: null,
+          parent_id: 'k_root',
+          created_at: BASE,
+          updated_at: BASE,
+        })),
+      );
+    const truncatedSeeds = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      limit: 10,
+    });
+    expect(truncatedSeeds.coverage).toMatchObject({
+      seed_match_count: 11,
+      selected_seed_expansion_candidate_count: 10,
+      returned_node_count: 10,
+      seed_matches_complete: false,
+      returned_nodes_complete_after_expansion: false,
+    });
+    expect(truncatedSeeds.claim_boundaries.supports_complete_expansion_claim).toBe(false);
+
+    const nodeIdMistakenForDomain = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'k_zhi',
+      nodeId: 'k_zhi',
+      include: ['ancestors', 'children', 'neighbors'],
+    });
+    expect(nodeIdMistakenForDomain).toMatchObject({
+      nodes: [],
+      edges: [],
+      query_scope: {
+        subject_domain: 'k_zhi',
+        subject_id_semantics: 'active_effective_domain',
+        node_id: 'k_zhi',
+        query: null,
+        active_only: true,
+      },
+      lookup_status: 'no_active_node_match_in_subject_domain',
+      coverage: {
+        seed_match_count: 0,
+        seed_matches_complete: true,
+      },
+      claim_boundaries: {
+        supports_global_node_absence_claim: false,
+        supports_never_existed_claim: false,
+        supports_archived_node_absence_claim: false,
+      },
+    });
+
     const subgraph = await expandKnowledgeSubgraphTool.execute(ctx(), {
       centerNodeId: 'k_zhi',
       depth: 1,
@@ -397,6 +484,22 @@ describe('Foundation D M2 read tools', () => {
     });
     expect(subgraphWithArchivedEdge.nodes.map((node) => node.id)).not.toContain('k_archived');
 
+    const archivedLookup = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      nodeId: 'k_archived',
+    });
+    expect(archivedLookup.lookup_status).toBe('no_active_node_match_in_subject_domain');
+    expect(archivedLookup.claim_boundaries.supports_never_existed_claim).toBe(false);
+
+    for (const invalid of [
+      { subjectId: 'yuwen', nodeId: '   ' },
+      { subjectId: 'yuwen', query: '   ' },
+      { subjectId: '   ', nodeId: 'k_zhi' },
+      { subjectId: 'yuwen', nodeId: 'k_zhi', query: '之' },
+    ]) {
+      await expect(queryKnowledgeTool.execute(ctx(), invalid)).rejects.toThrow();
+    }
+
     const paths = await findKnowledgePathsTool.execute(ctx(), {
       fromKnowledgeId: 'k_zhi',
       toKnowledgeId: 'k_er',
@@ -414,6 +517,16 @@ describe('Foundation D M2 read tools', () => {
     });
     expect(records.rows).toHaveLength(1);
     expect(records.rows[0].links.attempt_event_id).toBe('att_new');
+    expect(records.claim_boundaries).toEqual({
+      zero_rows_scope: 'matching_learning_record_rows_only',
+      supports_entity_inventory_claim: false,
+      supports_lifecycle_status_count_claim: false,
+    });
+    expect(queryRecordsTool.description).toContain(
+      'processing_status is a LearningRecord ingestion/linking state',
+    );
+    expect(queryRecordsTool.description).toContain('cannot prove those entities are absent');
+    expect(queryRecordsTool.description).toContain('entity_status_coverage=not_observed');
 
     const recordContext = await getRecordContextTool.execute(ctx(), {
       recordId: 'rec_mistake',
@@ -437,6 +550,8 @@ describe('Foundation D M2 read tools', () => {
       questionId: 'q_new',
       include: ['attempts', 'records', 'knowledge_context'],
     });
+    expect(questionContext.availability).toBe('found');
+    expect(questionContext.lifecycle.observation_status).toBe('observed');
     expect(questionContext.question?.id).toBe('q_new');
     expect(questionContext.lifecycle.attempt_counts.failure).toBe(1);
     expect(questionContext.records?.[0].record_id).toBe('rec_mistake');
@@ -455,6 +570,8 @@ describe('Foundation D M2 read tools', () => {
     });
 
     expect(questionContext.question).toBeNull();
+    expect(questionContext.availability).toBe('redacted_intervention_diagnostic');
+    expect(questionContext.lifecycle.observation_status).toBe('not_observed');
     expect(questionContext.lifecycle).toMatchObject({
       attempt_counts: { success: 0, partial: 0, failure: 0 },
       review_count: 0,
@@ -463,6 +580,19 @@ describe('Foundation D M2 read tools', () => {
     });
     expect(questionContext.records).toBeUndefined();
     expect(JSON.stringify(questionContext)).not.toContain('reference');
+    expect(getQuestionContextTool.summarize({ questionId: 'q_new' }, questionContext)).toContain(
+      'redacted',
+    );
+
+    const missing = await getQuestionContextTool.execute(ctx(), {
+      questionId: 'q_does_not_exist',
+    });
+    expect(missing.availability).toBe('not_found');
+    expect(missing.question).toBeNull();
+    expect(missing.lifecycle.observation_status).toBe('not_observed');
+    expect(getQuestionContextTool.summarize({ questionId: 'q_does_not_exist' }, missing)).toContain(
+      'missing',
+    );
   });
 
   // ADR-0032 D6-R6 — get_question_context(include:['structure']) projects the
@@ -526,8 +656,19 @@ describe('Foundation D M2 read tools', () => {
 
     const due = await getReviewDueTool.execute(ctx(), { limit: 10 });
     expect(due.rows.map((row) => row.question_id)).toEqual(['q_new', 'q_due']);
+    expect(due.queue_summary.count_scope).toBe('returned_actionable_rows_only');
     expect(due.queue_summary.never_reviewed_count).toBe(1);
     expect(due.queue_summary.overdue_count).toBe(1);
+    expect(due.queue_scope).toBe('due_now_and_never_reviewed_failures');
+    expect(due.fsrs_projection_summary.due_now_state_count).toBeGreaterThanOrEqual(1);
+    expect(due.queue_assertion).toMatchObject({
+      cleared: false,
+      actionable_due_total_count: null,
+      actionable_due_returned_count: 2,
+      queued_entity_count: null,
+      in_progress_entity_count: null,
+      failed_entity_count: null,
+    });
 
     await testDb()
       .insert(question)
@@ -614,6 +755,313 @@ describe('Foundation D M2 read tools', () => {
       .from(event)
       .where(and(eq(event.action, 'attempt'), eq(event.id, 'att_new')));
     expect(rows).toHaveLength(1);
+  });
+
+  it('separates an empty due-now queue from two bounded future FSRS projections', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'k_future_schedule',
+      name: '马尔可夫链稳态分布',
+      domain: 'math',
+      created_at: now,
+      updated_at: now,
+    });
+    await db.insert(question).values([
+      {
+        id: 'q_future_canonical',
+        kind: 'short_answer',
+        prompt_md: '求一个不可约非周期有限马尔可夫链的稳态分布。',
+        reference_md: '解 πP=π 且 Σπᵢ=1。',
+        source: 'manual',
+        knowledge_ids: ['k_future_schedule'],
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        id: 'q_future_legacy',
+        kind: 'short_answer',
+        prompt_md: '解释 detailed balance 与稳态分布的关系。',
+        reference_md: '满足 detailed balance 的分布必为稳态分布。',
+        source: 'manual',
+        knowledge_ids: ['k_future_schedule'],
+        created_at: new Date(now.getTime() + 1),
+        updated_at: now,
+      },
+    ]);
+    const firstDue = new Date(now.getTime() + 2 * 86_400_000);
+    const secondDue = new Date(now.getTime() + 5 * 86_400_000);
+    await db.insert(material_fsrs_state).values([
+      {
+        id: 'fsrs_future_knowledge',
+        subject_kind: 'knowledge',
+        subject_id: 'k_future_schedule',
+        state: fsrsState(firstDue) as never,
+        due_at: firstDue,
+        last_review_event_id: 'review_future_knowledge',
+        updated_at: now,
+      },
+      {
+        id: 'fsrs_future_question',
+        subject_kind: 'question',
+        subject_id: 'q_future_legacy',
+        state: fsrsState(secondDue) as never,
+        due_at: secondDue,
+        last_review_event_id: 'review_future_question',
+        updated_at: now,
+      },
+    ]);
+
+    const due = await getReviewDueTool.execute(ctx(), {
+      limit: 10,
+      knowledgeIds: ['k_future_schedule'],
+    });
+    expect(due.rows).toEqual([]);
+    expect(due.queue_summary).toMatchObject({
+      count_scope: 'returned_actionable_rows_only',
+      total_returned: 0,
+      never_reviewed_count: 0,
+      overdue_count: 0,
+    });
+    expect(due.fsrs_projection_summary).toMatchObject({
+      subject_scope: 'material_fsrs_state_rows_filtered_by_knowledge_ids',
+      supports_actionable_queue_claim: false,
+      total_state_count: 2,
+      due_now_state_count: 0,
+      future_state_count: 2,
+      earliest_future_due_at: firstDue.toISOString(),
+    });
+    expect(due.future_projections).toEqual([
+      expect.objectContaining({
+        subject_kind: 'knowledge',
+        subject_id: 'k_future_schedule',
+        due_at: firstDue.toISOString(),
+        last_review_event_id: 'review_future_knowledge',
+        timing: 'future',
+      }),
+      expect.objectContaining({
+        subject_kind: 'question',
+        subject_id: 'q_future_legacy',
+        due_at: secondDue.toISOString(),
+        last_review_event_id: 'review_future_question',
+        timing: 'future',
+      }),
+    ]);
+    expect(due.future_projection_coverage).toEqual({
+      returned_count: 2,
+      limit: 10,
+      total_future_count: 2,
+      has_more: false,
+      complete: true,
+      completeness: 'complete',
+    });
+    expect(due.queue_coverage).toMatchObject({
+      returned_count: 0,
+      total_matching_count: null,
+      has_more: null,
+      complete_for_due_now_window: null,
+      completeness: 'unknown',
+      claim_scope: 'returned_actionable_rows_only',
+      supports_exhaustive_zero_claim: false,
+    });
+    expect(due.entity_status_coverage).toEqual({
+      learning_item: 'not_observed',
+      intervention: 'not_observed',
+    });
+    expect(due.queue_assertion).toEqual({
+      cleared: null,
+      actionable_due_total_count: null,
+      actionable_due_returned_count: 0,
+      queued_entity_count: null,
+      in_progress_entity_count: null,
+      failed_entity_count: null,
+    });
+    expect(getReviewDueTool.summarize({}, due)).toContain(
+      'due-returned=0 · due-states=0 · due-completeness=unknown · future=2/2(complete)',
+    );
+  });
+
+  it('keeps retired intervention diagnostic schedules visible under a knowledge filter', async () => {
+    const db = testDb();
+    const activatedAt = new Date();
+    const interventionId = 'int_complex_schedule_fixture';
+    const knowledgeId = 'k_intervention_schedule';
+    await db.insert(knowledge).values({
+      id: knowledgeId,
+      name: '贝叶斯后验与基率校准',
+      domain: 'math',
+      created_at: activatedAt,
+      updated_at: activatedAt,
+    });
+    await writeEvent(db, {
+      id: 'conjecture_intervention_schedule',
+      actor_kind: 'agent',
+      actor_ref: 'agent:dreaming:variant_propose',
+      action: 'experimental:burnin_conjecture_fixture',
+      subject_kind: 'knowledge',
+      subject_id: knowledgeId,
+      outcome: 'success',
+      payload: { fixture: 'accepted misconception conjecture with grounded evidence' },
+      created_at: new Date(activatedAt.getTime() - 2_000),
+    });
+    await writeEvent(db, {
+      id: 'probe_result_intervention_schedule',
+      actor_kind: 'system',
+      actor_ref: 'grounding_gate',
+      action: 'experimental:burnin_probe_result_fixture',
+      subject_kind: 'event',
+      subject_id: 'conjecture_intervention_schedule',
+      outcome: 'success',
+      caused_by_event_id: 'conjecture_intervention_schedule',
+      payload: { fixture: 'effective discriminating probe result', predicted_p: 0.72 },
+      created_at: new Date(activatedAt.getTime() - 1_000),
+    });
+    const settlement = buildInterventionSettlement({
+      interventionId,
+      version: 1,
+      activatedAt,
+    });
+    await db.insert(intervention).values({
+      id: interventionId,
+      version: 1,
+      source_probe_result_event_id: 'probe_result_intervention_schedule',
+      conjecture_event_id: 'conjecture_intervention_schedule',
+      status: 'active',
+      delivery_mode: 'eligible',
+      idempotency_key: 'fixture:intervention:schedule:1',
+      snapshot_json: { conjecture: { knowledge_id: knowledgeId } } as never,
+      recommendation_json: { kind: 'recommendation', method_id: 'worked_example' } as never,
+      package_json: { diagnostics: { contract: 'answer-safe one-shot package' } } as never,
+      settlement_json: settlement as never,
+      activated_at: activatedAt,
+      created_at: activatedAt,
+      updated_at: activatedAt,
+    });
+    const delayed = settlement.diagnostics.delayed;
+    const transfer = settlement.diagnostics.transfer;
+    await db.insert(material_fsrs_state).values([
+      {
+        id: 'fsrs_intervention_delayed',
+        subject_kind: 'question',
+        subject_id: delayed.question_id,
+        state: fsrsState(new Date(delayed.due_at)) as never,
+        due_at: new Date(delayed.due_at),
+        updated_at: activatedAt,
+      },
+      {
+        id: 'fsrs_intervention_transfer',
+        subject_kind: 'question',
+        subject_id: transfer.question_id,
+        state: fsrsState(new Date(transfer.due_at)) as never,
+        due_at: new Date(transfer.due_at),
+        updated_at: activatedAt,
+      },
+    ]);
+
+    // The diagnostic question rows are intentionally absent, matching the
+    // post-settlement lifecycle in the actual burn-in clone.
+    const due = await getReviewDueTool.execute(ctx(), {
+      limit: 10,
+      knowledgeIds: [knowledgeId],
+    });
+    expect(due.rows).toEqual([]);
+    expect(due.fsrs_projection_summary).toMatchObject({
+      subject_scope: 'material_fsrs_state_rows_filtered_by_knowledge_ids',
+      total_state_count: 2,
+      due_now_state_count: 0,
+      future_state_count: 2,
+    });
+    expect(due.future_projections.map((row) => row.subject_id)).toEqual([
+      delayed.question_id,
+      transfer.question_id,
+    ]);
+    expect(due.future_projection_coverage).toMatchObject({
+      total_future_count: 2,
+      complete: true,
+      completeness: 'complete',
+    });
+    const truncated = await getReviewDueTool.execute(ctx(), {
+      limit: 1,
+      knowledgeIds: [knowledgeId],
+    });
+    expect(truncated.future_projections).toHaveLength(1);
+    expect(truncated.future_projection_coverage).toEqual({
+      returned_count: 1,
+      limit: 1,
+      total_future_count: 2,
+      has_more: true,
+      complete: false,
+      completeness: 'truncated',
+    });
+    expect(truncated.fsrs_projection_summary.total_state_count).toBe(
+      truncated.fsrs_projection_summary.due_now_state_count +
+        truncated.fsrs_projection_summary.future_state_count,
+    );
+    expect(JSON.stringify(due)).not.toContain('prompt_md');
+    expect(JSON.stringify(due)).not.toContain('reference_md');
+  });
+
+  it('does not claim due-queue completeness when a bounded pre-join hides a later eligible card', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values([
+      {
+        id: 'k_due_orphan',
+        name: '无可用题面的到期知识点',
+        domain: 'math',
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        id: 'k_due_eligible',
+        name: '有可用题面的到期知识点',
+        domain: 'math',
+        created_at: now,
+        updated_at: now,
+      },
+    ]);
+    await db.insert(question).values({
+      id: 'q_due_after_orphan',
+      kind: 'short_answer',
+      prompt_md: '说明特征值 1 与稳态分布存在性的关系。',
+      reference_md: '稳态分布是转移矩阵转置对应特征值 1 的归一化非负特征向量。',
+      source: 'manual',
+      knowledge_ids: ['k_due_eligible'],
+      created_at: now,
+      updated_at: now,
+    });
+    await db.insert(material_fsrs_state).values([
+      {
+        id: 'fsrs_due_orphan_first',
+        subject_kind: 'knowledge',
+        subject_id: 'k_due_orphan',
+        state: fsrsState(new Date(now.getTime() - 2 * 86_400_000)) as never,
+        due_at: new Date(now.getTime() - 2 * 86_400_000),
+        updated_at: now,
+      },
+      {
+        id: 'fsrs_due_eligible_second',
+        subject_kind: 'knowledge',
+        subject_id: 'k_due_eligible',
+        state: fsrsState(new Date(now.getTime() - 86_400_000)) as never,
+        due_at: new Date(now.getTime() - 86_400_000),
+        updated_at: now,
+      },
+    ]);
+
+    const due = await getReviewDueTool.execute(ctx(), { limit: 1 });
+    expect(due.rows).toEqual([]);
+    expect(due.fsrs_projection_summary.due_now_state_count).toBe(2);
+    expect(due.queue_coverage).toEqual({
+      returned_count: 0,
+      limit: 1,
+      total_matching_count: null,
+      has_more: null,
+      complete_for_due_now_window: null,
+      completeness: 'unknown',
+      claim_scope: 'returned_actionable_rows_only',
+      supports_exhaustive_zero_claim: false,
+    });
   });
 
   // codex PR #298 #3357932403 — a DRAFT question with a failure attempt (and no

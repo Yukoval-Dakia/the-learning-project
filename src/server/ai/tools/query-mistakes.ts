@@ -72,6 +72,11 @@ const OutputSchema = z.object({
     since_days: z.number().nullable(),
     limit: z.number().int(),
   }),
+  claim_boundaries: z.object({
+    zero_rows_scope: z.literal('matching_failure_attempt_rows_only'),
+    supports_entity_inventory_claim: z.literal(false),
+    supports_lifecycle_status_count_claim: z.literal(false),
+  }),
 });
 
 type Input = z.infer<typeof InputSchema>;
@@ -91,6 +96,8 @@ const DESCRIPTION = [
   '',
   'Set includeVariants=true to also list mistake_variant rows per question.',
   'Set includeAttribution=false to skip the cause-policy resolution (cheaper).',
+  'A zero-row result only describes matching failure-attempt rows. It cannot prove a current queue',
+  'or entity failed-status count of zero, and cannot override get_review_due.queue_assertion nulls.',
 ].join('\n');
 
 async function loadQuestionPrompts(db: Db, questionIds: string[]): Promise<Map<string, string>> {
@@ -276,6 +283,11 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       due_within_days: filter.dueWithinDays ?? null,
       since_days: filter.sinceDays ?? null,
       limit,
+    },
+    claim_boundaries: {
+      zero_rows_scope: 'matching_failure_attempt_rows_only',
+      supports_entity_inventory_claim: false,
+      supports_lifecycle_status_count_claim: false,
     },
   });
 }

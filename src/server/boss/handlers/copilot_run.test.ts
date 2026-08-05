@@ -6,7 +6,7 @@
 //   ② 非 transient error（plain Error）→ terminal FAILED(exhausted)+reply+return（不 throw，YUK-575 MF1）；
 //   ③ 启动前已有 cancel 事件 → 早停写 failed(cancelled)，不调 AI；
 //   ④ run handle = run_id = 传入 checkpoint_id（job_events.business_id）。
-//   YUK-575: N2 流式 delta FIFO（S3）/ N3+S4 ambient 装配往返 / N5+MF-A budget /
+//   YUK-575/YUK-832: N2 reviewed full-delta settlement（S3）/ N3+S4 ambient 装配往返 / N5+MF-A budget /
 //            MF1/MF2 transient·exhausted 分诊 + 幂等守卫 / S6 static 约束。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -19,6 +19,11 @@ import {
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { countOutstandingDurableRuns } from '@/capabilities/copilot/server/durable-backlog';
 import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
+import {
+  COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
+  COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+  COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
+} from '@/capabilities/copilot/server/evidence-review';
 import { COPILOT_SUBAGENT_NAME } from '@/capabilities/copilot/server/subagents';
 import type { Db } from '@/db/client';
 import { ai_task_runs, event, job_events, provider_session_admission } from '@/db/schema';
@@ -29,14 +34,17 @@ import {
 } from '@/server/ai/provider-session-admission';
 import { createRunLifecycle } from '@/server/ai/run-lifecycle';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/server/ai/tools/allowlists';
+import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
 import { and, eq } from 'drizzle-orm';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { STUCK_RUN_THRESHOLD_MS } from './ai_task_run_reconcile';
 import {
+  CLAIMED_EXECUTION_SETTLE_GRACE_MS,
   type CopilotRunJobData,
   DURABLE_BUDGET,
+  DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
   type RunCopilotRunParams,
   buildCopilotRunHandler,
   claimCopilotExecutionFence,
@@ -75,7 +83,8 @@ type AgentCtx = {
 };
 
 // streamTaskCollecting mock — 匹配 (kind, input, ctx, onDelta) => Promise<StreamCollectResult>。
-// deltas 若给则在 resolve 前逐个 onDelta（测 N2/S3 FIFO）；partial/error 模拟
+// deltas 若给则在 resolve 前逐个 onDelta（模拟 primary stream 曾产生正文）；handler
+// 只保留这个布尔事实，审阅后由 settlement 投影一条完整安全 DELTA。partial/error 模拟
 // graceful-degrade。默认不 emit delta（保既有 [STARTED,REPLY,DONE] 事件序列断言）。
 function streamMock(
   text: string,
@@ -185,6 +194,427 @@ describe('runCopilotRun', () => {
     expect(replies[0]?.payload).toMatchObject({ reply_md: '这是回答', task_run_id: 'tr_x' });
   });
 
+  it('YUK-832 — raw evidence candidate stays private; repaired reply alone reaches delta, domain history, and terminal', async () => {
+    const runId = 'copilot_user_ask_yuk832_durable_review';
+    const sessionId = 'sess_yuk832_durable_review';
+    const unsafeCandidate =
+      '六个事件是连续且充分的因果链；C04 的 due query 返回 0 行，所以整个队列已归零。';
+    const rawUnsafeCandidate = `${unsafeCandidate}\n<!--primary_view:{"source":"artifact","ref":{"kind":"question","id":"q_unsafe_durable"}}-->`;
+    const safeReply =
+      'evt_rate_a03 与 evt_probe_a03 只是 evt_proposal_a03 的直接子节点，不能串成兄弟因果链。C04 的 queue_assertion=null，无法裁决队列是否归零。';
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
+    });
+    const run = vi.fn(
+      async (_kind: string, _input: unknown, _ctx: AgentCtx, onDelta: (text: string) => void) => {
+        await mcpOptions?.onResult?.({
+          name: 'query_events',
+          effect: 'read',
+          input: { subject_id: 'diagnostic_subject_A03', limit: 50 },
+          output: {
+            query_contract: {
+              scope_coverage: 'blocked_cross_subject_relation_followup_required',
+            },
+            events: [
+              {
+                id: 'evt_rate_a03',
+                caused_by_event_id: 'evt_proposal_a03',
+                evidence: { relation_type: 'direct_child' },
+              },
+              {
+                id: 'evt_probe_a03',
+                caused_by_event_id: 'evt_proposal_a03',
+                outcome: null,
+                evidence: {
+                  outcome: 0,
+                  activation_policy: 'not_observed',
+                  necessary_conditions: 'not_supported',
+                  sufficient_conditions: 'not_supported',
+                },
+              },
+            ],
+            has_more: false,
+            next_cursor: null,
+          },
+          error_reason: null,
+          executed: true,
+        });
+        onDelta('六个事件是连续且充分的因果链；');
+        onDelta('C04 返回 0 行，所以整个队列已归零。');
+        expect(
+          (await replay(runId)).some((event) => event.event_type === COPILOT_RUN_EVENTS.DELTA),
+        ).toBe(false);
+        return {
+          text: rawUnsafeCandidate,
+          task_run_id: 'tr_yuk832_durable_candidate',
+          finishReason: 'end_turn',
+          usage: { inputTokens: 132_000, outputTokens: 4_900 },
+        };
+      },
+    );
+    const reviewEvidenceReplyFn = vi.fn(async (input) => {
+      expect(input).toMatchObject({
+        candidateReply: unsafeCandidate,
+        candidateComplete: true,
+        requestContext: {
+          user_message: expect.stringContaining('A03'),
+          surface: 'copilot',
+          triggered_by: 'chat',
+        },
+        toolTrace: [expect.objectContaining({ name: 'query_events', effect: 'read' })],
+        attemptTimeouts: {
+          referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+          comparisonMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
+        },
+      });
+      expect(input.requestContext).not.toHaveProperty('conversation_history');
+      expect(
+        (await replay(runId)).some((event) => event.event_type === COPILOT_RUN_EVENTS.DELTA),
+      ).toBe(false);
+      return {
+        status: 'repair' as const,
+        replyText: safeReply,
+        reviewTaskRunId: 'tr_yuk832_durable_review',
+        referenceTaskRunIds: ['tr_yuk832_durable_reference_invalid', 'tr_yuk832_durable_reference'],
+        comparisonTaskRunIds: [
+          'tr_yuk832_durable_original_rejected',
+          'tr_yuk832_durable_fallback_pass_1',
+          'tr_yuk832_durable_fallback_pass_2',
+        ],
+        violations: ['noncausal_relation', 'queue_or_count_unknown_promoted'],
+      };
+    });
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: sessionId,
+        user_message: '核完 A03 proposal→probe/review/judge 链，再判断 C04 due queue 是否归零。',
+      },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn,
+      buildTavilyMcpServerFn: () => null,
+      reviewEvidenceReplyFn,
+    });
+
+    expect(result).toEqual({
+      status: 'done',
+      reply: safeReply,
+      task_run_id: 'tr_yuk832_durable_candidate',
+    });
+    const events = await replay(runId);
+    expect(events.map((entry) => entry.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      COPILOT_RUN_EVENTS.DELTA,
+      COPILOT_RUN_EVENTS.REPLY,
+      COPILOT_RUN_EVENTS.DONE,
+    ]);
+    expect(events.find((entry) => entry.event_type === COPILOT_RUN_EVENTS.DELTA)?.payload).toEqual({
+      text: safeReply,
+    });
+    expect(
+      events.find((entry) => entry.event_type === COPILOT_RUN_EVENTS.REPLY)?.payload,
+    ).toMatchObject({
+      reply_md: safeReply,
+    });
+    expect(JSON.stringify(events)).not.toContain(unsafeCandidate);
+    const replies = await copilotReplyEvents(sessionId);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.payload.reply_md).toBe(safeReply);
+    expect(replies[0]?.payload.evidence_validation).toEqual({
+      status: 'repair',
+      reference_task_run_ids: [
+        'tr_yuk832_durable_reference_invalid',
+        'tr_yuk832_durable_reference',
+      ],
+      comparison_task_run_ids: [
+        'tr_yuk832_durable_original_rejected',
+        'tr_yuk832_durable_fallback_pass_1',
+        'tr_yuk832_durable_fallback_pass_2',
+      ],
+    });
+    expect(JSON.stringify(replies[0])).not.toContain(unsafeCandidate);
+    expect(replies[0]?.payload).not.toHaveProperty('primary_view');
+  });
+
+  it('YUK-832 — read-bearing partial keeps the real primary run id on its reviewed failure marker', async () => {
+    const runId = 'copilot_user_ask_yuk832_reviewed_partial';
+    const sessionId = 'sess_yuk832_reviewed_partial';
+    const primaryTaskRunId = 'tr_yuk832_reviewed_partial_primary';
+    const unsafePartial =
+      '42 次作答与 5 个探针已经证明定义域错误是唯一根因，而且 due reader 返回 0 行证明整个队列清空。';
+    const safePartial =
+      '42 次作答只支持定义域错误反复出现；5 个探针尚未全部完成。due reader 的 exact filter 返回 0 行，但完整队列覆盖仍未知。';
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
+    });
+    const run = vi.fn(
+      async (_kind: string, _input: unknown, _ctx: AgentCtx, onDelta: (text: string) => void) => {
+        await mcpOptions?.onResult?.({
+          name: 'get_review_due',
+          effect: 'read',
+          input: { learner_id: 'learner_complex_42', limit: 100 },
+          output: {
+            rows: [],
+            queue_assertion: { cleared: null },
+            queue_coverage: {
+              completeness: 'unknown',
+              supports_exhaustive_zero_claim: false,
+            },
+          },
+          error_reason: null,
+          executed: true,
+        });
+        onDelta(unsafePartial);
+        return {
+          text: unsafePartial,
+          task_run_id: primaryTaskRunId,
+          finishReason: 'tool_budget_exhausted',
+          usage: { inputTokens: 71_000, outputTokens: 2_300 },
+          partial: true,
+          error: 'provider budget exhausted after five cross-domain probes',
+        };
+      },
+    );
+    const reviewEvidenceReplyFn = vi.fn(async (input) => {
+      expect(input).toMatchObject({
+        candidateReply: unsafePartial,
+        candidateTaskRunId: primaryTaskRunId,
+        candidateComplete: false,
+        toolTrace: [expect.objectContaining({ name: 'get_review_due', effect: 'read' })],
+      });
+      return {
+        status: 'repair' as const,
+        replyText: safePartial,
+        referenceTaskRunIds: ['tr_yuk832_partial_reference'],
+        comparisonTaskRunIds: [
+          'tr_yuk832_partial_original_fail',
+          'tr_yuk832_partial_repair_pass_1',
+          'tr_yuk832_partial_repair_pass_2',
+        ],
+      };
+    });
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: sessionId,
+        user_message:
+          '交叉核验 42 次作答、5 个未教学探针与完整 due queue，再判断定义域错误是否为唯一根因。',
+      },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn,
+      buildTavilyMcpServerFn: () => null,
+      reviewEvidenceReplyFn,
+    });
+
+    expect(result).toEqual({
+      status: 'failed',
+      error: 'provider budget exhausted after five cross-domain probes',
+    });
+    const events = await replay(runId);
+    expect(events.map((entry) => entry.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      COPILOT_RUN_EVENTS.DELTA,
+      COPILOT_RUN_EVENTS.FAILED,
+    ]);
+    expect(events.find((entry) => entry.event_type === COPILOT_RUN_EVENTS.DELTA)?.payload).toEqual({
+      text: safePartial,
+    });
+    expect(
+      events.find((entry) => entry.event_type === COPILOT_RUN_EVENTS.FAILED)?.payload,
+    ).toMatchObject({
+      reason: 'exhausted',
+      reply_md: safePartial,
+    });
+    expect(JSON.stringify(events)).not.toContain(unsafePartial);
+
+    const replies = await copilotReplyEvents(sessionId);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      outcome: 'failure',
+      task_run_id: primaryTaskRunId,
+      payload: {
+        reply_md: safePartial,
+        evidence_validation: {
+          status: 'repair',
+          reference_task_run_ids: ['tr_yuk832_partial_reference'],
+          comparison_task_run_ids: [
+            'tr_yuk832_partial_original_fail',
+            'tr_yuk832_partial_repair_pass_1',
+            'tr_yuk832_partial_repair_pass_2',
+          ],
+        },
+      },
+    });
+    expect(JSON.stringify(replies)).not.toContain(unsafePartial);
+  });
+
+  it('YUK-832 — durable pass projects exact bytes and drops an unreviewed primary-view side channel', async () => {
+    const runId = 'copilot_user_ask_yuk832_durable_exact_bytes';
+    const sessionId = 'sess_yuk832_durable_exact_bytes';
+    const cleanedCandidate =
+      'A03 的 probe 与 rate 都是 proposal 的直接子事件；现有记录不支持把兄弟事件串成因果链。';
+    const marker = '<!--primary_view:{"source":"ephemeral_html","ref":"<div>队列已清空</div>"}-->';
+    const rawCandidate = `${cleanedCandidate}\n${marker}`;
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
+    });
+    const run = vi.fn(
+      async (_kind: string, _input: unknown, _ctx: AgentCtx, onDelta: (text: string) => void) => {
+        await mcpOptions?.onResult?.({
+          name: 'query_events',
+          effect: 'read',
+          input: { subject_id: 'diagnostic_subject_A03', limit: 50 },
+          output: {
+            events: [
+              { id: 'evt_probe', caused_by_event_id: 'evt_proposal' },
+              { id: 'evt_rate', caused_by_event_id: 'evt_proposal' },
+            ],
+            has_more: false,
+          },
+          error_reason: null,
+          executed: true,
+        });
+        onDelta(cleanedCandidate.slice(0, 18));
+        onDelta(`${cleanedCandidate.slice(18)}\n${marker}`);
+        return {
+          text: rawCandidate,
+          task_run_id: 'tr_yuk832_durable_exact_bytes',
+          finishReason: 'end_turn',
+          usage: { inputTokens: 18_500, outputTokens: 730 },
+        };
+      },
+    );
+    const reviewEvidenceReplyFn = vi.fn(async (input) => {
+      expect(input.candidateReply).toBe(cleanedCandidate);
+      return {
+        status: 'pass' as const,
+        replyText: input.candidateReply,
+        referenceTaskRunIds: ['reference_durable_exact'],
+        comparisonTaskRunIds: ['compare_durable_exact_1', 'compare_durable_exact_2'],
+      };
+    });
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: sessionId,
+        user_message: '按真实事件核验 A03 的 proposal、probe 与 rate 关系。',
+      },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn,
+      buildTavilyMcpServerFn: () => null,
+      reviewEvidenceReplyFn,
+    });
+
+    expect(result).toEqual({
+      status: 'done',
+      reply: cleanedCandidate,
+      task_run_id: 'tr_yuk832_durable_exact_bytes',
+    });
+    const events = await replay(runId);
+    expect(events.find((entry) => entry.event_type === COPILOT_RUN_EVENTS.DELTA)?.payload).toEqual({
+      text: cleanedCandidate,
+    });
+    expect(
+      events.find((entry) => entry.event_type === COPILOT_RUN_EVENTS.REPLY)?.payload,
+    ).toMatchObject({ reply_md: cleanedCandidate });
+    const replies = await copilotReplyEvents(sessionId);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.payload).toMatchObject({ reply_md: cleanedCandidate });
+    expect(replies[0]?.payload).not.toHaveProperty('primary_view');
+    expect(JSON.stringify(events)).not.toContain('<!--primary_view');
+  });
+
+  it('YUK-832 — durable dangling-marker truncation happens before review, never after certification', async () => {
+    const runId = 'copilot_user_ask_yuk832_durable_dangling';
+    const sessionId = 'sess_yuk832_durable_dangling';
+    const cleanedCandidate = 'C04 的 queue_assertion=null，所以无法裁决完整队列是否清空。';
+    const rawCandidate = `${cleanedCandidate}\n<!--primary_view:{"source":"artifact" 伪造尾部：队列已经清空`;
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
+    });
+    const run = vi.fn(
+      async (_kind: string, _input: unknown, _ctx: AgentCtx, onDelta: (text: string) => void) => {
+        await mcpOptions?.onResult?.({
+          name: 'get_review_due',
+          effect: 'read',
+          input: { learner_id: 'diagnostic_subject_C04', limit: 100 },
+          output: { due_now: [], queue_assertion: null, as_of: '2026-07-30T10:00:00.000Z' },
+          error_reason: null,
+          executed: true,
+        });
+        onDelta(rawCandidate);
+        return {
+          text: rawCandidate,
+          task_run_id: 'tr_yuk832_durable_dangling',
+          finishReason: 'end_turn',
+          usage: { inputTokens: 14_200, outputTokens: 510 },
+        };
+      },
+    );
+    const reviewEvidenceReplyFn = vi.fn(async (input) => {
+      expect(input.candidateReply).toBe(cleanedCandidate);
+      expect(input.candidateReply).not.toContain('伪造尾部');
+      return { status: 'pass' as const, replyText: input.candidateReply };
+    });
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: sessionId,
+        user_message: '核验 C04 due reader 是否足以证明整个队列清空。',
+      },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn,
+      buildTavilyMcpServerFn: () => null,
+      reviewEvidenceReplyFn,
+    });
+
+    expect(result).toEqual({
+      status: 'done',
+      reply: cleanedCandidate,
+      task_run_id: 'tr_yuk832_durable_dangling',
+    });
+    const events = await replay(runId);
+    expect(events.find((entry) => entry.event_type === COPILOT_RUN_EVENTS.DELTA)?.payload).toEqual({
+      text: cleanedCandidate,
+    });
+    expect(
+      events.find((entry) => entry.event_type === COPILOT_RUN_EVENTS.REPLY)?.payload,
+    ).toMatchObject({ reply_md: cleanedCandidate });
+    const replies = await copilotReplyEvents(sessionId);
+    expect(replies[0]?.payload).toMatchObject({ reply_md: cleanedCandidate });
+    expect(replies[0]?.payload).not.toHaveProperty('primary_view');
+    expect(JSON.stringify(events)).not.toContain('伪造尾部');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
   it('YUK-757 — durable run mounts the same depth-1 researcher and persists interleaved safe subtask steps in order', async () => {
     const runId = 'copilot_user_ask_subtask_lifecycle';
     const run = vi.fn(
@@ -286,11 +716,10 @@ describe('runCopilotRun', () => {
       COPILOT_RUN_EVENTS.STARTED,
       COPILOT_RUN_EVENTS.EXECUTION_STARTED,
       COPILOT_RUN_EVENTS.STEP,
+      COPILOT_RUN_EVENTS.STEP,
+      COPILOT_RUN_EVENTS.STEP,
+      COPILOT_RUN_EVENTS.STEP,
       COPILOT_RUN_EVENTS.DELTA,
-      COPILOT_RUN_EVENTS.STEP,
-      COPILOT_RUN_EVENTS.STEP,
-      COPILOT_RUN_EVENTS.DELTA,
-      COPILOT_RUN_EVENTS.STEP,
       COPILOT_RUN_EVENTS.REPLY,
       COPILOT_RUN_EVENTS.DONE,
     ]);
@@ -300,13 +729,13 @@ describe('runCopilotRun', () => {
       {
         step_kind: 'subtask',
         subtask_id: 'task-cross-artifacts-77',
-        label: '交叉核对函数讲义、四次历史作答与知识图谱先修边',
+        label: '正在深入核对证据',
         status: 'running',
       },
       {
         step_kind: 'subtask',
         subtask_id: 'task-question-preview-31',
-        label: '预览参数函数辨析题，覆盖 a=0 与判别式为零两种退化情形',
+        label: '正在深入核对证据',
         status: 'running',
       },
       {
@@ -318,7 +747,7 @@ describe('runCopilotRun', () => {
       {
         step_kind: 'subtask',
         subtask_id: 'task-question-preview-31',
-        label: '预览参数函数辨析题，覆盖 a=0 与判别式为零两种退化情形',
+        label: '子任务未完成',
         status: 'failed',
         error: '子任务未完成',
       },
@@ -467,6 +896,7 @@ describe('runCopilotRun', () => {
     const streamRun = streamMock(reply, {
       taskRunId: 'tr_terminal_projection_repair',
       finishReason: 'end_turn',
+      deltas: ['已核对 42 次作答；', '三轮延迟复习与五个探针也已完成。'],
     });
     const projectTerminal = vi
       .fn()
@@ -501,6 +931,7 @@ describe('runCopilotRun', () => {
       payload: {
         reply_md: reply,
         durable_finish_reason: 'end_turn',
+        durable_emit_reviewed_delta: true,
       },
     });
     expect((await replay(runId)).map((item) => item.event_type)).toEqual([
@@ -524,8 +955,12 @@ describe('runCopilotRun', () => {
       COPILOT_RUN_EVENTS.QUEUED,
       COPILOT_RUN_EVENTS.STARTED,
       COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      COPILOT_RUN_EVENTS.DELTA,
       COPILOT_RUN_EVENTS.REPLY,
       COPILOT_RUN_EVENTS.DONE,
+    ]);
+    expect(repairedEvents.filter((item) => item.event_type === COPILOT_RUN_EVENTS.DELTA)).toEqual([
+      expect.objectContaining({ payload: { text: reply } }),
     ]);
     expect(repairedEvents.some((item) => item.event_type === COPILOT_RUN_EVENTS.FAILED)).toBe(
       false,
@@ -548,6 +983,7 @@ describe('runCopilotRun', () => {
       partial: true,
       error: providerError,
       taskRunId: 'tr_failed_projection_repair',
+      deltas: ['已完成 42 次历史作答核对；', '五个探针只跑完三题。'],
     });
     const projectTerminal = vi
       .fn()
@@ -578,10 +1014,11 @@ describe('runCopilotRun', () => {
     expect(persistedReplies).toHaveLength(1);
     expect(persistedReplies[0]).toMatchObject({
       outcome: 'failure',
-      task_run_id: `copilot_run_exhausted_${runId}`,
+      task_run_id: 'tr_failed_projection_repair',
       caused_by_event_id: runId,
       payload: {
         reply_md: partialReply,
+        durable_emit_reviewed_delta: true,
         durable_failure: { reason: 'exhausted', error: providerError },
       },
     });
@@ -602,7 +1039,11 @@ describe('runCopilotRun', () => {
       COPILOT_RUN_EVENTS.QUEUED,
       COPILOT_RUN_EVENTS.STARTED,
       COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      COPILOT_RUN_EVENTS.DELTA,
       COPILOT_RUN_EVENTS.FAILED,
+    ]);
+    expect(repairedEvents.filter((item) => item.event_type === COPILOT_RUN_EVENTS.DELTA)).toEqual([
+      expect.objectContaining({ payload: { text: partialReply } }),
     ]);
     expect(repairedEvents.at(-1)?.payload).toMatchObject({
       reason: 'exhausted',
@@ -780,7 +1221,7 @@ describe('runCopilotRun', () => {
     await ownerStarted;
     await testDb()
       .update(job_events)
-      .set({ occurred_at: new Date(Date.now() - DURABLE_BUDGET.timeoutMs - 31_000) })
+      .set({ occurred_at: new Date(Date.now() - DURABLE_OWNER_SETTLEMENT_BUDGET_MS - 1_000) })
       .where(
         and(
           eq(job_events.business_table, COPILOT_RUN_TABLE),
@@ -861,13 +1302,13 @@ describe('runCopilotRun', () => {
     ]);
     expect(await countOutstandingDurableRuns(testDb())).toBe(1);
 
-    // A genuine recovery happens only after the original 12-minute execution
-    // budget has elapsed (normally pg-boss redelivers after its 2h lease). Age
-    // the fence rather than mis-model an early overlap as a crashed owner.
+    // A genuine recovery happens only after the 12-minute primary run, bounded
+    // final evidence review, and settlement grace have elapsed. Age the fence
+    // rather than mis-model an early overlap as a crashed owner.
     await testDb()
       .update(job_events)
       .set({
-        occurred_at: new Date(Date.now() - DURABLE_BUDGET.timeoutMs - 31_000),
+        occurred_at: new Date(Date.now() - DURABLE_OWNER_SETTLEMENT_BUDGET_MS - 1_000),
       })
       .where(
         and(
@@ -1028,9 +1469,9 @@ describe('runCopilotRun', () => {
     expect(replyJobEvent?.payload).toMatchObject({ reply_md: '这是正文' });
   });
 
-  // YUK-575 (N2/S3) — 流式 delta → job_events：FIFO + terminal 前 drain → 每条 delta id
-  // 严格早于 REPLY/DONE，且 job_events id 单调。
-  it('N2/S3 — 流式 delta 写 job_events，id 单调、所有 delta 严格早于 REPLY/DONE', async () => {
+  // YUK-575/YUK-832 (N2/S3) — 原始 chunks 只作“有正文”信号；review 后的完整安全
+  // DELTA 与 terminal 在同一 settlement transaction 内写入，保证可恢复且 id 单调。
+  it('N2/S3 — one reviewed full-text DELTA 严格早于 REPLY/DONE', async () => {
     const runId = 'run_delta_fifo';
     const run = streamMock('最终答复', { deltas: ['最', '终', '答复'] });
     const result = await runCopilotRun({
@@ -1046,13 +1487,11 @@ describe('runCopilotRun', () => {
     // id 单调递增。
     const ids = events.map((e) => e.id);
     expect(ids).toEqual([...ids].sort((a, b) => a - b));
-    // 事件序列：STARTED, EXECUTION_STARTED, 3×DELTA, REPLY, DONE。
+    // 事件序列：STARTED, EXECUTION_STARTED, reviewed full DELTA, REPLY, DONE。
     const types = events.map((e) => e.event_type);
     expect(types).toEqual([
       COPILOT_RUN_EVENTS.STARTED,
       COPILOT_RUN_EVENTS.EXECUTION_STARTED,
-      COPILOT_RUN_EVENTS.DELTA,
-      COPILOT_RUN_EVENTS.DELTA,
       COPILOT_RUN_EVENTS.DELTA,
       COPILOT_RUN_EVENTS.REPLY,
       COPILOT_RUN_EVENTS.DONE,
@@ -1065,11 +1504,11 @@ describe('runCopilotRun', () => {
     const doneId = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.DONE)?.id ?? 0;
     expect(maxDeltaId).toBeLessThan(replyId);
     expect(replyId).toBeLessThan(doneId);
-    // delta payload 携带文本。
+    // delta payload 是审阅后的完整正文，不重放 raw chunk 边界。
     const firstDelta = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.DELTA);
-    expect(firstDelta?.payload).toMatchObject({ text: '最' });
+    expect(firstDelta?.payload).toMatchObject({ text: '最终答复' });
     // 流式态派生为 running（终态 done 前）。
-    expect(deriveCopilotRunStatus(events.slice(0, 4))).toBe('running');
+    expect(deriveCopilotRunStatus(events.slice(0, 3))).toBe('running');
   });
 
   // YUK-596 (causal history + S4) — handler pickup 时调共享装配器，传
@@ -1158,7 +1597,13 @@ describe('runCopilotRun', () => {
   // YUK-575 (S6) — 承重约束：durable abort budget 必须 < stuck-in-running sweeper 阈值，
   // 否则 sweeper 误收敛 live durable run 成 failure。
   it('S6 — DURABLE_BUDGET.timeoutMs < STUCK_RUN_THRESHOLD_MS', () => {
+    expect(DURABLE_OWNER_SETTLEMENT_BUDGET_MS).toBe(
+      DURABLE_BUDGET.timeoutMs +
+        COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS +
+        CLAIMED_EXECUTION_SETTLE_GRACE_MS,
+    );
     expect(DURABLE_BUDGET.timeoutMs).toBeLessThan(STUCK_RUN_THRESHOLD_MS);
+    expect(DURABLE_OWNER_SETTLEMENT_BUDGET_MS).toBeLessThan(STUCK_RUN_THRESHOLD_MS);
   });
 
   it('F3 — 已有 DONE 终态的 run 被重投 → 跳过，不重跑 AI、不重写事件/回复', async () => {
@@ -1797,6 +2242,120 @@ describe('runCopilotRun', () => {
         durable_failure: { reason: 'cancelled' },
       },
     });
+  });
+
+  it('Stop — read-bearing cancellation after certification persists neither candidate nor selected repair', async () => {
+    const runId = 'copilot_user_ask_stop_between_certification_and_marker';
+    const sessionId = 'sess_stop_between_certification_and_marker';
+    const unsafeCandidate = 'exact subjectId 里是 0，所以产品数据库不存在 intervention。';
+    const selectedRepair = '本轮 subjectId 窗口未返回 intervention，但完整因果后段仍未核验。';
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcp = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
+    });
+    const run = vi.fn(async () => {
+      await mcpOptions?.onResult?.({
+        name: 'query_events',
+        effect: 'read',
+        input: { filter: { subjectId: 'kc_chain_rule', limit: 50 } },
+        output: {
+          events: [],
+          subject_scope: {
+            causal_descendants_included: false,
+            cross_stage_claim_status: 'blocked_cross_subject_relation_followup_required',
+          },
+        },
+        error_reason: null,
+        executed: true,
+      });
+      return {
+        text: unsafeCandidate,
+        task_run_id: 'tr_stop_between_certification_and_marker',
+        finishReason: 'end_turn',
+        usage: { inputTokens: 12_000, outputTokens: 600 },
+      };
+    });
+    const reviewEvidenceReplyFn = vi.fn(async () => {
+      await writeJobEvent(testDb(), {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+        payload: { requested_by: 'user', stage: 'after_certification_before_marker' },
+      });
+      return {
+        status: 'repair' as const,
+        replyText: selectedRepair,
+        reviewTaskRunId: 'tr_review_before_stop',
+        verificationTaskRunId: 'tr_certification_before_stop',
+        violations: ['incomplete_scope_or_pagination'],
+      };
+    });
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: buildMcp as never,
+      reviewEvidenceReplyFn,
+    });
+
+    expect(result).toEqual({ status: 'cancelled' });
+    const serialized = JSON.stringify(await replay(runId));
+    expect(serialized).not.toContain(unsafeCandidate);
+    expect(serialized).not.toContain(selectedRepair);
+    const replies = await copilotReplyEvents(sessionId);
+    expect(JSON.stringify(replies)).not.toContain(unsafeCandidate);
+    expect(JSON.stringify(replies)).not.toContain(selectedRepair);
+  });
+
+  it('Stop — pure-text cancellation observed after review preserves the reviewed partial', async () => {
+    const runId = 'copilot_user_ask_stop_after_pure_text_review';
+    const sessionId = 'sess_stop_after_pure_text_review';
+    const reviewedPartial =
+      '已完成三份材料的前两份对照：定义域约束一致，第二份在参数退化处多一个边界分支；第三份尚未完成。';
+    const run = vi.fn(async () => ({
+      text: reviewedPartial,
+      task_run_id: 'tr_stop_after_pure_text_review',
+      finishReason: 'end_turn',
+      usage: { inputTokens: 8_000, outputTokens: 420 },
+    }));
+    const reviewEvidenceReplyFn = vi.fn(async () => {
+      await writeJobEvent(testDb(), {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+        payload: { requested_by: 'user', stage: 'after_pure_text_review' },
+      });
+      return { status: 'skipped' as const, replyText: reviewedPartial };
+    });
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+      reviewEvidenceReplyFn,
+    });
+
+    expect(result).toEqual({ status: 'cancelled' });
+    const events = await replay(runId);
+    expect(events.at(-1)?.payload).toMatchObject({
+      reason: 'cancelled',
+      reply_md: reviewedPartial,
+    });
+    expect(await copilotReplyEvents(sessionId)).toEqual([
+      expect.objectContaining({
+        outcome: 'failure',
+        task_run_id: 'tr_stop_after_pure_text_review',
+        payload: expect.objectContaining({
+          reply_md: reviewedPartial,
+          durable_failure: expect.objectContaining({ reason: 'cancelled' }),
+        }),
+      }),
+    ]);
   });
 
   it('Stop — a materializing tool start suppresses the checkpoint even when its mirror is unavailable', async () => {

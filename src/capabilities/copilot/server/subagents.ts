@@ -105,14 +105,7 @@ export interface CopilotSubtaskEvent {
   error?: '子任务未完成';
 }
 
-const MAX_SUBTASK_LABEL_CHARS = 120;
-
-function sanitizeSubtaskLabel(value: unknown, fallback: string): string {
-  if (typeof value !== 'string') return fallback;
-  const collapsed = value.replace(/\s+/gu, ' ').trim();
-  if (!collapsed) return fallback;
-  return collapsed.slice(0, MAX_SUBTASK_LABEL_CHARS);
-}
+const RUNNING_SUBTASK_LABEL = '正在深入核对证据';
 
 /**
  * Project the SDK task lifecycle onto the public card payload allowlist.
@@ -126,7 +119,12 @@ export function toCopilotSubtaskEvent(message: CopilotTaskLifecycleMessage): Cop
     return {
       step_kind: 'subtask',
       subtask_id: message.task_id,
-      label: sanitizeSubtaskLabel(message.description, '正在深入处理'),
+      // SDK descriptions are model-authored prose. They can contain an
+      // unreviewed conclusion (for example “队列已清空”), so lifecycle cards
+      // expose only a deterministic phase label before the final evidence
+      // review. The private Task result still carries the useful conclusion
+      // back to the parent Copilot.
+      label: RUNNING_SUBTASK_LABEL,
       status: 'running',
     };
   }
@@ -147,10 +145,7 @@ export function toCopilotSubtaskEvent(message: CopilotTaskLifecycleMessage): Cop
   return {
     step_kind: 'subtask',
     subtask_id: message.task_id,
-    label: sanitizeSubtaskLabel(
-      message.patch.description,
-      failed ? '子任务未完成' : completed ? '子任务已完成' : '正在深入处理',
-    ),
+    label: failed ? '子任务未完成' : completed ? '子任务已完成' : RUNNING_SUBTASK_LABEL,
     status: failed ? 'failed' : completed ? 'completed' : 'running',
     ...(failed ? { error: '子任务未完成' as const } : {}),
   };

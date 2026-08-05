@@ -22,7 +22,10 @@
 > `pre_execution_lost` is limited to QUEUED-only histories with no worker touch;
 > an explicit fence or legacy STARTED/DELTA/STEP/REPLY/FAILED(error) is treated
 > as possible execution and becomes no-checkpoint `ambiguous_execution` only
-> after the 12-minute execution ceiling plus 30-second settlement grace.
+> after the 12-minute primary execution ceiling, the YUK-832 bounded FULL
+> evidence pipeline (at most two six-minute blind-reference slots plus four
+> six-minute comparison slots in the worst contract-invalid + fallback path),
+> and 30-second settlement grace.
 > `FAILED(reason='error')` remains a retry frame; all other FAILED reasons are
 > fail-closed terminal. Created/retry/active jobs and queue lookup failures are
 > never terminalized.
@@ -39,6 +42,65 @@
 > anchor after refresh. Success/failure settlement rechecks cancellation while
 > holding the same settlement lock, preventing contradictory DONE+FAILED races.
 > Dock consumption/button work remains later and still requires UI pre-flight.
+
+> **YUK-832 final evidence review update (2026-08-02):** free-form Copilot
+> candidate prose is now buffered rather than published as it is generated. The
+> shipped intervention FULL validator state machine is generalized: a blind leg
+> never sees candidate prose and receives the immutable typed DomainTool trace plus
+> a server-generated short source-id catalog. It uses only bounded append-only
+> internal submission tools to add evidence points, mark unused successful reads,
+> and set one fallback; the server resolves source ids to exact RFC6901 pointers and
+> derives dense point/request/trace coverage. A comparator similarly appends small
+> per-reply checks; the server derives request checks, coverage, digest and verdict.
+> Neither provider leg emits or authorizes one large cross-indexed JSON object.
+> The internal tools are local collectors, not DomainTools: they cannot read or
+> mutate product state, and accepted records freeze only after an explicit complete
+> call. Provider verdict is not authority; the shared confirmed-review state machine
+> still requires two valid pass attempts, while a valid fail stops immediately.
+> The blind fallback is the only possible repair and must itself obtain two fresh
+> valid passes; there is no third draft. Missing/duplicate/out-of-range records,
+> unknown source ids, incomplete completion, provider failure, timeout or canonical
+> binding mismatch remain contract-invalid/fail closed. A second bounded attempt may
+> receive only the server-generated fixed submission rejection (at most 240
+> characters); it never receives the prior records/verdict, candidate, thinking, or
+> new evidence, and its actual input is separately hashed and bound. The Agent SDK
+> turn ceilings cover the whole bounded protocol rather than an optimistic happy path:
+> a fully accepted blind reference needs at most 16 turns (8 evidence chunks + 5
+> trace-classification chunks + safe reply + explicit completion + terminal), while a
+> fully accepted comparison needs at most 18 (16 reply-check chunks + explicit completion
+> + terminal). Both SDK ceilings are 24 so bounded tool rejections have correction room;
+> these are ceilings, not required work. The 480s durable-reference and 360s
+> durable-comparator wall-clock
+> aborts remain authoritative, while inline comparison stays at 120s. Actual A01 on
+> `9c43ab8e` proved the previous four-turn
+> ceiling structurally insufficient when both blind attempts ended with
+> `error_max_turns`; the gate failed closed before comparison. A second exact-head A01
+> on `c8bd8761` then bound the blind reference successfully, but both independent
+> comparators hit the original 120s wall-clock limit. That actual evidence authorizes
+> only a durable comparator override; `3ad1f0f9` then proved 240s still insufficient
+> when its first comparator hit that ceiling after the blind reference bound. The
+> durable tail therefore aligns to the already-proven 360s blind budget; attempt count
+> and binding do not change. Actual harness observation must cover the resulting 48.5m
+> owner ceiling rather than the stale 14m pre-FULL window. On `ef5789a7`, that corrected
+> harness observed one blind timeout and one `error_max_turns` at the exact prior 16-turn
+> limit after 263s. `4708378a` then gave both attempts the 24-turn correction ceiling;
+> neither exhausted turns, but both reached the 360s wall clock. The bounded progress
+> records make the second result decisive: 31 accepted points, six classified calls and
+> the safe reply were present, while only completion remained. The durable reference
+> therefore gets two additional minutes for the final seal/terminal turns; comparator,
+> attempt count and binding stay unchanged. FULL review is now at most 40m, so the primary
+> 12m + 30s settlement owner ceiling is 52.5m, still below the one-hour stale threshold.
+> Failure diagnostics persist only bounded submission counts/booleans, never provider
+> output, candidate prose or thinking.
+> Marker 记录 primary
+> stream 是否产生正文；随后
+> settlement projection 把一条 reviewed full-text DELTA 与 REPLY/DONE 或 FAILED
+> 放在同一事务里，严格按 DELTA→terminal 写入；redelivery/reconcile 从 marker 修复
+> 同一后缀，不重跑任一模型。STEP 卡只显示 deterministic lifecycle 文案，不转发
+> model-authored description。这 supersedes 原 N2/S3 的 raw-live-delta 细节。
+> `primary_view` 是另一条可见内容通道（尤其 `ephemeral_html`）；本轮 validator 只密封
+> reply text，因此任何读过 DomainTool 的 turn 都丢弃该 metadata。只有未触发证据审阅的
+> no-read turn 保留既有 primary-view nomination。
 
 ---
 
@@ -267,7 +329,7 @@ assembleCopilotRunInput(db, {
 
 ## 9. Interrupt / cancel / 串行（S6）
 
-- n=1 单会话 + `batchSize:1` → 天然单线程一次一 run（ADR-0041）。**S6 串行语义文档化**：copilot_run `batchSize:1` 使 run 串行——follow-up 在长 run 期间入队会**等到当前 run 结束**（可达 ceiling ~12-15min）才拾取。边跑打字 → 入队下一 checkpoint（等当前 run 完）。
+- n=1 单会话 + `batchSize:1` → 天然单线程一次一 run（ADR-0041）。**S6 串行语义文档化**：copilot_run `batchSize:1` 使 run 串行——follow-up 在长 run 期间入队会**等到当前 run 结束**（主任务 12min + FULL 审阅最坏 40min + 30s settlement grace，即 52.5min ceiling）才拾取。边跑打字 → 入队下一 checkpoint（等当前 run 完）。
 - **Stop 不是纯 UI。** app 与 worker 分进程，不能靠 API 进程内 controller registry；
   `job_events.CANCEL_REQUESTED` 是唯一 durable 真相源。取消 route 与 execution fence 共用
   dispatch lock、与 outcome marker 共用 settlement lock：cancel 先于 fence → 原子
@@ -278,6 +340,10 @@ assembleCopilotRunInput(db, {
   `PreToolUse` 在 Task/Tavily/其它 SDK 工具前 deny+abort；async DomainTool
   `beforeExecute` 是本地工具最终 gate。相同 AbortSignal 传入 root runner、ToolContext 与
   nested `run_task`/proposal LLM，避免根 loop 停止后子调用继续花费。
+- **FULL 证据管线共用取消边界。** blind reference、每个 bounded comparator attempt、
+  candidate→fallback 切换与 marker 提交前都复用该 AbortSignal 和 durable truth probe；
+  取消后不启动下一次 paid call、不把 AbortError 降级成普通 fail-closed 成功回复，也不
+  持久化 raw candidate / 未确认 fallback。
 - **终态与副作用边界。** 已开始的 DomainTool 从 execute 到 tool log + tool_use mirror
   完成前维持 in-flight barrier；drain 超时诚实落 `ambiguous_execution`，不假称安全取消。
   cancellation marker 保留已有 partial；无 partial 才写简短停止文案。materializing tool

@@ -363,18 +363,53 @@ async function executeOverview(ctx: ToolContext, raw: OverviewInput): Promise<Ov
   });
 }
 
+const NonEmptyKnowledgeSelectorSchema = z.string().trim().min(1);
+
 const QueryKnowledgeInputSchema = z.object({
-  subjectId: z.string().min(1),
-  query: z.string().optional(),
-  nodeId: z.string().optional(),
+  subjectId: NonEmptyKnowledgeSelectorSchema,
+  query: NonEmptyKnowledgeSelectorSchema.optional(),
+  nodeId: NonEmptyKnowledgeSelectorSchema.optional(),
   include: z
     .array(z.enum(['ancestors', 'children', 'neighbors', 'stats', 'recent_failures']))
     .optional(),
-  relationTypes: z.array(z.string()).optional(),
+  relationTypes: z.array(NonEmptyKnowledgeSelectorSchema).optional(),
   limit: z.number().int().min(1).max(50).optional(),
 });
 
 const QueryKnowledgeOutputSchema = z.object({
+  query_scope: z.object({
+    subject_domain: z.string(),
+    subject_id_semantics: z.literal('active_effective_domain'),
+    node_id: z.string().nullable(),
+    query: z.string().nullable(),
+    active_only: z.literal(true),
+    limit: z.number().int().positive(),
+    include: z.array(z.enum(['ancestors', 'children', 'neighbors', 'stats', 'recent_failures'])),
+    relation_types: z.array(z.string()).nullable(),
+  }),
+  lookup_status: z.enum([
+    'matched_active_nodes',
+    'no_active_node_match_in_subject_domain',
+    'no_active_query_match_in_subject_domain',
+    'no_active_nodes_in_subject_domain',
+  ]),
+  coverage: z.object({
+    seed_match_count: z.number().int().nonnegative(),
+    selected_seed_expansion_candidate_count: z.number().int().nonnegative(),
+    returned_node_count: z.number().int().nonnegative(),
+    seed_matches_complete: z.boolean(),
+    returned_nodes_complete_after_expansion: z.boolean(),
+    edges_complete_between_returned_nodes_for_requested_relation_types: z.literal(true),
+  }),
+  claim_boundaries: z.object({
+    supports_global_node_absence_claim: z.literal(false),
+    supports_never_existed_claim: z.literal(false),
+    supports_archived_node_absence_claim: z.literal(false),
+    edge_scope: z.literal('between_returned_active_nodes_for_requested_relation_types'),
+    supports_global_edge_absence_claim: z.literal(false),
+    supports_unrequested_relation_absence_claim: z.literal(false),
+    supports_complete_expansion_claim: z.boolean(),
+  }),
   nodes: z.array(
     z.object({
       id: z.string(),
@@ -426,15 +461,28 @@ async function executeQueryKnowledge(
   raw: QueryKnowledgeInput,
 ): Promise<QueryKnowledgeOutput> {
   const input = QueryKnowledgeInputSchema.parse(raw);
+  if (input.nodeId !== undefined && input.query !== undefined) {
+    throw new z.ZodError([
+      {
+        code: z.ZodIssueCode.custom,
+        message: 'nodeId and query are mutually exclusive exact selectors',
+        path: ['nodeId'],
+      },
+    ]);
+  }
   // P5.1 / YUK-143 — courtesy default (10) centralized in budgets.ts;
   // byte-unchanged from the prior inline literal.
   const limit = input.limit ?? TOOL_COURTESY_DEFAULTS.query_knowledge;
+  // [] is a common model spelling for "no relation filter". Canonicalize it
+  // to the same typed output as omission instead of claiming that an empty
+  // requested set somehow returned every relation.
+  const relationTypes = input.relationTypes?.length ? input.relationTypes : undefined;
   const rows = await loadKnowledgeRows(ctx.db, input.subjectId);
   const byId = nodeMap(rows);
   const allEdges = await loadEdges(
     ctx.db,
     rows.map((row) => row.id),
-    input.relationTypes,
+    relationTypes,
   );
   let seedMatches = rows;
   if (input.nodeId) {
@@ -491,8 +539,45 @@ async function executeQueryKnowledge(
     : undefined;
 
   const selectedIds = new Set(ids);
+  const expansionComplete = seedMatches.length <= limit && selected.size <= limit;
+  const lookupStatus: QueryKnowledgeOutput['lookup_status'] =
+    seedMatches.length > 0
+      ? 'matched_active_nodes'
+      : input.nodeId
+        ? 'no_active_node_match_in_subject_domain'
+        : input.query
+          ? 'no_active_query_match_in_subject_domain'
+          : 'no_active_nodes_in_subject_domain';
 
   return QueryKnowledgeOutputSchema.parse({
+    query_scope: {
+      subject_domain: input.subjectId,
+      subject_id_semantics: 'active_effective_domain',
+      node_id: input.nodeId ?? null,
+      query: input.query ?? null,
+      active_only: true,
+      limit,
+      include: included,
+      relation_types: relationTypes ?? null,
+    },
+    lookup_status: lookupStatus,
+    coverage: {
+      seed_match_count: seedMatches.length,
+      selected_seed_expansion_candidate_count: selected.size,
+      returned_node_count: matches.length,
+      seed_matches_complete: seedMatches.length <= limit,
+      returned_nodes_complete_after_expansion: expansionComplete,
+      edges_complete_between_returned_nodes_for_requested_relation_types: true,
+    },
+    claim_boundaries: {
+      supports_global_node_absence_claim: false,
+      supports_never_existed_claim: false,
+      supports_archived_node_absence_claim: false,
+      edge_scope: 'between_returned_active_nodes_for_requested_relation_types',
+      supports_global_edge_absence_claim: false,
+      supports_unrequested_relation_absence_claim: false,
+      supports_complete_expansion_claim: expansionComplete,
+    },
     nodes: matches.map((row) => {
       const m = mastery.get(row.id);
       return {
@@ -790,7 +875,7 @@ export const getSubjectGraphOverviewTool: DomainTool<OverviewInput, OverviewOutp
 export const queryKnowledgeTool: DomainTool<QueryKnowledgeInput, QueryKnowledgeOutput> = {
   name: 'query_knowledge',
   description:
-    'Find knowledge nodes by id or text and return path, local edge counts, optional stats, and recent failure snippets.',
+    'Find active knowledge nodes by id or text inside one effective subject domain and return path, local edge counts, optional stats, and recent failure snippets. subjectId is the domain scope (for example math/yuwen), never a node id. nodeId and query are mutually exclusive exact selectors. Empty nodes means no active match in that exact domain/query scope; it cannot prove global absence, archived absence, or that a node never existed. edges only cover returned active nodes and requested relation types; an empty edge list is not global absence. Read query_scope, lookup_status, coverage, and claim_boundaries before making a negative or complete-expansion claim.',
   effect: 'read',
   inputSchema: QueryKnowledgeInputSchema,
   outputSchema: QueryKnowledgeOutputSchema,

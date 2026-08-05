@@ -46,6 +46,8 @@ export interface TerminalResultEvidence {
   structuredOutput?: unknown;
 }
 
+export type ObservedRunUsage = Pick<TerminalResultEvidence, 'usage' | 'tokenCounts' | 'costUsd'>;
+
 interface LifecycleConfig<TResult extends LifecycleResult> {
   db: Db;
   kind: TaskKind;
@@ -138,6 +140,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   private readonly admissionPlan: ProviderSessionAdmissionPlan;
   private admissionFailure: ProviderSessionAdmissionError | undefined;
   private terminal: TerminalResultEvidence | undefined;
+  private observedUsage: ObservedRunUsage | undefined;
   private costTruthCache: AttemptCostTruth | undefined;
   private readonly terminalWriteAttempts = new Set<AttemptTerminalStatus>();
   private terminalWriteInFlight = false;
@@ -162,21 +165,25 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   get usage(): LifecycleUsage {
-    return this.terminal?.usage ?? { inputTokens: 0, outputTokens: 0 };
+    return this.terminal?.usage ?? this.observedUsage?.usage ?? { inputTokens: 0, outputTokens: 0 };
   }
 
   get tokenCounts(): TokenCounts {
-    return this.terminal?.tokenCounts ?? { inputTokens: 0, outputTokens: 0 };
+    return (
+      this.terminal?.tokenCounts ??
+      this.observedUsage?.tokenCounts ?? { inputTokens: 0, outputTokens: 0 }
+    );
   }
 
   get costTruth(): AttemptCostTruth {
     if (!this.costTruthCache) {
-      this.costTruthCache = this.terminal
+      const evidence = this.terminal ?? this.observedUsage;
+      this.costTruthCache = evidence
         ? resolveAttemptCostTruth({
             provider: this.resolved.provider,
             model: this.resolved.model,
-            tokens: this.terminal.tokenCounts,
-            reportedCostUsd: this.terminal.costUsd,
+            tokens: evidence.tokenCounts,
+            reportedCostUsd: evidence.costUsd,
           })
         : unknownAttemptCostTruth(this.resolved.provider, this.resolved.model);
     }
@@ -397,12 +404,24 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
 
   recordTerminalResult(terminal: TerminalResultEvidence): void {
     this.terminal = terminal;
+    this.observedUsage = terminal;
     this.costTruthCache = resolveAttemptCostTruth({
       provider: this.resolved.provider,
       model: this.resolved.model,
       tokens: terminal.tokenCounts,
       reportedCostUsd: terminal.costUsd,
     });
+  }
+
+  /**
+   * Keep the latest aggregate SDK usage even when no terminal result arrives.
+   * Result-error messages carry authoritative aggregate usage; budget aborts can
+   * still contribute the assistant turns observed before the stream was cut.
+   */
+  recordObservedUsage(observation: ObservedRunUsage): void {
+    if (this.terminal) return;
+    this.observedUsage = observation;
+    this.costTruthCache = undefined;
   }
 
   async recordToolCall(input: {

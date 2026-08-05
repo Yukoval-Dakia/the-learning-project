@@ -41,6 +41,38 @@ export const ConjectureProbeResponseJudgement = z
   .strict();
 export type ConjectureProbeResponseJudgementT = z.infer<typeof ConjectureProbeResponseJudgement>;
 
+/**
+ * Cross-reader/writer semantic matrix for a persisted probe disposition.
+ * Shape validation alone is insufficient: a well-formed gold judgement cannot
+ * support outcome=0, and a target-error judgement cannot support outcome=1.
+ */
+export function isCanonicalProbeOutcomeJudgement(input: {
+  outcome: 0 | 1 | null;
+  judgement: ConjectureProbeResponseJudgementT | null | undefined;
+}): boolean {
+  const judgement = input.judgement;
+  if (!judgement || judgement.gradable !== true) return false;
+  if (input.outcome === 1) {
+    return (
+      judgement.answer_result === 'correct' &&
+      judgement.target_error_match === 'not_matched' &&
+      judgement.reason_code === 'gold_signature_matched'
+    );
+  }
+  if (input.outcome === 0) {
+    return (
+      judgement.answer_result === 'incorrect' &&
+      judgement.target_error_match === 'matched' &&
+      judgement.reason_code === 'target_error_signature_matched'
+    );
+  }
+  return (
+    judgement.answer_result === 'incorrect' &&
+    judgement.target_error_match === 'not_matched' &&
+    judgement.reason_code === 'response_matches_neither_signature'
+  );
+}
+
 const ALL_RESPONSE_EVIDENCE_REFS = [
   'learner_response',
   'gold_response_signature',

@@ -306,6 +306,7 @@ describe('P5.5 Phase 1 tool-eval fixtures', () => {
       },
     );
     // Hand-off: attempt.event_id -> attribute_mistake.attempt_event_id.
+    if (!attemptCtx.attempt) throw new Error('fixture attempt lookup unexpectedly missing');
     const attemptId = attemptCtx.attempt.event_id;
     expect(attemptId).toBeTruthy();
 

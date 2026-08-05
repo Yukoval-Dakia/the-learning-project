@@ -49,6 +49,12 @@ import { Conversation } from '@/server/session';
 // moves from this counter into durable job_events once QUEUED is committed.
 let durableDispatchReservations = 0;
 
+// Candidate prose stays buffered until YUK-832 review completes, so keep the
+// Cloudflare Tunnel connection alive with an SSE comment rather than leaking an
+// unreviewed delta. The heartbeat does not extend the request budget: dispatch,
+// the primary run, blind reference and every comparator all share the single
+// absolute provider-session deadline below.
+export const COPILOT_INLINE_SSE_HEARTBEAT_MS = 15_000;
 // One edge request can perform a bounded dispatch judgment and then an inline
 // Copilot run. Admission wait, SDK startup and model execution must share this
 // absolute budget so the retained synchronous path stays below cloudflared's
@@ -473,6 +479,15 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       chain = chain.then(() => sse.writeSSE({ event, data: JSON.stringify(payload) }));
       return chain;
     };
+    const writeHeartbeat = () => {
+      chain = chain.then(async () => {
+        await sse.write(': keepalive\n\n');
+      });
+      return chain;
+    };
+    const heartbeat = setInterval(() => {
+      void writeHeartbeat();
+    }, COPILOT_INLINE_SSE_HEARTBEAT_MS);
     try {
       const result = await runCopilotChatStreaming(
         db,
@@ -500,6 +515,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       });
       await writeFrame('reply', { error: 'Internal Server Error' });
     } finally {
+      clearInterval(heartbeat);
       await chain.catch(() => undefined);
       await sse.close();
     }
