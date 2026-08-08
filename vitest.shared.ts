@@ -136,6 +136,7 @@ export const fastTestInclude = [
   // YUK-359 — pure arithmetic cost fallback, no DB/SDK imports.
   'src/server/ai/pricing.test.ts',
   'src/server/ai/attempt-cost.test.ts',
+  'src/server/ai/provider-attempt-lifecycle.test.ts',
   // YUK-365 — provider resolution (key vs oauth authMode, AI_PROVIDER_OVERRIDE
   // switch). Pure no-DB: imports only ./providers (→ @/ai/registry) + stubs env;
   // no @/db/client / postgres / SDK. src/server/ai/** has no unit glob, so this

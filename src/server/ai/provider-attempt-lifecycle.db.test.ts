@@ -1,0 +1,777 @@
+import {
+  ProviderAttemptTerminalEvidence,
+  ProviderRequestIdentity,
+} from '@/core/schema/provider-attempt';
+import type { Db } from '@/db/client';
+import * as schema from '@/db/schema';
+import { provider_attempt, provider_attempt_admission } from '@/db/schema';
+import { eq, sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { resetDb, testDb } from '../../../tests/helpers/db';
+import { createProviderAttemptLifecycle } from './provider-attempt-lifecycle';
+
+interface IndependentDb {
+  readonly db: Db;
+  close(): Promise<void>;
+}
+
+const opened: IndependentDb[] = [];
+
+function openIndependentDb(): IndependentDb {
+  const url = process.env.TEST_DATABASE_URL;
+  if (!url) throw new Error('TEST_DATABASE_URL not set');
+  const client = postgres(url, { max: 1 });
+  const handle: IndependentDb = {
+    db: drizzle(client, { schema }),
+    close: () => client.end(),
+  };
+  opened.push(handle);
+  return handle;
+}
+
+const identity = (attemptId: string, caller: 'api' | 'worker' = 'api') =>
+  ProviderRequestIdentity.parse({
+    attemptId,
+    operationId: '00000000-0000-4000-8000-000000000852',
+    attemptKind: 'wire',
+    provider: 'xiaomi',
+    model: 'mimo-v2.5',
+    lane: 'generation',
+    protocol: 'anthropic-compatible',
+    endpointClass: 'messages',
+    caller,
+    operationKind: 'QuestionGenerateTask',
+  });
+
+const unknownEvidence = {
+  terminal: 'unknown' as const,
+  reason: 'provider did not expose terminal accounting',
+  wireCount: null,
+  usage: {
+    basis: 'unknown' as const,
+    unit: null,
+    input: null,
+    output: null,
+    total: null,
+    source: 'provider:no-usage',
+  },
+  cost: {
+    basis: 'unknown' as const,
+    amount: null,
+    currency: null,
+    source: 'pricebook:no-entry',
+  },
+};
+
+beforeEach(async () => {
+  await resetDb();
+});
+
+afterEach(async () => {
+  await Promise.all(opened.splice(0).map((handle) => handle.close()));
+});
+
+describe('ProviderAttemptLifecycle', () => {
+  it.each(['api', 'worker'] as const)(
+    'acquires and atomically settles a %s attempt',
+    async (caller) => {
+      // Given a public lifecycle with a live deadline.
+      const lifecycle = createProviderAttemptLifecycle({
+        mode: 'enforce',
+        identity: identity(
+          `00000000-0000-4000-8000-00000000085${caller === 'api' ? '3' : '4'}`,
+          caller,
+        ),
+        deadlineAt: new Date(Date.now() + 60_000),
+        db: testDb(),
+      });
+
+      // When its attempt is acquired and finished.
+      const handle = await lifecycle.acquire();
+      await handle.reserveProviderStart();
+      const result = await handle.finish(unknownEvidence);
+
+      // Then durable attempt truth and released ownership are visible together.
+      expect(handle.admission).toBe('acquired');
+      expect(result).toBe('settled');
+      const attempts = await testDb()
+        .select()
+        .from(provider_attempt)
+        .where(eq(provider_attempt.attempt_id, lifecycle.identity.attemptId));
+      const admissions = await testDb()
+        .select()
+        .from(provider_attempt_admission)
+        .where(eq(provider_attempt_admission.attempt_id, lifecycle.identity.attemptId));
+      expect(attempts[0]).toMatchObject({
+        caller,
+        terminal_status: 'unknown',
+        terminal_reason: unknownEvidence.reason,
+        wire_count: null,
+        cost_basis: 'unknown',
+        cost_amount: null,
+      });
+      expect(admissions[0]).toMatchObject({
+        status: 'released',
+        terminal_reason: 'attempt_finished',
+      });
+    },
+  );
+
+  it('settles a current pre-start owner when local failure occurs before reservation', async () => {
+    // Given an acquired attempt whose provider-start right was never reserved.
+    const attemptId = '00000000-0000-4000-8000-000000000903';
+    const handle = await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity(attemptId),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    }).acquire();
+
+    // When the current owner records a local abort before any provider start.
+    const result = await handle.finish({
+      ...unknownEvidence,
+      terminal: 'aborted',
+      reason: 'local validation failed before provider start',
+    });
+
+    // Then the attempt settles without fabricating a start reservation.
+    expect(result).toBe('settled');
+    expect((await testDb().select().from(provider_attempt))[0]).toMatchObject({
+      provider_start_reserved_at: null,
+      terminal_status: 'aborted',
+      terminal_reason: 'local validation failed before provider start',
+    });
+    expect((await testDb().select().from(provider_attempt_admission))[0]).toMatchObject({
+      status: 'released',
+      terminal_reason: 'attempt_finished',
+    });
+  });
+
+  it('keeps acquire idempotent on one lifecycle and rejects an independently owned active duplicate', async () => {
+    // Given two independent clients for one attempt identity.
+    const firstDb = openIndependentDb();
+    const secondDb = openIndependentDb();
+    const attemptIdentity = identity('00000000-0000-4000-8000-000000000855');
+    const deadlineAt = new Date(Date.now() + 60_000);
+    const first = createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: attemptIdentity,
+      deadlineAt,
+      db: firstDb.db,
+    });
+    const second = createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: attemptIdentity,
+      deadlineAt,
+      db: secondDb.db,
+    });
+
+    // When the independent owners race acquisition.
+    const results = await Promise.allSettled([first.acquire(), second.acquire()]);
+
+    // Then exactly one owns the lease and its repeated acquire returns the same handle.
+    const winner = results.find((result) => result.status === 'fulfilled');
+    const loser = results.find((result) => result.status === 'rejected');
+    expect(winner?.status).toBe('fulfilled');
+    expect(loser).toMatchObject({
+      status: 'rejected',
+      reason: expect.objectContaining({ reason: 'active_duplicate' }),
+    });
+    if (winner?.status !== 'fulfilled') throw new Error('expected one acquired lifecycle');
+    const owningLifecycle = results[0].status === 'fulfilled' ? first : second;
+    expect(await owningLifecycle.acquire()).toBe(winner.value);
+  });
+
+  it('allows expired takeover, fences the old owner, and does not terminalize on expiry alone', async () => {
+    // Given an acquired attempt whose lease is expired without a terminal attempt.
+    const attemptId = '00000000-0000-4000-8000-000000000856';
+    const deadlineAt = new Date(Date.now() + 60_000);
+    const oldLifecycle = createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity(attemptId),
+      deadlineAt,
+      db: testDb(),
+    });
+    const oldHandle = await oldLifecycle.acquire();
+    await testDb().execute(sql`UPDATE provider_attempt_admission
+      SET lease_expires_at = clock_timestamp() - interval '1 second'
+      WHERE attempt_id = ${attemptId}`);
+    const beforeTakeover = await testDb()
+      .select({ finishedAt: provider_attempt.finished_at })
+      .from(provider_attempt)
+      .where(eq(provider_attempt.attempt_id, attemptId));
+
+    // When a new owner takes over the expired lease.
+    const newLifecycle = createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity(attemptId),
+      deadlineAt,
+      db: openIndependentDb().db,
+    });
+    const newHandle = await newLifecycle.acquire();
+
+    // Then expiry was nonterminal, the old owner is fenced, and the new owner can settle.
+    expect(beforeTakeover[0]?.finishedAt).toBeNull();
+    await expect(oldHandle.reserveProviderStart()).rejects.toMatchObject({
+      reason: 'lease_lost',
+    });
+    await newHandle.reserveProviderStart();
+    await expect(newHandle.finish(unknownEvidence)).resolves.toBe('settled');
+    await expect(oldHandle.finish(unknownEvidence)).rejects.toMatchObject({ reason: 'lease_lost' });
+  });
+
+  it('lets an expired owner settle when no takeover occurred', async () => {
+    // Given an expired lease with its original owner still recorded.
+    const attemptId = '00000000-0000-4000-8000-000000000857';
+    const lifecycle = createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity(attemptId),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    });
+    const handle = await lifecycle.acquire();
+    await handle.reserveProviderStart();
+    await testDb().execute(sql`UPDATE provider_attempt_admission
+      SET lease_expires_at = clock_timestamp() - interval '1 second'
+      WHERE attempt_id = ${attemptId}`);
+
+    // When the original owner finishes without any takeover.
+    const result = await handle.finish(unknownEvidence);
+
+    // Then settlement succeeds despite elapsed lease time.
+    expect(result).toBe('settled');
+  });
+
+  it('denies enforce after deadline, observes would-deny, and keeps off free of SQL rows', async () => {
+    // Given elapsed deadlines in each policy mode.
+    const enforceId = '00000000-0000-4000-8000-000000000858';
+    const observeId = '00000000-0000-4000-8000-000000000859';
+    const offId = '00000000-0000-4000-8000-000000000860';
+    const past = new Date(Date.now() - 1_000);
+
+    // When each lifecycle acquires.
+    await expect(
+      createProviderAttemptLifecycle({
+        mode: 'enforce',
+        identity: identity(enforceId),
+        deadlineAt: past,
+        db: testDb(),
+      }).acquire(),
+    ).rejects.toMatchObject({ reason: 'deadline_elapsed' });
+    const observed = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: identity(observeId),
+      deadlineAt: past,
+      db: testDb(),
+    }).acquire();
+    const off = await createProviderAttemptLifecycle({
+      mode: 'off',
+      identity: identity(offId),
+      deadlineAt: past,
+      db: testDb(),
+    }).acquire();
+
+    // Then enforce persists only denial, observe persists an attempt, and off persists nothing.
+    expect(observed.admission).toBe('would_deny');
+    await expect(observed.reserveProviderStart()).resolves.toBeUndefined();
+    await expect(observed.finish(unknownEvidence)).resolves.toBe('settled');
+    expect(off.admission).toBe('off');
+    expect(await off.finish(unknownEvidence)).toBe('untracked');
+    const attempts = await testDb().select().from(provider_attempt);
+    const admissions = await testDb().select().from(provider_attempt_admission);
+    expect(attempts.map((row) => row.attempt_id)).toEqual([observeId]);
+    expect(admissions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ attempt_id: enforceId, status: 'denied' }),
+        expect.objectContaining({ attempt_id: observeId, status: 'released' }),
+      ]),
+    );
+    expect(admissions.some((row) => row.attempt_id === offId)).toBe(false);
+  });
+
+  it('keeps observe start permissive after its acquired deadline elapses', async () => {
+    // Given observe acquired after its hard deadline as a would-deny lease.
+    const attemptId = '00000000-0000-4000-8000-000000000868';
+    const deadlineAt = new Date(Date.now() - 1_000);
+    const lifecycle = createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: identity(attemptId),
+      deadlineAt,
+      db: testDb(),
+    });
+    const handle = await lifecycle.acquire();
+
+    // When start is reserved after the DB deadline, Then observe still permits and can settle.
+    await expect(handle.reserveProviderStart()).resolves.toBeUndefined();
+    await expect(
+      createProviderAttemptLifecycle({
+        mode: 'enforce',
+        identity: lifecycle.identity,
+        deadlineAt,
+        db: openIndependentDb().db,
+      }).acquire(),
+    ).rejects.toMatchObject({ reason: 'recovery_required' });
+    await expect(handle.finish(unknownEvidence)).resolves.toBe('settled');
+  });
+
+  it('rejects immutable identity collisions after lease expiry', async () => {
+    // Given an expired durable attempt identity.
+    const attemptId = '00000000-0000-4000-8000-000000000861';
+    await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity(attemptId),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    }).acquire();
+    await testDb().execute(sql`UPDATE provider_attempt_admission
+      SET lease_expires_at = clock_timestamp() - interval '1 second'
+      WHERE attempt_id = ${attemptId}`);
+
+    // When another lifecycle reuses the id for another provider.
+    const collision = createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: { ...identity(attemptId), provider: 'anthropic' },
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: openIndependentDb().db,
+    });
+
+    // Then observe mode still fails closed on identity collision.
+    await expect(collision.acquire()).rejects.toMatchObject({ reason: 'identity_collision' });
+  });
+
+  it('records an external id once and rejects conflicting CAS', async () => {
+    // Given an acquired provider attempt.
+    const attemptId = '00000000-0000-4000-8000-000000000862';
+    const handle = await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity(attemptId),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    }).acquire();
+    await testDb().execute(sql`UPDATE provider_attempt_admission
+      SET lease_expires_at = clock_timestamp() - interval '1 second'
+      WHERE attempt_id = ${attemptId}`);
+
+    // When the current owner binds after expiry and replays identically, then differently.
+    await handle.recordExternalRequestId('provider-request-862');
+    await handle.recordExternalRequestId('provider-request-862');
+
+    // Then the identical replay is accepted and the conflicting value is rejected.
+    await expect(handle.recordExternalRequestId('provider-request-other')).rejects.toMatchObject({
+      reason: 'external_request_id_conflict',
+    });
+  });
+
+  it('CAS-binds an initial external id during expired takeover and rejects conflicts', async () => {
+    // Given an expired attempt whose durable external request id is still null.
+    const attemptId = '00000000-0000-4000-8000-000000000869';
+    const deadlineAt = new Date(Date.now() + 60_000);
+    const first = await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity(attemptId),
+      deadlineAt,
+      db: testDb(),
+    }).acquire();
+    await testDb().execute(sql`UPDATE provider_attempt_admission
+      SET lease_expires_at = clock_timestamp() - interval '1 second'
+      WHERE attempt_id = ${attemptId}`);
+
+    // When takeover supplies an initial external id, it is bound before acquire returns.
+    await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: { ...identity(attemptId), externalRequestId: 'provider-request-869' },
+      deadlineAt,
+      db: openIndependentDb().db,
+    }).acquire();
+    expect(
+      (
+        await testDb()
+          .select({ externalRequestId: provider_attempt.external_request_id })
+          .from(provider_attempt)
+          .where(eq(provider_attempt.attempt_id, attemptId))
+      )[0]?.externalRequestId,
+    ).toBe('provider-request-869');
+    await expect(first.recordExternalRequestId('old-owner-value')).rejects.toMatchObject({
+      reason: 'lease_lost',
+    });
+    await testDb().execute(sql`UPDATE provider_attempt_admission
+      SET lease_expires_at = clock_timestamp() - interval '1 second'
+      WHERE attempt_id = ${attemptId}`);
+
+    // Then identical takeover replay succeeds, but a later conflicting value fails closed.
+    await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: { ...identity(attemptId), externalRequestId: 'provider-request-869' },
+      deadlineAt,
+      db: openIndependentDb().db,
+    }).acquire();
+    await testDb().execute(sql`UPDATE provider_attempt_admission
+      SET lease_expires_at = clock_timestamp() - interval '1 second'
+      WHERE attempt_id = ${attemptId}`);
+    await expect(
+      createProviderAttemptLifecycle({
+        mode: 'observe',
+        identity: { ...identity(attemptId), externalRequestId: 'provider-request-conflict' },
+        deadlineAt,
+        db: openIndependentDb().db,
+      }).acquire(),
+    ).rejects.toMatchObject({ reason: 'external_request_id_conflict' });
+  });
+
+  it.each([
+    ['enforce', null, '00000000-0000-4000-8000-000000000870'],
+    ['observe', 'orphan-request', '00000000-0000-4000-8000-000000000871'],
+  ] as const)(
+    'fails %s closed when a nonterminal durable attempt is missing admission',
+    async (mode, externalRequestId, attemptId) => {
+      // Given a restored durable attempt whose wipe-only admission row is absent.
+      await testDb()
+        .insert(provider_attempt)
+        .values({
+          attempt_id: attemptId,
+          operation_id: identity(attemptId).operationId,
+          attempt_kind: 'wire',
+          provider: 'xiaomi',
+          model: 'mimo-v2.5',
+          lane_id: 'generation',
+          protocol: 'anthropic-compatible',
+          endpoint_class: 'messages',
+          caller: 'api',
+          operation_kind: 'QuestionGenerateTask',
+          external_request_id: externalRequestId,
+          started_at: new Date('2026-01-01T00:00:00.000Z'),
+        });
+      const before = await testDb()
+        .select()
+        .from(provider_attempt)
+        .where(eq(provider_attempt.attempt_id, attemptId));
+
+      // When reacquisition is attempted, Then recovery is required without mutation/recreation.
+      await expect(
+        createProviderAttemptLifecycle({
+          mode,
+          identity: {
+            ...identity(attemptId),
+            ...(externalRequestId === null ? {} : { externalRequestId }),
+          },
+          deadlineAt: new Date(Date.now() + 60_000),
+          db: openIndependentDb().db,
+        }).acquire(),
+      ).rejects.toMatchObject({ reason: 'recovery_required' });
+      expect(
+        await testDb()
+          .select()
+          .from(provider_attempt)
+          .where(eq(provider_attempt.attempt_id, attemptId)),
+      ).toEqual(before);
+      expect(
+        await testDb()
+          .select()
+          .from(provider_attempt_admission)
+          .where(eq(provider_attempt_admission.attempt_id, attemptId)),
+      ).toEqual([]);
+    },
+  );
+
+  it('returns already_settled for identical evidence and rejects terminal conflicts and reuse', async () => {
+    // Given a settled attempt.
+    const attemptId = '00000000-0000-4000-8000-000000000863';
+    const deadlineAt = new Date(Date.now() + 60_000);
+    const lifecycle = createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity(attemptId),
+      deadlineAt,
+      db: testDb(),
+    });
+    const handle = await lifecycle.acquire();
+    await handle.reserveProviderStart();
+    await handle.finish(unknownEvidence);
+
+    // When finish is replayed identically or with different evidence.
+    const replay = await handle.finish(unknownEvidence);
+
+    // Then identical replay is idempotent and conflicting terminal/reacquire are rejected.
+    expect(replay).toBe('already_settled');
+    await expect(handle.finish({ ...unknownEvidence, reason: 'different' })).rejects.toMatchObject({
+      reason: 'terminal_conflict',
+    });
+    await expect(
+      createProviderAttemptLifecycle({
+        mode: 'enforce',
+        identity: identity(attemptId),
+        deadlineAt,
+        db: openIndependentDb().db,
+      }).acquire(),
+    ).rejects.toMatchObject({ reason: 'terminal_reuse' });
+  });
+
+  it('enforces opaque wire truth and persists explicit known zero cost', async () => {
+    // Given an opaque operation and a wire attempt.
+    const opaque = await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: {
+        ...identity('00000000-0000-4000-8000-000000000864'),
+        attemptKind: 'opaque_operation',
+      },
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    }).acquire();
+    const wire = await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity('00000000-0000-4000-8000-000000000865'),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    }).acquire();
+    await opaque.reserveProviderStart();
+    await wire.reserveProviderStart();
+    const knownZero = ProviderAttemptTerminalEvidence.parse({
+      terminal: 'succeeded',
+      reason: 'completed',
+      wireCount: 1,
+      usage: {
+        basis: 'reported',
+        unit: 'tokens',
+        input: 0,
+        output: null,
+        total: null,
+        source: 'sdk:usage',
+      },
+      cost: {
+        basis: 'estimated',
+        amount: 0,
+        currency: 'USD',
+        source: 'pricebook:v1',
+      },
+    });
+
+    // When opaque evidence claims a wire and wire evidence reports known zero.
+    await expect(opaque.finish(knownZero)).rejects.toMatchObject({ reason: 'opaque_wire_count' });
+    await opaque.finish({ ...unknownEvidence, wireCount: null });
+    await wire.finish(knownZero);
+
+    // Then opaque remains null and known zero is durable rather than unknown.
+    const rows = await testDb().select().from(provider_attempt);
+    expect(rows.find((row) => row.attempt_id.endsWith('864'))?.wire_count).toBeNull();
+    expect(rows.find((row) => row.attempt_id.endsWith('865'))).toMatchObject({
+      cost_basis: 'estimated',
+      cost_amount: 0,
+      cost_currency: 'USD',
+    });
+  });
+
+  it('canonicalizes mixed-case UUIDs before concurrent acquisition', async () => {
+    // Given independent lifecycle inputs that differ only by UUID casing.
+    const deadlineAt = new Date(Date.now() + 60_000);
+    const lower = identity('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    const upper = ProviderRequestIdentity.parse({
+      ...lower,
+      attemptId: 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+      operationId: '00000000-0000-4000-8000-000000000852',
+    });
+    const first = createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: lower,
+      deadlineAt,
+      db: openIndependentDb().db,
+    });
+    const second = createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: upper,
+      deadlineAt,
+      db: openIndependentDb().db,
+    });
+
+    // When both acquire concurrently.
+    const results = await Promise.allSettled([first.acquire(), second.acquire()]);
+
+    // Then the canonical durable identity has exactly one owner.
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect(await testDb().select().from(provider_attempt)).toHaveLength(1);
+  });
+
+  it('requires recovery after start reservation and lets the original owner finish after expiry', async () => {
+    // Given a reserved provider start whose pre-start lease later expires.
+    const attemptId = '00000000-0000-4000-8000-000000000898';
+    const deadlineAt = new Date(Date.now() + 60_000);
+    const first = await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity(attemptId),
+      deadlineAt,
+      db: testDb(),
+    }).acquire();
+    const reservation = first.reserveProviderStart();
+    expect(first.reserveProviderStart()).toBe(reservation);
+    await reservation;
+    await testDb().execute(sql`UPDATE provider_attempt_admission
+      SET lease_expires_at = clock_timestamp() - interval '1 second'
+      WHERE attempt_id = ${attemptId}`);
+
+    // When a distinct lifecycle tries to take over and the owner later finishes.
+    const takeover = createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity(attemptId),
+      deadlineAt,
+      db: openIndependentDb().db,
+    });
+
+    // Then takeover is permanently fenced while the original owner can settle.
+    await expect(takeover.acquire()).rejects.toMatchObject({ reason: 'recovery_required' });
+    await expect(first.finish(unknownEvidence)).resolves.toBe('settled');
+  });
+
+  it('rejects a changed absolute deadline without mutating either row', async () => {
+    // Given an unreserved attempt with an immutable deadline.
+    const attemptId = '00000000-0000-4000-8000-000000000899';
+    const deadlineAt = new Date(Date.now() + 60_000);
+    await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity(attemptId),
+      deadlineAt,
+      db: testDb(),
+    }).acquire();
+    const beforeAttempt = await testDb().select().from(provider_attempt);
+    const beforeAdmission = await testDb().select().from(provider_attempt_admission);
+
+    // When the same identity is presented with another absolute deadline.
+    const mismatch = createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity(attemptId),
+      deadlineAt: new Date(deadlineAt.getTime() + 1),
+      db: openIndependentDb().db,
+    });
+
+    // Then the typed mismatch occurs before any durable mutation.
+    await expect(mismatch.acquire()).rejects.toMatchObject({ reason: 'deadline_mismatch' });
+    expect(await testDb().select().from(provider_attempt)).toEqual(beforeAttempt);
+    expect(await testDb().select().from(provider_attempt_admission)).toEqual(beforeAdmission);
+  });
+
+  it('persists an elapsed enforce denial without terminalizing the attempt', async () => {
+    // Given an elapsed observe attempt that remains unreserved.
+    const attemptId = '00000000-0000-4000-8000-000000000900';
+    const deadlineAt = new Date(Date.now() - 1_000);
+    const observed = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: identity(attemptId),
+      deadlineAt,
+      db: testDb(),
+    }).acquire();
+
+    // When enforce evaluates the same immutable elapsed deadline.
+    const enforce = createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity(attemptId),
+      deadlineAt,
+      db: openIndependentDb().db,
+    });
+
+    // Then it denies atomically, cannot reserve, and leaves attempt truth nonterminal.
+    await expect(enforce.acquire()).rejects.toMatchObject({ reason: 'deadline_elapsed' });
+    await expect(observed.reserveProviderStart()).rejects.toMatchObject({ reason: 'lease_lost' });
+    expect((await testDb().select().from(provider_attempt))[0]).toMatchObject({
+      terminal_status: null,
+      finished_at: null,
+      provider_start_reserved_at: null,
+    });
+    expect((await testDb().select().from(provider_attempt_admission))[0]).toMatchObject({
+      status: 'denied',
+      lease_owner: null,
+      acquired_at: null,
+      lease_expires_at: null,
+      terminal_reason: 'deadline_elapsed',
+    });
+    await expect(
+      createProviderAttemptLifecycle({
+        mode: 'enforce',
+        identity: identity(attemptId),
+        deadlineAt,
+        db: openIndependentDb().db,
+      }).acquire(),
+    ).rejects.toMatchObject({ reason: 'terminal_reuse' });
+  });
+
+  it('caps the pre-start lease at the immutable hard deadline', async () => {
+    // Given a hard deadline shorter than the normal pre-start lease.
+    const attemptId = '00000000-0000-4000-8000-000000000901';
+    const deadlineAt = new Date(Date.now() + 5_000);
+
+    // When enforce acquires the attempt.
+    await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity(attemptId),
+      deadlineAt,
+      db: testDb(),
+    }).acquire();
+
+    // Then its lease cannot exceed the absolute deadline.
+    const row = (await testDb().select().from(provider_attempt_admission))[0];
+    expect(row?.lease_expires_at?.getTime()).toBeLessThanOrEqual(deadlineAt.getTime());
+  });
+
+  it('rolls back attempt settlement when admission release fails', async () => {
+    // Given a reserved attempt and a temporary trigger that rejects admission release.
+    const attemptId = '00000000-0000-4000-8000-000000000902';
+    const handle = await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity(attemptId),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    }).acquire();
+    await handle.reserveProviderStart();
+    await testDb().execute(sql`CREATE FUNCTION yuk851_reject_release() RETURNS trigger
+      LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'reject release'; END $$`);
+    await testDb().execute(sql`CREATE TRIGGER yuk851_reject_release
+      BEFORE UPDATE ON provider_attempt_admission
+      FOR EACH ROW WHEN (NEW.status = 'released') EXECUTE FUNCTION yuk851_reject_release()`);
+
+    try {
+      // When finish reaches the admission release write.
+      await expect(handle.finish(unknownEvidence)).rejects.toMatchObject({
+        reason: 'control_plane_unavailable',
+      });
+
+      // Then the attempt update and admission update both rolled back.
+      expect((await testDb().select().from(provider_attempt))[0]).toMatchObject({
+        terminal_status: null,
+        finished_at: null,
+      });
+      expect((await testDb().select().from(provider_attempt_admission))[0]).toMatchObject({
+        status: 'acquired',
+      });
+    } finally {
+      await testDb().execute(sql`DROP TRIGGER IF EXISTS yuk851_reject_release
+        ON provider_attempt_admission`);
+      await testDb().execute(sql`DROP FUNCTION IF EXISTS yuk851_reject_release()`);
+    }
+  });
+
+  it('fails enforce closed and returns observe untracked on control-plane failure', async () => {
+    // Given independent DB handles whose underlying clients are closed.
+    const enforceDb = openIndependentDb();
+    const observeDb = openIndependentDb();
+    await enforceDb.close();
+    await observeDb.close();
+    opened.splice(0);
+
+    // When both modes acquire against the unavailable control plane.
+    const enforce = createProviderAttemptLifecycle({
+      mode: 'enforce',
+      identity: identity('00000000-0000-4000-8000-000000000866'),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: enforceDb.db,
+    });
+    const observe = createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: identity('00000000-0000-4000-8000-000000000867'),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: observeDb.db,
+    });
+
+    // Then enforce is closed while observe exposes an explicit untracked handle.
+    await expect(enforce.acquire()).rejects.toMatchObject({ reason: 'control_plane_unavailable' });
+    await expect(observe.acquire()).resolves.toMatchObject({ admission: 'untracked' });
+  });
+});

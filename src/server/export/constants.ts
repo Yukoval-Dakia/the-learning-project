@@ -87,7 +87,11 @@
 // YUK-791: intervention — immutable snapshot + recommendation/package/review lineage.
 // Authored causal state cannot be rebuilt after restore, so it enters FK_ORDER.
 // NEW FK_ORDER table 必 bump：49 → 50 tables，4.16 → 4.17。
-export const SCHEMA_VERSION = '4.17';
+// YUK-851: provider_attempt is durable provider-call truth, including the irreversible
+// start-reservation marker. It must survive restore; provider_attempt_admission is only
+// a short-lived ownership fence and is deliberately wiped instead. Adding the durable
+// table to FK_ORDER changes the payload shape: 50 → 51 tables, 4.17 → 4.18.
+export const SCHEMA_VERSION = '4.18';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -251,6 +255,9 @@ export const FK_ORDER = [
   'placement_starter_attempt',
   'placement_starter_attempt_question',
   'placement_starter_cost_component',
+  // YUK-851 has no enforced FK, but remains last so durable provider-attempt truth is
+  // restored after the current authored/cost parents and rides whole-row schema changes.
+  'provider_attempt',
 ] as const;
 
 export type TableName = (typeof FK_ORDER)[number];
@@ -288,6 +295,9 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // restore and the `on conflict do nothing` restore insert would drop the archived
   // rows anyway. (Excluded, not FK_ORDER → no SCHEMA_VERSION bump.)
   'hub_sync_reconciliation',
+  // YUK-851: short pre-start lease ownership is operational and unsafe to replay;
+  // durable provider-start reservation truth lives on archived provider_attempt.
+  'provider_attempt_admission',
   // YUK-842: provider query-session admission leases + start-reservation ledger. Terminal rows
   // become eligible for opportunistic lane-local pruning after seven days; there is no TTL.
   // Restoring operational rows would resurrect stale claims, family relationships, and rate-window
@@ -333,6 +343,8 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
 // parent wipe and need no entry here.
 // Order matters (child → parent): effect → delivery → checkpoint, and node → run.
 export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
+  // YUK-851: clear pre-restore owners before durable provider_attempt rows are replaced.
+  'provider_attempt_admission',
   'provider_session_admission',
   'event_subscription_effect',
   'event_subscription_delivery',

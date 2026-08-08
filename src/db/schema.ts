@@ -28,6 +28,7 @@ import type {
   Rubric,
   ToolState,
 } from '../core/schema/business';
+import type { ProviderAttemptUsageTruth } from '../core/schema/provider-attempt';
 import type {
   QuestionAnswerAnchorT,
   QuestionGenerationPlanT,
@@ -898,6 +899,186 @@ export const ai_task_runs = pgTable(
           (${t.cost_basis} = 'unknown' AND ${t.cost_usd} IS NULL)
           OR (${t.cost_basis} IN ('reported','estimated') AND ${t.cost_usd} IS NOT NULL AND ${t.cost_usd} >= 0)
         )
+      )`,
+    ),
+  ],
+);
+
+export const provider_attempt = pgTable(
+  'provider_attempt',
+  {
+    attempt_id: uuid('attempt_id').primaryKey(),
+    operation_id: uuid('operation_id').notNull(),
+    attempt_kind: text('attempt_kind').notNull(),
+    provider: text('provider').notNull(),
+    model: text('model'),
+    lane_id: text('lane_id').notNull(),
+    protocol: text('protocol').notNull(),
+    endpoint_class: text('endpoint_class').notNull(),
+    caller: text('caller').notNull(),
+    operation_kind: text('operation_kind').notNull(),
+    external_request_id: text('external_request_id'),
+    terminal_status: text('terminal_status'),
+    terminal_reason: text('terminal_reason'),
+    wire_count: integer('wire_count'),
+    usage_json: jsonb('usage_json').$type<ProviderAttemptUsageTruth>(),
+    cost_basis: text('cost_basis'),
+    cost_amount: doublePrecision('cost_amount'),
+    cost_currency: text('cost_currency'),
+    cost_source: text('cost_source'),
+    started_at: timestamp('started_at', { withTimezone: true }).notNull(),
+    provider_start_reserved_at: timestamp('provider_start_reserved_at', { withTimezone: true }),
+    finished_at: timestamp('finished_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('provider_attempt_operation_idx').on(t.operation_id, t.started_at.desc(), t.attempt_id),
+    index('provider_attempt_open_operation_idx')
+      .on(t.operation_id, t.lane_id, t.started_at.desc())
+      .where(sql`${t.finished_at} IS NULL`),
+    index('provider_attempt_external_request_idx')
+      .on(t.provider, t.external_request_id)
+      .where(sql`${t.external_request_id} IS NOT NULL`),
+    check('provider_attempt_kind_ck', sql`${t.attempt_kind} IN ('wire','opaque_operation')`),
+    check('provider_attempt_caller_ck', sql`${t.caller} IN ('api','worker')`),
+    check(
+      'provider_attempt_terminal_ck',
+      sql`${t.terminal_status} IS NULL OR ${t.terminal_status} IN ('succeeded','failed','aborted','unknown')`,
+    ),
+    check(
+      'provider_attempt_identity_ck',
+      sql`btrim(${t.provider}) <> ''
+        AND (${t.model} IS NULL OR btrim(${t.model}) <> '')
+        AND btrim(${t.lane_id}) <> ''
+        AND btrim(${t.protocol}) <> ''
+        AND btrim(${t.endpoint_class}) <> ''
+        AND btrim(${t.operation_kind}) <> ''
+        AND (${t.external_request_id} IS NULL OR btrim(${t.external_request_id}) <> '')`,
+    ),
+    check('provider_attempt_wire_ck', sql`${t.wire_count} IS NULL OR ${t.wire_count} >= 0`),
+    check(
+      'provider_attempt_opaque_ck',
+      sql`${t.attempt_kind} <> 'opaque_operation' OR ${t.wire_count} IS NULL`,
+    ),
+    check(
+      'provider_attempt_terminal_shape_ck',
+      sql`(
+        ${t.finished_at} IS NULL AND ${t.terminal_status} IS NULL
+        AND ${t.terminal_reason} IS NULL AND ${t.wire_count} IS NULL
+        AND ${t.usage_json} IS NULL AND ${t.cost_basis} IS NULL
+        AND ${t.cost_amount} IS NULL AND ${t.cost_currency} IS NULL AND ${t.cost_source} IS NULL
+      ) OR (
+        ${t.finished_at} IS NOT NULL AND ${t.terminal_status} IS NOT NULL
+        AND ${t.terminal_reason} IS NOT NULL AND btrim(${t.terminal_reason}) <> ''
+        AND ${t.usage_json} IS NOT NULL AND jsonb_typeof(${t.usage_json}) = 'object'
+        AND ${t.usage_json} ?& ARRAY['basis','unit','input','output','total','source']
+        AND ${t.usage_json} - ARRAY['basis','unit','input','output','total','source']::text[] = '{}'::jsonb
+        AND jsonb_typeof(${t.usage_json}->'source') = 'string'
+        AND btrim(${t.usage_json}->>'source') <> ''
+        AND (
+          (${t.usage_json}->>'basis' IN ('reported','estimated')
+            AND jsonb_typeof(${t.usage_json}->'unit') = 'string'
+            AND btrim(${t.usage_json}->>'unit') <> ''
+            AND jsonb_typeof(${t.usage_json}->'input') IN ('number','null')
+            AND jsonb_typeof(${t.usage_json}->'output') IN ('number','null')
+            AND jsonb_typeof(${t.usage_json}->'total') IN ('number','null')
+            AND (jsonb_typeof(${t.usage_json}->'input') = 'number'
+              OR jsonb_typeof(${t.usage_json}->'output') = 'number'
+              OR jsonb_typeof(${t.usage_json}->'total') = 'number')
+            AND COALESCE((${t.usage_json}->>'input')::double precision, 0) >= 0
+            AND COALESCE((${t.usage_json}->>'output')::double precision, 0) >= 0
+            AND COALESCE((${t.usage_json}->>'total')::double precision, 0) >= 0)
+          OR (${t.usage_json}->>'basis' = 'unknown'
+            AND (jsonb_typeof(${t.usage_json}->'unit') = 'null'
+              OR (jsonb_typeof(${t.usage_json}->'unit') = 'string'
+                AND btrim(${t.usage_json}->>'unit') <> ''))
+            AND jsonb_typeof(${t.usage_json}->'input') = 'null'
+            AND jsonb_typeof(${t.usage_json}->'output') = 'null'
+            AND jsonb_typeof(${t.usage_json}->'total') = 'null')
+        )
+        AND ${t.cost_basis} IS NOT NULL
+        AND ${t.cost_source} IS NOT NULL
+      )`,
+    ),
+    check(
+      'provider_attempt_cost_shape_ck',
+      sql`${t.cost_basis} IS NULL OR (
+        btrim(${t.cost_source}) <> '' AND (
+          (${t.cost_basis} IN ('reported','estimated') AND ${t.cost_amount} IS NOT NULL
+            AND ${t.cost_amount} NOT IN ('Infinity'::double precision, '-Infinity'::double precision, 'NaN'::double precision)
+            AND ${t.cost_amount} >= 0
+            AND ${t.cost_currency} ~ '^[A-Z]{3}$')
+          OR (${t.cost_basis} = 'unknown' AND ${t.cost_amount} IS NULL
+            AND (${t.cost_currency} IS NULL OR ${t.cost_currency} ~ '^[A-Z]{3}$'))
+        )
+      )`,
+    ),
+    check(
+      'provider_attempt_timeline_ck',
+      sql`(${t.provider_start_reserved_at} IS NULL OR ${t.provider_start_reserved_at} >= ${t.started_at})
+        AND (${t.finished_at} IS NULL OR ${t.finished_at} >= ${t.started_at})
+        AND (${t.finished_at} IS NULL OR ${t.provider_start_reserved_at} IS NULL
+          OR ${t.finished_at} >= ${t.provider_start_reserved_at})`,
+    ),
+  ],
+);
+
+export const provider_attempt_admission = pgTable(
+  'provider_attempt_admission',
+  {
+    attempt_id: uuid('attempt_id').primaryKey(),
+    identity_fingerprint: text('identity_fingerprint').notNull(),
+    policy_fingerprint: text('policy_fingerprint').notNull(),
+    lane_id: text('lane_id').notNull(),
+    mode: text('mode').notNull(),
+    status: text('status').notNull(),
+    lease_owner: uuid('lease_owner'),
+    requested_at: timestamp('requested_at', { withTimezone: true }).notNull(),
+    deadline_at: timestamp('deadline_at', { withTimezone: true }).notNull(),
+    acquired_at: timestamp('acquired_at', { withTimezone: true }),
+    lease_expires_at: timestamp('lease_expires_at', { withTimezone: true }),
+    terminal_at: timestamp('terminal_at', { withTimezone: true }),
+    terminal_reason: text('terminal_reason'),
+  },
+  (t) => [
+    index('provider_attempt_admission_lane_active_idx')
+      .on(t.lane_id, t.lease_expires_at, t.attempt_id)
+      .where(sql`${t.status} IN ('acquired','would_deny')`),
+    index('provider_attempt_admission_lane_start_idx')
+      .on(t.lane_id, t.acquired_at, t.attempt_id)
+      .where(sql`${t.acquired_at} IS NOT NULL`),
+    index('provider_attempt_admission_lane_terminal_idx')
+      .on(t.lane_id, t.terminal_at, t.attempt_id)
+      .where(sql`${t.terminal_at} IS NOT NULL`),
+    check(
+      'provider_attempt_admission_identity_ck',
+      sql`btrim(${t.identity_fingerprint}) <> ''
+        AND btrim(${t.policy_fingerprint}) <> ''
+        AND btrim(${t.lane_id}) <> ''
+        AND ${t.mode} IN ('observe','enforce')
+        AND ${t.status} IN ('acquired','would_deny','denied','released','lease_expired')`,
+    ),
+    check(
+      'provider_attempt_admission_state_ck',
+      sql`(
+        ${t.status} IN ('acquired','would_deny') AND ${t.lease_owner} IS NOT NULL
+        AND ${t.acquired_at} IS NOT NULL AND ${t.lease_expires_at} IS NOT NULL
+        AND ${t.terminal_at} IS NULL AND ${t.terminal_reason} IS NULL
+        AND (
+          (${t.status} = 'acquired' AND ${t.lease_expires_at} <= ${t.deadline_at})
+          OR (${t.status} = 'would_deny' AND ${t.mode} = 'observe')
+        )
+      ) OR (
+        ${t.status} = 'denied' AND ${t.lease_owner} IS NULL
+        AND ${t.mode} = 'enforce'
+        AND ${t.acquired_at} IS NULL AND ${t.lease_expires_at} IS NULL
+        AND ${t.terminal_at} IS NOT NULL AND ${t.terminal_reason} IS NOT NULL
+        AND btrim(${t.terminal_reason}) <> ''
+      ) OR (
+        ${t.status} IN ('released','lease_expired') AND ${t.lease_owner} IS NOT NULL
+        AND ${t.acquired_at} IS NOT NULL AND ${t.lease_expires_at} IS NOT NULL
+        AND ${t.terminal_at} IS NOT NULL AND ${t.terminal_reason} IS NOT NULL
+        AND btrim(${t.terminal_reason}) <> ''
+        AND (${t.status} = 'released' OR ${t.terminal_at} >= ${t.lease_expires_at})
       )`,
     ),
   ],
