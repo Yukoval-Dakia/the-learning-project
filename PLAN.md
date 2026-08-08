@@ -3,18 +3,19 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-08-08
-> **【Phase 1 F1 in draft PR #1164 — independent review passed; exact-head CI pending; no deployment】**
+> **【Phase 1 F1 delivered on main via #1164 — main CI green; no deployment】**
 
 ## NOW
 
-- **Architecture FULL Phase 1 F1 已实现，尚未进入 main。** YUK-847–849 把 Failure Learning
+- **Architecture FULL Phase 1 F1 已交付 main。** YUK-847–849 把 Failure Learning
   竖切进 `practice`：capability-owned TaskSpecs、attempt-event subscription、稳定 job identity、
   两个 jobs、两个 concrete tools 与 author variant public operation 已收口；旧 knowledge /
-  central 双轨与四处 producer raw enqueue 已删除。draft PR #1164 的三轴独立 review 已无
-  P0/P1，等待最终 head 的 GitHub CI。
+  central 双轨与四处 producer raw enqueue 已删除。PR #1164 squash merge 为 `1e34a5e7`；
+  独立 review 无 P0/P1，merge SHA 的 GitHub CI Gate run `31256157552` 全绿。YUK-847–849
+  均 Done，F1 milestone 100%。
 - **架构债基线真实下降。** dependency ratchet 从 `547 / 71 / 63` 收紧到
-  `531 / 70 / 62`；prompt hash 保持，scoped unit 143/143、typecheck 与边界 audit 通过。
-  本机 OrbStack 停止，DB suites 仅完成 discovery，真实执行交给 exact-head CI。
+  `531 / 70 / 62`；prompt hash 保持，scoped unit 143/143、typecheck 与边界 audit 通过；
+  merge 后 main CI 已真实执行 unit、两个 DB 分片、migration、build 与 audits。
 - **Phase 0 仍已闭合。** YUK-840/841/842 Done；#1154 LIGHT evidence certification 已在 main。
   **不部署 combined image**；YUK-832 产品 gate 仍 HOLD。
 - **YUK-832 仍 In Progress / HOLD。** r9 actual A01 已降 reference 成本并补齐失败记账，
@@ -27,11 +28,11 @@
 
 ## NEXT
 
-1. 跟进 YUK-847–849 draft PR #1164；只以 exact-head GitHub CI + 独立 review 判定可合并，
-   DB suites 必须在 CI 真跑，不用本地 discovery 代替。
-2. **本轮不部署。** 后续发布必须 worker-first：先注册两个 jobs 并让
+1. **F1 代码线已关闭，不再重开实现。** 后续发布必须 worker-first：先注册两个 jobs 并让
    `practice.failure-learning-attempt@v1` bootstrap/active，再替换已删除 raw enqueue 的 app；
    否则 bootstrap 窗口内的 failure attempt 会漏投。
+2. **本轮未部署。** 发布前核对 subscription checkpoint、transition-window census/backfill
+   与 permanent-stage marker；代码 merge 不能替代 rollout 证据。
 3. **不要部署 #1154 combined image**；YUK-832 保持 In Progress / product HOLD，直至
    owner 授权 actual-output / enforcement 证据或改判。
 4. FULL checkpoint（YUK-839）仅在 owner 重新提升时执行；当前不增加 provider budget、
