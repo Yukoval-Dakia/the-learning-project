@@ -32,12 +32,20 @@ export type WireEvidence = SourceEvidence & {
   readonly calls: readonly ProviderWireCall[];
 };
 
+export type DirectImporterKind = 'runtime' | 'type' | 're-export' | 'dynamic';
+
+export type DirectImporter = {
+  readonly path: string;
+  readonly kind: DirectImporterKind;
+};
+
 export type ProviderLane = {
   readonly id: string;
   readonly owner: string;
   readonly disposition: ProviderLaneDisposition;
   readonly wire: WireEvidence;
   readonly callers: readonly SourceEvidence[];
+  readonly directImporters: readonly DirectImporter[];
   readonly roles: readonly ('api' | 'worker')[];
   readonly provider: string;
   readonly model: string;
@@ -92,6 +100,11 @@ export const PROVIDER_LANES = [
         imports: ['@/capabilities/knowledge/public'],
       },
     ],
+    directImporters: [
+      { path: 'src/capabilities/knowledge/server/tag-knowledge.ts', kind: 'runtime' },
+      { path: 'src/capabilities/practice/jobs/embed_backfill.ts', kind: 'runtime' },
+      { path: 'src/server/quiz/matcher.ts', kind: 'runtime' },
+    ],
     roles: ['api', 'worker'],
     provider: 'DashScope OpenAI-compatible endpoint; MEM0_EMBEDDING_BASE_URL is env-configurable',
     model: 'text-embedding-v4 fixed in source',
@@ -139,7 +152,10 @@ export const PROVIDER_LANES = [
         imports: ['@/capabilities/knowledge/server/propose_edge'],
       },
     ],
-    roles: ['worker'],
+    directImporters: [
+      { path: 'src/capabilities/knowledge/server/propose_edge.ts', kind: 'runtime' },
+    ],
+    roles: ['api', 'worker'],
     provider: 'GLM OpenAI-compatible endpoint via env-configurable Mem0 LLM configuration',
     model: 'env-resolved MEM0_LLM_MODEL through resolveGlmConfig',
     endpointClass: 'OpenAI-compatible chat completions POST /chat/completions',
@@ -181,6 +197,7 @@ export const PROVIDER_LANES = [
       contains: ['judgeReconciliation', '/chat/completions'],
     },
     callers: [],
+    directImporters: [],
     roles: [],
     provider: 'GLM historical implementation',
     model: 'historical only; not runtime truth',
@@ -229,6 +246,7 @@ export const PROVIDER_LANES = [
         imports: ['./reconcile-llm'],
       },
     ],
+    directImporters: [{ path: 'src/server/memory/triggers.ts', kind: 'runtime' }],
     roles: ['worker'],
     provider: 'GLM OpenAI-compatible endpoint via env-configurable Mem0 LLM configuration',
     model: 'env-resolved MEM0_LLM_MODEL; hardcoded ledger text is not model truth',
@@ -275,6 +293,10 @@ export const PROVIDER_LANES = [
         path: 'src/capabilities/ingestion/jobs/tencent_ocr_extract.ts',
         imports: ['@/capabilities/ingestion/server/glm_ocr'],
       },
+    ],
+    directImporters: [
+      { path: 'src/capabilities/ingestion/jobs/tencent_ocr_extract.ts', kind: 'runtime' },
+      { path: 'src/capabilities/ingestion/server/glm_ocr_parser.ts', kind: 'type' },
     ],
     roles: ['worker'],
     provider: 'GLM OCR fixed HTTP endpoint',
@@ -327,6 +349,15 @@ export const PROVIDER_LANES = [
         path: 'src/server/memory/read.ts',
         imports: ['./client', './search-memories'],
       },
+    ],
+    directImporters: [
+      { path: 'src/capabilities/knowledge/server/edge-reconcile.ts', kind: 'runtime' },
+      { path: 'src/capabilities/knowledge/server/propose_edge.ts', kind: 'type' },
+      { path: 'src/server/memory/read.ts', kind: 'runtime' },
+      { path: 'src/server/memory/reconcile-llm.ts', kind: 'runtime' },
+      { path: 'src/server/memory/reconcile-store.ts', kind: 'type' },
+      { path: 'src/server/memory/search-memories.ts', kind: 'type' },
+      { path: 'src/server/memory/triggers.ts', kind: 'runtime' },
     ],
     roles: ['api', 'worker'],
     provider: 'Mem0 OSS with env-configurable OpenAI-compatible GLM and DashScope endpoints',
@@ -382,6 +413,9 @@ export const PROVIDER_LANES = [
         path: 'src/capabilities/ingestion/jobs/tencent_ocr_extract.ts',
         imports: ['@/capabilities/ingestion/server/tencent_mark'],
       },
+    ],
+    directImporters: [
+      { path: 'src/capabilities/ingestion/jobs/tencent_ocr_extract.ts', kind: 'runtime' },
     ],
     roles: ['worker'],
     provider: 'Tencent Cloud OCR SDK fixed endpoint',
@@ -461,6 +495,12 @@ export function validateProviderLaneInventory(lanes: readonly ProviderLaneCandid
       missingEvidence(lane.evidence) ||
       lane.roles.some((role) => role !== 'api' && role !== 'worker') ||
       (lane.disposition !== 'prune' && (lane.callers.length === 0 || lane.roles.length === 0)) ||
+      (lane.disposition !== 'prune' && lane.directImporters.length === 0) ||
+      lane.directImporters.some(
+        (importer) =>
+          importer.path.trim().length === 0 ||
+          !['runtime', 'type', 're-export', 'dynamic'].includes(importer.kind),
+      ) ||
       lane.callers.some((caller) => missingEvidence(caller) || callerLacksAstEvidence(caller));
     if (missingMetadata) problems.push(`${label}: missing required metadata`);
     if (!['migrate', 'opaque', 'prune'].includes(lane.disposition)) {

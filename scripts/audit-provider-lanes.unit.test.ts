@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { auditProviderLanes, collectProviderWireFindings } from './audit-provider-lanes';
+import {
+  auditProviderLanes,
+  collectProjectImportEdges,
+  collectProviderWireFindings,
+} from './audit-provider-lanes';
 import {
   PROVIDER_LANES,
   type ProviderLane,
@@ -25,6 +29,12 @@ function makeFixture(): string {
     'src/server/ai/embed.ts',
     "export const embed = () => fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings');\n",
   );
+  write(
+    root,
+    'src/server/consumer.ts',
+    "import { embed } from './ai/embed.js';\nexport { embed };\n",
+  );
+  write(root, 'src/capabilities/example/jobs/consumer.ts', "import '@/server/consumer';\n");
   return root;
 }
 
@@ -44,6 +54,7 @@ function fixtureLane(overrides: Partial<ProviderLane> = {}): ProviderLane {
         calls: ['fetch'],
       },
     ],
+    directImporters: [{ path: 'src/server/consumer.ts', kind: 'runtime' }],
     roles: ['worker'],
     provider: 'DashScope',
     model: 'text-embedding-v4',
@@ -104,6 +115,42 @@ function configuredFixtureLane(): ProviderLane {
       },
     },
   };
+}
+
+function glmFixtureLane(): ProviderLane {
+  return fixtureLane({
+    id: 'glm.memory-reconcile',
+    wire: {
+      path: 'src/server/memory/reconcile-llm.ts',
+      calls: ['fetchImpl'],
+      contains: ['judgeReconciliation', '/chat/completions'],
+    },
+    callers: [
+      {
+        path: 'src/server/memory/glm-consumer.ts',
+        imports: ['./reconcile-llm.js'],
+      },
+    ],
+    directImporters: [{ path: 'src/server/memory/glm-consumer.ts', kind: 'runtime' }],
+    configuration: {
+      endpoint: {
+        summary: 'fixture endpoint',
+        source: { path: 'src/server/memory/reconcile-llm.ts', calls: ['fetchImpl'] },
+      },
+      credential: {
+        summary: 'fixture credential',
+        source: { path: 'src/server/memory/reconcile-llm.ts', calls: ['fetchImpl'] },
+      },
+      model: {
+        summary: 'fixture model',
+        source: { path: 'src/server/memory/reconcile-llm.ts', calls: ['fetchImpl'] },
+      },
+    },
+    evidence: {
+      path: 'src/server/memory/reconcile-llm.ts',
+      contains: ['judgeReconciliation', '/chat/completions'],
+    },
+  });
 }
 
 afterEach(() => {
@@ -211,16 +258,38 @@ describe('provider lane inventory', () => {
   it('rejects a changed declared DashScope endpoint default even when the embeddings path remains', () => {
     const root = makeFixture();
     write(root, 'src/server/ai/embed.ts', configurationFixture('https://unapproved.example/v1'));
-    expect(auditProviderLanes(root, [configuredFixtureLane()])).toMatchObject({ ok: false });
+    expect(auditProviderLanes(root, [configuredFixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          path: 'src/server/ai/embed.ts',
+          reason: expect.stringContaining(
+            'configuration endpoint evidence no longer matches declared literal',
+          ),
+        }),
+      ],
+    });
   });
 
   it.each([
     ['credential', configurationFixture(undefined, 'UNAPPROVED_API_KEY')],
     ['model', configurationFixture(undefined, undefined, 'other-embedding-model')],
-  ])('rejects a changed DashScope %s configuration source', (_kind, source) => {
+  ])('rejects a changed DashScope %s configuration source', (kind, source) => {
     const root = makeFixture();
     write(root, 'src/server/ai/embed.ts', source);
-    expect(auditProviderLanes(root, [configuredFixtureLane()])).toMatchObject({ ok: false });
+    expect(auditProviderLanes(root, [configuredFixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          path: 'src/server/ai/embed.ts',
+          reason: expect.stringContaining(
+            kind === 'credential'
+              ? 'configuration credential evidence no longer matches declared env read'
+              : 'configuration model evidence no longer matches declared literal',
+          ),
+        }),
+      ],
+    });
   });
 
   it('rejects reintroduction of a pruned misconception reconcile module', () => {
@@ -287,6 +356,140 @@ describe('provider lane inventory', () => {
     });
   });
 
+  it('classifies a local fetch alias as the declared direct provider wire', () => {
+    const root = makeFixture();
+    write(
+      root,
+      'src/server/ai/embed.ts',
+      "const request = fetch;\nexport const embed = () => request('https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings');\n",
+    );
+    expect(collectProviderWireFindings(root)).toEqual([
+      {
+        call: 'fetch',
+        kind: 'dashscope-embedding-fetch',
+        path: 'src/server/ai/embed.ts',
+      },
+    ]);
+    expect(auditProviderLanes(root, [fixtureLane()]).ok).toBe(true);
+  });
+
+  it('preserves fetchImpl identity through a local alias chain', () => {
+    const root = makeFixture();
+    write(
+      root,
+      'src/server/memory/reconcile-llm.ts',
+      "const request = fetchImpl;\nconst send = request;\nexport const judgeReconciliation = () => send('/chat/completions');\n",
+    );
+    write(
+      root,
+      'src/server/memory/glm-consumer.ts',
+      "import { judgeReconciliation } from './reconcile-llm.js';\nexport { judgeReconciliation };\n",
+    );
+    write(
+      root,
+      'src/capabilities/example/jobs/glm-consumer.ts',
+      "import '@/server/memory/glm-consumer';\n",
+    );
+    expect(collectProviderWireFindings(root)).toContainEqual({
+      call: 'fetchImpl',
+      kind: 'glm-memory-reconcile-fetch',
+      path: 'src/server/memory/reconcile-llm.ts',
+    });
+    expect(auditProviderLanes(root, [fixtureLane(), glmFixtureLane()]).ok).toBe(true);
+  });
+
+  it('fails closed on an undeclared direct importer of a wire', () => {
+    const root = makeFixture();
+    write(root, 'src/server/undeclared.ts', "import './ai/embed';\n");
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          reason: expect.stringContaining('direct importer closure drift'),
+        }),
+      ],
+    });
+  });
+
+  it('fails when API role reachability changes without changing a direct importer', () => {
+    const root = makeFixture();
+    const lane = fixtureLane({ roles: ['api', 'worker'] });
+    write(root, 'src/capabilities/example/api/consumer.ts', "import '@/server/consumer';\n");
+    expect(auditProviderLanes(root, [lane]).ok).toBe(true);
+    rmSync(resolve(root, 'src/capabilities/example/api/consumer.ts'));
+    expect(auditProviderLanes(root, [lane])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({ reason: expect.stringContaining('runtime role closure drift') }),
+      ],
+    });
+  });
+
+  it('classifies re-exports, dynamic imports, explicit JavaScript specifiers, and type-only imports', () => {
+    const root = makeFixture();
+    write(root, 'src/server/reexport.ts', "export { embed } from './ai/embed.js';\n");
+    write(root, 'src/server/dynamic.ts', "export const load = () => import('./ai/embed');\n");
+    write(
+      root,
+      'src/server/types.ts',
+      "import type { embed } from './ai/embed';\nexport type Embedded = typeof embed;\n",
+    );
+    expect(collectProjectImportEdges(root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'src/server/consumer.ts', kind: 'runtime' }),
+        expect.objectContaining({ path: 'src/server/reexport.ts', kind: 're-export' }),
+        expect.objectContaining({ path: 'src/server/dynamic.ts', kind: 'dynamic' }),
+        expect.objectContaining({ path: 'src/server/types.ts', kind: 'type' }),
+      ]),
+    );
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          reason: expect.stringContaining('direct importer closure drift'),
+        }),
+      ],
+    });
+  });
+
+  it('rejects export-from, dynamic, and explicit JavaScript imports of pruned modules but not suffix near-misses', () => {
+    const root = makeFixture();
+    write(
+      root,
+      'src/server/reexport.ts',
+      "export {} from '../capabilities/knowledge/server/misconception-reconcile.js';\n",
+    );
+    write(
+      root,
+      'src/server/dynamic.ts',
+      "export const load = () => import('../capabilities/knowledge/server/misconception-reconcile');\n",
+    );
+    write(
+      root,
+      'src/server/near-miss.ts',
+      "import '../capabilities/knowledge/server/not-misconception-reconcile';\n",
+    );
+    const result = auditProviderLanes(root, [fixtureLane()]);
+    expect(result.violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: 'src/server/reexport.ts',
+          reason: 'pruned misconception reconcile module is imported',
+        }),
+        expect.objectContaining({
+          path: 'src/server/dynamic.ts',
+          reason: 'pruned misconception reconcile module is imported',
+        }),
+      ]),
+    );
+    expect(result.violations).not.toContainEqual(
+      expect.objectContaining({
+        path: 'src/server/near-miss.ts',
+        reason: 'pruned misconception reconcile module is imported',
+      }),
+    );
+  });
+
   it('fails closed on a capability API fetch while excluding UI paths from the backend census', () => {
     const root = makeFixture();
     write(
@@ -321,6 +524,24 @@ describe('provider lane inventory', () => {
     expect(collectProviderWireFindings(root)).not.toContainEqual(
       expect.objectContaining({ path: 'src/capabilities/ingestion/ui/client.ts' }),
     );
+  });
+
+  it('fails closed on a provider fetch in the production worker entry', () => {
+    const root = makeFixture();
+    write(
+      root,
+      'scripts/worker.ts',
+      "export const call = () => fetch('https://worker-provider.example/v1');\n",
+    );
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          path: 'scripts/worker.ts',
+          reason: expect.stringContaining('unlisted direct provider wire'),
+        }),
+      ],
+    });
   });
 
   it('excludes both test and spec source variants from the provider census', () => {

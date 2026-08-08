@@ -1,8 +1,10 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { basename, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse } from '@babel/parser';
 import {
+  type DirectImporter,
+  type DirectImporterKind,
   PROVIDER_LANES,
   PRUNED_MISCONCEPTION_MODULES,
   type ProviderConfigurationTruth,
@@ -45,6 +47,15 @@ type SourceFacts = {
   readonly literals: readonly string[];
 };
 
+type SourceImportEdge = {
+  readonly path: string;
+  readonly source: string;
+  readonly kind: DirectImporterKind;
+  readonly target?: string;
+};
+
+const SUPPORTED_SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -68,12 +79,20 @@ function backendSourceFiles(root: string): string[] {
     ...sourceFiles(resolve(root, 'src')),
     ...sourceFiles(resolve(root, 'server')),
   ]);
+  const worker = resolve(root, 'scripts/worker.ts');
+  if (existsSync(worker)) {
+    if (lstatSync(worker).isSymbolicLink()) {
+      throw new Error(`${worker}: symbolic link found while collecting source files`);
+    }
+    files.add(worker);
+  }
   return [...files]
     .filter((path) => {
       const pathFromProject = projectPath(root, path);
       return (
         pathFromProject.startsWith('server/') ||
         pathFromProject.startsWith('src/server/') ||
+        pathFromProject === 'scripts/worker.ts' ||
         (pathFromProject.startsWith('src/capabilities/') && !pathFromProject.includes('/ui/'))
       );
     })
@@ -139,6 +158,7 @@ function inspectSource(code: string, filename: string): SourceFacts {
   }).program;
   const imports = new Set<string>();
   const calls: string[] = [];
+  const requestAliases = new Map<string, string>();
   const envReads = new Set<string>();
   const literals = new Set<string>();
 
@@ -153,6 +173,18 @@ function inspectSource(code: string, filename: string): SourceFacts {
     if (value.type === 'ImportDeclaration') {
       const source = textValue(value.source);
       if (source) imports.add(source);
+    }
+    if (value.type === 'VariableDeclarator') {
+      if (
+        isRecord(value.id) &&
+        value.id.type === 'Identifier' &&
+        typeof value.id.name === 'string' &&
+        isRecord(value.init) &&
+        value.init.type === 'Identifier' &&
+        typeof value.init.name === 'string'
+      ) {
+        requestAliases.set(value.id.name, value.init.name);
+      }
     }
     if (value.type === 'CallExpression') {
       const name = callName(value.callee);
@@ -170,10 +202,213 @@ function inspectSource(code: string, filename: string): SourceFacts {
   visit(program);
   return {
     imports: [...imports].sort((left, right) => left.localeCompare(right)),
-    calls: calls.sort((left, right) => left.localeCompare(right)),
+    calls: calls
+      .map((call) => {
+        let resolved = call;
+        const visited = new Set<string>();
+        while (requestAliases.has(resolved) && !visited.has(resolved)) {
+          visited.add(resolved);
+          resolved = requestAliases.get(resolved) ?? resolved;
+        }
+        return resolved === 'fetch' || resolved === 'fetchImpl' ? resolved : call;
+      })
+      .sort((left, right) => left.localeCompare(right)),
     envReads: [...envReads].sort((left, right) => left.localeCompare(right)),
     literals: [...literals].sort((left, right) => left.localeCompare(right)),
   };
+}
+
+function stripSupportedExtension(path: string): string {
+  const extension = extname(path);
+  return SUPPORTED_SOURCE_EXTENSIONS.includes(extension) ? path.slice(0, -extension.length) : path;
+}
+
+function importKind(node: Record<string, unknown>): DirectImporterKind {
+  if (node.importKind === 'type') return 'type';
+  const specifiers = Array.isArray(node.specifiers) ? node.specifiers : [];
+  if (
+    specifiers.length > 0 &&
+    specifiers.every((specifier) => isRecord(specifier) && specifier.importKind === 'type')
+  ) {
+    return 'type';
+  }
+  return 'runtime';
+}
+
+function resolveImportTarget(root: string, importer: string, source: string): string | undefined {
+  const unextended = stripSupportedExtension(
+    source.startsWith('@/')
+      ? resolve(root, 'src', source.slice(2))
+      : source.startsWith('.')
+        ? resolve(dirname(importer), source)
+        : '',
+  );
+  if (!unextended) return undefined;
+  const candidates = [
+    ...SUPPORTED_SOURCE_EXTENSIONS.map((extension) => `${unextended}${extension}`),
+    ...SUPPORTED_SOURCE_EXTENSIONS.map((extension) => resolve(unextended, `index${extension}`)),
+  ];
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    if (lstatSync(candidate).isSymbolicLink()) {
+      throw new Error(`${candidate}: symbolic link found while resolving source import`);
+    }
+    if (statSync(candidate).isFile()) return candidate;
+  }
+  return undefined;
+}
+
+function importSourceFiles(root: string): string[] {
+  const files = new Set([
+    ...sourceFiles(resolve(root, 'src')),
+    ...sourceFiles(resolve(root, 'server')),
+  ]);
+  const worker = resolve(root, 'scripts/worker.ts');
+  if (existsSync(worker)) {
+    if (lstatSync(worker).isSymbolicLink()) {
+      throw new Error(`${worker}: symbolic link found while collecting source files`);
+    }
+    files.add(worker);
+  }
+  return [...files].sort((left, right) =>
+    projectPath(root, left).localeCompare(projectPath(root, right)),
+  );
+}
+
+function collectImportEdgesFromSource(
+  root: string,
+  path: string,
+  code: string,
+): {
+  readonly edges: readonly SourceImportEdge[];
+  readonly unsupportedDynamicImports: readonly string[];
+} {
+  const program = parse(code, {
+    sourceType: 'module',
+    sourceFilename: path,
+    plugins: ['typescript', 'jsx', 'dynamicImport', 'importAttributes'],
+  }).program;
+  const edges: SourceImportEdge[] = [];
+  const unsupportedDynamicImports: string[] = [];
+  const addEdge = (source: string, kind: DirectImporterKind): void => {
+    edges.push({
+      path: projectPath(root, path),
+      source,
+      kind,
+      target: resolveImportTarget(root, path, source),
+    });
+  };
+  function visit(value: unknown): void {
+    if (Array.isArray(value)) {
+      for (const child of value) visit(child);
+      return;
+    }
+    if (!isRecord(value)) return;
+    if (value.type === 'ImportDeclaration') {
+      const source = textValue(value.source);
+      if (source) addEdge(source, importKind(value));
+    }
+    if (value.type === 'ExportNamedDeclaration' || value.type === 'ExportAllDeclaration') {
+      const source = textValue(value.source);
+      if (source) addEdge(source, 're-export');
+    }
+    if (value.type === 'CallExpression') {
+      const argumentsList = Array.isArray(value.arguments) ? value.arguments : [];
+      if (isRecord(value.callee) && value.callee.type === 'Import') {
+        const source = textValue(argumentsList[0]);
+        if (source) addEdge(source, 'dynamic');
+        else unsupportedDynamicImports.push(projectPath(root, path));
+      }
+      if (
+        isRecord(value.callee) &&
+        value.callee.type === 'Identifier' &&
+        value.callee.name === 'require'
+      ) {
+        const source = textValue(argumentsList[0]);
+        if (source) addEdge(source, 'runtime');
+      }
+    }
+    for (const [key, child] of Object.entries(value)) {
+      if (!['loc', 'start', 'end', 'extra'].includes(key)) visit(child);
+    }
+  }
+  visit(program);
+  return { edges, unsupportedDynamicImports };
+}
+
+function collectProjectImportScan(root: string): {
+  readonly edges: readonly SourceImportEdge[];
+  readonly unsupportedDynamicImports: readonly string[];
+} {
+  const scans = importSourceFiles(root).map((path) =>
+    collectImportEdgesFromSource(root, path, readFileSync(path, 'utf8')),
+  );
+  return {
+    edges: scans
+      .flatMap((scan) => scan.edges)
+      .sort(
+        (left, right) =>
+          left.path.localeCompare(right.path) ||
+          left.source.localeCompare(right.source) ||
+          left.kind.localeCompare(right.kind),
+      ),
+    unsupportedDynamicImports: scans
+      .flatMap((scan) => scan.unsupportedDynamicImports)
+      .sort((left, right) => left.localeCompare(right)),
+  };
+}
+
+export function collectProjectImportEdges(projectRoot: string): readonly SourceImportEdge[] {
+  return collectProjectImportScan(resolve(projectRoot)).edges;
+}
+
+function importerMultiset(importers: readonly DirectImporter[]): string[] {
+  return importers
+    .map((importer) => `${importer.path}:${importer.kind}`)
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function compositionRole(path: string): 'api' | 'worker' | undefined {
+  if (/^src\/capabilities\/[^/]+\/api\//.test(path)) return 'api';
+  if (/^src\/capabilities\/[^/]+\/jobs\//.test(path)) return 'worker';
+  if (path === 'src/server/boss/handlers.ts' || path === 'scripts/worker.ts') return 'worker';
+  return undefined;
+}
+
+function runtimeRolesForTarget(
+  root: string,
+  edges: readonly SourceImportEdge[],
+  target: string,
+): string[] {
+  const reachable = new Map<string, Set<string>>();
+  for (const edge of edges) {
+    if (!edge.target || edge.kind === 'type') continue;
+    const targets = reachable.get(edge.path) ?? new Set<string>();
+    targets.add(projectPath(root, edge.target));
+    reachable.set(edge.path, targets);
+  }
+  const roles = new Set<string>();
+  for (const path of importSourceFiles(root).map((file) => projectPath(root, file))) {
+    const role = compositionRole(path);
+    if (!role) continue;
+    const queue = [path];
+    const visited = new Set<string>();
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current || visited.has(current)) continue;
+      visited.add(current);
+      if (current === projectPath(root, target)) {
+        roles.add(role);
+        break;
+      }
+      for (const next of reachable.get(current) ?? []) queue.push(next);
+    }
+  }
+  return [...roles].sort((left, right) => left.localeCompare(right));
+}
+
+function moduleSegment(source: string): string {
+  return stripSupportedExtension(basename(source));
 }
 
 function projectPath(root: string, path: string): string {
@@ -237,9 +472,16 @@ function checkEvidence(
     evidence.literals?.every((literal) => facts.literals.includes(literal)) ?? true;
   const tokensMatch = evidence.contains?.every((needle) => code.includes(needle)) ?? true;
   if (importsMatch && callsMatch && envReadsMatch && literalsMatch && tokensMatch) return undefined;
+  const mismatches = [
+    !importsMatch ? 'import' : undefined,
+    !callsMatch ? 'call' : undefined,
+    !envReadsMatch ? 'env read' : undefined,
+    !literalsMatch ? 'literal' : undefined,
+    !tokensMatch ? 'token' : undefined,
+  ].filter((value): value is string => Boolean(value));
   return {
     path: evidence.path,
-    reason: `${role} evidence no longer matches the declared AST import, call, env read, or literal token`,
+    reason: `${role} evidence no longer matches declared ${mismatches.join(', ')}`,
   };
 }
 
@@ -280,6 +522,7 @@ export function auditProviderLanes(
 ): ProviderLaneAuditResult {
   const root = resolve(projectRoot);
   const findings = collectProviderWireFindings(root);
+  const importScan = collectProjectImportScan(root);
   const violations: ProviderLaneViolation[] = validateProviderLaneInventory(lanes).map(
     (reason) => ({
       path: 'scripts/provider-lane-inventory.ts',
@@ -312,6 +555,27 @@ export function auditProviderLanes(
         reason: `wire call count drift: expected ${expectedCalls.join(', ')}; observed ${observedCalls.join(', ')}`,
       });
     }
+    const wirePath = resolve(root, lane.wire.path);
+    const observedImporters = importerMultiset(
+      importScan.edges
+        .filter((edge) => edge.target === wirePath)
+        .map((edge) => ({ path: edge.path, kind: edge.kind })),
+    );
+    const expectedImporters = importerMultiset(lane.directImporters);
+    if (!sameMultiset(observedImporters, expectedImporters)) {
+      violations.push({
+        path: lane.wire.path,
+        reason: `direct importer closure drift: expected ${expectedImporters.join(', ')}; observed ${observedImporters.join(', ')}`,
+      });
+    }
+    const observedRoles = runtimeRolesForTarget(root, importScan.edges, wirePath);
+    const expectedRoles = [...lane.roles].sort((left, right) => left.localeCompare(right));
+    if (!sameMultiset(observedRoles, expectedRoles)) {
+      violations.push({
+        path: lane.wire.path,
+        reason: `runtime role closure drift: expected ${expectedRoles.join(', ')}; observed ${observedRoles.join(', ')}`,
+      });
+    }
     for (const [role, evidence] of [
       ['wire', lane.wire],
       ['evidence hook', lane.evidence],
@@ -322,21 +586,25 @@ export function auditProviderLanes(
     }
   }
 
-  const prunedImportNames = PRUNED_MISCONCEPTION_MODULES.map((path) =>
-    basename(path).replace(/\.ts$/, ''),
+  for (const path of importScan.unsupportedDynamicImports) {
+    violations.push({
+      path,
+      reason: 'unsupported dynamic import prevents direct importer closure validation',
+    });
+  }
+
+  const prunedImportNames = new Set(
+    PRUNED_MISCONCEPTION_MODULES.map((path) => moduleSegment(path)),
   );
   for (const module of PRUNED_MISCONCEPTION_MODULES) {
     if (existsSync(resolve(root, module))) {
       violations.push({ path: module, reason: 'pruned module was reintroduced' });
     }
   }
-  for (const file of sourceFiles(resolve(root, 'src'))) {
-    const facts = inspectSource(readFileSync(file, 'utf8'), file);
-    if (
-      facts.imports.some((imported) => prunedImportNames.some((name) => imported.endsWith(name)))
-    ) {
+  for (const edge of importScan.edges) {
+    if (prunedImportNames.has(moduleSegment(edge.source))) {
       violations.push({
-        path: projectPath(root, file),
+        path: edge.path,
         reason: 'pruned misconception reconcile module is imported',
       });
     }
