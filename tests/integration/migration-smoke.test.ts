@@ -2017,3 +2017,292 @@ describe('migration smoke — YUK-842 provider query-session admission foundatio
     });
   });
 });
+
+describe('migration smoke — YUK-851 provider attempt lifecycle', () => {
+  const BASELINE_TAG = '0088_yuk842_provider_session_admission';
+  const MIGRATION_TAG = '0089_yuk851_provider_attempt_lifecycle';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+  let baselineSignature: unknown;
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(client, migration.sql);
+      if (migration.tag === BASELINE_TAG) break;
+    }
+    baselineSignature = await client`
+      SELECT table_name, column_name, ordinal_position, data_type, is_nullable
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+      ORDER BY table_name, ordinal_position
+    `;
+    const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
+    if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
+    await applyMigrationFile(client, migration.sql);
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('creates exact columns, indexes, checks, and no foreign keys', async () => {
+    const columns = await client<{ table_name: string; column_name: string }[]>`
+      SELECT table_name, column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name IN ('provider_attempt', 'provider_attempt_admission')
+    `;
+    const byTable = Map.groupBy(columns, (row) => row.table_name);
+    expect(new Set(byTable.get('provider_attempt')?.map((row) => row.column_name))).toEqual(
+      new Set([
+        'attempt_id',
+        'operation_id',
+        'attempt_kind',
+        'provider',
+        'model',
+        'lane_id',
+        'protocol',
+        'endpoint_class',
+        'caller',
+        'operation_kind',
+        'external_request_id',
+        'terminal_status',
+        'terminal_reason',
+        'wire_count',
+        'usage_json',
+        'cost_basis',
+        'cost_amount',
+        'cost_currency',
+        'cost_source',
+        'started_at',
+        'provider_start_reserved_at',
+        'finished_at',
+      ]),
+    );
+    expect(
+      new Set(byTable.get('provider_attempt_admission')?.map((row) => row.column_name)),
+    ).toEqual(
+      new Set([
+        'attempt_id',
+        'identity_fingerprint',
+        'policy_fingerprint',
+        'lane_id',
+        'mode',
+        'status',
+        'lease_owner',
+        'requested_at',
+        'deadline_at',
+        'acquired_at',
+        'lease_expires_at',
+        'terminal_at',
+        'terminal_reason',
+      ]),
+    );
+    const indexes = await client<{ indexname: string; indexdef: string }[]>`
+      SELECT indexname, indexdef FROM pg_indexes
+      WHERE schemaname = 'public' AND tablename IN ('provider_attempt', 'provider_attempt_admission')
+    `;
+    expect(new Set(indexes.map((row) => row.indexname))).toEqual(
+      new Set([
+        'provider_attempt_pkey',
+        'provider_attempt_operation_idx',
+        'provider_attempt_open_operation_idx',
+        'provider_attempt_external_request_idx',
+        'provider_attempt_admission_pkey',
+        'provider_attempt_admission_lane_active_idx',
+        'provider_attempt_admission_lane_start_idx',
+        'provider_attempt_admission_lane_terminal_idx',
+      ]),
+    );
+    const indexDefinition = new Map(indexes.map((row) => [row.indexname, row.indexdef]));
+    expect(indexDefinition.get('provider_attempt_operation_idx')).toContain(
+      '(operation_id, started_at DESC, attempt_id)',
+    );
+    expect(indexDefinition.get('provider_attempt_open_operation_idx')).toContain(
+      '(operation_id, lane_id, started_at DESC) WHERE (finished_at IS NULL)',
+    );
+    expect(indexDefinition.get('provider_attempt_external_request_idx')).toContain(
+      '(provider, external_request_id) WHERE (external_request_id IS NOT NULL)',
+    );
+    expect(indexDefinition.get('provider_attempt_admission_lane_active_idx')).toContain(
+      "WHERE (status = ANY (ARRAY['acquired'::text, 'would_deny'::text]))",
+    );
+    expect(indexDefinition.get('provider_attempt_admission_lane_start_idx')).toContain(
+      'WHERE (acquired_at IS NOT NULL)',
+    );
+    expect(indexDefinition.get('provider_attempt_admission_lane_terminal_idx')).toContain(
+      'WHERE (terminal_at IS NOT NULL)',
+    );
+    const checks = await client<{ constraint_name: string }[]>`
+      SELECT constraint_name FROM information_schema.table_constraints
+      WHERE table_schema = 'public'
+        AND table_name IN ('provider_attempt', 'provider_attempt_admission')
+        AND constraint_type = 'CHECK'
+        AND constraint_name LIKE 'provider_attempt_%'
+    `;
+    expect(new Set(checks.map((row) => row.constraint_name))).toEqual(
+      new Set([
+        'provider_attempt_kind_ck',
+        'provider_attempt_caller_ck',
+        'provider_attempt_terminal_ck',
+        'provider_attempt_identity_ck',
+        'provider_attempt_wire_ck',
+        'provider_attempt_opaque_ck',
+        'provider_attempt_terminal_shape_ck',
+        'provider_attempt_cost_shape_ck',
+        'provider_attempt_timeline_ck',
+        'provider_attempt_admission_identity_ck',
+        'provider_attempt_admission_state_ck',
+      ]),
+    );
+    const foreignKeys = await client<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM information_schema.table_constraints
+      WHERE table_schema = 'public'
+        AND table_name IN ('provider_attempt', 'provider_attempt_admission')
+        AND constraint_type = 'FOREIGN KEY'
+    `;
+    expect(foreignKeys[0]?.count).toBe(0);
+  });
+
+  it('accepts valid unfinished, wire terminal, opaque terminal, and active admission shapes', async () => {
+    await client`
+      INSERT INTO provider_attempt (
+        attempt_id, operation_id, attempt_kind, provider, model, lane_id, protocol,
+        endpoint_class, caller, operation_kind, started_at
+      ) VALUES (
+        '00000000-0000-4000-8000-000000000871',
+        '00000000-0000-4000-8000-000000000872',
+        'wire', 'xiaomi', NULL, 'generation', 'anthropic', 'messages', 'api', 'Task', now()
+      )
+    `;
+    await client`
+      INSERT INTO provider_attempt (
+        attempt_id, operation_id, attempt_kind, provider, model, lane_id, protocol,
+        endpoint_class, caller, operation_kind, terminal_status, terminal_reason,
+        wire_count, usage_json, cost_basis, cost_amount, cost_currency, cost_source,
+        started_at, finished_at
+      ) VALUES (
+        '00000000-0000-4000-8000-000000000873',
+        '00000000-0000-4000-8000-000000000872',
+        'wire', 'xiaomi', 'mimo', 'generation', 'anthropic', 'messages', 'worker', 'Task',
+        'succeeded', 'completed', 0,
+        '{"basis":"reported","unit":"tokens","input":0,"output":null,"total":null,"source":"sdk"}',
+        'reported', 0, 'USD', 'sdk', now(), now()
+      )
+    `;
+    await client`
+      INSERT INTO provider_attempt (
+        attempt_id, operation_id, attempt_kind, provider, model, lane_id, protocol,
+        endpoint_class, caller, operation_kind, terminal_status, terminal_reason,
+        wire_count, usage_json, cost_basis, cost_amount, cost_currency, cost_source,
+        started_at, finished_at
+      ) VALUES (
+        '00000000-0000-4000-8000-000000000874',
+        '00000000-0000-4000-8000-000000000872',
+        'opaque_operation', 'anthropic', 'claude', 'opaque', 'sdk', 'query', 'worker',
+        'OpaqueTask', 'unknown', 'opaque operation', NULL,
+        '{"basis":"unknown","unit":null,"input":null,"output":null,"total":null,"source":"sdk"}',
+        'unknown', NULL, NULL, 'pricebook', now(), now()
+      )
+    `;
+    await client`
+      INSERT INTO provider_attempt_admission (
+        attempt_id, identity_fingerprint, policy_fingerprint, lane_id, mode, status,
+        lease_owner, requested_at, deadline_at, acquired_at, lease_expires_at
+      ) VALUES (
+        '00000000-0000-4000-8000-000000000871', 'identity', 'policy', 'generation',
+        'enforce', 'acquired', '00000000-0000-4000-8000-000000000875',
+        now(), now() + interval '1 minute', now(), now() + interval '1 minute'
+      )
+    `;
+  });
+
+  it.each([
+    [
+      'provider_attempt_kind_ck',
+      `INSERT INTO provider_attempt (attempt_id,operation_id,attempt_kind,provider,lane_id,protocol,endpoint_class,caller,operation_kind,started_at) VALUES ('00000000-0000-4000-8000-000000000881','00000000-0000-4000-8000-000000000880','bad','p','l','p','e','api','o',now())`,
+    ],
+    [
+      'provider_attempt_caller_ck',
+      `INSERT INTO provider_attempt (attempt_id,operation_id,attempt_kind,provider,lane_id,protocol,endpoint_class,caller,operation_kind,started_at) VALUES ('00000000-0000-4000-8000-000000000882','00000000-0000-4000-8000-000000000880','wire','p','l','p','e','cron','o',now())`,
+    ],
+    [
+      'provider_attempt_terminal_ck',
+      `INSERT INTO provider_attempt (attempt_id,operation_id,attempt_kind,provider,lane_id,protocol,endpoint_class,caller,operation_kind,terminal_status,terminal_reason,usage_json,cost_basis,cost_source,started_at,finished_at) VALUES ('00000000-0000-4000-8000-000000000891','00000000-0000-4000-8000-000000000880','wire','p','l','p','e','api','o','bad','done','{"basis":"unknown","unit":null,"input":null,"output":null,"total":null,"source":"s"}','unknown','s',now(),now())`,
+    ],
+    [
+      'provider_attempt_identity_ck',
+      `INSERT INTO provider_attempt (attempt_id,operation_id,attempt_kind,provider,lane_id,protocol,endpoint_class,caller,operation_kind,started_at) VALUES ('00000000-0000-4000-8000-000000000883','00000000-0000-4000-8000-000000000880','wire',' ','l','p','e','api','o',now())`,
+    ],
+    [
+      'provider_attempt_wire_ck',
+      `INSERT INTO provider_attempt (attempt_id,operation_id,attempt_kind,provider,lane_id,protocol,endpoint_class,caller,operation_kind,terminal_status,terminal_reason,wire_count,usage_json,cost_basis,cost_source,started_at,finished_at) VALUES ('00000000-0000-4000-8000-000000000884','00000000-0000-4000-8000-000000000880','wire','p','l','p','e','api','o','unknown','done',-1,'{"basis":"unknown","unit":null,"input":null,"output":null,"total":null,"source":"s"}','unknown','s',now(),now())`,
+    ],
+    [
+      'provider_attempt_opaque_ck',
+      `INSERT INTO provider_attempt (attempt_id,operation_id,attempt_kind,provider,lane_id,protocol,endpoint_class,caller,operation_kind,terminal_status,terminal_reason,wire_count,usage_json,cost_basis,cost_source,started_at,finished_at) VALUES ('00000000-0000-4000-8000-000000000885','00000000-0000-4000-8000-000000000880','opaque_operation','p','l','p','e','api','o','unknown','done',1,'{"basis":"unknown","unit":null,"input":null,"output":null,"total":null,"source":"s"}','unknown','s',now(),now())`,
+    ],
+    [
+      'provider_attempt_terminal_shape_ck',
+      `INSERT INTO provider_attempt (attempt_id,operation_id,attempt_kind,provider,lane_id,protocol,endpoint_class,caller,operation_kind,terminal_status,started_at) VALUES ('00000000-0000-4000-8000-000000000886','00000000-0000-4000-8000-000000000880','wire','p','l','p','e','api','o','failed',now())`,
+    ],
+    [
+      'provider_attempt_cost_shape_ck',
+      `INSERT INTO provider_attempt (attempt_id,operation_id,attempt_kind,provider,lane_id,protocol,endpoint_class,caller,operation_kind,terminal_status,terminal_reason,usage_json,cost_basis,cost_amount,cost_source,started_at,finished_at) VALUES ('00000000-0000-4000-8000-000000000887','00000000-0000-4000-8000-000000000880','wire','p','l','p','e','api','o','unknown','done','{"basis":"unknown","unit":null,"input":null,"output":null,"total":null,"source":"s"}','unknown',0,'s',now(),now())`,
+    ],
+    [
+      'provider_attempt_timeline_ck',
+      `INSERT INTO provider_attempt (attempt_id,operation_id,attempt_kind,provider,lane_id,protocol,endpoint_class,caller,operation_kind,terminal_status,terminal_reason,usage_json,cost_basis,cost_source,started_at,finished_at) VALUES ('00000000-0000-4000-8000-000000000888','00000000-0000-4000-8000-000000000880','wire','p','l','p','e','api','o','unknown','done','{"basis":"unknown","unit":null,"input":null,"output":null,"total":null,"source":"s"}','unknown','s','2026-01-02','2026-01-01')`,
+    ],
+    [
+      'provider_attempt_timeline_ck',
+      `INSERT INTO provider_attempt (attempt_id,operation_id,attempt_kind,provider,lane_id,protocol,endpoint_class,caller,operation_kind,started_at,provider_start_reserved_at) VALUES ('00000000-0000-4000-8000-000000000896','00000000-0000-4000-8000-000000000880','wire','p','l','p','e','api','o','2026-01-02','2026-01-01')`,
+    ],
+    [
+      'provider_attempt_timeline_ck',
+      `INSERT INTO provider_attempt (attempt_id,operation_id,attempt_kind,provider,lane_id,protocol,endpoint_class,caller,operation_kind,terminal_status,terminal_reason,usage_json,cost_basis,cost_source,started_at,provider_start_reserved_at,finished_at) VALUES ('00000000-0000-4000-8000-000000000897','00000000-0000-4000-8000-000000000880','wire','p','l','p','e','api','o','unknown','done','{"basis":"unknown","unit":null,"input":null,"output":null,"total":null,"source":"s"}','unknown','s','2026-01-01','2026-01-03','2026-01-02')`,
+    ],
+    [
+      'provider_attempt_admission_identity_ck',
+      `INSERT INTO provider_attempt_admission (attempt_id,identity_fingerprint,policy_fingerprint,lane_id,mode,status,requested_at,deadline_at,terminal_at,terminal_reason) VALUES ('00000000-0000-4000-8000-000000000889',' ','p','l','enforce','denied',now(),now(),'2026-01-01','denied')`,
+    ],
+    [
+      'provider_attempt_admission_state_ck',
+      `INSERT INTO provider_attempt_admission (attempt_id,identity_fingerprint,policy_fingerprint,lane_id,mode,status,requested_at,deadline_at) VALUES ('00000000-0000-4000-8000-000000000890','i','p','l','enforce','acquired',now(),now())`,
+    ],
+    [
+      'provider_attempt_admission_state_ck',
+      `INSERT INTO provider_attempt_admission (attempt_id,identity_fingerprint,policy_fingerprint,lane_id,mode,status,lease_owner,requested_at,deadline_at,acquired_at,lease_expires_at) VALUES ('00000000-0000-4000-8000-000000000892','i','p','l','enforce','acquired','00000000-0000-4000-8000-000000000899',now(),now(),now(),now()+interval '1 second')`,
+    ],
+    [
+      'provider_attempt_admission_state_ck',
+      `INSERT INTO provider_attempt_admission (attempt_id,identity_fingerprint,policy_fingerprint,lane_id,mode,status,lease_owner,requested_at,deadline_at,acquired_at,lease_expires_at) VALUES ('00000000-0000-4000-8000-000000000893','i','p','l','enforce','would_deny','00000000-0000-4000-8000-000000000899',now(),now(),now(),now()+interval '1 second')`,
+    ],
+    [
+      'provider_attempt_admission_state_ck',
+      `INSERT INTO provider_attempt_admission (attempt_id,identity_fingerprint,policy_fingerprint,lane_id,mode,status,requested_at,deadline_at,terminal_at,terminal_reason) VALUES ('00000000-0000-4000-8000-000000000894','i','p','l','observe','denied',now(),now(),now(),'denied')`,
+    ],
+    [
+      'provider_attempt_admission_state_ck',
+      `INSERT INTO provider_attempt_admission (attempt_id,identity_fingerprint,policy_fingerprint,lane_id,mode,status,lease_owner,requested_at,deadline_at,acquired_at,lease_expires_at,terminal_at,terminal_reason) VALUES ('00000000-0000-4000-8000-000000000895','i','p','l','enforce','lease_expired','00000000-0000-4000-8000-000000000899',now(),now()+interval '2 seconds',now(),now()+interval '2 seconds',now()+interval '1 second','expired')`,
+    ],
+  ])('rejects invalid rows through named check %s', async (constraintName, statement) => {
+    await expect(client.unsafe(statement)).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: constraintName,
+    });
+  });
+
+  it('leaves every pre-0089 table column signature unchanged', async () => {
+    const after = await client`
+      SELECT table_name, column_name, ordinal_position, data_type, is_nullable
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name NOT IN ('provider_attempt', 'provider_attempt_admission')
+      ORDER BY table_name, ordinal_position
+    `;
+    expect(after).toEqual(baselineSignature);
+  });
+});
