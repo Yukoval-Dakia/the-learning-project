@@ -1073,5 +1073,102 @@
       "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
       "expected_by": "2026-09-30"
     }
+  },
+  "_comment_yuk850_historical_misconception_reconciliation": "YUK-850 deletes the unreachable misconception reconciliation runtime and its writer while deliberately retaining the table declaration and migrations so existing databases and any historical rows remain readable. F4.1 must make the final retain-or-drop decision; no new runtime writer may be added in the meantime.",
+  "misconception_reconciliation_log.candidate_from_kind": {
+    "reason": "YUK-850 prunes the unreachable misconception reconciliation runtime. The historical table remains read-compatible only; no runtime writer remains.",
+    "resolves_when": {
+      "kind": "phase",
+      "ref": "F4.1 quantitative architecture audit decides historical misconception reconciliation table retention",
+      "expected_by": "2026-11-30"
+    }
+  },
+  "misconception_reconciliation_log.candidate_from_id": {
+    "reason": "YUK-850 prunes the unreachable misconception reconciliation runtime. The historical table remains read-compatible only; no runtime writer remains.",
+    "resolves_when": {
+      "kind": "phase",
+      "ref": "F4.1 quantitative architecture audit decides historical misconception reconciliation table retention",
+      "expected_by": "2026-11-30"
+    }
+  },
+  "misconception_reconciliation_log.candidate_to_kind": {
+    "reason": "YUK-850 prunes the unreachable misconception reconciliation runtime. The historical table remains read-compatible only; no runtime writer remains.",
+    "resolves_when": {
+      "kind": "phase",
+      "ref": "F4.1 quantitative architecture audit decides historical misconception reconciliation table retention",
+      "expected_by": "2026-11-30"
+    }
+  },
+  "misconception_reconciliation_log.candidate_to_id": {
+    "reason": "YUK-850 prunes the unreachable misconception reconciliation runtime. The historical table remains read-compatible only; no runtime writer remains.",
+    "resolves_when": {
+      "kind": "phase",
+      "ref": "F4.1 quantitative architecture audit decides historical misconception reconciliation table retention",
+      "expected_by": "2026-11-30"
+    }
+  },
+  "misconception_reconciliation_log.candidate_relation_type": {
+    "reason": "YUK-850 prunes the unreachable misconception reconciliation runtime. The historical table remains read-compatible only; no runtime writer remains.",
+    "resolves_when": {
+      "kind": "phase",
+      "ref": "F4.1 quantitative architecture audit decides historical misconception reconciliation table retention",
+      "expected_by": "2026-11-30"
+    }
+  },
+  "misconception_reconciliation_log.action": {
+    "reason": "YUK-850 prunes the unreachable misconception reconciliation runtime. The historical table remains read-compatible only; no runtime writer remains.",
+    "resolves_when": {
+      "kind": "phase",
+      "ref": "F4.1 quantitative architecture audit decides historical misconception reconciliation table retention",
+      "expected_by": "2026-11-30"
+    }
+  },
+  "misconception_reconciliation_log.superseded_edge_id": {
+    "reason": "YUK-850 prunes the unreachable misconception reconciliation runtime. The historical table remains read-compatible only; no runtime writer remains.",
+    "resolves_when": {
+      "kind": "phase",
+      "ref": "F4.1 quantitative architecture audit decides historical misconception reconciliation table retention",
+      "expected_by": "2026-11-30"
+    }
+  },
+  "misconception_reconciliation_log.confidence": {
+    "reason": "YUK-850 prunes the unreachable misconception reconciliation runtime. The historical table remains read-compatible only; no runtime writer remains.",
+    "resolves_when": {
+      "kind": "phase",
+      "ref": "F4.1 quantitative architecture audit decides historical misconception reconciliation table retention",
+      "expected_by": "2026-11-30"
+    }
+  },
+  "misconception_reconciliation_log.reason": {
+    "reason": "YUK-850 prunes the unreachable misconception reconciliation runtime. The historical table remains read-compatible only; no runtime writer remains.",
+    "resolves_when": {
+      "kind": "phase",
+      "ref": "F4.1 quantitative architecture audit decides historical misconception reconciliation table retention",
+      "expected_by": "2026-11-30"
+    }
+  },
+  "misconception_reconciliation_log.llm_raw": {
+    "reason": "YUK-850 prunes the unreachable misconception reconciliation runtime. The historical table remains read-compatible only; no runtime writer remains.",
+    "resolves_when": {
+      "kind": "phase",
+      "ref": "F4.1 quantitative architecture audit decides historical misconception reconciliation table retention",
+      "expected_by": "2026-11-30"
+    }
+  },
+  "misconception_reconciliation_log.planned_at": {
+    "reason": "YUK-850 prunes the unreachable misconception reconciliation runtime. The historical table remains read-compatible only; no runtime writer remains.",
+    "resolves_when": {
+      "kind": "phase",
+      "ref": "F4.1 quantitative architecture audit decides historical misconception reconciliation table retention",
+      "expected_by": "2026-11-30"
+    }
+  },
+  "misconception_reconciliation_log.applied_at": {
+    "reason": "YUK-850 prunes the unreachable misconception reconciliation runtime. The historical table remains read-compatible only; no runtime writer remains.",
+    "resolves_when": {
+      "kind": "phase",
+      "ref": "F4.1 quantitative architecture audit decides historical misconception reconciliation table retention",
+      "expected_by": "2026-11-30"
+    }
   }
 }
