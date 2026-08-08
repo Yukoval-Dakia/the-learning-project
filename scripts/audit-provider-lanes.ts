@@ -1,10 +1,11 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse } from '@babel/parser';
 import {
   PROVIDER_LANES,
   PRUNED_MISCONCEPTION_MODULES,
+  type ProviderConfigurationTruth,
   type ProviderLane,
   type SourceEvidence,
   validateProviderLaneInventory,
@@ -40,6 +41,8 @@ export type ProviderLaneAuditResult = {
 type SourceFacts = {
   readonly imports: readonly string[];
   readonly calls: readonly string[];
+  readonly envReads: readonly string[];
+  readonly literals: readonly string[];
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -51,6 +54,9 @@ function sourceFiles(root: string): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(root).sort((left, right) => left.localeCompare(right))) {
     const path = resolve(root, entry);
+    if (lstatSync(path).isSymbolicLink()) {
+      throw new Error(`${path}: symbolic link found while collecting source files`);
+    }
     if (statSync(path).isDirectory()) files.push(...sourceFiles(path));
     else if (SOURCE_FILE.test(entry) && !TEST_FILE.test(entry)) files.push(path);
   }
@@ -93,6 +99,38 @@ function callName(callee: unknown): string | undefined {
   return `${callee.object.name}.${callee.property.name}`;
 }
 
+function envReadName(node: unknown): string | undefined {
+  if (
+    !isRecord(node) ||
+    (node.type !== 'MemberExpression' && node.type !== 'OptionalMemberExpression') ||
+    node.computed
+  )
+    return undefined;
+  if (
+    !isRecord(node.object) ||
+    (node.object.type !== 'MemberExpression' && node.object.type !== 'OptionalMemberExpression') ||
+    node.object.computed
+  )
+    return undefined;
+  if (!isRecord(node.object.object) || node.object.object.type !== 'Identifier') return undefined;
+  if (!isRecord(node.object.property) || node.object.property.type !== 'Identifier')
+    return undefined;
+  if (!isRecord(node.property) || node.property.type !== 'Identifier') return undefined;
+  return node.object.object.name === 'process' && node.object.property.name === 'env'
+    ? typeof node.property.name === 'string'
+      ? node.property.name
+      : undefined
+    : undefined;
+}
+
+function helperEnvReadName(node: unknown): string | undefined {
+  if (!isRecord(node) || node.type !== 'CallExpression') return undefined;
+  if (!isRecord(node.callee) || node.callee.type !== 'Identifier') return undefined;
+  if (node.callee.name !== 'optionalEnv' && node.callee.name !== 'requireEnv') return undefined;
+  if (!Array.isArray(node.arguments)) return undefined;
+  return textValue(node.arguments[1]);
+}
+
 function inspectSource(code: string, filename: string): SourceFacts {
   const program = parse(code, {
     sourceType: 'module',
@@ -101,6 +139,8 @@ function inspectSource(code: string, filename: string): SourceFacts {
   }).program;
   const imports = new Set<string>();
   const calls: string[] = [];
+  const envReads = new Set<string>();
+  const literals = new Set<string>();
 
   function visit(value: unknown): void {
     if (Array.isArray(value)) {
@@ -108,6 +148,8 @@ function inspectSource(code: string, filename: string): SourceFacts {
       return;
     }
     if (!isRecord(value)) return;
+    const literal = textValue(value);
+    if (literal) literals.add(literal);
     if (value.type === 'ImportDeclaration') {
       const source = textValue(value.source);
       if (source) imports.add(source);
@@ -116,6 +158,10 @@ function inspectSource(code: string, filename: string): SourceFacts {
       const name = callName(value.callee);
       if (name) calls.push(name);
     }
+    const envRead = envReadName(value);
+    if (envRead) envReads.add(envRead);
+    const helperEnvRead = helperEnvReadName(value);
+    if (helperEnvRead) envReads.add(helperEnvRead);
     for (const [key, child] of Object.entries(value)) {
       if (!['loc', 'start', 'end', 'extra'].includes(key)) visit(child);
     }
@@ -125,6 +171,8 @@ function inspectSource(code: string, filename: string): SourceFacts {
   return {
     imports: [...imports].sort((left, right) => left.localeCompare(right)),
     calls: calls.sort((left, right) => left.localeCompare(right)),
+    envReads: [...envReads].sort((left, right) => left.localeCompare(right)),
+    literals: [...literals].sort((left, right) => left.localeCompare(right)),
   };
 }
 
@@ -184,12 +232,30 @@ function checkEvidence(
   const facts = inspectSource(code, path);
   const importsMatch = evidence.imports?.every((source) => facts.imports.includes(source)) ?? true;
   const callsMatch = evidence.calls?.every((call) => facts.calls.includes(call)) ?? true;
+  const envReadsMatch = evidence.envReads?.every((name) => facts.envReads.includes(name)) ?? true;
+  const literalsMatch =
+    evidence.literals?.every((literal) => facts.literals.includes(literal)) ?? true;
   const tokensMatch = evidence.contains?.every((needle) => code.includes(needle)) ?? true;
-  if (importsMatch && callsMatch && tokensMatch) return undefined;
+  if (importsMatch && callsMatch && envReadsMatch && literalsMatch && tokensMatch) return undefined;
   return {
     path: evidence.path,
-    reason: `${role} evidence no longer matches the declared AST import, call, or literal token`,
+    reason: `${role} evidence no longer matches the declared AST import, call, env read, or literal token`,
   };
+}
+
+function checkConfiguration(
+  root: string,
+  configuration: ProviderConfigurationTruth,
+): ProviderLaneViolation[] {
+  const entries = [
+    ['configuration endpoint', configuration.endpoint.source],
+    ['configuration credential', configuration.credential.source],
+    ['configuration model', configuration.model.source],
+  ] as const;
+  return entries.flatMap((entry): ProviderLaneViolation[] => {
+    const violation = checkEvidence(root, entry[1], entry[0]);
+    return violation ? [violation] : [];
+  });
 }
 
 function sameMultiset(left: readonly string[], right: readonly string[]): boolean {
@@ -232,6 +298,7 @@ export function auditProviderLanes(
   }
   for (const lane of lanes) {
     if (lane.disposition === 'prune') continue;
+    violations.push(...checkConfiguration(root, lane.configuration));
     const observedCalls = findings
       .filter(
         (finding) => laneForFinding(finding.kind) === lane.id && finding.path === lane.wire.path,

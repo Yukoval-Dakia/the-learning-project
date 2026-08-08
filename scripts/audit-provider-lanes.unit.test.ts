@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -48,12 +48,61 @@ function fixtureLane(overrides: Partial<ProviderLane> = {}): ProviderLane {
     provider: 'DashScope',
     model: 'text-embedding-v4',
     endpointClass: 'OpenAI-compatible embeddings',
+    configuration: {
+      endpoint: {
+        summary: 'fixture endpoint',
+        source: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+      credential: {
+        summary: 'fixture credential',
+        source: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+      model: {
+        summary: 'fixture model',
+        source: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    },
     evidence: {
       path: 'src/server/ai/embed.ts',
       contains: ['fetch', '/embeddings'],
     },
     costSupport: 'no project-side per-wire ledger hook',
     ...overrides,
+  };
+}
+
+function configurationFixture(
+  endpoint = 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  credential = 'DASHSCOPE_API_KEY',
+  model = 'text-embedding-v4',
+): string {
+  return `const BASE_URL = process.env.MEM0_EMBEDDING_BASE_URL?.trim() || '${endpoint}';
+const apiKey = process.env.${credential}?.trim();
+export const embed = () => fetch(\`${'${BASE_URL}'}/embeddings\`, { body: JSON.stringify({ model: '${model}', apiKey }) });
+`;
+}
+
+function configuredFixtureLane(): ProviderLane {
+  return {
+    ...fixtureLane(),
+    configuration: {
+      endpoint: {
+        summary: 'env-configurable compatible endpoint with DashScope default',
+        source: {
+          path: 'src/server/ai/embed.ts',
+          envReads: ['MEM0_EMBEDDING_BASE_URL'],
+          literals: ['https://dashscope.aliyuncs.com/compatible-mode/v1'],
+        },
+      },
+      credential: {
+        summary: 'DashScope API key environment credential',
+        source: { path: 'src/server/ai/embed.ts', envReads: ['DASHSCOPE_API_KEY'] },
+      },
+      model: {
+        summary: 'fixed embedding model literal',
+        source: { path: 'src/server/ai/embed.ts', literals: ['text-embedding-v4'] },
+      },
+    },
   };
 }
 
@@ -157,6 +206,21 @@ describe('provider lane inventory', () => {
         expect.objectContaining({ reason: expect.stringContaining('missing required metadata') }),
       ],
     });
+  });
+
+  it('rejects a changed declared DashScope endpoint default even when the embeddings path remains', () => {
+    const root = makeFixture();
+    write(root, 'src/server/ai/embed.ts', configurationFixture('https://unapproved.example/v1'));
+    expect(auditProviderLanes(root, [configuredFixtureLane()])).toMatchObject({ ok: false });
+  });
+
+  it.each([
+    ['credential', configurationFixture(undefined, 'UNAPPROVED_API_KEY')],
+    ['model', configurationFixture(undefined, undefined, 'other-embedding-model')],
+  ])('rejects a changed DashScope %s configuration source', (_kind, source) => {
+    const root = makeFixture();
+    write(root, 'src/server/ai/embed.ts', source);
+    expect(auditProviderLanes(root, [configuredFixtureLane()])).toMatchObject({ ok: false });
   });
 
   it('rejects reintroduction of a pruned misconception reconcile module', () => {
@@ -278,5 +342,16 @@ describe('provider lane inventory', () => {
         path: 'src/server/ai/embed.ts',
       },
     ]);
+  });
+
+  it('fails closed when a source tree contains a symbolic link', () => {
+    const root = makeFixture();
+    write(
+      root,
+      'src/server/target.ts',
+      "export const call = () => fetch('https://link.example');\n",
+    );
+    symlinkSync('target.ts', resolve(root, 'src/server/link.ts'));
+    expect(() => collectProviderWireFindings(root)).toThrow('symbolic link');
   });
 });

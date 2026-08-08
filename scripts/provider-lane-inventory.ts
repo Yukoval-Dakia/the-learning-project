@@ -4,7 +4,20 @@ export type SourceEvidence = {
   readonly path: string;
   readonly imports?: readonly string[];
   readonly calls?: readonly string[];
+  readonly envReads?: readonly string[];
+  readonly literals?: readonly string[];
   readonly contains?: readonly string[];
+};
+
+export type ConfigurationTruth = {
+  readonly summary: string;
+  readonly source: SourceEvidence;
+};
+
+export type ProviderConfigurationTruth = {
+  readonly endpoint: ConfigurationTruth;
+  readonly credential: ConfigurationTruth;
+  readonly model: ConfigurationTruth;
 };
 
 export type ProviderWireCall =
@@ -29,6 +42,7 @@ export type ProviderLane = {
   readonly provider: string;
   readonly model: string;
   readonly endpointClass: string;
+  readonly configuration: ProviderConfigurationTruth;
   readonly evidence: SourceEvidence;
   readonly costSupport: string;
 };
@@ -79,9 +93,27 @@ export const PROVIDER_LANES = [
       },
     ],
     roles: ['api', 'worker'],
-    provider: 'DashScope',
+    provider: 'DashScope OpenAI-compatible endpoint; MEM0_EMBEDDING_BASE_URL is env-configurable',
     model: 'text-embedding-v4 fixed in source',
     endpointClass: 'OpenAI-compatible embeddings POST /embeddings',
+    configuration: {
+      endpoint: {
+        summary: 'MEM0_EMBEDDING_BASE_URL env override; defaults to DashScope compatible v1',
+        source: {
+          path: 'src/server/ai/embed.ts',
+          envReads: ['MEM0_EMBEDDING_BASE_URL'],
+          literals: ['https://dashscope.aliyuncs.com/compatible-mode/v1'],
+        },
+      },
+      credential: {
+        summary: 'DashScope API credential from DASHSCOPE_API_KEY',
+        source: { path: 'src/server/ai/embed.ts', envReads: ['DASHSCOPE_API_KEY'] },
+      },
+      model: {
+        summary: 'fixed text-embedding-v4 source literal',
+        source: { path: 'src/server/ai/embed.ts', literals: ['text-embedding-v4'] },
+      },
+    },
     evidence: {
       path: 'src/server/ai/embed.ts',
       contains: ['DASHSCOPE_API_KEY', 'EMBED_MODEL', 'EMBED_DIMS'],
@@ -108,9 +140,31 @@ export const PROVIDER_LANES = [
       },
     ],
     roles: ['worker'],
-    provider: 'GLM via Mem0 LLM configuration',
+    provider: 'GLM OpenAI-compatible endpoint via env-configurable Mem0 LLM configuration',
     model: 'env-resolved MEM0_LLM_MODEL through resolveGlmConfig',
     endpointClass: 'OpenAI-compatible chat completions POST /chat/completions',
+    configuration: {
+      endpoint: {
+        summary: 'MEM0_LLM_BASE_URL env override; defaults to GLM coding-plan compatible endpoint',
+        source: {
+          path: 'src/server/memory/client.ts',
+          envReads: ['MEM0_LLM_BASE_URL'],
+          literals: ['https://open.bigmodel.cn/api/coding/paas/v4'],
+        },
+      },
+      credential: {
+        summary: 'GLM credential from ZHIPU_API_KEY through createMem0Config',
+        source: { path: 'src/server/memory/client.ts', envReads: ['ZHIPU_API_KEY'] },
+      },
+      model: {
+        summary: 'MEM0_LLM_MODEL env override; defaults to glm-5.2',
+        source: {
+          path: 'src/server/memory/client.ts',
+          envReads: ['MEM0_LLM_MODEL'],
+          literals: ['glm-5.2'],
+        },
+      },
+    },
     evidence: {
       path: 'src/capabilities/knowledge/server/propose_edge.ts',
       contains: ['onUsage', 'writeCostLedger', 'resolveGlmConfig'],
@@ -131,6 +185,29 @@ export const PROVIDER_LANES = [
     provider: 'GLM historical implementation',
     model: 'historical only; not runtime truth',
     endpointClass: 'historical OpenAI-compatible chat completions',
+    configuration: {
+      endpoint: {
+        summary: 'historical endpoint configuration; no live runtime',
+        source: {
+          path: 'src/capabilities/knowledge/server/misconception-reconcile.ts',
+          calls: ['fetchImpl'],
+        },
+      },
+      credential: {
+        summary: 'historical credential configuration; no live runtime',
+        source: {
+          path: 'src/capabilities/knowledge/server/misconception-reconcile.ts',
+          contains: ['ZHIPU_API_KEY'],
+        },
+      },
+      model: {
+        summary: 'historical model configuration; no live runtime',
+        source: {
+          path: 'src/capabilities/knowledge/server/misconception-reconcile.ts',
+          contains: ['model'],
+        },
+      },
+    },
     evidence: {
       path: 'src/db/schema.ts',
       contains: ['misconception_reconciliation_log'],
@@ -153,9 +230,31 @@ export const PROVIDER_LANES = [
       },
     ],
     roles: ['worker'],
-    provider: 'GLM via Mem0 LLM configuration',
+    provider: 'GLM OpenAI-compatible endpoint via env-configurable Mem0 LLM configuration',
     model: 'env-resolved MEM0_LLM_MODEL; hardcoded ledger text is not model truth',
     endpointClass: 'OpenAI-compatible chat completions POST /chat/completions',
+    configuration: {
+      endpoint: {
+        summary: 'MEM0_LLM_BASE_URL env override; defaults to GLM coding-plan compatible endpoint',
+        source: {
+          path: 'src/server/memory/client.ts',
+          envReads: ['MEM0_LLM_BASE_URL'],
+          literals: ['https://open.bigmodel.cn/api/coding/paas/v4'],
+        },
+      },
+      credential: {
+        summary: 'GLM credential from ZHIPU_API_KEY through createMem0Config',
+        source: { path: 'src/server/memory/client.ts', envReads: ['ZHIPU_API_KEY'] },
+      },
+      model: {
+        summary: 'MEM0_LLM_MODEL env override; defaults to glm-5.2',
+        source: {
+          path: 'src/server/memory/client.ts',
+          envReads: ['MEM0_LLM_MODEL'],
+          literals: ['glm-5.2'],
+        },
+      },
+    },
     evidence: {
       path: 'src/server/memory/triggers.ts',
       contains: ['onUsage', 'writeCostLedger', "task_kind: 'memory_reconcile'"],
@@ -178,9 +277,29 @@ export const PROVIDER_LANES = [
       },
     ],
     roles: ['worker'],
-    provider: 'GLM OCR',
+    provider: 'GLM OCR fixed HTTP endpoint',
     model: 'glm-ocr fixed in source',
     endpointClass: 'GLM layout_parsing POST endpoint',
+    configuration: {
+      endpoint: {
+        summary: 'fixed GLM layout_parsing endpoint literal',
+        source: {
+          path: 'src/capabilities/ingestion/server/glm_ocr.ts',
+          literals: ['https://open.bigmodel.cn/api/paas/v4/layout_parsing'],
+        },
+      },
+      credential: {
+        summary: 'GLM OCR credential from ZHIPU_API_KEY',
+        source: {
+          path: 'src/capabilities/ingestion/server/glm_ocr.ts',
+          envReads: ['ZHIPU_API_KEY'],
+        },
+      },
+      model: {
+        summary: 'fixed glm-ocr model literal',
+        source: { path: 'src/capabilities/ingestion/server/glm_ocr.ts', literals: ['glm-ocr'] },
+      },
+    },
     evidence: {
       path: 'src/capabilities/ingestion/jobs/tencent_ocr_extract.ts',
       contains: ['glmPromptTokens', 'calculateGlmOcrCost', "provider: 'glm'"],
@@ -210,9 +329,39 @@ export const PROVIDER_LANES = [
       },
     ],
     roles: ['api', 'worker'],
-    provider: 'Mem0 OSS configured with project LLM and embedder',
+    provider: 'Mem0 OSS with env-configurable OpenAI-compatible GLM and DashScope endpoints',
     model: 'opaque model-bearing memory.add and memory.search operations',
     endpointClass: 'Mem0 SDK add/search, including infer:false embedding writes',
+    configuration: {
+      endpoint: {
+        summary:
+          'MEM0_LLM_BASE_URL and MEM0_EMBEDDING_BASE_URL env overrides with GLM and DashScope defaults',
+        source: {
+          path: 'src/server/memory/client.ts',
+          envReads: ['MEM0_LLM_BASE_URL', 'MEM0_EMBEDDING_BASE_URL'],
+          literals: [
+            'https://open.bigmodel.cn/api/coding/paas/v4',
+            'https://dashscope.aliyuncs.com/compatible-mode/v1',
+          ],
+        },
+      },
+      credential: {
+        summary: 'Mem0 delegated credentials from ZHIPU_API_KEY and DASHSCOPE_API_KEY',
+        source: {
+          path: 'src/server/memory/client.ts',
+          envReads: ['ZHIPU_API_KEY', 'DASHSCOPE_API_KEY'],
+        },
+      },
+      model: {
+        summary:
+          'MEM0_LLM_MODEL and MEM0_EMBEDDING_MODEL env overrides with GLM and DashScope defaults',
+        source: {
+          path: 'src/server/memory/client.ts',
+          envReads: ['MEM0_LLM_MODEL', 'MEM0_EMBEDDING_MODEL'],
+          literals: ['glm-5.2', 'text-embedding-v4'],
+        },
+      },
+    },
     evidence: {
       path: 'src/server/memory/client.ts',
       contains: ['infer: false', 'memory.add', 'memory.search'],
@@ -235,9 +384,32 @@ export const PROVIDER_LANES = [
       },
     ],
     roles: ['worker'],
-    provider: 'Tencent Cloud OCR',
+    provider: 'Tencent Cloud OCR SDK fixed endpoint',
     model: 'provider-managed QuestionMarkAgent',
     endpointClass: 'Tencent SDK SubmitQuestionMarkAgentJob and DescribeQuestionMarkAgentJob',
+    configuration: {
+      endpoint: {
+        summary: 'Tencent OCR SDK endpoint literal',
+        source: {
+          path: 'src/capabilities/ingestion/server/tencent_mark.ts',
+          literals: ['ocr.tencentcloudapi.com'],
+        },
+      },
+      credential: {
+        summary: 'Tencent SDK credentials from TENCENT_SECRET_ID and TENCENT_SECRET_KEY',
+        source: {
+          path: 'src/capabilities/ingestion/server/tencent_mark.ts',
+          envReads: ['TENCENT_SECRET_ID', 'TENCENT_SECRET_KEY'],
+        },
+      },
+      model: {
+        summary: 'provider-managed QuestionMarkAgent model selected by SDK operations',
+        source: {
+          path: 'src/capabilities/ingestion/server/tencent_mark.ts',
+          calls: ['client.SubmitQuestionMarkAgentJob', 'client.DescribeQuestionMarkAgentJob'],
+        },
+      },
+    },
     evidence: {
       path: 'src/capabilities/ingestion/server/tencent_mark.ts',
       contains: ['SubmitQuestionMarkAgentJob', 'DescribeQuestionMarkAgentJob'],
@@ -250,11 +422,17 @@ export const PROVIDER_LANES = [
 function missingEvidence(value: SourceEvidence): boolean {
   return (
     value.path.trim().length === 0 ||
-    ![value.imports, value.calls, value.contains].some((items) => (items?.length ?? 0) > 0) ||
-    [value.imports, value.calls, value.contains].some((items) =>
+    ![value.imports, value.calls, value.envReads, value.literals, value.contains].some(
+      (items) => (items?.length ?? 0) > 0,
+    ) ||
+    [value.imports, value.calls, value.envReads, value.literals, value.contains].some((items) =>
       items?.some((item) => item.trim().length === 0),
     )
   );
+}
+
+function missingConfiguration(value: ConfigurationTruth): boolean {
+  return value.summary.trim().length === 0 || missingEvidence(value.source);
 }
 
 function callerLacksAstEvidence(value: SourceEvidence): boolean {
@@ -275,6 +453,9 @@ export function validateProviderLaneInventory(lanes: readonly ProviderLaneCandid
       lane.model.trim().length === 0 ||
       lane.endpointClass.trim().length === 0 ||
       lane.costSupport.trim().length === 0 ||
+      missingConfiguration(lane.configuration.endpoint) ||
+      missingConfiguration(lane.configuration.credential) ||
+      missingConfiguration(lane.configuration.model) ||
       lane.wire.calls.length === 0 ||
       missingEvidence(lane.wire) ||
       missingEvidence(lane.evidence) ||
