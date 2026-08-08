@@ -29,7 +29,6 @@ import { buildQuizVerifyHandler } from './handlers/quiz_verify';
 import { buildSessionSummaryHandler } from './handlers/session_summary';
 import { buildSourceVerifyHandler } from './handlers/source_verify';
 import { buildSourcingHandler } from './handlers/sourcing';
-import { buildVariantGenHandler } from './handlers/variant_gen';
 import { buildVariantVerifyHandler } from './handlers/variant_verify';
 import {
   VERIFY_DISPATCH_RECOVERY_QUEUE,
@@ -39,7 +38,7 @@ import {
 // M4-T3 (YUK-319)：本文件已渐缩为「未迁域 job 注册簿」。建队配方（YUK-237 三档
 // expire/retention/DLQ + YUK-259 race 防护）抽到 queue-config.ts，与 capability
 // jobs 注册器（register-capability-jobs.ts）共用。已迁入 manifest jobs 声明并由
-// 注册器挂载的 job 不再出现在这里：knowledge 夜链三 cron + attribution_followup、
+// 注册器挂载的 job 不再出现在这里：knowledge 夜链、practice failure-learning、
 // notes 的 hub_auto_sync_nightly + note_refine、agency
 // 四 cron（dreaming/coach_daily/coach_weekly/goal_scope）。
 //
@@ -50,7 +49,7 @@ import {
 //   - registerMemoryHandlers（memory_* 队列归 memory 模块）
 //   - session_summary（链式 LLM）
 //   - note_verify / note_generate（工厂带 boss 二参链式回调，不符 JobHandlerFactory 单参签名）
-//   - quiz_gen / quiz_verify / sourcing / source_verify / variant_gen / variant_verify
+//   - quiz_gen / quiz_verify / sourcing / source_verify / variant_verify
 //   - tencent_ocr_extract（0.5s polling + lazy r2 getter）/ auto_enroll
 //   - 未迁域：ingestion（auto_enroll / tencent_ocr_extract 待 ingestion 包 jobs 声明）
 
@@ -282,17 +281,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
         await boss.send('note_verify', { artifact_id: artifactId });
       },
     }),
-  );
-
-  // Task #17: variant generation. Enqueued by attribution_followup after
-  // a judge event is written; consumes ~30-60s LLM call to produce a 1-shot
-  // variant question (mistakes spec §3.4). batchSize=1 keeps mimo
-  // rate-limit friendly.
-  await createJobQueue(boss, 'variant_gen', EXPIRE_LLM);
-  await boss.work(
-    'variant_gen',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildVariantGenHandler(db),
   );
 
   // YUK-17 / ADR-0018 — second-pass content alignment check for accepted

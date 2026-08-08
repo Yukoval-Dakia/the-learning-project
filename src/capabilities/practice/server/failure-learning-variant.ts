@@ -1,4 +1,4 @@
-// Phase 2 (Task #17) — async variant question generation.
+// Practice-owned Failure Learning — variant proposal stage.
 //
 // Triggered after a failure attempt has an effective cause. If the active
 // SubjectProfile marks the cause's primary_category as targetable, generate
@@ -24,68 +24,38 @@
 import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { and, count, eq, inArray } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
-import { z } from 'zod';
 
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import { getFailureAttemptById } from '@/server/events/queries';
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 // YUK-471 W2 (critic A4) — mistake_variant creation seam. The creation tx ALWAYS writes the
 // runtime BASE event (experimental:mistake_variant_create, carrying the fold-blind cause_category)
 // + the materialized_id_index anchor so the SoT-flip guard resolves the variant O(1); the
 // per-entity flag projectionIsWriter('mistake_variant') gates ONLY who writes the ROW (projection
 // write-through when ON, the imperative INSERT when OFF). NOT genesis (A4: genesis is backfill-only).
-import { projectMistakeVariant } from '@/server/projections/mistake_variant';
 import {
+  anchorMistakeVariant,
   assertMistakeVariantParity,
   mistakeVariantLiveRowToSnapshot,
-} from '@/server/projections/parity';
-import { projectionIsWriter } from '@/server/projections/sot-flag';
-import { listProposalInboxRows } from '@/server/proposals/inbox';
-import { writeVariantQuestionProposal } from '@/server/proposals/producers';
+  projectMistakeVariant,
+  projectionWritesMistakeVariant,
+} from '@/server/projections/mistake-variant-runtime';
+import {
+  listProposalInboxRows,
+  writeVariantQuestionProposal,
+} from '@/server/proposals/practice-runtime';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { type VariantGenInput, parseVariantOutput } from '../tasks/variant-gen';
+import { effectiveCauseForFailureAttempt, getFailureAttemptById } from './attempt-events';
+import { recordVariantPermanent } from './failure-learning-ledger';
+import type { PracticeTaskRunFn } from './task-runtime';
 
 // YUK-17 / ADR-0018 — per-parent in-flight variant cap. Counts
 // mistake_variant rows where status IN ('draft', 'active') so AI cannot flood
 // the inbox even when the user defers review.
 export const VARIANTS_MAX_IN_FLIGHT = 3;
 
-export interface VariantGenJobData {
-  attempt_event_id: string;
-}
-
-export type RunTaskFn = TaskTextRunFn;
-
-type DepsOverride = {
-  runTaskFn?: RunTaskFn;
-};
-
-const VariantOutputSchema = z.object({
-  prompt_md: z.string().min(1).max(2000),
-  reference_md: z.string().min(1).max(2000),
-  difficulty: z.number().int().min(1).max(5),
-  reasoning: z.string().min(1).max(500),
-});
-
-function parseVariantOutput(text: string): z.infer<typeof VariantOutputSchema> {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseVariantOutput: no JSON object found in text');
-  }
-  let json: unknown;
-  try {
-    json = JSON.parse(text.slice(start, end + 1));
-  } catch (e) {
-    throw new Error(`parseVariantOutput: JSON.parse failed: ${(e as Error).message}`);
-  }
-  return VariantOutputSchema.parse(json);
-}
+export type RunTaskFn = PracticeTaskRunFn;
 
 export interface RunVariantGenParams {
   db: Db;
@@ -105,9 +75,11 @@ export interface RunVariantGenResult {
     | 'skipped:variant_chain_terminus'
     | 'skipped:cause_not_targetable'
     | 'skipped:already_has_variant'
-    | 'skipped:variants_max_reached';
+    | 'skipped:variants_max_reached'
+    | 'failed:invalid_model_output';
   proposal_id?: string;
   mistake_variant_id?: string;
+  reason?: string;
 }
 
 export async function runVariantGen(params: RunVariantGenParams): Promise<RunVariantGenResult> {
@@ -219,7 +191,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     return { status: 'skipped:cause_not_targetable' };
   }
 
-  const input = {
+  const input: VariantGenInput = {
     original_question: {
       id: parent.id,
       kind: parent.kind,
@@ -238,14 +210,26 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   const result = await runTaskFn('VariantGenTask', input, {
     subjectProfile,
   });
-  const parsed = parseVariantOutput(result.text);
+  let parsed: ReturnType<typeof parseVariantOutput>;
+  try {
+    parsed = parseVariantOutput(result.text);
+  } catch (error) {
+    // The provider call already succeeded and incurred cost. Redelivery cannot
+    // repair deterministic output validation and would only reburn the model,
+    // so record a terminal product-stage failure and ACK the durable job.
+    await recordVariantPermanent(db, result.task_run_id);
+    return {
+      status: 'failed:invalid_model_output',
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
 
   const rootId = parent.root_question_id ?? parent.id;
   const now = new Date();
 
   let proposalId = '';
   const mistakeVariantId = createId();
-  const flip = projectionIsWriter('mistake_variant');
+  const flip = projectionWritesMistakeVariant();
   await db.transaction(async (tx) => {
     proposalId = await writeVariantQuestionProposal(tx, {
       source_question_id: parent.id,
@@ -258,6 +242,10 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
       root_question_id: rootId,
       variant_depth: parent.variant_depth + 1,
       reason_md: parsed.reasoning,
+      // Causality follows the effective failure truth. An authoritative user
+      // cause therefore remains the proposal parent; an AI-attributed lane
+      // points at the exact judge event rather than merely the attempt.
+      caused_by_event_id: cause.event_id,
       task_run_id: result.task_run_id ?? null,
       cost_usd: result.cost_usd,
       created_at: now,
@@ -303,11 +291,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     });
     // 2. ALWAYS write the materialized_id_index anchor (mvId → the create event) regardless of the
     //    flag. The event log + anchor is the source of truth; the flag only switches the ROW writer.
-    await upsertMaterializedIdIndex(tx, {
-      materialized_id: mistakeVariantId,
-      anchor_event_id: createEventId,
-      subject_kind: 'mistake_variant',
-    });
+    await anchorMistakeVariant(tx, mistakeVariantId, createEventId);
     // 3. ROW writer — gated on the per-entity flag (critic A1, defer-flip-not-build):
     //    ON  → the projection write-through folds (the create base) and writes the row;
     //    OFF → the imperative INSERT stays the writer (current behavior — claim the in-flight slot
@@ -335,28 +319,5 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     status: 'proposed',
     proposal_id: proposalId,
     mistake_variant_id: mistakeVariantId,
-  };
-}
-
-export function buildVariantGenHandler(
-  db: Db,
-  deps: DepsOverride = {},
-): (jobs: Job<VariantGenJobData>[]) => Promise<void> {
-  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
-  return async (jobs) => {
-    for (const job of jobs) {
-      const attemptEventId = job.data?.attempt_event_id;
-      if (!attemptEventId) {
-        console.warn('[variant_gen] job missing attempt_event_id', job.id);
-        continue;
-      }
-      try {
-        const result = await runVariantGen({ db, attemptEventId, runTaskFn });
-        console.log(`[variant_gen] ${attemptEventId} → ${result.status}`);
-      } catch (err) {
-        console.error(`[variant_gen] ${attemptEventId} failed`, err);
-        throw err;
-      }
-    }
   };
 }

@@ -1,4 +1,4 @@
-// Phase 1c.1 Step 4 — attribution rewrite.
+// Practice-owned Failure Learning — attribution stage.
 //
 // PREVIOUSLY: takes mistakeId + expectedVersion, UPDATEs mistake.cause with optimistic
 // version check. NOW: takes attemptEventId, writes a chained judge event via writeEvent.
@@ -10,89 +10,28 @@
 // per ADR-0005 — never call db.insert(event) directly; goes through writeEvent.
 
 import { newId } from '@/core/ids';
-import {
-  CauseSchema,
-  type CauseSchemaT,
-  type MetaCauseFieldsT,
-  getDefaultMetaCause,
-  validateCauseAgainstProfile,
-} from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { event as eventTable } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
-import { getJudgeForAttempt } from '@/server/events/queries';
 // YUK-598 stale-const 收口（v2 §9①）：defaultSubjectProfile 冻结常量 → 活 registry
 // resolveSubjectProfile()（每次调用求值，owner 编辑 general 即跟随）。
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
-import { z } from 'zod';
-import { writePermanentAiFailureLedger, writeRetryableAiFailureLedger } from './ai_failure_log';
-import { retrieveCauseCandidates } from './attribute-retrieve';
-
-// Lane B `CauseSchema` uses `analysis_md`. Step 7 cut over: the AttributionTask
-// prompt now emits `analysis_md` natively, so the Step 4 `z.preprocess` bridge
-// has been removed. Legacy LLM outputs emitting `ai_analysis_md` will fail
-// schema parse and surface as a no-op (no judge event written) — see
-// runAttributionAndWriteJudgeEvent's parse-error catch path.
-const AttributionOutputSchema = CauseSchema.extend({
-  analysis_md: z.string().min(1).max(2000),
-});
-
-export type AttributionOutput = Omit<CauseSchemaT, keyof MetaCauseFieldsT> & MetaCauseFieldsT;
-
-export function parseAttributionOutput(
-  text: string,
-  profile: SubjectProfile = resolveSubjectProfile(),
-): AttributionOutput {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseAttributionOutput: no JSON object found in text');
-  }
-  const slice = text.slice(start, end + 1);
-  let json: unknown;
-  try {
-    json = JSON.parse(slice);
-  } catch (e) {
-    throw new Error(`parseAttributionOutput: JSON.parse failed: ${(e as Error).message}`);
-  }
-  const parsed = validateCauseAgainstProfile(AttributionOutputSchema.parse(json), profile);
-  return {
-    ...parsed,
-    // Explicit null from the model is meaningful (for example a violation).
-    // Only an omitted field falls back to the profile category's cold-start prior.
-    meta_cause:
-      parsed.meta_cause === undefined
-        ? (getDefaultMetaCause(parsed.primary_category) ?? null)
-        : parsed.meta_cause,
-    meta_cause_secondary: parsed.meta_cause_secondary ?? null,
-    metacog_flag: parsed.metacog_flag ?? null,
-    bloom_level: parsed.bloom_level ?? null,
-    self_corrected_on_hint: parsed.self_corrected_on_hint ?? null,
-    recurred_cross_item: parsed.recurred_cross_item ?? null,
-  };
-}
-
-export interface AttributionInput {
-  prompt_md: string;
-  reference_md: string | null;
-  wrong_answer_md: string;
-  knowledge_context: Array<{ id: string; name: string; effective_domain: string | null }>;
-  // YUK-562 (process-data 通电) — 学生自述的解题思路 / 过程文本（来自 attempt payload
-  // 的 reasoning_trace，solve-session 首个 live writer）。runner 把整个 input 对象
-  // JSON.stringify 进 user message（runner.ts:304），故该字段非空时会作为「学生自述思路」
-  // 一节自动出现在归因 prompt 里，帮 LLM 在思维层面定位错因；缺省（省略 key）时 user
-  // message byte-identical → 归因 prompt 不变。system prompt（buildAttributionPrompt /
-  // Rerank）刻意不改：它被 registry.test.ts 的逐字节 hash oracle 冻结，字段名自描述即可。
-  reasoning_trace_md?: string | null;
-}
+import { retrieveCauseCandidates } from '../tasks/attribute-retrieve';
+import {
+  type AttributionInput,
+  type AttributionOutput,
+  parseAttributionOutput,
+} from '../tasks/attribution';
+import { getJudgeForAttempt } from './attempt-events';
+import { recordAttributionPermanent, recordAttributionRetryable } from './failure-learning-ledger';
+import { type PracticeTaskRunFn, practiceCostUsdToMicroUsd } from './task-runtime';
 
 export interface RunAttributionAndWriteJudgeEventParams {
   db: Db;
   attemptEventId: string; // was mistakeId + expectedVersion
   input: AttributionInput;
-  runTaskFn: TaskTextRunFn;
+  runTaskFn: PracticeTaskRunFn;
   subjectProfile?: SubjectProfile;
   /**
    * Optional: knowledge ids the judge referenced. Defaults to []. Used to populate
@@ -157,7 +96,7 @@ export async function runAttributionAndWriteJudgeEvent(
   // the durable record. OCR #6: ALSO write a best-effort `failed_retryable`
   // ledger row for the copilot `attribute_mistake` caller, which does NOT rethrow
   // and so has no other observability for a retryable failure.
-  let result: Awaited<ReturnType<TaskTextRunFn>>;
+  let result: Awaited<ReturnType<PracticeTaskRunFn>>;
   try {
     // Idempotency check — mirrors old "cause already set" behaviour. The DB-level
     // PK conflict in writeEvent gives us idempotency on event id, but here we
@@ -225,7 +164,7 @@ export async function runAttributionAndWriteJudgeEvent(
   } catch (err) {
     console.error('runAttributionAndWriteJudgeEvent: retryable failure (attempt unaffected)', err);
     // Best-effort (swallows internally); never masks the retryable classification.
-    await writeRetryableAiFailureLedger(params.db, 'AttributionTask');
+    await recordAttributionRetryable(params.db);
     return { outcome: 'retryable', error: err };
   }
 
@@ -242,7 +181,7 @@ export async function runAttributionAndWriteJudgeEvent(
       'runAttributionAndWriteJudgeEvent: permanent parse failure (attempt unaffected)',
       err,
     );
-    await writePermanentAiFailureLedger(params.db, 'AttributionTask', result.task_run_id);
+    await recordAttributionPermanent(params.db, result.task_run_id);
     return { outcome: 'permanent', error: err };
   }
 
@@ -302,7 +241,7 @@ export async function runAttributionAndWriteJudgeEvent(
       },
       caused_by_event_id: params.attemptEventId,
       task_run_id: result.task_run_id ?? null,
-      cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
+      cost_micro_usd: practiceCostUsdToMicroUsd(result.cost_usd),
       created_at: new Date(),
     });
   } catch (err) {
@@ -311,7 +250,7 @@ export async function runAttributionAndWriteJudgeEvent(
       err,
     );
     // Best-effort (swallows internally); never masks the retryable classification.
-    await writeRetryableAiFailureLedger(params.db, 'AttributionTask');
+    await recordAttributionRetryable(params.db);
     return { outcome: 'retryable', error: err };
   }
 

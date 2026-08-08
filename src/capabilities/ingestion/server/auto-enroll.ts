@@ -228,13 +228,6 @@ export interface RunAutoEnrollParams {
    * `defaultImageFetch`.
    */
   gradeImageFetchFn?: MultimodalDirectImageFetchFn;
-  /**
-   * YUK-482 cut ④ — attribution_followup enqueue seam. DB tests inject a vi.fn()
-   * to assert the SAME job the human import route enqueues fires for a graded
-   * FAILURE. Defaults to the production pg-boss send (gated on
-   * shouldEnqueueBackgroundJobs()).
-   */
-  enqueueAttributionFollowupFn?: (attemptEventId: string) => Promise<void>;
   /** Override env for the flag / threshold reads (tests). */
   env?: FlagEnv;
   /** Shared wall-clock for the batch. */
@@ -287,8 +280,6 @@ export async function runAutoEnrollForSession(
   // the per-block flow below is byte-for-byte today's text-draft path.
   const studentGrading = mode === 'enroll' && studentAnswerGradingEnabled(env);
   const gradeStudentAnswerFn = params.gradeStudentAnswerFn ?? defaultGradeStudentAnswer;
-  const enqueueAttributionFollowupFn =
-    params.enqueueAttributionFollowupFn ?? defaultEnqueueAttributionFollowup;
 
   // Load the session (must be an ingestion session in an extractable state).
   const sessionRows = await params.db
@@ -1041,30 +1032,9 @@ export async function runAutoEnrollForSession(
 
     enrolled.push(result);
 
-    // ---- YUK-482 cut ④ — 错因 (attribution) for a student-graded FAILURE. ----
-    // Enqueue the SAME attribution_followup job the human import route uses
-    // (import.ts:506) so the async attribution agent supersedes the placeholder
-    // cause for a graded wrong answer. Only the student-graded FAILURE path needs it
-    // (the normal auto path with a mistakeDraft.cause writes its own chained judge
-    // event in-tx above; success/partial/unanswered have no failure cause to
-    // attribute). Runs AFTER the tx commits (boss.send is an external side-effect;
-    // mirrors import.ts which sends after the writes commit) — best-effort, never
-    // aborts the committed enroll.
-    if (gradedVerdict && outcome === 'failure' && result.attempt_event_id) {
-      // Best-effort: the default impl (`defaultEnqueueAttributionFollowup`) already
-      // swallows internal errors, but an injected test seam (or a future impl) is
-      // not contractually required to. Wrap so a throwing seam NEVER aborts the
-      // already-committed enroll — matches the comment above and the import-route
-      // precedent (import.ts logs + continues on boss.send failure).
-      try {
-        await enqueueAttributionFollowupFn(result.attempt_event_id);
-      } catch (err) {
-        console.warn(
-          `[auto_enroll:student_grade] attribution_followup enqueue threw (non-fatal) for attempt ${result.attempt_event_id}:`,
-          err,
-        );
-      }
-    }
+    // Failure-learning follow-up is derived from the committed attempt event by
+    // the practice-owned durable subscription. This producer intentionally has
+    // no queue dependency or post-transaction best-effort side effect.
   }
 
   return {
@@ -1322,23 +1292,4 @@ async function defaultGradeStudentAnswer(params: {
     coarse_outcome: result.coarse_outcome,
     confidence: result.confidence,
   };
-}
-
-/**
- * YUK-482 cut ④ — production attribution_followup enqueue. The SAME job the human
- * import route fires (import.ts:506) so a graded FAILURE supersedes its placeholder
- * cause via the existing async attribution chain. Gated on
- * shouldEnqueueBackgroundJobs() (no boss in unit/test runtimes); best-effort —
- * a send failure is logged, never aborts the already-committed enroll.
- */
-async function defaultEnqueueAttributionFollowup(attemptEventId: string): Promise<void> {
-  const { shouldEnqueueBackgroundJobs } = await import('@/server/runtime-env');
-  if (!shouldEnqueueBackgroundJobs()) return;
-  try {
-    const { getStartedBoss } = await import('@/server/boss/client');
-    const boss = await getStartedBoss();
-    await boss.send('attribution_followup', { attempt_event_id: attemptEventId });
-  } catch (err) {
-    console.warn(`[auto_enroll] attribution_followup enqueue failed for ${attemptEventId}:`, err);
-  }
 }

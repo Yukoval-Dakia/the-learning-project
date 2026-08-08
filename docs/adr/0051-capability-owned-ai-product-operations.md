@@ -1,9 +1,9 @@
 # ADR-0051 — Capability-owned AI product operations
 
-**Status**: Accepted（Phase 0 正在实施）
+**Status**: Accepted（Phase 0 closed；Phase 1 F1 implemented, review pending）
 **Decision source**: owner 2026-08-02「直接启动 FULL」；YUK-840
 **Amends**: `docs/superpowers/specs/2026-06-10-architecture-redesign-design.md` §2.1–2.2 的当前代码执行方式，不推翻其产品裁决
-**Related**: YUK-767 · YUK-840 · YUK-841 · YUK-842 · ADR-0004 · ADR-0021 · ADR-0032
+**Related**: YUK-767 · YUK-840 · YUK-841 · YUK-842 · YUK-847 · YUK-848 · YUK-849 · ADR-0004 · ADR-0021 · ADR-0032
 
 ## Context
 
@@ -22,6 +22,24 @@ client。它解决了“从哪里接入”，没有解决“谁拥有完整产�
 
 因此当前 `TaskDef`、`JobDecl` 和 tool manifest 是有用的 access/composition seam，但不是有足够
 深度的产品模块。继续增加 wrapper、facade 或 manifest 字段不会自动关闭所有权。
+
+## Implementation status (2026-08-08)
+
+Phase 1 的首个竖切 F1 已在 YUK-847–849 实现，等待 PR exact-head CI / review：
+
+- attribution、rerank 与 variant-gen 的 prompt/parser/预算迁入 `practice/tasks`；中央 registry
+  只保留命名静态投影，既有 prompt hash 不变；
+- `practice.failure-learning-attempt@v1` 从 committed attempt 事实事务性投递稳定 job identity；
+  producer 不再知道 `attribution_followup` 队列；
+- 两个 jobs、两个 concrete DomainTools 与 `author_question` variant operation 统一调用
+  practice-owned Failure Learning；旧 knowledge job、中央 variant handler 与中央双工具实现删除；
+- proposal 的 `caused_by_event_id` 指向精确 effective cause event；invalid model output 记永久失败，
+  durable redelivery 不重复购买同一确定性 parse failure；
+- dependency ratchet 从 `547 / 71 / 63` 收紧到 `531 / 70 / 62`。
+
+这仍是 static modular monolith 内的本地 service seam，不是网络微服务。该变更尚未部署；由于
+event-subscription bootstrap 不回放启动前历史，发布顺序必须是 worker-first，并在 subscription
+active 后再替换移除了 producer raw send 的 app。
 
 ## Decision
 

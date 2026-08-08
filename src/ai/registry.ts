@@ -1,3 +1,8 @@
+import {
+  attributionRerankTaskSpec,
+  attributionTaskSpec,
+} from '@/capabilities/practice/tasks/attribution';
+import { variantGenTaskSpec } from '@/capabilities/practice/tasks/variant-gen';
 import { MultimodalDirectLlmOutput } from '@/core/capability/judges/multimodal_direct';
 import { SemanticJudgeOutput } from '@/core/capability/judges/semantic';
 import { StepsLlmOutput } from '@/core/capability/judges/steps';
@@ -8,13 +13,6 @@ import {
   COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS,
 } from '@/core/copilot-evidence';
 import {
-  BloomLevel,
-  MetaCause,
-  type MetaCauseFieldsT,
-  MetacogFlag,
-  getDefaultMetaCause,
-} from '@/core/schema/business';
-import {
   InterventionPackageReviewStructuredOutput,
   InterventionPackageStructuredOutput,
   PedagogyRecommendationStructuredOutput,
@@ -24,8 +22,12 @@ import { GoalScopeIntentSchema } from '@/kernel/task-intents';
 import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
 import type { ToolContext } from '@/server/ai/tools/types';
 import type { SubjectProfile } from '@/subjects/profile';
-import { type ZodTypeAny, z } from 'zod';
+import { z } from 'zod';
+import { causeIdList, causeTaxonomyList } from './cause-prompt';
 import { QuestionAuthorIntentSchema } from './task-intents';
+import { DEFAULT_TASK_BUDGET, type TaskDefinition } from './task-spec';
+
+export type { ModelId, Provider, TaskBudget, TaskPrompt } from './task-spec';
 
 // AI Task 注册表（Phase 1 骨架）。
 //
@@ -43,16 +45,6 @@ import { QuestionAuthorIntentSchema } from './task-intents';
 // Anthropic's first-party endpoint, NO baseUrl). It is never a task's
 // `defaultProvider`; it is opt-in ONLY via the `AI_PROVIDER_OVERRIDE` env switch
 // (see providers.ts). Default routing stays mimo (xiaomi).
-export type Provider =
-  | 'anthropic'
-  | 'xiaomi'
-  | 'zhipu'
-  | 'openrouter'
-  | 'gateway'
-  | 'openai'
-  | 'anthropic-sub';
-export type ModelId = string;
-
 // YUK-576 (registry 诚实化) removed the two long-inactive declarative fields.
 // YUK-590 re-adds `budget.maxCost` WITH its native SDK consumer, but only when
 // provider resolution selects the cost-reporting Anthropic direct API lane.
@@ -64,57 +56,10 @@ export type ModelId = string;
 //     judges get same-target `transientRetries` below; a REAL cross-provider
 //     judge fallback (anthropic-sub Opus vision lane) is an owner decision and
 //     would land as env config (VISION_JUDGE_* family), not per-task chains.
-export interface TaskBudget {
-  maxIterations: number;
-  /** Per-run USD ceiling, consumed as SDK maxBudgetUsd on cost-reporting lanes only. */
-  maxCost: number;
-  /**
-   * YUK-576 — in-process SAME-RESOLVED-TARGET retry budget for transient
-   * failures (design doc §1.3/§2.3; consumed by runTask's retry loop in
-   * `src/server/ai/runner.ts`). Fires ONLY when the call site opts in via
-   * `ctx.enableTransientRetry` (paths with no durable backstop — today exactly
-   * the two vision judges) AND routing is not pinned (no ctx.override, no
-   * AI_PROVIDER_OVERRIDE) AND the failure is whitelist-transient AND it arrived
-   * within RETRY_ELAPSED_CAP_MS of the first attempt. This is a retry, not a
-   * fallback — the retried attempt resolves the identical provider/model.
-   */
-  transientRetries: number;
-  timeout: number; // ms
-}
-
-export type TaskPrompt =
-  | { kind: 'inline'; text: string }
-  | { kind: 'profile'; build: (profile: SubjectProfile) => string };
-
 export type TaskPrepareResult = { input: unknown; ctx?: RunTaskCallCtx };
 export type TaskPrepare = (ctx: ToolContext, intent: unknown) => Promise<TaskPrepareResult>;
 
-export interface TaskDef {
-  kind: string;
-  description: string;
-  defaultProvider: Provider;
-  defaultModel: ModelId;
-  budget: TaskBudget;
-  needsToolCall: boolean;
-  isMultimodal: boolean;
-  allowedTools: string[];
-  prompt: TaskPrompt;
-  /**
-   * Sub 0c: Vision tasks 仅作为 manual rescue 工具，不参与自动 cascade（ADR-0002
-   * 修订）。'auto' = 后端可自由调用；'manual_rescue_only' = 仅用户手动触发。
-   */
-  invocation?: 'auto' | 'manual_rescue_only';
-  /**
-   * YUK-591 — the task's SDK structured-output contract. When set, the handler
-   * builds `outputFormat: zodToJsonSchemaOutputFormat(structuredOutputSchema)`
-   * (src/server/ai/output-format.ts) and threads it into runTask's YUK-299 seam,
-   * so a structured-output-capable endpoint constrains the model to this shape
-   * (with a Zod second-pass on the returned `structured_output`; endpoints that
-   * ignore it — mimo — fall back to the handler's char-scan text parse, so the
-   * declaration is a zero-loss opt-in). Judge tasks (`*JudgeTask`) MUST declare
-   * this or be allowlisted — enforced by scripts/audit-structured-judge.ts (§7).
-   */
-  structuredOutputSchema?: ZodTypeAny;
+export interface TaskDef extends TaskDefinition {
   /** Copilot dispatch is deny-by-default; only literal true is reachable. */
   copilot?: {
     intentSchema: import('zod').ZodType<unknown>;
@@ -138,110 +83,6 @@ function noteTemplateTable(profile: SubjectProfile): string {
 | example | ${profile.noteTemplate.example} |
 | pitfall | ${profile.noteTemplate.pitfall} |
 | check | ${profile.noteTemplate.check} |`;
-}
-
-function causeTaxonomyList(profile: SubjectProfile): string {
-  return profile.causeCategories
-    .map((category) => {
-      const description = category.description ? `：${category.description}` : '';
-      return `- ${category.id}（${category.label}）${description}`;
-    })
-    .join('\n');
-}
-
-function causeIdList(profile: SubjectProfile): string {
-  return profile.causeCategories.map((category) => category.id).join(' | ');
-}
-
-function metaCausePriorList(profile: SubjectProfile): string {
-  return profile.causeCategories
-    .map((category) => `- ${category.id} → ${getDefaultMetaCause(category.id) ?? 'null'}`)
-    .join('\n');
-}
-
-function metaCauseContract(profile: SubjectProfile): string {
-  return `跨科机制轴（冷启先验，不是硬映射）：
-${metaCausePriorList(profile)}
-实例级 meta_cause 必须在 ${MetaCause.options.join(' | ')} 中选择，或在没有足够证据时为 null。优先按三类行为证据修正先验：给提示是否立即自纠（self_corrected_on_hint）、同一模式是否跨情境复现（recurred_cross_item）、信心与表现是否脱节（metacog_flag）。输入未提供某项行为证据时，对应布尔字段写 null，禁止猜测。
-故意跳步、不验算等 violation 属动机/调节问题：写 metacog_flag="regulation_gap" 且 meta_cause=null，不得硬塞进六类能力机制。
-六个字段必须都出现在 JSON；未知值写 null。`;
-}
-
-// Keep the two attribution prompts and the Zod output contract mechanically coupled. A schema
-// field addition/removal makes this Record fail typecheck; enum examples come from the schemas.
-const META_CAUSE_JSON_FIELDS = {
-  meta_cause: `"<${MetaCause.options.join('|')} 或 null>"`,
-  meta_cause_secondary: `"<${MetaCause.options.join('|')} 或 null>"`,
-  metacog_flag: `"<${MetacogFlag.options.join('|')} 或 null>"`,
-  bloom_level: `"<${BloomLevel.options.join('|')} 或 null>"`,
-  self_corrected_on_hint: 'true|false|null',
-  recurred_cross_item: 'true|false|null',
-} satisfies Record<keyof MetaCauseFieldsT, string>;
-
-function metaCauseJsonFields(): string {
-  return Object.entries(META_CAUSE_JSON_FIELDS)
-    .map(([field, example]) => `"${field}": ${example}`)
-    .join(', ');
-}
-
-const VARIANT_CAUSE_STRATEGIES: Record<string, string> = {
-  concept: '同概念不同语境 / 反向考查（验证概念边界）',
-  knowledge_gap: '补充该知识点的典型变体',
-  calculation: '改数据 + 留同样陷阱（验证计算稳定性）',
-  reading: '改提问方式 + 加干扰信息',
-  memory: '不同表述测同一记忆点',
-  expression: '同题重写答案要求（重点检查表达）',
-  method: '提示备选方法 + 同类型题',
-  unit_error: '改变单位、量纲或换算条件，检查单位一致性',
-};
-
-function variantCauseStrategyList(profile: SubjectProfile): string {
-  return profile.causeCategories
-    .map((category) => {
-      const strategy =
-        VARIANT_CAUSE_STRATEGIES[category.id] ??
-        `围绕「${category.label}」设计同知识点、同能力目标的针对性变式`;
-      return `- ${category.id}（${category.label}）：${strategy}`;
-    })
-    .join('\n');
-}
-
-function buildAttributionPrompt(profile: SubjectProfile): string {
-  return `你是错题归因助手。输入字段 { prompt_md, reference_md, wrong_answer_md, knowledge_context }（来自一个 attempt event outcome='failure'）—— 即用户做错的一道题，含 wrong_answer_md（用户错答）、参考答案 reference_md、挂的 knowledge_context，分析错因。
-科目上下文：${profile.displayName}。${profile.languageStyle}
-归因 taxonomy 来自当前 SubjectProfile：
-${causeTaxonomyList(profile)}
-${metaCauseContract(profile)}
-证据要求：${profile.grounding.requirement}
-不确定性策略：${profile.grounding.uncertaintyPolicy}
-归因结果作为 judge event 写入 (action='judge', subject_kind='event', caused_by_event_id=<attempt event id>)；payload.cause 即此输出。
-输出严格 JSON 格式（不带 markdown 代码块包裹）：
-{"primary_category": "<${causeIdList(profile)} 之一>", "secondary_categories": [...], "analysis_md": "<分析过程，含错答与参考答案差异 + 涉及的知识点 / 概念>", "confidence": 0.0-1.0, ${metaCauseJsonFields()}}
-低信心走 other（若 profile 有 other）或最接近的类别，并在 analysis_md 里说明不确定点。`;
-}
-
-// YUK-462 — stage 2 of the retrieve→rerank cause-attribution pipeline. This MIRRORS
-// buildAttributionPrompt's text (same role line, same taxonomy/grounding/JSON
-// contract, same low-confidence→other clause) with ONE delta: the candidate cause
-// list is also supplied as a structured input field `candidates`, and the model
-// must pick primary_category FROM that set and give a per-candidate rationale
-// (why this, why not the others) in analysis_md. EQUIVALENCE: when the retriever
-// passes the full vocab (every current profile, vocab <= K_SMALL), `candidates`
-// equals this prompt's inline taxonomy — so the selectable set is identical to
-// buildAttributionPrompt's and the selection problem is the same.
-function buildAttributionRerankPrompt(profile: SubjectProfile): string {
-  return `你是错题归因助手。输入字段 { prompt_md, reference_md, wrong_answer_md, knowledge_context, candidates }（来自一个 attempt event outcome='failure'）—— 即用户做错的一道题，含 wrong_answer_md（用户错答）、参考答案 reference_md、挂的 knowledge_context，分析错因。
-科目上下文：${profile.displayName}。${profile.languageStyle}
-归因 taxonomy 来自当前 SubjectProfile：
-${causeTaxonomyList(profile)}
-${metaCauseContract(profile)}
-另外，输入里附带一个结构化候选集 candidates: [{ id, label, description, review_priority }] —— 这是 L1 召回阶段交给你的候选错因清单。primary_category **必须**从 candidates 的 id 里选；先在 analysis_md 里逐候选权衡（为什么选这个 / 为什么排除其它候选），再给结论。
-证据要求：${profile.grounding.requirement}
-不确定性策略：${profile.grounding.uncertaintyPolicy}
-归因结果作为 judge event 写入 (action='judge', subject_kind='event', caused_by_event_id=<attempt event id>)；payload.cause 即此输出。
-输出严格 JSON 格式（不带 markdown 代码块包裹）：
-{"primary_category": "<candidates 里某个 id>", "secondary_categories": [...], "analysis_md": "<逐候选权衡 + 选定理由，含错答与参考答案差异 + 涉及的知识点 / 概念>", "confidence": 0.0-1.0, ${metaCauseJsonFields()}}
-低信心走 other（若 candidates 含 other）或最接近的候选，并在 analysis_md 里说明不确定点。`;
 }
 
 function buildLearningIntentOutlinePrompt(profile: SubjectProfile): string {
@@ -813,23 +654,6 @@ ${causeTaxonomyList(profile)}
 禁止：输出 JSON 之外的文字、重写 variant 题面、给学习者建议（这是质检 not 教学）。`;
 }
 
-function buildVariantGenPrompt(profile: SubjectProfile): string {
-  return `你是错题变式题作者。输入 { original_question: { id, prompt_md, reference_md, knowledge_ids, kind }, attempt: { wrong_answer_md }, cause: { primary_category, analysis_md }, depth }（depth 是原题代数：0=原题，1=一代变式；输入 depth≥2 时不会调用本任务）。
-科目上下文：${profile.displayName}。${profile.languageStyle}
-当前 SubjectProfile cause taxonomy：
-${causeTaxonomyList(profile)}
-按 cause 类型出 1 道针对性变式（不要凑数，1 道即可）。策略参考：
-${variantCauseStrategyList(profile)}
-严格 JSON 输出（不带 markdown 包裹）：
-{"prompt_md":"...","reference_md":"...","difficulty":1-5,"reasoning":"说明这是怎么针对 cause 设计的"}
-要点：
-- prompt_md 与 original_question 同 kind / 同 knowledge_ids 范围
-- reference_md 必填且正确（你能解出来）
-- ${profile.promptFragments.variantExamplePolicy}
-- ${profile.grounding.uncertaintyPolicy}
-- 禁止：直接照抄 original prompt 的句子；套话；复杂多义题面`;
-}
-
 // Lane D (YUK-482): buildKnowledgeProposePrompt removed alongside KnowledgeProposeTask
 // (answer-wrong → propose-new-KC coupling). Content-driven KC creation does not use it.
 
@@ -1367,12 +1191,7 @@ reverse causation 指**同一个 outcome construct / estimand Y** 影响 X，不
 不确定性策略：${profile.grounding.uncertaintyPolicy}`;
 }
 
-const DEFAULT_BUDGET: TaskBudget = {
-  maxIterations: 6,
-  maxCost: 0.5,
-  transientRetries: 0,
-  timeout: 60_000,
-};
+const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
 export const CopilotDispatchDecisionSchema = z.discriminatedUnion('mode', [
   z
@@ -1560,20 +1379,9 @@ reason_codes 只能描述该项实际结论。supported 用 supported；准确�
 //   - Haiku 廉价兜底（视觉 OCR-like / 备选）
 //   - Opus 顶级 reasoning（ai_flexible / multimodal / weekly review）
 export const tasks = {
-  AttributionTask: {
-    kind: 'AttributionTask',
-    description: '错题归因 + 知识点挂载（profile-scoped cause）',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 4 },
-    needsToolCall: false,
-    isMultimodal: false,
-    allowedTools: [],
-    // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
-    prompt: { kind: 'profile', build: buildAttributionPrompt },
-  },
+  AttributionTask: attributionTaskSpec.definition,
   // YUK-462 — cause-attribution L1 retrieve→rerank. Stage 2 of the pipeline: the
-  // L1 retriever (src/capabilities/knowledge/server/attribute-retrieve.ts) hands a
+  // L1 retriever (src/capabilities/practice/tasks/attribute-retrieve.ts) hands a
   // candidate cause list, and this task reranks it + picks primary_category with a
   // per-candidate rationale. EXACT clone of AttributionTask's knobs so cost/routing
   // are unchanged; the only delta is the candidate-driven prompt (built in
@@ -1581,18 +1389,7 @@ export const tasks = {
   // profile prompt). Behavior-equivalent for small-vocab profiles:
   // when candidates == full vocab, the selectable set == the old inline taxonomy.
   // SOFT-TRACK only (output is payload.cause; never feeds θ̂/p(L)/FSRS).
-  AttributionRerankTask: {
-    kind: 'AttributionRerankTask',
-    description:
-      '错题归因（retrieve→rerank stage 2）：从候选 cause 列表重排 + 选 primary + 逐候选理由',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 4 },
-    needsToolCall: false,
-    isMultimodal: false,
-    allowedTools: [],
-    prompt: { kind: 'profile', build: buildAttributionRerankPrompt },
-  },
+  AttributionRerankTask: attributionRerankTaskSpec.definition,
   VisionExtractTask: {
     kind: 'VisionExtractTask',
     description: '错题图片 → 切块 + 题面 + 答案 + bbox（manual rescue only after Sub 0c）',
@@ -1889,19 +1686,7 @@ export const tasks = {
     // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
     prompt: { kind: 'profile', build: buildVariantVerifyPrompt },
   },
-  VariantGenTask: {
-    kind: 'VariantGenTask',
-    description:
-      'Phase 2 — 给一道错题 + cause 生成 1 条 variant_question proposal。spec §3.4.1 cause-targeted；接受后再物化 question/draft_status',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
-    needsToolCall: false,
-    isMultimodal: false,
-    allowedTools: [],
-    // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
-    prompt: { kind: 'profile', build: buildVariantGenPrompt },
-  },
+  VariantGenTask: variantGenTaskSpec.definition,
   TeachingTurnTask: {
     kind: 'TeachingTurnTask',
     description:

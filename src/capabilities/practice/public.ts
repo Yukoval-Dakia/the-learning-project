@@ -28,3 +28,8 @@ export {
   retireInterventionDiagnosticQuestion,
 } from './server/intervention-diagnostics';
 export type { CommittedInterventionDiagnosticAttempt } from './server/intervention-diagnostics';
+export { proposeFailureVariant } from './server/failure-learning-public';
+export type {
+  ProposeFailureVariantInput,
+  VariantProposalResult,
+} from './server/failure-learning-public';

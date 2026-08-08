@@ -3,11 +3,10 @@
  *
  * Strategy:
  * - Use testDb() / resetDb() for actual Postgres integration
- * - Mock @/capabilities/knowledge/server/attribute to avoid real AI calls
  * - Mock @/server/ai/runner
  * - Lane D (YUK-482): the failure→propose-new-KC side-effect was removed from
- *   import; these tests assert NO propose event is written while attribution
- *   still runs.
+ *   import; these tests assert only canonical capture facts are written. The
+ *   practice-owned durable subscription derives failure learning afterwards.
  */
 
 import { createId } from '@paralleldrive/cuid2';
@@ -40,17 +39,6 @@ vi.mock('@/server/ai/runner', () => ({
     finishReason: 'stop',
     usage: { inputTokens: 1, outputTokens: 1 },
   })),
-}));
-
-const mockRunAttributionAndWriteJudgeEvent = vi.fn(async () => {});
-vi.mock('@/capabilities/knowledge/server/attribute', () => ({
-  runAttributionAndWriteJudgeEvent: (...args: unknown[]) =>
-    mockRunAttributionAndWriteJudgeEvent(...(args as [])),
-  parseAttributionOutput: vi.fn(),
-}));
-
-vi.mock('@/capabilities/knowledge/server/tree', () => ({
-  loadTreeSnapshot: vi.fn(async () => []),
 }));
 
 import { POST } from './import';
@@ -210,9 +198,7 @@ describe('POST /api/ingestion/[id]/import', () => {
   beforeEach(async () => {
     r2._store.clear();
     await resetDb();
-    mockRunAttributionAndWriteJudgeEvent.mockReset();
     vi.clearAllMocks();
-    mockRunAttributionAndWriteJudgeEvent.mockResolvedValue(undefined);
   });
 
   it('unchanged card happy path: cause=null → inserts 1 question + 1 attempt event, session=imported', async () => {
@@ -1420,9 +1406,7 @@ describe('POST /api/ingestion/[id]/import — set_status fold==row parity (YUK-5
   beforeEach(async () => {
     r2._store.clear();
     await resetDb();
-    mockRunAttributionAndWriteJudgeEvent.mockReset();
     vi.clearAllMocks();
-    mockRunAttributionAndWriteJudgeEvent.mockResolvedValue(undefined);
   });
 
   async function expectQbFoldEqualsRow(

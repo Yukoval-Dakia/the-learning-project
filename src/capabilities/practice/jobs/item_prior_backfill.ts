@@ -14,18 +14,17 @@
 import { sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { parseItemPriorOutput } from '@/server/ai/item-prior';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import { inArray } from 'drizzle-orm';
+import { resolveSubjectProfileForKnowledgeIds } from '../server/knowledge-runtime';
+import { type PracticeTaskRunFn, makePracticeTaskRunFn } from '../server/task-runtime';
 
 type DepsOverride = {
-  runTaskFn?: TaskTextRunFn;
+  runTaskFn?: PracticeTaskRunFn;
   /** 每轮最多标定多少题（防一次 job 打爆 LLM 预算）。default 25。 */
   maxPerRun?: number;
 };
@@ -74,7 +73,7 @@ export async function runItemPriorBackfill(
   result.considered = candidates.length;
   if (candidates.length === 0) return result;
 
-  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
+  const runTaskFn = deps.runTaskFn ?? makePracticeTaskRunFn(db);
 
   // Resolve knowledge names once for the union of all candidate knowledge ids.
   const allKnowledgeIds = Array.from(new Set(candidates.flatMap((c) => c.knowledge_ids ?? [])));

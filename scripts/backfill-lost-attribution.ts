@@ -27,10 +27,11 @@
 // `parseLimit` — stays importable in the unit test without a DATABASE_URL.
 import './load-env';
 
+import type { FailureLearningBossSend } from '@/capabilities/practice/jobs/failure-learning-jobs';
 import {
   type EnqueueAttributionFollowupFn,
   runLostAttributionBackfill,
-} from '@/capabilities/knowledge/server/lost-attribution-backfill';
+} from '@/capabilities/practice/server/lost-attribution-backfill';
 
 export const DEFAULT_LIMIT = 25;
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
@@ -86,10 +87,16 @@ async function main(): Promise<number> {
 
   let send: EnqueueAttributionFollowupFn | undefined;
   if (!dryRun) {
+    const { enqueueAttributionFollowup } = await import(
+      '@/capabilities/practice/jobs/failure-learning-jobs'
+    );
     const { getStartedBoss } = await import('@/server/boss/client');
     const boss = await getStartedBoss();
     send = async (attemptEventId: string) => {
-      await boss.send('attribution_followup', { attempt_event_id: attemptEventId });
+      await enqueueAttributionFollowup(
+        boss.send.bind(boss) as FailureLearningBossSend,
+        attemptEventId,
+      );
     };
   }
 

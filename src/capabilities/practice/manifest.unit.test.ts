@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { practiceCapability } from './manifest';
 
 describe('practice manifest jobs', () => {
+  it('owns both durable Failure Learning stages', () => {
+    const handlers = practiceCapability.jobs?.handlers ?? [];
+    for (const name of ['attribution_followup', 'variant_gen']) {
+      const job = handlers.find((candidate) => candidate.name === name);
+      expect(job?.queue, name).toBe('llm');
+      expect(typeof job?.load, name).toBe('function');
+    }
+  });
+
   // YUK-758 — embed_backfill / answer_class_backfill are now orchestrated DAG members
   // (roots): the anchored orchestrator triggers them, so they declare `dependsOn` and
   // must NOT keep a cron (validateComposition enforces the mutual exclusion).
@@ -61,8 +70,29 @@ describe('practice manifest jobs', () => {
 
 describe('practice manifest events', () => {
   it('owns the canonical review action for durable cross-capability consumers', () => {
+    expect(practiceCapability.events?.actions).toContain('attempt');
     expect(practiceCapability.events?.actions).toContain('review');
     expect(practiceCapability.events?.actions).toContain('judge');
+  });
+
+  it('subscribes Failure Learning to the canonical attempt fact', () => {
+    expect(practiceCapability.subscriptions?.handlers).toContainEqual(
+      expect.objectContaining({
+        id: 'practice.failure-learning-attempt',
+        version: 1,
+        actions: ['attempt'],
+        load: expect.any(Function),
+      }),
+    );
+  });
+});
+
+describe('practice manifest tools', () => {
+  it('loads concrete Failure Learning tools from the owning capability', () => {
+    const tools = practiceCapability.copilotTools?.tools ?? [];
+    for (const name of ['attribute_mistake', 'propose_variant']) {
+      expect(tools.find((tool) => tool.name === name)?.load, name).toEqual(expect.any(Function));
+    }
   });
 });
 

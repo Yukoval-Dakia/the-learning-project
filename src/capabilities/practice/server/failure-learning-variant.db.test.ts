@@ -1,6 +1,5 @@
 // Task #17 — variant_gen handler tests.
 
-import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -8,7 +7,8 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { runVariantGen } from './variant_gen';
+import { runAttributionAndWriteJudgeEvent } from './failure-learning-attribution';
+import { runVariantGen } from './failure-learning-variant';
 
 const VALID_VARIANT_OUTPUT = JSON.stringify({
   prompt_md: '辨析下列句中「之」的用法：「师道之不传也久矣」。',
@@ -111,8 +111,9 @@ async function seedRawJudgeForAttempt(attemptId: string, category: string) {
 }
 
 async function seedUserCauseForAttempt(attemptId: string, category: string, notes = 'manual fix') {
+  const userCauseEventId = createId();
   await writeEvent(testDb(), {
-    id: createId(),
+    id: userCauseEventId,
     session_id: null,
     actor_kind: 'user',
     actor_ref: 'self',
@@ -129,6 +130,7 @@ async function seedUserCauseForAttempt(attemptId: string, category: string, note
     cost_micro_usd: null,
     created_at: new Date(),
   });
+  return userCauseEventId;
 }
 
 async function seedKnowledge(domain = 'yuwen') {
@@ -262,6 +264,12 @@ describe('runVariantGen', () => {
         .from(event)
         .where(eq(event.id, result.proposal_id ?? ''))
     )[0];
+    const [judge] = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, attemptId)))
+      .limit(1);
+    expect(proposal.caused_by_event_id).toBe(judge.id);
     const aiProposal = (
       proposal.payload as {
         ai_proposal?: { kind?: string; proposed_change?: Record<string, unknown> };
@@ -331,7 +339,11 @@ describe('runVariantGen', () => {
     const attemptId = createId();
     await seedFailureAttempt(attemptId, 'q1');
     await seedJudgeForAttempt(attemptId, 'carelessness');
-    await seedUserCauseForAttempt(attemptId, 'concept', '用户确认是概念混淆');
+    const userCauseEventId = await seedUserCauseForAttempt(
+      attemptId,
+      'concept',
+      '用户确认是概念混淆',
+    );
 
     const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
       text: VALID_VARIANT_OUTPUT,
@@ -347,6 +359,11 @@ describe('runVariantGen', () => {
       primary_category: 'concept',
       analysis_md: '用户确认是概念混淆',
     });
+    const [proposal] = await db
+      .select({ caused_by_event_id: event.caused_by_event_id })
+      .from(event)
+      .where(eq(event.id, result.proposal_id ?? ''));
+    expect(proposal.caused_by_event_id).toBe(userCauseEventId);
   });
 
   it('uses the subject profile, not a global skip list, for time_pressure variants', async () => {
@@ -558,7 +575,7 @@ describe('runVariantGen', () => {
     expect(result.status).toBe('proposed');
   });
 
-  it('throws when LLM output is not valid JSON', async () => {
+  it('classifies invalid model output as permanent without retrying', async () => {
     const db = testDb();
     await seedKnowledge();
     await seedQuestion({ id: 'q1' });
@@ -567,106 +584,11 @@ describe('runVariantGen', () => {
     await seedJudgeForAttempt(attemptId, 'concept');
 
     const runTaskFn = vi.fn(async () => ({ text: 'not json' }));
-    await expect(runVariantGen({ db, attemptEventId: attemptId, runTaskFn })).rejects.toThrow(
-      /parseVariantOutput/,
-    );
-  });
-});
-
-describe('runAttributionFollowup → enqueueVariantGen wiring', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('invokes enqueueVariantGen with the attempt id after a successful run', async () => {
-    const { runAttributionFollowup } = await import(
-      '@/capabilities/knowledge/jobs/attribution_followup'
-    );
-    const db = testDb();
-    await seedKnowledge();
-    await seedQuestion({ id: 'q1' });
-    const attemptId = createId();
-    await seedFailureAttempt(attemptId, 'q1');
-
-    const runTaskFn = vi.fn(async () => ({
-      text: JSON.stringify({
-        primary_category: 'concept',
-        secondary_categories: [],
-        analysis_md: '...',
-        confidence: 0.8,
-      }),
-    }));
-    const enqueueVariantGen = vi.fn(async () => {});
-
-    const result = await runAttributionFollowup({
-      db,
-      attemptEventId: attemptId,
-      runTaskFn,
-      enqueueVariantGen,
+    const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
+    expect(result).toMatchObject({
+      status: 'failed:invalid_model_output',
+      reason: expect.stringMatching(/parseVariantOutput/),
     });
-    expect(result.status).toBe('attempted');
-    expect(enqueueVariantGen).toHaveBeenCalledWith(attemptId);
-
-    // The judge event chained off the attempt was indeed written
-    const judges = await db
-      .select()
-      .from(event)
-      .where(
-        and(
-          eq(event.action, 'judge'),
-          eq(event.subject_kind, 'event'),
-          eq(event.caused_by_event_id, attemptId),
-        ),
-      );
-    expect(judges).toHaveLength(1);
-  });
-
-  it('does not invoke enqueueVariantGen when attempt is skipped', async () => {
-    const { runAttributionFollowup } = await import(
-      '@/capabilities/knowledge/jobs/attribution_followup'
-    );
-    const enqueueVariantGen = vi.fn(async () => {});
-    const runTaskFn = vi.fn();
-
-    const result = await runAttributionFollowup({
-      db: testDb(),
-      attemptEventId: 'no_such',
-      runTaskFn,
-      enqueueVariantGen,
-    });
-    expect(result.status).toBe('skipped:attempt_not_found');
-    expect(enqueueVariantGen).not.toHaveBeenCalled();
-  });
-
-  it('swallows enqueue errors (attribution result still succeeds)', async () => {
-    const { runAttributionFollowup } = await import(
-      '@/capabilities/knowledge/jobs/attribution_followup'
-    );
-    const db = testDb();
-    await seedKnowledge();
-    await seedQuestion({ id: 'q1' });
-    const attemptId = createId();
-    await seedFailureAttempt(attemptId, 'q1');
-
-    const runTaskFn = vi.fn(async () => ({
-      text: JSON.stringify({
-        primary_category: 'concept',
-        secondary_categories: [],
-        analysis_md: '...',
-        confidence: 0.8,
-      }),
-    }));
-    const enqueueVariantGen = vi.fn(async () => {
-      throw new Error('boss not reachable');
-    });
-
-    const result = await runAttributionFollowup({
-      db,
-      attemptEventId: attemptId,
-      runTaskFn,
-      enqueueVariantGen,
-    });
-    expect(result.status).toBe('attempted');
-    expect(enqueueVariantGen).toHaveBeenCalled();
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
   });
 });

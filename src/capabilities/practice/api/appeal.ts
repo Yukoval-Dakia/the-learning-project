@@ -3,10 +3,10 @@ import { db } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/http';
-import { getStartedBoss } from '@/server/boss/client';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
+import { getPracticeBoss } from '../server/queue-runtime';
 import { CreateAppealBodySchema } from './contracts';
 
 /**
@@ -60,7 +60,7 @@ export async function createAppeal(req: Request) {
   // 真去重；handler caused_by 查重是结构性兜底）。测试环境
   // （shouldEnqueueBackgroundJobs false）只写事件，由测试直接调 handler。
   if (shouldEnqueueBackgroundJobs()) {
-    const boss = await getStartedBoss();
+    const boss = await getPracticeBoss();
     await boss.send(
       'rejudge',
       { appeal_event_id: appealEventId },

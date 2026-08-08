@@ -64,7 +64,6 @@ import {
   applyConjectureHistoryGate,
   loadConjectureHistory,
 } from '@/capabilities/agency/server/conjecture/history';
-import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event, source_asset } from '@/db/schema';
@@ -79,6 +78,7 @@ import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/w
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { writeRetryableAiFailureLedger } from '../server/ai-runtime';
 
 import {
   ConjectureInductionOperationalError,

@@ -5,14 +5,12 @@
 // non-empty (Math MVP constraint). Routes by question.kind to steps@1 / semantic@1
 // via the orchestrator's JudgeInvoker, writes an attempt event, transitions the
 // session to judged, reveals the worked solution, and enrolls a mistake on a low
-// score. On failure, enqueues attribution_followup (gated by the shared
-// shouldEnqueueBackgroundJobs(), getStartedBoss).
+// score. Failure-learning follow-up is owned by the practice attempt-event
+// subscription; this request path only commits the product fact.
 import { SolveError, submitSolveAttempt } from '@/capabilities/practice/server/solve-session';
 import { db } from '@/db/client';
 import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { getStartedBoss } from '@/server/boss/client';
-import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { SolveSubmissionBodySchema } from './question-solve-contracts';
 
 export async function createSolveSubmission(
@@ -39,18 +37,6 @@ export async function createSolveSubmission(
       hintsUsed: parsed.data.hints_used,
       finalHintLevel: parsed.data.final_hint_level,
     });
-
-    // Enqueue attribution after the response path commits (failure only). Gated
-    // by the shared shouldEnqueueBackgroundJobs() (YUK-239), mirroring
-    // /api/mistakes. Uses getStartedBoss (YUK-192), never createBoss.
-    if (result.mistake_id !== undefined && shouldEnqueueBackgroundJobs()) {
-      try {
-        const boss = await getStartedBoss();
-        await boss.send('attribution_followup', { attempt_event_id: result.attempt_event_id });
-      } catch (err) {
-        console.warn(`attribution_followup enqueue failed for ${result.attempt_event_id}:`, err);
-      }
-    }
 
     return Response.json({
       attempt_event_id: result.attempt_event_id,

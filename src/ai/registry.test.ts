@@ -12,6 +12,11 @@
 
 import { createHash } from 'node:crypto';
 import {
+  attributionRerankTaskSpec,
+  attributionTaskSpec,
+} from '@/capabilities/practice/tasks/attribution';
+import { variantGenTaskSpec } from '@/capabilities/practice/tasks/variant-gen';
+import {
   COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS,
   COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS,
 } from '@/core/copilot-evidence';
@@ -46,6 +51,12 @@ describe('copilot task dispatch declarations', () => {
 });
 
 describe('task prompt definitions', () => {
+  it('statically projects the practice-owned failure-learning task specs', () => {
+    expect(tasks.AttributionTask).toBe(attributionTaskSpec.definition);
+    expect(tasks.AttributionRerankTask).toBe(attributionRerankTaskSpec.definition);
+    expect(tasks.VariantGenTask).toBe(variantGenTaskSpec.definition);
+  });
+
   it('defines one non-empty inline or profile prompt for every task', () => {
     expect(Object.keys(tasks)).toHaveLength(51);
 

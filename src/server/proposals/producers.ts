@@ -66,6 +66,7 @@ export async function writeVariantQuestionProposal(
       suggestion_kind: 'corrective',
     },
     task_run_id: input.task_run_id ?? null,
+    caused_by_event_id: input.caused_by_event_id ?? null,
     cost_usd: input.cost_usd,
     created_at: input.created_at,
   });

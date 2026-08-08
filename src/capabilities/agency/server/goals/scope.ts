@@ -11,17 +11,16 @@
 import { newId } from '@/core/ids';
 import { z } from 'zod';
 
-// M5 seam（YUK-319 T2 记录）：跨包深 import knowledge 内部模块——M5 收紧包边界时
-// 应换走 knowledge 包对外导出面；M4 等价平移期原样保留。
-import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/public';
 import { loadTreeSnapshot } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
 import type { GoalScopeIntent } from '@/kernel/task-intents';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
+// M5 seam（YUK-319 T2 记录）：跨包深 import knowledge 内部模块——M5 收紧包边界时
+// 应换走 knowledge 包对外导出面；M4 等价平移期原样保留。
 import type { ToolContext } from '@/server/ai/tools/types';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
+import { type TaskTextRunFn, writeRetryableAiFailureLedger } from '../ai-runtime';
 
 const GoalScopeOutputSchema = z.object({
   scope_knowledge_ids: z.array(z.string().min(1)).default([]),

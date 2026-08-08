@@ -106,12 +106,15 @@ import {
 export const practiceCapability = defineCapability({
   name: 'practice',
   description:
-    '练习消费侧：FSRS 传感器、判分评级、卷（paper）机制与会话编排。M2 加入流编排器与卷架（YUK-316）。',
+    '练习消费侧：作答、判分、错因学习、针对性变式、FSRS 传感器、卷（paper）机制与会话编排。',
   // YUK-573 — judge 校准观测事件归属（report-only）：sample = 每条复判对照一行
   // （caused_by = 原 judge event，MF8 partial unique index 唯一化）；run_summary =
   // 每次 run 一行（mass-skip 自曝面）。写者只有 judge_calibration_sample job。
   events: {
     actions: [
+      // Canonical learner response fact. Failure Learning subscribes to this
+      // owner event instead of coupling every producer to a queue name.
+      'attempt',
       // Canonical learner review publisher (api/submit.ts). Declaring its
       // ownership lets other capabilities consume reviews through the durable
       // event-subscription kernel instead of polling Practice internals.
@@ -127,6 +130,19 @@ export const practiceCapability = defineCapability({
       // 面的 enqueueDurableJudge；消费者是 judge_pending_reconcile sweeper 与 submit 的
       // late-arrival guard（server/judge-run-dispatch.ts）。
       'experimental:judge_pending_attempt',
+    ],
+  },
+  subscriptions: {
+    handlers: [
+      {
+        id: 'practice.failure-learning-attempt',
+        version: 1,
+        actions: ['attempt'],
+        load: () =>
+          import('./server/failure-learning-subscription').then(
+            (m) => m.buildFailureLearningAttemptSubscriber,
+          ),
+      },
     ],
   },
   api: {
@@ -740,6 +756,20 @@ export const practiceCapability = defineCapability({
     // import handleRejudge（非 buildXHandler 工厂），不走注册器统一配方——此处
     // 声明无 load 纯归属元数据。（YUK-349：review_plan 链式 job 已随 B3 退役。）
     handlers: [
+      {
+        // Durable stage 1: classify an active question failure, write the exact
+        // causal judge, then hand off stage 2 with a stable per-attempt job id.
+        name: 'attribution_followup',
+        queue: 'llm',
+        load: () =>
+          import('./jobs/attribution_followup').then((m) => m.buildAttributionFollowupHandler),
+      },
+      {
+        // Durable stage 2: propose-only cause-targeted variant generation.
+        name: 'variant_gen',
+        queue: 'llm',
+        load: () => import('./jobs/variant_gen').then((m) => m.buildVariantGenHandler),
+      },
       { name: 'rejudge', queue: 'llm' },
       // YUK-594 (durable judge main path, W1) — durable judge_run（异步为主路径）。
       // 注册留 handlers.ts 渐缩簿：形态要 includeMetadata:true 读 retryCount 驱动
@@ -1026,11 +1056,11 @@ export const practiceCapability = defineCapability({
       },
       {
         name: 'attribute_mistake',
-        load: () => import('@/server/ai/tools/proposal-tools').then((m) => m.attributeMistakeTool),
+        load: () => import('./tools/attribute-mistake').then((m) => m.attributeMistakeTool),
       },
       {
         name: 'propose_variant',
-        load: () => import('@/server/ai/tools/proposal-tools').then((m) => m.proposeVariantTool),
+        load: () => import('./tools/propose-variant').then((m) => m.proposeVariantTool),
       },
       {
         name: 'author_question',

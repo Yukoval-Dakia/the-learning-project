@@ -1,3 +1,5 @@
+// Legacy product-stage failure ledger helpers shared by capability-owned operations.
+// These remain central because they project AI attempt observability, not knowledge semantics.
 import type { Db, Tx } from '@/db/client';
 import { writeCostLedger } from '@/server/ai/log';
 

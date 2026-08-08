@@ -52,7 +52,7 @@ export const PROPOSE_WRITE_TOOLS = [
   'propose_record_links',
   'propose_record_promotion',
   // ADR-0032 D8 — unified question-authoring front door. Routes by seed mode to
-  // the variant (runVariantGen) / record→question propose paths and (ADR-0031
+  // the Failure Learning variant / record→question propose paths and (ADR-0031
   // lane B) the knowledge|material draft-question generation.
   'author_question',
   // YUK-195 — agent-callable question structure-edit write tools. Operate on the

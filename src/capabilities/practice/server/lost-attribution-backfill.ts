@@ -8,7 +8,7 @@
 // aggregates, no query reads the outcome column), so a failure attempt could end
 // up with NO judge event and nobody noticing. This census finds those attempts —
 // failure attempts lacking a real (non-`attribution_pending`) judge — and
-// re-enqueues the EXISTING idempotent `attribution_followup` job for each.
+// re-enqueues the practice-owned idempotent `attribution_followup` job for each.
 //
 // IDEMPOTENT + SAFE. The re-enqueued job runs runAttributionFollowup →
 // runAttributionAndWriteJudgeEvent, whose getJudgeForAttempt skip-check no-ops

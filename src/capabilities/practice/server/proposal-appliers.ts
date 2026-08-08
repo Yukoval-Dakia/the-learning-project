@@ -33,26 +33,24 @@ import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 // YUK-471 W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
 // event; the per-entity flag gates whether the projection (ON) or the imperative UPDATE (OFF)
 // writes the row. OFF still runs the write-time fold==row parity assert.
-import { projectMistakeVariantGuarded } from '@/server/projections/mistake_variant';
 import {
   assertMistakeVariantParity,
   hasMistakeVariantGenesisAnchor,
   mistakeVariantLiveRowToSnapshot,
-} from '@/server/projections/parity';
-import { projectionIsWriter } from '@/server/projections/sot-flag';
+  projectMistakeVariantGuarded,
+  projectionWritesMistakeVariant,
+} from '@/server/projections/mistake-variant-runtime';
 import {
+  type ProposalInboxRow,
   acquireProposalDecisionLock,
   asPlainRecord,
   ensureAcceptOnly,
+  ensureProposalDecisionSignal,
   existingAcceptRate,
   findExistingRateEvent,
-  requiredString,
-} from '@/server/proposals/applier-helpers';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
-import {
-  ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
-} from '@/server/proposals/signals';
+  requiredString,
+} from '@/server/proposals/practice-runtime';
 import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 
@@ -237,7 +235,7 @@ export async function acceptVariantQuestionProposal(
   const rateEventId = newId();
   // YUK-471 W2 — gate who writes the mistake_variant ROW (the flag is read ONCE outside the tx so a
   // mid-tx env flip can't split the decision). ON → projection write-through; OFF → imperative.
-  const flip = projectionIsWriter('mistake_variant');
+  const flip = projectionWritesMistakeVariant();
 
   await db.transaction(async (tx) => {
     await lockPlacementSupplyScopes(tx, proposedChange.knowledge_ids ?? []);

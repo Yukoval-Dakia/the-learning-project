@@ -1,4 +1,4 @@
-// YUK-462 — cause-attribution L1 retrieve stage.
+// YUK-462 — practice-owned cause-attribution L1 retrieve stage.
 //
 // Stage 1 of the retrieve→rerank-with-rationale attribution pipeline. Given the
 // attempt input + resolved SubjectProfile, return the candidate cause categories
@@ -18,7 +18,7 @@
 // Postgres table.
 
 import type { SubjectProfile } from '@/subjects/profile';
-import type { AttributionInput } from './attribute';
+import type { AttributionCandidate, AttributionInput } from './attribution';
 
 /**
  * A cause candidate handed to the rerank stage. Structurally identical to
@@ -26,7 +26,7 @@ import type { AttributionInput } from './attribute';
  * variant_targetable?, source_pack? }) — derived from the profile type so there
  * is zero type drift and no parallel declaration to keep in sync.
  */
-export type CauseCandidate = SubjectProfile['causeCategories'][number];
+export type CauseCandidate = AttributionCandidate;
 
 /**
  * Passthrough threshold. >= every current profile vocab size (max 11 today), so

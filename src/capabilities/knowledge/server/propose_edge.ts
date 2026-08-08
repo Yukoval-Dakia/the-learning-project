@@ -14,6 +14,7 @@ import { parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { writeRetryableAiFailureLedger } from '@/server/ai/failure-ledger';
 import { writeCostLedger } from '@/server/ai/log';
 import { glmChatCostCny } from '@/server/ai/pricing';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
@@ -25,7 +26,6 @@ import type { SubjectProfile } from '@/subjects/profile';
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { writeRetryableAiFailureLedger } from './ai_failure_log';
 import {
   type EdgeCandidate,
   type EdgeNeighbor,
