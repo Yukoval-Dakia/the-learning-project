@@ -79,12 +79,13 @@ function backendSourceFiles(root: string): string[] {
     ...sourceFiles(resolve(root, 'src')),
     ...sourceFiles(resolve(root, 'server')),
   ]);
-  const worker = resolve(root, 'scripts/worker.ts');
-  if (existsSync(worker)) {
-    if (lstatSync(worker).isSymbolicLink()) {
-      throw new Error(`${worker}: symbolic link found while collecting source files`);
+  for (const entry of ['server/index.ts', 'scripts/worker.ts']) {
+    const entryPath = resolve(root, entry);
+    if (!existsSync(entryPath)) continue;
+    if (lstatSync(entryPath).isSymbolicLink()) {
+      throw new Error(`${entryPath}: symbolic link found while collecting source files`);
     }
-    files.add(worker);
+    files.add(entryPath);
   }
   return [...files]
     .filter((path) => {
@@ -115,7 +116,23 @@ function callName(callee: unknown): string | undefined {
   if (!isRecord(callee.property) || callee.property.type !== 'Identifier') return undefined;
   if (typeof callee.object.name !== 'string' || typeof callee.property.name !== 'string')
     return undefined;
+  if (
+    (callee.object.name === 'globalThis' || callee.object.name === 'global') &&
+    callee.property.name === 'fetch'
+  ) {
+    return 'fetch';
+  }
   return `${callee.object.name}.${callee.property.name}`;
+}
+
+function globalFetchMemberName(node: unknown): string | undefined {
+  if (!isRecord(node) || node.type !== 'MemberExpression' || node.computed) return undefined;
+  if (!isRecord(node.object) || node.object.type !== 'Identifier') return undefined;
+  if (!isRecord(node.property) || node.property.type !== 'Identifier') return undefined;
+  return (node.object.name === 'globalThis' || node.object.name === 'global') &&
+    node.property.name === 'fetch'
+    ? 'fetch'
+    : undefined;
 }
 
 function envReadName(node: unknown): string | undefined {
@@ -184,6 +201,38 @@ function inspectSource(code: string, filename: string): SourceFacts {
         typeof value.init.name === 'string'
       ) {
         requestAliases.set(value.id.name, value.init.name);
+      }
+      if (
+        isRecord(value.id) &&
+        value.id.type === 'Identifier' &&
+        typeof value.id.name === 'string'
+      ) {
+        const globalFetch = globalFetchMemberName(value.init);
+        if (globalFetch) requestAliases.set(value.id.name, globalFetch);
+      }
+      if (
+        isRecord(value.id) &&
+        value.id.type === 'ObjectPattern' &&
+        isRecord(value.init) &&
+        value.init.type === 'Identifier' &&
+        (value.init.name === 'globalThis' || value.init.name === 'global') &&
+        Array.isArray(value.id.properties)
+      ) {
+        for (const property of value.id.properties) {
+          if (
+            !isRecord(property) ||
+            property.type !== 'ObjectProperty' ||
+            !isRecord(property.key) ||
+            property.key.type !== 'Identifier' ||
+            property.key.name !== 'fetch' ||
+            !isRecord(property.value) ||
+            property.value.type !== 'Identifier' ||
+            typeof property.value.name !== 'string'
+          ) {
+            continue;
+          }
+          requestAliases.set(property.value.name, 'fetch');
+        }
       }
     }
     if (value.type === 'CallExpression') {
@@ -263,12 +312,13 @@ function importSourceFiles(root: string): string[] {
     ...sourceFiles(resolve(root, 'src')),
     ...sourceFiles(resolve(root, 'server')),
   ]);
-  const worker = resolve(root, 'scripts/worker.ts');
-  if (existsSync(worker)) {
-    if (lstatSync(worker).isSymbolicLink()) {
-      throw new Error(`${worker}: symbolic link found while collecting source files`);
+  for (const entry of ['server/index.ts', 'scripts/worker.ts']) {
+    const entryPath = resolve(root, entry);
+    if (!existsSync(entryPath)) continue;
+    if (lstatSync(entryPath).isSymbolicLink()) {
+      throw new Error(`${entryPath}: symbolic link found while collecting source files`);
     }
-    files.add(worker);
+    files.add(entryPath);
   }
   return [...files].sort((left, right) =>
     projectPath(root, left).localeCompare(projectPath(root, right)),
@@ -336,11 +386,35 @@ function collectImportEdgesFromSource(
   return { edges, unsupportedDynamicImports };
 }
 
+function runtimeSourceClosure(root: string, roots: readonly string[]): string[] {
+  const pending = [...roots];
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const path = pending.pop();
+    if (!path || visited.has(path)) continue;
+    visited.add(path);
+    const scan = collectImportEdgesFromSource(root, path, readFileSync(path, 'utf8'));
+    for (const edge of scan.edges) {
+      if (edge.target && edge.kind !== 'type' && !isUiSource(root, edge.target)) {
+        pending.push(edge.target);
+      }
+    }
+  }
+  return [...visited].sort((left, right) =>
+    projectPath(root, left).localeCompare(projectPath(root, right)),
+  );
+}
+
+function isUiSource(root: string, path: string): boolean {
+  const pathFromProject = projectPath(root, path);
+  return pathFromProject.startsWith('src/ui/') || pathFromProject.includes('/ui/');
+}
+
 function collectProjectImportScan(root: string): {
   readonly edges: readonly SourceImportEdge[];
   readonly unsupportedDynamicImports: readonly string[];
 } {
-  const scans = importSourceFiles(root).map((path) =>
+  const scans = runtimeSourceClosure(root, importSourceFiles(root)).map((path) =>
     collectImportEdgesFromSource(root, path, readFileSync(path, 'utf8')),
   );
   return {
@@ -442,7 +516,7 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
 }
 
 export function collectProviderWireFindings(projectRoot: string): ProviderWireFinding[] {
-  return backendSourceFiles(projectRoot)
+  return runtimeSourceClosure(projectRoot, backendSourceFiles(projectRoot))
     .flatMap((path) => {
       const code = readFileSync(path, 'utf8');
       return findingsFor(projectPath(projectRoot, path), code, inspectSource(code, path));

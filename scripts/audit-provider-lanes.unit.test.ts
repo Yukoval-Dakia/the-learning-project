@@ -373,6 +373,44 @@ describe('provider lane inventory', () => {
     expect(auditProviderLanes(root, [fixtureLane()]).ok).toBe(true);
   });
 
+  it.each([
+    [
+      "export const embed = () => globalThis.fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings');\n",
+    ],
+    [
+      "const request = global.fetch;\nexport const embed = () => request('https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings');\n",
+    ],
+    [
+      "const { fetch: request } = globalThis;\nexport const embed = () => request('https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings');\n",
+    ],
+  ])('classifies Node global Fetch member syntax as fetch', (source) => {
+    const root = makeFixture();
+    write(root, 'src/server/ai/embed.ts', source);
+    expect(collectProviderWireFindings(root)).toContainEqual({
+      call: 'fetch',
+      kind: 'dashscope-embedding-fetch',
+      path: 'src/server/ai/embed.ts',
+    });
+    expect(auditProviderLanes(root, [fixtureLane()]).ok).toBe(true);
+  });
+
+  it('does not classify imported Undici fetch implementations as provider wires', () => {
+    const root = makeFixture();
+    write(
+      root,
+      'src/server/pinned-fetch.ts',
+      "import { fetch as undiciFetch } from 'undici';\nexport const download = () => undiciFetch('https://content.example/file');\n",
+    );
+    expect(collectProviderWireFindings(root)).toEqual([
+      {
+        call: 'fetch',
+        kind: 'dashscope-embedding-fetch',
+        path: 'src/server/ai/embed.ts',
+      },
+    ]);
+    expect(auditProviderLanes(root, [fixtureLane()]).ok).toBe(true);
+  });
+
   it('preserves fetchImpl identity through a local alias chain', () => {
     const root = makeFixture();
     write(
@@ -542,6 +580,33 @@ describe('provider lane inventory', () => {
         }),
       ],
     });
+  });
+
+  it('follows a product runtime import into scripts without scanning independent operator scripts', () => {
+    const root = makeFixture();
+    write(root, 'server/index.ts', "import '../scripts/direct-provider.js';\n");
+    write(
+      root,
+      'scripts/direct-provider.ts',
+      "export const call = () => globalThis.fetch('https://direct-provider.example/v1');\n",
+    );
+    write(
+      root,
+      'scripts/smoke-local.ts',
+      "export const call = () => globalThis.fetch('https://operator.example/v1');\n",
+    );
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          path: 'scripts/direct-provider.ts',
+          reason: expect.stringContaining('unlisted direct provider wire'),
+        }),
+      ],
+    });
+    expect(collectProviderWireFindings(root)).not.toContainEqual(
+      expect.objectContaining({ path: 'scripts/smoke-local.ts' }),
+    );
   });
 
   it('excludes both test and spec source variants from the provider census', () => {
