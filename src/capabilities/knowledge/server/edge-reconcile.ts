@@ -36,9 +36,22 @@
 // OWN ring — do NOT pre-build for it here (ADR-0034 §后果 "异构边闸归 RT1").
 
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
+import {
+  type DirectProviderOperationOptions,
+  createDirectProviderOperationContext,
+  executeDirectProviderAttempt,
+  glmChatCostCny,
+  isDirectProviderAttemptInvariantError,
+} from '@/server/ai/direct-provider-attempt';
 import { type Env, createMem0Config } from '@/server/memory/client';
 
 const DEFAULT_TIMEOUT_MS = 60_000;
+
+export type EdgeProviderAttemptOptions = DirectProviderOperationOptions;
+
+export function isEdgeReconcileInvariantError(error: unknown): boolean {
+  return isDirectProviderAttemptInvariantError(error);
+}
 
 // Structural-edge action space: KEEP_BOTH | SUPERSEDE ONLY.
 //   - KEEP_BOTH: the candidate and the live neighbor describe different, coexisting
@@ -134,6 +147,7 @@ type GlmChatBody = {
 };
 
 type GlmChatResponse = {
+  id?: string;
   choices?: Array<{ message?: { content?: string } }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
   error?: { code?: string | number; message?: string };
@@ -141,6 +155,11 @@ type GlmChatResponse = {
 
 /** Token usage surfaced to the caller so it can write cost_ledger (mirrors reconcile-llm.ts). */
 export type ReconcileUsage = { promptTokens: number; completionTokens: number };
+export type ReconcileUsageCorrelation = {
+  attemptId: string;
+  model: string;
+  estimatedCostCny: number;
+};
 
 export type GlmConfig = {
   baseURL: string;
@@ -395,7 +414,11 @@ export async function judgeEdgeReconcile(
     env?: Env;
     timeoutMs?: number;
     fetchImpl?: typeof fetch;
-    onUsage?: (usage: ReconcileUsage) => void | Promise<void>;
+    providerAttempt?: EdgeProviderAttemptOptions;
+    onUsage?: (
+      usage: ReconcileUsage,
+      correlation: ReconcileUsageCorrelation,
+    ) => void | Promise<void>;
   } = {},
 ): Promise<EdgeReconcileDecision> {
   // No neighbors → nothing to reconcile against → KEEP_BOTH. Skip the GLM call
@@ -430,84 +453,130 @@ export async function judgeEdgeReconcile(
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  let resp: Response;
-  try {
-    resp = await fetchImpl(`${glmConfig.baseURL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${glmConfig.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new RetryableError(
-        `GLM edge-reconcile request aborted/timed out after ${timeoutMs}ms`,
-        {
+  if (!opts.providerAttempt) {
+    throw new TypeError('judgeEdgeReconcile requires provider attempt context');
+  }
+  const providerOperation = createDirectProviderOperationContext(opts.providerAttempt);
+  const result = await executeDirectProviderAttempt(
+    providerOperation,
+    {
+      provider: 'glm',
+      model: glmConfig.model,
+      lane: 'glm.knowledge-edge-reconcile',
+      protocol: 'http',
+      endpointClass: 'openai-compatible.chat-completions',
+      operationKind: 'edge_reconcile',
+      unknownCostCurrency: 'CNY',
+    },
+    async (attempt) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      let resp: Response;
+      try {
+        resp = await fetchImpl(`${glmConfig.baseURL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${glmConfig.apiKey}`,
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      } catch (err) {
+        const aborted = err instanceof Error && err.name === 'AbortError';
+        attempt.markTerminal(
+          aborted ? 'aborted' : 'failed',
+          aborted ? 'provider_request_aborted' : 'provider_network_error',
+        );
+        if (aborted) {
+          throw new RetryableError(
+            `GLM edge-reconcile request aborted/timed out after ${timeoutMs}ms`,
+            { cause: err },
+          );
+        }
+        throw new RetryableError(`GLM edge-reconcile network error: ${String(err)}`, {
           cause: err,
-        },
-      );
-    }
-    throw new RetryableError(`GLM edge-reconcile network error: ${String(err)}`, {
-      cause: err,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+        });
+      } finally {
+        clearTimeout(timer);
+      }
 
-  if (!resp.ok) {
-    let errBody: GlmChatResponse | null = null;
-    try {
-      errBody = (await resp.json()) as GlmChatResponse;
-    } catch {
-      errBody = null;
-    }
-    const code = errBody?.error?.code ?? '';
-    const message = `GLM edge-reconcile error [http ${resp.status}${code ? ` code ${code}` : ''}]: ${errBody?.error?.message ?? 'no message'}`;
-    if (resp.status === 401 || resp.status === 403) {
-      throw new PermanentError(message);
-    }
-    if (resp.status === 429 || resp.status >= 500) {
-      throw new RetryableError(message);
-    }
-    throw new PermanentError(message);
-  }
+      const headerRequestId = resp.headers.get('x-request-id');
+      if (headerRequestId) await attempt.recordExternalRequestId(headerRequestId);
+      if (!resp.ok) {
+        attempt.markTerminal('failed', `provider_http_${resp.status}`);
+        let errBody: GlmChatResponse | null = null;
+        try {
+          errBody = (await resp.json()) as GlmChatResponse;
+        } catch {
+          errBody = null;
+        }
+        const code = errBody?.error?.code ?? '';
+        const message = `GLM edge-reconcile error [http ${resp.status}${code ? ` code ${code}` : ''}]: ${errBody?.error?.message ?? 'no message'}`;
+        if (resp.status === 401 || resp.status === 403) throw new PermanentError(message);
+        if (resp.status === 429 || resp.status >= 500) throw new RetryableError(message);
+        throw new PermanentError(message);
+      }
 
-  let json: GlmChatResponse;
-  try {
-    json = (await resp.json()) as GlmChatResponse;
-  } catch (err) {
-    throw new PermanentError('GLM edge-reconcile returned a non-JSON 2xx body', { cause: err });
-  }
+      let json: GlmChatResponse;
+      try {
+        json = (await resp.json()) as GlmChatResponse;
+      } catch (err) {
+        attempt.markTerminal('failed', 'provider_response_malformed');
+        throw new PermanentError('GLM edge-reconcile returned a non-JSON 2xx body', {
+          cause: err,
+        });
+      }
+      if (!headerRequestId && json.id) await attempt.recordExternalRequestId(json.id);
 
-  // Surface usage for cost_ledger BEFORE the content/parse guards — a billed-but-
-  // empty response still cost money (mirrors reconcile-llm.ts YUK-359). Guard so a
-  // callback failure never corrupts the reconcile result. Await the callback so
-  // the accounting attempt settles before the judgment resolves.
-  if (opts.onUsage && json.usage) {
-    try {
-      await opts.onUsage({
-        promptTokens: json.usage.prompt_tokens ?? 0,
-        completionTokens: json.usage.completion_tokens ?? 0,
-      });
-    } catch (err) {
-      console.error('[edge-reconcile] onUsage callback failed', err);
-    }
-  }
+      const promptTokens = json.usage?.prompt_tokens;
+      const completionTokens = json.usage?.completion_tokens;
+      const totalTokens = json.usage?.total_tokens;
+      if (
+        typeof promptTokens === 'number' ||
+        typeof completionTokens === 'number' ||
+        typeof totalTokens === 'number'
+      ) {
+        attempt.reportUsage({
+          input: typeof promptTokens === 'number' ? promptTokens : null,
+          output: typeof completionTokens === 'number' ? completionTokens : null,
+          total: typeof totalTokens === 'number' ? totalTokens : null,
+        });
+      }
+      if (typeof promptTokens === 'number' && typeof completionTokens === 'number') {
+        const estimatedCostCny = glmChatCostCny(promptTokens, completionTokens);
+        attempt.estimateCost({
+          amount: estimatedCostCny,
+          currency: 'CNY',
+          source: 'glm_chat_pricebook',
+        });
+        if (opts.onUsage) {
+          try {
+            await opts.onUsage(
+              { promptTokens, completionTokens },
+              { attemptId: attempt.attemptId, model: glmConfig.model, estimatedCostCny },
+            );
+          } catch (err) {
+            console.error('[edge-reconcile] onUsage callback failed', err);
+          }
+        }
+      }
 
-  const content = json.choices?.[0]?.message?.content;
-  if (typeof content !== 'string' || content.trim().length === 0) {
-    throw new ReconcileParseError(
-      'GLM edge-reconcile response has no message content',
-      JSON.stringify(json),
-    );
-  }
-
-  const decision = parseEdgeReconcileResponse(content, neighbors);
-  return applyConfidenceThreshold(decision);
+      const content = json.choices?.[0]?.message?.content;
+      if (typeof content !== 'string' || content.trim().length === 0) {
+        attempt.markTerminal('failed', 'provider_response_malformed');
+        throw new ReconcileParseError(
+          'GLM edge-reconcile response has no message content',
+          JSON.stringify(json),
+        );
+      }
+      try {
+        return applyConfidenceThreshold(parseEdgeReconcileResponse(content, neighbors));
+      } catch (err) {
+        attempt.markTerminal('failed', 'provider_response_malformed');
+        throw err;
+      }
+    },
+  );
+  return result.value;
 }

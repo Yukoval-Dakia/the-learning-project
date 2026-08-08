@@ -1,3 +1,7 @@
+import type {
+  DirectProviderLifecycleFactory,
+  DirectProviderOperationContext,
+} from '@/server/ai/direct-provider-attempt';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type CandidateEntry,
@@ -18,6 +22,28 @@ const MOCK_ENV = {
   ZHIPU_API_KEY: 'test-key',
   DASHSCOPE_API_KEY: 'test-dashscope',
 };
+
+function attemptContext(records: unknown[]): DirectProviderOperationContext {
+  const createLifecycle: DirectProviderLifecycleFactory = (input) => ({
+    identity: input.identity,
+    acquire: async () => ({
+      admission: 'acquired',
+      reserveProviderStart: async () => undefined,
+      recordExternalRequestId: async () => undefined,
+      finish: async (evidence) => {
+        records.push({ identity: input.identity, evidence });
+        return 'settled';
+      },
+    }),
+  });
+  return {
+    caller: 'worker',
+    deadlineAt: new Date('2030-01-01T00:00:00.000Z'),
+    mode: 'observe',
+    operationId: '00000000-0000-4000-8000-000000000020',
+    createLifecycle,
+  };
+}
 
 function mockNewMems(): NewMemoryEntry[] {
   return [
@@ -246,6 +272,7 @@ describe('judgeReconciliation', () => {
     const decisions = await judgeReconciliation(mockNewMems(), mockCandidates(), {
       env: MOCK_ENV,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      providerAttempt: attemptContext([]),
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -298,7 +325,10 @@ describe('judgeReconciliation', () => {
     await judgeReconciliation(mockNewMems(), mockCandidates(), {
       env: MOCK_ENV,
       fetchImpl: fetchMock as unknown as typeof fetch,
-      onUsage: (u) => seen.push(u),
+      providerAttempt: attemptContext([]),
+      onUsage: (u) => {
+        seen.push(u);
+      },
     });
 
     expect(seen).toEqual([{ promptTokens: 1234, completionTokens: 56 }]);
@@ -318,17 +348,36 @@ describe('judgeReconciliation', () => {
         ),
     );
     const seen: Array<{ promptTokens: number; completionTokens: number }> = [];
+    const attempts: unknown[] = [];
 
     await expect(
       judgeReconciliation(mockNewMems(), mockCandidates(), {
         env: MOCK_ENV,
         fetchImpl: fetchMock as unknown as typeof fetch,
-        onUsage: (u) => seen.push(u),
+        providerAttempt: attemptContext(attempts),
+        onUsage: (u) => {
+          seen.push(u);
+        },
       }),
     ).rejects.toThrow(ReconcileParseError);
 
     // onUsage fired despite the subsequent throw.
     expect(seen).toEqual([{ promptTokens: 800, completionTokens: 0 }]);
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        evidence: expect.objectContaining({
+          terminal: 'failed',
+          reason: 'provider_response_malformed',
+          wireCount: 1,
+          usage: expect.objectContaining({
+            basis: 'reported',
+            input: 800,
+            output: 0,
+          }),
+          cost: expect.objectContaining({ basis: 'estimated', currency: 'CNY' }),
+        }),
+      }),
+    ]);
   });
 
   it('throws RetryableError on 5xx', async () => {
@@ -340,6 +389,7 @@ describe('judgeReconciliation', () => {
       judgeReconciliation(mockNewMems(), mockCandidates(), {
         env: MOCK_ENV,
         fetchImpl: fetchMock as unknown as typeof fetch,
+        providerAttempt: attemptContext([]),
       }),
     ).rejects.toThrow(/503/);
   });
@@ -356,6 +406,7 @@ describe('judgeReconciliation', () => {
       judgeReconciliation(mockNewMems(), mockCandidates(), {
         env: MOCK_ENV,
         fetchImpl: fetchMock as unknown as typeof fetch,
+        providerAttempt: attemptContext([]),
       }),
     ).rejects.toThrow(ReconcileParseError);
   });

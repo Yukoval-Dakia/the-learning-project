@@ -8,6 +8,10 @@
 // the superseded-edge-id carry-back, the confidence-threshold downgrade, the
 // ReconcileParseError safe-degrade surface, and the mem0 prompt-hijack red line.
 
+import type {
+  DirectProviderLifecycleFactory,
+  DirectProviderOperationOptions,
+} from '@/server/ai/direct-provider-attempt';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type EdgeCandidate,
@@ -26,6 +30,28 @@ const MOCK_ENV = {
   ZHIPU_API_KEY: 'test-key',
   DASHSCOPE_API_KEY: 'test-dashscope',
 };
+
+function attemptContext(records: unknown[]): DirectProviderOperationOptions {
+  const createLifecycle: DirectProviderLifecycleFactory = (input) => ({
+    identity: input.identity,
+    acquire: async () => ({
+      admission: 'acquired',
+      reserveProviderStart: async () => undefined,
+      recordExternalRequestId: async () => undefined,
+      finish: async (evidence) => {
+        records.push({ identity: input.identity, evidence });
+        return 'settled';
+      },
+    }),
+  });
+  return {
+    caller: 'worker',
+    deadlineAt: new Date('2030-01-01T00:00:00.000Z'),
+    mode: 'observe',
+    operationAnchor: '00000000-0000-4000-8000-000000000030',
+    createLifecycle,
+  };
+}
 
 function candidate(overrides: Partial<EdgeCandidate> = {}): EdgeCandidate {
   return {
@@ -213,13 +239,16 @@ describe('applyConfidenceThreshold', () => {
 describe('judgeEdgeReconcile', () => {
   it('empty neighbors -> KEEP_BOTH WITHOUT a GLM call', async () => {
     const fetchMock = vi.fn();
+    const attempts: unknown[] = [];
     const d = await judgeEdgeReconcile(candidate(), [], {
       env: MOCK_ENV,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      providerAttempt: attemptContext(attempts),
     });
     expect(d.action).toBe('KEEP_BOTH');
     expect(d.superseded_edge_id).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(attempts).toEqual([]);
   });
 
   it('a candidate judged a correction of a live edge -> SUPERSEDE carrying the old edge id', async () => {
@@ -234,6 +263,7 @@ describe('judgeEdgeReconcile', () => {
       {
         env: MOCK_ENV,
         fetchImpl: fetchMock as unknown as typeof fetch,
+        providerAttempt: attemptContext([]),
       },
     );
     expect(d.action).toBe('SUPERSEDE');
@@ -258,6 +288,7 @@ describe('judgeEdgeReconcile', () => {
     const d = await judgeEdgeReconcile(candidate(), [neighbor()], {
       env: MOCK_ENV,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      providerAttempt: attemptContext([]),
     });
     expect(d.action).toBe('KEEP_BOTH');
     expect(d.superseded_edge_id).toBeNull();
@@ -270,12 +301,23 @@ describe('judgeEdgeReconcile', () => {
           status: 200,
         }),
     );
+    const attempts: unknown[] = [];
     await expect(
       judgeEdgeReconcile(candidate(), [neighbor()], {
         env: MOCK_ENV,
         fetchImpl: fetchMock as unknown as typeof fetch,
+        providerAttempt: attemptContext(attempts),
       }),
     ).rejects.toThrow(ReconcileParseError);
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        evidence: expect.objectContaining({
+          terminal: 'failed',
+          reason: 'provider_response_malformed',
+          wireCount: 1,
+        }),
+      }),
+    ]);
   });
 
   it('fires onUsage with token counts on a successful GLM response', async () => {
@@ -289,6 +331,7 @@ describe('judgeEdgeReconcile', () => {
     await judgeEdgeReconcile(candidate(), [neighbor()], {
       env: MOCK_ENV,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      providerAttempt: attemptContext([]),
       onUsage: (u) => {
         seen.push(u);
       },
@@ -312,6 +355,7 @@ describe('judgeEdgeReconcile', () => {
     const judgment = judgeEdgeReconcile(candidate(), [neighbor()], {
       env: MOCK_ENV,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      providerAttempt: attemptContext([]),
       onUsage: () => usagePending,
     }).then(() => {
       resolved = true;
@@ -334,6 +378,7 @@ describe('judgeEdgeReconcile', () => {
       judgeEdgeReconcile(candidate(), [neighbor()], {
         env: MOCK_ENV,
         fetchImpl: fetchMock as unknown as typeof fetch,
+        providerAttempt: attemptContext([]),
       }),
     ).rejects.toThrow(/503/);
   });

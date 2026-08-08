@@ -8,10 +8,12 @@ import {
   event,
   knowledge,
   knowledge_edge,
+  provider_attempt,
   question,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { getCorrectionStatus } from '@/kernel/events';
+import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { RECENT_FAILURE_WINDOW_MS } from '@/server/ai/tools/knowledge-readers';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { and, eq, isNull } from 'drizzle-orm';
@@ -1813,6 +1815,47 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
     expect(logRows).toHaveLength(0);
   });
 
+  it('provider-attempt invariant failure aborts instead of degrading to KEEP_BOTH', async () => {
+    const db = testDb();
+    await insertKnowledge('kA');
+    await insertKnowledge('kB');
+    await insertKnowledge('kC');
+    await insertLiveEdge('e_invariant', 'kA', 'kB', 'contrasts_with');
+    await seedJudgeFailure('att_inv_1', ['kA', 'kC']);
+    await seedJudgeFailure('att_inv_2', ['kA', 'kC']);
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kA',
+            to_knowledge_id: 'kC',
+            relation_type: 'contrasts_with',
+            weight: 0.7,
+            reasoning: reasoningFor('att_inv_1'),
+          },
+        ],
+      }),
+    });
+    const invariantError = new ProviderAttemptLifecycleError(
+      'terminal_conflict',
+      '00000000-0000-4000-8000-000000000041',
+    );
+
+    await expect(
+      runEdgeProposeAndWrite({
+        db,
+        recentFailures,
+        runTaskFn: fakeRunTask,
+        judgeReconcileFn: async () => {
+          throw invariantError;
+        },
+      }),
+    ).rejects.toBe(invariantError);
+  });
+
   it('low-confidence SUPERSEDE degrades to KEEP_BOTH (confidence threshold re-applied in the wiring)', async () => {
     const db = testDb();
     await insertKnowledge('kA');
@@ -1997,6 +2040,7 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
         db,
         recentFailures,
         runTaskFn: fakeRunTask,
+        pgbossJobId: '00000000-0000-4000-8000-000000000090',
         // Env carries the ZHIPU/DASHSCOPE keys createMem0Config requires; NO
         // judgeReconcileFn → the LIVE judgeEdgeReconcile runs (against fetchMock).
         // CodeRabbit/PR-Agent Finding 3 regression lock: MEM0_LLM_MODEL overrides
@@ -2030,6 +2074,25 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
       // NOT the previously-hardcoded 'glm-5.2'.
       expect(ledgerRows[0].model).toBe('glm-4.6-test-override');
       expect(ledgerRows[0].model).not.toBe('glm-5.2');
+      const attempts = await db.select().from(provider_attempt);
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]).toMatchObject({
+        lane_id: 'glm.knowledge-edge-reconcile',
+        protocol: 'http',
+        endpoint_class: 'openai-compatible.chat-completions',
+        terminal_status: 'succeeded',
+        wire_count: 1,
+        cost_basis: 'estimated',
+        cost_currency: 'CNY',
+      });
+      expect(attempts[0].usage_json).toMatchObject({
+        basis: 'reported',
+        input: 321,
+        output: 42,
+        total: 363,
+      });
+      expect(ledgerRows[0].task_run_id).toBe(attempts[0].attempt_id);
+      expect(ledgerRows[0].pgboss_job_id).toBe('00000000-0000-4000-8000-000000000090');
     } finally {
       global.fetch = originalFetch;
     }

@@ -6,13 +6,19 @@
 // Also verifies the two-read-consumer passthrough after supersede injection.
 
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
+import { cost_ledger, provider_attempt } from '@/db/schema';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { createMem0Collection } from '../../../tests/helpers/mem0-collection';
 import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import type { MemoryClient } from './client';
-import { type CandidateEntry, type NewMemoryEntry, ReconcileParseError } from './reconcile-llm';
+import {
+  type CandidateEntry,
+  type NewMemoryEntry,
+  ReconcileParseError,
+  judgeReconciliation,
+} from './reconcile-llm';
 import { insertPlannedRows, loadUnappliedLog, makePlannedRow } from './reconcile-store';
 import { buildMemoryReconcileHandler } from './triggers';
 
@@ -104,6 +110,98 @@ describe('reconcile handler — failure mode 1: LLM parse failure degrades to KE
     `)) as Array<{ action: string }>;
     expect(rows.length).toBe(1);
     expect(rows[0].action).toBe('KEEP_BOTH');
+    expect(await db.select().from(provider_attempt)).toEqual([]);
+  });
+});
+
+describe('reconcile handler — provider attempt and legacy ledger parity', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+  });
+
+  it('records one settled attempt and retains one correlated legacy cost row', async () => {
+    const db = testDb();
+    const newMemId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: 'glm-request-memory-1',
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    decisions: [
+                      {
+                        new_index: 0,
+                        action: 'KEEP_BOTH',
+                        old_index: null,
+                        confidence: 0.9,
+                        reason: 'independent event',
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+            usage: { prompt_tokens: 120, completion_tokens: 8, total_tokens: 128 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    const handler = buildMemoryReconcileHandler(db, {
+      memoryClient: mockMemoryClient([]),
+      judge: (newMems, candidatesByNew, opts) =>
+        judgeReconciliation(newMems, candidatesByNew, {
+          ...opts,
+          env: {
+            DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
+            ZHIPU_API_KEY: 'test-key',
+            DASHSCOPE_API_KEY: 'test-dashscope',
+          },
+          fetchImpl: fetchMock as unknown as typeof fetch,
+        }),
+    });
+
+    await handler(
+      makeJob({
+        memories: [mem(newMemId, 'User completed a difficult proof', 'event', 2000)],
+        user_id: 'self',
+      }) as never,
+    );
+
+    const attempts = await db.select().from(provider_attempt);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({
+      lane_id: 'glm.memory-reconcile',
+      protocol: 'http',
+      endpoint_class: 'openai-compatible.chat-completions',
+      terminal_status: 'succeeded',
+      wire_count: 1,
+      external_request_id: 'glm-request-memory-1',
+      cost_basis: 'estimated',
+      cost_currency: 'CNY',
+    });
+    expect(attempts[0].usage_json).toMatchObject({
+      basis: 'reported',
+      input: 120,
+      output: 8,
+      total: 128,
+    });
+
+    const legacyRows = await db
+      .select()
+      .from(cost_ledger)
+      .where(sql`${cost_ledger.task_kind} = 'memory_reconcile'`);
+    expect(legacyRows).toHaveLength(1);
+    expect(legacyRows[0]).toMatchObject({
+      entry_kind: 'legacy',
+      task_run_id: attempts[0].attempt_id,
+      tokens_in: 120,
+      tokens_out: 8,
+      currency: 'CNY',
+    });
   });
 });
 

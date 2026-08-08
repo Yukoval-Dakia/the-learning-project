@@ -259,7 +259,7 @@ export const PROVIDER_LANES = [
     },
     evidence: {
       path: 'src/capabilities/knowledge/server/propose_edge.ts',
-      calls: ['writeCostLedger', 'resolveGlmConfig'],
+      calls: ['writeCostLedger'],
     },
     costSupport: 'per-wire cost_ledger hook records resolved model and token usage',
   },

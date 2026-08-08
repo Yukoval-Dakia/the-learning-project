@@ -33,7 +33,18 @@ export function buildAutoEnrollHandler(db: Db): (jobs: Job<AutoEnrollJobData>[])
         continue;
       }
       try {
-        const result = await runAutoEnrollForSession({ db, sessionId, ctx: { db } });
+        const result = await runAutoEnrollForSession({
+          db,
+          sessionId,
+          ctx: { db },
+          providerAttempt: {
+            db,
+            caller: 'worker',
+            mode: 'observe',
+            deadlineAt: new Date(Date.now() + 20_000),
+            operationAnchor: job.id,
+          },
+        });
         console.log(
           `[auto_enroll] ${sessionId} → ${result.status} (enrolled=${result.enrolled}, routed_to_review=${result.routed_to_review})`,
         );
