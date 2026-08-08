@@ -3,16 +3,17 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-08-08
-> **【Phase 1 F1 implemented — exact-head CI / review pending; no deployment】**
+> **【Phase 1 F1 in draft PR #1164 — independent review passed; exact-head CI pending; no deployment】**
 
 ## NOW
 
-- **Architecture FULL Phase 1 F1 已实现，尚未交付。** YUK-847–849 把 Failure Learning
+- **Architecture FULL Phase 1 F1 已实现，尚未进入 main。** YUK-847–849 把 Failure Learning
   竖切进 `practice`：capability-owned TaskSpecs、attempt-event subscription、稳定 job identity、
   两个 jobs、两个 concrete tools 与 author variant public operation 已收口；旧 knowledge /
-  central 双轨与四处 producer raw enqueue 已删除。等待 draft PR exact-head CI 与独立 review。
+  central 双轨与四处 producer raw enqueue 已删除。draft PR #1164 的三轴独立 review 已无
+  P0/P1，等待最终 head 的 GitHub CI。
 - **架构债基线真实下降。** dependency ratchet 从 `547 / 71 / 63` 收紧到
-  `531 / 70 / 62`；prompt hash 保持，scoped unit 140/140、typecheck 与边界 audit 通过。
+  `531 / 70 / 62`；prompt hash 保持，scoped unit 143/143、typecheck 与边界 audit 通过。
   本机 OrbStack 停止，DB suites 仅完成 discovery，真实执行交给 exact-head CI。
 - **Phase 0 仍已闭合。** YUK-840/841/842 Done；#1154 LIGHT evidence certification 已在 main。
   **不部署 combined image**；YUK-832 产品 gate 仍 HOLD。
@@ -26,8 +27,8 @@
 
 ## NEXT
 
-1. 发布 YUK-847–849 draft PR；只以 exact-head GitHub CI + 独立 review 判定可合并，DB
-   suites 必须在 CI 真跑，不用本地 discovery 代替。
+1. 跟进 YUK-847–849 draft PR #1164；只以 exact-head GitHub CI + 独立 review 判定可合并，
+   DB suites 必须在 CI 真跑，不用本地 discovery 代替。
 2. **本轮不部署。** 后续发布必须 worker-first：先注册两个 jobs 并让
    `practice.failure-learning-attempt@v1` bootstrap/active，再替换已删除 raw enqueue 的 app；
    否则 bootstrap 窗口内的 failure attempt 会漏投。
