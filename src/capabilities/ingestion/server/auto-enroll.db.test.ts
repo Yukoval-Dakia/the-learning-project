@@ -24,6 +24,7 @@ import {
   question_block,
 } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
+import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
@@ -419,6 +420,27 @@ describe('runAutoEnrollForSession', () => {
       .from(question_block)
       .where(eq(question_block.ingestion_session_id, sessionId));
     expect(blocks.every((b) => b.status === 'draft')).toBe(true);
+  });
+
+  it('flag ON + provider-attempt invariant aborts instead of routing to review', async () => {
+    const db = testDb();
+    const { sessionId } = await seed(db);
+    const invariantError = new ProviderAttemptLifecycleError(
+      'lease_lost',
+      '00000000-0000-4000-8000-000000000042',
+    );
+
+    await expect(
+      runAutoEnrollForSession({
+        db,
+        sessionId,
+        subjectId: 'yuwen',
+        env: { [FLAG]: 'true' },
+        tagKnowledgeFn: async () => {
+          throw invariantError;
+        },
+      }),
+    ).rejects.toBe(invariantError);
   });
 
   it('skips when session is not in an extractable status', async () => {

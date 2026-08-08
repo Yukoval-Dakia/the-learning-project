@@ -26,7 +26,7 @@ import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schem
 import type { Db } from '@/db/client';
 import { isPoolVisible } from '@/db/predicates';
 import { knowledge } from '@/db/schema';
-import { embedText } from '@/server/ai/embed';
+import { type EmbedProviderAttemptOptions, embedText } from '@/server/ai/embed';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
 import { type DispatchResult, dispatchSupplyTarget } from '@/server/question-supply/dispatcher';
@@ -151,6 +151,7 @@ export interface MatcherDeps {
   /** queryText 路 B 的 embedder seam. 默认 embedText (DashScope text-embedding-v4@1024).
    *  铁律: 与池中向量同一 seam，否则 cosine 跨空间无意义 (plan §190). */
   embedFn?: (text: string) => Promise<number[]>;
+  providerAttempt?: EmbedProviderAttemptOptions;
   /** 残余生成派发 seam (Task 3). 默认 dispatchSupplyTarget (route-plan → enqueue 既有队列，
    *  带 7 天 fingerprint cooldown 防无界 re-dispatch). db 测试注 vi.fn() 捕获 target、不打
    *  真 pg-boss / 真 Tavily. */
@@ -175,13 +176,25 @@ export interface MatcherDeps {
  * null (poolFetch 退 created_at,id 标量序)。queryText 经可注入 embedFn (默认 embedText)，
  * 保证与池向量同一 embedding seam (plan §190 铁律).
  */
-async function resolveQueryEmbedding(demand: Demand, deps: MatcherDeps): Promise<number[] | null> {
+async function resolveQueryEmbedding(
+  db: Db,
+  demand: Demand,
+  deps: MatcherDeps,
+): Promise<number[] | null> {
   if (demand.queryEmbedding != null && demand.queryEmbedding.length > 0) {
     return demand.queryEmbedding;
   }
   if (demand.queryText != null && demand.queryText.length > 0) {
-    const embed = deps.embedFn ?? embedText;
-    return embed(demand.queryText);
+    if (deps.embedFn) return deps.embedFn(demand.queryText);
+    return embedText(
+      demand.queryText,
+      deps.providerAttempt ?? {
+        db,
+        caller: 'api',
+        mode: 'observe',
+        deadlineAt: new Date(Date.now() + 20_000),
+      },
+    );
   }
   return null;
 }
@@ -523,7 +536,7 @@ export async function matcher(
   }
 
   // 解析查询向量 (路 A queryEmbedding 优先于路 B queryText)；都无 → null → 标量序.
-  const queryEmbedding = await resolveQueryEmbedding(demand, deps);
+  const queryEmbedding = await resolveQueryEmbedding(db, demand, deps);
 
   // 召回全量候选 (activeOnly:false 召回 active+draft 当场仲裁).
   // 不传 limit — 截断在 app 层 rankPool 的 slice (F2 回归防线).

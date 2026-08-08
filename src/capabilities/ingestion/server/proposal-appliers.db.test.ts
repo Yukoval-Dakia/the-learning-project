@@ -16,6 +16,7 @@ import {
   question_block,
   source_asset,
 } from '@/db/schema';
+import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { createId } from '@paralleldrive/cuid2';
@@ -1269,5 +1270,30 @@ describe('image_candidate cold-start bridges (YUK-478)', () => {
       .from(knowledge)
       .where(eq(knowledge.parent_id, 'seed:math:root'));
     expect(created).toHaveLength(0);
+  });
+
+  it('tagKnowledge provider-attempt invariant aborts image accept instead of persisting un-attributed', async () => {
+    const db = testDb();
+    await seedKnowledge(db);
+    await seedColdStartProposal('img_cand_invariant');
+    const { deps: baseDeps } = coldStartDeps({
+      subject_id: 'math',
+      kc_name: '一元二次方程求根',
+      reference_md: 'x = 2 或 x = 3',
+    });
+    const invariantError = new ProviderAttemptLifecycleError(
+      'identity_collision',
+      '00000000-0000-4000-8000-000000000043',
+    );
+    const deps: ImageCandidateAcceptDeps = {
+      ...baseDeps,
+      tagKnowledgeFn: async () => {
+        throw invariantError;
+      },
+    };
+
+    await expect(
+      acceptAiProposal(db, 'img_cand_invariant', { imageCandidateDeps: deps }),
+    ).rejects.toBe(invariantError);
   });
 });

@@ -63,7 +63,11 @@ import {
   studentAnswerGradingEnabled,
 } from '@/capabilities/ingestion/server/workflow-judge-config';
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
-import { type NameKcFn, tagKnowledge } from '@/capabilities/knowledge/public';
+import {
+  type NameKcFn,
+  isTagKnowledgeInvariantError,
+  tagKnowledge,
+} from '@/capabilities/knowledge/public';
 import type { CoarseOutcomeT } from '@/core/schema/capability';
 import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
 import {
@@ -157,6 +161,7 @@ export interface RunAutoEnrollResult {
 export interface RunAutoEnrollParams {
   db: Db;
   sessionId: string;
+  providerAttempt?: Parameters<typeof tagKnowledge>[0]['providerAttempt'];
   /** Restrict TaggingTask's candidate grid to one subject (single-subject default omits). */
   subjectId?: string;
   /**
@@ -510,6 +515,7 @@ export async function runAutoEnrollForSession(
         const tag = await tagKnowledgeFn(
           {
             db: params.db,
+            providerAttempt: params.providerAttempt,
             // Thread the bridge runTask seam through tagKnowledge's default naming invoker
             // (makeDefaultNameKc → runColdStartBridge) so DB tests stub the model exactly as
             // before. `ctx` defaults to { db } when the caller omits one.
@@ -531,6 +537,7 @@ export async function runAutoEnrollForSession(
         );
         tagging = synthesizeTaggingOutput(tag.knowledge_ids);
       } catch (err) {
+        if (isTagKnowledgeInvariantError(err)) throw err;
         // A tagging outage (provider down / unparseable name / missing seed root inside
         // applyProposeNew) must NEVER auto-enroll — route to review (block stays 'draft', upload
         // preserved). Mirrors the old TaggingTaskError swallow. We swallow ANY throw here (not
@@ -539,8 +546,8 @@ export async function runAutoEnrollForSession(
         // route-to-review, not abort the whole batch into a pg-boss retry-forever loop (the LOW
         // missing-seed-root guard the old inline cold-start path enforced).
         //
-        // DELIBERATE best-effort contract: an UNEXPECTED fault (DB blip, programming bug) is ALSO
-        // caught here — it is LOGGED via console.error (visible to monitoring) and the block is
+        // DELIBERATE best-effort contract: other unexpected faults (DB blip, programming bug) are
+        // caught here — they are LOGGED via console.error (visible to monitoring) and the block is
         // routed to review rather than re-thrown. A best-effort enroll lane must never abort the
         // whole session batch, and the human review surface is the backstop for any block that did
         // not auto-enroll (nothing is lost). We trade pg-boss retry-on-transient for batch

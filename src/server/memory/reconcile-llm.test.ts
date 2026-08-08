@@ -1,3 +1,7 @@
+import type {
+  DirectProviderLifecycleFactory,
+  DirectProviderOperationContext,
+} from '@/server/ai/direct-provider-attempt';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type CandidateEntry,
@@ -18,6 +22,33 @@ const MOCK_ENV = {
   ZHIPU_API_KEY: 'test-key',
   DASHSCOPE_API_KEY: 'test-dashscope',
 };
+
+function attemptContext(
+  records: unknown[],
+  externalRequestIds: string[] = [],
+): DirectProviderOperationContext {
+  const createLifecycle: DirectProviderLifecycleFactory = (input) => ({
+    identity: input.identity,
+    acquire: async () => ({
+      admission: 'acquired',
+      reserveProviderStart: async () => undefined,
+      recordExternalRequestId: async (id) => {
+        externalRequestIds.push(id);
+      },
+      finish: async (evidence) => {
+        records.push({ identity: input.identity, evidence });
+        return 'settled';
+      },
+    }),
+  });
+  return {
+    caller: 'worker',
+    deadlineAt: new Date('2030-01-01T00:00:00.000Z'),
+    mode: 'observe',
+    operationId: '00000000-0000-4000-8000-000000000020',
+    createLifecycle,
+  };
+}
 
 function mockNewMems(): NewMemoryEntry[] {
   return [
@@ -246,6 +277,7 @@ describe('judgeReconciliation', () => {
     const decisions = await judgeReconciliation(mockNewMems(), mockCandidates(), {
       env: MOCK_ENV,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      providerAttempt: attemptContext([]),
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -298,7 +330,10 @@ describe('judgeReconciliation', () => {
     await judgeReconciliation(mockNewMems(), mockCandidates(), {
       env: MOCK_ENV,
       fetchImpl: fetchMock as unknown as typeof fetch,
-      onUsage: (u) => seen.push(u),
+      providerAttempt: attemptContext([]),
+      onUsage: (u) => {
+        seen.push(u);
+      },
     });
 
     expect(seen).toEqual([{ promptTokens: 1234, completionTokens: 56 }]);
@@ -318,30 +353,159 @@ describe('judgeReconciliation', () => {
         ),
     );
     const seen: Array<{ promptTokens: number; completionTokens: number }> = [];
+    const attempts: unknown[] = [];
 
     await expect(
       judgeReconciliation(mockNewMems(), mockCandidates(), {
         env: MOCK_ENV,
         fetchImpl: fetchMock as unknown as typeof fetch,
-        onUsage: (u) => seen.push(u),
+        providerAttempt: attemptContext(attempts),
+        onUsage: (u) => {
+          seen.push(u);
+        },
       }),
     ).rejects.toThrow(ReconcileParseError);
 
     // onUsage fired despite the subsequent throw.
     expect(seen).toEqual([{ promptTokens: 800, completionTokens: 0 }]);
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        evidence: expect.objectContaining({
+          terminal: 'failed',
+          reason: 'provider_response_malformed',
+          wireCount: 1,
+          usage: expect.objectContaining({
+            basis: 'reported',
+            input: 800,
+            output: 0,
+          }),
+          cost: expect.objectContaining({
+            basis: 'unknown',
+            amount: null,
+            currency: 'CNY',
+            source: 'provider_cost_absent',
+          }),
+        }),
+      }),
+    ]);
+  });
+
+  it('keeps partial provider usage null while legacy usage defaults missing counts to zero', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    decisions: [
+                      {
+                        new_index: 0,
+                        action: 'KEEP_BOTH',
+                        old_index: null,
+                        confidence: 0.9,
+                        reason: 'ok',
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+            usage: { prompt_tokens: 17 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    const attempts: unknown[] = [];
+    const legacyUsage: Array<{ promptTokens: number; completionTokens: number }> = [];
+
+    await judgeReconciliation(mockNewMems(), mockCandidates(), {
+      env: MOCK_ENV,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      providerAttempt: attemptContext(attempts),
+      onUsage: (usage) => {
+        legacyUsage.push(usage);
+      },
+    });
+
+    expect(legacyUsage).toEqual([{ promptTokens: 17, completionTokens: 0 }]);
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        evidence: expect.objectContaining({
+          usage: expect.objectContaining({ input: 17, output: null, total: null }),
+          cost: expect.objectContaining({ basis: 'unknown', amount: null }),
+        }),
+      }),
+    ]);
+  });
+
+  it('leaves provider usage unknown for an empty usage object while preserving legacy 0/0', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    decisions: [
+                      {
+                        new_index: 0,
+                        action: 'KEEP_BOTH',
+                        old_index: null,
+                        confidence: 0.9,
+                        reason: 'ok',
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+            usage: {},
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    const attempts: unknown[] = [];
+    const legacyUsage: Array<{ promptTokens: number; completionTokens: number }> = [];
+
+    await judgeReconciliation(mockNewMems(), mockCandidates(), {
+      env: MOCK_ENV,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      providerAttempt: attemptContext(attempts),
+      onUsage: (usage) => {
+        legacyUsage.push(usage);
+      },
+    });
+
+    expect(legacyUsage).toEqual([{ promptTokens: 0, completionTokens: 0 }]);
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        evidence: expect.objectContaining({
+          usage: expect.objectContaining({ basis: 'unknown', input: null, output: null }),
+        }),
+      }),
+    ]);
   });
 
   it('throws RetryableError on 5xx', async () => {
+    const externalRequestIds: string[] = [];
     const fetchMock = vi.fn(
-      async () => new Response('{"error":{"message":"down"}}', { status: 503 }),
+      async () =>
+        new Response('{"id":"glm-memory-error-503","error":{"message":"down"}}', {
+          status: 503,
+        }),
     );
 
     await expect(
       judgeReconciliation(mockNewMems(), mockCandidates(), {
         env: MOCK_ENV,
         fetchImpl: fetchMock as unknown as typeof fetch,
+        providerAttempt: attemptContext([], externalRequestIds),
       }),
     ).rejects.toThrow(/503/);
+    expect(externalRequestIds).toEqual(['glm-memory-error-503']);
   });
 
   it('throws ReconcileParseError when GLM returns non-JSON content', async () => {
@@ -356,6 +520,7 @@ describe('judgeReconciliation', () => {
       judgeReconciliation(mockNewMems(), mockCandidates(), {
         env: MOCK_ENV,
         fetchImpl: fetchMock as unknown as typeof fetch,
+        providerAttempt: attemptContext([]),
       }),
     ).rejects.toThrow(ReconcileParseError);
   });

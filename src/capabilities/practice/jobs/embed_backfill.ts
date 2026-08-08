@@ -24,7 +24,7 @@
 import { getEffectiveDomain } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
-import { EMBED_MODEL, embedMany } from '@/server/ai/embed';
+import { EMBED_MODEL, type EmbedProviderAttemptOptions, embedMany } from '@/server/ai/embed';
 import { embedHash, knowledgeEmbedText, questionEmbedText } from '@/server/ai/embed-source';
 import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -45,7 +45,16 @@ const EFFECTIVE_DOMAIN_CONCURRENCY = 8;
 /** Idempotent: embed up to `limit` question rows + `limit` knowledge rows whose
  *  embedding IS NULL OR whose embed_version is behind EMBED_VERSION, stamping
  *  model + version + content-hash. Returns the number embedded. */
-export async function runEmbedBackfill(db: Db, limit = 100): Promise<number> {
+export async function runEmbedBackfill(
+  db: Db,
+  limit = 100,
+  providerAttempt: EmbedProviderAttemptOptions = {
+    db,
+    caller: 'worker',
+    mode: 'observe',
+    deadlineAt: new Date(Date.now() + 20_000),
+  },
+): Promise<number> {
   let total = 0;
 
   // Re-embed predicate (YUK-393): NULL embedding (never embedded / edit-NULLed)
@@ -61,7 +70,7 @@ export async function runEmbedBackfill(db: Db, limit = 100): Promise<number> {
   const qs = await db.select().from(question).where(qStale).limit(limit);
   if (qs.length > 0) {
     const texts = qs.map((q) => questionEmbedText(q));
-    const vecs = await embedMany(texts);
+    const vecs = await embedMany(texts, providerAttempt);
     for (let i = 0; i < qs.length; i++) {
       await db
         .update(question)
@@ -122,7 +131,10 @@ export async function runEmbedBackfill(db: Db, limit = 100): Promise<number> {
     }
 
     if (resolved.length > 0) {
-      const vecs = await embedMany(resolved.map((r) => r.text));
+      const vecs = await embedMany(
+        resolved.map((r) => r.text),
+        providerAttempt,
+      );
       for (let i = 0; i < resolved.length; i++) {
         const { k, text } = resolved[i];
         await db
@@ -152,9 +164,15 @@ export async function runEmbedBackfill(db: Db, limit = 100): Promise<number> {
 export function buildEmbedBackfillHandler(
   db: Db,
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {
-  return async () => {
+  return async (jobs) => {
     try {
-      const embedded = await runEmbedBackfill(db);
+      const embedded = await runEmbedBackfill(db, 100, {
+        db,
+        caller: 'worker',
+        mode: 'observe',
+        deadlineAt: new Date(Date.now() + 20_000),
+        operationAnchor: jobs[0]?.id,
+      });
       console.log('[embed_backfill] embedded', embedded);
     } catch (err) {
       console.error('[embed_backfill] failed', err);

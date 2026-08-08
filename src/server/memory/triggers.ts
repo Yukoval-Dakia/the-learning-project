@@ -4,8 +4,11 @@ import type { Job, PgBoss } from 'pg-boss';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import {
+  createDirectProviderOperationContext,
+  isDirectProviderAttemptInvariantError,
+} from '@/server/ai/direct-provider-attempt';
 import { writeCostLedger } from '@/server/ai/log';
-import { glmChatCostCny } from '@/server/ai/pricing';
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
 import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import {
@@ -731,18 +734,31 @@ export function buildMemoryReconcileHandler(
         let decisions: Awaited<ReturnType<typeof judge>>;
         try {
           decisions = await judge(newMems, candidatesByNew, {
+            providerAttempt: createDirectProviderOperationContext({
+              db,
+              caller: 'worker',
+              mode: 'observe',
+              deadlineAt: new Date(Date.now() + 65_000),
+              operationAnchor: job.id,
+            }),
             // YUK-359: record GLM reconcile cost (CNY). Best-effort — a ledger
             // write failure must never fail reconcile, so swallow + log.
-            onUsage: (usage) => {
-              void writeCostLedger(db, {
-                task_kind: 'memory_reconcile',
-                provider: 'glm',
-                model: 'glm-5.2',
-                cost: glmChatCostCny(usage.promptTokens, usage.completionTokens),
-                currency: 'CNY',
-                tokens_in: usage.promptTokens,
-                tokens_out: usage.completionTokens,
-              }).catch((err) => console.error('[memory_reconcile] writeCostLedger failed', err));
+            onUsage: async (usage, correlation) => {
+              try {
+                await writeCostLedger(db, {
+                  task_run_id: correlation.attemptId,
+                  task_kind: 'memory_reconcile',
+                  provider: 'glm',
+                  model: correlation.model,
+                  cost: correlation.estimatedCostCny,
+                  currency: 'CNY',
+                  tokens_in: usage.promptTokens,
+                  tokens_out: usage.completionTokens,
+                  pgboss_job_id: job.id,
+                });
+              } catch (err) {
+                console.error('[memory_reconcile] writeCostLedger failed', err);
+              }
             },
           });
         } catch (err) {
@@ -917,6 +933,7 @@ export function buildMemoryReconcileHandler(
         // Apply phase: consume recommendations without mutating mem0.
         await applyPlannedRows(db, userId);
       } catch (err) {
+        if (isDirectProviderAttemptInvariantError(err)) throw err;
         // Retryable failures (GLM timeout / 5xx / transient provider error) MUST
         // propagate so pg-boss retries the job (enqueueMemoryReconcile sets
         // retryLimit/retryDelay/retryBackoff). The retry is safe: the common

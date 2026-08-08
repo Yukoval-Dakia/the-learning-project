@@ -23,7 +23,7 @@ export {
   resolveSubjectProfileForKnowledgeIds,
   resolveSubjectProfileForKnowledgeIdsStrict,
 } from './server/subject-profile';
-export { tagKnowledge } from './server/tag-knowledge';
+export { isTagKnowledgeInvariantError, tagKnowledge } from './server/tag-knowledge';
 export type { NameKcFn } from './server/tag-knowledge';
 export {
   listKnowledgeEdges,

@@ -49,7 +49,7 @@ import {
   fetchWithPinnedDispatcher,
 } from '@/capabilities/ingestion/server/pinned-fetch';
 import { runVisionExtract } from '@/capabilities/ingestion/server/vision';
-import { tagKnowledge } from '@/capabilities/knowledge/public';
+import { isTagKnowledgeInvariantError, tagKnowledge } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 // YUK-229 — SSRF host-literal guard shared with the client (@/core/net/private-host). The
 // server keeps a throwing wrapper (assertPublicHttpUrl) + DNS-answer/redirect re-validation on
@@ -736,6 +736,13 @@ export async function acceptImageCandidateProposal(
         const tag = await tagKnowledgeFn(
           {
             db,
+            providerAttempt: {
+              db,
+              caller: 'api',
+              mode: 'observe',
+              deadlineAt: new Date(Date.now() + 20_000),
+              operationAnchor: proposalId,
+            },
             // Reuse the bridge's already-classified name — NO second model call.
             nameKcFn: async () => ({ kc_name: bridge.kc_name }),
           },
@@ -750,6 +757,7 @@ export async function acceptImageCandidateProposal(
         // event, so the terminal tx just attributes the question to the returned ids.
         knowledgeIds = tag.knowledge_ids;
       } catch (bridgeErr) {
+        if (isTagKnowledgeInvariantError(bridgeErr)) throw bridgeErr;
         // Best-effort: a provider outage / unparseable output / a missing seed root must NOT lose
         // the user's upload. Persist the draft un-attributed (knowledge_ids:[], stays a 'draft'
         // — see structural-verify gate below), exactly as the pre-YUK-478 behaviour. This catch

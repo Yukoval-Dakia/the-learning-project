@@ -16,7 +16,6 @@ import { event, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeRetryableAiFailureLedger } from '@/server/ai/failure-ledger';
 import { writeCostLedger } from '@/server/ai/log';
-import { glmChatCostCny } from '@/server/ai/pricing';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import type { FailureAttempt } from '@/server/events/queries';
@@ -29,10 +28,11 @@ import { z } from 'zod';
 import {
   type EdgeCandidate,
   type EdgeNeighbor,
+  type EdgeProviderAttemptOptions,
   type EdgeReconcileDecision,
   applyConfidenceThreshold,
+  isEdgeReconcileInvariantError,
   judgeEdgeReconcile,
-  resolveGlmConfig,
 } from './edge-reconcile';
 import {
   insertEdgePlannedRows,
@@ -78,11 +78,13 @@ export interface RunEdgeProposeAndWriteParams {
   db: Db;
   recentFailures: FailureAttempt[];
   runTaskFn: RunTaskFn;
-  env?: unknown;
+  env?: Env;
   subjectProfile?: SubjectProfile;
   // Override for tests. Production omits it → the live GLM judge is used with
   // `env` threaded through (so the ZHIPU key resolves via mem0 config).
   judgeReconcileFn?: JudgeEdgeReconcileFn;
+  providerAttempt?: EdgeProviderAttemptOptions;
+  pgbossJobId?: string;
 }
 
 export interface RunEdgeProposeAndWriteResult {
@@ -495,28 +497,35 @@ export async function runEdgeProposeAndWrite(
             params.judgeReconcileFn ??
             ((cand: EdgeCandidate, nbrs: EdgeNeighbor[]) =>
               judgeEdgeReconcile(cand, nbrs, {
-                env: params.env as never,
+                env: params.env,
+                providerAttempt: params.providerAttempt ?? {
+                  db: params.db,
+                  caller: 'worker',
+                  mode: 'observe',
+                  deadlineAt: new Date(Date.now() + 65_000),
+                },
                 // YUK-344: ledger live reconcile GLM tokens to cost_ledger, mirroring
                 // the memory reconcile path (triggers.ts onUsage / YUK-359). Best-effort
                 // — a ledger write failure must never fail reconcile, so swallow + log;
                 // successful writes are awaited so callers never observe a pre-ledger result.
                 // Only the LIVE judge bills; the injected test fn (judgeReconcileFn) has
                 // no GLM call, so it correctly never reaches this onUsage.
-                onUsage: async (usage) => {
+                onUsage: async (usage, correlation) => {
                   // CodeRabbit/PR-Agent Finding 3 — thread the ACTUAL resolved GLM
                   // model (the same resolveGlmConfig the judge uses) instead of
                   // hardcoding 'glm-5.2', which drifts when MEM0_LLM_MODEL overrides
                   // the model. Single source of truth: resolveGlmConfig(env).
-                  const model = resolveGlmConfig(params.env as Env).model;
                   try {
                     await writeCostLedger(params.db, {
+                      task_run_id: correlation.attemptId,
                       task_kind: 'edge_reconcile',
                       provider: 'glm',
-                      model,
-                      cost: glmChatCostCny(usage.promptTokens, usage.completionTokens),
+                      model: correlation.model,
+                      cost: correlation.estimatedCostCny,
                       currency: 'CNY',
                       tokens_in: usage.promptTokens,
                       tokens_out: usage.completionTokens,
+                      pgboss_job_id: params.pgbossJobId,
                     });
                   } catch (err) {
                     console.error('[edge_reconcile] writeCostLedger failed', err);
@@ -530,6 +539,7 @@ export async function runEdgeProposeAndWrite(
           // confidence" invariant holds regardless of the decision source).
           decision = applyConfidenceThreshold(await judge(candidateForReconcile, neighbors));
         } catch (err) {
+          if (isEdgeReconcileInvariantError(err)) throw err;
           // ReconcileParseError / Retryable / Permanent — safe-degrade to
           // KEEP_BOTH (no destructive supersede on an unparseable / failed judge).
           // Log ONLY the safe message: a ReconcileParseError carries `raw` = the
@@ -651,6 +661,7 @@ export async function runEdgeProposeAndWrite(
 
     return stats;
   } catch (err) {
+    if (isEdgeReconcileInvariantError(err)) throw err;
     // Log ONLY the safe message: this catch-all in the edge-reconcile write path
     // could in principle receive an error carrying a raw LLM payload (e.g. a
     // ReconcileParseError), and serializing the whole error object would leak that

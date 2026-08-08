@@ -1,4 +1,9 @@
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
+import {
+  type DirectProviderOperationContext,
+  executeDirectProviderAttempt,
+} from '@/server/ai/direct-provider-attempt';
+import { glmChatCostCny } from '@/server/ai/pricing';
 
 import { type Env, createMem0Config } from './client';
 
@@ -80,6 +85,7 @@ type GlmChatBody = {
 };
 
 type GlmChatResponse = {
+  id?: string;
   choices?: Array<{ message?: { content?: string } }>;
   // YUK-359: OpenAI-compat usage — present on success, previously discarded.
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
@@ -88,6 +94,11 @@ type GlmChatResponse = {
 
 /** YUK-359 — token usage surfaced to the caller so it can write cost_ledger. */
 export type ReconcileUsage = { promptTokens: number; completionTokens: number };
+export type ReconcileUsageCorrelation = {
+  attemptId: string;
+  model: string;
+  estimatedCostCny: number;
+};
 
 type GlmConfig = {
   baseURL: string;
@@ -378,9 +389,13 @@ export async function judgeReconciliation(
     env?: Env;
     timeoutMs?: number;
     fetchImpl?: typeof fetch;
+    providerAttempt?: DirectProviderOperationContext;
     // YUK-359: fired with token usage on a successful GLM response so the caller
     // (triggers.ts) can write cost_ledger. Never throws into the reconcile path.
-    onUsage?: (usage: ReconcileUsage) => void;
+    onUsage?: (
+      usage: ReconcileUsage,
+      correlation: ReconcileUsageCorrelation,
+    ) => void | Promise<void>;
   } = {},
 ): Promise<ReconcileDecision[]> {
   const env = opts.env ?? process.env;
@@ -402,82 +417,130 @@ export async function judgeReconciliation(
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  let resp: Response;
-  try {
-    resp = await fetchImpl(`${glmConfig.baseURL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${glmConfig.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new RetryableError(`GLM reconcile request aborted/timed out after ${timeoutMs}ms`, {
-        cause: err,
-      });
-    }
-    throw new RetryableError(`GLM reconcile network error: ${String(err)}`, {
-      cause: err,
-    });
-  } finally {
-    clearTimeout(timer);
+  if (!opts.providerAttempt) {
+    throw new TypeError('judgeReconciliation requires provider attempt context');
   }
+  const result = await executeDirectProviderAttempt(
+    opts.providerAttempt,
+    {
+      provider: 'glm',
+      model: glmConfig.model,
+      lane: 'glm.memory-reconcile',
+      protocol: 'http',
+      endpointClass: 'openai-compatible.chat-completions',
+      operationKind: 'memory_reconcile',
+      unknownCostCurrency: 'CNY',
+    },
+    async (attempt) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      let resp: Response;
+      try {
+        resp = await fetchImpl(`${glmConfig.baseURL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${glmConfig.apiKey}`,
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      } catch (err) {
+        const aborted = err instanceof Error && err.name === 'AbortError';
+        attempt.markTerminal(
+          aborted ? 'aborted' : 'failed',
+          aborted ? 'provider_request_aborted' : 'provider_network_error',
+        );
+        if (aborted) {
+          throw new RetryableError(`GLM reconcile request aborted/timed out after ${timeoutMs}ms`, {
+            cause: err,
+          });
+        }
+        throw new RetryableError(`GLM reconcile network error: ${String(err)}`, {
+          cause: err,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
 
-  if (!resp.ok) {
-    let errBody: GlmChatResponse | null = null;
-    try {
-      errBody = (await resp.json()) as GlmChatResponse;
-    } catch {
-      errBody = null;
-    }
-    const code = errBody?.error?.code ?? '';
-    const message = `GLM reconcile error [http ${resp.status}${code ? ` code ${code}` : ''}]: ${errBody?.error?.message ?? 'no message'}`;
-    if (resp.status === 401 || resp.status === 403) {
-      throw new PermanentError(message);
-    }
-    if (resp.status === 429 || resp.status >= 500) {
-      throw new RetryableError(message);
-    }
-    throw new PermanentError(message);
-  }
+      const headerRequestId = resp.headers.get('x-request-id');
+      if (headerRequestId) await attempt.recordExternalRequestId(headerRequestId);
+      if (!resp.ok) {
+        attempt.markTerminal('failed', `provider_http_${resp.status}`);
+        let errBody: GlmChatResponse | null = null;
+        try {
+          errBody = (await resp.json()) as GlmChatResponse;
+        } catch {
+          errBody = null;
+        }
+        const bodyRequestId = errBody?.id?.trim();
+        if (!headerRequestId && bodyRequestId) {
+          await attempt.recordExternalRequestId(bodyRequestId);
+        }
+        const code = errBody?.error?.code ?? '';
+        const message = `GLM reconcile error [http ${resp.status}${code ? ` code ${code}` : ''}]: ${errBody?.error?.message ?? 'no message'}`;
+        if (resp.status === 401 || resp.status === 403) throw new PermanentError(message);
+        if (resp.status === 429 || resp.status >= 500) throw new RetryableError(message);
+        throw new PermanentError(message);
+      }
 
-  let json: GlmChatResponse;
-  try {
-    json = (await resp.json()) as GlmChatResponse;
-  } catch (err) {
-    throw new PermanentError('GLM reconcile returned a non-JSON 2xx body', { cause: err });
-  }
+      let json: GlmChatResponse;
+      try {
+        json = (await resp.json()) as GlmChatResponse;
+      } catch (err) {
+        attempt.markTerminal('failed', 'provider_response_malformed');
+        throw new PermanentError('GLM reconcile returned a non-JSON 2xx body', { cause: err });
+      }
+      if (!headerRequestId && json.id) await attempt.recordExternalRequestId(json.id);
 
-  // YUK-359: surface usage for cost_ledger BEFORE the content/parse guards — a
-  // GLM response that bills tokens but returns empty/unparseable content still
-  // cost money and must be recorded (else parse-failure days under-report
-  // memory_reconcile spend). Guard so a callback throw never corrupts the
-  // reconcile result (cost tracking is best-effort observability).
-  if (opts.onUsage && json.usage) {
-    try {
-      opts.onUsage({
-        promptTokens: json.usage.prompt_tokens ?? 0,
-        completionTokens: json.usage.completion_tokens ?? 0,
-      });
-    } catch (err) {
-      console.error('[reconcile-llm] onUsage callback failed', err);
-    }
-  }
+      const promptTokens = json.usage?.prompt_tokens;
+      const completionTokens = json.usage?.completion_tokens;
+      const totalTokens = json.usage?.total_tokens;
+      const hasReportedTokens =
+        typeof promptTokens === 'number' ||
+        typeof completionTokens === 'number' ||
+        typeof totalTokens === 'number';
+      if (hasReportedTokens) {
+        attempt.reportUsage({
+          input: typeof promptTokens === 'number' ? promptTokens : null,
+          output: typeof completionTokens === 'number' ? completionTokens : null,
+          total: typeof totalTokens === 'number' ? totalTokens : null,
+        });
+      }
+      if (json.usage) {
+        const legacyPromptTokens = typeof promptTokens === 'number' ? promptTokens : 0;
+        const legacyCompletionTokens = typeof completionTokens === 'number' ? completionTokens : 0;
+        const estimatedCostCny = glmChatCostCny(legacyPromptTokens, legacyCompletionTokens);
+        if (opts.onUsage) {
+          try {
+            await opts.onUsage(
+              {
+                promptTokens: legacyPromptTokens,
+                completionTokens: legacyCompletionTokens,
+              },
+              { attemptId: attempt.attemptId, model: glmConfig.model, estimatedCostCny },
+            );
+          } catch (err) {
+            console.error('[reconcile-llm] onUsage callback failed', err);
+          }
+        }
+      }
 
-  const content = json.choices?.[0]?.message?.content;
-  if (typeof content !== 'string' || content.trim().length === 0) {
-    throw new ReconcileParseError(
-      'GLM reconcile response has no message content',
-      JSON.stringify(json),
-    );
-  }
-
-  const decisions = parseReconcileResponse(content);
-  return applyConfidenceThreshold(decisions);
+      const content = json.choices?.[0]?.message?.content;
+      if (typeof content !== 'string' || content.trim().length === 0) {
+        attempt.markTerminal('failed', 'provider_response_malformed');
+        throw new ReconcileParseError(
+          'GLM reconcile response has no message content',
+          JSON.stringify(json),
+        );
+      }
+      try {
+        return applyConfidenceThreshold(parseReconcileResponse(content));
+      } catch (err) {
+        attempt.markTerminal('failed', 'provider_response_malformed');
+        throw err;
+      }
+    },
+  );
+  return result.value;
 }

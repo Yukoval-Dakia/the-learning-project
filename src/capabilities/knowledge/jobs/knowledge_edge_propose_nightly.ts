@@ -20,6 +20,7 @@ import type { Job } from 'pg-boss';
 
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import {
+  type RunEdgeProposeAndWriteParams,
   type RunTaskFn,
   runEdgeProposeAndWrite,
 } from '@/capabilities/knowledge/server/propose_edge';
@@ -33,6 +34,8 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
+  providerAttempt?: RunEdgeProposeAndWriteParams['providerAttempt'];
+  pgbossJobId?: string;
   // YUK-583 — test-only seam to drive the backlog-paging path cheaply (mirrors
   // merge_attribution_sweep's `maxRepair` injectable cap). Never set in prod:
   // production always uses EDGE_PROPOSE_SCAN_LIMIT.
@@ -259,6 +262,8 @@ export async function runKnowledgeEdgeProposeNightly(
     // keeps the nightly handler aligned with judgeEdgeReconcile({ env }) and the
     // runTask provenance ctx (both env-scoped).
     env: process.env,
+    providerAttempt: deps.providerAttempt,
+    pgbossJobId: deps.pgbossJobId,
     subjectProfile: await resolveDominantSubjectProfile(db, attempts),
   });
 
@@ -294,9 +299,18 @@ export async function runKnowledgeEdgeProposeNightly(
 export function buildKnowledgeEdgeProposeNightlyHandler(
   db: Db,
 ): (jobs: Job<Record<string, never>>[]) => Promise<JobYieldOutput> {
-  return async () => {
+  return async (jobs) => {
     try {
-      const result = await runKnowledgeEdgeProposeNightly(db);
+      const result = await runKnowledgeEdgeProposeNightly(db, {
+        pgbossJobId: jobs[0]?.id,
+        providerAttempt: {
+          db,
+          caller: 'worker',
+          mode: 'observe',
+          deadlineAt: new Date(Date.now() + 65_000),
+          operationAnchor: jobs[0]?.id,
+        },
+      });
       console.log('[knowledge_edge_propose_nightly] result', result);
       // YUK-779 — the fallible unit is the single batch LLM call.
       //

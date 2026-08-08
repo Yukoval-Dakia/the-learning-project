@@ -40,7 +40,11 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { embedText } from '@/server/ai/embed';
+import {
+  type EmbedProviderAttemptOptions,
+  embedText,
+  isDirectProviderAttemptInvariantError,
+} from '@/server/ai/embed';
 import { questionEmbedText } from '@/server/ai/embed-source';
 // YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns).
 import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
@@ -56,6 +60,10 @@ import { MATCH_THRESHOLD } from './tagging-flags';
 
 /** Nearest-first candidates fetched per tag. Mirrors poolFetch's modest top-K. */
 const RETRIEVAL_TOP_K = 10;
+
+export function isTagKnowledgeInvariantError(error: unknown): boolean {
+  return isDirectProviderAttemptInvariantError(error);
+}
 
 /**
  * Naming seam — given the question (subject already resolved), return a concise
@@ -80,6 +88,7 @@ export interface TagKnowledgeDeps {
   db: Db;
   /** Embed the question text → query vector. Injected in tests. Defaults to embedText. */
   embedFn?: (text: string) => Promise<number[]>;
+  providerAttempt?: EmbedProviderAttemptOptions;
   /** Name the proposed KC. Injected in tests. Defaults to the cold-start-bridge naming. */
   nameKcFn?: NameKcFn;
   /**
@@ -164,7 +173,7 @@ export async function tagKnowledge(
   input: TagKnowledgeInput,
 ): Promise<TagKnowledgeResult> {
   const { db } = deps;
-  const embedFn = deps.embedFn ?? embedText;
+  const embedFn = deps.embedFn ?? ((text: string) => embedText(text, deps.providerAttempt));
   const nameKcFn = deps.nameKcFn ?? makeDefaultNameKc(deps);
   const threshold = deps.threshold ?? MATCH_THRESHOLD;
   // Guard the explicit-empty-array case too: `?? default` fires only on `undefined`, so a

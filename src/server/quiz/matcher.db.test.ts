@@ -1,5 +1,5 @@
 import { db } from '@/db/client';
-import { event, knowledge, question } from '@/db/schema';
+import { event, knowledge, provider_attempt, question } from '@/db/schema';
 import type { DispatchResult } from '@/server/question-supply/dispatcher';
 import {
   type QuestionSupplyTarget,
@@ -7,8 +7,13 @@ import {
 } from '@/server/question-supply/target-discovery';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb } from '../../../tests/helpers/db';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
 
 // B4 (YUK-386) — MATCHER_ANSWER_CLASS_FILTER is a module-level const in ./matcher-flags. Its
 // REAL default is false (dark-ship). We mock just that one export via a getter (EARLY_KLP
@@ -308,6 +313,41 @@ describe('matcher — Task 2 (cosine soft ranking + NULL embedding 降级)', () 
     expect(embedFn).toHaveBeenCalledWith('near q-near direction');
     // the embedded vector is forwarded as queryEmbedding → cosine nearest wins.
     expect(result.used[0].question_id).toBe('q-near');
+  });
+
+  it('queryText default embed path records real API attempts with fresh invocation operations', async () => {
+    const kc = 'kc-text-default';
+    await seedKc(kc, 'math');
+    await seed({ id: 'q-near', knowledge_ids: [kc], embedding: vec(0, 1) });
+    await seed({ id: 'q-far', knowledge_ids: [kc], embedding: vec(1, 0) });
+    vi.stubEnv('DASHSCOPE_API_KEY', 'test-dashscope');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [{ index: 0, embedding: vec(0.05, 0.95) }],
+              usage: { prompt_tokens: 7, total_tokens: 7 },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+      ),
+    );
+
+    const demand = { knowledgeId: kc, queryText: 'near q-near direction', limit: 1 };
+    const first = await matcher(db, demand);
+    const second = await matcher(db, demand);
+
+    expect(first.used.map((item) => item.question_id)).toEqual(['q-near']);
+    expect(second.used.map((item) => item.question_id)).toEqual(['q-near']);
+    const attempts = await db.select().from(provider_attempt);
+    expect(attempts).toHaveLength(2);
+    expect(attempts).toEqual([
+      expect.objectContaining({ lane_id: 'dashscope.embedding', caller: 'api' }),
+      expect.objectContaining({ lane_id: 'dashscope.embedding', caller: 'api' }),
+    ]);
+    expect(attempts[0].operation_id).not.toBe(attempts[1].operation_id);
   });
 
   it('queryEmbedding takes priority over queryText — embedFn not called', async () => {
