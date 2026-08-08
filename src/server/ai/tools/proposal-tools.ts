@@ -17,7 +17,7 @@ import {
   type RubricVerdict,
   validateProposalQuality,
 } from '@/capabilities/knowledge/server/rubric-validator';
-import { type VariantProposalResult, proposeFailureVariant } from '@/capabilities/practice/public';
+import type { VariantProposalResult } from '@/capabilities/practice/public';
 // ADR-0032 D6-B (YUK-203 lane L6) — the pure verify-gate is reused at PROPOSE
 // time (pre-flight against the live tree) and again at ACCEPT time (the applier).
 import { applyQuestionEdit } from '@/capabilities/practice/server/proposal-appliers';
@@ -1469,6 +1469,11 @@ export async function authorQuestion(
       // guards live there. `deps.causedByEventId` is intentionally NOT forwarded:
       // the operation owns the variant proposal's domain provenance. Only the `record` seed below
       // threads causedByEventId — the asymmetry is by design, not a miss.
+      // Load the public owner facet only when this seed actually executes. The
+      // Practice public barrel also exposes request handlers with production DB
+      // defaults, so eager import would make schema-only tool registration perform
+      // unrelated runtime initialization.
+      const { proposeFailureVariant } = await import('@/capabilities/practice/public');
       const result = await proposeFailureVariant({
         db: deps.db,
         attemptEventId: seed.attempt_event_id,

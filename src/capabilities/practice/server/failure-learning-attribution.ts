@@ -7,7 +7,7 @@
 //
 // Idempotency: if a judge event with caused_by_event_id=attemptEventId already exists,
 // skip + warn (mirrors the legacy "cause already set" check). Single-owner write path
-// per ADR-0005 — never call db.insert(event) directly; goes through writeEvent.
+// per ADR-0005 — never INSERT the event row directly; goes through writeEvent.
 
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
