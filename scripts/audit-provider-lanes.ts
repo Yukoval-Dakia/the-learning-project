@@ -5,7 +5,9 @@ import { parse } from '@babel/parser';
 import {
   type DirectImporter,
   type DirectImporterKind,
+  IMPORTED_FETCH_EXCEPTIONS,
   PROVIDER_LANES,
+  PROVIDER_RUNTIME_SDK_IMPORTS,
   PRUNED_MISCONCEPTION_MODULES,
   type ProviderConfigurationTruth,
   type ProviderLane,
@@ -45,6 +47,12 @@ type SourceFacts = {
   readonly calls: readonly string[];
   readonly envReads: readonly string[];
   readonly literals: readonly string[];
+  readonly importedFetches: readonly ImportedFetchBinding[];
+};
+
+type ImportedFetchBinding = {
+  readonly source: string;
+  readonly local: string;
 };
 
 type SourceImportEdge = {
@@ -52,9 +60,16 @@ type SourceImportEdge = {
   readonly source: string;
   readonly kind: DirectImporterKind;
   readonly target?: string;
+  readonly bindings?: readonly RuntimeImportBinding[];
+};
+
+type RuntimeImportBinding = {
+  readonly imported: string;
+  readonly local: string;
 };
 
 const SUPPORTED_SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
+const DEFAULT_FETCH_PACKAGES = new Set(['node-fetch', 'cross-fetch']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -182,6 +197,7 @@ function inspectSource(code: string, filename: string): SourceFacts {
   const imports = new Set<string>();
   const calls: string[] = [];
   const requestAliases = new Map<string, string>();
+  const importedFetches: ImportedFetchBinding[] = [];
   const envReads = new Set<string>();
   const literals = new Set<string>();
 
@@ -195,7 +211,24 @@ function inspectSource(code: string, filename: string): SourceFacts {
     if (literal) literals.add(literal);
     if (value.type === 'ImportDeclaration') {
       const source = textValue(value.source);
-      if (source) imports.add(source);
+      if (source) {
+        imports.add(source);
+        if (importKind(value) !== 'type' && Array.isArray(value.specifiers)) {
+          for (const specifier of value.specifiers) {
+            if (!isRecord(specifier) || !isRecord(specifier.local)) continue;
+            const local = identifierName(specifier.local);
+            if (!local) continue;
+            const imported =
+              specifier.type === 'ImportSpecifier' ? identifierName(specifier.imported) : undefined;
+            const isNamedFetch = imported === 'fetch';
+            const isKnownDefaultFetch =
+              specifier.type === 'ImportDefaultSpecifier' && DEFAULT_FETCH_PACKAGES.has(source);
+            if (!isNamedFetch && !isKnownDefaultFetch) continue;
+            importedFetches.push({ source, local });
+            requestAliases.set(local, `imported-fetch:${source}:${local}`);
+          }
+        }
+      }
     }
     if (value.type === 'VariableDeclarator') {
       if (
@@ -265,11 +298,19 @@ function inspectSource(code: string, filename: string): SourceFacts {
           visited.add(resolved);
           resolved = requestAliases.get(resolved) ?? resolved;
         }
-        return resolved === 'fetch' || resolved === 'fetchImpl' ? resolved : call;
+        return resolved === 'fetch' ||
+          resolved === 'fetchImpl' ||
+          resolved.startsWith('imported-fetch:')
+          ? resolved
+          : call;
       })
       .sort((left, right) => left.localeCompare(right)),
     envReads: [...envReads].sort((left, right) => left.localeCompare(right)),
     literals: [...literals].sort((left, right) => left.localeCompare(right)),
+    importedFetches: importedFetches.sort(
+      (left, right) =>
+        left.source.localeCompare(right.source) || left.local.localeCompare(right.local),
+    ),
   };
 }
 
@@ -346,12 +387,17 @@ function collectImportEdgesFromSource(
   }).program;
   const edges: SourceImportEdge[] = [];
   const unsupportedDynamicImports: string[] = [];
-  const addEdge = (source: string, kind: DirectImporterKind): void => {
+  const addEdge = (
+    source: string,
+    kind: DirectImporterKind,
+    bindings: readonly RuntimeImportBinding[] = [],
+  ): void => {
     edges.push({
       path: projectPath(root, path),
       source,
       kind,
       target: resolveImportTarget(root, path, source),
+      bindings,
     });
   };
   function visit(value: unknown): void {
@@ -362,7 +408,27 @@ function collectImportEdgesFromSource(
     if (!isRecord(value)) return;
     if (value.type === 'ImportDeclaration') {
       const source = textValue(value.source);
-      if (source) addEdge(source, importKind(value));
+      if (source) {
+        const kind = importKind(value);
+        const bindings =
+          kind === 'type' || !Array.isArray(value.specifiers)
+            ? []
+            : value.specifiers.flatMap((specifier): RuntimeImportBinding[] => {
+                if (!isRecord(specifier) || !isRecord(specifier.local)) return [];
+                const local = identifierName(specifier.local);
+                if (!local || specifier.importKind === 'type') return [];
+                const imported =
+                  specifier.type === 'ImportSpecifier'
+                    ? identifierName(specifier.imported)
+                    : specifier.type === 'ImportDefaultSpecifier'
+                      ? 'default'
+                      : specifier.type === 'ImportNamespaceSpecifier'
+                        ? '*'
+                        : undefined;
+                return imported ? [{ imported, local }] : [];
+              });
+        addEdge(source, kind, bindings);
+      }
     }
     if (value.type === 'ExportNamedDeclaration' || value.type === 'ExportAllDeclaration') {
       const source = textValue(value.source);
@@ -449,11 +515,99 @@ function importerMultiset(importers: readonly DirectImporter[]): string[] {
     .sort((left, right) => left.localeCompare(right));
 }
 
-function compositionRole(path: string): 'api' | 'worker' | undefined {
-  if (/^src\/capabilities\/[^/]+\/api\//.test(path)) return 'api';
-  if (/^src\/capabilities\/[^/]+\/jobs\//.test(path)) return 'worker';
-  if (path === 'src/server/boss/handlers.ts' || path === 'scripts/worker.ts') return 'worker';
-  return undefined;
+type CompositionRoot = {
+  readonly path: string;
+  readonly role: 'api' | 'worker';
+  readonly blocksCapabilityIndex: boolean;
+};
+
+function manifestCompositionRoots(root: string): CompositionRoot[] {
+  const roots: CompositionRoot[] = [];
+  for (const path of sourceFiles(resolve(root, 'src/capabilities'))) {
+    if (!path.endsWith('/manifest.ts')) continue;
+    const program = parse(readFileSync(path, 'utf8'), {
+      sourceType: 'module',
+      sourceFilename: path,
+      plugins: ['typescript', 'jsx', 'dynamicImport', 'importAttributes'],
+    }).program;
+    function visit(value: unknown, keys: readonly string[]): void {
+      if (Array.isArray(value)) {
+        for (const child of value) visit(child, keys);
+        return;
+      }
+      if (!isRecord(value)) return;
+      if (value.type === 'ObjectProperty') {
+        const key = identifierName(value.key) ?? textValue(value.key);
+        if (key) visit(value.value, [...keys, key]);
+        return;
+      }
+      if (
+        value.type === 'CallExpression' &&
+        isRecord(value.callee) &&
+        value.callee.type === 'Import'
+      ) {
+        const source = Array.isArray(value.arguments) ? textValue(value.arguments[0]) : undefined;
+        const target = source ? resolveImportTarget(root, path, source) : undefined;
+        const role =
+          keys.join('/') === 'api/routes/load'
+            ? 'api'
+            : keys.join('/') === 'jobs/handlers/load'
+              ? 'worker'
+              : undefined;
+        if (target && role) {
+          roots.push({ path: projectPath(root, target), role, blocksCapabilityIndex: false });
+        }
+      }
+      for (const [key, child] of Object.entries(value)) {
+        if (!['loc', 'start', 'end', 'extra'].includes(key)) visit(child, keys);
+      }
+    }
+    visit(program, []);
+  }
+  return roots;
+}
+
+function compositionRoots(root: string): CompositionRoot[] {
+  const roots = manifestCompositionRoots(root);
+  const app = resolve(root, 'server/app.ts');
+  if (existsSync(app)) {
+    roots.push({ path: 'server/app.ts', role: 'api', blocksCapabilityIndex: true });
+  }
+  const handlers = resolve(root, 'src/server/boss/handlers.ts');
+  if (existsSync(handlers)) {
+    roots.push({
+      path: 'src/server/boss/handlers.ts',
+      role: 'worker',
+      blocksCapabilityIndex: false,
+    });
+  }
+  return roots;
+}
+
+function runtimeCompositionPaths(root: string, edges: readonly SourceImportEdge[]): Set<string> {
+  const reachable = new Map<string, Set<string>>();
+  for (const edge of edges) {
+    if (!edge.target || edge.kind === 'type') continue;
+    const targets = reachable.get(edge.path) ?? new Set<string>();
+    targets.add(projectPath(root, edge.target));
+    reachable.set(edge.path, targets);
+  }
+  const paths = new Set<string>();
+  const visited = new Set<string>();
+  for (const rootEntry of compositionRoots(root)) {
+    const queue = [rootEntry.path];
+    while (queue.length > 0) {
+      const current = queue.pop();
+      if (!current || visited.has(`${rootEntry.role}:${current}`)) continue;
+      visited.add(`${rootEntry.role}:${current}`);
+      paths.add(current);
+      for (const next of reachable.get(current) ?? []) {
+        if (rootEntry.blocksCapabilityIndex && next === 'src/capabilities/index.ts') continue;
+        queue.push(next);
+      }
+    }
+  }
+  return paths;
 }
 
 function runtimeRolesForTarget(
@@ -469,20 +623,21 @@ function runtimeRolesForTarget(
     reachable.set(edge.path, targets);
   }
   const roles = new Set<string>();
-  for (const path of importSourceFiles(root).map((file) => projectPath(root, file))) {
-    const role = compositionRole(path);
-    if (!role) continue;
-    const queue = [path];
+  for (const rootEntry of compositionRoots(root)) {
+    const queue = [rootEntry.path];
     const visited = new Set<string>();
     while (queue.length > 0) {
       const current = queue.shift();
       if (!current || visited.has(current)) continue;
       visited.add(current);
       if (current === projectPath(root, target)) {
-        roles.add(role);
+        roles.add(rootEntry.role);
         break;
       }
-      for (const next of reachable.get(current) ?? []) queue.push(next);
+      for (const next of reachable.get(current) ?? []) {
+        if (rootEntry.blocksCapabilityIndex && next === 'src/capabilities/index.ts') continue;
+        queue.push(next);
+      }
     }
   }
   return [...roles].sort((left, right) => left.localeCompare(right));
@@ -498,6 +653,14 @@ function projectPath(root: string, path: string): string {
 
 function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWireFinding[] {
   return facts.calls.flatMap((call): ProviderWireFinding[] => {
+    if (call.startsWith('imported-fetch:')) {
+      const [, source, local] = call.split(':');
+      const isException = IMPORTED_FETCH_EXCEPTIONS.some(
+        (exception) =>
+          exception.path === path && exception.source === source && exception.local === local,
+      );
+      return isException ? [] : [{ kind: 'unclassified-provider-fetch', call, path }];
+    }
     if (call === 'memory.add' || call === 'memory.search') {
       return [{ kind: 'mem0-model-bearing-operation', call, path }];
     }
@@ -520,6 +683,149 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
       return [{ kind: 'glm-ocr-layout-parsing-fetch', call, path }];
     return [{ kind: 'unclassified-provider-fetch', call, path }];
   });
+}
+
+function checkImportedFetchExceptions(
+  root: string,
+  requireDeclaredPaths: boolean,
+): ProviderLaneViolation[] {
+  return IMPORTED_FETCH_EXCEPTIONS.flatMap((exception): ProviderLaneViolation[] => {
+    const path = resolve(root, exception.path);
+    if (!existsSync(path)) {
+      return requireDeclaredPaths
+        ? [{ path: exception.path, reason: 'imported fetch exception path does not exist' }]
+        : [];
+    }
+    const facts = inspectSource(readFileSync(path, 'utf8'), path);
+    const call = `imported-fetch:${exception.source}:${exception.local}`;
+    const matchesImport = facts.importedFetches.some(
+      (binding) => binding.source === exception.source && binding.local === exception.local,
+    );
+    return matchesImport && facts.calls.includes(call)
+      ? []
+      : [
+          {
+            path: exception.path,
+            reason: 'imported fetch exception no longer matches declared import and call',
+          },
+        ];
+  });
+}
+
+function isWatchedProviderSdk(source: string): boolean {
+  return (
+    source.startsWith('@anthropic-ai/sdk') ||
+    source.startsWith('@anthropic-ai/claude-agent-sdk') ||
+    source.startsWith('openai') ||
+    source.startsWith('mem0ai/oss') ||
+    source.startsWith('tencentcloud-sdk-nodejs-ocr')
+  );
+}
+
+function hasAgentProviderStartBinding(edge: SourceImportEdge): boolean {
+  return (
+    edge.source.startsWith('@anthropic-ai/claude-agent-sdk') &&
+    (edge.bindings ?? []).some(
+      (binding) => binding.imported === 'startup' || binding.imported === 'query',
+    )
+  );
+}
+
+function sdkEntryMatchesEdge(
+  entry: (typeof PROVIDER_RUNTIME_SDK_IMPORTS)[number],
+  edge: SourceImportEdge,
+): boolean {
+  if (entry.path !== edge.path || entry.source !== edge.source) return false;
+  return entry.disposition !== 'central'
+    ? true
+    : (edge.bindings ?? []).some(
+        (binding) => binding.imported === entry.imported && binding.local === entry.local,
+      );
+}
+
+function staticProviderContractViolations(): ProviderLaneViolation[] {
+  const violations: ProviderLaneViolation[] = [];
+  const fetchKeys = new Set<string>();
+  for (const entry of IMPORTED_FETCH_EXCEPTIONS) {
+    const key = `${entry.path}:${entry.source}:${entry.imported}:${entry.local}`;
+    if (
+      fetchKeys.has(key) ||
+      !entry.path.trim() ||
+      !entry.source.trim() ||
+      !entry.local.trim() ||
+      !entry.owner.trim() ||
+      !entry.purpose.trim()
+    ) {
+      violations.push({
+        path: 'scripts/provider-lane-inventory.ts',
+        reason: 'invalid imported fetch exception',
+      });
+    }
+    fetchKeys.add(key);
+  }
+  const sdkKeys = new Set<string>();
+  for (const entry of PROVIDER_RUNTIME_SDK_IMPORTS) {
+    const key = `${entry.path}:${entry.source}`;
+    if (sdkKeys.has(key) || !entry.path.trim() || !entry.source.trim()) {
+      violations.push({
+        path: 'scripts/provider-lane-inventory.ts',
+        reason: 'invalid provider SDK runtime import',
+      });
+    }
+    sdkKeys.add(key);
+  }
+  return violations;
+}
+
+function checkProviderSdkImports(
+  root: string,
+  edges: readonly SourceImportEdge[],
+  lanes: readonly ProviderLane[],
+  requireDeclaredPaths: boolean,
+): ProviderLaneViolation[] {
+  const productionPaths = runtimeCompositionPaths(root, edges);
+  for (const entry of PROVIDER_RUNTIME_SDK_IMPORTS) productionPaths.add(entry.path);
+  const observed = edges.filter(
+    (edge) =>
+      productionPaths.has(edge.path) &&
+      edge.kind !== 'type' &&
+      isWatchedProviderSdk(edge.source) &&
+      (!edge.source.startsWith('@anthropic-ai/claude-agent-sdk') ||
+        hasAgentProviderStartBinding(edge)),
+  );
+  const violations: ProviderLaneViolation[] = [];
+  for (const edge of observed) {
+    if (!PROVIDER_RUNTIME_SDK_IMPORTS.some((entry) => sdkEntryMatchesEdge(entry, edge))) {
+      violations.push({
+        path: edge.path,
+        reason: `unlisted provider SDK runtime import: ${edge.source}`,
+      });
+    }
+  }
+  for (const entry of PROVIDER_RUNTIME_SDK_IMPORTS) {
+    if (!existsSync(resolve(root, entry.path))) {
+      if (requireDeclaredPaths) {
+        violations.push({
+          path: entry.path,
+          reason: `declared provider SDK runtime import is missing: ${entry.source}`,
+        });
+      }
+      continue;
+    }
+    if (entry.disposition === 'lane' && !lanes.some((lane) => lane.id === entry.laneId)) {
+      violations.push({
+        path: entry.path,
+        reason: `provider SDK lane reference does not exist: ${entry.laneId}`,
+      });
+    }
+    if (!observed.some((edge) => sdkEntryMatchesEdge(entry, edge))) {
+      violations.push({
+        path: entry.path,
+        reason: `declared provider SDK runtime import is missing: ${entry.source}`,
+      });
+    }
+  }
+  return violations;
 }
 
 export function collectProviderWireFindings(projectRoot: string): ProviderWireFinding[] {
@@ -609,6 +915,12 @@ export function auditProviderLanes(
       path: 'scripts/provider-lane-inventory.ts',
       reason,
     }),
+  );
+  const requireDeclaredPaths = lanes === PROVIDER_LANES;
+  violations.push(
+    ...staticProviderContractViolations(),
+    ...checkImportedFetchExceptions(root, requireDeclaredPaths),
+    ...checkProviderSdkImports(root, importScan.edges, lanes, requireDeclaredPaths),
   );
   for (const finding of findings) {
     const laneId = laneForFinding(finding.kind);

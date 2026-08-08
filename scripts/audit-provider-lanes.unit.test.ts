@@ -35,6 +35,11 @@ function makeFixture(): string {
     "import { embed } from './ai/embed.js';\nexport { embed };\n",
   );
   write(root, 'src/capabilities/example/jobs/consumer.ts', "import '@/server/consumer';\n");
+  write(
+    root,
+    'src/capabilities/example/manifest.ts',
+    "export const manifest = { jobs: { handlers: [{ load: () => import('./jobs/consumer') }] } };\n",
+  );
   return root;
 }
 
@@ -75,6 +80,7 @@ function fixtureLane(overrides: Partial<ProviderLane> = {}): ProviderLane {
     },
     evidence: {
       path: 'src/server/ai/embed.ts',
+      calls: ['fetch'],
       contains: ['fetch', '/embeddings'],
     },
     costSupport: 'no project-side per-wire ledger hook',
@@ -148,6 +154,7 @@ function glmFixtureLane(): ProviderLane {
     },
     evidence: {
       path: 'src/server/memory/reconcile-llm.ts',
+      calls: ['fetchImpl'],
       contains: ['judgeReconciliation', '/chat/completions'],
     },
   });
@@ -404,7 +411,7 @@ describe('provider lane inventory', () => {
     const root = makeFixture();
     write(
       root,
-      'src/server/pinned-fetch.ts',
+      'src/capabilities/ingestion/server/pinned-fetch.ts',
       "import { fetch as undiciFetch } from 'undici';\nexport const download = () => undiciFetch('https://content.example/file');\n",
     );
     expect(collectProviderWireFindings(root)).toEqual([
@@ -434,6 +441,11 @@ describe('provider lane inventory', () => {
       'src/capabilities/example/jobs/glm-consumer.ts',
       "import '@/server/memory/glm-consumer';\n",
     );
+    write(
+      root,
+      'src/capabilities/example/manifest.ts',
+      "export const manifest = { jobs: { handlers: [{ load: () => import('./jobs/consumer') }, { load: () => import('./jobs/glm-consumer') }] } };\n",
+    );
     expect(collectProviderWireFindings(root)).toContainEqual({
       call: 'fetchImpl',
       kind: 'glm-memory-reconcile-fetch',
@@ -459,12 +471,141 @@ describe('provider lane inventory', () => {
     const root = makeFixture();
     const lane = fixtureLane({ roles: ['api', 'worker'] });
     write(root, 'src/capabilities/example/api/consumer.ts', "import '@/server/consumer';\n");
+    write(
+      root,
+      'src/capabilities/example/manifest.ts',
+      "export const manifest = { api: { routes: [{ load: () => import('./api/consumer') }] }, jobs: { handlers: [{ load: () => import('./jobs/consumer') }] } };\n",
+    );
     expect(auditProviderLanes(root, [lane]).ok).toBe(true);
     rmSync(resolve(root, 'src/capabilities/example/api/consumer.ts'));
     expect(auditProviderLanes(root, [lane])).toMatchObject({
       ok: false,
       violations: [
         expect.objectContaining({ reason: expect.stringContaining('runtime role closure drift') }),
+      ],
+    });
+  });
+
+  it('uses only registered manifest loaders and direct server app dependencies for API roles', () => {
+    const root = makeFixture();
+    write(root, 'src/capabilities/example/api/orphan.ts', "import '@/server/consumer';\n");
+    expect(auditProviderLanes(root, [fixtureLane()]).ok).toBe(true);
+    write(root, 'server/app.ts', "import './app-helper';\n");
+    write(root, 'server/app-helper.ts', "import '../src/server/consumer';\n");
+    expect(auditProviderLanes(root, [fixtureLane({ roles: ['api', 'worker'] })]).ok).toBe(true);
+  });
+
+  it('fails closed on an imported provider fetch outside the pinned transport exception', () => {
+    const root = makeFixture();
+    write(
+      root,
+      'src/server/provider-fetch.ts',
+      "import { fetch as providerFetch } from 'undici';\nexport const call = () => providerFetch('https://provider.example/v1');\n",
+    );
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          reason: expect.stringContaining('unlisted direct provider wire'),
+        }),
+      ],
+    });
+  });
+
+  it('fails closed on a watched provider SDK import from a production composition root', () => {
+    const root = makeFixture();
+    write(root, 'server/app.ts', "import { OpenAI } from 'openai';\nvoid OpenAI;\n");
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({ reason: 'unlisted provider SDK runtime import: openai' }),
+      ],
+    });
+  });
+
+  it('fails closed on a watched provider SDK import in a registered API loader dependency', () => {
+    const root = makeFixture();
+    write(root, 'src/capabilities/example/api/route.ts', "import './sdk-helper';\n");
+    write(
+      root,
+      'src/capabilities/example/api/sdk-helper.ts',
+      "import { OpenAI } from 'openai';\nvoid OpenAI;\n",
+    );
+    write(
+      root,
+      'src/capabilities/example/manifest.ts',
+      "export const manifest = { api: { routes: [{ load: () => import('./api/route') }] }, jobs: { handlers: [{ load: () => import('./jobs/consumer') }] } };\n",
+    );
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          path: 'src/capabilities/example/api/sdk-helper.ts',
+          reason: 'unlisted provider SDK runtime import: openai',
+        }),
+      ],
+    });
+  });
+
+  it('fails closed on an Agent SDK startup binding in a registered API loader dependency', () => {
+    const root = makeFixture();
+    write(root, 'src/capabilities/example/api/route.ts', "import './sdk-helper';\n");
+    write(
+      root,
+      'src/capabilities/example/api/sdk-helper.ts',
+      "import { startup } from '@anthropic-ai/claude-agent-sdk';\nvoid startup;\n",
+    );
+    write(
+      root,
+      'src/capabilities/example/manifest.ts',
+      "export const manifest = { api: { routes: [{ load: () => import('./api/route') }] }, jobs: { handlers: [{ load: () => import('./jobs/consumer') }] } };\n",
+    );
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          path: 'src/capabilities/example/api/sdk-helper.ts',
+          reason: 'unlisted provider SDK runtime import: @anthropic-ai/claude-agent-sdk',
+        }),
+      ],
+    });
+  });
+
+  it('does not infer API reachability from copilot loaders or the server index worker branch', () => {
+    const root = makeFixture();
+    write(root, 'src/capabilities/example/copilot.ts', "import '@/server/consumer';\n");
+    write(root, 'server/worker-helper.ts', "import '../src/server/consumer';\n");
+    write(root, 'server/index.ts', "import './worker-helper';\n");
+    write(
+      root,
+      'src/capabilities/example/manifest.ts',
+      "export const manifest = { jobs: { handlers: [{ load: () => import('./jobs/consumer') }] }, copilotTools: { tools: [{ load: () => import('./copilot') }] } };\n",
+    );
+    expect(auditProviderLanes(root, [fixtureLane()]).ok).toBe(true);
+  });
+
+  it('requires executable ledger evidence rather than retained ledger text', () => {
+    const root = makeFixture();
+    const lane = fixtureLane({
+      evidence: { path: 'src/server/ai/embed.ts', calls: ['writeCostLedger'] },
+    });
+    write(
+      root,
+      'src/server/ai/embed.ts',
+      "const writeCostLedger = () => undefined;\nexport const embed = () => { writeCostLedger(); return fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings'); };\n",
+    );
+    expect(auditProviderLanes(root, [lane]).ok).toBe(true);
+    write(
+      root,
+      'src/server/ai/embed.ts',
+      "// writeCostLedger()\nconst stale = 'writeCostLedger';\nexport const embed = () => fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings');\nvoid stale;\n",
+    );
+    expect(auditProviderLanes(root, [lane])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          reason: 'evidence hook evidence no longer matches declared call',
+        }),
       ],
     });
   });

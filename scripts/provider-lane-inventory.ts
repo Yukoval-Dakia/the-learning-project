@@ -39,6 +39,30 @@ export type DirectImporter = {
   readonly kind: DirectImporterKind;
 };
 
+export type ImportedFetchException = {
+  readonly path: string;
+  readonly source: string;
+  readonly imported: 'fetch';
+  readonly local: string;
+  readonly owner: string;
+  readonly purpose: string;
+};
+
+export type ProviderSdkRuntimeImport =
+  | {
+      readonly path: string;
+      readonly source: string;
+      readonly disposition: 'central';
+      readonly imported: 'startup';
+      readonly local: string;
+    }
+  | {
+      readonly path: string;
+      readonly source: string;
+      readonly disposition: 'lane';
+      readonly laneId: string;
+    };
+
 export type ProviderLane = {
   readonly id: string;
   readonly owner: string;
@@ -67,6 +91,39 @@ const prunedMisconceptionModules = [
 ] as const;
 
 export const PRUNED_MISCONCEPTION_MODULES = prunedMisconceptionModules;
+
+export const IMPORTED_FETCH_EXCEPTIONS = [
+  {
+    path: 'src/capabilities/ingestion/server/pinned-fetch.ts',
+    source: 'undici',
+    imported: 'fetch',
+    local: 'undiciFetch',
+    owner: 'capabilities/ingestion',
+    purpose: 'bounded content-download transport; not an AI/provider wire',
+  },
+] as const satisfies readonly ImportedFetchException[];
+
+export const PROVIDER_RUNTIME_SDK_IMPORTS = [
+  {
+    path: 'src/server/ai/runner.ts',
+    source: '@anthropic-ai/claude-agent-sdk',
+    disposition: 'central',
+    imported: 'startup',
+    local: 'sdkStartup',
+  },
+  {
+    path: 'src/server/memory/client.ts',
+    source: 'mem0ai/oss',
+    disposition: 'lane',
+    laneId: 'mem0.event-memory',
+  },
+  {
+    path: 'src/capabilities/ingestion/server/tencent_mark.ts',
+    source: 'tencentcloud-sdk-nodejs-ocr',
+    disposition: 'lane',
+    laneId: 'tencent.question-mark-agent',
+  },
+] as const satisfies readonly ProviderSdkRuntimeImport[];
 
 export const PROVIDER_LANES = [
   {
@@ -129,7 +186,8 @@ export const PROVIDER_LANES = [
     },
     evidence: {
       path: 'src/server/ai/embed.ts',
-      contains: ['DASHSCOPE_API_KEY', 'EMBED_MODEL', 'EMBED_DIMS'],
+      calls: ['fetch'],
+      contains: ['/embeddings'],
     },
     costSupport: 'no project-side per-wire cost ledger hook in the direct embedding client',
   },
@@ -183,7 +241,7 @@ export const PROVIDER_LANES = [
     },
     evidence: {
       path: 'src/capabilities/knowledge/server/propose_edge.ts',
-      contains: ['onUsage', 'writeCostLedger', 'resolveGlmConfig'],
+      calls: ['writeCostLedger', 'resolveGlmConfig'],
     },
     costSupport: 'per-wire cost_ledger hook records resolved model and token usage',
   },
@@ -275,7 +333,8 @@ export const PROVIDER_LANES = [
     },
     evidence: {
       path: 'src/server/memory/triggers.ts',
-      contains: ['onUsage', 'writeCostLedger', "task_kind: 'memory_reconcile'"],
+      calls: ['writeCostLedger'],
+      contains: ["task_kind: 'memory_reconcile'"],
     },
     costSupport: 'per-wire cost_ledger hook records usage; model identity remains env-resolved',
   },
@@ -324,7 +383,8 @@ export const PROVIDER_LANES = [
     },
     evidence: {
       path: 'src/capabilities/ingestion/jobs/tencent_ocr_extract.ts',
-      contains: ['glmPromptTokens', 'calculateGlmOcrCost', "provider: 'glm'"],
+      calls: ['writeCostLedger', 'calculateGlmOcrCost'],
+      contains: ["provider: 'glm'"],
     },
     costSupport: 'per-page usage accumulated and written to cost_ledger on success and failure',
   },
@@ -395,7 +455,8 @@ export const PROVIDER_LANES = [
     },
     evidence: {
       path: 'src/server/memory/client.ts',
-      contains: ['infer: false', 'memory.add', 'memory.search'],
+      calls: ['memory.add', 'memory.search'],
+      contains: ['infer: false'],
     },
     costSupport: 'no project-side per-wire cost truth for opaque Mem0 operations',
   },
@@ -446,7 +507,7 @@ export const PROVIDER_LANES = [
     },
     evidence: {
       path: 'src/capabilities/ingestion/server/tencent_mark.ts',
-      contains: ['SubmitQuestionMarkAgentJob', 'DescribeQuestionMarkAgentJob'],
+      calls: ['client.SubmitQuestionMarkAgentJob', 'client.DescribeQuestionMarkAgentJob'],
     },
     costSupport:
       'no project-side provider usage or per-wire cost truth; OCR ledger records zero cost',
@@ -469,7 +530,7 @@ function missingConfiguration(value: ConfigurationTruth): boolean {
   return value.summary.trim().length === 0 || missingEvidence(value.source);
 }
 
-function callerLacksAstEvidence(value: SourceEvidence): boolean {
+function lacksAstEvidence(value: SourceEvidence): boolean {
   return (value.imports?.length ?? 0) === 0 && (value.calls?.length ?? 0) === 0;
 }
 
@@ -493,6 +554,7 @@ export function validateProviderLaneInventory(lanes: readonly ProviderLaneCandid
       lane.wire.calls.length === 0 ||
       missingEvidence(lane.wire) ||
       missingEvidence(lane.evidence) ||
+      (lane.disposition !== 'prune' && lacksAstEvidence(lane.evidence)) ||
       lane.roles.some((role) => role !== 'api' && role !== 'worker') ||
       (lane.disposition !== 'prune' && (lane.callers.length === 0 || lane.roles.length === 0)) ||
       (lane.disposition !== 'prune' && lane.directImporters.length === 0) ||
@@ -501,7 +563,7 @@ export function validateProviderLaneInventory(lanes: readonly ProviderLaneCandid
           importer.path.trim().length === 0 ||
           !['runtime', 'type', 're-export', 'dynamic'].includes(importer.kind),
       ) ||
-      lane.callers.some((caller) => missingEvidence(caller) || callerLacksAstEvidence(caller));
+      lane.callers.some((caller) => missingEvidence(caller) || lacksAstEvidence(caller));
     if (missingMetadata) problems.push(`${label}: missing required metadata`);
     if (!['migrate', 'opaque', 'prune'].includes(lane.disposition)) {
       problems.push(`${label}: unsupported disposition ${lane.disposition}`);
