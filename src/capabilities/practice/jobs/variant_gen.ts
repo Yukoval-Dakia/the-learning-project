@@ -6,7 +6,7 @@ import {
   makePracticeTaskRunFn,
 } from '@/capabilities/practice/server/task-runtime';
 import type { Db } from '@/db/client';
-import type { FailureLearningJobData } from './failure-learning-jobs';
+import { type FailureLearningJobData, failureLearningAttemptId } from './failure-learning-jobs';
 
 export type VariantGenJobData = FailureLearningJobData;
 
@@ -23,7 +23,7 @@ export function buildVariantGenHandler(
   const learning = createFailureLearning({ db, runTaskFn });
   return async (jobs) => {
     for (const job of jobs) {
-      const attemptEventId = job.data?.attempt_event_id;
+      const attemptEventId = failureLearningAttemptId(job.data);
       if (!attemptEventId) {
         console.warn('[variant_gen] job missing attempt_event_id', job.id);
         continue;

@@ -35,7 +35,7 @@ export type AttributionResult =
       modelInvoked: boolean;
     }
   | { status: 'skipped'; reason: FailureLearningSkipReason; modelInvoked: false }
-  | { status: 'failed_permanent'; error: unknown; modelInvoked: true }
+  | { status: 'failed_permanent'; error: unknown; modelInvoked: boolean }
   | { status: 'failed_retryable'; error: unknown; modelInvoked: boolean };
 
 export type VariantProposalResult = RunVariantGenResult;
@@ -151,12 +151,16 @@ async function attributeFailure(
   if (options.automatic && failure.user_cause) {
     return { status: 'skipped', reason: 'user_cause_present', modelInvoked: false };
   }
+  if (failure.question_snapshot === null) {
+    return { status: 'skipped', reason: 'question_not_found', modelInvoked: false };
+  }
 
   const [questionRow] = await deps.db
     .select({
       prompt_md: question.prompt_md,
       reference_md: question.reference_md,
       knowledge_ids: question.knowledge_ids,
+      updated_at: question.updated_at,
     })
     .from(question)
     .where(eq(question.id, failure.question_id))
@@ -165,11 +169,20 @@ async function attributeFailure(
   if (!frozenQuestion && !questionRow) {
     return { status: 'skipped', reason: 'question_not_found', modelInvoked: false };
   }
+  if (
+    failure.question_snapshot === undefined &&
+    questionRow &&
+    questionRow.updated_at > failure.created_at
+  ) {
+    return { status: 'skipped', reason: 'question_not_found', modelInvoked: false };
+  }
 
   const referencedKnowledgeIds =
     failure.referenced_knowledge_ids.length > 0
       ? failure.referenced_knowledge_ids
-      : (questionRow?.knowledge_ids ?? []);
+      : failure.question_snapshot === undefined
+        ? (questionRow?.knowledge_ids ?? [])
+        : [];
   const knowledgeContext = await loadFailureLearningKnowledgeContext(
     deps.db,
     referencedKnowledgeIds,
@@ -207,7 +220,7 @@ async function attributeFailure(
     return { status: 'failed_retryable', error: outcome.error, modelInvoked };
   }
   if (outcome.outcome === 'permanent') {
-    return { status: 'failed_permanent', error: outcome.error, modelInvoked: true };
+    return { status: 'failed_permanent', error: outcome.error, modelInvoked };
   }
 
   const judge = await getJudgeForAttempt(deps.db, attemptEventId);

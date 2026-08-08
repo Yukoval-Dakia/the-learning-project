@@ -13,6 +13,7 @@ import {
   buildAttributionFollowupHandler,
   runAttributionFollowup,
 } from './attribution_followup';
+import { ATTRIBUTION_FOLLOWUP_QUEUE, failureLearningJobId } from './failure-learning-jobs';
 
 async function seedXuciKnowledge() {
   await testDb().insert(knowledge).values({
@@ -163,6 +164,63 @@ describe('runAttributionFollowup', () => {
       enqueueVariantGen,
     });
     expect(result.status).toBe('skipped:question_not_found');
+    expect(runTaskFn).not.toHaveBeenCalled();
+    expect(enqueueVariantGen).not.toHaveBeenCalled();
+  });
+
+  it('does not pair an invalid frozen snapshot with the current question row', async () => {
+    const db = testDb();
+    await seedXuciKnowledge();
+    await seedQuestion('q1');
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await db
+      .update(event)
+      .set({
+        payload: {
+          answer_md: '助词，主谓间',
+          answer_image_refs: [],
+          referenced_knowledge_ids: ['k_xuci'],
+          question_snapshot: { schema_version: 1 },
+        },
+      })
+      .where(eq(event.id, attemptId));
+    const runTaskFn = vi.fn();
+    const enqueueVariantGen = vi.fn(async () => {});
+
+    await expect(
+      runAttributionFollowup({
+        db,
+        attemptEventId: attemptId,
+        runTaskFn,
+        enqueueVariantGen,
+      }),
+    ).resolves.toEqual({ status: 'skipped:question_not_found' });
+    expect(runTaskFn).not.toHaveBeenCalled();
+    expect(enqueueVariantGen).not.toHaveBeenCalled();
+  });
+
+  it('does not use an edited current question as a legacy snapshot fallback', async () => {
+    const db = testDb();
+    await seedXuciKnowledge();
+    await seedQuestion('q1');
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await db
+      .update(question)
+      .set({ prompt_md: '后来修改的题面', updated_at: new Date('2030-01-01T00:00:00.000Z') })
+      .where(eq(question.id, 'q1'));
+    const runTaskFn = vi.fn();
+    const enqueueVariantGen = vi.fn(async () => {});
+
+    await expect(
+      runAttributionFollowup({
+        db,
+        attemptEventId: attemptId,
+        runTaskFn,
+        enqueueVariantGen,
+      }),
+    ).resolves.toEqual({ status: 'skipped:question_not_found' });
     expect(runTaskFn).not.toHaveBeenCalled();
     expect(enqueueVariantGen).not.toHaveBeenCalled();
   });
@@ -426,6 +484,16 @@ describe('runAttributionFollowup', () => {
     expect(result.status).toBe('failed_permanent');
     expect(enqueueVariantGen).not.toHaveBeenCalled();
 
+    await expect(
+      runAttributionFollowup({
+        db,
+        attemptEventId: attemptId,
+        runTaskFn,
+        enqueueVariantGen,
+      }),
+    ).resolves.toMatchObject({ status: 'failed_permanent' });
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+
     const judges = await db
       .select()
       .from(event)
@@ -438,6 +506,9 @@ describe('runAttributionFollowup', () => {
     expect(ledger).toHaveLength(1);
     expect(ledger[0].outcome).toBe('failed_permanent');
     expect(ledger[0].task_run_id).toBe('tr_perm');
+    expect(ledger[0].pgboss_job_id).toBe(
+      failureLearningJobId(ATTRIBUTION_FOLLOWUP_QUEUE, attemptId),
+    );
   });
 
   // ── YUK-562 (process-data 通电): reasoning_trace → AttributionInput.reasoning_trace_md ──

@@ -1,12 +1,13 @@
 // Task #17 — variant_gen handler tests.
 
-import { event, knowledge, mistake_variant, question } from '@/db/schema';
+import { cost_ledger, event, knowledge, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { VARIANT_GEN_QUEUE, failureLearningJobId } from '../jobs/failure-learning-jobs';
 import { runAttributionAndWriteJudgeEvent } from './failure-learning-attribution';
 import { runVariantGen } from './failure-learning-variant';
 
@@ -289,6 +290,168 @@ describe('runVariantGen', () => {
     expect(questions).toHaveLength(1);
   });
 
+  it('uses frozen attempt evidence after the current question is edited', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    await seedQuestion({ id: 'q1' });
+    const attemptId = createId();
+    await writeEvent(db, {
+      id: attemptId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'failure',
+      payload: {
+        answer_md: '助词，主谓间',
+        answer_image_refs: [],
+        referenced_knowledge_ids: ['k_xuci'],
+        question_snapshot: {
+          schema_version: 1,
+          question: {
+            question_id: 'q1',
+            question_version: 0,
+            parent_question_id: null,
+            prompt_md: '冻结题面',
+            reference_md: '冻结答案',
+            choices_md: null,
+            image_refs: [],
+            figures: [],
+            updated_at: '2026-08-08T08:00:00.000Z',
+          },
+          parent_question: null,
+        },
+      },
+      created_at: new Date('2026-08-08T08:01:00.000Z'),
+    });
+    await db
+      .update(question)
+      .set({
+        prompt_md: '后来修改的题面',
+        reference_md: '后来修改的答案',
+        updated_at: new Date('2026-08-08T08:02:00.000Z'),
+      })
+      .where(eq(question.id, 'q1'));
+    await seedJudgeForAttempt(attemptId, 'concept');
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown) => ({
+      text: VALID_VARIANT_OUTPUT,
+    }));
+
+    await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
+
+    expect(runTaskFn.mock.calls[0]?.[1]).toMatchObject({
+      original_question: {
+        prompt_md: '冻结题面',
+        reference_md: '冻结答案',
+        knowledge_ids: ['k_xuci'],
+      },
+    });
+  });
+
+  it('preserves a frozen null reference after the current question gains one', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    await seedQuestion({ id: 'q1' });
+    const attemptId = createId();
+    await writeEvent(db, {
+      id: attemptId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'failure',
+      payload: {
+        answer_md: '助词，主谓间',
+        answer_image_refs: [],
+        referenced_knowledge_ids: ['k_xuci'],
+        question_snapshot: {
+          schema_version: 1,
+          question: {
+            question_id: 'q1',
+            question_version: 0,
+            parent_question_id: null,
+            prompt_md: '冻结题面',
+            reference_md: null,
+            choices_md: null,
+            image_refs: [],
+            figures: [],
+            updated_at: '2026-08-08T08:00:00.000Z',
+          },
+          parent_question: null,
+        },
+      },
+      created_at: new Date('2026-08-08T08:01:00.000Z'),
+    });
+    await db
+      .update(question)
+      .set({
+        reference_md: '后来新增的答案',
+        updated_at: new Date('2026-08-08T08:02:00.000Z'),
+      })
+      .where(eq(question.id, 'q1'));
+    await seedJudgeForAttempt(attemptId, 'concept');
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown) => ({
+      text: VALID_VARIANT_OUTPUT,
+    }));
+
+    await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
+
+    expect(runTaskFn.mock.calls[0]?.[1]).toMatchObject({
+      original_question: {
+        prompt_md: '冻结题面',
+        reference_md: null,
+        knowledge_ids: ['k_xuci'],
+      },
+    });
+  });
+
+  it('fails closed on a corrupt frozen question snapshot', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    await seedQuestion({ id: 'q1' });
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await db
+      .update(event)
+      .set({
+        payload: {
+          answer_md: '助词，主谓间',
+          answer_image_refs: [],
+          referenced_knowledge_ids: ['k_xuci'],
+          question_snapshot: { schema_version: 1 },
+        },
+      })
+      .where(eq(event.id, attemptId));
+    await seedJudgeForAttempt(attemptId, 'concept');
+    const runTaskFn = vi.fn();
+
+    await expect(runVariantGen({ db, attemptEventId: attemptId, runTaskFn })).resolves.toEqual({
+      status: 'skipped:question_not_found',
+    });
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('does not use an edited current question as a legacy snapshot fallback', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    await seedQuestion({ id: 'q1' });
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await db
+      .update(question)
+      .set({ prompt_md: '后来修改的题面', updated_at: new Date('2030-01-01T00:00:00.000Z') })
+      .where(eq(question.id, 'q1'));
+    await seedJudgeForAttempt(attemptId, 'concept');
+    const runTaskFn = vi.fn();
+
+    await expect(runVariantGen({ db, attemptEventId: attemptId, runTaskFn })).resolves.toEqual({
+      status: 'skipped:question_not_found',
+    });
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
   it('passes the first knowledge subject profile to VariantGenTask', async () => {
     const db = testDb();
     await seedKnowledge('math');
@@ -409,6 +572,40 @@ describe('runVariantGen', () => {
     // LLM called only once
     expect(runTaskFn).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['accept', 'dismiss'] as const)(
+    'does not regenerate after the same-attempt proposal is rated %s',
+    async (rating) => {
+      const db = testDb();
+      await seedKnowledge();
+      await seedQuestion({ id: 'q1' });
+      const attemptId = createId();
+      await seedFailureAttempt(attemptId, 'q1');
+      await seedJudgeForAttempt(attemptId, 'concept');
+      const runTaskFn = vi.fn(async () => ({ text: VALID_VARIANT_OUTPUT }));
+      const first = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
+      const proposalId = first.proposal_id;
+      if (!proposalId) throw new Error('expected first proposal id');
+
+      await db.insert(event).values({
+        id: createId(),
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: proposalId,
+        outcome: 'success',
+        payload: { rating },
+        caused_by_event_id: proposalId,
+        created_at: new Date(),
+      });
+
+      await expect(runVariantGen({ db, attemptEventId: attemptId, runTaskFn })).resolves.toEqual({
+        status: 'skipped:already_has_variant',
+      });
+      expect(runTaskFn).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it('propagates an existing root_question_id (preserves variant lineage)', async () => {
     const db = testDb();
@@ -583,12 +780,29 @@ describe('runVariantGen', () => {
     await seedFailureAttempt(attemptId, 'q1');
     await seedJudgeForAttempt(attemptId, 'concept');
 
-    const runTaskFn = vi.fn(async () => ({ text: 'not json' }));
+    const runTaskFn = vi.fn(async () => ({ text: 'not json', task_run_id: 'tr_variant_perm' }));
     const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
     expect(result).toMatchObject({
       status: 'failed:invalid_model_output',
       reason: expect.stringMatching(/parseVariantOutput/),
     });
     expect(runTaskFn).toHaveBeenCalledTimes(1);
+
+    await expect(
+      runVariantGen({ db, attemptEventId: attemptId, runTaskFn }),
+    ).resolves.toMatchObject({
+      status: 'failed:invalid_model_output',
+    });
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    const ledger = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_kind, 'VariantGenTask'));
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({
+      outcome: 'failed_permanent',
+      task_run_id: 'tr_variant_perm',
+      pgboss_job_id: failureLearningJobId(VARIANT_GEN_QUEUE, attemptId),
+    });
   });
 });

@@ -10,6 +10,7 @@ import {
   type FailureLearningBossSend,
   type FailureLearningJobData,
   enqueueVariantGen,
+  failureLearningAttemptId,
 } from './failure-learning-jobs';
 
 export type AttributionFollowupJobData = FailureLearningJobData;
@@ -79,7 +80,7 @@ export function buildAttributionFollowupHandler(
   const enqueueVariant = deps.enqueueVariantGen ?? defaultEnqueueVariantGen;
   return async (jobs) => {
     for (const job of jobs) {
-      const attemptEventId = job.data?.attempt_event_id;
+      const attemptEventId = failureLearningAttemptId(job.data);
       if (!attemptEventId) {
         console.warn('[attribution_followup] job missing attempt_event_id', job.id);
         continue;

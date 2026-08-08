@@ -12,7 +12,7 @@ export {
   findExistingRateEvent,
   requiredString,
 } from './applier-helpers';
-export { listProposalInboxRows } from './inbox';
+export { hasProposalWithCooldownKey, listProposalInboxRows } from './inbox';
 export type { ProposalInboxRow } from './inbox';
 export { writeVariantQuestionProposal } from './producers';
 export { ensureProposalDecisionSignal, recordProposalDecisionSignal } from './signals';

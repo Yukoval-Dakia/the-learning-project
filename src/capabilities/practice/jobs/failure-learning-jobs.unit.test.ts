@@ -4,10 +4,19 @@ import {
   VARIANT_GEN_QUEUE,
   enqueueAttributionFollowup,
   enqueueVariantGen,
+  failureLearningAttemptId,
   failureLearningJobId,
 } from './failure-learning-jobs';
 
 describe('Failure Learning durable job identity', () => {
+  it('accepts only a non-empty string attempt id from the legacy payload', () => {
+    expect(failureLearningAttemptId({ attempt_event_id: 'attempt_1' })).toBe('attempt_1');
+    expect(failureLearningAttemptId({ attempt_event_id: 1 })).toBeNull();
+    expect(failureLearningAttemptId({ attempt_event_id: {} })).toBeNull();
+    expect(failureLearningAttemptId({ attempt_event_id: '   ' })).toBeNull();
+    expect(failureLearningAttemptId(null)).toBeNull();
+  });
+
   it('derives stable, stage-specific pg-boss UUIDs from the attempt id', () => {
     const attemptId = 'attempt_cuid_that_is_not_a_uuid';
     const attribution = failureLearningJobId(ATTRIBUTION_FOLLOWUP_QUEUE, attemptId);

@@ -41,13 +41,13 @@ import {
   projectionWritesMistakeVariant,
 } from '@/server/projections/mistake-variant-runtime';
 import {
-  listProposalInboxRows,
+  hasProposalWithCooldownKey,
   writeVariantQuestionProposal,
 } from '@/server/proposals/practice-runtime';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { type VariantGenInput, parseVariantOutput } from '../tasks/variant-gen';
 import { effectiveCauseForFailureAttempt, getFailureAttemptById } from './attempt-events';
-import { recordVariantPermanent } from './failure-learning-ledger';
+import { hasVariantPermanent, recordVariantPermanent } from './failure-learning-ledger';
 import type { PracticeTaskRunFn } from './task-runtime';
 
 // YUK-17 / ADR-0018 — per-parent in-flight variant cap. Counts
@@ -110,6 +110,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
 
   const failure = await getFailureAttemptById(db, attemptEventId);
   if (!failure) return { status: 'skipped:attempt_not_active' };
+  if (failure.question_snapshot === null) return { status: 'skipped:question_not_found' };
   const cause = effectiveCauseForFailureAttempt(failure);
   if (!cause) return { status: 'skipped:no_judge_yet' };
   if (!cause.primary_category) return { status: 'skipped:cause_not_targetable' };
@@ -126,12 +127,16 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
       variant_depth: question.variant_depth,
       root_question_id: question.root_question_id,
       difficulty: question.difficulty,
+      updated_at: question.updated_at,
     })
     .from(question)
     .where(eq(question.id, attempt.subject_id))
     .limit(1);
   const parent = qRows[0];
   if (!parent) return { status: 'skipped:question_not_found' };
+  if (failure.question_snapshot === undefined && parent.updated_at > failure.created_at) {
+    return { status: 'skipped:question_not_found' };
+  }
   if (parent.source === 'mistake_variant') {
     return { status: 'skipped:variant_chain_terminus' };
   }
@@ -164,18 +169,18 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   // Per-(parent, attempt) idempotency: same attempt re-triggering variant_gen
   // never spawns a second proposal — even if variants_max still has headroom.
   const cooldownKey = `variant_question:${parent.id}:${attemptEventId}`;
-  const pendingProposals = await listProposalInboxRows(db, { status: 'pending' });
-  if (
-    pendingProposals.some(
-      (proposal) =>
-        proposal.kind === 'variant_question' && proposal.payload.cooldown_key === cooldownKey,
-    )
-  ) {
+  if (await hasProposalWithCooldownKey(db, 'variant_question', cooldownKey)) {
     return { status: 'skipped:already_has_variant' };
   }
 
   const payload = attempt.payload as { answer_md?: string | null };
-  const firstKnowledgeId = parent.knowledge_ids[0];
+  const sourceKnowledgeIds =
+    failure.referenced_knowledge_ids.length > 0
+      ? failure.referenced_knowledge_ids
+      : failure.question_snapshot === undefined
+        ? parent.knowledge_ids
+        : [];
+  const firstKnowledgeId = sourceKnowledgeIds[0];
   const knowledgeRows = firstKnowledgeId
     ? await db
         .select({ domain: knowledge.domain })
@@ -190,14 +195,22 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   if (!causeCategory || causeCategory.variant_targetable === false) {
     return { status: 'skipped:cause_not_targetable' };
   }
+  if (await hasVariantPermanent(db, attemptEventId)) {
+    return {
+      status: 'failed:invalid_model_output',
+      reason: 'VariantGenTask has a durable permanent-output marker',
+    };
+  }
+
+  const frozenQuestion = failure.question_snapshot?.question;
 
   const input: VariantGenInput = {
     original_question: {
       id: parent.id,
       kind: parent.kind,
-      prompt_md: parent.prompt_md,
-      reference_md: parent.reference_md,
-      knowledge_ids: parent.knowledge_ids,
+      prompt_md: frozenQuestion?.prompt_md ?? parent.prompt_md,
+      reference_md: frozenQuestion ? frozenQuestion.reference_md : parent.reference_md,
+      knowledge_ids: sourceKnowledgeIds,
     },
     attempt: { wrong_answer_md: payload.answer_md ?? '' },
     cause: {
@@ -217,7 +230,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     // The provider call already succeeded and incurred cost. Redelivery cannot
     // repair deterministic output validation and would only reburn the model,
     // so record a terminal product-stage failure and ACK the durable job.
-    await recordVariantPermanent(db, result.task_run_id);
+    await recordVariantPermanent(db, attemptEventId, result.task_run_id);
     return {
       status: 'failed:invalid_model_output',
       reason: error instanceof Error ? error.message : String(error),
@@ -237,7 +250,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
       prompt_md: parsed.prompt_md,
       reference_md: parsed.reference_md,
       difficulty: parsed.difficulty,
-      knowledge_ids: parent.knowledge_ids,
+      knowledge_ids: sourceKnowledgeIds,
       parent_variant_id: parent.id,
       root_question_id: rootId,
       variant_depth: parent.variant_depth + 1,

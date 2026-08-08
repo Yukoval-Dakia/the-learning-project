@@ -32,16 +32,16 @@ export async function writeRetryableAiFailureLedger(
  * (cost incurred) but a downstream deterministic step (parse / schema validate)
  * failed, so retrying is wasteful. When present, `taskRunId` lets this row join
  * into run-detail observability (the task_run_id join) — the row is written FOR
- * that read surface; no query consumes the outcome column itself yet. If the
- * task runner returned no task_run_id the row degrades to task_run_id=NULL
- * (visible only via direct SQL — the same invisibility the backfill doc
- * describes). Errors are swallowed like the retryable sibling — a ledger hiccup
- * must never mask the permanent classification.
+ * that read surface. If the task runner returned no task_run_id the row degrades
+ * to task_run_id=NULL. A capability may provide a durable job correlation key,
+ * query the outcome + key as its terminal marker, and require the write to
+ * succeed before acknowledging the job.
  */
 export async function writePermanentAiFailureLedger(
-  db: Db,
+  db: Db | Tx,
   taskKind: string,
   taskRunId: string | null | undefined,
+  options: { pgbossJobId?: string; throwOnError?: boolean } = {},
 ): Promise<void> {
   try {
     await writeCostLedger(db, {
@@ -53,8 +53,10 @@ export async function writePermanentAiFailureLedger(
       tokens_in: 0,
       tokens_out: 0,
       outcome: 'failed_permanent',
+      pgboss_job_id: options.pgbossJobId,
     });
   } catch (err) {
+    if (options.throwOnError) throw err;
     console.error(`[${taskKind}] writeCostLedger failed for permanent AI failure`, err);
   }
 }

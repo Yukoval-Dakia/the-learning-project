@@ -9,11 +9,11 @@ src/capabilities/
   agency/             # 能动编排：夜链 + goal scope + agent-notes
   copilot/            # Copilot 单人格对话 + copilotTools 贡献
   ingestion/          # 录入域：OCR / Vision rescue / 抽取 / 入库
-  knowledge/          # 知识图谱域：树 + mesh + 提议 + 归因
+  knowledge/          # 知识图谱域：树 + mesh + 提议 + 有界知识读取
   notes/              # Note artifact 域：block-tree 编辑器 + Living Note refine
   observability/      # AI 可观测性：admin 四页 + 今日成本条
   onboarding/         # 冷启动：目标、上传、起点探测与起始档案
-  practice/           # 练习域：review / quiz / judge / paper / 题库
+  practice/           # 练习域：review / judge / failure learning / quiz / paper / 题库
   shell/              # 工作台壳层：收件箱 + Today + Coach
 ```
 

@@ -24,7 +24,11 @@ import {
   parseAttributionOutput,
 } from '../tasks/attribution';
 import { getJudgeForAttempt } from './attempt-events';
-import { recordAttributionPermanent, recordAttributionRetryable } from './failure-learning-ledger';
+import {
+  hasAttributionPermanent,
+  recordAttributionPermanent,
+  recordAttributionRetryable,
+} from './failure-learning-ledger';
 import { type PracticeTaskRunFn, practiceCostUsdToMicroUsd } from './task-runtime';
 
 export interface RunAttributionAndWriteJudgeEventParams {
@@ -143,6 +147,13 @@ export async function runAttributionAndWriteJudgeEvent(
       };
     }
 
+    if (await hasAttributionPermanent(params.db, params.attemptEventId)) {
+      return {
+        outcome: 'permanent',
+        error: new Error('AttributionTask has a durable permanent-output marker'),
+      };
+    }
+
     // YUK-462 — retrieve→rerank-with-rationale. The profile (resolved above) is
     // reused for both the L1 retriever and the post-LLM parse/clamp.
     //
@@ -181,7 +192,11 @@ export async function runAttributionAndWriteJudgeEvent(
       'runAttributionAndWriteJudgeEvent: permanent parse failure (attempt unaffected)',
       err,
     );
-    await recordAttributionPermanent(params.db, result.task_run_id);
+    try {
+      await recordAttributionPermanent(params.db, params.attemptEventId, result.task_run_id);
+    } catch (markerError) {
+      return { outcome: 'retryable', error: markerError };
+    }
     return { outcome: 'permanent', error: err };
   }
 
