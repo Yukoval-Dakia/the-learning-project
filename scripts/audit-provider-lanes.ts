@@ -111,26 +111,32 @@ function textValue(node: unknown): string | undefined {
 function callName(callee: unknown): string | undefined {
   if (!isRecord(callee)) return undefined;
   if (callee.type === 'Identifier' && typeof callee.name === 'string') return callee.name;
-  if (callee.type !== 'MemberExpression' || callee.computed) return undefined;
+  if (callee.type !== 'MemberExpression') return undefined;
   if (!isRecord(callee.object) || callee.object.type !== 'Identifier') return undefined;
-  if (!isRecord(callee.property) || callee.property.type !== 'Identifier') return undefined;
-  if (typeof callee.object.name !== 'string' || typeof callee.property.name !== 'string')
-    return undefined;
+  const property = callee.computed ? textValue(callee.property) : identifierName(callee.property);
+  if (typeof callee.object.name !== 'string' || !property) return undefined;
   if (
     (callee.object.name === 'globalThis' || callee.object.name === 'global') &&
-    callee.property.name === 'fetch'
+    property === 'fetch'
   ) {
     return 'fetch';
   }
-  return `${callee.object.name}.${callee.property.name}`;
+  if (callee.computed) return undefined;
+  return `${callee.object.name}.${property}`;
+}
+
+function identifierName(node: unknown): string | undefined {
+  return isRecord(node) && node.type === 'Identifier' && typeof node.name === 'string'
+    ? node.name
+    : undefined;
 }
 
 function globalFetchMemberName(node: unknown): string | undefined {
-  if (!isRecord(node) || node.type !== 'MemberExpression' || node.computed) return undefined;
+  if (!isRecord(node) || node.type !== 'MemberExpression') return undefined;
   if (!isRecord(node.object) || node.object.type !== 'Identifier') return undefined;
-  if (!isRecord(node.property) || node.property.type !== 'Identifier') return undefined;
+  const property = node.computed ? textValue(node.property) : identifierName(node.property);
   return (node.object.name === 'globalThis' || node.object.name === 'global') &&
-    node.property.name === 'fetch'
+    property === 'fetch'
     ? 'fetch'
     : undefined;
 }
@@ -376,6 +382,7 @@ function collectImportEdgesFromSource(
       ) {
         const source = textValue(argumentsList[0]);
         if (source) addEdge(source, 'runtime');
+        else unsupportedDynamicImports.push(projectPath(root, path));
       }
     }
     for (const [key, child] of Object.entries(value)) {

@@ -383,6 +383,12 @@ describe('provider lane inventory', () => {
     [
       "const { fetch: request } = globalThis;\nexport const embed = () => request('https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings');\n",
     ],
+    [
+      "export const embed = () => globalThis['fetch']('https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings');\n",
+    ],
+    [
+      "const request = global['fetch'];\nexport const embed = () => request('https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings');\n",
+    ],
   ])('classifies Node global Fetch member syntax as fetch', (source) => {
     const root = makeFixture();
     write(root, 'src/server/ai/embed.ts', source);
@@ -607,6 +613,29 @@ describe('provider lane inventory', () => {
     expect(collectProviderWireFindings(root)).not.toContainEqual(
       expect.objectContaining({ path: 'scripts/smoke-local.ts' }),
     );
+  });
+
+  it('fails closed on a non-literal CommonJS require from a production root', () => {
+    const root = makeFixture();
+    write(
+      root,
+      'server/index.ts',
+      "const target = '../scripts/direct-provider';\nrequire(target);\n",
+    );
+    write(
+      root,
+      'scripts/direct-provider.ts',
+      "export const call = () => globalThis.fetch('https://direct-provider.example/v1');\n",
+    );
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          path: 'server/index.ts',
+          reason: 'unsupported dynamic import prevents direct importer closure validation',
+        }),
+      ],
+    });
   });
 
   it('excludes both test and spec source variants from the provider census', () => {
