@@ -521,10 +521,85 @@ type CompositionRoot = {
   readonly blocksCapabilityIndex: boolean;
 };
 
+function registeredManifestPaths(root: string): Set<string> {
+  const indexPath = resolve(root, 'src/capabilities/index.ts');
+  if (!existsSync(indexPath)) return new Set<string>();
+  const program = parse(readFileSync(indexPath, 'utf8'), {
+    sourceType: 'module',
+    sourceFilename: indexPath,
+    plugins: ['typescript', 'jsx', 'dynamicImport', 'importAttributes'],
+  }).program;
+  const imports = new Map<string, string>();
+  const capabilityArrays: unknown[][] = [];
+  for (const statement of program.body) {
+    if (!isRecord(statement)) continue;
+    if (statement.type === 'ImportDeclaration') {
+      const source = textValue(statement.source);
+      if (!source || statement.importKind === 'type' || !Array.isArray(statement.specifiers)) {
+        continue;
+      }
+      const target = resolveImportTarget(root, indexPath, source);
+      if (!target) continue;
+      for (const specifier of statement.specifiers) {
+        if (
+          !isRecord(specifier) ||
+          specifier.type !== 'ImportSpecifier' ||
+          specifier.importKind === 'type' ||
+          !isRecord(specifier.local)
+        ) {
+          continue;
+        }
+        const local = identifierName(specifier.local);
+        if (local) imports.set(local, projectPath(root, target));
+      }
+      continue;
+    }
+    if (
+      statement.type !== 'ExportNamedDeclaration' ||
+      !isRecord(statement.declaration) ||
+      statement.declaration.type !== 'VariableDeclaration' ||
+      statement.declaration.kind !== 'const' ||
+      !Array.isArray(statement.declaration.declarations)
+    ) {
+      continue;
+    }
+    for (const declarator of statement.declaration.declarations) {
+      if (
+        !isRecord(declarator) ||
+        !isRecord(declarator.id) ||
+        declarator.id.type !== 'Identifier' ||
+        declarator.id.name !== 'capabilities' ||
+        !isRecord(declarator.init) ||
+        declarator.init.type !== 'ArrayExpression' ||
+        !Array.isArray(declarator.init.elements)
+      ) {
+        continue;
+      }
+      capabilityArrays.push(declarator.init.elements);
+    }
+  }
+  if (capabilityArrays.length !== 1) {
+    throw new Error(`${indexPath}: exactly one exported static capabilities array is required`);
+  }
+  const [capabilities] = capabilityArrays;
+  const paths = capabilities.map((element) => {
+    const name = identifierName(element);
+    const path = name ? imports.get(name) : undefined;
+    if (!path || !path.endsWith('/manifest.ts')) {
+      throw new Error(
+        `${indexPath}: capabilities array must contain imported manifest identifiers`,
+      );
+    }
+    return path;
+  });
+  return new Set(paths);
+}
+
 function manifestCompositionRoots(root: string): CompositionRoot[] {
   const roots: CompositionRoot[] = [];
+  const registered = registeredManifestPaths(root);
   for (const path of sourceFiles(resolve(root, 'src/capabilities'))) {
-    if (!path.endsWith('/manifest.ts')) continue;
+    if (!path.endsWith('/manifest.ts') || !registered.has(projectPath(root, path))) continue;
     const program = parse(readFileSync(path, 'utf8'), {
       sourceType: 'module',
       sourceFilename: path,
@@ -687,6 +762,7 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
 
 function checkImportedFetchExceptions(
   root: string,
+  edges: readonly SourceImportEdge[],
   requireDeclaredPaths: boolean,
 ): ProviderLaneViolation[] {
   return IMPORTED_FETCH_EXCEPTIONS.flatMap((exception): ProviderLaneViolation[] => {
@@ -701,12 +777,35 @@ function checkImportedFetchExceptions(
     const matchesImport = facts.importedFetches.some(
       (binding) => binding.source === exception.source && binding.local === exception.local,
     );
-    return matchesImport && facts.calls.includes(call)
+    const expectedCalls = Array.from({ length: exception.expectedCalls }, () => call);
+    const observedCalls = facts.calls.filter((candidate) => candidate === call);
+    const observedImporters = edges
+      .filter((edge) => edge.target === path)
+      .flatMap((edge) => {
+        const bindings = edge.bindings ?? [];
+        return bindings.length > 0
+          ? bindings.map(
+              (binding) =>
+                `${edge.path}:${edge.kind}:${edge.source}:${binding.imported}:${binding.local}`,
+            )
+          : [`${edge.path}:${edge.kind}:${edge.source}:<none>:<none>`];
+      })
+      .sort((left, right) => left.localeCompare(right));
+    const expectedImporters = exception.directImporters
+      .map(
+        (importer) =>
+          `${importer.path}:${importer.kind}:${importer.source}:${importer.imported}:${importer.local}`,
+      )
+      .sort((left, right) => left.localeCompare(right));
+    return matchesImport &&
+      sameMultiset(observedCalls, expectedCalls) &&
+      sameMultiset(observedImporters, expectedImporters)
       ? []
       : [
           {
             path: exception.path,
-            reason: 'imported fetch exception no longer matches declared import and call',
+            reason:
+              'imported fetch exception no longer matches declared import, call multiset, or importer closure',
           },
         ];
   });
@@ -919,7 +1018,7 @@ export function auditProviderLanes(
   const requireDeclaredPaths = lanes === PROVIDER_LANES;
   violations.push(
     ...staticProviderContractViolations(),
-    ...checkImportedFetchExceptions(root, requireDeclaredPaths),
+    ...checkImportedFetchExceptions(root, importScan.edges, requireDeclaredPaths),
     ...checkProviderSdkImports(root, importScan.edges, lanes, requireDeclaredPaths),
   );
   for (const finding of findings) {

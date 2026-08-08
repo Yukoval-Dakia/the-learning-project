@@ -46,6 +46,14 @@ export type ImportedFetchException = {
   readonly local: string;
   readonly owner: string;
   readonly purpose: string;
+  readonly expectedCalls: 1;
+  readonly directImporters: readonly {
+    readonly path: string;
+    readonly kind: DirectImporterKind;
+    readonly source: string;
+    readonly imported: string;
+    readonly local: string;
+  }[];
 };
 
 export type ProviderSdkRuntimeImport =
@@ -100,6 +108,16 @@ export const IMPORTED_FETCH_EXCEPTIONS = [
     local: 'undiciFetch',
     owner: 'capabilities/ingestion',
     purpose: 'bounded content-download transport; not an AI/provider wire',
+    expectedCalls: 1,
+    directImporters: [
+      {
+        path: 'src/capabilities/ingestion/server/image-candidate-accept.ts',
+        kind: 'runtime',
+        source: '@/capabilities/ingestion/server/pinned-fetch',
+        imported: 'fetchWithPinnedDispatcher',
+        local: 'fetchWithPinnedDispatcher',
+      },
+    ],
   },
 ] as const satisfies readonly ImportedFetchException[];
 

@@ -40,6 +40,11 @@ function makeFixture(): string {
     'src/capabilities/example/manifest.ts',
     "export const manifest = { jobs: { handlers: [{ load: () => import('./jobs/consumer') }] } };\n",
   );
+  write(
+    root,
+    'src/capabilities/index.ts',
+    "import { exampleCapability } from './example/manifest';\nexport const capabilities = [exampleCapability];\n",
+  );
   return root;
 }
 
@@ -414,6 +419,11 @@ describe('provider lane inventory', () => {
       'src/capabilities/ingestion/server/pinned-fetch.ts',
       "import { fetch as undiciFetch } from 'undici';\nexport const download = () => undiciFetch('https://content.example/file');\n",
     );
+    write(
+      root,
+      'src/capabilities/ingestion/server/image-candidate-accept.ts',
+      "import { fetchWithPinnedDispatcher } from '@/capabilities/ingestion/server/pinned-fetch';\nvoid fetchWithPinnedDispatcher;\n",
+    );
     expect(collectProviderWireFindings(root)).toEqual([
       {
         call: 'fetch',
@@ -422,6 +432,46 @@ describe('provider lane inventory', () => {
       },
     ]);
     expect(auditProviderLanes(root, [fixtureLane()]).ok).toBe(true);
+  });
+
+  it('rejects extra protected fetch calls and wrapper importers', () => {
+    const root = makeFixture();
+    write(
+      root,
+      'src/capabilities/ingestion/server/pinned-fetch.ts',
+      "import { fetch as undiciFetch } from 'undici';\nexport const download = () => undiciFetch('https://content.example/file');\nexport const extra = () => undiciFetch('https://content.example/extra');\n",
+    );
+    write(
+      root,
+      'src/capabilities/ingestion/server/image-candidate-accept.ts',
+      "import { fetchWithPinnedDispatcher } from '@/capabilities/ingestion/server/pinned-fetch';\nvoid fetchWithPinnedDispatcher;\n",
+    );
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          reason: expect.stringContaining('imported fetch exception no longer matches'),
+        }),
+      ],
+    });
+    write(
+      root,
+      'src/capabilities/ingestion/server/pinned-fetch.ts',
+      "import { fetch as undiciFetch } from 'undici';\nexport const download = () => undiciFetch('https://content.example/file');\n",
+    );
+    write(
+      root,
+      'src/server/extra-pinned-consumer.ts',
+      "import { fetchWithPinnedDispatcher as extraPinnedFetch } from '@/capabilities/ingestion/server/pinned-fetch';\nvoid extraPinnedFetch;\n",
+    );
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          reason: expect.stringContaining('imported fetch exception no longer matches'),
+        }),
+      ],
+    });
   });
 
   it('preserves fetchImpl identity through a local alias chain', () => {
@@ -486,6 +536,29 @@ describe('provider lane inventory', () => {
     });
   });
 
+  it('uses the top-level exported capabilities array despite nested shadows', () => {
+    const root = makeFixture();
+    write(root, 'src/capabilities/example/api/consumer.ts', "import '@/server/consumer';\n");
+    write(
+      root,
+      'src/capabilities/example/manifest.ts',
+      "export const manifest = { api: { routes: [{ load: () => import('./api/consumer') }] }, jobs: { handlers: [{ load: () => import('./jobs/consumer') }] } };\n",
+    );
+    write(
+      root,
+      'src/capabilities/index.ts',
+      "import { exampleCapability } from './example/manifest';\nexport const capabilities = [exampleCapability];\nfunction shadow() { const capabilities = []; return capabilities; }\nvoid shadow;\n",
+    );
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          reason: 'runtime role closure drift: expected worker; observed api, worker',
+        }),
+      ],
+    });
+  });
+
   it('uses only registered manifest loaders and direct server app dependencies for API roles', () => {
     const root = makeFixture();
     write(root, 'src/capabilities/example/api/orphan.ts', "import '@/server/consumer';\n");
@@ -493,6 +566,17 @@ describe('provider lane inventory', () => {
     write(root, 'server/app.ts', "import './app-helper';\n");
     write(root, 'server/app-helper.ts', "import '../src/server/consumer';\n");
     expect(auditProviderLanes(root, [fixtureLane({ roles: ['api', 'worker'] })]).ok).toBe(true);
+  });
+
+  it('does not derive roles from an orphan manifest outside capabilities index', () => {
+    const root = makeFixture();
+    write(root, 'src/capabilities/orphan/api/consumer.ts', "import '@/server/consumer';\n");
+    write(
+      root,
+      'src/capabilities/orphan/manifest.ts',
+      "export const orphanCapability = { api: { routes: [{ load: () => import('./api/consumer') }] } };\n",
+    );
+    expect(auditProviderLanes(root, [fixtureLane()]).ok).toBe(true);
   });
 
   it('fails closed on an imported provider fetch outside the pinned transport exception', () => {
