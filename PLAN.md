@@ -12,16 +12,16 @@
   `530 / 70 / 62`。未部署。
 - **F0.1 / YUK-851 已交付 main。** PR #1168 merge SHA `839653c5`；main CI 与 CodeQL
   均 green，Linear 为 Done。独立 `provider_attempt` 生命周期已成为 F0.2 使用的真实契约。
-- **F0.2 / YUK-854 本地 code-complete，尚未交付。** 隔离分支实现 DashScope embedding、GLM
+- **F0.2 / YUK-854 本地分支 code-complete，已是 commit candidate，尚未交付。** 隔离分支实现 DashScope embedding、GLM
   memory reconcile、GLM knowledge-edge reconcile 三条 direct-provider lane 的真实 attempt lifecycle。
-  证据：60 focused unit、81 DB、provider/capability/schema/partition audits（边界仍为
+  证据：focused unit/DB suites、provider/capability/schema/partition audits（边界仍为
   `530 / 70 / 62`）、typecheck、scoped Biome、build、disposable DB/mock-wire QA 均 green。
-  当前仍是未 commit、未 push、无 PR、未 merge 状态。
+  当前仍未 push、无 PR、未 merge、未部署。
 - **生产边界不变。** F0.0–F0.2 均未部署；YUK-832 继续 HOLD，YUK-842 production 继续 observe。
 
 ## NEXT
 
-1. **先交付 F0.2 / YUK-854：**审查 18-file 窄 diff，commit/push、PR、独立 review、exact-head CI，
+1. **先交付 F0.2 / YUK-854：**审查当前窄 diff，commit/push、PR、独立 review、exact-head CI，
    merge 后才可称 delivered；本地绿灯不替代 main 交付。
 2. **F0.2 merge 后才开始 F0.3。** 重新核对当时的 live callers、契约、错误语义与验证范围；不从
    F0.2 local 状态提前展开。

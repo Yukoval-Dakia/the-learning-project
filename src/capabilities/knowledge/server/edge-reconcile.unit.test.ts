@@ -31,13 +31,18 @@ const MOCK_ENV = {
   DASHSCOPE_API_KEY: 'test-dashscope',
 };
 
-function attemptContext(records: unknown[]): DirectProviderOperationOptions {
+function attemptContext(
+  records: unknown[],
+  externalRequestIds: string[] = [],
+): DirectProviderOperationOptions {
   const createLifecycle: DirectProviderLifecycleFactory = (input) => ({
     identity: input.identity,
     acquire: async () => ({
       admission: 'acquired',
       reserveProviderStart: async () => undefined,
-      recordExternalRequestId: async () => undefined,
+      recordExternalRequestId: async (id) => {
+        externalRequestIds.push(id);
+      },
       finish: async (evidence) => {
         records.push({ identity: input.identity, evidence });
         return 'settled';
@@ -339,6 +344,65 @@ describe('judgeEdgeReconcile', () => {
     expect(seen).toEqual([{ promptTokens: 321, completionTokens: 12 }]);
   });
 
+  it('keeps partial provider usage null while legacy usage defaults missing counts to zero', async () => {
+    const fetchMock = vi.fn(async () =>
+      glmResponse(
+        { decision: { action: 'KEEP_BOTH', neighbor_index: null, confidence: 0.9, reason: 'ok' } },
+        { usage: { completion_tokens: 12 } },
+      ),
+    );
+    const attempts: unknown[] = [];
+    const legacyUsage: Array<{ promptTokens: number; completionTokens: number }> = [];
+
+    await judgeEdgeReconcile(candidate(), [neighbor()], {
+      env: MOCK_ENV,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      providerAttempt: attemptContext(attempts),
+      onUsage: (usage) => {
+        legacyUsage.push(usage);
+      },
+    });
+
+    expect(legacyUsage).toEqual([{ promptTokens: 0, completionTokens: 12 }]);
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        evidence: expect.objectContaining({
+          usage: expect.objectContaining({ input: null, output: 12, total: null }),
+          cost: expect.objectContaining({ basis: 'unknown', amount: null }),
+        }),
+      }),
+    ]);
+  });
+
+  it('leaves provider usage unknown for an empty usage object while preserving legacy 0/0', async () => {
+    const fetchMock = vi.fn(async () =>
+      glmResponse(
+        { decision: { action: 'KEEP_BOTH', neighbor_index: null, confidence: 0.9, reason: 'ok' } },
+        { usage: {} },
+      ),
+    );
+    const attempts: unknown[] = [];
+    const legacyUsage: Array<{ promptTokens: number; completionTokens: number }> = [];
+
+    await judgeEdgeReconcile(candidate(), [neighbor()], {
+      env: MOCK_ENV,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      providerAttempt: attemptContext(attempts),
+      onUsage: (usage) => {
+        legacyUsage.push(usage);
+      },
+    });
+
+    expect(legacyUsage).toEqual([{ promptTokens: 0, completionTokens: 0 }]);
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        evidence: expect.objectContaining({
+          usage: expect.objectContaining({ basis: 'unknown', input: null, output: null }),
+        }),
+      }),
+    ]);
+  });
+
   it('awaits an async onUsage callback before resolving', async () => {
     const fetchMock = vi.fn(async () =>
       glmResponse(
@@ -371,15 +435,20 @@ describe('judgeEdgeReconcile', () => {
   });
 
   it('throws RetryableError on a 5xx GLM response', async () => {
+    const externalRequestIds: string[] = [];
     const fetchMock = vi.fn(
-      async () => new Response('{"error":{"message":"down"}}', { status: 503 }),
+      async () =>
+        new Response('{"id":"glm-edge-error-503","error":{"message":"down"}}', {
+          status: 503,
+        }),
     );
     await expect(
       judgeEdgeReconcile(candidate(), [neighbor()], {
         env: MOCK_ENV,
         fetchImpl: fetchMock as unknown as typeof fetch,
-        providerAttempt: attemptContext([]),
+        providerAttempt: attemptContext([], externalRequestIds),
       }),
     ).rejects.toThrow(/503/);
+    expect(externalRequestIds).toEqual(['glm-edge-error-503']);
   });
 });

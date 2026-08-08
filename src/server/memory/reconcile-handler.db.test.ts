@@ -7,6 +7,7 @@
 
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import { cost_ledger, provider_attempt } from '@/db/schema';
+import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -180,8 +181,10 @@ describe('reconcile handler — provider attempt and legacy ledger parity', () =
       terminal_status: 'succeeded',
       wire_count: 1,
       external_request_id: 'glm-request-memory-1',
-      cost_basis: 'estimated',
+      cost_basis: 'unknown',
+      cost_amount: null,
       cost_currency: 'CNY',
+      cost_source: 'provider_cost_absent',
     });
     expect(attempts[0].usage_json).toMatchObject({
       basis: 'reported',
@@ -587,6 +590,34 @@ describe('reconcile handler — retryable failure rethrows (pg-boss retries)', (
         }) as never,
       ),
     ).rejects.toBeInstanceOf(PermanentError);
+  });
+
+  it('rethrows provider-attempt lifecycle invariant failures instead of best-effort swallowing', async () => {
+    const db = testDb();
+    const newMemId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const oldMemId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const memoryClient = mockMemoryClient([
+      { id: oldMemId, memory: 'User prefers light mode', metadata: { created_ms: 1000 } },
+    ]);
+    const invariant = new ProviderAttemptLifecycleError(
+      'terminal_conflict',
+      'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+    );
+    const handler = buildMemoryReconcileHandler(db, {
+      memoryClient,
+      judge: vi.fn(async () => {
+        throw invariant;
+      }) as never,
+    });
+
+    await expect(
+      handler(
+        makeJob({
+          memories: [mem(newMemId, 'User prefers dark mode', 'preference', 2000)],
+          user_id: 'self',
+        }) as never,
+      ),
+    ).rejects.toBe(invariant);
   });
 });
 

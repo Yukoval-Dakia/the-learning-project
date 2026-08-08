@@ -2082,8 +2082,10 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
         endpoint_class: 'openai-compatible.chat-completions',
         terminal_status: 'succeeded',
         wire_count: 1,
-        cost_basis: 'estimated',
+        cost_basis: 'unknown',
+        cost_amount: null,
         cost_currency: 'CNY',
+        cost_source: 'provider_cost_absent',
       });
       expect(attempts[0].usage_json).toMatchObject({
         basis: 'reported',

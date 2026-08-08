@@ -511,6 +511,10 @@ export async function judgeEdgeReconcile(
         } catch {
           errBody = null;
         }
+        const bodyRequestId = errBody?.id?.trim();
+        if (!headerRequestId && bodyRequestId) {
+          await attempt.recordExternalRequestId(bodyRequestId);
+        }
         const code = errBody?.error?.code ?? '';
         const message = `GLM edge-reconcile error [http ${resp.status}${code ? ` code ${code}` : ''}]: ${errBody?.error?.message ?? 'no message'}`;
         if (resp.status === 401 || resp.status === 403) throw new PermanentError(message);
@@ -532,28 +536,28 @@ export async function judgeEdgeReconcile(
       const promptTokens = json.usage?.prompt_tokens;
       const completionTokens = json.usage?.completion_tokens;
       const totalTokens = json.usage?.total_tokens;
-      if (
+      const hasReportedTokens =
         typeof promptTokens === 'number' ||
         typeof completionTokens === 'number' ||
-        typeof totalTokens === 'number'
-      ) {
+        typeof totalTokens === 'number';
+      if (hasReportedTokens) {
         attempt.reportUsage({
           input: typeof promptTokens === 'number' ? promptTokens : null,
           output: typeof completionTokens === 'number' ? completionTokens : null,
           total: typeof totalTokens === 'number' ? totalTokens : null,
         });
       }
-      if (typeof promptTokens === 'number' && typeof completionTokens === 'number') {
-        const estimatedCostCny = glmChatCostCny(promptTokens, completionTokens);
-        attempt.estimateCost({
-          amount: estimatedCostCny,
-          currency: 'CNY',
-          source: 'glm_chat_pricebook',
-        });
+      if (json.usage) {
+        const legacyPromptTokens = typeof promptTokens === 'number' ? promptTokens : 0;
+        const legacyCompletionTokens = typeof completionTokens === 'number' ? completionTokens : 0;
+        const estimatedCostCny = glmChatCostCny(legacyPromptTokens, legacyCompletionTokens);
         if (opts.onUsage) {
           try {
             await opts.onUsage(
-              { promptTokens, completionTokens },
+              {
+                promptTokens: legacyPromptTokens,
+                completionTokens: legacyCompletionTokens,
+              },
               { attemptId: attempt.attemptId, model: glmConfig.model, estimatedCostCny },
             );
           } catch (err) {

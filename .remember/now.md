@@ -9,14 +9,14 @@
   `530 / 70 / 62`。未部署。
 - **F0.1 / YUK-851 已在 main。** PR #1168 merge SHA `839653c5`；main CI / CodeQL green，
   Linear Done。
-- **F0.2 / YUK-854 是当前 active handoff。** 隔离 worktree 中 locally code-complete：60 unit、
-  81 DB、audits（`530 / 70 / 62`）、typecheck、Biome、build、disposable DB/mock-wire QA green。
-  尚未 commit、push、开 PR 或 merge；因此不能称 delivered。
+- **F0.2 / YUK-854 是当前 active handoff。** 隔离本地分支 code-complete、已是 commit candidate；
+  focused unit/DB suites、audits（`530 / 70 / 62`）、typecheck、Biome、build、disposable
+  DB/mock-wire QA green。尚未 push、开 PR、merge 或部署，因此不能称 delivered。
 - **运行状态：**没有 deployment；YUK-832 HOLD 与 YUK-842 observe 均未改变。
 
 ## NEXT
 
-1. 只收敛并交付 F0.2：复核 18-file diff，commit/push、PR、独立 review、exact-head CI、merge。
+1. 只收敛并交付 F0.2：复核当前窄 diff，commit/push、PR、独立 review、exact-head CI、merge。
 2. 仅在 F0.2 merge 后开始 F0.3；重新读取 live caller 与契约，不把本地测试证据当成依赖已交付。
 3. F0.3 后按序处理 F0.4、F0.5；F2–F4 继续保持 open。
 

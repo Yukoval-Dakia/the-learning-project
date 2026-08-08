@@ -23,13 +23,18 @@ const MOCK_ENV = {
   DASHSCOPE_API_KEY: 'test-dashscope',
 };
 
-function attemptContext(records: unknown[]): DirectProviderOperationContext {
+function attemptContext(
+  records: unknown[],
+  externalRequestIds: string[] = [],
+): DirectProviderOperationContext {
   const createLifecycle: DirectProviderLifecycleFactory = (input) => ({
     identity: input.identity,
     acquire: async () => ({
       admission: 'acquired',
       reserveProviderStart: async () => undefined,
-      recordExternalRequestId: async () => undefined,
+      recordExternalRequestId: async (id) => {
+        externalRequestIds.push(id);
+      },
       finish: async (evidence) => {
         records.push({ identity: input.identity, evidence });
         return 'settled';
@@ -374,24 +379,133 @@ describe('judgeReconciliation', () => {
             input: 800,
             output: 0,
           }),
-          cost: expect.objectContaining({ basis: 'estimated', currency: 'CNY' }),
+          cost: expect.objectContaining({
+            basis: 'unknown',
+            amount: null,
+            currency: 'CNY',
+            source: 'provider_cost_absent',
+          }),
+        }),
+      }),
+    ]);
+  });
+
+  it('keeps partial provider usage null while legacy usage defaults missing counts to zero', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    decisions: [
+                      {
+                        new_index: 0,
+                        action: 'KEEP_BOTH',
+                        old_index: null,
+                        confidence: 0.9,
+                        reason: 'ok',
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+            usage: { prompt_tokens: 17 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    const attempts: unknown[] = [];
+    const legacyUsage: Array<{ promptTokens: number; completionTokens: number }> = [];
+
+    await judgeReconciliation(mockNewMems(), mockCandidates(), {
+      env: MOCK_ENV,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      providerAttempt: attemptContext(attempts),
+      onUsage: (usage) => {
+        legacyUsage.push(usage);
+      },
+    });
+
+    expect(legacyUsage).toEqual([{ promptTokens: 17, completionTokens: 0 }]);
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        evidence: expect.objectContaining({
+          usage: expect.objectContaining({ input: 17, output: null, total: null }),
+          cost: expect.objectContaining({ basis: 'unknown', amount: null }),
+        }),
+      }),
+    ]);
+  });
+
+  it('leaves provider usage unknown for an empty usage object while preserving legacy 0/0', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    decisions: [
+                      {
+                        new_index: 0,
+                        action: 'KEEP_BOTH',
+                        old_index: null,
+                        confidence: 0.9,
+                        reason: 'ok',
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+            usage: {},
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    const attempts: unknown[] = [];
+    const legacyUsage: Array<{ promptTokens: number; completionTokens: number }> = [];
+
+    await judgeReconciliation(mockNewMems(), mockCandidates(), {
+      env: MOCK_ENV,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      providerAttempt: attemptContext(attempts),
+      onUsage: (usage) => {
+        legacyUsage.push(usage);
+      },
+    });
+
+    expect(legacyUsage).toEqual([{ promptTokens: 0, completionTokens: 0 }]);
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        evidence: expect.objectContaining({
+          usage: expect.objectContaining({ basis: 'unknown', input: null, output: null }),
         }),
       }),
     ]);
   });
 
   it('throws RetryableError on 5xx', async () => {
+    const externalRequestIds: string[] = [];
     const fetchMock = vi.fn(
-      async () => new Response('{"error":{"message":"down"}}', { status: 503 }),
+      async () =>
+        new Response('{"id":"glm-memory-error-503","error":{"message":"down"}}', {
+          status: 503,
+        }),
     );
 
     await expect(
       judgeReconciliation(mockNewMems(), mockCandidates(), {
         env: MOCK_ENV,
         fetchImpl: fetchMock as unknown as typeof fetch,
-        providerAttempt: attemptContext([]),
+        providerAttempt: attemptContext([], externalRequestIds),
       }),
     ).rejects.toThrow(/503/);
+    expect(externalRequestIds).toEqual(['glm-memory-error-503']);
   });
 
   it('throws ReconcileParseError when GLM returns non-JSON content', async () => {
