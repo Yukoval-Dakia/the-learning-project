@@ -11,18 +11,17 @@
 | `hub-mesh.ts` | hub auto-zone / AutoLinksContainer 计算（hub_auto_sync_nightly 消费）|
 | `node-page.ts` | 单节点页面聚合 reader |
 | `proposals.ts` | 知识节点 propose event + accept/dismiss（content-driven：cold-start-bridge / image-candidate-accept / agent proposal-tools / KnowledgeReviewTask 的写路径）|
-| `attribute.ts` | 错题归因（写 judge event，`payload.cause` 10 类，`caused_by_event_id` 链 attempt）|
+| `failure-learning-context.ts` | 给 Practice Failure Learning 的有界、保序、active-only knowledge reader |
 | `review.ts` | KnowledgeReviewTask（维护流 producer）+ legacy `write_proposal` MCP tool 入口 |
 | `rubric-validator.ts` | 知识 rubric 校验 |
 | `seed.ts` | 种子知识树 |
 | `subject-profile.ts` / `subject-resolution.ts` | SubjectProfile 解析（profile-driven task 用）|
 | `validate.ts` | 节点/树结构校验 |
-| `ai_failure_log.ts` | AI 提议失败留痕 |
 
 ## 关键约束
 - `relation_type` 核心 5 类：`prerequisite | related_to | contrasts_with | applied_in | derived_from`，外加 `experimental:*` 命名空间。
 - 节点/edge 的 propose 都写 `event(action='propose')`，**不直接改硬事实**——accept route 才落地真实 mutation。
-- attribution 通过 chained judge event，`caused_by_event_id` 指向 attempt event。
+- Failure Learning 的 eligibility、归因与变式提议归 Practice；本包只提供 knowledge context reader。
 
 ## ANTI-PATTERNS
 - 破坏性动作（合并节点 / reparent / archive）只能 propose，无直接 write tool。

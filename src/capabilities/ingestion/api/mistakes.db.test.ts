@@ -2,24 +2,14 @@
 
 import { event, knowledge, learning_record, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { CreateMistakeResponseSchema, MistakeListResponseSchema } from './contracts';
 import { GET, POST } from './mistakes';
 
-// Mock the AI background tasks so tests don't call Anthropic.
 // Lane D (YUK-482): the failure→propose-new-KC coupling was removed from POST
-// /api/mistakes. There is no longer a propose module import here; mistakes only
-// records the attempt + enqueues attribution. We assert NO propose event is
-// written while attribution still fires.
-vi.mock('@/capabilities/knowledge/server/attribute', () => ({
-  runAttributionAndWriteJudgeEvent: vi.fn().mockResolvedValue(undefined),
-}));
-// Lane D (YUK-482): the loadTreeSnapshot mock was removed — it only served the
-// (now-deleted) failure→propose path; POST /api/mistakes no longer loads the tree.
-
-// M5-T5a (YUK-321)：路由 after() 已改写为 fire-and-forget（POST 内同步发起，
-// mock 立即 resolve），不再需要 the old after mock / runAfterCallbacks 钩子。
+// /api/mistakes. The producer commits attempt/user-cause facts only; the
+// practice-owned durable subscription derives failure learning after commit.
 
 const KNOWLEDGE_BASE = {
   domain: 'yuwen',
@@ -230,12 +220,11 @@ describe('POST /api/mistakes', () => {
     });
   });
 
-  // Lane D (YUK-482): a failed attempt with no user-supplied cause still enqueues
-  // attribution (PERFORMANCE-axis 错因), but must NOT propose a new KC.
+  // Lane D (YUK-482): a failed attempt with no user-supplied cause remains a
+  // durable-subscription eligible PERFORMANCE-axis fact, but must NOT propose a KC.
   it('records the failure + attribution-eligible, but writes no propose event (cause null)', async () => {
     const res = await postMistake(validBody({ cause: null }));
     expect(res.status).toBe(201);
-    await new Promise((r) => setTimeout(r, 50));
 
     const db = testDb();
     const { eq, and } = await import('drizzle-orm');
@@ -263,7 +252,6 @@ describe('POST /api/mistakes', () => {
 
     const res = await postMistake(validBody({ cause: null }));
     expect(res.status).toBe(201);
-    await new Promise((r) => setTimeout(r, 50));
 
     const proposeEvents = await db
       .select()
@@ -272,21 +260,32 @@ describe('POST /api/mistakes', () => {
     expect(proposeEvents).toHaveLength(0);
   });
 
-  it('skips attribution when cause is provided manually (and never proposes a KC)', async () => {
-    const { runAttributionAndWriteJudgeEvent } = await import(
-      '@/capabilities/knowledge/server/attribute'
-    );
-    vi.mocked(runAttributionAndWriteJudgeEvent).mockClear();
-
+  it('commits manual cause with its attempt so the subscription can skip model work', async () => {
     const res = await postMistake(
       validBody({ cause: { primary_category: 'memory', user_notes: null } }),
     );
     expect(res.status).toBe(201);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(vi.mocked(runAttributionAndWriteJudgeEvent)).not.toHaveBeenCalled();
+    const body = (await res.json()) as { mistake_id: string };
 
     const db = testDb();
     const { eq, and } = await import('drizzle-orm');
+    const attempts = await db.select().from(event).where(eq(event.id, body.mistake_id));
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].action).toBe('attempt');
+    expect(attempts[0].outcome).toBe('failure');
+
+    const userCauseRows = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:user_cause'),
+          eq(event.caused_by_event_id, body.mistake_id),
+        ),
+      );
+    expect(userCauseRows).toHaveLength(1);
+    expect(userCauseRows[0].subject_id).toBe(body.mistake_id);
+
     const proposeEvents = await db
       .select()
       .from(event)

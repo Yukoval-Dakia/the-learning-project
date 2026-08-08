@@ -101,23 +101,22 @@ Question (统一题库，single source of truth)
 
 所有 AI 调用按「任务」抽象，**不**按 `chat()` 抽象——避免丢掉 provider 特色能力（prompt caching / batch API / structured output / multimodal）。
 
-> **FULL 执行注（2026-08-02，YUK-840）**：当前 `src/ai/registry.ts` 是可运行的中央
-> catalog，但还不是完成的产品语义所有权边界。ADR-0051 已锁定目标：capability 拥有完整
+> **FULL 执行注（2026-08-08，YUK-840 / YUK-847–849）**：Phase 0 已闭合；Phase 1
+> 首个 Failure Learning 竖切已实现并等待 review。ADR-0051 锁定目标：capability 拥有完整
 > product operation 与 typed task contract，中央 runtime 只拥有 provider/SDK/budget/retry/
-> admission/model-attempt logging；registry 在迁移期退化为静态 composition projection。
-> 当前代码的执行附录见
-> `docs/superpowers/plans/2026-08-02-architecture-full-phase-0-1.md`。这项迁移尚未完成，
-> 不得把 public seam 或 shared `AiRunLifecycle` 误报成语义所有权已闭合。
+> admission/model-attempt logging。Attribution/AttributionRerank/VariantGen 已由 `practice/tasks`
+> 拥有，registry 对三者只做静态 composition projection；其余 tasks 仍按后续竖切迁移。
+> 实现附录见 `docs/superpowers/plans/2026-08-08-practice-failure-learning-implementation.md`。
 
 架构债由 `pnpm audit:capability-boundaries` 递减约束。基线单位是去重后的
-`(source file, resolved target module)`：capability → server 538、server → capability deep
-70、cross-capability value 63；后者目前包含一个由 agency/ingestion/knowledge/notes/practice
+`(source file, resolved target module)`：capability → server 531、server → capability deep
+70、cross-capability value 62；后者目前包含一个由 agency/ingestion/knowledge/notes/practice
 组成的非平凡 SCC。任何下降必须在同一变更收紧
 `scripts/capability-boundary-baseline.json`，不能留下回涨额度。
 
 ### 5.1 Task 注册
 
-> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-08-02）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 50 个 task）。
+> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-08-08）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 51 个 task）。
 
 **当前 registry**（runner + registry 都通；实际触发看 route / pg-boss handler）：
 
@@ -130,7 +129,7 @@ Question (统一题库，single source of truth)
 | `SessionSummaryTask` | mimo-v2.5-pro | review session end | 否 | — | ≤120 字 session summary |
 | `LearningIntentOutlineTask` | mimo-v2.5-pro | `/api/learning-intents` | 否 | — | 1 hub + N atomic outline |
 | `NoteGenerateTask` | mimo-v2.5-pro | pg-boss `note_generate` | 否 | — | atomic artifact sections |
-| `VariantGenTask` | mimo-v2.5-pro | pg-boss `variant_gen` | 否 | — | draft `question(source='mistake_variant')` |
+| `VariantGenTask` | mimo-v2.5-pro | pg-boss `variant_gen` / explicit tool | 否 | — | pending variant proposal + draft `mistake_variant` ledger；accept 后才物化 question |
 | `TeachingTurnTask` | mimo-v2.5-pro | `/api/teaching-sessions/*` | 否 | — | Active Teaching turn；`ask_check` 可落 `question(source='teaching_check')` |
 | `KnowledgeReviewTask` | mimo-v2.5-pro | pg-boss `knowledge_maintenance_nightly` / manual maintenance | 是 | — | tree / mesh mutation proposal |
 | `VisionExtractTask` | mimo-v2.5 | `POST /api/ingestion/[id]/rescue` | 否 | 输入 | bbox blocks |
@@ -184,7 +183,10 @@ Question (统一题库，single source of truth)
 
 需要"边看数据边决策"的 Task 走 multi-turn tool call；输入已固定的 Task 走单轮 structured output。
 
-> **2026-05-19 alignment**: 现行 runner 在 `src/server/ai/runner.ts`，所有 LLM task 都走 `@anthropic-ai/claude-agent-sdk`。Tool transport 使用 Claude Agent SDK 的 `mcpServers + allowedTools + maxTurns`。统一 Domain Tool Registry 仍是计划中设计；当前只有 `KnowledgeReviewTask` 在 `src/server/knowledge/review.ts` 内部创建本地 in-process MCP tool。
+> **2026-08-08 alignment**: 现行 runner 在 `src/server/ai/runner.ts`，Agent SDK task 走
+> `@anthropic-ai/claude-agent-sdk`。Tool transport 使用 SDK 的 `mcpServers + allowedTools + maxTurns`。
+> DomainTool registry、capability manifest inventory 与 in-process MCP bridge 已运行；具体产品工具
+> 逐步迁回 owner capability，中央层只负责组合、预算与 transport。
 
 **当前规则**（YUK-321 M5 起 generic `/api/ai/[task]` route 已退场——AI 调用全走 capability manifest 声明的领域 route 或 pg-boss worker；下述规则语义不变，仅路由入口从 `app/api/ai/[task]` 改为各 capability 包 `manifest.ts` 声明的 route）：
 
@@ -192,10 +194,12 @@ Question (统一题库，single source of truth)
 - SubjectProfile-driven task **不能**走 generic route；必须走领域 route / worker，由该入口解析并传入正确 `SubjectProfile`。
 - `needsToolCall: true` 的 task **不能**走 generic route；必须走领域 route/worker，由入口注入 MCP server 和 allowlist。例如 `KnowledgeReviewTask` 现由 `knowledge_maintenance_nightly` cron in-process 调 `streamReviewTask`（YUK-617 撤了冗余的 `/api/knowledge/review` HTTP route）。
 - `invocation: 'manual_rescue_only'` 的 VisionExtract* task 只能走 ingestion rescue 入口，不通过 generic route 暴露。
-- 当前唯一实际 MCP server 是每次 review 请求内创建的本地 `loom` server；唯一 tool 是 `mcp__loom__write_proposal`，用于写 proposal event，不对外暴露 endpoint。
+- 本地 `loom` MCP server 从 capability manifests 装配 typed DomainTools；它是进程内 transport，
+  不对外暴露 endpoint。`attribute_mistake` / `propose_variant` 的 concrete adapters 已归 practice，
+  `author_question` 的 variant 分支只走其窄 public operation。
 - 破坏性操作（删题、合并节点、reparent、merge、archive）没有直接 write tool。AI 只能 propose；用户 accept route 再执行真实 mutation。
 
-**计划中的 DomainTool 合约**（未落地；第二个 tool-calling task 出现前不实现）：
+**当前 DomainTool 合约**（由 manifest inventory + registry/MCP bridge 消费）：
 
 ```ts
 type ToolEffect = 'read' | 'propose' | 'write';
@@ -211,7 +215,8 @@ interface DomainTool<Input, Output> {
 }
 ```
 
-未来 `src/server/ai/tools/registry.ts` 才会成为领域工具源头；`src/server/ai/tools/mcp.ts` 再把选中的 DomainTool 包成 in-process MCP server。独立远程 MCP server 推后，不作为当前产品内 tool 架构核心。
+`src/server/ai/tools/registry.ts` 静态装配 capability manifests；MCP bridge 把选中的 DomainTool
+包成 in-process server。独立远程 MCP server 仍推后，不作为当前产品内 tool 架构核心。
 
 **循环控制现状**：
 

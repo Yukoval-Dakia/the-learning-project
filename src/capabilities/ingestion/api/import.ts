@@ -5,7 +5,7 @@
  * failure block now produces only:
  *   - question row (canonical)
  *   - attempt event (outcome='failure') chained to the question
- *   - optional AI-attributed judge event (queued via runAttributionAndWriteJudgeEvent)
+ *   - optional AI-attributed judge event (derived from the durable attempt stream)
  *
  * `mistake_id` on the wire equals the attempt event id (opaque to clients).
  *
@@ -31,11 +31,9 @@ import { db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { getStartedBoss } from '@/server/boss/client';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Ingestion } from '@/server/session';
 // YUK-234 (SEC-4): request-body schema (incl. per-array .max() bounds) lives in
 // ./schema so the bounds are unit-testable without the route's DB/R2/AI import
@@ -226,17 +224,6 @@ async function executePOST(req: Request, params: Record<string, string>): Promis
     const questionIds: string[] = [];
     const mistakeIds: string[] = [];
     const recordIds: string[] = [];
-    // queueData only carries the fields the post-txn enqueue (attribution_followup
-    // when cause is null) actually reads. Lane D (YUK-482) removed the failure→
-    // propose-new-KC side-effect that previously consumed prompt_md / reference_md /
-    // wrong_answer_md / knowledge_ids / subjectProfile here; keeping them would be
-    // dead data on the post-write path (no other reader).
-    const queueData: Array<{
-      mistakeId: string;
-      attemptEventId: string;
-      cause: { primary_category: string; user_notes: string | null } | null;
-    }> = [];
-
     await db.transaction(async (tx) => {
       // SELECT … FOR UPDATE on the session row + asserts importable status.
       // Concurrent callers serialise here; the second to acquire the lock sees
@@ -496,16 +483,6 @@ async function executePOST(req: Request, params: Record<string, string>): Promis
           actorRef: 'block_import',
           now,
         });
-
-        // Only failure captures have a cause to attribute. success/partial/
-        // unanswered never queue attribution_followup.
-        if (enroll.needsAttribution && enroll.attemptEventId !== null) {
-          queueData.push({
-            mistakeId,
-            attemptEventId: enroll.attemptEventId,
-            cause: block.cause,
-          });
-        }
       }
 
       // Sweep: mark any draft blocks user dropped as 'ignored'
@@ -556,38 +533,9 @@ async function executePOST(req: Request, params: Record<string, string>): Promis
       await Ingestion.commitImport(tx, sessionId);
     });
 
-    // Queue post-write tasks (fire-and-forget with Promise.allSettled)
-    void Promise.allSettled(
-      queueData.flatMap((q) => {
-        const tasks: Promise<void>[] = [];
-        // Lane D (YUK-482): the failure→propose-new-KC side-effect was removed
-        // here. Proposing a knowledge concept is a CONTENT-axis action (driven by
-        // what the material covers), independent of answer correctness; a wrong
-        // imported attempt is a PERFORMANCE-axis signal → 错因/attribution
-        // (enqueued below) + mastery, never KC creation. KC creation lives in the
-        // content-driven paths (cold-start-bridge / image-candidate-accept matcher
-        // / agent proposal tools / KnowledgeReviewTask). Attribution unchanged.
-
-        // Task #16: attribution via pg-boss instead of inline. Worker process
-        // owns the LLM call; ingestion route returns as soon as DB writes
-        // commit.
-        if (q.cause === null && shouldEnqueueBackgroundJobs()) {
-          tasks.push(
-            (async () => {
-              try {
-                const boss = await getStartedBoss();
-                await boss.send('attribution_followup', {
-                  attempt_event_id: q.attemptEventId,
-                });
-              } catch (err) {
-                console.warn(`attribution_followup enqueue failed for ${q.attemptEventId}:`, err);
-              }
-            })(),
-          );
-        }
-        return tasks;
-      }),
-    );
+    // Failure-learning follow-up is derived from the committed attempt events
+    // by the practice-owned durable subscription. The ingestion route no longer
+    // knows queue names or performs a best-effort post-transaction handoff.
 
     return Response.json({
       question_ids: questionIds,

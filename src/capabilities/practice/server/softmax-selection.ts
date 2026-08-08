@@ -35,8 +35,6 @@ import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { inArray } from 'drizzle-orm';
 
-import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import {
   buildMemoryPriorAdvisoryBlock,
   buildSelectionOrchestratorTaskInputWithCandidates,
@@ -61,6 +59,7 @@ import {
   type StreamPlanItem,
   composeDailyStream,
 } from './stream-composer';
+import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from './task-runtime';
 
 type DbLike = Db | Tx;
 
@@ -69,7 +68,7 @@ type DbLike = Db | Tx;
 // ───────────────────────────────────────────────────────────────────────────
 
 /** runTask 投影（只取 .text）——DI 便于 mock（测试不命中 live endpoint）。 */
-export type RunTaskFn = TaskTextRunFn;
+export type RunTaskFn = PracticeTaskRunFn;
 
 /** Read-only learner-memory prior loader. One invocation per L2 orchestration at most. */
 export type LoadMemoryPriorFn = () => Promise<readonly string[]>;
@@ -637,7 +636,7 @@ const defaultLoadMemoryPrior: LoadMemoryPriorFn = async () => {
 
 /** 默认 production runTask（动态 import 避免 server-only 模块进 unit graph）。 */
 async function defaultRunTaskFn(db: Db): Promise<RunTaskFn> {
-  return makeRunTaskTextFn(db);
+  return makePracticeTaskTextRunFn(db);
 }
 
 // ───────────────────────────────────────────────────────────────────────────

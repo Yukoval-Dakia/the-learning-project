@@ -5,8 +5,9 @@ export {
   resolveAllActiveKnowledgeIds,
   resolveSubjectKnowledgeIds,
 } from './server/domain';
+export { loadFailureLearningKnowledgeContext } from './server/failure-learning-context';
+export type { FailureLearningKnowledgeNode } from './server/failure-learning-context';
 export { loadTreeSnapshot } from './server/tree';
-export { writeRetryableAiFailureLedger } from './server/ai_failure_log';
 export {
   ACCEPT_RESULT_KINDS,
   applyArchive,

@@ -471,6 +471,26 @@ function proposalPayloadCooldownKeyExpr() {
   return sql<string>`(${event.payload}->'ai_proposal'->>'cooldown_key')`;
 }
 
+/** Exact all-status lookup used by durable producer idempotency guards. */
+export async function hasProposalWithCooldownKey(
+  db: DbLike,
+  kind: AiProposalPayloadT['kind'],
+  cooldownKey: string,
+): Promise<boolean> {
+  const rows = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        proposalWhere(),
+        eq(proposalPayloadKindExpr(), kind),
+        eq(proposalPayloadCooldownKeyExpr(), cooldownKey),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
 function proposalCooldownActiveExpr(nowIso: string) {
   return sql<number>`CASE
     WHEN ${proposal_signals.cooldown_until} IS NOT NULL

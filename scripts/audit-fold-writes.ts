@@ -247,10 +247,10 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'mistake_variant',
-    file: 'src/server/boss/handlers/variant_gen.ts',
-    marker: "projectionIsWriter('mistake_variant')",
+    file: 'src/capabilities/practice/server/failure-learning-variant.ts',
+    marker: 'projectionWritesMistakeVariant()',
     role: 'gated-dual-path',
-    note: "variant_gen insert gated on projectionIsWriter('mistake_variant').",
+    note: 'Failure Learning variant insert is gated through the mistake-variant projection gateway.',
   },
   {
     table: 'mistake_variant',
@@ -262,9 +262,9 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   {
     table: 'mistake_variant',
     file: 'src/capabilities/practice/server/proposal-appliers.ts',
-    marker: "projectionIsWriter('mistake_variant')",
+    marker: 'projectionWritesMistakeVariant()',
     role: 'gated-dual-path',
-    note: "mistake_variant accept-path applier gated on projectionIsWriter('mistake_variant').",
+    note: 'mistake_variant accept path is gated through the projection gateway.',
   },
   {
     table: 'mistake_variant',

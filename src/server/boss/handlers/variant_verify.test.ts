@@ -1,6 +1,6 @@
 // YUK-17 / ADR-0018 — variant_verify handler tests.
 
-import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
+import { runAttributionAndWriteJudgeEvent } from '@/capabilities/practice/server/failure-learning-attribution';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeVariantQuestionProposal } from '@/server/proposals/producers';

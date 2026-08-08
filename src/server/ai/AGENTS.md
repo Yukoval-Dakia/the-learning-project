@@ -14,7 +14,7 @@
 | `tools/mcp-bridge.ts` | 把任意 allowlist 包成 in-process MCP server + 写 `tool_call_log`/`tool_use` mirror |
 | `tools/allowlists.ts` | 生成 surface-specific `mcp__loom__*` allowlist |
 | `tools/{knowledge-readers,context-readers,query-events,query-mistakes}.ts` | read surface（返回语义化上下文）|
-| `tools/proposal-tools.ts` | T-D4 propose/write 8 个工具（propose_*, attribute_mistake）|
+| `tools/proposal-tools.ts` | central mixed-seed `author_question` 与其余 proposal tools；Failure Learning concrete tools 由 Practice manifest 装配 |
 
 ## 关键约束
 - Domain Tool Registry 是源头；MCP 只是 Claude Agent SDK 的 in-process 适配层。

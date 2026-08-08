@@ -1,6 +1,8 @@
 import { capabilities } from '@/capabilities';
-import * as attributeModule from '@/capabilities/knowledge/server/attribute';
 import { runWriteProposal } from '@/capabilities/knowledge/server/review';
+import * as attributeModule from '@/capabilities/practice/server/failure-learning-attribution';
+import { attributeMistakeTool } from '@/capabilities/practice/tools/attribute-mistake';
+import { proposeVariantTool } from '@/capabilities/practice/tools/propose-variant';
 import {
   artifact,
   cost_ledger,
@@ -25,14 +27,12 @@ import {
 } from '../../../../tests/helpers/db';
 import { buildMcpServerFromRegistry } from './mcp-bridge';
 import {
-  attributeMistakeTool,
   proposeKnowledgeEdgeTool,
   proposeKnowledgeMutationTool,
   proposeLearningItemCompletionTool,
   proposeLearningItemRelearnTool,
   proposeRecordLinksTool,
   proposeRecordPromotionTool,
-  proposeVariantTool,
 } from './proposal-tools';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, getTool, listTools } from './registry';
@@ -785,7 +785,7 @@ describe('Wave 3 proposal/action DomainTools', () => {
     expect(ledger[0].outcome).toBe('failed_retryable');
   });
 
-  it('propose_variant reuses runVariantGen rules and creates a variant proposal ledger row', async () => {
+  it('propose_variant uses the Practice owner rules and creates a variant proposal ledger row', async () => {
     const db = testDb();
     await seedKnowledgeGraph();
     await seedQuestionAndFailure({ withJudge: true });

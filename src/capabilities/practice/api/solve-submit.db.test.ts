@@ -79,13 +79,21 @@ describe('POST /api/questions/[id]/solve/[sid]/submit', () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
+      attempt_event_id: string;
       judge: { coarse_outcome: string };
       revealed_solution_md: string;
       mistake_id?: string;
     };
     expect(body.judge.coarse_outcome).toBe('incorrect');
     expect(body.revealed_solution_md).toContain('a+b');
-    expect(body.mistake_id).toBeDefined();
+    const mistakeId = body.mistake_id;
+    expect(mistakeId).toBeDefined();
+    if (!mistakeId) throw new Error('expected a failure attempt id');
+
+    const [attempt] = await db.select().from(event).where(eq(event.id, body.attempt_event_id));
+    expect(attempt.action).toBe('attempt');
+    expect(attempt.outcome).toBe('failure');
+    expect(attempt.subject_id).toBe(id);
 
     const [s] = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
     expect(s.status).toBe('judged');
@@ -94,6 +102,10 @@ describe('POST /api/questions/[id]/solve/[sid]/submit', () => {
       .from(learning_record)
       .where(eq(learning_record.question_id, id));
     expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      id: mistakeId,
+      attempt_event_id: body.attempt_event_id,
+    });
   });
 
   it('YUK-562: writes reasoning_trace (steps only) separately while answer_md keeps the full join', async () => {

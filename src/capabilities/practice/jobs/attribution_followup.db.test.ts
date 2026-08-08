@@ -13,6 +13,7 @@ import {
   buildAttributionFollowupHandler,
   runAttributionFollowup,
 } from './attribution_followup';
+import { ATTRIBUTION_FOLLOWUP_QUEUE, failureLearningJobId } from './failure-learning-jobs';
 
 async function seedXuciKnowledge() {
   await testDb().insert(knowledge).values({
@@ -77,13 +78,16 @@ describe('runAttributionFollowup', () => {
 
   it('returns skipped:attempt_not_found when attempt event does not exist', async () => {
     const runTaskFn = vi.fn();
+    const enqueueVariantGen = vi.fn(async () => {});
     const result = await runAttributionFollowup({
       db: testDb(),
       attemptEventId: 'no_such_event',
       runTaskFn,
+      enqueueVariantGen,
     });
     expect(result.status).toBe('skipped:attempt_not_found');
     expect(runTaskFn).not.toHaveBeenCalled();
+    expect(enqueueVariantGen).not.toHaveBeenCalled();
   });
 
   it('returns skipped:not_a_failure_attempt for non-failure events', async () => {
@@ -119,13 +123,16 @@ describe('runAttributionFollowup', () => {
     });
 
     const runTaskFn = vi.fn();
+    const enqueueVariantGen = vi.fn(async () => {});
     const result = await runAttributionFollowup({
       db,
       attemptEventId: reviewId,
       runTaskFn,
+      enqueueVariantGen,
     });
     expect(result.status).toBe('skipped:not_a_failure_attempt');
     expect(runTaskFn).not.toHaveBeenCalled();
+    expect(enqueueVariantGen).not.toHaveBeenCalled();
   });
 
   it('returns skipped:question_not_found when attempt references missing question', async () => {
@@ -149,13 +156,73 @@ describe('runAttributionFollowup', () => {
     });
 
     const runTaskFn = vi.fn();
+    const enqueueVariantGen = vi.fn(async () => {});
     const result = await runAttributionFollowup({
       db,
       attemptEventId: attemptId,
       runTaskFn,
+      enqueueVariantGen,
     });
     expect(result.status).toBe('skipped:question_not_found');
     expect(runTaskFn).not.toHaveBeenCalled();
+    expect(enqueueVariantGen).not.toHaveBeenCalled();
+  });
+
+  it('does not pair an invalid frozen snapshot with the current question row', async () => {
+    const db = testDb();
+    await seedXuciKnowledge();
+    await seedQuestion('q1');
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await db
+      .update(event)
+      .set({
+        payload: {
+          answer_md: '助词，主谓间',
+          answer_image_refs: [],
+          referenced_knowledge_ids: ['k_xuci'],
+          question_snapshot: { schema_version: 1 },
+        },
+      })
+      .where(eq(event.id, attemptId));
+    const runTaskFn = vi.fn();
+    const enqueueVariantGen = vi.fn(async () => {});
+
+    await expect(
+      runAttributionFollowup({
+        db,
+        attemptEventId: attemptId,
+        runTaskFn,
+        enqueueVariantGen,
+      }),
+    ).resolves.toEqual({ status: 'skipped:question_not_found' });
+    expect(runTaskFn).not.toHaveBeenCalled();
+    expect(enqueueVariantGen).not.toHaveBeenCalled();
+  });
+
+  it('does not use an edited current question as a legacy snapshot fallback', async () => {
+    const db = testDb();
+    await seedXuciKnowledge();
+    await seedQuestion('q1');
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await db
+      .update(question)
+      .set({ prompt_md: '后来修改的题面', updated_at: new Date('2030-01-01T00:00:00.000Z') })
+      .where(eq(question.id, 'q1'));
+    const runTaskFn = vi.fn();
+    const enqueueVariantGen = vi.fn(async () => {});
+
+    await expect(
+      runAttributionFollowup({
+        db,
+        attemptEventId: attemptId,
+        runTaskFn,
+        enqueueVariantGen,
+      }),
+    ).resolves.toEqual({ status: 'skipped:question_not_found' });
+    expect(runTaskFn).not.toHaveBeenCalled();
+    expect(enqueueVariantGen).not.toHaveBeenCalled();
   });
 
   it('runs AttributionTask + writes chained judge event on happy path', async () => {
@@ -180,14 +247,17 @@ describe('runAttributionFollowup', () => {
     const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
       text: VALID_ATTRIBUTION_OUTPUT,
     }));
+    const enqueueVariantGen = vi.fn(async () => {});
 
     const result = await runAttributionFollowup({
       db,
       attemptEventId: attemptId,
       runTaskFn,
+      enqueueVariantGen,
     });
     expect(result.status).toBe('attempted');
     expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(enqueueVariantGen).toHaveBeenCalledWith(attemptId);
 
     // Verify chained judge event written
     const judges = await db
@@ -226,11 +296,13 @@ describe('runAttributionFollowup', () => {
     const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
       text: VALID_ATTRIBUTION_OUTPUT,
     }));
+    const enqueueVariantGen = vi.fn(async () => {});
 
     const result = await runAttributionFollowup({
       db,
       attemptEventId: attemptId,
       runTaskFn,
+      enqueueVariantGen,
     });
 
     expect(result.status).toBe('attempted');
@@ -265,11 +337,13 @@ describe('runAttributionFollowup', () => {
         confidence: 0.9,
       }),
     }));
+    const enqueueVariantGen = vi.fn(async () => {});
 
     const result = await runAttributionFollowup({
       db,
       attemptEventId: attemptId,
       runTaskFn,
+      enqueueVariantGen,
     });
 
     expect(result.status).toBe('attempted');
@@ -310,9 +384,10 @@ describe('runAttributionFollowup', () => {
     await seedFailureAttempt(attemptId, 'q1');
 
     const runTaskFn = vi.fn(async () => ({ text: VALID_ATTRIBUTION_OUTPUT }));
+    const enqueueVariantGen = vi.fn(async () => {});
 
-    await runAttributionFollowup({ db, attemptEventId: attemptId, runTaskFn });
-    await runAttributionFollowup({ db, attemptEventId: attemptId, runTaskFn });
+    await runAttributionFollowup({ db, attemptEventId: attemptId, runTaskFn, enqueueVariantGen });
+    await runAttributionFollowup({ db, attemptEventId: attemptId, runTaskFn, enqueueVariantGen });
 
     // Inner runAttributionAndWriteJudgeEvent dedups via getJudgeForAttempt;
     // second call should not write a second judge event.
@@ -327,6 +402,7 @@ describe('runAttributionFollowup', () => {
         ),
       );
     expect(judges).toHaveLength(1);
+    expect(enqueueVariantGen).toHaveBeenCalledTimes(2);
   });
 
   // ── YUK-379 (B1): retryable rethrow + permanent continue ──────────────────
@@ -387,7 +463,7 @@ describe('runAttributionFollowup', () => {
     await expect(handler(jobs)).rejects.toThrow('LLM down');
   });
 
-  it('YUK-379: permanent parse failure returns attempted (no throw) and still fans out variant_gen', async () => {
+  it('YUK-379: permanent parse failure is acknowledged without an empty variant handoff', async () => {
     const db = testDb();
     await seedXuciKnowledge();
     await seedQuestion('q1');
@@ -403,10 +479,20 @@ describe('runAttributionFollowup', () => {
       runTaskFn,
       enqueueVariantGen,
     });
-    // permanent is a completed attribution attempt — the job does not retry, and
-    // the best-effort variant_gen fan-out still fires (idempotent, cause-gated).
-    expect(result.status).toBe('attempted');
-    expect(enqueueVariantGen).toHaveBeenCalledTimes(1);
+    // Permanent parse failure must not retry paid inference and has no effective
+    // cause for variant generation, so the owner facade stops before handoff.
+    expect(result.status).toBe('failed_permanent');
+    expect(enqueueVariantGen).not.toHaveBeenCalled();
+
+    await expect(
+      runAttributionFollowup({
+        db,
+        attemptEventId: attemptId,
+        runTaskFn,
+        enqueueVariantGen,
+      }),
+    ).resolves.toMatchObject({ status: 'failed_permanent' });
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
 
     const judges = await db
       .select()
@@ -420,6 +506,9 @@ describe('runAttributionFollowup', () => {
     expect(ledger).toHaveLength(1);
     expect(ledger[0].outcome).toBe('failed_permanent');
     expect(ledger[0].task_run_id).toBe('tr_perm');
+    expect(ledger[0].pgboss_job_id).toBe(
+      failureLearningJobId(ATTRIBUTION_FOLLOWUP_QUEUE, attemptId),
+    );
   });
 
   // ── YUK-562 (process-data 通电): reasoning_trace → AttributionInput.reasoning_trace_md ──
@@ -453,8 +542,14 @@ describe('runAttributionFollowup', () => {
     const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
       text: VALID_ATTRIBUTION_OUTPUT,
     }));
+    const enqueueVariantGen = vi.fn(async () => {});
 
-    const result = await runAttributionFollowup({ db, attemptEventId: attemptId, runTaskFn });
+    const result = await runAttributionFollowup({
+      db,
+      attemptEventId: attemptId,
+      runTaskFn,
+      enqueueVariantGen,
+    });
     expect(result.status).toBe('attempted');
     // Second arg is the task input object ({ ...AttributionInput, candidates }) the
     // runner serializes into the model user message.
@@ -474,8 +569,14 @@ describe('runAttributionFollowup', () => {
     const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
       text: VALID_ATTRIBUTION_OUTPUT,
     }));
+    const enqueueVariantGen = vi.fn(async () => {});
 
-    const result = await runAttributionFollowup({ db, attemptEventId: attemptId, runTaskFn });
+    const result = await runAttributionFollowup({
+      db,
+      attemptEventId: attemptId,
+      runTaskFn,
+      enqueueVariantGen,
+    });
     expect(result.status).toBe('attempted');
     expect(runTaskFn.mock.calls[0]?.[1]).not.toHaveProperty('reasoning_trace_md');
   });
@@ -506,8 +607,14 @@ describe('runAttributionFollowup', () => {
     const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
       text: VALID_ATTRIBUTION_OUTPUT,
     }));
+    const enqueueVariantGen = vi.fn(async () => {});
 
-    const result = await runAttributionFollowup({ db, attemptEventId: attemptId, runTaskFn });
+    const result = await runAttributionFollowup({
+      db,
+      attemptEventId: attemptId,
+      runTaskFn,
+      enqueueVariantGen,
+    });
     expect(result.status).toBe('attempted');
     expect(runTaskFn.mock.calls[0]?.[1]).not.toHaveProperty('reasoning_trace_md');
   });

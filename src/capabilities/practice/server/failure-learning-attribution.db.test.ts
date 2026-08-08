@@ -4,11 +4,8 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import {
-  type AttributionInput,
-  parseAttributionOutput,
-  runAttributionAndWriteJudgeEvent,
-} from './attribute';
+import { type AttributionInput, parseAttributionOutput } from '../tasks/attribution';
+import { runAttributionAndWriteJudgeEvent } from './failure-learning-attribution';
 
 describe('parseAttributionOutput', () => {
   it('parses well-formed JSON with analysis_md (Lane B field name)', () => {

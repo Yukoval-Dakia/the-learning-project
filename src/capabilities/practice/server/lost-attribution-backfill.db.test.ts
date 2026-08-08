@@ -1,4 +1,4 @@
-// YUK-379 (B1) — census + backfill for silently-lost attribution.
+// YUK-379 / YUK-847 — census + owner backfill for silently-lost attribution.
 
 import { question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';

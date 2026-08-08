@@ -13,11 +13,9 @@ import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { collectionPayload, resourceResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { getStartedBoss } from '@/server/boss/client';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { listMistakeProjectionPage } from '@/server/records/mistakes';
 import { createLearningRecord } from '@/server/records/queries';
-import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { and, inArray, isNull } from 'drizzle-orm';
 import { CreateMistakeBodySchema, MistakeListQuerySchema } from './contracts';
 
@@ -189,22 +187,9 @@ export async function POST(req: Request): Promise<Response> {
     // below, and must NOT drive KC creation. KC creation lives entirely in the
     // content-driven paths (ingestion cold-start-bridge / image-candidate-accept
     // matcher / agent proposal tools / KnowledgeReviewTask). The attribution
-    // enqueue below is unchanged.
-
-    // Async attribution via pg-boss (Task #16): user-supplied cause skips this,
-    // otherwise the worker picks up the job and calls AttributionTask. Durable
-    // + retryable + doesn't tie up the web container. Gated by the shared
-    // shouldEnqueueBackgroundJobs() (YUK-239) so the test suite doesn't
-    // accumulate boss state (same posture as session_summary + note_generate
-    // enqueue).
-    if (body.cause === null && shouldEnqueueBackgroundJobs()) {
-      try {
-        const boss = await getStartedBoss();
-        await boss.send('attribution_followup', { attempt_event_id: attemptEventId });
-      } catch (err) {
-        console.warn(`attribution_followup enqueue failed for ${attemptEventId}:`, err);
-      }
-    }
+    // Failure-learning follow-up is now derived durably from the committed
+    // attempt event. A user-cause event remains authoritative and is filtered
+    // by the practice-owned subscription before any model work is scheduled.
 
     return resourceResponse(
       {

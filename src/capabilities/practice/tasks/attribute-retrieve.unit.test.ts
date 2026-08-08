@@ -20,8 +20,8 @@ import {
   resolveSubjectProfile,
 } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
-import type { AttributionInput } from './attribute';
 import { K_MAX, K_SMALL, retrieveCauseCandidates } from './attribute-retrieve';
+import type { AttributionInput } from './attribution';
 
 const retrieveInput: AttributionInput = {
   prompt_md: '"之"在主谓之间的用法?',

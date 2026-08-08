@@ -142,8 +142,6 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       'src/capabilities/knowledge/server/proposals.ts',
       // knowledge edges direct writers (Lane B GenerateKnowledgeEdge / ProposeKnowledgeEdge)
       'src/capabilities/knowledge/server/edges.ts',
-      // knowledge attribute (judge event writer)
-      'src/capabilities/knowledge/server/attribute.ts',
       // knowledge review stream task tool
       'src/capabilities/knowledge/server/review.ts',
       // Test fixture helpers

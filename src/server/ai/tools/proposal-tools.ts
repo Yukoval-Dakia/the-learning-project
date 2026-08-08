@@ -2,10 +2,9 @@
 //
 // These tools expose existing owner-service paths to agent tool loops. They do
 // not apply destructive graph, record, or LearningItem mutations directly:
-// proposal tools write inbox-visible proposal events, while attribute_mistake
-// delegates to the AttributionTask writer that appends a judge event.
+// proposal tools write inbox-visible proposal events. Capability-owned tools
+// live with their product operation and are loaded through capability manifests.
 
-import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 // ADR-0032 D4-E1 (YUK-203) — archive-op edge proposal targets a live edge by id;
 // the single-owner edges module is the read authority.
@@ -18,6 +17,7 @@ import {
   type RubricVerdict,
   validateProposalQuality,
 } from '@/capabilities/knowledge/server/rubric-validator';
+import type { VariantProposalResult } from '@/capabilities/practice/public';
 // ADR-0032 D6-B (YUK-203 lane L6) — the pure verify-gate is reused at PROPOSE
 // time (pre-flight against the live tree) and again at ACCEPT time (the applier).
 import { applyQuestionEdit } from '@/capabilities/practice/server/proposal-appliers';
@@ -50,11 +50,6 @@ import type { TaskTextRunFn } from '@/server/ai/provenance';
 // + question_draft proposal in one tx).
 import { runQuestionAuthor } from '@/server/ai/question-author';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { runVariantGen } from '@/server/boss/handlers/variant_gen';
-import {
-  getFailureAttemptWithReasoningTraceById,
-  getJudgeForAttempt,
-} from '@/server/events/queries';
 // P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
 // this edge and pass it as the OPTIONAL adaptive input to the L1 validator. The
 // digest read is bounded; cold-start / below-threshold returns a no-op bump.
@@ -67,7 +62,6 @@ import {
   writeRelearnProposal,
 } from '@/server/proposals/producers';
 import { writeAiProposal } from '@/server/proposals/writer';
-import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from './budgets';
@@ -862,258 +856,6 @@ export const proposeKnowledgeMutationTool: DomainTool<
 };
 
 // ---------------------------------------------------------------------------
-// attribute_mistake
-// ---------------------------------------------------------------------------
-
-const AttributeMistakeInputSchema = z.object({
-  attempt_event_id: z.string().min(1),
-});
-
-const AttributeMistakeOutputSchema = z.object({
-  status: z.enum(['written', 'skipped:existing_judge', 'skipped:not_failure_attempt', 'failed']),
-  judge_event_id: z.string().optional(),
-  cause: z
-    .object({
-      primary_category: z.string(),
-      secondary_categories: z.array(z.string()),
-      confidence: z.number().nullable(),
-      analysis_excerpt: z.string(),
-    })
-    .optional(),
-  reason: z.string().optional(),
-});
-
-type AttributeMistakeInput = z.infer<typeof AttributeMistakeInputSchema>;
-type AttributeMistakeOutput = z.infer<typeof AttributeMistakeOutputSchema>;
-
-function judgeOutput(
-  status: 'written' | 'skipped:existing_judge',
-  judge: NonNullable<Awaited<ReturnType<typeof getJudgeForAttempt>>>,
-): AttributeMistakeOutput {
-  return {
-    status,
-    judge_event_id: judge.judge_event_id,
-    cause: {
-      primary_category: judge.cause.primary_category,
-      secondary_categories: judge.cause.secondary_categories ?? [],
-      confidence: judge.cause.confidence ?? null,
-      analysis_excerpt: excerpt(judge.cause.analysis_md),
-    },
-  };
-}
-
-async function attributeMistakeExecute(
-  ctx: ToolContext,
-  raw: AttributeMistakeInput,
-): Promise<AttributeMistakeOutput> {
-  const input = AttributeMistakeInputSchema.parse(raw);
-  // YUK-562 — this loader runs the SAME single query as getFailureAttemptById and
-  // also surfaces the attempt payload's reasoning_trace, so the process-data
-  // self-report reaches attribution without a second round-trip.
-  const loaded = await getFailureAttemptWithReasoningTraceById(ctx.db, input.attempt_event_id);
-  if (!loaded) {
-    return { status: 'skipped:not_failure_attempt' };
-  }
-  const { failure, reasoning_trace: rawReasoningTrace } = loaded;
-
-  const existingJudge = await getJudgeForAttempt(ctx.db, input.attempt_event_id);
-  if (existingJudge) {
-    return judgeOutput('skipped:existing_judge', existingJudge);
-  }
-
-  const questionRow = (
-    await ctx.db
-      .select({
-        id: question.id,
-        prompt_md: question.prompt_md,
-        reference_md: question.reference_md,
-        knowledge_ids: question.knowledge_ids,
-      })
-      .from(question)
-      .where(eq(question.id, failure.question_id))
-      .limit(1)
-  )[0];
-  if (!questionRow) {
-    return { status: 'failed', reason: `question not found: ${failure.question_id}` };
-  }
-
-  const knowledgeRows =
-    failure.referenced_knowledge_ids.length === 0
-      ? []
-      : await ctx.db
-          .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
-          .from(knowledge)
-          .where(inArray(knowledge.id, failure.referenced_knowledge_ids));
-  const effectiveDomains = await Promise.all(
-    knowledgeRows.map(async (row) => ({
-      id: row.id,
-      effective_domain: await getEffectiveDomain(ctx.db, row.id).catch(() => row.domain),
-    })),
-  );
-  const domainByKnowledgeId = new Map(
-    effectiveDomains.map((row) => [row.id, row.effective_domain ?? null]),
-  );
-  const subjectProfile = resolveSubjectProfile(
-    domainByKnowledgeId.get(knowledgeRows[0]?.id) ?? null,
-  );
-
-  // YUK-562 (process-data 通电) — feed the attempt's reasoning_trace (already loaded
-  // above, no extra query) into attribution as the "student self-report" section,
-  // mirroring the attribution_followup job. Present → threaded; absent /
-  // whitespace-only → key omitted (byte-identical attribution input).
-  const reasoningTraceMd = rawReasoningTrace?.trim() ? rawReasoningTrace : undefined;
-
-  let attributionTaskRan = false;
-  const runTaskFn = makeRunTaskFn(ctx.db, {
-    signal: ctx.signal,
-    parentTaskRunId: ctx.taskRunId,
-    ...(ctx.providerSessionDeadlineAt !== undefined
-      ? { providerSessionDeadlineAt: ctx.providerSessionDeadlineAt }
-      : {}),
-  });
-  await runAttributionAndWriteJudgeEvent({
-    db: ctx.db,
-    attemptEventId: input.attempt_event_id,
-    input: {
-      prompt_md: questionRow.prompt_md,
-      reference_md: questionRow.reference_md ?? null,
-      wrong_answer_md: failure.answer_md ?? '',
-      knowledge_context: knowledgeRows.map((row) => ({
-        id: row.id,
-        name: row.name,
-        effective_domain: domainByKnowledgeId.get(row.id) ?? null,
-      })),
-      // YUK-562 — only add the key when there is real process text (else omitted).
-      ...(reasoningTraceMd !== undefined ? { reasoning_trace_md: reasoningTraceMd } : {}),
-    },
-    runTaskFn: (kind, taskInput, taskCtx) => {
-      attributionTaskRan = true;
-      return runTaskFn(kind, taskInput, taskCtx);
-    },
-    subjectProfile,
-    referencedKnowledgeIds: failure.referenced_knowledge_ids,
-  });
-
-  const writtenJudge = await getJudgeForAttempt(ctx.db, input.attempt_event_id);
-  if (!writtenJudge) {
-    return { status: 'failed', reason: 'AttributionTask completed without writing a judge event' };
-  }
-  if (!attributionTaskRan) {
-    return judgeOutput('skipped:existing_judge', writtenJudge);
-  }
-  return judgeOutput('written', writtenJudge);
-}
-
-export const attributeMistakeTool: DomainTool<AttributeMistakeInput, AttributeMistakeOutput> = {
-  name: 'attribute_mistake',
-  description:
-    'Run the existing AttributionTask path for one failure attempt and append a judge event if no active judge exists. The caller cannot provide a cause.',
-  effect: 'write',
-  inputSchema: AttributeMistakeInputSchema,
-  outputSchema: AttributeMistakeOutputSchema,
-  costClass: 'cheap_llm',
-  execute: attributeMistakeExecute,
-  summarize(input, output) {
-    return `attribute ${input.attempt_event_id.slice(0, 8)}: ${output.status}${output.cause ? ` (${output.cause.primary_category})` : ''}`;
-  },
-  mirrorEvent: 'when_causal',
-};
-
-// ---------------------------------------------------------------------------
-// propose_variant
-// ---------------------------------------------------------------------------
-
-const ProposeVariantInputSchema = z.object({
-  attempt_event_id: z.string().min(1),
-  count: z.literal(1).optional(),
-});
-
-const ProposeVariantOutputSchema = z.object({
-  status: z.enum([
-    'generated',
-    'skipped:attempt_not_found',
-    'skipped:not_failure_attempt',
-    'skipped:attempt_not_active',
-    'skipped:no_judge_yet',
-    'skipped:question_not_found',
-    'skipped:max_depth',
-    'skipped:variant_chain_terminus',
-    'skipped:cause_not_targetable',
-    'skipped:already_has_variant',
-    'skipped:variants_max_reached',
-    'failed',
-  ]),
-  proposal_ids: z.array(z.string()),
-  mistake_variant_ids: z.array(z.string()),
-  variant_question_ids: z.array(z.string()),
-  reasoning_summary: z.string().optional(),
-});
-
-type ProposeVariantInput = z.infer<typeof ProposeVariantInputSchema>;
-type ProposeVariantOutput = z.infer<typeof ProposeVariantOutputSchema>;
-
-async function proposeVariantExecute(
-  ctx: ToolContext,
-  raw: ProposeVariantInput,
-): Promise<ProposeVariantOutput> {
-  const input = ProposeVariantInputSchema.parse(raw);
-  try {
-    const result = await runVariantGen({
-      db: ctx.db,
-      attemptEventId: input.attempt_event_id,
-      runTaskFn: makeRunTaskFn(ctx.db, {
-        signal: ctx.signal,
-        parentTaskRunId: ctx.taskRunId,
-        ...(ctx.providerSessionDeadlineAt !== undefined
-          ? { providerSessionDeadlineAt: ctx.providerSessionDeadlineAt }
-          : {}),
-      }),
-    });
-    if (result.status !== 'proposed') {
-      return {
-        status:
-          result.status === 'skipped:not_a_failure_attempt'
-            ? 'skipped:not_failure_attempt'
-            : result.status,
-        proposal_ids: [],
-        mistake_variant_ids: [],
-        variant_question_ids: [],
-      };
-    }
-    return {
-      status: 'generated',
-      proposal_ids: result.proposal_id ? [result.proposal_id] : [],
-      mistake_variant_ids: result.mistake_variant_id ? [result.mistake_variant_id] : [],
-      variant_question_ids: [],
-      reasoning_summary: result.proposal_id ? `proposal ${result.proposal_id}` : undefined,
-    };
-  } catch (err) {
-    return {
-      status: 'failed',
-      proposal_ids: [],
-      mistake_variant_ids: [],
-      variant_question_ids: [],
-      reasoning_summary: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
-
-export const proposeVariantTool: DomainTool<ProposeVariantInput, ProposeVariantOutput> = {
-  name: 'propose_variant',
-  description:
-    'Generate one targeted variant-question proposal for a failure attempt by reusing runVariantGen guards: active failure, judge required, targetable cause, depth cap, and variant caps.',
-  effect: 'propose',
-  inputSchema: ProposeVariantInputSchema,
-  outputSchema: ProposeVariantOutputSchema,
-  costClass: 'cheap_llm',
-  execute: proposeVariantExecute,
-  summarize(input, output) {
-    return `variant ${input.attempt_event_id.slice(0, 8)}: ${output.status}`;
-  },
-  mirrorEvent: 'when_causal',
-};
-
-// ---------------------------------------------------------------------------
 // LearningItem proposal tools
 // ---------------------------------------------------------------------------
 
@@ -1477,7 +1219,7 @@ export const proposeRecordPromotionTool: DomainTool<
 // ADR-0032 D8 (docs/adr/0032-domaintool-surface-redesign.md:76-83): the three
 // question-creation entry points share ONE `author_question` core keyed by a
 // seeding mode:
-//   - seed_mode='variant'           = the existing propose_variant / runVariantGen path
+//   - seed_mode='variant'           = the practice-owned Failure Learning path
 //   - seed_mode='record'            = the existing record_promotion → question path
 //   - seed_mode='knowledge'|'material' = ADR-0031 lane B (quiz C→A, YUK-304):
 //                                        generate ONE original draft question via
@@ -1487,7 +1229,7 @@ export const proposeRecordPromotionTool: DomainTool<
 //                                        accept promotes draft→active + FSRS.
 //
 // Minimal-risk unification boundary (grounded in the actual code):
-//   * The variant seed DELEGATES to `runVariantGen` UNCHANGED — every hard guard
+//   * The variant seed DELEGATES to Failure Learning — every hard guard
 //     (cause-targetable, depth≤2, chain terminus) and soft guard (in-flight cap,
 //     cooldown) lives there and is preserved by construction (HARD INVARIANT #1/#3).
 //   * The record seed writes `kind:'record_promotion'` with `target:'question'`
@@ -1663,7 +1405,7 @@ export interface AuthorQuestionDeps {
   taskRunId: string;
   /** ctx.causedByEventId (optional, matches ToolContext). */
   causedByEventId?: string;
-  /** Injectable for tests; the variant seed defaults to runVariantGen's runner. */
+  /** Injectable for tests; the variant seed defaults to the central AI runner. */
   runTaskFn?: TaskTextRunFn;
 }
 
@@ -1701,11 +1443,11 @@ function toAuthorQuestionSeed(input: AuthorQuestionInput): AuthorQuestionSeed {
   }
 }
 
-// Remap runVariantGen's internal status vocabulary to the propose_variant tool's
+// Remap Failure Learning's internal status vocabulary to the propose_variant tool's
 // external vocabulary (only `not_a_failure_attempt` → `not_failure_attempt`
 // differs). Byte-identical to proposeVariantExecute's inline remap.
 function remapVariantSkipStatus(
-  status: Exclude<Awaited<ReturnType<typeof runVariantGen>>['status'], 'proposed'>,
+  status: Exclude<VariantProposalResult['status'], 'proposed' | 'failed:invalid_model_output'>,
 ): AuthorQuestionOutput['status'] {
   return status === 'skipped:not_a_failure_attempt' ? 'skipped:not_failure_attempt' : status;
 }
@@ -1723,16 +1465,30 @@ export async function authorQuestion(
   const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(deps.db);
   switch (seed.seed_mode) {
     case 'variant': {
-      // DELEGATE to runVariantGen UNCHANGED — all variant guards live there.
-      // `deps.causedByEventId` is intentionally NOT forwarded here: runVariantGen
-      // owns the variant proposal's provenance (writeVariantQuestionProposal
-      // derives causality from the attempt event). Only the `record` seed below
+      // DELEGATE to the practice-owned Failure Learning operation — all variant
+      // guards live there. `deps.causedByEventId` is intentionally NOT forwarded:
+      // the operation owns the variant proposal's domain provenance. Only the `record` seed below
       // threads causedByEventId — the asymmetry is by design, not a miss.
-      const result = await runVariantGen({
+      // Load the public owner facet only when this seed actually executes. The
+      // Practice public barrel also exposes request handlers with production DB
+      // defaults, so eager import would make schema-only tool registration perform
+      // unrelated runtime initialization.
+      const { proposeFailureVariant } = await import('@/capabilities/practice/public');
+      const result = await proposeFailureVariant({
         db: deps.db,
         attemptEventId: seed.attempt_event_id,
         runTaskFn,
       });
+      if (result.status === 'failed:invalid_model_output') {
+        return {
+          status: 'failed',
+          seed_mode: 'variant',
+          proposal_ids: [],
+          mistake_variant_ids: [],
+          variant_question_ids: [],
+          reasoning_summary: result.reason,
+        };
+      }
       if (result.status !== 'proposed') {
         return {
           status: remapVariantSkipStatus(result.status),
@@ -1897,7 +1653,7 @@ async function authorQuestionExecute(
 export const authorQuestionTool: DomainTool<AuthorQuestionInput, AuthorQuestionOutput> = {
   name: 'author_question',
   description:
-    'Author one question proposal via a seeding mode (ADR-0032 D8). seed_mode="variant" generates a targeted variant for a failure attempt (reuses runVariantGen guards); seed_mode="record" promotes a LearningRecord into a question draft; seed_mode="knowledge"|"material" generates ONE original draft question seeded by knowledge_ids (and, for "material", a pasted material_body_md — 材料 stem + sub_questions tree supported), inserts it as draft_status="draft", and writes a question_draft proposal whose accept promotes it to active + FSRS. The returned question_ids may be assembled into a paper via write_quiz in the same turn (drafts allowed). Proposal-only: the user accepts in the inbox; no draft ever enters the review pool without accept.',
+    'Author one question proposal via a seeding mode (ADR-0032 D8). seed_mode="variant" generates a targeted variant through the practice-owned Failure Learning guards; seed_mode="record" promotes a LearningRecord into a question draft; seed_mode="knowledge"|"material" generates ONE original draft question seeded by knowledge_ids (and, for "material", a pasted material_body_md — 材料 stem + sub_questions tree supported), inserts it as draft_status="draft", and writes a question_draft proposal whose accept promotes it to active + FSRS. The returned question_ids may be assembled into a paper via write_quiz in the same turn (drafts allowed). Proposal-only: the user accepts in the inbox; no draft ever enters the review pool without accept.',
   effect: 'propose',
   inputSchema: AuthorQuestionInputSchema,
   outputSchema: AuthorQuestionOutputSchema,

@@ -4,7 +4,7 @@ import type {
   ProposalAcceptInput,
   ProposalAcceptResult,
 } from '@/kernel/proposals';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
+import type { ProposalInboxRow } from '@/server/proposals/practice-runtime';
 import {
   type PracticeApplierOpts,
   acceptQuestionDraftProposal,

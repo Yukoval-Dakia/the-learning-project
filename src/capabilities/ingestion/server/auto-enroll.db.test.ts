@@ -1107,9 +1107,9 @@ describe('runAutoEnrollForSession', () => {
       }),
     ).rejects.toThrow('db connection lost');
 
-    // buildAutoEnrollHandler re-throws an escaping fault so pg-boss retries on the
-    // auto_enroll queue alone (mirrors attribution_followup). Spy the runner the
-    // handler imports so the escaping infra fault is deterministic.
+    // buildAutoEnrollHandler re-throws an escaping fault so pg-boss retries the
+    // auto_enroll job. Spy the runner the handler imports so the escaping infra
+    // fault is deterministic.
     const autoEnrollModule = await import('./auto-enroll');
     const spy = vi
       .spyOn(autoEnrollModule, 'runAutoEnrollForSession')
@@ -1846,15 +1846,15 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
 
   // ---------------------------------------------------------------------------
   // Flag ON + student work + confident FAILURE verdict → graded attempt synthesized:
-  // outcome from verdict, answerImageRefs = source_asset_ids, attribution_followup
-  // enqueued, updateThetaForAttempt called once keyed on the KC.
+  // outcome from verdict, answerImageRefs = source_asset_ids, and
+  // updateThetaForAttempt called once keyed on the KC. Failure learning is
+  // derived later from the committed attempt by the durable subscription.
   // ---------------------------------------------------------------------------
-  it('flag ON + confident failure: graded attempt + attribution + θ̂', async () => {
+  it('flag ON + confident failure: graded attempt fact + θ̂', async () => {
     const db = testDb();
     const { sessionId, blockId } = await seedStudentWork(db);
 
     const gradeStudentAnswerFn = vi.fn<GradeStudentAnswerFn>(gradeFailure);
-    const enqueueAttributionFollowupFn = vi.fn<(id: string) => Promise<void>>(async () => {});
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
@@ -1862,7 +1862,6 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,
-      enqueueAttributionFollowupFn,
     });
 
     expect(result.status).toBe('completed');
@@ -1885,10 +1884,6 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
     // mistake record (failure → kind='mistake').
     const records = await db.select().from(learning_record);
     expect(records[0]?.kind).toBe('mistake');
-
-    // attribution_followup enqueued for the failure with the attempt event id.
-    expect(enqueueAttributionFollowupFn).toHaveBeenCalledTimes(1);
-    expect(enqueueAttributionFollowupFn.mock.calls[0]?.[0]).toBe(attempts[0]?.id);
 
     // θ̂ written for the question's primary KC (k1). mastery_state keys KC
     // granularity on (subject_kind='knowledge', subject_id=kc). (updateThetaForAttempt
@@ -1913,14 +1908,13 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
   });
 
   // ---------------------------------------------------------------------------
-  // Flag ON + confident CORRECT verdict → success attempt, NO attribution, θ̂ written.
+  // Flag ON + confident CORRECT verdict → success attempt + θ̂ written.
   // ---------------------------------------------------------------------------
-  it('flag ON + confident correct: success attempt, no attribution, θ̂ written', async () => {
+  it('flag ON + confident correct: success attempt fact + θ̂ written', async () => {
     const db = testDb();
     const { sessionId } = await seedStudentWork(db);
 
     const gradeStudentAnswerFn = vi.fn(gradeCorrect);
-    const enqueueAttributionFollowupFn = vi.fn<(id: string) => Promise<void>>(async () => {});
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
@@ -1928,16 +1922,15 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,
-      enqueueAttributionFollowupFn,
     });
 
     expect(result.enrolled).toBe(1);
     const attempts = await db.select().from(event).where(eq(event.action, 'attempt'));
     expect(attempts[0]?.outcome).toBe('success');
-    // success → worked_example record, NO attribution_followup.
+    // success → worked_example record; no failure fact exists for the durable
+    // failure-learning subscription to select.
     const records = await db.select().from(learning_record);
     expect(records[0]?.kind).toBe('worked_example');
-    expect(enqueueAttributionFollowupFn).not.toHaveBeenCalled();
     // θ̂ still written for the success evidence (KC row exists).
     const masteryKc = await db
       .select()
@@ -1955,7 +1948,6 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
     const { sessionId, blockId } = await seedStudentWork(db);
 
     const gradeStudentAnswerFn = vi.fn(gradeLowConfidence);
-    const enqueueAttributionFollowupFn = vi.fn<(id: string) => Promise<void>>(async () => {});
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
@@ -1963,7 +1955,6 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,
-      enqueueAttributionFollowupFn,
     });
 
     expect(result.status).toBe('completed');
@@ -1971,7 +1962,6 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
     expect(result.routed_to_review).toBe(1);
     // Judge ran, but no downstream synthesis.
     expect(gradeStudentAnswerFn).toHaveBeenCalledTimes(1);
-    expect(enqueueAttributionFollowupFn).not.toHaveBeenCalled();
     expect(await db.select().from(event).where(eq(event.action, 'attempt'))).toHaveLength(0);
     expect(await db.select().from(question)).toHaveLength(0);
     expect(await db.select().from(mastery_state)).toHaveLength(0);

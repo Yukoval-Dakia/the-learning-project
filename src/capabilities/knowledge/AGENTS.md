@@ -5,16 +5,16 @@
 ## WHERE TO LOOK
 | 文件 | 职责 |
 |------|------|
-| `manifest.ts` | 12 条 API 路由 + 7 个 cron/链式 job + 4 proposal kinds + 6 copilot tools |
+| `manifest.ts` | API、job、proposal kind、copilot tool 的组合声明 |
 | `api/*.ts` | tree / node-page / proposals / edges / review / frontier / misconceptions / veto |
-| `server/` | tree、edges、proposals、rubric-validator、attribute、review、seed、domain/subject-profile |
-| `jobs/` | `knowledge_edge_propose_nightly`、`frontier_fill_nightly`、`knowledge_maintenance_nightly`、`attribution_followup`、`kc_dedup_nightly`、`merge_attribution_sweep`、`projection_oracle_sweep` |
+| `server/` | tree、edges、proposals、rubric-validator、review、seed、domain/subject-profile，以及给 Failure Learning 的有界 knowledge reader |
+| `jobs/` | Knowledge 图谱维护、edge 提议、dedup、merge attribution 与 projection oracle 后台任务 |
 | `ui/KnowledgePage.tsx` / `KnowledgeDetailPage.tsx` | 知识面与节点详情页 |
 
 ## CONVENTIONS
 - `relation_type` 核心 5 类：`prerequisite | related_to | contrasts_with | applied_in | derived_from`；新关系先用 `experimental:*`。
 - 节点/edge/misconception 的 propose 都写 `event(action='propose')`，accept route 才执行真实 mutation。
-- attribution 通过 chained judge event，`caused_by_event_id` 指向 attempt event。
+- Practice Failure Learning 只能经 `public.ts` 暴露的有界 reader 读取知识上下文；Knowledge 不拥有归因 workflow。
 
 ## ANTI-PATTERNS
 - 破坏性动作（合并节点 / reparent / archive / misconception veto）只能 propose，无直接 write tool。

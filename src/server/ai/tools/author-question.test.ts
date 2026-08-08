@@ -3,11 +3,11 @@
 // Proves the front door delegates to the EXISTING code paths without regressing
 // the variant guards (HARD INVARIANT #1/#3) or the record_promotion accept
 // idempotency (HARD INVARIANT #2):
-//   - seed=variant   → runVariantGen UNCHANGED (guards preserved via delegation)
+//   - seed=variant   → practice-owned Failure Learning (guards preserved via delegation)
 //   - seed=record    → kind:'record_promotion' / target:'question' → unchanged accept
 //   - seed=knowledge|material → typed STUB, writes ZERO proposals (lane B seam)
 //
-// DB-config test: imports runVariantGen / writeAiProposal / acceptAiProposal /
+// DB-config test: imports Failure Learning / writeAiProposal / acceptAiProposal /
 // @/db, seeds a real Postgres testcontainer.
 import { knowledge, learning_record, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -131,7 +131,7 @@ function mockVariantModelOnce(): void {
   });
 }
 
-describe('author_question — variant seed (delegates to runVariantGen)', () => {
+describe('author_question — variant seed (delegates to Failure Learning)', () => {
   beforeEach(async () => {
     await resetDb();
     mockRunner.runTask.mockReset();
@@ -190,7 +190,7 @@ describe('author_question — variant seed (delegates to runVariantGen)', () => 
 
   it('remaps not_a_failure_attempt → not_failure_attempt (external vocabulary)', async () => {
     const db = testDb();
-    // A non-attempt event id → runVariantGen returns skipped:not_a_failure_attempt.
+    // A non-attempt event id → Failure Learning returns skipped:not_a_failure_attempt.
     await db.insert(question).values({
       id: 'q_x',
       kind: 'short_answer',
@@ -218,6 +218,29 @@ describe('author_question — variant seed (delegates to runVariantGen)', () => 
       deps(),
     );
     expect(result.status).toBe('skipped:not_failure_attempt');
+  });
+
+  it('folds permanent variant parse failures into the existing failed contract', async () => {
+    await seedFailureAttempt({ withJudge: true });
+    mockRunner.runTask.mockResolvedValueOnce({
+      task_run_id: 'tr_variant_invalid',
+      text: '{"prompt_md":"missing required fields"}',
+      cost_usd: 0,
+    });
+
+    const result = await authorQuestion(
+      { seed_mode: 'variant', attempt_event_id: 'att_failure' },
+      deps(),
+    );
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      seed_mode: 'variant',
+      proposal_ids: [],
+      mistake_variant_ids: [],
+      variant_question_ids: [],
+    });
+    expect(result.reasoning_summary).toBeTruthy();
   });
 });
 

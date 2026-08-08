@@ -28,6 +28,8 @@
 // (F-7 / AC-7). The pure-logic helper checks are FOLDED in here (M7), so there
 // is NO separate fixtures-assert.test.ts and NO vitest.shared.ts edit.
 
+import { attributeMistakeTool } from '@/capabilities/practice/tools/attribute-mistake';
+import { proposeVariantTool } from '@/capabilities/practice/tools/propose-variant';
 import {
   completion_evidence,
   event,
@@ -45,12 +47,7 @@ import { getLearningItemContextTool } from './context-readers';
 import { assertAgentReadable, assertCostLabel, resolvePath } from './fixtures-assert';
 import { getAttemptContextTool } from './get-attempt-context';
 import { expandKnowledgeSubgraphTool, queryKnowledgeTool } from './knowledge-readers';
-import {
-  attributeMistakeTool,
-  proposeKnowledgeEdgeTool,
-  proposeLearningItemCompletionTool,
-  proposeVariantTool,
-} from './proposal-tools';
+import { proposeKnowledgeEdgeTool, proposeLearningItemCompletionTool } from './proposal-tools';
 import { queryMistakesTool } from './query-mistakes';
 import type { DomainTool, ToolContext } from './types';
 
@@ -334,7 +331,7 @@ describe('P5.5 Phase 1 tool-eval fixtures', () => {
 
     // --- Stage 4: propose_variant (LLM-stubbed) ---
     // Hand-off: stage 4 takes the SAME attempt id; stage 3's judge write is the
-    // precondition runVariantGen re-reads (judge must exist or no_judge_yet).
+    // precondition Failure Learning re-reads (an effective cause must exist).
     mockRunner.runTask.mockResolvedValueOnce(VARIANT_GEN_TASK_RESULT);
     const variant = await proposeVariantTool.execute(ctx(), { attempt_event_id: attemptId });
     expect(variant.status).toBe('generated');

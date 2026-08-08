@@ -40,10 +40,9 @@ import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/public';
 // 应换走 knowledge 包对外导出面；M4 等价平移期原样保留。
 import { loadTreeSnapshot } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { getDefaultSubjectRegistry, resolveSubjectProfile } from '@/subjects/profile';
+import { type TaskTextRunFn, makeRunTaskFn } from '../server/ai-runtime';
 import { loadPendingGoalScopeSubjects } from './goal_scope_dedup';
 
 type DepsOverride = {

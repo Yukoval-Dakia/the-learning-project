@@ -30,7 +30,7 @@ export const knowledgeCapability = defineCapability({
   description:
     '知识域：认知结构树（tree 快照 / effective_domain 派生轴——科目是视角不是结构）、' +
     'knowledge_edge 关系网、节点页聚合（node-page，跨包读 notes 导出）、提议双链' +
-    '（节点 propose / 边 propose_edge + rubric 校验 + accept/dismiss）、错因归因（attribute）。',
+    '（节点 propose / 边 propose_edge + rubric 校验 + accept/dismiss）。',
   api: {
     // M3-T4 (YUK-317)：8 条路由全带 load 懒加载 thunk（M1/M2 配方）。静态段
     // proposals/edges/review* 在 Hono 中优先于 :id 匹配。
@@ -189,9 +189,8 @@ export const knowledgeCapability = defineCapability({
     ],
   },
   jobs: {
-    // M4-T3 (YUK-319) + Lane D (YUK-482)：夜链 cron + 链式 attribution followup 入容器。
-    // cron/链式形态照 handlers.ts 现状；注册由 server/boss/register-capability-jobs.ts
-    // 收集挂载，此处声明是唯一归属源。
+    // M4-T3 (YUK-319)：knowledge 夜链 job 入容器。注册由
+    // server/boss/register-capability-jobs.ts 收集挂载，此处声明是唯一归属源。
     handlers: [
       // Lane D (YUK-482): knowledge_propose_nightly was removed — its sole job was
       // getFailureAttempts → propose-new-KC, i.e. answer-wrong → propose coupling.
@@ -240,13 +239,6 @@ export const knowledgeCapability = defineCapability({
           import('./jobs/knowledge_maintenance_nightly').then(
             (m) => m.buildKnowledgeMaintenanceNightlyHandler,
           ),
-      },
-      {
-        // Task #16：async 错因归因。链式/按需（mistakes + ingestion import 投递），无 cron。
-        name: 'attribution_followup',
-        queue: 'llm',
-        load: () =>
-          import('./jobs/attribution_followup').then((m) => m.buildAttributionFollowupHandler),
       },
       {
         // P5 (YUK-489): dedup-on-maintenance. Deterministic (zero-LLM) nightly scan
