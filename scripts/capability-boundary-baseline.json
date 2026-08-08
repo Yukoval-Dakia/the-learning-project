@@ -3,7 +3,7 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 531,
+      "total": 530,
       "byOwnerPair": {
         "agency -> agency": 7,
         "agency -> ai": 29,
@@ -53,7 +53,7 @@
         "knowledge -> events": 8,
         "knowledge -> fsrs": 2,
         "knowledge -> mastery": 5,
-        "knowledge -> memory": 3,
+        "knowledge -> memory": 2,
         "knowledge -> projections": 19,
         "knowledge -> proposals": 18,
         "notes -> ai": 8,

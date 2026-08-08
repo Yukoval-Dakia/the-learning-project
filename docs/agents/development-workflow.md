@@ -69,6 +69,7 @@ pnpm audit:api-contracts
 pnpm audit:api-client
 pnpm audit:api-client-usage
 pnpm audit:capability-boundaries
+pnpm audit:provider-lanes
 pnpm audit:partition
 pnpm audit:profile
 pnpm audit:learner-copy
@@ -105,6 +106,7 @@ pnpm audit:partition
 pnpm audit:api-client
 pnpm audit:api-client-usage
 pnpm audit:capability-boundaries
+pnpm audit:provider-lanes
 pnpm audit:profile
 pnpm audit:draft-status
 pnpm audit:draft-status-reads
@@ -113,7 +115,7 @@ pnpm build
 
 After push, the exact-head GitHub `CI Gate` runs `pnpm test`, which includes the
 agent-control-plane, API-contract, API-client, API-client-usage,
-capability-boundary, profile, learner-copy, no-learning-styles,
+capability-boundary, provider-lane, profile, learner-copy, no-learning-styles,
 structured-judge, draft-status, strict draft-status-read, and hub-sync-writer
 audits before unit, DB, and migration tests. The explicit local audit commands
 remain useful for clear attribution, but they do not replace the GitHub gate.
