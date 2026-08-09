@@ -87,11 +87,13 @@ describe('Practice stream provider transaction boundary', () => {
   it('lets provider settlement finish while nine original-key xact writers contend', async () => {
     // Given one paid-work holder paused before a real opaque settlement and nine lock waiters.
     const { db, client } = createTenConnectionDb();
-    const observer = createConnectionDb(1).client;
     const questionId = await seedSamplableQuestion(db);
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     const settled = Promise.withResolvers<void>();
+    const allWaitersReady = Promise.withResolvers<void>();
+    const startWaiters = Promise.withResolvers<void>();
+    let readyWaiterCount = 0;
     const loadMemoryPrior = async () => {
       entered.resolve();
       await release.promise;
@@ -124,23 +126,18 @@ describe('Practice stream provider transaction boundary', () => {
     const waitersDone = Promise.allSettled(
       Array.from({ length: 9 }, () =>
         client.begin(async (tx) => {
+          readyWaiterCount += 1;
+          if (readyWaiterCount === 9) allWaitersReady.resolve();
+          await startWaiters.promise;
           await tx.unsafe('SELECT pg_advisory_xact_lock(hashtext($1))', [`stream:compose:${DATE}`]);
           await tx`SELECT pg_sleep(0.05)`;
         }),
       ),
     );
-    for (;;) {
-      const [waiting] = await observer<{ count: number }[]>`
-        SELECT count(*)::int AS count
-        FROM pg_stat_activity
-        WHERE datname = current_database()
-          AND wait_event = 'advisory'
-      `;
-      if (waiting.count >= 8) break;
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
+    await allWaitersReady.promise;
 
     // When provider work resumes, settlement must not wait for those xact waiters to time out.
+    startWaiters.resolve();
     release.resolve();
     const settledBeforeWaiterTimeout = await Promise.race([
       settled.promise.then(() => true),
