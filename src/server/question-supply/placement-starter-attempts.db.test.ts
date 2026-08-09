@@ -761,6 +761,16 @@ describe('placement paid-call reservations', () => {
       epoch: '11111111-1111-4111-8111-111111111111',
       draftStatus: 'draft',
     });
+    await seedAuthorizedQuestion(now, {
+      attemptId: attempt.attemptId,
+      questionId: 'q-already-satisfied',
+      epoch: '11111111-1111-4111-8111-111111111125',
+      draftStatus: 'draft',
+    });
+    await testDb()
+      .update(placement_starter_attempt_question)
+      .set({ verification_status: 'satisfied' })
+      .where(eq(placement_starter_attempt_question.question_id, 'q-already-satisfied'));
     const authority = {
       claim_id: CLAIM_ID,
       attempt_id: attempt.attemptId,
@@ -844,6 +854,16 @@ describe('placement paid-call reservations', () => {
       .from(placement_starter_attempt)
       .where(eq(placement_starter_attempt.id, attempt.attemptId));
     expect(terminalAttempt.status).toBe('invariant_failed');
+    const attemptQuestions = await testDb()
+      .select()
+      .from(placement_starter_attempt_question)
+      .where(eq(placement_starter_attempt_question.attempt_id, attempt.attemptId));
+    expect(
+      Object.fromEntries(attemptQuestions.map((row) => [row.question_id, row.verification_status])),
+    ).toEqual({
+      'q-already-satisfied': 'satisfied',
+      'q-unknown-cost': 'exhausted',
+    });
     const componentsAfterRejectedReservation = await testDb()
       .select()
       .from(placement_starter_cost_component);
@@ -928,6 +948,80 @@ describe('placement paid-call reservations', () => {
       .from(placement_starter_claim)
       .where(eq(placement_starter_claim.id, CLAIM_ID));
     expect(claim.known_cost_micro_usd).toBe(75_000);
+  });
+
+  it('serializes finish and unknown-cost terminalization with attempt-first locking', async () => {
+    const now = new Date('2026-07-23T00:00:00.000Z');
+    await seedClaim(now);
+    const attempt = await acquirePlacementAttempt(testDb(), {
+      claimId: CLAIM_ID,
+      pgBossJobId: JOB_ID,
+      deliveryNo: 1,
+      startedOn: now,
+      now,
+    });
+
+    const [finishOutcome, terminalizeOutcome] = await Promise.allSettled([
+      finishPlacementAttempt(testDb(), attempt, 'underfilled', now),
+      terminalizePlacementUnknownCost(testDb(), {
+        claimId: CLAIM_ID,
+        attemptId: attempt.attemptId,
+        fencingToken: attempt.fencingToken,
+        now,
+      }),
+    ]);
+
+    expect(terminalizeOutcome.status).toBe('fulfilled');
+    if (finishOutcome.status === 'rejected') {
+      expect(finishOutcome.reason).toBeInstanceOf(PlacementStarterStaleAuthorityError);
+    }
+    const [terminalAttempt] = await testDb()
+      .select()
+      .from(placement_starter_attempt)
+      .where(eq(placement_starter_attempt.id, attempt.attemptId));
+    expect(terminalAttempt.status).toBe('invariant_failed');
+    const [claim] = await testDb()
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, CLAIM_ID));
+    expect(claim).toMatchObject({
+      status: 'exhausted',
+      last_error_code: 'cost_unknown',
+    });
+  });
+
+  it('overrides a committed underfilled finish with late unknown-cost truth', async () => {
+    const now = new Date('2026-07-23T00:00:00.000Z');
+    await seedClaim(now);
+    const attempt = await acquirePlacementAttempt(testDb(), {
+      claimId: CLAIM_ID,
+      pgBossJobId: JOB_ID,
+      deliveryNo: 1,
+      startedOn: now,
+      now,
+    });
+
+    await finishPlacementAttempt(testDb(), attempt, 'underfilled', now);
+    await terminalizePlacementUnknownCost(testDb(), {
+      claimId: CLAIM_ID,
+      attemptId: attempt.attemptId,
+      fencingToken: attempt.fencingToken,
+      now,
+    });
+
+    const [terminalAttempt] = await testDb()
+      .select()
+      .from(placement_starter_attempt)
+      .where(eq(placement_starter_attempt.id, attempt.attemptId));
+    expect(terminalAttempt.status).toBe('invariant_failed');
+    const [claim] = await testDb()
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, CLAIM_ID));
+    expect(claim).toMatchObject({
+      status: 'exhausted',
+      last_error_code: 'cost_unknown',
+    });
   });
 
   it('keeps unknown claim cost sticky when a sibling reservation is released', async () => {

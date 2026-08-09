@@ -40,4 +40,21 @@ describe('all-known product-operation cost', () => {
       expect(costUsdToMicroUsd(cost)).toBeNull();
     },
   );
+
+  it('returns unknown when finite USD overflows during micro-USD conversion', () => {
+    expect(costUsdToMicroUsd(Number.MAX_VALUE)).toBeNull();
+  });
+
+  it('accepts the maximum PostgreSQL integer micro-USD value', () => {
+    expect(costUsdToMicroUsd(2_147.483647)).toBe(2_147_483_647);
+  });
+
+  it('rejects a rounded micro-USD value above the PostgreSQL integer maximum', () => {
+    expect(costUsdToMicroUsd(2_147.483648)).toBeNull();
+  });
+
+  it('rejects negative finite USD as unknown cost', () => {
+    expect(costUsdToMicroUsd(-0.000001)).toBeNull();
+    expect(costUsdToMicroUsd(-0.0000004)).toBeNull();
+  });
 });

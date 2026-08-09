@@ -3,6 +3,8 @@ import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
 
+const POSTGRES_INTEGER_MAX = 2_147_483_647;
+
 export interface TaskTextResult {
   text: string;
   task_run_id?: string;
@@ -38,7 +40,15 @@ export function taskPromptFingerprint(task: AiTaskKind, profile?: SubjectProfile
 }
 
 export function costUsdToMicroUsd(costUsd: number | null | undefined): number | null {
-  return costUsd == null || !Number.isFinite(costUsd) ? null : Math.round(costUsd * 1_000_000);
+  if (costUsd == null || !Number.isFinite(costUsd) || costUsd < 0) return null;
+  const microUsd = costUsd * 1_000_000;
+  if (!Number.isFinite(microUsd)) return null;
+  const roundedMicroUsd = Math.round(microUsd);
+  return Number.isSafeInteger(roundedMicroUsd) &&
+    roundedMicroUsd >= 0 &&
+    roundedMicroUsd <= POSTGRES_INTEGER_MAX
+    ? roundedMicroUsd
+    : null;
 }
 
 export function sumAllKnownCostUsd(costs: readonly (number | null | undefined)[]): number | null {

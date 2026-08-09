@@ -1180,6 +1180,25 @@ export async function terminalizePlacementUnknownCost(
 ): Promise<void> {
   const now = input.now ?? new Date();
   await db.transaction(async (tx) => {
+    const attemptAuthority =
+      input.attemptId && input.fencingToken
+        ? { attemptId: input.attemptId, fencingToken: input.fencingToken }
+        : null;
+    const [attempt] = attemptAuthority
+      ? await tx
+          .select({
+            status: placement_starter_attempt.status,
+            fencingToken: placement_starter_attempt.fencing_token,
+          })
+          .from(placement_starter_attempt)
+          .where(
+            and(
+              eq(placement_starter_attempt.id, attemptAuthority.attemptId),
+              eq(placement_starter_attempt.claim_id, input.claimId),
+            ),
+          )
+          .for('update')
+      : [];
     const [claim] = await tx
       .select({
         status: placement_starter_claim.status,
@@ -1191,7 +1210,10 @@ export async function terminalizePlacementUnknownCost(
     if (!claim) throw new PlacementStarterAdmissionError('placement starter claim not found');
     if (claim.status === 'exhausted' && claim.errorCode === 'cost_unknown') return;
 
-    if (input.attemptId && input.fencingToken) {
+    if (attemptAuthority) {
+      if (!attempt || attempt.fencingToken !== attemptAuthority.fencingToken) {
+        throw new PlacementStarterStaleAuthorityError('placement unknown-cost fence lost');
+      }
       const terminalAttempt = await tx
         .update(placement_starter_attempt)
         .set({
@@ -1205,10 +1227,17 @@ export async function terminalizePlacementUnknownCost(
         })
         .where(
           and(
-            eq(placement_starter_attempt.id, input.attemptId),
+            eq(placement_starter_attempt.id, attemptAuthority.attemptId),
             eq(placement_starter_attempt.claim_id, input.claimId),
-            eq(placement_starter_attempt.fencing_token, input.fencingToken),
-            inArray(placement_starter_attempt.status, ['running', 'verifying']),
+            eq(placement_starter_attempt.fencing_token, attemptAuthority.fencingToken),
+            inArray(placement_starter_attempt.status, [
+              'running',
+              'verifying',
+              'succeeded',
+              'underfilled',
+              'timed_out',
+              'interrupted',
+            ]),
           ),
         )
         .returning({ id: placement_starter_attempt.id });
@@ -1218,7 +1247,12 @@ export async function terminalizePlacementUnknownCost(
       await tx
         .update(placement_starter_attempt_question)
         .set({ verification_status: 'exhausted' })
-        .where(eq(placement_starter_attempt_question.attempt_id, input.attemptId));
+        .where(
+          and(
+            eq(placement_starter_attempt_question.attempt_id, attemptAuthority.attemptId),
+            eq(placement_starter_attempt_question.verification_status, 'authorized'),
+          ),
+        );
     }
 
     await markPlacementStarterClaimTerminal(tx, input.claimId, 'exhausted', now, {
