@@ -100,7 +100,7 @@ describe('Tencent OCR concurrent delivery fencing', () => {
       data: { sessionId, operationId },
       retryCount: 0,
       retryLimit: 2,
-      startedOn: new Date('2026-08-09T00:00:00.000Z'),
+      startedOn: new Date(),
     };
 
     // When: the final retry crosses findSaved before generation 0 persists its JobId.
