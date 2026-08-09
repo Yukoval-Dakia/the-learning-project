@@ -8,6 +8,7 @@ import {
   question,
 } from '@/db/schema';
 import {
+  type Mem0OpaqueOperationContext,
   createMem0OpaqueOperationContext,
   executeMem0OpaqueOperation,
 } from '@/server/ai/provider-attempt-runtime';
@@ -19,6 +20,7 @@ import { resetDb } from '../../../../tests/helpers/db';
 import { composeNightly, recomposeStream } from './stream-store';
 
 const DATE = '2026-08-10';
+const WAITER_BARRIER_TIMEOUT_MS = 5_000;
 const clients: Array<ReturnType<typeof postgres>> = [];
 
 function createTenConnectionDb(): { db: Db; client: ReturnType<typeof postgres> } {
@@ -39,6 +41,32 @@ function createConnectionDb(max: number): { db: Db; client: ReturnType<typeof po
 function errorCode(error: unknown): string {
   if (!(error instanceof Error) || !('code' in error)) return 'unknown_error';
   return typeof error.code === 'string' ? error.code : 'unknown_error';
+}
+
+function errorSqlState(error: unknown): string {
+  if (!(error instanceof Error)) return 'unknown_sqlstate';
+  if ('code' in error && typeof error.code === 'string') return error.code;
+  return errorSqlState(error.cause);
+}
+
+async function waitForAdvisoryWaiters(
+  observer: ReturnType<typeof postgres>,
+  expectedCount: number,
+): Promise<void> {
+  const deadlineAt = Date.now() + WAITER_BARRIER_TIMEOUT_MS;
+  for (;;) {
+    const [waiting] = await observer<{ count: number }[]>`
+      SELECT count(*)::int AS count
+      FROM pg_stat_activity
+      WHERE datname = current_database()
+        AND wait_event = 'advisory'
+    `;
+    if (waiting.count >= expectedCount) return;
+    if (Date.now() >= deadlineAt) {
+      throw new Error(`Expected ${expectedCount} advisory waiters, observed ${waiting.count}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 async function seedSamplableQuestion(db: Db): Promise<string> {
@@ -84,70 +112,79 @@ afterEach(async () => {
 });
 
 describe('Practice stream provider transaction boundary', () => {
-  it('lets provider settlement finish while nine original-key xact writers contend', async () => {
-    // Given one paid-work holder paused before a real opaque settlement and nine lock waiters.
+  it('binds the default Mem0 loader to the paid-lock reserved session', async () => {
+    // Given the production memory seam paused after reading its injected database backend.
     const { db, client } = createTenConnectionDb();
     const questionId = await seedSamplableQuestion(db);
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
-    const settled = Promise.withResolvers<void>();
-    const allWaitersReady = Promise.withResolvers<void>();
-    const startWaiters = Promise.withResolvers<void>();
-    let readyWaiterCount = 0;
-    const loadMemoryPrior = async () => {
-      entered.resolve();
-      await release.promise;
-      const result = await executeMem0OpaqueOperation(
-        createMem0OpaqueOperationContext({
-          db,
-          caller: 'worker',
-          deadlineAt: new Date(Date.now() + 5_000),
-          operationAnchor: 'practice-nine-waiters-settlement',
-        }),
-        'search',
-        async () => ['settled prior'],
-      );
-      settled.resolve();
-      return result;
-    };
+    let providerBackendPid: number | undefined;
+    const readMemoryFacts = vi.fn(
+      async (_query: string, _opts: unknown, providerOperation: Mem0OpaqueOperationContext) => {
+        if (!providerOperation.db) throw new TypeError('Expected provider operation database');
+        const [backend] = await providerOperation.db.$client<{ pid: number }[]>`
+          SELECT pg_backend_pid() AS pid
+        `;
+        providerBackendPid = backend.pid;
+        entered.resolve();
+        await release.promise;
+        return { results: [] };
+      },
+    );
+    vi.doMock('@/server/memory/read', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('@/server/memory/read')>()),
+      readMemoryFacts,
+    }));
     const compose = composeNightly(db, DATE, {
       policy: { policy: 'softmax_mfi' },
       composeDeps: {
-        loadMemoryPrior,
+        providerInvocation: {
+          db,
+          caller: 'worker',
+          deadlineAt: new Date(Date.now() + WAITER_BARRIER_TIMEOUT_MS),
+          operationAnchor: 'practice-default-memory-reserved-session',
+        },
         runTaskFn: async () => ({
           text: JSON.stringify({
-            candidates: [{ refId: questionId, weight: 1, role: 'new_check', reason: 'waiters' }],
+            candidates: [{ refId: questionId, weight: 1, role: 'new_check', reason: 'binding' }],
           }),
         }),
         rng: () => 0,
       },
     });
-    await entered.promise;
-    const waitersDone = Promise.allSettled(
-      Array.from({ length: 9 }, () =>
-        client.begin(async (tx) => {
-          readyWaiterCount += 1;
-          if (readyWaiterCount === 9) allWaitersReady.resolve();
-          await startWaiters.promise;
-          await tx.unsafe('SELECT pg_advisory_xact_lock(hashtext($1))', [`stream:compose:${DATE}`]);
-          await tx`SELECT pg_sleep(0.05)`;
+
+    // When memory loading is active, inspect the backend holding the paid advisory key.
+    let enteredTimeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        entered.promise,
+        new Promise<never>((_, reject) => {
+          enteredTimeout = setTimeout(
+            () => reject(new Error('Default memory loader did not reach the reserved session')),
+            WAITER_BARRIER_TIMEOUT_MS,
+          );
         }),
-      ),
-    );
-    await allWaitersReady.promise;
+      ]);
+      const [holder] = await client<{ pid: number }[]>`
+        SELECT activity.pid
+        FROM pg_locks held
+        JOIN pg_stat_activity activity ON activity.pid = held.pid
+        WHERE held.locktype = 'advisory'
+          AND held.granted
+          AND held.classid = 0
+          AND held.objid = ((hashtext(${`stream:compose-paid:${DATE}`})::bigint & 4294967295)::oid)
+          AND held.objsubid = 1
+      `;
 
-    // When provider work resumes, settlement must not wait for those xact waiters to time out.
-    startWaiters.resolve();
-    release.resolve();
-    const settledBeforeWaiterTimeout = await Promise.race([
-      settled.promise.then(() => true),
-      new Promise<false>((resolve) => setTimeout(() => resolve(false), 500)),
-    ]);
-    await waitersDone;
+      // Then provider context and advisory ownership are the same physical session.
+      expect(providerBackendPid).toBe(holder.pid);
+      expect(readMemoryFacts).toHaveBeenCalledTimes(1);
+    } finally {
+      if (enteredTimeout !== undefined) clearTimeout(enteredTimeout);
+      release.resolve();
+      vi.doUnmock('@/server/memory/read');
+    }
     await compose;
-
-    // Then the distinct paid key leaves a pool connection available for durable settlement.
-    expect(settledBeforeWaiterTimeout).toBe(true);
   });
 
   it('keeps a top-level provider transaction outside ten concurrent compose lock transactions', async () => {
@@ -501,22 +538,21 @@ describe('Practice stream provider transaction boundary', () => {
 
     // When provider settlement succeeds but the final compose transaction rolls back.
     try {
-      await expect(
-        composeNightly(db, DATE, {
-          policy: { policy: 'softmax_mfi' },
-          composeDeps: {
-            loadMemoryPrior,
-            runTaskFn: async () => ({
-              text: JSON.stringify({
-                candidates: [
-                  { refId: questionId, weight: 1, role: 'new_check', reason: 'durability' },
-                ],
-              }),
+      const materializationError = await composeNightly(db, DATE, {
+        policy: { policy: 'softmax_mfi' },
+        composeDeps: {
+          loadMemoryPrior,
+          runTaskFn: async () => ({
+            text: JSON.stringify({
+              candidates: [
+                { refId: questionId, weight: 1, role: 'new_check', reason: 'durability' },
+              ],
             }),
-            rng: () => 0,
-          },
-        }),
-      ).rejects.toThrow('Failed query: insert into "practice_stream_item"');
+          }),
+          rng: () => 0,
+        },
+      }).catch((error: unknown) => error);
+      expect(errorSqlState(materializationError)).toBe('P0001');
     } finally {
       await client.unsafe(
         'DROP TRIGGER IF EXISTS fail_practice_stream_insert ON practice_stream_item',

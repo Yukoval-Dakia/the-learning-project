@@ -19,7 +19,7 @@
 // replace ONLY this selection step — see ADR-0030 §5.
 
 import type { QuestionKindT } from '@/core/schema/judge-routing';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { isPoolVisible, notDraftPredicate } from '@/db/predicates';
 import { event, question } from '@/db/schema';
 import { and, inArray, sql } from 'drizzle-orm';
@@ -158,7 +158,7 @@ export interface ProbeSelectionPrefetch {
  * family read becomes an in-memory filter of the bucket by `root_question_id`/`id`.
  */
 export async function prefetchProbeSelection(
-  dbHandle: Db,
+  dbHandle: Db | Tx,
   inputs: Array<{ knowledgeId: string; lastReviewEventId: string | null }>,
 ): Promise<ProbeSelectionPrefetch> {
   const eventIds = Array.from(

@@ -41,6 +41,7 @@ import {
   type CollectedSignal,
   collectCandidateSignals,
 } from './candidate-signals';
+import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
 import { handleReviewDue } from './due-list';
 import { FRONTIER_MAX_ITEMS, learnableFrontier } from './learnable-frontier';
 import { countPaperSlots } from './paper-sections';
@@ -113,154 +114,6 @@ function streamPartitionPredicate(date: string, sessionId?: string | null) {
 
 function streamPartitionLockKey(date: string, sessionId?: string | null): string {
   return sessionId ? `stream:session:${sessionId}` : `stream:compose:${date}`;
-}
-
-function composePaidWorkLockKey(date: string): string {
-  return `stream:compose-paid:${date}`;
-}
-
-const DEFAULT_COMPOSE_LOCK_WAIT_MS = 30_000;
-
-function composeBusyError(): ApiError {
-  return new ApiError(
-    'practice_compose_busy',
-    'Practice stream compose is busy; retry the request',
-    503,
-    { 'Retry-After': '1' },
-  );
-}
-
-type ReservedConnection = Awaited<ReturnType<Db['$client']['reserve']>>;
-
-async function reserveBeforeDeadline(db: Db, deadlineAt: Date): Promise<ReservedConnection> {
-  const remainingMs = deadlineAt.getTime() - Date.now();
-  if (remainingMs <= 0) throw composeBusyError();
-
-  let timedOut = false;
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  const pendingReservation = db.$client.reserve().then((reserved) => {
-    if (timedOut) {
-      reserved.release();
-      return null;
-    }
-    return reserved;
-  });
-  let result: ReservedConnection | null;
-  try {
-    result = await Promise.race([
-      pendingReservation,
-      new Promise<null>((resolve) => {
-        timeout = setTimeout(() => {
-          timedOut = true;
-          resolve(null);
-        }, remainingMs);
-      }),
-    ]);
-  } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
-  }
-  if (result === null) throw composeBusyError();
-  return result;
-}
-
-async function tryComposeSessionLockBeforeDeadline(
-  reserved: ReservedConnection,
-  lockKey: string,
-  deadlineAt: Date,
-): Promise<{ status: 'settled'; acquired: boolean } | { status: 'timed_out' }> {
-  const remainingMs = deadlineAt.getTime() - Date.now();
-  if (remainingMs <= 0) throw composeBusyError();
-
-  const query = reserved<{ acquired: boolean }[]>`
-    SELECT pg_try_advisory_lock(hashtext(${lockKey})) AS acquired
-  `;
-  const timedOut = Symbol('timed_out');
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const result = await Promise.race([
-      query,
-      new Promise<typeof timedOut>((resolve) => {
-        timeout = setTimeout(() => {
-          resolve(timedOut);
-        }, remainingMs);
-      }),
-    ]);
-    if (result === timedOut) {
-      void releaseReservedAfterTryLockSettles(reserved, query, lockKey);
-      return { status: 'timed_out' };
-    }
-    return { status: 'settled', acquired: result[0]?.acquired === true };
-  } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
-  }
-}
-
-async function releaseReservedAfterTryLockSettles(
-  reserved: ReservedConnection,
-  query: Promise<unknown>,
-  lockKey: string,
-): Promise<void> {
-  try {
-    await query.catch(() => undefined);
-    await reserved
-      .unsafe('SELECT pg_advisory_unlock(hashtext($1))', [lockKey])
-      .catch(() => undefined);
-  } finally {
-    reserved.release();
-  }
-}
-
-async function reserveComposeSessionLock(
-  db: Db,
-  lockKey: string,
-  deadlineAt: Date,
-): Promise<ReservedConnection> {
-  for (;;) {
-    if (Date.now() >= deadlineAt.getTime()) throw composeBusyError();
-    const reserved = await reserveBeforeDeadline(db, deadlineAt);
-    let lockResult: Awaited<ReturnType<typeof tryComposeSessionLockBeforeDeadline>>;
-    try {
-      lockResult = await tryComposeSessionLockBeforeDeadline(reserved, lockKey, deadlineAt);
-    } catch (error) {
-      reserved.release();
-      throw error;
-    }
-    if (lockResult.status === 'timed_out') throw composeBusyError();
-    try {
-      if (lockResult.acquired) {
-        if (Date.now() < deadlineAt.getTime()) return reserved;
-        await reserved.unsafe('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]);
-        throw composeBusyError();
-      }
-    } catch (error) {
-      reserved.release();
-      throw error;
-    }
-    reserved.release();
-    const remainingMs = deadlineAt.getTime() - Date.now();
-    if (remainingMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, Math.min(25, remainingMs)));
-    }
-  }
-}
-
-async function withinComposePaidWorkLock<T>(
-  db: Db,
-  date: string,
-  deadlineAt: Date,
-  work: (rootDb: Db) => Promise<T>,
-): Promise<T> {
-  const lockKey = composePaidWorkLockKey(date);
-  const reserved = await reserveComposeSessionLock(db, lockKey, deadlineAt);
-  try {
-    return await work(db);
-  } finally {
-    try {
-      await reserved.unsafe('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]);
-    } finally {
-      reserved.release();
-    }
-  }
 }
 
 async function lockDailyStreamPartition(db: DbLike, date: string): Promise<void> {
@@ -344,6 +197,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   // 1. FSRS 到期投影 — 经现行 due handler（函数调用）。
   const dueRes = await handleReviewDue(
     new Request(`http://internal/api/review/due?limit=${DUE_INPUT_LIMIT}`),
+    { db },
   );
   const dueJson = (await dueRes.json()) as {
     rows?: Array<{ question_id: string; knowledge_ids?: string[] }>;
@@ -846,8 +700,8 @@ async function singleFlightCompose(
     db,
     date,
     lockDeadlineAt,
-    async (rootDb) => {
-      const count = await rootDb.transaction(async (tx) => {
+    async (lockedDb) => {
+      const count = await lockedDb.transaction(async (tx) => {
         await lockDailyStreamPartition(tx, date);
         const [result] = await tx
           .select({ count: sql<number>`count(*)::int` })
@@ -860,11 +714,11 @@ async function singleFlightCompose(
       const lockedDeps = deps.providerInvocation
         ? {
             ...deps,
-            providerInvocation: { ...deps.providerInvocation, db: rootDb },
+            providerInvocation: { ...deps.providerInvocation, db: lockedDb },
           }
         : deps;
-      const prepared = await prepareCompose(rootDb, date, policy, lockedDeps, capacity);
-      return rootDb.transaction(async (tx) => {
+      const prepared = await prepareCompose(lockedDb, date, policy, lockedDeps, capacity);
+      return lockedDb.transaction(async (tx) => {
         await lockDailyStreamPartition(tx, date);
         const [{ finalCount }] = await tx
           .select({ finalCount: sql<number>`count(*)::int` })
@@ -1649,8 +1503,8 @@ export async function recomposeStream(
     db,
     date,
     lockDeadlineAt,
-    async (rootDb) => {
-      const pendingIdsAtPrepare = await rootDb.transaction(async (tx) => {
+    async (lockedDb) => {
+      const pendingIdsAtPrepare = await lockedDb.transaction(async (tx) => {
         await lockDailyStreamPartition(tx, date);
         const rows = await tx
           .select({ id: practice_stream_item.id })
@@ -1661,17 +1515,17 @@ export async function recomposeStream(
       const lockedDeps = deps.providerInvocation
         ? {
             ...deps,
-            providerInvocation: { ...deps.providerInvocation, db: rootDb },
+            providerInvocation: { ...deps.providerInvocation, db: lockedDb },
           }
         : deps;
       const prepared = await prepareCompose(
-        rootDb,
+        lockedDb,
         date,
         opts.policy ?? resolveSelectionPolicy(),
         lockedDeps,
         opts.capacity,
       );
-      return rootDb.transaction(async (tx) => {
+      return lockedDb.transaction(async (tx) => {
         await lockDailyStreamPartition(tx, date);
         if (pendingIdsAtPrepare.length > 0) {
           await tx

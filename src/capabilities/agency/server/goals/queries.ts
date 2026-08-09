@@ -269,7 +269,7 @@ export async function listActiveGoals(db: DbLike): Promise<ActiveGoal[]> {
  * goal's pinned scope silently blinded them. One resolve per DISTINCT subject (Map-deduped) —
  * no caching subsystem (single-user, hundreds of nodes; see §9⑨ cost prerequisite).
  */
-export async function listActiveGoalsWithResolvedScope(db: Db): Promise<ActiveGoal[]> {
+export async function listActiveGoalsWithResolvedScope(db: DbLike): Promise<ActiveGoal[]> {
   const goals = await listActiveGoals(db);
   const bySubject = new Map<string, string[]>();
   for (const g of goals) {
