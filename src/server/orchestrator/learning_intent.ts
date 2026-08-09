@@ -18,8 +18,8 @@ import { newId } from '@/core/ids';
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { writeNoteGenerationIntent } from '@/capabilities/notes/public';
 import { summaryBodyBlocks } from '@/capabilities/notes/server/body-blocks';
-import { writeNoteGenerationIntent } from '@/capabilities/notes/server/note-handoff';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
