@@ -33,6 +33,7 @@ import {
   evidenceDemandToTargetContext,
   withSupplyTraceDifficultyEvidence,
 } from '@/server/question-supply/evidence-demand';
+import { PlacementStarterAdmissionError } from '@/server/question-supply/placement-starter-attempts';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { semanticJudgeOutput, solverOutput } from '../../../../tests/helpers/solve-check-fixtures';
 import { teachingQualityOutput } from '../../../../tests/helpers/teaching-quality-fixtures';
@@ -171,6 +172,79 @@ async function seedDraftQuestion(opts: {
     created_at: now,
     updated_at: now,
   });
+}
+
+async function seedPlacementVerifyAuthority() {
+  const now = new Date('2026-08-09T00:00:00.000Z');
+  const claimId = 'claim-missing-provider-run';
+  const attemptId = 'attempt-missing-provider-run';
+  const questionId = 'q-missing-provider-run';
+  const jobId = 'job-missing-provider-run';
+  const fencingToken = '11111111-1111-4111-8111-111111111131';
+  const verificationEpoch = '11111111-1111-4111-8111-111111111132';
+  await seedKnowledge('k-missing-provider-run');
+  await seedDraftQuestion({
+    id: questionId,
+    knowledgeId: 'k-missing-provider-run',
+    kind: 'choice',
+    judge: 'exact',
+    promptMd: '「之」在「学而时习之」中的词性是？',
+    referenceMd: '代词',
+    choicesMd: ['代词', '助词', '动词', '连词'],
+    rubricJson: { required_points: [] },
+  });
+  await testDb().insert(placement_starter_claim).values({
+    id: claimId,
+    fingerprint: 'placement-starter|missing-provider-run',
+    goal_id: 'goal-missing-provider-run',
+    semantic_goal_revision_id: 'revision-missing-provider-run',
+    subject_id: 'wenyan',
+    knowledge_id: 'k-missing-provider-run',
+    demand_id: 'demand-missing-provider-run',
+    target_id: 'target-missing-provider-run',
+    status: 'verifying',
+    pg_boss_job_id: jobId,
+    known_cost_micro_usd: 0,
+    next_reconcile_at: now,
+    created_at: now,
+    updated_at: now,
+  });
+  await testDb()
+    .insert(placement_starter_attempt)
+    .values({
+      id: attemptId,
+      claim_id: claimId,
+      pg_boss_job_id: jobId,
+      delivery_no: 1,
+      fencing_token: fencingToken,
+      status: 'verifying',
+      lease_expires_at: new Date('2099-01-01T00:00:00.000Z'),
+      started_at: now,
+      created_at: now,
+      updated_at: now,
+    });
+  await testDb().insert(placement_starter_attempt_question).values({
+    attempt_id: attemptId,
+    claim_id: claimId,
+    question_id: questionId,
+    canonical_hash: 'hash-missing-provider-run',
+    verification_authority_epoch: verificationEpoch,
+    verification_status: 'authorized',
+    created_at: now,
+  });
+  return {
+    claimId,
+    attemptId,
+    questionId,
+    jobId,
+    authority: {
+      claim_id: claimId,
+      attempt_id: attemptId,
+      question_id: questionId,
+      verification_authority_epoch: verificationEpoch,
+      fencing_token: fencingToken,
+    },
+  };
 }
 
 // YUK-224 (slice 3, tier 3) — material_grounded meta carrying the grounded doc id.
@@ -1145,6 +1219,104 @@ describe('buildQuizVerifyHandler', () => {
     expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
     expect(await fsrsRowCount('question', 'qa')).toBe(0);
     expect(await fsrsRowCount('question', 'qb')).toBe(0);
+  });
+
+  it.each([
+    { missingKind: 'QuizVerifyTask', expectedSettledCount: 0 },
+    { missingKind: 'SolutionGenerateTask', expectedSettledCount: 2 },
+    { missingKind: 'TeachingQualityTask', expectedSettledCount: 2 },
+  ])(
+    'terminalizes unknown cost when $missingKind omits task_run_id',
+    async ({ missingKind, expectedSettledCount }) => {
+      const fixture = await seedPlacementVerifyAuthority();
+      const runTaskFn = vi.fn(async (kind: string) => {
+        const text =
+          kind === 'QuizVerifyTask'
+            ? verifyOutput({ overall: 'pass' })
+            : kind === 'SolutionGenerateTask'
+              ? solverOutput('代词')
+              : teachingQualityOutput({});
+        if (kind === missingKind) return { text };
+        return { text, task_run_id: `tr-${kind}`, cost_usd: 0 };
+      });
+      const handler = buildQuizVerifyHandler(testDb(), { runTaskFn });
+
+      await expect(
+        handler([
+          {
+            id: fixture.jobId,
+            data: {
+              question_ids: [fixture.questionId],
+              placement_authorities: [fixture.authority],
+            },
+          } as never,
+        ]),
+      ).resolves.toBeUndefined();
+      expect(runTaskFn.mock.calls.filter(([kind]) => kind === missingKind)).toHaveLength(1);
+
+      const [claim] = await testDb()
+        .select()
+        .from(placement_starter_claim)
+        .where(eq(placement_starter_claim.id, fixture.claimId));
+      expect(claim).toMatchObject({
+        status: 'exhausted',
+        known_cost_micro_usd: null,
+        last_error_class: 'cost_unknown',
+        last_error_code: 'cost_unknown',
+      });
+      const [attempt] = await testDb()
+        .select()
+        .from(placement_starter_attempt)
+        .where(eq(placement_starter_attempt.id, fixture.attemptId));
+      expect(attempt).toMatchObject({
+        status: 'invariant_failed',
+        error_class: 'cost_unknown',
+        error_code: 'cost_unknown',
+      });
+      const [attemptQuestion] = await testDb()
+        .select()
+        .from(placement_starter_attempt_question)
+        .where(eq(placement_starter_attempt_question.attempt_id, fixture.attemptId));
+      expect(attemptQuestion.verification_status).toBe('exhausted');
+      const components = await testDb()
+        .select()
+        .from(placement_starter_cost_component)
+        .where(eq(placement_starter_cost_component.claim_id, fixture.claimId));
+      expect(components).toHaveLength(expectedSettledCount);
+      expect(
+        components.some((component) => component.provider_task_run_id.startsWith('reservation:')),
+      ).toBe(false);
+      expect(components.every((component) => component.cost_micro_usd === 0)).toBe(true);
+    },
+  );
+
+  it('keeps known-cost missing task_run_id as an admission error', async () => {
+    const fixture = await seedPlacementVerifyAuthority();
+    const runTaskFn = vi.fn(async () => ({
+      text: verifyOutput({ overall: 'pass' }),
+      cost_usd: 0,
+    }));
+
+    await expect(
+      runQuizVerify({
+        db: testDb(),
+        questionId: fixture.questionId,
+        runTaskFn,
+        placementAuthority: fixture.authority,
+      }),
+    ).rejects.toBeInstanceOf(PlacementStarterAdmissionError);
+    expect(runTaskFn).toHaveBeenCalledOnce();
+
+    const [claim] = await testDb()
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, fixture.claimId));
+    expect(claim).toMatchObject({ status: 'verifying', known_cost_micro_usd: 0 });
+    const components = await testDb()
+      .select()
+      .from(placement_starter_cost_component)
+      .where(eq(placement_starter_cost_component.claim_id, fixture.claimId));
+    expect(components).toHaveLength(0);
   });
 
   it('exhausts an unknown-cost placement claim and skips its later questions in the same job', async () => {

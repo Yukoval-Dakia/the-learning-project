@@ -103,6 +103,16 @@ type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
 
+function requirePlacementProviderTaskRunId(result: TaskTextResult, label: string): string {
+  if (result.task_run_id) return result.task_run_id;
+  if (costUsdToMicroUsd(result.cost_usd) === null) {
+    throw new PlacementStarterUnknownCostError(`placement ${label} cost is unknown`);
+  }
+  throw new PlacementStarterAdmissionError(
+    `placement ${label} paid invocation missing task_run_id`,
+  );
+}
+
 // §4 / §5 — deterministic normalized n-gram overlap. Word-shingle Jaccard between
 // the prompt and each source snippet; we take the MAX over snippets (worst-case
 // closeness). Returns 0 when there are no usable snippets (nothing to copy from →
@@ -353,16 +363,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       afterTaskRun: async (result) => {
         taskResult = result;
         if (!placementAuthority) return;
-        if (!result.task_run_id) {
-          throw new PlacementStarterAdmissionError(
-            'placement quiz_verify paid invocation missing task_run_id',
-          );
-        }
+        const providerTaskRunId = requirePlacementProviderTaskRunId(result, 'quiz_verify');
         const settlement = await db.transaction(async (tx) =>
           settleAuthorizedPaidCall(tx, {
             authority: placementAuthority,
             reservationKey: primaryReservationKey,
-            providerTaskRunId: result.task_run_id as string,
+            providerTaskRunId,
             costMicroUsd: costUsdToMicroUsd(result.cost_usd),
           }),
         );
@@ -521,16 +527,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                       );
                     },
                     settlePaidCall: async (kind, invocationId, paidResult) => {
-                      if (!paidResult.task_run_id) {
-                        throw new PlacementStarterAdmissionError(
-                          `placement ${kind} paid invocation missing task_run_id`,
-                        );
-                      }
+                      const providerTaskRunId = requirePlacementProviderTaskRunId(paidResult, kind);
                       const settlement = await db.transaction(async (tx) =>
                         settleAuthorizedPaidCall(tx, {
                           authority: placementAuthority,
                           reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}:${invocationId}`,
-                          providerTaskRunId: paidResult.task_run_id as string,
+                          providerTaskRunId,
                           costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd),
                         }),
                       );
@@ -586,16 +588,15 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                       );
                     },
                     settlePaidCall: async (invocationId, paidResult) => {
-                      if (!paidResult.task_run_id) {
-                        throw new PlacementStarterAdmissionError(
-                          'placement teaching_quality paid invocation missing task_run_id',
-                        );
-                      }
+                      const providerTaskRunId = requirePlacementProviderTaskRunId(
+                        paidResult,
+                        'teaching_quality',
+                      );
                       const settlement = await db.transaction(async (tx) =>
                         settleAuthorizedPaidCall(tx, {
                           authority: placementAuthority,
                           reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality:${invocationId}`,
-                          providerTaskRunId: paidResult.task_run_id as string,
+                          providerTaskRunId,
                           costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd),
                         }),
                       );
