@@ -73,14 +73,12 @@ describe('notes capability — durable generate and verify handoff (YUK-857)', (
   });
 
   it('keeps queue tiers exact and uses the shared Notes recovery floor', () => {
-    expect(handlers.find((handler) => handler.name === 'note_generate')).toMatchObject({
-      queue: 'llm',
-      schedule: undefined,
-    });
-    expect(handlers.find((handler) => handler.name === 'note_verify')).toMatchObject({
-      queue: 'llm',
-      schedule: undefined,
-    });
+    const generate = handlers.find((handler) => handler.name === 'note_generate');
+    const verify = handlers.find((handler) => handler.name === 'note_verify');
+    expect(generate).toMatchObject({ queue: 'llm' });
+    expect(generate?.schedule).toBeUndefined();
+    expect(verify).toMatchObject({ queue: 'llm' });
+    expect(verify?.schedule).toBeUndefined();
     expect(handlers.find((handler) => handler.name === 'note_handoff_recovery')).toBeUndefined();
     expect(handlers.find((handler) => handler.name === 'hub_sync_recovery')).toMatchObject({
       queue: 'llm',

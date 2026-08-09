@@ -21,11 +21,18 @@ import {
 } from '@/capabilities/notes/server/hub-sync-reconciliation';
 import { recoverNoteHandoffsAndClaims } from '@/capabilities/notes/server/note-handoff';
 import type { Db } from '@/db/client';
-import type { HubSyncSend } from '@/server/boss/hub-sync-wake';
 
 const RECOVERY_MAX_ARTIFACTS = 25;
 const WAKE_MAX_ARTIFACTS = 25;
 const NIGHTLY_MAX_ARTIFACTS = 25;
+
+interface HubSyncSend {
+  send: (
+    queue: string,
+    data: unknown,
+    options?: { singletonKey?: string; singletonSeconds?: number },
+  ) => Promise<unknown>;
+}
 
 export const HUB_SYNC_RECOVERY_QUEUE = 'hub_sync_recovery';
 export const HUB_SYNC_RECOVERY_CONTINUATION_KEY = 'hub_sync_recovery_continuation';
