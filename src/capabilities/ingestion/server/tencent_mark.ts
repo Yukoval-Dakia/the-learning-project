@@ -62,9 +62,15 @@ export type DescribeResponse = {
   [key: string]: unknown;
 };
 
+export async function describeOcrJob(jobId: string): Promise<DescribeResponse> {
+  const client = createOcrClient();
+  return (await client.DescribeQuestionMarkAgentJob({ JobId: jobId })) as DescribeResponse;
+}
+
 export type PollOptions = {
   intervalMs?: number;
   timeoutMs?: number;
+  describeFn?: typeof describeOcrJob;
 };
 
 /**
@@ -79,10 +85,10 @@ export async function pollUntilDone(
 ): Promise<DescribeResponse> {
   const intervalMs = opts.intervalMs ?? 2000;
   const timeoutMs = opts.timeoutMs ?? 300_000;
-  const client = createOcrClient();
+  const describe = opts.describeFn ?? describeOcrJob;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const resp = (await client.DescribeQuestionMarkAgentJob({ JobId: jobId })) as DescribeResponse;
+    const resp = await describe(jobId);
     if (resp.JobStatus === 'DONE' || resp.JobStatus === 'FAIL') {
       return resp;
     }

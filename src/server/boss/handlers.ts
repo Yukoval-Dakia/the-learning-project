@@ -299,7 +299,7 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await createJobQueue(boss, 'tencent_ocr_extract', EXPIRE_AGENT);
   await boss.work(
     'tencent_ocr_extract',
-    { pollingIntervalSeconds: 0.5, batchSize: 1 },
+    { pollingIntervalSeconds: 0.5, batchSize: 1, includeMetadata: true },
     buildTencentOcrHandler({
       db,
       // lazy r2 —— test 环境通过 R2 env 未设也能起 worker；生产 env 必须齐全

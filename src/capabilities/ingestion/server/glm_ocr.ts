@@ -1,4 +1,9 @@
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
+import {
+  type OcrPageProviderAttemptControl,
+  type OcrPageProviderContext,
+  executeGlmOcrWireAttempt,
+} from './provider-attempts';
 
 /**
  * GLM-OCR layout_parsing client — YUK-253 OCR engine swap.
@@ -23,6 +28,7 @@ import { PermanentError, RetryableError } from '@/core/schema/structured_questio
 const GLM_LAYOUT_PARSING_URL = 'https://open.bigmodel.cn/api/paas/v4/layout_parsing';
 const GLM_MODEL = 'glm-ocr';
 const DEFAULT_TIMEOUT_MS = 120_000;
+const GLM_OCR_PRICE_CNY_PER_MILLION_TOKENS = 0.2;
 
 /** One layout block GLM returns per page (markdown text or figure region). */
 export type GlmLayoutBlock = {
@@ -68,6 +74,8 @@ export type GlmOcrParams = {
   signal?: AbortSignal;
   /** Override the default 120s one-shot timeout (mainly for tests). */
   timeoutMs?: number;
+  /** Stable extraction-page operation context; omitted by parser/no-wire fakes. */
+  providerAttempt?: OcrPageProviderContext;
 };
 
 /** Minimal shape of a GLM JSON error body (`{ error: { code, message } }`). */
@@ -155,68 +163,87 @@ export async function runGlmLayoutParsing(params: GlmOcrParams): Promise<GlmLayo
 
   // data URI assembly (JSON body only — multipart + bare base64 are rejected).
   const file = `data:${params.mediaType};base64,${params.imageBase64}`;
-
-  const timeoutMs = params.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  // Compose the caller's signal with the internal timeout.
-  const onCallerAbort = () => controller.abort();
-  if (params.signal) {
-    if (params.signal.aborted) controller.abort();
-    else params.signal.addEventListener('abort', onCallerAbort, { once: true });
-  }
-
-  let resp: Response;
-  try {
-    resp = await fetch(GLM_LAYOUT_PARSING_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({ model: GLM_MODEL, file }),
-      signal: controller.signal,
-    });
-  } catch (err) {
-    // Abort (timeout / caller cancel) and network errors → Retryable so pg-boss
-    // retries (parity with the Tencent poll-timeout RetryableError).
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new RetryableError(`GLM OCR request aborted/timed out after ${timeoutMs}ms`, {
-        cause: err,
-      });
+  const executeRequest = async (
+    attempt?: OcrPageProviderAttemptControl,
+  ): Promise<GlmLayoutResponse> => {
+    const timeoutMs = params.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    // Compose the caller's signal with the internal timeout.
+    const onCallerAbort = () => controller.abort();
+    if (params.signal) {
+      if (params.signal.aborted) controller.abort();
+      else params.signal.addEventListener('abort', onCallerAbort, { once: true });
     }
-    throw new RetryableError(`GLM OCR network error: ${String(err)}`, { cause: err });
-  } finally {
-    clearTimeout(timer);
-    if (params.signal) params.signal.removeEventListener('abort', onCallerAbort);
-  }
 
-  if (!resp.ok) {
-    let body: GlmErrorBody | null = null;
+    let resp: Response;
     try {
-      body = (await resp.json()) as GlmErrorBody;
-    } catch {
-      body = null;
+      resp = await fetch(GLM_LAYOUT_PARSING_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({ model: GLM_MODEL, file }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      // Abort (timeout / caller cancel) and network errors → Retryable so pg-boss
+      // retries (parity with the Tencent poll-timeout RetryableError).
+      if (err instanceof Error && err.name === 'AbortError') {
+        attempt?.markTerminal('aborted', 'provider_request_aborted');
+        throw new RetryableError(`GLM OCR request aborted/timed out after ${timeoutMs}ms`, {
+          cause: err,
+        });
+      }
+      attempt?.markTerminal('failed', 'provider_network_error');
+      throw new RetryableError(`GLM OCR network error: ${String(err)}`, { cause: err });
+    } finally {
+      clearTimeout(timer);
+      if (params.signal) params.signal.removeEventListener('abort', onCallerAbort);
     }
-    throw mapGlmHttpError(resp.status, body);
-  }
 
-  let json: unknown;
-  try {
-    json = await resp.json();
-  } catch (err) {
-    throw new PermanentError('GLM OCR returned a non-JSON 2xx body', { cause: err });
-  }
+    if (!resp.ok) {
+      let body: GlmErrorBody | null = null;
+      try {
+        body = (await resp.json()) as GlmErrorBody;
+      } catch {
+        body = null;
+      }
+      throw mapGlmHttpError(resp.status, body);
+    }
 
-  // 2xx but a GLM error code can still surface in the body (some gateways do
-  // this). Treat a present error.code the same as an HTTP error.
-  const maybeErr = json as GlmErrorBody;
-  const inlineCode = readGlmErrorCode(maybeErr);
-  if (inlineCode && inlineCode !== '0') {
-    throw mapGlmHttpError(200, maybeErr);
-  }
+    let json: unknown;
+    try {
+      json = await resp.json();
+    } catch (err) {
+      throw new PermanentError('GLM OCR returned a non-JSON 2xx body', { cause: err });
+    }
 
-  const parsed = json as GlmLayoutResponse;
-  validateGlmLayoutResponse(parsed);
-  return parsed;
+    // 2xx but a GLM error code can still surface in the body (some gateways do
+    // this). Treat a present error.code the same as an HTTP error.
+    const maybeErr = json as GlmErrorBody;
+    const inlineCode = readGlmErrorCode(maybeErr);
+    if (inlineCode && inlineCode !== '0') {
+      throw mapGlmHttpError(200, maybeErr);
+    }
+
+    const parsed = json as GlmLayoutResponse;
+    validateGlmLayoutResponse(parsed);
+    await attempt?.recordExternalRequestId(parsed.request_id);
+    attempt?.reportUsage({
+      input: parsed.usage.prompt_tokens,
+      output: parsed.usage.completion_tokens,
+      total: parsed.usage.total_tokens,
+    });
+    attempt?.estimateCost({
+      amount: (parsed.usage.total_tokens / 1_000_000) * GLM_OCR_PRICE_CNY_PER_MILLION_TOKENS,
+      currency: 'CNY',
+      source: 'glm_ocr_published_token_price',
+    });
+    return parsed;
+  };
+
+  if (!params.providerAttempt) return executeRequest();
+  return executeGlmOcrWireAttempt(params.providerAttempt, executeRequest);
 }

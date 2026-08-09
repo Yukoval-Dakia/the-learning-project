@@ -156,6 +156,7 @@ export async function markExtractionStarted(tx: Db | Tx, sessionId: string): Pro
   if (!current) {
     throw new ApiError('not_found', `learning_session ${sessionId} not found`, 404);
   }
+  if (current.status === 'extracting') return;
   assertFromState(
     current.status,
     ['queued'] as const,
