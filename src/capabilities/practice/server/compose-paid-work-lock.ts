@@ -99,6 +99,7 @@ async function reserveComposeSessionLock(
   lockKey: string,
   deadlineAt: Date,
 ): Promise<ReservedConnection> {
+  // A failed try-lock releases its pool slot before backoff so unrelated queries can progress.
   for (;;) {
     if (Date.now() >= deadlineAt.getTime()) throw composeBusyError();
     const reserved = await reserveBeforeDeadline(db, deadlineAt);
