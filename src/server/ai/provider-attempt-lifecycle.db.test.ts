@@ -1249,6 +1249,13 @@ describe('ProviderAttemptLifecycle', () => {
       db: testDb(),
     }).acquire();
     await first.reserveProviderStart();
+    const firstOwner = (
+      await testDb()
+        .select()
+        .from(provider_attempt_admission)
+        .where(eq(provider_attempt_admission.attempt_id, firstAttemptId))
+    )[0]?.lease_owner;
+    expect(firstOwner).toEqual(expect.any(String));
     const liveCompetitor = await createProviderAttemptLifecycle({
       mode: 'observe',
       identity: identity(liveCompetitorId),
@@ -1256,6 +1263,13 @@ describe('ProviderAttemptLifecycle', () => {
       providerStartFence: 'operation_kind',
       db: testDb(),
     }).acquire();
+    const liveCompetitorOwner = (
+      await testDb()
+        .select()
+        .from(provider_attempt_admission)
+        .where(eq(provider_attempt_admission.attempt_id, liveCompetitorId))
+    )[0]?.lease_owner;
+    expect(liveCompetitorOwner).toEqual(expect.any(String));
     await expect(liveCompetitor.reserveProviderStart()).rejects.toMatchObject({
       reason: 'active_duplicate',
     });
@@ -1268,7 +1282,7 @@ describe('ProviderAttemptLifecycle', () => {
       )[0],
     ).toMatchObject({
       status: 'released',
-      lease_owner: null,
+      lease_owner: liveCompetitorOwner,
       terminal_reason: 'provider_start_active_duplicate',
     });
     expect(
@@ -1297,18 +1311,31 @@ describe('ProviderAttemptLifecycle', () => {
       providerStartFence: 'operation_kind',
       db: testDb(),
     }).acquire();
+    const staleCompetitorOwner = (
+      await testDb()
+        .select()
+        .from(provider_attempt_admission)
+        .where(eq(provider_attempt_admission.attempt_id, staleCompetitorId))
+    )[0]?.lease_owner;
+    expect(staleCompetitorOwner).toEqual(expect.any(String));
 
     await expect(staleCompetitor.reserveProviderStart()).rejects.toMatchObject({
       reason: 'recovery_required',
     });
-    expect(
-      (
-        await testDb()
-          .select()
-          .from(provider_attempt_admission)
-          .where(eq(provider_attempt_admission.attempt_id, firstAttemptId))
-      )[0],
-    ).toMatchObject({ status: 'lease_expired', terminal_reason: 'lease_expired' });
+    const expiredOwner = (
+      await testDb()
+        .select()
+        .from(provider_attempt_admission)
+        .where(eq(provider_attempt_admission.attempt_id, firstAttemptId))
+    )[0];
+    expect(expiredOwner).toMatchObject({
+      status: 'lease_expired',
+      lease_owner: firstOwner,
+      terminal_reason: 'lease_expired',
+    });
+    expect(expiredOwner?.terminal_at?.getTime()).toBeGreaterThanOrEqual(
+      expiredOwner?.lease_expires_at?.getTime() ?? Number.POSITIVE_INFINITY,
+    );
     expect(
       (
         await testDb()
@@ -1318,7 +1345,7 @@ describe('ProviderAttemptLifecycle', () => {
       )[0],
     ).toMatchObject({
       status: 'released',
-      lease_owner: null,
+      lease_owner: staleCompetitorOwner,
       terminal_reason: 'provider_start_recovery_required',
     });
     expect(
@@ -1333,6 +1360,151 @@ describe('ProviderAttemptLifecycle', () => {
       reason: 'lease_lost',
     });
     await expect(first.finish(unknownEvidence)).rejects.toMatchObject({ reason: 'lease_lost' });
+  });
+
+  it('releases a deadline-elapsed started blocker while preserving both owners', async () => {
+    const ownerAttemptId = '00000000-0000-4000-8000-000000000960';
+    const contenderAttemptId = '00000000-0000-4000-8000-000000000961';
+    const owner = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: identity(ownerAttemptId),
+      deadlineAt: new Date(Date.now() + 60_000),
+      providerStartFence: 'operation_kind',
+      db: testDb(),
+    }).acquire();
+    await owner.reserveProviderStart();
+    await testDb().execute(sql`UPDATE provider_attempt_admission
+      SET status = 'would_deny', deadline_at = clock_timestamp() - interval '1 second',
+        lease_expires_at = clock_timestamp() + interval '30 seconds'
+      WHERE attempt_id = ${ownerAttemptId}`);
+    const ownerBefore = (
+      await testDb()
+        .select()
+        .from(provider_attempt_admission)
+        .where(eq(provider_attempt_admission.attempt_id, ownerAttemptId))
+    )[0];
+    const contender = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: identity(contenderAttemptId),
+      deadlineAt: new Date(Date.now() + 60_000),
+      providerStartFence: 'operation_kind',
+      db: testDb(),
+    }).acquire();
+    const contenderOwner = (
+      await testDb()
+        .select()
+        .from(provider_attempt_admission)
+        .where(eq(provider_attempt_admission.attempt_id, contenderAttemptId))
+    )[0]?.lease_owner;
+    expect(contenderOwner).toEqual(expect.any(String));
+
+    await expect(contender.reserveProviderStart()).rejects.toMatchObject({
+      reason: 'recovery_required',
+    });
+    expect(
+      (
+        await testDb()
+          .select()
+          .from(provider_attempt_admission)
+          .where(eq(provider_attempt_admission.attempt_id, ownerAttemptId))
+      )[0],
+    ).toMatchObject({
+      status: 'released',
+      lease_owner: ownerBefore?.lease_owner,
+      terminal_reason: 'deadline_elapsed',
+    });
+    expect(
+      (
+        await testDb()
+          .select()
+          .from(provider_attempt_admission)
+          .where(eq(provider_attempt_admission.attempt_id, contenderAttemptId))
+      )[0],
+    ).toMatchObject({
+      status: 'released',
+      lease_owner: contenderOwner,
+      terminal_reason: 'provider_start_recovery_required',
+    });
+  });
+
+  it('serializes concurrent fenced reserves without preholding attempt locks', async () => {
+    const firstAttemptId = '00000000-0000-4000-8000-000000000962';
+    const secondAttemptId = '00000000-0000-4000-8000-000000000963';
+    const deadlineAt = new Date(Date.now() + 60_000);
+    const firstIdentity = identity(firstAttemptId);
+    const first = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: firstIdentity,
+      deadlineAt,
+      providerStartFence: 'operation_kind',
+      db: openIndependentDb().db,
+    }).acquire();
+    const second = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: identity(secondAttemptId),
+      deadlineAt,
+      providerStartFence: 'operation_kind',
+      db: openIndependentDb().db,
+    }).acquire();
+    const operationFenceKey = `provider-attempt-operation-kind:${firstIdentity.operationId}:${firstIdentity.provider}:${firstIdentity.lane}:${firstIdentity.operationKind}`;
+    const reservations: Array<Promise<void>> = [];
+    const lockWaiters = await openIndependentDb().db.transaction(async (barrierTx) => {
+      const holderRows = await barrierTx.execute<{ pid: number }>(
+        sql`SELECT pg_backend_pid() AS pid`,
+      );
+      const holderPid = holderRows[0]?.pid;
+      if (holderPid === undefined) throw new Error('operation fence barrier has no backend pid');
+      await barrierTx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${operationFenceKey}, 0))`,
+      );
+      reservations.push(first.reserveProviderStart(), second.reserveProviderStart());
+
+      let waitingRows: Array<{ granted_advisory: number; pid: number }> = [];
+      for (let probe = 0; probe < 100 && waitingRows.length < 2; probe += 1) {
+        waitingRows = await barrierTx.execute<{ granted_advisory: number; pid: number }>(sql`
+          SELECT waiting.pid,
+            (SELECT count(*)::int
+              FROM pg_locks granted
+              WHERE granted.pid = waiting.pid
+                AND granted.locktype = 'advisory'
+                AND granted.granted) AS granted_advisory
+          FROM pg_locks held
+          JOIN pg_locks waiting
+            ON waiting.locktype = held.locktype
+            AND waiting.database IS NOT DISTINCT FROM held.database
+            AND waiting.classid IS NOT DISTINCT FROM held.classid
+            AND waiting.objid IS NOT DISTINCT FROM held.objid
+            AND waiting.objsubid IS NOT DISTINCT FROM held.objsubid
+          WHERE held.pid = ${holderPid}
+            AND held.locktype = 'advisory'
+            AND held.granted
+            AND waiting.pid <> held.pid
+            AND NOT waiting.granted
+          ORDER BY waiting.pid
+        `);
+      }
+      return waitingRows;
+    });
+
+    const results = await Promise.allSettled(reservations);
+
+    expect(lockWaiters).toHaveLength(2);
+    expect(lockWaiters).toEqual([
+      expect.objectContaining({ granted_advisory: 0 }),
+      expect.objectContaining({ granted_advisory: 0 }),
+    ]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toEqual([
+      expect.objectContaining({ reason: expect.objectContaining({ reason: 'active_duplicate' }) }),
+    ]);
+    const attempts = await testDb().select().from(provider_attempt);
+    expect(attempts.filter((attempt) => attempt.provider_start_reserved_at !== null)).toHaveLength(
+      1,
+    );
+    const admissions = await testDb().select().from(provider_attempt_admission);
+    expect(admissions.filter((admission) => admission.status === 'released')).toEqual([
+      expect.objectContaining({ terminal_reason: 'provider_start_active_duplicate' }),
+    ]);
   });
 
   it('fences a concurrent same-generation attempt identity before a second start', async () => {

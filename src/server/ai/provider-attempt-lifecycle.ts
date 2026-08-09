@@ -220,12 +220,38 @@ export function createProviderAttemptLifecycle(input: {
           try {
             const blockerDecision = await input.db.transaction(
               async (tx): Promise<'active_duplicate' | 'recovery_required' | null> => {
-                await tx.execute(
-                  sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt:${identity.attemptId}`}, 0))`,
-                );
                 if (input.providerStartFence === 'operation_kind') {
                   await tx.execute(
                     sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt-operation-kind:${identity.operationId}:${identity.provider}:${identity.lane}:${identity.operationKind}`}, 0))`,
+                  );
+                  const candidateRows = await tx.execute<{ attempt_id: string }>(sql`
+                    SELECT a.attempt_id::text
+                    FROM provider_attempt AS a
+                    JOIN provider_attempt_admission AS d USING (attempt_id)
+                    WHERE a.attempt_id = ${identity.attemptId}
+                      OR (
+                        a.operation_id = ${identity.operationId}
+                        AND a.provider = ${identity.provider}
+                        AND a.lane_id = ${identity.lane}
+                        AND a.operation_kind = ${identity.operationKind}
+                        AND a.provider_start_reserved_at IS NOT NULL
+                        AND d.status IN ('acquired', 'would_deny')
+                      )
+                  `);
+                  const candidateIds = [
+                    ...new Set([
+                      identity.attemptId,
+                      ...candidateRows.map((candidate) => candidate.attempt_id),
+                    ]),
+                  ].sort();
+                  for (const candidateId of candidateIds) {
+                    await tx.execute(
+                      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt:${candidateId}`}, 0))`,
+                    );
+                  }
+                } else {
+                  await tx.execute(
+                    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt:${identity.attemptId}`}, 0))`,
                   );
                 }
                 const rows = await tx.execute<{
@@ -248,10 +274,24 @@ export function createProviderAttemptLifecycle(input: {
                   throw lifecycleError('lease_lost', identity);
                 }
                 if (input.providerStartFence === 'operation_kind') {
+                  const fencedAtRows = await tx.execute<{ fenced_at: string }>(
+                    sql`SELECT clock_timestamp()::text AS fenced_at`,
+                  );
+                  const fencedAt = fencedAtRows[0]?.fenced_at;
+                  if (fencedAt === undefined) throw lifecycleError('lease_lost', identity);
                   await tx.execute(sql`
                   UPDATE provider_attempt_admission AS d
-                  SET status = 'lease_expired', lease_owner = NULL,
-                    terminal_at = clock_timestamp(), terminal_reason = 'lease_expired'
+                  SET status = CASE
+                      WHEN d.lease_expires_at <= ${fencedAt}::timestamptz
+                        THEN 'lease_expired'
+                      ELSE 'released'
+                    END,
+                    terminal_at = ${fencedAt}::timestamptz,
+                    terminal_reason = CASE
+                      WHEN d.lease_expires_at <= ${fencedAt}::timestamptz
+                        THEN 'lease_expired'
+                      ELSE 'deadline_elapsed'
+                    END
                   FROM provider_attempt AS a
                   WHERE d.attempt_id = a.attempt_id
                     AND a.attempt_id <> ${identity.attemptId}
@@ -261,13 +301,13 @@ export function createProviderAttemptLifecycle(input: {
                     AND a.operation_kind = ${identity.operationKind}
                     AND a.provider_start_reserved_at IS NOT NULL
                     AND d.status IN ('acquired', 'would_deny')
-                    AND (d.lease_expires_at <= clock_timestamp()
-                      OR d.deadline_at <= clock_timestamp())
+                    AND (d.lease_expires_at <= ${fencedAt}::timestamptz
+                      OR d.deadline_at <= ${fencedAt}::timestamptz)
                 `);
                   const blockers = await tx.execute<{ live: boolean }>(sql`
                   SELECT d.status IN ('acquired', 'would_deny')
-                    AND d.lease_expires_at > clock_timestamp()
-                    AND d.deadline_at > clock_timestamp() AS live
+                    AND d.lease_expires_at > ${fencedAt}::timestamptz
+                    AND d.deadline_at > ${fencedAt}::timestamptz AS live
                   FROM provider_attempt a
                   LEFT JOIN provider_attempt_admission d USING (attempt_id)
                   WHERE a.attempt_id <> ${identity.attemptId}
@@ -288,7 +328,6 @@ export function createProviderAttemptLifecycle(input: {
                       .update(provider_attempt_admission)
                       .set({
                         status: 'released',
-                        lease_owner: null,
                         terminal_at: sql`clock_timestamp()`,
                         terminal_reason: `provider_start_${decision}`,
                       })
