@@ -37,8 +37,18 @@ export function taskPromptFingerprint(task: AiTaskKind, profile?: SubjectProfile
   });
 }
 
-export function costUsdToMicroUsd(costUsd: number | undefined): number | null {
-  return costUsd === undefined ? null : Math.round(costUsd * 1_000_000);
+export function costUsdToMicroUsd(costUsd: number | null | undefined): number | null {
+  return costUsd == null || !Number.isFinite(costUsd) ? null : Math.round(costUsd * 1_000_000);
+}
+
+export function sumAllKnownCostUsd(costs: readonly (number | null | undefined)[]): number | null {
+  let total = 0;
+  for (const cost of costs) {
+    if (cost == null || !Number.isFinite(cost)) return null;
+    total += cost;
+    if (!Number.isFinite(total)) return null;
+  }
+  return total;
 }
 
 export function aiAgentRef(

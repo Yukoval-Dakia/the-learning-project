@@ -2306,3 +2306,164 @@ describe('migration smoke — YUK-851 provider attempt lifecycle', () => {
     expect(after).toEqual(baselineSignature);
   });
 });
+
+describe('migration smoke — YUK-844 placement unknown cost', () => {
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    for (const migration of orderedMigrations()) {
+      if (migration.tag === '0090_yuk844_placement_unknown_cost') break;
+      await applyMigrationFile(client, migration.sql);
+    }
+    await client`
+      INSERT INTO placement_starter_claim (
+        id, fingerprint, goal_id, semantic_goal_revision_id, subject_id,
+        knowledge_id, demand_id, target_id, status, pg_boss_job_id,
+        known_cost_micro_usd, created_at, updated_at
+      ) VALUES (
+        'migration-yuk844-claim', 'migration-yuk844-fingerprint', 'migration-yuk844-goal',
+        'migration-yuk844-revision', 'yuwen', 'migration-yuk844-knowledge',
+        'migration-yuk844-demand', 'migration-yuk844-target', 'running',
+        'migration-yuk844-job', 250, now(), now()
+      )
+    `;
+    await client`
+      INSERT INTO placement_starter_attempt (
+        id, claim_id, pg_boss_job_id, delivery_no, fencing_token, status,
+        lease_expires_at, created_at, updated_at
+      ) VALUES (
+        'migration-yuk844-attempt', 'migration-yuk844-claim', 'migration-yuk844-job', 1,
+        '00000000-0000-4000-8000-000000000844', 'running', now() + interval '1 hour',
+        now(), now()
+      )
+    `;
+    await client`
+      INSERT INTO placement_starter_cost_component (
+        id, claim_id, attempt_id, component_kind, provider_task_run_id,
+        cost_micro_usd, created_at
+      ) VALUES (
+        'migration-yuk844-known', 'migration-yuk844-claim', 'migration-yuk844-attempt',
+        'quiz_gen', 'migration-yuk844-known-run', 250, now()
+      )
+    `;
+    const migration = orderedMigrations().find(
+      (entry) => entry.tag === '0090_yuk844_placement_unknown_cost',
+    );
+    if (!migration) throw new Error('migration 0090_yuk844_placement_unknown_cost not found');
+    await applyMigrationFile(client, migration.sql);
+  }, 90_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('preserves numeric history and accepts canonical settlement dispositions', async () => {
+    const [claim] = await client<{ known_cost_micro_usd: number | null }[]>`
+      SELECT known_cost_micro_usd FROM placement_starter_claim
+      WHERE id = 'migration-yuk844-claim'
+    `;
+    const [component] = await client<{ cost_micro_usd: number | null; over_cap: boolean | null }[]>`
+      SELECT cost_micro_usd, over_cap FROM placement_starter_cost_component
+      WHERE id = 'migration-yuk844-known'
+    `;
+    expect(claim?.known_cost_micro_usd).toBe(250);
+    expect(component?.cost_micro_usd).toBe(250);
+    expect(component?.over_cap).toBeNull();
+    await client`
+      INSERT INTO placement_starter_cost_component (
+        id, claim_id, attempt_id, component_kind, provider_task_run_id,
+        cost_micro_usd, created_at
+      ) VALUES (
+        'migration-yuk844-unknown', 'migration-yuk844-claim', 'migration-yuk844-attempt',
+        'quiz_verify', 'migration-yuk844-unknown-run', NULL, now()
+      )
+    `;
+    await client`
+      INSERT INTO placement_starter_cost_component (
+        id, claim_id, attempt_id, component_kind, provider_task_run_id,
+        cost_micro_usd, over_cap, created_at
+      ) VALUES
+        (
+          'migration-yuk844-within-cap', 'migration-yuk844-claim',
+          'migration-yuk844-attempt', 'solution_check',
+          'migration-yuk844-within-cap-run', 400, false, now()
+        ),
+        (
+          'migration-yuk844-over-cap', 'migration-yuk844-claim',
+          'migration-yuk844-attempt', 'teaching_quality',
+          'migration-yuk844-over-cap-run', 700, true, now()
+        )
+    `;
+    await client`
+      UPDATE placement_starter_claim SET known_cost_micro_usd = NULL
+      WHERE id = 'migration-yuk844-claim'
+    `;
+  });
+
+  it('rejects nullable reservations and negative settled or claim costs', async () => {
+    await expect(client`
+      INSERT INTO placement_starter_cost_component (
+        id, claim_id, attempt_id, component_kind, provider_task_run_id,
+        cost_micro_usd, created_at
+      ) VALUES (
+        'migration-yuk844-null-reservation', 'migration-yuk844-claim',
+        'migration-yuk844-attempt', 'solution_check', 'reservation:migration-yuk844',
+        NULL, now()
+      )
+    `).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'placement_starter_cost_component_nonnegative',
+    });
+    await expect(client`
+      INSERT INTO placement_starter_cost_component (
+        id, claim_id, attempt_id, component_kind, provider_task_run_id,
+        cost_micro_usd, over_cap, created_at
+      ) VALUES (
+        'migration-yuk844-reservation-disposition', 'migration-yuk844-claim',
+        'migration-yuk844-attempt', 'solution_check',
+        'reservation:migration-yuk844-disposition', 100, false, now()
+      )
+    `).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'placement_starter_cost_component_over_cap_check',
+    });
+    await expect(client`
+      INSERT INTO placement_starter_cost_component (
+        id, claim_id, attempt_id, component_kind, provider_task_run_id,
+        cost_micro_usd, over_cap, created_at
+      ) VALUES (
+        'migration-yuk844-unknown-disposition', 'migration-yuk844-claim',
+        'migration-yuk844-attempt', 'quiz_verify',
+        'migration-yuk844-unknown-disposition-run', NULL, true, now()
+      )
+    `).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'placement_starter_cost_component_over_cap_check',
+    });
+    await expect(client`
+      INSERT INTO placement_starter_cost_component (
+        id, claim_id, attempt_id, component_kind, provider_task_run_id,
+        cost_micro_usd, created_at
+      ) VALUES (
+        'migration-yuk844-negative', 'migration-yuk844-claim',
+        'migration-yuk844-attempt', 'teaching_quality', 'migration-yuk844-negative-run',
+        -1, now()
+      )
+    `).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'placement_starter_cost_component_nonnegative',
+    });
+    await expect(client`
+      UPDATE placement_starter_claim SET known_cost_micro_usd = -1
+      WHERE id = 'migration-yuk844-claim'
+    `).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'placement_starter_claim_nonnegative_cost',
+    });
+  });
+});

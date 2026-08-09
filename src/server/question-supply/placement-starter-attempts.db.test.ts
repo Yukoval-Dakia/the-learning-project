@@ -17,6 +17,8 @@ import {
   PLACEMENT_RENEWAL_CEILING_MS,
   PLACEMENT_VERIFY_POLL_MS,
   PlacementStarterBudgetExhaustedError,
+  PlacementStarterStaleAuthorityError,
+  PlacementStarterUnknownCostError,
   acquirePlacementAttempt,
   assertPlacementAuthority,
   countEligiblePlacementQuestions,
@@ -26,10 +28,12 @@ import {
   placementAttemptVerificationSettled,
   placementDeliveryMetadata,
   placementFulfillmentDisposition,
+  releaseAuthorizedPaidCall,
   renewPlacementAttempt,
   reserveAuthorizedPaidCall,
   settleAuthorizedPaidCall,
   startPlacementAttemptHeartbeat,
+  terminalizePlacementUnknownCost,
 } from './placement-starter-attempts';
 
 describe('placementDeliveryMetadata', () => {
@@ -636,11 +640,23 @@ describe('placement paid-call reservations', () => {
           now,
         }),
       ),
-    ).resolves.toEqual({ overCap: true });
+    ).resolves.toEqual({ overCap: true, costUnknown: false });
+    await expect(
+      testDb().transaction((tx) =>
+        settleAuthorizedPaidCall(tx, {
+          authority,
+          reservationKey: 'settle',
+          providerTaskRunId: 'run-over-cap',
+          costMicroUsd: 700_000,
+          now,
+        }),
+      ),
+    ).resolves.toEqual({ overCap: true, costUnknown: false });
     const [overCapComponent] = await testDb().select().from(placement_starter_cost_component);
     expect(overCapComponent).toMatchObject({
       provider_task_run_id: 'run-over-cap',
       cost_micro_usd: 700_000,
+      over_cap: true,
     });
     await testDb().transaction((tx) =>
       reserveAuthorizedPaidCall(tx, {
@@ -651,15 +667,28 @@ describe('placement paid-call reservations', () => {
         now,
       }),
     );
-    await testDb().transaction((tx) =>
-      settleAuthorizedPaidCall(tx, {
-        authority,
-        reservationKey: 'settle-normal',
-        providerTaskRunId: 'run-settle',
-        costMicroUsd: 400_000,
-        now,
-      }),
-    );
+    await expect(
+      testDb().transaction((tx) =>
+        settleAuthorizedPaidCall(tx, {
+          authority,
+          reservationKey: 'settle-normal',
+          providerTaskRunId: 'run-settle',
+          costMicroUsd: 400_000,
+          now,
+        }),
+      ),
+    ).resolves.toEqual({ overCap: false, costUnknown: false });
+    await expect(
+      testDb().transaction((tx) =>
+        settleAuthorizedPaidCall(tx, {
+          authority,
+          reservationKey: 'settle-normal',
+          providerTaskRunId: 'run-settle',
+          costMicroUsd: 400_000,
+          now,
+        }),
+      ),
+    ).resolves.toEqual({ overCap: false, costUnknown: false });
     await testDb().transaction((tx) =>
       reserveAuthorizedPaidCall(tx, {
         authority,
@@ -684,14 +713,348 @@ describe('placement paid-call reservations', () => {
       'run-retry',
       'run-settle',
     ]);
-    expect(components.map((row) => row.cost_micro_usd).sort((a, b) => a - b)).toEqual([
-      300_000, 400_000, 700_000,
-    ]);
+    expect(components.map((row) => row.cost_micro_usd).sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual(
+      [300_000, 400_000, 700_000],
+    );
+    expect(components.find((row) => row.provider_task_run_id === 'run-settle')?.over_cap).toBe(
+      false,
+    );
     const [claim] = await testDb()
       .select()
       .from(placement_starter_claim)
       .where(eq(placement_starter_claim.id, CLAIM_ID));
     expect(claim.known_cost_micro_usd).toBe(1_400_000);
+    await testDb()
+      .update(placement_starter_cost_component)
+      .set({ over_cap: null })
+      .where(eq(placement_starter_cost_component.provider_task_run_id, 'run-settle'));
+    await expect(
+      testDb().transaction((tx) =>
+        settleAuthorizedPaidCall(tx, {
+          authority,
+          reservationKey: 'settle-normal',
+          providerTaskRunId: 'run-settle',
+          costMicroUsd: 400_000,
+          now,
+        }),
+      ),
+    ).rejects.toThrow(/missing over-cap disposition/);
+  });
+
+  it('replays one unknown settlement after terminalization without another adjustment', async () => {
+    const now = new Date('2026-07-23T00:00:00.000Z');
+    await seedClaim(now);
+    const attempt = await acquirePlacementAttempt(testDb(), {
+      claimId: CLAIM_ID,
+      pgBossJobId: JOB_ID,
+      deliveryNo: 1,
+      startedOn: now,
+      now,
+    });
+    await testDb()
+      .update(placement_starter_attempt)
+      .set({ status: 'verifying' })
+      .where(eq(placement_starter_attempt.id, attempt.attemptId));
+    await seedAuthorizedQuestion(now, {
+      attemptId: attempt.attemptId,
+      questionId: 'q-unknown-cost',
+      epoch: '11111111-1111-4111-8111-111111111111',
+      draftStatus: 'draft',
+    });
+    const authority = {
+      claim_id: CLAIM_ID,
+      attempt_id: attempt.attemptId,
+      question_id: 'q-unknown-cost',
+      verification_authority_epoch: '11111111-1111-4111-8111-111111111111',
+      fencing_token: attempt.fencingToken,
+    };
+    await testDb().transaction((tx) =>
+      reserveAuthorizedPaidCall(tx, {
+        authority,
+        kind: 'solution_check',
+        reservationKey: 'unknown-cost',
+        now,
+      }),
+    );
+    await expect(
+      testDb().transaction((tx) =>
+        settleAuthorizedPaidCall(tx, {
+          authority,
+          reservationKey: 'unknown-cost',
+          providerTaskRunId: 'run-unknown-cost',
+          costMicroUsd: null,
+          now,
+        }),
+      ),
+    ).resolves.toEqual({ overCap: false, costUnknown: true });
+    await expect(
+      testDb().transaction((tx) =>
+        reserveAuthorizedPaidCall(tx, {
+          authority,
+          kind: 'teaching_quality',
+          reservationKey: 'after-unknown',
+          now,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(PlacementStarterUnknownCostError);
+    await terminalizePlacementUnknownCost(testDb(), {
+      claimId: CLAIM_ID,
+      attemptId: attempt.attemptId,
+      fencingToken: attempt.fencingToken,
+      now,
+    });
+    await expect(
+      testDb().transaction((tx) =>
+        settleAuthorizedPaidCall(tx, {
+          authority,
+          reservationKey: 'unknown-cost',
+          providerTaskRunId: 'run-unknown-cost',
+          costMicroUsd: 25_000,
+          now,
+        }),
+      ),
+    ).resolves.toEqual({ overCap: false, costUnknown: true });
+    await expect(
+      testDb().transaction((tx) =>
+        settleAuthorizedPaidCall(tx, {
+          authority,
+          reservationKey: 'unknown-cost',
+          providerTaskRunId: 'run-not-the-exact-replay',
+          costMicroUsd: null,
+          now,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(PlacementStarterStaleAuthorityError);
+
+    const components = await testDb().select().from(placement_starter_cost_component);
+    expect(components).toHaveLength(1);
+    expect(components[0]).toMatchObject({
+      provider_task_run_id: 'run-unknown-cost',
+      cost_micro_usd: null,
+      over_cap: null,
+    });
+    const [claim] = await testDb()
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, CLAIM_ID));
+    expect(claim.status).toBe('exhausted');
+    expect(claim.known_cost_micro_usd).toBeNull();
+    const [terminalAttempt] = await testDb()
+      .select()
+      .from(placement_starter_attempt)
+      .where(eq(placement_starter_attempt.id, attempt.attemptId));
+    expect(terminalAttempt.status).toBe('invariant_failed');
+    const componentsAfterRejectedReservation = await testDb()
+      .select()
+      .from(placement_starter_cost_component);
+    expect(
+      componentsAfterRejectedReservation.some((component) =>
+        component.provider_task_run_id.startsWith('reservation:'),
+      ),
+    ).toBe(false);
+  });
+
+  it('serializes concurrent exact settlement replay to one canonical adjustment', async () => {
+    const now = new Date('2026-07-23T00:00:00.000Z');
+    await seedClaim(now);
+    const attempt = await acquirePlacementAttempt(testDb(), {
+      claimId: CLAIM_ID,
+      pgBossJobId: JOB_ID,
+      deliveryNo: 1,
+      startedOn: now,
+      now,
+    });
+    await testDb()
+      .update(placement_starter_attempt)
+      .set({ status: 'verifying' })
+      .where(eq(placement_starter_attempt.id, attempt.attemptId));
+    await seedAuthorizedQuestion(now, {
+      attemptId: attempt.attemptId,
+      questionId: 'q-concurrent-settle',
+      epoch: '11111111-1111-4111-8111-111111111124',
+      draftStatus: 'draft',
+    });
+    const authority = {
+      claim_id: CLAIM_ID,
+      attempt_id: attempt.attemptId,
+      question_id: 'q-concurrent-settle',
+      verification_authority_epoch: '11111111-1111-4111-8111-111111111124',
+      fencing_token: attempt.fencingToken,
+    };
+    await testDb().transaction((tx) =>
+      reserveAuthorizedPaidCall(tx, {
+        authority,
+        kind: 'solution_check',
+        reservationKey: 'concurrent-exact',
+        maxCostMicroUsd: 50_000,
+        now,
+      }),
+    );
+
+    const results = await Promise.all([
+      testDb().transaction((tx) =>
+        settleAuthorizedPaidCall(tx, {
+          authority,
+          reservationKey: 'concurrent-exact',
+          providerTaskRunId: 'run-concurrent-exact',
+          costMicroUsd: 75_000,
+          now,
+        }),
+      ),
+      testDb().transaction((tx) =>
+        settleAuthorizedPaidCall(tx, {
+          authority,
+          reservationKey: 'concurrent-exact',
+          providerTaskRunId: 'run-concurrent-exact',
+          costMicroUsd: 75_000,
+          now,
+        }),
+      ),
+    ]);
+
+    expect(results).toEqual([
+      { overCap: true, costUnknown: false },
+      { overCap: true, costUnknown: false },
+    ]);
+    const components = await testDb().select().from(placement_starter_cost_component);
+    expect(components).toHaveLength(1);
+    expect(components[0]).toMatchObject({
+      provider_task_run_id: 'run-concurrent-exact',
+      cost_micro_usd: 75_000,
+      over_cap: true,
+    });
+    const [claim] = await testDb()
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, CLAIM_ID));
+    expect(claim.known_cost_micro_usd).toBe(75_000);
+  });
+
+  it('keeps unknown claim cost sticky when a sibling reservation is released', async () => {
+    const now = new Date('2026-07-23T00:00:00.000Z');
+    await seedClaim(now);
+    const attempt = await acquirePlacementAttempt(testDb(), {
+      claimId: CLAIM_ID,
+      pgBossJobId: JOB_ID,
+      deliveryNo: 1,
+      startedOn: now,
+      now,
+    });
+    await testDb()
+      .update(placement_starter_attempt)
+      .set({ status: 'verifying' })
+      .where(eq(placement_starter_attempt.id, attempt.attemptId));
+    await seedAuthorizedQuestion(now, {
+      attemptId: attempt.attemptId,
+      questionId: 'q-sibling-release',
+      epoch: '11111111-1111-4111-8111-111111111113',
+      draftStatus: 'draft',
+    });
+    const authority = {
+      claim_id: CLAIM_ID,
+      attempt_id: attempt.attemptId,
+      question_id: 'q-sibling-release',
+      verification_authority_epoch: '11111111-1111-4111-8111-111111111113',
+      fencing_token: attempt.fencingToken,
+    };
+    await testDb().transaction(async (tx) => {
+      await reserveAuthorizedPaidCall(tx, {
+        authority,
+        kind: 'solution_check',
+        reservationKey: 'sibling-a',
+        now,
+      });
+      await reserveAuthorizedPaidCall(tx, {
+        authority,
+        kind: 'teaching_quality',
+        reservationKey: 'sibling-b',
+        now,
+      });
+    });
+    await testDb().transaction((tx) =>
+      settleAuthorizedPaidCall(tx, {
+        authority,
+        reservationKey: 'sibling-a',
+        providerTaskRunId: 'run-sibling-a-unknown',
+        costMicroUsd: null,
+        now,
+      }),
+    );
+
+    await testDb().transaction((tx) =>
+      releaseAuthorizedPaidCall(tx, {
+        claimId: CLAIM_ID,
+        reservationKey: 'sibling-b',
+        now,
+      }),
+    );
+
+    const [claim] = await testDb()
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, CLAIM_ID));
+    expect(claim.known_cost_micro_usd).toBeNull();
+    const components = await testDb().select().from(placement_starter_cost_component);
+    expect(components).toHaveLength(1);
+    expect(components[0]).toMatchObject({
+      provider_task_run_id: 'run-sibling-a-unknown',
+      cost_micro_usd: null,
+    });
+  });
+
+  it('settles a genuine zero cost as known zero', async () => {
+    const now = new Date('2026-07-23T00:00:00.000Z');
+    await seedClaim(now);
+    const attempt = await acquirePlacementAttempt(testDb(), {
+      claimId: CLAIM_ID,
+      pgBossJobId: JOB_ID,
+      deliveryNo: 1,
+      startedOn: now,
+      now,
+    });
+    await testDb()
+      .update(placement_starter_attempt)
+      .set({ status: 'verifying' })
+      .where(eq(placement_starter_attempt.id, attempt.attemptId));
+    await seedAuthorizedQuestion(now, {
+      attemptId: attempt.attemptId,
+      questionId: 'q-zero-cost',
+      epoch: '11111111-1111-4111-8111-111111111112',
+      draftStatus: 'draft',
+    });
+    const authority = {
+      claim_id: CLAIM_ID,
+      attempt_id: attempt.attemptId,
+      question_id: 'q-zero-cost',
+      verification_authority_epoch: '11111111-1111-4111-8111-111111111112',
+      fencing_token: attempt.fencingToken,
+    };
+    await testDb().transaction((tx) =>
+      reserveAuthorizedPaidCall(tx, {
+        authority,
+        kind: 'quiz_verify',
+        reservationKey: 'zero-cost',
+        now,
+      }),
+    );
+    await expect(
+      testDb().transaction((tx) =>
+        settleAuthorizedPaidCall(tx, {
+          authority,
+          reservationKey: 'zero-cost',
+          providerTaskRunId: 'run-zero-cost',
+          costMicroUsd: 0,
+          now,
+        }),
+      ),
+    ).resolves.toEqual({ overCap: false, costUnknown: false });
+    const [claim] = await testDb()
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, CLAIM_ID));
+    expect(claim.known_cost_micro_usd).toBe(0);
+    const [component] = await testDb().select().from(placement_starter_cost_component);
+    expect(component).toMatchObject({ cost_micro_usd: 0, over_cap: false });
   });
 });
 

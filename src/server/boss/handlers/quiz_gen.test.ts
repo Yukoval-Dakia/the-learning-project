@@ -1860,6 +1860,64 @@ describe('buildQuizGenHandler', () => {
     expect(claim?.status).toBe('exhausted');
     expect(claim?.exhausted_at).not.toBeNull();
   });
+
+  it('fails closed and exhausts a placement claim whose prior cost is unknown', async () => {
+    const now = new Date('2026-07-23T00:00:00.000Z');
+    await testDb().insert(placement_starter_claim).values({
+      id: 'claim-unknown-cost',
+      fingerprint: 'placement-starter|unknown-cost',
+      goal_id: 'goal-unknown-cost',
+      semantic_goal_revision_id: 'rev-unknown-cost',
+      subject_id: 'wenyan',
+      knowledge_id: 'k-unknown-cost',
+      demand_id: 'demand-unknown-cost',
+      target_id: 'target-unknown-cost',
+      status: 'retry_scheduled',
+      pg_boss_job_id: 'job-unknown-cost',
+      known_cost_micro_usd: null,
+      next_reconcile_at: now,
+      created_at: now,
+      updated_at: now,
+    });
+    const runAgentTaskFn = vi.fn(async () => {
+      throw new Error('provider call must not start after unknown placement cost');
+    });
+    const handler = buildQuizGenHandler(testDb(), {
+      runAgentTaskFn: runAgentTaskFn as never,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: () => null,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    await expect(
+      handler([
+        {
+          id: 'job-unknown-cost',
+          data: {
+            trigger: 'knowledge',
+            ref_id: 'k-unknown-cost',
+            placement_starter_claim_id: 'claim-unknown-cost',
+          },
+          retryCount: 1,
+          retryLimit: 2,
+          expireInSeconds: 7200,
+          startedOn: now,
+          signal: new AbortController().signal,
+        } as never,
+      ]),
+    ).resolves.toBeUndefined();
+    expect(runAgentTaskFn).not.toHaveBeenCalled();
+    const [claim] = await testDb()
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, 'claim-unknown-cost'));
+    expect(claim).toMatchObject({
+      status: 'exhausted',
+      known_cost_micro_usd: null,
+      last_error_class: 'cost_unknown',
+      last_error_code: 'cost_unknown',
+    });
+  });
 });
 
 // YUK-224 F1 / F3 (PR #314 round-1) — pure helpers, no DB.

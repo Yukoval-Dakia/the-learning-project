@@ -68,7 +68,7 @@ import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event, source_asset } from '@/db/schema';
 import { defaultImageFetch } from '@/server/ai/judges/steps-judge';
-import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
+import { type TaskTextRunFn, costUsdToMicroUsd, sumAllKnownCostUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { type FailureAttempt, getFailureAttemptsWithReasoningTrace } from '@/server/events/queries';
@@ -139,7 +139,7 @@ export interface ResearchMeetingResult {
   /** probe outcomes skipped this run (dangling / malformed / unreadable conjecture ref). */
   reconcile_skipped: number;
   /** total Opus cost across the run's inductions, USD. */
-  cost_usd: number;
+  cost_usd: number | null;
   /**
    * the run's anchor event id (provenance + scan subject). `''` sentinel when the
    * run early-returned on an empty night (zero top cells → no anchor event written).
@@ -159,7 +159,7 @@ const ResearchMeetingResultSchema = z
     pending_before: z.number().int().nonnegative(),
     reconciled: z.number().int().nonnegative(),
     reconcile_skipped: z.number().int().nonnegative(),
-    cost_usd: z.number().nonnegative(),
+    cost_usd: z.number().nonnegative().nullable(),
     // Empty runs deliberately have no trigger/scan anchor; the completion event
     // still persists that `''` sentinel so redelivery can return the exact result.
     trigger_event_id: z.string(),
@@ -1063,7 +1063,7 @@ async function runResearchMeetingNightlyClaimed(
         failed: number;
         failed_task_kind: ConjectureInductionTaskKind | null;
         retry_job_error: ConjectureInductionOperationalError | null;
-        cost_usd: number;
+        cost_usd: number | null;
       }> => {
         let induced: InduceConjectureResult;
         const priorClaimMd = reproduciblePriorClaimMdByKey.get(cell.key);
@@ -1098,7 +1098,7 @@ async function runResearchMeetingNightlyClaimed(
               failed: 1,
               failed_task_kind: err.taskKind,
               retry_job_error: err,
-              cost_usd: 0,
+              cost_usd: null,
             };
           }
           // YUK-779: keep swallowing (one bad cell must not fail the batch) but COUNT it,
@@ -1116,7 +1116,7 @@ async function runResearchMeetingNightlyClaimed(
                 ? err.taskKind
                 : 'MindModelInductionTask',
             retry_job_error: null,
-            cost_usd: 0,
+            cost_usd: null,
           };
         }
 
@@ -1146,7 +1146,7 @@ async function runResearchMeetingNightlyClaimed(
   const created = cellResults.reduce((sum, result) => sum + result.created, 0);
   const abstained = cellResults.reduce((sum, result) => sum + result.abstained, 0);
   const cellsFailed = cellResults.reduce((sum, result) => sum + result.failed, 0);
-  const costUsd = cellResults.reduce((sum, result) => sum + result.cost_usd, 0);
+  const costUsd = sumAllKnownCostUsd(cellResults.map((result) => result.cost_usd));
   if (created + abstained + cellsFailed !== preparedTopCells.length) {
     throw new Error(
       `research_meeting_nightly: result invariant violated: created(${created}) + abstained(${abstained}) + failed(${cellsFailed}) !== considered(${preparedTopCells.length})`,

@@ -1078,11 +1078,30 @@ describe('runSolveCheck — EFF-1 cost/provenance threading', () => {
     expect(result.cost_usd).toBeCloseTo(0.03);
   });
 
-  it('omits provenance fields when the runner reports none ({ text }-only mock)', async () => {
+  it('marks a successful unpriced solver leg as unknown', async () => {
     const runTaskFn = vi.fn(async () => ({ text: solverOutput('公元前202年') }));
     const result = await runSolveCheck(exactQuestion, { runTaskFn, profile: fakeProfile });
     expect(result.task_run_ids).toBeUndefined();
-    expect(result.cost_usd).toBeUndefined();
+    expect(result.cost_usd).toBeNull();
+  });
+
+  it('keeps mixed known and unknown semantic legs unknown', async () => {
+    const runTaskFn = vi.fn(async (kind: string) => {
+      if (kind === 'SolutionGenerateTask') {
+        return { text: solverOutput('独立答案'), task_run_id: 'tr_solver', cost_usd: 0.01 };
+      }
+      if (kind === 'SemanticJudgeTask') {
+        return { text: semanticOutput('correct', 0.9), task_run_id: 'tr_judge' };
+      }
+      throw new Error(`unexpected task ${kind}`);
+    });
+    const result = await runSolveCheck(openQuestion, {
+      runTaskFn,
+      profile: fakeProfile,
+      db: fakeDb,
+    });
+    expect(result.task_run_ids).toEqual(['tr_solver', 'tr_judge']);
+    expect(result.cost_usd).toBeNull();
   });
 });
 
@@ -1696,6 +1715,19 @@ describe('runTeachingQualityCheck — conservative non-blocking behaviour (R2)',
     });
     expect(result.task_run_ids).toEqual(['tr_tq']);
     expect(result.cost_usd).toBeCloseTo(0.004);
+  });
+
+  it('marks a successful unpriced teaching-quality call as unknown', async () => {
+    const runTaskFn = vi.fn(async () => ({
+      text: teachingQualityOutput({}),
+      task_run_id: 'tr_tq_unknown',
+    }));
+    const result = await runTeachingQualityCheck(choiceQuestionTQ, {
+      runTaskFn,
+      profile: fakeProfile,
+      db: fakeDb,
+    });
+    expect(result.cost_usd).toBeNull();
   });
 });
 

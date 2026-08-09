@@ -38,7 +38,11 @@ import { AgentRunError } from '@/server/ai/agent-run-error';
 import { type RepairLevel, parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
-import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
+import {
+  type TaskTextResult,
+  type TaskTextRunFn,
+  sumAllKnownCostUsd,
+} from '@/server/ai/provenance';
 import type { Provider } from '@/server/ai/providers';
 import {
   PlacementStarterAdmissionError,
@@ -285,11 +289,8 @@ export interface SolveCheckResult {
   compared_by: 'normalize' | 'semantic' | 'none';
   /** Exact candidates disagreed before the SemanticJudge fallback (YUK-612 audit signal). */
   normalized_exact_mismatch?: boolean;
-  // EFF-1 (YUK-554 review) — provenance/cost of the 1 (exact) or 2 (semantic: solver +
-  // judge) LLM calls this check spent, in call order, when the runner reported them.
-  // cost_usd is the SUM across legs; absent when no leg reported a number.
   task_run_ids?: string[];
-  cost_usd?: number;
+  cost_usd?: number | null;
   /** The question requires prompt images, but not every referenced asset could be loaded. */
   image_input_unavailable?: boolean;
 }
@@ -308,7 +309,7 @@ export type IndependentSolutionResult =
       task_input_sha256: string;
       solver_output_sha256: string;
       solver_output_repair_level: Exclude<RepairLevel, 'jsonrepair'>;
-      cost_usd?: number;
+      cost_usd?: number | null;
     }
   | {
       status: 'unsupported';
@@ -317,7 +318,7 @@ export type IndependentSolutionResult =
       /** Safe to repeat once: a paid run was persisted, but its output contract was unusable. */
       retryable: boolean;
       task_run_ids?: string[];
-      cost_usd?: number;
+      cost_usd?: number | null;
       image_input_unavailable?: boolean;
     };
 
@@ -335,13 +336,13 @@ type IndependentSolutionExecutionResult =
       solver_output_sha256?: string;
       solver_output_repair_level: Exclude<RepairLevel, 'jsonrepair'>;
       task_run_ids?: string[];
-      cost_usd?: number;
+      cost_usd?: number | null;
     }
   | {
       status: 'unsupported';
       reason: string;
       task_run_ids?: string[];
-      cost_usd?: number;
+      cost_usd?: number | null;
       image_input_unavailable?: boolean;
       /** Explicit override for callers that may retry a complete-contract miss. */
       retryable?: boolean;
@@ -735,18 +736,17 @@ async function runIndependentSolutionInternal(
   const requiresVision = (question.image_refs?.length ?? 0) > 0;
   const solverOverride = solutionLaneOverride(opts);
   const taskRunIds: string[] = [];
-  let costUsd: number | undefined;
+  const costsUsd: Array<number | null | undefined> = [];
+  let solverRunCompleted = false;
   const recordRun = (run: { task_run_id?: string; cost_usd?: number }): void => {
     if (typeof run.task_run_id === 'string' && run.task_run_id.length > 0) {
       taskRunIds.push(run.task_run_id);
     }
-    if (typeof run.cost_usd === 'number' && Number.isFinite(run.cost_usd)) {
-      costUsd = (costUsd ?? 0) + run.cost_usd;
-    }
+    costsUsd.push(run.cost_usd);
   };
   const provenance = (): Pick<IndependentSolutionExecutionResult, 'task_run_ids' | 'cost_usd'> => ({
     ...(taskRunIds.length > 0 ? { task_run_ids: [...taskRunIds] } : {}),
-    ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
+    cost_usd: sumAllKnownCostUsd(costsUsd),
   });
 
   const input = {
@@ -777,6 +777,7 @@ async function runIndependentSolutionInternal(
         status: 'unsupported',
         reason: 'prompt images require a Db handle for source_asset resolution',
         image_input_unavailable: true,
+        ...provenance(),
       };
     }
     let images: Array<{ data: string; mediaType: string }>;
@@ -789,6 +790,7 @@ async function runIndependentSolutionInternal(
         status: 'unsupported',
         reason: `prompt image fetch failed: ${err instanceof Error ? err.message : String(err)}`,
         image_input_unavailable: true,
+        ...provenance(),
       };
     }
     if (images.length !== promptImageRefs.length) {
@@ -796,6 +798,7 @@ async function runIndependentSolutionInternal(
         status: 'unsupported',
         reason: `prompt image fetch resolved ${images.length}/${promptImageRefs.length} assets`,
         image_input_unavailable: true,
+        ...provenance(),
       };
     }
     taskInput = { text: JSON.stringify(input), images };
@@ -809,6 +812,7 @@ async function runIndependentSolutionInternal(
     solverPaidInvocationId = randomUUID();
     await opts.beforePaidCall?.('solution_check', solverPaidInvocationId);
     const solverRun = await opts.runTaskFn(solverTaskKind, taskInput, ctx);
+    solverRunCompleted = true;
     recordRun(solverRun);
     await opts.settlePaidCall?.('solution_check', solverPaidInvocationId, solverRun);
     solverPaidSettled = true;
@@ -891,6 +895,7 @@ async function runIndependentSolutionInternal(
       ...provenance(),
     };
   } catch (err) {
+    if (!solverRunCompleted) costsUsd.push(null);
     // runTask persists a failure row before throwing AgentRunError. Preserve
     // that paid-attempt identity even though this reusable solver seam converts
     // provider errors into `unsupported` for ordinary question verification.
@@ -1042,18 +1047,16 @@ export async function runSolveCheck(
   // EFF-1 (YUK-554 review) — seed provenance with the reusable solver leg,
   // then append the optional SemanticJudge comparator leg below.
   const taskRunIds: string[] = [...(independentlySolved.task_run_ids ?? [])];
-  let costUsd = independentlySolved.cost_usd;
+  const costsUsd: Array<number | null | undefined> = [independentlySolved.cost_usd];
   const recordRun = (r: { task_run_id?: string; cost_usd?: number }): void => {
     if (typeof r.task_run_id === 'string' && r.task_run_id.length > 0) {
       taskRunIds.push(r.task_run_id);
     }
-    if (typeof r.cost_usd === 'number' && Number.isFinite(r.cost_usd)) {
-      costUsd = (costUsd ?? 0) + r.cost_usd;
-    }
+    costsUsd.push(r.cost_usd);
   };
   const runProvenance = (): Pick<SolveCheckResult, 'task_run_ids' | 'cost_usd'> => ({
     ...(taskRunIds.length > 0 ? { task_run_ids: [...taskRunIds] } : {}),
-    ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
+    cost_usd: sumAllKnownCostUsd(costsUsd),
   });
 
   const assertCurrentAuthority = async (): Promise<void> =>
@@ -1135,6 +1138,7 @@ export async function runSolveCheck(
       }
       return r;
     } catch (err) {
+      costsUsd.push(null);
       if (
         err instanceof PlacementStarterStaleAuthorityError ||
         err instanceof PlacementStarterAdmissionError
@@ -1311,7 +1315,7 @@ export interface TeachingQualityResult {
   reason: string;
   // provenance/cost of the single LLM call, when the runner reported them.
   task_run_ids?: string[];
-  cost_usd?: number;
+  cost_usd?: number | null;
 }
 
 // YUK-578 — per-axis veto switches (mirrors SOLVE_CHECK_TIER34_VETO). All three axes veto a
@@ -1377,17 +1381,15 @@ export async function runTeachingQualityCheck(
   const isChoice = (question.choices_md ?? []).length > 0;
 
   const taskRunIds: string[] = [];
-  let costUsd: number | undefined;
+  const costsUsd: Array<number | null | undefined> = [];
   const recordRun = (r: { task_run_id?: string; cost_usd?: number }): void => {
     if (typeof r.task_run_id === 'string' && r.task_run_id.length > 0)
       taskRunIds.push(r.task_run_id);
-    if (typeof r.cost_usd === 'number' && Number.isFinite(r.cost_usd)) {
-      costUsd = (costUsd ?? 0) + r.cost_usd;
-    }
+    costsUsd.push(r.cost_usd);
   };
   const runProvenance = (): Pick<TeachingQualityResult, 'task_run_ids' | 'cost_usd'> => ({
     ...(taskRunIds.length > 0 ? { task_run_ids: [...taskRunIds] } : {}),
-    ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
+    cost_usd: sumAllKnownCostUsd(costsUsd),
   });
 
   const skipped = (verdict: TeachingQualityVerdict, reason: string): TeachingQualityResult => ({
@@ -1404,6 +1406,7 @@ export async function runTeachingQualityCheck(
   // provider throws before settlePaidCall, so it does not leak into known_cost.
   let teachingPaidInvocationId: string | undefined;
   let teachingPaidSettled = false;
+  let teachingRunCompleted = false;
   try {
     const input = {
       ...(opts.placementAuthority ? { placement_authority: opts.placementAuthority } : {}),
@@ -1432,11 +1435,13 @@ export async function runTeachingQualityCheck(
     teachingPaidInvocationId = randomUUID();
     await opts.beforePaidCall?.(teachingPaidInvocationId);
     const run = await opts.runTaskFn('TeachingQualityTask', input, ctx);
+    teachingRunCompleted = true;
     recordRun(run);
     await opts.settlePaidCall?.(teachingPaidInvocationId, run);
     teachingPaidSettled = true;
     parsed = extractJsonObject(run.text, 'teaching-quality: TeachingQualityTask');
   } catch (err) {
+    if (!teachingRunCompleted) costsUsd.push(null);
     if (teachingPaidInvocationId && !teachingPaidSettled) {
       try {
         await opts.releasePaidCall?.(teachingPaidInvocationId);

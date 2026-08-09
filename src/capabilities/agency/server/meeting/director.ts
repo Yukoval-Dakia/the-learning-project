@@ -54,7 +54,7 @@ import { buildEvidenceServer, persistToolTrace } from '@/server/agency/scout/evi
 import type { ToolTraceEntry } from '@/server/agency/scout/evidence-mcp';
 import { createFindingsCapture } from '@/server/agency/scout/report-findings';
 import { buildEvidenceScoutAgentDefinition } from '@/server/agency/scout/scout-agent';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import { SPAWN_BUDGET_MODE, createSpawnContract } from '@/server/ai/spawn-contract';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
@@ -511,37 +511,8 @@ export async function runResearchMeetingDirector(
   } else {
     outcome = 'success';
   }
-  // rawCostUsd is the SDK-reported number regardless of degrade status (0 when
-  // taskResult never resolved); resultCostUsd (below, round-5 review minor 0.80) and
-  // costMicroUsd both separately gate on `degraded` to distinguish "genuinely $0" from
-  // "unknown because the run threw before the runner's cost ledger write".
-  const rawCostUsd = taskResult?.cost_usd ?? 0;
-
-  // §10 review fix — flattened from a nested ternary. round-3 review OCR #7 — the
-  // round-2 formula ALSO treated a genuine $0 cost (the flat OAuth lane legitimately
-  // reporting no per-call cost on a SUCCESSFUL run) as null, conflating "no spend" with
-  // "unknown/degraded". Fixed per the dreaming_nightly.ts:388 precedent
-  // (`cost_usd === undefined ? null : Math.round(...)`): null means ONLY "degraded, cost
-  // unknown because the throw happened before the runner's cost ledger write" — a real,
-  // successful $0 is recorded as the literal 0, not null (mirrors dreaming_scan — the
-  // scan is still cost-bearing even when that cost happens to be zero).
-  let costMicroUsd: number | null;
-  if (degraded) {
-    costMicroUsd = null;
-  } else {
-    costMicroUsd = Math.round(rawCostUsd * 1_000_000);
-  }
-
-  // round-5 review minor 0.80 — the PUBLIC result.cost_usd had the SAME degraded-vs-$0
-  // conflation as the scan event's cost_micro_usd (round-3 #7 fixed that side; this
-  // aligns the public result with it): a degraded run used to report 0, indistinguishable
-  // from a genuinely free successful run. null now means ONLY "degraded, unknown".
-  let resultCostUsd: number | null;
-  if (degraded) {
-    resultCostUsd = null;
-  } else {
-    resultCostUsd = rawCostUsd;
-  }
+  const resultCostUsd = degraded ? null : (taskResult?.cost_usd ?? null);
+  const costMicroUsd = costUsdToMicroUsd(resultCostUsd);
 
   try {
     const scanEventAt = deps.now?.() ?? new Date();

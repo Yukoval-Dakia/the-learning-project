@@ -16,7 +16,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readAgentNotes } from '@/capabilities/agency/server/notes';
 import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
 import type { QuizGenMetadataT } from '@/core/schema/quiz_gen';
-import { event, knowledge, material_fsrs_state, question, source_document } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  material_fsrs_state,
+  placement_starter_attempt,
+  placement_starter_attempt_question,
+  placement_starter_claim,
+  placement_starter_cost_component,
+  question,
+  source_document,
+} from '@/db/schema';
 import {
   buildCoverageEvidenceDemand,
   buildSupplyTrace,
@@ -1135,6 +1145,159 @@ describe('buildQuizVerifyHandler', () => {
     expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
     expect(await fsrsRowCount('question', 'qa')).toBe(0);
     expect(await fsrsRowCount('question', 'qb')).toBe(0);
+  });
+
+  it('exhausts an unknown-cost placement claim and skips its later questions in the same job', async () => {
+    const now = new Date('2026-08-09T00:00:00.000Z');
+    const claimId = 'claim-handler-unknown-cost';
+    const attemptId = 'attempt-handler-unknown-cost';
+    const jobId = 'job-handler-unknown-cost';
+    const fencingToken = '11111111-1111-4111-8111-111111111121';
+    const firstEpoch = '11111111-1111-4111-8111-111111111122';
+    const secondEpoch = '11111111-1111-4111-8111-111111111123';
+    await seedKnowledge('k-handler-unknown');
+    await seedDraftQuestion({ id: 'q-handler-unknown-first', knowledgeId: 'k-handler-unknown' });
+    await seedDraftQuestion({ id: 'q-handler-unknown-second', knowledgeId: 'k-handler-unknown' });
+    await seedDraftQuestion({ id: 'q-handler-unscoped-after', knowledgeId: 'k-handler-unknown' });
+    await testDb().insert(placement_starter_claim).values({
+      id: claimId,
+      fingerprint: 'placement-starter|handler-unknown-cost',
+      goal_id: 'goal-handler-unknown-cost',
+      semantic_goal_revision_id: 'revision-handler-unknown-cost',
+      subject_id: 'wenyan',
+      knowledge_id: 'k-handler-unknown',
+      demand_id: 'demand-handler-unknown-cost',
+      target_id: 'target-handler-unknown-cost',
+      status: 'verifying',
+      pg_boss_job_id: jobId,
+      known_cost_micro_usd: 0,
+      next_reconcile_at: now,
+      created_at: now,
+      updated_at: now,
+    });
+    await testDb()
+      .insert(placement_starter_attempt)
+      .values({
+        id: attemptId,
+        claim_id: claimId,
+        pg_boss_job_id: jobId,
+        delivery_no: 1,
+        fencing_token: fencingToken,
+        status: 'verifying',
+        lease_expires_at: new Date('2099-01-01T00:00:00.000Z'),
+        started_at: now,
+        created_at: now,
+        updated_at: now,
+      });
+    await testDb()
+      .insert(placement_starter_attempt_question)
+      .values([
+        {
+          attempt_id: attemptId,
+          claim_id: claimId,
+          question_id: 'q-handler-unknown-first',
+          canonical_hash: 'hash-handler-unknown-first',
+          verification_authority_epoch: firstEpoch,
+          verification_status: 'authorized',
+          created_at: now,
+        },
+        {
+          attempt_id: attemptId,
+          claim_id: claimId,
+          question_id: 'q-handler-unknown-second',
+          canonical_hash: 'hash-handler-unknown-second',
+          verification_authority_epoch: secondEpoch,
+          verification_status: 'authorized',
+          created_at: now,
+        },
+      ]);
+    const runTaskFn = taskMock(
+      verifyOutput({ overall: 'pass' }),
+      {
+        SolutionGenerateTask: solverOutput('「之」用在主谓之间，取消句子独立性。'),
+        TeachingQualityTask: teachingQualityOutput({}),
+      },
+      'tr-handler-unknown-cost',
+    );
+    const firstAuthority = {
+      claim_id: claimId,
+      attempt_id: attemptId,
+      question_id: 'q-handler-unknown-first',
+      verification_authority_epoch: firstEpoch,
+      fencing_token: fencingToken,
+    };
+    const secondAuthority = {
+      ...firstAuthority,
+      question_id: 'q-handler-unknown-second',
+      verification_authority_epoch: secondEpoch,
+    };
+
+    const handler = buildQuizVerifyHandler(testDb(), { runTaskFn });
+    await expect(
+      handler([
+        {
+          id: jobId,
+          data: {
+            question_ids: [
+              'q-handler-unknown-first',
+              'q-handler-unknown-second',
+              'q-handler-unscoped-after',
+            ],
+            placement_authorities: [firstAuthority, secondAuthority],
+          },
+        } as never,
+      ]),
+    ).resolves.toBeUndefined();
+
+    expect(runTaskFn.mock.calls.map(([kind]) => kind)).toEqual([
+      'QuizVerifyTask',
+      'QuizVerifyTask',
+      'SolutionGenerateTask',
+      'TeachingQualityTask',
+    ]);
+    const [claim] = await testDb()
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, claimId));
+    expect(claim).toMatchObject({
+      status: 'exhausted',
+      known_cost_micro_usd: null,
+      last_error_class: 'cost_unknown',
+      last_error_code: 'cost_unknown',
+    });
+    const [attempt] = await testDb()
+      .select()
+      .from(placement_starter_attempt)
+      .where(eq(placement_starter_attempt.id, attemptId));
+    expect(attempt).toMatchObject({
+      status: 'invariant_failed',
+      error_class: 'cost_unknown',
+      error_code: 'cost_unknown',
+    });
+    const attemptQuestions = await testDb()
+      .select()
+      .from(placement_starter_attempt_question)
+      .where(eq(placement_starter_attempt_question.attempt_id, attemptId));
+    expect(attemptQuestions.map((row) => row.verification_status)).toEqual([
+      'exhausted',
+      'exhausted',
+    ]);
+    const components = await testDb()
+      .select()
+      .from(placement_starter_cost_component)
+      .where(eq(placement_starter_cost_component.claim_id, claimId));
+    expect(components).toHaveLength(1);
+    expect(components[0]).toMatchObject({
+      provider_task_run_id: 'tr-handler-unknown-cost',
+      cost_micro_usd: null,
+      over_cap: null,
+    });
+    expect(components[0]?.provider_task_run_id.startsWith('reservation:')).toBe(false);
+    const [unscopedQuestion] = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.id, 'q-handler-unscoped-after'));
+    expect(unscopedQuestion.draft_status).toBe('active');
   });
 });
 

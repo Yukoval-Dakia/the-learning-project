@@ -437,6 +437,34 @@ describe('runResearchMeetingNightly', () => {
     );
   });
 
+  it('keeps one unpriced cell sticky in the run and completion summary', async () => {
+    const writeAiProposalFn = vi.fn(async () => 'prop_unknown');
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+    let call = 0;
+    const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => {
+      call += 1;
+      return { ...fakeInduced(input), cost_usd: call === 1 ? 0.02 : null };
+    });
+
+    const result = await runResearchMeetingNightly(
+      {} as never,
+      baseDeps({ writeAiProposalFn, writeEventFn, induceConjectureFn }),
+    );
+
+    expect(result.cost_usd).toBeNull();
+    expect(writeAiProposalFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ cost_usd: null }),
+    );
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:research_meeting_completed',
+        payload: { completed_result: result },
+      }),
+    );
+  });
+
   it('persists trigger, cell outcomes, scan, and completion through one transaction scope', async () => {
     const tx = { kind: 'test-transaction' } as never;
     const writeAiProposalFn = vi.fn(async () => 'prop_x');

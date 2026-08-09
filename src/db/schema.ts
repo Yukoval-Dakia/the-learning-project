@@ -2420,7 +2420,7 @@ export const placement_starter_claim = pgTable(
     pg_boss_job_id: text('pg_boss_job_id'),
     max_paid_attempts: integer('max_paid_attempts').notNull().default(3),
     budget_limit_micro_usd: integer('budget_limit_micro_usd').notNull().default(1_000_000),
-    known_cost_micro_usd: integer('known_cost_micro_usd').notNull().default(0),
+    known_cost_micro_usd: integer('known_cost_micro_usd').default(0),
     next_reconcile_at: timestamp('next_reconcile_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -2483,7 +2483,7 @@ export const placement_starter_claim = pgTable(
     check('placement_starter_claim_max_attempts_v1', sql`${t.max_paid_attempts} = 3`),
     check(
       'placement_starter_claim_nonnegative_cost',
-      sql`${t.budget_limit_micro_usd} >= 0 AND ${t.known_cost_micro_usd} >= 0`,
+      sql`${t.budget_limit_micro_usd} >= 0 AND (${t.known_cost_micro_usd} IS NULL OR ${t.known_cost_micro_usd} >= 0)`,
     ),
     check(
       'placement_starter_claim_terminal_timestamps',
@@ -2596,7 +2596,8 @@ export const placement_starter_cost_component = pgTable(
     }).notNull(),
     question_id: text('question_id').references(() => question.id),
     provider_task_run_id: text('provider_task_run_id').notNull(),
-    cost_micro_usd: integer('cost_micro_usd').notNull(),
+    cost_micro_usd: integer('cost_micro_usd'),
+    over_cap: boolean('over_cap'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull(),
   },
   (t) => [
@@ -2618,7 +2619,21 @@ export const placement_starter_cost_component = pgTable(
       'placement_starter_cost_component_kind_check',
       sql`${t.component_kind} IN ('quiz_gen','quiz_verify','solution_check','teaching_quality')`,
     ),
-    check('placement_starter_cost_component_nonnegative', sql`${t.cost_micro_usd} >= 0`),
+    check(
+      'placement_starter_cost_component_nonnegative',
+      sql`(
+        ${t.provider_task_run_id} LIKE 'reservation:%'
+        AND ${t.cost_micro_usd} IS NOT NULL
+        AND ${t.cost_micro_usd} >= 0
+      ) OR (
+        ${t.provider_task_run_id} NOT LIKE 'reservation:%'
+        AND (${t.cost_micro_usd} IS NULL OR ${t.cost_micro_usd} >= 0)
+      )`,
+    ),
+    check(
+      'placement_starter_cost_component_over_cap_check',
+      sql`${t.over_cap} IS NULL OR (${t.provider_task_run_id} NOT LIKE 'reservation:%' AND ${t.cost_micro_usd} IS NOT NULL)`,
+    ),
   ],
 );
 

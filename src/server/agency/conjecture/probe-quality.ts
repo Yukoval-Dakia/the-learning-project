@@ -9,7 +9,11 @@ import {
   evaluateConjectureProbePackageStructure,
 } from '@/core/schema/business';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
-import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
+import {
+  type TaskTextResult,
+  type TaskTextRunFn,
+  sumAllKnownCostUsd,
+} from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
 import { parseTaskStructuredOutput } from './structured-output';
@@ -46,7 +50,7 @@ export interface PrepareConjectureProbePairInput {
 interface ProbeQualityResultBase {
   attempts: ConjectureProbeQualityAttemptT[];
   task_run_ids: string[];
-  cost_usd: number;
+  cost_usd: number | null;
 }
 
 export type PrepareConjectureProbePairResult =
@@ -84,7 +88,7 @@ export async function prepareConjectureProbePair(
 ): Promise<PrepareConjectureProbePairResult> {
   const attempts: ConjectureProbeQualityAttemptT[] = [];
   const taskRunIds: string[] = [];
-  let costUsd = 0;
+  const costsUsd: Array<number | null | undefined> = [];
   let operationalFailureSeen = false;
   let lastOperationalTaskKind: ConjectureProbeQualityTaskKind = 'ConjectureProbeAuthorTask';
 
@@ -99,7 +103,7 @@ export async function prepareConjectureProbePair(
       outcome: 'rejected',
       attempts,
       task_run_ids: taskRunIds,
-      cost_usd: costUsd,
+      cost_usd: sumAllKnownCostUsd(costsUsd),
     };
   };
 
@@ -124,6 +128,7 @@ export async function prepareConjectureProbePair(
         },
       );
     } catch (error) {
+      costsUsd.push(null);
       operationalFailureSeen = true;
       lastOperationalTaskKind = 'ConjectureProbeAuthorTask';
       if (attempt < 2) {
@@ -144,7 +149,7 @@ export async function prepareConjectureProbePair(
     }
 
     if (authorResult.task_run_id) taskRunIds.push(authorResult.task_run_id);
-    costUsd += authorResult.cost_usd ?? 0;
+    costsUsd.push(authorResult.cost_usd);
     if (!authorResult.task_run_id) {
       operationalFailureSeen = true;
       lastOperationalTaskKind = 'ConjectureProbeAuthorTask';
@@ -224,6 +229,7 @@ export async function prepareConjectureProbePair(
         },
       );
     } catch (error) {
+      costsUsd.push(null);
       operationalFailureSeen = true;
       lastOperationalTaskKind = 'ConjectureProbeReviewTask';
       if (attempt < 2) {
@@ -244,7 +250,7 @@ export async function prepareConjectureProbePair(
     }
 
     if (reviewResult.task_run_id) taskRunIds.push(reviewResult.task_run_id);
-    costUsd += reviewResult.cost_usd ?? 0;
+    costsUsd.push(reviewResult.cost_usd);
     if (!reviewResult.task_run_id) {
       operationalFailureSeen = true;
       lastOperationalTaskKind = 'ConjectureProbeReviewTask';
@@ -322,7 +328,7 @@ export async function prepareConjectureProbePair(
       primary_task_run_id: authorTaskRunId,
       attempts: structuredClone(attempts),
       task_run_ids: taskRunIds,
-      cost_usd: costUsd,
+      cost_usd: sumAllKnownCostUsd(costsUsd),
     };
   }
 
