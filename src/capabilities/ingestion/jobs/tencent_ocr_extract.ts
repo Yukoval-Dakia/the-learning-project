@@ -1,4 +1,4 @@
-import type { Job } from 'pg-boss';
+import type { JobWithMetadata } from 'pg-boss';
 import sharp from 'sharp';
 
 import { type PreAttachFigure, cropAndUploadFigures } from '@/capabilities/ingestion/server/crop';
@@ -15,6 +15,15 @@ import {
 } from '@/capabilities/ingestion/server/glm_ocr_parser';
 import { writeIngestionOperationEvent } from '@/capabilities/ingestion/server/operation-store';
 import {
+  TencentSubmitInProgressError,
+  createOcrPageProviderContext,
+  executeTencentOcrDescribe,
+  executeTencentOcrSubmit,
+  extractionPageOperationId,
+  findSavedTencentJobId,
+  writeLegacyOcrCostLedger,
+} from '@/capabilities/ingestion/server/provider-attempts';
+import {
   type StructureResult,
   StructureTaskError,
   renderTencentHint,
@@ -22,6 +31,7 @@ import {
 } from '@/capabilities/ingestion/server/structure';
 import {
   type DescribeResponse,
+  describeOcrJob,
   pollUntilDone,
   submitOcrJob,
 } from '@/capabilities/ingestion/server/tencent_mark';
@@ -38,7 +48,6 @@ import { PermanentError, RetryableError } from '@/core/schema/structured_questio
 import type { FigureRefT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, source_asset } from '@/db/schema';
-import { writeCostLedger } from '@/server/ai/log';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import {
   type IngestionExtractionProgressPayloadT,
@@ -67,12 +76,6 @@ function bboxCenterPosition(bbox: { x: number; y: number; width: number; height:
 
 export type TencentOcrJobData = { sessionId: string; operationId?: string };
 
-const TASK_KIND = 'tencent_ocr_extract';
-
-function calculateGlmOcrCost(promptTokens: number, completionTokens: number): number {
-  return ((promptTokens + completionTokens) / 1_000_000) * 0.2;
-}
-
 export type TencentOcrDeps = {
   db: Db;
   r2: R2Client;
@@ -87,7 +90,9 @@ export type TencentOcrDeps = {
    * retained `EXTRACT_OCR_ENGINE='tencent'` fallback path (see engine resolution).
    */
   submitFn?: typeof submitOcrJob;
-  pollFn?: typeof pollUntilDone;
+  describeFn?: typeof describeOcrJob;
+  tencentPollOptions?: { readonly intervalMs?: number; readonly timeoutMs?: number };
+  afterTencentJobSaved?: (jobId: string) => Promise<void>;
   /**
    * YUK-253: explicit engine override for tests (bypasses the EXTRACT_OCR_ENGINE
    * env read). 'glm' (default) | 'tencent' (retained fallback).
@@ -103,17 +108,52 @@ export type TencentOcrDeps = {
 
 export function buildTencentOcrHandler(
   deps: TencentOcrDeps,
-): (jobs: Job<TencentOcrJobData>[]) => Promise<void> {
+): (jobs: JobWithMetadata<TencentOcrJobData>[]) => Promise<void> {
   return async (jobs) => {
     for (const job of jobs) {
       try {
-        await processOneOcrJob(deps, job.data.sessionId, job.id, job.data.operationId);
+        await processOneOcrJob(deps, job);
       } catch (err) {
-        await emitOperationFailureSafely(deps.db, job.data.operationId);
+        if (!shouldKeepExtractionResumable(err, deliveryMetadata(job))) {
+          await emitOperationFailureForFailedSession(
+            deps.db,
+            job.data.sessionId,
+            job.data.operationId,
+          );
+        }
         throw err;
       }
     }
   };
+}
+
+function deliveryMetadata(job: JobWithMetadata<TencentOcrJobData>): {
+  readonly retryCount: number;
+  readonly retryLimit: number;
+} {
+  const retryCount = 'retryCount' in job ? job.retryCount : 0;
+  const retryLimit = 'retryLimit' in job ? job.retryLimit : 0;
+  return {
+    retryCount: typeof retryCount === 'number' ? retryCount : 0,
+    retryLimit: typeof retryLimit === 'number' ? retryLimit : 0,
+  };
+}
+
+function normalizeExtractionError(err: unknown): RetryableError | PermanentError {
+  return err instanceof RetryableError || err instanceof PermanentError
+    ? err
+    : mapTencentError(err);
+}
+
+function shouldKeepExtractionResumable(
+  err: unknown,
+  delivery: { readonly retryCount: number; readonly retryLimit: number },
+): boolean {
+  if (err instanceof TencentSubmitInProgressError) return true;
+  return (
+    normalizeExtractionError(err) instanceof RetryableError &&
+    delivery.retryCount < delivery.retryLimit
+  );
 }
 
 async function emitOperationEventSafely(
@@ -140,6 +180,22 @@ async function emitOperationFailureSafely(db: Db, operationId: string | undefine
   });
 }
 
+async function emitOperationFailureForFailedSession(
+  db: Db,
+  sessionId: string,
+  operationId: string | undefined,
+): Promise<void> {
+  if (!operationId) return;
+  const rows = await db
+    .select({ status: learning_session.status })
+    .from(learning_session)
+    .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')))
+    .limit(1);
+  const session = rows[0];
+  if (session && session.status !== 'failed') return;
+  await emitOperationFailureSafely(db, operationId);
+}
+
 /**
  * Emit one extraction-progress event under the deliberate swallow-and-log
  * discipline: a progress emit must NEVER fail an otherwise-succeeding run, so a
@@ -161,13 +217,13 @@ async function emitProgressSafely(
 
 async function processOneOcrJob(
   deps: TencentOcrDeps,
-  sessionId: string,
-  bossJobId: string,
-  operationId?: string,
+  job: JobWithMetadata<TencentOcrJobData>,
 ): Promise<void> {
+  const { operationId, sessionId } = job.data;
+  const bossJobId = job.id;
   const glmOcr = deps.glmOcrFn ?? runGlmLayoutParsing;
   const submit = deps.submitFn ?? submitOcrJob;
-  const poll = deps.pollFn ?? pollUntilDone;
+  const describe = deps.describeFn ?? describeOcrJob;
   const runStructure = deps.runStructureFn ?? runStructureTask;
 
   // YUK-253: engine selection. GLM-OCR is the default; 'tencent' is the
@@ -199,7 +255,7 @@ async function processOneOcrJob(
       new PermanentError(`session ${sessionId} has no source_asset_ids`),
       engine,
     );
-    await emitOperationFailureSafely(deps.db, operationId);
+    await emitOperationFailureForFailedSession(deps.db, sessionId, operationId);
     return; // already failed, don't rethrow
   }
   const assetById = new Map<string, typeof source_asset.$inferSelect>();
@@ -214,7 +270,7 @@ async function processOneOcrJob(
         new PermanentError(`source_asset ${id} not found`),
         engine,
       );
-      await emitOperationFailureSafely(deps.db, operationId);
+      await emitOperationFailureForFailedSession(deps.db, sessionId, operationId);
       return;
     }
     assetById.set(id, asset);
@@ -278,6 +334,11 @@ async function processOneOcrJob(
       }
 
       const pageBase64 = pageBuffer.toString('base64');
+      const pageOperationId = extractionPageOperationId({
+        canonicalOperationId: operationId,
+        bossJobId,
+        pageIndex,
+      });
       pageImages.push({
         data: pageBase64,
         mediaType: asset.mime_type,
@@ -288,7 +349,11 @@ async function processOneOcrJob(
 
       if (engine === 'glm') {
         // GLM layout_parsing is synchronous (single call, no submit+poll).
-        const glmResp = await glmOcr({ imageBase64: pageBase64, mediaType: asset.mime_type });
+        const glmResp = await glmOcr({
+          imageBase64: pageBase64,
+          mediaType: asset.mime_type,
+          providerAttempt: createOcrPageProviderContext(deps.db, pageOperationId),
+        });
         glmPromptTokens += glmResp.usage?.prompt_tokens ?? 0;
         glmCompletionTokens += glmResp.usage?.completion_tokens ?? 0;
         // Parse this single page; stamp the handler's pageIndex (the response is
@@ -302,10 +367,30 @@ async function processOneOcrJob(
         }
       } else {
         // PHASE-DEFERRED (YUK-253): retained Tencent engine behind the flag.
-        const tencentJobId = await submit({ ImageBase64: pageBase64 });
-        const ocrResp: DescribeResponse = await poll(tencentJobId);
+        const savedJobId = await findSavedTencentJobId(deps.db, pageOperationId);
+        const tencentJobId =
+          savedJobId ??
+          (await executeTencentOcrSubmit({
+            db: deps.db,
+            pageOperationId,
+            deliveryRetryCount: job.retryCount,
+            deliveryStartedOn: job.startedOn,
+            params: { ImageBase64: pageBase64 },
+            submit,
+          }));
+        if (savedJobId === null) await deps.afterTencentJobSaved?.(tencentJobId);
+        const ocrResp: DescribeResponse = await pollUntilDone(tencentJobId, {
+          ...deps.tencentPollOptions,
+          describeFn: (jobId) =>
+            executeTencentOcrDescribe({
+              db: deps.db,
+              pageOperationId,
+              jobId,
+              describe,
+            }),
+        });
         if (ocrResp.JobStatus === 'FAIL') {
-          throw new RetryableError(
+          throw new PermanentError(
             `Tencent OCR job ${tencentJobId} FAIL: ${ocrResp.JobErrorMsg ?? 'unknown'}`,
           );
         }
@@ -539,39 +624,14 @@ async function processOneOcrJob(
       }),
     );
 
-    // 11. cost_ledger success.
-    //     YUK-253: GLM is the first billable OCR point. Tencent/xiaomi report no
-    //     cost, but GLM does: 0.2 元/M tokens (input = output price). cost is in
-    //     RMB 元 — marked by currency:'CNY' (YUK-359 added the column so read
-    //     paths group by currency instead of summing mixed USD/RMB).
-    if (engine === 'glm') {
-      await writeCostLedger(deps.db, {
-        task_kind: TASK_KIND,
-        provider: 'glm',
-        model: 'glm-ocr',
-        // cost in RMB 元 — GLM OCR 0.2元/M tokens (input=output).
-        cost: calculateGlmOcrCost(glmPromptTokens, glmCompletionTokens),
-        currency: 'CNY',
-        tokens_in: glmPromptTokens,
-        tokens_out: glmCompletionTokens,
-        outcome: 'success',
-        pgboss_job_id: bossJobId,
-      });
-    } else {
-      // PHASE-DEFERRED (YUK-253): retained Tencent path bills 0 (no token report).
-      // Tencent prices in RMB, so currency:'CNY' even though cost is 0.
-      await writeCostLedger(deps.db, {
-        task_kind: TASK_KIND,
-        provider: 'tencent',
-        model: 'QuestionMarkAgent',
-        cost: 0,
-        currency: 'CNY',
-        tokens_in: 0,
-        tokens_out: 0,
-        outcome: 'success',
-        pgboss_job_id: bossJobId,
-      });
-    }
+    await writeLegacyOcrCostLedger({
+      db: deps.db,
+      bossJobId,
+      engine,
+      outcome: 'success',
+      promptTokens: glmPromptTokens,
+      completionTokens: glmCompletionTokens,
+    });
 
     // YUK-696: both paid modes are opt-in. Do not even enqueue the worker when
     // both flags are absent/OFF; the extraction remains available for manual review.
@@ -621,10 +681,18 @@ async function processOneOcrJob(
       result: { session_id: sessionId, status: extractionResult.status },
     });
   } catch (err) {
-    await markFailedAndLogCost(deps, sessionId, bossJobId, err, engine, {
-      promptTokens: glmPromptTokens,
-      completionTokens: glmCompletionTokens,
-    });
+    await markFailedAndLogCost(
+      deps,
+      sessionId,
+      bossJobId,
+      err,
+      engine,
+      {
+        promptTokens: glmPromptTokens,
+        completionTokens: glmCompletionTokens,
+      },
+      deliveryMetadata(job),
+    );
     throw err; // rethrow so pg-boss retries (Retryable) or archives (Permanent)
   }
 }
@@ -639,39 +707,35 @@ async function markFailedAndLogCost(
     promptTokens: 0,
     completionTokens: 0,
   },
+  delivery: { retryCount: number; retryLimit: number } = { retryCount: 0, retryLimit: 0 },
 ): Promise<void> {
   // GLM client throws typed Retryable/Permanent errors, so mapTencentError is
   // only reached for legacy Tencent-path SDK errors (unchanged classification).
-  const mapped =
-    err instanceof RetryableError || err instanceof PermanentError ? err : mapTencentError(err);
+  const mapped = normalizeExtractionError(err);
   const outcome = mapped instanceof RetryableError ? 'failed_retryable' : 'failed_permanent';
 
-  try {
-    await deps.db.transaction((tx) =>
-      Ingestion.markExtractionFailed(tx, sessionId, mapped.message),
-    );
-  } catch (innerErr) {
-    // markExtractionFailed itself can throw if state guard rejects (e.g. session already failed
-    // from earlier retry). Log and continue —— pg-boss already knows.
-    console.error('[tencent_ocr_extract] markExtractionFailed failed', innerErr);
+  if (!shouldKeepExtractionResumable(mapped, delivery)) {
+    try {
+      await deps.db.transaction((tx) =>
+        Ingestion.markExtractionFailed(tx, sessionId, mapped.message),
+      );
+    } catch (innerErr) {
+      // markExtractionFailed itself can throw if state guard rejects (e.g. session already failed
+      // from earlier retry). Log and continue —— pg-boss already knows.
+      console.error('[tencent_ocr_extract] markExtractionFailed failed', innerErr);
+    }
   }
 
   try {
-    const tokensIn = engine === 'glm' ? glmUsage.promptTokens : 0;
-    const tokensOut = engine === 'glm' ? glmUsage.completionTokens : 0;
-    await writeCostLedger(deps.db, {
-      task_kind: TASK_KIND,
-      provider: engine === 'glm' ? 'glm' : 'tencent',
-      model: engine === 'glm' ? 'glm-ocr' : 'QuestionMarkAgent',
-      cost: engine === 'glm' ? calculateGlmOcrCost(tokensIn, tokensOut) : 0,
-      // Both OCR engines price in RMB (YUK-359).
-      currency: 'CNY',
-      tokens_in: tokensIn,
-      tokens_out: tokensOut,
+    await writeLegacyOcrCostLedger({
+      db: deps.db,
+      bossJobId,
+      engine,
       outcome,
-      pgboss_job_id: bossJobId,
+      promptTokens: glmUsage.promptTokens,
+      completionTokens: glmUsage.completionTokens,
     });
   } catch (innerErr) {
-    console.error('[tencent_ocr_extract] writeCostLedger failed', innerErr);
+    console.error('[tencent_ocr_extract] writeLegacyOcrCostLedger failed', innerErr);
   }
 }

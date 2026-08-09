@@ -180,6 +180,19 @@ describe('Ingestion.markExtractionStarted', () => {
     ).rejects.toBeInstanceOf(ApiError);
     await cleanup(sessionId, sourceDocId);
   });
+
+  it('keeps the same extraction resumable when pg-boss redelivers it', async () => {
+    // Given: a prior delivery already moved this ingestion extraction to extracting.
+    const { sessionId, sourceDocId } = await makeSession('extracting');
+
+    // When: pg-boss redelivers the same extraction and the worker starts it again.
+    await db.transaction((tx) => markExtractionStarted(tx, sessionId));
+
+    // Then: the session remains extracting instead of rejecting the resumable delivery.
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
+    expect(rows[0].status).toBe('extracting');
+    await cleanup(sessionId, sourceDocId);
+  });
 });
 
 describe('Ingestion.applyExtractionResult', () => {

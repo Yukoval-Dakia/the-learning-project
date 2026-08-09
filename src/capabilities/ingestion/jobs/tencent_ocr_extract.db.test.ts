@@ -16,6 +16,7 @@ import {
   event,
   job_events,
   learning_session,
+  provider_attempt,
   question_block,
   source_asset,
   source_document,
@@ -294,6 +295,7 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
     expect(ours?.tokens_in).toBe(1128);
     expect(ours?.tokens_out).toBe(440);
     expect(ours?.cost).toBeCloseTo(((1128 + 440) / 1_000_000) * 0.2, 10);
+    expect(await db.select().from(provider_attempt)).toHaveLength(0);
 
     await cleanup(sessionId, sourceDocId, assetId);
     if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
@@ -524,6 +526,9 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
     );
     expect(glmOcrFn).not.toHaveBeenCalled();
 
+    const attempts = await db.select().from(provider_attempt);
+    expect(attempts).toHaveLength(0);
+
     const cost = await db.select().from(cost_ledger);
     const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-3');
     expect(ours?.outcome).toBe('failed_permanent');
@@ -590,7 +595,7 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
 
     const glmOcrFn = vi.fn(); // must NOT be called on the tencent path
     const submitFn = vi.fn(async () => 'tencent-job-id');
-    const pollFn = vi.fn(async () => clozeFixture as never);
+    const describeFn = vi.fn(async () => clozeFixture as never);
     const runStructureFn = makeVlmStub();
 
     const handler = buildTencentOcrHandler({
@@ -599,10 +604,18 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
       engine: 'tencent',
       glmOcrFn: glmOcrFn as never,
       submitFn,
-      pollFn,
+      describeFn,
       runStructureFn,
     });
-    await handler([{ id: 'boss-job-tencent', data: { sessionId } } as never]);
+    await handler([
+      {
+        id: 'boss-job-tencent',
+        data: { sessionId },
+        retryCount: 0,
+        retryLimit: 2,
+        startedOn: new Date('2026-08-09T00:00:00.000Z'),
+      } as never,
+    ]);
 
     const session = await db
       .select()
@@ -635,7 +648,7 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
     const r2 = makeR2WithImage(await makeTestImage());
 
     const submitFn = vi.fn(async () => 'tencent-job-fb');
-    const pollFn = vi.fn(async () => clozeFixture as never);
+    const describeFn = vi.fn(async () => clozeFixture as never);
     const runStructureFn = (async () => {
       throw new StructureTaskError('provider unavailable');
     }) as RunStructureFn;
@@ -645,10 +658,18 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
       r2,
       engine: 'tencent',
       submitFn,
-      pollFn,
+      describeFn,
       runStructureFn,
     });
-    await handler([{ id: 'boss-job-tencent-fb', data: { sessionId } } as never]);
+    await handler([
+      {
+        id: 'boss-job-tencent-fb',
+        data: { sessionId },
+        retryCount: 0,
+        retryLimit: 2,
+        startedOn: new Date('2026-08-09T00:00:00.000Z'),
+      } as never,
+    ]);
 
     const session = await db
       .select()

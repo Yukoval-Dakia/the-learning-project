@@ -400,11 +400,12 @@ export const PROVIDER_LANES = [
       },
     },
     evidence: {
-      path: 'src/capabilities/ingestion/jobs/tencent_ocr_extract.ts',
-      calls: ['writeCostLedger', 'calculateGlmOcrCost'],
-      contains: ["provider: 'glm'"],
+      path: 'src/capabilities/ingestion/server/glm_ocr.ts',
+      calls: ['executeGlmOcrWireAttempt'],
+      contains: ['recordExternalRequestId', 'reportUsage', 'estimateCost'],
     },
-    costSupport: 'per-page usage accumulated and written to cost_ledger on success and failure',
+    costSupport:
+      'each page fetch records provider request id, usage, and estimated CNY cost; the transitional legacy ledger mirror remains until F0.5',
   },
   {
     id: 'mem0.event-memory',
@@ -528,7 +529,7 @@ export const PROVIDER_LANES = [
       calls: ['client.SubmitQuestionMarkAgentJob', 'client.DescribeQuestionMarkAgentJob'],
     },
     costSupport:
-      'no project-side provider usage or per-wire cost truth; OCR ledger records zero cost',
+      'each Submit/Describe attempt records unknown usage and cost; the transitional legacy OCR ledger mirror remains zero until F0.5',
   },
 ] as const satisfies readonly ProviderLane[];
 

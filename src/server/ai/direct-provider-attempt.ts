@@ -50,6 +50,7 @@ export interface DirectProviderAttemptDescriptor {
   readonly endpointClass: string;
   readonly operationKind: string;
   readonly unknownCostCurrency: 'CNY' | 'USD' | null;
+  readonly attemptAnchor?: string;
 }
 
 export interface DirectProviderAttemptControl {
@@ -117,7 +118,10 @@ function makeLifecycle(
   descriptor: DirectProviderAttemptDescriptor,
 ): ProviderAttemptLifecycle {
   const identity = ProviderRequestIdentity.parse({
-    attemptId: randomUUID(),
+    attemptId:
+      descriptor.attemptAnchor === undefined
+        ? randomUUID()
+        : providerOperationIdForInvocation(descriptor.attemptAnchor),
     operationId: context.operationId,
     attemptKind: 'wire' as const,
     provider: descriptor.provider,
