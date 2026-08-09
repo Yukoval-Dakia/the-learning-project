@@ -22,6 +22,7 @@ const providerOperation = createMem0OpaqueOperationContext({
   caller: 'api',
   deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
   operationAnchor: 'search-memories-unit-852',
+  mode: 'observe',
   createLifecycle: vi.fn(),
 });
 

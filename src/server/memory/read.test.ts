@@ -13,6 +13,7 @@ describe('readMemoryFacts', () => {
       caller: 'api',
       deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
       operationAnchor: 'read-memory-facts-unit-852',
+      mode: 'observe',
       createLifecycle: vi.fn(),
     });
     const result = await readMemoryFacts('learner preferences', { topK: 2 }, providerOperation, {

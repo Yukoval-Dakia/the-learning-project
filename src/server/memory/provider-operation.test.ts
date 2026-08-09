@@ -3,6 +3,7 @@ import type {
   ProviderAttemptLifecycle,
 } from '@/server/ai/provider-attempt-lifecycle';
 import {
+  type Mem0OpaqueLifecycleFactory,
   createMem0OpaqueOperationContext,
   executeMem0OpaqueOperation,
 } from '@/server/ai/provider-attempt-runtime';
@@ -11,6 +12,83 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 afterEach(() => vi.restoreAllMocks());
 
 describe('Mem0 opaque provider operation', () => {
+  it.each([
+    ['absent config', {}, 'off', null],
+    [
+      'global off',
+      {
+        AI_PROVIDER_ATTEMPT_ADMISSION_MODE: 'off',
+        AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: JSON.stringify({
+          'mem0.event-memory': { maxConcurrentAttempts: 2, maxAttemptStartsPerMinute: 5 },
+        }),
+      },
+      'off',
+      null,
+    ],
+    [
+      'unlisted lane policy',
+      {
+        AI_PROVIDER_ATTEMPT_ADMISSION_MODE: 'observe',
+        AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: JSON.stringify({
+          'glm.memory-reconcile': { maxConcurrentAttempts: 3, maxAttemptStartsPerMinute: 7 },
+        }),
+      },
+      'off',
+      null,
+    ],
+    [
+      'listed observe policy',
+      {
+        AI_PROVIDER_ATTEMPT_ADMISSION_MODE: 'observe',
+        AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: JSON.stringify({
+          'mem0.event-memory': { maxConcurrentAttempts: 2, maxAttemptStartsPerMinute: 5 },
+        }),
+      },
+      'observe',
+      { maxConcurrentAttempts: 2, maxAttemptStartsPerMinute: 5 },
+    ],
+    [
+      'listed enforce policy',
+      {
+        AI_PROVIDER_ATTEMPT_ADMISSION_MODE: 'enforce',
+        AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: JSON.stringify({
+          'mem0.event-memory': { maxConcurrentAttempts: 2, maxAttemptStartsPerMinute: 5 },
+        }),
+      },
+      'enforce',
+      { maxConcurrentAttempts: 2, maxAttemptStartsPerMinute: 5 },
+    ],
+  ] as const)(
+    'passes resolver result through the opaque production seam for %s',
+    async (_scenario, env, expectedMode, expectedPolicy) => {
+      const execute = vi.fn().mockResolvedValue('provider-result');
+      const createLifecycle = vi.fn<Mem0OpaqueLifecycleFactory>((input) => ({
+        identity: input.identity,
+        acquire: async () => ({
+          admission: input.mode === 'off' ? 'off' : 'acquired',
+          reserveProviderStart: async () => undefined,
+          recordExternalRequestId: async () => undefined,
+          finish: async () => (input.mode === 'off' ? 'untracked' : 'settled'),
+        }),
+      }));
+      const context = createMem0OpaqueOperationContext({
+        caller: 'worker',
+        deadlineAt: new Date('2030-01-01T00:00:00.000Z'),
+        operationAnchor: 'mem0-admission-seam',
+        env,
+        createLifecycle,
+      });
+
+      await expect(executeMem0OpaqueOperation(context, 'add_inferred', execute)).resolves.toBe(
+        'provider-result',
+      );
+      expect(createLifecycle).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: expectedMode, policy: expectedPolicy }),
+      );
+      expect(execute).toHaveBeenCalledOnce();
+    },
+  );
+
   it('keeps one caller-owned operation identity while each SDK call gets a fresh attempt', async () => {
     // Given one product invocation and an observable lifecycle factory.
     const identities: ProviderAttemptLifecycle['identity'][] = [];
@@ -30,6 +108,7 @@ describe('Mem0 opaque provider operation', () => {
       caller: 'worker',
       deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
       operationAnchor: 'memory-ingest-job-852',
+      mode: 'observe',
       createLifecycle,
     });
 
@@ -81,6 +160,7 @@ describe('Mem0 opaque provider operation', () => {
       caller: 'api',
       deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
       operationAnchor: 'api-memory-search-852',
+      mode: 'observe',
       createLifecycle,
     });
 
@@ -140,6 +220,7 @@ describe('Mem0 opaque provider operation', () => {
       caller: 'api',
       deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
       operationAnchor: 'api-success-settlement-failure-852',
+      mode: 'observe',
       createLifecycle,
     });
 
@@ -195,6 +276,7 @@ describe('Mem0 opaque provider operation', () => {
       caller: 'worker',
       deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
       operationAnchor: 'worker-sdk-settlement-failure-852',
+      mode: 'observe',
       createLifecycle,
     });
 

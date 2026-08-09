@@ -8,6 +8,7 @@ const providerOperation = createMem0OpaqueOperationContext({
   caller: 'worker',
   deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
   operationAnchor: 'conjecture-projection-db-852',
+  mode: 'observe',
   createLifecycle: vi.fn(),
 });
 

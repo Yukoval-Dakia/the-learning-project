@@ -40,7 +40,6 @@ export function buildAutoEnrollHandler(db: Db): (jobs: Job<AutoEnrollJobData>[])
           providerAttempt: {
             db,
             caller: 'worker',
-            mode: 'observe',
             deadlineAt: new Date(Date.now() + 20_000),
             operationAnchor: job.id,
           },

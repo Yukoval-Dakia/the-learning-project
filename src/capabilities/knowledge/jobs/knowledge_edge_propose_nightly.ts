@@ -306,7 +306,6 @@ export function buildKnowledgeEdgeProposeNightlyHandler(
         providerAttempt: {
           db,
           caller: 'worker',
-          mode: 'observe',
           deadlineAt: new Date(Date.now() + 65_000),
           operationAnchor: jobs[0]?.id,
         },

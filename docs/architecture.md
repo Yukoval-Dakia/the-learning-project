@@ -694,7 +694,7 @@ FSRS 投影表 `material_fsrs_state` 从 event 流派生，每次 `action='revie
        │   ├─ UPDATE session.status    │    R2.get + Tencent submit/poll + parse + crop
        │   ├─ writeJobEvent → NOTIFY   │    IngestionSession.applyExtractionResult
        │   └─ boss.send                │       └─ writeJobEvent (NOTIFY)
-       │                               │    writeCostLedger(outcome, pgboss_job_id)
+       │                               │    provider_attempt lifecycle + usage/cost truth
        ├── GET /api/.../events (SSE)   │
        │   replay + subscribe          │
        ↑                               │
@@ -786,3 +786,13 @@ started → completed | abandoned
 **pg-boss dev harness（`echo_jobs` + `/api/echo`）**：`echo_jobs` 表 + `POST /api/echo` 路由 + `src/server/boss/handlers/echo.ts` 是 Sub 0c 的 **pg-boss E2E dev harness**，验证 enqueue → pg-boss worker → notify → SSE 全链路。这是验收门（acceptance gate），**不是生产业务路由**；不在 Phase 1c.1 DROP，但 Phase 2+ 可按需清理。（closes #34 finding 2）
 
 **命名澄清**：`Tool` (LLM 函数原语) ≠ `tool_*` Artifact (互动型产出物)。前者是 AI 任务层的实现细节，后者是用户消费的内容对象。两个层级不冲突但同名易混。
+
+### Direct-provider attempt admission and cost truth
+
+Direct and opaque provider calls use `provider_attempt` as their durable lifecycle and cost truth.
+The closed lane set and `off -> observe -> enforce` resolver are documented in
+`docs/runbooks/provider-attempt-admission.md`. This gate is separate from the Claude Agent SDK
+session gate (`provider_session_admission`). Cost readers union terminal, provider-started attempts
+with existing `cost_ledger` rows. Only durable exact attempt-ID links are de-duplicated. Unlinked
+historical OCR job-level rows remain visible as explicit legacy truth; exact-head code no longer
+writes new mirrors. Readers never copy provider attempts into `cost_ledger`.

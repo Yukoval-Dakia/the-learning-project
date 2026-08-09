@@ -8,7 +8,6 @@ import {
   createDirectProviderOperationContext,
   executeDirectProviderAttempt,
   providerOperationIdForInvocation,
-  writeCostLedger,
 } from '@/server/ai/provider-attempt-runtime';
 import { and, desc, eq, isNotNull } from 'drizzle-orm';
 
@@ -29,15 +28,6 @@ type TencentDescribeResponse = {
 };
 type TencentSubmit = (params: TencentSubmitParams) => Promise<string>;
 type TencentDescribe = (jobId: string) => Promise<TencentDescribeResponse>;
-
-type LegacyOcrLedgerInput = {
-  readonly db: Db;
-  readonly bossJobId: string;
-  readonly engine: 'glm' | 'tencent';
-  readonly outcome: 'success' | 'failed_retryable' | 'failed_permanent';
-  readonly promptTokens: number;
-  readonly completionTokens: number;
-};
 
 export class ProviderAttemptResumeConflictError extends Error {
   readonly operationId: string;
@@ -97,7 +87,6 @@ export function createOcrPageProviderContext(
   return createDirectProviderOperationContext({
     db,
     caller: 'worker',
-    mode: 'observe',
     deadlineAt: new Date(Date.now() + 180_000),
     operationAnchor: pageOperationId,
   });
@@ -138,7 +127,6 @@ export async function executeTencentOcrSubmit(input: {
   const context = createDirectProviderOperationContext({
     db: input.db,
     caller: 'worker',
-    mode: 'observe',
     deadlineAt,
     operationAnchor: input.pageOperationId,
   });
@@ -188,7 +176,6 @@ export async function executeTencentOcrDescribe(input: {
   const context = createDirectProviderOperationContext({
     db: input.db,
     caller: 'worker',
-    mode: 'observe',
     deadlineAt: new Date(Date.now() + 60_000),
     operationAnchor: input.pageOperationId,
   });
@@ -216,21 +203,4 @@ export async function executeTencentOcrDescribe(input: {
     },
   );
   return result.value;
-}
-
-/** Transitional legacy zero/estimated ledger mirror; delete with F0.5 cutover. */
-export async function writeLegacyOcrCostLedger(input: LegacyOcrLedgerInput): Promise<void> {
-  const tokensIn = input.engine === 'glm' ? input.promptTokens : 0;
-  const tokensOut = input.engine === 'glm' ? input.completionTokens : 0;
-  await writeCostLedger(input.db, {
-    task_kind: 'tencent_ocr_extract',
-    provider: input.engine,
-    model: input.engine === 'glm' ? 'glm-ocr' : 'QuestionMarkAgent',
-    cost: input.engine === 'glm' ? ((tokensIn + tokensOut) / 1_000_000) * 0.2 : 0,
-    currency: 'CNY',
-    tokens_in: tokensIn,
-    tokens_out: tokensOut,
-    outcome: input.outcome,
-    pgboss_job_id: input.bossJobId,
-  });
 }

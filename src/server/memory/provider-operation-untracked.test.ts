@@ -15,6 +15,7 @@ describe('Mem0 opaque untracked settlement', () => {
       caller: 'worker',
       deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
       operationAnchor: 'worker-untracked-852',
+      mode: 'observe',
       createLifecycle: (input) => ({
         identity: input.identity,
         acquire: async () => ({
@@ -54,6 +55,7 @@ describe('Mem0 opaque untracked settlement', () => {
       caller: 'api',
       deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
       operationAnchor: 'api-failed-untracked-852',
+      mode: 'observe',
       createLifecycle: (input) => ({
         identity: input.identity,
         acquire: async () => ({

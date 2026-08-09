@@ -298,50 +298,7 @@ describe('judgeReconciliation', () => {
     expect(decisions[0].action).toBe('KEEP_BOTH');
   });
 
-  it('fires onUsage with token counts from the GLM response (YUK-359)', async () => {
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({
-            choices: [
-              {
-                message: {
-                  content: JSON.stringify({
-                    decisions: [
-                      {
-                        new_index: 0,
-                        action: 'KEEP_BOTH',
-                        old_index: null,
-                        confidence: 0.9,
-                        reason: 'ok',
-                      },
-                    ],
-                  }),
-                },
-              },
-            ],
-            usage: { prompt_tokens: 1234, completion_tokens: 56, total_tokens: 1290 },
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ),
-    );
-    const seen: Array<{ promptTokens: number; completionTokens: number }> = [];
-
-    await judgeReconciliation(mockNewMems(), mockCandidates(), {
-      env: MOCK_ENV,
-      fetchImpl: fetchMock as unknown as typeof fetch,
-      providerAttempt: attemptContext([]),
-      onUsage: (u) => {
-        seen.push(u);
-      },
-    });
-
-    expect(seen).toEqual([{ promptTokens: 1234, completionTokens: 56 }]);
-  });
-
-  it('fires onUsage even when content is empty + the parse then throws (YUK-359 cost gap)', async () => {
-    // A billed-but-empty response: usage tokens present, content empty. The cost
-    // MUST still be recorded before ReconcileParseError throws.
+  it('records attempt cost truth when billed content is empty before parse failure', async () => {
     const fetchMock = vi.fn(
       async () =>
         new Response(
@@ -352,7 +309,6 @@ describe('judgeReconciliation', () => {
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         ),
     );
-    const seen: Array<{ promptTokens: number; completionTokens: number }> = [];
     const attempts: unknown[] = [];
 
     await expect(
@@ -360,14 +316,9 @@ describe('judgeReconciliation', () => {
         env: MOCK_ENV,
         fetchImpl: fetchMock as unknown as typeof fetch,
         providerAttempt: attemptContext(attempts),
-        onUsage: (u) => {
-          seen.push(u);
-        },
       }),
     ).rejects.toThrow(ReconcileParseError);
 
-    // onUsage fired despite the subsequent throw.
-    expect(seen).toEqual([{ promptTokens: 800, completionTokens: 0 }]);
     expect(attempts).toEqual([
       expect.objectContaining({
         evidence: expect.objectContaining({
@@ -380,17 +331,17 @@ describe('judgeReconciliation', () => {
             output: 0,
           }),
           cost: expect.objectContaining({
-            basis: 'unknown',
-            amount: null,
+            basis: 'estimated',
+            amount: expect.any(Number),
             currency: 'CNY',
-            source: 'provider_cost_absent',
+            source: 'glm-chat-pricebook',
           }),
         }),
       }),
     ]);
   });
 
-  it('keeps partial provider usage null while legacy usage defaults missing counts to zero', async () => {
+  it('keeps partial provider usage null while estimating from the reported token subset', async () => {
     const fetchMock = vi.fn(
       async () =>
         new Response(
@@ -418,29 +369,23 @@ describe('judgeReconciliation', () => {
         ),
     );
     const attempts: unknown[] = [];
-    const legacyUsage: Array<{ promptTokens: number; completionTokens: number }> = [];
-
     await judgeReconciliation(mockNewMems(), mockCandidates(), {
       env: MOCK_ENV,
       fetchImpl: fetchMock as unknown as typeof fetch,
       providerAttempt: attemptContext(attempts),
-      onUsage: (usage) => {
-        legacyUsage.push(usage);
-      },
     });
 
-    expect(legacyUsage).toEqual([{ promptTokens: 17, completionTokens: 0 }]);
     expect(attempts).toEqual([
       expect.objectContaining({
         evidence: expect.objectContaining({
           usage: expect.objectContaining({ input: 17, output: null, total: null }),
-          cost: expect.objectContaining({ basis: 'unknown', amount: null }),
+          cost: expect.objectContaining({ basis: 'estimated', amount: expect.any(Number) }),
         }),
       }),
     ]);
   });
 
-  it('leaves provider usage unknown for an empty usage object while preserving legacy 0/0', async () => {
+  it('leaves provider usage and cost unknown for an empty usage object', async () => {
     const fetchMock = vi.fn(
       async () =>
         new Response(
@@ -468,18 +413,12 @@ describe('judgeReconciliation', () => {
         ),
     );
     const attempts: unknown[] = [];
-    const legacyUsage: Array<{ promptTokens: number; completionTokens: number }> = [];
-
     await judgeReconciliation(mockNewMems(), mockCandidates(), {
       env: MOCK_ENV,
       fetchImpl: fetchMock as unknown as typeof fetch,
       providerAttempt: attemptContext(attempts),
-      onUsage: (usage) => {
-        legacyUsage.push(usage);
-      },
     });
 
-    expect(legacyUsage).toEqual([{ promptTokens: 0, completionTokens: 0 }]);
     expect(attempts).toEqual([
       expect.objectContaining({
         evidence: expect.objectContaining({

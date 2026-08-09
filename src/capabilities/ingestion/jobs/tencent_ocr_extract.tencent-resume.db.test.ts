@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ProviderAttemptResumeConflictError,
@@ -9,13 +9,7 @@ import {
 import type { DescribeResponse } from '@/capabilities/ingestion/server/tencent_mark';
 import { RetryableError } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
-import {
-  cost_ledger,
-  job_events,
-  learning_session,
-  provider_attempt,
-  question_block,
-} from '@/db/schema';
+import { job_events, learning_session, provider_attempt, question_block } from '@/db/schema';
 import { createImageR2, seedIngestionSession } from '@/server/session/ingestion-test-support';
 import tencentDone from '../../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
 import { resetDb } from '../../../../tests/helpers/db';
@@ -37,7 +31,20 @@ function structureResult() {
   };
 }
 
-beforeEach(resetDb);
+beforeEach(async () => {
+  vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
+  vi.stubEnv(
+    'AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON',
+    JSON.stringify({
+      'tencent.question-mark-agent': {
+        maxConcurrentAttempts: 100,
+        maxAttemptStartsPerMinute: 1000,
+      },
+    }),
+  );
+  await resetDb();
+});
+afterEach(() => vi.unstubAllEnvs());
 
 describe('Tencent OCR provider-attempt resume', () => {
   it('resumes the saved JobId after termination without a second Submit', async () => {
@@ -93,7 +100,7 @@ describe('Tencent OCR provider-attempt resume', () => {
     await secondHandler([{ ...job, retryCount: 1 }] as never);
 
     // Then: only the saved JobId is polled, and new truth remains unknown while
-    // the retained legacy ledger continues to record zero cost.
+    // provider-attempt truth remains unknown rather than fabricating zero cost.
     expect(submitFn).toHaveBeenCalledOnce();
     expect(describeFn).toHaveBeenCalledWith('saved-job-id');
     const session = await db
@@ -114,12 +121,6 @@ describe('Tencent OCR provider-attempt resume', () => {
     );
     expect(attempts.every((attempt) => attempt.cost_basis === 'unknown')).toBe(true);
     expect(attempts.every((attempt) => attempt.usage_json?.basis === 'unknown')).toBe(true);
-    const legacyRows = await db
-      .select()
-      .from(cost_ledger)
-      .where(eq(cost_ledger.provider, 'tencent'));
-    expect(legacyRows).toHaveLength(2);
-    expect(legacyRows.every((row) => row.cost === 0)).toBe(true);
   });
 
   it('keeps poll timeout resumable and polls the same JobId on redelivery', async () => {

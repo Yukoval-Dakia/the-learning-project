@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { db } from '@/db/client';
 import { provider_attempt } from '@/db/schema';
@@ -12,7 +12,20 @@ import {
   findSavedTencentJobId,
 } from './provider-attempts';
 
-beforeEach(resetDb);
+beforeEach(async () => {
+  vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
+  vi.stubEnv(
+    'AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON',
+    JSON.stringify({
+      'tencent.question-mark-agent': {
+        maxConcurrentAttempts: 100,
+        maxAttemptStartsPerMinute: 1000,
+      },
+    }),
+  );
+  await resetDb();
+});
+afterEach(() => vi.unstubAllEnvs());
 
 describe('ingestion provider-attempt resume helpers', () => {
   it('propagates conflicting saved JobIds and creates no recovery wire attempt', async () => {

@@ -10,6 +10,11 @@ import {
 } from '@/core/schema/provider-attempt';
 import type { Db } from '@/db/client';
 import {
+  ProviderAttemptAdmissionLaneSchema,
+  type ProviderAttemptAdmissionPolicy,
+  resolveProviderAttemptAdmission,
+} from './provider-attempt-admission-config';
+import {
   type ProviderAttemptLifecycle,
   ProviderAttemptLifecycleError,
   type ProviderAttemptLifecycleMode,
@@ -19,6 +24,7 @@ export { glmChatCostCny } from './pricing';
 
 export type DirectProviderLifecycleFactory = (input: {
   readonly mode: ProviderAttemptLifecycleMode;
+  readonly policy?: ProviderAttemptAdmissionPolicy | null;
   readonly identity: ProviderRequestIdentityT;
   readonly deadlineAt: Date;
   readonly db?: Db;
@@ -27,7 +33,9 @@ export type DirectProviderLifecycleFactory = (input: {
 export interface DirectProviderOperationContext {
   readonly caller: 'api' | 'worker';
   readonly deadlineAt: Date;
-  readonly mode: ProviderAttemptLifecycleMode;
+  readonly mode?: ProviderAttemptLifecycleMode;
+  readonly policy?: ProviderAttemptAdmissionPolicy | null;
+  readonly env?: NodeJS.ProcessEnv;
   readonly operationId: string;
   readonly db?: Db;
   readonly createLifecycle?: DirectProviderLifecycleFactory;
@@ -37,7 +45,9 @@ export interface DirectProviderOperationOptions {
   readonly db?: Db;
   readonly caller: 'api' | 'worker';
   readonly deadlineAt: Date;
-  readonly mode: ProviderAttemptLifecycleMode;
+  readonly mode?: ProviderAttemptLifecycleMode;
+  readonly policy?: ProviderAttemptAdmissionPolicy | null;
+  readonly env?: NodeJS.ProcessEnv;
   readonly operationAnchor?: string;
   readonly createLifecycle?: DirectProviderLifecycleFactory;
 }
@@ -107,6 +117,8 @@ export function createDirectProviderOperationContext(
     db: input.db,
     caller: input.caller,
     mode: input.mode,
+    policy: input.policy,
+    env: input.env ?? process.env,
     deadlineAt: input.deadlineAt,
     operationId: providerOperationIdForInvocation(input.operationAnchor),
     createLifecycle: input.createLifecycle,
@@ -117,6 +129,13 @@ function makeLifecycle(
   context: DirectProviderOperationContext,
   descriptor: DirectProviderAttemptDescriptor,
 ): ProviderAttemptLifecycle {
+  const configured =
+    context.mode === undefined
+      ? resolveProviderAttemptAdmission(
+          context.env ?? process.env,
+          ProviderAttemptAdmissionLaneSchema.parse(descriptor.lane),
+        )
+      : { mode: context.mode, policy: context.policy ?? null };
   const identity = ProviderRequestIdentity.parse({
     attemptId:
       descriptor.attemptAnchor === undefined
@@ -134,7 +153,8 @@ function makeLifecycle(
   });
   if (context.createLifecycle) {
     return context.createLifecycle({
-      mode: context.mode,
+      mode: configured.mode,
+      policy: configured.policy,
       identity,
       deadlineAt: context.deadlineAt,
       db: context.db,
@@ -142,7 +162,8 @@ function makeLifecycle(
   }
   if (!context.db) throw new TypeError('direct provider attempt context requires db');
   return createProviderAttemptLifecycle({
-    mode: context.mode,
+    mode: configured.mode,
+    policy: configured.policy,
     identity,
     deadlineAt: context.deadlineAt,
     db: context.db,

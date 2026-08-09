@@ -153,24 +153,12 @@ type GlmChatResponse = {
   error?: { code?: string | number; message?: string };
 };
 
-/** Token usage surfaced to the caller so it can write cost_ledger (mirrors reconcile-llm.ts). */
-export type ReconcileUsage = { promptTokens: number; completionTokens: number };
-export type ReconcileUsageCorrelation = {
-  attemptId: string;
-  model: string;
-  estimatedCostCny: number;
-};
-
 export type GlmConfig = {
   baseURL: string;
   apiKey: string;
   model: string;
 };
 
-// Exported so the cost_ledger call site (propose_edge.ts) can read the SAME
-// resolved GLM model the judge uses — single source of truth (CodeRabbit/PR-Agent
-// Finding 3), instead of hardcoding 'glm-5.2' which drifts when MEM0_LLM_MODEL is
-// set. Cheap + idempotent (createMem0Config just reads env into a config object).
 export function resolveGlmConfig(env: Env): GlmConfig {
   const mem0Config = createMem0Config(env);
   const llmConfig = mem0Config.llm.config;
@@ -415,10 +403,6 @@ export async function judgeEdgeReconcile(
     timeoutMs?: number;
     fetchImpl?: typeof fetch;
     providerAttempt?: EdgeProviderAttemptOptions;
-    onUsage?: (
-      usage: ReconcileUsage,
-      correlation: ReconcileUsageCorrelation,
-    ) => void | Promise<void>;
   } = {},
 ): Promise<EdgeReconcileDecision> {
   // No neighbors → nothing to reconcile against → KEEP_BOTH. Skip the GLM call
@@ -547,23 +531,13 @@ export async function judgeEdgeReconcile(
           total: typeof totalTokens === 'number' ? totalTokens : null,
         });
       }
-      if (json.usage) {
-        const legacyPromptTokens = typeof promptTokens === 'number' ? promptTokens : 0;
-        const legacyCompletionTokens = typeof completionTokens === 'number' ? completionTokens : 0;
-        const estimatedCostCny = glmChatCostCny(legacyPromptTokens, legacyCompletionTokens);
-        if (opts.onUsage) {
-          try {
-            await opts.onUsage(
-              {
-                promptTokens: legacyPromptTokens,
-                completionTokens: legacyCompletionTokens,
-              },
-              { attemptId: attempt.attemptId, model: glmConfig.model, estimatedCostCny },
-            );
-          } catch (err) {
-            console.error('[edge-reconcile] onUsage callback failed', err);
-          }
-        }
+      if (hasReportedTokens) {
+        const estimatedCostCny = glmChatCostCny(promptTokens ?? 0, completionTokens ?? 0);
+        attempt.estimateCost({
+          amount: estimatedCostCny,
+          currency: 'CNY',
+          source: 'glm-chat-pricebook',
+        });
       }
 
       const content = json.choices?.[0]?.message?.content;

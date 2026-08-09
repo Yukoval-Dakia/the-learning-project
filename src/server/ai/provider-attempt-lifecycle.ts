@@ -10,12 +10,14 @@ import {
 import type { Db } from '@/db/client';
 import { provider_attempt, provider_attempt_admission } from '@/db/schema';
 import { sql } from 'drizzle-orm';
+import type { ProviderAttemptAdmissionPolicy } from './provider-attempt-admission-config';
 
 export type ProviderAttemptLifecycleMode = 'off' | 'observe' | 'enforce';
 export type ProviderAttemptAdmission = 'off' | 'acquired' | 'would_deny' | 'untracked';
 export type ProviderAttemptFinishResult = 'settled' | 'already_settled' | 'untracked';
 export type ProviderAttemptLifecycleReason =
   | 'active_duplicate'
+  | 'capacity_exhausted'
   | 'control_plane_unavailable'
   | 'deadline_elapsed'
   | 'deadline_mismatch'
@@ -23,7 +25,9 @@ export type ProviderAttemptLifecycleReason =
   | 'identity_collision'
   | 'lease_lost'
   | 'opaque_wire_count'
+  | 'policy_mismatch'
   | 'recovery_required'
+  | 'rate_exhausted'
   | 'terminal_conflict'
   | 'terminal_reuse';
 
@@ -80,12 +84,22 @@ interface AttemptState extends Record<string, unknown> {
 
 export const OBSERVE_WOULD_DENY_LEASE_MS = 300_000;
 export const PROVIDER_ATTEMPT_PRESTART_LEASE_MS = 30_000;
-const POLICY_FINGERPRINT = createHash('sha256')
-  .update(
-    `provider-attempt-lifecycle:v2:hard-deadline:prestart-lease-${PROVIDER_ATTEMPT_PRESTART_LEASE_MS}:observe-would-deny-lease-${OBSERVE_WOULD_DENY_LEASE_MS}:start-reservation`,
-  )
-  .digest('hex');
 const NONBLANK = /\S/;
+
+function policyFingerprint(policy: ProviderAttemptAdmissionPolicy | null): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        protocol: 'provider-attempt-admission:v3',
+        prestartLeaseMs: PROVIDER_ATTEMPT_PRESTART_LEASE_MS,
+        observeWouldDenyLeaseMs: OBSERVE_WOULD_DENY_LEASE_MS,
+        hardDeadline: true,
+        immediateDecision: true,
+        policy,
+      }),
+    )
+    .digest('hex');
+}
 
 function fingerprint(identity: ProviderRequestIdentityT): string {
   return createHash('sha256')
@@ -171,6 +185,7 @@ function controlFailure(
 
 export function createProviderAttemptLifecycle(input: {
   readonly mode: ProviderAttemptLifecycleMode;
+  readonly policy?: ProviderAttemptAdmissionPolicy | null;
   readonly identity: ProviderRequestIdentityT;
   readonly deadlineAt: Date;
   readonly db: Db;
@@ -180,6 +195,8 @@ export function createProviderAttemptLifecycle(input: {
     throw new RangeError('deadlineAt must be valid');
   const deadlineAtIso = input.deadlineAt.toISOString();
   const identityFingerprint = fingerprint(identity);
+  const policy = input.policy ?? null;
+  const admissionPolicyFingerprint = policyFingerprint(policy);
   const leaseOwner = randomUUID();
   let acquired: Promise<ProviderAttemptHandle> | undefined;
 
@@ -227,6 +244,12 @@ export function createProviderAttemptLifecycle(input: {
                       AND d.status IN ('acquired','would_deny'))`)
                 .returning({ attempt_id: provider_attempt.attempt_id });
               if (updated.length !== 1) throw lifecycleError('lease_lost', identity);
+              await tx
+                .update(provider_attempt_admission)
+                .set({ lease_expires_at: sql`${provider_attempt_admission.deadline_at}` })
+                .where(sql`${provider_attempt_admission.attempt_id} = ${identity.attemptId}
+                  AND ${provider_attempt_admission.lease_owner} = ${leaseOwner}
+                  AND ${provider_attempt_admission.status} IN ('acquired','would_deny')`);
             });
           } catch (error) {
             if (error instanceof ProviderAttemptLifecycleError) throw error;
@@ -353,6 +376,9 @@ export function createProviderAttemptLifecycle(input: {
             await tx.execute(
               sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt:${identity.attemptId}`}, 0))`,
             );
+            await tx.execute(
+              sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt-lane:${identity.lane}`}, 0))`,
+            );
             const rows =
               await tx.execute<AttemptState>(sql`SELECT a.operation_id::text, a.attempt_kind,
               a.provider, a.model, a.lane_id, a.protocol, a.endpoint_class, a.caller,
@@ -422,7 +448,7 @@ export function createProviderAttemptLifecycle(input: {
                 .values({
                   attempt_id: identity.attemptId,
                   identity_fingerprint: identityFingerprint,
-                  policy_fingerprint: POLICY_FINGERPRINT,
+                  policy_fingerprint: admissionPolicyFingerprint,
                   lane_id: identity.lane,
                   mode: 'enforce',
                   status: 'denied',
@@ -433,6 +459,57 @@ export function createProviderAttemptLifecycle(input: {
                 })
                 .onConflictDoNothing({ target: provider_attempt_admission.attempt_id });
               return 'denied' as const;
+            }
+            let policyViolation:
+              | 'capacity_exhausted'
+              | 'policy_mismatch'
+              | 'rate_exhausted'
+              | null = null;
+            if (policy !== null) {
+              const policyRows = await tx.execute<{
+                active_count: number;
+                starts_last_minute: number;
+                mixed_policy: boolean;
+              }>(sql`
+                SELECT
+                  COUNT(*) FILTER (WHERE status IN ('acquired','would_deny')
+                    AND lease_expires_at > clock_timestamp())::int AS active_count,
+                  COUNT(*) FILTER (WHERE acquired_at >= clock_timestamp() - interval '1 minute')::int
+                    AS starts_last_minute,
+                  BOOL_OR(policy_fingerprint <> ${admissionPolicyFingerprint}) FILTER (
+                    WHERE status IN ('acquired','would_deny')
+                      AND lease_expires_at > clock_timestamp()) AS mixed_policy
+                FROM provider_attempt_admission
+                WHERE lane_id = ${identity.lane}
+              `);
+              const policyState = policyRows[0];
+              if (policyState?.mixed_policy === true) {
+                policyViolation = 'policy_mismatch';
+              } else if ((policyState?.active_count ?? 0) >= policy.maxConcurrentAttempts) {
+                policyViolation = 'capacity_exhausted';
+              } else if (
+                (policyState?.starts_last_minute ?? 0) >= policy.maxAttemptStartsPerMinute
+              ) {
+                policyViolation = 'rate_exhausted';
+              }
+            }
+            if (policyViolation !== null && input.mode === 'enforce') {
+              await tx
+                .insert(provider_attempt_admission)
+                .values({
+                  attempt_id: identity.attemptId,
+                  identity_fingerprint: identityFingerprint,
+                  policy_fingerprint: admissionPolicyFingerprint,
+                  lane_id: identity.lane,
+                  mode: 'enforce',
+                  status: 'denied',
+                  requested_at: sql`clock_timestamp()`,
+                  deadline_at: input.deadlineAt,
+                  terminal_at: sql`clock_timestamp()`,
+                  terminal_reason: policyViolation,
+                })
+                .onConflictDoNothing({ target: provider_attempt_admission.attempt_id });
+              return policyViolation;
             }
             await tx
               .insert(provider_attempt)
@@ -451,13 +528,13 @@ export function createProviderAttemptLifecycle(input: {
                 started_at: sql`clock_timestamp()`,
               })
               .onConflictDoNothing({ target: provider_attempt.attempt_id });
-            const status = deadlineElapsed ? 'would_deny' : 'acquired';
+            const status = deadlineElapsed || policyViolation !== null ? 'would_deny' : 'acquired';
             await tx
               .insert(provider_attempt_admission)
               .values({
                 attempt_id: identity.attemptId,
                 identity_fingerprint: identityFingerprint,
-                policy_fingerprint: POLICY_FINGERPRINT,
+                policy_fingerprint: admissionPolicyFingerprint,
                 lane_id: identity.lane,
                 mode: input.mode,
                 status,
@@ -476,7 +553,7 @@ export function createProviderAttemptLifecycle(input: {
                 target: provider_attempt_admission.attempt_id,
                 set: {
                   identity_fingerprint: identityFingerprint,
-                  policy_fingerprint: POLICY_FINGERPRINT,
+                  policy_fingerprint: admissionPolicyFingerprint,
                   lane_id: identity.lane,
                   mode: input.mode,
                   status,
@@ -501,6 +578,13 @@ export function createProviderAttemptLifecycle(input: {
             return status as 'acquired' | 'would_deny';
           });
           if (admission === 'denied') throw lifecycleError('deadline_elapsed', identity);
+          if (
+            admission === 'capacity_exhausted' ||
+            admission === 'policy_mismatch' ||
+            admission === 'rate_exhausted'
+          ) {
+            throw lifecycleError(admission, identity);
+          }
           return makeHandle(admission);
         } catch (error) {
           if (error instanceof ProviderAttemptLifecycleError) throw error;

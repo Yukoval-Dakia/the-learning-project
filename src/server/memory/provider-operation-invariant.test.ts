@@ -15,6 +15,7 @@ describe('Mem0 opaque provider start invariants', () => {
         caller: 'api',
         deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
         operationAnchor: `api-${failurePoint}-invariant-852`,
+        mode: 'observe',
         createLifecycle: (input) => ({
           identity: input.identity,
           acquire: async () => {

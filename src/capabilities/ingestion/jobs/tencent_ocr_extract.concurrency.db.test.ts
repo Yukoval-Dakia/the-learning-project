@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   readIngestionOperation,
@@ -39,7 +39,20 @@ async function reserveOperation(sessionId: string, operationId: string): Promise
   });
 }
 
-beforeEach(resetDb);
+beforeEach(async () => {
+  vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
+  vi.stubEnv(
+    'AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON',
+    JSON.stringify({
+      'tencent.question-mark-agent': {
+        maxConcurrentAttempts: 100,
+        maxAttemptStartsPerMinute: 1000,
+      },
+    }),
+  );
+  await resetDb();
+});
+afterEach(() => vi.unstubAllEnvs());
 
 describe('Tencent OCR concurrent delivery fencing', () => {
   it('sends one Submit for concurrent deliveries in the same retry generation', async () => {

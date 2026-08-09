@@ -92,14 +92,6 @@ type GlmChatResponse = {
   error?: { code?: string | number; message?: string };
 };
 
-/** YUK-359 — token usage surfaced to the caller so it can write cost_ledger. */
-export type ReconcileUsage = { promptTokens: number; completionTokens: number };
-export type ReconcileUsageCorrelation = {
-  attemptId: string;
-  model: string;
-  estimatedCostCny: number;
-};
-
 type GlmConfig = {
   baseURL: string;
   apiKey: string;
@@ -390,12 +382,6 @@ export async function judgeReconciliation(
     timeoutMs?: number;
     fetchImpl?: typeof fetch;
     providerAttempt?: DirectProviderOperationContext;
-    // YUK-359: fired with token usage on a successful GLM response so the caller
-    // (triggers.ts) can write cost_ledger. Never throws into the reconcile path.
-    onUsage?: (
-      usage: ReconcileUsage,
-      correlation: ReconcileUsageCorrelation,
-    ) => void | Promise<void>;
   } = {},
 ): Promise<ReconcileDecision[]> {
   const env = opts.env ?? process.env;
@@ -507,23 +493,13 @@ export async function judgeReconciliation(
           total: typeof totalTokens === 'number' ? totalTokens : null,
         });
       }
-      if (json.usage) {
-        const legacyPromptTokens = typeof promptTokens === 'number' ? promptTokens : 0;
-        const legacyCompletionTokens = typeof completionTokens === 'number' ? completionTokens : 0;
-        const estimatedCostCny = glmChatCostCny(legacyPromptTokens, legacyCompletionTokens);
-        if (opts.onUsage) {
-          try {
-            await opts.onUsage(
-              {
-                promptTokens: legacyPromptTokens,
-                completionTokens: legacyCompletionTokens,
-              },
-              { attemptId: attempt.attemptId, model: glmConfig.model, estimatedCostCny },
-            );
-          } catch (err) {
-            console.error('[reconcile-llm] onUsage callback failed', err);
-          }
-        }
+      if (hasReportedTokens) {
+        const estimatedCostCny = glmChatCostCny(promptTokens ?? 0, completionTokens ?? 0);
+        attempt.estimateCost({
+          amount: estimatedCostCny,
+          currency: 'CNY',
+          source: 'glm-chat-pricebook',
+        });
       }
 
       const content = json.choices?.[0]?.message?.content;

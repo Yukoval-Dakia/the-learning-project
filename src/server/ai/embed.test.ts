@@ -70,6 +70,157 @@ function fixedIdentity(attemptId: string, operationId: string) {
 }
 
 describe('executeDirectProviderAttempt', () => {
+  it.each([
+    ['absent config', {}, 'off', null],
+    [
+      'global off',
+      {
+        AI_PROVIDER_ATTEMPT_ADMISSION_MODE: 'off',
+        AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: JSON.stringify({
+          'glm.memory-reconcile': { maxConcurrentAttempts: 2, maxAttemptStartsPerMinute: 5 },
+        }),
+      },
+      'off',
+      null,
+    ],
+    [
+      'unlisted lane policy',
+      {
+        AI_PROVIDER_ATTEMPT_ADMISSION_MODE: 'observe',
+        AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: JSON.stringify({
+          'dashscope.embedding': { maxConcurrentAttempts: 3, maxAttemptStartsPerMinute: 7 },
+        }),
+      },
+      'off',
+      null,
+    ],
+    [
+      'listed observe policy',
+      {
+        AI_PROVIDER_ATTEMPT_ADMISSION_MODE: 'observe',
+        AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: JSON.stringify({
+          'glm.memory-reconcile': { maxConcurrentAttempts: 2, maxAttemptStartsPerMinute: 5 },
+        }),
+      },
+      'observe',
+      { maxConcurrentAttempts: 2, maxAttemptStartsPerMinute: 5 },
+    ],
+    [
+      'listed enforce policy',
+      {
+        AI_PROVIDER_ATTEMPT_ADMISSION_MODE: 'enforce',
+        AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: JSON.stringify({
+          'glm.memory-reconcile': { maxConcurrentAttempts: 2, maxAttemptStartsPerMinute: 5 },
+        }),
+      },
+      'enforce',
+      { maxConcurrentAttempts: 2, maxAttemptStartsPerMinute: 5 },
+    ],
+  ] as const)(
+    'passes resolver result through the direct production seam for %s',
+    async (_scenario, env, expectedMode, expectedPolicy) => {
+      const execute = vi.fn().mockResolvedValue('provider-result');
+      const createLifecycle = vi.fn<DirectProviderLifecycleFactory>((input) => ({
+        identity: input.identity,
+        acquire: async () => ({
+          admission: input.mode === 'off' ? 'off' : 'acquired',
+          reserveProviderStart: async () => undefined,
+          recordExternalRequestId: async () => undefined,
+          finish: async () => (input.mode === 'off' ? 'untracked' : 'settled'),
+        }),
+      }));
+      const context: DirectProviderOperationContext = {
+        caller: 'worker',
+        deadlineAt: new Date('2030-01-01T00:00:00.000Z'),
+        env,
+        operationId: '00000000-0000-4000-8000-000000000071',
+        createLifecycle,
+      };
+
+      await expect(
+        executeDirectProviderAttempt(
+          context,
+          {
+            provider: 'glm',
+            model: 'glm-5.2',
+            lane: 'glm.memory-reconcile',
+            protocol: 'http',
+            endpointClass: 'openai-compatible.chat-completions',
+            operationKind: 'memory_reconcile',
+            unknownCostCurrency: 'CNY',
+          },
+          execute,
+        ),
+      ).resolves.toMatchObject({ value: 'provider-result' });
+      expect(createLifecycle).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: expectedMode, policy: expectedPolicy }),
+      );
+      expect(execute).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('allows the provider callback after an observe would-deny', async () => {
+    const execute = vi.fn().mockResolvedValue('observed');
+    const { context, createLifecycle } = operationContext();
+    createLifecycle.mockReturnValue({
+      identity: fixedIdentity('00000000-0000-4000-8000-000000000046', context.operationId),
+      acquire: async () => ({
+        admission: 'would_deny',
+        reserveProviderStart: async () => undefined,
+        recordExternalRequestId: async () => undefined,
+        finish: async () => 'settled',
+      }),
+    });
+
+    await expect(
+      executeDirectProviderAttempt(
+        context,
+        {
+          provider: 'glm',
+          model: 'glm-5.2',
+          lane: 'glm.memory-reconcile',
+          protocol: 'http',
+          endpointClass: 'openai-compatible.chat-completions',
+          operationKind: 'memory_reconcile',
+          unknownCostCurrency: 'CNY',
+        },
+        execute,
+      ),
+    ).resolves.toMatchObject({ value: 'observed' });
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it('does not invoke the provider callback after an enforce denial', async () => {
+    const execute = vi.fn().mockResolvedValue('unreachable');
+    const { context, createLifecycle } = operationContext();
+    createLifecycle.mockReturnValue({
+      identity: fixedIdentity('00000000-0000-4000-8000-000000000047', context.operationId),
+      acquire: async () => {
+        throw new ProviderAttemptLifecycleError(
+          'capacity_exhausted',
+          '00000000-0000-4000-8000-000000000047',
+        );
+      },
+    });
+
+    await expect(
+      executeDirectProviderAttempt(
+        context,
+        {
+          provider: 'glm',
+          model: 'glm-5.2',
+          lane: 'glm.memory-reconcile',
+          protocol: 'http',
+          endpointClass: 'openai-compatible.chat-completions',
+          operationKind: 'memory_reconcile',
+          unknownCostCurrency: 'CNY',
+        },
+        execute,
+      ),
+    ).rejects.toMatchObject({ reason: 'capacity_exhausted' });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('classifies lifecycle invariants without treating ordinary control-plane unavailability as invariant', () => {
     expect(
       isDirectProviderAttemptInvariantError(

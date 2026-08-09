@@ -15,7 +15,6 @@ import type { Db, Tx } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeRetryableAiFailureLedger } from '@/server/ai/failure-ledger';
-import { writeCostLedger } from '@/server/ai/log';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import type { FailureAttempt } from '@/server/events/queries';
@@ -501,35 +500,7 @@ export async function runEdgeProposeAndWrite(
                 providerAttempt: params.providerAttempt ?? {
                   db: params.db,
                   caller: 'worker',
-                  mode: 'observe',
                   deadlineAt: new Date(Date.now() + 65_000),
-                },
-                // YUK-344: ledger live reconcile GLM tokens to cost_ledger, mirroring
-                // the memory reconcile path (triggers.ts onUsage / YUK-359). Best-effort
-                // — a ledger write failure must never fail reconcile, so swallow + log;
-                // successful writes are awaited so callers never observe a pre-ledger result.
-                // Only the LIVE judge bills; the injected test fn (judgeReconcileFn) has
-                // no GLM call, so it correctly never reaches this onUsage.
-                onUsage: async (usage, correlation) => {
-                  // CodeRabbit/PR-Agent Finding 3 — thread the ACTUAL resolved GLM
-                  // model (the same resolveGlmConfig the judge uses) instead of
-                  // hardcoding 'glm-5.2', which drifts when MEM0_LLM_MODEL overrides
-                  // the model. Single source of truth: resolveGlmConfig(env).
-                  try {
-                    await writeCostLedger(params.db, {
-                      task_run_id: correlation.attemptId,
-                      task_kind: 'edge_reconcile',
-                      provider: 'glm',
-                      model: correlation.model,
-                      cost: correlation.estimatedCostCny,
-                      currency: 'CNY',
-                      tokens_in: usage.promptTokens,
-                      tokens_out: usage.completionTokens,
-                      pgboss_job_id: params.pgbossJobId,
-                    });
-                  } catch (err) {
-                    console.error('[edge_reconcile] writeCostLedger failed', err);
-                  }
                 },
               }));
           // Defensive re-apply of the confidence threshold: the live

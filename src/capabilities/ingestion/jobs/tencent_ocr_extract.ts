@@ -21,7 +21,6 @@ import {
   executeTencentOcrSubmit,
   extractionPageOperationId,
   findSavedTencentJobId,
-  writeLegacyOcrCostLedger,
 } from '@/capabilities/ingestion/server/provider-attempts';
 import {
   type StructureResult,
@@ -48,6 +47,7 @@ import { PermanentError, RetryableError } from '@/core/schema/structured_questio
 import type { FigureRefT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, source_asset } from '@/db/schema';
+import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-runtime';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import {
   type IngestionExtractionProgressPayloadT,
@@ -139,10 +139,20 @@ function deliveryMetadata(job: JobWithMetadata<TencentOcrJobData>): {
   };
 }
 
-function normalizeExtractionError(err: unknown): RetryableError | PermanentError {
-  return err instanceof RetryableError || err instanceof PermanentError
-    ? err
-    : mapTencentError(err);
+export function normalizeExtractionError(err: unknown): RetryableError | PermanentError {
+  if (err instanceof RetryableError || err instanceof PermanentError) return err;
+  if (err instanceof ProviderAttemptLifecycleError) {
+    switch (err.reason) {
+      case 'capacity_exhausted':
+      case 'control_plane_unavailable':
+      case 'policy_mismatch':
+      case 'rate_exhausted':
+        return new RetryableError(`Provider attempt admission ${err.reason}`);
+      default:
+        return mapTencentError(err);
+    }
+  }
+  return mapTencentError(err);
 }
 
 function shouldKeepExtractionResumable(
@@ -624,15 +634,6 @@ async function processOneOcrJob(
       }),
     );
 
-    await writeLegacyOcrCostLedger({
-      db: deps.db,
-      bossJobId,
-      engine,
-      outcome: 'success',
-      promptTokens: glmPromptTokens,
-      completionTokens: glmCompletionTokens,
-    });
-
     // YUK-696: both paid modes are opt-in. Do not even enqueue the worker when
     // both flags are absent/OFF; the extraction remains available for manual review.
     // Inline getStartedBoss() producer (worker process already has boss started
@@ -681,11 +682,12 @@ async function processOneOcrJob(
       result: { session_id: sessionId, status: extractionResult.status },
     });
   } catch (err) {
+    const mapped = normalizeExtractionError(err);
     await markFailedAndLogCost(
       deps,
       sessionId,
       bossJobId,
-      err,
+      mapped,
       engine,
       {
         promptTokens: glmPromptTokens,
@@ -693,27 +695,23 @@ async function processOneOcrJob(
       },
       deliveryMetadata(job),
     );
-    throw err; // rethrow so pg-boss retries (Retryable) or archives (Permanent)
+    throw mapped;
   }
 }
 
 async function markFailedAndLogCost(
   deps: TencentOcrDeps,
   sessionId: string,
-  bossJobId: string,
+  _bossJobId: string,
   err: unknown,
-  engine: 'glm' | 'tencent' = 'glm',
-  glmUsage: { promptTokens: number; completionTokens: number } = {
+  _engine: 'glm' | 'tencent' = 'glm',
+  _glmUsage: { promptTokens: number; completionTokens: number } = {
     promptTokens: 0,
     completionTokens: 0,
   },
   delivery: { retryCount: number; retryLimit: number } = { retryCount: 0, retryLimit: 0 },
 ): Promise<void> {
-  // GLM client throws typed Retryable/Permanent errors, so mapTencentError is
-  // only reached for legacy Tencent-path SDK errors (unchanged classification).
   const mapped = normalizeExtractionError(err);
-  const outcome = mapped instanceof RetryableError ? 'failed_retryable' : 'failed_permanent';
-
   if (!shouldKeepExtractionResumable(mapped, delivery)) {
     try {
       await deps.db.transaction((tx) =>
@@ -724,18 +722,5 @@ async function markFailedAndLogCost(
       // from earlier retry). Log and continue —— pg-boss already knows.
       console.error('[tencent_ocr_extract] markExtractionFailed failed', innerErr);
     }
-  }
-
-  try {
-    await writeLegacyOcrCostLedger({
-      db: deps.db,
-      bossJobId,
-      engine,
-      outcome,
-      promptTokens: glmUsage.promptTokens,
-      completionTokens: glmUsage.completionTokens,
-    });
-  } catch (innerErr) {
-    console.error('[tencent_ocr_extract] writeLegacyOcrCostLedger failed', innerErr);
   }
 }

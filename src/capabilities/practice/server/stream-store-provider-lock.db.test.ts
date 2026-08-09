@@ -531,6 +531,7 @@ describe('Practice stream provider transaction boundary', () => {
           caller: 'worker',
           deadlineAt: new Date(Date.now() + 65_000),
           operationAnchor,
+          mode: 'observe',
         }),
         'search',
         async () => ['durable prior'],

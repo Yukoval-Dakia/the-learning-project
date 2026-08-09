@@ -116,6 +116,7 @@ jobs:
           pnpm audit:draft-status
           pnpm audit:draft-status-reads --strict
           pnpm audit:hub-sync-writers
+          pnpm audit:provider-attempt-truth
 
   unit:
     name: unit tests

@@ -5,7 +5,6 @@ export {
   executeDirectProviderAttempt,
   providerOperationIdForInvocation,
 } from './direct-provider-attempt';
-export { writeCostLedger } from './log';
 export {
   type Mem0OpaqueLifecycleFactory,
   type Mem0OpaqueOperationContext,

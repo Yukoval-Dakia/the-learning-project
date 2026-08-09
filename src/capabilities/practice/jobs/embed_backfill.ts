@@ -51,7 +51,6 @@ export async function runEmbedBackfill(
   providerAttempt: EmbedProviderAttemptOptions = {
     db,
     caller: 'worker',
-    mode: 'observe',
     deadlineAt: new Date(Date.now() + 20_000),
   },
 ): Promise<number> {
@@ -169,7 +168,6 @@ export function buildEmbedBackfillHandler(
       const embedded = await runEmbedBackfill(db, 100, {
         db,
         caller: 'worker',
-        mode: 'observe',
         deadlineAt: new Date(Date.now() + 20_000),
         operationAnchor: jobs[0]?.id,
       });

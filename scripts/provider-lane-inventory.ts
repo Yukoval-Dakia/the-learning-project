@@ -204,10 +204,11 @@ export const PROVIDER_LANES = [
     },
     evidence: {
       path: 'src/server/ai/embed.ts',
-      calls: ['fetch'],
-      contains: ['/embeddings'],
+      calls: ['executeDirectProviderAttempt', 'attempt.reportUsage'],
+      contains: ['dashscope.embedding'],
     },
-    costSupport: 'no project-side per-wire cost ledger hook in the direct embedding client',
+    costSupport:
+      'provider_attempt records reported token usage and preserves unknown monetary cost',
   },
   {
     id: 'glm.knowledge-edge-reconcile',
@@ -258,10 +259,10 @@ export const PROVIDER_LANES = [
       },
     },
     evidence: {
-      path: 'src/capabilities/knowledge/server/propose_edge.ts',
-      calls: ['writeCostLedger'],
+      path: 'src/capabilities/knowledge/server/edge-reconcile.ts',
+      calls: ['executeDirectProviderAttempt', 'attempt.estimateCost'],
     },
-    costSupport: 'per-wire cost_ledger hook records resolved model and token usage',
+    costSupport: 'provider_attempt records reported usage and estimated CNY cost per wire attempt',
   },
   {
     id: 'glm.knowledge-misconception-reconcile',
@@ -350,11 +351,10 @@ export const PROVIDER_LANES = [
       },
     },
     evidence: {
-      path: 'src/server/memory/triggers.ts',
-      calls: ['writeCostLedger'],
-      contains: ["task_kind: 'memory_reconcile'"],
+      path: 'src/server/memory/reconcile-llm.ts',
+      calls: ['executeDirectProviderAttempt', 'attempt.estimateCost'],
     },
-    costSupport: 'per-wire cost_ledger hook records usage; model identity remains env-resolved',
+    costSupport: 'provider_attempt records reported usage and estimated CNY cost per wire attempt',
   },
   {
     id: 'glm.ocr-layout-parsing',
@@ -405,7 +405,7 @@ export const PROVIDER_LANES = [
       contains: ['recordExternalRequestId', 'reportUsage', 'estimateCost'],
     },
     costSupport:
-      'each page fetch records provider request id, usage, and estimated CNY cost; the transitional legacy ledger mirror remains until F0.5',
+      'each page fetch records provider request id, reported usage, and estimated CNY cost in provider_attempt',
   },
   {
     id: 'mem0.event-memory',
@@ -477,7 +477,7 @@ export const PROVIDER_LANES = [
       calls: ['memory.add', 'memory.search'],
       contains: ['infer: false'],
     },
-    costSupport: 'no project-side per-wire cost truth for opaque Mem0 operations',
+    costSupport: 'provider_attempt records each opaque Mem0 operation with unknown usage and cost',
   },
   {
     id: 'tencent.question-mark-agent',
@@ -525,11 +525,12 @@ export const PROVIDER_LANES = [
       },
     },
     evidence: {
-      path: 'src/capabilities/ingestion/server/tencent_mark.ts',
-      calls: ['client.SubmitQuestionMarkAgentJob', 'client.DescribeQuestionMarkAgentJob'],
+      path: 'src/capabilities/ingestion/server/provider-attempts.ts',
+      calls: ['executeDirectProviderAttempt'],
+      contains: ['tencent.question-mark-agent'],
     },
     costSupport:
-      'each Submit/Describe attempt records unknown usage and cost; the transitional legacy OCR ledger mirror remains zero until F0.5',
+      'each Submit/Describe attempt records unknown usage and cost in provider_attempt without fabricating zero',
   },
 ] as const satisfies readonly ProviderLane[];
 

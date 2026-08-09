@@ -748,6 +748,137 @@ describe('ProviderAttemptLifecycle', () => {
     }
   });
 
+  it('observe records capacity would-deny while allowing a second provider start', async () => {
+    const policy = { maxConcurrentAttempts: 1, maxAttemptStartsPerMinute: 10 };
+    const first = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      policy,
+      identity: identity('00000000-0000-4000-8000-000000000920'),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    }).acquire();
+    await first.reserveProviderStart();
+
+    const second = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      policy,
+      identity: identity('00000000-0000-4000-8000-000000000921'),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    }).acquire();
+
+    expect(second.admission).toBe('would_deny');
+    await expect(second.reserveProviderStart()).resolves.toBeUndefined();
+  });
+
+  it('enforce rejects capacity and rate before provider start reservation', async () => {
+    const capacityPolicy = { maxConcurrentAttempts: 1, maxAttemptStartsPerMinute: 10 };
+    const first = await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      policy: capacityPolicy,
+      identity: identity('00000000-0000-4000-8000-000000000922'),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    }).acquire();
+    await first.reserveProviderStart();
+    await expect(
+      createProviderAttemptLifecycle({
+        mode: 'enforce',
+        policy: capacityPolicy,
+        identity: identity('00000000-0000-4000-8000-000000000923'),
+        deadlineAt: new Date(Date.now() + 60_000),
+        db: testDb(),
+      }).acquire(),
+    ).rejects.toMatchObject({ reason: 'capacity_exhausted' });
+    await first.finish(unknownEvidence);
+
+    await expect(
+      createProviderAttemptLifecycle({
+        mode: 'enforce',
+        policy: { maxConcurrentAttempts: 10, maxAttemptStartsPerMinute: 1 },
+        identity: identity('00000000-0000-4000-8000-000000000924'),
+        deadlineAt: new Date(Date.now() + 60_000),
+        db: testDb(),
+      }).acquire(),
+    ).rejects.toMatchObject({ reason: 'rate_exhausted' });
+    expect(
+      await testDb()
+        .select()
+        .from(provider_attempt)
+        .where(eq(provider_attempt.attempt_id, '00000000-0000-4000-8000-000000000923')),
+    ).toHaveLength(0);
+  });
+
+  it('observe records rate would-deny and keeps the start reservable', async () => {
+    const policy = { maxConcurrentAttempts: 10, maxAttemptStartsPerMinute: 1 };
+    const first = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      policy,
+      identity: identity('00000000-0000-4000-8000-000000000929'),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    }).acquire();
+    await first.finish(unknownEvidence);
+
+    const second = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      policy,
+      identity: identity('00000000-0000-4000-8000-000000000935'),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    }).acquire();
+
+    expect(second.admission).toBe('would_deny');
+    await expect(second.reserveProviderStart()).resolves.toBeUndefined();
+  });
+
+  it('extends a started attempt lease to its immutable deadline', async () => {
+    const deadlineAt = new Date(Date.now() + 120_000);
+    const handle = await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      policy: { maxConcurrentAttempts: 1, maxAttemptStartsPerMinute: 10 },
+      identity: identity('00000000-0000-4000-8000-000000000925'),
+      deadlineAt,
+      db: testDb(),
+    }).acquire();
+
+    await handle.reserveProviderStart();
+
+    const row = (await testDb().select().from(provider_attempt_admission))[0];
+    expect(row?.lease_expires_at?.getTime()).toBe(deadlineAt.getTime());
+  });
+
+  it('marks mixed live policy would-deny in observe and policy-mismatch in enforce', async () => {
+    const deadlineAt = new Date(Date.now() + 60_000);
+    const first = await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      policy: { maxConcurrentAttempts: 3, maxAttemptStartsPerMinute: 10 },
+      identity: identity('00000000-0000-4000-8000-000000000926'),
+      deadlineAt,
+      db: testDb(),
+    }).acquire();
+    const observed = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      policy: { maxConcurrentAttempts: 4, maxAttemptStartsPerMinute: 10 },
+      identity: identity('00000000-0000-4000-8000-000000000927'),
+      deadlineAt,
+      db: testDb(),
+    }).acquire();
+
+    expect(observed.admission).toBe('would_deny');
+    await expect(
+      createProviderAttemptLifecycle({
+        mode: 'enforce',
+        policy: { maxConcurrentAttempts: 4, maxAttemptStartsPerMinute: 10 },
+        identity: identity('00000000-0000-4000-8000-000000000928'),
+        deadlineAt,
+        db: testDb(),
+      }).acquire(),
+    ).rejects.toMatchObject({ reason: 'policy_mismatch' });
+    await first.finish(unknownEvidence);
+    await observed.finish(unknownEvidence);
+  });
+
   it('fails enforce closed and returns observe untracked on control-plane failure', async () => {
     // Given independent DB handles whose underlying clients are closed.
     const enforceDb = openIndependentDb();

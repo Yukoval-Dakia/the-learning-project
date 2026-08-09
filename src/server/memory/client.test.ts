@@ -35,6 +35,7 @@ function testProviderOperation() {
     caller: 'worker',
     deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
     operationAnchor: 'client-unit-operation-852',
+    mode: 'observe',
     createLifecycle: (input) => ({
       identity: input.identity,
       acquire: async () => ({
@@ -144,6 +145,7 @@ describe('createMemoryClient', () => {
       caller: 'worker',
       deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
       operationAnchor: 'worker-memory-client-matrix-852',
+      mode: 'observe',
       createLifecycle: (input) => {
         identities.push(input.identity);
         return {
@@ -223,6 +225,7 @@ describe('createMemoryClient', () => {
       caller: 'worker',
       deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
       operationAnchor: 'worker-memory-cache-hit-852',
+      mode: 'observe',
       createLifecycle,
     });
     const memory = mem0LikeMock({

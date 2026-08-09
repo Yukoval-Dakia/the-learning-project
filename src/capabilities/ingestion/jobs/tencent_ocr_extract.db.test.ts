@@ -9,7 +9,7 @@ import type {
 } from '@/capabilities/ingestion/server/glm_ocr';
 import type { StructureResult, runStructureTask } from '@/capabilities/ingestion/server/structure';
 import { StructureTaskError } from '@/capabilities/ingestion/server/structure';
-import { PermanentError } from '@/core/schema/structured_question';
+import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import {
   cost_ledger,
@@ -21,13 +21,41 @@ import {
   source_asset,
   source_document,
 } from '@/db/schema';
+import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-runtime';
 import type { R2Client } from '@/server/r2';
 import clozeFixture from '../../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
 import { resetDb } from '../../../../tests/helpers/db';
-import { buildTencentOcrHandler } from './tencent_ocr_extract';
+import { buildTencentOcrHandler, normalizeExtractionError } from './tencent_ocr_extract';
 
 type GlmOcrFn = typeof runGlmLayoutParsing;
 type RunStructureFn = typeof runStructureTask;
+
+describe('Tencent OCR admission error classification', () => {
+  it.each([
+    'capacity_exhausted',
+    'rate_exhausted',
+    'policy_mismatch',
+    'control_plane_unavailable',
+  ] as const)('keeps %s resumable before Tencent SDK mapping', (reason) => {
+    const mapped = normalizeExtractionError(
+      new ProviderAttemptLifecycleError(reason, '00000000-0000-4000-8000-000000000081'),
+    );
+
+    expect(mapped).toBeInstanceOf(RetryableError);
+    expect(mapped.message).toContain(reason);
+  });
+
+  it('keeps unsafe identity fencing fail closed', () => {
+    const mapped = normalizeExtractionError(
+      new ProviderAttemptLifecycleError(
+        'identity_collision',
+        '00000000-0000-4000-8000-000000000082',
+      ),
+    );
+
+    expect(mapped).toBeInstanceOf(PermanentError);
+  });
+});
 
 // YUK-253 — GLM-OCR is now the DEFAULT extraction engine. The handler injects
 // `glmOcrFn`; tests stub it so no real GLM HTTP call happens. The layered
@@ -36,8 +64,8 @@ type RunStructureFn = typeof runStructureTask;
 // retained rollback engine alive.
 
 // A minimal single-page GLM layout_parsing response. The handler calls glmOcr
-// once per page, each returning a single-page response. usage drives the
-// cost_ledger (0.2 元/M, input=output).
+// once per page, each returning a single-page response. Usage drives estimated
+// CNY truth on provider_attempt (0.2 元/M, input=output).
 function makeGlmResponse(opts?: {
   text?: string;
   promptTokens?: number;
@@ -249,14 +277,29 @@ function makeR2WithImage(image: Buffer): R2Client & { puts: { key: string; body:
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 beforeEach(async () => {
+  vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
+  vi.stubEnv(
+    'AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON',
+    JSON.stringify({
+      'glm.ocr-layout-parsing': {
+        maxConcurrentAttempts: 100,
+        maxAttemptStartsPerMinute: 1000,
+      },
+      'tencent.question-mark-agent': {
+        maxConcurrentAttempts: 100,
+        maxAttemptStartsPerMinute: 1000,
+      },
+    }),
+  );
   await resetDb();
 });
 
 describe('tencent_ocr_extract handler (GLM default engine)', () => {
-  it('GLM happy path: queued → extracted with VLM-owned block + GLM cost_ledger', async () => {
+  it('GLM happy path does not fabricate legacy cost for an injected no-wire stub', async () => {
     const { sessionId, sourceDocId, assetId } = await seedSessionWithAsset();
     const r2 = makeR2WithImage(await makeTestImage());
 
@@ -286,15 +329,7 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
 
     const cost = await db.select().from(cost_ledger);
     const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-1');
-    expect(ours).toBeTruthy();
-    expect(ours?.outcome).toBe('success');
-    // YUK-253 cost accounting: provider 'glm', model 'glm-ocr', tokens passthrough,
-    // cost = (1128+440)/1e6 * 0.2.
-    expect(ours?.provider).toBe('glm');
-    expect(ours?.model).toBe('glm-ocr');
-    expect(ours?.tokens_in).toBe(1128);
-    expect(ours?.tokens_out).toBe(440);
-    expect(ours?.cost).toBeCloseTo(((1128 + 440) / 1_000_000) * 0.2, 10);
+    expect(ours).toBeUndefined();
     expect(await db.select().from(provider_attempt)).toHaveLength(0);
 
     await cleanup(sessionId, sourceDocId, assetId);
@@ -372,7 +407,7 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
     }
   });
 
-  it('GLM VLM-fail → page-level GLM fallback questions + cost_ledger still written', async () => {
+  it('GLM VLM-fail keeps fallback questions without a legacy cost row', async () => {
     const { sessionId, sourceDocId, assetId } = await seedSessionWithAsset();
     const r2 = makeR2WithImage(await makeTestImage());
 
@@ -408,8 +443,7 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
 
     const cost = await db.select().from(cost_ledger);
     const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-fb');
-    expect(ours?.outcome).toBe('success');
-    expect(ours?.provider).toBe('glm');
+    expect(ours).toBeUndefined();
 
     await cleanup(sessionId, sourceDocId, assetId);
     if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
@@ -467,9 +501,7 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
 
     const cost = await db.select().from(cost_ledger);
     const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-perm');
-    expect(ours?.outcome).toBe('failed_permanent');
-    expect(ours?.provider).toBe('glm');
-    expect(ours?.cost).toBe(0);
+    expect(ours).toBeUndefined();
 
     await cleanup(sessionId, sourceDocId, assetId);
     if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
@@ -497,11 +529,7 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
 
     const cost = await db.select().from(cost_ledger);
     const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-page2-fail');
-    expect(ours?.outcome).toBe('failed_permanent');
-    expect(ours?.provider).toBe('glm');
-    expect(ours?.tokens_in).toBe(3000);
-    expect(ours?.tokens_out).toBe(700);
-    expect(ours?.cost).toBeCloseTo(((3000 + 700) / 1_000_000) * 0.2, 10);
+    expect(ours).toBeUndefined();
 
     await cleanup(sessionId, sourceDocId, assetIds);
     if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
@@ -531,8 +559,7 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
 
     const cost = await db.select().from(cost_ledger);
     const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-3');
-    expect(ours?.outcome).toBe('failed_permanent');
-    expect(ours?.provider).toBe('glm');
+    expect(ours).toBeUndefined();
 
     await cleanup(sessionId, sourceDocId, assetId);
     if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
@@ -589,7 +616,7 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
   // YUK-253 — retained Tencent rollback engine. engine:'tencent' must fall
   // through to the submitFn/pollFn path (keep ≥1 Tencent-path test alive).
 
-  it("engine='tencent' rollback: uses Tencent submit/poll + tencent cost_ledger", async () => {
+  it("engine='tencent' rollback uses Tencent attempts without legacy zero cost", async () => {
     const { sessionId, sourceDocId, assetId } = await seedSessionWithAsset();
     const r2 = makeR2WithImage(await makeTestImage());
 
@@ -633,11 +660,13 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
 
     const cost = await db.select().from(cost_ledger);
     const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-tencent');
-    expect(ours?.outcome).toBe('success');
-    // Tencent path bills 0 / provider 'tencent'.
-    expect(ours?.provider).toBe('tencent');
-    expect(ours?.model).toBe('QuestionMarkAgent');
-    expect(ours?.cost).toBe(0);
+    expect(ours).toBeUndefined();
+    const attempts = await db
+      .select()
+      .from(provider_attempt)
+      .where(eq(provider_attempt.provider, 'tencent'));
+    expect(attempts.length).toBeGreaterThan(0);
+    expect(attempts.every((attempt) => attempt.cost_basis === 'unknown')).toBe(true);
 
     await cleanup(sessionId, sourceDocId, assetId);
     if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
