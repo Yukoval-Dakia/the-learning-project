@@ -60,10 +60,12 @@ type AgentCtx = {
 // Typed agent-mock factory: gives mock.calls[0] the [kind, input, ctx] tuple so
 // destructuring the recorded ctx typechecks (the bare vi.fn(async () => …) has
 // no declared params → calls[0] is `[]`).
-function agentMock(output: string, taskRunId?: string) {
-  return vi.fn(async (_kind: string, _input: unknown, _ctx: AgentCtx) =>
-    taskRunId === undefined ? { text: output } : { text: output, task_run_id: taskRunId },
-  );
+function agentMock(output: string, taskRunId?: string, costUsd?: number) {
+  return vi.fn(async (_kind: string, _input: unknown, _ctx: AgentCtx) => ({
+    text: output,
+    ...(taskRunId === undefined ? {} : { task_run_id: taskRunId }),
+    ...(costUsd === undefined ? {} : { cost_usd: costUsd }),
+  }));
 }
 
 function twoPartyBarrier() {
@@ -818,7 +820,7 @@ describe('runQuizGen', () => {
         refId: 'k-test',
         count: 1,
         placementAttempt: attempt,
-        runAgentTaskFn: agentMock(CLOSED_BOOK_OUTPUT, 'tr-raced'),
+        runAgentTaskFn: agentMock(CLOSED_BOOK_OUTPUT, 'tr-raced', 0),
         enqueueQuizVerify,
         buildTavilyMcpServerFn: () => null,
         buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,

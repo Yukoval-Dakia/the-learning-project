@@ -1249,12 +1249,19 @@ describe('buildQuizVerifyHandler', () => {
       ]),
     ).resolves.toBeUndefined();
 
-    expect(runTaskFn.mock.calls.map(([kind]) => kind)).toEqual([
-      'QuizVerifyTask',
-      'QuizVerifyTask',
-      'SolutionGenerateTask',
-      'TeachingQualityTask',
+    const taskKinds = runTaskFn.mock.calls.map(([kind]) => kind);
+    const verifyCalls = runTaskFn.mock.calls.filter(([kind]) => kind === 'QuizVerifyTask');
+    expect(verifyCalls.map(([, input]) => input)).toEqual([
+      expect.objectContaining({
+        question: expect.objectContaining({ id: 'q-handler-unknown-first' }),
+      }),
+      expect.objectContaining({
+        question: expect.objectContaining({ id: 'q-handler-unscoped-after' }),
+      }),
     ]);
+    expect(taskKinds.filter((kind) => kind !== 'QuizVerifyTask').sort()).toEqual(
+      ['SemanticJudgeTask', 'SolutionGenerateTask', 'TeachingQualityTask'].sort(),
+    );
     const [claim] = await testDb()
       .select()
       .from(placement_starter_claim)
