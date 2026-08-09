@@ -1,4 +1,4 @@
-# 当前 handoff — 2026-08-09 YUK-852 local complete
+# 当前 handoff — 2026-08-09 YUK-852 PR #1171 P1 收敛
 
 > 只维护 NOW / NEXT / PARKED / BLOCKED-ON 四栏；以 Linear 与 main CI 为交付权威。
 
@@ -11,15 +11,16 @@
   Linear Done。
 - **F0.2 / YUK-854 已在 main。** PR #1169 merge SHA `b677dab4`；未部署。
 - **F0.3 / YUK-853 已在 main。** SHA `b16f6276cb51033979953e9c8cc8c561f894d13b`；未部署。
-- **F0.4 / YUK-852 是当前 active handoff。** Mem0 三条真实 add 与 canonical search 的 opaque
-  provider-attempt 本地 code-complete；caller/deadline/operation anchor 已线程到 worker、tool 与 Practice
-  L2，cache-hit 不造 attempt，settlement 失败保持 observe fail-open。unit、DB、archive compatibility 与
-  `530 / 70 / 62` boundary 均 green；无 migration。本地未 commit/push/PR/merge/deploy，不能称 delivered。
+- **F0.4 / YUK-852 是当前 active handoff。** PR #1171 已 Ready；P1 修复后的本地 delivery candidate
+  已 commit、尚未 push，remote head 仍为 `448c5e7e8a2e628064ecb8309a9867a4dec0ef61`。
+  Mem0 三条真实 add 与 canonical search 已进入 PR；candidate 尚未 push，PR 尚未 merge，亦未 deploy。
+  unit、DB 与 `530 / 70 / 62` boundary 均 green；无 migration，不能称 delivered。
 - **运行状态：**没有 deployment；YUK-832 HOLD 与 YUK-842 observe 均未改变。
 
 ## NEXT
 
-1. 对 F0.4 做 scope inspection 与独立 review；获授权后再 commit、push、PR、exact-head CI、merge。
+1. 对本地 P1 第二 commit 做最终 scope inspection；获授权后 normal push，等待新 exact-head CI 与
+   review 收敛后 merge PR #1171。
 2. F0.4 后处理 F0.5；F0.5 删除 transitional legacy OCR ledger mirror。
 3. F2–F4 继续保持 open。
 
@@ -31,6 +32,6 @@
 
 ## BLOCKED-ON
 
-- F0.4 delivery 尚缺 scope inspection、commit、push、PR、独立 review、exact-head CI 与 merge。
+- F0.4 delivery 尚缺本地 P1 第二 commit push、新 exact-head CI、review 收敛与 PR #1171 merge。
 - Architecture FULL 仍依赖 F0.4 交付、F0.5 与 F2–F4，当前不能宣称 closed。
 - Production 没有部署授权或真实观察证据；保持未部署表述。

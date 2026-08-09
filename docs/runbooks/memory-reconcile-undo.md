@@ -50,9 +50,22 @@ owner 现实中几乎不会自发注意到某条记忆被误删——回滚依�
 5. 逐字恢复（**用 `restoreVerbatim`，绝不用 `addEventMemory`**——后者 infer:true + eventToText 信封会重跑抽取
    LLM、非逐字）：
    ```ts
+   import { db } from '@/db/client';
+   import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
    import { createMemoryClient } from '@/server/memory/client';
+
    const client = createMemoryClient();
-   await client.restoreVerbatim(prevText, reconstructedMetadata /* 从 prev_metadata / event 表重建 */);
+   const reconciliationLogId = '<memory_reconciliation_log.id>';
+   await client.restoreVerbatim(
+     prevText,
+     reconstructedMetadata, // 从 prev_metadata / event 表重建
+     createMem0OpaqueOperationContext({
+       db,
+       caller: 'worker',
+       deadlineAt: new Date(Date.now() + 30_000),
+       operationAnchor: `memory-reconcile-undo:${reconciliationLogId}`,
+     }),
+   );
    ```
 
 ## 场景 B：SUPERSEDE/MERGE 覆写了错误内容

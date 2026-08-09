@@ -579,7 +579,11 @@ async function tryLlmOrchestration(
     const memoryPrior = buildMemoryPriorAdvisoryBlock(memories);
     const taskInput = memoryPrior ? { ...candidateBlock, memoryPrior } : candidateBlock;
     const fn = runTaskFn ?? (await defaultRunTaskFn(db as Db));
-    const result = await fn('SelectionOrchestratorTask', taskInput, {});
+    const result = await fn('SelectionOrchestratorTask', taskInput, {
+      ...(providerInvocation
+        ? { providerSessionDeadlineAt: providerInvocation.deadlineAt.getTime() }
+        : {}),
+    });
     const refIds = selectedCandidates.map((s) => s.refId);
     const parsed = parseSelectionOrchestratorOutput(result.text, refIds);
     // parse barrier 保证 parsed 非空（空编排 = throw → 下方 catch 的 L2-failure warn 接管观测，
