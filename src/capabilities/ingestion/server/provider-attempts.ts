@@ -1,16 +1,14 @@
 import { RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import {
-  ProviderAttemptAdmissionLaneSchema,
-  resolveProviderAttemptAdmission,
-} from '@/server/ai/provider-attempt-admission-config';
-import {
   type DirectProviderAttemptControl,
   type DirectProviderOperationContext,
+  ProviderAttemptAdmissionLaneSchema,
   ProviderAttemptLifecycleError,
   createDirectProviderOperationContext,
   executeDirectProviderAttempt,
   providerOperationIdForInvocation,
+  resolveProviderAttemptAdmission,
 } from '@/server/ai/provider-attempt-runtime';
 import { sql } from 'drizzle-orm';
 
