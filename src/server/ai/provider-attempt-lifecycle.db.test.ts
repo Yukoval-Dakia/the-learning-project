@@ -131,13 +131,56 @@ describe('ProviderAttemptLifecycle', () => {
       expect(admissions).toEqual([
         expect.objectContaining({
           attempt_id: result.attemptId,
-          mode: 'observe',
+          mode: 'off',
           status: 'released',
           terminal_reason: 'attempt_finished',
         }),
       ]);
     },
   );
+
+  it('persists an elapsed off attempt as acquired and never records would-deny', async () => {
+    const attemptId = '00000000-0000-4000-8000-000000000964';
+    const deadlineAt = new Date(Date.now() - 1_000);
+    const handle = await createProviderAttemptLifecycle({
+      mode: 'off',
+      persistAttemptWhenOff: true,
+      identity: identity(attemptId),
+      deadlineAt,
+      db: testDb(),
+    }).acquire();
+
+    expect(handle.admission).toBe('acquired');
+    const activeAdmission = (
+      await testDb()
+        .select()
+        .from(provider_attempt_admission)
+        .where(eq(provider_attempt_admission.attempt_id, attemptId))
+    )[0];
+    expect(activeAdmission).toMatchObject({
+      mode: 'off',
+      status: 'acquired',
+      terminal_reason: null,
+    });
+    expect(activeAdmission?.lease_expires_at?.getTime()).toBeGreaterThan(deadlineAt.getTime());
+
+    await expect(handle.reserveProviderStart()).resolves.toBeUndefined();
+    await expect(handle.finish(unknownEvidence)).resolves.toBe('settled');
+    expect(
+      (
+        await testDb()
+          .select()
+          .from(provider_attempt_admission)
+          .where(eq(provider_attempt_admission.attempt_id, attemptId))
+      )[0],
+    ).toMatchObject({ mode: 'off', status: 'released', terminal_reason: 'attempt_finished' });
+    expect(
+      await testDb()
+        .select()
+        .from(provider_attempt_admission)
+        .where(eq(provider_attempt_admission.status, 'would_deny')),
+    ).toEqual([]);
+  });
 
   it('lets a default-off direct provider call proceed untracked when its control plane is unavailable', async () => {
     const unavailable = openIndependentDb();
@@ -168,6 +211,29 @@ describe('ProviderAttemptLifecycle', () => {
       ),
     ).resolves.toMatchObject({ value: 'direct-result' });
     expect(providerCall).toHaveBeenCalledOnce();
+  });
+
+  it('executes and durably settles a default-off opaque provider operation', async () => {
+    const providerCall = vi.fn(async () => 'opaque-result');
+    const context = createMem0OpaqueOperationContext({
+      db: testDb(),
+      caller: 'worker',
+      deadlineAt: new Date(Date.now() + 60_000),
+      env: {},
+      operationAnchor: 'default-off-durable-opaque',
+    });
+
+    await expect(executeMem0OpaqueOperation(context, 'search', providerCall)).resolves.toBe(
+      'opaque-result',
+    );
+    expect(providerCall).toHaveBeenCalledOnce();
+    expect(await testDb().select().from(provider_attempt_admission)).toEqual([
+      expect.objectContaining({
+        mode: 'off',
+        status: 'released',
+        terminal_reason: 'attempt_finished',
+      }),
+    ]);
   });
 
   it('lets a default-off opaque provider call proceed untracked when its control plane is unavailable', async () => {
@@ -933,6 +999,38 @@ describe('ProviderAttemptLifecycle', () => {
     ).toHaveLength(0);
   });
 
+  it.each(['observe', 'enforce'] as const)(
+    'excludes live and recent off rows from %s policy accounting',
+    async (mode) => {
+      const liveOff = await createProviderAttemptLifecycle({
+        mode: 'off',
+        persistAttemptWhenOff: true,
+        identity: identity('00000000-0000-4000-8000-000000000965'),
+        deadlineAt: new Date(Date.now() + 60_000),
+        db: testDb(),
+      }).acquire();
+      await liveOff.reserveProviderStart();
+      const recentOff = await createProviderAttemptLifecycle({
+        mode: 'off',
+        persistAttemptWhenOff: true,
+        identity: identity('00000000-0000-4000-8000-000000000966'),
+        deadlineAt: new Date(Date.now() + 60_000),
+        db: testDb(),
+      }).acquire();
+      await recentOff.finish(unknownEvidence);
+
+      const admitted = await createProviderAttemptLifecycle({
+        mode,
+        policy: { maxConcurrentAttempts: 1, maxAttemptStartsPerMinute: 1 },
+        identity: identity('00000000-0000-4000-8000-000000000967'),
+        deadlineAt: new Date(Date.now() + 60_000),
+        db: testDb(),
+      }).acquire();
+
+      expect(admitted.admission).toBe('acquired');
+    },
+  );
+
   it('replaces an expired unreserved admission with a durable enforce denial on conflict', async () => {
     const attemptId = '00000000-0000-4000-8000-000000000936';
     const deadlineAt = new Date(Date.now() + 60_000);
@@ -1505,6 +1603,42 @@ describe('ProviderAttemptLifecycle', () => {
     expect(admissions.filter((admission) => admission.status === 'released')).toEqual([
       expect.objectContaining({ terminal_reason: 'provider_start_active_duplicate' }),
     ]);
+  });
+
+  it('keeps the operation-kind duplicate-start fence active in persisted off mode', async () => {
+    const first = await createProviderAttemptLifecycle({
+      mode: 'off',
+      persistAttemptWhenOff: true,
+      identity: identity('00000000-0000-4000-8000-000000000968'),
+      deadlineAt: new Date(Date.now() + 60_000),
+      providerStartFence: 'operation_kind',
+      db: testDb(),
+    }).acquire();
+    await first.reserveProviderStart();
+    const competitor = await createProviderAttemptLifecycle({
+      mode: 'off',
+      persistAttemptWhenOff: true,
+      identity: identity('00000000-0000-4000-8000-000000000969'),
+      deadlineAt: new Date(Date.now() + 60_000),
+      providerStartFence: 'operation_kind',
+      db: testDb(),
+    }).acquire();
+
+    await expect(competitor.reserveProviderStart()).rejects.toMatchObject({
+      reason: 'active_duplicate',
+    });
+    expect(
+      (
+        await testDb()
+          .select()
+          .from(provider_attempt_admission)
+          .where(eq(provider_attempt_admission.attempt_id, '00000000-0000-4000-8000-000000000969'))
+      )[0],
+    ).toMatchObject({
+      mode: 'off',
+      status: 'released',
+      terminal_reason: 'provider_start_active_duplicate',
+    });
   });
 
   it('fences a concurrent same-generation attempt identity before a second start', async () => {

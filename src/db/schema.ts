@@ -1054,7 +1054,7 @@ export const provider_attempt_admission = pgTable(
       sql`btrim(${t.identity_fingerprint}) <> ''
         AND btrim(${t.policy_fingerprint}) <> ''
         AND btrim(${t.lane_id}) <> ''
-        AND ${t.mode} IN ('observe','enforce')
+        AND ${t.mode} IN ('off','observe','enforce')
         AND ${t.status} IN ('acquired','would_deny','denied','released','lease_expired')`,
     ),
     check(
@@ -1064,7 +1064,8 @@ export const provider_attempt_admission = pgTable(
         AND ${t.acquired_at} IS NOT NULL AND ${t.lease_expires_at} IS NOT NULL
         AND ${t.terminal_at} IS NULL AND ${t.terminal_reason} IS NULL
         AND (
-          (${t.status} = 'acquired' AND ${t.lease_expires_at} <= ${t.deadline_at})
+          (${t.status} = 'acquired'
+            AND (${t.mode} = 'off' OR ${t.lease_expires_at} <= ${t.deadline_at}))
           OR (${t.status} = 'would_deny' AND ${t.mode} = 'observe')
         )
       ) OR (

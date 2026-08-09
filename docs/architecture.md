@@ -794,7 +794,9 @@ The closed lane set and `off -> observe -> enforce` resolver are documented in
 `docs/runbooks/provider-attempt-admission.md`. This gate is separate from the Claude Agent SDK
 session gate (`provider_session_admission`). Admission `off` bypasses limiting while provider calls
 remain durably traced on a best-effort basis; a persistence outage may leave an off-mode call
-untracked. Cost readers union terminal, provider-started attempts
+untracked. When persistence is available, the admission row retains exact `mode = off` with an
+`acquired` lifecycle lease for fencing and settlement; it never emits `would_deny` and is excluded
+from capacity/rate/mixed-policy aggregation. Cost readers union terminal, provider-started attempts
 with existing `cost_ledger` rows. Only durable exact attempt-ID links are de-duplicated. Unlinked
 historical OCR job-level rows remain visible as explicit legacy truth; exact-head code no longer
 writes new mirrors. Readers never copy provider attempts into `cost_ledger`.

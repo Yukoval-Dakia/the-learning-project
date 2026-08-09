@@ -19,7 +19,10 @@ Set `AI_PROVIDER_ATTEMPT_ADMISSION_MODE` to `off`, `observe`, or `enforce`. Set
 contain positive integer `maxConcurrentAttempts` and `maxAttemptStartsPerMinute`. Unknown keys are
 rejected. Missing config, an unlisted lane, or global `off` resolves to off.
 `off` disables capacity/rate enforcement but does not disable durable `provider_attempt` lifecycle
-and cost truth for calls that reach the provider.
+and cost truth for calls that reach the provider. Its best-effort admission row records the exact
+`mode = off` with `status = acquired`, including when the immutable provider deadline has already
+elapsed; off never records `would_deny`. These rows retain the normal pre-start lease for lifecycle
+fencing but are excluded from capacity, rate, and mixed-policy accounting.
 
 There is no queue. Admission uses the database clock and lane advisory serialization. A successful
 reservation consumes rate capacity immediately. Pre-start reservations count as active; after
@@ -45,7 +48,8 @@ automatic fence release.
 Use exactly the same mode and policy JSON in the Hono app and pg-boss worker environments. Start
 with `observe`, inspect durable admission outcomes, then move selected listed lanes to `enforce`
 only under separate rollout authorization. Roll back immediately by setting the global mode to
-`off`; no schema or data rollback is required.
+`off`; existing attempt/admission evidence remains available, while new off rows record rollback
+mode exactly and cannot become `would_deny`. No schema or data rollback is required.
 
 YUK-855 is code and CI evidence only. F0.O1 owns any later production rollout; this runbook does
 not authorize production configuration, deployment, or a change to an existing observation boundary.

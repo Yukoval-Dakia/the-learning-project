@@ -2503,3 +2503,105 @@ describe('migration smoke — YUK-844 placement unknown cost', () => {
     });
   });
 });
+
+describe('migration smoke — YUK-855 provider attempt off mode', () => {
+  const BASELINE_TAG = '0090_yuk844_placement_unknown_cost';
+  const MIGRATION_TAG = '0091_yuk855_provider_attempt_off_mode';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(client, migration.sql);
+      if (migration.tag === BASELINE_TAG) break;
+    }
+    await client`
+      INSERT INTO provider_attempt_admission (
+        attempt_id, identity_fingerprint, policy_fingerprint, lane_id, mode, status,
+        lease_owner, requested_at, deadline_at, acquired_at, lease_expires_at
+      ) VALUES (
+        '00000000-0000-4000-8000-000000000991', 'existing-identity', 'existing-policy',
+        'glm.memory-reconcile', 'observe', 'acquired',
+        '00000000-0000-4000-8000-000000000992', now(), now() + interval '2 minutes',
+        now(), now() + interval '1 minute'
+      )
+    `;
+    const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
+    if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
+    await applyMigrationFile(client, migration.sql);
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('preserves existing admission rows and accepts off acquired through release', async () => {
+    const existing = await client<
+      { attempt_id: string; lease_owner: string | null; mode: string; status: string }[]
+    >`
+      SELECT attempt_id::text, lease_owner::text, mode, status
+      FROM provider_attempt_admission
+      WHERE attempt_id = '00000000-0000-4000-8000-000000000991'
+    `;
+    expect(existing).toEqual([
+      {
+        attempt_id: '00000000-0000-4000-8000-000000000991',
+        lease_owner: '00000000-0000-4000-8000-000000000992',
+        mode: 'observe',
+        status: 'acquired',
+      },
+    ]);
+
+    await client`
+      INSERT INTO provider_attempt_admission (
+        attempt_id, identity_fingerprint, policy_fingerprint, lane_id, mode, status,
+        lease_owner, requested_at, deadline_at, acquired_at, lease_expires_at
+      ) VALUES (
+        '00000000-0000-4000-8000-000000000993', 'off-identity', 'off-policy',
+        'glm.memory-reconcile', 'off', 'acquired',
+        '00000000-0000-4000-8000-000000000994', now(), now() - interval '1 second',
+        now(), now() + interval '30 seconds'
+      )
+    `;
+    await client`
+      UPDATE provider_attempt_admission
+      SET status = 'released', terminal_at = now(), terminal_reason = 'attempt_finished'
+      WHERE attempt_id = '00000000-0000-4000-8000-000000000993'
+    `;
+    const released = await client<
+      { lease_owner: string | null; mode: string; status: string; terminal_reason: string | null }[]
+    >`
+      SELECT lease_owner::text, mode, status, terminal_reason
+      FROM provider_attempt_admission
+      WHERE attempt_id = '00000000-0000-4000-8000-000000000993'
+    `;
+    expect(released).toEqual([
+      {
+        lease_owner: '00000000-0000-4000-8000-000000000994',
+        mode: 'off',
+        status: 'released',
+        terminal_reason: 'attempt_finished',
+      },
+    ]);
+  });
+
+  it.each([
+    [
+      'would_deny',
+      `INSERT INTO provider_attempt_admission (attempt_id,identity_fingerprint,policy_fingerprint,lane_id,mode,status,lease_owner,requested_at,deadline_at,acquired_at,lease_expires_at) VALUES ('00000000-0000-4000-8000-000000000995','i','p','l','off','would_deny','00000000-0000-4000-8000-000000000997',now(),now()+interval '1 minute',now(),now()+interval '30 seconds')`,
+    ],
+    [
+      'denied',
+      `INSERT INTO provider_attempt_admission (attempt_id,identity_fingerprint,policy_fingerprint,lane_id,mode,status,requested_at,deadline_at,terminal_at,terminal_reason) VALUES ('00000000-0000-4000-8000-000000000996','i','p','l','off','denied',now(),now(),now(),'denied')`,
+    ],
+  ])('rejects off %s through the state constraint', async (_status, statement) => {
+    await expect(client.unsafe(statement)).rejects.toMatchObject({
+      code: '23514',
+      constraint_name: 'provider_attempt_admission_state_ck',
+    });
+  });
+});

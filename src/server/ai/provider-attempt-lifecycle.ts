@@ -202,8 +202,7 @@ export function createProviderAttemptLifecycle(input: {
   const deadlineAtIso = input.deadlineAt.toISOString();
   const identityFingerprint = fingerprint(identity, input.providerStartFence);
   const policy = input.mode === 'off' ? null : (input.policy ?? null);
-  const persistedMode: Exclude<ProviderAttemptLifecycleMode, 'off'> =
-    input.mode === 'enforce' ? 'enforce' : 'observe';
+  const persistedMode = input.mode;
   const admissionPolicyFingerprint = policyFingerprint(policy);
   const leaseOwner = randomUUID();
   let acquired: Promise<ProviderAttemptHandle> | undefined;
@@ -590,6 +589,7 @@ export function createProviderAttemptLifecycle(input: {
                       AND lease_expires_at > clock_timestamp()) AS mixed_policy
                 FROM provider_attempt_admission
                 WHERE lane_id = ${identity.lane}
+                  AND mode IN ('observe', 'enforce')
               `);
               const policyState = policyRows[0];
               if (policyState?.mixed_policy === true) {
@@ -653,7 +653,10 @@ export function createProviderAttemptLifecycle(input: {
                 started_at: sql`clock_timestamp()`,
               })
               .onConflictDoNothing({ target: provider_attempt.attempt_id });
-            const status = deadlineElapsed || policyViolation !== null ? 'would_deny' : 'acquired';
+            const status =
+              input.mode === 'observe' && (deadlineElapsed || policyViolation !== null)
+                ? 'would_deny'
+                : 'acquired';
             await tx
               .insert(provider_attempt_admission)
               .values({
@@ -667,10 +670,13 @@ export function createProviderAttemptLifecycle(input: {
                 requested_at: sql`clock_timestamp()`,
                 deadline_at: input.deadlineAt,
                 acquired_at: sql`clock_timestamp()`,
-                lease_expires_at: deadlineElapsed
-                  ? sql`clock_timestamp() + ${OBSERVE_WOULD_DENY_LEASE_MS} * interval '1 millisecond'`
-                  : sql`LEAST(${deadlineAtIso}::timestamptz,
-                      clock_timestamp() + ${PROVIDER_ATTEMPT_PRESTART_LEASE_MS} * interval '1 millisecond')`,
+                lease_expires_at:
+                  status === 'would_deny'
+                    ? sql`clock_timestamp() + ${OBSERVE_WOULD_DENY_LEASE_MS} * interval '1 millisecond'`
+                    : input.mode === 'off'
+                      ? sql`clock_timestamp() + ${PROVIDER_ATTEMPT_PRESTART_LEASE_MS} * interval '1 millisecond'`
+                      : sql`LEAST(${deadlineAtIso}::timestamptz,
+                          clock_timestamp() + ${PROVIDER_ATTEMPT_PRESTART_LEASE_MS} * interval '1 millisecond')`,
                 terminal_at: null,
                 terminal_reason: null,
               })
@@ -685,10 +691,13 @@ export function createProviderAttemptLifecycle(input: {
                   lease_owner: leaseOwner,
                   requested_at: sql`clock_timestamp()`,
                   acquired_at: sql`clock_timestamp()`,
-                  lease_expires_at: deadlineElapsed
-                    ? sql`clock_timestamp() + ${OBSERVE_WOULD_DENY_LEASE_MS} * interval '1 millisecond'`
-                    : sql`LEAST(${deadlineAtIso}::timestamptz,
-                        clock_timestamp() + ${PROVIDER_ATTEMPT_PRESTART_LEASE_MS} * interval '1 millisecond')`,
+                  lease_expires_at:
+                    status === 'would_deny'
+                      ? sql`clock_timestamp() + ${OBSERVE_WOULD_DENY_LEASE_MS} * interval '1 millisecond'`
+                      : input.mode === 'off'
+                        ? sql`clock_timestamp() + ${PROVIDER_ATTEMPT_PRESTART_LEASE_MS} * interval '1 millisecond'`
+                        : sql`LEAST(${deadlineAtIso}::timestamptz,
+                            clock_timestamp() + ${PROVIDER_ATTEMPT_PRESTART_LEASE_MS} * interval '1 millisecond')`,
                   terminal_at: null,
                   terminal_reason: null,
                 },
