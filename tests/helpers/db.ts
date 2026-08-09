@@ -145,6 +145,7 @@ export async function rollbackTestTransaction(): Promise<void> {
 // ingestion_session DROPped — removed from this list. Step 1.4: judgment +
 // user_appeal previously dropped per data-assumptions §O2.
 const ALL_TABLES = [
+  'note_verification_claim',
   'provider_attempt_admission',
   'provider_attempt',
   // YUK-842 — operational provider query-session leases/start-window rows (loose refs).

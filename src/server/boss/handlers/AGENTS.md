@@ -53,6 +53,7 @@
 ## CRON — 高频
 | Queue | cron | 注册点 | 说明 |
 |-------|------|--------|------|
+| `hub_sync_recovery` | `* * * * *` | notes/manifest | 唯一 Notes recovery floor：hub reconcile 与 handoff/claim 隔离执行；补发缺 completion 的 current-v1 intent、合成 legacy intent、无 AI 收敛 staged result，expired pre-wire/epoch claim 只投递 fenced `note_verify`，expired provider-start 转 ambiguous；任一分支失败最终仍抛出 |
 | `promote_conversation_idle` | `* * * * *` | ../handlers.ts | 每分钟 active→idle（5min 无输入；idle=事件缺席，只能 poll）|
 | `memory_ingest_outbox_poll` | `* * * * *`（**UTC**）| memory/triggers.ts | ADR-0021 transactional outbox dispatch 心跳（**不可降频**——写点直投=复刻已回滚 PR #163）|
 | `memory_ingest_outbox_recover` | `0 * * * *`（**UTC**）| memory/triggers.ts | outbox 排空 recovery drain（cap 1000 cycles）|
@@ -60,7 +61,7 @@
 | `judge_pending_reconcile` | `50 * * * *` | practice/manifest | YUK-777 A3 — durable judge 的 domain-state-scan sweeper：扫「作答已录、判词未落」的 `experimental:judge_pending_attempt`（无 `event.id = run_id` 的 review），经**同一 rate-limited 入队面**重投 `judge_run`。**每小时而非夜批**：这是学习者面前悬着的判词，等一夜等于丢一天；stall 门槛 15min + pg-boss liveness 权威判定，故不会抢在飞的 run。自身零 LLM（付费发生在 `judge_run`）→ fast 层。恢复次数封顶（`judge_run.requeued` 计数）+ 7d 年龄封顶后转人工（D6 manual-only，YUK-800 A4）|
 
 ## 事件触发链（enqueue-by-event，非 cron）
-- `note_generate` →`onReady`→ `note_verify`（YUK-358 决定3：`onPassed` 链已删——`embedded_check_generate` 孤儿链真删后无下游消费者）
+- `note_generate` / `note_verify` 由 Notes manifest 注册；同事务 intent + 提交后 deterministic dispatch 衔接，由 `hub_sync_recovery` 每分钟补投。
 - `attribution_followup`（替代 inline `after()`）→ `variant_gen`；accept 后 → `variant_verify`
 - `tencent_ocr_extract` —— 生产 OCR async（R2 creds 缺失不应破坏 test worker：lazy `get r2()`）
 - `session_summary` —— review session end 后 enqueue
@@ -69,7 +70,7 @@
 ## CONVENTIONS
 - handler 是工厂 `build*(db, opts?)`，返回 pg-boss work fn；测试旁置 `*.test.ts`。
 - 默认 `localConcurrency 1, batchSize 1`，无 `singleton`——单 worker 串行，跨进程靠 DB version lock。
-- 新 job：建 queue + work + （如 cron）schedule，全部加进 `../handlers.ts`，并在此表登记时序理由。
+- generic boss job 才加进 `../handlers.ts`；capability job 只经对应 manifest 声明。
 
 ## ANTI-PATTERNS
 - 别在 handler factory 外调 `getR2()`——缺 env 会炸 test worker 启动。

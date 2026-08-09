@@ -91,7 +91,10 @@
 // start-reservation marker. It must survive restore; provider_attempt_admission is only
 // a short-lived ownership fence and is deliberately wiped instead. Adding the durable
 // table to FK_ORDER changes the payload shape: 50 → 51 tables, 4.17 → 4.18.
-export const SCHEMA_VERSION = '4.18';
+// YUK-857: note_verification_claim is durable paid-call fencing and staged-result recovery
+// state keyed to artifact. It must survive restore after its artifact parent; adding it to
+// FK_ORDER changes the payload shape: 51 → 52 tables, 4.18 → 4.19.
+export const SCHEMA_VERSION = '4.19';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -177,6 +180,7 @@ export const FK_ORDER = [
   'learning_item',
   'completion_evidence',
   'artifact',
+  'note_verification_claim',
   'artifact_block_ref',
   'answer',
   'event',

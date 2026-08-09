@@ -2,10 +2,9 @@ import type { NoteRefineTriggerKind } from '@/capabilities/notes/jobs/note-refin
 import { parseFlag } from '@/core/env-flags';
 import type { Db } from '@/db/client';
 import { job_events } from '@/db/schema';
-import { getStartedBoss } from '@/server/boss/client';
-import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { and, eq, gt, sql } from 'drizzle-orm';
+import { getNotesBoss, notesBossTransaction } from './boss-port';
 
 export const NOTE_REFINE_TRIGGER_DEBOUNCE_MS = 60 * 60_000;
 const NOTE_REFINE_DEBOUNCE_TABLE = 'note_refine_debounce';
@@ -47,7 +46,7 @@ export type NoteRefineBossSend = (
   options?: {
     singletonKey?: string;
     singletonSeconds?: number;
-    db?: ReturnType<typeof fromPgBossDrizzleTx>;
+    db?: ReturnType<typeof notesBossTransaction>;
   },
 ) => Promise<string | null>;
 
@@ -93,7 +92,7 @@ export async function enqueueNoteRefineTrigger(input: {
   try {
     let send = input.bossSend;
     if (!send) {
-      const boss = await getStartedBoss();
+      const boss = await getNotesBoss();
       send = boss.send.bind(boss);
     }
     const data = {
@@ -125,7 +124,7 @@ export async function enqueueNoteRefineTrigger(input: {
           .limit(1);
         if (existing.length > 0) return false;
 
-        const jobId = await send('note_refine', data, { db: fromPgBossDrizzleTx(tx) });
+        const jobId = await send('note_refine', data, { db: notesBossTransaction(tx) });
         if (jobId === null) return false;
 
         await tx.insert(job_events).values({

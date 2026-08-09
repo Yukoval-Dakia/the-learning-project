@@ -1,5 +1,5 @@
 import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
-import { artifact, knowledge } from '@/db/schema';
+import { artifact, event, knowledge } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -152,22 +152,32 @@ describe('runNoteGenerate', () => {
     expect((updated.generated_by as { task_run_id?: string } | null)?.task_run_id).toBe(
       'tr_note_generate_1',
     );
+    const verificationIntents = await testDb()
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.action, 'experimental:note_handoff'));
+    expect(verificationIntents).toHaveLength(1);
+    expect(verificationIntents[0]?.payload).toMatchObject({
+      version: 1,
+      artifact_id: 'a1',
+      handoff_kind: 'verification_intent',
+    });
   });
 
-  it('buildNoteGenerateHandler calls onReady after ready generation', async () => {
+  it('buildNoteGenerateHandler dispatches verification after the ready transaction commits', async () => {
     await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
     const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
       text: VALID_SECTIONS,
     }));
-    const onReady = vi.fn(async (_artifactId: string) => {});
-    const handler = buildNoteGenerateHandler(testDb(), { runTaskFn, onReady });
+    const dispatchVerification = vi.fn(async (_artifactId: string) => true);
+    const handler = buildNoteGenerateHandler(testDb(), { runTaskFn, dispatchVerification });
 
     await handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never]);
 
-    expect(onReady).toHaveBeenCalledWith('a1');
+    expect(dispatchVerification).toHaveBeenCalledWith('a1');
   });
 
-  it('does not call onReady when another worker already claimed the pending artifact', async () => {
+  it('does not dispatch verification when another worker already claimed the pending artifact', async () => {
     await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
     const db = testDb();
     const runTaskFn = vi.fn(async () => {
@@ -177,12 +187,12 @@ describe('runNoteGenerate', () => {
         .where(eq(artifact.id, 'a1'));
       return { text: VALID_SECTIONS };
     });
-    const onReady = vi.fn(async (_artifactId: string) => {});
-    const handler = buildNoteGenerateHandler(db, { runTaskFn, onReady });
+    const dispatchVerification = vi.fn(async (_artifactId: string) => true);
+    const handler = buildNoteGenerateHandler(db, { runTaskFn, dispatchVerification });
 
     await handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never]);
 
-    expect(onReady).not.toHaveBeenCalled();
+    expect(dispatchVerification).not.toHaveBeenCalled();
   });
 
   it('passes the knowledge subject profile to NoteGenerateTask', async () => {
@@ -219,6 +229,41 @@ describe('runNoteGenerate', () => {
     const db = testDb();
     const updated = (await db.select().from(artifact).where(eq(artifact.id, 'a1')))[0];
     expect(updated.generation_status).toBe('failed');
+  });
+
+  it('reruns a failed delivery, then skips completed redelivery without another provider call', async () => {
+    await seedAtomic({ artifactId: 'retry-success' });
+    let calls = 0;
+    const runTaskFn = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('transient generation failure');
+      return { text: VALID_SECTIONS };
+    });
+    const dispatchVerification = vi.fn(async () => true);
+    const handler = buildNoteGenerateHandler(testDb(), { runTaskFn, dispatchVerification });
+
+    await expect(
+      handler([{ id: 'first-delivery', data: { artifact_id: 'retry-success' } } as never]),
+    ).rejects.toThrow('transient generation failure');
+    const [failed] = await testDb()
+      .select({ status: artifact.generation_status })
+      .from(artifact)
+      .where(eq(artifact.id, 'retry-success'));
+    expect(failed.status).toBe('failed');
+
+    await expect(
+      handler([{ id: 'retry-delivery', data: { artifact_id: 'retry-success' } } as never]),
+    ).resolves.toBeUndefined();
+    await expect(
+      handler([{ id: 'completed-redelivery', data: { artifact_id: 'retry-success' } } as never]),
+    ).resolves.toBeUndefined();
+    const [ready] = await testDb()
+      .select({ status: artifact.generation_status })
+      .from(artifact)
+      .where(eq(artifact.id, 'retry-success'));
+    expect(ready.status).toBe('ready');
+    expect(runTaskFn).toHaveBeenCalledTimes(2);
+    expect(dispatchVerification).toHaveBeenCalledTimes(1);
   });
 
   it('marks failed when LLM output cannot be parsed', async () => {

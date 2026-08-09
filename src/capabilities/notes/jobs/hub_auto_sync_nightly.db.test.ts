@@ -17,6 +17,7 @@ vi.mock('@/server/boss/client', async (importOriginal) => {
   return { ...actual, getRunningBoss: () => bossMock.getRunningBoss() };
 });
 
+import type { HubSyncCycleResult } from '../server/hub-sync-reconciliation';
 import {
   buildHubAutoSyncNightlyHandler,
   buildHubSyncMutationWakeJobHandler,
@@ -303,6 +304,53 @@ describe('YUK-384 production continuation dispatch (buildHubSyncRecoveryJobHandl
 
     await buildHubSyncRecoveryJobHandler(testDb())([{ id: 'job-1' }] as never);
     expect(bossMock.send).not.toHaveBeenCalled();
+  });
+
+  it('runs handoff recovery even when hub recovery fails, then rejects for retry', async () => {
+    const hubError = new Error('hub recovery failed');
+    const runHubRecovery = vi.fn(async (): Promise<HubSyncCycleResult> => {
+      throw hubError;
+    });
+    const recoverHandoffsAndClaims = vi.fn(async () => undefined);
+
+    const handler = buildHubSyncRecoveryJobHandler(testDb(), {
+      runHubRecovery,
+      recoverHandoffsAndClaims,
+    });
+    await expect(handler([{ id: 'job-1' }] as never)).rejects.toBe(hubError);
+    expect(runHubRecovery).toHaveBeenCalledTimes(1);
+    expect(recoverHandoffsAndClaims).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs hub recovery even when handoff recovery fails, then rejects for retry', async () => {
+    const handoffError = new Error('handoff recovery failed');
+    const result = {
+      reason: 'recovery',
+      mode: 'apply',
+      claimed: 0,
+      applied: 0,
+      acknowledged_noop: 0,
+      deferred_editing: 0,
+      superseded: 0,
+      retry_scheduled: 0,
+      cancelled: 0,
+      shadowed: 0,
+      lost_lease: 0,
+      retry_record_failed: 0,
+      continuation_needed: false,
+    } satisfies HubSyncCycleResult;
+    const runHubRecovery = vi.fn(async () => result);
+    const recoverHandoffsAndClaims = vi.fn(async () => {
+      throw handoffError;
+    });
+
+    const handler = buildHubSyncRecoveryJobHandler(testDb(), {
+      runHubRecovery,
+      recoverHandoffsAndClaims,
+    });
+    await expect(handler([{ id: 'job-1' }] as never)).rejects.toBe(handoffError);
+    expect(runHubRecovery).toHaveBeenCalledTimes(1);
+    expect(recoverHandoffsAndClaims).toHaveBeenCalledTimes(1);
   });
 
   it('the mutation-wake queue consumer actually drives a cycle (converges a ready hub)', async () => {

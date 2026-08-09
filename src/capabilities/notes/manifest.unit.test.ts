@@ -41,6 +41,7 @@ describe('notes capability — hub-sync job family (YUK-384)', () => {
     expect(recovery).toBeDefined();
     expect(recovery?.schedule).toEqual({ cron: '* * * * *', tz: 'Asia/Shanghai' });
     expect(recovery?.load).toBeInstanceOf(Function);
+    expect(byName.has('note_handoff_recovery')).toBe(false);
   });
 
   it('registers the on-demand mutation-wake queue with a consumer (no cron)', () => {
@@ -56,5 +57,34 @@ describe('notes capability — hub-sync job family (YUK-384)', () => {
     for (const name of ['hub_auto_sync_nightly', 'hub_sync_recovery', 'hub_sync_mutation_wake']) {
       expect(byName.has(name)).toBe(true);
     }
+  });
+});
+
+describe('notes capability — durable generate and verify handoff (YUK-857)', () => {
+  const handlers = notesCapability.jobs?.handlers ?? [];
+
+  it('declares exactly one loadable handler for each Notes handoff queue', async () => {
+    for (const name of ['note_generate', 'note_verify']) {
+      const matches = handlers.filter((handler) => handler.name === name);
+      expect(matches).toHaveLength(1);
+      expect(matches[0]?.load).toBeInstanceOf(Function);
+      await expect(matches[0]?.load?.()).resolves.toBeInstanceOf(Function);
+    }
+  });
+
+  it('keeps queue tiers exact and uses the shared Notes recovery floor', () => {
+    expect(handlers.find((handler) => handler.name === 'note_generate')).toMatchObject({
+      queue: 'llm',
+      schedule: undefined,
+    });
+    expect(handlers.find((handler) => handler.name === 'note_verify')).toMatchObject({
+      queue: 'llm',
+      schedule: undefined,
+    });
+    expect(handlers.find((handler) => handler.name === 'note_handoff_recovery')).toBeUndefined();
+    expect(handlers.find((handler) => handler.name === 'hub_sync_recovery')).toMatchObject({
+      queue: 'llm',
+      schedule: { cron: '* * * * *', tz: 'Asia/Shanghai' },
+    });
   });
 });

@@ -1,5 +1,6 @@
 // Phase 2B — Learning Intent Orchestrator tests.
 
+import { NOTE_HANDOFF_ACTION } from '@/capabilities/notes/server/note-handoff';
 import { artifact, event, knowledge, learning_item } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -281,6 +282,17 @@ describe('acceptLearningIntent', () => {
       expect(aArt.parent_artifact_id).toBe(result.hub_artifact_id);
       expect(aArt.body_blocks).toBeNull();
     }
+    const handoffIntents = await db
+      .select({ subject_id: event.subject_id, payload: event.payload })
+      .from(event)
+      .where(eq(event.action, NOTE_HANDOFF_ACTION));
+    expect(handoffIntents).toHaveLength(2);
+    expect(new Set(handoffIntents.map((row) => row.subject_id))).toEqual(
+      new Set(result.atomic_artifact_ids),
+    );
+    expect(handoffIntents.every((row) => row.payload.handoff_kind === 'generation_intent')).toBe(
+      true,
+    );
   });
 
   it('materializes optional long notes as child learning items and note_long artifacts', async () => {

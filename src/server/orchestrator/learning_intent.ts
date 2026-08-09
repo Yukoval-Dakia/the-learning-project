@@ -19,6 +19,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { summaryBodyBlocks } from '@/capabilities/notes/server/body-blocks';
+import { writeNoteGenerationIntent } from '@/capabilities/notes/server/note-handoff';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
@@ -869,6 +870,7 @@ export async function acceptLearningIntent(
         taskRunId: proposalTaskRunId ?? null,
         createdAt: now,
       });
+      await writeNoteGenerationIntent(tx, atomicArtifactIds[i]);
     }
 
     // Long artifact stubs (pending; worker fills body_blocks with free-form rich notes)
@@ -905,6 +907,7 @@ export async function acceptLearningIntent(
         taskRunId: proposalTaskRunId ?? null,
         createdAt: now,
       });
+      await writeNoteGenerationIntent(tx, longArtifactIds[i]);
     }
 
     // Rate event: marks proposal accepted, chains via caused_by_event_id

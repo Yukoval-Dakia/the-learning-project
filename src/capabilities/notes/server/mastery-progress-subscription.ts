@@ -8,8 +8,8 @@ import type {
   EventSubscriptionHandlerFactory,
   EventSubscriptionOutcome,
 } from '@/kernel/manifest';
-import { getStartedBoss } from '@/server/boss/client';
 import { and, asc, eq } from 'drizzle-orm';
+import { getNotesBoss } from './boss-port';
 import { reserveAndEnqueueMasteryRefineEffect } from './mastery-refine-effect';
 import { collectMasteryRefineTargets } from './mastery-refine-targets';
 import type { NoteRefineBossSend } from './note-refine-triggers';
@@ -113,7 +113,7 @@ export async function handleMasteryProgressNoteRefineDelivery(
 
   let send = deps.bossSend;
   if (!send) {
-    const boss = await getStartedBoss();
+    const boss = await getNotesBoss();
     send = boss.send.bind(boss);
   }
   const counts = {

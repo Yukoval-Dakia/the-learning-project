@@ -90,7 +90,7 @@ describe('learning_item proposal lifecycle', () => {
 
   it('accept materializes 1 hub + N atomic learning_items via acceptLearningIntent and records a single rate event', async () => {
     const { proposalId } = await seedLearningItemProposal();
-    const enqueueLearningIntentNote = vi.fn(async (_artifactId: string) => {});
+    const enqueueLearningIntentNote = vi.fn(async (_artifactId: string) => true);
     const result = await acceptAiProposal(testDb(), proposalId, {
       enqueueLearningIntentNote,
     });
@@ -161,7 +161,7 @@ describe('learning_item proposal lifecycle', () => {
 
   it('idempotent re-accept re-enqueues only note artifacts that are still pending', async () => {
     const { proposalId } = await seedLearningItemProposal({ withLong: true });
-    const firstEnqueue = vi.fn(async (_artifactId: string) => {});
+    const firstEnqueue = vi.fn(async (_artifactId: string) => true);
     const first = await acceptAiProposal(testDb(), proposalId, {
       enqueueLearningIntentNote: firstEnqueue,
     });
@@ -174,7 +174,7 @@ describe('learning_item proposal lifecycle', () => {
       .set({ generation_status: 'ready' })
       .where(eq(artifact.id, first.atomic_artifact_ids[0]));
 
-    const retryEnqueue = vi.fn(async (_artifactId: string) => {});
+    const retryEnqueue = vi.fn(async (_artifactId: string) => true);
     const second = await acceptAiProposal(testDb(), proposalId, {
       enqueueLearningIntentNote: retryEnqueue,
     });

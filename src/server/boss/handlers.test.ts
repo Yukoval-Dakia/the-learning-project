@@ -14,6 +14,32 @@ async function registerAll(boss: PgBoss): Promise<void> {
 }
 
 describe('registerHandlers + registerCapabilityJobs', () => {
+  it('registers Notes handoff workers and the shared recovery floor exactly once', async () => {
+    const boss = {
+      createQueue: vi.fn(async () => undefined),
+      updateQueue: vi.fn(async () => undefined),
+      work: vi.fn(async () => undefined),
+      schedule: vi.fn(async () => undefined),
+      send: vi.fn(async () => 'job-id'),
+    } as unknown as PgBoss;
+
+    await registerAll(boss);
+
+    const workedNames = (boss.work as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => call[0] as string,
+    );
+    for (const name of ['note_generate', 'note_verify', 'hub_sync_recovery']) {
+      expect(workedNames.filter((worked) => worked === name)).toHaveLength(1);
+    }
+    expect(workedNames).not.toContain('note_handoff_recovery');
+    const recoverySchedules = (boss.schedule as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call) => call[0] === 'hub_sync_recovery',
+    );
+    expect(recoverySchedules).toEqual([
+      ['hub_sync_recovery', '* * * * *', {}, expect.objectContaining({ tz: 'Asia/Shanghai' })],
+    ]);
+  });
+
   it('registers knowledge_maintenance_nightly queue with expiry + DLQ, but no cron (YUK-758 DAG member)', async () => {
     const boss = {
       createQueue: vi.fn(async () => undefined),

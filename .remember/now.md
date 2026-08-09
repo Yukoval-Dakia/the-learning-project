@@ -1,4 +1,4 @@
-# 当前 handoff — 2026-08-10 YUK-855 admission modes delivery
+# 当前 handoff — 2026-08-10 YUK-857 Notes durable handoff
 
 > 只维护 NOW / NEXT / PARKED / BLOCKED-ON 四栏；以 Linear 与 main CI 为交付权威。
 
@@ -13,16 +13,17 @@
 - **F0.3 / YUK-853 已在 main。** SHA `b16f6276cb51033979953e9c8cc8c561f894d13b`；未部署。
 - **F0.4 / YUK-852 已在 main。** PR #1171 merge SHA `c98b10b0`；未部署。
 - **YUK-844 已在 main。** PR #1172 merge 到 `b140d246`；unknown-cost 与 migration 0090 已交付。
-- **YUK-855 是当前 active handoff。** PR #1173 首个 SHA `7519f350` 的 GitHub CI 已提供失败证据；
-  capability baseline、audit unit seam、DB fixtures、cost aggregate ISO bind、off-mode durable truth 与
-  control-plane fail-open 修复均已落盘，等待提交后的新 exact-head CI 与独立复审。
+- **YUK-855 已交付 main。** YUK-857 前置依赖解除。
+- **YUK-857 是当前 active handoff。** event v1 intent/completion、deterministic pg-boss
+  UUID/readback、indexed 每分钟 recovery、0093 Notes verification claim、artifact-version/fence CAS、
+  raw-result recovery 与 Notes-owned task definitions 已作者化。未提交，未做 runtime 验证。
 - **运行状态：**没有 deployment；YUK-832 HOLD 与 YUK-842 observe 均未改变。
 
 ## NEXT
 
-1. Commit/push YUK-855 当前修复，监控 PR #1173 新 exact-head CI，处理剩余 review threads。
-2. CI/review 全绿后 merge、同步 Linear，并以非强制方式移除 YUK-855 worktree。
-3. 从最新 main 启动 YUK-857 Notes durable handoff；F2.2–F4 继续保持 open。
+1. 完成 YUK-857 scoped Biome、changed JSON `jq empty` 与 `git diff --check`，封存 evidence。
+2. Root commit/push 后只以 exact-head GitHub CI + 独立 review 验证 tests/typecheck/build。
+3. CI/review 全绿后 merge、同步 Linear；F2.2–F4 继续保持 open。
 
 ## PARKED
 
@@ -32,6 +33,6 @@
 
 ## BLOCKED-ON
 
-- YUK-855 delivery 尚缺当前修复 commit/push、新 exact-head CI、review clean 与 merge。
-- YUK-857 由 YUK-855 阻塞；Architecture FULL 仍依赖 YUK-855 与 F2–F4，当前不能宣称 closed。
+- YUK-857 尚缺 commit/push、exact-head CI、review clean 与 merge。
+- Architecture FULL 仍依赖 F2.1–F4，当前不能宣称 closed。
 - Production 没有部署授权或真实观察证据；保持未部署表述。

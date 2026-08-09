@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { Tx } from '@/db/client';
 import { event_subscription_effect } from '@/db/schema';
-import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import { and, desc, eq, gt, sql } from 'drizzle-orm';
+import { notesBossTransaction } from './boss-port';
 import type { NoteRefineBossSend } from './note-refine-triggers';
 import { NOTE_REFINE_TRIGGER_DEBOUNCE_MS, noteRefineTriggerEnabled } from './note-refine-triggers';
 
@@ -110,7 +110,7 @@ export async function reserveAndEnqueueMasteryRefineEffect(input: {
             trigger_event_id: input.sourceEventId,
           },
         },
-        { db: fromPgBossDrizzleTx(input.tx) },
+        { db: notesBossTransaction(input.tx) },
       );
       if (downstreamJobId === null) {
         throw new Error('note_refine transactional send returned null');
