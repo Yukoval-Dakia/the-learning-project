@@ -11,16 +11,17 @@
   Linear Done。
 - **F0.2 / YUK-854 已在 main。** PR #1169 merge SHA `b677dab4`；未部署。
 - **F0.3 / YUK-853 已在 main。** SHA `b16f6276cb51033979953e9c8cc8c561f894d13b`；未部署。
-- **F0.4 / YUK-852 是当前 active handoff。** PR #1171 已 Ready；P1 修复后的本地 delivery candidate
-  已 commit、尚未 push，remote head 仍为 `448c5e7e8a2e628064ecb8309a9867a4dec0ef61`。
-  Mem0 三条真实 add 与 canonical search 已进入 PR；candidate 尚未 push，PR 尚未 merge，亦未 deploy。
-  unit、DB 与 `530 / 70 / 62` boundary 均 green；无 migration，不能称 delivered。
+- **F0.4 / YUK-852 是当前 active handoff。** PR #1171 已 Ready；连接池自饿修复提交
+  `7713732c` 尚未 push，remote head 为 `d5af454c894b8c2ef397841feacd4a3780f1317d`。
+  Mem0 三条真实 add 与 canonical search 已进入 PR；paid-lock compose/recompose、due-list 与 re-rank
+  现在复用同一 `Db | Tx` 句柄。8 个相关 DB 文件 `111/111` green，独立 correctness 与
+  code-quality review 均 ACCEPT；PR 尚未 merge，亦未 deploy。无 migration，不能称 delivered。
 - **运行状态：**没有 deployment；YUK-832 HOLD 与 YUK-842 observe 均未改变。
 
 ## NEXT
 
-1. 对本地 P1 第二 commit 做最终 scope inspection；获授权后 normal push，等待新 exact-head CI 与
-   review 收敛后 merge PR #1171。
+1. Normal push `7713732c`，处理 review threads，等待新 exact-head CI；全绿且无未解决 P0/P1 后
+   merge PR #1171。
 2. F0.4 后处理 F0.5；F0.5 删除 transitional legacy OCR ledger mirror。
 3. F2–F4 继续保持 open。
 
@@ -32,6 +33,6 @@
 
 ## BLOCKED-ON
 
-- F0.4 delivery 尚缺本地 P1 第二 commit push、新 exact-head CI、review 收敛与 PR #1171 merge。
+- F0.4 delivery 尚缺 `7713732c` push、新 exact-head CI、review 收敛与 PR #1171 merge。
 - Architecture FULL 仍依赖 F0.4 交付、F0.5 与 F2–F4，当前不能宣称 closed。
 - Production 没有部署授权或真实观察证据；保持未部署表述。

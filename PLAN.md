@@ -16,18 +16,20 @@
   已接入 F0.1 attempt lifecycle。未部署。
 - **F0.3 / YUK-853 已交付 main。** main SHA
   `b16f6276cb51033979953e9c8cc8c561f894d13b`；OCR wire provider-attempt 已进入主线。未部署。
-- **F0.4 / YUK-852 正在 PR #1171 收敛，尚未交付。** P1 修复后的本地 delivery candidate
-  已 commit、尚未 push；Mem0 的三条真实 `memory.add` 与 canonical
+- **F0.4 / YUK-852 正在 PR #1171 收敛，尚未交付。** P1/P0 连接池自饿修复已提交为
+  `7713732c`、尚未 push；Mem0 的三条真实 `memory.add` 与 canonical
   `memory.search` 已接入 observe opaque operation；caller-owned operation、fresh attempt、terminal
   truth、unknown usage/cost 与 `wire_count=null` 已由 unit/DB 测试覆盖。worker add、API tool search、
-  Practice L2 lazy/recompose/nightly 均已线程；candidate 尚未 push，PR 当前 remote head 仍为
-  `448c5e7e`、尚未 merge；无 schema/migration/version 变化。
+  Practice L2 lazy/recompose/nightly 均已线程。当前修复让 paid advisory lock、compose/recompose、
+  due-list 与 re-rank 始终复用同一 `Db | Tx` 句柄；8 个相关 DB 文件 `111/111` green，独立
+  correctness/code-quality review 均 ACCEPT。PR remote head 为 `d5af454c`，本地 ahead 1；尚未
+  push/merge，无 schema/migration/version 变化。
 - **生产边界不变。** F0.0–F0.4 均未部署；YUK-832 继续 HOLD，YUK-842 production 继续 observe。
 
 ## NEXT
 
-1. **收敛 F0.4 / YUK-852：**完成 P1 transaction-boundary scope inspection 后，再授权 normal push、
-   exact-head CI、review thread 处理与 merge。本地 commit 与绿灯不替代 main 交付。
+1. **收敛 F0.4 / YUK-852：**normal push `7713732c`，处理 review threads，等待新 exact-head CI，
+   全绿且无未解决 P0/P1 后 merge PR #1171。本地 commit 与绿灯不替代 main 交付。
 2. F0.4 交付后再推进 F0.5；F0.5 移除 transitional legacy OCR ledger mirror。
 3. F2–F4 仍为开放工作，按依赖与 owner 优先级单独收敛。
 4. 任何 production observation / deployment 都需单独授权；代码 merge 不自动改变 rollout 或 enforcement。
@@ -41,6 +43,6 @@
 
 ## BLOCKED-ON
 
-- **F0.4 main delivery：**PR #1171 尚缺 P1 第二 commit push、exact-head CI、review 收敛与 merge。
+- **F0.4 main delivery：**PR #1171 尚缺 `7713732c` push、新 exact-head CI、review 收敛与 merge。
 - **Architecture FULL：**F0.4 尚未交付，F0.5 与 F2–F4 仍 open，不能宣称 closed。
 - **Production：**没有部署授权或生产观察证据；main/local 状态都不等于 deployed。
