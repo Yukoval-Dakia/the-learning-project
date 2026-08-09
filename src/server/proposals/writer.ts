@@ -28,7 +28,7 @@ export interface WriteAiProposalInput {
   };
   caused_by_event_id?: string | null;
   task_run_id?: string | null;
-  cost_usd?: number;
+  cost_usd?: number | null;
   created_at?: Date;
 }
 

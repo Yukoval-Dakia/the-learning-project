@@ -168,7 +168,7 @@ export const GroundingPrivateMapSchema = z.object({
       prior_claim_md: z.string().nullable(),
       task_run_ids: z.array(z.string()),
       primary_task_run_id: z.string().nullable(),
-      cost_usd: z.number().nonnegative(),
+      cost_usd: z.number().nonnegative().nullable(),
       confidence: z.number().min(0).max(1),
       confidence_capped: z.boolean(),
       probe_quality_attempts: z.array(ConjectureProbeQualityAttempt).optional(),

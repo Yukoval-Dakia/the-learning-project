@@ -743,6 +743,23 @@ describe('runResearchMeetingDirector — pipeline', () => {
     expect(scans[0].cost_micro_usd).toBe(0); // NOT null — a successful run's real 0 is a fact
   });
 
+  it('records a successful unpriced director run as unknown', async () => {
+    const runAgentTaskFn = vi.fn(async () => {
+      await callTool('propose_conjecture', validProposeArgs);
+      return {
+        task_run_id: 'director_run_unknown_cost',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      };
+    });
+    const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+    expect(result.outcome).toBe('success');
+    expect(result.cost_usd).toBeNull();
+    const scans = await testDb().select().from(event).where(eq(event.action, SCAN_ACTION));
+    expect(scans[0]?.cost_micro_usd).toBeNull();
+  });
+
   it('dedups against a pending conjecture the deterministic lane already raised (cross-actor)', async () => {
     // Seed a PENDING conjecture from the deterministic lane (actor research_meeting).
     await writeAiProposal(testDb(), {

@@ -352,7 +352,11 @@ export async function addPlacementStarterCostComponent(
     .update(placement_starter_claim)
     .set({
       known_cost_micro_usd: sql`(
-        SELECT COALESCE(SUM(${placement_starter_cost_component.cost_micro_usd}), 0)::int
+        SELECT CASE
+          WHEN COUNT(*) FILTER (WHERE ${placement_starter_cost_component.cost_micro_usd} IS NULL) > 0
+            THEN NULL
+          ELSE COALESCE(SUM(${placement_starter_cost_component.cost_micro_usd}), 0)::int
+        END
         FROM ${placement_starter_cost_component}
         WHERE ${placement_starter_cost_component.claim_id} = ${input.claim_id}
       )`,

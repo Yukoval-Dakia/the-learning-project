@@ -89,6 +89,7 @@ import {
   PlacementStarterDeadlineError,
   PlacementStarterStaleAuthorityError,
   PlacementStarterUnderfillError,
+  PlacementStarterUnknownCostError,
   type PlacementVerificationAuthority,
   acquirePlacementAttempt,
   assertPlacementAttemptFence,
@@ -103,6 +104,7 @@ import {
   renewPlacementAttempt,
   reservePlacementGenerationCall,
   startPlacementAttemptHeartbeat,
+  terminalizePlacementUnknownCost,
 } from '@/server/question-supply/placement-starter-attempts';
 import { markPlacementStarterClaimTerminal } from '@/server/question-supply/placement-starter-store';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
@@ -626,6 +628,32 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       ...(subjectSkills ? { skills: subjectSkills } : {}),
     });
     taskResult = result;
+    if (params.placementAttempt) {
+      if (!result.task_run_id) {
+        throw new PlacementStarterUnknownCostError(
+          'placement quiz_gen paid invocation is missing provider task_run_id',
+        );
+      }
+      // recordPlacementAttemptOutput commits the actual provider run id + cost (retention) and
+      // reports over-cap; block the delivery here so the settlement is preserved (codex P2).
+      const { overCap, costUnknown } = await recordPlacementAttemptOutput(
+        db,
+        params.placementAttempt,
+        {
+          taskRunId: result.task_run_id,
+          outputText: result.text,
+          costMicroUsd: costUsdToMicroUsd(result.cost_usd),
+        },
+      );
+      if (costUnknown) {
+        throw new PlacementStarterUnknownCostError('placement generation cost is unknown');
+      }
+      if (overCap) {
+        throw new PlacementStarterAdmissionError(
+          'placement generation exceeded authorized reservation',
+        );
+      }
+    }
     await params.placementHeartbeat?.assertHealthy();
     if (params.placementAttempt) {
       await assertPlacementAttemptFence(db, params.placementAttempt);
@@ -635,23 +663,6 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       throw new Error(
         `quiz_gen exact_count=${params.exactCount} but agent produced ${parsed.questions.length}`,
       );
-    }
-    if (params.placementAttempt) {
-      if (!result.task_run_id) {
-        throw new Error('placement quiz_gen requires provider task_run_id');
-      }
-      // recordPlacementAttemptOutput commits the actual provider run id + cost (retention) and
-      // reports over-cap; block the delivery here so the settlement is preserved (codex P2).
-      const { overCap } = await recordPlacementAttemptOutput(db, params.placementAttempt, {
-        taskRunId: result.task_run_id,
-        outputText: result.text,
-        costMicroUsd: costUsdToMicroUsd(result.cost_usd) ?? 0,
-      });
-      if (overCap) {
-        throw new PlacementStarterAdmissionError(
-          'placement generation exceeded authorized reservation',
-        );
-      }
     }
 
     // YUK-226 S2-5b F1 — when the 找题次序 PINNED a generation_method (step 3
@@ -1408,6 +1419,19 @@ export function buildQuizGenHandler(
         }
         console.log(`[quiz_gen] ${data.trigger}:${data.ref_id} -> ${result.status}`);
       } catch (err) {
+        if (err instanceof PlacementStarterUnknownCostError && data.placement_starter_claim_id) {
+          const claimId = data.placement_starter_claim_id;
+          await terminalizePlacementUnknownCost(db, {
+            claimId,
+            ...(placementAttempt
+              ? {
+                  attemptId: placementAttempt.attemptId,
+                  fencingToken: placementAttempt.fencingToken,
+                }
+              : {}),
+          });
+          continue;
+        }
         // Pre-attempt budget exhaustion (codex P2-A): acquirePlacementAttempt threw
         // PlacementStarterBudgetExhaustedError BEFORE placementAttempt was assigned, so the
         // finishPlacementAttempt path below cannot terminalize. A budget-exhausted claim can never

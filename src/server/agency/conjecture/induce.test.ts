@@ -781,7 +781,7 @@ describe('induceConjecture self-consistency', () => {
     expect(result.task_run_ids).toEqual(['run_2', 'run_3', 'probe-author-run', 'probe-review-run']);
     if (result.outcome !== 'proposal') throw new Error('expected proposal');
     expect(result.primary_task_run_id).toBe('probe-author-run');
-    expect(result.cost_usd).toBeCloseTo(0.5, 5);
+    expect(result.cost_usd).toBeNull();
     expect(runTaskFn).toHaveBeenCalledTimes(3);
     expect(warnSpy).toHaveBeenCalledWith(
       '[induceConjecture] induction sample failed, skipping',
@@ -791,6 +791,47 @@ describe('induceConjecture self-consistency', () => {
         error: 'transient sample failure',
       }),
     );
+  });
+
+  it('sums every numeric induction, grouping, author, and reviewer leg', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce({ ...sample('链式法则误区 A'), cost_usd: 0.1 })
+      .mockResolvedValueOnce({ ...sample('链式法则误区 B'), cost_usd: 0.1 })
+      .mockResolvedValueOnce({ ...sample('链式法则误区 C'), cost_usd: 0.1 })
+      .mockResolvedValueOnce({ ...groupResult([[0, 1, 2]]), cost_usd: 0.2 })
+      .mockResolvedValueOnce({ ...probePackageResult(), cost_usd: 0.3 })
+      .mockResolvedValueOnce({ ...probeReviewResult(), cost_usd: 0.4 });
+
+    const result = await induceConjectureImpl({ cells: [cell()], samples: 3, runTaskFn });
+
+    expect(result.outcome).toBe('proposal');
+    expect(result.cost_usd).toBeCloseTo(1.2, 6);
+  });
+
+  it('keeps unknown probe pricing sticky across otherwise known legs', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce({ ...sample('链式法则误区'), cost_usd: 0.1 })
+      .mockResolvedValueOnce(probePackageResult())
+      .mockResolvedValueOnce({ ...probeReviewResult(), cost_usd: 0.2 });
+
+    const result = await induceConjectureImpl({ cells: [cell()], samples: 1, runTaskFn });
+
+    expect(result.outcome).toBe('proposal');
+    expect(result.cost_usd).toBeNull();
+  });
+
+  it('preserves a genuinely zero-cost conjecture operation', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce({ ...sample('链式法则误区'), cost_usd: 0 })
+      .mockResolvedValueOnce({ ...probePackageResult(), cost_usd: 0 })
+      .mockResolvedValueOnce({ ...probeReviewResult(), cost_usd: 0 });
+
+    const result = await induceConjectureImpl({ cells: [cell()], samples: 1, runTaskFn });
+
+    expect(result.cost_usd).toBe(0);
   });
 
   it('uses a winning proposal sample for scalar task-run correlation', async () => {

@@ -1,4 +1,4 @@
-# 当前 handoff — 2026-08-09 YUK-852 PR #1171 P1 收敛
+# 当前 handoff — 2026-08-09 YUK-844 unknown-cost 实施
 
 > 只维护 NOW / NEXT / PARKED / BLOCKED-ON 四栏；以 Linear 与 main CI 为交付权威。
 
@@ -11,28 +11,27 @@
   Linear Done。
 - **F0.2 / YUK-854 已在 main。** PR #1169 merge SHA `b677dab4`；未部署。
 - **F0.3 / YUK-853 已在 main。** SHA `b16f6276cb51033979953e9c8cc8c561f894d13b`；未部署。
-- **F0.4 / YUK-852 是当前 active handoff。** PR #1171 已 Ready；连接池自饿修复提交
-  `7713732c` 尚未 push，remote head 为 `d5af454c894b8c2ef397841feacd4a3780f1317d`。
-  Mem0 三条真实 add 与 canonical search 已进入 PR；paid-lock compose/recompose、due-list 与 re-rank
-  现在复用同一 `Db | Tx` 句柄。8 个相关 DB 文件 `111/111` green，独立 correctness 与
-  code-quality review 均 ACCEPT；PR 尚未 merge，亦未 deploy。无 migration，不能称 delivered。
+- **F0.4 / YUK-852 已在 main。** PR #1171 merge SHA `c98b10b0`；未部署。
+- **YUK-844 是当前 active handoff。** 隔离 worktree 已把 product-operation cost 收口为
+  all-known nullable，并让 placement unknown settlement sticky、拒绝后续付费、以
+  `cost_unknown` 强制 exhausted。migration 0090、测试与 scoped static guards 已收口，尚未运行
+  exact-head CI。
 - **运行状态：**没有 deployment；YUK-832 HOLD 与 YUK-842 observe 均未改变。
 
 ## NEXT
 
-1. Normal push `7713732c`，处理 review threads，等待新 exact-head CI；全绿且无未解决 P0/P1 后
-   merge PR #1171。
-2. F0.4 后处理 F0.5；F0.5 删除 transitional legacy OCR ledger mirror。
+1. Commit/push YUK-844 当前实现并等待 exact-head CI、独立 review 与 merge。
+2. YUK-855 legacy writer 删除保持独立，不并入本分支。
 3. F2–F4 继续保持 open。
 
 ## PARKED
 
 - YUK-832 / YUK-839 保持 fail-closed HOLD；YUK-842 production 保持 observe。
-- F0.5、F2–F4 尚未关闭；分别到达时再确认 owner、scope 与验收证据。
-- Production observation / deployment 需独立授权，不与 F0.4 PR 交付合并。
+- YUK-855、F2–F4 尚未关闭；分别到达时再确认 owner、scope 与验收证据。
+- Production observation / deployment 需独立授权，不与 YUK-844 delivery 合并。
 
 ## BLOCKED-ON
 
-- F0.4 delivery 尚缺 `7713732c` push、新 exact-head CI、review 收敛与 PR #1171 merge。
-- Architecture FULL 仍依赖 F0.4 交付、F0.5 与 F2–F4，当前不能宣称 closed。
+- YUK-844 delivery 尚缺 commit/push、exact-head CI、独立 review 与 merge。
+- Architecture FULL 仍依赖 YUK-844、YUK-855 与 F2–F4，当前不能宣称 closed。
 - Production 没有部署授权或真实观察证据；保持未部署表述。

@@ -65,11 +65,13 @@ import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
 import {
   PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
+  PlacementStarterUnknownCostError,
   type PlacementVerificationAuthority,
   assertPlacementAuthority,
   releaseAuthorizedPaidCall,
   reserveAuthorizedPaidCall,
   settleAuthorizedPaidCall,
+  terminalizePlacementUnknownCost,
 } from '@/server/question-supply/placement-starter-attempts';
 import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import { resolveSolveOverrideFromEnv } from '@/server/quiz/solve-lane';
@@ -100,6 +102,19 @@ export type RunTaskFn = TaskTextRunFn;
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
+
+function requirePlacementProviderTaskRunId(
+  result: Pick<TaskTextResult, 'task_run_id' | 'cost_usd'>,
+  label: string,
+): string {
+  if (result.task_run_id) return result.task_run_id;
+  if (costUsdToMicroUsd(result.cost_usd) === null) {
+    throw new PlacementStarterUnknownCostError(`placement ${label} cost is unknown`);
+  }
+  throw new PlacementStarterAdmissionError(
+    `placement ${label} paid invocation missing task_run_id`,
+  );
+}
 
 // §4 / §5 — deterministic normalized n-gram overlap. Word-shingle Jaccard between
 // the prompt and each source snippet; we take the MAX over snippets (worst-case
@@ -351,20 +366,19 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       afterTaskRun: async (result) => {
         taskResult = result;
         if (!placementAuthority) return;
-        if (!result.task_run_id) {
-          throw new PlacementStarterAdmissionError(
-            'placement quiz_verify paid invocation missing task_run_id',
-          );
-        }
+        const providerTaskRunId = requirePlacementProviderTaskRunId(result, 'quiz_verify');
         const settlement = await db.transaction(async (tx) =>
           settleAuthorizedPaidCall(tx, {
             authority: placementAuthority,
             reservationKey: primaryReservationKey,
-            providerTaskRunId: result.task_run_id as string,
-            costMicroUsd: costUsdToMicroUsd(result.cost_usd) ?? 0,
+            providerTaskRunId,
+            costMicroUsd: costUsdToMicroUsd(result.cost_usd),
           }),
         );
         primaryPaidSettled = true;
+        if (settlement.costUnknown) {
+          throw new PlacementStarterUnknownCostError('placement quiz_verify cost is unknown');
+        }
         if (settlement.overCap) {
           throw new PlacementStarterAdmissionError(
             'placement quiz_verify paid invocation exceeded authorized reservation',
@@ -516,19 +530,20 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                       );
                     },
                     settlePaidCall: async (kind, invocationId, paidResult) => {
-                      if (!paidResult.task_run_id) {
-                        throw new PlacementStarterAdmissionError(
-                          `placement ${kind} paid invocation missing task_run_id`,
-                        );
-                      }
+                      const providerTaskRunId = requirePlacementProviderTaskRunId(paidResult, kind);
                       const settlement = await db.transaction(async (tx) =>
                         settleAuthorizedPaidCall(tx, {
                           authority: placementAuthority,
                           reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}:${invocationId}`,
-                          providerTaskRunId: paidResult.task_run_id as string,
-                          costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd) ?? 0,
+                          providerTaskRunId,
+                          costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd),
                         }),
                       );
+                      if (settlement.costUnknown) {
+                        throw new PlacementStarterUnknownCostError(
+                          `placement ${kind} cost is unknown`,
+                        );
+                      }
                       if (settlement.overCap) {
                         throw new PlacementStarterAdmissionError(
                           `placement ${kind} paid invocation exceeded authorized reservation`,
@@ -576,19 +591,23 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                       );
                     },
                     settlePaidCall: async (invocationId, paidResult) => {
-                      if (!paidResult.task_run_id) {
-                        throw new PlacementStarterAdmissionError(
-                          'placement teaching_quality paid invocation missing task_run_id',
-                        );
-                      }
+                      const providerTaskRunId = requirePlacementProviderTaskRunId(
+                        paidResult,
+                        'teaching_quality',
+                      );
                       const settlement = await db.transaction(async (tx) =>
                         settleAuthorizedPaidCall(tx, {
                           authority: placementAuthority,
                           reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality:${invocationId}`,
-                          providerTaskRunId: paidResult.task_run_id as string,
-                          costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd) ?? 0,
+                          providerTaskRunId,
+                          costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd),
                         }),
                       );
+                      if (settlement.costUnknown) {
+                        throw new PlacementStarterUnknownCostError(
+                          'placement teaching_quality cost is unknown',
+                        );
+                      }
                       if (settlement.overCap) {
                         throw new PlacementStarterAdmissionError(
                           'placement teaching_quality paid invocation exceeded authorized reservation',
@@ -1081,6 +1100,7 @@ export function buildQuizVerifyHandler(
 ): (jobs: Job<QuizVerifyJobData>[]) => Promise<void> {
   const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   return async (jobs) => {
+    const unknownCostClaimIds = new Set<string>();
     for (const job of jobs) {
       const questionIds = job.data?.question_ids;
       if (!Array.isArray(questionIds) || questionIds.length === 0) {
@@ -1094,13 +1114,28 @@ export function buildQuizVerifyHandler(
         ]),
       );
       for (const questionId of questionIds) {
-        const result = await runQuizVerify({
-          db,
-          questionId,
-          runTaskFn,
-          placementAuthority: placementAuthorities.get(questionId),
-        });
-        console.log(`[quiz_verify] ${questionId} -> ${result.status}`);
+        const placementAuthority = placementAuthorities.get(questionId);
+        if (placementAuthority && unknownCostClaimIds.has(placementAuthority.claim_id)) continue;
+        try {
+          const result = await runQuizVerify({
+            db,
+            questionId,
+            runTaskFn,
+            placementAuthority,
+          });
+          console.log(`[quiz_verify] ${questionId} -> ${result.status}`);
+        } catch (error) {
+          if (error instanceof PlacementStarterUnknownCostError && placementAuthority) {
+            await terminalizePlacementUnknownCost(db, {
+              claimId: placementAuthority.claim_id,
+              attemptId: placementAuthority.attempt_id,
+              fencingToken: placementAuthority.fencing_token,
+            });
+            unknownCostClaimIds.add(placementAuthority.claim_id);
+            continue;
+          }
+          throw error;
+        }
       }
     }
   };

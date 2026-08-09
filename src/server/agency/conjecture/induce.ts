@@ -44,7 +44,11 @@ import {
   type ConjectureProposalDraftT,
 } from '@/core/schema/business';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
-import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
+import {
+  type TaskTextResult,
+  type TaskTextRunFn,
+  sumAllKnownCostUsd,
+} from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
 import {
@@ -110,7 +114,7 @@ interface InduceConjectureResultBase {
   samples: number;
   /** task_run_ids of every completed sample plus semantic-grouping run, if used. */
   task_run_ids: string[];
-  cost_usd: number;
+  cost_usd: number | null;
   /** Every requested sample remains visible in the decision denominator. */
   votes: {
     proposal: number;
@@ -331,7 +335,7 @@ const GroupSchema = z.object({
 interface DeduplicateHypothesesResult {
   ok: boolean;
   groups: number[][];
-  cost_usd: number;
+  cost_usd: number | null;
   task_run_id: string | undefined;
 }
 
@@ -354,7 +358,7 @@ async function deduplicateHypotheses(
   ): DeduplicateHypothesesResult => ({
     ok: false,
     groups: hypotheses.map((_, i) => [i]),
-    cost_usd: result.cost_usd ?? 0,
+    cost_usd: result.cost_usd ?? null,
     task_run_id: result.task_run_id,
   });
 
@@ -421,7 +425,7 @@ async function deduplicateHypotheses(
   return {
     ok: true,
     groups: causallyHomogeneousGroups,
-    cost_usd: result.cost_usd ?? 0,
+    cost_usd: result.cost_usd ?? null,
     task_run_id: result.task_run_id,
   };
 }
@@ -475,7 +479,7 @@ export async function induceConjecture(
   const sampleErrors: string[] = [];
   let invalidSamples = 0;
   let failedSamples = 0;
-  let costUsd = 0;
+  const costsUsd: Array<number | null | undefined> = [];
   const sampleResults = await Promise.allSettled(
     Array.from({ length: samples }, () =>
       runTaskFn('MindModelInductionTask', taskInput, {
@@ -495,7 +499,7 @@ export async function induceConjecture(
     if (settled.status === 'fulfilled') {
       const result = settled.value;
       if (result.task_run_id) taskRunIds.push(result.task_run_id);
-      costUsd += result.cost_usd ?? 0;
+      costsUsd.push(result.cost_usd);
       const draft = parseSampleDraft(result);
       if (!draft) {
         invalidSamples += 1;
@@ -509,6 +513,7 @@ export async function induceConjecture(
         else invalidSamples += 1;
       }
     } else {
+      costsUsd.push(null);
       failedSamples += 1;
       const err = settled.reason;
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -550,7 +555,7 @@ export async function induceConjecture(
       confidence_capped: false,
       samples,
       task_run_ids: taskRunIds,
-      cost_usd: costUsd,
+      cost_usd: sumAllKnownCostUsd(costsUsd),
       votes,
       probe_quality_attempts: [],
     };
@@ -587,7 +592,7 @@ export async function induceConjecture(
       runTaskFn,
     );
     // Accumulate cost + provenance from the dedup call.
-    costUsd += dedup.cost_usd;
+    costsUsd.push(dedup.cost_usd);
     if (dedup.task_run_id) taskRunIds.push(dedup.task_run_id);
 
     if (!dedup.ok) {
@@ -636,7 +641,7 @@ export async function induceConjecture(
       confidence_capped: false,
       samples,
       task_run_ids: taskRunIds,
-      cost_usd: costUsd,
+      cost_usd: sumAllKnownCostUsd(costsUsd),
       votes,
       probe_quality_attempts: [],
     };
@@ -668,7 +673,7 @@ export async function induceConjecture(
     }
     throw error;
   }
-  costUsd += probeQuality.cost_usd;
+  costsUsd.push(probeQuality.cost_usd);
   taskRunIds.push(...probeQuality.task_run_ids);
 
   if (probeQuality.outcome === 'rejected') {
@@ -691,7 +696,7 @@ export async function induceConjecture(
       confidence_capped,
       samples,
       task_run_ids: taskRunIds,
-      cost_usd: costUsd,
+      cost_usd: sumAllKnownCostUsd(costsUsd),
       votes,
       probe_quality_attempts: probeQuality.attempts,
     };
@@ -720,7 +725,7 @@ export async function induceConjecture(
     confidence_capped,
     samples,
     task_run_ids: taskRunIds,
-    cost_usd: costUsd,
+    cost_usd: sumAllKnownCostUsd(costsUsd),
     votes,
     probe_quality_attempts: probeQuality.attempts,
   };

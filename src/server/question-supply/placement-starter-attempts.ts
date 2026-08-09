@@ -42,10 +42,31 @@ export class PlacementStarterAdmissionError extends Error {}
 // rather than retrying into the same throw (YUK-452 round-3, codex P2-A). Subclass so existing
 // `instanceof PlacementStarterAdmissionError` checks + `/budget/` message assertions still hold.
 export class PlacementStarterBudgetExhaustedError extends PlacementStarterAdmissionError {}
+export class PlacementStarterUnknownCostError extends PlacementStarterAdmissionError {}
 export class PlacementStarterAttemptActiveError extends Error {}
 export class PlacementStarterStaleAuthorityError extends Error {}
 export class PlacementStarterUnderfillError extends Error {}
 export class PlacementStarterDeadlineError extends Error {}
+
+function canonicalSettlementResult(settlement: {
+  cost: number | null;
+  overCap: boolean | null;
+}): { overCap: boolean; costUnknown: boolean } {
+  if (settlement.cost === null) {
+    if (settlement.overCap !== null) {
+      throw new PlacementStarterAdmissionError(
+        'unknown placement cost has an over-cap disposition',
+      );
+    }
+    return { overCap: false, costUnknown: true };
+  }
+  if (settlement.overCap === null) {
+    throw new PlacementStarterAdmissionError(
+      'known placement cost is missing over-cap disposition',
+    );
+  }
+  return { overCap: settlement.overCap, costUnknown: false };
+}
 
 export function placementDeliveryMetadata(input: {
   retryCount: unknown;
@@ -254,6 +275,9 @@ export async function acquirePlacementAttempt(
     }
     if (claim.max_paid_attempts !== 3 || input.deliveryNo > claim.max_paid_attempts) {
       throw new PlacementStarterAdmissionError('placement paid delivery exceeds claim policy');
+    }
+    if (claim.known_cost_micro_usd === null) {
+      throw new PlacementStarterUnknownCostError('placement starter cost is unknown');
     }
     if (claim.known_cost_micro_usd >= claim.budget_limit_micro_usd) {
       throw new PlacementStarterBudgetExhaustedError('placement starter budget exhausted');
@@ -565,9 +589,12 @@ export async function reservePlacementGenerationCall(
       .select({ id: placement_starter_cost_component.id })
       .from(placement_starter_cost_component)
       .where(eq(placement_starter_cost_component.id, id));
-    if (existing) return;
     const reserved = PLACEMENT_GENERATION_RESERVATION_MICRO_USD;
-    if (!claim || claim.knownCost + reserved > claim.budgetLimit) {
+    if (!claim || claim.knownCost === null) {
+      throw new PlacementStarterUnknownCostError('placement starter cost is unknown');
+    }
+    if (existing) return;
+    if (claim.knownCost + reserved > claim.budgetLimit) {
       throw new PlacementStarterAdmissionError('placement generation exceeds claim budget');
     }
     await tx.insert(placement_starter_cost_component).values({
@@ -589,30 +616,54 @@ export async function reservePlacementGenerationCall(
 export async function recordPlacementAttemptOutput(
   db: Db,
   attempt: PlacementAttemptAuthority,
-  input: { taskRunId: string; outputText: string; costMicroUsd: number; now?: Date },
-): Promise<{ overCap: boolean }> {
+  input: { taskRunId: string; outputText: string; costMicroUsd: number | null; now?: Date },
+): Promise<{ overCap: boolean; costUnknown: boolean }> {
   const now = input.now ?? new Date();
   const outputHash = createHash('sha256').update(input.outputText).digest('hex');
+  const reservationId = createHash('sha256')
+    .update(`placement-paid-call-reservation\0${attempt.attemptId}:quiz_gen`)
+    .digest('hex');
+  const fallbackSettlementId = createHash('sha256')
+    .update(`${input.taskRunId}\0quiz_gen\0`)
+    .digest('hex');
   return db.transaction(async (tx) => {
     const [current] = await tx
       .select()
       .from(placement_starter_attempt)
       .where(eq(placement_starter_attempt.id, attempt.attemptId))
       .for('update');
+    if (!current) {
+      throw new PlacementStarterStaleAuthorityError('placement output fence lost');
+    }
     if (
-      !current ||
       current.fencing_token !== attempt.fencingToken ||
+      (current.provider_task_run_id && current.provider_task_run_id !== input.taskRunId) ||
+      (current.provider_output_hash && current.provider_output_hash !== outputHash)
+    ) {
+      throw new PlacementStarterAdmissionError('placement provider output invariant mismatch');
+    }
+    if (
+      current.provider_task_run_id === input.taskRunId &&
+      current.provider_output_hash === outputHash
+    ) {
+      const [settled] = await tx
+        .select({
+          cost: placement_starter_cost_component.cost_micro_usd,
+          overCap: placement_starter_cost_component.over_cap,
+          providerTaskRunId: placement_starter_cost_component.provider_task_run_id,
+        })
+        .from(placement_starter_cost_component)
+        .where(inArray(placement_starter_cost_component.id, [reservationId, fallbackSettlementId]));
+      if (settled?.providerTaskRunId === input.taskRunId) {
+        return canonicalSettlementResult(settled);
+      }
+    }
+    if (
       !['running', 'verifying'].includes(current.status) ||
       !current.lease_expires_at ||
       current.lease_expires_at <= now
     ) {
       throw new PlacementStarterStaleAuthorityError('placement output fence lost');
-    }
-    if (
-      (current.provider_task_run_id && current.provider_task_run_id !== input.taskRunId) ||
-      (current.provider_output_hash && current.provider_output_hash !== outputHash)
-    ) {
-      throw new PlacementStarterAdmissionError('placement provider output invariant mismatch');
     }
     await tx
       .update(placement_starter_attempt)
@@ -623,9 +674,6 @@ export async function recordPlacementAttemptOutput(
         updated_at: now,
       })
       .where(eq(placement_starter_attempt.id, attempt.attemptId));
-    const reservationId = createHash('sha256')
-      .update(`placement-paid-call-reservation\0${attempt.attemptId}:quiz_gen`)
-      .digest('hex');
     const [reservation] = await tx
       .select({ cost: placement_starter_cost_component.cost_micro_usd })
       .from(placement_starter_cost_component)
@@ -638,28 +686,50 @@ export async function recordPlacementAttemptOutput(
     // placeholder. This transaction commits the settlement; the caller decides whether over-cap
     // blocks the delivery.
     if (reservation) {
-      const settledCost = Math.max(0, input.costMicroUsd);
+      if (reservation.cost === null) {
+        throw new PlacementStarterAdmissionError('placement reservation cost is missing');
+      }
+      if (input.costMicroUsd !== null && input.costMicroUsd < 0) {
+        throw new PlacementStarterAdmissionError('placement settled cost must be nonnegative');
+      }
+      const settledCost = input.costMicroUsd;
+      const overCap = settledCost !== null && settledCost > reservation.cost;
       await tx
         .update(placement_starter_cost_component)
-        .set({ provider_task_run_id: input.taskRunId, cost_micro_usd: settledCost })
+        .set({
+          provider_task_run_id: input.taskRunId,
+          cost_micro_usd: settledCost,
+          over_cap: settledCost === null ? null : overCap,
+        })
         .where(eq(placement_starter_cost_component.id, reservationId));
       await tx
         .update(placement_starter_claim)
         .set({
-          known_cost_micro_usd: sql`${placement_starter_claim.known_cost_micro_usd} - ${reservation.cost} + ${settledCost}`,
+          known_cost_micro_usd:
+            settledCost === null
+              ? null
+              : sql`CASE
+                  WHEN ${placement_starter_claim.known_cost_micro_usd} IS NULL THEN NULL
+                  ELSE ${placement_starter_claim.known_cost_micro_usd} - ${reservation.cost} + ${settledCost}
+                END`,
           updated_at: now,
         })
         .where(eq(placement_starter_claim.id, attempt.claimId));
-      return { overCap: settledCost > reservation.cost };
+      return { overCap, costUnknown: settledCost === null };
     }
+    const overCap =
+      input.costMicroUsd === null
+        ? null
+        : input.costMicroUsd > PLACEMENT_GENERATION_RESERVATION_MICRO_USD;
     await addAuthorizedCostComponent(tx, {
       authority: attempt,
       kind: 'quiz_gen',
       taskRunId: input.taskRunId,
       costMicroUsd: input.costMicroUsd,
+      overCap,
       now,
     });
-    return { overCap: false };
+    return { overCap: overCap ?? false, costUnknown: input.costMicroUsd === null };
   });
 }
 
@@ -690,6 +760,9 @@ export async function releaseAuthorizedPaidCall(
     .where(eq(placement_starter_cost_component.id, id))
     .for('update');
   if (!reservation || !reservation.providerTaskRunId.startsWith('reservation:')) return;
+  if (reservation.cost === null) {
+    throw new PlacementStarterAdmissionError('placement reservation cost is missing');
+  }
   // Ledger cross-wiring guard (CodeRabbit, PR #1040): the refund below debits the CALLER's
   // claimId, so a caller passing a claimId that doesn't own this reservation would silently
   // shrink the wrong claim's known_cost. All current callers derive both from one authority,
@@ -705,7 +778,10 @@ export async function releaseAuthorizedPaidCall(
   await tx
     .update(placement_starter_claim)
     .set({
-      known_cost_micro_usd: sql`GREATEST(0, ${placement_starter_claim.known_cost_micro_usd} - ${reservation.cost})`,
+      known_cost_micro_usd: sql`CASE
+        WHEN ${placement_starter_claim.known_cost_micro_usd} IS NULL THEN NULL
+        ELSE GREATEST(0, ${placement_starter_claim.known_cost_micro_usd} - ${reservation.cost})
+      END`,
       updated_at: now,
     })
     .where(eq(placement_starter_claim.id, input.claimId));
@@ -741,8 +817,11 @@ export async function reserveAuthorizedPaidCall(
     .select({ id: placement_starter_cost_component.id })
     .from(placement_starter_cost_component)
     .where(eq(placement_starter_cost_component.id, id));
+  if (!claim || claim.knownCost === null) {
+    throw new PlacementStarterUnknownCostError('placement starter cost is unknown');
+  }
   if (existing) return;
-  if (!claim || claim.knownCost + costMicroUsd > claim.budgetLimit) {
+  if (claim.knownCost + costMicroUsd > claim.budgetLimit) {
     throw new PlacementStarterAdmissionError('placement paid call exceeds claim budget');
   }
   await tx.insert(placement_starter_cost_component).values({
@@ -767,15 +846,44 @@ export async function settleAuthorizedPaidCall(
     authority: PlacementVerificationAuthority;
     reservationKey: string;
     providerTaskRunId: string;
-    costMicroUsd: number;
+    costMicroUsd: number | null;
     now?: Date;
   },
-): Promise<{ overCap: boolean }> {
+): Promise<{ overCap: boolean; costUnknown: boolean }> {
   const now = input.now ?? new Date();
-  await assertPlacementAuthority(tx, input.authority, now);
   const id = createHash('sha256')
     .update(`placement-paid-call-reservation\0${input.reservationKey}`)
     .digest('hex');
+  const settledId = createHash('sha256')
+    .update(`${input.providerTaskRunId}\0${input.authority.attempt_id}\0${input.reservationKey}`)
+    .digest('hex');
+  const findExistingSettlement = async (): Promise<{
+    cost: number | null;
+    overCap: boolean | null;
+  } | null> => {
+    const [settlement] = await tx
+      .select({
+        cost: placement_starter_cost_component.cost_micro_usd,
+        overCap: placement_starter_cost_component.over_cap,
+      })
+      .from(placement_starter_cost_component)
+      .where(eq(placement_starter_cost_component.id, settledId));
+    return settlement ?? null;
+  };
+  try {
+    await assertPlacementAuthority(tx, input.authority, now);
+  } catch (error) {
+    if (!(error instanceof PlacementStarterStaleAuthorityError)) throw error;
+    const settlementAfterStaleAuthority = await findExistingSettlement();
+    if (settlementAfterStaleAuthority) {
+      return canonicalSettlementResult(settlementAfterStaleAuthority);
+    }
+    throw error;
+  }
+  const settlementAfterAuthorityLock = await findExistingSettlement();
+  if (settlementAfterAuthorityLock) {
+    return canonicalSettlementResult(settlementAfterAuthorityLock);
+  }
   const [reservation] = await tx
     .select({
       cost: placement_starter_cost_component.cost_micro_usd,
@@ -787,17 +895,17 @@ export async function settleAuthorizedPaidCall(
     .for('update');
   if (!reservation)
     throw new PlacementStarterAdmissionError('placement paid call reservation missing');
-  if (reservation.providerTaskRunId === input.providerTaskRunId) {
-    return { overCap: input.costMicroUsd > reservation.cost };
-  }
   if (!reservation.providerTaskRunId.startsWith('reservation:')) {
     throw new PlacementStarterAdmissionError('placement paid call reservation already settled');
   }
-  const settledCost = Math.max(0, input.costMicroUsd);
-  const overCap = settledCost > reservation.cost;
-  const settledId = createHash('sha256')
-    .update(`${input.providerTaskRunId}\0${input.authority.attempt_id}\0${input.reservationKey}`)
-    .digest('hex');
+  if (reservation.cost === null) {
+    throw new PlacementStarterAdmissionError('placement reservation cost is missing');
+  }
+  if (input.costMicroUsd !== null && input.costMicroUsd < 0) {
+    throw new PlacementStarterAdmissionError('placement settled cost must be nonnegative');
+  }
+  const settledCost = input.costMicroUsd;
+  const overCap = settledCost !== null && settledCost > reservation.cost;
   await tx.insert(placement_starter_cost_component).values({
     id: settledId,
     claim_id: input.authority.claim_id,
@@ -806,6 +914,7 @@ export async function settleAuthorizedPaidCall(
     question_id: input.authority.question_id,
     provider_task_run_id: input.providerTaskRunId,
     cost_micro_usd: settledCost,
+    over_cap: settledCost === null ? null : overCap,
     created_at: now,
   });
   await tx
@@ -814,11 +923,17 @@ export async function settleAuthorizedPaidCall(
   await tx
     .update(placement_starter_claim)
     .set({
-      known_cost_micro_usd: sql`${placement_starter_claim.known_cost_micro_usd} - ${reservation.cost} + ${settledCost}`,
+      known_cost_micro_usd:
+        settledCost === null
+          ? null
+          : sql`CASE
+              WHEN ${placement_starter_claim.known_cost_micro_usd} IS NULL THEN NULL
+              ELSE ${placement_starter_claim.known_cost_micro_usd} - ${reservation.cost} + ${settledCost}
+            END`,
       updated_at: now,
     })
     .where(eq(placement_starter_claim.id, input.authority.claim_id));
-  return { overCap };
+  return { overCap, costUnknown: settledCost === null };
 }
 
 export async function addAuthorizedCostComponent(
@@ -827,7 +942,8 @@ export async function addAuthorizedCostComponent(
     authority: Pick<PlacementAttemptAuthority, 'claimId' | 'attemptId' | 'fencingToken'>;
     kind: PlacementCostComponentKind;
     taskRunId: string;
-    costMicroUsd: number;
+    costMicroUsd: number | null;
+    overCap: boolean | null;
     questionId?: string;
     now?: Date;
   },
@@ -848,9 +964,19 @@ export async function addAuthorizedCostComponent(
     .select({ id: placement_starter_cost_component.id })
     .from(placement_starter_cost_component)
     .where(eq(placement_starter_cost_component.id, existingComponentId));
+  if (!claim) {
+    throw new PlacementStarterAdmissionError('placement claim is missing');
+  }
+  if (claim.knownCost === null) {
+    throw new PlacementStarterUnknownCostError('placement starter cost is unknown');
+  }
+  if (input.costMicroUsd !== null && input.costMicroUsd < 0) {
+    throw new PlacementStarterAdmissionError('placement settled cost must be nonnegative');
+  }
   if (
     !existingComponent &&
-    (!claim || claim.knownCost + Math.max(0, input.costMicroUsd) > claim.budgetLimit)
+    input.costMicroUsd !== null &&
+    claim.knownCost + input.costMicroUsd > claim.budgetLimit
   ) {
     throw new PlacementStarterAdmissionError('placement cost component exceeds claim budget');
   }
@@ -871,7 +997,8 @@ export async function addAuthorizedCostComponent(
       component_kind: input.kind,
       question_id: input.questionId ?? null,
       provider_task_run_id: input.taskRunId,
-      cost_micro_usd: Math.max(0, input.costMicroUsd),
+      cost_micro_usd: input.costMicroUsd,
+      over_cap: input.overCap,
       created_at: now,
     })
     .onConflictDoNothing();
@@ -879,7 +1006,11 @@ export async function addAuthorizedCostComponent(
     .update(placement_starter_claim)
     .set({
       known_cost_micro_usd: sql`(
-        SELECT COALESCE(SUM(${placement_starter_cost_component.cost_micro_usd}), 0)::int
+        SELECT CASE
+          WHEN COUNT(*) FILTER (WHERE ${placement_starter_cost_component.cost_micro_usd} IS NULL) > 0
+            THEN NULL
+          ELSE COALESCE(SUM(${placement_starter_cost_component.cost_micro_usd}), 0)::int
+        END
         FROM ${placement_starter_cost_component}
         WHERE ${placement_starter_cost_component.claim_id} = ${input.authority.claimId}
       )`,
@@ -1035,5 +1166,109 @@ export async function finishPlacementAttempt(
       .update(placement_starter_claim)
       .set(claimUpdate)
       .where(eq(placement_starter_claim.id, attempt.claimId));
+  });
+}
+
+export async function terminalizePlacementUnknownCost(
+  db: Db,
+  input: {
+    claimId: string;
+    attemptId?: string;
+    fencingToken?: string;
+    now?: Date;
+  },
+): Promise<void> {
+  const now = input.now ?? new Date();
+  await db.transaction(async (tx) => {
+    const attemptAuthority =
+      input.attemptId && input.fencingToken
+        ? { attemptId: input.attemptId, fencingToken: input.fencingToken }
+        : null;
+    const [attempt] = attemptAuthority
+      ? await tx
+          .select({
+            status: placement_starter_attempt.status,
+            fencingToken: placement_starter_attempt.fencing_token,
+          })
+          .from(placement_starter_attempt)
+          .where(
+            and(
+              eq(placement_starter_attempt.id, attemptAuthority.attemptId),
+              eq(placement_starter_attempt.claim_id, input.claimId),
+            ),
+          )
+          .for('update')
+      : [];
+    const [claim] = await tx
+      .select({
+        status: placement_starter_claim.status,
+        errorCode: placement_starter_claim.last_error_code,
+      })
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, input.claimId))
+      .for('update');
+    if (!claim) throw new PlacementStarterAdmissionError('placement starter claim not found');
+    if (claim.status === 'exhausted' && claim.errorCode === 'cost_unknown') {
+      await tx
+        .update(placement_starter_claim)
+        .set({ known_cost_micro_usd: null, updated_at: now })
+        .where(eq(placement_starter_claim.id, input.claimId));
+      return;
+    }
+
+    if (attemptAuthority) {
+      if (!attempt || attempt.fencingToken !== attemptAuthority.fencingToken) {
+        throw new PlacementStarterStaleAuthorityError('placement unknown-cost fence lost');
+      }
+      const terminalAttempt = await tx
+        .update(placement_starter_attempt)
+        .set({
+          status: 'invariant_failed',
+          lease_expires_at: null,
+          error_class: 'cost_unknown',
+          error_code: 'cost_unknown',
+          error_message: 'provider cost is unknown',
+          finished_at: now,
+          updated_at: now,
+        })
+        .where(
+          and(
+            eq(placement_starter_attempt.id, attemptAuthority.attemptId),
+            eq(placement_starter_attempt.claim_id, input.claimId),
+            eq(placement_starter_attempt.fencing_token, attemptAuthority.fencingToken),
+            inArray(placement_starter_attempt.status, [
+              'running',
+              'verifying',
+              'succeeded',
+              'underfilled',
+              'timed_out',
+              'interrupted',
+            ]),
+          ),
+        )
+        .returning({ id: placement_starter_attempt.id });
+      if (terminalAttempt.length === 0) {
+        throw new PlacementStarterStaleAuthorityError('placement unknown-cost fence lost');
+      }
+      await tx
+        .update(placement_starter_attempt_question)
+        .set({ verification_status: 'exhausted' })
+        .where(
+          and(
+            eq(placement_starter_attempt_question.attempt_id, attemptAuthority.attemptId),
+            eq(placement_starter_attempt_question.verification_status, 'authorized'),
+          ),
+        );
+    }
+
+    await tx
+      .update(placement_starter_claim)
+      .set({ known_cost_micro_usd: null, updated_at: now })
+      .where(eq(placement_starter_claim.id, input.claimId));
+    await markPlacementStarterClaimTerminal(tx, input.claimId, 'exhausted', now, {
+      class: 'cost_unknown',
+      code: 'cost_unknown',
+      message: 'provider cost is unknown; placement paid work is fail-closed',
+    });
   });
 }
