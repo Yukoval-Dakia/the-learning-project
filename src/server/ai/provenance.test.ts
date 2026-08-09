@@ -10,9 +10,9 @@ describe('all-known product-operation cost', () => {
     expect(sumAllKnownCostUsd([0, 0.01, 0.02])).toBeCloseTo(0.03, 8);
   });
 
-  it.each([[null], [undefined], [0.01, null, 0.02]])(
+  it.each([{ costs: [null] }, { costs: [undefined] }, { costs: [0.01, null, 0.02] }])(
     'returns unknown when any attempted child is unpriced',
-    (costs) => {
+    ({ costs }) => {
       expect(sumAllKnownCostUsd(costs)).toBeNull();
     },
   );
