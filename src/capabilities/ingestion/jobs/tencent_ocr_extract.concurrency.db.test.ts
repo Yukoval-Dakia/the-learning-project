@@ -55,7 +55,7 @@ beforeEach(async () => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('Tencent OCR concurrent delivery fencing', () => {
-  it('sends one Submit when retry generations overlap at the provider wire', async () => {
+  it('sends one Submit when different final retry generations overlap', async () => {
     // Given: generation 0 is paused inside the provider Submit wire.
     const { sessionId, operationId } = await seedIngestionSession(1);
     await reserveOperation(sessionId, operationId);
@@ -103,7 +103,7 @@ describe('Tencent OCR concurrent delivery fencing', () => {
       startedOn: new Date(),
     };
 
-    // When: the final retry crosses findSaved before generation 0 persists its JobId.
+    // When: a competing delivery reaches history resolution before generation 0 persists its JobId.
     const winner = handler([delivery] as never);
     await winnerWireEntered;
     const competitor = handler([{ ...delivery, retryCount: 2 }] as never);

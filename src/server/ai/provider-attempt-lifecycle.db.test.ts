@@ -1052,6 +1052,39 @@ describe('ProviderAttemptLifecycle', () => {
     await observed.finish(unknownEvidence);
   });
 
+  it('keeps start fencing outside lane policy while fencing attempt identity drift', async () => {
+    const policy = { maxConcurrentAttempts: 3, maxAttemptStartsPerMinute: 10 };
+    const deadlineAt = new Date(Date.now() + 60_000);
+    const fencedAttemptId = '00000000-0000-4000-8000-000000000955';
+    await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      policy,
+      identity: identity(fencedAttemptId),
+      deadlineAt,
+      providerStartFence: 'operation_kind',
+      db: testDb(),
+    }).acquire();
+
+    await expect(
+      createProviderAttemptLifecycle({
+        mode: 'enforce',
+        policy,
+        identity: identity('00000000-0000-4000-8000-000000000956'),
+        deadlineAt,
+        db: testDb(),
+      }).acquire(),
+    ).resolves.toMatchObject({ admission: 'acquired' });
+    await expect(
+      createProviderAttemptLifecycle({
+        mode: 'enforce',
+        policy,
+        identity: identity(fencedAttemptId),
+        deadlineAt,
+        db: openIndependentDb().db,
+      }).acquire(),
+    ).rejects.toMatchObject({ reason: 'identity_collision' });
+  });
+
   it('fails enforce closed and returns observe untracked on control-plane failure', async () => {
     // Given independent DB handles whose underlying clients are closed.
     const enforceDb = openIndependentDb();
@@ -1077,5 +1110,270 @@ describe('ProviderAttemptLifecycle', () => {
     // Then enforce is closed while observe exposes an explicit untracked handle.
     await expect(enforce.acquire()).rejects.toMatchObject({ reason: 'control_plane_unavailable' });
     await expect(observe.acquire()).resolves.toMatchObject({ admission: 'untracked' });
+  });
+
+  it('re-evaluates a new delivery after a durable capacity denial', async () => {
+    const policy = { maxConcurrentAttempts: 1, maxAttemptStartsPerMinute: 10 };
+    const blocker = await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      policy,
+      identity: identity('00000000-0000-4000-8000-000000000940'),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    }).acquire();
+    const deniedAttemptId = '00000000-0000-4000-8000-000000000941';
+    await expect(
+      createProviderAttemptLifecycle({
+        mode: 'enforce',
+        policy,
+        identity: identity(deniedAttemptId),
+        deadlineAt: new Date(Date.now() + 60_000),
+        db: testDb(),
+      }).acquire(),
+    ).rejects.toMatchObject({ reason: 'capacity_exhausted' });
+    await blocker.finish(unknownEvidence);
+
+    const retry = await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      policy,
+      identity: identity('00000000-0000-4000-8000-000000000942'),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    }).acquire();
+
+    await expect(retry.reserveProviderStart()).resolves.toBeUndefined();
+    expect(
+      (
+        await testDb()
+          .select()
+          .from(provider_attempt_admission)
+          .where(eq(provider_attempt_admission.attempt_id, deniedAttemptId))
+      )[0],
+    ).toMatchObject({ status: 'denied', terminal_reason: 'capacity_exhausted' });
+  });
+
+  it('re-evaluates a new delivery after durable rate and policy denials', async () => {
+    const ratePolicy = { maxConcurrentAttempts: 10, maxAttemptStartsPerMinute: 1 };
+    const rateSeedId = '00000000-0000-4000-8000-000000000943';
+    const rateSeed = await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      policy: ratePolicy,
+      identity: identity(rateSeedId),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    }).acquire();
+    await rateSeed.finish(unknownEvidence);
+    const rateDeniedId = '00000000-0000-4000-8000-000000000944';
+    await expect(
+      createProviderAttemptLifecycle({
+        mode: 'enforce',
+        policy: ratePolicy,
+        identity: identity(rateDeniedId),
+        deadlineAt: new Date(Date.now() + 60_000),
+        db: testDb(),
+      }).acquire(),
+    ).rejects.toMatchObject({ reason: 'rate_exhausted' });
+    await testDb().execute(sql`UPDATE provider_attempt_admission
+      SET acquired_at = clock_timestamp() - interval '2 minutes'
+      WHERE attempt_id = ${rateSeedId}`);
+    await expect(
+      (
+        await createProviderAttemptLifecycle({
+          mode: 'enforce',
+          policy: ratePolicy,
+          identity: identity('00000000-0000-4000-8000-000000000945'),
+          deadlineAt: new Date(Date.now() + 60_000),
+          db: testDb(),
+        }).acquire()
+      ).reserveProviderStart(),
+    ).resolves.toBeUndefined();
+    expect(
+      (
+        await testDb()
+          .select()
+          .from(provider_attempt_admission)
+          .where(eq(provider_attempt_admission.attempt_id, rateDeniedId))
+      )[0],
+    ).toMatchObject({ status: 'denied', terminal_reason: 'rate_exhausted' });
+
+    await resetDb();
+    const policySeed = await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      policy: { maxConcurrentAttempts: 3, maxAttemptStartsPerMinute: 10 },
+      identity: identity('00000000-0000-4000-8000-000000000946'),
+      deadlineAt: new Date(Date.now() + 60_000),
+      db: testDb(),
+    }).acquire();
+    const policyDeniedId = '00000000-0000-4000-8000-000000000947';
+    const nextPolicy = { maxConcurrentAttempts: 4, maxAttemptStartsPerMinute: 10 };
+    await expect(
+      createProviderAttemptLifecycle({
+        mode: 'enforce',
+        policy: nextPolicy,
+        identity: identity(policyDeniedId),
+        deadlineAt: new Date(Date.now() + 60_000),
+        db: testDb(),
+      }).acquire(),
+    ).rejects.toMatchObject({ reason: 'policy_mismatch' });
+    await policySeed.finish(unknownEvidence);
+    await expect(
+      (
+        await createProviderAttemptLifecycle({
+          mode: 'enforce',
+          policy: nextPolicy,
+          identity: identity('00000000-0000-4000-8000-000000000948'),
+          deadlineAt: new Date(Date.now() + 60_000),
+          db: testDb(),
+        }).acquire()
+      ).reserveProviderStart(),
+    ).resolves.toBeUndefined();
+    const durableDenials = await testDb()
+      .select()
+      .from(provider_attempt_admission)
+      .where(eq(provider_attempt_admission.attempt_id, policyDeniedId));
+    expect(durableDenials[0]).toMatchObject({
+      status: 'denied',
+      terminal_reason: 'policy_mismatch',
+    });
+  });
+
+  it('atomically fences operation-kind starts and expires stale active owners', async () => {
+    const firstAttemptId = '00000000-0000-4000-8000-000000000949';
+    const liveCompetitorId = '00000000-0000-4000-8000-000000000950';
+    const staleCompetitorId = '00000000-0000-4000-8000-000000000951';
+    const first = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: identity(firstAttemptId),
+      deadlineAt: new Date(Date.now() + 60_000),
+      providerStartFence: 'operation_kind',
+      db: testDb(),
+    }).acquire();
+    await first.reserveProviderStart();
+    const liveCompetitor = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: identity(liveCompetitorId),
+      deadlineAt: new Date(Date.now() + 60_000),
+      providerStartFence: 'operation_kind',
+      db: testDb(),
+    }).acquire();
+    await expect(liveCompetitor.reserveProviderStart()).rejects.toMatchObject({
+      reason: 'active_duplicate',
+    });
+    expect(
+      (
+        await testDb()
+          .select()
+          .from(provider_attempt_admission)
+          .where(eq(provider_attempt_admission.attempt_id, liveCompetitorId))
+      )[0],
+    ).toMatchObject({
+      status: 'released',
+      lease_owner: null,
+      terminal_reason: 'provider_start_active_duplicate',
+    });
+    expect(
+      (
+        await testDb()
+          .select()
+          .from(provider_attempt)
+          .where(eq(provider_attempt.attempt_id, liveCompetitorId))
+      )[0]?.provider_start_reserved_at,
+    ).toBeNull();
+    expect(
+      (
+        await testDb()
+          .select()
+          .from(provider_attempt_admission)
+          .where(eq(provider_attempt_admission.attempt_id, firstAttemptId))
+      )[0],
+    ).toMatchObject({ status: 'acquired' });
+    await testDb().execute(sql`UPDATE provider_attempt_admission
+      SET lease_expires_at = clock_timestamp() - interval '1 second'
+      WHERE attempt_id = ${firstAttemptId}`);
+    const staleCompetitor = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: identity(staleCompetitorId),
+      deadlineAt: new Date(Date.now() + 60_000),
+      providerStartFence: 'operation_kind',
+      db: testDb(),
+    }).acquire();
+
+    await expect(staleCompetitor.reserveProviderStart()).rejects.toMatchObject({
+      reason: 'recovery_required',
+    });
+    expect(
+      (
+        await testDb()
+          .select()
+          .from(provider_attempt_admission)
+          .where(eq(provider_attempt_admission.attempt_id, firstAttemptId))
+      )[0],
+    ).toMatchObject({ status: 'lease_expired', terminal_reason: 'lease_expired' });
+    expect(
+      (
+        await testDb()
+          .select()
+          .from(provider_attempt_admission)
+          .where(eq(provider_attempt_admission.attempt_id, staleCompetitorId))
+      )[0],
+    ).toMatchObject({
+      status: 'released',
+      lease_owner: null,
+      terminal_reason: 'provider_start_recovery_required',
+    });
+    expect(
+      (
+        await testDb()
+          .select()
+          .from(provider_attempt)
+          .where(eq(provider_attempt.attempt_id, staleCompetitorId))
+      )[0]?.provider_start_reserved_at,
+    ).toBeNull();
+    await expect(first.recordExternalRequestId('too-late')).rejects.toMatchObject({
+      reason: 'lease_lost',
+    });
+    await expect(first.finish(unknownEvidence)).rejects.toMatchObject({ reason: 'lease_lost' });
+  });
+
+  it('fences a concurrent same-generation attempt identity before a second start', async () => {
+    const attemptId = '00000000-0000-4000-8000-000000000954';
+    const deadlineAt = new Date(Date.now() + 60_000);
+    const owner = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: identity(attemptId),
+      deadlineAt,
+      providerStartFence: 'operation_kind',
+      db: testDb(),
+    }).acquire();
+    await owner.reserveProviderStart();
+
+    await expect(
+      createProviderAttemptLifecycle({
+        mode: 'observe',
+        identity: identity(attemptId),
+        deadlineAt,
+        providerStartFence: 'operation_kind',
+        db: openIndependentDb().db,
+      }).acquire(),
+    ).rejects.toMatchObject({ reason: 'active_duplicate' });
+  });
+
+  it('allows a different delivery deadline after an expired unreserved attempt', async () => {
+    await createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: identity('00000000-0000-4000-8000-000000000952'),
+      deadlineAt: new Date(Date.now() - 1_000),
+      providerStartFence: 'operation_kind',
+      db: testDb(),
+    }).acquire();
+    const retry = await createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: identity('00000000-0000-4000-8000-000000000953'),
+      deadlineAt: new Date(Date.now() + 60_000),
+      providerStartFence: 'operation_kind',
+      db: testDb(),
+    }).acquire();
+
+    await expect(retry.reserveProviderStart()).resolves.toBeUndefined();
   });
 });

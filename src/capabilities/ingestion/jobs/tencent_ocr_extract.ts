@@ -22,7 +22,6 @@ import {
   executeTencentOcrDescribe,
   executeTencentOcrSubmit,
   extractionPageOperationId,
-  findSavedTencentJobId,
 } from '@/capabilities/ingestion/server/provider-attempts';
 import {
   type StructureResult,
@@ -164,7 +163,7 @@ function shouldKeepExtractionResumable(
   if (!(normalized instanceof RetryableError)) return false;
   if (
     normalized instanceof TencentSubmitInProgressError &&
-    (normalized.reason === 'active_duplicate' || normalized.reason === 'deadline_mismatch')
+    normalized.reason === 'active_duplicate'
   ) {
     return true;
   }
@@ -382,17 +381,16 @@ async function processOneOcrJob(
         }
       } else {
         // PHASE-DEFERRED (YUK-253): retained Tencent engine behind the flag.
-        const savedJobId = await findSavedTencentJobId(deps.db, pageOperationId);
-        const tencentJobId =
-          savedJobId ??
-          (await executeTencentOcrSubmit({
-            db: deps.db,
-            pageOperationId,
-            deliveryStartedOn: job.startedOn,
-            params: { ImageBase64: pageBase64 },
-            submit,
-          }));
-        if (savedJobId === null) await deps.afterTencentJobSaved?.(tencentJobId);
+        const tencentJobId = await executeTencentOcrSubmit({
+          db: deps.db,
+          pageOperationId,
+          bossJobId,
+          deliveryRetryCount: deliveryMetadata(job).retryCount,
+          deliveryStartedOn: job.startedOn,
+          params: { ImageBase64: pageBase64 },
+          submit,
+          afterJobSaved: deps.afterTencentJobSaved,
+        });
         const ocrResp: DescribeResponse = await pollUntilDone(tencentJobId, {
           ...deps.tencentPollOptions,
           describeFn: (jobId) =>

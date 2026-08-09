@@ -101,7 +101,10 @@ function policyFingerprint(policy: ProviderAttemptAdmissionPolicy | null): strin
     .digest('hex');
 }
 
-function fingerprint(identity: ProviderRequestIdentityT): string {
+function fingerprint(
+  identity: ProviderRequestIdentityT,
+  providerStartFence: 'operation_kind' | undefined,
+): string {
   return createHash('sha256')
     .update(
       JSON.stringify({
@@ -115,6 +118,7 @@ function fingerprint(identity: ProviderRequestIdentityT): string {
         endpointClass: identity.endpointClass,
         caller: identity.caller,
         operationKind: identity.operationKind,
+        ...(providerStartFence === undefined ? {} : { providerStartFence }),
       }),
     )
     .digest('hex');
@@ -189,13 +193,14 @@ export function createProviderAttemptLifecycle(input: {
   readonly policy?: ProviderAttemptAdmissionPolicy | null;
   readonly identity: ProviderRequestIdentityT;
   readonly deadlineAt: Date;
+  readonly providerStartFence?: 'operation_kind';
   readonly db: Db;
 }): ProviderAttemptLifecycle {
   const identity = ProviderRequestIdentity.parse(input.identity);
   if (!Number.isFinite(input.deadlineAt.getTime()))
     throw new RangeError('deadlineAt must be valid');
   const deadlineAtIso = input.deadlineAt.toISOString();
-  const identityFingerprint = fingerprint(identity);
+  const identityFingerprint = fingerprint(identity, input.providerStartFence);
   const policy = input.mode === 'off' ? null : (input.policy ?? null);
   const persistedMode: Exclude<ProviderAttemptLifecycleMode, 'off'> =
     input.mode === 'enforce' ? 'enforce' : 'observe';
@@ -213,15 +218,21 @@ export function createProviderAttemptLifecycle(input: {
         reserved = (async () => {
           if (bypass) return;
           try {
-            await input.db.transaction(async (tx) => {
-              await tx.execute(
-                sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt:${identity.attemptId}`}, 0))`,
-              );
-              const rows = await tx.execute<{
-                provider_start_reserved_at: Date | string | null;
-                owned: boolean;
-                temporally_live: boolean;
-              }>(sql`
+            const blockerDecision = await input.db.transaction(
+              async (tx): Promise<'active_duplicate' | 'recovery_required' | null> => {
+                await tx.execute(
+                  sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt:${identity.attemptId}`}, 0))`,
+                );
+                if (input.providerStartFence === 'operation_kind') {
+                  await tx.execute(
+                    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt-operation-kind:${identity.operationId}:${identity.provider}:${identity.lane}:${identity.operationKind}`}, 0))`,
+                  );
+                }
+                const rows = await tx.execute<{
+                  provider_start_reserved_at: Date | string | null;
+                  owned: boolean;
+                  temporally_live: boolean;
+                }>(sql`
                 SELECT a.provider_start_reserved_at,
                   d.lease_owner = ${leaseOwner}::uuid
                     AND d.status IN ('acquired','would_deny') AS owned,
@@ -230,30 +241,86 @@ export function createProviderAttemptLifecycle(input: {
                 FROM provider_attempt a JOIN provider_attempt_admission d USING (attempt_id)
                 WHERE a.attempt_id = ${identity.attemptId}
               `);
-              const row = rows[0];
-              if (!row?.owned) throw lifecycleError('lease_lost', identity);
-              if (row.provider_start_reserved_at !== null) return;
-              if (input.mode === 'enforce' && !row.temporally_live) {
-                throw lifecycleError('lease_lost', identity);
-              }
-              const updated = await tx
-                .update(provider_attempt)
-                .set({ provider_start_reserved_at: sql`clock_timestamp()` })
-                .where(sql`${provider_attempt.attempt_id} = ${identity.attemptId}
+                const row = rows[0];
+                if (!row?.owned) throw lifecycleError('lease_lost', identity);
+                if (row.provider_start_reserved_at !== null) return null;
+                if (input.mode === 'enforce' && !row.temporally_live) {
+                  throw lifecycleError('lease_lost', identity);
+                }
+                if (input.providerStartFence === 'operation_kind') {
+                  await tx.execute(sql`
+                  UPDATE provider_attempt_admission AS d
+                  SET status = 'lease_expired', lease_owner = NULL,
+                    terminal_at = clock_timestamp(), terminal_reason = 'lease_expired'
+                  FROM provider_attempt AS a
+                  WHERE d.attempt_id = a.attempt_id
+                    AND a.attempt_id <> ${identity.attemptId}
+                    AND a.operation_id = ${identity.operationId}
+                    AND a.provider = ${identity.provider}
+                    AND a.lane_id = ${identity.lane}
+                    AND a.operation_kind = ${identity.operationKind}
+                    AND a.provider_start_reserved_at IS NOT NULL
+                    AND d.status IN ('acquired', 'would_deny')
+                    AND (d.lease_expires_at <= clock_timestamp()
+                      OR d.deadline_at <= clock_timestamp())
+                `);
+                  const blockers = await tx.execute<{ live: boolean }>(sql`
+                  SELECT d.status IN ('acquired', 'would_deny')
+                    AND d.lease_expires_at > clock_timestamp()
+                    AND d.deadline_at > clock_timestamp() AS live
+                  FROM provider_attempt a
+                  LEFT JOIN provider_attempt_admission d USING (attempt_id)
+                  WHERE a.attempt_id <> ${identity.attemptId}
+                    AND a.operation_id = ${identity.operationId}
+                    AND a.provider = ${identity.provider}
+                    AND a.lane_id = ${identity.lane}
+                    AND a.operation_kind = ${identity.operationKind}
+                    AND a.provider_start_reserved_at IS NOT NULL
+                  ORDER BY a.started_at DESC, a.attempt_id DESC
+                `);
+                  const decision = blockers.some((blocker) => blocker.live)
+                    ? 'active_duplicate'
+                    : blockers.length > 0
+                      ? 'recovery_required'
+                      : null;
+                  if (decision !== null) {
+                    const released = await tx
+                      .update(provider_attempt_admission)
+                      .set({
+                        status: 'released',
+                        lease_owner: null,
+                        terminal_at: sql`clock_timestamp()`,
+                        terminal_reason: `provider_start_${decision}`,
+                      })
+                      .where(sql`${provider_attempt_admission.attempt_id} = ${identity.attemptId}
+                      AND ${provider_attempt_admission.lease_owner} = ${leaseOwner}
+                      AND ${provider_attempt_admission.status} IN ('acquired','would_deny')`)
+                      .returning({ attempt_id: provider_attempt_admission.attempt_id });
+                    if (released.length !== 1) throw lifecycleError('lease_lost', identity);
+                    return decision;
+                  }
+                }
+                const updated = await tx
+                  .update(provider_attempt)
+                  .set({ provider_start_reserved_at: sql`clock_timestamp()` })
+                  .where(sql`${provider_attempt.attempt_id} = ${identity.attemptId}
                   AND ${provider_attempt.provider_start_reserved_at} IS NULL
                   AND EXISTS (SELECT 1 FROM provider_attempt_admission d
                     WHERE d.attempt_id = ${provider_attempt.attempt_id}
                       AND d.lease_owner = ${leaseOwner}
                       AND d.status IN ('acquired','would_deny'))`)
-                .returning({ attempt_id: provider_attempt.attempt_id });
-              if (updated.length !== 1) throw lifecycleError('lease_lost', identity);
-              await tx
-                .update(provider_attempt_admission)
-                .set({ lease_expires_at: sql`${provider_attempt_admission.deadline_at}` })
-                .where(sql`${provider_attempt_admission.attempt_id} = ${identity.attemptId}
+                  .returning({ attempt_id: provider_attempt.attempt_id });
+                if (updated.length !== 1) throw lifecycleError('lease_lost', identity);
+                await tx
+                  .update(provider_attempt_admission)
+                  .set({ lease_expires_at: sql`${provider_attempt_admission.deadline_at}` })
+                  .where(sql`${provider_attempt_admission.attempt_id} = ${identity.attemptId}
                   AND ${provider_attempt_admission.lease_owner} = ${leaseOwner}
                   AND ${provider_attempt_admission.status} IN ('acquired','would_deny')`);
-            });
+                return null;
+              },
+            );
+            if (blockerDecision !== null) throw lifecycleError(blockerDecision, identity);
           } catch (error) {
             if (error instanceof ProviderAttemptLifecycleError) throw error;
             controlFailure(input.mode, identity, error);

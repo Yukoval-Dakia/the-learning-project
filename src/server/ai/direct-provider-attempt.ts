@@ -27,6 +27,7 @@ export type DirectProviderLifecycleFactory = (input: {
   readonly policy?: ProviderAttemptAdmissionPolicy | null;
   readonly identity: ProviderRequestIdentityT;
   readonly deadlineAt: Date;
+  readonly providerStartFence?: 'operation_kind';
   readonly db?: Db;
 }) => ProviderAttemptLifecycle;
 
@@ -61,6 +62,7 @@ export interface DirectProviderAttemptDescriptor {
   readonly operationKind: string;
   readonly unknownCostCurrency: 'CNY' | 'USD' | null;
   readonly attemptAnchor?: string;
+  readonly providerStartFence?: 'operation_kind';
 }
 
 export interface DirectProviderAttemptControl {
@@ -157,6 +159,7 @@ function makeLifecycle(
       policy: configured.policy,
       identity,
       deadlineAt: context.deadlineAt,
+      providerStartFence: descriptor.providerStartFence,
       db: context.db,
     });
   }
@@ -167,6 +170,7 @@ function makeLifecycle(
     policy: configured.policy,
     identity,
     deadlineAt: context.deadlineAt,
+    providerStartFence: descriptor.providerStartFence,
     db: context.db,
   });
 }

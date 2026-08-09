@@ -9,9 +9,12 @@ import {
   extractionPageOperationId,
 } from '@/capabilities/ingestion/server/provider-attempts';
 import type { DescribeResponse } from '@/capabilities/ingestion/server/tencent_mark';
+import { ProviderRequestIdentity } from '@/core/schema/provider-attempt';
 import { RetryableError } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import { job_events, learning_session, provider_attempt, question_block } from '@/db/schema';
+import { createProviderAttemptLifecycle } from '@/server/ai/provider-attempt-lifecycle';
+import { providerOperationIdForInvocation } from '@/server/ai/provider-attempt-runtime';
 import { createImageR2, seedIngestionSession } from '@/server/session/ingestion-test-support';
 import tencentDone from '../../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
 import { resetDb } from '../../../../tests/helpers/db';
@@ -111,6 +114,8 @@ describe('Tencent OCR provider-attempt resume', () => {
       const input = {
         db,
         pageOperationId,
+        bossJobId: 'post-wire-control-plane-failure',
+        deliveryRetryCount: firstDelivery.retryCount,
         deliveryStartedOn: firstDelivery.startedOn,
         params: { ImageBase64: 'seed' },
         submit,
@@ -120,6 +125,7 @@ describe('Tencent OCR provider-attempt resume', () => {
       await expect(
         executeTencentOcrSubmit({
           ...input,
+          deliveryRetryCount: retryDelivery.retryCount,
           deliveryStartedOn: retryDelivery.startedOn,
         }),
       ).rejects.toBeInstanceOf(TencentSubmitInProgressError);
@@ -144,6 +150,8 @@ describe('Tencent OCR provider-attempt resume', () => {
     const firstInput = {
       db,
       pageOperationId,
+      bossJobId: 'failed-submit-retry',
+      deliveryRetryCount: 0,
       deliveryStartedOn: new Date(),
       params: { ImageBase64: 'seed' },
       submit,
@@ -153,6 +161,7 @@ describe('Tencent OCR provider-attempt resume', () => {
     await expect(
       executeTencentOcrSubmit({
         ...firstInput,
+        deliveryRetryCount: 1,
         deliveryStartedOn: new Date(Date.now() + 1_000),
       }),
     ).rejects.toBeInstanceOf(TencentSubmitInProgressError);
@@ -170,7 +179,7 @@ describe('Tencent OCR provider-attempt resume', () => {
     ]);
   });
 
-  it('terminalizes an ambiguous stable Submit fence when the final delivery is exhausted', async () => {
+  it('terminalizes an ambiguous started Submit fence when the final delivery is exhausted', async () => {
     vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'off');
     const { sessionId, operationId } = await seedIngestionSession(1);
     const submitError = new RetryableError('ambiguous Tencent Submit callback failure');
@@ -234,6 +243,70 @@ describe('Tencent OCR provider-attempt resume', () => {
         external_request_id: null,
       }),
     ]);
+  });
+
+  it('terminalizes a deadline mismatch on the final delivery without a Submit wire', async () => {
+    const { sessionId, operationId } = await seedIngestionSession(1);
+    const bossJobId = 'deadline-mismatch-final';
+    const deliveryRetryCount = 1;
+    const pageOperationId = extractionPageOperationId({
+      canonicalOperationId: operationId,
+      bossJobId,
+      pageIndex: 0,
+    });
+    const attemptAnchor = `ingestion-ocr:${pageOperationId}:tencent-submit:${bossJobId}:delivery:${deliveryRetryCount}`;
+    await createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: ProviderRequestIdentity.parse({
+        attemptId: providerOperationIdForInvocation(attemptAnchor),
+        operationId: pageOperationId,
+        attemptKind: 'wire',
+        provider: 'tencent',
+        model: 'QuestionMarkAgent',
+        lane: 'tencent.question-mark-agent',
+        protocol: 'http',
+        endpointClass: 'tencent.question-mark-agent.submit',
+        caller: 'worker',
+        operationKind: 'ocr_page_submit',
+      }),
+      deadlineAt: new Date(Date.now() + 120_000),
+      providerStartFence: 'operation_kind',
+      db,
+    }).acquire();
+    const submitFn = vi.fn(async () => 'must-not-submit');
+    const handler = buildTencentOcrHandler({
+      db,
+      r2: await createImageR2(),
+      engine: 'tencent',
+      submitFn,
+      describeFn: vi.fn(),
+    });
+
+    const rejection = handler([
+      {
+        id: bossJobId,
+        data: { sessionId, operationId },
+        retryCount: deliveryRetryCount,
+        retryLimit: deliveryRetryCount,
+        startedOn: new Date(),
+      },
+    ] as never);
+
+    await expect(rejection).rejects.toMatchObject({ reason: 'deadline_mismatch' });
+    expect(submitFn).not.toHaveBeenCalled();
+    expect(
+      (
+        await db
+          .select({ status: learning_session.status })
+          .from(learning_session)
+          .where(eq(learning_session.id, sessionId))
+      )[0]?.status,
+    ).toBe('failed');
+    const operationEvents = await db
+      .select()
+      .from(job_events)
+      .where(eq(job_events.business_id, operationId));
+    expect(operationEvents.some((event) => event.event_type === 'operation.failed')).toBe(true);
   });
 
   it('resumes the saved JobId after termination without a second Submit', async () => {

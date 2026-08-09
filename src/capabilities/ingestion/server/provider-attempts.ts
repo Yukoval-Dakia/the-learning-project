@@ -1,6 +1,9 @@
 import { RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import { provider_attempt } from '@/db/schema';
+import {
+  ProviderAttemptAdmissionLaneSchema,
+  resolveProviderAttemptAdmission,
+} from '@/server/ai/provider-attempt-admission-config';
 import {
   type DirectProviderAttemptControl,
   type DirectProviderOperationContext,
@@ -9,7 +12,7 @@ import {
   executeDirectProviderAttempt,
   providerOperationIdForInvocation,
 } from '@/server/ai/provider-attempt-runtime';
-import { and, desc, eq, isNotNull, isNull, ne } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 
 export { ProviderAttemptLifecycleError };
 
@@ -62,50 +65,87 @@ export function extractionPageOperationId(input: {
   return providerOperationIdForInvocation(`ingestion-ocr:${anchor}:page:${input.pageIndex}`);
 }
 
-export async function findSavedTencentJobId(
+type TencentSubmitHistoryRow = {
+  readonly attempt_id: string;
+  readonly external_request_id: string | null;
+  readonly provider_start_reserved_at: Date | string | null;
+  readonly admission_status: string | null;
+  readonly lease_live: boolean;
+};
+
+type TencentSubmitHistoryResolution =
+  | { readonly kind: 'needs_fence' }
+  | { readonly kind: 'resume'; readonly jobId: string }
+  | { readonly kind: 'submit' };
+
+async function resolveTencentSubmitHistory(
   db: Db,
   pageOperationId: string,
-): Promise<string | null> {
-  const rows = await db
-    .select({ jobId: provider_attempt.external_request_id })
-    .from(provider_attempt)
-    .where(
-      and(
-        eq(provider_attempt.operation_id, pageOperationId),
-        eq(provider_attempt.provider, 'tencent'),
-        eq(provider_attempt.lane_id, TENCENT_OCR_QUESTION_MARK_LANE),
-        eq(provider_attempt.operation_kind, TENCENT_OCR_SUBMIT_OPERATION_KIND),
-        isNotNull(provider_attempt.external_request_id),
-      ),
-    )
-    .orderBy(desc(provider_attempt.started_at), desc(provider_attempt.attempt_id));
-  const jobIds = new Set(rows.flatMap((row) => (row.jobId === null ? [] : [row.jobId])));
-  if (jobIds.size > 1) throw new ProviderAttemptResumeConflictError(pageOperationId);
-  return jobIds.values().next().value ?? null;
+): Promise<TencentSubmitHistoryResolution> {
+  const rows = await db.execute<TencentSubmitHistoryRow>(sql`
+    SELECT a.attempt_id::text, a.external_request_id, a.provider_start_reserved_at,
+      d.status AS admission_status,
+      COALESCE(d.status IN ('acquired', 'would_deny')
+        AND d.lease_expires_at > clock_timestamp()
+        AND d.deadline_at > clock_timestamp(), false) AS lease_live
+    FROM provider_attempt a
+    LEFT JOIN provider_attempt_admission d USING (attempt_id)
+    WHERE a.operation_id = ${pageOperationId}
+      AND a.provider = 'tencent'
+      AND a.lane_id = ${TENCENT_OCR_QUESTION_MARK_LANE}
+      AND a.operation_kind = ${TENCENT_OCR_SUBMIT_OPERATION_KIND}
+    ORDER BY a.started_at DESC, a.attempt_id DESC
+  `);
+  const savedJobIds = new Set(
+    rows.flatMap((row) => (row.external_request_id === null ? [] : [row.external_request_id])),
+  );
+  if (savedJobIds.size > 1) throw new ProviderAttemptResumeConflictError(pageOperationId);
+  const liveBlocker = rows.find((row) => row.provider_start_reserved_at !== null && row.lease_live);
+  if (liveBlocker) {
+    throw new TencentSubmitInProgressError(
+      pageOperationId,
+      new ProviderAttemptLifecycleError('active_duplicate', liveBlocker.attempt_id),
+    );
+  }
+  const expiredActive = rows.some(
+    (row) =>
+      row.provider_start_reserved_at !== null &&
+      (row.admission_status === 'acquired' || row.admission_status === 'would_deny'),
+  );
+  if (expiredActive) return { kind: 'needs_fence' };
+  const recoveryBlocker = rows.find(
+    (row) => row.provider_start_reserved_at !== null && row.external_request_id === null,
+  );
+  if (recoveryBlocker) {
+    throw new TencentSubmitInProgressError(
+      pageOperationId,
+      new ProviderAttemptLifecycleError('recovery_required', recoveryBlocker.attempt_id),
+    );
+  }
+  const savedJobId = savedJobIds.values().next().value;
+  return savedJobId === undefined ? { kind: 'submit' } : { kind: 'resume', jobId: savedJobId };
 }
 
-async function findAmbiguousTencentSubmitAttemptId(
-  db: Db,
-  pageOperationId: string,
-  stableAttemptId: string,
-): Promise<string | null> {
-  const rows = await db
-    .select({ attemptId: provider_attempt.attempt_id })
-    .from(provider_attempt)
-    .where(
-      and(
-        eq(provider_attempt.operation_id, pageOperationId),
-        eq(provider_attempt.provider, 'tencent'),
-        eq(provider_attempt.lane_id, TENCENT_OCR_QUESTION_MARK_LANE),
-        eq(provider_attempt.operation_kind, TENCENT_OCR_SUBMIT_OPERATION_KIND),
-        ne(provider_attempt.attempt_id, stableAttemptId),
-        isNotNull(provider_attempt.provider_start_reserved_at),
-        isNull(provider_attempt.external_request_id),
-      ),
-    )
-    .orderBy(desc(provider_attempt.started_at), desc(provider_attempt.attempt_id))
-    .limit(1);
-  return rows[0]?.attemptId ?? null;
+async function resolveTencentSubmitHistoryForAdmission(input: {
+  readonly db: Db;
+  readonly pageOperationId: string;
+  readonly attemptId: string;
+  readonly mode: 'off' | 'observe' | 'enforce';
+}): Promise<TencentSubmitHistoryResolution> {
+  try {
+    return await resolveTencentSubmitHistory(input.db, input.pageOperationId);
+  } catch (error) {
+    if (
+      error instanceof ProviderAttemptResumeConflictError ||
+      error instanceof TencentSubmitInProgressError
+    ) {
+      throw error;
+    }
+    if (input.mode === 'enforce') {
+      throw new ProviderAttemptLifecycleError('control_plane_unavailable', input.attemptId, error);
+    }
+    return { kind: 'submit' };
+  }
 }
 
 export function createOcrPageProviderContext(
@@ -146,27 +186,32 @@ export async function executeGlmOcrWireAttempt<T>(
 export async function executeTencentOcrSubmit(input: {
   readonly db: Db;
   readonly pageOperationId: string;
+  readonly bossJobId: string;
+  readonly deliveryRetryCount: number;
   readonly deliveryStartedOn: Date;
   readonly params: TencentSubmitParams;
   readonly submit: TencentSubmit;
+  readonly afterJobSaved?: (jobId: string) => Promise<void>;
 }): Promise<string> {
-  const attemptAnchor = `ingestion-ocr:${input.pageOperationId}:tencent-submit`;
-  const stableAttemptId = providerOperationIdForInvocation(attemptAnchor);
-  const ambiguousAttemptId = await findAmbiguousTencentSubmitAttemptId(
-    input.db,
-    input.pageOperationId,
-    stableAttemptId,
+  const attemptAnchor = `ingestion-ocr:${input.pageOperationId}:tencent-submit:${input.bossJobId}:delivery:${input.deliveryRetryCount}`;
+  const attemptId = providerOperationIdForInvocation(attemptAnchor);
+  const configured = resolveProviderAttemptAdmission(
+    process.env,
+    ProviderAttemptAdmissionLaneSchema.parse(TENCENT_OCR_QUESTION_MARK_LANE),
   );
-  if (ambiguousAttemptId !== null) {
-    throw new TencentSubmitInProgressError(
-      input.pageOperationId,
-      new ProviderAttemptLifecycleError('recovery_required', ambiguousAttemptId),
-    );
-  }
+  const history = await resolveTencentSubmitHistoryForAdmission({
+    db: input.db,
+    pageOperationId: input.pageOperationId,
+    attemptId,
+    mode: configured.mode,
+  });
+  if (history.kind === 'resume') return history.jobId;
   const deadlineAt = new Date(input.deliveryStartedOn.getTime() + 60_000);
   const context = createDirectProviderOperationContext({
     db: input.db,
     caller: 'worker',
+    mode: configured.mode,
+    policy: configured.policy,
     deadlineAt,
     operationAnchor: input.pageOperationId,
   });
@@ -182,6 +227,7 @@ export async function executeTencentOcrSubmit(input: {
         operationKind: TENCENT_OCR_SUBMIT_OPERATION_KIND,
         unknownCostCurrency: 'CNY',
         attemptAnchor,
+        providerStartFence: 'operation_kind',
       },
       async (attempt) => {
         const jobId = await input.submit(input.params);
@@ -189,6 +235,7 @@ export async function executeTencentOcrSubmit(input: {
         return jobId;
       },
     );
+    await input.afterJobSaved?.(result.value);
     return result.value;
   } catch (error) {
     if (!(error instanceof ProviderAttemptLifecycleError)) throw error;
@@ -201,8 +248,13 @@ export async function executeTencentOcrSubmit(input: {
       default:
         throw error;
     }
-    const savedJobId = await findSavedTencentJobId(input.db, input.pageOperationId);
-    if (savedJobId !== null) return savedJobId;
+    const resolved = await resolveTencentSubmitHistoryForAdmission({
+      db: input.db,
+      pageOperationId: input.pageOperationId,
+      attemptId,
+      mode: configured.mode,
+    });
+    if (resolved.kind === 'resume') return resolved.jobId;
     throw new TencentSubmitInProgressError(input.pageOperationId, error);
   }
 }
