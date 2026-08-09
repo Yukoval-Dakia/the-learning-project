@@ -103,7 +103,10 @@ type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
 
-function requirePlacementProviderTaskRunId(result: TaskTextResult, label: string): string {
+function requirePlacementProviderTaskRunId(
+  result: Pick<TaskTextResult, 'task_run_id' | 'cost_usd'>,
+  label: string,
+): string {
   if (result.task_run_id) return result.task_run_id;
   if (costUsdToMicroUsd(result.cost_usd) === null) {
     throw new PlacementStarterUnknownCostError(`placement ${label} cost is unknown`);
