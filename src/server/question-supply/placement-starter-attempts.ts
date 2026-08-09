@@ -1208,7 +1208,13 @@ export async function terminalizePlacementUnknownCost(
       .where(eq(placement_starter_claim.id, input.claimId))
       .for('update');
     if (!claim) throw new PlacementStarterAdmissionError('placement starter claim not found');
-    if (claim.status === 'exhausted' && claim.errorCode === 'cost_unknown') return;
+    if (claim.status === 'exhausted' && claim.errorCode === 'cost_unknown') {
+      await tx
+        .update(placement_starter_claim)
+        .set({ known_cost_micro_usd: null, updated_at: now })
+        .where(eq(placement_starter_claim.id, input.claimId));
+      return;
+    }
 
     if (attemptAuthority) {
       if (!attempt || attempt.fencingToken !== attemptAuthority.fencingToken) {
@@ -1255,6 +1261,10 @@ export async function terminalizePlacementUnknownCost(
         );
     }
 
+    await tx
+      .update(placement_starter_claim)
+      .set({ known_cost_micro_usd: null, updated_at: now })
+      .where(eq(placement_starter_claim.id, input.claimId));
     await markPlacementStarterClaimTerminal(tx, input.claimId, 'exhausted', now, {
       class: 'cost_unknown',
       code: 'cost_unknown',

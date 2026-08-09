@@ -21,8 +21,10 @@ import {
   knowledge,
   learning_item,
   material_fsrs_state,
+  placement_starter_attempt,
   placement_starter_attempt_question,
   placement_starter_claim,
+  placement_starter_cost_component,
   question,
   source_document,
 } from '@/db/schema';
@@ -33,7 +35,11 @@ import {
   buildSupplyTrace,
   evidenceDemandToTargetContext,
 } from '@/server/question-supply/evidence-demand';
-import { acquirePlacementAttempt } from '@/server/question-supply/placement-starter-attempts';
+import {
+  PlacementStarterStaleAuthorityError,
+  PlacementStarterUnknownCostError,
+  acquirePlacementAttempt,
+} from '@/server/question-supply/placement-starter-attempts';
 import { canonicalQuestionContentHash } from '@/server/quiz/content-fingerprint';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
@@ -284,6 +290,45 @@ async function seedKnowledge(opts: { id: string; domain?: string | null }) {
     created_at: now,
     updated_at: now,
     version: 0,
+  });
+}
+
+const INVALID_OUTPUT_PLACEMENT = {
+  claimId: 'claim-invalid-placement-output',
+  jobId: 'job-invalid-output',
+  knowledgeId: 'k-invalid-placement-output',
+} as const;
+
+async function seedInvalidOutputPlacementClaim(now: Date) {
+  await seedKnowledge({ id: INVALID_OUTPUT_PLACEMENT.knowledgeId });
+  await testDb().insert(placement_starter_claim).values({
+    id: INVALID_OUTPUT_PLACEMENT.claimId,
+    fingerprint: 'placement-starter|invalid-output',
+    goal_id: 'goal-invalid-output',
+    semantic_goal_revision_id: 'rev-invalid-output',
+    subject_id: 'wenyan',
+    knowledge_id: INVALID_OUTPUT_PLACEMENT.knowledgeId,
+    demand_id: 'demand-invalid-output',
+    target_id: 'target-invalid-output',
+    status: 'queued',
+    pg_boss_job_id: INVALID_OUTPUT_PLACEMENT.jobId,
+    max_paid_attempts: 3,
+    budget_limit_micro_usd: 1_000_000,
+    known_cost_micro_usd: 0,
+    next_reconcile_at: now,
+    created_at: now,
+    updated_at: now,
+  });
+}
+
+async function acquireInvalidOutputPlacementAttempt(now: Date) {
+  await seedInvalidOutputPlacementClaim(now);
+  return acquirePlacementAttempt(testDb(), {
+    claimId: INVALID_OUTPUT_PLACEMENT.claimId,
+    pgBossJobId: INVALID_OUTPUT_PLACEMENT.jobId,
+    deliveryNo: 1,
+    startedOn: now,
+    now,
   });
 }
 
@@ -858,6 +903,139 @@ describe('runQuizGen', () => {
       expect(enqueuedIds.includes('raced-existing')).toBe(expectEnqueued);
     },
   );
+
+  it.each([
+    { name: 'malformed JSON', output: '{not-json', exactCount: undefined },
+    { name: 'wrong exact_count', output: CLOSED_BOOK_OUTPUT, exactCount: 2 },
+  ])(
+    'settles unknown placement cost before rejecting $name output',
+    async ({ output, exactCount }) => {
+      const now = new Date();
+      const attempt = await acquireInvalidOutputPlacementAttempt(now);
+
+      await expect(
+        runQuizGen({
+          db: testDb(),
+          trigger: 'knowledge',
+          refId: INVALID_OUTPUT_PLACEMENT.knowledgeId,
+          ...(exactCount === undefined ? {} : { exactCount }),
+          placementAttempt: attempt,
+          runAgentTaskFn: agentMock(output, 'tr-invalid-placement-output'),
+          enqueueQuizVerify: vi.fn(async () => {}),
+          buildTavilyMcpServerFn: () => null,
+          buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+        }),
+      ).rejects.toBeInstanceOf(PlacementStarterUnknownCostError);
+
+      const components = await testDb()
+        .select()
+        .from(placement_starter_cost_component)
+        .where(eq(placement_starter_cost_component.claim_id, INVALID_OUTPUT_PLACEMENT.claimId));
+      expect(components).toHaveLength(1);
+      expect(components[0]).toMatchObject({
+        provider_task_run_id: 'tr-invalid-placement-output',
+        cost_micro_usd: null,
+      });
+      expect(
+        components.some((component) => component.provider_task_run_id.startsWith('reservation:')),
+      ).toBe(false);
+      const [claim] = await testDb()
+        .select()
+        .from(placement_starter_claim)
+        .where(eq(placement_starter_claim.id, INVALID_OUTPUT_PLACEMENT.claimId));
+      expect(claim.known_cost_micro_usd).toBeNull();
+    },
+  );
+
+  it.each([
+    {
+      name: 'malformed JSON',
+      output: '{not-json',
+      expectedError: /parseOutput/,
+    },
+    {
+      name: 'wrong exact_count',
+      output: CLOSED_BOOK_OUTPUT,
+      exactCount: 2,
+      expectedError: /quiz_gen exact_count=2 but agent produced 1/,
+    },
+    {
+      name: 'wrong pinned generation method',
+      output: CLOSED_BOOK_OUTPUT,
+      generationMethod: 'material_grounded' as const,
+      expectedError:
+        /pinned generation_method='material_grounded' but agent produced 'closed_book'/,
+    },
+  ])(
+    'retains known placement cost before rejecting $name output',
+    async ({ output, exactCount, generationMethod, expectedError }) => {
+      const now = new Date();
+      const attempt = await acquireInvalidOutputPlacementAttempt(now);
+
+      await expect(
+        runQuizGen({
+          db: testDb(),
+          trigger: 'knowledge',
+          refId: INVALID_OUTPUT_PLACEMENT.knowledgeId,
+          ...(exactCount === undefined ? {} : { exactCount }),
+          ...(generationMethod === undefined ? {} : { generationMethod }),
+          placementAttempt: attempt,
+          runAgentTaskFn: agentMock(output, 'tr-known-invalid-placement-output', 0.01),
+          enqueueQuizVerify: vi.fn(async () => {}),
+          buildTavilyMcpServerFn: () => null,
+          buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+        }),
+      ).rejects.toThrow(expectedError);
+
+      const components = await testDb()
+        .select()
+        .from(placement_starter_cost_component)
+        .where(eq(placement_starter_cost_component.claim_id, INVALID_OUTPUT_PLACEMENT.claimId));
+      expect(components).toEqual([
+        expect.objectContaining({
+          provider_task_run_id: 'tr-known-invalid-placement-output',
+          cost_micro_usd: 10_000,
+          over_cap: false,
+        }),
+      ]);
+      const [claim] = await testDb()
+        .select()
+        .from(placement_starter_claim)
+        .where(eq(placement_starter_claim.id, INVALID_OUTPUT_PLACEMENT.claimId));
+      expect(claim.known_cost_micro_usd).toBe(10_000);
+    },
+  );
+
+  it('rejects settlement when the placement fence goes stale during the paid call', async () => {
+    const now = new Date();
+    const attempt = await acquireInvalidOutputPlacementAttempt(now);
+    const runAgentTaskFn = vi.fn(async () => {
+      await testDb()
+        .update(placement_starter_attempt)
+        .set({ status: 'underfilled' })
+        .where(eq(placement_starter_attempt.id, attempt.attemptId));
+      return { text: CLOSED_BOOK_OUTPUT, task_run_id: 'tr-stale-output', cost_usd: 0.01 };
+    });
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: INVALID_OUTPUT_PLACEMENT.knowledgeId,
+        placementAttempt: attempt,
+        runAgentTaskFn,
+        enqueueQuizVerify: vi.fn(async () => {}),
+        buildTavilyMcpServerFn: () => null,
+        buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+      }),
+    ).rejects.toBeInstanceOf(PlacementStarterStaleAuthorityError);
+
+    const settledComponents = await testDb()
+      .select()
+      .from(placement_starter_cost_component)
+      .where(eq(placement_starter_cost_component.provider_task_run_id, 'tr-stale-output'));
+    expect(settledComponents).toHaveLength(0);
+  });
 
   it('does not create a ready artifact when the whole batch is exact duplicates', async () => {
     await seedKnowledge({ id: 'k1' });
@@ -1804,6 +1982,54 @@ describe('buildQuizGenHandler', () => {
     // the first batch and skips the duplicate batch without another verify enqueue.
     expect(rows).toHaveLength(2);
     expect(enqueueQuizVerify).toHaveBeenCalledTimes(1);
+  });
+
+  it('terminalizes unknown cost when a paid placement result omits task_run_id', async () => {
+    const now = new Date();
+    await seedInvalidOutputPlacementClaim(now);
+    const runAgentTaskFn = agentMock(CLOSED_BOOK_OUTPUT);
+    const handler = buildQuizGenHandler(testDb(), {
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: () => null,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+      now: () => now,
+    });
+
+    await expect(
+      handler([
+        {
+          id: INVALID_OUTPUT_PLACEMENT.jobId,
+          data: {
+            trigger: 'knowledge',
+            ref_id: INVALID_OUTPUT_PLACEMENT.knowledgeId,
+            placement_starter_claim_id: INVALID_OUTPUT_PLACEMENT.claimId,
+          },
+          retryCount: 0,
+          retryLimit: 2,
+          expireInSeconds: 7200,
+          startedOn: now,
+          signal: new AbortController().signal,
+        } as never,
+      ]),
+    ).resolves.toBeUndefined();
+    expect(runAgentTaskFn).toHaveBeenCalledOnce();
+
+    const [claim] = await testDb()
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, INVALID_OUTPUT_PLACEMENT.claimId));
+    expect(claim).toMatchObject({
+      status: 'exhausted',
+      known_cost_micro_usd: null,
+      last_error_class: 'cost_unknown',
+      last_error_code: 'cost_unknown',
+    });
+    const components = await testDb()
+      .select()
+      .from(placement_starter_cost_component)
+      .where(eq(placement_starter_cost_component.claim_id, INVALID_OUTPUT_PLACEMENT.claimId));
+    expect(components).toHaveLength(0);
   });
 
   it('terminalizes a budget-exhausted placement claim and completes the job without throwing (YUK-452 round-3)', async () => {

@@ -628,19 +628,11 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       ...(subjectSkills ? { skills: subjectSkills } : {}),
     });
     taskResult = result;
-    await params.placementHeartbeat?.assertHealthy();
-    if (params.placementAttempt) {
-      await assertPlacementAttemptFence(db, params.placementAttempt);
-    }
-    const { parsed, parseRepaired } = parseOutput(result.text);
-    if (params.exactCount !== undefined && parsed.questions.length !== params.exactCount) {
-      throw new Error(
-        `quiz_gen exact_count=${params.exactCount} but agent produced ${parsed.questions.length}`,
-      );
-    }
     if (params.placementAttempt) {
       if (!result.task_run_id) {
-        throw new Error('placement quiz_gen requires provider task_run_id');
+        throw new PlacementStarterUnknownCostError(
+          'placement quiz_gen paid invocation is missing provider task_run_id',
+        );
       }
       // recordPlacementAttemptOutput commits the actual provider run id + cost (retention) and
       // reports over-cap; block the delivery here so the settlement is preserved (codex P2).
@@ -661,6 +653,16 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           'placement generation exceeded authorized reservation',
         );
       }
+    }
+    await params.placementHeartbeat?.assertHealthy();
+    if (params.placementAttempt) {
+      await assertPlacementAttemptFence(db, params.placementAttempt);
+    }
+    const { parsed, parseRepaired } = parseOutput(result.text);
+    if (params.exactCount !== undefined && parsed.questions.length !== params.exactCount) {
+      throw new Error(
+        `quiz_gen exact_count=${params.exactCount} but agent produced ${parsed.questions.length}`,
+      );
     }
 
     // YUK-226 S2-5b F1 — when the 找题次序 PINNED a generation_method (step 3
