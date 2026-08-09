@@ -349,6 +349,31 @@ describe('judgeEdgeReconcile', () => {
     ]);
   });
 
+  it('reports total-only provider usage without fabricating a zero cost estimate', async () => {
+    const fetchMock = vi.fn(async () =>
+      glmResponse(
+        { decision: { action: 'KEEP_BOTH', neighbor_index: null, confidence: 0.9, reason: 'ok' } },
+        { usage: { total_tokens: 29 } },
+      ),
+    );
+    const attempts: unknown[] = [];
+
+    await judgeEdgeReconcile(candidate(), [neighbor()], {
+      env: MOCK_ENV,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      providerAttempt: attemptContext(attempts),
+    });
+
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        evidence: expect.objectContaining({
+          usage: expect.objectContaining({ input: null, output: null, total: 29 }),
+          cost: expect.objectContaining({ basis: 'unknown', amount: null }),
+        }),
+      }),
+    ]);
+  });
+
   it('leaves provider usage and cost unknown for an empty usage object', async () => {
     const fetchMock = vi.fn(async () =>
       glmResponse(

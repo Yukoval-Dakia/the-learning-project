@@ -1,5 +1,14 @@
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ProviderLaneAuditResult } from './audit-provider-lanes';
+
+const laneAuditMocks = vi.hoisted(() => ({
+  auditProviderLanes: vi.fn<(projectRoot: string) => ProviderLaneAuditResult>(),
+}));
+
+vi.mock('./audit-provider-lanes', () => ({
+  auditProviderLanes: laneAuditMocks.auditProviderLanes,
+}));
 import {
   PROVIDER_ATTEMPT_TRUTH_PATHS,
   type ProviderAttemptTruthSource,
@@ -25,6 +34,14 @@ const compliantSources = (): ProviderAttemptTruthSource[] =>
   }));
 
 describe('provider attempt truth audit', () => {
+  beforeEach(() => {
+    laneAuditMocks.auditProviderLanes.mockReset().mockReturnValue({
+      ok: true,
+      findings: [],
+      violations: [],
+    });
+  });
+
   it('accepts migrated wrappers without legacy accounting', () => {
     expect(collectProviderAttemptTruthViolations(compliantSources())).toEqual([]);
   });
@@ -58,9 +75,25 @@ describe('provider attempt truth audit', () => {
     });
   });
 
-  it('keeps the migrated truth audit coupled to the repository provider-lane scanner', () => {
+  it('delegates repository wire discovery and maps scanner violations', () => {
     const projectRoot = fileURLToPath(new URL('..', import.meta.url));
+    laneAuditMocks.auditProviderLanes.mockReturnValue({
+      ok: false,
+      findings: [],
+      violations: [
+        {
+          path: 'src/capabilities/example/server/provider.ts',
+          reason: 'unlisted direct provider wire: unclassified-provider-fetch',
+        },
+      ],
+    });
 
-    expect(runProviderAttemptTruthAudit(projectRoot)).toEqual([]);
+    expect(runProviderAttemptTruthAudit(projectRoot)).toContainEqual({
+      path: 'src/capabilities/example/server/provider.ts',
+      rule: 'provider-lane-drift',
+      detail: 'unlisted direct provider wire: unclassified-provider-fetch',
+    });
+    expect(laneAuditMocks.auditProviderLanes).toHaveBeenCalledOnce();
+    expect(laneAuditMocks.auditProviderLanes).toHaveBeenCalledWith(projectRoot);
   });
 });

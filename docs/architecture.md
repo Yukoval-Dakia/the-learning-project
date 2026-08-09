@@ -792,7 +792,9 @@ started → completed | abandoned
 Direct and opaque provider calls use `provider_attempt` as their durable lifecycle and cost truth.
 The closed lane set and `off -> observe -> enforce` resolver are documented in
 `docs/runbooks/provider-attempt-admission.md`. This gate is separate from the Claude Agent SDK
-session gate (`provider_session_admission`). Cost readers union terminal, provider-started attempts
+session gate (`provider_session_admission`). Admission `off` bypasses limiting while provider calls
+remain durably traced on a best-effort basis; a persistence outage may leave an off-mode call
+untracked. Cost readers union terminal, provider-started attempts
 with existing `cost_ledger` rows. Only durable exact attempt-ID links are de-duplicated. Unlinked
 historical OCR job-level rows remain visible as explicit legacy truth; exact-head code no longer
 writes new mirrors. Readers never copy provider attempts into `cost_ledger`.

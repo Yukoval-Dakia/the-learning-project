@@ -931,6 +931,11 @@ describe('runAutoEnrollForSession', () => {
       db,
       sessionId,
       env: { [OBSERVE_FLAG]: 'true' },
+      providerAttempt: {
+        caller: 'worker',
+        deadlineAt: new Date('2030-01-01T00:00:00.000Z'),
+        mode: 'observe',
+      },
       runTaggingFn: async () => {
         taggingCalled += 1;
         return highConfidenceTagging();

@@ -24,6 +24,7 @@ export async function readProviderCostAggregates(
   db: Db | Tx,
   from: Date,
 ): Promise<ProviderCostAggregateRow[]> {
+  const fromIso = from.toISOString();
   return db.execute<ProviderCostAggregateRow>(sql`
     WITH authoritative_attempts AS NOT MATERIALIZED (
       SELECT attempt_id
@@ -41,7 +42,7 @@ export async function readProviderCostAggregates(
           THEN c.task_run_id::uuid
           ELSE NULL
         END
-      WHERE c.occurred_at >= ${from}
+      WHERE c.occurred_at >= ${fromIso}
         AND linked_attempt.attempt_id IS NULL
       UNION ALL
       SELECT p.operation_kind, p.cost_amount, COALESCE(p.cost_currency, 'XXX'),
@@ -50,7 +51,7 @@ export async function readProviderCostAggregates(
         COALESCE((p.usage_json->>'output')::double precision, 0)::int,
         p.finished_at
       FROM provider_attempt p
-      WHERE p.finished_at >= ${from}
+      WHERE p.finished_at >= ${fromIso}
         AND p.finished_at IS NOT NULL
         AND p.provider_start_reserved_at IS NOT NULL
         AND (p.attempt_kind = 'opaque_operation' OR COALESCE(p.wire_count, 0) > 0)

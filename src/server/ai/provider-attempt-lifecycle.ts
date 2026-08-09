@@ -179,12 +179,13 @@ function controlFailure(
   identity: ProviderRequestIdentityT,
   cause: unknown,
 ) {
-  if (mode === 'observe') return undefined;
+  if (mode !== 'enforce') return undefined;
   throw new ProviderAttemptLifecycleError('control_plane_unavailable', identity.attemptId, cause);
 }
 
 export function createProviderAttemptLifecycle(input: {
   readonly mode: ProviderAttemptLifecycleMode;
+  readonly persistAttemptWhenOff?: boolean;
   readonly policy?: ProviderAttemptAdmissionPolicy | null;
   readonly identity: ProviderRequestIdentityT;
   readonly deadlineAt: Date;
@@ -195,7 +196,9 @@ export function createProviderAttemptLifecycle(input: {
     throw new RangeError('deadlineAt must be valid');
   const deadlineAtIso = input.deadlineAt.toISOString();
   const identityFingerprint = fingerprint(identity);
-  const policy = input.policy ?? null;
+  const policy = input.mode === 'off' ? null : (input.policy ?? null);
+  const persistedMode: Exclude<ProviderAttemptLifecycleMode, 'off'> =
+    input.mode === 'enforce' ? 'enforce' : 'observe';
   const admissionPolicyFingerprint = policyFingerprint(policy);
   const leaseOwner = randomUUID();
   let acquired: Promise<ProviderAttemptHandle> | undefined;
@@ -370,7 +373,7 @@ export function createProviderAttemptLifecycle(input: {
     acquire() {
       if (acquired) return acquired;
       acquired = (async () => {
-        if (input.mode === 'off') return makeHandle('off');
+        if (input.mode === 'off' && input.persistAttemptWhenOff !== true) return makeHandle('off');
         try {
           const admission = await input.db.transaction(async (tx) => {
             await tx.execute(
@@ -508,7 +511,23 @@ export function createProviderAttemptLifecycle(input: {
                   terminal_at: sql`clock_timestamp()`,
                   terminal_reason: policyViolation,
                 })
-                .onConflictDoNothing({ target: provider_attempt_admission.attempt_id });
+                .onConflictDoUpdate({
+                  target: provider_attempt_admission.attempt_id,
+                  set: {
+                    identity_fingerprint: identityFingerprint,
+                    policy_fingerprint: admissionPolicyFingerprint,
+                    lane_id: identity.lane,
+                    mode: 'enforce',
+                    status: 'denied',
+                    lease_owner: null,
+                    requested_at: sql`clock_timestamp()`,
+                    deadline_at: input.deadlineAt,
+                    acquired_at: null,
+                    lease_expires_at: null,
+                    terminal_at: sql`clock_timestamp()`,
+                    terminal_reason: policyViolation,
+                  },
+                });
               return policyViolation;
             }
             await tx
@@ -536,7 +555,7 @@ export function createProviderAttemptLifecycle(input: {
                 identity_fingerprint: identityFingerprint,
                 policy_fingerprint: admissionPolicyFingerprint,
                 lane_id: identity.lane,
-                mode: input.mode,
+                mode: persistedMode,
                 status,
                 lease_owner: leaseOwner,
                 requested_at: sql`clock_timestamp()`,
@@ -555,7 +574,7 @@ export function createProviderAttemptLifecycle(input: {
                   identity_fingerprint: identityFingerprint,
                   policy_fingerprint: admissionPolicyFingerprint,
                   lane_id: identity.lane,
-                  mode: input.mode,
+                  mode: persistedMode,
                   status,
                   lease_owner: leaseOwner,
                   requested_at: sql`clock_timestamp()`,

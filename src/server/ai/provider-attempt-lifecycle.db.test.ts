@@ -8,8 +8,17 @@ import { provider_attempt, provider_attempt_admission } from '@/db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import {
+  type DirectProviderAttemptControl,
+  createDirectProviderOperationContext,
+  executeDirectProviderAttempt,
+} from './direct-provider-attempt';
+import {
+  createMem0OpaqueOperationContext,
+  executeMem0OpaqueOperation,
+} from './opaque-provider-operation';
 import { createProviderAttemptLifecycle } from './provider-attempt-lifecycle';
 
 interface IndependentDb {
@@ -74,6 +83,121 @@ afterEach(async () => {
 });
 
 describe('ProviderAttemptLifecycle', () => {
+  it.each(['api', 'worker'] as const)(
+    'keeps admission off for a %s-shaped call while persisting attempt and cost truth',
+    async (caller) => {
+      const providerCall = vi.fn(async (attempt: DirectProviderAttemptControl) => {
+        attempt.reportUsage({ input: 12, output: 3, total: 15 });
+        attempt.estimateCost({ amount: 0.0015, currency: 'CNY', source: 'test-pricebook' });
+        return 'provider-result';
+      });
+      const context = createDirectProviderOperationContext({
+        db: testDb(),
+        caller,
+        deadlineAt: new Date(Date.now() + 60_000),
+        env: {},
+        operationAnchor: `off-${caller}-provider-operation`,
+      });
+
+      const result = await executeDirectProviderAttempt(
+        context,
+        {
+          provider: 'glm',
+          model: 'glm-test',
+          lane: 'glm.memory-reconcile',
+          protocol: 'http',
+          endpointClass: 'openai-compatible.chat-completions',
+          operationKind: 'memory_reconcile',
+          unknownCostCurrency: 'CNY',
+        },
+        providerCall,
+      );
+
+      expect(result.value).toBe('provider-result');
+      expect(providerCall).toHaveBeenCalledOnce();
+      const attempts = await testDb().select().from(provider_attempt);
+      const admissions = await testDb().select().from(provider_attempt_admission);
+      expect(attempts).toEqual([
+        expect.objectContaining({
+          attempt_id: result.attemptId,
+          caller,
+          terminal_status: 'succeeded',
+          wire_count: 1,
+          cost_basis: 'estimated',
+          cost_amount: 0.0015,
+          cost_currency: 'CNY',
+        }),
+      ]);
+      expect(admissions).toEqual([
+        expect.objectContaining({
+          attempt_id: result.attemptId,
+          mode: 'observe',
+          status: 'released',
+          terminal_reason: 'attempt_finished',
+        }),
+      ]);
+    },
+  );
+
+  it('lets a default-off direct provider call proceed untracked when its control plane is unavailable', async () => {
+    const unavailable = openIndependentDb();
+    await unavailable.close();
+    opened.splice(0);
+    const providerCall = vi.fn(async () => 'direct-result');
+    const context = createDirectProviderOperationContext({
+      db: unavailable.db,
+      caller: 'worker',
+      deadlineAt: new Date(Date.now() + 60_000),
+      env: {},
+      operationAnchor: 'default-off-unavailable-direct',
+    });
+
+    await expect(
+      executeDirectProviderAttempt(
+        context,
+        {
+          provider: 'glm',
+          model: 'glm-test',
+          lane: 'glm.memory-reconcile',
+          protocol: 'http',
+          endpointClass: 'openai-compatible.chat-completions',
+          operationKind: 'memory_reconcile',
+          unknownCostCurrency: 'CNY',
+        },
+        providerCall,
+      ),
+    ).resolves.toMatchObject({ value: 'direct-result' });
+    expect(providerCall).toHaveBeenCalledOnce();
+  });
+
+  it('lets a default-off opaque provider call proceed untracked when its control plane is unavailable', async () => {
+    const unavailable = openIndependentDb();
+    await unavailable.close();
+    opened.splice(0);
+    const providerCall = vi.fn(async () => 'opaque-result');
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const context = createMem0OpaqueOperationContext({
+      db: unavailable.db,
+      caller: 'api',
+      deadlineAt: new Date(Date.now() + 60_000),
+      env: {},
+      operationAnchor: 'default-off-unavailable-opaque',
+    });
+
+    try {
+      await expect(executeMem0OpaqueOperation(context, 'search', providerCall)).resolves.toBe(
+        'opaque-result',
+      );
+      expect(providerCall).toHaveBeenCalledOnce();
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[mem0-provider-operation] terminal settlement failed; preserving provider outcome',
+        expect.objectContaining({ settlementReason: 'finish_untracked' }),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it.each(['api', 'worker'] as const)(
     'acquires and atomically settles a %s attempt',
     async (caller) => {
@@ -807,6 +931,55 @@ describe('ProviderAttemptLifecycle', () => {
         .from(provider_attempt)
         .where(eq(provider_attempt.attempt_id, '00000000-0000-4000-8000-000000000923')),
     ).toHaveLength(0);
+  });
+
+  it('replaces an expired unreserved admission with a durable enforce denial on conflict', async () => {
+    const attemptId = '00000000-0000-4000-8000-000000000936';
+    const deadlineAt = new Date(Date.now() + 60_000);
+    const policy = { maxConcurrentAttempts: 1, maxAttemptStartsPerMinute: 100 };
+    await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      policy,
+      identity: identity(attemptId),
+      deadlineAt,
+      db: testDb(),
+    }).acquire();
+    await testDb().execute(sql`UPDATE provider_attempt_admission
+      SET lease_expires_at = clock_timestamp() - interval '1 second'
+      WHERE attempt_id = ${attemptId}`);
+    await createProviderAttemptLifecycle({
+      mode: 'enforce',
+      policy,
+      identity: identity('00000000-0000-4000-8000-000000000937'),
+      deadlineAt,
+      db: testDb(),
+    }).acquire();
+
+    await expect(
+      createProviderAttemptLifecycle({
+        mode: 'enforce',
+        policy,
+        identity: identity(attemptId),
+        deadlineAt,
+        db: testDb(),
+      }).acquire(),
+    ).rejects.toMatchObject({ reason: 'capacity_exhausted' });
+
+    const admission = (
+      await testDb()
+        .select()
+        .from(provider_attempt_admission)
+        .where(eq(provider_attempt_admission.attempt_id, attemptId))
+    )[0];
+    expect(admission).toMatchObject({
+      mode: 'enforce',
+      status: 'denied',
+      lease_owner: null,
+      acquired_at: null,
+      lease_expires_at: null,
+      terminal_reason: 'capacity_exhausted',
+    });
+    expect(admission?.terminal_at).toBeInstanceOf(Date);
   });
 
   it('observe records rate would-deny and keeps the start reservable', async () => {

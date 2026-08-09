@@ -9,7 +9,9 @@ import {
   executeDirectProviderAttempt,
   providerOperationIdForInvocation,
 } from '@/server/ai/provider-attempt-runtime';
-import { and, desc, eq, isNotNull } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, isNull, ne } from 'drizzle-orm';
+
+export { ProviderAttemptLifecycleError };
 
 export const GLM_OCR_LAYOUT_PARSING_LANE = 'glm.ocr-layout-parsing';
 export const TENCENT_OCR_QUESTION_MARK_LANE = 'tencent.question-mark-agent';
@@ -80,6 +82,30 @@ export async function findSavedTencentJobId(
   return jobIds.values().next().value ?? null;
 }
 
+async function findAmbiguousTencentSubmitAttemptId(
+  db: Db,
+  pageOperationId: string,
+  stableAttemptId: string,
+): Promise<string | null> {
+  const rows = await db
+    .select({ attemptId: provider_attempt.attempt_id })
+    .from(provider_attempt)
+    .where(
+      and(
+        eq(provider_attempt.operation_id, pageOperationId),
+        eq(provider_attempt.provider, 'tencent'),
+        eq(provider_attempt.lane_id, TENCENT_OCR_QUESTION_MARK_LANE),
+        eq(provider_attempt.operation_kind, TENCENT_OCR_SUBMIT_OPERATION_KIND),
+        ne(provider_attempt.attempt_id, stableAttemptId),
+        isNotNull(provider_attempt.provider_start_reserved_at),
+        isNull(provider_attempt.external_request_id),
+      ),
+    )
+    .orderBy(desc(provider_attempt.started_at), desc(provider_attempt.attempt_id))
+    .limit(1);
+  return rows[0]?.attemptId ?? null;
+}
+
 export function createOcrPageProviderContext(
   db: Db,
   pageOperationId: string,
@@ -118,11 +144,23 @@ export async function executeGlmOcrWireAttempt<T>(
 export async function executeTencentOcrSubmit(input: {
   readonly db: Db;
   readonly pageOperationId: string;
-  readonly deliveryRetryCount: number;
   readonly deliveryStartedOn: Date;
   readonly params: TencentSubmitParams;
   readonly submit: TencentSubmit;
 }): Promise<string> {
+  const attemptAnchor = `ingestion-ocr:${input.pageOperationId}:tencent-submit`;
+  const stableAttemptId = providerOperationIdForInvocation(attemptAnchor);
+  const ambiguousAttemptId = await findAmbiguousTencentSubmitAttemptId(
+    input.db,
+    input.pageOperationId,
+    stableAttemptId,
+  );
+  if (ambiguousAttemptId !== null) {
+    throw new TencentSubmitInProgressError(
+      input.pageOperationId,
+      new ProviderAttemptLifecycleError('recovery_required', ambiguousAttemptId),
+    );
+  }
   const deadlineAt = new Date(input.deliveryStartedOn.getTime() + 60_000);
   const context = createDirectProviderOperationContext({
     db: input.db,
@@ -141,7 +179,7 @@ export async function executeTencentOcrSubmit(input: {
         endpointClass: 'tencent.question-mark-agent.submit',
         operationKind: TENCENT_OCR_SUBMIT_OPERATION_KIND,
         unknownCostCurrency: 'CNY',
-        attemptAnchor: `ingestion-ocr:${input.pageOperationId}:tencent-submit:generation:${input.deliveryRetryCount}`,
+        attemptAnchor,
       },
       async (attempt) => {
         const jobId = await input.submit(input.params);

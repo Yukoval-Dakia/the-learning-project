@@ -163,6 +163,7 @@ function makeLifecycle(
   if (!context.db) throw new TypeError('direct provider attempt context requires db');
   return createProviderAttemptLifecycle({
     mode: configured.mode,
+    persistAttemptWhenOff: true,
     policy: configured.policy,
     identity,
     deadlineAt: context.deadlineAt,

@@ -2097,7 +2097,12 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
         output: 42,
         total: 363,
       });
-      expect(attempts[0].operation_id).toBe('00000000-0000-4000-8000-000000000090');
+      expect(attempts[0].operation_id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      expect(attempts[0].attempt_id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
     } finally {
       global.fetch = originalFetch;
     }

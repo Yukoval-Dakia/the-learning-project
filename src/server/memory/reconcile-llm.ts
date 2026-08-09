@@ -486,6 +486,8 @@ export async function judgeReconciliation(
         typeof promptTokens === 'number' ||
         typeof completionTokens === 'number' ||
         typeof totalTokens === 'number';
+      const hasPricedTokens =
+        typeof promptTokens === 'number' || typeof completionTokens === 'number';
       if (hasReportedTokens) {
         attempt.reportUsage({
           input: typeof promptTokens === 'number' ? promptTokens : null,
@@ -493,7 +495,7 @@ export async function judgeReconciliation(
           total: typeof totalTokens === 'number' ? totalTokens : null,
         });
       }
-      if (hasReportedTokens) {
+      if (hasPricedTokens) {
         const estimatedCostCny = glmChatCostCny(promptTokens ?? 0, completionTokens ?? 0);
         attempt.estimateCost({
           amount: estimatedCostCny,

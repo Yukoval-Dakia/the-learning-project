@@ -18,6 +18,8 @@ Set `AI_PROVIDER_ATTEMPT_ADMISSION_MODE` to `off`, `observe`, or `enforce`. Set
 `AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON` to an object whose explicitly listed lane values each
 contain positive integer `maxConcurrentAttempts` and `maxAttemptStartsPerMinute`. Unknown keys are
 rejected. Missing config, an unlisted lane, or global `off` resolves to off.
+`off` disables capacity/rate enforcement but does not disable durable `provider_attempt` lifecycle
+and cost truth for calls that reach the provider.
 
 There is no queue. Admission uses the database clock and lane advisory serialization. A successful
 reservation consumes rate capacity immediately. Pre-start reservations count as active; after
@@ -29,6 +31,8 @@ produce `would_deny` in observe.
 Cost readers aggregate terminal, provider-started attempt truth in SQL. They remove a legacy row
 only when its `task_run_id` is a valid UUID that exactly links an authoritative attempt. Unlinked
 historical OCR rows remain visible as legacy truth; no timestamp-based suppression is applied.
+Tencent Submit uses one stable logical attempt identity per page operation across pg-boss retry
+generations. Provider-started legacy generation rows without a saved JobId remain retryably fenced.
 
 ## Rollout and rollback
 

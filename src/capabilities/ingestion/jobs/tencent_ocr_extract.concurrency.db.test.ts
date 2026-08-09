@@ -55,8 +55,8 @@ beforeEach(async () => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('Tencent OCR concurrent delivery fencing', () => {
-  it('sends one Submit for concurrent deliveries in the same retry generation', async () => {
-    // Given: one final-generation delivery is paused inside the provider Submit wire.
+  it('sends one Submit when retry generations overlap at the provider wire', async () => {
+    // Given: generation 0 is paused inside the provider Submit wire.
     const { sessionId, operationId } = await seedIngestionSession(1);
     await reserveOperation(sessionId, operationId);
     let releaseWinner: () => void = () => undefined;
@@ -96,17 +96,19 @@ describe('Tencent OCR concurrent delivery fencing', () => {
       runStructureFn: vi.fn(async () => structureResult()),
     });
     const delivery = {
-      id: 'same-generation-job',
+      id: 'overlapping-generation-job',
       data: { sessionId, operationId },
-      retryCount: 2,
+      retryCount: 0,
       retryLimit: 2,
       startedOn: new Date('2026-08-09T00:00:00.000Z'),
     };
 
-    // When: a concurrent handler crosses findSaved before the winner persists its JobId.
+    // When: generation 1 crosses findSaved before generation 0 persists its JobId.
     const winner = handler([delivery] as never);
     await winnerWireEntered;
-    const competitor = handler([delivery] as never);
+    const competitor = handler([
+      { ...delivery, retryCount: 1, startedOn: new Date('2026-08-09T00:01:00.000Z') },
+    ] as never);
     competitor.finally(competitionObserved).catch(() => undefined);
     await competitionReachedFenceOrWire;
     releaseWinner();

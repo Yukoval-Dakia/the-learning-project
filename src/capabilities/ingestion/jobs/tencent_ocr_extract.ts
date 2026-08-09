@@ -15,6 +15,8 @@ import {
 } from '@/capabilities/ingestion/server/glm_ocr_parser';
 import { writeIngestionOperationEvent } from '@/capabilities/ingestion/server/operation-store';
 import {
+  ProviderAttemptLifecycleError,
+  ProviderAttemptResumeConflictError,
   TencentSubmitInProgressError,
   createOcrPageProviderContext,
   executeTencentOcrDescribe,
@@ -47,7 +49,6 @@ import { PermanentError, RetryableError } from '@/core/schema/structured_questio
 import type { FigureRefT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, source_asset } from '@/db/schema';
-import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-runtime';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import {
   type IngestionExtractionProgressPayloadT,
@@ -383,7 +384,6 @@ async function processOneOcrJob(
           (await executeTencentOcrSubmit({
             db: deps.db,
             pageOperationId,
-            deliveryRetryCount: job.retryCount,
             deliveryStartedOn: job.startedOn,
             params: { ImageBase64: pageBase64 },
             submit,
@@ -695,6 +695,7 @@ async function processOneOcrJob(
       },
       deliveryMetadata(job),
     );
+    if (err instanceof ProviderAttemptResumeConflictError) throw err;
     throw mapped;
   }
 }

@@ -103,6 +103,7 @@ function makeLifecycle(
   if (!context.db) throw new TypeError('Mem0 opaque operation context requires db');
   return createProviderAttemptLifecycle({
     mode: configured.mode,
+    persistAttemptWhenOff: true,
     policy: configured.policy,
     identity,
     deadlineAt: context.deadlineAt,
