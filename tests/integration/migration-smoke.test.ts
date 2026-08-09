@@ -2605,3 +2605,41 @@ describe('migration smoke — YUK-855 provider attempt off mode', () => {
     });
   });
 });
+
+describe('migration smoke — YUK-855 provider attempt start rate index', () => {
+  const BASELINE_TAG = '0091_yuk855_provider_attempt_off_mode';
+  const MIGRATION_TAG = '0092_yuk855_provider_attempt_start_rate_index';
+  const INDEX_NAME = 'provider_attempt_lane_start_rate_idx';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(client, migration.sql);
+      if (migration.tag === BASELINE_TAG) break;
+    }
+    const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
+    if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
+    await applyMigrationFile(client, migration.sql);
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('adds the partial lane and provider-start index', async () => {
+    const indexes = await client<{ indexdef: string; indexname: string }[]>`
+      SELECT indexname, indexdef
+      FROM pg_indexes
+      WHERE schemaname = 'public' AND tablename = 'provider_attempt'
+    `;
+    expect(new Set(indexes.map((index) => index.indexname))).toContain(INDEX_NAME);
+    expect(indexes.find((index) => index.indexname === INDEX_NAME)?.indexdef).toContain(
+      '(lane_id, provider_start_reserved_at) WHERE (provider_start_reserved_at IS NOT NULL)',
+    );
+  });
+});

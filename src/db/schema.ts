@@ -938,6 +938,9 @@ export const provider_attempt = pgTable(
     index('provider_attempt_external_request_idx')
       .on(t.provider, t.external_request_id)
       .where(sql`${t.external_request_id} IS NOT NULL`),
+    index('provider_attempt_lane_start_rate_idx')
+      .on(t.lane_id, t.provider_start_reserved_at)
+      .where(sql`${t.provider_start_reserved_at} IS NOT NULL`),
     check('provider_attempt_kind_ck', sql`${t.attempt_kind} IN ('wire','opaque_operation')`),
     check('provider_attempt_caller_ck', sql`${t.caller} IN ('api','worker')`),
     check(

@@ -24,12 +24,14 @@ and cost truth for calls that reach the provider. Its best-effort admission row 
 elapsed; off never records `would_deny`. These rows retain the normal pre-start lease for lifecycle
 fencing but are excluded from capacity, rate, and mixed-policy accounting.
 
-There is no queue. Admission uses the database clock and lane advisory serialization. A successful
-reservation consumes rate capacity immediately. Pre-start reservations count as active; after
-provider start the lease remains active until terminal settlement or the immutable absolute
-deadline. `observe` persists `would_deny` and allows the provider callback. `enforce` persists a
-denial and throws before the callback. Mixed live policy fingerprints fail closed in enforce and
-produce `would_deny` in observe.
+There is no queue. Admission uses the database clock and lane advisory serialization. Acquisition
+alone, including an acquired attempt that never reaches the wire, does not consume the per-minute
+start limit. The limit is charged only when `reserveProviderStart` atomically records the actual
+provider-start reservation; terminal/released starts remain counted for one minute. Admission
+pre-start leases still count toward active concurrency, and after provider start the lease remains
+active until terminal settlement or the immutable absolute deadline. `observe` persists
+`would_deny` and allows the provider callback. `enforce` persists a denial and throws before the
+callback. Mixed live policy fingerprints fail closed in enforce and produce `would_deny` in observe.
 
 Cost readers aggregate terminal, provider-started attempt truth in SQL. They remove a legacy row
 only when its `task_run_id` is a valid UUID that exactly links an authoritative attempt. Unlinked
