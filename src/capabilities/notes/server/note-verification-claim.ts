@@ -47,8 +47,12 @@ export type NoteVerificationLease = {
 export type NoteVerificationReservation =
   | { kind: 'claimed'; lease: NoteVerificationLease }
   | { kind: 'result_ready'; staged: StagedNoteVerification }
-  | { kind: 'busy' | 'ambiguous' | 'completed' }
-  | { kind: 'not_found' | 'not_ready' | 'not_queued'; artifactType?: string };
+  | { kind: 'busy' }
+  | { kind: 'ambiguous' }
+  | { kind: 'completed' }
+  | { kind: 'not_found'; artifactType?: string }
+  | { kind: 'not_ready'; artifactType?: string }
+  | { kind: 'not_queued'; artifactType?: string };
 
 function taskRunId(artifactId: string, artifactVersion: number, fence: number): string {
   const digest = createHash('sha256')
