@@ -41,6 +41,7 @@ export interface ToolContext {
   signal?: AbortSignal;
   /** Absolute caller wall clock propagated into nested central AI work. */
   providerSessionDeadlineAt?: number;
+  providerAttemptCaller?: 'api' | 'worker';
   taskRunId: string;
   callerActor: ToolCallerActor;
   /** When set, mirror events use this as `caused_by_event_id`. */

@@ -26,6 +26,7 @@
 // 失败语义：composeNightly 内部走两级 fallback（永不 throw 出选题逻辑）；handler 顶层 try/catch
 // 记日志后 rethrow → pg-boss 重试（DB 故障等可重试错误照常传播）。
 
+import { randomUUID } from 'node:crypto';
 import type { Job } from 'pg-boss';
 
 import type { Db } from '@/db/client';
@@ -42,12 +43,23 @@ export interface StreamComposeNightlyResult {
 /**
  * 为「今天」预产练习流（hybrid 夜间预产）。幂等：今天已物化 → no-op（added=0）。
  */
-export async function runStreamComposeNightly(db: Db): Promise<StreamComposeNightlyResult> {
+export async function runStreamComposeNightly(
+  db: Db,
+  operationAnchor: string = randomUUID(),
+): Promise<StreamComposeNightlyResult> {
   const date = streamLocalDate();
   // YUK-558 (spec Q6-A / M2)：夜间预产 compose 事件种子化（独立 eventKind='compose-nightly'，
   // 与用户首读 lazy compose / 手动 recompose 各派生独立 seed）。幂等不变（今天已物化 → no-op）。
   const added = await composeNightly(db, date, {
-    composeDeps: { rng: buildSeededSelectionRng(date, 'compose-nightly', date) },
+    composeDeps: {
+      rng: buildSeededSelectionRng(date, 'compose-nightly', date),
+      providerInvocation: {
+        db,
+        caller: 'worker',
+        deadlineAt: new Date(Date.now() + 65_000),
+        operationAnchor,
+      },
+    },
   });
   return { date, added };
 }
@@ -55,9 +67,9 @@ export async function runStreamComposeNightly(db: Db): Promise<StreamComposeNigh
 export function buildStreamComposeNightlyHandler(
   db: Db,
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {
-  return async () => {
+  return async (jobs) => {
     try {
-      const result = await runStreamComposeNightly(db);
+      const result = await runStreamComposeNightly(db, jobs[0]?.id ?? randomUUID());
       console.log('[practice_stream_compose_nightly] result', result);
     } catch (err) {
       console.error('[practice_stream_compose_nightly] failed', err);

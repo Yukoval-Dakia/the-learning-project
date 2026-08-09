@@ -84,6 +84,12 @@ export interface ComposeSoftmaxDeps {
    * 构造/搜索失败一律退空 prior，不改变 LLM fallback level。
    */
   loadMemoryPrior?: LoadMemoryPriorFn;
+  providerInvocation?: {
+    db: Db;
+    caller: 'api' | 'worker';
+    deadlineAt: Date;
+    operationAnchor: string;
+  };
   /** Poisson 抽样 rng（默认 Math.random）；测试传 seeded rng 确定化。 */
   rng?: () => number;
 }
@@ -416,6 +422,7 @@ export async function composeSoftmaxStream(
       samplable,
       deps.runTaskFn,
       deps.loadMemoryPrior,
+      deps.providerInvocation,
     );
     if (llmResult) {
       weighted = llmResult.weighted;
@@ -550,6 +557,7 @@ async function tryLlmOrchestration(
   samplable: CollectedSignal[],
   runTaskFn?: RunTaskFn,
   loadMemoryPrior?: LoadMemoryPriorFn,
+  providerInvocation?: ComposeSoftmaxDeps['providerInvocation'],
 ): Promise<{ weighted: WeightedCandidate[]; arrangementByRef: Map<string, number> } | null> {
   try {
     const { input: candidateBlock, selectedCandidates } =
@@ -567,7 +575,7 @@ async function tryLlmOrchestration(
     // decision: client construction, embedding/search, or an injected loader may fail, but that
     // failure only removes the optional memoryPrior field. In particular, do not let it reach the
     // outer catch (which correctly means the L2 orchestration itself failed).
-    const memories = await loadMemoryPriorFailSoft(loadMemoryPrior);
+    const memories = await loadMemoryPriorFailSoft(loadMemoryPrior, providerInvocation);
     const memoryPrior = buildMemoryPriorAdvisoryBlock(memories);
     const taskInput = memoryPrior ? { ...candidateBlock, memoryPrior } : candidateBlock;
     const fn = runTaskFn ?? (await defaultRunTaskFn(db as Db));
@@ -608,9 +616,12 @@ async function tryLlmOrchestration(
 const SELECTION_MEMORY_QUERY =
   'learner practice preferences, recurring weaknesses, study habits, and helpful sequencing';
 
-async function loadMemoryPriorFailSoft(loader?: LoadMemoryPriorFn): Promise<readonly string[]> {
+async function loadMemoryPriorFailSoft(
+  loader?: LoadMemoryPriorFn,
+  providerInvocation?: ComposeSoftmaxDeps['providerInvocation'],
+): Promise<readonly string[]> {
   try {
-    return await (loader ?? defaultLoadMemoryPrior)();
+    return await (loader ?? (() => defaultLoadMemoryPrior(providerInvocation)))();
   } catch (err) {
     console.warn('[softmax-selection] mem0 learner prior unavailable → continue without advisory', {
       err: err instanceof Error ? err.message : String(err),
@@ -620,15 +631,26 @@ async function loadMemoryPriorFailSoft(loader?: LoadMemoryPriorFn): Promise<read
 }
 
 /** Production-only lazy loader: no mem0/native dependency enters the module graph before L2 runs. */
-const defaultLoadMemoryPrior: LoadMemoryPriorFn = async () => {
-  const { readMemoryFacts } = await import('@/server/memory/read');
+const defaultLoadMemoryPrior = async (
+  providerInvocation?: ComposeSoftmaxDeps['providerInvocation'],
+): Promise<readonly string[]> => {
+  if (!providerInvocation) {
+    throw new TypeError('Practice L2 memory prior requires provider invocation');
+  }
+  const { createMem0OpaqueOperationContext, readMemoryFacts } = await import(
+    '@/server/memory/read'
+  );
   // Client construction may throw synchronously when env/config is unavailable. The caller's
   // loadMemoryPriorFailSoft boundary intentionally covers this construction as well as search.
-  const result = await readMemoryFacts(SELECTION_MEMORY_QUERY, {
-    topK: MEM0_PRIOR_CAP,
-    // No subject:* filter: attempt/review facts are generally global+topic scoped and a subject
-    // filter would silently discard the learner facts this advisory is meant to surface.
-  });
+  const result = await readMemoryFacts(
+    SELECTION_MEMORY_QUERY,
+    {
+      topK: MEM0_PRIOR_CAP,
+      // No subject:* filter: attempt/review facts are generally global+topic scoped and a subject
+      // filter would silently discard the learner facts this advisory is meant to surface.
+    },
+    createMem0OpaqueOperationContext(providerInvocation),
+  );
   return (result.results ?? [])
     .map((item) => item.memory)
     .filter((memory): memory is string => typeof memory === 'string' && memory.trim().length > 0);

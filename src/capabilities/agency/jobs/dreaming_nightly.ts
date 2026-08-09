@@ -328,6 +328,8 @@ export async function runDreamingNightly(
       ctx: {
         db,
         taskRunId: toolContextTaskRunId,
+        providerAttemptCaller: 'worker',
+        providerSessionDeadlineAt: Date.now() + 65_000,
         callerActor: { kind: 'agent', ref: 'dreaming' },
         causedByEventId: triggerEventId,
       },

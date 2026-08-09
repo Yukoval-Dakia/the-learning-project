@@ -438,6 +438,9 @@ export const fastTestInclude = [
   // falls through to the DB partition.
   'src/server/memory/brief-writer.test.ts',
   'src/server/memory/client.test.ts',
+  'src/server/memory/provider-operation.test.ts',
+  'src/server/memory/provider-operation-invariant.test.ts',
+  'src/server/memory/provider-operation-untracked.test.ts',
   'src/server/memory/triggers.test.ts',
   // P2 (YUK-342) — pure (no-DB) GLM reconcile LLM unit: mocks fetch, no live DB.
   'src/server/memory/reconcile-llm.test.ts',

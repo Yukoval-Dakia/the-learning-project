@@ -966,6 +966,8 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       db,
       signal: lifecycleAbortController.signal,
       taskRunId,
+      providerAttemptCaller: 'worker',
+      providerSessionDeadlineAt: Date.now() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
       callerActor: { kind: 'agent', ref: actorRef },
       causedByEventId: runId,
     },

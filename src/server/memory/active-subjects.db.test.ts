@@ -10,17 +10,20 @@
 import { batchResolveSubjectIds } from '@/capabilities/knowledge/server/subject-resolution';
 import { newId } from '@/core/ids';
 import { event, knowledge, learning_record, memory_brief_note } from '@/db/schema';
+import { providerOperationIdForInvocation } from '@/server/ai/provider-attempt-runtime';
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
 import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import {
   listActiveSubjectsSinceRefresh,
   loadSubjectBriefEvents,
   resolveQualifyingEventSubjects,
 } from './active-subjects';
 import { type GenerateBrief, loadEventsFromDbForTest } from './brief';
+import type { MemoryClient } from './client';
 import { buildMemoryBriefRegenHandler, buildMemoryBriefSweepHandler } from './triggers';
 
 const NOW = new Date('2026-05-31T03:00:00Z');
@@ -437,6 +440,33 @@ describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
       }>,
     ];
   }
+
+  it('anchors Mem0 search to the brief job and scope', async () => {
+    // Given a concrete brief job and a search client that exposes its operation context.
+    const operationIds: string[] = [];
+    const search: MemoryClient['search'] = vi.fn(async (_query, _opts, operation) => {
+      operationIds.push(operation.operationId);
+      return { results: [] };
+    });
+    const handler = buildMemoryBriefRegenHandler(testDb(), {
+      memoryClient: memoryClientMock({ search }),
+      generateBrief: fakeGenerate(),
+    });
+    const jobId = '00000000-0000-4000-8000-000000000854';
+
+    // When global brief regeneration searches learner facts.
+    await handler([
+      {
+        id: jobId,
+        data: { scope_key: 'global', now: NOW.toISOString() },
+      } as Job<{ scope_key: string; now?: string }>,
+    ]);
+
+    // Then the stable causal key includes both the job and scope.
+    expect(operationIds).toEqual([
+      providerOperationIdForInvocation(`memory-brief:${jobId}:global`),
+    ]);
+  });
 
   it('subject brief is NON-EMPTY from referenced_knowledge_ids while affected_scopes loader returns 0 rows', async () => {
     await seedKnowledge('k-yuwen', 'yuwen');

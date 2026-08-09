@@ -1107,6 +1107,7 @@ async function runCopilotChatImpl(
     ctx: {
       db,
       taskRunId,
+      providerAttemptCaller: 'api',
       signal: lifecycleAbortController.signal,
       ...(deps.providerSessionDeadlineAt !== undefined
         ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }

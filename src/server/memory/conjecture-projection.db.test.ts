@@ -1,7 +1,15 @@
+import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
 import type { MemoryClient } from '@/server/memory/client';
 import { addVerbatimProjectionOnce } from '@/server/memory/triggers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+
+const providerOperation = createMem0OpaqueOperationContext({
+  caller: 'worker',
+  deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
+  operationAnchor: 'conjecture-projection-db-852',
+  createLifecycle: vi.fn(),
+});
 
 function deferred() {
   let resolve!: () => void;
@@ -44,6 +52,7 @@ describe('durable verbatim memory projection claim', () => {
       text: '改写后的判断',
       metadata: { event_id: 'rate_1' },
       projectionKey: 'conjecture-edit:rate_1',
+      providerOperation,
     };
 
     const first = addVerbatimProjectionOnce(db, store.client, input);
@@ -66,6 +75,7 @@ describe('durable verbatim memory projection claim', () => {
       text: '改写后的判断',
       metadata: { event_id: 'rate_2' },
       projectionKey: 'conjecture-edit:rate_2',
+      providerOperation,
     };
 
     await expect(addVerbatimProjectionOnce(testDb(), store.client, input)).rejects.toThrow(

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createMem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
 import type { MemoryClient } from './client';
 import { KIND_HALF_LIFE_DAYS, MAX_TOPK, OVERFETCH_FACTOR, searchMemories } from './search-memories';
 
@@ -16,6 +17,13 @@ type Item = {
   createdAt?: string;
   metadata?: Record<string, unknown>;
 };
+
+const providerOperation = createMem0OpaqueOperationContext({
+  caller: 'api',
+  deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
+  operationAnchor: 'search-memories-unit-852',
+  createLifecycle: vi.fn(),
+});
 
 function stubClient(
   items: Item[],
@@ -52,7 +60,11 @@ describe('searchMemories', () => {
       { id: 'live2', memory: 'studies in the morning', score: 0.8, metadata: { kind: 'habit' } },
     ]);
 
-    const out = await searchMemories(client, 'feedback preferences', { topK: 5, now });
+    const out = await searchMemories(client, 'feedback preferences', {
+      topK: 5,
+      now,
+      providerOperation,
+    });
 
     const ids = out.results.map((r) => r.id);
     expect(ids).toContain('live1');
@@ -73,7 +85,7 @@ describe('searchMemories', () => {
     }));
     const client = stubClient(items, capture);
 
-    const out = await searchMemories(client, 'q', { topK: 2, now });
+    const out = await searchMemories(client, 'q', { topK: 2, now, providerOperation });
 
     // overfetch: request topK × OVERFETCH_FACTOR candidates from the store
     expect(capture.lastSearch?.topK).toBe(2 * OVERFETCH_FACTOR);
@@ -107,7 +119,7 @@ describe('searchMemories', () => {
       },
     ]);
 
-    const out = await searchMemories(client, 'q', { topK: 2, now });
+    const out = await searchMemories(client, 'q', { topK: 2, now, providerOperation });
 
     // fresh (0.7 raw, no decay) beats stale (0.9 raw × ~0.0625 decay ≈ 0.056)
     expect(out.results[0]?.id).toBe('fresh');
@@ -134,7 +146,7 @@ describe('searchMemories', () => {
     }));
     const client = stubClient(items);
 
-    const out = await searchMemories(client, 'q', { topK: 5, now });
+    const out = await searchMemories(client, 'q', { topK: 5, now, providerOperation });
 
     // none dropped
     expect(out.results).toHaveLength(5);
@@ -154,7 +166,7 @@ describe('searchMemories', () => {
     }));
     const client = stubClient(items);
 
-    const out = await searchMemories(client, 'q', { topK: 2, now });
+    const out = await searchMemories(client, 'q', { topK: 2, now, providerOperation });
 
     expect(out.results.map((r) => r.id)).toEqual(['a', 'b']);
   });
@@ -174,7 +186,12 @@ describe('searchMemories', () => {
       capture,
     );
 
-    await searchMemories(client, 'q', { topK: 3, now, filters: { scope_key: 'topic:k1' } });
+    await searchMemories(client, 'q', {
+      topK: 3,
+      now,
+      filters: { scope_key: 'topic:k1' },
+      providerOperation,
+    });
 
     expect(capture.lastSearch?.filters).toMatchObject({
       scope_key: 'topic:k1',
@@ -200,6 +217,7 @@ describe('searchMemories', () => {
     await searchMemories(client, 'q', {
       topK: 3,
       now,
+      providerOperation,
       // Caller already excludes a kind via NOT; the superseded filter must be
       // appended, not clobber it.
       filters: { NOT: [{ kind: 'event' }] },
@@ -227,6 +245,7 @@ describe('searchMemories', () => {
     await searchMemories(client, 'q', {
       topK: 3,
       now,
+      providerOperation,
       filters: { NOT: { kind: 'event' } },
     });
 
@@ -246,7 +265,7 @@ describe('searchMemories', () => {
     let out: Awaited<ReturnType<typeof searchMemories>> | undefined;
     await expect(
       (async () => {
-        out = await searchMemories(client, 'q', { topK: 5, now });
+        out = await searchMemories(client, 'q', { topK: 5, now, providerOperation });
       })(),
     ).resolves.toBeUndefined();
 
@@ -262,7 +281,11 @@ describe('searchMemories', () => {
 
     // Caller asks for far more than MAX_TOPK; the overfetch must be computed from
     // the clamped topK, not the raw request.
-    await searchMemories(client, 'q', { topK: MAX_TOPK + 1000, now });
+    await searchMemories(client, 'q', {
+      topK: MAX_TOPK + 1000,
+      now,
+      providerOperation,
+    });
 
     expect(capture.lastSearch?.topK).toBe(MAX_TOPK * OVERFETCH_FACTOR);
   });

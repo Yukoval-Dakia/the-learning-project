@@ -1,4 +1,6 @@
 import type { SearchResult } from 'mem0ai/oss';
+import type { Mem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
+export { createMem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
 import { type MemoryClient, createMemoryClient } from './client';
 import { type SearchMemoriesOpts, searchMemories } from './search-memories';
 
@@ -17,9 +19,10 @@ export type MemoryReadClientFactory = () => MemoryReadClient;
  */
 export async function readMemoryFacts(
   query: string,
-  opts: SearchMemoriesOpts,
+  opts: Omit<SearchMemoriesOpts, 'providerOperation'>,
+  providerOperation: Mem0OpaqueOperationContext,
   deps: { createClient?: MemoryReadClientFactory } = {},
 ): Promise<SearchResult> {
   const client = (deps.createClient ?? createMemoryClient)();
-  return searchMemories(client, query, opts);
+  return searchMemories(client, query, { ...opts, providerOperation });
 }

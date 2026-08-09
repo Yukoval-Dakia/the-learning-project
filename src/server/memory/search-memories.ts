@@ -1,4 +1,5 @@
 import type { SearchResult } from 'mem0ai/oss';
+import type { Mem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
 import type { MemoryClient } from './client';
 
 // P3 (YUK-351): the mem0 READ-path wrapper. All mem0 fact reads converge on this
@@ -62,6 +63,7 @@ export type SearchMemoriesOpts = {
   filters?: SearchFilters;
   /** Injectable clock for deterministic recency tests. Defaults to `new Date()`. */
   now?: Date;
+  providerOperation: Mem0OpaqueOperationContext;
 };
 
 // mem0's MemoryItem surfaces non-excluded payload keys (created_ms / kind /
@@ -149,10 +151,14 @@ export async function searchMemories(
   // and "memories unavailable" identically (a softer prior either way).
   let raw: SearchResult;
   try {
-    raw = await client.search(query, {
-      topK: topK * OVERFETCH_FACTOR,
-      filters,
-    });
+    raw = await client.search(
+      query,
+      {
+        topK: topK * OVERFETCH_FACTOR,
+        filters,
+      },
+      opts.providerOperation,
+    );
   } catch (err) {
     // ADR-0017: memory is an attention prior, not a source of truth — surface
     // the failure to logs but do not throw. Do not swallow silently.
