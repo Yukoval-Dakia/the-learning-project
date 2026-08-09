@@ -34,7 +34,19 @@ function glmResponse(requestId: string, text: string): GlmLayoutResponse {
   };
 }
 
-beforeEach(resetDb);
+beforeEach(async () => {
+  vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
+  vi.stubEnv(
+    'AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON',
+    JSON.stringify({
+      'glm.ocr-layout-parsing': {
+        maxConcurrentAttempts: 100,
+        maxAttemptStartsPerMinute: 1000,
+      },
+    }),
+  );
+  await resetDb();
+});
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();

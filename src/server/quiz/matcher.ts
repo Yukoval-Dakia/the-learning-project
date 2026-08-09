@@ -191,7 +191,6 @@ async function resolveQueryEmbedding(
       deps.providerAttempt ?? {
         db,
         caller: 'api',
-        mode: 'observe',
         deadlineAt: new Date(Date.now() + 20_000),
       },
     );

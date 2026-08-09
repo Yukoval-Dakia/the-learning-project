@@ -5,7 +5,10 @@ export {
   executeDirectProviderAttempt,
   providerOperationIdForInvocation,
 } from './direct-provider-attempt';
-export { writeCostLedger } from './log';
+export {
+  ProviderAttemptAdmissionLaneSchema,
+  resolveProviderAttemptAdmission,
+} from './provider-attempt-admission-config';
 export {
   type Mem0OpaqueLifecycleFactory,
   type Mem0OpaqueOperationContext,

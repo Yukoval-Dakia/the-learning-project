@@ -325,26 +325,7 @@ describe('judgeEdgeReconcile', () => {
     ]);
   });
 
-  it('fires onUsage with token counts on a successful GLM response', async () => {
-    const fetchMock = vi.fn(async () =>
-      glmResponse(
-        { decision: { action: 'KEEP_BOTH', neighbor_index: null, confidence: 0.9, reason: 'ok' } },
-        { usage: { prompt_tokens: 321, completion_tokens: 12, total_tokens: 333 } },
-      ),
-    );
-    const seen: Array<{ promptTokens: number; completionTokens: number }> = [];
-    await judgeEdgeReconcile(candidate(), [neighbor()], {
-      env: MOCK_ENV,
-      fetchImpl: fetchMock as unknown as typeof fetch,
-      providerAttempt: attemptContext([]),
-      onUsage: (u) => {
-        seen.push(u);
-      },
-    });
-    expect(seen).toEqual([{ promptTokens: 321, completionTokens: 12 }]);
-  });
-
-  it('keeps partial provider usage null while legacy usage defaults missing counts to zero', async () => {
+  it('keeps partial provider usage null while estimating from the reported token subset', async () => {
     const fetchMock = vi.fn(async () =>
       glmResponse(
         { decision: { action: 'KEEP_BOTH', neighbor_index: null, confidence: 0.9, reason: 'ok' } },
@@ -352,29 +333,48 @@ describe('judgeEdgeReconcile', () => {
       ),
     );
     const attempts: unknown[] = [];
-    const legacyUsage: Array<{ promptTokens: number; completionTokens: number }> = [];
+    await judgeEdgeReconcile(candidate(), [neighbor()], {
+      env: MOCK_ENV,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      providerAttempt: attemptContext(attempts),
+    });
+
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        evidence: expect.objectContaining({
+          usage: expect.objectContaining({ input: null, output: 12, total: null }),
+          cost: expect.objectContaining({ basis: 'estimated', amount: expect.any(Number) }),
+        }),
+      }),
+    ]);
+  });
+
+  it('reports total-only provider usage without fabricating a zero cost estimate', async () => {
+    const fetchMock = vi.fn(async () =>
+      glmResponse(
+        { decision: { action: 'KEEP_BOTH', neighbor_index: null, confidence: 0.9, reason: 'ok' } },
+        { usage: { total_tokens: 29 } },
+      ),
+    );
+    const attempts: unknown[] = [];
 
     await judgeEdgeReconcile(candidate(), [neighbor()], {
       env: MOCK_ENV,
       fetchImpl: fetchMock as unknown as typeof fetch,
       providerAttempt: attemptContext(attempts),
-      onUsage: (usage) => {
-        legacyUsage.push(usage);
-      },
     });
 
-    expect(legacyUsage).toEqual([{ promptTokens: 0, completionTokens: 12 }]);
     expect(attempts).toEqual([
       expect.objectContaining({
         evidence: expect.objectContaining({
-          usage: expect.objectContaining({ input: null, output: 12, total: null }),
+          usage: expect.objectContaining({ input: null, output: null, total: 29 }),
           cost: expect.objectContaining({ basis: 'unknown', amount: null }),
         }),
       }),
     ]);
   });
 
-  it('leaves provider usage unknown for an empty usage object while preserving legacy 0/0', async () => {
+  it('leaves provider usage and cost unknown for an empty usage object', async () => {
     const fetchMock = vi.fn(async () =>
       glmResponse(
         { decision: { action: 'KEEP_BOTH', neighbor_index: null, confidence: 0.9, reason: 'ok' } },
@@ -382,18 +382,12 @@ describe('judgeEdgeReconcile', () => {
       ),
     );
     const attempts: unknown[] = [];
-    const legacyUsage: Array<{ promptTokens: number; completionTokens: number }> = [];
-
     await judgeEdgeReconcile(candidate(), [neighbor()], {
       env: MOCK_ENV,
       fetchImpl: fetchMock as unknown as typeof fetch,
       providerAttempt: attemptContext(attempts),
-      onUsage: (usage) => {
-        legacyUsage.push(usage);
-      },
     });
 
-    expect(legacyUsage).toEqual([{ promptTokens: 0, completionTokens: 0 }]);
     expect(attempts).toEqual([
       expect.objectContaining({
         evidence: expect.objectContaining({
@@ -401,37 +395,6 @@ describe('judgeEdgeReconcile', () => {
         }),
       }),
     ]);
-  });
-
-  it('awaits an async onUsage callback before resolving', async () => {
-    const fetchMock = vi.fn(async () =>
-      glmResponse(
-        { decision: { action: 'KEEP_BOTH', neighbor_index: null, confidence: 0.9, reason: 'ok' } },
-        { usage: { prompt_tokens: 321, completion_tokens: 12, total_tokens: 333 } },
-      ),
-    );
-    let releaseUsage!: () => void;
-    const usagePending = new Promise<void>((resolve) => {
-      releaseUsage = resolve;
-    });
-    let resolved = false;
-
-    const judgment = judgeEdgeReconcile(candidate(), [neighbor()], {
-      env: MOCK_ENV,
-      fetchImpl: fetchMock as unknown as typeof fetch,
-      providerAttempt: attemptContext([]),
-      onUsage: () => usagePending,
-    }).then(() => {
-      resolved = true;
-    });
-
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(resolved).toBe(false);
-
-    releaseUsage();
-    await judgment;
-    expect(resolved).toBe(true);
   });
 
   it('throws RetryableError on a 5xx GLM response', async () => {

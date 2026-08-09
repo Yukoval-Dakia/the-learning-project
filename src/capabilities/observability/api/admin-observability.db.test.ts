@@ -1,4 +1,4 @@
-import { ai_task_runs, cost_ledger, tool_call_log } from '@/db/schema';
+import { ai_task_runs, cost_ledger, provider_attempt, tool_call_log } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET as getAdminCost } from './admin-cost';
@@ -198,6 +198,189 @@ describe('AI observability route contracts', () => {
           cost_basis: 'unknown',
           cost_ref: 'unpriced:xiaomi/mimo-future',
           cost: 0,
+          unknown_attempts: 1,
+        }),
+      ]),
+    );
+  });
+
+  it('projects provider attempt cost truth once and excludes no-wire attempts', async () => {
+    const occurredAt = new Date();
+    const base = {
+      operation_id: '00000000-0000-4000-8000-000000000930',
+      attempt_kind: 'wire',
+      provider: 'glm',
+      model: 'glm-5.2',
+      lane_id: 'glm.memory-reconcile',
+      protocol: 'http',
+      endpoint_class: 'openai-compatible.chat-completions',
+      caller: 'worker',
+      operation_kind: 'memory_reconcile',
+      terminal_status: 'succeeded',
+      terminal_reason: 'provider_response_accepted',
+      wire_count: 1,
+      usage_json: {
+        basis: 'reported',
+        unit: 'tokens',
+        input: 100,
+        output: 20,
+        total: 120,
+        source: 'provider_response',
+      },
+      started_at: occurredAt,
+      provider_start_reserved_at: occurredAt,
+      finished_at: occurredAt,
+    } as const;
+    await db.insert(provider_attempt).values([
+      {
+        ...base,
+        attempt_id: '00000000-0000-4000-8000-000000000931',
+        cost_basis: 'reported',
+        cost_amount: 0.1,
+        cost_currency: 'CNY',
+        cost_source: 'provider_response',
+      },
+      {
+        ...base,
+        attempt_id: '00000000-0000-4000-8000-000000000932',
+        cost_basis: 'estimated',
+        cost_amount: 0.2,
+        cost_currency: 'CNY',
+        cost_source: 'glm-chat-pricebook',
+      },
+      {
+        ...base,
+        attempt_id: '00000000-0000-4000-8000-000000000933',
+        cost_basis: 'unknown',
+        cost_amount: null,
+        cost_currency: null,
+        cost_source: 'provider_cost_absent',
+      },
+      {
+        ...base,
+        attempt_id: '00000000-0000-4000-8000-000000000934',
+        terminal_status: null,
+        terminal_reason: null,
+        wire_count: null,
+        usage_json: null,
+        cost_basis: null,
+        cost_amount: null,
+        cost_currency: null,
+        cost_source: null,
+        provider_start_reserved_at: null,
+        finished_at: null,
+      },
+    ]);
+    await db.insert(cost_ledger).values({
+      id: 'legacy_duplicate',
+      task_run_id: '00000000-0000-4000-8000-000000000931',
+      task_kind: 'memory_reconcile',
+      provider: 'glm',
+      model: 'glm-5.2',
+      cost: 0.1,
+      currency: 'CNY',
+      tokens_in: 100,
+      tokens_out: 20,
+      occurred_at: occurredAt,
+    });
+
+    const response = await getTodayCost(new Request('http://localhost/api/cost/today'));
+    const today = CostTodayResponseSchema.parse(await response.json()).today;
+
+    expect(today.ledger_rows).toBe(3);
+    expect(today.unknown_attempts).toBe(1);
+    expect(today.by_currency.find((row) => row.currency === 'CNY')?.cost).toBeCloseTo(0.3, 5);
+    expect(today.by_currency.find((row) => row.currency === 'XXX')?.cost).toBe(0);
+  });
+
+  it('retains unlinked OCR legacy rows before and after an authoritative attempt', async () => {
+    const now = new Date();
+    const bjt = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+    const attemptTime = new Date(
+      Date.UTC(bjt.getUTCFullYear(), bjt.getUTCMonth(), bjt.getUTCDate()) - 7 * 60 * 60 * 1000,
+    );
+    const historicalTime = new Date(attemptTime.getTime() - 60_000);
+    await db.insert(cost_ledger).values([
+      {
+        id: 'legacy_ocr_before_cutover',
+        task_run_id: null,
+        task_kind: 'tencent_ocr_extract',
+        provider: 'tencent',
+        model: 'question-mark-agent',
+        cost: 0.4,
+        currency: 'CNY',
+        tokens_in: 0,
+        tokens_out: 0,
+        occurred_at: historicalTime,
+      },
+      {
+        id: 'legacy_ocr_after_cutover',
+        task_run_id: 'unrelated-legacy-ocr-job',
+        task_kind: 'tencent_ocr_extract',
+        provider: 'tencent',
+        model: 'question-mark-agent',
+        cost: 0.6,
+        currency: 'CNY',
+        tokens_in: 0,
+        tokens_out: 0,
+        occurred_at: new Date(attemptTime.getTime() + 1_000),
+      },
+    ]);
+    await db.insert(provider_attempt).values({
+      attempt_id: '00000000-0000-4000-8000-000000000935',
+      operation_id: '00000000-0000-4000-8000-000000000936',
+      attempt_kind: 'wire',
+      provider: 'tencent',
+      model: null,
+      lane_id: 'tencent.question-mark-agent',
+      protocol: 'tencent-sdk',
+      endpoint_class: 'question-mark-agent.submit',
+      caller: 'worker',
+      operation_kind: 'ocr_page_submit',
+      terminal_status: 'succeeded',
+      terminal_reason: 'provider_response_accepted',
+      wire_count: 1,
+      usage_json: {
+        basis: 'unknown',
+        unit: null,
+        input: null,
+        output: null,
+        total: null,
+        source: 'tencent_sdk_usage_unavailable',
+      },
+      cost_basis: 'unknown',
+      cost_amount: null,
+      cost_currency: null,
+      cost_source: 'tencent_sdk_cost_unavailable',
+      started_at: attemptTime,
+      provider_start_reserved_at: attemptTime,
+      finished_at: attemptTime,
+    });
+
+    const response = await getTodayCost(new Request('http://localhost/api/cost/today'));
+    const today = CostTodayResponseSchema.parse(await response.json()).today;
+
+    expect(today.ledger_rows).toBe(3);
+    expect(today.unknown_attempts).toBe(1);
+    expect(today.legacy_rows).toBe(2);
+    expect(today.by_currency.find((row) => row.currency === 'CNY')?.cost).toBeCloseTo(1, 5);
+
+    const adminResponse = await getAdminCost(new Request('http://localhost/api/admin/cost?days=7'));
+    const admin = AdminCostResponseSchema.parse(await adminResponse.json());
+    expect(admin.by_task).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          task_kind: 'tencent_ocr_extract',
+          currency: 'CNY',
+          cost: expect.closeTo(1, 5),
+          calls: 2,
+          legacy_rows: 2,
+        }),
+        expect.objectContaining({
+          task_kind: 'ocr_page_submit',
+          currency: 'XXX',
+          cost: 0,
+          calls: 1,
           unknown_attempts: 1,
         }),
       ]),

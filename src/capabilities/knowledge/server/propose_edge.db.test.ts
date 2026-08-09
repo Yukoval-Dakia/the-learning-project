@@ -19,6 +19,20 @@ import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+
+beforeEach(() => {
+  vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
+  vi.stubEnv(
+    'AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON',
+    JSON.stringify({
+      'glm.knowledge-edge-reconcile': {
+        maxConcurrentAttempts: 100,
+        maxAttemptStartsPerMinute: 1000,
+      },
+    }),
+  );
+});
+afterEach(() => vi.unstubAllEnvs());
 import type { EdgeReconcileDecision } from './edge-reconcile';
 import { ReconcileParseError } from './edge-reconcile';
 import { parseEdgeProposeOutput, runEdgeProposeAndWrite } from './propose_edge';
@@ -1970,13 +1984,12 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
   });
 
   // YUK-344 (Issue 3) — the LIVE judge path (no injected judgeReconcileFn) must
-  // ledger its GLM tokens to cost_ledger via the onUsage hook, mirroring the
-  // memory reconcile path (triggers.ts / YUK-359). Exercises judgeEdgeReconcile
+  // record its GLM usage and estimated cost on the authoritative provider attempt,
+  // matching the memory reconcile provider-attempt path. Exercises judgeEdgeReconcile
   // through runEdgeProposeAndWrite with a MOCKED global fetch (the wiring does not
   // thread fetchImpl, so the judge uses global fetch) returning a SUPERSEDE with
-  // usage tokens; asserts an `edge_reconcile` cost_ledger row is written AND the
-  // supersede actually applied (proving the bill is for a real live judgment).
-  it('live judge path writes a cost_ledger row for reconcile GLM usage (YUK-344 Issue 3)', async () => {
+  // usage tokens; asserts estimated attempt truth and the supersede both persist.
+  it('live judge path records reconcile GLM usage only in provider_attempt', async () => {
     const db = testDb();
     await insertKnowledge('kA');
     await insertKnowledge('kB');
@@ -2007,7 +2020,7 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
 
     // Mock global fetch: the live judge resolves GLM config from env then POSTs to
     // {baseURL}/chat/completions. Return a SUPERSEDE of neighbor_index 0 (the only
-    // neighbor handed to the ring) WITH usage tokens so onUsage fires.
+    // neighbor handed to the ring) with usage tokens so attempt cost truth is estimated.
     const glmResponse = {
       choices: [
         {
@@ -2044,8 +2057,8 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
         // Env carries the ZHIPU/DASHSCOPE keys createMem0Config requires; NO
         // judgeReconcileFn → the LIVE judgeEdgeReconcile runs (against fetchMock).
         // CodeRabbit/PR-Agent Finding 3 regression lock: MEM0_LLM_MODEL overrides
-        // the GLM model to a NON-default value, so a cost_ledger row that hardcoded
-        // 'glm-5.2' would be DETECTABLY wrong. The model must come from the same
+        // the GLM model to a NON-default value, so provider-attempt truth that hardcoded
+        // 'glm-5.2' would be detectably wrong. The model must come from the same
         // resolveGlmConfig(env) the judge uses.
         env: {
           DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
@@ -2059,21 +2072,11 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(stats.reconcile_superseded).toBe(1);
 
-      // The GLM tokens were ledgered to cost_ledger under task_kind='edge_reconcile'.
       const ledgerRows = await db
         .select()
         .from(cost_ledger)
         .where(eq(cost_ledger.task_kind, 'edge_reconcile'));
-      expect(ledgerRows).toHaveLength(1);
-      expect(ledgerRows[0].provider).toBe('glm');
-      expect(ledgerRows[0].currency).toBe('CNY');
-      expect(ledgerRows[0].tokens_in).toBe(321);
-      expect(ledgerRows[0].tokens_out).toBe(42);
-      expect(Number(ledgerRows[0].cost)).toBeGreaterThan(0);
-      // Finding 3: the ledger model is the RESOLVED model (MEM0_LLM_MODEL override),
-      // NOT the previously-hardcoded 'glm-5.2'.
-      expect(ledgerRows[0].model).toBe('glm-4.6-test-override');
-      expect(ledgerRows[0].model).not.toBe('glm-5.2');
+      expect(ledgerRows).toHaveLength(0);
       const attempts = await db.select().from(provider_attempt);
       expect(attempts).toHaveLength(1);
       expect(attempts[0]).toMatchObject({
@@ -2082,10 +2085,11 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
         endpoint_class: 'openai-compatible.chat-completions',
         terminal_status: 'succeeded',
         wire_count: 1,
-        cost_basis: 'unknown',
-        cost_amount: null,
+        model: 'glm-4.6-test-override',
+        cost_basis: 'estimated',
+        cost_amount: expect.any(Number),
         cost_currency: 'CNY',
-        cost_source: 'provider_cost_absent',
+        cost_source: 'glm-chat-pricebook',
       });
       expect(attempts[0].usage_json).toMatchObject({
         basis: 'reported',
@@ -2093,8 +2097,12 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
         output: 42,
         total: 363,
       });
-      expect(ledgerRows[0].task_run_id).toBe(attempts[0].attempt_id);
-      expect(ledgerRows[0].pgboss_job_id).toBe('00000000-0000-4000-8000-000000000090');
+      expect(attempts[0].operation_id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      expect(attempts[0].attempt_id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
     } finally {
       global.fetch = originalFetch;
     }

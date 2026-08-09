@@ -8,7 +8,6 @@ import {
   createDirectProviderOperationContext,
   isDirectProviderAttemptInvariantError,
 } from '@/server/ai/direct-provider-attempt';
-import { writeCostLedger } from '@/server/ai/log';
 import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
 import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
@@ -777,29 +776,9 @@ export function buildMemoryReconcileHandler(
             providerAttempt: createDirectProviderOperationContext({
               db,
               caller: 'worker',
-              mode: 'observe',
               deadlineAt: new Date(Date.now() + 65_000),
               operationAnchor: job.id,
             }),
-            // YUK-359: record GLM reconcile cost (CNY). Best-effort — a ledger
-            // write failure must never fail reconcile, so swallow + log.
-            onUsage: async (usage, correlation) => {
-              try {
-                await writeCostLedger(db, {
-                  task_run_id: correlation.attemptId,
-                  task_kind: 'memory_reconcile',
-                  provider: 'glm',
-                  model: correlation.model,
-                  cost: correlation.estimatedCostCny,
-                  currency: 'CNY',
-                  tokens_in: usage.promptTokens,
-                  tokens_out: usage.completionTokens,
-                  pgboss_job_id: job.id,
-                });
-              } catch (err) {
-                console.error('[memory_reconcile] writeCostLedger failed', err);
-              }
-            },
           });
         } catch (err) {
           if (err instanceof ReconcileParseError) {

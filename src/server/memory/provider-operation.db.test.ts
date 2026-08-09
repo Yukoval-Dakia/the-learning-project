@@ -2,7 +2,7 @@ import { provider_attempt } from '@/db/schema';
 import { buildSearchMemoryFactsTool } from '@/server/ai/tools/search-memory-facts';
 import type { ToolContext } from '@/server/ai/tools/types';
 import type { Job } from 'pg-boss';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { createMem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
 import { type Mem0Like, createMemoryClient } from './client';
@@ -26,7 +26,17 @@ function fakeMem0(overrides: Partial<Pick<Mem0Like, 'add' | 'search' | 'getAll'>
   };
 }
 
-beforeEach(resetDb);
+beforeEach(async () => {
+  vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
+  vi.stubEnv(
+    'AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON',
+    JSON.stringify({
+      'mem0.event-memory': { maxConcurrentAttempts: 100, maxAttemptStartsPerMinute: 1000 },
+    }),
+  );
+  await resetDb();
+});
+afterEach(() => vi.unstubAllEnvs());
 
 describe('Mem0 opaque operation durable surfaces', () => {
   it('persists one worker add attempt while preserving event metadata and output', async () => {

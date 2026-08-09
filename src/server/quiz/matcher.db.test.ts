@@ -15,6 +15,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+beforeEach(() => {
+  vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
+  vi.stubEnv(
+    'AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON',
+    JSON.stringify({
+      'dashscope.embedding': { maxConcurrentAttempts: 100, maxAttemptStartsPerMinute: 1000 },
+    }),
+  );
+});
+
 // B4 (YUK-386) — MATCHER_ANSWER_CLASS_FILTER is a module-level const in ./matcher-flags. Its
 // REAL default is false (dark-ship). We mock just that one export via a getter (EARLY_KLP
 // pattern) so both flag directions stay covered regardless of the default:

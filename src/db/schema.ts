@@ -938,6 +938,9 @@ export const provider_attempt = pgTable(
     index('provider_attempt_external_request_idx')
       .on(t.provider, t.external_request_id)
       .where(sql`${t.external_request_id} IS NOT NULL`),
+    index('provider_attempt_lane_start_rate_idx')
+      .on(t.lane_id, t.provider_start_reserved_at)
+      .where(sql`${t.provider_start_reserved_at} IS NOT NULL`),
     check('provider_attempt_kind_ck', sql`${t.attempt_kind} IN ('wire','opaque_operation')`),
     check('provider_attempt_caller_ck', sql`${t.caller} IN ('api','worker')`),
     check(
@@ -1054,7 +1057,7 @@ export const provider_attempt_admission = pgTable(
       sql`btrim(${t.identity_fingerprint}) <> ''
         AND btrim(${t.policy_fingerprint}) <> ''
         AND btrim(${t.lane_id}) <> ''
-        AND ${t.mode} IN ('observe','enforce')
+        AND ${t.mode} IN ('off','observe','enforce')
         AND ${t.status} IN ('acquired','would_deny','denied','released','lease_expired')`,
     ),
     check(
@@ -1064,7 +1067,8 @@ export const provider_attempt_admission = pgTable(
         AND ${t.acquired_at} IS NOT NULL AND ${t.lease_expires_at} IS NOT NULL
         AND ${t.terminal_at} IS NULL AND ${t.terminal_reason} IS NULL
         AND (
-          (${t.status} = 'acquired' AND ${t.lease_expires_at} <= ${t.deadline_at})
+          (${t.status} = 'acquired'
+            AND (${t.mode} = 'off' OR ${t.lease_expires_at} <= ${t.deadline_at}))
           OR (${t.status} = 'would_deny' AND ${t.mode} = 'observe')
         )
       ) OR (

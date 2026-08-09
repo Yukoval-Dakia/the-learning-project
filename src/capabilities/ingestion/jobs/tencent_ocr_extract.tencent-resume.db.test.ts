@@ -1,21 +1,20 @@
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ProviderAttemptResumeConflictError,
+  TencentSubmitInProgressError,
   executeTencentOcrSubmit,
   extractionPageOperationId,
 } from '@/capabilities/ingestion/server/provider-attempts';
 import type { DescribeResponse } from '@/capabilities/ingestion/server/tencent_mark';
+import { ProviderRequestIdentity } from '@/core/schema/provider-attempt';
 import { RetryableError } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
-import {
-  cost_ledger,
-  job_events,
-  learning_session,
-  provider_attempt,
-  question_block,
-} from '@/db/schema';
+import { job_events, learning_session, provider_attempt, question_block } from '@/db/schema';
+import { createProviderAttemptLifecycle } from '@/server/ai/provider-attempt-lifecycle';
+import { providerOperationIdForInvocation } from '@/server/ai/provider-attempt-runtime';
 import { createImageR2, seedIngestionSession } from '@/server/session/ingestion-test-support';
 import tencentDone from '../../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
 import { resetDb } from '../../../../tests/helpers/db';
@@ -37,9 +36,279 @@ function structureResult() {
   };
 }
 
-beforeEach(resetDb);
+function legacySubmitAttempt(pageOperationId: string, jobId: string, startedAt: Date) {
+  return {
+    attempt_id: randomUUID(),
+    operation_id: pageOperationId,
+    attempt_kind: 'wire',
+    provider: 'tencent',
+    model: 'QuestionMarkAgent',
+    lane_id: 'tencent.question-mark-agent',
+    protocol: 'http',
+    endpoint_class: 'tencent.question-mark-agent.submit',
+    caller: 'worker',
+    operation_kind: 'ocr_page_submit',
+    external_request_id: jobId,
+    terminal_status: 'succeeded',
+    terminal_reason: 'provider_response_accepted',
+    wire_count: 1,
+    usage_json: {
+      basis: 'unknown' as const,
+      unit: 'tokens',
+      input: null,
+      output: null,
+      total: null,
+      source: 'provider_response_absent',
+    },
+    cost_basis: 'unknown',
+    cost_amount: null,
+    cost_currency: 'CNY',
+    cost_source: 'provider_cost_absent',
+    started_at: startedAt,
+    provider_start_reserved_at: startedAt,
+    finished_at: startedAt,
+  };
+}
+
+beforeEach(async () => {
+  vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
+  vi.stubEnv(
+    'AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON',
+    JSON.stringify({
+      'tencent.question-mark-agent': {
+        maxConcurrentAttempts: 100,
+        maxAttemptStartsPerMinute: 1000,
+      },
+    }),
+  );
+  await resetDb();
+});
+afterEach(() => vi.unstubAllEnvs());
 
 describe('Tencent OCR provider-attempt resume', () => {
+  it('does not rethrow an off-mode external-id persistence failure or duplicate Submit on retry', async () => {
+    vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'off');
+    vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON', '{stale malformed rollback config');
+    const pageOperationId = extractionPageOperationId({
+      canonicalOperationId: 'post-wire-control-plane-failure',
+      bossJobId: 'post-wire-control-plane-failure',
+      pageIndex: 0,
+    });
+    const submit = vi.fn(async () => 'accepted-without-persisted-id');
+    await db.execute(sql`CREATE OR REPLACE FUNCTION yuk855_reject_external_request_id()
+      RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF OLD.external_request_id IS NULL AND NEW.external_request_id IS NOT NULL THEN
+          RAISE EXCEPTION 'simulated external request id persistence failure';
+        END IF;
+        RETURN NEW;
+      END
+      $$`);
+    await db.execute(sql`CREATE TRIGGER yuk855_reject_external_request_id
+      BEFORE UPDATE OF external_request_id ON provider_attempt
+      FOR EACH ROW EXECUTE FUNCTION yuk855_reject_external_request_id()`);
+
+    try {
+      const firstDelivery = { retryCount: 0, startedOn: new Date() };
+      const retryDelivery = { retryCount: 1, startedOn: new Date(Date.now() + 1_000) };
+      const input = {
+        db,
+        pageOperationId,
+        bossJobId: 'post-wire-control-plane-failure',
+        deliveryRetryCount: firstDelivery.retryCount,
+        deliveryStartedOn: firstDelivery.startedOn,
+        params: { ImageBase64: 'seed' },
+        submit,
+      };
+
+      await expect(executeTencentOcrSubmit(input)).resolves.toBe('accepted-without-persisted-id');
+      await expect(
+        executeTencentOcrSubmit({
+          ...input,
+          deliveryRetryCount: retryDelivery.retryCount,
+          deliveryStartedOn: retryDelivery.startedOn,
+        }),
+      ).rejects.toBeInstanceOf(TencentSubmitInProgressError);
+      expect(submit).toHaveBeenCalledOnce();
+    } finally {
+      await db.execute(
+        sql`DROP TRIGGER IF EXISTS yuk855_reject_external_request_id ON provider_attempt`,
+      );
+      await db.execute(sql`DROP FUNCTION IF EXISTS yuk855_reject_external_request_id()`);
+    }
+  });
+
+  it('treats a callback throw after Submit reservation as ambiguous across retry generations', async () => {
+    vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'off');
+    const pageOperationId = extractionPageOperationId({
+      canonicalOperationId: 'failed-submit-retry',
+      bossJobId: 'failed-submit-retry',
+      pageIndex: 0,
+    });
+    const submitError = new Error('provider rejected Submit before acceptance');
+    const submit = vi.fn().mockRejectedValueOnce(submitError);
+    const firstInput = {
+      db,
+      pageOperationId,
+      bossJobId: 'failed-submit-retry',
+      deliveryRetryCount: 0,
+      deliveryStartedOn: new Date(),
+      params: { ImageBase64: 'seed' },
+      submit,
+    };
+
+    await expect(executeTencentOcrSubmit(firstInput)).rejects.toBe(submitError);
+    await expect(
+      executeTencentOcrSubmit({
+        ...firstInput,
+        deliveryRetryCount: 1,
+        deliveryStartedOn: new Date(Date.now() + 1_000),
+      }),
+    ).rejects.toBeInstanceOf(TencentSubmitInProgressError);
+    expect(submit).toHaveBeenCalledOnce();
+    const attempts = await db
+      .select()
+      .from(provider_attempt)
+      .where(eq(provider_attempt.operation_id, pageOperationId));
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        terminal_status: 'failed',
+        wire_count: 1,
+        external_request_id: null,
+      }),
+    ]);
+  });
+
+  it('terminalizes an ambiguous started Submit fence when the final delivery is exhausted', async () => {
+    vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'off');
+    const { sessionId, operationId } = await seedIngestionSession(1);
+    const submitError = new RetryableError('ambiguous Tencent Submit callback failure');
+    const submitFn = vi.fn().mockRejectedValueOnce(submitError);
+    const handler = buildTencentOcrHandler({
+      db,
+      r2: await createImageR2(),
+      engine: 'tencent',
+      submitFn,
+      describeFn: vi.fn(),
+    });
+    const firstDelivery = {
+      id: 'ambiguous-submit-final-exhaustion',
+      data: { sessionId, operationId },
+      retryCount: 0,
+      retryLimit: 1,
+      startedOn: new Date(),
+    };
+
+    await expect(handler([firstDelivery] as never)).rejects.toBe(submitError);
+    expect(
+      (
+        await db
+          .select({ status: learning_session.status })
+          .from(learning_session)
+          .where(eq(learning_session.id, sessionId))
+      )[0]?.status,
+    ).toBe('extracting');
+    await expect(
+      handler([
+        {
+          ...firstDelivery,
+          retryCount: 1,
+          startedOn: new Date(Date.now() + 1_000),
+        },
+      ] as never),
+    ).rejects.toBeInstanceOf(TencentSubmitInProgressError);
+
+    expect(submitFn).toHaveBeenCalledOnce();
+    expect(
+      (
+        await db
+          .select({ status: learning_session.status })
+          .from(learning_session)
+          .where(eq(learning_session.id, sessionId))
+      )[0]?.status,
+    ).toBe('failed');
+    const operationEvents = await db
+      .select()
+      .from(job_events)
+      .where(eq(job_events.business_id, operationId));
+    expect(operationEvents.some((event) => event.event_type === 'operation.failed')).toBe(true);
+    const attempts = await db
+      .select()
+      .from(provider_attempt)
+      .where(eq(provider_attempt.operation_kind, 'ocr_page_submit'));
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        terminal_status: 'failed',
+        wire_count: 1,
+        external_request_id: null,
+      }),
+    ]);
+  });
+
+  it('terminalizes a deadline mismatch on the final delivery without a Submit wire', async () => {
+    const { sessionId, operationId } = await seedIngestionSession(1);
+    const bossJobId = 'deadline-mismatch-final';
+    const deliveryRetryCount = 1;
+    const pageOperationId = extractionPageOperationId({
+      canonicalOperationId: operationId,
+      bossJobId,
+      pageIndex: 0,
+    });
+    const attemptAnchor = `ingestion-ocr:${pageOperationId}:tencent-submit:${bossJobId}:delivery:${deliveryRetryCount}`;
+    await createProviderAttemptLifecycle({
+      mode: 'observe',
+      identity: ProviderRequestIdentity.parse({
+        attemptId: providerOperationIdForInvocation(attemptAnchor),
+        operationId: pageOperationId,
+        attemptKind: 'wire',
+        provider: 'tencent',
+        model: 'QuestionMarkAgent',
+        lane: 'tencent.question-mark-agent',
+        protocol: 'http',
+        endpointClass: 'tencent.question-mark-agent.submit',
+        caller: 'worker',
+        operationKind: 'ocr_page_submit',
+      }),
+      deadlineAt: new Date(Date.now() + 120_000),
+      providerStartFence: 'operation_kind',
+      db,
+    }).acquire();
+    const submitFn = vi.fn(async () => 'must-not-submit');
+    const handler = buildTencentOcrHandler({
+      db,
+      r2: await createImageR2(),
+      engine: 'tencent',
+      submitFn,
+      describeFn: vi.fn(),
+    });
+
+    const rejection = handler([
+      {
+        id: bossJobId,
+        data: { sessionId, operationId },
+        retryCount: deliveryRetryCount,
+        retryLimit: deliveryRetryCount,
+        startedOn: new Date(),
+      },
+    ] as never);
+
+    await expect(rejection).rejects.toMatchObject({ reason: 'deadline_mismatch' });
+    expect(submitFn).not.toHaveBeenCalled();
+    expect(
+      (
+        await db
+          .select({ status: learning_session.status })
+          .from(learning_session)
+          .where(eq(learning_session.id, sessionId))
+      )[0]?.status,
+    ).toBe('failed');
+    const operationEvents = await db
+      .select()
+      .from(job_events)
+      .where(eq(job_events.business_id, operationId));
+    expect(operationEvents.some((event) => event.event_type === 'operation.failed')).toBe(true);
+  });
+
   it('resumes the saved JobId after termination without a second Submit', async () => {
     // Given: Tencent accepted Submit and the worker terminates after persisting its JobId.
     const { sessionId, operationId } = await seedIngestionSession(1);
@@ -93,7 +362,7 @@ describe('Tencent OCR provider-attempt resume', () => {
     await secondHandler([{ ...job, retryCount: 1 }] as never);
 
     // Then: only the saved JobId is polled, and new truth remains unknown while
-    // the retained legacy ledger continues to record zero cost.
+    // provider-attempt truth remains unknown rather than fabricating zero cost.
     expect(submitFn).toHaveBeenCalledOnce();
     expect(describeFn).toHaveBeenCalledWith('saved-job-id');
     const session = await db
@@ -114,12 +383,6 @@ describe('Tencent OCR provider-attempt resume', () => {
     );
     expect(attempts.every((attempt) => attempt.cost_basis === 'unknown')).toBe(true);
     expect(attempts.every((attempt) => attempt.usage_json?.basis === 'unknown')).toBe(true);
-    const legacyRows = await db
-      .select()
-      .from(cost_ledger)
-      .where(eq(cost_ledger.provider, 'tencent'));
-    expect(legacyRows).toHaveLength(2);
-    expect(legacyRows.every((row) => row.cost === 0)).toBe(true);
   });
 
   it('keeps poll timeout resumable and polls the same JobId on redelivery', async () => {
@@ -272,22 +535,20 @@ describe('Tencent OCR provider-attempt resume', () => {
       bossJobId: 'conflict-handler-job',
       pageIndex: 0,
     });
-    await executeTencentOcrSubmit({
-      db,
-      pageOperationId,
-      deliveryRetryCount: 0,
-      deliveryStartedOn: new Date('2026-08-09T00:00:00.000Z'),
-      params: { ImageBase64: 'seed' },
-      submit: async () => 'historical-job-a',
-    });
-    await executeTencentOcrSubmit({
-      db,
-      pageOperationId,
-      deliveryRetryCount: 1,
-      deliveryStartedOn: new Date('2026-08-09T00:01:00.000Z'),
-      params: { ImageBase64: 'seed' },
-      submit: async () => 'historical-job-b',
-    });
+    await db
+      .insert(provider_attempt)
+      .values([
+        legacySubmitAttempt(
+          pageOperationId,
+          'historical-job-a',
+          new Date('2026-08-09T00:00:00.000Z'),
+        ),
+        legacySubmitAttempt(
+          pageOperationId,
+          'historical-job-b',
+          new Date('2026-08-09T00:01:00.000Z'),
+        ),
+      ]);
     const recoverySubmit = vi.fn(async () => 'must-not-submit');
     const recoveryDescribe = vi.fn(async (): Promise<DescribeResponse> => ({ JobStatus: 'DONE' }));
     const handler = buildTencentOcrHandler({

@@ -126,6 +126,7 @@ describe('provider attempt backup lifecycle', () => {
         caller: 'api',
         deadlineAt: new Date(Date.now() + 65_000),
         operationAnchor: 'archive-api-search-852',
+        mode: 'observe',
       }),
     );
     expect(result.results?.[0]?.id).toBe('archive-memory-852');
@@ -180,6 +181,7 @@ describe('provider attempt backup lifecycle', () => {
         caller: 'api',
         deadlineAt: new Date(Date.now() + 65_000),
         operationAnchor: 'later-api-search-852',
+        mode: 'observe',
       }),
     );
     expect(laterResult.results?.[0]?.id).toBe('archive-memory-852');

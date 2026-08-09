@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   readIngestionOperation,
@@ -39,11 +39,24 @@ async function reserveOperation(sessionId: string, operationId: string): Promise
   });
 }
 
-beforeEach(resetDb);
+beforeEach(async () => {
+  vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
+  vi.stubEnv(
+    'AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON',
+    JSON.stringify({
+      'tencent.question-mark-agent': {
+        maxConcurrentAttempts: 100,
+        maxAttemptStartsPerMinute: 1000,
+      },
+    }),
+  );
+  await resetDb();
+});
+afterEach(() => vi.unstubAllEnvs());
 
 describe('Tencent OCR concurrent delivery fencing', () => {
-  it('sends one Submit for concurrent deliveries in the same retry generation', async () => {
-    // Given: one final-generation delivery is paused inside the provider Submit wire.
+  it('sends one Submit when different final retry generations overlap', async () => {
+    // Given: generation 0 is paused inside the provider Submit wire.
     const { sessionId, operationId } = await seedIngestionSession(1);
     await reserveOperation(sessionId, operationId);
     let releaseWinner: () => void = () => undefined;
@@ -83,17 +96,17 @@ describe('Tencent OCR concurrent delivery fencing', () => {
       runStructureFn: vi.fn(async () => structureResult()),
     });
     const delivery = {
-      id: 'same-generation-job',
+      id: 'overlapping-generation-job',
       data: { sessionId, operationId },
-      retryCount: 2,
+      retryCount: 0,
       retryLimit: 2,
-      startedOn: new Date('2026-08-09T00:00:00.000Z'),
+      startedOn: new Date(),
     };
 
-    // When: a concurrent handler crosses findSaved before the winner persists its JobId.
+    // When: a competing delivery reaches history resolution before generation 0 persists its JobId.
     const winner = handler([delivery] as never);
     await winnerWireEntered;
-    const competitor = handler([delivery] as never);
+    const competitor = handler([{ ...delivery, retryCount: 2 }] as never);
     competitor.finally(competitionObserved).catch(() => undefined);
     await competitionReachedFenceOrWire;
     releaseWinner();
@@ -105,6 +118,7 @@ describe('Tencent OCR concurrent delivery fencing', () => {
     expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toHaveLength(1);
     const rejected = outcomes.find((outcome) => outcome.status === 'rejected');
     expect(rejected?.reason).toBeInstanceOf(TencentSubmitInProgressError);
+    expect(rejected?.reason.reason).toBe('active_duplicate');
     const session = await db
       .select({ status: learning_session.status })
       .from(learning_session)

@@ -739,7 +739,6 @@ export async function acceptImageCandidateProposal(
             providerAttempt: {
               db,
               caller: 'api',
-              mode: 'observe',
               deadlineAt: new Date(Date.now() + 20_000),
               operationAnchor: proposalId,
             },

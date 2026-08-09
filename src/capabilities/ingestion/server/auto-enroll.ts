@@ -630,8 +630,8 @@ export async function runAutoEnrollForSession(
           subject_id: block.id,
           outcome: verdict.route === 'auto' ? 'success' : 'skipped',
           payload: {
-            generated_by: 'workflow_judge',
             mode: 'observe',
+            generated_by: 'workflow_judge',
             route: verdict.route,
             confidence: verdict.confidence,
             threshold,

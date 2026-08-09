@@ -10,8 +10,26 @@ import { cost_ledger, provider_attempt } from '@/db/schema';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { providerOperationIdForInvocation } from '@/server/ai/provider-attempt-runtime';
 import { sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+
+beforeEach(() => {
+  vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
+  vi.stubEnv(
+    'AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON',
+    JSON.stringify({
+      'glm.memory-reconcile': {
+        maxConcurrentAttempts: 100,
+        maxAttemptStartsPerMinute: 1000,
+      },
+      'mem0.event-memory': {
+        maxConcurrentAttempts: 100,
+        maxAttemptStartsPerMinute: 1000,
+      },
+    }),
+  );
+});
+afterEach(() => vi.unstubAllEnvs());
 import { createMem0Collection } from '../../../tests/helpers/mem0-collection';
 import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import type { MemoryClient } from './client';
@@ -116,13 +134,13 @@ describe('reconcile handler — failure mode 1: LLM parse failure degrades to KE
   });
 });
 
-describe('reconcile handler — provider attempt and legacy ledger parity', () => {
+describe('reconcile handler — authoritative provider attempt cost truth', () => {
   beforeEach(async () => {
     await resetDb();
     await createTestCollection();
   });
 
-  it('records one settled attempt and retains one correlated legacy cost row', async () => {
+  it('records one settled attempt without a legacy cost row', async () => {
     const db = testDb();
     const newMemId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     const fetchMock = vi.fn(
@@ -182,10 +200,10 @@ describe('reconcile handler — provider attempt and legacy ledger parity', () =
       terminal_status: 'succeeded',
       wire_count: 1,
       external_request_id: 'glm-request-memory-1',
-      cost_basis: 'unknown',
-      cost_amount: null,
+      cost_basis: 'estimated',
+      cost_amount: expect.any(Number),
       cost_currency: 'CNY',
-      cost_source: 'provider_cost_absent',
+      cost_source: 'glm-chat-pricebook',
     });
     expect(attempts[0].usage_json).toMatchObject({
       basis: 'reported',
@@ -198,14 +216,7 @@ describe('reconcile handler — provider attempt and legacy ledger parity', () =
       .select()
       .from(cost_ledger)
       .where(sql`${cost_ledger.task_kind} = 'memory_reconcile'`);
-    expect(legacyRows).toHaveLength(1);
-    expect(legacyRows[0]).toMatchObject({
-      entry_kind: 'legacy',
-      task_run_id: attempts[0].attempt_id,
-      tokens_in: 120,
-      tokens_out: 8,
-      currency: 'CNY',
-    });
+    expect(legacyRows).toHaveLength(0);
   });
 });
 

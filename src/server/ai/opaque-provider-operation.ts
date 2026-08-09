@@ -3,6 +3,10 @@ import { ProviderRequestIdentity } from '@/core/schema/provider-attempt';
 import type { Db } from '@/db/client';
 import { providerOperationIdForInvocation } from './direct-provider-attempt';
 import {
+  type ProviderAttemptAdmissionPolicy,
+  resolveProviderAttemptAdmission,
+} from './provider-attempt-admission-config';
+import {
   type ProviderAttemptHandle,
   type ProviderAttemptLifecycle,
   type ProviderAttemptLifecycleMode,
@@ -17,6 +21,7 @@ export type Mem0OpaqueOperationKind =
 
 export type Mem0OpaqueLifecycleFactory = (input: {
   readonly mode: ProviderAttemptLifecycleMode;
+  readonly policy?: ProviderAttemptAdmissionPolicy | null;
   readonly identity: ProviderAttemptLifecycle['identity'];
   readonly deadlineAt: Date;
   readonly db?: Db;
@@ -27,6 +32,9 @@ export interface Mem0OpaqueOperationContext {
   readonly deadlineAt: Date;
   readonly operationId: string;
   readonly db?: Db;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly mode?: ProviderAttemptLifecycleMode;
+  readonly policy?: ProviderAttemptAdmissionPolicy | null;
   readonly createLifecycle?: Mem0OpaqueLifecycleFactory;
 }
 
@@ -35,6 +43,9 @@ export interface Mem0OpaqueOperationOptions {
   readonly caller: 'api' | 'worker';
   readonly deadlineAt: Date;
   readonly operationAnchor: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly mode?: ProviderAttemptLifecycleMode;
+  readonly policy?: ProviderAttemptAdmissionPolicy | null;
   readonly createLifecycle?: Mem0OpaqueLifecycleFactory;
 }
 
@@ -50,6 +61,9 @@ export function createMem0OpaqueOperationContext(
 ): Mem0OpaqueOperationContext {
   return Object.freeze({
     db: input.db,
+    env: input.env ?? process.env,
+    mode: input.mode,
+    policy: input.policy,
     caller: input.caller,
     deadlineAt: input.deadlineAt,
     operationId: providerOperationIdForInvocation(input.operationAnchor),
@@ -61,6 +75,10 @@ function makeLifecycle(
   context: Mem0OpaqueOperationContext,
   operationKind: Mem0OpaqueOperationKind,
 ): ProviderAttemptLifecycle {
+  const configured =
+    context.mode === undefined
+      ? resolveProviderAttemptAdmission(context.env ?? process.env, 'mem0.event-memory')
+      : { mode: context.mode, policy: context.policy ?? null };
   const identity = ProviderRequestIdentity.parse({
     attemptId: randomUUID(),
     operationId: context.operationId,
@@ -75,7 +93,8 @@ function makeLifecycle(
   });
   if (context.createLifecycle) {
     return context.createLifecycle({
-      mode: 'observe',
+      mode: configured.mode,
+      policy: configured.policy,
       identity,
       deadlineAt: context.deadlineAt,
       db: context.db,
@@ -83,7 +102,9 @@ function makeLifecycle(
   }
   if (!context.db) throw new TypeError('Mem0 opaque operation context requires db');
   return createProviderAttemptLifecycle({
-    mode: 'observe',
+    mode: configured.mode,
+    persistAttemptWhenOff: true,
+    policy: configured.policy,
     identity,
     deadlineAt: context.deadlineAt,
     db: context.db,
