@@ -160,11 +160,15 @@ function shouldKeepExtractionResumable(
   err: unknown,
   delivery: { readonly retryCount: number; readonly retryLimit: number },
 ): boolean {
-  if (err instanceof TencentSubmitInProgressError) return true;
-  return (
-    normalizeExtractionError(err) instanceof RetryableError &&
-    delivery.retryCount < delivery.retryLimit
-  );
+  const normalized = normalizeExtractionError(err);
+  if (!(normalized instanceof RetryableError)) return false;
+  if (
+    normalized instanceof TencentSubmitInProgressError &&
+    (normalized.reason === 'active_duplicate' || normalized.reason === 'deadline_mismatch')
+  ) {
+    return true;
+  }
+  return delivery.retryCount < delivery.retryLimit;
 }
 
 async function emitOperationEventSafely(

@@ -33,6 +33,12 @@ only when its `task_run_id` is a valid UUID that exactly links an authoritative 
 historical OCR rows remain visible as legacy truth; no timestamp-based suppression is applied.
 Tencent Submit uses one stable logical attempt identity per page operation across pg-boss retry
 generations. Provider-started legacy generation rows without a saved JobId remain retryably fenced.
+When retries are exhausted, only a terminal or historical ambiguous started Submit is terminalized
+as a failed extraction. A competing delivery must never terminalize a live Submit owner, even on its
+final retry. The attempt fence must not be auto-cleared or replayed because provider acceptance is
+unknown. An operator must reconcile external Tencent evidence and follow normal failed-session
+recovery before any explicit repair; this runbook does not authorize destructive cleanup or
+automatic fence release.
 
 ## Rollout and rollback
 

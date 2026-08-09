@@ -616,7 +616,7 @@ describe('ProviderAttemptLifecycle', () => {
     // When finish is replayed identically or with different evidence.
     const replay = await handle.finish(unknownEvidence);
 
-    // Then identical replay is idempotent and conflicting terminal/reacquire are rejected.
+    // Then identical replay is idempotent and terminal reuse wins even if the deadline changed.
     expect(replay).toBe('already_settled');
     await expect(handle.finish({ ...unknownEvidence, reason: 'different' })).rejects.toMatchObject({
       reason: 'terminal_conflict',
@@ -625,7 +625,7 @@ describe('ProviderAttemptLifecycle', () => {
       createProviderAttemptLifecycle({
         mode: 'enforce',
         identity: identity(attemptId),
-        deadlineAt,
+        deadlineAt: new Date(deadlineAt.getTime() + 1),
         db: openIndependentDb().db,
       }).acquire(),
     ).rejects.toMatchObject({ reason: 'terminal_reuse' });

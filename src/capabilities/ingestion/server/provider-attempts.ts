@@ -43,11 +43,13 @@ export class ProviderAttemptResumeConflictError extends Error {
 
 export class TencentSubmitInProgressError extends RetryableError {
   readonly pageOperationId: string;
+  readonly reason: ProviderAttemptLifecycleError['reason'];
 
   constructor(pageOperationId: string, cause: ProviderAttemptLifecycleError) {
     super(`Tencent Submit is already owned for page operation ${pageOperationId}`, { cause });
     this.name = 'TencentSubmitInProgressError';
     this.pageOperationId = pageOperationId;
+    this.reason = cause.reason;
   }
 }
 

@@ -402,6 +402,14 @@ export function createProviderAttemptLifecycle(input: {
               )[0]?.elapsed === true;
             if (row) {
               requireIdentity(row, identity, identityFingerprint);
+              if (
+                row.terminal_status !== null ||
+                row.admission_status === 'denied' ||
+                row.admission_status === 'released' ||
+                row.admission_status === 'lease_expired'
+              ) {
+                throw lifecycleError('terminal_reuse', identity);
+              }
               if (row.admission_status !== null && row.deadline_matches !== true) {
                 throw lifecycleError('deadline_mismatch', identity);
               }
@@ -415,19 +423,11 @@ export function createProviderAttemptLifecycle(input: {
               ) {
                 throw lifecycleError('external_request_id_conflict', identity);
               }
-              if (
-                row.terminal_status !== null ||
-                row.admission_status === 'denied' ||
-                row.admission_status === 'released' ||
-                row.admission_status === 'lease_expired'
-              ) {
-                throw lifecycleError('terminal_reuse', identity);
+              if (row.lease_live === true && !(deadlineElapsed && input.mode === 'enforce')) {
+                throw lifecycleError('active_duplicate', identity);
               }
               if (row.provider_start_reserved_at !== null) {
                 throw lifecycleError('recovery_required', identity);
-              }
-              if (row.lease_live === true && !(deadlineElapsed && input.mode === 'enforce')) {
-                throw lifecycleError('active_duplicate', identity);
               }
             }
             if (deadlineElapsed && input.mode === 'enforce') {

@@ -103,12 +103,10 @@ describe('Tencent OCR concurrent delivery fencing', () => {
       startedOn: new Date('2026-08-09T00:00:00.000Z'),
     };
 
-    // When: generation 1 crosses findSaved before generation 0 persists its JobId.
+    // When: the final retry crosses findSaved before generation 0 persists its JobId.
     const winner = handler([delivery] as never);
     await winnerWireEntered;
-    const competitor = handler([
-      { ...delivery, retryCount: 1, startedOn: new Date('2026-08-09T00:01:00.000Z') },
-    ] as never);
+    const competitor = handler([{ ...delivery, retryCount: 2 }] as never);
     competitor.finally(competitionObserved).catch(() => undefined);
     await competitionReachedFenceOrWire;
     releaseWinner();
@@ -120,6 +118,7 @@ describe('Tencent OCR concurrent delivery fencing', () => {
     expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toHaveLength(1);
     const rejected = outcomes.find((outcome) => outcome.status === 'rejected');
     expect(rejected?.reason).toBeInstanceOf(TencentSubmitInProgressError);
+    expect(rejected?.reason.reason).toBe('active_duplicate');
     const session = await db
       .select({ status: learning_session.status })
       .from(learning_session)

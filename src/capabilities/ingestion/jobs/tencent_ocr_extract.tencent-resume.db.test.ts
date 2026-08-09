@@ -170,6 +170,72 @@ describe('Tencent OCR provider-attempt resume', () => {
     ]);
   });
 
+  it('terminalizes an ambiguous stable Submit fence when the final delivery is exhausted', async () => {
+    vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'off');
+    const { sessionId, operationId } = await seedIngestionSession(1);
+    const submitError = new RetryableError('ambiguous Tencent Submit callback failure');
+    const submitFn = vi.fn().mockRejectedValueOnce(submitError);
+    const handler = buildTencentOcrHandler({
+      db,
+      r2: await createImageR2(),
+      engine: 'tencent',
+      submitFn,
+      describeFn: vi.fn(),
+    });
+    const firstDelivery = {
+      id: 'ambiguous-submit-final-exhaustion',
+      data: { sessionId, operationId },
+      retryCount: 0,
+      retryLimit: 1,
+      startedOn: new Date(),
+    };
+
+    await expect(handler([firstDelivery] as never)).rejects.toBe(submitError);
+    expect(
+      (
+        await db
+          .select({ status: learning_session.status })
+          .from(learning_session)
+          .where(eq(learning_session.id, sessionId))
+      )[0]?.status,
+    ).toBe('extracting');
+    await expect(
+      handler([
+        {
+          ...firstDelivery,
+          retryCount: 1,
+          startedOn: new Date(Date.now() + 1_000),
+        },
+      ] as never),
+    ).rejects.toBeInstanceOf(TencentSubmitInProgressError);
+
+    expect(submitFn).toHaveBeenCalledOnce();
+    expect(
+      (
+        await db
+          .select({ status: learning_session.status })
+          .from(learning_session)
+          .where(eq(learning_session.id, sessionId))
+      )[0]?.status,
+    ).toBe('failed');
+    const operationEvents = await db
+      .select()
+      .from(job_events)
+      .where(eq(job_events.business_id, operationId));
+    expect(operationEvents.some((event) => event.event_type === 'operation.failed')).toBe(true);
+    const attempts = await db
+      .select()
+      .from(provider_attempt)
+      .where(eq(provider_attempt.operation_kind, 'ocr_page_submit'));
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        terminal_status: 'failed',
+        wire_count: 1,
+        external_request_id: null,
+      }),
+    ]);
+  });
+
   it('resumes the saved JobId after termination without a second Submit', async () => {
     // Given: Tencent accepted Submit and the worker terminates after persisting its JobId.
     const { sessionId, operationId } = await seedIngestionSession(1);
