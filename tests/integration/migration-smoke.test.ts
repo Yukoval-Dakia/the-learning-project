@@ -2345,10 +2345,36 @@ describe('migration smoke — YUK-844 placement unknown cost', () => {
       INSERT INTO placement_starter_cost_component (
         id, claim_id, attempt_id, component_kind, provider_task_run_id,
         cost_micro_usd, created_at
-      ) VALUES (
-        'migration-yuk844-known', 'migration-yuk844-claim', 'migration-yuk844-attempt',
-        'quiz_gen', 'migration-yuk844-known-run', 250, now()
-      )
+      ) VALUES
+        (
+          'migration-yuk844-known', 'migration-yuk844-claim', 'migration-yuk844-attempt',
+          'quiz_gen', 'migration-yuk844-known-run', 250, now()
+        ),
+        (
+          'migration-yuk844-generation-boundary', 'migration-yuk844-claim',
+          'migration-yuk844-attempt', 'quiz_gen',
+          'migration-yuk844-generation-boundary-run', 500000, now()
+        ),
+        (
+          'migration-yuk844-generation-over', 'migration-yuk844-claim',
+          'migration-yuk844-attempt', 'quiz_gen',
+          'migration-yuk844-generation-over-run', 500001, now()
+        ),
+        (
+          'migration-yuk844-paid-boundary', 'migration-yuk844-claim',
+          'migration-yuk844-attempt', 'solution_check',
+          'migration-yuk844-paid-boundary-run', 100000, now()
+        ),
+        (
+          'migration-yuk844-paid-over', 'migration-yuk844-claim',
+          'migration-yuk844-attempt', 'teaching_quality',
+          'migration-yuk844-paid-over-run', 100001, now()
+        ),
+        (
+          'migration-yuk844-reservation', 'migration-yuk844-claim',
+          'migration-yuk844-attempt', 'quiz_verify',
+          'reservation:migration-yuk844-existing', 100000, now()
+        )
     `;
     const migration = orderedMigrations().find(
       (entry) => entry.tag === '0090_yuk844_placement_unknown_cost',
@@ -2367,13 +2393,23 @@ describe('migration smoke — YUK-844 placement unknown cost', () => {
       SELECT known_cost_micro_usd FROM placement_starter_claim
       WHERE id = 'migration-yuk844-claim'
     `;
-    const [component] = await client<{ cost_micro_usd: number | null; over_cap: boolean | null }[]>`
-      SELECT cost_micro_usd, over_cap FROM placement_starter_cost_component
-      WHERE id = 'migration-yuk844-known'
+    const components = await client<
+      { id: string; cost_micro_usd: number | null; over_cap: boolean | null }[]
+    >`
+      SELECT id, cost_micro_usd, over_cap FROM placement_starter_cost_component
+      WHERE claim_id = 'migration-yuk844-claim'
     `;
+    const componentsById = new Map(components.map((component) => [component.id, component]));
     expect(claim?.known_cost_micro_usd).toBe(250);
-    expect(component?.cost_micro_usd).toBe(250);
-    expect(component?.over_cap).toBeNull();
+    expect(componentsById.get('migration-yuk844-known')).toMatchObject({
+      cost_micro_usd: 250,
+      over_cap: false,
+    });
+    expect(componentsById.get('migration-yuk844-generation-boundary')?.over_cap).toBe(false);
+    expect(componentsById.get('migration-yuk844-generation-over')?.over_cap).toBe(true);
+    expect(componentsById.get('migration-yuk844-paid-boundary')?.over_cap).toBe(false);
+    expect(componentsById.get('migration-yuk844-paid-over')?.over_cap).toBe(true);
+    expect(componentsById.get('migration-yuk844-reservation')?.over_cap).toBeNull();
     await client`
       INSERT INTO placement_starter_cost_component (
         id, claim_id, attempt_id, component_kind, provider_task_run_id,

@@ -7,6 +7,15 @@ ALTER TABLE "placement_starter_cost_component"
 ALTER TABLE "placement_starter_cost_component"
   ADD COLUMN "over_cap" boolean;
 --> statement-breakpoint
+UPDATE "placement_starter_cost_component"
+SET "over_cap" = CASE
+  WHEN "component_kind" = 'quiz_gen'
+    THEN "cost_micro_usd" > 500000
+  ELSE "cost_micro_usd" > 100000
+END
+WHERE "provider_task_run_id" NOT LIKE 'reservation:%'
+  AND "cost_micro_usd" IS NOT NULL;
+--> statement-breakpoint
 ALTER TABLE "placement_starter_claim"
   DROP CONSTRAINT "placement_starter_claim_nonnegative_cost";
 --> statement-breakpoint
