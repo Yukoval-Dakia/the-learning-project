@@ -1,3 +1,7 @@
+import {
+  type Mem0OpaqueOperationContext,
+  executeMem0OpaqueOperation,
+} from '@/server/ai/provider-attempt-runtime';
 // Single source of truth for the mem0 pgvector collection (= table) name. The backup
 // path (src/server/export/constants.ts) and this live client MUST resolve the same
 // default so a backup restores to the exact table the client reads from (Cursor OCR
@@ -39,7 +43,7 @@ export type MemoryHistoryEntry = {
   is_deleted: number;
 };
 
-type Mem0Like = {
+export type Mem0Like = {
   add(
     messages: string,
     config: { userId: string; metadata: Record<string, unknown>; infer: boolean },
@@ -92,10 +96,14 @@ export type MemoryEventInput = {
 };
 
 export type MemoryClient = {
-  addEventMemory(event: MemoryEventInput): Promise<SearchResult>;
+  addEventMemory(
+    event: MemoryEventInput,
+    providerOperation: Mem0OpaqueOperationContext,
+  ): Promise<SearchResult>;
   search(
     query: string,
-    opts?: { topK?: number; filters?: Record<string, unknown> },
+    opts: { topK?: number; filters?: Record<string, unknown> },
+    providerOperation: Mem0OpaqueOperationContext,
   ): Promise<SearchResult>;
   /**
    * Idempotent worker projection for canonical verbatim facts. The stable projection
@@ -106,6 +114,7 @@ export type MemoryClient = {
     text: string,
     metadata: Record<string, unknown>,
     projectionKey: string,
+    providerOperation: Mem0OpaqueOperationContext,
   ): Promise<SearchResult>;
   // YUK-557 (Q2a): idempotent hard delete via mem0 official delete() — writes a
   // tombstone (previous_value + is_deleted=1) before the real vector DELETE.
@@ -116,7 +125,11 @@ export type MemoryClient = {
   // add(..., {infer:false}) so the text is stored as a single memory WITHOUT
   // re-running the extraction LLM (NOT addEventMemory, which is infer:true +
   // eventToText envelope → a paraphrase, not the original). Produces a NEW UUID.
-  restoreVerbatim(text: string, metadata: Record<string, unknown>): Promise<SearchResult>;
+  restoreVerbatim(
+    text: string,
+    metadata: Record<string, unknown>,
+    providerOperation: Mem0OpaqueOperationContext,
+  ): Promise<SearchResult>;
 };
 
 function requireEnv(env: Env, name: string): string {
@@ -258,47 +271,53 @@ export function createMemoryClient(
   const memory = factory(config);
 
   return {
-    async addEventMemory(input) {
-      return memory.add(eventToText(input), {
-        userId: 'self',
-        metadata: {
-          source: 'event',
-          event_id: input.id,
-          // P3 (YUK-351): provenance of the originating event. Only 'user' reaches
-          // here (the extraction gate rejects 'agent' upstream in triggers.ts), but
-          // persist it so the source actor is auditable on the extracted fact.
-          actor_kind: input.actor_kind,
-          action: input.action,
-          subject_kind: input.subject_kind,
-          subject_id: input.subject_id,
-          affected_scopes: input.affected_scopes,
-          created_at: input.created_at.toISOString(),
-          // P2 (YUK-342): created_ms (epoch milliseconds) for recency filtering;
-          // kind for per-kind reconcile rules. Both flat-spread into mem0 payload
-          // top-level by mem0's metadata handling.
-          created_ms: input.created_at.getTime(),
-          kind: input.kind,
-        },
-        infer: true,
-      });
+    async addEventMemory(input, providerOperation) {
+      return executeMem0OpaqueOperation(providerOperation, 'add_inferred', () =>
+        memory.add(eventToText(input), {
+          userId: 'self',
+          metadata: {
+            source: 'event',
+            event_id: input.id,
+            // P3 (YUK-351): provenance of the originating event. Only 'user' reaches
+            // here (the extraction gate rejects 'agent' upstream in triggers.ts), but
+            // persist it so the source actor is auditable on the extracted fact.
+            actor_kind: input.actor_kind,
+            action: input.action,
+            subject_kind: input.subject_kind,
+            subject_id: input.subject_id,
+            affected_scopes: input.affected_scopes,
+            created_at: input.created_at.toISOString(),
+            // P2 (YUK-342): created_ms (epoch milliseconds) for recency filtering;
+            // kind for per-kind reconcile rules. Both flat-spread into mem0 payload
+            // top-level by mem0's metadata handling.
+            created_ms: input.created_at.getTime(),
+            kind: input.kind,
+          },
+          infer: true,
+        }),
+      );
     },
-    async addVerbatimOnce(text, metadata, projectionKey) {
+    async addVerbatimOnce(text, metadata, projectionKey, providerOperation) {
       const filters = { user_id: 'self', projection_key: projectionKey };
       const existing = await memory.getAll({ topK: 2, filters });
       if ((existing.results ?? []).length > 0) return existing;
-      return memory.add(text, {
-        userId: 'self',
-        metadata: { ...metadata, projection_key: projectionKey },
-        infer: false,
-      });
+      return executeMem0OpaqueOperation(providerOperation, 'add_verbatim', () =>
+        memory.add(text, {
+          userId: 'self',
+          metadata: { ...metadata, projection_key: projectionKey },
+          infer: false,
+        }),
+      );
     },
-    async search(query, searchOpts = {}) {
+    async search(query, searchOpts, providerOperation) {
       const { scope_key: scopeKey, ...filters } = searchOpts.filters ?? {};
       if (typeof scopeKey === 'string') {
         filters.affected_scopes ??= { contains: scopeKey };
       }
       filters.user_id = 'self';
-      return memory.search(query, { topK: searchOpts.topK, filters });
+      return executeMem0OpaqueOperation(providerOperation, 'search', () =>
+        memory.search(query, { topK: searchOpts.topK, filters }),
+      );
     },
     // YUK-557 (Q2a, F1 verify-absence): idempotent — a half-applied batch can
     // replay. On ANY delete error, VERIFY whether the row still exists via mem0's
@@ -342,7 +361,7 @@ export function createMemoryClient(
     async history(memoryId) {
       return memory.history(memoryId);
     },
-    async restoreVerbatim(text, metadata) {
+    async restoreVerbatim(text, metadata, providerOperation) {
       // infer:false → mem0's addToVectorStore skips the extraction LLM and calls
       // createMemory(text, {}, metadata) directly (index.mjs:6419-6436): the raw
       // text is embedded and inserted as a single new memory (new UUID), with NO
@@ -351,7 +370,9 @@ export function createMemoryClient(
       // through addEventMemory (infer:true + eventToText envelope → a re-extracted
       // paraphrase, not the verbatim original). Fallback if this ever changes:
       // direct pgvector INSERT + manual embed (see docs/runbooks/memory-reconcile-undo.md).
-      return memory.add(text, { userId: 'self', metadata, infer: false });
+      return executeMem0OpaqueOperation(providerOperation, 'restore_verbatim', () =>
+        memory.add(text, { userId: 'self', metadata, infer: false }),
+      );
     },
   };
 }

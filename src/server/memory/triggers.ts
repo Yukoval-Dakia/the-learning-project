@@ -9,6 +9,7 @@ import {
   isDirectProviderAttemptInvariantError,
 } from '@/server/ai/direct-provider-attempt';
 import { writeCostLedger } from '@/server/ai/log';
+import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
 import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import {
@@ -285,7 +286,12 @@ export async function enqueueMemoryReconcile(
 export async function addVerbatimProjectionOnce(
   db: Db,
   client: Pick<MemoryClient, 'addVerbatimOnce'>,
-  input: { text: string; metadata: Record<string, unknown>; projectionKey: string },
+  input: {
+    text: string;
+    metadata: Record<string, unknown>;
+    projectionKey: string;
+    providerOperation: Parameters<MemoryClient['addVerbatimOnce']>[3];
+  },
 ) {
   return db.transaction(async (tx) => {
     // The Postgres claim spans lookup + external add. Concurrent workers for the
@@ -295,7 +301,12 @@ export async function addVerbatimProjectionOnce(
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`memory_projection:${input.projectionKey}`}, 0))`,
     );
-    return client.addVerbatimOnce(input.text, input.metadata, input.projectionKey);
+    return client.addVerbatimOnce(
+      input.text,
+      input.metadata,
+      input.projectionKey,
+      input.providerOperation,
+    );
   });
 }
 
@@ -331,6 +342,7 @@ export function buildMemoryEventIngestHandler(
       const memResult = await (async () => {
         if (!admitToExtraction) return null;
         if (editedConjecture) {
+          const projectionKey = `conjecture-edit:${row.id}`;
           return addVerbatimProjectionOnce(db, client, {
             text: editedConjecture.claim,
             metadata: {
@@ -346,10 +358,24 @@ export function buildMemoryEventIngestHandler(
               created_ms: row.created_at.getTime(),
               kind: CONJECTURE_EDIT_MEMORY_KIND,
             },
-            projectionKey: `conjecture-edit:${row.id}`,
+            projectionKey,
+            providerOperation: createMem0OpaqueOperationContext({
+              db,
+              caller: 'worker',
+              deadlineAt: new Date(Date.now() + 65_000),
+              operationAnchor: projectionKey,
+            }),
           });
         }
-        return client.addEventMemory(row);
+        return client.addEventMemory(
+          row,
+          createMem0OpaqueOperationContext({
+            db,
+            caller: 'worker',
+            deadlineAt: new Date(Date.now() + 65_000),
+            operationAnchor: row.id,
+          }),
+        );
       })();
       // YUK-729 — fan out brief regen with a BOUNDED, SEQUENTIAL, per-scope-isolated
       // loop. Three properties matter:
@@ -517,6 +543,12 @@ export function buildMemoryBriefRegenHandler(
             const result = await searchMemories(memoryClient, `memory brief ${scopeKey}`, {
               topK: 10,
               filters: { scope_key: scopeKey },
+              providerOperation: createMem0OpaqueOperationContext({
+                db,
+                caller: 'worker',
+                deadlineAt: new Date(Date.now() + 65_000),
+                operationAnchor: `memory-brief:${job.id}:${scopeKey}`,
+              }),
             });
             return (result?.results ?? []).map((item) => ({ id: item.id, memory: item.memory }));
           } catch (err) {
@@ -694,7 +726,6 @@ export function buildMemoryReconcileHandler(
         const newMems: NewMemoryEntry[] = [];
         const candidatesByNew = new Map<number, CandidateEntry[]>();
         const newIdSet = new Set(newMemInputs.map((m) => m.id));
-
         for (let i = 0; i < newMemInputs.length; i++) {
           const input = newMemInputs[i];
           newMems.push({
@@ -708,10 +739,19 @@ export function buildMemoryReconcileHandler(
           const cands: CandidateEntry[] = [];
           // Empty text → skip search (would embed ''); leaves no candidates → KEEP_BOTH.
           if (input.text.trim().length > 0) {
-            const searchResult = await client.search(input.text, {
-              topK: RECONCILE_TOP_K + 1,
-              filters: { user_id: userId },
-            });
+            const searchResult = await client.search(
+              input.text,
+              {
+                topK: RECONCILE_TOP_K + 1,
+                filters: { user_id: userId },
+              },
+              createMem0OpaqueOperationContext({
+                db,
+                caller: 'worker',
+                deadlineAt: new Date(Date.now() + 65_000),
+                operationAnchor: `memory-reconcile:${job.id}:${input.id}`,
+              }),
+            );
             for (const r of searchResult?.results ?? []) {
               if (newIdSet.has(r.id)) continue; // exclude this batch's own new memories
               const cms = (r.metadata as Record<string, unknown> | undefined)?.created_ms;

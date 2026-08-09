@@ -1715,7 +1715,10 @@ describe('B3 learnable_frontier — store 层（YUK-349 #3）', () => {
     // loadMemoryPrior below: defaultLoadMemoryPrior must import this module and absorb the
     // constructor failure without turning a healthy LLM orchestration into statistical fallback.
     const readMemoryFacts = vi.fn(() => createMemoryClient());
-    vi.doMock('@/server/memory/read', () => ({ readMemoryFacts }));
+    vi.doMock('@/server/memory/read', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('@/server/memory/read')>()),
+      readMemoryFacts,
+    }));
 
     try {
       const runTaskFn = vi.fn(async (_kind: string, input: unknown) => {
@@ -1730,16 +1733,27 @@ describe('B3 learnable_frontier — store 层（YUK-349 #3）', () => {
       });
 
       const inputs = await collectComposerInputs(testDb(), TODAY);
+      const providerInvocation = {
+        db: testDb(),
+        caller: 'worker' as const,
+        deadlineAt: new Date(Date.now() + 65_000),
+        operationAnchor: 'practice-l2-default-loader-852',
+      };
       const result = await composeSoftmaxStream(
         testDb(),
         inputs,
         { policy: 'softmax_mfi' },
         // No loadMemoryPrior DI: exercise defaultLoadMemoryPrior's production dynamic imports.
-        { runTaskFn, rng: RNG_ALWAYS_SELECT },
+        { runTaskFn, rng: RNG_ALWAYS_SELECT, providerInvocation },
       );
 
       expect(createMemoryClient).toHaveBeenCalledTimes(1);
       expect(readMemoryFacts).toHaveBeenCalledTimes(1);
+      expect(readMemoryFacts).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ topK: 5 }),
+        expect.objectContaining({ caller: 'worker' }),
+      );
       expect(runTaskFn).toHaveBeenCalledTimes(1);
       expect(result.fallback).toBe('none');
       expect(result.plan.items.map((item) => item.ref_id)).toContain(variantId);

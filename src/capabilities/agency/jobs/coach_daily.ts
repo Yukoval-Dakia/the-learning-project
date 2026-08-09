@@ -327,6 +327,8 @@ export async function runCoach(
       ctx: {
         db,
         taskRunId: toolContextTaskRunId,
+        providerAttemptCaller: 'worker',
+        providerSessionDeadlineAt: Date.now() + 65_000,
         callerActor: { kind: 'agent', ref: 'coach' },
         causedByEventId: triggerEventId,
       },

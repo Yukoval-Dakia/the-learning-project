@@ -8,6 +8,7 @@
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import { cost_ledger, provider_attempt } from '@/db/schema';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
+import { providerOperationIdForInvocation } from '@/server/ai/provider-attempt-runtime';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -33,8 +34,8 @@ async function createTestCollection() {
 type MemInput = { id: string; text: string; created_ms: number; kind: string };
 type JobData = { memories: MemInput[]; user_id: string };
 
-function makeJob(data: JobData): { data: JobData }[] {
-  return [{ data }];
+function makeJob(data: JobData): { id: string; data: JobData }[] {
+  return [{ id: '00000000-0000-4000-8000-000000000852', data }];
 }
 
 function mem(id: string, text = 'some memory', kind = 'event', created_ms = 1000): MemInput {
@@ -327,6 +328,40 @@ describe('reconcile handler — uses extracted memory text for search (not event
     expect(cands).toHaveLength(1);
     expect(cands[0].text).toBe('User prefers light mode');
     expect(cands[0].memory_id).toBe(oldMemId);
+  });
+
+  it('assigns each searched memory its own stable causal operation', async () => {
+    // Given one reconcile job containing two distinct new memories.
+    const db = testDb();
+    const first = mem('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa0852', 'first fact');
+    const second = mem('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbb0852', 'second fact');
+    const operationIds: string[] = [];
+    const search: MemoryClient['search'] = vi.fn(async (_query, _opts, providerOperation) => {
+      operationIds.push(providerOperation.operationId);
+      return { results: [] };
+    });
+    const judge = vi.fn(async () => [
+      { new_index: 0, action: 'KEEP_BOTH', old_index: null, confidence: 1, reason: 'first' },
+      { new_index: 1, action: 'KEEP_BOTH', old_index: null, confidence: 1, reason: 'second' },
+    ]);
+    const handler = buildMemoryReconcileHandler(db, {
+      memoryClient: memoryClientMock({ search }),
+      judge: judge as never,
+    });
+
+    // When the handler searches candidates for both inputs.
+    await handler(makeJob({ memories: [first, second], user_id: 'self' }) as never);
+
+    // Then different causal inputs are distinct while each identity is retry-stable.
+    expect(operationIds).toEqual([
+      providerOperationIdForInvocation(
+        `memory-reconcile:00000000-0000-4000-8000-000000000852:${first.id}`,
+      ),
+      providerOperationIdForInvocation(
+        `memory-reconcile:00000000-0000-4000-8000-000000000852:${second.id}`,
+      ),
+    ]);
+    expect(new Set(operationIds)).toHaveLength(2);
   });
 });
 

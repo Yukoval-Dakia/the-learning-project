@@ -41,6 +41,7 @@ import {
   type CollectedSignal,
   collectCandidateSignals,
 } from './candidate-signals';
+import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
 import { handleReviewDue } from './due-list';
 import { FRONTIER_MAX_ITEMS, learnableFrontier } from './learnable-frontier';
 import { countPaperSlots } from './paper-sections';
@@ -94,7 +95,7 @@ export function streamLocalDate(now: Date = new Date()): string {
   return now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
 }
 
-/** 本模块的 DB 句柄：既可是顶层 `db`，也可是事务内 `tx`（single-flight 锁需要事务）。 */
+/** 本模块的 DB 句柄：既可是顶层 `db`，也可是事务内 `tx`。 */
 type DbLike = Db | Tx;
 
 /**
@@ -113,6 +114,10 @@ function streamPartitionPredicate(date: string, sessionId?: string | null) {
 
 function streamPartitionLockKey(date: string, sessionId?: string | null): string {
   return sessionId ? `stream:session:${sessionId}` : `stream:compose:${date}`;
+}
+
+async function lockDailyStreamPartition(db: DbLike, date: string): Promise<void> {
+  await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${streamPartitionLockKey(date)}))`);
 }
 
 // ADR-0037 H8 (due-must-review) — due is a HARD constraint: the merge engine may reorder
@@ -192,6 +197,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   // 1. FSRS 到期投影 — 经现行 due handler（函数调用）。
   const dueRes = await handleReviewDue(
     new Request(`http://internal/api/review/due?limit=${DUE_INPUT_LIMIT}`),
+    { db },
   );
   const dueJson = (await dueRes.json()) as {
     rows?: Array<{ question_id: string; knowledge_ids?: string[] }>;
@@ -534,10 +540,10 @@ export function resolveSelectionPolicy(): SelectionPolicyConfig {
 }
 
 /**
- * compose+materialize 在事务内的结果：新增行数 + **待写的选题观测元组**（FINDING B）。
+ * 最终 materialization 事务的结果：新增行数 + **待写的选题观测元组**（FINDING B）。
  *
- * 观测**不**在事务内写——见 composeMaterializeCollect / singleFlightCompose 的 FINDING B
- * 解耦说明。事务内只把 (streamItemId, refId, π_i, signals) 元组**收集**起来，由调用方在
+ * 观测**不**在事务内写——最终短事务只把 (streamItemId, refId, π_i, signals) 元组
+ * **收集**起来，由调用方在
  * **事务提交后**（锁外，best-effort）落库，使遥测写失败永不回滚已物化的流。
  */
 interface ComposeOutcome {
@@ -547,31 +553,26 @@ interface ComposeOutcome {
   observations: SelectionObservationInput[];
 }
 
+interface PreparedCompose {
+  plan: StreamPlan;
+  sampledInclusion: Map<string, number>;
+  signalByRef: Map<string, CollectedSignal>;
+}
+
 /**
- * 按 policy 编排 + 物化 + **收集**（不写）π_i 观测。两条路径：
- *   - legacy：确定性 composeDailyStream → materialize。π_i 不记（observations 空）。
- *   - softmax_mfi：composeSoftmaxStream（含两级 fallback，永不 throw）→ materialize →
- *     **收集**每个被 sampler 抽中的非到期项的观测元组（π_i + policy + signals snapshot +
- *     streamItemId=物化行 id）。到期项 π_i=1 确定性、非随机抽样——**不收集**（IPW 只关心
- *     被抽样的非到期项；记 π_i=1 会污染 active-PPI 的方差估计）。
- *
- * ⚠️ FINDING B：本函数**只收集不写**观测。它跑在 single-flight 锁事务内（singleFlightCompose
- *   / recomposeStream 的 `db.transaction`）——若在事务内 INSERT selection_observation 且 INSERT
- *   抛错，Postgres 会把**整个事务**标记为 aborted，try/catch 记日志也救不回，提交时整笔回滚
- *   → 刚物化的 practice_stream 一起没了（违反「遥测失败不得破坏选题」）。故把观测元组**带出
- *   事务**，由调用方在提交后锁外 best-effort 落库（见 writeObservationsBestEffort）。
+ * 按 policy 准备不可变计划。Mem0 与 runTask 发生在最终 materialization 短事务之前。
  */
-async function composeMaterializeCollect(
-  db: DbLike,
+async function prepareCompose(
+  db: Db,
   date: string,
   policy: SelectionPolicyConfig,
   deps: ComposeSoftmaxDeps = {},
   capacity?: ComposerInputs['capacity'],
-  // Task 9：物化行的 `added_by` 来源标注（lazy-compose / recompose = 'composer_live'；
-  //   夜间预产 job = 'composer_nightly'）。两条路径共用本函数（DRY，不分叉 compose 逻辑），
-  //   只此参数不同——区分流是用户首读懒产的还是夜链 AI 预产的（D14 夜链开场白归属）。
-  addedBy: StreamItemRow['added_by'] = 'composer_live',
-): Promise<ComposeOutcome> {
+): Promise<PreparedCompose> {
+  // Preparation deliberately does not read practice_stream_item. Candidate collection, the
+  // optional Mem0 prior, and runTask therefore cannot capture a stale stream snapshot. Callers
+  // probe and finalize under streamPartitionLockKey, the ordering boundary also used by
+  // reRankAfterAnswer and intervention materialization.
   const inputs = await collectComposerInputs(db, date);
   // 容量注入（DI，测试用——production 不传，走 composeSoftmaxStream 的 DEFAULT_WARN/MAX）。
   //   收紧 max 可让 targetCount < 候选数，使 π_i 真正 < 1（区分不同权重的候选），并行
@@ -579,13 +580,29 @@ async function composeMaterializeCollect(
   if (capacity) inputs.capacity = capacity;
 
   if (policy.policy === 'legacy') {
-    const { added } = await materializeStream(db, composeDailyStream(inputs), addedBy);
-    return { added, observations: [] };
+    return {
+      plan: composeDailyStream(inputs),
+      sampledInclusion: new Map(),
+      signalByRef: new Map(),
+    };
   }
 
   // softmax_mfi：永不 throw（两级 fallback 兜底）。
   const result: ComposeSoftmaxResult = await composeSoftmaxStream(db, inputs, policy, deps);
-  const { added, freshRefs } = await materializeStream(db, result.plan, addedBy);
+  return {
+    plan: result.plan,
+    sampledInclusion: result.sampledInclusion,
+    signalByRef: result.signalByRef,
+  };
+}
+
+async function materializePreparedCollect(
+  db: DbLike,
+  date: string,
+  prepared: PreparedCompose,
+  addedBy: StreamItemRow['added_by'],
+): Promise<ComposeOutcome> {
+  const { added, freshRefs } = await materializeStream(db, prepared.plan, addedBy);
 
   // π_i 收集：只对**本轮新物化**的被抽中非到期项（CLUSTER A 修复）。
   //   result.sampledInclusion 含本轮被抽中的所有非到期 ref，但 recompose 时存活的
@@ -596,16 +613,16 @@ async function composeMaterializeCollect(
   //
   //   需要物化行 id：重读当日流按 ref_id 取（截断后被砍的项已从 inclusion map 移除）。
   const observations: SelectionObservationInput[] = [];
-  if (result.sampledInclusion.size > 0 && freshRefs.size > 0) {
+  if (prepared.sampledInclusion.size > 0 && freshRefs.size > 0) {
     const rows = await db
       .select({ id: practice_stream_item.id, ref_id: practice_stream_item.ref_id })
       .from(practice_stream_item)
       .where(streamPartitionPredicate(date));
     const idByRef = new Map(rows.map((r) => [r.ref_id, r.id]));
-    for (const [refId, pi] of result.sampledInclusion) {
+    for (const [refId, pi] of prepared.sampledInclusion) {
       // 只收集本轮新插入的项——存活行的观测在它首次物化那轮已写过。
       if (!freshRefs.has(refId)) continue;
-      const signal = result.signalByRef.get(refId);
+      const signal = prepared.signalByRef.get(refId);
       observations.push({
         date,
         streamItemId: idByRef.get(refId),
@@ -623,7 +640,7 @@ async function composeMaterializeCollect(
 }
 
 /**
- * FINDING B：在 single-flight 锁事务**提交后**（锁外）best-effort 落选题观测。
+ * FINDING B：在 final materialization 短事务提交且 session lock 释放后 best-effort 落选题观测。
  *
  * 用顶层 `db`（**非** tx）逐条写——这样一条观测写失败只丢那一条遥测，既不影响已提交的
  * 物化流，也不影响其余观测（每条独立 try/catch）。遥测是 telemetry-only：失败记日志继续，
@@ -648,21 +665,22 @@ async function writeObservationsBestEffort(
 }
 
 /**
- * Single-flight compose（CLUSTER C 修复）——把 compose+materialize 包进一个事务，
- * 事务内先抢一把 `pg_advisory_xact_lock(hashtext('stream:compose:<date>'))`（同 submit.ts/
- * paper-submit.ts 的 FSRS 锁同款），再做**双重检查**：拿到锁后重读当日行，若已非空说明
+ * Single-flight compose（CLUSTER C 修复）——reserved connection 持有独立的 paid-work
+ * `pg_advisory_lock(hashtext('stream:compose-paid:<date>'))`，但 prepare/Mem0/runTask 不在事务内。
+ * 拿到 paid lock 后在原 `stream:compose:<date>` xact writer 边界内短暂 probe；若已非空说明
  * 竞态的赢家已 compose 过，本调用 no-op 返回（不再二次调 LLM / 不再插重复 position /
- * 不再写重复 π_i 观测）。锁随事务释放（xact 锁，commit/rollback 自动解）。
+ * 不再写重复 π_i 观测）。最终短事务重新取得原 xact key、重读并 materialize；paid session
+ * lock 串行昂贵工作，但不占用 reRank/intervention 等原-key writer 的等待连接。
  *
  * 为什么需要：getStream 的 lazy-compose 与 recompose 都「读行→（空则）compose→materialize」，
  * 之前无锁——两个并发请求都看到空、都调 LLM、都 materialize，导致双倍 LLM 调用 + 重复
  * position + 重复观测。advisory 锁把这段串行化成单飞。
  *
- * FINDING B：选题观测（π_i）**不在事务内写**——事务只 compose+materialize 并**带出**待写
+ * FINDING B：选题观测（π_i）**不在事务内写**——最终短事务只 materialize 并**带出**待写
  * 观测元组，提交后由 writeObservationsBestEffort 在**锁外** best-effort 落库。遥测写失败因此
  * 永不回滚已物化的流（事务内 INSERT 抛错会 abort 整笔事务，try/catch 也救不回）。
  *
- * @returns 新增行数（compose 真正发生时 = composeMaterializeCollect 的 added；竞态输家
+ * @returns 新增行数（compose 真正发生时 = materializePreparedCollect 的 added；竞态输家
  *          no-op 时 = 0）。
  */
 async function singleFlightCompose(
@@ -673,26 +691,44 @@ async function singleFlightCompose(
   capacity?: ComposerInputs['capacity'],
   // Task 9：物化来源标注。lazy-compose / recompose 传 'composer_live'（缺省）；
   //   夜间预产 job 经 composeNightly 传 'composer_nightly'。双重检查 + 单飞锁不变，
-  //   只 addedBy 透传到 composeMaterializeCollect。
+  //   只 addedBy 透传到 materializePreparedCollect。
   addedBy: StreamItemRow['added_by'] = 'composer_live',
 ): Promise<number> {
-  const { added, observations } = await db.transaction(async (tx) => {
-    // 事务级 advisory 锁，键 = 'stream:compose:<date>'。同日的并发 compose 串行化。
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
+  const lockDeadlineAt =
+    deps.providerInvocation?.deadlineAt ?? new Date(Date.now() + DEFAULT_COMPOSE_LOCK_WAIT_MS);
+  const { added, observations } = await withinComposePaidWorkLock(
+    db,
+    date,
+    lockDeadlineAt,
+    async (lockedDb) => {
+      const count = await lockedDb.transaction(async (tx) => {
+        await lockDailyStreamPartition(tx, date);
+        const [result] = await tx
+          .select({ count: sql<number>`count(*)::int` })
+          .from(practice_stream_item)
+          .where(streamPartitionPredicate(date));
+        return result.count;
+      });
+      if (count > 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    // 双重检查：拿到锁后重读。赢家已 compose ⇒ 行非空 ⇒ 输家 no-op（不重 compose）。
-    // Task 9 幂等核心：夜间 job 与用户首读 lazy-compose 共用此锁 + 双重检查——夜间先产
-    //   ⇒ 当日行非空 ⇒ 用户首读 lazy 命中双重检查 no-op（不二次 compose、不双发 LLM、
-    //   不插重复 position / 重复 π_i）。反向（用户先读再夜间 job）亦同：夜间 job 经
-    //   composeNightly 自己也做「已物化则 no-op」双重检查（见 composeNightly）。
-    const [{ count }] = await tx
-      .select({ count: sql<number>`count(*)::int` })
-      .from(practice_stream_item)
-      .where(streamPartitionPredicate(date));
-    if (count > 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
-
-    return composeMaterializeCollect(tx, date, policy, deps, capacity, addedBy);
-  });
+      const lockedDeps = deps.providerInvocation
+        ? {
+            ...deps,
+            providerInvocation: { ...deps.providerInvocation, db: lockedDb },
+          }
+        : deps;
+      const prepared = await prepareCompose(lockedDb, date, policy, lockedDeps, capacity);
+      return lockedDb.transaction(async (tx) => {
+        await lockDailyStreamPartition(tx, date);
+        const [{ finalCount }] = await tx
+          .select({ finalCount: sql<number>`count(*)::int` })
+          .from(practice_stream_item)
+          .where(streamPartitionPredicate(date));
+        if (finalCount > 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+        return materializePreparedCollect(tx, date, prepared, addedBy);
+      });
+    },
+  );
 
   // 事务已提交（流已稳）——锁外 best-effort 写观测；失败只丢遥测，绝不回滚流（FINDING B）。
   await writeObservationsBestEffort(db, observations);
@@ -710,7 +746,7 @@ async function singleFlightCompose(
  *   - 夜间 job 跑完用户首读：lazy-compose 命中双重检查 no-op（不 double-compose）。
  *   - 用户先首读再夜间 job：夜间 job 命中双重检查 no-op（不覆盖已产流）。
  *
- * @returns 新增行数（真正预产时 = composeMaterializeCollect 的 added；已物化时 = 0）。
+ * @returns 新增行数（真正预产时 = materializePreparedCollect 的 added；已物化时 = 0）。
  */
 export async function composeNightly(
   db: Db,
@@ -1442,11 +1478,10 @@ export async function advanceStreamItem(
  * 手动重排：保留 done/in_progress/skipped，删 pending 后按当前信号重新编排追加。
  * 选题路径同 getStream（policy 缺省 resolveSelectionPolicy）；softmax_mfi 路径记 π_i。
  *
- * CLUSTER C：delete + compose + materialize 全包进一个事务，事务内先抢
- * `pg_advisory_xact_lock('stream:compose:<date>')`——与 getStream 的 lazy-compose 共用**同一
- * 把锁键**，故 lazy-compose 与 recompose 互斥、并发 recompose 也串行化（不双发 LLM、不插重复
- * position、不写重复 π_i 观测）。recompose 是显式用户动作，拿锁后不做「空则 no-op」双重检查
- * （它本就要在存活行之上重排）——锁只负责串行化。CLUSTER A/B 修复保证串行重排幂等。
+ * CLUSTER C：与 lazy-compose 共用独立的 `stream:compose-paid:<date>` session lock。先在原
+ * `stream:compose:<date>` xact writer 边界内捕获待删 pending id；prepare/Mem0/runTask 在事务外
+ * 完成；最终短事务重取原 key，只删除仍 pending 的捕获行再物化。prepare 期间新到的 intervention
+ * 因而保留。recompose 是显式用户动作，故每次调用仍执行一次 prepare。
  *
  * FINDING B：与 singleFlightCompose 同款——选题观测在事务**提交后**锁外 best-effort 写，
  * 遥测失败永不回滚已重排物化的流。
@@ -1461,19 +1496,52 @@ export async function recomposeStream(
     capacity?: ComposerInputs['capacity'];
   } = {},
 ): Promise<number> {
-  const { added, observations } = await db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
-    await tx
-      .delete(practice_stream_item)
-      .where(and(streamPartitionPredicate(date), eq(practice_stream_item.status, 'pending')));
-    return composeMaterializeCollect(
-      tx,
-      date,
-      opts.policy ?? resolveSelectionPolicy(),
-      opts.composeDeps ?? {},
-      opts.capacity,
-    );
-  });
+  const deps = opts.composeDeps ?? {};
+  const lockDeadlineAt =
+    deps.providerInvocation?.deadlineAt ?? new Date(Date.now() + DEFAULT_COMPOSE_LOCK_WAIT_MS);
+  const { added, observations } = await withinComposePaidWorkLock(
+    db,
+    date,
+    lockDeadlineAt,
+    async (lockedDb) => {
+      const pendingIdsAtPrepare = await lockedDb.transaction(async (tx) => {
+        await lockDailyStreamPartition(tx, date);
+        const rows = await tx
+          .select({ id: practice_stream_item.id })
+          .from(practice_stream_item)
+          .where(and(streamPartitionPredicate(date), eq(practice_stream_item.status, 'pending')));
+        return rows.map((row) => row.id);
+      });
+      const lockedDeps = deps.providerInvocation
+        ? {
+            ...deps,
+            providerInvocation: { ...deps.providerInvocation, db: lockedDb },
+          }
+        : deps;
+      const prepared = await prepareCompose(
+        lockedDb,
+        date,
+        opts.policy ?? resolveSelectionPolicy(),
+        lockedDeps,
+        opts.capacity,
+      );
+      return lockedDb.transaction(async (tx) => {
+        await lockDailyStreamPartition(tx, date);
+        if (pendingIdsAtPrepare.length > 0) {
+          await tx
+            .delete(practice_stream_item)
+            .where(
+              and(
+                streamPartitionPredicate(date),
+                eq(practice_stream_item.status, 'pending'),
+                inArray(practice_stream_item.id, pendingIdsAtPrepare),
+              ),
+            );
+        }
+        return materializePreparedCollect(tx, date, prepared, 'composer_live');
+      });
+    },
+  );
 
   // 事务已提交（流已稳）——锁外 best-effort 写观测（FINDING B）。
   await writeObservationsBestEffort(db, observations);

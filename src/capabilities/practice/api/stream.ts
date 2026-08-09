@@ -51,12 +51,23 @@ export async function GET(req: Request): Promise<Response> {
     const knowledgeId = parsedQuery.data.kc;
     // 只有「今天」才 lazy compose——翻看历史日期不应凭空生出新流。
     const isToday = date === streamLocalDate();
+    const composeInvocationId = newId();
     // YUK-558：compose 事件种子化（仅 isToday 才可能触发 compose；历史日期不 compose，不派生 seed）。
     const view = await getStream(db, date, {
       composeIfEmpty: isToday,
       knowledgeId,
       materializeScoped: isToday,
-      composeDeps: isToday ? { rng: buildSeededSelectionRng(date, 'compose', date) } : undefined,
+      composeDeps: isToday
+        ? {
+            rng: buildSeededSelectionRng(date, 'compose', date),
+            providerInvocation: {
+              db,
+              caller: 'api',
+              deadlineAt: new Date(Date.now() + 65_000),
+              operationAnchor: composeInvocationId,
+            },
+          }
+        : undefined,
     });
     return Response.json(view);
   } catch (err) {
@@ -80,8 +91,17 @@ export async function POST(req: Request): Promise<Response> {
     // 签，违背「每按新抽」语义）。nonce 保留「每次 recompose 重新抽」语义；replay 凭日志记录的 seed
     // （非可从 (date, eventKind) 重导——这是 recompose 与 compose/compose-nightly 的语义分野：后两者
     // 用 date 当 triggerId 是因为**物化幂等**是真 feature（同日重跑 = 同选集，双重检查命中不 double-compose））。
+    const recomposeInvocationId = newId();
     const added = await recomposeStream(db, date, {
-      composeDeps: { rng: buildSeededSelectionRng(date, 'recompose', newId()) },
+      composeDeps: {
+        rng: buildSeededSelectionRng(date, 'recompose', recomposeInvocationId),
+        providerInvocation: {
+          db,
+          caller: 'api',
+          deadlineAt: new Date(Date.now() + 65_000),
+          operationAnchor: recomposeInvocationId,
+        },
+      },
     });
     const view = await getStream(db, date, { enforceBudget: true });
     return Response.json({ added, ...view });

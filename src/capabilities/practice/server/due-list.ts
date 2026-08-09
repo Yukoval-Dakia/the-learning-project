@@ -40,7 +40,7 @@ import {
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
-import { type Db, db } from '@/db/client';
+import { type Db, type Tx, db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { material_fsrs_state, question } from '@/db/schema';
 import { errorResponse } from '@/kernel/http';
@@ -50,9 +50,11 @@ import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 
 // YUK-167 / ADR-0025 — swappable active-goals reader so DB tests inject goal
 // fixtures (mirrors coach_daily.ts / dreaming_nightly.ts CoachRunDeps pattern).
-type ListActiveGoalsFn = (db: Db) => Promise<ActiveGoal[]>;
+type DbLike = Db | Tx;
+type ListActiveGoalsFn = (db: DbLike) => Promise<ActiveGoal[]>;
 
 export interface ReviewDueDeps {
+  db?: DbLike;
   // Defaults to listActiveGoalsWithResolvedScope. The goals only ADD a soft re-rank of the
   // overdue items already selected by the FSRS due-ordering + limit — they
   // never change which items are returned (ND-5).
@@ -90,8 +92,11 @@ function pickLatestFailureByQuestion(failures: FailureAttempt[]): Map<
   return out;
 }
 
-async function loadLatestFailureQuestionIds(candidateLimit: number): Promise<string[]> {
-  const rows = (await db.execute(sql<{ question_id: string }>`
+async function loadLatestFailureQuestionIds(
+  activeDb: DbLike,
+  candidateLimit: number,
+): Promise<string[]> {
+  const rows = (await activeDb.execute(sql<{ question_id: string }>`
     SELECT subject_id AS question_id
     FROM (
       SELECT
@@ -112,6 +117,7 @@ async function loadLatestFailureQuestionIds(candidateLimit: number): Promise<str
 }
 
 async function getFailureAttemptsPerQuestion(
+  activeDb: DbLike,
   questionIds: string[],
   perQuestionLimit: number,
 ): Promise<FailureAttempt[]> {
@@ -121,7 +127,7 @@ async function getFailureAttemptsPerQuestion(
   // previous `limit: qids*cap*3` was a global active-rows cap and let one
   // hot question saturate the window, dropping quiet questions from the
   // never-reviewed slice entirely.
-  return await getFailureAttempts(db, { questionIds, perQuestionLimit });
+  return await getFailureAttempts(activeDb, { questionIds, perQuestionLimit });
 }
 
 // T-CS / YUK-168 — deterministic round-robin SELECTION across subjects.
@@ -198,6 +204,7 @@ type ScheduledDueRow = {
 
 export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): Promise<Response> {
   try {
+    const activeDb = deps.db ?? db;
     // YUK-603 — resolved read: subject_live goals live-derive their scope for the re-rank.
     const listGoals = deps.listActiveGoalsFn ?? listActiveGoalsWithResolvedScope;
     const url = new URL(req.url);
@@ -242,7 +249,7 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
 
     const candidateWindow = Math.min(Math.max(limit * 4, 100), 400);
     const usedDueQuestionIds = new Set<string>();
-    const knowledgeStateRows = await db
+    const knowledgeStateRows = await activeDb
       .select({
         knowledge_id: material_fsrs_state.subject_id,
         state: material_fsrs_state.state,
@@ -264,7 +271,7 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
     // selection below is then pure in-memory over the prefetch, and the shared usedDueQuestionIds
     // set is threaded through the SAME sequential order → byte-identical probe picks.
     const probePrefetch = await prefetchProbeSelection(
-      db,
+      activeDb,
       knowledgeStateRows.map((stateRow) => ({
         knowledgeId: stateRow.knowledge_id,
         lastReviewEventId: stateRow.last_review_event_id ?? null,
@@ -291,7 +298,7 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
       });
     }
 
-    const legacyQuestionStateRows = await db
+    const legacyQuestionStateRows = await activeDb
       .select({
         question_id: material_fsrs_state.subject_id,
         state: material_fsrs_state.state,
@@ -345,10 +352,10 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
     // question has no FSRS state row yet. Use the existing event-stream read
     // path (getFailureAttempts) and filter out already-projected ids.
     const projectedQids = new Set(dueRows.map((r) => r.question_id));
-    const candidateQuestionIds = (await loadLatestFailureQuestionIds(candidateWindow)).filter(
-      (questionId) => !projectedQids.has(questionId),
-    );
-    const newAttempts = await getFailureAttemptsPerQuestion(candidateQuestionIds, 4);
+    const candidateQuestionIds = (
+      await loadLatestFailureQuestionIds(activeDb, candidateWindow)
+    ).filter((questionId) => !projectedQids.has(questionId));
+    const newAttempts = await getFailureAttemptsPerQuestion(activeDb, candidateQuestionIds, 4);
     const newQuestionIds: string[] = [];
     for (const a of newAttempts) {
       if (!projectedQids.has(a.question_id) && !newQuestionIds.includes(a.question_id)) {
@@ -384,7 +391,7 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
       }
 
       // Question-level projection check (legacy unlabeled questions).
-      const existing = await db
+      const existing = await activeDb
         .select({ subject_id: material_fsrs_state.subject_id })
         .from(material_fsrs_state)
         .where(
@@ -398,7 +405,7 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
       // Knowledge-level projection check. Fold in each candidate question's own
       // knowledge_ids (a labeled question's review schedules its knowledge node)
       // plus the failure-attempt referenced ids.
-      const candidateQuestionRows = await db
+      const candidateQuestionRows = await activeDb
         .select({ id: question.id, knowledge_ids: question.knowledge_ids })
         .from(question)
         .where(inArray(question.id, newQuestionIds));
@@ -417,7 +424,7 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
       );
       const projectedKnowledgeIds = new Set<string>();
       if (allCandidateKnowledgeIds.length > 0) {
-        const knowledgeProjections = await db
+        const knowledgeProjections = await activeDb
           .select({ subject_id: material_fsrs_state.subject_id })
           .from(material_fsrs_state)
           .where(
@@ -440,7 +447,7 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
         return true;
       });
       if (trulyNew.length > 0) {
-        const qRows = await db
+        const qRows = await activeDb
           .select({
             id: question.id,
             prompt_md: question.prompt_md,
@@ -469,7 +476,7 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
       }
     }
     const dueQuestionIds = dueRows.map((row) => row.question_id);
-    const dueAttempts = await getFailureAttemptsPerQuestion(dueQuestionIds, 4);
+    const dueAttempts = await getFailureAttemptsPerQuestion(activeDb, dueQuestionIds, 4);
     const latestFailureByQid = pickLatestFailureByQuestion([...newAttempts, ...dueAttempts]);
 
     type OutRow = {
@@ -560,7 +567,7 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
     // byte-identical to the old `combined.slice(0, limit)`. This keeps the
     // current single-subject-heavy usage (and every single-subject test) green.
     const subjectIdByRow = await batchResolveSubjectIds(
-      db,
+      activeDb,
       combined.map((r) => ({ id: r.id, knowledge_ids: r.knowledge_ids })),
     );
     const newSegment = combined.slice(0, newRows.length);
@@ -580,7 +587,7 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
     // contiguous tail of `page`. We stable-partition ONLY that segment so
     // goal-relevant overdue items come first, preserving the original relative
     // order within each group. Items outside the overdue segment are untouched.
-    const reordered = await rerankOverdueByGoals(page, listGoals);
+    const reordered = await rerankOverdueByGoals(activeDb, page, listGoals);
 
     return Response.json({ rows: reordered });
   } catch (err) {
@@ -604,10 +611,11 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
  * is returned with its order unchanged (byte-identical to today).
  */
 async function rerankOverdueByGoals<T extends { fsrs_state: unknown; knowledge_ids: string[] }>(
+  activeDb: DbLike,
   page: T[],
   listGoals: ListActiveGoalsFn,
 ): Promise<T[]> {
-  const activeGoals = await listGoals(db);
+  const activeGoals = await listGoals(activeDb);
   if (activeGoals.length === 0) return page;
 
   const goalScope = new Set<string>();

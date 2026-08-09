@@ -10,6 +10,8 @@
 // mastery / FSRS and never biases judging. `mirrorEvent: 'never'` keeps the
 // internal retrieval out of the user-visible event stream.
 
+import { createHash } from 'node:crypto';
+import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
 import { type MemoryReadClientFactory, readMemoryFacts } from '@/server/memory/read';
 import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';
@@ -77,7 +79,7 @@ export function buildSearchMemoryFactsTool(
   const readDeps = opts.memoryFactory ? { createClient: opts.memoryFactory } : undefined;
 
   async function execute(
-    _ctx: ToolContext,
+    ctx: ToolContext,
     input: SearchMemoryFactsInput,
   ): Promise<SearchMemoryFactsOutput> {
     // P3 (YUK-351): read through the searchMemories wrapper so soft-superseded
@@ -85,12 +87,29 @@ export function buildSearchMemoryFactsTool(
     // reranked. `user_id` is still forced to 'self' inside the client wrapper
     // (client.ts:195) — single-user invariant. `scopeKey` is threaded through the
     // documented `{ contains }` filter shape (client.ts:191-194).
+    if (ctx.providerAttemptCaller === undefined) {
+      throw new TypeError('search_memory_facts requires the actual provider attempt caller');
+    }
+    if (ctx.providerSessionDeadlineAt === undefined) {
+      throw new TypeError('search_memory_facts requires a provider session deadline');
+    }
+    const topK = input.topK ?? DEFAULT_FACTS_TOP_K;
+    const scopeKey = input.scopeKey ?? null;
+    const inputDigest = createHash('sha256')
+      .update(JSON.stringify({ query: input.query, topK, scopeKey }))
+      .digest('hex');
     const result = await readMemoryFacts(
       input.query,
       {
-        topK: input.topK ?? DEFAULT_FACTS_TOP_K,
-        filters: input.scopeKey ? { scope_key: input.scopeKey } : undefined,
+        topK,
+        filters: scopeKey ? { scope_key: scopeKey } : undefined,
       },
+      createMem0OpaqueOperationContext({
+        db: ctx.db,
+        caller: ctx.providerAttemptCaller,
+        deadlineAt: new Date(ctx.providerSessionDeadlineAt),
+        operationAnchor: `search-memory-facts:${ctx.taskRunId}:${inputDigest}`,
+      }),
       readDeps,
     );
     const facts = result.results ?? [];

@@ -1,4 +1,6 @@
 import { type Mock, describe, expect, it, vi } from 'vitest';
+import type { ProviderAttemptLifecycle } from '../ai/provider-attempt-lifecycle';
+import { createMem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
 import { createMem0Config, createMemoryClient } from './client';
 
 // YUK-557 (F1/F7): file-local Mem0Like factory. Mem0Like is the INNER mem0 surface
@@ -27,6 +29,23 @@ const env = {
   ZHIPU_API_KEY: 'zhipu-key',
   DASHSCOPE_API_KEY: 'dashscope-key',
 };
+
+function testProviderOperation() {
+  return createMem0OpaqueOperationContext({
+    caller: 'worker',
+    deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
+    operationAnchor: 'client-unit-operation-852',
+    createLifecycle: (input) => ({
+      identity: input.identity,
+      acquire: async () => ({
+        admission: 'acquired',
+        reserveProviderStart: async () => {},
+        recordExternalRequestId: async () => {},
+        finish: async () => 'settled',
+      }),
+    }),
+  });
+}
 
 describe('createMem0Config', () => {
   it('maps project env to pgvector + 百炼 v4 embedder + GLM openai-compat LLM', () => {
@@ -117,27 +136,145 @@ describe('createMem0Config', () => {
 });
 
 describe('createMemoryClient', () => {
+  it('records one opaque attempt for each real add and canonical search while preserving outputs', async () => {
+    // Given one caller operation, a fake Mem0 surface, and observable attempt identities.
+    const identities: ProviderAttemptLifecycle['identity'][] = [];
+    const finish = vi.fn(async () => 'settled' as const);
+    const providerOperation = createMem0OpaqueOperationContext({
+      caller: 'worker',
+      deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
+      operationAnchor: 'worker-memory-client-matrix-852',
+      createLifecycle: (input) => {
+        identities.push(input.identity);
+        return {
+          identity: input.identity,
+          acquire: async () => ({
+            admission: 'acquired' as const,
+            reserveProviderStart: async () => {},
+            recordExternalRequestId: async () => {},
+            finish,
+          }),
+        };
+      },
+    });
+    const memory = mem0LikeMock({
+      add: vi.fn(async (text: string) => ({ results: [{ id: `add:${text}`, memory: text }] })),
+      search: vi.fn(async (query: string) => ({
+        results: [{ id: 'search-result', memory: query }],
+      })),
+    });
+    const client = createMemoryClient({ env, memoryFactory: () => memory });
+
+    // When every model-bearing public client operation executes once.
+    const eventResult = await client.addEventMemory(
+      {
+        id: 'evt_opaque_852',
+        actor_kind: 'user',
+        action: 'review',
+        subject_kind: 'question',
+        subject_id: 'q852',
+        payload: { answer_md: 'preserved event output' },
+        affected_scopes: ['global', 'topic:k852'],
+        created_at: new Date('2026-08-09T03:00:00.000Z'),
+        kind: 'event',
+      },
+      providerOperation,
+    );
+    const verbatimResult = await client.addVerbatimOnce(
+      'owner corrected fact',
+      { event_id: 'evt_opaque_852', affected_scopes: ['global'] },
+      'projection:evt_opaque_852',
+      providerOperation,
+    );
+    const searchResult = await client.search(
+      'preserve canonical search output',
+      { topK: 2, filters: { scope_key: 'global' } },
+      providerOperation,
+    );
+    const restoreResult = await client.restoreVerbatim(
+      'restored fact',
+      { event_id: 'evt_restore_852', user_id: 'self' },
+      providerOperation,
+    );
+
+    // Then the four real SDK calls preserve their outputs and carry truthful operation kinds.
+    expect(eventResult.results?.[0]?.id).toContain('add:');
+    expect(verbatimResult.results?.[0]?.memory).toBe('owner corrected fact');
+    expect(searchResult.results?.[0]).toEqual({
+      id: 'search-result',
+      memory: 'preserve canonical search output',
+    });
+    expect(restoreResult.results?.[0]?.memory).toBe('restored fact');
+    expect(identities.map((identity) => identity.operationKind)).toEqual([
+      'add_inferred',
+      'add_verbatim',
+      'search',
+      'restore_verbatim',
+    ]);
+    expect(new Set(identities.map((identity) => identity.attemptId))).toHaveLength(4);
+    expect(new Set(identities.map((identity) => identity.operationId))).toHaveLength(1);
+    expect(finish).toHaveBeenCalledTimes(4);
+  });
+
+  it('creates no opaque attempt when addVerbatimOnce returns a getAll cache hit', async () => {
+    // Given a projection already present in the non-model-bearing getAll cache check.
+    const createLifecycle = vi.fn();
+    const providerOperation = createMem0OpaqueOperationContext({
+      caller: 'worker',
+      deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
+      operationAnchor: 'worker-memory-cache-hit-852',
+      createLifecycle,
+    });
+    const memory = mem0LikeMock({
+      getAll: vi.fn(async () => ({
+        results: [{ id: 'existing-852', memory: 'existing fact' }],
+      })),
+    });
+    const client = createMemoryClient({ env, memoryFactory: () => memory });
+
+    // When addVerbatimOnce returns the existing projection.
+    const result = await client.addVerbatimOnce(
+      'existing fact',
+      { event_id: 'evt_existing_852' },
+      'projection:existing-852',
+      providerOperation,
+    );
+
+    // Then getAll stays uninstrumented and no fake provider attempt exists.
+    expect(result.results?.[0]?.id).toBe('existing-852');
+    expect(memory.add).not.toHaveBeenCalled();
+    expect(createLifecycle).not.toHaveBeenCalled();
+  });
+
   it('forces the single-user Mem0 invariant on add/search', async () => {
     const memory = mem0LikeMock({
       search: vi.fn(async () => ({ results: [{ id: 'm1', memory: 'prefers terse feedback' }] })),
     });
     const client = createMemoryClient({ env, memoryFactory: () => memory });
 
-    await client.addEventMemory({
-      id: 'evt_1',
-      actor_kind: 'user',
-      action: 'review',
-      subject_kind: 'question',
-      subject_id: 'q1',
-      payload: { user_response_md: 'A', referenced_knowledge_ids: ['k1'] },
-      affected_scopes: ['global', 'topic:k1'],
-      created_at: new Date('2026-05-27T00:00:00Z'),
-      kind: 'event',
-    });
-    await client.search('what should I remember?', {
-      topK: 3,
-      filters: { user_id: 'other', scope_key: 'topic:k1' },
-    });
+    const providerOperation = testProviderOperation();
+    await client.addEventMemory(
+      {
+        id: 'evt_1',
+        actor_kind: 'user',
+        action: 'review',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        payload: { user_response_md: 'A', referenced_knowledge_ids: ['k1'] },
+        affected_scopes: ['global', 'topic:k1'],
+        created_at: new Date('2026-05-27T00:00:00Z'),
+        kind: 'event',
+      },
+      providerOperation,
+    );
+    await client.search(
+      'what should I remember?',
+      {
+        topK: 3,
+        filters: { user_id: 'other', scope_key: 'topic:k1' },
+      },
+      providerOperation,
+    );
 
     expect(memory.add).toHaveBeenCalledWith(expect.stringContaining('review'), {
       userId: 'self',
@@ -165,32 +302,35 @@ describe('createMemoryClient', () => {
     const memory = mem0LikeMock();
     const client = createMemoryClient({ env, memoryFactory: () => memory });
 
-    await client.addEventMemory({
-      id: 'evt_attempt_snapshot',
-      actor_kind: 'user',
-      action: 'attempt',
-      subject_kind: 'question',
-      subject_id: 'q-child',
-      payload: {
-        answer_md: 'learner answer must remain',
-        question_snapshot: {
-          schema_version: 1,
-          question: {
-            question_id: 'q-child',
-            prompt_md: 'child prompt remains',
-            reference_md: 'CHILD GOLD MUST NOT LEAVE',
-          },
-          parent_question: {
-            question_id: 'q-parent',
-            prompt_md: 'parent prompt remains',
-            reference_md: 'PARENT GOLD MUST NOT LEAVE',
+    await client.addEventMemory(
+      {
+        id: 'evt_attempt_snapshot',
+        actor_kind: 'user',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q-child',
+        payload: {
+          answer_md: 'learner answer must remain',
+          question_snapshot: {
+            schema_version: 1,
+            question: {
+              question_id: 'q-child',
+              prompt_md: 'child prompt remains',
+              reference_md: 'CHILD GOLD MUST NOT LEAVE',
+            },
+            parent_question: {
+              question_id: 'q-parent',
+              prompt_md: 'parent prompt remains',
+              reference_md: 'PARENT GOLD MUST NOT LEAVE',
+            },
           },
         },
+        affected_scopes: ['global'],
+        created_at: new Date('2026-07-28T00:00:00Z'),
+        kind: 'event',
       },
-      affected_scopes: ['global'],
-      created_at: new Date('2026-07-28T00:00:00Z'),
-      kind: 'event',
-    });
+      testProviderOperation(),
+    );
 
     const serialized = memory.add.mock.calls[0]?.[0] as string;
     const extractionInput = JSON.parse(serialized) as {
@@ -254,10 +394,20 @@ describe('createMemoryClient', () => {
     const client = createMemoryClient({ env, memoryFactory: () => memory });
     const metadata = { source: 'conjecture_edit', event_id: 'rate_1' };
 
-    const first = await client.addVerbatimOnce('改写后的判断', metadata, 'conjecture-edit:rate_1');
+    const first = await client.addVerbatimOnce(
+      '改写后的判断',
+      metadata,
+      'conjecture-edit:rate_1',
+      testProviderOperation(),
+    );
     // Simulates pg-boss redelivery after the first add succeeded but the process died
     // before job acknowledgement. The retry must discover and return the same row.
-    const replay = await client.addVerbatimOnce('改写后的判断', metadata, 'conjecture-edit:rate_1');
+    const replay = await client.addVerbatimOnce(
+      '改写后的判断',
+      metadata,
+      'conjecture-edit:rate_1',
+      testProviderOperation(),
+    );
 
     expect(first.results).toHaveLength(1);
     expect(replay.results).toEqual(first.results);

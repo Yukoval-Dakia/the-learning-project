@@ -1,6 +1,7 @@
 import type { Job } from 'pg-boss';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
+import { providerOperationIdForInvocation } from '../ai/provider-attempt-runtime';
 import { resolveQualifyingEventSubjects } from './active-subjects';
 import {
   MAX_BRIEF_REGEN_SCOPES,
@@ -117,7 +118,14 @@ describe('buildMemoryEventIngestHandler', () => {
       event_id: string;
     }>[]);
 
-    expect(addEventMemory).toHaveBeenCalledWith(expect.objectContaining({ id: 'evt_1' }));
+    expect(addEventMemory).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'evt_1' }),
+      expect.objectContaining({
+        caller: 'worker',
+        operationId: providerOperationIdForInvocation('evt_1'),
+        deadlineAt: expect.any(Date),
+      }),
+    );
     // 2 brief regen (global + topic:k1) + 1 reconcile
     expect(boss.send).toHaveBeenCalledTimes(3);
     // Verify reconcile was enqueued with correct ids
@@ -195,6 +203,10 @@ describe('buildMemoryEventIngestHandler', () => {
         kind: 'weakness',
       },
       'conjecture-edit:rate_edited_1',
+      expect.objectContaining({
+        caller: 'worker',
+        operationId: providerOperationIdForInvocation('conjecture-edit:rate_edited_1'),
+      }),
     );
     expect(send).toHaveBeenCalledWith(
       MEMORY_RECONCILE_QUEUE,
@@ -311,7 +323,10 @@ describe('buildMemoryEventIngestHandler', () => {
 
     await handler([{ data: { event_id: 'evt_user' } } as Job<{ event_id: string }>]);
 
-    expect(addEventMemory).toHaveBeenCalledWith(expect.objectContaining({ id: 'evt_user' }));
+    expect(addEventMemory).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'evt_user' }),
+      expect.objectContaining({ caller: 'worker', operationId: expect.any(String) }),
+    );
     expect(send).toHaveBeenCalledWith(
       MEMORY_RECONCILE_QUEUE,
       expect.objectContaining({ user_id: 'self' }),
