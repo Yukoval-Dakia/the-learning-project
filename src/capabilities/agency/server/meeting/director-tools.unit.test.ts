@@ -278,7 +278,7 @@ describe('propose_conjecture — server-enforced single writer', () => {
     expect(input.actor_ref).toBe(RESEARCH_MEETING_AGENT_ACTOR);
     expect(input.caused_by_event_id).toBe('trigger_1');
     expect(input.task_run_id).toBe('probe_author');
-    expect(input.cost_usd).toBe(0);
+    expect(input.cost_usd).toBeNull();
     if (input.payload.kind !== 'conjecture') throw new Error('kind narrowing');
     expect(input.payload.target.subject_kind).toBe('mind_model');
     expect(input.payload.target.subject_id).toBe('k_a');
