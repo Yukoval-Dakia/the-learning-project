@@ -6,6 +6,7 @@
 | 文件 | 职责 |
 |------|------|
 | `runner.ts` | 统一把所有 task 送进 Claude Agent SDK `query()`；支持 `mcpServers` / `allowedTools` / `maxTurns`（`runTask`/`runAgentTask`/`streamTask`）|
+| `sdk-terminal.ts` | 把 SDK assistant/result 消息适配为 lifecycle usage、thinking 元数据与终态证据；不持久化原始 CoT |
 | `providers.ts` | Anthropic provider（xiaomi/mimo 兼容端点）|
 | `log.ts` | run / event 留痕 |
 | `provenance.ts` | source / `last_modified_by` 标记 |
@@ -22,7 +23,8 @@
   `content[]` 的 `thinking` block，不是 OpenAI-compatible 的字面字段
   `reasoning_content`。SDK 0.3.220 会把 omitted / `enabled` 都归一为 wire
   `adaptive`，不能用 Options 值伪称已发送 literal `enabled`；以真实返回的
-  thinking-block metadata 验证运行态，绝不持久化原始 CoT。
+  thinking-block metadata 验证运行态，绝不持久化原始 CoT。每次 lifecycle attempt
+  独占一个 terminal evidence collector；result usage 存在时覆盖 assistant 累加值。
 - 无 skill 的产品调用必须设 `settingSources: []`，避免仓库 `CLAUDE.md`、project
   hooks 和开发指令混入模型上下文；同时传稳定 `title`，不要为 ephemeral task 额外
   发起自动标题模型请求。显式 skill 调用暂保留 omitted settingSources，维持已验证的

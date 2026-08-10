@@ -89,6 +89,7 @@ export const fastTestInclude = [
   // (fetch is stubbed in embed.test.ts; embed-source.test.ts is string-join only).
   'src/server/ai/embed.test.ts',
   'src/server/ai/embed-source.test.ts',
+  'src/server/ai/sdk-terminal.test.ts',
   // YUK-274 — pure (no-DB) unit for the globalThis singleton-cache HMR guard in
   // src/server/boss/client.ts. `pg-boss` is vi.mock'd and the only ./client
   // import is a dynamic `await import()`, so no live Postgres is touched → unit

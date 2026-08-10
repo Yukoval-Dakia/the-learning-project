@@ -12,20 +12,21 @@
   fenced provider-start 后置 add marker、ingest completion/intents、exact deterministic
   dispatch/readback、append-only recovery cursor + bounded wrap scan 第二 leg 与 strict
   `observe|write|recover|drain` 模式已实现；没有 table/migration/new cron。
-- **F2.3 / YUK-861 架构结论为 NO-GO。** Verify transactional outbox、Notes post-commit
+- **F2.3 / YUK-861 NO-GO docs 已合并 main。** squash `f84fe3bc`；Verify transactional outbox、Notes post-commit
   singleton/readback、Memory batch digest/cursor/fail-closed receipt 差异过大；协议保持 owner-local，
-  callback workflow shell 明确拒绝。详见 ADR-0052；Linear closeout 在本 docs 交付合并后执行。
+  callback workflow shell 明确拒绝。详见 ADR-0052；Linear 已取消为 not justified。
+- **F2.4 / YUK-860 SDK terminal adaptation 已完成作者态。** 新 pure collector 统一 assistant
+  usage/thinking 累加与 result terminal evidence；`runTask` 每次 retry、`streamTask`、
+  `streamTaskCollecting` 均为 lifecycle-local 实例。尚未 commit/push/deploy，exact-head CI 与独立 review 待执行。
 - **生产边界不变：** YUK-858 未部署；YUK-832 HOLD 与 YUK-842 observe 未改变。
 
 ## NEXT
 
-1. 以 exact-head GitHub CI、独立 review 和 merge 收口 YUK-861 docs-only 交付，再把 Linear
-   YUK-861 关闭为 not justified。
-2. **F2.4 / YUK-860 是下一实现 lane。** Linear 当前 scope 已核验为统一 Agent SDK terminal
-   evidence adaptation；它独立于 F2.3，不重开 durable handoff 抽象。
-3. YUK-858 rollout 仍需独立授权与真实观察证据，顺序 `observe -> write -> recover`；回滚为
+1. 以 exact-head GitHub CI 与独立 review 收口 YUK-860；不改变 caller 的 retry、abort、partial、
+   settlement 或 logging policy。
+2. YUK-858 rollout 仍需独立授权与真实观察证据，顺序 `observe -> write -> recover`；回滚为
    `recover -> drain -> observe`。
-4. 继续执行 Linear capture gate；generic handoff core 只有 ADR-0052 Future gates 全满足才可重开。
+3. 继续执行 Linear capture gate；generic handoff core 只有 ADR-0052 Future gates 全满足才可重开。
 
 ## PARKED
 
@@ -36,4 +37,4 @@
 ## BLOCKED-ON
 
 - Production blocked on独立部署授权和真实观察证据。
-- YUK-861 docs delivery blocked on exact-head GitHub CI、独立 review 与 merge。
+- YUK-860 delivery blocked on commit/push、exact-head GitHub CI 与独立 review。
