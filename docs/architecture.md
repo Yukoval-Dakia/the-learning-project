@@ -756,6 +756,23 @@ DROP TRIGGER IF EXISTS hub_sync_knowledge_edge_dirty ON knowledge_edge;
 
 **并发注记 — atomic 硬删 vs finalizer 死锁 (X2)**：atomic 硬删事务持 atomic 行锁 → `AFTER DELETE` 触发器 fan-out 要更新 hub cursor；同时 finalizer 持 cursor 锁 → `syncBlockRefsForArtifact` 插 `artifact_block_ref(to_artifact_id=该 atomic)` 需该 atomic 行的 `KEY SHARE` → 两事务互等。这是**可能但收敛安全**的：PostgreSQL 死锁检测（默认 `deadlock_timeout` 1s）解环、abort 一边并抛 `40P01 deadlock_detected`。**finalize 侧**若被 abort，`40P01` 是 5 字符 SQLSTATE → `classifyHubSyncError` 归 `pg_transient` → classified retry → 下一周期自愈（无数据损失，义务不丢）。**删除侧调用方**若被 abort，需容忍并重试该删除（标准写侧重试纪律）。彻底消除方案（如 finalize 先验 refs、或延迟 block-ref fan-out）是 follow-up，非本 PR——单用户规模下死锁窗口极小，PG 解环 + 自愈已足。
 
+### 十.2 Owner-local durable handoff protocols (YUK-861 NO-GO)
+
+YUK-861 对 Verify、Notes、Memory 三条 durable handoff 做了架构 closeout；结论写入
+[`ADR-0052`](adr/0052-owner-local-durable-handoff-protocols.md)：它们都支持 crash recovery，但不是同一
+个协议，不建立 generic handoff core 或 callback workflow shell。
+
+| owner | 事实与提交边界 | receipt / recovery |
+|---|---|---|
+| Verify (`src/server/boss/verify-dispatch-outbox.ts`) | draft 与 `writeVerifyDispatchIntent()` 同一 transaction；`dispatchPendingVerifyIntents()` 锁 pending intent，并用 `fromPgBossDrizzleTx(tx)` enqueue | enqueue 与 per-question/verifier completion 同一 transaction；失败保留 intent，`recoverOrphanVerifyDispatches()` 只恢复 verify |
+| Notes (`src/capabilities/notes/server/note-handoff.ts`) | artifact transaction 写 append-only intent；queue send 在 commit 后发生 | exact returned job ID 或 exact `getJobById()` readback 确认 receipt 后写 completion；`hub_sync_recovery` 作为共享 floor，claim/result recovery 仍由 Notes 自己拥有 |
+| Memory (`src/server/memory/memory-reconcile-handoff*.ts`) | DB transaction 只写 marker/intent/completion/cursor；Mem0 lookup/SDK 与 pg-boss 在 transaction 外 | 上游 provider truth 由 fence、`add_started` 和 resolution 约束；下游一个 batch job 的 exact receipt 被物化为共享 job/digest 的多条 per-memory completion；严格 `observe|write|recover|drain` 与 append-only bounded cursor 保持 Memory-owned |
+
+这三个边界必须继续由各 owner 维护。重复少量机械 dispatch/readback 代码是可接受的架构成本；
+不得以 callback 成功、共享 completion 或统一 optional-field shell 替代真实 transaction、provider、
+digest、cursor 与 receipt 语义。YUK-858 已合并 `136faec8224c0f0136532c748aea1bbc689ca7b7`，exact-head CI
+`31362608190` green；本状态不代表已部署，YUK-832 继续 HOLD、YUK-842 production 继续 observe。
+
 **学习会话 (LearningSession) 多态状态机** (ADR-0008，演化自 ADR-0005；[CONTEXT.md](../CONTEXT.md) "录入会话")：
 
 `learning_session` 表承载 6 种会话类型：`ingestion | review | tutor | explore | create | conversation`。Phase 1c.1 实现前 2 种；余 4 种 enum 占位、行为延后。
