@@ -2772,6 +2772,22 @@ describe('migration smoke — YUK-857 note verification claim', () => {
       VALUES ('claim-artifact',0,'result_ready',now(),now(),now())
     `).rejects.toMatchObject({ constraint_name: 'note_verification_claim_shape_ck' });
     await expect(client`
+      INSERT INTO note_verification_claim (
+        artifact_id,artifact_version,state,provider_attempts,available_at,created_at,updated_at
+      ) VALUES ('claim-artifact',0,'retry_wait',4,now(),now(),now())
+    `).rejects.toMatchObject({
+      constraint_name: 'note_verification_claim_provider_attempts_ck',
+    });
+    await expect(client`
+      INSERT INTO note_verification_claim (
+        artifact_id,artifact_version,state,provider_attempts,error_message,
+        available_at,created_at,updated_at
+      ) VALUES (
+        'claim-artifact',0,'attempts_exhausted',3,'provider attempt limit reached',
+        now(),now(),now()
+      )
+    `).resolves.toBeDefined();
+    await expect(client`
       INSERT INTO note_verification_claim (artifact_id,artifact_version,state,available_at,created_at,updated_at)
       VALUES ('missing-artifact',0,'retry_wait',now(),now(),now())
     `).rejects.toMatchObject({ code: '23503' });

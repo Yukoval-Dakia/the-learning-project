@@ -21,7 +21,7 @@ describe('Notes handoff ownership boundary', () => {
       readFile(new URL('../../server/proposals/actions.ts', import.meta.url), 'utf8'),
     ]);
     expect(generateSource).not.toContain('onReady');
-    expect(applierSource).not.toContain("boss.send(\n    'note_generate'");
+    expect(applierSource).not.toMatch(/boss\.send\s*\(\s*['"]note_generate['"]/);
     expect(applierSource).not.toContain('NOTE_GENERATE_SINGLETON_SECONDS');
     expect(applierSource).not.toContain('@/capabilities/notes/');
     expect(actionsSource).toContain('dispatchNoteGeneration');

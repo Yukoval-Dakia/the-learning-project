@@ -16,14 +16,16 @@
 - **YUK-855 已交付 main。** YUK-857 前置依赖解除。
 - **YUK-857 是当前 active handoff。** PR #1174 已承载 event v1 intent/completion、deterministic
   pg-boss UUID/readback、indexed 每分钟 recovery、0093 Notes verification claim、
-  artifact-version/fence CAS、raw-result recovery 与 Notes-owned task definitions。前一候选
-  `ddf5ac96` 的 GitHub CI 全绿；final security review 发现的 confirmed-failure recovery gap 已在
-  当前变更中修复，新 head 仍待 fresh exact-head CI/review。未做本地 runtime 验证。
+  artifact-version/fence CAS、raw-result recovery 与 Notes-owned task definitions。SHA
+  `860e39cf` 的 exact-head CI run `31343456441` 已全绿，但后续 PR review 确认 provider-start
+  boundary、跨 recovery job 无界 paid retry、claim recovery 吞错三条 P1。当前 worktree repair
+  已 author，并经 correctness / quality / security static review PASS；尚未 commit/push，新 head
+  仍待 fresh exact-head CI/review。未做本地 runtime 验证。
 - **运行状态：**没有 deployment；YUK-832 HOLD 与 YUK-842 observe 均未改变。
 
 ## NEXT
 
-1. 推送 YUK-857 final review fix 与本次 handoff 同步。
+1. Commit/push 当前 YUK-857 repair 与本次 handoff 同步。
 2. 只以 fresh exact-head GitHub CI + 独立 review 验证 tests/typecheck/build。
 3. CI/review 全绿后 merge、同步 Linear；F2.2–F4 继续保持 open。
 

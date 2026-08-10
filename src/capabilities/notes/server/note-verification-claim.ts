@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { and, eq, inArray, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
 
 import type { NoteVerificationResultT } from '@/core/schema/business';
 import { NoteVerificationResult } from '@/core/schema/business';
@@ -11,6 +11,7 @@ import { z } from 'zod';
 const CLAIM_RETRY_DELAY_MS = 30_000;
 const RESERVED_LEASE_MS = 20_000;
 const PROVIDER_STARTED_LEASE_MS = 3_900_000;
+export const NOTE_VERIFICATION_PROVIDER_ATTEMPT_LIMIT = 3;
 
 const TaskTextResultSchema = z.object({
   text: z.string(),
@@ -49,6 +50,7 @@ export type NoteVerificationReservation =
   | { kind: 'result_ready'; staged: StagedNoteVerification }
   | { kind: 'busy' }
   | { kind: 'ambiguous' }
+  | { kind: 'attempts_exhausted' }
   | { kind: 'completed' }
   | { kind: 'not_found'; artifactType?: string }
   | { kind: 'not_ready'; artifactType?: string }
@@ -119,6 +121,7 @@ export async function reserveNoteVerification(
           task_run_id: null,
           result_json: null,
           result_attempts: 0,
+          provider_attempts: 0,
           error_message: null,
           available_at: now,
           claimed_at: null,
@@ -138,6 +141,7 @@ export async function reserveNoteVerification(
         task_run_id: null,
         result_json: null,
         result_attempts: 0,
+        provider_attempts: 0,
         available_at: now,
       };
     }
@@ -155,6 +159,9 @@ export async function reserveNoteVerification(
     }
     if (claim.state === 'ambiguous') {
       return { kind: 'ambiguous' };
+    }
+    if (claim.state === 'attempts_exhausted') {
+      return { kind: 'attempts_exhausted' };
     }
     if (claim.state === 'provider_started') {
       if (claim.lease_expires_at && claim.lease_expires_at <= now) {
@@ -221,6 +228,19 @@ export async function reserveNoteVerification(
       return { kind: 'not_queued', artifactType: artifactRow.type };
     }
     if (claim.available_at.getTime() > now.getTime()) return { kind: 'busy' };
+    if (claim.provider_attempts >= NOTE_VERIFICATION_PROVIDER_ATTEMPT_LIMIT) {
+      await tx
+        .update(note_verification_claim)
+        .set({
+          state: 'attempts_exhausted',
+          claim_token: null,
+          task_run_id: null,
+          error_message: 'provider attempt limit reached',
+          updated_at: now,
+        })
+        .where(eq(note_verification_claim.artifact_id, artifactId));
+      return { kind: 'attempts_exhausted' };
+    }
 
     const fence = claim.fence + 1;
     const token = randomUUID();
@@ -283,19 +303,66 @@ function artifactEpochIsCurrent(lease: NoteVerificationLease) {
 export async function markNoteVerificationProviderStarted(
   db: Db,
   lease: NoteVerificationLease,
-): Promise<boolean> {
-  const now = new Date();
-  const rows = await db
-    .update(note_verification_claim)
-    .set({
-      state: 'provider_started',
-      provider_started_at: now,
-      lease_expires_at: new Date(now.getTime() + PROVIDER_STARTED_LEASE_MS),
-      updated_at: now,
-    })
-    .where(and(leasePredicate(lease, 'reserved'), artifactEpochIsCurrent(lease)))
-    .returning({ artifactId: note_verification_claim.artifact_id });
-  return rows.length === 1;
+): Promise<
+  | { kind: 'started'; providerAttempts: number }
+  | { kind: 'attempts_exhausted' }
+  | { kind: 'claim_changed' }
+> {
+  return db.transaction(async (tx) => {
+    const now = new Date();
+    const rows = await tx
+      .update(note_verification_claim)
+      .set({
+        state: 'provider_started',
+        provider_attempts: sql`${note_verification_claim.provider_attempts} + 1`,
+        provider_started_at: now,
+        lease_expires_at: new Date(now.getTime() + PROVIDER_STARTED_LEASE_MS),
+        updated_at: now,
+      })
+      .where(
+        and(
+          leasePredicate(lease, 'reserved'),
+          artifactEpochIsCurrent(lease),
+          lt(note_verification_claim.provider_attempts, NOTE_VERIFICATION_PROVIDER_ATTEMPT_LIMIT),
+        ),
+      )
+      .returning({ providerAttempts: note_verification_claim.provider_attempts });
+    const started = rows[0];
+    if (started) return { kind: 'started', providerAttempts: started.providerAttempts };
+
+    const claimRows = await tx
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, lease.artifactId))
+      .for('update')
+      .limit(1);
+    const claim = claimRows[0];
+    if (
+      claim?.state !== 'reserved' ||
+      claim.artifact_version !== lease.artifactVersion ||
+      claim.fence !== lease.fence ||
+      claim.claim_token !== lease.token ||
+      claim.task_run_id !== lease.taskRunId
+    ) {
+      return { kind: 'claim_changed' };
+    }
+    if (claim.provider_attempts < NOTE_VERIFICATION_PROVIDER_ATTEMPT_LIMIT) {
+      return { kind: 'claim_changed' };
+    }
+    await tx
+      .update(note_verification_claim)
+      .set({
+        state: 'attempts_exhausted',
+        claim_token: null,
+        task_run_id: null,
+        claimed_at: null,
+        lease_expires_at: null,
+        error_message: 'provider attempt limit reached',
+        updated_at: now,
+      })
+      .where(leasePredicate(lease, 'reserved'));
+    return { kind: 'attempts_exhausted' };
+  });
 }
 
 export async function stageNoteVerificationResult(
@@ -496,6 +563,7 @@ export async function supersedeNoteVerificationEpoch(
         task_run_id: null,
         result_json: null,
         result_attempts: 0,
+        provider_attempts: 0,
         error_message: 'artifact epoch superseded active verification',
         available_at: now,
         lease_expires_at: null,
@@ -670,6 +738,7 @@ export async function prepareNoteVerificationResultRecovery(
           task_run_id: null,
           result_json: null,
           result_attempts: 0,
+          provider_attempts: 0,
           error_message: 'artifact epoch superseded during claim recovery',
           available_at: now,
           lease_expires_at: null,
@@ -730,6 +799,24 @@ export async function prepareNoteVerificationResultRecovery(
     }
     if (claim.available_at > now) return null;
     if (claim.state === 'retry_wait' && !claim.task_run_id && !claim.result_json) {
+      if (claim.provider_attempts >= NOTE_VERIFICATION_PROVIDER_ATTEMPT_LIMIT) {
+        await tx
+          .update(note_verification_claim)
+          .set({
+            state: 'attempts_exhausted',
+            error_message: 'provider attempt limit reached',
+            updated_at: now,
+          })
+          .where(
+            and(
+              eq(note_verification_claim.artifact_id, artifactId),
+              eq(note_verification_claim.state, 'retry_wait'),
+              eq(note_verification_claim.fence, claim.fence),
+              eq(note_verification_claim.artifact_version, claim.artifact_version),
+            ),
+          );
+        return null;
+      }
       return { kind: 'retry_required', artifactId, fence: claim.fence };
     }
     if (claim.state === 'result_ready') {

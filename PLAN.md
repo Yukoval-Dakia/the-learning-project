@@ -23,14 +23,16 @@
 - **F0.5 / YUK-855 已交付 main。** YUK-857 的前置依赖已解除。
 - **F2.1 / YUK-857 是当前 active implementation。** Notes append-only handoff、deterministic
   dispatch/readback、indexed manifest recovery、version/fence verification claim 与 Notes-owned task
-  definitions 已进入 PR #1174；0093 迁移加入短事务 reserve/result/finalize 状态机。前一候选 SHA
-  `ddf5ac96` 的 GitHub CI 全绿，final security review 发现的 confirmed-failure recovery gap 已在当前
-  变更中修复；新 head 仍须 fresh exact-head CI/review。owner 禁止本地 test/typecheck/build/audit/migration。
+  definitions 已进入 PR #1174；0093 迁移加入短事务 reserve/result/finalize 状态机。SHA
+  `860e39cf` 的 exact-head CI run `31343456441` 已全绿，但后续 PR review 确认 provider-start
+  boundary、跨 recovery job 无界 paid retry、claim recovery 吞错三条 P1。当前 worktree repair
+  已 author，并经 correctness / quality / security static review PASS；尚未 commit/push，仍须新
+  exact-head CI/review。owner 禁止本地 test/typecheck/build/audit/migration。
 - **生产边界不变。** F0.0–F0.4 均未部署；YUK-832 继续 HOLD，YUK-842 production 继续 observe。
 
 ## NEXT
 
-1. 推送 YUK-857 final review fix 与本次 handoff 同步；不在本地跑 runtime gates。
+1. Commit/push 当前 YUK-857 repair 与本次 handoff 同步；不在本地跑 runtime gates。
 2. 只以 fresh exact-head GitHub CI 与独立 review 验证 runtime/type/test gates；绿后 merge、同步 Linear。
 3. F2.2–F4 继续按依赖与 owner 优先级单独收敛。
 4. production observation / deployment 需单独授权。

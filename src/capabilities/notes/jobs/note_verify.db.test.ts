@@ -13,6 +13,7 @@ import postgres from 'postgres';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
+  type RunTaskFn,
   buildNoteVerifyHandler,
   recoverResultReadyNoteVerifications,
   runNoteVerify,
@@ -45,6 +46,17 @@ function fakeBoss() {
   return { jobs, send, getJobById };
 }
 
+async function crossProviderBoundary(ctx: Parameters<RunTaskFn>[2]): Promise<void> {
+  if (!ctx?.taskRunId || !ctx.beforeProviderQuery) {
+    throw new Error('provider boundary callback missing');
+  }
+  await ctx.beforeProviderQuery({
+    taskRunId: ctx.taskRunId,
+    provider: 'anthropic-sub',
+    model: 'test',
+  });
+}
+
 async function seedArtifact(id: string, version = 0, db: Db = testDb()): Promise<void> {
   const now = new Date();
   await db.insert(artifact).values({
@@ -72,7 +84,10 @@ describe('runNoteVerify durable claim', () => {
 
   it('completes once and exits before AI on redelivery', async () => {
     await seedArtifact('completed');
-    const runTaskFn = vi.fn(async () => ({ text: PASS_OUTPUT }));
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      return { text: PASS_OUTPUT };
+    });
     await expect(
       runNoteVerify({ db: testDb(), artifactId: 'completed', runTaskFn }),
     ).resolves.toMatchObject({ status: 'verified' });
@@ -85,6 +100,7 @@ describe('runNoteVerify durable claim', () => {
       .from(note_verification_claim)
       .where(eq(note_verification_claim.artifact_id, 'completed'));
     expect(claim.state).toBe('completed');
+    expect(claim.provider_attempts).toBe(1);
   });
 
   it('keeps no-sections deliveries skipped without leaving a recoverable claim', async () => {
@@ -114,7 +130,8 @@ describe('runNoteVerify durable claim', () => {
     const wait = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const runTaskFn = vi.fn(async () => {
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
       await wait;
       return { text: PASS_OUTPUT };
     });
@@ -134,7 +151,8 @@ describe('runNoteVerify durable claim', () => {
     const wait = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const runTaskFn = vi.fn(async () => {
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
       await wait;
       return { text: PASS_OUTPUT };
     });
@@ -159,7 +177,8 @@ describe('runNoteVerify durable claim', () => {
     const wait = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const runTaskFn = vi.fn(async () => {
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
       await wait;
       return { text: PASS_OUTPUT };
     });
@@ -192,11 +211,55 @@ describe('runNoteVerify durable claim', () => {
     }
   });
 
+  it('retries a pre-wire startup failure without consuming a provider attempt', async () => {
+    await seedArtifact('pre-wire');
+    const startupFailure = vi.fn(async () => {
+      throw new Error('sdk startup failed');
+    });
+
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'pre-wire', runTaskFn: startupFailure }),
+    ).rejects.toThrow('sdk startup failed');
+    const [released] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'pre-wire'));
+    expect(released).toMatchObject({
+      state: 'retry_wait',
+      provider_attempts: 0,
+      provider_started_at: null,
+      task_run_id: null,
+    });
+    const taskRuns = await testDb()
+      .select({ id: ai_task_runs.id })
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.task_kind, 'NoteVerifyTask'));
+    expect(taskRuns).toEqual([]);
+
+    await testDb()
+      .update(note_verification_claim)
+      .set({ available_at: new Date(0) })
+      .where(eq(note_verification_claim.artifact_id, 'pre-wire'));
+    const successfulRetry = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      return { text: PASS_OUTPUT };
+    });
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'pre-wire', runTaskFn: successfulRetry }),
+    ).resolves.toMatchObject({ status: 'verified' });
+    const [completed] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'pre-wire'));
+    expect(completed.provider_attempts).toBe(1);
+  });
+
   it('recovery redispatches an exhausted confirmed-failure retry without another AI call', async () => {
     await seedArtifact('retry');
     let calls = 0;
     const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
       calls += 1;
+      await crossProviderBoundary(ctx);
       if (calls > 1) return { text: PASS_OUTPUT };
       const now = new Date();
       await testDb()
@@ -248,7 +311,8 @@ describe('runNoteVerify durable claim', () => {
 
   it('fails closed when provider start cannot be reconciled', async () => {
     await seedArtifact('ambiguous');
-    const runTaskFn = vi.fn(async () => {
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
       throw new Error('connection lost after start');
     });
     await expect(
@@ -258,6 +322,97 @@ describe('runNoteVerify durable claim', () => {
       runNoteVerify({ db: testDb(), artifactId: 'ambiguous', runTaskFn }),
     ).resolves.toMatchObject({ status: 'skipped:ambiguous' });
     expect(runTaskFn).toHaveBeenCalledTimes(1);
+    const [claim] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'ambiguous'));
+    expect(claim).toMatchObject({ state: 'ambiguous', provider_attempts: 1 });
+  });
+
+  it('caps persistent confirmed failures at three provider starts across recovery jobs', async () => {
+    await seedArtifact('attempt-cap');
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      const now = new Date();
+      await testDb()
+        .insert(ai_task_runs)
+        .values({
+          id: ctx.taskRunId ?? 'missing',
+          task_kind: 'NoteVerifyTask',
+          provider: 'test',
+          model: 'test',
+          input_hash: 'test',
+          status: 'failure',
+          finish_reason: 'error',
+          error_message: 'persistent failure',
+          started_at: now,
+          finished_at: now,
+        });
+      throw new Error('persistent failure');
+    });
+    const boss = fakeBoss();
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await expect(
+        runNoteVerify({ db: testDb(), artifactId: 'attempt-cap', runTaskFn }),
+      ).rejects.toThrow('persistent failure');
+      const [claim] = await testDb()
+        .select()
+        .from(note_verification_claim)
+        .where(eq(note_verification_claim.artifact_id, 'attempt-cap'));
+      expect(claim.provider_attempts).toBe(attempt);
+      expect(claim.state).toBe('retry_wait');
+      await testDb()
+        .update(note_verification_claim)
+        .set({ available_at: new Date(0) })
+        .where(eq(note_verification_claim.artifact_id, 'attempt-cap'));
+      await expect(recoverResultReadyNoteVerifications(testDb(), { boss })).resolves.toBe(0);
+    }
+
+    expect(runTaskFn).toHaveBeenCalledTimes(3);
+    expect(boss.send).toHaveBeenCalledTimes(2);
+    const [exhausted] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'attempt-cap'));
+    expect(exhausted).toMatchObject({
+      state: 'attempts_exhausted',
+      provider_attempts: 3,
+      provider_started_at: null,
+      task_run_id: null,
+    });
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'attempt-cap', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:attempts_exhausted' });
+    expect(runTaskFn).toHaveBeenCalledTimes(3);
+  });
+
+  it('resets the provider-attempt budget only for a new artifact epoch', async () => {
+    await seedArtifact('new-epoch', 1);
+    const now = new Date();
+    await testDb().insert(note_verification_claim).values({
+      artifact_id: 'new-epoch',
+      artifact_version: 0,
+      state: 'attempts_exhausted',
+      provider_attempts: 3,
+      error_message: 'provider attempt limit reached',
+      available_at: now,
+      created_at: now,
+      updated_at: now,
+    });
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      return { text: PASS_OUTPUT };
+    });
+
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'new-epoch', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'verified' });
+    const [claim] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'new-epoch'));
+    expect(claim).toMatchObject({ artifact_version: 1, provider_attempts: 1, state: 'completed' });
   });
 
   it('finalizes durable result_ready without a second AI call', async () => {
@@ -272,6 +427,38 @@ describe('runNoteVerify durable claim', () => {
     await expect(recoverResultReadyNoteVerifications(testDb())).resolves.toBe(1);
     const [row] = await testDb().select().from(artifact).where(eq(artifact.id, 'result-ready'));
     expect(row.verification_status).toBe('verified');
+  });
+
+  it('continues a recovery batch after one item fails, then rejects the batch', async () => {
+    await seedArtifact('batch-a-bad');
+    await seedArtifact('batch-b-good');
+    const bad = await reserveNoteVerification(testDb(), 'batch-a-bad');
+    const good = await reserveNoteVerification(testDb(), 'batch-b-good');
+    if (bad.kind !== 'claimed' || good.kind !== 'claimed') throw new Error('expected claims');
+    await markNoteVerificationProviderStarted(testDb(), bad.lease);
+    await markNoteVerificationProviderStarted(testDb(), good.lease);
+    await stageNoteVerificationResult(testDb(), bad.lease, {
+      kind: 'provider_result',
+      taskResult: { text: 'not-json', task_run_id: bad.lease.taskRunId },
+    });
+    await stageNoteVerificationResult(testDb(), good.lease, {
+      kind: 'provider_result',
+      taskResult: { text: PASS_OUTPUT, task_run_id: good.lease.taskRunId },
+    });
+
+    await expect(recoverResultReadyNoteVerifications(testDb())).rejects.toThrow(
+      'note verification recovery batch failed',
+    );
+    const [badClaim] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'batch-a-bad'));
+    const [goodArtifact] = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, 'batch-b-good'));
+    expect(badClaim.state).toBe('retry_wait');
+    expect(goodArtifact.verification_status).toBe('verified');
   });
 
   it('cron requeues an expired pre-provider reservation and the handler completes it', async () => {
@@ -292,7 +479,10 @@ describe('runNoteVerify durable claim', () => {
     expect(recovered.state).toBe('retry_wait');
     expect(recovered.claim_token).toBeNull();
     expect(recovered.fence).toBeGreaterThan(first.lease.fence);
-    const runTaskFn = vi.fn(async () => ({ text: PASS_OUTPUT }));
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      return { text: PASS_OUTPUT };
+    });
     const handler = buildNoteVerifyHandler(testDb(), { runTaskFn });
     await expect(
       handler([{ id: 'claim-recovery', data: { artifact_id: 'expired-reserved' } } as never]),
@@ -311,7 +501,9 @@ describe('runNoteVerify durable claim', () => {
     const boss = fakeBoss();
     boss.send.mockRejectedValueOnce(new Error('send unavailable'));
     boss.getJobById.mockRejectedValueOnce(new Error('readback unavailable'));
-    await expect(recoverResultReadyNoteVerifications(testDb(), { boss })).resolves.toBe(0);
+    await expect(recoverResultReadyNoteVerifications(testDb(), { boss })).rejects.toThrow(
+      'note verification recovery batch failed',
+    );
     const [pendingRetry] = await testDb()
       .select()
       .from(note_verification_claim)
@@ -357,7 +549,9 @@ describe('runNoteVerify durable claim', () => {
       taskResult: { text: 'not-json' },
     });
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      await expect(recoverResultReadyNoteVerifications(testDb())).resolves.toBe(0);
+      await expect(recoverResultReadyNoteVerifications(testDb())).rejects.toThrow(
+        'note verification recovery batch failed',
+      );
       const [deferred] = await testDb()
         .select()
         .from(note_verification_claim)
@@ -390,7 +584,8 @@ describe('runNoteVerify durable claim', () => {
       release = resolve;
     });
     let calls = 0;
-    const runTaskFn = vi.fn(async () => {
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
       calls += 1;
       if (calls === 1) await wait;
       return { text: PASS_OUTPUT };
@@ -423,8 +618,8 @@ describe('runNoteVerify durable claim', () => {
     const reservation = await reserveNoteVerification(testDb(), 'pre-start-epoch');
     if (reservation.kind !== 'claimed') throw new Error('expected claim');
     await testDb().update(artifact).set({ version: 1 }).where(eq(artifact.id, 'pre-start-epoch'));
-    await expect(markNoteVerificationProviderStarted(testDb(), reservation.lease)).resolves.toBe(
-      false,
-    );
+    await expect(
+      markNoteVerificationProviderStarted(testDb(), reservation.lease),
+    ).resolves.toMatchObject({ kind: 'claim_changed' });
   });
 });

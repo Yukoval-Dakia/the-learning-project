@@ -73,6 +73,7 @@ export interface RunNoteVerifyResult {
     | 'skipped:not_queued'
     | 'skipped:no_sections'
     | 'skipped:in_progress'
+    | 'skipped:attempts_exhausted'
     | 'skipped:ambiguous';
   artifact_type?: string;
   issues_count?: number;
@@ -323,6 +324,9 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
     return { status: 'skipped:not_queued', artifact_type: reservation.artifactType };
   }
   if (reservation.kind === 'completed') return { status: 'skipped:not_queued' };
+  if (reservation.kind === 'attempts_exhausted') {
+    return { status: 'skipped:attempts_exhausted' };
+  }
   if (reservation.kind === 'ambiguous') return { status: 'skipped:ambiguous' };
   if (reservation.kind === 'busy') return { status: 'skipped:in_progress' };
 
@@ -358,21 +362,39 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
         throw error;
       }
     })();
-    if (!(await markNoteVerificationProviderStarted(db, lease))) {
-      await supersedeNoteVerificationEpoch(db, lease);
-      throw noteVerificationRetryRequired(artifactId, 'provider-start claim changed');
-    }
+    let providerBoundaryCrossed = false;
     try {
       const taskResult = await runTaskFn('NoteVerifyTask', input, {
         subjectProfile: runtime.subjectProfile,
         skills: runtime.skills,
         taskRunId: lease.taskRunId,
+        beforeProviderQuery: async () => {
+          const providerStart = await markNoteVerificationProviderStarted(db, lease);
+          switch (providerStart.kind) {
+            case 'started':
+              providerBoundaryCrossed = true;
+              return;
+            case 'attempts_exhausted':
+              throw noteVerificationRetryRequired(artifactId, 'provider attempts exhausted');
+            case 'claim_changed':
+              await supersedeNoteVerificationEpoch(db, lease);
+              throw noteVerificationRetryRequired(artifactId, 'provider-start claim changed');
+            default: {
+              const exhaustive: never = providerStart;
+              throw new Error(`unhandled provider-start result: ${String(exhaustive)}`);
+            }
+          }
+        },
       });
       staged = {
         kind: 'provider_result',
         taskResult: { ...taskResult, task_run_id: lease.taskRunId },
       };
     } catch (error) {
+      if (!providerBoundaryCrossed) {
+        await releaseReservedNoteVerificationForRetry(db, lease, error);
+        throw error;
+      }
       let durableStatus: string | null = null;
       try {
         const statusRows = await db
@@ -405,6 +427,7 @@ export async function recoverResultReadyNoteVerifications(
 ): Promise<number> {
   const artifactIds = await listRecoverableNoteVerificationResults(db);
   let finalized = 0;
+  const errors: unknown[] = [];
   for (const artifactId of artifactIds) {
     try {
       const prepared = await prepareNoteVerificationResultRecovery(db, artifactId);
@@ -417,7 +440,11 @@ export async function recoverResultReadyNoteVerifications(
       if (result.status === 'verified' || result.status === 'needs_review') finalized += 1;
     } catch (error) {
       console.error('[note_verify] result recovery deferred', artifactId, error);
+      errors.push(error);
     }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(errors, 'note verification recovery batch failed');
   }
   return finalized;
 }

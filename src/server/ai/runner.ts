@@ -104,6 +104,14 @@ export type TaskEventMessage =
 
 export type TaskEventObserver = (event: TaskEventMessage) => Promise<void> | void;
 
+export type ProviderQueryStartContext = {
+  readonly taskRunId: string;
+  readonly provider: ResolvedProvider['provider'];
+  readonly model: string;
+};
+
+export type BeforeProviderQuery = (context: ProviderQueryStartContext) => Promise<void>;
+
 export interface TaskMiddleware {
   /**
    * Called once before the model invocation. Can return a transformed
@@ -244,6 +252,8 @@ export interface RunTaskCtx {
    * attempt; any opt-in transient retry gets a fresh id to preserve row identity.
    */
   taskRunId?: string;
+  /** Runs after durable attempt creation and immediately before WarmQuery.query submits a prompt. */
+  beforeProviderQuery?: BeforeProviderQuery;
   /**
    * Active outer central attempt for a nested DomainTool run. Same-lane children
    * borrow the parent's session-concurrency slot so maxConcurrency=1 cannot
@@ -581,6 +591,7 @@ async function withPreparedSdkQuery<TResult extends RunTaskResult, TValue>(
   prompt: string | AsyncIterable<SDKUserMessage>,
   options: Options,
   consume: (query: Query) => Promise<TValue>,
+  beforeProviderQuery?: BeforeProviderQuery,
 ): Promise<TValue> {
   let warmQuery: WarmQuery | undefined;
   let activeQuery: Query | undefined;
@@ -596,6 +607,11 @@ async function withPreparedSdkQuery<TResult extends RunTaskResult, TValue>(
     },
     async run() {
       if (!warmQuery) throw new Error('SDK startup completed without a warm query handle');
+      await beforeProviderQuery?.({
+        taskRunId: lifecycle.taskRunId,
+        provider: lifecycle.resolved.provider,
+        model: lifecycle.resolved.model,
+      });
       activeQuery = warmQuery.query(prompt);
       return consume(activeQuery);
     },
@@ -653,7 +669,7 @@ async function runTaskAttempt(args: {
   // started yet.
   const sdkPrompt = promptFromInput(actualInput);
   const sdkOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
-  await withPreparedSdkQuery(lifecycle, actualInput, sdkPrompt, sdkOptions, async (q) => {
+  const consumeSdkQuery = async (q: Query) => {
     let stepStartTime = Date.now();
     if (args.warnMissingMcp) {
       logMissingMcpServersWarning({
@@ -735,7 +751,15 @@ async function runTaskAttempt(args: {
         errors: [],
       });
     }
-  });
+  };
+  await withPreparedSdkQuery(
+    lifecycle,
+    actualInput,
+    sdkPrompt,
+    sdkOptions,
+    consumeSdkQuery,
+    ctx.beforeProviderQuery,
+  );
 
   // The provider permit is released before attempt settlement / afterRun. A DB
   // observation write must never occupy scarce upstream session capacity.
@@ -923,7 +947,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
           lifecycle.abortController,
           lifecycle.resolved,
         );
-        await withPreparedSdkQuery(lifecycle, actualInput, sdkPrompt, sdkOptions, async (q) => {
+        const consumeSdkQuery = async (q: Query) => {
           let stepStartTime = Date.now();
           for await (const msg of q) {
             await notifyTaskEvent(ctx, msg);
@@ -988,7 +1012,15 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
               errors: [],
             });
           }
-        });
+        };
+        await withPreparedSdkQuery(
+          lifecycle,
+          actualInput,
+          sdkPrompt,
+          sdkOptions,
+          consumeSdkQuery,
+          ctx.beforeProviderQuery,
+        );
 
         const result: RunTaskResult = {
           task_run_id: lifecycle.taskRunId,
@@ -1248,7 +1280,7 @@ export async function streamTaskCollecting(
       : input;
     const sdkPrompt = promptFromInput(actualInput);
     const sdkOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
-    await withPreparedSdkQuery(lifecycle, actualInput, sdkPrompt, sdkOptions, async (q) => {
+    const consumeSdkQuery = async (q: Query) => {
       let stepStartTime = Date.now();
       for await (const msg of q) {
         await notifyTaskEvent(ctx, msg);
@@ -1318,7 +1350,15 @@ export async function streamTaskCollecting(
           errors: [],
         });
       }
-    });
+    };
+    await withPreparedSdkQuery(
+      lifecycle,
+      actualInput,
+      sdkPrompt,
+      sdkOptions,
+      consumeSdkQuery,
+      ctx.beforeProviderQuery,
+    );
 
     const result: StreamCollectResult = {
       task_run_id: lifecycle.taskRunId,

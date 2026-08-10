@@ -18,8 +18,8 @@
 - `note_refine` 触发源 = mark_wrong / mastery_change / dreaming / verify（dwell 已裁）。
 - `note_generate` / `note_verify` 只经同事务 intent + 提交后 dispatcher 衔接；completion 表示 queue dispatch 已确认，不表示模型业务完成。
 - `note_generate` 失败显式落 `failed`，pg-boss redelivery 用 CAS 重开为 `pending`；已 `ready` 的成功重投跳过。
-- `note_verify` 远程调用不得持有 DB transaction；artifact version + fence/token claim 保护 reserve、raw-result stage 与短事务 finalize。
-- `hub_sync_recovery` 是唯一 Notes 定时 recovery floor；hub reconcile 与 handoff/claim 分支隔离执行，任一失败最终仍抛出供 pg-boss 重试。
+- `note_verify` 远程调用不得持有 DB transaction；artifact version + fence/token claim 保护 reserve、raw-result stage 与短事务 finalize。provider attempt 只在 central runner durable start 后、真实 query 前原子计数；每个 artifact epoch 上限 3 次，只有新 epoch 重置。
+- `hub_sync_recovery` 是唯一 Notes 定时 recovery floor；hub reconcile 与 handoff/claim 分支隔离执行，claim batch 也会处理完其余项后聚合抛错，任一失败最终仍供 pg-boss 重试。
 - `NotePatch ≤3 ops AND ≤2 new blocks` 走 mutator，否则 propose。
 
 ## ANTI-PATTERNS

@@ -684,6 +684,7 @@ export const note_verification_claim = pgTable(
     task_run_id: text('task_run_id'),
     result_json: jsonb('result_json').$type<JsonObject>(),
     result_attempts: integer('result_attempts').notNull().default(0),
+    provider_attempts: integer('provider_attempts').notNull().default(0),
     error_message: text('error_message'),
     available_at: timestamp('available_at', { withTimezone: true }).notNull(),
     lease_expires_at: timestamp('lease_expires_at', { withTimezone: true }),
@@ -706,7 +707,7 @@ export const note_verification_claim = pgTable(
       .where(sql`${t.task_run_id} IS NOT NULL`),
     check(
       'note_verification_claim_state_ck',
-      sql`${t.state} IN ('retry_wait','reserved','provider_started','ambiguous','result_ready','completed')`,
+      sql`${t.state} IN ('retry_wait','reserved','provider_started','attempts_exhausted','ambiguous','result_ready','completed')`,
     ),
     check('note_verification_claim_fence_ck', sql`${t.fence} >= 0`),
     check(
@@ -715,12 +716,17 @@ export const note_verification_claim = pgTable(
         (${t.state} = 'retry_wait' AND ${t.claim_token} IS NULL AND ${t.lease_expires_at} IS NULL AND ${t.provider_started_at} IS NULL)
         OR (${t.state} = 'reserved' AND ${t.claim_token} IS NOT NULL AND ${t.task_run_id} IS NOT NULL AND ${t.lease_expires_at} IS NOT NULL AND ${t.provider_started_at} IS NULL AND ${t.result_json} IS NULL)
         OR (${t.state} = 'provider_started' AND ${t.claim_token} IS NOT NULL AND ${t.task_run_id} IS NOT NULL AND ${t.provider_started_at} IS NOT NULL AND ${t.result_json} IS NULL)
+        OR (${t.state} = 'attempts_exhausted' AND ${t.claim_token} IS NULL AND ${t.task_run_id} IS NULL AND ${t.lease_expires_at} IS NULL AND ${t.provider_started_at} IS NULL AND ${t.result_json} IS NULL AND ${t.error_message} IS NOT NULL)
         OR (${t.state} = 'ambiguous' AND (${t.provider_started_at} IS NOT NULL OR ${t.result_json} IS NOT NULL))
         OR (${t.state} = 'result_ready' AND ${t.result_json} IS NOT NULL AND ${t.lease_expires_at} IS NULL)
         OR (${t.state} = 'completed' AND ${t.result_json} IS NOT NULL AND ${t.completed_at} IS NOT NULL AND ${t.claim_token} IS NULL AND ${t.lease_expires_at} IS NULL)
       )`,
     ),
     check('note_verification_claim_result_attempts_ck', sql`${t.result_attempts} >= 0`),
+    check(
+      'note_verification_claim_provider_attempts_ck',
+      sql`${t.provider_attempts} >= 0 AND ${t.provider_attempts} <= 3`,
+    ),
   ],
 );
 
