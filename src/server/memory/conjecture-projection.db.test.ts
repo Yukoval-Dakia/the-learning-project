@@ -91,7 +91,7 @@ describe('durable verbatim memory projection claim', () => {
     expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(['fulfilled', 'rejected']);
     expect(addVerbatimOnce).toHaveBeenCalledTimes(2);
     expect(providerAdds).toHaveBeenCalledOnce();
-    expect(rows).toHaveLength(1);
+    expect(rows.size).toBe(1);
   });
 
   it('retry after external add success and pre-receipt crash converges to the existing row', async () => {
@@ -126,6 +126,6 @@ describe('durable verbatim memory projection claim', () => {
 
     expect(addVerbatimOnce).toHaveBeenCalledTimes(1);
     expect(findByEventId).toHaveBeenCalledWith('rate-crash');
-    expect(rows).toHaveLength(1);
+    expect(rows.size).toBe(1);
   });
 });

@@ -40,7 +40,7 @@ vi.mock('./memory-reconcile-handoff-store', async (importOriginal) => {
     ...actual,
     claimMemoryIngest: vi.fn(async () => 'winner'),
     readIngestCompleted: vi.fn(async () => null),
-    persistIngestCompleted: vi.fn(async (input: { memories: readonly unknown[] }) => ({
+    persistIngestCompleted: vi.fn(async (_db: Db, input: { memories: readonly unknown[] }) => ({
       version: 1,
       handoff_kind: 'ingest_completed',
       source_event_id: 'unit-event',

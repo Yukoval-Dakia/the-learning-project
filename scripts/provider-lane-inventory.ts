@@ -418,7 +418,7 @@ export const PROVIDER_LANES = [
     callers: [
       {
         path: 'src/server/memory/triggers.ts',
-        calls: ['client.addEventMemory', 'client.addVerbatimOnce'],
+        calls: ['client.addEventMemoryOnce', 'client.addVerbatimOnce'],
       },
       {
         path: 'src/server/memory/triggers.ts',

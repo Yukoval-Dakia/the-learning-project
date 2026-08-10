@@ -7,19 +7,22 @@
 
 - **F2.1 / YUK-857 已合并 main。** PR #1174 merge SHA `3d3c89c5`；Notes append-only
   handoff、deterministic dispatch/readback 与 shared recovery floor 已进入主线。未部署。
-- **F2.2 / YUK-858 已在隔离 worktree 完成代码与测试作者。** Memory-owned event v1
+- **F2.2 / YUK-858 PR #1175 current head 已含实现与 CI repairs，并已 committed/pushed。**
+  Memory-owned event v1
   fenced provider-start 后置 add marker、ingest completion/intents、exact deterministic
   dispatch/readback、append-only recovery cursor + bounded wrap scan 第二 leg 与 strict
   `observe|write|recover|drain` 模式已实现；没有 table/migration/new cron。
-- **验证边界：** owner 禁止本地 test/typecheck/build/audit/migration；只运行 changed-file Biome
-  与 `git diff --check`。Runtime 结论留给 future exact-head GitHub CI。
-- **生产边界不变：** 本线没有 commit/push/deploy；YUK-832 HOLD 与 YUK-842 observe 未改变。
+- **最新 prior exact-head CI 反馈已修：** PostgreSQL strict-shape key count、trigger mock
+  `(db,input)` 签名、provider audit caller evidence 与 Map size assertions；owner 禁止本地
+  test/typecheck/build/audit/migration，runtime 结论只由 fresh current-head GitHub CI 给出。
+- **生产边界不变：** 未部署；YUK-832 HOLD 与 YUK-842 observe 未改变。
 
 ## NEXT
 
-1. 独立 review 当前 diff，修复后 commit/push。
-2. 以 future exact-head GitHub CI 验证 unit/DB/typecheck/build/audits。
-3. CI/review clean 后合并并同步 Linear；rollout 顺序 `observe -> write -> recover`。
+1. 等待 fresh current-head CI 验证 unit/DB/typecheck/build/audits；不预称 green。
+2. 确认无 unresolved P0/P1 review findings 后 merge；P2/minor/nit/refactor 不阻塞。
+3. 执行完整 Linear capture gate：duplicate search、actionable follow-up 创建/更新或明确无项、
+   YUK-858 issue status 与实际 merge/rollout 状态校准；rollout 顺序 `observe -> write -> recover`。
 
 ## PARKED
 
@@ -29,5 +32,6 @@
 
 ## BLOCKED-ON
 
-- Delivery blocked on commit/push、exact-head CI、独立 review 与 Linear 同步。
+- Delivery blocked on fresh current-head CI、无 unresolved P0/P1 review findings、merge 与
+  完整 Linear capture gate。
 - Production blocked on独立部署授权和真实观察证据。

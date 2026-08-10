@@ -136,7 +136,9 @@ async function candidates(
         eq(sql<string>`${event.payload} ->> 'version'`, '1'),
         eq(sql<string>`${event.payload} ->> 'handoff_kind'`, 'ingest_completed'),
         eq(sql<string>`${event.payload} ->> 'source_event_id'`, event.subject_id),
-        sql`jsonb_object_length(${event.payload}) = 6`,
+        sql`CASE WHEN jsonb_typeof(${event.payload}) = 'object'
+          THEN (SELECT count(*) FROM jsonb_object_keys(${event.payload}))
+          ELSE 0 END = 6`,
         sql`${event.payload} ->> 'resolution' IN ('provider_result', 'event_lookup')`,
         sql`${event.payload} ->> 'intent_digest' ~ '^[0-9a-f]{64}$'`,
         sql`CASE WHEN jsonb_typeof(${event.payload} -> 'memory_count') = 'number'
@@ -148,8 +150,10 @@ async function candidates(
             AND intent.payload ->> 'handoff_kind' = 'reconcile_intent'
             AND intent.payload ->> 'intent_digest' = ${event.payload} ->> 'intent_digest'
             AND jsonb_typeof(intent.payload -> 'memory') = 'object'
-            AND jsonb_object_length(intent.payload) = 5
-            AND jsonb_object_length(intent.payload -> 'memory') = 4
+            AND CASE WHEN jsonb_typeof(intent.payload) = 'object'
+              THEN (SELECT count(*) FROM jsonb_object_keys(intent.payload)) ELSE 0 END = 5
+            AND CASE WHEN jsonb_typeof(intent.payload -> 'memory') = 'object'
+              THEN (SELECT count(*) FROM jsonb_object_keys(intent.payload -> 'memory')) ELSE 0 END = 4
             AND intent.payload ->> 'source_event_id' = intent.subject_id
             AND jsonb_typeof(intent.payload -> 'memory' -> 'id') = 'string'
             AND length(intent.payload -> 'memory' ->> 'id') > 0

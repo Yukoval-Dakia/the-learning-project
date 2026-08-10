@@ -33,7 +33,9 @@ export async function readLatestRecoveryCursor(
         eq(event.subject_id, RECOVERY_CURSOR_SUBJECT_ID),
         eq(sql<string>`${event.payload} ->> 'version'`, '1'),
         eq(sql<string>`${event.payload} ->> 'handoff_kind'`, 'recovery_cursor'),
-        sql`jsonb_object_length(${event.payload}) = 4`,
+        sql`CASE WHEN jsonb_typeof(${event.payload}) = 'object'
+          THEN (SELECT count(*) FROM jsonb_object_keys(${event.payload}))
+          ELSE 0 END = 4`,
       ),
     )
     .orderBy(desc(event.dispatch_seq), desc(event.id))
