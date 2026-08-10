@@ -11,6 +11,7 @@ async function seedAtomic(opts: {
   archived?: boolean;
   knowledgeId?: string;
   domain?: string | null;
+  type?: string;
 }) {
   const db = testDb();
   const now = new Date();
@@ -30,7 +31,7 @@ async function seedAtomic(opts: {
   }
   await db.insert(artifact).values({
     id: opts.artifactId,
-    type: 'note_atomic',
+    type: opts.type ?? 'note_atomic',
     title: '之的用法',
     parent_artifact_id: null,
     knowledge_ids: opts.knowledgeId ? [opts.knowledgeId] : [],
@@ -140,6 +141,28 @@ describe('runNoteGenerate', () => {
     expect(runTaskFn).not.toHaveBeenCalled();
   });
 
+  it('skips a pending tool artifact without AI or mutation', async () => {
+    await seedAtomic({ artifactId: 'tool-generation', type: 'tool_quiz' });
+    const runTaskFn = vi.fn();
+
+    await expect(
+      runNoteGenerate({ db: testDb(), artifactId: 'tool-generation', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:not_pending' });
+
+    expect(runTaskFn).not.toHaveBeenCalled();
+    const [row] = await testDb()
+      .select({
+        type: artifact.type,
+        status: artifact.generation_status,
+        version: artifact.version,
+      })
+      .from(artifact)
+      .where(eq(artifact.id, 'tool-generation'));
+    expect(row).toEqual({ type: 'tool_quiz', status: 'pending', version: 0 });
+    const rows = await testDb().select({ id: event.id }).from(event);
+    expect(rows).toEqual([]);
+  });
+
   it('does not submit a provider query when the artifact is archived at the boundary', async () => {
     await seedAtomic({ artifactId: 'archived-at-boundary' });
     const db = testDb();
@@ -170,6 +193,37 @@ describe('runNoteGenerate', () => {
       .where(eq(artifact.id, 'archived-at-boundary'));
     expect(row).toMatchObject({ status: 'pending' });
     expect(row.archivedAt).not.toBeNull();
+  });
+
+  it('does not submit a provider query when the artifact becomes a tool at the boundary', async () => {
+    await seedAtomic({ artifactId: 'tool-at-boundary' });
+    const db = testDb();
+    let providerQueries = 0;
+    const runTaskFn: RunTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await db
+        .update(artifact)
+        .set({ type: 'tool_quiz', updated_at: new Date() })
+        .where(eq(artifact.id, 'tool-at-boundary'));
+      if (!ctx?.beforeProviderQuery) throw new Error('provider boundary callback missing');
+      await ctx.beforeProviderQuery({
+        taskRunId: 'generate-tool-race',
+        provider: 'anthropic-sub',
+        model: 'test',
+      });
+      providerQueries += 1;
+      return { text: VALID_SECTIONS };
+    });
+
+    await expect(
+      runNoteGenerate({ db, artifactId: 'tool-at-boundary', runTaskFn }),
+    ).rejects.toThrow('note generation is no longer pending and active');
+
+    expect(providerQueries).toBe(0);
+    const [row] = await db
+      .select({ type: artifact.type, status: artifact.generation_status })
+      .from(artifact)
+      .where(eq(artifact.id, 'tool-at-boundary'));
+    expect(row).toEqual({ type: 'tool_quiz', status: 'pending' });
   });
 
   it('generates + writes sections on happy path', async () => {

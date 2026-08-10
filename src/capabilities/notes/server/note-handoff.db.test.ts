@@ -5,14 +5,17 @@ import { artifact, event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
+  NOTE_GENERATION_SINGLETON_SECONDS,
   NOTE_HANDOFF_ACTION,
   NOTE_HANDOFF_KINDS,
   dispatchNoteGeneration,
+  dispatchNoteVerification,
   noteHandoffEventId,
   noteHandoffJobId,
   recoverNoteHandoffs,
   recoverNoteHandoffsAndClaims,
   writeNoteGenerationIntent,
+  writeNoteVerificationIntent,
 } from './note-handoff';
 
 async function seedNote(
@@ -21,6 +24,7 @@ async function seedNote(
     readonly generation: string;
     readonly verification: string;
     readonly archived?: boolean;
+    readonly type?: string;
   },
 ): Promise<void> {
   const now = new Date();
@@ -28,7 +32,7 @@ async function seedNote(
     .insert(artifact)
     .values({
       id,
-      type: 'note_atomic',
+      type: states.type ?? 'note_atomic',
       title: `Durable handoff ${id}`,
       parent_artifact_id: null,
       knowledge_ids: [],
@@ -52,10 +56,16 @@ async function seedNote(
 
 function fakeBoss() {
   const jobs = new Map<string, { readonly state: string }>();
-  const send = vi.fn(async (_queue: string, _data: object, options: { id: string }) => {
-    jobs.set(options.id, { state: 'created' });
-    return options.id;
-  });
+  const send = vi.fn(
+    async (
+      _queue: string,
+      _data: object,
+      options: { id: string; singletonKey?: string; singletonSeconds?: number },
+    ) => {
+      jobs.set(options.id, { state: 'created' });
+      return options.id;
+    },
+  );
   const getJobById = vi.fn(async (_queue: string, id: string) => jobs.get(id) ?? null);
   return { jobs, send, getJobById };
 }
@@ -81,6 +91,8 @@ describe('Notes durable handoff', () => {
       { artifact_id: 'note-generation' },
       {
         id: noteHandoffJobId(NOTE_HANDOFF_KINDS.generationIntent, 'note-generation'),
+        singletonKey: 'note-generation',
+        singletonSeconds: NOTE_GENERATION_SINGLETON_SECONDS,
       },
     );
     const completion = await testDb()
@@ -93,6 +105,22 @@ describe('Notes durable handoff', () => {
         ),
       );
     expect(completion).toHaveLength(1);
+  });
+
+  it('keeps verification dispatch id-only', async () => {
+    await seedNote('note-verification', { generation: 'ready', verification: 'queued' });
+    await testDb().transaction((tx) => writeNoteVerificationIntent(tx, 'note-verification'));
+    const boss = fakeBoss();
+
+    await expect(dispatchNoteVerification(testDb(), 'note-verification', { boss })).resolves.toBe(
+      true,
+    );
+
+    expect(boss.send).toHaveBeenCalledWith(
+      'note_verify',
+      { artifact_id: 'note-verification' },
+      { id: noteHandoffJobId(NOTE_HANDOFF_KINDS.verificationIntent, 'note-verification') },
+    );
   });
 
   it('does not expose an intent from a rolled-back artifact transaction', async () => {
@@ -244,6 +272,57 @@ describe('Notes durable handoff', () => {
     expect(intents).toEqual([]);
   });
 
+  it('does not synthesize or dispatch generation or verification work for tool artifacts', async () => {
+    await seedNote('tool-pending', {
+      type: 'tool_quiz',
+      generation: 'pending',
+      verification: 'not_required',
+    });
+    await seedNote('tool-ready', {
+      type: 'tool_quiz',
+      generation: 'ready',
+      verification: 'queued',
+    });
+    const boss = fakeBoss();
+
+    await expect(recoverNoteHandoffs(testDb(), { boss })).resolves.toBe(0);
+
+    expect(boss.send).not.toHaveBeenCalled();
+    const intents = await testDb()
+      .select({ subjectId: event.subject_id })
+      .from(event)
+      .where(eq(event.action, NOTE_HANDOFF_ACTION));
+    expect(intents).toEqual([]);
+  });
+
+  it('does not dispatch stale generation or verification intents for tool artifacts', async () => {
+    await seedNote('tool-with-intent', {
+      type: 'tool_quiz',
+      generation: 'pending',
+      verification: 'not_required',
+    });
+    await seedNote('tool-verify-with-intent', {
+      type: 'tool_quiz',
+      generation: 'ready',
+      verification: 'queued',
+    });
+    await testDb().transaction(async (tx) => {
+      await writeNoteGenerationIntent(tx, 'tool-with-intent');
+      await writeNoteVerificationIntent(tx, 'tool-verify-with-intent');
+    });
+    const boss = fakeBoss();
+
+    await expect(dispatchNoteGeneration(testDb(), 'tool-with-intent', { boss })).resolves.toBe(
+      false,
+    );
+    await expect(
+      dispatchNoteVerification(testDb(), 'tool-verify-with-intent', { boss }),
+    ).resolves.toBe(false);
+    await expect(recoverNoteHandoffs(testDb(), { boss })).resolves.toBe(0);
+
+    expect(boss.send).not.toHaveBeenCalled();
+  });
+
   it('does not dispatch an existing intent after its artifact is archived', async () => {
     await seedNote('note-archived-after-intent', {
       generation: 'pending',
@@ -319,7 +398,69 @@ describe('Notes durable handoff', () => {
     expect(boss.send).toHaveBeenCalledWith(
       'note_generate',
       { artifact_id: 'valid-after-terminal-intents' },
-      { id: noteHandoffJobId(NOTE_HANDOFF_KINDS.generationIntent, 'valid-after-terminal-intents') },
+      {
+        id: noteHandoffJobId(NOTE_HANDOFF_KINDS.generationIntent, 'valid-after-terminal-intents'),
+        singletonKey: 'valid-after-terminal-intents',
+        singletonSeconds: NOTE_GENERATION_SINGLETON_SECONDS,
+      },
+    );
+  });
+
+  it('filters fifty non-note intents before the recovery limit', async () => {
+    for (let index = 0; index < 50; index += 1) {
+      const artifactId = `tool-poison-${String(index).padStart(2, '0')}`;
+      await seedNote(artifactId, {
+        type: 'tool_quiz',
+        generation: 'pending',
+        verification: 'not_required',
+      });
+      await testDb().transaction((tx) => writeNoteGenerationIntent(tx, artifactId));
+    }
+    await seedNote('note-after-tool-poison', {
+      generation: 'pending',
+      verification: 'not_required',
+    });
+    const boss = fakeBoss();
+
+    await expect(recoverNoteHandoffs(testDb(), { boss })).resolves.toBe(1);
+
+    expect(boss.send).toHaveBeenCalledTimes(1);
+    expect(boss.send).toHaveBeenCalledWith(
+      'note_generate',
+      { artifact_id: 'note-after-tool-poison' },
+      {
+        id: noteHandoffJobId(NOTE_HANDOFF_KINDS.generationIntent, 'note-after-tool-poison'),
+        singletonKey: 'note-after-tool-poison',
+        singletonSeconds: NOTE_GENERATION_SINGLETON_SECONDS,
+      },
+    );
+  });
+
+  it('filters fifty non-note lifecycle rows before legacy synthesis limit', async () => {
+    for (let index = 0; index < 50; index += 1) {
+      await seedNote(`tool-legacy-${String(index).padStart(2, '0')}`, {
+        type: 'tool_quiz',
+        generation: 'pending',
+        verification: 'not_required',
+      });
+    }
+    await seedNote('note-after-tool-legacy', {
+      generation: 'pending',
+      verification: 'not_required',
+    });
+    const boss = fakeBoss();
+
+    await expect(recoverNoteHandoffs(testDb(), { boss })).resolves.toBe(1);
+
+    expect(boss.send).toHaveBeenCalledTimes(1);
+    expect(boss.send).toHaveBeenCalledWith(
+      'note_generate',
+      { artifact_id: 'note-after-tool-legacy' },
+      {
+        id: noteHandoffJobId(NOTE_HANDOFF_KINDS.generationIntent, 'note-after-tool-legacy'),
+        singletonKey: 'note-after-tool-legacy',
+        singletonSeconds: NOTE_GENERATION_SINGLETON_SECONDS,
+      },
     );
   });
 

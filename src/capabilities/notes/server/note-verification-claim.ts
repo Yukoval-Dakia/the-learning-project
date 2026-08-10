@@ -8,6 +8,7 @@ import type { Db, Tx } from '@/db/client';
 import { artifact, note_verification_claim } from '@/db/schema';
 import { z } from 'zod';
 
+import { NOTE_ARTIFACT_TYPES, isNoteArtifactType } from './note-artifact-types';
 import { emitNoteVerificationLifecycleEvent } from './note-verification-lifecycle';
 
 const CLAIM_RETRY_DELAY_MS = 30_000;
@@ -80,6 +81,7 @@ async function failArtifactVerificationForEpoch(
     .where(
       and(
         eq(artifact.id, epoch.artifactId),
+        inArray(artifact.type, NOTE_ARTIFACT_TYPES),
         eq(artifact.version, epoch.artifactVersion),
         eq(artifact.generation_status, 'ready'),
         eq(artifact.verification_status, 'queued'),
@@ -118,6 +120,9 @@ export async function reserveNoteVerification(
       .limit(1);
     const artifactRow = artifactRows[0];
     if (!artifactRow) return { kind: 'not_found' };
+    if (!isNoteArtifactType(artifactRow.type)) {
+      return { kind: 'not_queued', artifactType: artifactRow.type };
+    }
     if (artifactRow.archivedAt !== null || artifactRow.verificationStatus !== 'queued') {
       const existingRows = await tx
         .select({ state: note_verification_claim.state })
@@ -347,6 +352,7 @@ function artifactEpochIsCurrent(lease: NoteVerificationLease) {
     SELECT 1 FROM ${artifact}
     WHERE ${artifact.id} = ${lease.artifactId}
       AND ${artifact.version} = ${lease.artifactVersion}
+      AND ${inArray(artifact.type, NOTE_ARTIFACT_TYPES)}
       AND ${artifact.generation_status} = 'ready'
       AND ${artifact.verification_status} = 'queued'
       AND ${artifact.archived_at} IS NULL
@@ -366,6 +372,7 @@ export async function markNoteVerificationProviderStarted(
     const artifactRows = await tx
       .select({
         version: artifact.version,
+        type: artifact.type,
         generationStatus: artifact.generation_status,
         verificationStatus: artifact.verification_status,
         archivedAt: artifact.archived_at,
@@ -385,6 +392,7 @@ export async function markNoteVerificationProviderStarted(
     if (
       !artifactRow ||
       artifactRow.version !== lease.artifactVersion ||
+      !isNoteArtifactType(artifactRow.type) ||
       artifactRow.generationStatus !== 'ready' ||
       artifactRow.verificationStatus !== 'queued' ||
       artifactRow.archivedAt !== null ||
@@ -481,6 +489,7 @@ export async function releaseNoteVerificationForRetry(
     const artifactRows = await tx
       .select({
         version: artifact.version,
+        type: artifact.type,
         generationStatus: artifact.generation_status,
         verificationStatus: artifact.verification_status,
         archivedAt: artifact.archived_at,
@@ -500,6 +509,7 @@ export async function releaseNoteVerificationForRetry(
     if (
       !artifactRow ||
       artifactRow.version !== lease.artifactVersion ||
+      !isNoteArtifactType(artifactRow.type) ||
       artifactRow.generationStatus !== 'ready' ||
       artifactRow.verificationStatus !== 'queued' ||
       artifactRow.archivedAt !== null ||
@@ -642,6 +652,7 @@ export async function supersedeNoteVerificationEpoch(
     const artifactRows = await tx
       .select({
         version: artifact.version,
+        type: artifact.type,
         generationStatus: artifact.generation_status,
         verificationStatus: artifact.verification_status,
         archivedAt: artifact.archived_at,
@@ -654,6 +665,7 @@ export async function supersedeNoteVerificationEpoch(
     if (
       !artifactRow ||
       artifactRow.version === lease.artifactVersion ||
+      !isNoteArtifactType(artifactRow.type) ||
       artifactRow.generationStatus !== 'ready' ||
       artifactRow.verificationStatus !== 'queued' ||
       artifactRow.archivedAt !== null
@@ -721,6 +733,7 @@ export async function finalizeNoteVerificationResult<T>(
     const artifactRows = await tx
       .select({
         version: artifact.version,
+        type: artifact.type,
         generationStatus: artifact.generation_status,
         verificationStatus: artifact.verification_status,
         archivedAt: artifact.archived_at,
@@ -742,6 +755,7 @@ export async function finalizeNoteVerificationResult<T>(
     if (
       !artifactRow ||
       artifactRow.version !== claim.artifact_version ||
+      !isNoteArtifactType(artifactRow.type) ||
       artifactRow.generationStatus !== 'ready' ||
       artifactRow.verificationStatus !== 'queued' ||
       artifactRow.archivedAt !== null
@@ -786,6 +800,7 @@ export async function listRecoverableNoteVerificationResults(
       and(
         lte(note_verification_claim.available_at, now),
         isNull(artifact.archived_at),
+        inArray(artifact.type, NOTE_ARTIFACT_TYPES),
         eq(artifact.generation_status, 'ready'),
         eq(artifact.verification_status, 'queued'),
         or(
@@ -847,6 +862,7 @@ export async function prepareNoteVerificationResultRecovery(
     const now = new Date();
     if (
       !claim ||
+      !isNoteArtifactType(artifactRow.type) ||
       artifactRow.generationStatus !== 'ready' ||
       artifactRow.verificationStatus !== 'queued' ||
       artifactRow.archivedAt !== null

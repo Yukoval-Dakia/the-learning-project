@@ -20,6 +20,10 @@ import {
   noteSectionsToBodyBlocks,
 } from '@/capabilities/notes/server/body-blocks';
 import {
+  NOTE_ARTIFACT_TYPES,
+  isNoteArtifactType,
+} from '@/capabilities/notes/server/note-artifact-types';
+import {
   dispatchNoteVerification,
   writeNoteVerificationIntent,
 } from '@/capabilities/notes/server/note-handoff';
@@ -134,6 +138,7 @@ async function reopenFailedGenerationForRetry(db: Db, artifactId: string): Promi
       .where(
         and(
           eq(artifact.id, artifactId),
+          inArray(artifact.type, NOTE_ARTIFACT_TYPES),
           eq(artifact.generation_status, 'failed'),
           isNull(artifact.archived_at),
         ),
@@ -149,6 +154,7 @@ async function reopenFailedGenerationForRetry(db: Db, artifactId: string): Promi
       .where(
         and(
           eq(artifact.id, artifactId),
+          inArray(artifact.type, NOTE_ARTIFACT_TYPES),
           eq(artifact.generation_status, 'failed'),
           isNull(artifact.archived_at),
         ),
@@ -196,6 +202,7 @@ export async function runNoteGenerate(
     .limit(1);
   const row = rows[0];
   if (!row) return { status: 'skipped:not_found' };
+  if (!isNoteArtifactType(row.type)) return { status: 'skipped:not_pending' };
   if (row.archived_at !== null) return { status: 'skipped:not_pending' };
   if (row.generation_status === 'failed') {
     if (!(await reopenFailedGenerationForRetry(db, artifactId))) {
@@ -259,6 +266,7 @@ export async function runNoteGenerate(
           .where(
             and(
               eq(artifact.id, artifactId),
+              inArray(artifact.type, NOTE_ARTIFACT_TYPES),
               eq(artifact.generation_status, 'pending'),
               isNull(artifact.archived_at),
             ),
@@ -296,6 +304,7 @@ export async function runNoteGenerate(
         .where(
           and(
             eq(artifact.id, artifactId),
+            inArray(artifact.type, NOTE_ARTIFACT_TYPES),
             eq(artifact.generation_status, 'pending'),
             isNull(artifact.archived_at),
           ),
@@ -324,6 +333,7 @@ export async function runNoteGenerate(
         .where(
           and(
             eq(artifact.id, artifactId),
+            inArray(artifact.type, NOTE_ARTIFACT_TYPES),
             eq(artifact.generation_status, 'pending'),
             isNull(artifact.archived_at),
           ),
@@ -390,6 +400,7 @@ export async function runNoteGenerate(
           .where(
             and(
               eq(artifact.id, artifactId),
+              inArray(artifact.type, NOTE_ARTIFACT_TYPES),
               eq(artifact.generation_status, 'pending'),
               isNull(artifact.archived_at),
             ),
@@ -404,6 +415,7 @@ export async function runNoteGenerate(
           .where(
             and(
               eq(artifact.id, artifactId),
+              inArray(artifact.type, NOTE_ARTIFACT_TYPES),
               eq(artifact.generation_status, 'pending'),
               isNull(artifact.archived_at),
             ),

@@ -30,9 +30,12 @@
   又确认 archived artifact 可被 recovery 重派发、终态 artifact 可遗留 claim 并占满 recovery batch。
   repair `63025457` 加入 archived/terminal eligibility guards 与 pre-LIMIT starvation regressions；
   其 exact-head CI run `31349482564` 除 DB shard 2 外均通过，失败暴露 capped artifact redelivery
-  丢失 canonical `attempts_exhausted` 结果。PR 当前 head 已保留该 terminal claim 结果，同时让 archived
-  ambiguous redelivery 安全 ack，并已 commit/push；只有这个 current head 的 fresh exact-head
-  CI/review/merge 可作最终证据。未做本地 runtime 验证。
+  丢失 canonical `attempts_exhausted` 结果。head `585d11f1` 保留该 terminal claim 结果，同时让
+  archived ambiguous redelivery 安全 ack；其 exact-head CI run `31350323594` 全绿。CI 后的新 review
+  又确认 legacy recovery 会误接非 Note artifact，以及升级时旧 random-ID generation job 与新
+  deterministic job 可能双投递。PR 当前 head 已统一 `note_atomic|note_long|note_hub` eligibility，
+  并让 deterministic generation send 保留旧 artifact singleton 兼容契约；只有这个 current head 的
+  fresh exact-head CI/review/merge 可作最终证据。未做本地 runtime 验证。
 - **运行状态：**没有 deployment；YUK-832 HOLD 与 YUK-842 observe 均未改变。
 
 ## NEXT

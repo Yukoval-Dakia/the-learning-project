@@ -149,6 +149,35 @@ describe('runNoteVerify durable claim', () => {
     expect(claims).toEqual([]);
   });
 
+  it('skips a queued tool artifact without AI, claim creation, or mutation', async () => {
+    await seedArtifact('tool-verification');
+    await testDb()
+      .update(artifact)
+      .set({ type: 'tool_quiz' })
+      .where(eq(artifact.id, 'tool-verification'));
+    const runTaskFn = vi.fn();
+
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'tool-verification', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:not_queued' });
+
+    expect(runTaskFn).not.toHaveBeenCalled();
+    const claims = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'tool-verification'));
+    expect(claims).toEqual([]);
+    const [row] = await testDb()
+      .select({
+        type: artifact.type,
+        status: artifact.verification_status,
+        version: artifact.version,
+      })
+      .from(artifact)
+      .where(eq(artifact.id, 'tool-verification'));
+    expect(row).toEqual({ type: 'tool_quiz', status: 'queued', version: 0 });
+  });
+
   it('drops a reservation when the artifact is archived before the provider boundary', async () => {
     await seedArtifact('archived-before-provider');
     const db = testDb();
@@ -659,6 +688,45 @@ describe('runNoteVerify durable claim', () => {
     expect(boss.send).toHaveBeenCalledWith(
       'note_verify',
       { artifact_id: 'valid-after-terminal-claims' },
+      expect.objectContaining({ id: expect.any(String) }),
+    );
+  });
+
+  it('filters fifty non-note claims before the recovery limit', async () => {
+    const db = testDb();
+    for (let index = 0; index < 50; index += 1) {
+      const artifactId = `tool-claim-${String(index).padStart(2, '0')}`;
+      await seedArtifact(artifactId);
+      const reservation = await reserveNoteVerification(db, artifactId);
+      if (reservation.kind !== 'claimed') throw new Error('expected tool seed claim');
+      await db.update(artifact).set({ type: 'tool_quiz' }).where(eq(artifact.id, artifactId));
+      await db
+        .update(note_verification_claim)
+        .set({
+          state: 'retry_wait',
+          claim_token: null,
+          task_run_id: null,
+          claimed_at: null,
+          lease_expires_at: null,
+          available_at: new Date(0),
+        })
+        .where(eq(note_verification_claim.artifact_id, artifactId));
+    }
+    await seedArtifact('valid-after-tool-claims');
+    const valid = await reserveNoteVerification(db, 'valid-after-tool-claims');
+    if (valid.kind !== 'claimed') throw new Error('expected valid recovery claim');
+    await db
+      .update(note_verification_claim)
+      .set({ lease_expires_at: new Date(0), available_at: new Date(0) })
+      .where(eq(note_verification_claim.artifact_id, 'valid-after-tool-claims'));
+    const boss = fakeBoss();
+
+    await expect(recoverResultReadyNoteVerifications(db, { boss })).resolves.toBe(0);
+
+    expect(boss.send).toHaveBeenCalledTimes(1);
+    expect(boss.send).toHaveBeenCalledWith(
+      'note_verify',
+      { artifact_id: 'valid-after-tool-claims' },
       expect.objectContaining({ id: expect.any(String) }),
     );
   });

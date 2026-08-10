@@ -7,11 +7,13 @@ import type { Db, Tx } from '@/db/client';
 import { artifact, event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { getNotesBoss } from './boss-port';
+import { NOTE_ARTIFACT_TYPES } from './note-artifact-types';
 
 export const NOTE_HANDOFF_ACTION = 'experimental:note_handoff';
 
 const HANDOFF_VERSION = 1;
 const RECOVERY_BATCH_SIZE = 50;
+export const NOTE_GENERATION_SINGLETON_SECONDS = 24 * 60 * 60;
 
 export const NOTE_HANDOFF_KINDS = {
   generationIntent: 'generation_intent',
@@ -44,7 +46,15 @@ const IntentPayloadSchema = z.object({
 });
 
 export type BossDispatch = {
-  send(queue: string, data: object, options: { id: string }): Promise<string | null>;
+  send(
+    queue: string,
+    data: object,
+    options: {
+      readonly id: string;
+      readonly singletonKey?: string;
+      readonly singletonSeconds?: number;
+    },
+  ): Promise<string | null>;
   getJobById(queue: string, id: string): Promise<{ readonly state: string } | null>;
 };
 
@@ -80,6 +90,20 @@ function completionFor(intentKind: IntentKind): CompletionKind {
 
 function queueFor(intentKind: IntentKind): 'note_generate' | 'note_verify' {
   return intentKind === NOTE_HANDOFF_KINDS.generationIntent ? 'note_generate' : 'note_verify';
+}
+
+function jobOptionsFor(
+  intentKind: IntentKind,
+  artifactId: string,
+  jobId: string,
+): { readonly id: string; readonly singletonKey?: string; readonly singletonSeconds?: number } {
+  return intentKind === NOTE_HANDOFF_KINDS.generationIntent
+    ? {
+        id: jobId,
+        singletonKey: artifactId,
+        singletonSeconds: NOTE_GENERATION_SINGLETON_SECONDS,
+      }
+    : { id: jobId };
 }
 
 async function writeHandoffRecord(
@@ -139,7 +163,14 @@ async function artifactCanReceiveHandoff(
   const rows = await db
     .select({ id: artifact.id })
     .from(artifact)
-    .where(and(eq(artifact.id, artifactId), isNull(artifact.archived_at), lifecyclePredicate))
+    .where(
+      and(
+        eq(artifact.id, artifactId),
+        inArray(artifact.type, NOTE_ARTIFACT_TYPES),
+        isNull(artifact.archived_at),
+        lifecyclePredicate,
+      ),
+    )
     .limit(1);
   return rows.length === 1;
 }
@@ -159,9 +190,10 @@ export async function dispatchNoteHandoff(
   const boss = deps.boss ?? (await getNotesBoss());
   const queue = queueFor(intentKind);
   const jobId = noteHandoffJobId(intentKind, artifactId);
+  const jobOptions = jobOptionsFor(intentKind, artifactId, jobId);
   let confirmed = false;
   try {
-    const sentId = await boss.send(queue, { artifact_id: artifactId }, { id: jobId });
+    const sentId = await boss.send(queue, { artifact_id: artifactId }, jobOptions);
     confirmed = sentId === jobId || (await durableJobExists(boss, queue, jobId));
   } catch (error) {
     try {
@@ -235,6 +267,7 @@ async function synthesizeLegacyIntents(db: Db): Promise<void> {
     .where(
       and(
         isNull(artifact.archived_at),
+        inArray(artifact.type, NOTE_ARTIFACT_TYPES),
         sql`(${artifact.generation_status} = 'pending' OR (${artifact.generation_status} = 'ready' AND ${artifact.verification_status} = 'queued'))
         AND NOT EXISTS (
           SELECT 1 FROM ${event} e
@@ -290,6 +323,7 @@ export async function recoverNoteHandoffs(
         eq(sql<string>`${event.payload} ->> 'version'`, String(HANDOFF_VERSION)),
         eq(sql<string>`${event.payload} ->> 'artifact_id'`, event.subject_id),
         isNull(artifact.archived_at),
+        inArray(artifact.type, NOTE_ARTIFACT_TYPES),
         sql`NOT EXISTS (
           SELECT 1 FROM ${event} completion
           WHERE completion.action = ${NOTE_HANDOFF_ACTION}
