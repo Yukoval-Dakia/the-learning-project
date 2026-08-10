@@ -348,7 +348,9 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
   if (contractFailure) {
     staged = { kind: 'parsed', parsed: contractFailure, taskResult: null };
     if (!(await stageNoteVerificationContractResult(db, lease, staged))) {
-      await supersedeNoteVerificationEpoch(db, lease);
+      if (!(await supersedeNoteVerificationEpoch(db, lease))) {
+        await discardReservedNoteVerificationClaim(db, lease);
+      }
       throw noteVerificationRetryRequired(artifactId, 'contract-result claim changed');
     }
   } else {
@@ -381,7 +383,9 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
               throw noteVerificationRetryRequired(artifactId, 'provider attempts exhausted');
             case 'claim_changed':
               providerStartState.rejection = 'claim_changed';
-              await supersedeNoteVerificationEpoch(db, lease);
+              if (!(await supersedeNoteVerificationEpoch(db, lease))) {
+                await discardReservedNoteVerificationClaim(db, lease);
+              }
               throw noteVerificationRetryRequired(artifactId, 'provider-start claim changed');
             default: {
               const exhaustive: never = providerStart;

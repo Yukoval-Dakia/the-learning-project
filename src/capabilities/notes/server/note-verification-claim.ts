@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { and, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
 
 import type { NoteVerificationResultT } from '@/core/schema/business';
 import { NoteVerificationResult } from '@/core/schema/business';
@@ -83,6 +83,7 @@ async function failArtifactVerificationForEpoch(
         eq(artifact.version, epoch.artifactVersion),
         eq(artifact.generation_status, 'ready'),
         eq(artifact.verification_status, 'queued'),
+        isNull(artifact.archived_at),
       ),
     )
     .returning({ version: artifact.version });
@@ -108,6 +109,7 @@ export async function reserveNoteVerification(
         type: artifact.type,
         generationStatus: artifact.generation_status,
         verificationStatus: artifact.verification_status,
+        archivedAt: artifact.archived_at,
         version: artifact.version,
       })
       .from(artifact)
@@ -116,6 +118,9 @@ export async function reserveNoteVerification(
       .limit(1);
     const artifactRow = artifactRows[0];
     if (!artifactRow) return { kind: 'not_found' };
+    if (artifactRow.archivedAt !== null || artifactRow.verificationStatus !== 'queued') {
+      return { kind: 'not_queued', artifactType: artifactRow.type };
+    }
     if (artifactRow.generationStatus !== 'ready') {
       return { kind: 'not_ready', artifactType: artifactRow.type };
     }
@@ -260,9 +265,6 @@ export async function reserveNoteVerification(
         .where(eq(note_verification_claim.artifact_id, artifactId));
       return { kind: 'result_ready', staged: parsed.data };
     }
-    if (artifactRow.verificationStatus !== 'queued') {
-      return { kind: 'not_queued', artifactType: artifactRow.type };
-    }
     if (claim.available_at.getTime() > now.getTime()) return { kind: 'busy' };
     if (claim.provider_attempts >= NOTE_VERIFICATION_PROVIDER_ATTEMPT_LIMIT) {
       await tx
@@ -338,6 +340,7 @@ function artifactEpochIsCurrent(lease: NoteVerificationLease) {
       AND ${artifact.version} = ${lease.artifactVersion}
       AND ${artifact.generation_status} = 'ready'
       AND ${artifact.verification_status} = 'queued'
+      AND ${artifact.archived_at} IS NULL
   )`;
 }
 
@@ -351,31 +354,12 @@ export async function markNoteVerificationProviderStarted(
 > {
   return db.transaction(async (tx) => {
     const now = new Date();
-    const rows = await tx
-      .update(note_verification_claim)
-      .set({
-        state: 'provider_started',
-        provider_attempts: sql`${note_verification_claim.provider_attempts} + 1`,
-        provider_started_at: now,
-        lease_expires_at: new Date(now.getTime() + PROVIDER_STARTED_LEASE_MS),
-        updated_at: now,
-      })
-      .where(
-        and(
-          leasePredicate(lease, 'reserved'),
-          artifactEpochIsCurrent(lease),
-          lt(note_verification_claim.provider_attempts, NOTE_VERIFICATION_PROVIDER_ATTEMPT_LIMIT),
-        ),
-      )
-      .returning({ providerAttempts: note_verification_claim.provider_attempts });
-    const started = rows[0];
-    if (started) return { kind: 'started', providerAttempts: started.providerAttempts };
-
     const artifactRows = await tx
       .select({
         version: artifact.version,
         generationStatus: artifact.generation_status,
         verificationStatus: artifact.verification_status,
+        archivedAt: artifact.archived_at,
       })
       .from(artifact)
       .where(eq(artifact.id, lease.artifactId))
@@ -394,6 +378,7 @@ export async function markNoteVerificationProviderStarted(
       artifactRow.version !== lease.artifactVersion ||
       artifactRow.generationStatus !== 'ready' ||
       artifactRow.verificationStatus !== 'queued' ||
+      artifactRow.archivedAt !== null ||
       claim?.state !== 'reserved' ||
       claim.artifact_version !== lease.artifactVersion ||
       claim.fence !== lease.fence ||
@@ -402,23 +387,37 @@ export async function markNoteVerificationProviderStarted(
     ) {
       return { kind: 'claim_changed' };
     }
-    if (claim.provider_attempts < NOTE_VERIFICATION_PROVIDER_ATTEMPT_LIMIT) {
-      return { kind: 'claim_changed' };
+    if (claim.provider_attempts >= NOTE_VERIFICATION_PROVIDER_ATTEMPT_LIMIT) {
+      await tx
+        .update(note_verification_claim)
+        .set({
+          state: 'attempts_exhausted',
+          claim_token: null,
+          task_run_id: null,
+          claimed_at: null,
+          lease_expires_at: null,
+          error_message: 'provider attempt limit reached',
+          updated_at: now,
+        })
+        .where(leasePredicate(lease, 'reserved'));
+      await failArtifactVerificationForEpoch(tx, lease, now);
+      return { kind: 'attempts_exhausted' };
     }
-    await tx
+    const rows = await tx
       .update(note_verification_claim)
       .set({
-        state: 'attempts_exhausted',
-        claim_token: null,
-        task_run_id: null,
-        claimed_at: null,
-        lease_expires_at: null,
-        error_message: 'provider attempt limit reached',
+        state: 'provider_started',
+        provider_attempts: sql`${note_verification_claim.provider_attempts} + 1`,
+        provider_started_at: now,
+        lease_expires_at: new Date(now.getTime() + PROVIDER_STARTED_LEASE_MS),
         updated_at: now,
       })
-      .where(leasePredicate(lease, 'reserved'));
-    await failArtifactVerificationForEpoch(tx, lease, now);
-    return { kind: 'attempts_exhausted' };
+      .where(leasePredicate(lease, 'reserved'))
+      .returning({ providerAttempts: note_verification_claim.provider_attempts });
+    const started = rows[0];
+    return started
+      ? { kind: 'started', providerAttempts: started.providerAttempts }
+      : { kind: 'claim_changed' };
   });
 }
 
@@ -475,6 +474,7 @@ export async function releaseNoteVerificationForRetry(
         version: artifact.version,
         generationStatus: artifact.generation_status,
         verificationStatus: artifact.verification_status,
+        archivedAt: artifact.archived_at,
       })
       .from(artifact)
       .where(eq(artifact.id, lease.artifactId))
@@ -493,6 +493,7 @@ export async function releaseNoteVerificationForRetry(
       artifactRow.version !== lease.artifactVersion ||
       artifactRow.generationStatus !== 'ready' ||
       artifactRow.verificationStatus !== 'queued' ||
+      artifactRow.archivedAt !== null ||
       claim?.state !== 'provider_started' ||
       claim.artifact_version !== lease.artifactVersion ||
       claim.fence !== lease.fence ||
@@ -560,9 +561,11 @@ export async function releaseReservedNoteVerificationForRetry(
       available_at: new Date(now.getTime() + CLAIM_RETRY_DELAY_MS),
       updated_at: now,
     })
-    .where(leasePredicate(lease, 'reserved'))
+    .where(and(leasePredicate(lease, 'reserved'), artifactEpochIsCurrent(lease)))
     .returning({ artifactId: note_verification_claim.artifact_id });
-  return rows.length === 1;
+  if (rows.length === 1) return true;
+  await discardReservedNoteVerificationClaim(db, lease);
+  return false;
 }
 
 export async function discardReservedNoteVerificationClaim(
@@ -632,6 +635,7 @@ export async function supersedeNoteVerificationEpoch(
         version: artifact.version,
         generationStatus: artifact.generation_status,
         verificationStatus: artifact.verification_status,
+        archivedAt: artifact.archived_at,
       })
       .from(artifact)
       .where(eq(artifact.id, lease.artifactId))
@@ -642,7 +646,8 @@ export async function supersedeNoteVerificationEpoch(
       !artifactRow ||
       artifactRow.version === lease.artifactVersion ||
       artifactRow.generationStatus !== 'ready' ||
-      artifactRow.verificationStatus !== 'queued'
+      artifactRow.verificationStatus !== 'queued' ||
+      artifactRow.archivedAt !== null
     ) {
       return false;
     }
@@ -709,6 +714,7 @@ export async function finalizeNoteVerificationResult<T>(
         version: artifact.version,
         generationStatus: artifact.generation_status,
         verificationStatus: artifact.verification_status,
+        archivedAt: artifact.archived_at,
       })
       .from(artifact)
       .where(eq(artifact.id, artifactId))
@@ -728,7 +734,8 @@ export async function finalizeNoteVerificationResult<T>(
       !artifactRow ||
       artifactRow.version !== claim.artifact_version ||
       artifactRow.generationStatus !== 'ready' ||
-      artifactRow.verificationStatus !== 'queued'
+      artifactRow.verificationStatus !== 'queued' ||
+      artifactRow.archivedAt !== null
     ) {
       return null;
     }
@@ -765,9 +772,13 @@ export async function listRecoverableNoteVerificationResults(
   const rows = await db
     .select({ artifactId: note_verification_claim.artifact_id })
     .from(note_verification_claim)
+    .innerJoin(artifact, eq(artifact.id, note_verification_claim.artifact_id))
     .where(
       and(
         lte(note_verification_claim.available_at, now),
+        isNull(artifact.archived_at),
+        eq(artifact.generation_status, 'ready'),
+        eq(artifact.verification_status, 'queued'),
         or(
           eq(note_verification_claim.state, 'result_ready'),
           and(
@@ -784,13 +795,7 @@ export async function listRecoverableNoteVerificationResults(
             isNotNull(note_verification_claim.lease_expires_at),
             lte(note_verification_claim.lease_expires_at, now),
           ),
-          sql`EXISTS (
-            SELECT 1 FROM ${artifact}
-            WHERE ${artifact.id} = ${note_verification_claim.artifact_id}
-              AND ${artifact.version} <> ${note_verification_claim.artifact_version}
-              AND ${artifact.generation_status} = 'ready'
-              AND ${artifact.verification_status} = 'queued'
-          )`,
+          sql`${artifact.version} <> ${note_verification_claim.artifact_version}`,
         ),
       ),
     )
@@ -814,6 +819,7 @@ export async function prepareNoteVerificationResultRecovery(
         version: artifact.version,
         generationStatus: artifact.generation_status,
         verificationStatus: artifact.verification_status,
+        archivedAt: artifact.archived_at,
       })
       .from(artifact)
       .where(eq(artifact.id, artifactId))
@@ -833,7 +839,8 @@ export async function prepareNoteVerificationResultRecovery(
     if (
       !claim ||
       artifactRow.generationStatus !== 'ready' ||
-      artifactRow.verificationStatus !== 'queued'
+      artifactRow.verificationStatus !== 'queued' ||
+      artifactRow.archivedAt !== null
     ) {
       return null;
     }

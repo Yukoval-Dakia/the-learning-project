@@ -33,8 +33,11 @@
   `31347238672` 的 DB/unit/migration/build/usability 均通过，但新增 claim→artifacts direct edge
   触发 boundary audit。PR 当前 head 已用 Notes-local verification lifecycle adapter 合并两个 direct
   edge，恢复既有 `notes -> artifacts = 8` / total `523` 基线且未抬高 baseline，并已 commit/push；
-  correctness / quality static re-review PASS。只有该 current head 的 fresh exact-head CI/review/merge
-  可作最终证据。owner 禁止本地 test/typecheck/build/audit/migration。
+  correctness / quality static re-review PASS；其 exact-head CI run `31348035418` 全绿。后续 review
+  又确认 archived artifact 可被 recovery 重派发、终态 artifact 可遗留 claim 并占满 recovery batch。
+  PR 当前 head（包含 archived/terminal eligibility guards 与 pre-LIMIT starvation regressions）已
+  commit/push；只有这个 current head 的 fresh exact-head CI/review/merge 可作最终证据。owner 禁止
+  本地 test/typecheck/build/audit/migration。
 - **生产边界不变。** F0.0–F0.4 均未部署；YUK-832 继续 HOLD，YUK-842 production 继续 observe。
 
 ## NEXT

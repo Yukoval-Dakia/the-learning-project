@@ -124,6 +124,57 @@ describe('runNoteVerify durable claim', () => {
     expect(runTaskFn).not.toHaveBeenCalled();
   });
 
+  it('skips archived and terminal deliveries without creating claims or calling AI', async () => {
+    await seedArtifact('archived-delivery');
+    await seedArtifact('verified-delivery');
+    await testDb()
+      .update(artifact)
+      .set({ archived_at: new Date() })
+      .where(eq(artifact.id, 'archived-delivery'));
+    await testDb()
+      .update(artifact)
+      .set({ verification_status: 'verified' })
+      .where(eq(artifact.id, 'verified-delivery'));
+    const runTaskFn = vi.fn();
+
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'archived-delivery', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:not_queued' });
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'verified-delivery', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:not_queued' });
+
+    expect(runTaskFn).not.toHaveBeenCalled();
+    const claims = await testDb().select().from(note_verification_claim);
+    expect(claims).toEqual([]);
+  });
+
+  it('drops a reservation when the artifact is archived before the provider boundary', async () => {
+    await seedArtifact('archived-before-provider');
+    const db = testDb();
+    let providerQueries = 0;
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await db
+        .update(artifact)
+        .set({ archived_at: new Date() })
+        .where(eq(artifact.id, 'archived-before-provider'));
+      await crossProviderBoundary(ctx);
+      providerQueries += 1;
+      return { text: PASS_OUTPUT };
+    });
+
+    await expect(
+      runNoteVerify({ db, artifactId: 'archived-before-provider', runTaskFn }),
+    ).rejects.toThrow('provider-start claim changed');
+
+    expect(providerQueries).toBe(0);
+    const claims = await db
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'archived-before-provider'));
+    expect(claims).toEqual([]);
+  });
+
   it('fences concurrent delivery to exactly one paid call', async () => {
     await seedArtifact('concurrent');
     let release: (() => void) | undefined;
@@ -540,6 +591,48 @@ describe('runNoteVerify durable claim', () => {
       .where(eq(artifact.id, 'batch-b-good'));
     expect(badClaim.state).toBe('retry_wait');
     expect(goodArtifact.verification_status).toBe('verified');
+  });
+
+  it('filters fifty terminal claims before the recovery limit', async () => {
+    const db = testDb();
+    for (let index = 0; index < 50; index += 1) {
+      const artifactId = `terminal-claim-${String(index).padStart(2, '0')}`;
+      await seedArtifact(artifactId);
+      const reservation = await reserveNoteVerification(db, artifactId);
+      if (reservation.kind !== 'claimed') throw new Error('expected terminal seed claim');
+      await db
+        .update(artifact)
+        .set({ verification_status: 'verified' })
+        .where(eq(artifact.id, artifactId));
+      await db
+        .update(note_verification_claim)
+        .set({
+          state: 'retry_wait',
+          claim_token: null,
+          task_run_id: null,
+          claimed_at: null,
+          lease_expires_at: null,
+          available_at: new Date(0),
+        })
+        .where(eq(note_verification_claim.artifact_id, artifactId));
+    }
+    await seedArtifact('valid-after-terminal-claims');
+    const valid = await reserveNoteVerification(db, 'valid-after-terminal-claims');
+    if (valid.kind !== 'claimed') throw new Error('expected valid recovery claim');
+    await db
+      .update(note_verification_claim)
+      .set({ lease_expires_at: new Date(0), available_at: new Date(0) })
+      .where(eq(note_verification_claim.artifact_id, 'valid-after-terminal-claims'));
+    const boss = fakeBoss();
+
+    await expect(recoverResultReadyNoteVerifications(db, { boss })).resolves.toBe(0);
+
+    expect(boss.send).toHaveBeenCalledTimes(1);
+    expect(boss.send).toHaveBeenCalledWith(
+      'note_verify',
+      { artifact_id: 'valid-after-terminal-claims' },
+      expect.objectContaining({ id: expect.any(String) }),
+    );
   });
 
   it('cron requeues an expired pre-provider reservation and the handler completes it', async () => {

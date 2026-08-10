@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { Db, Tx } from '@/db/client';
@@ -127,6 +127,23 @@ async function durableJobExists(
   return job !== null;
 }
 
+async function artifactCanReceiveHandoff(
+  db: Db | Tx,
+  artifactId: string,
+  intentKind: IntentKind,
+): Promise<boolean> {
+  const lifecyclePredicate =
+    intentKind === NOTE_HANDOFF_KINDS.generationIntent
+      ? eq(artifact.generation_status, 'pending')
+      : and(eq(artifact.generation_status, 'ready'), eq(artifact.verification_status, 'queued'));
+  const rows = await db
+    .select({ id: artifact.id })
+    .from(artifact)
+    .where(and(eq(artifact.id, artifactId), isNull(artifact.archived_at), lifecyclePredicate))
+    .limit(1);
+  return rows.length === 1;
+}
+
 export async function dispatchNoteHandoff(
   db: Db,
   artifactId: string,
@@ -137,6 +154,7 @@ export async function dispatchNoteHandoff(
   const completionKind = completionFor(intentKind);
   const completionId = noteHandoffEventId(completionKind, artifactId);
   if (!(await recordExists(db, intentId)) || (await recordExists(db, completionId))) return false;
+  if (!(await artifactCanReceiveHandoff(db, artifactId, intentKind))) return false;
 
   const boss = deps.boss ?? (await getNotesBoss());
   const queue = queueFor(intentKind);
@@ -215,7 +233,9 @@ async function synthesizeLegacyIntents(db: Db): Promise<void> {
     })
     .from(artifact)
     .where(
-      sql`(${artifact.generation_status} = 'pending' OR (${artifact.generation_status} = 'ready' AND ${artifact.verification_status} = 'queued'))
+      and(
+        isNull(artifact.archived_at),
+        sql`(${artifact.generation_status} = 'pending' OR (${artifact.generation_status} = 'ready' AND ${artifact.verification_status} = 'queued'))
         AND NOT EXISTS (
           SELECT 1 FROM ${event} e
           WHERE e.action = ${NOTE_HANDOFF_ACTION}
@@ -227,15 +247,23 @@ async function synthesizeLegacyIntents(db: Db): Promise<void> {
               ELSE ${NOTE_HANDOFF_KINDS.verificationIntent}
             END
         )`,
+      ),
     )
     .orderBy(asc(artifact.created_at), asc(artifact.id))
     .limit(RECOVERY_BATCH_SIZE);
 
   for (const row of rows) {
     await db.transaction(async (tx) => {
-      if (row.generation_status === 'pending') {
+      if (
+        row.generation_status === 'pending' &&
+        (await artifactCanReceiveHandoff(tx, row.id, NOTE_HANDOFF_KINDS.generationIntent))
+      ) {
         await writeNoteGenerationIntent(tx, row.id);
-      } else if (row.generation_status === 'ready' && row.verification_status === 'queued') {
+      } else if (
+        row.generation_status === 'ready' &&
+        row.verification_status === 'queued' &&
+        (await artifactCanReceiveHandoff(tx, row.id, NOTE_HANDOFF_KINDS.verificationIntent))
+      ) {
         await writeNoteVerificationIntent(tx, row.id);
       }
     });
@@ -261,6 +289,7 @@ export async function recoverNoteHandoffs(
         inArray(sql<string>`${event.payload} ->> 'handoff_kind'`, intentKinds),
         eq(sql<string>`${event.payload} ->> 'version'`, String(HANDOFF_VERSION)),
         eq(sql<string>`${event.payload} ->> 'artifact_id'`, event.subject_id),
+        isNull(artifact.archived_at),
         sql`NOT EXISTS (
           SELECT 1 FROM ${event} completion
           WHERE completion.action = ${NOTE_HANDOFF_ACTION}

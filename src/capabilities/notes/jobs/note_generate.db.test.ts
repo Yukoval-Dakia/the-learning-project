@@ -3,11 +3,12 @@ import { artifact, event, knowledge } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { buildNoteGenerateHandler, runNoteGenerate } from './note_generate';
+import { type RunTaskFn, buildNoteGenerateHandler, runNoteGenerate } from './note_generate';
 
 async function seedAtomic(opts: {
   artifactId: string;
   pending?: boolean;
+  archived?: boolean;
   knowledgeId?: string;
   domain?: string | null;
 }) {
@@ -43,7 +44,7 @@ async function seedAtomic(opts: {
     generation_status: opts.pending === false ? 'ready' : 'pending',
     generated_by: null,
     history: [],
-    archived_at: null,
+    archived_at: opts.archived ? now : null,
     created_at: now,
     updated_at: now,
     version: 0,
@@ -126,6 +127,49 @@ describe('runNoteGenerate', () => {
     });
     expect(result.status).toBe('skipped:not_pending');
     expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('skips an archived pending delivery before invoking the task runner', async () => {
+    await seedAtomic({ artifactId: 'archived-pending', archived: true });
+    const runTaskFn = vi.fn();
+
+    await expect(
+      runNoteGenerate({ db: testDb(), artifactId: 'archived-pending', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:not_pending' });
+
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('does not submit a provider query when the artifact is archived at the boundary', async () => {
+    await seedAtomic({ artifactId: 'archived-at-boundary' });
+    const db = testDb();
+    let providerQueries = 0;
+    const runTaskFn: RunTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await db
+        .update(artifact)
+        .set({ archived_at: new Date(), updated_at: new Date() })
+        .where(eq(artifact.id, 'archived-at-boundary'));
+      if (!ctx?.beforeProviderQuery) throw new Error('provider boundary callback missing');
+      await ctx.beforeProviderQuery({
+        taskRunId: 'generate-archive-race',
+        provider: 'anthropic-sub',
+        model: 'test',
+      });
+      providerQueries += 1;
+      return { text: VALID_SECTIONS };
+    });
+
+    await expect(
+      runNoteGenerate({ db, artifactId: 'archived-at-boundary', runTaskFn }),
+    ).rejects.toThrow('note generation is no longer pending and active');
+
+    expect(providerQueries).toBe(0);
+    const [row] = await db
+      .select({ status: artifact.generation_status, archivedAt: artifact.archived_at })
+      .from(artifact)
+      .where(eq(artifact.id, 'archived-at-boundary'));
+    expect(row).toMatchObject({ status: 'pending' });
+    expect(row.archivedAt).not.toBeNull();
   });
 
   it('generates + writes sections on happy path', async () => {

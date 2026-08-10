@@ -17,7 +17,11 @@ import {
 
 async function seedNote(
   id: string,
-  states: { readonly generation: string; readonly verification: string },
+  states: {
+    readonly generation: string;
+    readonly verification: string;
+    readonly archived?: boolean;
+  },
 ): Promise<void> {
   const now = new Date();
   await testDb()
@@ -39,6 +43,7 @@ async function seedNote(
       verification_status: states.verification,
       generated_by: null,
       history: [],
+      archived_at: states.archived ? now : null,
       created_at: now,
       updated_at: now,
       version: 0,
@@ -216,6 +221,49 @@ describe('Notes durable handoff', () => {
     );
   });
 
+  it('does not synthesize or dispatch handoff work for an archived pending artifact', async () => {
+    await seedNote('note-archived-legacy', {
+      generation: 'pending',
+      verification: 'not_required',
+      archived: true,
+    });
+    const boss = fakeBoss();
+
+    await expect(recoverNoteHandoffs(testDb(), { boss })).resolves.toBe(0);
+
+    expect(boss.send).not.toHaveBeenCalled();
+    const intents = await testDb()
+      .select({ id: event.id })
+      .from(event)
+      .where(
+        eq(
+          event.id,
+          noteHandoffEventId(NOTE_HANDOFF_KINDS.generationIntent, 'note-archived-legacy'),
+        ),
+      );
+    expect(intents).toEqual([]);
+  });
+
+  it('does not dispatch an existing intent after its artifact is archived', async () => {
+    await seedNote('note-archived-after-intent', {
+      generation: 'pending',
+      verification: 'not_required',
+    });
+    await testDb().transaction((tx) => writeNoteGenerationIntent(tx, 'note-archived-after-intent'));
+    await testDb()
+      .update(artifact)
+      .set({ archived_at: new Date(), updated_at: new Date() })
+      .where(eq(artifact.id, 'note-archived-after-intent'));
+    const boss = fakeBoss();
+
+    await expect(
+      dispatchNoteGeneration(testDb(), 'note-archived-after-intent', { boss }),
+    ).resolves.toBe(false);
+    await expect(recoverNoteHandoffs(testDb(), { boss })).resolves.toBe(0);
+
+    expect(boss.send).not.toHaveBeenCalled();
+  });
+
   it('skips malformed, future-version, missing and terminal rows without blocking valid work', async () => {
     await seedNote('note-valid', { generation: 'pending', verification: 'not_required' });
     await seedNote('note-terminal', { generation: 'failed', verification: 'failed' });
@@ -248,6 +296,31 @@ describe('Notes durable handoff', () => {
 
     await expect(recoverNoteHandoffs(testDb(), { boss })).resolves.toBe(1);
     expect(boss.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('filters fifty terminal intents before the recovery limit', async () => {
+    for (let index = 0; index < 50; index += 1) {
+      const artifactId = `terminal-intent-${String(index).padStart(2, '0')}`;
+      await seedNote(artifactId, { generation: 'failed', verification: 'failed' });
+      await testDb().transaction((tx) => writeNoteGenerationIntent(tx, artifactId));
+    }
+    await seedNote('valid-after-terminal-intents', {
+      generation: 'pending',
+      verification: 'not_required',
+    });
+    await testDb().transaction((tx) =>
+      writeNoteGenerationIntent(tx, 'valid-after-terminal-intents'),
+    );
+    const boss = fakeBoss();
+
+    await expect(recoverNoteHandoffs(testDb(), { boss })).resolves.toBe(1);
+
+    expect(boss.send).toHaveBeenCalledTimes(1);
+    expect(boss.send).toHaveBeenCalledWith(
+      'note_generate',
+      { artifact_id: 'valid-after-terminal-intents' },
+      { id: noteHandoffJobId(NOTE_HANDOFF_KINDS.generationIntent, 'valid-after-terminal-intents') },
+    );
   });
 
   it('filters fifty payload-subject mismatches before the recovery limit', async () => {

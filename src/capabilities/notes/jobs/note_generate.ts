@@ -10,7 +10,7 @@
 // the broken state instead of stuck-pending. pg-boss retries on throw per
 // queue policy.
 
-import { type SQL, and, eq, inArray } from 'drizzle-orm';
+import { type SQL, and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 
@@ -131,7 +131,13 @@ async function reopenFailedGenerationForRetry(db: Db, artifactId: string): Promi
     const rows = await tx
       .select({ version: artifact.version })
       .from(artifact)
-      .where(and(eq(artifact.id, artifactId), eq(artifact.generation_status, 'failed')))
+      .where(
+        and(
+          eq(artifact.id, artifactId),
+          eq(artifact.generation_status, 'failed'),
+          isNull(artifact.archived_at),
+        ),
+      )
       .for('update')
       .limit(1);
     const row = rows[0];
@@ -140,7 +146,13 @@ async function reopenFailedGenerationForRetry(db: Db, artifactId: string): Promi
     const updated = await tx
       .update(artifact)
       .set({ generation_status: 'pending', updated_at: now })
-      .where(and(eq(artifact.id, artifactId), eq(artifact.generation_status, 'failed')))
+      .where(
+        and(
+          eq(artifact.id, artifactId),
+          eq(artifact.generation_status, 'failed'),
+          isNull(artifact.archived_at),
+        ),
+      )
       .returning({ id: artifact.id });
     if (updated.length !== 1) return false;
     await emitArtifactLifecycleEvent(tx, {
@@ -177,12 +189,14 @@ export async function runNoteGenerate(
       parent_artifact_id: artifact.parent_artifact_id,
       attrs: artifact.attrs,
       generation_status: artifact.generation_status,
+      archived_at: artifact.archived_at,
     })
     .from(artifact)
     .where(eq(artifact.id, artifactId))
     .limit(1);
   const row = rows[0];
   if (!row) return { status: 'skipped:not_found' };
+  if (row.archived_at !== null) return { status: 'skipped:not_pending' };
   if (row.generation_status === 'failed') {
     if (!(await reopenFailedGenerationForRetry(db, artifactId))) {
       return { status: 'skipped:not_pending' };
@@ -238,6 +252,22 @@ export async function runNoteGenerate(
     const result = await runTaskFn('NoteGenerateTask', input, {
       subjectProfile,
       skills: await resolveNoteSkill(subjectProfile.id),
+      beforeProviderQuery: async () => {
+        const activeRows = await db
+          .select({ id: artifact.id })
+          .from(artifact)
+          .where(
+            and(
+              eq(artifact.id, artifactId),
+              eq(artifact.generation_status, 'pending'),
+              isNull(artifact.archived_at),
+            ),
+          )
+          .limit(1);
+        if (activeRows.length === 0) {
+          throw new Error(`note generation is no longer pending and active: ${artifactId}`);
+        }
+      },
     });
     const parsed = parseNoteGenerateOutput(result.text);
 
@@ -263,7 +293,13 @@ export async function runNoteGenerate(
           history: artifact.history,
         })
         .from(artifact)
-        .where(and(eq(artifact.id, artifactId), eq(artifact.generation_status, 'pending')))
+        .where(
+          and(
+            eq(artifact.id, artifactId),
+            eq(artifact.generation_status, 'pending'),
+            isNull(artifact.archived_at),
+          ),
+        )
         .for('update')
         .limit(1);
       const before = beforeRows[0];
@@ -285,7 +321,13 @@ export async function runNoteGenerate(
           version: nextVersion,
           updated_at: now,
         })
-        .where(and(eq(artifact.id, artifactId), eq(artifact.generation_status, 'pending')))
+        .where(
+          and(
+            eq(artifact.id, artifactId),
+            eq(artifact.generation_status, 'pending'),
+            isNull(artifact.archived_at),
+          ),
+        )
         .returning({ id: artifact.id });
       if (rows.length === 0) return [];
 
@@ -345,7 +387,13 @@ export async function runNoteGenerate(
         const beforeRows = await tx
           .select({ version: artifact.version })
           .from(artifact)
-          .where(eq(artifact.id, artifactId))
+          .where(
+            and(
+              eq(artifact.id, artifactId),
+              eq(artifact.generation_status, 'pending'),
+              isNull(artifact.archived_at),
+            ),
+          )
           .for('update')
           .limit(1);
         const before = beforeRows[0];
@@ -353,7 +401,13 @@ export async function runNoteGenerate(
         const rows = await tx
           .update(artifact)
           .set({ generation_status: 'failed', updated_at: failedAt })
-          .where(and(eq(artifact.id, artifactId), eq(artifact.generation_status, 'pending')))
+          .where(
+            and(
+              eq(artifact.id, artifactId),
+              eq(artifact.generation_status, 'pending'),
+              isNull(artifact.archived_at),
+            ),
+          )
           .returning({ id: artifact.id });
         if (rows.length === 0) return;
         await emitArtifactLifecycleEvent(tx, {
