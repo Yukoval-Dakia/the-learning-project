@@ -28,10 +28,13 @@
   boundary、跨 recovery job 无界 paid retry、claim recovery 吞错三条 P1。repair commit
   `01dd3b68` 已推送 PR #1174；后续 head `e6a0c280` 的 exact-head CI run `31345789472`
   全绿，但 review thread 随后确认 attempt cap 只终结 claim、未终结 artifact 的第四条 P1。
-  PR 当前 head 已包含最终 repair：第三次 confirmed provider failure 与所有 cap 入口均同事务投影
-  claim `attempts_exhausted`、artifact `verification_status='failed'` 及 lifecycle event，并已
-  commit/push；correctness / quality static re-review PASS。只有该 current head 的 fresh exact-head
-  CI/review/merge 可作最终证据。owner 禁止本地 test/typecheck/build/audit/migration。
+  repair `121bdb85` 使第三次 confirmed provider failure 与所有 cap 入口均同事务投影 claim
+  `attempts_exhausted`、artifact `verification_status='failed'` 及 lifecycle event；其 CI run
+  `31347238672` 的 DB/unit/migration/build/usability 均通过，但新增 claim→artifacts direct edge
+  触发 boundary audit。PR 当前 head 已用 Notes-local verification lifecycle adapter 合并两个 direct
+  edge，恢复既有 `notes -> artifacts = 8` / total `523` 基线且未抬高 baseline，并已 commit/push；
+  correctness / quality static re-review PASS。只有该 current head 的 fresh exact-head CI/review/merge
+  可作最终证据。owner 禁止本地 test/typecheck/build/audit/migration。
 - **生产边界不变。** F0.0–F0.4 均未部署；YUK-832 继续 HOLD，YUK-842 production 继续 observe。
 
 ## NEXT

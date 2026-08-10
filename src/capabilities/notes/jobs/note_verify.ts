@@ -28,6 +28,7 @@ import {
   stageNoteVerificationResult,
   supersedeNoteVerificationEpoch,
 } from '@/capabilities/notes/server/note-verification-claim';
+import { emitNoteVerificationLifecycleEvent } from '@/capabilities/notes/server/note-verification-lifecycle';
 import { NoteVerificationResult, type NoteVerificationResultT } from '@/core/schema/business';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db, Tx } from '@/db/client';
@@ -40,7 +41,6 @@ import {
   costUsdToMicroUsd,
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -192,11 +192,10 @@ async function persistNoteVerificationResultTx(params: {
   });
   const version = updatedRows[0]?.version;
   if (version !== undefined) {
-    await emitArtifactLifecycleEvent(tx, {
-      subjectId: artifactId,
-      op: 'set_verification_status',
-      verificationStatus: status,
-      verificationSummary: parsed,
+    await emitNoteVerificationLifecycleEvent(tx, {
+      artifactId,
+      status,
+      summary: parsed,
       verifiedBy: verifiedByRef,
       nextVersion: version,
       actorKind: taskResult ? 'agent' : 'system',

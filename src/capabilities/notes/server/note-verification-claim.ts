@@ -6,8 +6,9 @@ import type { NoteVerificationResultT } from '@/core/schema/business';
 import { NoteVerificationResult } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { artifact, note_verification_claim } from '@/db/schema';
-import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
 import { z } from 'zod';
+
+import { emitNoteVerificationLifecycleEvent } from './note-verification-lifecycle';
 
 const CLAIM_RETRY_DELAY_MS = 30_000;
 const RESERVED_LEASE_MS = 20_000;
@@ -87,10 +88,9 @@ async function failArtifactVerificationForEpoch(
     .returning({ version: artifact.version });
   const row = rows[0];
   if (!row) return;
-  await emitArtifactLifecycleEvent(tx, {
-    subjectId: epoch.artifactId,
-    op: 'set_verification_status',
-    verificationStatus: 'failed',
+  await emitNoteVerificationLifecycleEvent(tx, {
+    artifactId: epoch.artifactId,
+    status: 'failed',
     nextVersion: row.version,
     actorKind: 'system',
     actorRef: 'note_verify_attempt_limit',
