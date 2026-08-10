@@ -48,7 +48,7 @@ function assistant(
       usage: observedUsage,
     },
     parent_tool_use_id: null,
-    uuid: 'assistant-terminal-test',
+    uuid: '00000000-0000-4000-8000-000000000001',
     session_id: 'session-terminal-test',
   };
 }
@@ -75,7 +75,7 @@ function successResult(
     modelUsage: {},
     permission_denials: [],
     structured_output: overrides.structuredOutput,
-    uuid: 'result-terminal-test',
+    uuid: '00000000-0000-4000-8000-000000000002',
     session_id: 'session-terminal-test',
   };
 }
@@ -94,7 +94,7 @@ function errorResult(stopReason: string | null = null): ResultMessage {
     modelUsage: {},
     permission_denials: [],
     errors: ['terminal failure'],
-    uuid: 'result-terminal-error-test',
+    uuid: '00000000-0000-4000-8000-000000000003',
     session_id: 'session-terminal-test',
   };
 }
