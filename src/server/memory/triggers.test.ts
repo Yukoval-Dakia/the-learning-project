@@ -74,7 +74,7 @@ function addEventMemoryOnceMock(
 ): MemoryClient['addEventMemoryOnce'] {
   return vi.fn(async (_event, _providerOperation, beforeProviderAdd) => {
     await beforeProviderAdd();
-    return { result: { results }, resolution: 'provider_result' };
+    return { result: { results }, resolution: 'provider_result' as const };
   });
 }
 

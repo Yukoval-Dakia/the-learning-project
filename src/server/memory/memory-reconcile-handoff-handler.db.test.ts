@@ -52,7 +52,7 @@ describe('memory reconcile ingest handoff modes and crashes', () => {
         await beforeProviderAdd();
         return {
           result: { results: [{ id: `memory-${fixture.mode}`, memory: fixture.mode }] },
-          resolution: 'provider_result',
+          resolution: 'provider_result' as const,
         };
       },
     );
@@ -104,7 +104,8 @@ describe('memory reconcile ingest handoff modes and crashes', () => {
     const addEventMemoryOnce: MemoryClient['addEventMemoryOnce'] = vi.fn(
       async (input, _providerOperation, beforeProviderAdd) => {
         const existing = await findByEventId(input.id);
-        if (existing.results.length > 0) return { result: existing, resolution: 'event_lookup' };
+        if (existing.results.length > 0)
+          return { result: existing, resolution: 'event_lookup' as const };
         boundaryArrivals += 1;
         if (boundaryArrivals === 2) releaseBoundary();
         await bothAtBoundary;
@@ -112,7 +113,7 @@ describe('memory reconcile ingest handoff modes and crashes', () => {
         providerAdd();
         const memory = { id: 'memory-concurrent', memory: 'one paid lifecycle' };
         externalMemories.set(input.id, memory);
-        return { result: { results: [memory] }, resolution: 'provider_result' };
+        return { result: { results: [memory] }, resolution: 'provider_result' as const };
       },
     );
     const send = vi.fn(async (_queue: string, _data: object, options?: object) =>
@@ -165,7 +166,8 @@ describe('memory reconcile ingest handoff modes and crashes', () => {
     const addEventMemoryOnce: MemoryClient['addEventMemoryOnce'] = vi.fn(
       async (input, _providerOperation, beforeProviderAdd) => {
         const existing = await findByEventId(input.id);
-        if (existing.results.length > 0) return { result: existing, resolution: 'event_lookup' };
+        if (existing.results.length > 0)
+          return { result: existing, resolution: 'event_lookup' as const };
         await beforeProviderAdd();
         providerAdd();
         rows.set(input.id, { id: 'memory-generic', memory: 'generic inferred fact' });
@@ -208,7 +210,7 @@ describe('memory reconcile ingest handoff modes and crashes', () => {
         providerAdd();
         return {
           result: { results: [{ id: 'memory-after-retry', memory: 'safe retry' }] },
-          resolution: 'provider_result',
+          resolution: 'provider_result' as const,
         };
       },
     );

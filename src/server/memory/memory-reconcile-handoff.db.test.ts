@@ -217,14 +217,14 @@ describe('memory reconcile append-only handoff', () => {
   it('fails closed when a post-start event lookup is still empty', async () => {
     const db = testDb();
     await claimMemoryIngest(db, 'source-ambiguous');
-    const findByEventId = vi.fn(async () => ({ results: [] }));
+    const findByEventId = vi.fn(async (_eventId: string) => ({ results: [] }));
     const providerAdd = vi.fn();
     const addEventMemoryOnce: MemoryClient['addEventMemoryOnce'] = vi.fn(
       async (input, _providerOperation, beforeProviderAdd) => {
         await findByEventId(input.id);
         await beforeProviderAdd();
         providerAdd();
-        return { result: { results: [] }, resolution: 'provider_result' };
+        return { result: { results: [] }, resolution: 'provider_result' as const };
       },
     );
     const handler = buildMemoryEventIngestHandler(
