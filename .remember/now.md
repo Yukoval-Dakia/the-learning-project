@@ -2,7 +2,7 @@
 
 ## NOW
 
-- Base/main 为 YUK-858 merge `136faec8224c0f0136532c748aea1bbc689ca7b7`（PR #1175）；未部署。
+- Base/main 为 YUK-861 merge `f84fe3bc44d4e56c4143daf3f382d8ec757c454e`；未部署。
 - YUK-858 exact-head CI
   `31362608190` green，未部署。Mem0 exact event lookup、
   lookup-before-add、opaque operation-kind provider-start fence、post-reserve event v1 add marker、
