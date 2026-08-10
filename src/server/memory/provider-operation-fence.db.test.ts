@@ -133,7 +133,7 @@ describe('Mem0 opaque provider-start fence', () => {
     await db
       .update(provider_attempt_admission)
       .set({
-        lease_expires_at: sql`clock_timestamp() - interval '1 second'`,
+        lease_expires_at: sql`clock_timestamp() - interval '2 seconds'`,
         deadline_at: sql`clock_timestamp() - interval '1 second'`,
       })
       .where(eq(provider_attempt_admission.attempt_id, firstAttempt.attempt_id));
