@@ -19,10 +19,12 @@
   artifact-version/fence CAS、raw-result recovery 与 Notes-owned task definitions。SHA
   `860e39cf` 的 exact-head CI run `31343456441` 已全绿，但后续 PR review 确认 provider-start
   boundary、跨 recovery job 无界 paid retry、claim recovery 吞错三条 P1。repair commit
-  `01dd3b68` 已推送 PR #1174，并经 correctness / quality / security static review PASS；该 SHA
-  的 CI run `31345451148` 已启动，但不是最终交付证据。PR 当前 head（包含本 handoff sync）已
-  commit/push；只有该 current head 的 fresh exact-head CI/review/merge 可作最终证据。未做本地
-  runtime 验证。
+  `01dd3b68` 已推送 PR #1174；后续 head `e6a0c280` 的 exact-head CI run `31345789472`
+  全绿，但 review thread 随后确认 attempt cap 只终结 claim、未终结 artifact 的第四条 P1。
+  PR 当前 head 已包含最终 repair：第三次 confirmed provider failure 与所有 cap 入口均同事务投影
+  claim `attempts_exhausted`、artifact `verification_status='failed'` 及 lifecycle event，并已
+  commit/push；correctness / quality static re-review PASS。只有该 current head 的 fresh exact-head
+  CI/review/merge 可作最终证据。未做本地 runtime 验证。
 - **运行状态：**没有 deployment；YUK-832 HOLD 与 YUK-842 observe 均未改变。
 
 ## NEXT

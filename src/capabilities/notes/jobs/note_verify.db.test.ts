@@ -6,8 +6,8 @@ import {
 } from '@/capabilities/notes/server/note-verification-claim';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
-import { ai_task_runs, artifact, note_verification_claim } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { ai_task_runs, artifact, event, note_verification_claim } from '@/db/schema';
+import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -352,7 +352,7 @@ describe('runNoteVerify durable claim', () => {
     });
     const boss = fakeBoss();
 
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
       await expect(
         runNoteVerify({ db: testDb(), artifactId: 'attempt-cap', runTaskFn }),
       ).rejects.toThrow('persistent failure');
@@ -369,17 +369,41 @@ describe('runNoteVerify durable claim', () => {
       await expect(recoverResultReadyNoteVerifications(testDb(), { boss })).resolves.toBe(0);
     }
 
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'attempt-cap', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:attempts_exhausted' });
+
     expect(runTaskFn).toHaveBeenCalledTimes(3);
     expect(boss.send).toHaveBeenCalledTimes(2);
     const [exhausted] = await testDb()
       .select()
       .from(note_verification_claim)
       .where(eq(note_verification_claim.artifact_id, 'attempt-cap'));
+    const [failedArtifact] = await testDb()
+      .select({ verificationStatus: artifact.verification_status })
+      .from(artifact)
+      .where(eq(artifact.id, 'attempt-cap'));
+    const lifecycleEvents = await testDb()
+      .select({ payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.subject_id, 'attempt-cap'),
+          eq(event.action, 'experimental:artifact_lifecycle'),
+        ),
+      );
     expect(exhausted).toMatchObject({
       state: 'attempts_exhausted',
       provider_attempts: 3,
       provider_started_at: null,
       task_run_id: null,
+    });
+    expect(failedArtifact.verificationStatus).toBe('failed');
+    expect(lifecycleEvents).toContainEqual({
+      payload: expect.objectContaining({
+        op: 'set_verification_status',
+        verification_status: 'failed',
+      }),
     });
     await expect(
       runNoteVerify({ db: testDb(), artifactId: 'attempt-cap', runTaskFn }),
@@ -413,6 +437,63 @@ describe('runNoteVerify durable claim', () => {
       .from(note_verification_claim)
       .where(eq(note_verification_claim.artifact_id, 'new-epoch'));
     expect(claim).toMatchObject({ artifact_version: 1, provider_attempts: 1, state: 'completed' });
+  });
+
+  it('repairs a queued artifact already paired with an exhausted current-epoch claim', async () => {
+    await seedArtifact('exhausted-redelivery');
+    const now = new Date();
+    await testDb().insert(note_verification_claim).values({
+      artifact_id: 'exhausted-redelivery',
+      artifact_version: 0,
+      state: 'attempts_exhausted',
+      provider_attempts: 3,
+      error_message: 'provider attempt limit reached',
+      available_at: now,
+      created_at: now,
+      updated_at: now,
+    });
+    const runTaskFn = vi.fn();
+
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'exhausted-redelivery', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:attempts_exhausted' });
+
+    const [failedArtifact] = await testDb()
+      .select({ verificationStatus: artifact.verification_status })
+      .from(artifact)
+      .where(eq(artifact.id, 'exhausted-redelivery'));
+    expect(failedArtifact.verificationStatus).toBe('failed');
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('acks a provider-start cap race without submitting a query or leaving the artifact queued', async () => {
+    await seedArtifact('cap-at-boundary');
+    let submittedQueries = 0;
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await testDb()
+        .update(note_verification_claim)
+        .set({ provider_attempts: 3 })
+        .where(eq(note_verification_claim.artifact_id, 'cap-at-boundary'));
+      await crossProviderBoundary(ctx);
+      submittedQueries += 1;
+      return { text: PASS_OUTPUT };
+    });
+
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'cap-at-boundary', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:attempts_exhausted' });
+
+    const [claim] = await testDb()
+      .select({ state: note_verification_claim.state })
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'cap-at-boundary'));
+    const [failedArtifact] = await testDb()
+      .select({ verificationStatus: artifact.verification_status })
+      .from(artifact)
+      .where(eq(artifact.id, 'cap-at-boundary'));
+    expect(claim.state).toBe('attempts_exhausted');
+    expect(failedArtifact.verificationStatus).toBe('failed');
+    expect(submittedQueries).toBe(0);
   });
 
   it('finalizes durable result_ready without a second AI call', async () => {

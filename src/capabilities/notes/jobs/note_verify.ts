@@ -363,6 +363,9 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
       }
     })();
     let providerBoundaryCrossed = false;
+    const providerStartState: {
+      rejection: 'attempts_exhausted' | 'claim_changed' | null;
+    } = { rejection: null };
     try {
       const taskResult = await runTaskFn('NoteVerifyTask', input, {
         subjectProfile: runtime.subjectProfile,
@@ -375,8 +378,10 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
               providerBoundaryCrossed = true;
               return;
             case 'attempts_exhausted':
+              providerStartState.rejection = 'attempts_exhausted';
               throw noteVerificationRetryRequired(artifactId, 'provider attempts exhausted');
             case 'claim_changed':
+              providerStartState.rejection = 'claim_changed';
               await supersedeNoteVerificationEpoch(db, lease);
               throw noteVerificationRetryRequired(artifactId, 'provider-start claim changed');
             default: {
@@ -391,6 +396,18 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
         taskResult: { ...taskResult, task_run_id: lease.taskRunId },
       };
     } catch (error) {
+      switch (providerStartState.rejection) {
+        case 'attempts_exhausted':
+          return { status: 'skipped:attempts_exhausted' };
+        case 'claim_changed':
+          throw error;
+        case null:
+          break;
+        default: {
+          const exhaustive: never = providerStartState.rejection;
+          throw new Error(`unhandled provider-start rejection: ${String(exhaustive)}`);
+        }
+      }
       if (!providerBoundaryCrossed) {
         await releaseReservedNoteVerificationForRetry(db, lease, error);
         throw error;
@@ -407,7 +424,20 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
         durableStatus = null;
       }
       if (durableStatus === 'failure') {
-        await releaseNoteVerificationForRetry(db, lease, error);
+        const release = await releaseNoteVerificationForRetry(db, lease, error);
+        switch (release.kind) {
+          case 'retry_wait':
+            break;
+          case 'attempts_exhausted':
+            return { status: 'skipped:attempts_exhausted' };
+          case 'claim_changed':
+            await supersedeNoteVerificationEpoch(db, lease);
+            throw error;
+          default: {
+            const exhaustive: never = release;
+            throw new Error(`unhandled verification release: ${String(exhaustive)}`);
+          }
+        }
       } else {
         await markNoteVerificationAmbiguous(db, lease, error);
       }

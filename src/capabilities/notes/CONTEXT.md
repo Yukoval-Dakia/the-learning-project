@@ -11,7 +11,8 @@ hub-dismiss）、generate/verify durable handoff 与 Living Note refine 链（no
   reservation / 新 artifact epoch 写入可重发现的无 task/result `retry_wait`，再投递
   fence-specific `note_verify` job，但自身绝不执行付费 AI；
   provider attempt 在 central runner durable start 后、真实 query 前按 artifact epoch 原子计数，
-  最多 3 次；pre-wire failure 不计数，达到上限进入 `attempts_exhausted`，只有新 epoch 重置。
+  最多 3 次；pre-wire failure 不计数，达到上限时同事务投影 claim `attempts_exhausted` 与
+  artifact `verification_status='failed'`，只有新 epoch 重置。
   expired provider-start 只会 fail-closed 为 ambiguous。上述 handoff/claim 与 hub reconcile 共用
   manifest 中唯一的 `hub_sync_recovery` 定时 floor；两分支隔离执行，任一失败仍让 job retry-visible。
   注：`tool_quiz` 形态的 artifact 由 practice

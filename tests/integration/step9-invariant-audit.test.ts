@@ -459,6 +459,9 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       'src/server/orchestrator/learning_intent.ts',
       'src/capabilities/notes/jobs/note_generate.ts',
       'src/capabilities/notes/jobs/note_verify.ts',
+      // YUK-857 — provider-attempt exhaustion atomically sets verification_status=failed and emits
+      // the matching artifact lifecycle projection in the claim transaction.
+      'src/capabilities/notes/server/note-verification-claim.ts',
       'src/server/boss/handlers/embedded_check_generate.ts',
       'src/server/boss/handlers/quiz_gen.ts',
       'src/server/proposals/actions.ts',

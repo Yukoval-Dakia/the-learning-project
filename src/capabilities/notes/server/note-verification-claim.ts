@@ -6,6 +6,7 @@ import type { NoteVerificationResultT } from '@/core/schema/business';
 import { NoteVerificationResult } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { artifact, note_verification_claim } from '@/db/schema';
+import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
 import { z } from 'zod';
 
 const CLAIM_RETRY_DELAY_MS = 30_000;
@@ -65,6 +66,36 @@ function taskRunId(artifactId: string, artifactVersion: number, fence: number): 
 
 function parseStaged(value: unknown) {
   return StagedNoteVerificationSchema.safeParse(value);
+}
+
+async function failArtifactVerificationForEpoch(
+  tx: Tx,
+  epoch: { readonly artifactId: string; readonly artifactVersion: number },
+  now: Date,
+): Promise<void> {
+  const rows = await tx
+    .update(artifact)
+    .set({ verification_status: 'failed', updated_at: now })
+    .where(
+      and(
+        eq(artifact.id, epoch.artifactId),
+        eq(artifact.version, epoch.artifactVersion),
+        eq(artifact.generation_status, 'ready'),
+        eq(artifact.verification_status, 'queued'),
+      ),
+    )
+    .returning({ version: artifact.version });
+  const row = rows[0];
+  if (!row) return;
+  await emitArtifactLifecycleEvent(tx, {
+    subjectId: epoch.artifactId,
+    op: 'set_verification_status',
+    verificationStatus: 'failed',
+    nextVersion: row.version,
+    actorKind: 'system',
+    actorRef: 'note_verify_attempt_limit',
+    createdAt: now,
+  });
 }
 
 export async function reserveNoteVerification(
@@ -161,6 +192,11 @@ export async function reserveNoteVerification(
       return { kind: 'ambiguous' };
     }
     if (claim.state === 'attempts_exhausted') {
+      await failArtifactVerificationForEpoch(
+        tx,
+        { artifactId, artifactVersion: artifactRow.version },
+        now,
+      );
       return { kind: 'attempts_exhausted' };
     }
     if (claim.state === 'provider_started') {
@@ -239,6 +275,11 @@ export async function reserveNoteVerification(
           updated_at: now,
         })
         .where(eq(note_verification_claim.artifact_id, artifactId));
+      await failArtifactVerificationForEpoch(
+        tx,
+        { artifactId, artifactVersion: artifactRow.version },
+        now,
+      );
       return { kind: 'attempts_exhausted' };
     }
 
@@ -330,6 +371,16 @@ export async function markNoteVerificationProviderStarted(
     const started = rows[0];
     if (started) return { kind: 'started', providerAttempts: started.providerAttempts };
 
+    const artifactRows = await tx
+      .select({
+        version: artifact.version,
+        generationStatus: artifact.generation_status,
+        verificationStatus: artifact.verification_status,
+      })
+      .from(artifact)
+      .where(eq(artifact.id, lease.artifactId))
+      .for('update')
+      .limit(1);
     const claimRows = await tx
       .select()
       .from(note_verification_claim)
@@ -337,7 +388,12 @@ export async function markNoteVerificationProviderStarted(
       .for('update')
       .limit(1);
     const claim = claimRows[0];
+    const artifactRow = artifactRows[0];
     if (
+      !artifactRow ||
+      artifactRow.version !== lease.artifactVersion ||
+      artifactRow.generationStatus !== 'ready' ||
+      artifactRow.verificationStatus !== 'queued' ||
       claim?.state !== 'reserved' ||
       claim.artifact_version !== lease.artifactVersion ||
       claim.fence !== lease.fence ||
@@ -361,6 +417,7 @@ export async function markNoteVerificationProviderStarted(
         updated_at: now,
       })
       .where(leasePredicate(lease, 'reserved'));
+    await failArtifactVerificationForEpoch(tx, lease, now);
     return { kind: 'attempts_exhausted' };
   });
 }
@@ -411,24 +468,78 @@ export async function releaseNoteVerificationForRetry(
   db: Db,
   lease: NoteVerificationLease,
   error: unknown,
-): Promise<boolean> {
-  const now = new Date();
-  const rows = await db
-    .update(note_verification_claim)
-    .set({
-      state: 'retry_wait',
-      claim_token: null,
-      task_run_id: null,
-      claimed_at: null,
-      provider_started_at: null,
-      lease_expires_at: null,
-      error_message: error instanceof Error ? error.message : String(error),
-      available_at: new Date(now.getTime() + CLAIM_RETRY_DELAY_MS),
-      updated_at: now,
-    })
-    .where(leasePredicate(lease, 'provider_started'))
-    .returning({ artifactId: note_verification_claim.artifact_id });
-  return rows.length === 1;
+): Promise<{ kind: 'retry_wait' } | { kind: 'attempts_exhausted' } | { kind: 'claim_changed' }> {
+  return db.transaction(async (tx) => {
+    const artifactRows = await tx
+      .select({
+        version: artifact.version,
+        generationStatus: artifact.generation_status,
+        verificationStatus: artifact.verification_status,
+      })
+      .from(artifact)
+      .where(eq(artifact.id, lease.artifactId))
+      .for('update')
+      .limit(1);
+    const claimRows = await tx
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, lease.artifactId))
+      .for('update')
+      .limit(1);
+    const artifactRow = artifactRows[0];
+    const claim = claimRows[0];
+    if (
+      !artifactRow ||
+      artifactRow.version !== lease.artifactVersion ||
+      artifactRow.generationStatus !== 'ready' ||
+      artifactRow.verificationStatus !== 'queued' ||
+      claim?.state !== 'provider_started' ||
+      claim.artifact_version !== lease.artifactVersion ||
+      claim.fence !== lease.fence ||
+      claim.claim_token !== lease.token ||
+      claim.task_run_id !== lease.taskRunId
+    ) {
+      return { kind: 'claim_changed' };
+    }
+    const now = new Date();
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (claim.provider_attempts >= NOTE_VERIFICATION_PROVIDER_ATTEMPT_LIMIT) {
+      const exhaustedRows = await tx
+        .update(note_verification_claim)
+        .set({
+          state: 'attempts_exhausted',
+          claim_token: null,
+          task_run_id: null,
+          claimed_at: null,
+          provider_started_at: null,
+          lease_expires_at: null,
+          error_message: errorMessage,
+          updated_at: now,
+        })
+        .where(leasePredicate(lease, 'provider_started'))
+        .returning({ artifactId: note_verification_claim.artifact_id });
+      if (exhaustedRows.length === 0) return { kind: 'claim_changed' };
+      await failArtifactVerificationForEpoch(tx, lease, now);
+      return { kind: 'attempts_exhausted' };
+    }
+    const retryRows = await tx
+      .update(note_verification_claim)
+      .set({
+        state: 'retry_wait',
+        claim_token: null,
+        task_run_id: null,
+        claimed_at: null,
+        provider_started_at: null,
+        lease_expires_at: null,
+        error_message: errorMessage,
+        available_at: new Date(now.getTime() + CLAIM_RETRY_DELAY_MS),
+        updated_at: now,
+      })
+      .where(leasePredicate(lease, 'provider_started'))
+      .returning({ artifactId: note_verification_claim.artifact_id });
+    if (retryRows.length === 0) return { kind: 'claim_changed' };
+    return { kind: 'retry_wait' };
+  });
 }
 
 export async function releaseReservedNoteVerificationForRetry(
@@ -815,6 +926,11 @@ export async function prepareNoteVerificationResultRecovery(
               eq(note_verification_claim.artifact_version, claim.artifact_version),
             ),
           );
+        await failArtifactVerificationForEpoch(
+          tx,
+          { artifactId, artifactVersion: claim.artifact_version },
+          now,
+        );
         return null;
       }
       return { kind: 'retry_required', artifactId, fence: claim.fence };
