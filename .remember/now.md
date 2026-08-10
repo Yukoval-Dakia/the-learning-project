@@ -14,15 +14,17 @@
 - **F0.4 / YUK-852 已在 main。** PR #1171 merge SHA `c98b10b0`；未部署。
 - **YUK-844 已在 main。** PR #1172 merge 到 `b140d246`；unknown-cost 与 migration 0090 已交付。
 - **YUK-855 已交付 main。** YUK-857 前置依赖解除。
-- **YUK-857 是当前 active handoff。** event v1 intent/completion、deterministic pg-boss
-  UUID/readback、indexed 每分钟 recovery、0093 Notes verification claim、artifact-version/fence CAS、
-  raw-result recovery 与 Notes-owned task definitions 已作者化。未提交，未做 runtime 验证。
+- **YUK-857 是当前 active handoff。** PR #1174 已承载 event v1 intent/completion、deterministic
+  pg-boss UUID/readback、indexed 每分钟 recovery、0093 Notes verification claim、
+  artifact-version/fence CAS、raw-result recovery 与 Notes-owned task definitions。前一候选
+  `ddf5ac96` 的 GitHub CI 全绿；final security review 发现的 confirmed-failure recovery gap 已在
+  当前变更中修复，新 head 仍待 fresh exact-head CI/review。未做本地 runtime 验证。
 - **运行状态：**没有 deployment；YUK-832 HOLD 与 YUK-842 observe 均未改变。
 
 ## NEXT
 
-1. 完成 YUK-857 scoped Biome、changed JSON `jq empty` 与 `git diff --check`，封存 evidence。
-2. Root commit/push 后只以 exact-head GitHub CI + 独立 review 验证 tests/typecheck/build。
+1. 推送 YUK-857 final review fix 与本次 handoff 同步。
+2. 只以 fresh exact-head GitHub CI + 独立 review 验证 tests/typecheck/build。
 3. CI/review 全绿后 merge、同步 Linear；F2.2–F4 继续保持 open。
 
 ## PARKED
@@ -33,6 +35,6 @@
 
 ## BLOCKED-ON
 
-- YUK-857 尚缺 commit/push、exact-head CI、review clean 与 merge。
+- YUK-857 blocked on fresh exact-head CI、review clean 与 merge。
 - Architecture FULL 仍依赖 F2.1–F4，当前不能宣称 closed。
 - Production 没有部署授权或真实观察证据；保持未部署表述。
