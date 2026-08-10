@@ -119,6 +119,15 @@ export async function reserveNoteVerification(
     const artifactRow = artifactRows[0];
     if (!artifactRow) return { kind: 'not_found' };
     if (artifactRow.archivedAt !== null || artifactRow.verificationStatus !== 'queued') {
+      const existingRows = await tx
+        .select({ state: note_verification_claim.state })
+        .from(note_verification_claim)
+        .where(eq(note_verification_claim.artifact_id, artifactId))
+        .for('update')
+        .limit(1);
+      if (existingRows[0]?.state === 'attempts_exhausted') {
+        return { kind: 'attempts_exhausted' };
+      }
       return { kind: 'not_queued', artifactType: artifactRow.type };
     }
     if (artifactRow.generationStatus !== 'ready') {

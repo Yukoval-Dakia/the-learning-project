@@ -380,6 +380,34 @@ describe('runNoteVerify durable claim', () => {
     expect(claim).toMatchObject({ state: 'ambiguous', provider_attempts: 1 });
   });
 
+  it('acknowledges an archived delivery even when its paid result remains ambiguous', async () => {
+    await seedArtifact('archived-ambiguous');
+    const firstRunTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      throw new Error('connection lost after start');
+    });
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'archived-ambiguous', runTaskFn: firstRunTaskFn }),
+    ).rejects.toThrow('connection lost');
+    await testDb()
+      .update(artifact)
+      .set({ archived_at: new Date() })
+      .where(eq(artifact.id, 'archived-ambiguous'));
+    const redeliveryRunTaskFn = vi.fn();
+    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn: redeliveryRunTaskFn });
+
+    await expect(
+      handler([{ id: 'archived-ambiguous', data: { artifact_id: 'archived-ambiguous' } } as never]),
+    ).resolves.toBeUndefined();
+
+    expect(redeliveryRunTaskFn).not.toHaveBeenCalled();
+    const [claim] = await testDb()
+      .select({ state: note_verification_claim.state })
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'archived-ambiguous'));
+    expect(claim.state).toBe('ambiguous');
+  });
+
   it('caps persistent confirmed failures at three provider starts across recovery jobs', async () => {
     await seedArtifact('attempt-cap');
     const runTaskFn = vi.fn(async (_kind, _input, ctx) => {

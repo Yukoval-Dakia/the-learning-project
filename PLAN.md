@@ -35,9 +35,11 @@
   edge，恢复既有 `notes -> artifacts = 8` / total `523` 基线且未抬高 baseline，并已 commit/push；
   correctness / quality static re-review PASS；其 exact-head CI run `31348035418` 全绿。后续 review
   又确认 archived artifact 可被 recovery 重派发、终态 artifact 可遗留 claim 并占满 recovery batch。
-  PR 当前 head（包含 archived/terminal eligibility guards 与 pre-LIMIT starvation regressions）已
-  commit/push；只有这个 current head 的 fresh exact-head CI/review/merge 可作最终证据。owner 禁止
-  本地 test/typecheck/build/audit/migration。
+  repair `63025457` 加入 archived/terminal eligibility guards 与 pre-LIMIT starvation regressions；
+  其 exact-head CI run `31349482564` 除 DB shard 2 外均通过，失败暴露 capped artifact redelivery
+  丢失 canonical `attempts_exhausted` 结果。PR 当前 head 已保留该 terminal claim 结果，同时让 archived
+  ambiguous redelivery 安全 ack，并已 commit/push；只有这个 current head 的 fresh exact-head
+  CI/review/merge 可作最终证据。owner 禁止本地 test/typecheck/build/audit/migration。
 - **生产边界不变。** F0.0–F0.4 均未部署；YUK-832 继续 HOLD，YUK-842 production 继续 observe。
 
 ## NEXT
