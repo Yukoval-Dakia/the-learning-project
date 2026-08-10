@@ -363,6 +363,13 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
+    file: 'src/capabilities/notes/server/note-verification-claim.ts',
+    marker: '.update(artifact)',
+    role: 'off-path-writer',
+    note: 'note verification claim atomically terminalizes provider-attempt exhaustion with a set_verification_status lifecycle event.',
+  },
+  {
+    table: 'artifact',
     file: 'src/capabilities/notes/jobs/note_generate.ts',
     marker: '.update(artifact)',
     role: 'off-path-writer',

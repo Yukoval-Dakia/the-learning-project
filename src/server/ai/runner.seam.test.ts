@@ -20,17 +20,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mockSdk = vi.hoisted(() => ({
   capturedOptions: undefined as unknown,
   messages: [] as unknown[],
+  queryStarted: vi.fn(),
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   startup: vi.fn(async ({ options }: { options: unknown }) => {
     mockSdk.capturedOptions = options;
     return {
-      query: vi.fn(() =>
-        (async function* () {
+      query: vi.fn(() => {
+        mockSdk.queryStarted();
+        return (async function* () {
           for (const m of mockSdk.messages) yield m;
-        })(),
-      ),
+        })();
+      }),
       close: vi.fn(),
     };
   }),
@@ -91,7 +93,7 @@ vi.mock('@/server/ai/log', () => ({
 
 import { tasks } from '@/ai/registry';
 import type { JsonSchemaOutputFormat } from '@anthropic-ai/claude-agent-sdk';
-import { runTask, streamTaskCollecting } from './runner';
+import { runTask, streamTask, streamTaskCollecting } from './runner';
 
 // Minimal db stub — never dereferenced because every ai/log writer is mocked.
 const fakeDb = {} as never;
@@ -164,6 +166,59 @@ describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
     };
     expect(opts.env.CLAUDE_CODE_MAX_RETRIES).toBe('2');
     expect('maxBudgetUsd' in opts).toBe(false);
+  });
+
+  it('runs the typed provider callback after durable start and before query submission', async () => {
+    logMock.started.mockClear();
+    mockSdk.queryStarted.mockClear();
+    const beforeProviderQuery = vi.fn(async () => {
+      expect(logMock.started).toHaveBeenCalledTimes(1);
+      expect(mockSdk.queryStarted).not.toHaveBeenCalled();
+    });
+
+    await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb, beforeProviderQuery });
+
+    expect(beforeProviderQuery).toHaveBeenCalledWith(
+      expect.objectContaining({ taskRunId: expect.any(String) }),
+    );
+    expect(mockSdk.queryStarted).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the streaming provider callback after durable start and before query submission', async () => {
+    logMock.started.mockClear();
+    mockSdk.queryStarted.mockClear();
+    const beforeProviderQuery = vi.fn(async () => {
+      expect(logMock.started).toHaveBeenCalledTimes(1);
+      expect(mockSdk.queryStarted).not.toHaveBeenCalled();
+    });
+
+    await streamTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb, beforeProviderQuery }).text();
+
+    expect(beforeProviderQuery).toHaveBeenCalledWith(
+      expect.objectContaining({ taskRunId: expect.any(String) }),
+    );
+    expect(mockSdk.queryStarted).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the collecting provider callback after durable start and before query submission', async () => {
+    logMock.started.mockClear();
+    mockSdk.queryStarted.mockClear();
+    const beforeProviderQuery = vi.fn(async () => {
+      expect(logMock.started).toHaveBeenCalledTimes(1);
+      expect(mockSdk.queryStarted).not.toHaveBeenCalled();
+    });
+
+    await streamTaskCollecting(
+      UNMIGRATED_KIND,
+      { q: 1 },
+      { db: fakeDb, beforeProviderQuery },
+      vi.fn(),
+    );
+
+    expect(beforeProviderQuery).toHaveBeenCalledWith(
+      expect.objectContaining({ taskRunId: expect.any(String) }),
+    );
+    expect(mockSdk.queryStarted).toHaveBeenCalledTimes(1);
   });
 
   it('records returned thinking-block presence without persisting raw reasoning', async () => {

@@ -1,15 +1,17 @@
 import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
-import { artifact, knowledge } from '@/db/schema';
+import { artifact, event, knowledge } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { buildNoteGenerateHandler, runNoteGenerate } from './note_generate';
+import { type RunTaskFn, buildNoteGenerateHandler, runNoteGenerate } from './note_generate';
 
 async function seedAtomic(opts: {
   artifactId: string;
   pending?: boolean;
+  archived?: boolean;
   knowledgeId?: string;
   domain?: string | null;
+  type?: string;
 }) {
   const db = testDb();
   const now = new Date();
@@ -29,7 +31,7 @@ async function seedAtomic(opts: {
   }
   await db.insert(artifact).values({
     id: opts.artifactId,
-    type: 'note_atomic',
+    type: opts.type ?? 'note_atomic',
     title: '之的用法',
     parent_artifact_id: null,
     knowledge_ids: opts.knowledgeId ? [opts.knowledgeId] : [],
@@ -43,7 +45,7 @@ async function seedAtomic(opts: {
     generation_status: opts.pending === false ? 'ready' : 'pending',
     generated_by: null,
     history: [],
-    archived_at: null,
+    archived_at: opts.archived ? now : null,
     created_at: now,
     updated_at: now,
     version: 0,
@@ -128,6 +130,102 @@ describe('runNoteGenerate', () => {
     expect(runTaskFn).not.toHaveBeenCalled();
   });
 
+  it('skips an archived pending delivery before invoking the task runner', async () => {
+    await seedAtomic({ artifactId: 'archived-pending', archived: true });
+    const runTaskFn = vi.fn();
+
+    await expect(
+      runNoteGenerate({ db: testDb(), artifactId: 'archived-pending', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:not_pending' });
+
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('skips a pending tool artifact without AI or mutation', async () => {
+    await seedAtomic({ artifactId: 'tool-generation', type: 'tool_quiz' });
+    const runTaskFn = vi.fn();
+
+    await expect(
+      runNoteGenerate({ db: testDb(), artifactId: 'tool-generation', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:not_pending' });
+
+    expect(runTaskFn).not.toHaveBeenCalled();
+    const [row] = await testDb()
+      .select({
+        type: artifact.type,
+        status: artifact.generation_status,
+        version: artifact.version,
+      })
+      .from(artifact)
+      .where(eq(artifact.id, 'tool-generation'));
+    expect(row).toEqual({ type: 'tool_quiz', status: 'pending', version: 0 });
+    const rows = await testDb().select({ id: event.id }).from(event);
+    expect(rows).toEqual([]);
+  });
+
+  it('does not submit a provider query when the artifact is archived at the boundary', async () => {
+    await seedAtomic({ artifactId: 'archived-at-boundary' });
+    const db = testDb();
+    let providerQueries = 0;
+    const runTaskFn: RunTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await db
+        .update(artifact)
+        .set({ archived_at: new Date(), updated_at: new Date() })
+        .where(eq(artifact.id, 'archived-at-boundary'));
+      if (!ctx?.beforeProviderQuery) throw new Error('provider boundary callback missing');
+      await ctx.beforeProviderQuery({
+        taskRunId: 'generate-archive-race',
+        provider: 'anthropic-sub',
+        model: 'test',
+      });
+      providerQueries += 1;
+      return { text: VALID_SECTIONS };
+    });
+
+    await expect(
+      runNoteGenerate({ db, artifactId: 'archived-at-boundary', runTaskFn }),
+    ).rejects.toThrow('note generation is no longer pending and active');
+
+    expect(providerQueries).toBe(0);
+    const [row] = await db
+      .select({ status: artifact.generation_status, archivedAt: artifact.archived_at })
+      .from(artifact)
+      .where(eq(artifact.id, 'archived-at-boundary'));
+    expect(row).toMatchObject({ status: 'pending' });
+    expect(row.archivedAt).not.toBeNull();
+  });
+
+  it('does not submit a provider query when the artifact becomes a tool at the boundary', async () => {
+    await seedAtomic({ artifactId: 'tool-at-boundary' });
+    const db = testDb();
+    let providerQueries = 0;
+    const runTaskFn: RunTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await db
+        .update(artifact)
+        .set({ type: 'tool_quiz', updated_at: new Date() })
+        .where(eq(artifact.id, 'tool-at-boundary'));
+      if (!ctx?.beforeProviderQuery) throw new Error('provider boundary callback missing');
+      await ctx.beforeProviderQuery({
+        taskRunId: 'generate-tool-race',
+        provider: 'anthropic-sub',
+        model: 'test',
+      });
+      providerQueries += 1;
+      return { text: VALID_SECTIONS };
+    });
+
+    await expect(
+      runNoteGenerate({ db, artifactId: 'tool-at-boundary', runTaskFn }),
+    ).rejects.toThrow('note generation is no longer pending and active');
+
+    expect(providerQueries).toBe(0);
+    const [row] = await db
+      .select({ type: artifact.type, status: artifact.generation_status })
+      .from(artifact)
+      .where(eq(artifact.id, 'tool-at-boundary'));
+    expect(row).toEqual({ type: 'tool_quiz', status: 'pending' });
+  });
+
   it('generates + writes sections on happy path', async () => {
     await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
     const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
@@ -152,22 +250,32 @@ describe('runNoteGenerate', () => {
     expect((updated.generated_by as { task_run_id?: string } | null)?.task_run_id).toBe(
       'tr_note_generate_1',
     );
+    const verificationIntents = await testDb()
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.action, 'experimental:note_handoff'));
+    expect(verificationIntents).toHaveLength(1);
+    expect(verificationIntents[0]?.payload).toMatchObject({
+      version: 1,
+      artifact_id: 'a1',
+      handoff_kind: 'verification_intent',
+    });
   });
 
-  it('buildNoteGenerateHandler calls onReady after ready generation', async () => {
+  it('buildNoteGenerateHandler dispatches verification after the ready transaction commits', async () => {
     await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
     const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
       text: VALID_SECTIONS,
     }));
-    const onReady = vi.fn(async (_artifactId: string) => {});
-    const handler = buildNoteGenerateHandler(testDb(), { runTaskFn, onReady });
+    const dispatchVerification = vi.fn(async (_artifactId: string) => true);
+    const handler = buildNoteGenerateHandler(testDb(), { runTaskFn, dispatchVerification });
 
     await handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never]);
 
-    expect(onReady).toHaveBeenCalledWith('a1');
+    expect(dispatchVerification).toHaveBeenCalledWith('a1');
   });
 
-  it('does not call onReady when another worker already claimed the pending artifact', async () => {
+  it('does not dispatch verification when another worker already claimed the pending artifact', async () => {
     await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
     const db = testDb();
     const runTaskFn = vi.fn(async () => {
@@ -177,12 +285,12 @@ describe('runNoteGenerate', () => {
         .where(eq(artifact.id, 'a1'));
       return { text: VALID_SECTIONS };
     });
-    const onReady = vi.fn(async (_artifactId: string) => {});
-    const handler = buildNoteGenerateHandler(db, { runTaskFn, onReady });
+    const dispatchVerification = vi.fn(async (_artifactId: string) => true);
+    const handler = buildNoteGenerateHandler(db, { runTaskFn, dispatchVerification });
 
     await handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never]);
 
-    expect(onReady).not.toHaveBeenCalled();
+    expect(dispatchVerification).not.toHaveBeenCalled();
   });
 
   it('passes the knowledge subject profile to NoteGenerateTask', async () => {
@@ -219,6 +327,41 @@ describe('runNoteGenerate', () => {
     const db = testDb();
     const updated = (await db.select().from(artifact).where(eq(artifact.id, 'a1')))[0];
     expect(updated.generation_status).toBe('failed');
+  });
+
+  it('reruns a failed delivery, then skips completed redelivery without another provider call', async () => {
+    await seedAtomic({ artifactId: 'retry-success' });
+    let calls = 0;
+    const runTaskFn = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('transient generation failure');
+      return { text: VALID_SECTIONS };
+    });
+    const dispatchVerification = vi.fn(async () => true);
+    const handler = buildNoteGenerateHandler(testDb(), { runTaskFn, dispatchVerification });
+
+    await expect(
+      handler([{ id: 'first-delivery', data: { artifact_id: 'retry-success' } } as never]),
+    ).rejects.toThrow('transient generation failure');
+    const [failed] = await testDb()
+      .select({ status: artifact.generation_status })
+      .from(artifact)
+      .where(eq(artifact.id, 'retry-success'));
+    expect(failed.status).toBe('failed');
+
+    await expect(
+      handler([{ id: 'retry-delivery', data: { artifact_id: 'retry-success' } } as never]),
+    ).resolves.toBeUndefined();
+    await expect(
+      handler([{ id: 'completed-redelivery', data: { artifact_id: 'retry-success' } } as never]),
+    ).resolves.toBeUndefined();
+    const [ready] = await testDb()
+      .select({ status: artifact.generation_status })
+      .from(artifact)
+      .where(eq(artifact.id, 'retry-success'));
+    expect(ready.status).toBe('ready');
+    expect(runTaskFn).toHaveBeenCalledTimes(2);
+    expect(dispatchVerification).toHaveBeenCalledTimes(1);
   });
 
   it('marks failed when LLM output cannot be parsed', async () => {

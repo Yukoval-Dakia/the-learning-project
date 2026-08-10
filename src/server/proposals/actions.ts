@@ -32,7 +32,11 @@ import {
   decideKnowledgeEdgeProposal,
   dismissProposal,
 } from '@/capabilities/knowledge/public';
-import { type NoteUpdateAcceptResult, undoNoteRefineApplyEvent } from '@/capabilities/notes/public';
+import {
+  type NoteUpdateAcceptResult,
+  dispatchNoteGeneration,
+  undoNoteRefineApplyEvent,
+} from '@/capabilities/notes/public';
 import type {
   EnqueueVariantVerifyFn,
   QuestionDraftAcceptResult,
@@ -93,6 +97,7 @@ import {
   markRecordsActioned,
   rollbackRecordsActioned,
 } from '@/server/records/record_processing';
+import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { acquireProposalDecisionLock, findExistingRateEvent } from './applier-helpers';
 import { type ProposalInboxRow, getProposalInboxRow } from './inbox';
 import { ensureProposalDecisionSignal, recordProposalDecisionSignal } from './signals';
@@ -161,8 +166,6 @@ export type AcceptAiProposalOpts = {
   user_note?: string;
   // YUK-17 — swappable enqueue (DB tests inject a no-op or vi.fn).
   enqueueVariantVerify?: EnqueueVariantVerifyFn;
-  // YUK-604 — swappable note_generate enqueue; DB tests inject a spy while
-  // production uses pg-boss with an artifact-keyed singleton window.
   enqueueLearningIntentNote?: EnqueueLearningIntentNoteFn;
   // YUK-227 S3 Slice C — image_candidate accept seams (download/VLM/enqueue/ledger).
   // DB tests inject stubs to drive the accept path without real R2 / model spend.
@@ -250,7 +253,15 @@ export async function acceptAiProposal(
     }
   }
 
-  const result = await dispatchAccept(db, proposalId, proposal, opts);
+  const enqueueLearningIntentNote =
+    opts.enqueueLearningIntentNote ??
+    (shouldEnqueueBackgroundJobs()
+      ? (artifactId: string) => dispatchNoteGeneration(db, artifactId)
+      : undefined);
+  const result = await dispatchAccept(db, proposalId, proposal, {
+    ...opts,
+    ...(enqueueLearningIntentNote ? { enqueueLearningIntentNote } : {}),
+  });
 
   // YUK-15 — flip cited records linked/raw → actioned. Best-effort: kind
   // handlers already committed their owner-service tx, so this runs after.

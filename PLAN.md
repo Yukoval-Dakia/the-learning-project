@@ -3,7 +3,7 @@
 > Linear 是权威 tracker；本文件只镜像 NOW / NEXT / PARKED / BLOCKED-ON。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-08-10
-> **Architecture FULL 仍在继续；YUK-844 已交付 main，当前实施线为 YUK-855。**
+> **Architecture FULL 仍在继续；当前实施线为 YUK-857。**
 
 ## NOW
 
@@ -20,18 +20,37 @@
   caller-owned operation/fresh attempt/terminal truth 与连接池句柄复用均已进入主线。未部署。
 - **F0 unknown-cost / YUK-844 已交付 main。** PR #1172 已合并到 `b140d246`；
   all-known nullable cost、placement sticky-null settlement 与 migration 0090 已进入主线。未部署。
-- **F0.5 / YUK-855 是当前 active delivery。** PR #1173 已打开；provider/lane admission
-  `off / observe / enforce`、durable provider-attempt truth、legacy cost writer retirement 与统一成本投影
-  已实现。首轮 exact-head CI 暴露的问题已修复，等待新 SHA 的 GitHub CI 与独立 review。
+- **F0.5 / YUK-855 已交付 main。** YUK-857 的前置依赖已解除。
+- **F2.1 / YUK-857 是当前 active implementation。** Notes append-only handoff、deterministic
+  dispatch/readback、indexed manifest recovery、version/fence verification claim 与 Notes-owned task
+  definitions 已进入 PR #1174；0093 迁移加入短事务 reserve/result/finalize 状态机。SHA
+  `860e39cf` 的 exact-head CI run `31343456441` 已全绿，但后续 PR review 确认 provider-start
+  boundary、跨 recovery job 无界 paid retry、claim recovery 吞错三条 P1。repair commit
+  `01dd3b68` 已推送 PR #1174；后续 head `e6a0c280` 的 exact-head CI run `31345789472`
+  全绿，但 review thread 随后确认 attempt cap 只终结 claim、未终结 artifact 的第四条 P1。
+  repair `121bdb85` 使第三次 confirmed provider failure 与所有 cap 入口均同事务投影 claim
+  `attempts_exhausted`、artifact `verification_status='failed'` 及 lifecycle event；其 CI run
+  `31347238672` 的 DB/unit/migration/build/usability 均通过，但新增 claim→artifacts direct edge
+  触发 boundary audit。PR 当前 head 已用 Notes-local verification lifecycle adapter 合并两个 direct
+  edge，恢复既有 `notes -> artifacts = 8` / total `523` 基线且未抬高 baseline，并已 commit/push；
+  correctness / quality static re-review PASS；其 exact-head CI run `31348035418` 全绿。后续 review
+  又确认 archived artifact 可被 recovery 重派发、终态 artifact 可遗留 claim 并占满 recovery batch。
+  repair `63025457` 加入 archived/terminal eligibility guards 与 pre-LIMIT starvation regressions；
+  其 exact-head CI run `31349482564` 除 DB shard 2 外均通过，失败暴露 capped artifact redelivery
+  丢失 canonical `attempts_exhausted` 结果。head `585d11f1` 保留该 terminal claim 结果，同时让
+  archived ambiguous redelivery 安全 ack；其 exact-head CI run `31350323594` 全绿。CI 后的新 review
+  又确认 legacy recovery 会误接非 Note artifact，以及升级时旧 random-ID generation job 与新
+  deterministic job 可能双投递。PR 当前 head 已统一 `note_atomic|note_long|note_hub` eligibility，
+  并让 deterministic generation send 保留旧 artifact singleton 兼容契约；只有这个 current head 的
+  fresh exact-head CI/review/merge 可作最终证据。owner 禁止本地 test/typecheck/build/audit/migration。
 - **生产边界不变。** F0.0–F0.4 均未部署；YUK-832 继续 HOLD，YUK-842 production 继续 observe。
 
 ## NEXT
 
-1. **收敛 YUK-855：**提交并 push 当前 review/CI 修复，只以 exact-head GitHub CI 验证；
-   review clean 后 merge，并同步 Linear。
-2. **启动 YUK-857 / F2.1：**从最新 main 建隔离 worktree，实施 Notes generate/verify durable handoff。
+1. 监控 PR current head 的 exact-head GitHub CI 与独立 review；不在本地跑 runtime gates。
+2. 只以 fresh exact-head 结果验证 runtime/type/test gates；全绿且 review clean 后再 merge、同步 Linear。
 3. F2.2–F4 继续按依赖与 owner 优先级单独收敛。
-4. 任何 production observation / deployment 都需单独授权；merge 不自动改变 rollout 或 enforcement。
+4. production observation / deployment 需单独授权。
 
 ## PARKED
 
@@ -43,7 +62,6 @@
 
 ## BLOCKED-ON
 
-- **YUK-855 delivery：**当前修复尚缺 commit/push、新 exact-head CI、独立 review 与 merge。
-- **YUK-857：**Linear 仍由 YUK-855 阻塞；YUK-855 merge 后立即解除并启动。
-- **Architecture FULL：**YUK-855 与 F2–F4 仍 open，不能宣称 closed。
+- **YUK-857 delivery：**blocked on fresh exact-head CI、独立 review 与 merge。
+- **Architecture FULL：**F2.1–F4 仍 open，不能宣称 closed。
 - **Production：**没有部署授权或生产观察证据；main/local 状态都不等于 deployed。

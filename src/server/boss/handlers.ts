@@ -1,7 +1,5 @@
 import { buildAutoEnrollHandler } from '@/capabilities/ingestion/jobs/auto_enroll';
 import { buildTencentOcrHandler } from '@/capabilities/ingestion/jobs/tencent_ocr_extract';
-import { buildNoteGenerateHandler } from '@/capabilities/notes/jobs/note_generate';
-import { buildNoteVerifyHandler } from '@/capabilities/notes/jobs/note_verify';
 import { buildJudgeRunHandler } from '@/capabilities/practice/jobs/judge_run';
 import { JUDGE_RUN_QUEUE } from '@/capabilities/practice/server/judge-durable-config';
 import type { Db } from '@/db/client';
@@ -48,7 +46,6 @@ import {
 //   - prune_job_events / prune_orphan_* / promote_conversation_idle（FAST housekeeping cron）
 //   - registerMemoryHandlers（memory_* 队列归 memory 模块）
 //   - session_summary（链式 LLM）
-//   - note_verify / note_generate（工厂带 boss 二参链式回调，不符 JobHandlerFactory 单参签名）
 //   - quiz_gen / quiz_verify / sourcing / source_verify / variant_verify
 //   - tencent_ocr_extract（0.5s polling + lazy r2 getter）/ auto_enroll
 //   - 未迁域：ingestion（auto_enroll / tencent_ocr_extract 待 ingestion 包 jobs 声明）
@@ -255,32 +252,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     VERIFY_DISPATCH_RECOVERY_QUEUE,
     { trigger: 'startup' },
     { singletonKey: 'verify-dispatch-startup' },
-  );
-
-  // Product Track 1: NoteVerifyTask — enqueued after note_generate marks a
-  // generated note ready. Keeps note generation and verification as separate
-  // lifecycle axes.
-  await createJobQueue(boss, 'note_verify', EXPIRE_LLM);
-  await boss.work(
-    'note_verify',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    // YUK-358 决定3：note_verify 不再链式触发 embedded_check_generate
-    //（内嵌判分自测孤儿链真删）。onPassed 是可选回调——无下游消费者，直接省略。
-    buildNoteVerifyHandler(db, {}),
-  );
-
-  // Phase 2B: NoteGenerateTask — enqueued by canonical learning_item proposal accept,
-  // one job per atomic/long artifact. Each job runs ~30-60s LLM call and updates
-  // the artifact row in place. batchSize=1 keeps mimo rate-limit friendly.
-  await createJobQueue(boss, 'note_generate', EXPIRE_LLM);
-  await boss.work(
-    'note_generate',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildNoteGenerateHandler(db, {
-      onReady: async (artifactId) => {
-        await boss.send('note_verify', { artifact_id: artifactId });
-      },
-    }),
   );
 
   // YUK-17 / ADR-0018 — second-pass content alignment check for accepted

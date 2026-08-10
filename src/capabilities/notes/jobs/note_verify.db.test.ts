@@ -1,442 +1,895 @@
 import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
-import { artifact, event, knowledge, material_fsrs_state, question } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import {
+  markNoteVerificationProviderStarted,
+  reserveNoteVerification,
+  stageNoteVerificationResult,
+} from '@/capabilities/notes/server/note-verification-claim';
+import type { Db } from '@/db/client';
+import * as schema from '@/db/schema';
+import { ai_task_runs, artifact, event, note_verification_claim } from '@/db/schema';
+import { and, eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { buildNoteVerifyHandler, runNoteVerify } from './note_verify';
+import {
+  type RunTaskFn,
+  buildNoteVerifyHandler,
+  recoverResultReadyNoteVerifications,
+  runNoteVerify,
+} from './note_verify';
 
-const NOTE_SECTIONS = [
-  {
-    id: 's1',
-    kind: 'definition',
-    body_md: '「之」是文言虚词。',
-    source_tier: 'llm_only',
-    user_verified: false,
-    embedded_check: null,
-    version: 1,
-  },
-  {
-    id: 's2',
-    kind: 'mechanism',
-    body_md: '助词 / 代词 / 动词三类。',
-    source_tier: 'llm_only',
-    user_verified: false,
-    embedded_check: null,
-    version: 1,
-  },
-  {
-    id: 's3',
-    kind: 'example',
-    body_md: '例：师道之不传也久矣。',
-    source_tier: 'llm_only',
-    user_verified: false,
-    embedded_check: null,
-    version: 1,
-  },
-  {
-    id: 's4',
-    kind: 'pitfall',
-    body_md: '主谓之间的「之」常不译。',
-    source_tier: 'llm_only',
-    user_verified: false,
-    embedded_check: null,
-    version: 1,
-  },
-  {
-    id: 's5',
-    kind: 'check',
-    body_md: '自检：判断句中「之」的作用。',
-    source_tier: 'llm_only',
-    user_verified: false,
-    embedded_check: null,
-    version: 1,
-  },
-];
+const SECTIONS = ['definition', 'mechanism', 'example', 'pitfall', 'check'].map((kind, index) => ({
+  id: `s${index}`,
+  kind,
+  body_md: `${kind} content`,
+  source_tier: 'llm_only',
+  user_verified: false,
+  embedded_check: null,
+  version: 1,
+}));
 
 const PASS_OUTPUT = JSON.stringify({
   verdict: 'pass',
-  summary_md: '结构完整，未发现明显问题。',
+  summary_md: 'verified',
   issues: [],
-  confidence: 0.82,
+  confidence: 0.9,
 });
 
-const NEEDS_REVIEW_OUTPUT = JSON.stringify({
-  verdict: 'needs_review',
-  summary_md: '例子部分需要人工复核。',
-  issues: [
-    {
-      block_id: 'b2',
-      severity: 'warn',
-      category: 'factuality',
-      message: '例句解释缺少文本证据。',
-      suggested_fix_md: '补充原句出处或改成不确定表述。',
-    },
-  ],
-  confidence: 0.58,
-});
+function fakeBoss() {
+  const jobs = new Map<string, { readonly state: string }>();
+  const send = vi.fn(async (_queue: string, _data: object, options: { id: string }) => {
+    jobs.set(options.id, { state: 'created' });
+    return options.id;
+  });
+  const getJobById = vi.fn(async (_queue: string, id: string) => jobs.get(id) ?? null);
+  return { jobs, send, getJobById };
+}
 
-async function seedAtomic(opts: {
-  artifactId: string;
-  artifactType?: 'note_atomic' | 'note_long';
-  generationStatus?: string;
-  sections?: unknown[] | null;
-  knowledgeId?: string;
-  domain?: string | null;
-}) {
-  const db = testDb();
-  const now = new Date();
-  if (opts.knowledgeId) {
-    await db.insert(knowledge).values({
-      id: opts.knowledgeId,
-      name: opts.domain === 'math' ? '一元二次方程' : '之',
-      domain: opts.domain ?? 'yuwen',
-      parent_id: null,
-      merged_from: [],
-      proposed_by_ai: false,
-      approval_status: 'approved',
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
+async function crossProviderBoundary(ctx: Parameters<RunTaskFn>[2]): Promise<void> {
+  if (!ctx?.taskRunId || !ctx.beforeProviderQuery) {
+    throw new Error('provider boundary callback missing');
   }
-  await db.insert(artifact).values({
-    id: opts.artifactId,
-    type: opts.artifactType ?? 'note_atomic',
-    title: opts.domain === 'math' ? '配方法' : '之的用法',
-    parent_artifact_id: null,
-    knowledge_ids: opts.knowledgeId ? [opts.knowledgeId] : [],
-    intent_source: 'learning_intent',
-    source: 'ai_generated',
-    source_ref: null,
-    body_blocks:
-      opts.sections === null
-        ? null
-        : noteSectionsToBodyBlocks(
-            (opts.sections === undefined ? NOTE_SECTIONS : opts.sections) as never,
-          ),
-    attrs: { one_line_intent: '区分关键用法' } as never,
-    tool_kind: null,
-    tool_state: null,
-    generation_status: opts.generationStatus ?? 'ready',
-    verification_status: 'queued',
-    verification_summary: null,
-    generated_by: { by: 'ai', task_kind: 'NoteGenerateTask' } as never,
-    verified_by: null,
-    history: [],
-    archived_at: null,
-    created_at: now,
-    updated_at: now,
-    version: 0,
+  await ctx.beforeProviderQuery({
+    taskRunId: ctx.taskRunId,
+    provider: 'anthropic-sub',
+    model: 'test',
   });
 }
 
-describe('runNoteVerify', () => {
+async function seedArtifact(id: string, version = 0, db: Db = testDb()): Promise<void> {
+  const now = new Date();
+  await db.insert(artifact).values({
+    id,
+    type: 'note_atomic',
+    title: id,
+    knowledge_ids: [],
+    intent_source: 'learning_intent',
+    source: 'ai_generated',
+    body_blocks: noteSectionsToBodyBlocks(SECTIONS as never),
+    attrs: {},
+    generation_status: 'ready',
+    verification_status: 'queued',
+    history: [],
+    created_at: now,
+    updated_at: now,
+    version,
+  });
+}
+
+describe('runNoteVerify durable claim', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
-  it('returns skipped:not_found when artifact does not exist', async () => {
-    const runTaskFn = vi.fn();
-
-    const result = await runNoteVerify({
-      db: testDb(),
-      artifactId: 'missing',
-      runTaskFn,
+  it('completes once and exits before AI on redelivery', async () => {
+    await seedArtifact('completed');
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      return { text: PASS_OUTPUT };
     });
-
-    expect(result.status).toBe('skipped:not_found');
-    expect(runTaskFn).not.toHaveBeenCalled();
-  });
-
-  it('returns skipped:not_ready when generation_status is not ready', async () => {
-    await seedAtomic({ artifactId: 'a1', generationStatus: 'pending' });
-    const runTaskFn = vi.fn();
-
-    const result = await runNoteVerify({
-      db: testDb(),
-      artifactId: 'a1',
-      runTaskFn,
-    });
-
-    expect(result.status).toBe('skipped:not_ready');
-    expect(runTaskFn).not.toHaveBeenCalled();
-  });
-
-  it('returns skipped:no_sections when ready artifact has no sections', async () => {
-    await seedAtomic({ artifactId: 'a1', sections: null });
-    const runTaskFn = vi.fn();
-
-    const result = await runNoteVerify({
-      db: testDb(),
-      artifactId: 'a1',
-      runTaskFn,
-    });
-
-    expect(result.status).toBe('skipped:no_sections');
-    expect(runTaskFn).not.toHaveBeenCalled();
-  });
-
-  it('marks verification_status=verified and writes experimental note_verify event on pass', async () => {
-    await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
-    const runTaskFn = vi.fn(async () => ({ text: PASS_OUTPUT }));
-
-    const result = await runNoteVerify({
-      db: testDb(),
-      artifactId: 'a1',
-      runTaskFn,
-    });
-
-    expect(result).toMatchObject({
-      status: 'verified',
-      artifact_type: 'note_atomic',
-      issues_count: 0,
-    });
-
-    const [updated] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
-    expect(updated.verification_status).toBe('verified');
-    expect(updated.verification_summary).toMatchObject({ verdict: 'pass', confidence: 0.82 });
-    expect(updated.verified_by).toMatchObject({ by: 'ai', task_kind: 'NoteVerifyTask' });
-
-    // W3-C1γ — persistNoteVerificationResult now writes TWO events: the observability
-    // experimental:note_verify (unchanged) + the fold-source experimental:artifact_lifecycle
-    // (set_verification_status) carrying status + summary + verified_by.
-    const rows = await testDb().select().from(event).where(eq(event.subject_id, 'a1'));
-    expect(rows).toHaveLength(2);
-    const verifyRow = rows.find((r) => r.action === 'experimental:note_verify');
-    expect(verifyRow).toMatchObject({
-      action: 'experimental:note_verify',
-      subject_kind: 'artifact',
-      outcome: 'success',
-      actor_ref: 'note_verify',
-    });
-    // SUPERSET payload: existing `verdict` kept byte-identical + unified contract keys.
-    expect(verifyRow?.payload).toMatchObject({ verdict: 'pass' });
-    // YUK-350 increment 2 — unified verify contract shape: note pass → overall 'pass',
-    // NO failure_class.
-    const payload = verifyRow?.payload as {
-      overall?: string;
-      failure_class?: string;
-      axes?: unknown;
-    };
-    expect(payload.overall).toBe('pass');
-    expect(payload.failure_class).toBeUndefined();
-    expect(Array.isArray(payload.axes)).toBe(true);
-    // W3-C1γ fold-source lifecycle event: op=set_verification_status + carried summary + verified_by.
-    const lifecycleRow = rows.find((r) => r.action === 'experimental:artifact_lifecycle');
-    expect(lifecycleRow?.payload).toMatchObject({
-      op: 'set_verification_status',
-      verification_status: 'verified',
-    });
-    expect((lifecycleRow?.payload as { verified_by?: { by?: string } }).verified_by?.by).toBe('ai');
-
-    // PROMOTE semantics byte-identical: a note promote = an owner-readable ACTIVE
-    // artifact (verification_status='verified'). NO FSRS enroll and NO practice-pool
-    // entry — notes are not practice items. Assert nothing leaked into the pool/FSRS.
-    const fsrsRows = await testDb()
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'completed', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'verified' });
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'completed', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:not_queued' });
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    const [claim] = await testDb()
       .select()
-      .from(material_fsrs_state)
-      .where(eq(material_fsrs_state.subject_id, 'k1'));
-    expect(fsrsRows).toHaveLength(0);
-    const questionRows = await testDb().select().from(question);
-    expect(questionRows).toHaveLength(0);
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'completed'));
+    expect(claim.state).toBe('completed');
+    expect(claim.provider_attempts).toBe(1);
   });
 
-  it('marks verification_status=needs_review and persists issues when verifier flags problems', async () => {
-    await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
-    const runTaskFn = vi.fn(async () => ({ text: NEEDS_REVIEW_OUTPUT }));
+  it('keeps no-sections deliveries skipped without leaving a recoverable claim', async () => {
+    await seedArtifact('no-sections');
+    await testDb()
+      .update(artifact)
+      .set({ body_blocks: { type: 'doc', content: [] } })
+      .where(eq(artifact.id, 'no-sections'));
+    const runTaskFn = vi.fn();
 
-    const result = await runNoteVerify({
-      db: testDb(),
-      artifactId: 'a1',
-      runTaskFn,
-    });
-
-    expect(result).toMatchObject({
-      status: 'needs_review',
-      artifact_type: 'note_atomic',
-      issues_count: 1,
-    });
-
-    const [updated] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
-    expect(updated.verification_status).toBe('needs_review');
-    expect(updated.verification_summary).toMatchObject({
-      verdict: 'needs_review',
-      issues: [{ block_id: 'b2', category: 'factuality' }],
-    });
-
-    // RED-1 (YUK-358 决定7) — the DEAD patch-less note_update proposal is GONE.
-    // note_verify's needs_review branch no longer writes a proposal at all; the
-    // advisory (verification_summary + the experimental:note_verify event) is the
-    // ONLY user-facing artifact of a needs_review verdict — NOT a proposal. W3-C1γ
-    // ADDS the fold-source experimental:artifact_lifecycle event (set_verification_status),
-    // so there are TWO events: the verify event + the lifecycle event (no proposal).
-    const rows = await testDb().select().from(event).where(eq(event.subject_id, 'a1'));
-    expect(rows).toHaveLength(2);
-    expect(rows.some((r) => r.action === 'experimental:artifact_lifecycle')).toBe(true);
-    const verifyEvent = rows.find((row) => row.action === 'experimental:note_verify');
-    expect(verifyEvent).toBeDefined();
-    expect(verifyEvent?.outcome).toBe('partial');
-    // YUK-350 increment 2 — unified verify contract shape: note needs_review →
-    // overall 'needs_review' + failure_class 'validation_failure'; NEVER 'fail' (the
-    // note verdict has no fail). Existing `verdict` key kept byte-identical.
-    const vp = verifyEvent?.payload as {
-      verdict?: string;
-      overall?: string;
-      failure_class?: string;
-      axes?: Array<{ axis_name?: string; verdict?: string }>;
-    };
-    expect(vp.verdict).toBe('needs_review');
-    expect(vp.overall).toBe('needs_review');
-    expect(vp.overall).not.toBe('fail');
-    expect(vp.failure_class).toBe('validation_failure');
-    expect(vp.axes?.[0]?.axis_name).toBe('factuality');
-
-    // Advisory NOT regressed: verification_summary still carries the issues so they
-    // stay visible to the owner even with the dead proposal removed (red line 3).
-    expect(updated.verification_summary).toMatchObject({
-      verdict: 'needs_review',
-      issues: [{ block_id: 'b2', message: '例句解释缺少文本证据。' }],
-    });
-
-    // The patch-less note_update proposal MUST NOT exist anymore.
-    const proposalEvents = await testDb()
-      .select()
-      .from(event)
-      .where(eq(event.action, 'experimental:proposal'));
-    expect(proposalEvents).toHaveLength(0);
+    for (let delivery = 0; delivery < 2; delivery += 1) {
+      await expect(
+        runNoteVerify({ db: testDb(), artifactId: 'no-sections', runTaskFn }),
+      ).resolves.toMatchObject({ status: 'skipped:no_sections' });
+      const claims = await testDb()
+        .select({ artifactId: note_verification_claim.artifact_id })
+        .from(note_verification_claim)
+        .where(eq(note_verification_claim.artifact_id, 'no-sections'));
+      expect(claims).toEqual([]);
+    }
+    expect(runTaskFn).not.toHaveBeenCalled();
   });
 
-  it('passes subject profile from knowledge.domain to NoteVerifyTask', async () => {
-    await seedAtomic({ artifactId: 'a_math', knowledgeId: 'k_math', domain: 'math' });
-    const runTaskFn = vi.fn(async () => ({ text: PASS_OUTPUT }));
-
-    await runNoteVerify({
-      db: testDb(),
-      artifactId: 'a_math',
-      runTaskFn,
-    });
-
-    expect(runTaskFn).toHaveBeenCalledWith(
-      'NoteVerifyTask',
-      expect.objectContaining({
-        artifact_id: 'a_math',
-        knowledge_node: expect.objectContaining({ domain: 'math' }),
-      }),
-      expect.objectContaining({
-        subjectProfile: expect.objectContaining({ id: 'math' }),
-        // YUK-228 (S3 Slice B): handler must pass resolveNoteSkill(subject) as skills.
-        // YUK-611: resolver 输出命名空间名（== populate 镜像键）。
-        skills: ['math--note-math'],
-      }),
-    );
-  });
-
-  it('marks verification_status=failed when verifier output is invalid and rethrows', async () => {
-    await seedAtomic({ artifactId: 'a1' });
-    const runTaskFn = vi.fn(async () => ({ text: 'not json' }));
+  it('skips archived and terminal deliveries without creating claims or calling AI', async () => {
+    await seedArtifact('archived-delivery');
+    await seedArtifact('verified-delivery');
+    await testDb()
+      .update(artifact)
+      .set({ archived_at: new Date() })
+      .where(eq(artifact.id, 'archived-delivery'));
+    await testDb()
+      .update(artifact)
+      .set({ verification_status: 'verified' })
+      .where(eq(artifact.id, 'verified-delivery'));
+    const runTaskFn = vi.fn();
 
     await expect(
-      runNoteVerify({
-        db: testDb(),
-        artifactId: 'a1',
-        runTaskFn,
-      }),
-    ).rejects.toThrow(/parseVerificationOutput/);
+      runNoteVerify({ db: testDb(), artifactId: 'archived-delivery', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:not_queued' });
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'verified-delivery', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:not_queued' });
 
-    const [updated] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
-    expect(updated.verification_status).toBe('failed');
+    expect(runTaskFn).not.toHaveBeenCalled();
+    const claims = await testDb().select().from(note_verification_claim);
+    expect(claims).toEqual([]);
   });
 
-  it('catch-bottom projects overall=error + failure_class=system_error (transient, outcome=error)', async () => {
-    await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
-    const runTaskFn = vi.fn(async () => ({ text: 'not json' }));
+  it('skips a queued tool artifact without AI, claim creation, or mutation', async () => {
+    await seedArtifact('tool-verification');
+    await testDb()
+      .update(artifact)
+      .set({ type: 'tool_quiz' })
+      .where(eq(artifact.id, 'tool-verification'));
+    const runTaskFn = vi.fn();
 
-    await expect(runNoteVerify({ db: testDb(), artifactId: 'a1', runTaskFn })).rejects.toThrow(
-      /parseVerificationOutput/,
-    );
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'tool-verification', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:not_queued' });
 
-    // The catch-bottom writes a TRANSIENT system-error verify event. overall='error'
-    // (the result-layer 'error' value can ONLY come from here — the note LLM-parse
-    // schema can never self-report it, red line 1) + failure_class='system_error'.
-    // W3-C1γ — the catch-bottom now ALSO emits the fold-source lifecycle event
-    // (set_verification_status='failed') in the SAME tx, so there are TWO events.
-    const rows = await testDb().select().from(event).where(eq(event.subject_id, 'a1'));
-    expect(rows).toHaveLength(2);
-    const failedLifecycle = rows.find((r) => r.action === 'experimental:artifact_lifecycle');
-    expect(failedLifecycle?.payload).toMatchObject({
-      op: 'set_verification_status',
-      verification_status: 'failed',
-    });
-    const errEvent = rows.find((r) => r.action === 'experimental:note_verify');
-    expect(errEvent).toBeDefined();
-    if (!errEvent) throw new Error('expected note_verify error event');
-    expect(errEvent.action).toBe('experimental:note_verify');
-    expect(errEvent.subject_kind).toBe('artifact');
-    // outcome='error' (NOT 'failure') marks it transient/retriable, distinct from a
-    // terminal model verdict.
-    expect(errEvent.outcome).toBe('error');
-    const ep = errEvent.payload as {
-      overall?: string;
-      failure_class?: string;
-      confidence?: number;
-      axes?: unknown[];
-    };
-    expect(ep.overall).toBe('error');
-    expect(ep.failure_class).toBe('system_error');
-    expect(ep.confidence).toBe(0);
-    expect(ep.axes).toHaveLength(0);
-
-    // A system error NEVER promotes: still no FSRS / no practice-pool entry.
-    const fsrsRows = await testDb()
+    expect(runTaskFn).not.toHaveBeenCalled();
+    const claims = await testDb()
       .select()
-      .from(material_fsrs_state)
-      .where(eq(material_fsrs_state.subject_id, 'k1'));
-    expect(fsrsRows).toHaveLength(0);
-    const questionRows = await testDb().select().from(question);
-    expect(questionRows).toHaveLength(0);
-  });
-});
-
-describe('buildNoteVerifyHandler — onPassed callback', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('onPassed fires when verdict=pass', async () => {
-    await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
-    const runTaskFn = vi.fn(async () => ({ text: PASS_OUTPUT }));
-    const onPassed = vi.fn(async (_id: string) => {});
-    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn, onPassed });
-    await handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never]);
-    expect(onPassed).toHaveBeenCalledWith('a1');
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'tool-verification'));
+    expect(claims).toEqual([]);
+    const [row] = await testDb()
+      .select({
+        type: artifact.type,
+        status: artifact.verification_status,
+        version: artifact.version,
+      })
+      .from(artifact)
+      .where(eq(artifact.id, 'tool-verification'));
+    expect(row).toEqual({ type: 'tool_quiz', status: 'queued', version: 0 });
   });
 
-  it('onPassed does NOT fire when verdict=needs_review', async () => {
-    await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
-    const runTaskFn = vi.fn(async () => ({ text: NEEDS_REVIEW_OUTPUT }));
-    const onPassed = vi.fn(async (_id: string) => {});
-    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn, onPassed });
-    await handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never]);
-    expect(onPassed).not.toHaveBeenCalled();
+  it('drops a reservation when the artifact is archived before the provider boundary', async () => {
+    await seedArtifact('archived-before-provider');
+    const db = testDb();
+    let providerQueries = 0;
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await db
+        .update(artifact)
+        .set({ archived_at: new Date() })
+        .where(eq(artifact.id, 'archived-before-provider'));
+      await crossProviderBoundary(ctx);
+      providerQueries += 1;
+      return { text: PASS_OUTPUT };
+    });
+
+    await expect(
+      runNoteVerify({ db, artifactId: 'archived-before-provider', runTaskFn }),
+    ).rejects.toThrow('provider-start claim changed');
+
+    expect(providerQueries).toBe(0);
+    const claims = await db
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'archived-before-provider'));
+    expect(claims).toEqual([]);
   });
 
-  it('onPassed does NOT fire for verified long notes', async () => {
-    await seedAtomic({ artifactId: 'a_long', artifactType: 'note_long', knowledgeId: 'k1' });
-    const runTaskFn = vi.fn(async () => ({ text: PASS_OUTPUT }));
-    const onPassed = vi.fn(async (_id: string) => {});
-    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn, onPassed });
-
-    await handler([{ id: 'job1', data: { artifact_id: 'a_long' } } as never]);
-
-    expect(onPassed).not.toHaveBeenCalled();
+  it('fences concurrent delivery to exactly one paid call', async () => {
+    await seedArtifact('concurrent');
+    let release: (() => void) | undefined;
+    const wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      await wait;
+      return { text: PASS_OUTPUT };
+    });
+    const first = runNoteVerify({ db: testDb(), artifactId: 'concurrent', runTaskFn });
+    await vi.waitFor(() => expect(runTaskFn).toHaveBeenCalledTimes(1));
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'concurrent', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:in_progress' });
+    release?.();
+    await expect(first).resolves.toMatchObject({ status: 'verified' });
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
   });
 
-  it('onPassed does NOT fire when runner throws', async () => {
-    await seedAtomic({ artifactId: 'a1' });
-    const runTaskFn = vi.fn(async () => ({ text: 'not json' }));
-    const onPassed = vi.fn(async (_id: string) => {});
-    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn, onPassed });
-    await expect(handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never])).rejects.toThrow();
-    expect(onPassed).not.toHaveBeenCalled();
+  it('keeps a live duplicate delivery retry-visible at the handler boundary', async () => {
+    await seedArtifact('busy-handler');
+    let release: (() => void) | undefined;
+    const wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      await wait;
+      return { text: PASS_OUTPUT };
+    });
+    const first = runNoteVerify({ db: testDb(), artifactId: 'busy-handler', runTaskFn });
+    await vi.waitFor(() => expect(runTaskFn).toHaveBeenCalledTimes(1));
+    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn });
+    await expect(
+      handler([{ id: 'redelivery', data: { artifact_id: 'busy-handler' } } as never]),
+    ).rejects.toThrow('retry required');
+    release?.();
+    await expect(first).resolves.toMatchObject({ status: 'verified' });
+  });
+
+  it('does not hold a database transaction connection over AI', async () => {
+    const url = process.env.TEST_DATABASE_URL;
+    if (!url) throw new Error('TEST_DATABASE_URL not set');
+    const client = postgres(url, { max: 1 });
+    const dedicatedDb: Db = drizzle(client, { schema });
+    let release: (() => void) | undefined;
+    let running: Promise<unknown> | undefined;
+    let probe: Promise<Array<{ id: string }>> | undefined;
+    const wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      await wait;
+      return { text: PASS_OUTPUT };
+    });
+    try {
+      await seedArtifact('pool-safe', 0, dedicatedDb);
+      running = runNoteVerify({ db: dedicatedDb, artifactId: 'pool-safe', runTaskFn });
+      await vi.waitFor(() => expect(runTaskFn).toHaveBeenCalledTimes(1));
+      probe = dedicatedDb
+        .select({ id: artifact.id })
+        .from(artifact)
+        .where(eq(artifact.id, 'pool-safe'))
+        .execute();
+      let probeTimer: ReturnType<typeof setTimeout> | undefined;
+      const probeResult = await Promise.race([
+        probe.then((rows) => ({ kind: 'rows' as const, rows })),
+        new Promise<{ kind: 'timeout' }>((resolve) => {
+          probeTimer = setTimeout(() => resolve({ kind: 'timeout' }), 2_000);
+        }),
+      ]).finally(() => {
+        if (probeTimer) clearTimeout(probeTimer);
+      });
+      expect(probeResult).toEqual({ kind: 'rows', rows: [{ id: 'pool-safe' }] });
+    } finally {
+      release?.();
+      const pending: Promise<unknown>[] = [];
+      if (running) pending.push(running);
+      if (probe) pending.push(probe);
+      await Promise.allSettled(pending);
+      await client.end();
+    }
+  });
+
+  it('retries a pre-wire startup failure without consuming a provider attempt', async () => {
+    await seedArtifact('pre-wire');
+    const startupFailure = vi.fn(async () => {
+      throw new Error('sdk startup failed');
+    });
+
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'pre-wire', runTaskFn: startupFailure }),
+    ).rejects.toThrow('sdk startup failed');
+    const [released] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'pre-wire'));
+    expect(released).toMatchObject({
+      state: 'retry_wait',
+      provider_attempts: 0,
+      provider_started_at: null,
+      task_run_id: null,
+    });
+    const taskRuns = await testDb()
+      .select({ id: ai_task_runs.id })
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.task_kind, 'NoteVerifyTask'));
+    expect(taskRuns).toEqual([]);
+
+    await testDb()
+      .update(note_verification_claim)
+      .set({ available_at: new Date(0) })
+      .where(eq(note_verification_claim.artifact_id, 'pre-wire'));
+    const successfulRetry = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      return { text: PASS_OUTPUT };
+    });
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'pre-wire', runTaskFn: successfulRetry }),
+    ).resolves.toMatchObject({ status: 'verified' });
+    const [completed] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'pre-wire'));
+    expect(completed.provider_attempts).toBe(1);
+  });
+
+  it('recovery redispatches an exhausted confirmed-failure retry without another AI call', async () => {
+    await seedArtifact('retry');
+    let calls = 0;
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      calls += 1;
+      await crossProviderBoundary(ctx);
+      if (calls > 1) return { text: PASS_OUTPUT };
+      const now = new Date();
+      await testDb()
+        .insert(ai_task_runs)
+        .values({
+          id: ctx.taskRunId ?? 'missing',
+          task_kind: 'NoteVerifyTask',
+          provider: 'test',
+          model: 'test',
+          input_hash: 'test',
+          status: 'failure',
+          finish_reason: 'error',
+          error_message: 'transient',
+          started_at: now,
+          finished_at: now,
+        });
+      throw new Error('transient');
+    });
+    await expect(runNoteVerify({ db: testDb(), artifactId: 'retry', runTaskFn })).rejects.toThrow(
+      'transient',
+    );
+    const [claim] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'retry'));
+    expect(claim.state).toBe('retry_wait');
+    expect(claim.claim_token).toBeNull();
+    expect(claim.task_run_id).toBeNull();
+    const [row] = await testDb().select().from(artifact).where(eq(artifact.id, 'retry'));
+    expect(row.verification_status).toBe('queued');
+    await testDb()
+      .update(note_verification_claim)
+      .set({ available_at: new Date(0) })
+      .where(eq(note_verification_claim.artifact_id, 'retry'));
+    const boss = fakeBoss();
+    await expect(recoverResultReadyNoteVerifications(testDb(), { boss })).resolves.toBe(0);
+    expect(boss.send).toHaveBeenCalledTimes(1);
+    expect(boss.send).toHaveBeenCalledWith(
+      'note_verify',
+      { artifact_id: 'retry' },
+      { id: expect.any(String) },
+    );
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'retry', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'verified' });
+    expect(runTaskFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed when provider start cannot be reconciled', async () => {
+    await seedArtifact('ambiguous');
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      throw new Error('connection lost after start');
+    });
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'ambiguous', runTaskFn }),
+    ).rejects.toThrow('connection lost');
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'ambiguous', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:ambiguous' });
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    const [claim] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'ambiguous'));
+    expect(claim).toMatchObject({ state: 'ambiguous', provider_attempts: 1 });
+  });
+
+  it('acknowledges an archived delivery even when its paid result remains ambiguous', async () => {
+    await seedArtifact('archived-ambiguous');
+    const firstRunTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      throw new Error('connection lost after start');
+    });
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'archived-ambiguous', runTaskFn: firstRunTaskFn }),
+    ).rejects.toThrow('connection lost');
+    await testDb()
+      .update(artifact)
+      .set({ archived_at: new Date() })
+      .where(eq(artifact.id, 'archived-ambiguous'));
+    const redeliveryRunTaskFn = vi.fn();
+    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn: redeliveryRunTaskFn });
+
+    await expect(
+      handler([{ id: 'archived-ambiguous', data: { artifact_id: 'archived-ambiguous' } } as never]),
+    ).resolves.toBeUndefined();
+
+    expect(redeliveryRunTaskFn).not.toHaveBeenCalled();
+    const [claim] = await testDb()
+      .select({ state: note_verification_claim.state })
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'archived-ambiguous'));
+    expect(claim.state).toBe('ambiguous');
+  });
+
+  it('caps persistent confirmed failures at three provider starts across recovery jobs', async () => {
+    await seedArtifact('attempt-cap');
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      const now = new Date();
+      await testDb()
+        .insert(ai_task_runs)
+        .values({
+          id: ctx.taskRunId ?? 'missing',
+          task_kind: 'NoteVerifyTask',
+          provider: 'test',
+          model: 'test',
+          input_hash: 'test',
+          status: 'failure',
+          finish_reason: 'error',
+          error_message: 'persistent failure',
+          started_at: now,
+          finished_at: now,
+        });
+      throw new Error('persistent failure');
+    });
+    const boss = fakeBoss();
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      await expect(
+        runNoteVerify({ db: testDb(), artifactId: 'attempt-cap', runTaskFn }),
+      ).rejects.toThrow('persistent failure');
+      const [claim] = await testDb()
+        .select()
+        .from(note_verification_claim)
+        .where(eq(note_verification_claim.artifact_id, 'attempt-cap'));
+      expect(claim.provider_attempts).toBe(attempt);
+      expect(claim.state).toBe('retry_wait');
+      await testDb()
+        .update(note_verification_claim)
+        .set({ available_at: new Date(0) })
+        .where(eq(note_verification_claim.artifact_id, 'attempt-cap'));
+      await expect(recoverResultReadyNoteVerifications(testDb(), { boss })).resolves.toBe(0);
+    }
+
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'attempt-cap', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:attempts_exhausted' });
+
+    expect(runTaskFn).toHaveBeenCalledTimes(3);
+    expect(boss.send).toHaveBeenCalledTimes(2);
+    const [exhausted] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'attempt-cap'));
+    const [failedArtifact] = await testDb()
+      .select({ verificationStatus: artifact.verification_status })
+      .from(artifact)
+      .where(eq(artifact.id, 'attempt-cap'));
+    const lifecycleEvents = await testDb()
+      .select({ payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.subject_id, 'attempt-cap'),
+          eq(event.action, 'experimental:artifact_lifecycle'),
+        ),
+      );
+    expect(exhausted).toMatchObject({
+      state: 'attempts_exhausted',
+      provider_attempts: 3,
+      provider_started_at: null,
+      task_run_id: null,
+    });
+    expect(failedArtifact.verificationStatus).toBe('failed');
+    expect(lifecycleEvents).toContainEqual({
+      payload: expect.objectContaining({
+        op: 'set_verification_status',
+        verification_status: 'failed',
+      }),
+    });
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'attempt-cap', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:attempts_exhausted' });
+    expect(runTaskFn).toHaveBeenCalledTimes(3);
+  });
+
+  it('resets the provider-attempt budget only for a new artifact epoch', async () => {
+    await seedArtifact('new-epoch', 1);
+    const now = new Date();
+    await testDb().insert(note_verification_claim).values({
+      artifact_id: 'new-epoch',
+      artifact_version: 0,
+      state: 'attempts_exhausted',
+      provider_attempts: 3,
+      error_message: 'provider attempt limit reached',
+      available_at: now,
+      created_at: now,
+      updated_at: now,
+    });
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      return { text: PASS_OUTPUT };
+    });
+
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'new-epoch', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'verified' });
+    const [claim] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'new-epoch'));
+    expect(claim).toMatchObject({ artifact_version: 1, provider_attempts: 1, state: 'completed' });
+  });
+
+  it('repairs a queued artifact already paired with an exhausted current-epoch claim', async () => {
+    await seedArtifact('exhausted-redelivery');
+    const now = new Date();
+    await testDb().insert(note_verification_claim).values({
+      artifact_id: 'exhausted-redelivery',
+      artifact_version: 0,
+      state: 'attempts_exhausted',
+      provider_attempts: 3,
+      error_message: 'provider attempt limit reached',
+      available_at: now,
+      created_at: now,
+      updated_at: now,
+    });
+    const runTaskFn = vi.fn();
+
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'exhausted-redelivery', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:attempts_exhausted' });
+
+    const [failedArtifact] = await testDb()
+      .select({ verificationStatus: artifact.verification_status })
+      .from(artifact)
+      .where(eq(artifact.id, 'exhausted-redelivery'));
+    expect(failedArtifact.verificationStatus).toBe('failed');
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('acks a provider-start cap race without submitting a query or leaving the artifact queued', async () => {
+    await seedArtifact('cap-at-boundary');
+    let submittedQueries = 0;
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await testDb()
+        .update(note_verification_claim)
+        .set({ provider_attempts: 3 })
+        .where(eq(note_verification_claim.artifact_id, 'cap-at-boundary'));
+      await crossProviderBoundary(ctx);
+      submittedQueries += 1;
+      return { text: PASS_OUTPUT };
+    });
+
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'cap-at-boundary', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'skipped:attempts_exhausted' });
+
+    const [claim] = await testDb()
+      .select({ state: note_verification_claim.state })
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'cap-at-boundary'));
+    const [failedArtifact] = await testDb()
+      .select({ verificationStatus: artifact.verification_status })
+      .from(artifact)
+      .where(eq(artifact.id, 'cap-at-boundary'));
+    expect(claim.state).toBe('attempts_exhausted');
+    expect(failedArtifact.verificationStatus).toBe('failed');
+    expect(submittedQueries).toBe(0);
+  });
+
+  it('finalizes durable result_ready without a second AI call', async () => {
+    await seedArtifact('result-ready');
+    const reservation = await reserveNoteVerification(testDb(), 'result-ready');
+    if (reservation.kind !== 'claimed') throw new Error('expected claim');
+    await markNoteVerificationProviderStarted(testDb(), reservation.lease);
+    await stageNoteVerificationResult(testDb(), reservation.lease, {
+      kind: 'provider_result',
+      taskResult: { text: PASS_OUTPUT, task_run_id: reservation.lease.taskRunId },
+    });
+    await expect(recoverResultReadyNoteVerifications(testDb())).resolves.toBe(1);
+    const [row] = await testDb().select().from(artifact).where(eq(artifact.id, 'result-ready'));
+    expect(row.verification_status).toBe('verified');
+  });
+
+  it('continues a recovery batch after one item fails, then rejects the batch', async () => {
+    await seedArtifact('batch-a-bad');
+    await seedArtifact('batch-b-good');
+    const bad = await reserveNoteVerification(testDb(), 'batch-a-bad');
+    const good = await reserveNoteVerification(testDb(), 'batch-b-good');
+    if (bad.kind !== 'claimed' || good.kind !== 'claimed') throw new Error('expected claims');
+    await markNoteVerificationProviderStarted(testDb(), bad.lease);
+    await markNoteVerificationProviderStarted(testDb(), good.lease);
+    await stageNoteVerificationResult(testDb(), bad.lease, {
+      kind: 'provider_result',
+      taskResult: { text: 'not-json', task_run_id: bad.lease.taskRunId },
+    });
+    await stageNoteVerificationResult(testDb(), good.lease, {
+      kind: 'provider_result',
+      taskResult: { text: PASS_OUTPUT, task_run_id: good.lease.taskRunId },
+    });
+
+    await expect(recoverResultReadyNoteVerifications(testDb())).rejects.toThrow(
+      'note verification recovery batch failed',
+    );
+    const [badClaim] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'batch-a-bad'));
+    const [goodArtifact] = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, 'batch-b-good'));
+    expect(badClaim.state).toBe('retry_wait');
+    expect(goodArtifact.verification_status).toBe('verified');
+  });
+
+  it('filters fifty terminal claims before the recovery limit', async () => {
+    const db = testDb();
+    for (let index = 0; index < 50; index += 1) {
+      const artifactId = `terminal-claim-${String(index).padStart(2, '0')}`;
+      await seedArtifact(artifactId);
+      const reservation = await reserveNoteVerification(db, artifactId);
+      if (reservation.kind !== 'claimed') throw new Error('expected terminal seed claim');
+      await db
+        .update(artifact)
+        .set({ verification_status: 'verified' })
+        .where(eq(artifact.id, artifactId));
+      await db
+        .update(note_verification_claim)
+        .set({
+          state: 'retry_wait',
+          claim_token: null,
+          task_run_id: null,
+          claimed_at: null,
+          lease_expires_at: null,
+          available_at: new Date(0),
+        })
+        .where(eq(note_verification_claim.artifact_id, artifactId));
+    }
+    await seedArtifact('valid-after-terminal-claims');
+    const valid = await reserveNoteVerification(db, 'valid-after-terminal-claims');
+    if (valid.kind !== 'claimed') throw new Error('expected valid recovery claim');
+    await db
+      .update(note_verification_claim)
+      .set({ lease_expires_at: new Date(0), available_at: new Date(0) })
+      .where(eq(note_verification_claim.artifact_id, 'valid-after-terminal-claims'));
+    const boss = fakeBoss();
+
+    await expect(recoverResultReadyNoteVerifications(db, { boss })).resolves.toBe(0);
+
+    expect(boss.send).toHaveBeenCalledTimes(1);
+    expect(boss.send).toHaveBeenCalledWith(
+      'note_verify',
+      { artifact_id: 'valid-after-terminal-claims' },
+      expect.objectContaining({ id: expect.any(String) }),
+    );
+  });
+
+  it('filters fifty non-note claims before the recovery limit', async () => {
+    const db = testDb();
+    for (let index = 0; index < 50; index += 1) {
+      const artifactId = `tool-claim-${String(index).padStart(2, '0')}`;
+      await seedArtifact(artifactId);
+      const reservation = await reserveNoteVerification(db, artifactId);
+      if (reservation.kind !== 'claimed') throw new Error('expected tool seed claim');
+      await db.update(artifact).set({ type: 'tool_quiz' }).where(eq(artifact.id, artifactId));
+      await db
+        .update(note_verification_claim)
+        .set({
+          state: 'retry_wait',
+          claim_token: null,
+          task_run_id: null,
+          claimed_at: null,
+          lease_expires_at: null,
+          available_at: new Date(0),
+        })
+        .where(eq(note_verification_claim.artifact_id, artifactId));
+    }
+    await seedArtifact('valid-after-tool-claims');
+    const valid = await reserveNoteVerification(db, 'valid-after-tool-claims');
+    if (valid.kind !== 'claimed') throw new Error('expected valid recovery claim');
+    await db
+      .update(note_verification_claim)
+      .set({ lease_expires_at: new Date(0), available_at: new Date(0) })
+      .where(eq(note_verification_claim.artifact_id, 'valid-after-tool-claims'));
+    const boss = fakeBoss();
+
+    await expect(recoverResultReadyNoteVerifications(db, { boss })).resolves.toBe(0);
+
+    expect(boss.send).toHaveBeenCalledTimes(1);
+    expect(boss.send).toHaveBeenCalledWith(
+      'note_verify',
+      { artifact_id: 'valid-after-tool-claims' },
+      expect.objectContaining({ id: expect.any(String) }),
+    );
+  });
+
+  it('cron requeues an expired pre-provider reservation and the handler completes it', async () => {
+    await seedArtifact('expired-reserved');
+    const first = await reserveNoteVerification(testDb(), 'expired-reserved');
+    if (first.kind !== 'claimed') throw new Error('expected claim');
+    await testDb()
+      .update(note_verification_claim)
+      .set({ lease_expires_at: new Date(0) })
+      .where(eq(note_verification_claim.artifact_id, 'expired-reserved'));
+    const boss = fakeBoss();
+    await expect(recoverResultReadyNoteVerifications(testDb(), { boss })).resolves.toBe(0);
+    expect(boss.send).toHaveBeenCalledTimes(1);
+    const [recovered] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'expired-reserved'));
+    expect(recovered.state).toBe('retry_wait');
+    expect(recovered.claim_token).toBeNull();
+    expect(recovered.fence).toBeGreaterThan(first.lease.fence);
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      return { text: PASS_OUTPUT };
+    });
+    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn });
+    await expect(
+      handler([{ id: 'claim-recovery', data: { artifact_id: 'expired-reserved' } } as never]),
+    ).resolves.toBeUndefined();
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('rediscovers a pre-wire recovery dispatch after send and readback both fail', async () => {
+    await seedArtifact('recovery-lost-ack');
+    const reservation = await reserveNoteVerification(testDb(), 'recovery-lost-ack');
+    if (reservation.kind !== 'claimed') throw new Error('expected claim');
+    await testDb()
+      .update(note_verification_claim)
+      .set({ lease_expires_at: new Date(0) })
+      .where(eq(note_verification_claim.artifact_id, 'recovery-lost-ack'));
+    const boss = fakeBoss();
+    boss.send.mockRejectedValueOnce(new Error('send unavailable'));
+    boss.getJobById.mockRejectedValueOnce(new Error('readback unavailable'));
+    await expect(recoverResultReadyNoteVerifications(testDb(), { boss })).rejects.toThrow(
+      'note verification recovery batch failed',
+    );
+    const [pendingRetry] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'recovery-lost-ack'));
+    expect(pendingRetry).toMatchObject({
+      state: 'retry_wait',
+      task_run_id: null,
+      result_json: null,
+    });
+    await expect(recoverResultReadyNoteVerifications(testDb(), { boss })).resolves.toBe(0);
+    expect(boss.send).toHaveBeenCalledTimes(2);
+    expect(boss.send.mock.calls[0]?.[2].id).toBe(boss.send.mock.calls[1]?.[2].id);
+    expect(boss.jobs.size).toBe(1);
+  });
+
+  it('turns an expired provider-start lease ambiguous without retrying wire', async () => {
+    await seedArtifact('expired-provider');
+    const reservation = await reserveNoteVerification(testDb(), 'expired-provider');
+    if (reservation.kind !== 'claimed') throw new Error('expected claim');
+    await markNoteVerificationProviderStarted(testDb(), reservation.lease);
+    await testDb()
+      .update(note_verification_claim)
+      .set({ lease_expires_at: new Date(0) })
+      .where(eq(note_verification_claim.artifact_id, 'expired-provider'));
+    const boss = fakeBoss();
+    await expect(recoverResultReadyNoteVerifications(testDb(), { boss })).resolves.toBe(0);
+    const runTaskFn = vi.fn();
+    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn });
+    await expect(
+      handler([{ id: 'expired-provider', data: { artifact_id: 'expired-provider' } } as never]),
+    ).rejects.toThrow('retry required');
+    expect(runTaskFn).not.toHaveBeenCalled();
+    expect(boss.send).not.toHaveBeenCalled();
+  });
+
+  it('bounds malformed durable-result retries without another paid call', async () => {
+    await seedArtifact('bad-result');
+    const reservation = await reserveNoteVerification(testDb(), 'bad-result');
+    if (reservation.kind !== 'claimed') throw new Error('expected claim');
+    await markNoteVerificationProviderStarted(testDb(), reservation.lease);
+    await stageNoteVerificationResult(testDb(), reservation.lease, {
+      kind: 'provider_result',
+      taskResult: { text: 'not-json' },
+    });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(recoverResultReadyNoteVerifications(testDb())).rejects.toThrow(
+        'note verification recovery batch failed',
+      );
+      const [deferred] = await testDb()
+        .select()
+        .from(note_verification_claim)
+        .where(eq(note_verification_claim.artifact_id, 'bad-result'));
+      expect(deferred.state).toBe('retry_wait');
+      expect(deferred.result_json).not.toBeNull();
+      await testDb()
+        .update(note_verification_claim)
+        .set({ available_at: new Date(0) })
+        .where(eq(note_verification_claim.artifact_id, 'bad-result'));
+    }
+    await expect(recoverResultReadyNoteVerifications(testDb())).resolves.toBe(0);
+    const [claim] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'bad-result'));
+    expect(claim.state).toBe('ambiguous');
+    expect(claim.result_attempts).toBe(2);
+    const taskRuns = await testDb()
+      .select({ id: ai_task_runs.id })
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.id, reservation.lease.taskRunId));
+    expect(taskRuns).toEqual([]);
+  });
+
+  it('makes an epoch change after provider start retry-visible and verifies the new epoch', async () => {
+    await seedArtifact('stale');
+    let release: (() => void) | undefined;
+    const wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
+      await crossProviderBoundary(ctx);
+      calls += 1;
+      if (calls === 1) await wait;
+      return { text: PASS_OUTPUT };
+    });
+    const first = runNoteVerify({ db: testDb(), artifactId: 'stale', runTaskFn });
+    await vi.waitFor(() => expect(runTaskFn).toHaveBeenCalledTimes(1));
+    await testDb().update(artifact).set({ version: 1 }).where(eq(artifact.id, 'stale'));
+    release?.();
+    await expect(first).rejects.toThrow('retry required');
+    const [superseded] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'stale'));
+    expect(superseded.state).toBe('retry_wait');
+    expect(superseded.artifact_version).toBe(1);
+    await expect(
+      runNoteVerify({ db: testDb(), artifactId: 'stale', runTaskFn }),
+    ).resolves.toMatchObject({ status: 'verified' });
+    expect(runTaskFn).toHaveBeenCalledTimes(2);
+    const [claim] = await testDb()
+      .select()
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'stale'));
+    expect(claim.artifact_version).toBe(1);
+    expect(claim.state).toBe('completed');
+  });
+
+  it('rejects an epoch change before provider start without calling AI', async () => {
+    await seedArtifact('pre-start-epoch');
+    const reservation = await reserveNoteVerification(testDb(), 'pre-start-epoch');
+    if (reservation.kind !== 'claimed') throw new Error('expected claim');
+    await testDb().update(artifact).set({ version: 1 }).where(eq(artifact.id, 'pre-start-epoch'));
+    await expect(
+      markNoteVerificationProviderStarted(testDb(), reservation.lease),
+    ).resolves.toMatchObject({ kind: 'claim_changed' });
   });
 });

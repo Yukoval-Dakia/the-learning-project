@@ -2643,3 +2643,153 @@ describe('migration smoke — YUK-855 provider attempt start rate index', () => 
     );
   });
 });
+
+describe('migration smoke — YUK-857 note verification claim', () => {
+  const BASELINE_TAG = '0092_yuk855_provider_attempt_start_rate_index';
+  const MIGRATION_TAG = '0093_yuk857_note_verification_claim';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(client, migration.sql);
+      if (migration.tag === BASELINE_TAG) break;
+    }
+    const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
+    if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
+    await applyMigrationFile(client, migration.sql);
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('creates the fenced claim and handoff recovery indexes', async () => {
+    const indexes = await client<{ indexdef: string; indexname: string }[]>`
+      SELECT indexname, indexdef FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND indexname IN (
+          'note_verification_claim_recovery_idx',
+          'note_verification_claim_task_run_unique',
+          'event_note_handoff_v1_recovery_idx',
+          'event_note_handoff_v1_completion_idx',
+          'artifact_note_handoff_legacy_idx'
+        )
+    `;
+    expect(new Set(indexes.map((row) => row.indexname))).toEqual(
+      new Set([
+        'note_verification_claim_recovery_idx',
+        'note_verification_claim_task_run_unique',
+        'event_note_handoff_v1_recovery_idx',
+        'event_note_handoff_v1_completion_idx',
+        'artifact_note_handoff_legacy_idx',
+      ]),
+    );
+    const definitions = Object.fromEntries(
+      indexes.map((index) => [index.indexname, index.indexdef.replaceAll('"', '')]),
+    );
+    expect(definitions.note_verification_claim_recovery_idx).toContain(
+      '(state, available_at, lease_expires_at, artifact_id)',
+    );
+    expect(definitions.note_verification_claim_task_run_unique).toContain(
+      'UNIQUE INDEX note_verification_claim_task_run_unique',
+    );
+    expect(definitions.note_verification_claim_task_run_unique).toContain(
+      '(task_run_id) WHERE (task_run_id IS NOT NULL)',
+    );
+    expect(definitions.event_note_handoff_v1_recovery_idx).toContain(
+      "((payload ->> 'handoff_kind'::text)), dispatch_seq, id, subject_id",
+    );
+    expect(definitions.event_note_handoff_v1_recovery_idx).toContain(
+      "(action = 'experimental:note_handoff'::text)",
+    );
+    expect(definitions.event_note_handoff_v1_recovery_idx).toContain(
+      "((payload ->> 'artifact_id'::text) = subject_id)",
+    );
+    expect(definitions.event_note_handoff_v1_recovery_idx).toContain(
+      "((payload ->> 'version'::text) = '1'::text)",
+    );
+    expect(definitions.event_note_handoff_v1_recovery_idx).toContain("'generation_intent'::text");
+    expect(definitions.event_note_handoff_v1_recovery_idx).toContain("'verification_intent'::text");
+    expect(definitions.event_note_handoff_v1_completion_idx).toContain(
+      "(subject_id, ((payload ->> 'handoff_kind'::text)))",
+    );
+    expect(definitions.event_note_handoff_v1_completion_idx).toContain(
+      "'generation_dispatch_complete'::text",
+    );
+    expect(definitions.event_note_handoff_v1_completion_idx).toContain(
+      "'verification_dispatch_complete'::text",
+    );
+    expect(definitions.artifact_note_handoff_legacy_idx).toContain(
+      '(generation_status, verification_status, created_at, id)',
+    );
+    expect(definitions.artifact_note_handoff_legacy_idx).toContain(
+      "(generation_status = 'pending'::text)",
+    );
+    expect(definitions.artifact_note_handoff_legacy_idx).toContain(
+      "(verification_status = 'queued'::text)",
+    );
+  });
+
+  it('rejects duplicate non-null verification task run ids', async () => {
+    await client`
+      INSERT INTO artifact (id,type,title,intent_source,source,generation_status,verification_status,created_at,updated_at)
+      VALUES
+        ('claim-task-run-a','note_atomic','Claim A','test','test','ready','queued',now(),now()),
+        ('claim-task-run-b','note_atomic','Claim B','test','test','ready','queued',now(),now())
+    `;
+    await client`
+      INSERT INTO note_verification_claim (
+        artifact_id,artifact_version,state,fence,claim_token,task_run_id,
+        available_at,lease_expires_at,created_at,updated_at
+      ) VALUES (
+        'claim-task-run-a',0,'reserved',1,'11111111-1111-4111-8111-111111111111',
+        'note-verify-duplicate-run',now(),now() + interval '2 minutes',now(),now()
+      )
+    `;
+    await expect(client`
+      INSERT INTO note_verification_claim (
+        artifact_id,artifact_version,state,fence,claim_token,task_run_id,
+        available_at,lease_expires_at,created_at,updated_at
+      ) VALUES (
+        'claim-task-run-b',0,'reserved',1,'22222222-2222-4222-8222-222222222222',
+        'note-verify-duplicate-run',now(),now() + interval '2 minutes',now(),now()
+      )
+    `).rejects.toMatchObject({ code: '23505' });
+  });
+
+  it('enforces claim state shape and artifact ownership', async () => {
+    await client`
+      INSERT INTO artifact (id,type,title,intent_source,source,generation_status,verification_status,created_at,updated_at)
+      VALUES ('claim-artifact','note_atomic','Claim','test','test','ready','queued',now(),now())
+    `;
+    await expect(client`
+      INSERT INTO note_verification_claim (artifact_id,artifact_version,state,available_at,created_at,updated_at)
+      VALUES ('claim-artifact',0,'result_ready',now(),now(),now())
+    `).rejects.toMatchObject({ constraint_name: 'note_verification_claim_shape_ck' });
+    await expect(client`
+      INSERT INTO note_verification_claim (
+        artifact_id,artifact_version,state,provider_attempts,available_at,created_at,updated_at
+      ) VALUES ('claim-artifact',0,'retry_wait',4,now(),now(),now())
+    `).rejects.toMatchObject({
+      constraint_name: 'note_verification_claim_provider_attempts_ck',
+    });
+    await expect(client`
+      INSERT INTO note_verification_claim (
+        artifact_id,artifact_version,state,provider_attempts,error_message,
+        available_at,created_at,updated_at
+      ) VALUES (
+        'claim-artifact',0,'attempts_exhausted',3,'provider attempt limit reached',
+        now(),now(),now()
+      )
+    `).resolves.toBeDefined();
+    await expect(client`
+      INSERT INTO note_verification_claim (artifact_id,artifact_version,state,available_at,created_at,updated_at)
+      VALUES ('missing-artifact',0,'retry_wait',now(),now(),now())
+    `).rejects.toMatchObject({ code: '23503' });
+  });
+});

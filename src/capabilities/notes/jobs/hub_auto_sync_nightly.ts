@@ -13,21 +13,34 @@
 
 import type { Job } from 'pg-boss';
 
+import { getRunningNotesBoss } from '@/capabilities/notes/server/boss-port';
 import {
   type HubSyncCycleResult,
   runHubSyncCycle,
   sweepAbandonedEditSessions,
 } from '@/capabilities/notes/server/hub-sync-reconciliation';
+import { recoverNoteHandoffsAndClaims } from '@/capabilities/notes/server/note-handoff';
 import type { Db } from '@/db/client';
-import { getRunningBoss } from '@/server/boss/client';
-import type { HubSyncSend } from '@/server/boss/hub-sync-wake';
 
 const RECOVERY_MAX_ARTIFACTS = 25;
 const WAKE_MAX_ARTIFACTS = 25;
 const NIGHTLY_MAX_ARTIFACTS = 25;
 
+interface HubSyncSend {
+  send: (
+    queue: string,
+    data: unknown,
+    options?: { singletonKey?: string; singletonSeconds?: number },
+  ) => Promise<unknown>;
+}
+
 export const HUB_SYNC_RECOVERY_QUEUE = 'hub_sync_recovery';
 export const HUB_SYNC_RECOVERY_CONTINUATION_KEY = 'hub_sync_recovery_continuation';
+
+type RecoveryFloorDeps = {
+  runHubRecovery?: () => Promise<HubSyncCycleResult>;
+  recoverHandoffsAndClaims?: () => Promise<void>;
+};
 
 // singletonKey ALONE does not de-duplicate on a standard pg-boss queue — it needs a
 // singletonSeconds throttle window (repo lessons YUK-491 / YUK-486). One backlog-drain
@@ -78,7 +91,7 @@ export function buildHubSyncRecoveryHandler(db: Db, deps: HubSyncSend) {
 // in production. No-op when boss is not running (tests).
 async function dispatchContinuationViaRunningBoss(result: HubSyncCycleResult): Promise<void> {
   if (!result.continuation_needed) return;
-  const boss = getRunningBoss();
+  const boss = getRunningNotesBoss();
   if (!boss) return;
   try {
     await dispatchContinuation(
@@ -124,13 +137,28 @@ export function buildHubAutoSyncNightlyHandler(
   };
 }
 
-export function buildHubSyncRecoveryJobHandler(db: Db): (jobs: Job[]) => Promise<void> {
+export function buildHubSyncRecoveryJobHandler(
+  db: Db,
+  deps: RecoveryFloorDeps = {},
+): (jobs: Job[]) => Promise<void> {
   return async () => {
-    const result = await runHubSyncCycle(db, {
-      reason: 'recovery',
-      maxArtifacts: RECOVERY_MAX_ARTIFACTS,
-    });
-    await dispatchContinuationViaRunningBoss(result);
+    const errors: unknown[] = [];
+    try {
+      const result = await (deps.runHubRecovery?.() ??
+        runHubSyncCycle(db, {
+          reason: 'recovery',
+          maxArtifacts: RECOVERY_MAX_ARTIFACTS,
+        }));
+      await dispatchContinuationViaRunningBoss(result);
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      await (deps.recoverHandoffsAndClaims?.() ?? recoverNoteHandoffsAndClaims(db));
+    } catch (error) {
+      errors.push(error);
+    }
+    if (errors.length > 0) throw errors[0];
   };
 }
 

@@ -193,12 +193,6 @@ export const notesCapability = defineCapability({
     ],
   },
   jobs: {
-    // M4-T3 (YUK-319)：notes 域 job 归属声明。注册由 server/boss/
-    // register-capability-jobs.ts 收集挂载（有 load 的两条）；note_generate /
-    // note_verify 的工厂带 boss 依赖二参（onReady 链式 boss.send 回调，
-    // note_generate→note_verify），不符 kernel JobHandlerFactory 单参签名——注册
-    // 留在 handlers.ts 渐缩簿，此处声明无 load 纯归属元数据。
-    // YUK-358 决定3：note_verify→embedded_check_generate 链已删（孤儿链真删）。
     handlers: [
       {
         // YUK-384：nightly hub-sync COVERAGE REPAIR sweep（BJT 02:45）——不再直接 apply，
@@ -210,8 +204,6 @@ export const notesCapability = defineCapability({
           import('./jobs/hub_auto_sync_nightly').then((m) => m.buildHubAutoSyncNightlyHandler),
       },
       {
-        // YUK-384：every-minute recovery floor——drain 就绪游标（≤60s 收敛下限），
-        // 是 durable convergence 的兜底（immediate wake 失败也靠它收口）。
         name: 'hub_sync_recovery',
         schedule: { cron: '* * * * *', tz: 'Asia/Shanghai' },
         queue: 'llm',
@@ -235,9 +227,16 @@ export const notesCapability = defineCapability({
         queue: 'llm',
         load: () => import('./jobs/note-refine').then((m) => m.buildNoteRefineHandler),
       },
-      // 纯归属元数据（无 load，注册在 handlers.ts 渐缩簿——见上）：
-      { name: 'note_generate', queue: 'llm' },
-      { name: 'note_verify', queue: 'llm' },
+      {
+        name: 'note_generate',
+        queue: 'llm',
+        load: () => import('./jobs/note_generate').then((m) => m.buildNoteGenerateHandler),
+      },
+      {
+        name: 'note_verify',
+        queue: 'llm',
+        load: () => import('./jobs/note_verify').then((m) => m.buildNoteVerifyHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。note_update 的 accept 持久化委托

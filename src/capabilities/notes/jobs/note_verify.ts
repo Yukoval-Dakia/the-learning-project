@@ -1,9 +1,3 @@
-// Product Track 1 — second-pass verification for generated atomic notes.
-//
-// Enqueued after note_generate marks an atomic artifact ready. The verifier is
-// deliberately a separate lifecycle axis: generation_status says whether note
-// content exists; verification_status says whether another AI pass trusts it.
-
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -13,16 +7,40 @@ import {
   bodyBlocksToBlockSummaries,
   bodyBlocksToNoteSections,
 } from '@/capabilities/notes/server/body-blocks';
+import {
+  type BossDispatch,
+  dispatchNoteVerificationClaimRecovery,
+} from '@/capabilities/notes/server/note-handoff';
 import { enqueueVerifyNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
+import {
+  type StagedNoteVerification,
+  deferNoteVerificationResultForRetry,
+  discardReservedNoteVerificationClaim,
+  finalizeNoteVerificationResult,
+  listRecoverableNoteVerificationResults,
+  markNoteVerificationAmbiguous,
+  markNoteVerificationProviderStarted,
+  prepareNoteVerificationResultRecovery,
+  releaseNoteVerificationForRetry,
+  releaseReservedNoteVerificationForRetry,
+  reserveNoteVerification,
+  stageNoteVerificationContractResult,
+  stageNoteVerificationResult,
+  supersedeNoteVerificationEpoch,
+} from '@/capabilities/notes/server/note-verification-claim';
+import { emitNoteVerificationLifecycleEvent } from '@/capabilities/notes/server/note-verification-lifecycle';
 import { NoteVerificationResult, type NoteVerificationResultT } from '@/core/schema/business';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
-import type { Db } from '@/db/client';
-import { artifact, knowledge } from '@/db/schema';
+import type { Db, Tx } from '@/db/client';
+import { ai_task_runs, artifact, knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
-import type { TaskTextResult } from '@/server/ai/provenance';
+import {
+  type TaskTextResult,
+  type TaskTextRunFn,
+  aiAgentRef,
+  costUsdToMicroUsd,
+} from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -52,7 +70,11 @@ export interface RunNoteVerifyResult {
     | 'needs_review'
     | 'skipped:not_found'
     | 'skipped:not_ready'
-    | 'skipped:no_sections';
+    | 'skipped:not_queued'
+    | 'skipped:no_sections'
+    | 'skipped:in_progress'
+    | 'skipped:attempts_exhausted'
+    | 'skipped:ambiguous';
   artifact_type?: string;
   issues_count?: number;
 }
@@ -61,6 +83,10 @@ type DepsOverride = {
   runTaskFn?: RunTaskFn;
   onPassed?: (artifactId: string) => Promise<void>;
 };
+
+function noteVerificationRetryRequired(artifactId: string, reason: string): Error {
+  return new Error(`note verification retry required for ${artifactId}: ${reason}`);
+}
 
 function parseVerificationOutput(text: string): NoteVerificationResultT {
   const start = text.indexOf('{');
@@ -71,13 +97,15 @@ function parseVerificationOutput(text: string): NoteVerificationResultT {
   let json: unknown;
   try {
     json = JSON.parse(text.slice(start, end + 1));
-  } catch (e) {
-    throw new Error(`parseVerificationOutput: JSON.parse failed: ${(e as Error).message}`);
+  } catch (error) {
+    throw new Error(
+      `parseVerificationOutput: JSON.parse failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   const parsed = NoteVerificationResult.safeParse(json);
   if (!parsed.success) {
     throw new Error(
-      `parseVerificationOutput: schema invalid: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
+      `parseVerificationOutput: schema invalid: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`,
     );
   }
   return parsed.data;
@@ -88,12 +116,10 @@ export function noteBodyBlockContractFailure(
   bodyBlocks: unknown,
 ): NoteVerificationResultT | null {
   if (artifactType !== 'note_atomic') return null;
-
   const semanticCheck = bodyBlocksHaveSemanticKinds(bodyBlocks, [
     ...ATOMIC_REQUIRED_SEMANTIC_KINDS,
   ]);
   if (semanticCheck.ok) return null;
-
   const missingKinds = semanticCheck.missing.join(', ');
   return {
     verdict: 'needs_review',
@@ -112,33 +138,21 @@ export function noteBodyBlockContractFailure(
   };
 }
 
-interface PersistVerificationOutcome {
+type PersistVerificationOutcome = {
   status: 'verified' | 'needs_review';
-  // YUK-358 决定7 — the committed verify event id, so the caller can chain a
-  // (flag-gated) verify→refine enqueue to it AFTER the transaction commits.
   verifyEventId: string;
-}
+};
 
-async function persistNoteVerificationResult(params: {
-  db: Db;
+type ParsedStagedNoteVerification = Extract<StagedNoteVerification, { kind: 'parsed' }>;
+
+async function persistNoteVerificationResultTx(params: {
+  tx: Tx;
   artifactId: string;
-  parsed: NoteVerificationResultT;
-  taskResult?: TaskTextResult;
+  staged: ParsedStagedNoteVerification;
 }): Promise<PersistVerificationOutcome> {
-  const { db, artifactId, parsed, taskResult } = params;
+  const { tx, artifactId, staged } = params;
+  const { parsed, taskResult } = staged;
   const status = parsed.verdict === 'pass' ? 'verified' : 'needs_review';
-
-  // YUK-350 (B5 increment 2) — project the note verdict onto the unified verify
-  // contract shape, exactly like increment C did for quiz/source/variant. The note
-  // PROMOTE decision is NOT recomputed here — `parsed.verdict` IS the handler's
-  // decision (pass ⇒ verified active artifact, needs_review ⇒ stays needs_review).
-  // The helper only PROJECTS: pass ⇒ overall='pass' (no failure_class), needs_review
-  // ⇒ overall='needs_review' + failure_class='validation_failure'. A note has NO
-  // 'fail' verdict, so it can never project overall='fail'; the result-layer 'error'
-  // lives solely on the catch-bottom (red line 1). The verify-event payload below
-  // is an ADDITIVE SUPERSET: it spreads the unified { axes, overall, failure_class?,
-  // summary_md, confidence } and keeps the full `...parsed` NoteVerificationResult
-  // (verdict / issues / summary_md / confidence) byte-identical for existing readers.
   const unified = toUnifiedVerifyResult({
     source: 'note',
     verdict: parsed.verdict,
@@ -146,86 +160,54 @@ async function persistNoteVerificationResult(params: {
     confidence: parsed.confidence,
     issues: parsed.issues,
   });
-
   const verifyEventId = createId();
-  // W3-C1γ — single tx clock so the artifact UPDATE's updated_at == the fold lifecycle event's
-  // created_at (fold updated_at = event time). The verified_by value is computed ONCE and shared
-  // between the UPDATE and the fold event so full-row parity reproduces the provenance column too.
   const now = new Date();
   const verifiedByRef = taskResult
     ? aiAgentRef('NoteVerifyTask', taskResult)
     : { by: 'system', task_kind: 'NoteVerifyTask', model: 'body-block-contract' };
-  await db.transaction(async (tx) => {
-    const updatedRows = await tx
-      .update(artifact)
-      .set({
-        verification_status: status,
-        verification_summary: parsed as never,
-        verified_by: verifiedByRef as never,
-        updated_at: now,
-      })
-      .where(eq(artifact.id, artifactId))
-      .returning({ version: artifact.version });
-
-    await writeEvent(tx, {
-      id: verifyEventId,
-      session_id: null,
-      actor_kind: taskResult ? 'agent' : 'system',
-      actor_ref: 'note_verify',
-      action: 'experimental:note_verify',
-      subject_kind: 'artifact',
-      subject_id: artifactId,
-      outcome: parsed.verdict === 'pass' ? 'success' : 'partial',
-      // SUPERSET: the unified contract shape spread first, then the full parsed note
-      // result kept on top (verdict / issues stay byte-identical; summary_md /
-      // confidence are shared between the two; axes / overall / failure_class? are
-      // the additive new keys).
-      payload: { ...unified, ...parsed },
-      caused_by_event_id: null,
-      task_run_id: taskResult?.task_run_id ?? null,
-      cost_micro_usd: costUsdToMicroUsd(taskResult?.cost_usd),
-      created_at: now,
-    });
-
-    // W3-C1γ — the fold-source lifecycle event (distinct from the experimental:note_verify
-    // observability event above). note_verify does NOT bump version, so next_version = the row's
-    // CURRENT version (the `.returning()` reported it, unchanged). Carries verification_status +
-    // verification_summary + verified_by so foldArtifact reproduces all three columns. Gated on the
-    // row existing (a missing artifact ⇒ no version ⇒ no fold event). Same tx — a malformed payload
-    // rolls back the paired UPDATE + verify event (parseEvent barrier). Plumbing ⇒ opt out of memory.
-    const updatedVersion = updatedRows[0]?.version;
-    if (updatedVersion !== undefined) {
-      await emitArtifactLifecycleEvent(tx, {
-        subjectId: artifactId,
-        op: 'set_verification_status',
-        verificationStatus: status,
-        verificationSummary: parsed,
-        verifiedBy: verifiedByRef,
-        nextVersion: updatedVersion,
-        actorKind: taskResult ? 'agent' : 'system',
-        actorRef: 'note_verify',
-        taskRunId: taskResult?.task_run_id ?? null,
-        costMicroUsd: costUsdToMicroUsd(taskResult?.cost_usd),
-        createdAt: now,
-      });
-    }
-
-    // YUK-358 决定7 (ADR-0040) — the DEAD patch-less note_update proposal is GONE.
-    // It was a permanent inbox occupant carrying only a summary + issues (no patch),
-    // so the owner could never ACT on it (acceptNoteUpdateProposal needs a patch via
-    // writeNoteRefineProposal — the verify-path proposal never carried one). The
-    // needs_review verdict is now ADVISORY: the verification_summary + the
-    // experimental:note_verify event above are the artifacts. Acting on the issues
-    // is a SEPARATE, flag-gated verify→refine enqueue done by the caller AFTER this
-    // transaction commits (see runNoteVerify), which routes through the NORMAL refine
-    // gate so verify gets zero gate privilege (red line 1).
+  const updatedRows = await tx
+    .update(artifact)
+    .set({
+      verification_status: status,
+      verification_summary: parsed as never,
+      verified_by: verifiedByRef as never,
+      updated_at: now,
+    })
+    .where(eq(artifact.id, artifactId))
+    .returning({ version: artifact.version });
+  await writeEvent(tx, {
+    id: verifyEventId,
+    session_id: null,
+    actor_kind: taskResult ? 'agent' : 'system',
+    actor_ref: 'note_verify',
+    action: 'experimental:note_verify',
+    subject_kind: 'artifact',
+    subject_id: artifactId,
+    outcome: parsed.verdict === 'pass' ? 'success' : 'partial',
+    payload: { ...unified, ...parsed },
+    caused_by_event_id: null,
+    task_run_id: taskResult?.task_run_id ?? null,
+    cost_micro_usd: costUsdToMicroUsd(taskResult?.cost_usd),
+    created_at: now,
   });
-
+  const version = updatedRows[0]?.version;
+  if (version !== undefined) {
+    await emitNoteVerificationLifecycleEvent(tx, {
+      artifactId,
+      status,
+      summary: parsed,
+      verifiedBy: verifiedByRef,
+      nextVersion: version,
+      actorKind: taskResult ? 'agent' : 'system',
+      actorRef: 'note_verify',
+      taskRunId: taskResult?.task_run_id ?? null,
+      costMicroUsd: costUsdToMicroUsd(taskResult?.cost_usd),
+      createdAt: now,
+    });
+  }
   return { status, verifyEventId };
 }
 
-// YUK-358 决定7 — build the verify→refine context_md from the verdict summary +
-// issues so the refine task sees exactly what the verifier flagged.
 function buildVerifyRefineContext(parsed: NoteVerificationResultT): string {
   const lines = ['Note verification flagged issues:', parsed.summary_md];
   for (const issue of parsed.issues) {
@@ -236,185 +218,268 @@ function buildVerifyRefineContext(parsed: NoteVerificationResultT): string {
   return lines.join('\n');
 }
 
-// YUK-358 决定7 — on needs_review, (flag-gated default-OFF) enqueue a verify-kind
-// refine carrying the verifier context, chained to the committed verify event.
-// Default-OFF + test-env skip mean this is a no-op in tests and in prod unless the
-// owner sets WAVE6_TRIGGER_VERIFY_ENABLED="true" — so the advisory verdict never
-// silently spends background AI budget (red lines 1 & 2). Enqueue happens AFTER
-// the persist transaction commits so the trigger event id is durable.
 async function maybeEnqueueVerifyRefine(params: {
   db: Db;
   artifactId: string;
-  parsed: NoteVerificationResultT;
+  staged: ParsedStagedNoteVerification;
   outcome: PersistVerificationOutcome;
 }): Promise<void> {
   if (params.outcome.status !== 'needs_review') return;
   await enqueueVerifyNoteRefine({
     db: params.db,
     artifactId: params.artifactId,
-    contextMd: buildVerifyRefineContext(params.parsed),
+    contextMd: buildVerifyRefineContext(params.staged.parsed),
     triggerEventId: params.outcome.verifyEventId,
   });
 }
 
-export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNoteVerifyResult> {
-  const { db, artifactId, runTaskFn } = params;
-
+async function loadVerificationInput(db: Db, artifactId: string) {
   const rows = await db
     .select({
       id: artifact.id,
       type: artifact.type,
       title: artifact.title,
-      knowledge_ids: artifact.knowledge_ids,
-      body_blocks: artifact.body_blocks,
-      generation_status: artifact.generation_status,
+      knowledgeIds: artifact.knowledge_ids,
+      bodyBlocks: artifact.body_blocks,
     })
     .from(artifact)
     .where(eq(artifact.id, artifactId))
     .limit(1);
   const row = rows[0];
-  if (!row) return { status: 'skipped:not_found' };
-  if (row.generation_status !== 'ready') {
-    return { status: 'skipped:not_ready', artifact_type: row.type };
-  }
-  const content = (row.body_blocks as { content?: unknown } | null)?.content;
-  if (!Array.isArray(content) || content.length === 0) {
-    return { status: 'skipped:no_sections', artifact_type: row.type };
-  }
-
-  const contractFailure = noteBodyBlockContractFailure(row.type, row.body_blocks);
-  if (contractFailure) {
-    const outcome = await persistNoteVerificationResult({
-      db,
-      artifactId,
-      parsed: contractFailure,
-    });
-    await maybeEnqueueVerifyRefine({ db, artifactId, parsed: contractFailure, outcome });
-    return {
-      status: outcome.status,
+  if (!row) return null;
+  const content = (row.bodyBlocks as { content?: unknown } | null)?.content;
+  if (!Array.isArray(content) || content.length === 0) return { row, input: null };
+  const primaryKnowledgeId = row.knowledgeIds[0] ?? null;
+  const knowledgeRows = primaryKnowledgeId
+    ? await db
+        .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+        .from(knowledge)
+        .where(eq(knowledge.id, primaryKnowledgeId))
+        .limit(1)
+    : [];
+  const knowledgeNode = knowledgeRows[0] ?? null;
+  return {
+    row,
+    input: {
+      artifact_id: row.id,
       artifact_type: row.type,
-      issues_count: contractFailure.issues.length,
-    };
-  }
-
-  const sections = bodyBlocksToNoteSections(row.body_blocks);
-  const blockSummaries = bodyBlocksToBlockSummaries(row.body_blocks);
-
-  let kNode: { id: string; name: string; domain: string | null } | null = null;
-  const primaryKnowledgeId = row.knowledge_ids[0] ?? null;
-  if (primaryKnowledgeId) {
-    const kRows = await db
-      .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
-      .from(knowledge)
-      .where(eq(knowledge.id, primaryKnowledgeId))
-      .limit(1);
-    kNode = kRows[0] ?? null;
-  }
-
-  const input = {
-    artifact_id: row.id,
-    artifact_type: row.type,
-    title: row.title,
-    knowledge_node: kNode,
-    body_blocks: row.body_blocks,
-    block_summaries: blockSummaries,
-    sections,
+      title: row.title,
+      knowledge_node: knowledgeNode,
+      body_blocks: row.bodyBlocks,
+      block_summaries: bodyBlocksToBlockSummaries(row.bodyBlocks),
+      sections: bodyBlocksToNoteSections(row.bodyBlocks),
+    },
   };
+}
 
-  let taskResult: TaskTextResult | null = null;
+async function finalizeStagedVerification(
+  db: Db,
+  artifactId: string,
+  artifactType: string,
+): Promise<RunNoteVerifyResult> {
+  let finalized: {
+    outcome: PersistVerificationOutcome;
+    staged: ParsedStagedNoteVerification;
+  } | null;
   try {
-    const subjectProfile = resolveSubjectProfile(kNode?.domain);
-    const result = await runTaskFn('NoteVerifyTask', input, {
-      subjectProfile,
-      skills: await resolveNoteSkill(subjectProfile.id),
+    finalized = await finalizeNoteVerificationResult(db, artifactId, async (tx, current) => {
+      const staged: ParsedStagedNoteVerification =
+        current.kind === 'parsed'
+          ? current
+          : {
+              kind: 'parsed',
+              parsed: parseVerificationOutput(current.taskResult.text),
+              taskResult: current.taskResult,
+            };
+      const outcome = await persistNoteVerificationResultTx({ tx, artifactId, staged });
+      return { outcome, staged };
     });
-    taskResult = result;
-    const parsed = parseVerificationOutput(result.text);
-    const outcome = await persistNoteVerificationResult({
-      db,
-      artifactId,
-      parsed,
-      taskResult: result,
-    });
-    await maybeEnqueueVerifyRefine({ db, artifactId, parsed, outcome });
-
-    return { status: outcome.status, artifact_type: row.type, issues_count: parsed.issues.length };
-  } catch (err) {
-    // YUK-350 (B5 increment 2, RL1) — error-safe catch-bottom. note_verify has NO
-    // promote-into-the-pool path (a note never enrolls into the question pool / FSRS),
-    // so a system error here can never promote anything. This catch:
-    //   (a) marks the artifact verification_status='failed' (best-effort), and
-    //   (b) writes a TRANSIENT-error verify event projecting the unified contract's
-    //       system_error shape ({ axes:[], overall:'error', failure_class:'system_error',
-    //       summary_md, confidence:0 }) — the ONLY producer of the result-layer 'error'
-    //       value. The note LLM-parse schema can never emit 'error' (its verdict is the
-    //       2-value pass|needs_review), so an `overall:'error'` payload is an unambiguous
-    //       "system blew up before a verdict" signal. The catch re-throws so pg-boss
-    //       retries; it NEVER promotes (red line 1: the model cannot self-report error).
-    // The error event uses outcome='error' (NOT 'failure'): like quiz_verify, a transient
-    // system failure is non-terminal and must remain retriable, distinct from a terminal
-    // model verdict (note has none — its non-promote verdict is needs_review/'partial').
-    try {
-      // W3-C1γ — the failed status flip + its error event + the fold lifecycle event are now ONE tx
-      // (was two separate db writes), so the fold reproduces verification_status='failed' and NOTHING
-      // about artifact stays KNOWN-UNFOLDED. Failure does NOT bump version. Best-effort: a throw here
-      // is logged, never masking the original error (rethrown below so pg-boss retries).
-      const failedAt = new Date();
-      await db.transaction(async (tx) => {
-        const beforeRows = await tx
-          .select({ version: artifact.version })
-          .from(artifact)
-          .where(eq(artifact.id, artifactId))
-          .for('update')
-          .limit(1);
-        const before = beforeRows[0];
-        const updatedRows = await tx
-          .update(artifact)
-          .set({ verification_status: 'failed', updated_at: failedAt })
-          .where(eq(artifact.id, artifactId))
-          .returning({ version: artifact.version });
-        await writeEvent(tx, {
-          id: createId(),
-          session_id: null,
-          actor_kind: 'agent',
-          actor_ref: 'note_verify',
-          action: 'experimental:note_verify',
-          subject_kind: 'artifact',
-          subject_id: artifactId,
-          outcome: 'error',
-          payload: {
-            artifact_id: artifactId,
-            ...toUnifiedVerifyResult({
-              source: 'system_error',
-              summary_md: `note_verify failed: ${String((err as Error).message ?? err)}`,
-              error: String((err as Error).message ?? err),
-            }),
-            error: String((err as Error).message ?? err),
-          },
-          caused_by_event_id: null,
-          task_run_id: taskResult?.task_run_id ?? null,
-          cost_micro_usd: costUsdToMicroUsd(taskResult?.cost_usd),
-          created_at: failedAt,
-        });
-        if (before && updatedRows.length > 0) {
-          await emitArtifactLifecycleEvent(tx, {
-            subjectId: artifactId,
-            op: 'set_verification_status',
-            verificationStatus: 'failed',
-            nextVersion: before.version,
-            actorKind: 'agent',
-            actorRef: 'note_verify',
-            taskRunId: taskResult?.task_run_id ?? null,
-            costMicroUsd: costUsdToMicroUsd(taskResult?.cost_usd),
-            createdAt: failedAt,
-          });
-        }
-      });
-    } catch (cleanupErr) {
-      console.error('[note_verify] catch-block cleanup failed for', artifactId, cleanupErr);
-    }
-    throw err;
+  } catch (error) {
+    await deferNoteVerificationResultForRetry(db, artifactId, error);
+    throw error;
   }
+  if (!finalized) return { status: 'skipped:in_progress', artifact_type: artifactType };
+  await maybeEnqueueVerifyRefine({
+    db,
+    artifactId,
+    staged: finalized.staged,
+    outcome: finalized.outcome,
+  });
+  return {
+    status: finalized.outcome.status,
+    artifact_type: artifactType,
+    issues_count: finalized.staged.parsed.issues.length,
+  };
+}
+
+export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNoteVerifyResult> {
+  const { db, artifactId, runTaskFn } = params;
+  const reservation = await reserveNoteVerification(db, artifactId);
+  if (reservation.kind === 'not_found') return { status: 'skipped:not_found' };
+  if (reservation.kind === 'not_ready') {
+    return { status: 'skipped:not_ready', artifact_type: reservation.artifactType };
+  }
+  if (reservation.kind === 'not_queued') {
+    return { status: 'skipped:not_queued', artifact_type: reservation.artifactType };
+  }
+  if (reservation.kind === 'completed') return { status: 'skipped:not_queued' };
+  if (reservation.kind === 'attempts_exhausted') {
+    return { status: 'skipped:attempts_exhausted' };
+  }
+  if (reservation.kind === 'ambiguous') return { status: 'skipped:ambiguous' };
+  if (reservation.kind === 'busy') return { status: 'skipped:in_progress' };
+
+  const loaded = await loadVerificationInput(db, artifactId);
+  if (!loaded) return { status: 'skipped:not_found' };
+  const input = loaded.input;
+  if (!input) {
+    if (reservation.kind === 'claimed') {
+      await discardReservedNoteVerificationClaim(db, reservation.lease);
+    }
+    return { status: 'skipped:no_sections', artifact_type: loaded.row.type };
+  }
+  if (reservation.kind === 'result_ready') {
+    return finalizeStagedVerification(db, artifactId, loaded.row.type);
+  }
+
+  const lease = reservation.lease;
+  let staged: StagedNoteVerification;
+  const contractFailure = noteBodyBlockContractFailure(loaded.row.type, loaded.row.bodyBlocks);
+  if (contractFailure) {
+    staged = { kind: 'parsed', parsed: contractFailure, taskResult: null };
+    if (!(await stageNoteVerificationContractResult(db, lease, staged))) {
+      if (!(await supersedeNoteVerificationEpoch(db, lease))) {
+        await discardReservedNoteVerificationClaim(db, lease);
+      }
+      throw noteVerificationRetryRequired(artifactId, 'contract-result claim changed');
+    }
+  } else {
+    const runtime = await (async () => {
+      try {
+        const subjectProfile = resolveSubjectProfile(input.knowledge_node?.domain);
+        return { subjectProfile, skills: await resolveNoteSkill(subjectProfile.id) };
+      } catch (error) {
+        await releaseReservedNoteVerificationForRetry(db, lease, error);
+        throw error;
+      }
+    })();
+    let providerBoundaryCrossed = false;
+    const providerStartState: {
+      rejection: 'attempts_exhausted' | 'claim_changed' | null;
+    } = { rejection: null };
+    try {
+      const taskResult = await runTaskFn('NoteVerifyTask', input, {
+        subjectProfile: runtime.subjectProfile,
+        skills: runtime.skills,
+        taskRunId: lease.taskRunId,
+        beforeProviderQuery: async () => {
+          const providerStart = await markNoteVerificationProviderStarted(db, lease);
+          switch (providerStart.kind) {
+            case 'started':
+              providerBoundaryCrossed = true;
+              return;
+            case 'attempts_exhausted':
+              providerStartState.rejection = 'attempts_exhausted';
+              throw noteVerificationRetryRequired(artifactId, 'provider attempts exhausted');
+            case 'claim_changed':
+              providerStartState.rejection = 'claim_changed';
+              if (!(await supersedeNoteVerificationEpoch(db, lease))) {
+                await discardReservedNoteVerificationClaim(db, lease);
+              }
+              throw noteVerificationRetryRequired(artifactId, 'provider-start claim changed');
+            default: {
+              const exhaustive: never = providerStart;
+              throw new Error(`unhandled provider-start result: ${String(exhaustive)}`);
+            }
+          }
+        },
+      });
+      staged = {
+        kind: 'provider_result',
+        taskResult: { ...taskResult, task_run_id: lease.taskRunId },
+      };
+    } catch (error) {
+      switch (providerStartState.rejection) {
+        case 'attempts_exhausted':
+          return { status: 'skipped:attempts_exhausted' };
+        case 'claim_changed':
+          throw error;
+        case null:
+          break;
+        default: {
+          const exhaustive: never = providerStartState.rejection;
+          throw new Error(`unhandled provider-start rejection: ${String(exhaustive)}`);
+        }
+      }
+      if (!providerBoundaryCrossed) {
+        await releaseReservedNoteVerificationForRetry(db, lease, error);
+        throw error;
+      }
+      let durableStatus: string | null = null;
+      try {
+        const statusRows = await db
+          .select({ status: ai_task_runs.status })
+          .from(ai_task_runs)
+          .where(eq(ai_task_runs.id, lease.taskRunId))
+          .limit(1);
+        durableStatus = statusRows[0]?.status ?? null;
+      } catch {
+        durableStatus = null;
+      }
+      if (durableStatus === 'failure') {
+        const release = await releaseNoteVerificationForRetry(db, lease, error);
+        switch (release.kind) {
+          case 'retry_wait':
+            break;
+          case 'attempts_exhausted':
+            return { status: 'skipped:attempts_exhausted' };
+          case 'claim_changed':
+            await supersedeNoteVerificationEpoch(db, lease);
+            throw error;
+          default: {
+            const exhaustive: never = release;
+            throw new Error(`unhandled verification release: ${String(exhaustive)}`);
+          }
+        }
+      } else {
+        await markNoteVerificationAmbiguous(db, lease, error);
+      }
+      throw error;
+    }
+  }
+  if (!contractFailure && !(await stageNoteVerificationResult(db, lease, staged))) {
+    await supersedeNoteVerificationEpoch(db, lease);
+    throw noteVerificationRetryRequired(artifactId, 'result claim changed');
+  }
+  return finalizeStagedVerification(db, artifactId, loaded.row.type);
+}
+
+export async function recoverResultReadyNoteVerifications(
+  db: Db,
+  deps: { readonly boss?: BossDispatch } = {},
+): Promise<number> {
+  const artifactIds = await listRecoverableNoteVerificationResults(db);
+  let finalized = 0;
+  const errors: unknown[] = [];
+  for (const artifactId of artifactIds) {
+    try {
+      const prepared = await prepareNoteVerificationResultRecovery(db, artifactId);
+      if (!prepared) continue;
+      if (prepared.kind === 'retry_required') {
+        await dispatchNoteVerificationClaimRecovery(prepared.artifactId, prepared.fence, deps);
+        continue;
+      }
+      const result = await finalizeStagedVerification(db, artifactId, prepared.artifactType);
+      if (result.status === 'verified' || result.status === 'needs_review') finalized += 1;
+    } catch (error) {
+      console.error('[note_verify] result recovery deferred', artifactId, error);
+      errors.push(error);
+    }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(errors, 'note verification recovery batch failed');
+  }
+  return finalized;
 }
 
 export function buildNoteVerifyHandler(
@@ -422,7 +487,6 @@ export function buildNoteVerifyHandler(
   deps: DepsOverride = {},
 ): (jobs: Job<NoteVerifyJobData>[]) => Promise<void> {
   const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
-  const { onPassed } = deps;
   return async (jobs) => {
     for (const job of jobs) {
       const artifactId = job.data?.artifact_id;
@@ -431,8 +495,11 @@ export function buildNoteVerifyHandler(
         continue;
       }
       const result = await runNoteVerify({ db, artifactId, runTaskFn });
+      if (result.status === 'skipped:in_progress' || result.status === 'skipped:ambiguous') {
+        throw noteVerificationRetryRequired(artifactId, result.status);
+      }
       if (result.status === 'verified' && result.artifact_type === 'note_atomic') {
-        await onPassed?.(artifactId);
+        await deps.onPassed?.(artifactId);
       }
       console.log(`[note_verify] ${artifactId} -> ${result.status}`);
     }

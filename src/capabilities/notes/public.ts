@@ -19,3 +19,4 @@ export {
   enqueueMasteryNoteRefine,
 } from './server/note-refine-triggers';
 export type { NoteUpdateAcceptResult } from './server/proposal-accept-applier';
+export { dispatchNoteGeneration, writeNoteGenerationIntent } from './server/note-handoff';
