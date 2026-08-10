@@ -15,7 +15,8 @@
   明确拒绝，协议保持 owner-local（ADR-0052）；Linear 已取消为 not justified。
 - YUK-860 已完成作者态：`sdk-terminal.ts` 统一 SDK assistant usage/thinking 累加与 result
   terminal evidence，result usage authoritative，缺失时才 fallback；三个 runner lifecycle 各自持有 collector，
-  caller retry/abort/partial/settlement/tool logging policy 未改变。尚未 commit/push/deploy。
+  caller retry/abort/partial/settlement/tool logging policy 未改变。已进入 PR delivery；fresh exact-head
+  CI、独立 review 与 merge 待执行，未部署。
 - 生产边界不变：YUK-832 HOLD；YUK-842 production observe。
 
 ## NEXT
@@ -31,5 +32,5 @@
 
 ## BLOCKED-ON
 
-- YUK-860 delivery：commit/push、exact-head GitHub CI 与独立 review。
+- YUK-860 delivery：fresh exact-head GitHub CI、独立 review 与 merge。
 - Production：无部署授权或真实观察证据。

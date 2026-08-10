@@ -17,7 +17,8 @@
   callback workflow shell 明确拒绝。详见 ADR-0052；Linear 已取消为 not justified。
 - **F2.4 / YUK-860 SDK terminal adaptation 已完成作者态。** 新 pure collector 统一 assistant
   usage/thinking 累加与 result terminal evidence；`runTask` 每次 retry、`streamTask`、
-  `streamTaskCollecting` 均为 lifecycle-local 实例。尚未 commit/push/deploy，exact-head CI 与独立 review 待执行。
+  `streamTaskCollecting` 均为 lifecycle-local 实例。已进入 PR delivery；fresh exact-head CI、独立 review
+  与 merge 待执行，未部署。
 - **生产边界不变：** YUK-858 未部署；YUK-832 HOLD 与 YUK-842 observe 未改变。
 
 ## NEXT
@@ -37,4 +38,4 @@
 ## BLOCKED-ON
 
 - Production blocked on独立部署授权和真实观察证据。
-- YUK-860 delivery blocked on commit/push、exact-head GitHub CI 与独立 review。
+- YUK-860 delivery blocked on fresh exact-head GitHub CI、独立 review 与 merge。
