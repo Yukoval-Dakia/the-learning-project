@@ -26,6 +26,10 @@ function fakeMem0(overrides: Partial<Pick<Mem0Like, 'add' | 'search' | 'getAll'>
   };
 }
 
+function deterministicSendId(options: object): string | null {
+  return 'id' in options && typeof options.id === 'string' ? options.id : null;
+}
+
 beforeEach(async () => {
   vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
   vi.stubEnv(
@@ -46,7 +50,9 @@ describe('Mem0 opaque operation durable surfaces', () => {
     }));
     const memory = fakeMem0({ add });
     const client = createMemoryClient({ env, memoryFactory: () => memory });
-    const send = vi.fn(async () => 'boss-child-852');
+    const send = vi.fn(async (_queue: string, _data: object, options: object) =>
+      deterministicSendId(options),
+    );
     const handler = buildMemoryEventIngestHandler(
       testDb(),
       { send },
@@ -67,12 +73,15 @@ describe('Mem0 opaque operation durable surfaces', () => {
     );
 
     // When one concrete pg-boss invocation performs the Mem0 add.
-    await handler([
-      {
-        id: '00000000-0000-4000-8000-000000000852',
-        data: { event_id: 'evt_worker_852' },
-      } as Job<{ event_id: string }>,
-    ]);
+    const job: Job<{ event_id: string }> = {
+      id: '00000000-0000-4000-8000-000000000852',
+      name: 'memory_event_ingest',
+      data: { event_id: 'evt_worker_852' },
+      expireInSeconds: 60,
+      heartbeatSeconds: null,
+      signal: new AbortController().signal,
+    };
+    await handler([job]);
 
     // Then the fake SDK output reaches reconcile and durable truth contains exactly one attempt.
     expect(add).toHaveBeenCalledWith(expect.any(String), {
@@ -102,6 +111,7 @@ describe('Mem0 opaque operation durable surfaces', () => {
       caller: 'worker',
       endpoint_class: 'memory.add',
       operation_kind: 'add_inferred',
+      provider_start_reserved_at: expect.any(Date),
       terminal_status: 'succeeded',
       wire_count: null,
       cost_basis: 'unknown',
@@ -226,6 +236,7 @@ describe('Mem0 opaque operation durable surfaces', () => {
       { event_id: 'evt_cached_852' },
       'projection:cached_852',
       providerOperation,
+      async () => {},
     );
 
     // Then output is preserved without a fake attempt for getAll.

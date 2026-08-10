@@ -442,6 +442,7 @@ export const fastTestInclude = [
   'src/server/memory/provider-operation-invariant.test.ts',
   'src/server/memory/provider-operation-untracked.test.ts',
   'src/server/memory/triggers.test.ts',
+  'src/server/memory/memory-reconcile-handoff.unit.test.ts',
   // P2 (YUK-342) — pure (no-DB) GLM reconcile LLM unit: mocks fetch, no live DB.
   'src/server/memory/reconcile-llm.test.ts',
   // P3 (YUK-351) — pure (no-DB) mem0 READ wrapper: stubbed MemoryClient.search,

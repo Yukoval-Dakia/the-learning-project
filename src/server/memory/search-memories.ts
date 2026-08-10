@@ -82,7 +82,7 @@ function halfLifeForKind(kind: unknown): number {
 }
 
 // created_ms is written by P2 as a `::text` cast (reconcile-store.ts) so it can
-// come back as a numeric string; addEventMemory writes it as a JS number. Accept
+// come back as a numeric string; inferred event-memory adds write it as a JS number. Accept
 // both, fall back to the ISO `createdAt`, and finally to now (age 0 → no decay).
 function createdMsForItem(
   item: SearchResult['results'][number],

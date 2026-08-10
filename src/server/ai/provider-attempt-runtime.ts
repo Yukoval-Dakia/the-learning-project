@@ -10,6 +10,7 @@ export {
   resolveProviderAttemptAdmission,
 } from './provider-attempt-admission-config';
 export {
+  type Mem0OpaqueExecutionOptions,
   type Mem0OpaqueLifecycleFactory,
   type Mem0OpaqueOperationContext,
   type Mem0OpaqueOperationKind,

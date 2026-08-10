@@ -1,6 +1,9 @@
 import { type Mock, describe, expect, it, vi } from 'vitest';
 import type { ProviderAttemptLifecycle } from '../ai/provider-attempt-lifecycle';
-import { createMem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
+import {
+  type Mem0OpaqueLifecycleFactory,
+  createMem0OpaqueOperationContext,
+} from '../ai/provider-attempt-runtime';
 import { createMem0Config, createMemoryClient } from './client';
 
 // YUK-557 (F1/F7): file-local Mem0Like factory. Mem0Like is the INNER mem0 surface
@@ -137,9 +140,165 @@ describe('createMem0Config', () => {
 });
 
 describe('createMemoryClient', () => {
+  it('findByEventId uses exact filters and rejects unsupported or truncated responses', async () => {
+    const getAll = vi
+      .fn()
+      .mockResolvedValueOnce({ results: [{ id: 'mem-1', memory: 'fact' }] })
+      .mockResolvedValueOnce({ memories: [] })
+      .mockResolvedValueOnce({
+        results: Array.from({ length: 100 }, (_, index) => ({
+          id: `mem-${index}`,
+          memory: `fact-${index}`,
+        })),
+      });
+    const client = createMemoryClient({ env, memoryFactory: () => mem0LikeMock({ getAll }) });
+
+    await expect(client.findByEventId('event-1')).resolves.toEqual({
+      results: [{ id: 'mem-1', memory: 'fact' }],
+    });
+    expect(getAll).toHaveBeenCalledWith({
+      topK: 100,
+      filters: { user_id: 'self', event_id: 'event-1' },
+    });
+    await expect(client.findByEventId('event-1')).rejects.toThrow(/unsupported response shape/);
+    await expect(client.findByEventId('event-1')).rejects.toThrow(/completeness bound 100/);
+  });
+
+  it('addEventMemoryOnce uses event lookup and never performs a second add', async () => {
+    const getAll = vi.fn(async () => ({ results: [{ id: 'mem-1', memory: 'existing' }] }));
+    const add = vi.fn(async () => ({ results: [{ id: 'mem-2', memory: 'duplicate' }] }));
+    const client = createMemoryClient({ env, memoryFactory: () => mem0LikeMock({ getAll, add }) });
+    const input = {
+      id: 'event-1',
+      actor_kind: 'user',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      payload: {},
+      affected_scopes: ['global'],
+      created_at: new Date('2026-08-10T00:00:00.000Z'),
+      kind: 'event',
+    };
+
+    const beforeProviderAdd = vi.fn(async () => {});
+    await expect(
+      client.addEventMemoryOnce(input, testProviderOperation(), beforeProviderAdd),
+    ).resolves.toEqual({
+      result: { results: [{ id: 'mem-1', memory: 'existing' }] },
+      resolution: 'event_lookup',
+    });
+    expect(add).not.toHaveBeenCalled();
+    expect(beforeProviderAdd).not.toHaveBeenCalled();
+  });
+
+  it('runs the provider-boundary callback after lookup and immediately before inferred add', async () => {
+    const order: string[] = [];
+    const fences: Array<'operation_kind' | undefined> = [];
+    const getAll = vi.fn(async () => {
+      order.push('lookup');
+      return { results: [] };
+    });
+    const add = vi.fn(async () => {
+      order.push('add');
+      return { results: [{ id: 'mem-1', memory: 'new' }] };
+    });
+    const client = createMemoryClient({ env, memoryFactory: () => mem0LikeMock({ getAll, add }) });
+    const providerOperation = createMem0OpaqueOperationContext({
+      caller: 'worker',
+      deadlineAt: new Date('2026-08-10T00:01:00.000Z'),
+      operationAnchor: 'ordered-provider-boundary',
+      mode: 'observe',
+      createLifecycle: (input) => {
+        fences.push(input.providerStartFence);
+        return {
+          identity: input.identity,
+          acquire: async () => {
+            order.push('acquire');
+            return {
+              admission: 'acquired',
+              reserveProviderStart: async () => {
+                order.push('reserve');
+              },
+              recordExternalRequestId: async () => {},
+              finish: async () => 'settled',
+            };
+          },
+        };
+      },
+    });
+    const input = {
+      id: 'event-boundary',
+      actor_kind: 'user',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      payload: {},
+      affected_scopes: ['global'],
+      created_at: new Date('2026-08-10T00:00:00.000Z'),
+      kind: 'event',
+    };
+
+    await client.addEventMemoryOnce(input, providerOperation, async () => {
+      order.push('boundary');
+    });
+
+    expect(order).toEqual(['lookup', 'acquire', 'reserve', 'boundary', 'add']);
+    expect(fences).toEqual(['operation_kind']);
+  });
+
+  it('leaves a reserved inferred add ambiguous when the post-reserve boundary hook rejects', async () => {
+    const reserveProviderStart = vi.fn(async () => {});
+    const finish = vi.fn(async () => 'settled' as const);
+    const createLifecycle = vi.fn<Mem0OpaqueLifecycleFactory>((input) => ({
+      identity: input.identity,
+      acquire: async () => ({
+        admission: 'acquired',
+        reserveProviderStart,
+        recordExternalRequestId: async () => {},
+        finish,
+      }),
+    }));
+    const add = vi.fn(async () => ({ results: [] }));
+    const client = createMemoryClient({
+      env,
+      memoryFactory: () => mem0LikeMock({ getAll: vi.fn(async () => ({ results: [] })), add }),
+    });
+    const providerOperation = createMem0OpaqueOperationContext({
+      caller: 'worker',
+      deadlineAt: new Date('2026-08-10T00:01:00.000Z'),
+      operationAnchor: 'losing-provider-boundary',
+      mode: 'observe',
+      createLifecycle,
+    });
+    const input = {
+      id: 'event-loser',
+      actor_kind: 'user',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      payload: {},
+      affected_scopes: [],
+      created_at: new Date('2026-08-10T00:00:00.000Z'),
+      kind: 'event',
+    };
+
+    await expect(
+      client.addEventMemoryOnce(input, providerOperation, async () => {
+        throw new Error('lost provider-boundary claim');
+      }),
+    ).rejects.toThrow(/lost provider-boundary claim/);
+    expect(createLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ providerStartFence: 'operation_kind' }),
+    );
+    expect(reserveProviderStart).toHaveBeenCalledOnce();
+    expect(finish).not.toHaveBeenCalled();
+    expect(add).not.toHaveBeenCalled();
+  });
+
   it('records one opaque attempt for each real add and canonical search while preserving outputs', async () => {
     // Given one caller operation, a fake Mem0 surface, and observable attempt identities.
     const identities: ProviderAttemptLifecycle['identity'][] = [];
+    const fences: Array<'operation_kind' | undefined> = [];
     const finish = vi.fn(async () => 'settled' as const);
     const providerOperation = createMem0OpaqueOperationContext({
       caller: 'worker',
@@ -148,6 +307,7 @@ describe('createMemoryClient', () => {
       mode: 'observe',
       createLifecycle: (input) => {
         identities.push(input.identity);
+        fences.push(input.providerStartFence);
         return {
           identity: input.identity,
           acquire: async () => ({
@@ -168,7 +328,7 @@ describe('createMemoryClient', () => {
     const client = createMemoryClient({ env, memoryFactory: () => memory });
 
     // When every model-bearing public client operation executes once.
-    const eventResult = await client.addEventMemory(
+    const eventResult = await client.addEventMemoryOnce(
       {
         id: 'evt_opaque_852',
         actor_kind: 'user',
@@ -181,12 +341,14 @@ describe('createMemoryClient', () => {
         kind: 'event',
       },
       providerOperation,
+      async () => {},
     );
     const verbatimResult = await client.addVerbatimOnce(
       'owner corrected fact',
       { event_id: 'evt_opaque_852', affected_scopes: ['global'] },
       'projection:evt_opaque_852',
       providerOperation,
+      async () => {},
     );
     const searchResult = await client.search(
       'preserve canonical search output',
@@ -200,7 +362,7 @@ describe('createMemoryClient', () => {
     );
 
     // Then the four real SDK calls preserve their outputs and carry truthful operation kinds.
-    expect(eventResult.results?.[0]?.id).toContain('add:');
+    expect(eventResult.result.results[0]?.id).toContain('add:');
     expect(verbatimResult.results?.[0]?.memory).toBe('owner corrected fact');
     expect(searchResult.results?.[0]).toEqual({
       id: 'search-result',
@@ -215,6 +377,7 @@ describe('createMemoryClient', () => {
     ]);
     expect(new Set(identities.map((identity) => identity.attemptId))).toHaveLength(4);
     expect(new Set(identities.map((identity) => identity.operationId))).toHaveLength(1);
+    expect(fences).toEqual(['operation_kind', 'operation_kind', undefined, undefined]);
     expect(finish).toHaveBeenCalledTimes(4);
   });
 
@@ -241,6 +404,7 @@ describe('createMemoryClient', () => {
       { event_id: 'evt_existing_852' },
       'projection:existing-852',
       providerOperation,
+      async () => {},
     );
 
     // Then getAll stays uninstrumented and no fake provider attempt exists.
@@ -256,7 +420,7 @@ describe('createMemoryClient', () => {
     const client = createMemoryClient({ env, memoryFactory: () => memory });
 
     const providerOperation = testProviderOperation();
-    await client.addEventMemory(
+    await client.addEventMemoryOnce(
       {
         id: 'evt_1',
         actor_kind: 'user',
@@ -269,6 +433,7 @@ describe('createMemoryClient', () => {
         kind: 'event',
       },
       providerOperation,
+      async () => {},
     );
     await client.search(
       'what should I remember?',
@@ -305,7 +470,7 @@ describe('createMemoryClient', () => {
     const memory = mem0LikeMock();
     const client = createMemoryClient({ env, memoryFactory: () => memory });
 
-    await client.addEventMemory(
+    await client.addEventMemoryOnce(
       {
         id: 'evt_attempt_snapshot',
         actor_kind: 'user',
@@ -333,6 +498,7 @@ describe('createMemoryClient', () => {
         kind: 'event',
       },
       testProviderOperation(),
+      async () => {},
     );
 
     const serialized = memory.add.mock.calls[0]?.[0] as string;
@@ -402,6 +568,7 @@ describe('createMemoryClient', () => {
       metadata,
       'conjecture-edit:rate_1',
       testProviderOperation(),
+      async () => {},
     );
     // Simulates pg-boss redelivery after the first add succeeded but the process died
     // before job acknowledgement. The retry must discover and return the same row.
@@ -410,6 +577,7 @@ describe('createMemoryClient', () => {
       metadata,
       'conjecture-edit:rate_1',
       testProviderOperation(),
+      async () => {},
     );
 
     expect(first.results).toHaveLength(1);
