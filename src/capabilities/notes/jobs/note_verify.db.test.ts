@@ -192,7 +192,7 @@ describe('runNoteVerify durable claim', () => {
     }
   });
 
-  it('retries only when exact durable task run says failure', async () => {
+  it('recovery redispatches an exhausted confirmed-failure retry without another AI call', async () => {
     await seedArtifact('retry');
     let calls = 0;
     const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
@@ -224,12 +224,22 @@ describe('runNoteVerify durable claim', () => {
       .where(eq(note_verification_claim.artifact_id, 'retry'));
     expect(claim.state).toBe('retry_wait');
     expect(claim.claim_token).toBeNull();
+    expect(claim.task_run_id).toBeNull();
     const [row] = await testDb().select().from(artifact).where(eq(artifact.id, 'retry'));
     expect(row.verification_status).toBe('queued');
     await testDb()
       .update(note_verification_claim)
       .set({ available_at: new Date(0) })
       .where(eq(note_verification_claim.artifact_id, 'retry'));
+    const boss = fakeBoss();
+    await expect(recoverResultReadyNoteVerifications(testDb(), { boss })).resolves.toBe(0);
+    expect(boss.send).toHaveBeenCalledTimes(1);
+    expect(boss.send).toHaveBeenCalledWith(
+      'note_verify',
+      { artifact_id: 'retry' },
+      { id: expect.any(String) },
+    );
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
     await expect(
       runNoteVerify({ db: testDb(), artifactId: 'retry', runTaskFn }),
     ).resolves.toMatchObject({ status: 'verified' });

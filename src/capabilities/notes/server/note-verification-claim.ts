@@ -351,6 +351,7 @@ export async function releaseNoteVerificationForRetry(
     .set({
       state: 'retry_wait',
       claim_token: null,
+      task_run_id: null,
       claimed_at: null,
       provider_started_at: null,
       lease_expires_at: null,
