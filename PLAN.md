@@ -25,15 +25,16 @@
   dispatch/readback、indexed manifest recovery、version/fence verification claim 与 Notes-owned task
   definitions 已进入 PR #1174；0093 迁移加入短事务 reserve/result/finalize 状态机。SHA
   `860e39cf` 的 exact-head CI run `31343456441` 已全绿，但后续 PR review 确认 provider-start
-  boundary、跨 recovery job 无界 paid retry、claim recovery 吞错三条 P1。当前 worktree repair
-  已 author，并经 correctness / quality / security static review PASS；尚未 commit/push，仍须新
-  exact-head CI/review。owner 禁止本地 test/typecheck/build/audit/migration。
+  boundary、跨 recovery job 无界 paid retry、claim recovery 吞错三条 P1。repair commit
+  `01dd3b68` 已推送 PR #1174，并经 correctness / quality / security static review PASS；该 SHA
+  的 CI run `31345451148` 已启动，但不是最终交付证据；本次 docs-only sync 将形成更新 head，
+  仍须 fresh exact-head CI/review/merge。owner 禁止本地 test/typecheck/build/audit/migration。
 - **生产边界不变。** F0.0–F0.4 均未部署；YUK-832 继续 HOLD，YUK-842 production 继续 observe。
 
 ## NEXT
 
-1. Commit/push 当前 YUK-857 repair 与本次 handoff 同步；不在本地跑 runtime gates。
-2. 只以 fresh exact-head GitHub CI 与独立 review 验证 runtime/type/test gates；绿后 merge、同步 Linear。
+1. 监控本次 docs-only 新 exact-head GitHub CI 与独立 review；不在本地跑 runtime gates。
+2. 只以 fresh exact-head 结果验证 runtime/type/test gates；全绿且 review clean 后再 merge、同步 Linear。
 3. F2.2–F4 继续按依赖与 owner 优先级单独收敛。
 4. production observation / deployment 需单独授权。
 
