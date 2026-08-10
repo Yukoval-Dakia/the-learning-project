@@ -372,6 +372,7 @@ export function buildMemoryEventIngestHandler(
         created_ms: createdMs,
         kind: editedConjecture ? CONJECTURE_EDIT_MEMORY_KIND : row.kind,
       }));
+      let reconcileDispatch: Parameters<typeof dispatchMemoryReconcile>[2] | null = null;
       if (ingest) {
         const persistIntents = modePersistsNewIntents(handoffMode);
         const completion = await persistIngestCompleted(db, {
@@ -380,11 +381,11 @@ export function buildMemoryEventIngestHandler(
           memories: newMemories,
           persistIntents,
         });
-        await dispatchMemoryReconcile(db, boss, {
+        reconcileDispatch = {
           sourceEventId: row.id,
           memories: newMemories,
           ...(persistIntents ? { completion } : {}),
-        });
+        };
       }
       // YUK-729 — fan out brief regen with a BOUNDED, SEQUENTIAL, per-scope-isolated
       // loop. Three properties matter:
@@ -395,7 +396,7 @@ export function buildMemoryEventIngestHandler(
       //      Promise.allSettled over every scope, so a large event does not slam the
       //      shared connection pool with concurrent inserts (#965 round-4, codex P2);
       //  (3) per-scope try/catch — one scope's transient failure neither skips the
-      //      rest nor delays the durable reconcile path above. Redelivery is now
+      //      rest nor prevents the retry-visible reconcile path below. Redelivery is now
       //      protected by the add_started marker and exact event lookup.
       // Backstop is PARTIAL: listStaleBriefScopes (the daily 03:00 sweep) re-scans
       // only scopes that ALREADY have a memory_brief_note row, so a first-appearance
@@ -463,6 +464,7 @@ export function buildMemoryEventIngestHandler(
           );
         }
       }
+      if (reconcileDispatch) await dispatchMemoryReconcile(db, boss, reconcileDispatch);
     }
   };
 }

@@ -339,11 +339,6 @@ describe('buildMemoryEventIngestHandler', () => {
     );
   });
 
-  // YUK-729/YUK-858 — the paid add runs before the
-  // affected_scopes brief-regen fan-out and the reconcile enqueue. If either
-  // enqueue rethrew out of the handler, pg-boss would redeliver and re-run the
-  // extraction (duplicate cost + a persistent duplicate mem0 row). Both enqueues
-  // must swallow+log a transient failure, degrading to the sweep backstop.
   it('YUK-729 — swallows an affected_scopes brief-regen enqueue failure (ingest resolves, extraction not retried)', async () => {
     const addEventMemoryOnce = addEventMemoryOnceMock([{ id: 'm1', memory: 'fact' }]);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -435,11 +430,20 @@ describe('buildMemoryEventIngestHandler', () => {
 
   it('YUK-858 — propagates a reconcile enqueue failure for durable recovery', async () => {
     const addEventMemoryOnce = addEventMemoryOnceMock([{ id: 'm1', memory: 'fact' }]);
-    // Reconcile has NO cron backstop, so the drop is logged at console.error (not warn)
-    // with enough context to reconcile the affected mem0 rows by hand.
-    // boss.send throws only for the reconcile enqueue; brief-regen still succeeds.
-    const send = vi.fn(async (name: string) => {
-      if (name === MEMORY_RECONCILE_QUEUE) throw new Error('reconcile send boom');
+    mockResolve.mockResolvedValueOnce(new Map([['evt_1', 'math']]));
+    const semanticOrder: string[] = [];
+    const send = vi.fn(async (name: string, data: object) => {
+      if (
+        name === MEMORY_BRIEF_REGEN_QUEUE &&
+        'scope_key' in data &&
+        typeof data.scope_key === 'string'
+      ) {
+        semanticOrder.push(`brief:${data.scope_key}`);
+      }
+      if (name === MEMORY_RECONCILE_QUEUE) {
+        semanticOrder.push('reconcile');
+        throw new Error('reconcile send boom');
+      }
       return 'job-1';
     });
     const boss = { send };
@@ -463,6 +467,7 @@ describe('buildMemoryEventIngestHandler', () => {
     ).rejects.toThrow('reconcile send boom');
 
     expect(addEventMemoryOnce).toHaveBeenCalledTimes(1);
+    expect(semanticOrder).toEqual(['brief:global', 'brief:subject:math', 'reconcile']);
   });
 
   it('YUK-729 — caps the brief-regen fan-out at MAX_BRIEF_REGEN_SCOPES and isolates failures within the cap', async () => {
