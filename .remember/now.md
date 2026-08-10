@@ -29,7 +29,7 @@
 ## PARKED
 
 - YUK-832 HOLD、YUK-842 observe 与生产未部署均不变。
-- F2.3 / YUK-861 已 NO-GO；F2.5–F4 保持 open。
+- F2.3 / YUK-861 已 NO-GO；F2.5 与 F3.2–F4 保持 open。
 
 ## BLOCKED-ON
 

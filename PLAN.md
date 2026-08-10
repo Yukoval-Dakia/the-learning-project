@@ -33,7 +33,7 @@
 
 - Production rollout / observation 需独立授权。
 - YUK-832 / YUK-839 保持 fail-closed HOLD；YUK-842 production 保持 observe。
-- F2.3 结案为 YUK-861 NO-GO；F2.5–F4 保持 open，不并入 YUK-862。
+- F2.3 结案为 YUK-861 NO-GO；F2.5 与 F3.2–F4 保持 open，不并入 YUK-862。
 
 ## BLOCKED-ON
 
