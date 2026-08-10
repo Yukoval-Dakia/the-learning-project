@@ -1,7 +1,7 @@
 # ADR-0052 — Owner-local durable handoff protocols (YUK-861 NO-GO)
 
 **Status:** NO-GO / Rejected（2026-08-10）
-**Decision source:** YUK-861 architecture closeout；current exact checkout `136faec8224c0f0136532c748aea1bbc689ca7b7`
+**Decision source:** YUK-861 architecture closeout；evaluated YUK-858 merge base `136faec8224c0f0136532c748aea1bbc689ca7b7`
 **Related:** YUK-700 · YUK-857 · YUK-858 · YUK-860 · ADR-0021 · ADR-0051
 
 ## Context

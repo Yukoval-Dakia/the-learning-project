@@ -8,7 +8,8 @@
   lookup-before-add、opaque operation-kind provider-start fence、post-reserve event v1 add marker、
   completion/intents/dispatch completion、exact deterministic pg-boss UUID/readback、append-only
   recovery cursor、strict 四模式和 bounded wrap hourly recovery 第二 leg。
-- 没有新表、migration、generic handoff core 或 cron；所有 handoff event 均设置 `ingest_at`。
+- 没有新表、migration、generic handoff core 或 cron；Memory handoff event 均设置 `ingest_at`，
+  避免重新进入 Memory ingest。
 - YUK-861 架构结论为 NO-GO：Verify transactional outbox、Notes post-commit singleton/readback、Memory batch
   digest/cursor/fail-closed receipt 不构成一个可经济抽取的 shared protocol；callback workflow shell
   明确拒绝，协议保持 owner-local（ADR-0052）；Linear closeout 在 docs 交付合并后执行。
