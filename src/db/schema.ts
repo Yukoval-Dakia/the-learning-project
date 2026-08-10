@@ -2841,7 +2841,7 @@ export const memory_reconciliation_log = pgTable(
     // prev_text 优先取 capturePrevState 读到的 DB 快照原文（verbatim 保真），candidate
     // text 仅作快照缺失时的兜底（PR #699 CR-5）；
     // RETRACT_NEW 的 prev_text 存 new 行原文（被丢弃那份），prev_metadata 留 NULL（其
-    // metadata 由本项目 addEventMemory 刚写、可从 event 表溯源）。KEEP_BOTH 恒 NULL。
+    // metadata 由本项目 inferred event-memory add 刚写、可从 event 表溯源）。KEEP_BOTH 恒 NULL。
     // 可空——不回填历史行。恢复 runbook：docs/runbooks/memory-reconcile-undo.md。
     prev_text: text('prev_text'),
     prev_metadata: jsonb('prev_metadata'),

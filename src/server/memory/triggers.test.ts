@@ -1,8 +1,10 @@
+import type { Db } from '@/db/client';
 import type { Job } from 'pg-boss';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import { providerOperationIdForInvocation } from '../ai/provider-attempt-runtime';
 import { resolveQualifyingEventSubjects } from './active-subjects';
+import type { MemoryClient, MemoryEventResult } from './client';
 import {
   MAX_BRIEF_REGEN_SCOPES,
   MEMORY_BRIEF_REGEN_QUEUE,
@@ -13,7 +15,6 @@ import {
   MEMORY_RECONCILE_QUEUE,
   buildMemoryEventIngestHandler,
   enqueueBriefRegen,
-  enqueueMemoryReconcile,
   registerMemoryHandlers,
   shouldExtractToMemory,
 } from './triggers';
@@ -33,7 +34,49 @@ vi.mock('./active-subjects', async (importOriginal) => {
   };
 });
 
+vi.mock('./memory-reconcile-handoff-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./memory-reconcile-handoff-store')>();
+  return {
+    ...actual,
+    claimMemoryIngest: vi.fn(async () => 'winner'),
+    readIngestCompleted: vi.fn(async () => null),
+    persistIngestCompleted: vi.fn(async (input: { memories: readonly unknown[] }) => ({
+      version: 1,
+      handoff_kind: 'ingest_completed',
+      source_event_id: 'unit-event',
+      resolution: 'provider_result',
+      memory_count: input.memories.length,
+      intent_digest: '0'.repeat(64),
+    })),
+  };
+});
+
+vi.mock('./memory-reconcile-handoff', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./memory-reconcile-handoff')>();
+  return {
+    ...actual,
+    dispatchMemoryReconcile: vi.fn(async (_db, boss, input) => {
+      if (input.memories.length === 0) return null;
+      return boss.send(
+        'memory_reconcile',
+        { memories: input.memories, user_id: 'self' },
+        { singletonKey: 'memory.reconcile.self' },
+      );
+    }),
+  };
+});
+
 const mockResolve = vi.mocked(resolveQualifyingEventSubjects);
+const unitDb = {} as Db;
+
+function addEventMemoryOnceMock(
+  results: MemoryEventResult['results'],
+): MemoryClient['addEventMemoryOnce'] {
+  return vi.fn(async (_event, _providerOperation, beforeProviderAdd) => {
+    await beforeProviderAdd();
+    return { result: { results }, resolution: 'provider_result' };
+  });
+}
 
 describe('enqueueBriefRegen', () => {
   it('uses a per-scope singleton key with a 6 minute anti-storm window', async () => {
@@ -53,51 +96,15 @@ describe('enqueueBriefRegen', () => {
   });
 });
 
-describe('enqueueMemoryReconcile', () => {
-  it('uses a per-user singleton key with a 90s window', async () => {
-    const boss = { send: vi.fn(async () => 'job-1') };
-
-    const memories = [
-      { id: 'mem1', text: 'prefers dark mode', created_ms: 1000, kind: 'preference' },
-      { id: 'mem2', text: 'answered q1', created_ms: 2000, kind: 'event' },
-    ];
-    await enqueueMemoryReconcile(boss, memories, 'self');
-
-    expect(boss.send).toHaveBeenCalledWith(
-      MEMORY_RECONCILE_QUEUE,
-      { memories, user_id: 'self' },
-      {
-        singletonKey: 'memory.reconcile.self',
-        singletonSeconds: 90,
-        singletonNextSlot: true,
-        // pg-boss retry on transient failure (handler rethrows RetryableError).
-        retryLimit: 3,
-        retryDelay: 30,
-        retryBackoff: true,
-      },
-    );
-  });
-
-  it('does not enqueue when memoryIds is empty', async () => {
-    const boss = { send: vi.fn(async () => 'job-1') };
-
-    await enqueueMemoryReconcile(boss, [], 'self');
-
-    expect(boss.send).not.toHaveBeenCalled();
-  });
-});
-
 describe('buildMemoryEventIngestHandler', () => {
   it('adds event memory, enqueues regen, and enqueues reconcile for new ids', async () => {
-    const addEventMemory = vi.fn(async () => ({
-      results: [
-        { id: 'mem1', memory: 'User prefers concise feedback' },
-        { id: 'mem2', memory: 'Question q1 was answered incorrectly' },
-      ],
-    }));
+    const addEventMemoryOnce = addEventMemoryOnceMock([
+      { id: 'mem1', memory: 'User prefers concise feedback' },
+      { id: 'mem2', memory: 'Question q1 was answered incorrectly' },
+    ]);
     const send = vi.fn(async (_name: string, _data: object, _opts?: object) => 'job-1');
     const boss = { send };
-    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+    const handler = buildMemoryEventIngestHandler(unitDb, boss, {
       loadEvent: async () => ({
         id: 'evt_1',
         actor_kind: 'user',
@@ -110,21 +117,22 @@ describe('buildMemoryEventIngestHandler', () => {
         kind: 'event',
       }),
       // YUK-557 (F7): ingest-handler tests never reach the reconcile apply path, so
-      // only addEventMemory is load-bearing; the rest default to no-ops.
-      memoryClient: memoryClientMock({ addEventMemory }),
+      // only addEventMemoryOnce is load-bearing; the rest default to no-ops.
+      memoryClient: memoryClientMock({ addEventMemoryOnce }),
     });
 
     await handler([{ data: { event_id: 'evt_1' } } as Job<{ event_id: string }>] as Job<{
       event_id: string;
     }>[]);
 
-    expect(addEventMemory).toHaveBeenCalledWith(
+    expect(addEventMemoryOnce).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'evt_1' }),
       expect.objectContaining({
         caller: 'worker',
         operationId: providerOperationIdForInvocation('evt_1'),
         deadlineAt: expect.any(Date),
       }),
+      expect.any(Function),
     );
     // 2 brief regen (global + topic:k1) + 1 reconcile
     expect(boss.send).toHaveBeenCalledTimes(3);
@@ -151,18 +159,13 @@ describe('buildMemoryEventIngestHandler', () => {
   });
 
   it('stores an edited conjecture claim verbatim and suppresses generic inferred extraction', async () => {
-    const addEventMemory = vi.fn(async () => ({ results: [] }));
+    const addEventMemoryOnce = addEventMemoryOnceMock([]);
     const addVerbatimOnce = vi.fn(async () => ({
       results: [{ id: 'mem_core_1', memory: '应先验证虚词语境判断' }],
     }));
     const send = vi.fn(async () => 'job-1');
-    const db = {
-      transaction: vi.fn(async (fn: (tx: { execute: () => Promise<void> }) => Promise<unknown>) =>
-        fn({ execute: vi.fn(async () => {}) }),
-      ),
-    };
     const handler = buildMemoryEventIngestHandler(
-      db as never,
+      unitDb,
       { send },
       {
         loadEvent: async () => ({
@@ -181,13 +184,13 @@ describe('buildMemoryEventIngestHandler', () => {
           created_at: new Date('2026-07-23T00:00:00Z'),
           kind: 'preference',
         }),
-        memoryClient: memoryClientMock({ addEventMemory, addVerbatimOnce }),
+        memoryClient: memoryClientMock({ addEventMemoryOnce, addVerbatimOnce }),
       },
     );
 
     await handler([{ data: { event_id: 'rate_edited_1' } } as Job<{ event_id: string }>]);
 
-    expect(addEventMemory).not.toHaveBeenCalled();
+    expect(addEventMemoryOnce).not.toHaveBeenCalled();
     expect(addVerbatimOnce).toHaveBeenCalledWith(
       '应先验证虚词语境判断',
       {
@@ -207,6 +210,7 @@ describe('buildMemoryEventIngestHandler', () => {
         caller: 'worker',
         operationId: providerOperationIdForInvocation('conjecture-edit:rate_edited_1'),
       }),
+      expect.any(Function),
     );
     expect(send).toHaveBeenCalledWith(
       MEMORY_RECONCILE_QUEUE,
@@ -225,10 +229,10 @@ describe('buildMemoryEventIngestHandler', () => {
     );
   });
 
-  it('does not enqueue reconcile when addEventMemory returns empty results (md5 dedup)', async () => {
-    const addEventMemory = vi.fn(async () => ({ results: [] }));
+  it('does not enqueue reconcile when addEventMemoryOnce returns empty results (md5 dedup)', async () => {
+    const addEventMemoryOnce = addEventMemoryOnceMock([]);
     const boss = { send: vi.fn(async () => 'job-1') };
-    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+    const handler = buildMemoryEventIngestHandler(unitDb, boss, {
       loadEvent: async () => ({
         id: 'evt_1',
         actor_kind: 'user',
@@ -241,8 +245,8 @@ describe('buildMemoryEventIngestHandler', () => {
         kind: 'event',
       }),
       // YUK-557 (F7): ingest-handler tests never reach the reconcile apply path, so
-      // only addEventMemory is load-bearing; the rest default to no-ops.
-      memoryClient: memoryClientMock({ addEventMemory }),
+      // only addEventMemoryOnce is load-bearing; the rest default to no-ops.
+      memoryClient: memoryClientMock({ addEventMemoryOnce }),
     });
 
     await handler([{ data: { event_id: 'evt_1' } } as Job<{ event_id: string }>] as Job<{
@@ -261,14 +265,14 @@ describe('buildMemoryEventIngestHandler', () => {
   // P3 (YUK-351) extraction gate — ADR-0039 §决定 7 invariant (i) / Phase 2 §6.3
   // C3 / §7 H6: an agent-originated event must NEVER feed mem0 extraction (it
   // would close the confirmation loop: orchestrator output → event → mem0 extracts
-  // a semantic-trait → fed back next turn). Agent events skip addEventMemory +
+  // a semantic-trait → fed back next turn). Agent events skip addEventMemoryOnce +
   // reconcile entirely, but STILL fan out brief regen (the brief NOTE layer reads
   // events directly from PG and legitimately summarizes agent activity too).
   it('GATES agent-originated events out of extraction (no add, no reconcile), still fans out brief regen', async () => {
-    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm', memory: 'x' }] }));
+    const addEventMemoryOnce = addEventMemoryOnceMock([{ id: 'm', memory: 'x' }]);
     const send = vi.fn(async (_name: string, _data: object, _opts?: object) => 'job-1');
     const boss = { send };
-    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+    const handler = buildMemoryEventIngestHandler(unitDb, boss, {
       loadEvent: async () => ({
         id: 'evt_agent',
         actor_kind: 'agent',
@@ -281,14 +285,14 @@ describe('buildMemoryEventIngestHandler', () => {
         kind: 'event',
       }),
       // YUK-557 (F7): ingest-handler tests never reach the reconcile apply path, so
-      // only addEventMemory is load-bearing; the rest default to no-ops.
-      memoryClient: memoryClientMock({ addEventMemory }),
+      // only addEventMemoryOnce is load-bearing; the rest default to no-ops.
+      memoryClient: memoryClientMock({ addEventMemoryOnce }),
     });
 
     await handler([{ data: { event_id: 'evt_agent' } } as Job<{ event_id: string }>]);
 
-    // Extraction gated: addEventMemory NEVER called for an agent event.
-    expect(addEventMemory).not.toHaveBeenCalled();
+    // Extraction gated: addEventMemoryOnce NEVER called for an agent event.
+    expect(addEventMemoryOnce).not.toHaveBeenCalled();
     // No reconcile enqueued (nothing was extracted).
     expect(send).not.toHaveBeenCalledWith(
       MEMORY_RECONCILE_QUEUE,
@@ -301,10 +305,10 @@ describe('buildMemoryEventIngestHandler', () => {
   });
 
   it('ADMITS user-originated events into extraction (add + reconcile)', async () => {
-    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm1', memory: 'fact' }] }));
+    const addEventMemoryOnce = addEventMemoryOnceMock([{ id: 'm1', memory: 'fact' }]);
     const send = vi.fn(async (_name: string, _data: object, _opts?: object) => 'job-1');
     const boss = { send };
-    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+    const handler = buildMemoryEventIngestHandler(unitDb, boss, {
       loadEvent: async () => ({
         id: 'evt_user',
         actor_kind: 'user',
@@ -317,15 +321,16 @@ describe('buildMemoryEventIngestHandler', () => {
         kind: 'event',
       }),
       // YUK-557 (F7): ingest-handler tests never reach the reconcile apply path, so
-      // only addEventMemory is load-bearing; the rest default to no-ops.
-      memoryClient: memoryClientMock({ addEventMemory }),
+      // only addEventMemoryOnce is load-bearing; the rest default to no-ops.
+      memoryClient: memoryClientMock({ addEventMemoryOnce }),
     });
 
     await handler([{ data: { event_id: 'evt_user' } } as Job<{ event_id: string }>]);
 
-    expect(addEventMemory).toHaveBeenCalledWith(
+    expect(addEventMemoryOnce).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'evt_user' }),
       expect.objectContaining({ caller: 'worker', operationId: expect.any(String) }),
+      expect.any(Function),
     );
     expect(send).toHaveBeenCalledWith(
       MEMORY_RECONCILE_QUEUE,
@@ -334,13 +339,13 @@ describe('buildMemoryEventIngestHandler', () => {
     );
   });
 
-  // YUK-729 — the PAID, non-idempotent addEventMemory runs before the
+  // YUK-729/YUK-858 — the paid add runs before the
   // affected_scopes brief-regen fan-out and the reconcile enqueue. If either
   // enqueue rethrew out of the handler, pg-boss would redeliver and re-run the
   // extraction (duplicate cost + a persistent duplicate mem0 row). Both enqueues
   // must swallow+log a transient failure, degrading to the sweep backstop.
   it('YUK-729 — swallows an affected_scopes brief-regen enqueue failure (ingest resolves, extraction not retried)', async () => {
-    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm1', memory: 'fact' }] }));
+    const addEventMemoryOnce = addEventMemoryOnceMock([{ id: 'm1', memory: 'fact' }]);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     // boss.send throws only for the brief-regen fan-out; reconcile still succeeds.
     const send = vi.fn(async (name: string) => {
@@ -348,7 +353,7 @@ describe('buildMemoryEventIngestHandler', () => {
       return 'job-1';
     });
     const boss = { send };
-    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+    const handler = buildMemoryEventIngestHandler(unitDb, boss, {
       loadEvent: async () => ({
         id: 'evt_1',
         actor_kind: 'user',
@@ -360,7 +365,7 @@ describe('buildMemoryEventIngestHandler', () => {
         created_at: new Date('2026-05-27T00:00:00Z'),
         kind: 'event',
       }),
-      memoryClient: memoryClientMock({ addEventMemory }),
+      memoryClient: memoryClientMock({ addEventMemoryOnce }),
     });
 
     // The throw must NOT reject the ingest job — a resolved handler is what
@@ -369,7 +374,7 @@ describe('buildMemoryEventIngestHandler', () => {
       handler([{ data: { event_id: 'evt_1' } } as Job<{ event_id: string }>]),
     ).resolves.toBeUndefined();
 
-    expect(addEventMemory).toHaveBeenCalledTimes(1);
+    expect(addEventMemoryOnce).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('[memory_brief_bridge] affected_scopes brief regen enqueue failed'),
       // The warn now aggregates the per-scope rejection reasons into an array.
@@ -379,7 +384,7 @@ describe('buildMemoryEventIngestHandler', () => {
   });
 
   it('YUK-729 — a first-scope brief-regen failure does not skip the remaining scopes (per-scope allSettled)', async () => {
-    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm1', memory: 'fact' }] }));
+    const addEventMemoryOnce = addEventMemoryOnceMock([{ id: 'm1', memory: 'fact' }]);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     // The FIRST affected scope's enqueue throws; the later scopes must still enqueue
     // (a sequential for-loop under one try/catch would have aborted after 'global').
@@ -390,7 +395,7 @@ describe('buildMemoryEventIngestHandler', () => {
       return 'job-1';
     });
     const boss = { send };
-    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+    const handler = buildMemoryEventIngestHandler(unitDb, boss, {
       loadEvent: async () => ({
         id: 'evt_1',
         actor_kind: 'user',
@@ -402,7 +407,7 @@ describe('buildMemoryEventIngestHandler', () => {
         created_at: new Date('2026-05-27T00:00:00Z'),
         kind: 'event',
       }),
-      memoryClient: memoryClientMock({ addEventMemory }),
+      memoryClient: memoryClientMock({ addEventMemoryOnce }),
     });
 
     await expect(
@@ -428,18 +433,17 @@ describe('buildMemoryEventIngestHandler', () => {
     warnSpy.mockRestore();
   });
 
-  it('YUK-729 — swallows a reconcile enqueue failure, logging at ERROR with compensation context (ingest resolves, extraction not retried)', async () => {
-    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm1', memory: 'fact' }] }));
+  it('YUK-858 — propagates a reconcile enqueue failure for durable recovery', async () => {
+    const addEventMemoryOnce = addEventMemoryOnceMock([{ id: 'm1', memory: 'fact' }]);
     // Reconcile has NO cron backstop, so the drop is logged at console.error (not warn)
     // with enough context to reconcile the affected mem0 rows by hand.
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     // boss.send throws only for the reconcile enqueue; brief-regen still succeeds.
     const send = vi.fn(async (name: string) => {
       if (name === MEMORY_RECONCILE_QUEUE) throw new Error('reconcile send boom');
       return 'job-1';
     });
     const boss = { send };
-    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+    const handler = buildMemoryEventIngestHandler(unitDb, boss, {
       loadEvent: async () => ({
         id: 'evt_1',
         actor_kind: 'user',
@@ -451,29 +455,21 @@ describe('buildMemoryEventIngestHandler', () => {
         created_at: new Date('2026-05-27T00:00:00Z'),
         kind: 'event',
       }),
-      memoryClient: memoryClientMock({ addEventMemory }),
+      memoryClient: memoryClientMock({ addEventMemoryOnce }),
     });
 
     await expect(
       handler([{ data: { event_id: 'evt_1' } } as Job<{ event_id: string }>]),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow('reconcile send boom');
 
-    expect(addEventMemory).toHaveBeenCalledTimes(1);
-    // ERROR level + carries the event id and the un-reconciled memory id for manual
-    // compensation.
-    const errorArg = errorSpy.mock.calls[0]?.[0] as string;
-    expect(errorArg).toContain('[memory_reconcile] reconcile enqueue FAILED');
-    expect(errorArg).toContain('evt_1');
-    expect(errorArg).toContain('m1');
-    expect(errorSpy.mock.calls[0]?.[1]).toBeInstanceOf(Error);
-    errorSpy.mockRestore();
+    expect(addEventMemoryOnce).toHaveBeenCalledTimes(1);
   });
 
   it('YUK-729 — caps the brief-regen fan-out at MAX_BRIEF_REGEN_SCOPES and isolates failures within the cap', async () => {
     // A bulk / import-style event carrying far more affected scopes than the cap.
     const scopeCount = MAX_BRIEF_REGEN_SCOPES + 50;
     const affected = Array.from({ length: scopeCount }, (_, i) => `topic:k${i}`);
-    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm1', memory: 'fact' }] }));
+    const addEventMemoryOnce = addEventMemoryOnceMock([{ id: 'm1', memory: 'fact' }]);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     // One scope INSIDE the cap throws; it must not abort the remaining enqueues.
     const send = vi.fn(async (name: string, data: { scope_key?: string }) => {
@@ -483,7 +479,7 @@ describe('buildMemoryEventIngestHandler', () => {
       return 'job-1';
     });
     const boss = { send };
-    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+    const handler = buildMemoryEventIngestHandler(unitDb, boss, {
       loadEvent: async () => ({
         id: 'evt_bulk',
         actor_kind: 'user',
@@ -495,7 +491,7 @@ describe('buildMemoryEventIngestHandler', () => {
         created_at: new Date('2026-05-27T00:00:00Z'),
         kind: 'event',
       }),
-      memoryClient: memoryClientMock({ addEventMemory }),
+      memoryClient: memoryClientMock({ addEventMemoryOnce }),
     });
 
     await expect(
@@ -516,7 +512,7 @@ describe('buildMemoryEventIngestHandler', () => {
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining(`capping brief regen fan-out at ${MAX_BRIEF_REGEN_SCOPES}`),
     );
-    expect(addEventMemory).toHaveBeenCalledTimes(1);
+    expect(addEventMemoryOnce).toHaveBeenCalledTimes(1);
     warnSpy.mockRestore();
   });
 });
@@ -538,7 +534,7 @@ describe('buildMemoryEventIngestHandler — YUK-581 subject brief bridge', () =>
     mockResolve.mockResolvedValueOnce(new Map([['evt_q', 'math']]));
     const send = vi.fn(async (_name: string, _data: object, _opts?: object) => 'job-1');
     const boss = { send };
-    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+    const handler = buildMemoryEventIngestHandler(unitDb, boss, {
       loadEvent: async () => ({
         id: 'evt_q',
         actor_kind: 'user',
@@ -575,7 +571,7 @@ describe('buildMemoryEventIngestHandler — YUK-581 subject brief bridge', () =>
   it('does NOT bridge a non-qualifying action (resolver untouched, no subject:<id> enqueue)', async () => {
     const send = vi.fn(async (_name: string, _data: object, _opts?: object) => 'job-1');
     const boss = { send };
-    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+    const handler = buildMemoryEventIngestHandler(unitDb, boss, {
       loadEvent: async () => ({
         id: 'evt_rate',
         actor_kind: 'user',
@@ -606,7 +602,7 @@ describe('buildMemoryEventIngestHandler — YUK-581 subject brief bridge', () =>
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const send = vi.fn(async (_name: string, _data: object, _opts?: object) => 'job-1');
     const boss = { send };
-    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+    const handler = buildMemoryEventIngestHandler(unitDb, boss, {
       loadEvent: async () => ({
         id: 'evt_q',
         actor_kind: 'user',
@@ -684,7 +680,7 @@ describe('registerMemoryHandlers', () => {
       send: vi.fn(async (_name: string, _data: object, _opts?: object) => 'job-1'),
     };
 
-    await registerMemoryHandlers(boss, {} as never, {
+    await registerMemoryHandlers(boss, unitDb, {
       memoryClient: memoryClientMock(),
       generateBrief: vi.fn(),
     });

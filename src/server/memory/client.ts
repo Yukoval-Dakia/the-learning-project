@@ -96,10 +96,15 @@ export type MemoryEventInput = {
 };
 
 export type MemoryClient = {
-  addEventMemory(
+  findByEventId(eventId: string): Promise<MemoryEventResult>;
+  addEventMemoryOnce(
     event: MemoryEventInput,
     providerOperation: Mem0OpaqueOperationContext,
-  ): Promise<SearchResult>;
+    beforeProviderAdd: BeforeMemoryProviderAdd,
+  ): Promise<{
+    readonly result: MemoryEventResult;
+    readonly resolution: 'provider_result' | 'event_lookup';
+  }>;
   search(
     query: string,
     opts: { topK?: number; filters?: Record<string, unknown> },
@@ -115,6 +120,7 @@ export type MemoryClient = {
     metadata: Record<string, unknown>,
     projectionKey: string,
     providerOperation: Mem0OpaqueOperationContext,
+    beforeProviderAdd: BeforeMemoryProviderAdd,
   ): Promise<SearchResult>;
   // YUK-557 (Q2a): idempotent hard delete via mem0 official delete() — writes a
   // tombstone (previous_value + is_deleted=1) before the real vector DELETE.
@@ -123,14 +129,29 @@ export type MemoryClient = {
   history(memoryId: string): Promise<MemoryHistoryEntry[]>;
   // YUK-557 (Q5/M5): verbatim restore of a deleted/overwritten memory. Uses
   // add(..., {infer:false}) so the text is stored as a single memory WITHOUT
-  // re-running the extraction LLM (NOT addEventMemory, which is infer:true +
-  // eventToText envelope → a paraphrase, not the original). Produces a NEW UUID.
+  // re-running the extraction LLM (unlike the inferred event envelope, which can
+  // produce a paraphrase). Produces a NEW UUID.
   restoreVerbatim(
     text: string,
     metadata: Record<string, unknown>,
     providerOperation: Mem0OpaqueOperationContext,
   ): Promise<SearchResult>;
 };
+
+export type BeforeMemoryProviderAdd = () => Promise<void>;
+
+export type MemoryEventResult = {
+  readonly results: readonly { readonly id: string; readonly memory: string }[];
+};
+
+const EVENT_LOOKUP_COMPLETENESS_BOUND = 100;
+
+export class Mem0EventLookupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'Mem0EventLookupError';
+  }
+}
 
 function requireEnv(env: Env, name: string): string {
   const value = env[name]?.trim();
@@ -225,6 +246,24 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function parseEventMemoryResult(value: unknown, source: string): MemoryEventResult {
+  if (!isJsonObject(value) || !Array.isArray(value.results)) {
+    throw new Mem0EventLookupError(`${source} returned an unsupported response shape`);
+  }
+  const results = value.results.map((item, index) => {
+    if (
+      !isJsonObject(item) ||
+      typeof item.id !== 'string' ||
+      item.id.length === 0 ||
+      typeof item.memory !== 'string'
+    ) {
+      throw new Mem0EventLookupError(`${source} returned an invalid result at index ${index}`);
+    }
+    return { id: item.id, memory: item.memory };
+  });
+  return { results };
+}
+
 function redactQuestionEvidenceForMemory(payload: unknown): unknown {
   if (!isJsonObject(payload) || !isJsonObject(payload.question_snapshot)) return payload;
   const snapshot = payload.question_snapshot;
@@ -269,44 +308,79 @@ export function createMemoryClient(
   const config = createMem0Config(env);
   const factory = opts.memoryFactory ?? ((c: MemoryConfig) => new Memory(c));
   const memory = factory(config);
+  const findByEventId = async (eventId: string): Promise<MemoryEventResult> => {
+    const result = parseEventMemoryResult(
+      await memory.getAll({
+        topK: EVENT_LOOKUP_COMPLETENESS_BOUND,
+        filters: { user_id: 'self', event_id: eventId },
+      }),
+      'Mem0 getAll(event_id)',
+    );
+    if (result.results.length >= EVENT_LOOKUP_COMPLETENESS_BOUND) {
+      throw new Mem0EventLookupError(
+        `Mem0 getAll(event_id) exceeded completeness bound ${EVENT_LOOKUP_COMPLETENESS_BOUND}`,
+      );
+    }
+    return result;
+  };
+  const addEventMemoryOnceAtBoundary = async (
+    input: MemoryEventInput,
+    providerOperation: Mem0OpaqueOperationContext,
+    beforeProviderAdd: BeforeMemoryProviderAdd,
+  ): Promise<SearchResult> => {
+    const add = () =>
+      memory.add(eventToText(input), {
+        userId: 'self',
+        metadata: {
+          source: 'event',
+          event_id: input.id,
+          actor_kind: input.actor_kind,
+          action: input.action,
+          subject_kind: input.subject_kind,
+          subject_id: input.subject_id,
+          affected_scopes: input.affected_scopes,
+          created_at: input.created_at.toISOString(),
+          created_ms: input.created_at.getTime(),
+          kind: input.kind,
+        },
+        infer: true,
+      });
+    return executeMem0OpaqueOperation(providerOperation, 'add_inferred', add, {
+      providerStartFence: 'operation_kind',
+      afterProviderStartReserved: beforeProviderAdd,
+    });
+  };
 
   return {
-    async addEventMemory(input, providerOperation) {
-      return executeMem0OpaqueOperation(providerOperation, 'add_inferred', () =>
-        memory.add(eventToText(input), {
-          userId: 'self',
-          metadata: {
-            source: 'event',
-            event_id: input.id,
-            // P3 (YUK-351): provenance of the originating event. Only 'user' reaches
-            // here (the extraction gate rejects 'agent' upstream in triggers.ts), but
-            // persist it so the source actor is auditable on the extracted fact.
-            actor_kind: input.actor_kind,
-            action: input.action,
-            subject_kind: input.subject_kind,
-            subject_id: input.subject_id,
-            affected_scopes: input.affected_scopes,
-            created_at: input.created_at.toISOString(),
-            // P2 (YUK-342): created_ms (epoch milliseconds) for recency filtering;
-            // kind for per-kind reconcile rules. Both flat-spread into mem0 payload
-            // top-level by mem0's metadata handling.
-            created_ms: input.created_at.getTime(),
-            kind: input.kind,
-          },
-          infer: true,
-        }),
-      );
+    findByEventId,
+    async addEventMemoryOnce(input, providerOperation, beforeProviderAdd) {
+      const existing = await findByEventId(input.id);
+      if (existing.results.length > 0) {
+        return { result: existing, resolution: 'event_lookup' };
+      }
+      const added = await addEventMemoryOnceAtBoundary(input, providerOperation, beforeProviderAdd);
+      return {
+        result: parseEventMemoryResult(added, 'Mem0 add(event)'),
+        resolution: 'provider_result',
+      };
     },
-    async addVerbatimOnce(text, metadata, projectionKey, providerOperation) {
+    async addVerbatimOnce(text, metadata, projectionKey, providerOperation, beforeProviderAdd) {
       const filters = { user_id: 'self', projection_key: projectionKey };
       const existing = await memory.getAll({ topK: 2, filters });
       if ((existing.results ?? []).length > 0) return existing;
-      return executeMem0OpaqueOperation(providerOperation, 'add_verbatim', () =>
-        memory.add(text, {
-          userId: 'self',
-          metadata: { ...metadata, projection_key: projectionKey },
-          infer: false,
-        }),
+      return executeMem0OpaqueOperation(
+        providerOperation,
+        'add_verbatim',
+        () =>
+          memory.add(text, {
+            userId: 'self',
+            metadata: { ...metadata, projection_key: projectionKey },
+            infer: false,
+          }),
+        {
+          providerStartFence: 'operation_kind',
+          afterProviderStartReserved: beforeProviderAdd,
+        },
       );
     },
     async search(query, searchOpts, providerOperation) {
@@ -367,8 +441,8 @@ export function createMemoryClient(
       // text is embedded and inserted as a single new memory (new UUID), with NO
       // MD5 dedup against existing rows (dedup lives only in the infer:true branch,
       // index.mjs:6539-6552). Verified against装机 mem0ai 3.0.6. NEVER route undo
-      // through addEventMemory (infer:true + eventToText envelope → a re-extracted
-      // paraphrase, not the verbatim original). Fallback if this ever changes:
+      // through inferred event extraction (infer:true + eventToText envelope → a
+      // re-extracted paraphrase, not the verbatim original). Fallback if this ever changes:
       // direct pgvector INSERT + manual embed (see docs/runbooks/memory-reconcile-undo.md).
       return executeMem0OpaqueOperation(providerOperation, 'restore_verbatim', () =>
         memory.add(text, { userId: 'self', metadata, infer: false }),

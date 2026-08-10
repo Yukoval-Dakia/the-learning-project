@@ -1,91 +1,131 @@
-import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
-import type { MemoryClient } from '@/server/memory/client';
-import { addVerbatimProjectionOnce } from '@/server/memory/triggers';
+import type { Job } from 'pg-boss';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
+import type { MemoryClient } from './client';
+import { buildMemoryEventIngestHandler } from './triggers';
 
-const providerOperation = createMem0OpaqueOperationContext({
-  caller: 'worker',
-  deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
-  operationAnchor: 'conjecture-projection-db-852',
-  mode: 'observe',
-  createLifecycle: vi.fn(),
-});
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
+function sourceEvent(id: string) {
+  return {
+    id,
+    actor_kind: 'user',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: 'conjecture-1',
+    payload: {
+      rating: 'accept',
+      conjecture_id: 'conjecture-1',
+      corrected_by_owner: true,
+      corrected_claim_md: '改写后的判断',
+    },
+    affected_scopes: [],
+    created_at: new Date(1),
+    kind: 'event',
+  };
 }
 
-function clientWithStore(
-  options: { pauseFirstAdd?: ReturnType<typeof deferred>; crashFirst?: boolean } = {},
-) {
-  const rows = new Map<string, { id: string; memory: string }>();
-  let calls = 0;
-  const addVerbatimOnce = vi.fn(async (text: string, _metadata: object, projectionKey: string) => {
-    const existing = rows.get(projectionKey);
-    if (existing) return { results: [existing] };
-    calls += 1;
-    if (calls === 1 && options.pauseFirstAdd) await options.pauseFirstAdd.promise;
-    const row = { id: `mem_${calls}`, memory: text };
-    rows.set(projectionKey, row);
-    if (calls === 1 && options.crashFirst) throw new Error('process died after mem0 add');
-    return { results: [row] };
-  });
+function ingestJob(eventId: string): Job<{ event_id: string }> {
   return {
-    rows,
-    client: { addVerbatimOnce } as Pick<MemoryClient, 'addVerbatimOnce'>,
-    addVerbatimOnce,
+    id: `job:${eventId}`,
+    name: 'memory_event_ingest',
+    data: { event_id: eventId },
+    expireInSeconds: 60,
+    heartbeatSeconds: null,
+    signal: new AbortController().signal,
   };
+}
+
+function deterministicSendId(options?: object): string | null {
+  return options && 'id' in options && typeof options.id === 'string' ? options.id : null;
 }
 
 describe('durable verbatim memory projection claim', () => {
   beforeEach(resetDb);
 
-  it('serializes two independent concurrent workers to one CORE projection', async () => {
-    const pause = deferred();
-    const store = clientWithStore({ pauseFirstAdd: pause });
+  it('serializes two concurrent edited-conjecture handlers at the provider boundary', async () => {
     const db = testDb();
-    const input = {
-      text: '改写后的判断',
-      metadata: { event_id: 'rate_1' },
-      projectionKey: 'conjecture-edit:rate_1',
-      providerOperation,
+    const rows = new Map<string, { id: string; memory: string }>();
+    let arrivals = 0;
+    let releaseBoundary = () => {};
+    const bothLookupsMissed = new Promise<void>((resolve) => {
+      releaseBoundary = resolve;
+    });
+    const providerAdds = vi.fn();
+    const addVerbatimOnce: MemoryClient['addVerbatimOnce'] = vi.fn(
+      async (_text, _metadata, _projectionKey, _providerOperation, beforeProviderAdd) => {
+        arrivals += 1;
+        if (arrivals === 2) releaseBoundary();
+        await bothLookupsMissed;
+        await beforeProviderAdd();
+        providerAdds();
+        const memory = { id: 'memory-concurrent', memory: '改写后的判断' };
+        rows.set('rate-concurrent', memory);
+        return { results: [memory] };
+      },
+    );
+    const findByEventId = vi.fn(async (eventId: string) => {
+      const memory = rows.get(eventId);
+      return { results: memory ? [memory] : [] };
+    });
+    const boss = {
+      send: vi.fn(async (_name: string, _data: object, options?: object) =>
+        deterministicSendId(options),
+      ),
     };
+    const firstHandler = buildMemoryEventIngestHandler(db, boss, {
+      handoffMode: 'write',
+      loadEvent: async () => sourceEvent('rate-concurrent'),
+      memoryClient: memoryClientMock({ addVerbatimOnce, findByEventId }),
+    });
+    const secondHandler = buildMemoryEventIngestHandler(db, boss, {
+      handoffMode: 'write',
+      loadEvent: async () => sourceEvent('rate-concurrent'),
+      memoryClient: memoryClientMock({ addVerbatimOnce, findByEventId }),
+    });
 
-    const first = addVerbatimProjectionOnce(db, store.client, input);
-    await vi.waitFor(() => expect(store.addVerbatimOnce).toHaveBeenCalledTimes(1));
-    const second = addVerbatimProjectionOnce(db, store.client, input);
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(store.addVerbatimOnce).toHaveBeenCalledTimes(1);
+    const outcomes = await Promise.allSettled([
+      firstHandler([ingestJob('rate-concurrent')]),
+      secondHandler([ingestJob('rate-concurrent')]),
+    ]);
 
-    pause.resolve();
-    const [a, b] = await Promise.all([first, second]);
-
-    expect(a.results).toEqual(b.results);
-    expect(store.addVerbatimOnce).toHaveBeenCalledTimes(2);
-    expect(store.rows).toHaveLength(1);
+    expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect(addVerbatimOnce).toHaveBeenCalledTimes(2);
+    expect(providerAdds).toHaveBeenCalledOnce();
+    expect(rows).toHaveLength(1);
   });
 
   it('retry after external add success and pre-receipt crash converges to the existing row', async () => {
-    const store = clientWithStore({ crashFirst: true });
-    const input = {
-      text: '改写后的判断',
-      metadata: { event_id: 'rate_2' },
-      projectionKey: 'conjecture-edit:rate_2',
-      providerOperation,
-    };
-
-    await expect(addVerbatimProjectionOnce(testDb(), store.client, input)).rejects.toThrow(
-      'process died after mem0 add',
+    const db = testDb();
+    const rows = new Map<string, { id: string; memory: string }>();
+    const addVerbatimOnce: MemoryClient['addVerbatimOnce'] = vi.fn(
+      async (_text, _metadata, _projectionKey, _providerOperation, beforeProviderAdd) => {
+        await beforeProviderAdd();
+        const memory = { id: 'memory-existing', memory: '改写后的判断' };
+        rows.set('rate-crash', memory);
+        throw new Error('process died after mem0 add');
+      },
     );
-    await expect(addVerbatimProjectionOnce(testDb(), store.client, input)).resolves.toMatchObject({
-      results: [{ id: 'mem_1' }],
+    const findByEventId = vi.fn(async (eventId: string) => {
+      const memory = rows.get(eventId);
+      return { results: memory ? [memory] : [] };
+    });
+    const client = memoryClientMock({ addVerbatimOnce, findByEventId });
+    const boss = {
+      send: vi.fn(async (_name: string, _data: object, options?: object) =>
+        deterministicSendId(options),
+      ),
+    };
+    const handler = buildMemoryEventIngestHandler(db, boss, {
+      handoffMode: 'write',
+      loadEvent: async () => sourceEvent('rate-crash'),
+      memoryClient: client,
     });
 
-    expect(store.rows).toHaveLength(1);
+    await expect(handler([ingestJob('rate-crash')])).rejects.toThrow('process died after mem0 add');
+    await expect(handler([ingestJob('rate-crash')])).resolves.toBeUndefined();
+
+    expect(addVerbatimOnce).toHaveBeenCalledTimes(1);
+    expect(findByEventId).toHaveBeenCalledWith('rate-crash');
+    expect(rows).toHaveLength(1);
   });
 });

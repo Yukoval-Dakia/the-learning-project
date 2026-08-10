@@ -24,8 +24,14 @@ export type Mem0OpaqueLifecycleFactory = (input: {
   readonly policy?: ProviderAttemptAdmissionPolicy | null;
   readonly identity: ProviderAttemptLifecycle['identity'];
   readonly deadlineAt: Date;
+  readonly providerStartFence?: 'operation_kind';
   readonly db?: Db;
 }) => ProviderAttemptLifecycle;
+
+export interface Mem0OpaqueExecutionOptions {
+  readonly providerStartFence?: 'operation_kind';
+  readonly afterProviderStartReserved?: () => Promise<void>;
+}
 
 export interface Mem0OpaqueOperationContext {
   readonly caller: 'api' | 'worker';
@@ -74,6 +80,7 @@ export function createMem0OpaqueOperationContext(
 function makeLifecycle(
   context: Mem0OpaqueOperationContext,
   operationKind: Mem0OpaqueOperationKind,
+  providerStartFence: Mem0OpaqueExecutionOptions['providerStartFence'],
 ): ProviderAttemptLifecycle {
   const configured =
     context.mode === undefined
@@ -97,6 +104,7 @@ function makeLifecycle(
       policy: configured.policy,
       identity,
       deadlineAt: context.deadlineAt,
+      providerStartFence,
       db: context.db,
     });
   }
@@ -107,6 +115,7 @@ function makeLifecycle(
     policy: configured.policy,
     identity,
     deadlineAt: context.deadlineAt,
+    providerStartFence,
     db: context.db,
   });
 }
@@ -175,10 +184,12 @@ export async function executeMem0OpaqueOperation<T>(
   context: Mem0OpaqueOperationContext,
   operationKind: Mem0OpaqueOperationKind,
   execute: () => Promise<T>,
+  options: Mem0OpaqueExecutionOptions = {},
 ): Promise<T> {
-  const lifecycle = makeLifecycle(context, operationKind);
+  const lifecycle = makeLifecycle(context, operationKind, options.providerStartFence);
   const handle = await lifecycle.acquire();
   await handle.reserveProviderStart();
+  await options.afterProviderStartReserved?.();
   let outcome:
     | { readonly kind: 'success'; readonly value: T }
     | { readonly kind: 'failure'; readonly error: unknown };

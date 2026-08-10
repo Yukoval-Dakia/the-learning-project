@@ -71,7 +71,7 @@ function mockMemoryClient(
   }>,
 ): MemoryClient {
   // YUK-557 (F7): partial reuse of the shared MemoryClient double — only search +
-  // hardDelete are load-bearing here (addEventMemory/history/restoreVerbatim default
+  // hardDelete are load-bearing here (addEventMemoryOnce/history/restoreVerbatim default
   // to no-ops). hardDelete runs a REAL raw DELETE against the test collection — the
   // guts of what production client.hardDelete does (mem0 official delete()) — so the
   // physical-delete assertions (newRows.toHaveLength(0)) stay genuine coverage

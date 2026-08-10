@@ -18,6 +18,7 @@ import {
   MEMORY_EVENT_INGEST_QUEUE,
   buildMemoryIngestOutboxPollHandler,
   buildMemoryIngestOutboxRecoverHandler,
+  runMemoryRecoveryFloor,
 } from './triggers';
 
 function attemptPayload(question_id = 'q1') {
@@ -104,7 +105,6 @@ describe('outbox poll handler (real-path)', () => {
     await poll([]);
     expect(boss.send).not.toHaveBeenCalled();
   });
-
   it('idempotency: writeEvent twice with same id → 1 event row → poll → 1 enqueue', async () => {
     const db = testDb();
     const boss = { send: vi.fn(async () => 'job-1') };
@@ -196,5 +196,35 @@ describe('outbox recovery handler (real-path)', () => {
     const recover = buildMemoryIngestOutboxRecoverHandler(db, boss);
     await recover([]);
     expect(boss.send).not.toHaveBeenCalled();
+  });
+});
+
+describe('shared hourly memory recovery floor', () => {
+  it('attempts reconcile recovery after ingest recovery fails, then propagates the first error', async () => {
+    const ingestError = new Error('ingest recovery failed');
+    const reconcile = vi.fn(async () => {});
+    await expect(
+      runMemoryRecoveryFloor({
+        ingest: async () => {
+          throw ingestError;
+        },
+        reconcile,
+      }),
+    ).rejects.toBe(ingestError);
+    expect(reconcile).toHaveBeenCalledOnce();
+  });
+
+  it('attempts ingest recovery when reconcile recovery fails, then propagates the reconcile error', async () => {
+    const reconcileError = new Error('reconcile recovery failed');
+    const ingest = vi.fn(async () => {});
+    await expect(
+      runMemoryRecoveryFloor({
+        ingest,
+        reconcile: async () => {
+          throw reconcileError;
+        },
+      }),
+    ).rejects.toBe(reconcileError);
+    expect(ingest).toHaveBeenCalledOnce();
   });
 });

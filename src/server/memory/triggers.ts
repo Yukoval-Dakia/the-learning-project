@@ -33,6 +33,21 @@ import {
 } from './brief';
 import { type MemoryClient, type MemoryEventInput, createMemoryClient } from './client';
 import {
+  MEMORY_RECONCILE_QUEUE,
+  type MemoryReconcileHandoffMode,
+  dispatchMemoryReconcile,
+  memoryReconcileHandoffMode,
+  modePersistsNewIntents,
+  recoverMemoryReconcileHandoffs,
+} from './memory-reconcile-handoff';
+import {
+  MemoryReconcileHandoffError,
+  type ReconcileMemInput,
+  claimMemoryIngest,
+  persistIngestCompleted,
+  readIngestCompleted,
+} from './memory-reconcile-handoff-store';
+import {
   type CandidateEntry,
   type NewMemoryEntry,
   type ReconcileAction,
@@ -65,9 +80,9 @@ export const MEMORY_BRIEF_SWEEP_QUEUE = 'memory_brief_sweep';
 // (e.g., worker restart, single fast-burst > batch size).
 export const MEMORY_INGEST_OUTBOX_POLL_QUEUE = 'memory_ingest_outbox_poll';
 export const MEMORY_INGEST_OUTBOX_RECOVER_QUEUE = 'memory_ingest_outbox_recover';
-// P2 (YUK-342): reconcile queue — event-driven (no cron schedule). Enqueued
-// after every addEventMemory fan-out. singletonKey serializes per-user.
-export const MEMORY_RECONCILE_QUEUE = 'memory_reconcile';
+// Reconcile remains event-driven; YUK-858 recovery shares the existing hourly
+// ingest-outbox floor instead of registering another queue or cron.
+export { MEMORY_RECONCILE_QUEUE } from './memory-reconcile-handoff';
 const OUTBOX_POLL_BATCH = 50;
 const REGEN_SINGLETON_SECONDS = 6 * 60;
 // YUK-729 (#965 round-4, codex P2) — cap the per-event brief-regen fan-out.
@@ -79,7 +94,6 @@ const REGEN_SINGLETON_SECONDS = 6 * 60;
 export const MAX_BRIEF_REGEN_SCOPES = 64;
 // Reconcile singleton window — short (reconcile is time-sensitive convergence,
 // unlike the 6-min brief). Owner directive: 90s.
-const RECONCILE_SINGLETON_SECONDS = 90;
 // Reconcile search topK — owner directive: 30.
 const RECONCILE_TOP_K = 30;
 
@@ -87,6 +101,7 @@ type BossLike = Pick<PgBoss, 'createQueue' | 'updateQueue'> & {
   work(name: string, ...args: unknown[]): Promise<unknown>;
   schedule(name: string, cron: string, data: object, options: object): Promise<unknown>;
   send(name: string, data: object, options?: object): Promise<string | null>;
+  getJobById?(name: string, id: string): Promise<{ readonly state: string } | null>;
 };
 
 /**
@@ -173,7 +188,7 @@ async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInp
  *   orchestration prompt → the model self-confirms its own prior output as a fact.
  *
  * The gate sits at the single write-side seam (buildMemoryEventIngestHandler),
- * BEFORE addEventMemory's extraction LLM call. It is a pure deterministic function
+ * BEFORE addEventMemoryOnce's extraction LLM call. It is a pure deterministic function
  * over event.actor_kind (NOT NULL, 'user' | 'agent' — src/db/schema.ts +
  * core/schema/event/known.ts), kept exported + unit-tested per the ADR's "写成
  * extraction gate invariant + 单测" directive.
@@ -257,67 +272,19 @@ export async function enqueueBriefRegen(
 // created_ms alongside the id. Searching mem0 by an opaque UUID embeds the UUID
 // string (semantic noise) and rarely retrieves the memory itself — so the text
 // (from add()'s results[].memory) must travel with the id, not be re-derived.
-export type ReconcileMemInput = { id: string; text: string; created_ms: number; kind: string };
-
-export async function enqueueMemoryReconcile(
-  boss: Pick<BossLike, 'send'>,
-  memories: ReconcileMemInput[],
-  userId: string,
-): Promise<void> {
-  if (memories.length === 0) return;
-  await boss.send(
-    MEMORY_RECONCILE_QUEUE,
-    { memories, user_id: userId },
-    {
-      singletonKey: `memory.reconcile.${userId}`,
-      singletonSeconds: RECONCILE_SINGLETON_SECONDS,
-      singletonNextSlot: true,
-      // Retry on transient failure (the handler rethrows RetryableError; planned
-      // rows replay idempotently). Without this, a rethrown RetryableError would
-      // dead-letter on the first try and the batch would never reconcile.
-      retryLimit: 3,
-      retryDelay: 30,
-      retryBackoff: true,
-    },
-  );
-}
-
-export async function addVerbatimProjectionOnce(
-  db: Db,
-  client: Pick<MemoryClient, 'addVerbatimOnce'>,
-  input: {
-    text: string;
-    metadata: Record<string, unknown>;
-    projectionKey: string;
-    providerOperation: Parameters<MemoryClient['addVerbatimOnce']>[3];
-  },
-) {
-  return db.transaction(async (tx) => {
-    // The Postgres claim spans lookup + external add. Concurrent workers for the
-    // same immutable projection key serialize here. If the process dies after mem0
-    // commits, the DB connection releases the lock; redelivery acquires it and
-    // addVerbatimOnce's metadata lookup discovers the existing external row.
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`memory_projection:${input.projectionKey}`}, 0))`,
-    );
-    return client.addVerbatimOnce(
-      input.text,
-      input.metadata,
-      input.projectionKey,
-      input.providerOperation,
-    );
-  });
-}
+export type { ReconcileMemInput } from './memory-reconcile-handoff-store';
 
 export function buildMemoryEventIngestHandler(
   db: Db,
-  boss: Pick<BossLike, 'send'>,
+  boss: Pick<BossLike, 'send' | 'getJobById'>,
   deps: {
     loadEvent?: (db: Db, eventId: string) => Promise<MemoryEventInput | null>;
     memoryClient?: MemoryClient;
+    handoffMode?: MemoryReconcileHandoffMode;
   } = {},
 ): (jobs: Job<{ event_id: string }>[]) => Promise<void> {
   const loadEvent = deps.loadEvent ?? defaultLoadEvent;
+  const handoffMode = deps.handoffMode ?? memoryReconcileHandoffMode();
   let memoryClient = deps.memoryClient;
   return async (jobs) => {
     memoryClient ??= createMemoryClient();
@@ -331,24 +298,42 @@ export function buildMemoryEventIngestHandler(
       // confirmation loop). The brief NOTE layer is orthogonal — it reads events
       // straight from PG (brief.ts:loadEventsFromDb) and legitimately summarizes
       // agent activity too — so the brief regen fan-out STILL runs for gated events;
-      // only addEventMemory + reconcile are skipped.
+      // only inferred event-memory add + reconcile are skipped.
       const admitToExtraction = shouldExtractToMemory(row);
       const editedConjecture = editedConjectureMemory(row);
 
       // Owner-edited conjectures are already canonical text. Persist the claim verbatim
       // (infer:false) so this job makes exactly one deterministic add+embedding call and
       // does not also ask the generic extraction LLM to infer a duplicate preference.
-      const memResult = await (async () => {
+      const ingest = await (async () => {
         if (!admitToExtraction) return null;
+        const completed = await readIngestCompleted(db, row.id);
+        if (completed?.memory_count === 0) {
+          return { result: { results: [] }, resolution: completed.resolution } as const;
+        }
+        const beforeProviderAdd = async () => {
+          const claim = await claimMemoryIngest(db, row.id);
+          if (claim !== 'winner')
+            throw new MemoryReconcileHandoffError(
+              `Mem0 add ${claim} for ${row.id}; exact lookup was incomplete or ambiguous`,
+            );
+        };
         if (editedConjecture) {
           const projectionKey = `conjecture-edit:${row.id}`;
-          return addVerbatimProjectionOnce(db, client, {
-            text: editedConjecture.claim,
-            metadata: {
+          const existing = await client.findByEventId(row.id);
+          if (existing.results.length > 0) {
+            return {
+              result: existing,
+              resolution: completed?.resolution ?? ('event_lookup' as const),
+            };
+          }
+          const result = await client.addVerbatimOnce(
+            editedConjecture.claim,
+            {
               source: 'conjecture_edit',
               event_id: row.id,
               conjecture_id: editedConjecture.conjectureId,
-              // codex P2 (PR #1039) — mirror addEventMemory's scope metadata: search()
+              // codex P2 (PR #1039) — mirror inferred event-memory scope metadata: search()
               // maps scope_key → `affected_scopes contains`, so without this the edited
               // claim would be invisible to every scoped retrieval.
               affected_scopes: row.affected_scopes,
@@ -358,15 +343,17 @@ export function buildMemoryEventIngestHandler(
               kind: CONJECTURE_EDIT_MEMORY_KIND,
             },
             projectionKey,
-            providerOperation: createMem0OpaqueOperationContext({
+            createMem0OpaqueOperationContext({
               db,
               caller: 'worker',
               deadlineAt: new Date(Date.now() + 65_000),
               operationAnchor: projectionKey,
             }),
-          });
+            beforeProviderAdd,
+          );
+          return { result, resolution: 'provider_result' as const };
         }
-        return client.addEventMemory(
+        const once = await client.addEventMemoryOnce(
           row,
           createMem0OpaqueOperationContext({
             db,
@@ -374,8 +361,31 @@ export function buildMemoryEventIngestHandler(
             deadlineAt: new Date(Date.now() + 65_000),
             operationAnchor: row.id,
           }),
+          beforeProviderAdd,
         );
+        return completed ? { ...once, resolution: completed.resolution } : once;
       })();
+      const createdMs = row.created_at.getTime();
+      const newMemories: ReconcileMemInput[] = (ingest?.result.results ?? []).map((memory) => ({
+        id: memory.id,
+        text: memory.memory,
+        created_ms: createdMs,
+        kind: editedConjecture ? CONJECTURE_EDIT_MEMORY_KIND : row.kind,
+      }));
+      if (ingest) {
+        const persistIntents = modePersistsNewIntents(handoffMode);
+        const completion = await persistIngestCompleted(db, {
+          sourceEventId: row.id,
+          resolution: ingest.resolution,
+          memories: newMemories,
+          persistIntents,
+        });
+        await dispatchMemoryReconcile(db, boss, {
+          sourceEventId: row.id,
+          memories: newMemories,
+          ...(persistIntents ? { completion } : {}),
+        });
+      }
       // YUK-729 — fan out brief regen with a BOUNDED, SEQUENTIAL, per-scope-isolated
       // loop. Three properties matter:
       //  (1) bounded fan-out — slice to MAX_BRIEF_REGEN_SCOPES so an unbounded
@@ -385,10 +395,8 @@ export function buildMemoryEventIngestHandler(
       //      Promise.allSettled over every scope, so a large event does not slam the
       //      shared connection pool with concurrent inserts (#965 round-4, codex P2);
       //  (3) per-scope try/catch — one scope's transient failure neither skips the
-      //      rest NOR rethrows out of the handler. A rethrow would trigger pg-boss
-      //      redelivery and re-run the PAID, non-idempotent addEventMemory above
-      //      (duplicate cost + a persistent duplicate mem0 row, reconcile being
-      //      human-gated to KEEP_BOTH).
+      //      rest nor delays the durable reconcile path above. Redelivery is now
+      //      protected by the add_started marker and exact event lookup.
       // Backstop is PARTIAL: listStaleBriefScopes (the daily 03:00 sweep) re-scans
       // only scopes that ALREADY have a memory_brief_note row, so a first-appearance
       // scope (or a truncated one) loses just this batch's regen; scopes with an
@@ -451,47 +459,6 @@ export function buildMemoryEventIngestHandler(
         } catch (err) {
           console.warn(
             `[memory_brief_bridge] subject bridge failed for event ${row.id}; nightly sweep will backstop`,
-            err,
-          );
-        }
-      }
-
-      if (!admitToExtraction) continue;
-      // Thread the extracted memory text + created_ms (the event's time) so the
-      // reconcile job searches by text, not by an opaque UUID (see ReconcileMemInput).
-      const createdMs = row.created_at.getTime();
-      const newMemories: ReconcileMemInput[] = (memResult?.results ?? [])
-        .filter(
-          (m): m is { id: string; memory: string } => typeof m.id === 'string' && m.id.length > 0,
-        )
-        .map((m) => ({
-          id: m.id,
-          text: typeof m.memory === 'string' ? m.memory : '',
-          created_ms: createdMs,
-          kind: editedConjecture ? CONJECTURE_EDIT_MEMORY_KIND : row.kind,
-        }));
-      if (newMemories.length > 0) {
-        // YUK-729 — same rationale as the brief-regen swallow above: a transient
-        // reconcile-enqueue failure must NOT rethrow and force a whole-job retry
-        // that re-pays for the addEventMemory extraction + spawns a duplicate mem0
-        // row. But the failure mode is HARSHER than brief regen: the reconcile queue
-        // is event-driven with NO cron sweep (see MEMORY_RECONCILE_QUEUE note above),
-        // and the queue's retryLimit is a JOB-layer control that never covers a failed
-        // boss.send — so a dropped enqueue leaves this batch's mem0 rows permanently
-        // un-reconciled with ZERO automatic recovery path. Per the ticket boundary we
-        // add no new recovery infra; instead this is logged at ERROR with enough
-        // context (event id + the extracted memory ids + kinds + user) that the error
-        // log IS the manual-compensation hook — an operator can re-run reconcile for
-        // those ids or inspect/merge the mem0 rows by hand.
-        try {
-          await enqueueMemoryReconcile(boss, newMemories, 'self');
-        } catch (err) {
-          console.error(
-            `[memory_reconcile] reconcile enqueue FAILED for event ${row.id}; ${newMemories.length} mem0 row(s) left permanently un-reconciled with NO auto-recovery — memory_ids=[${newMemories
-              .map((m) => m.id)
-              .join(
-                ', ',
-              )}] kinds=[${newMemories.map((m) => m.kind).join(', ')}] user=self. Manual compensation: re-enqueue reconcile for these ids or merge the mem0 rows by hand.`,
             err,
           );
         }
@@ -954,7 +921,7 @@ export function buildMemoryReconcileHandler(
       } catch (err) {
         if (isDirectProviderAttemptInvariantError(err)) throw err;
         // Retryable failures (GLM timeout / 5xx / transient provider error) MUST
-        // propagate so pg-boss retries the job (enqueueMemoryReconcile sets
+        // propagate so pg-boss retries the job (the durable dispatcher sets
         // retryLimit/retryDelay/retryBackoff). The retry is safe: the common
         // RetryableError site is judge() (BEFORE any planned rows are inserted),
         // so the batch simply re-runs; and any planned rows from a PRIOR run
@@ -1086,19 +1053,45 @@ export function buildMemoryIngestOutboxPollHandler(
 // Calls the same per-batch poller in a loop until a cycle returns empty,
 // with a safety cap to prevent runaway loops on pathological state.
 const OUTBOX_RECOVER_MAX_CYCLES = 1000;
+export async function runMemoryRecoveryFloor(legs: {
+  readonly ingest: () => Promise<void>;
+  readonly reconcile: () => Promise<void>;
+}): Promise<void> {
+  const errors: unknown[] = [];
+  try {
+    await legs.ingest();
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    await legs.reconcile();
+  } catch (error) {
+    errors.push(error);
+  }
+  if (errors.length > 0) throw errors[0];
+}
+
 export function buildMemoryIngestOutboxRecoverHandler(
   db: Db,
-  boss: Pick<BossLike, 'send'>,
+  boss: Pick<BossLike, 'send' | 'getJobById'>,
+  mode = memoryReconcileHandoffMode(),
 ): (jobs: Job<object>[]) => Promise<void> {
   const drainOnce = buildMemoryIngestOutboxPollHandler(db, boss);
   return async () => {
-    for (let cycle = 0; cycle < OUTBOX_RECOVER_MAX_CYCLES; cycle += 1) {
-      const before = await countPendingIngest(db);
-      if (before === 0) return;
-      await drainOnce([]);
-      const after = await countPendingIngest(db);
-      if (after >= before) return; // no progress — bail to avoid infinite loop
-    }
+    await runMemoryRecoveryFloor({
+      ingest: async () => {
+        for (let cycle = 0; cycle < OUTBOX_RECOVER_MAX_CYCLES; cycle += 1) {
+          const before = await countPendingIngest(db);
+          if (before === 0) break;
+          await drainOnce([]);
+          const after = await countPendingIngest(db);
+          if (after >= before) break;
+        }
+      },
+      reconcile: async () => {
+        await recoverMemoryReconcileHandoffs(db, boss, mode);
+      },
+    });
   };
 }
 
@@ -1165,7 +1158,7 @@ export async function registerMemoryHandlers(
   );
   await boss.schedule(MEMORY_INGEST_OUTBOX_RECOVER_QUEUE, '0 * * * *', {}, { tz: 'UTC' });
 
-  // P2 (YUK-342): reconcile queue — event-driven (no cron schedule).
+  // Reconcile queue — event-driven, with recovery attached to the hourly floor.
   // memory_reconcile is newer than the original YUK-248 inventory but has the
   // same paid-LLM failure mode, so keep the invariant exhaustive for every
   // queue owned by this registrar.

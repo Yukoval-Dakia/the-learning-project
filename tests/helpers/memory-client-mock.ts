@@ -8,13 +8,25 @@ import { vi } from 'vitest';
 //
 // Distinct from the file-local mem0LikeMock in client.test.ts: Mem0Like is the
 // INNER mem0 surface (add/search/delete/history/get) that createMemoryClient wraps;
-// MemoryClient is the OUTER project surface (addEventMemory/search/hardDelete/
+// MemoryClient is the OUTER project surface (addEventMemoryOnce/search/hardDelete/
 // history/restoreVerbatim). Different types — this one stays a shared helper, that
 // one stays file-local (V8).
 export function memoryClientMock(overrides: Partial<MemoryClient> = {}): MemoryClient {
   return {
-    addEventMemory: vi.fn(async () => ({ results: [] })),
-    addVerbatimOnce: vi.fn(async () => ({ results: [] })),
+    findByEventId: vi.fn(async () => ({ results: [] })),
+    addEventMemoryOnce:
+      overrides.addEventMemoryOnce ??
+      vi.fn(async (_event, _providerOperation, beforeProviderAdd) => {
+        await beforeProviderAdd();
+        return {
+          result: { results: [] },
+          resolution: 'provider_result' as const,
+        };
+      }),
+    addVerbatimOnce: vi.fn(async (_text, _metadata, _projectionKey, _providerOperation, before) => {
+      await before();
+      return { results: [] };
+    }),
     search: vi.fn(async () => ({ results: [] })),
     hardDelete: vi.fn(async () => {}),
     history: vi.fn(async () => []),

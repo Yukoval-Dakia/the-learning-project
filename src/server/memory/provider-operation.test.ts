@@ -302,4 +302,80 @@ describe('Mem0 opaque provider operation', () => {
       },
     );
   });
+
+  it('allows a safe retry when reservation fails before provider start', async () => {
+    const reserveFailure = new Error('provider start was not reserved');
+    let lifecycleCount = 0;
+    const afterProviderStartReserved = vi.fn(async () => {});
+    const execute = vi.fn(async () => 'provider-result');
+    const createLifecycle: Mem0OpaqueLifecycleFactory = (input) => {
+      lifecycleCount += 1;
+      const current = lifecycleCount;
+      return {
+        identity: input.identity,
+        acquire: async () => ({
+          admission: 'acquired',
+          reserveProviderStart: async () => {
+            if (current === 1) throw reserveFailure;
+          },
+          recordExternalRequestId: async () => {},
+          finish: async () => 'settled',
+        }),
+      };
+    };
+    const context = createMem0OpaqueOperationContext({
+      caller: 'worker',
+      deadlineAt: new Date('2030-01-01T00:00:00.000Z'),
+      operationAnchor: 'safe-pre-reserve-retry',
+      mode: 'observe',
+      createLifecycle,
+    });
+    const options = {
+      providerStartFence: 'operation_kind' as const,
+      afterProviderStartReserved,
+    };
+
+    await expect(
+      executeMem0OpaqueOperation(context, 'add_inferred', execute, options),
+    ).rejects.toBe(reserveFailure);
+    await expect(
+      executeMem0OpaqueOperation(context, 'add_inferred', execute, options),
+    ).resolves.toBe('provider-result');
+
+    expect(afterProviderStartReserved).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it('does not settle a post-reserve hook failure as a provider failure', async () => {
+    const hookFailure = new Error('durable add marker unavailable');
+    const finish = vi.fn<ProviderAttemptHandle['finish']>(async () => 'settled');
+    const execute = vi.fn(async () => 'unreachable');
+    const context = createMem0OpaqueOperationContext({
+      caller: 'worker',
+      deadlineAt: new Date('2030-01-01T00:00:00.000Z'),
+      operationAnchor: 'ambiguous-post-reserve-hook',
+      mode: 'observe',
+      createLifecycle: (input) => ({
+        identity: input.identity,
+        acquire: async () => ({
+          admission: 'acquired',
+          reserveProviderStart: async () => {},
+          recordExternalRequestId: async () => {},
+          finish,
+        }),
+      }),
+    });
+
+    await expect(
+      executeMem0OpaqueOperation(context, 'add_verbatim', execute, {
+        providerStartFence: 'operation_kind',
+        afterProviderStartReserved: async () => {
+          throw hookFailure;
+        },
+      }),
+    ).rejects.toBe(hookFailure);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(finish).not.toHaveBeenCalled();
+  });
 });
