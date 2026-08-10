@@ -15,16 +15,16 @@
 - **F2.3 / YUK-861 NO-GO docs 已合并 main。** squash `f84fe3bc`；Verify transactional outbox、Notes post-commit
   singleton/readback、Memory batch digest/cursor/fail-closed receipt 差异过大；协议保持 owner-local，
   callback workflow shell 明确拒绝。详见 ADR-0052；Linear 已取消为 not justified。
-- **F2.4 / YUK-860 SDK terminal adaptation 已完成作者态。** 新 pure collector 统一 assistant
-  usage/thinking 累加与 result terminal evidence；`runTask` 每次 retry、`streamTask`、
-  `streamTaskCollecting` 均为 lifecycle-local 实例。已进入 PR delivery；fresh exact-head CI、独立 review
-  与 merge 待执行，未部署。
+- **F2.4 / YUK-860 已合并 main。** PR #1177 squash `ce082f54`；exact-head CI
+  `31371088396` attempt 2 green。新 pure collector 统一 assistant usage/thinking 累加与
+  result terminal evidence；caller 的 retry、abort、partial、settlement 与 logging policy 保持独立。
+  本地 runtime gates 未运行，未部署。
 - **生产边界不变：** YUK-858 未部署；YUK-832 HOLD 与 YUK-842 observe 未改变。
 
 ## NEXT
 
-1. 以 exact-head GitHub CI 与独立 review 收口 YUK-860；不改变 caller 的 retry、abort、partial、
-   settlement 或 logging policy。
+1. **F3.1 / YUK-862 是下一实现 lane（当前 Todo）。** 从 `ce082f54` 刷新 DomainTool registry / MCP
+   bridge 路径与既有 schema checks，再开始 output-schema enforcement；不夹带 owner migration。
 2. YUK-858 rollout 仍需独立授权与真实观察证据，顺序 `observe -> write -> recover`；回滚为
    `recover -> drain -> observe`。
 3. 继续执行 Linear capture gate；generic handoff core 只有 ADR-0052 Future gates 全满足才可重开。
@@ -33,9 +33,8 @@
 
 - Production rollout / observation 需独立授权。
 - YUK-832 / YUK-839 保持 fail-closed HOLD；YUK-842 production 保持 observe。
-- F2.3 结案为 YUK-861 NO-GO；F2.5–F4 保持 open，不并入 YUK-858。
+- F2.3 结案为 YUK-861 NO-GO；F2.5–F4 保持 open，不并入 YUK-862。
 
 ## BLOCKED-ON
 
 - Production blocked on独立部署授权和真实观察证据。
-- YUK-860 delivery blocked on fresh exact-head GitHub CI、独立 review 与 merge。
