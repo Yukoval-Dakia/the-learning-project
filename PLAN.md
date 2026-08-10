@@ -7,31 +7,33 @@
 
 - **F2.1 / YUK-857 已合并 main。** PR #1174 merge SHA `3d3c89c5`；Notes append-only
   handoff、deterministic dispatch/readback 与 shared recovery floor 已进入主线。未部署。
-- **F2.2 / YUK-858 PR #1175 current head 已含实现与 CI repairs，并已 committed/pushed。**
-  Memory-owned event v1
+- **F2.2 / YUK-858 已合并 main。** PR #1175 merge SHA `136faec8224c0f0136532c748aea1bbc689ca7b7`；
+  exact-head CI `31362608190` green。Memory-owned event v1
   fenced provider-start 后置 add marker、ingest completion/intents、exact deterministic
   dispatch/readback、append-only recovery cursor + bounded wrap scan 第二 leg 与 strict
   `observe|write|recover|drain` 模式已实现；没有 table/migration/new cron。
-- **最新 prior exact-head CI 反馈已修：** PostgreSQL strict-shape key count、trigger mock
-  `(db,input)` 签名、provider audit caller evidence 与 Map size assertions；owner 禁止本地
-  test/typecheck/build/audit/migration，runtime 结论只由 fresh current-head GitHub CI 给出。
-- **生产边界不变：** 未部署；YUK-832 HOLD 与 YUK-842 observe 未改变。
+- **F2.3 / YUK-861 架构结论为 NO-GO。** Verify transactional outbox、Notes post-commit
+  singleton/readback、Memory batch digest/cursor/fail-closed receipt 差异过大；协议保持 owner-local，
+  callback workflow shell 明确拒绝。详见 ADR-0052；Linear closeout 在本 docs 交付合并后执行。
+- **生产边界不变：** YUK-858 未部署；YUK-832 HOLD 与 YUK-842 observe 未改变。
 
 ## NEXT
 
-1. 等待 fresh current-head CI 验证 unit/DB/typecheck/build/audits；不预称 green。
-2. 确认无 unresolved P0/P1 review findings 后 merge；P2/minor/nit/refactor 不阻塞。
-3. 执行完整 Linear capture gate：duplicate search、actionable follow-up 创建/更新或明确无项、
-   YUK-858 issue status 与实际 merge/rollout 状态校准；rollout 顺序 `observe -> write -> recover`。
+1. 以 exact-head GitHub CI、独立 review 和 merge 收口 YUK-861 docs-only 交付，再把 Linear
+   YUK-861 关闭为 not justified。
+2. **F2.4 / YUK-860 是下一实现 lane。** Linear 当前 scope 已核验为统一 Agent SDK terminal
+   evidence adaptation；它独立于 F2.3，不重开 durable handoff 抽象。
+3. YUK-858 rollout 仍需独立授权与真实观察证据，顺序 `observe -> write -> recover`；回滚为
+   `recover -> drain -> observe`。
+4. 继续执行 Linear capture gate；generic handoff core 只有 ADR-0052 Future gates 全满足才可重开。
 
 ## PARKED
 
-- Production rollout / observation 需独立授权；回滚顺序 `recover -> drain -> observe`。
+- Production rollout / observation 需独立授权。
 - YUK-832 / YUK-839 保持 fail-closed HOLD；YUK-842 production 保持 observe。
-- F2.3–F4 保持 open，不并入 YUK-858。
+- F2.3 结案为 YUK-861 NO-GO；F2.5–F4 保持 open，不并入 YUK-858。
 
 ## BLOCKED-ON
 
-- Delivery blocked on fresh current-head CI、无 unresolved P0/P1 review findings、merge 与
-  完整 Linear capture gate。
 - Production blocked on独立部署授权和真实观察证据。
+- YUK-861 docs delivery blocked on exact-head GitHub CI、独立 review 与 merge。
