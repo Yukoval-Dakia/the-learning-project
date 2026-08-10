@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import type { MemoryClient, MemoryEventInput } from './client';
-import { buildMemoryEventIngestHandler } from './triggers';
+import { MEMORY_RECONCILE_QUEUE, buildMemoryEventIngestHandler } from './triggers';
 
 function ingestJob(eventId: string): Job<{ event_id: string }> {
   return {
@@ -137,7 +137,7 @@ describe('memory reconcile ingest handoff modes and crashes', () => {
     expect(addEventMemoryOnce).toHaveBeenCalledTimes(2);
     expect(providerAdd).toHaveBeenCalledOnce();
     expect(externalMemories.size).toBe(1);
-    expect(send).toHaveBeenCalledOnce();
+    expect(send.mock.calls.filter(([queue]) => queue === MEMORY_RECONCILE_QUEUE)).toHaveLength(1);
     const rows = await db
       .select({ payload: event.payload })
       .from(event)
