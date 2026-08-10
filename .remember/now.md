@@ -20,13 +20,14 @@
   `860e39cf` 的 exact-head CI run `31343456441` 已全绿，但后续 PR review 确认 provider-start
   boundary、跨 recovery job 无界 paid retry、claim recovery 吞错三条 P1。repair commit
   `01dd3b68` 已推送 PR #1174，并经 correctness / quality / security static review PASS；该 SHA
-  的 CI run `31345451148` 已启动，但不是最终交付证据；本次 docs-only sync 将形成更新 head，
-  仍待 fresh exact-head CI/review/merge。未做本地 runtime 验证。
+  的 CI run `31345451148` 已启动，但不是最终交付证据。PR 当前 head（包含本 handoff sync）已
+  commit/push；只有该 current head 的 fresh exact-head CI/review/merge 可作最终证据。未做本地
+  runtime 验证。
 - **运行状态：**没有 deployment；YUK-832 HOLD 与 YUK-842 observe 均未改变。
 
 ## NEXT
 
-1. 监控本次 docs-only 新 exact-head GitHub CI 与独立 review。
+1. 监控 PR current head 的 exact-head GitHub CI 与独立 review。
 2. 只以 fresh exact-head 结果验证 tests/typecheck/build。
 3. CI/review 全绿后 merge、同步 Linear；F2.2–F4 继续保持 open。
 
