@@ -1,15 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 import type { CapabilityManifest } from '@/kernel/manifest';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { __resetRegistryForTests, getTool, registerTool } from '@/server/ai/tools/registry';
 import type { DomainTool } from '@/server/ai/tools/types';
 
-const fakeTool = (name: string) =>
-  ({ name, description: name, effect: 'read', execute: vi.fn() }) as unknown as DomainTool<
-    unknown,
-    unknown
-  >;
+const fakeTool = (name: string): DomainTool<unknown, unknown> => ({
+  name,
+  description: name,
+  effect: 'read',
+  inputSchema: z.unknown(),
+  outputSchema: z.unknown(),
+  costClass: 'local',
+  execute: vi.fn(),
+  summarize: () => name,
+  mirrorEvent: 'never',
+});
 
 const cap = (tools: CapabilityManifest['copilotTools']): CapabilityManifest => ({
   name: 'x',
