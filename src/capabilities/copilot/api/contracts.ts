@@ -115,6 +115,14 @@ const CopilotPrimaryViewSchema = z.discriminatedUnion('source', [
   z.object({ source: z.literal('ephemeral_html'), ref: z.string() }),
 ]);
 
+const CopilotTurnToolCallSchema = z.object({
+  toolName: z.string(),
+  input: z.record(z.string(), z.unknown()),
+  summary: z.string().optional(),
+  errorReason: z.string().optional(),
+  status: z.enum(['done', 'failed']),
+});
+
 export const CopilotTurnSchema = z.object({
   role: z.enum(['user', 'ai', 'tombstone']),
   text: z.string(),
@@ -131,6 +139,7 @@ export const CopilotTurnSchema = z.object({
     })
     .optional(),
   primary_view: CopilotPrimaryViewSchema.optional(),
+  tool_calls: z.array(CopilotTurnToolCallSchema).optional(),
 });
 
 export const CopilotTurnsResponseSchema = z.object({ turns: z.array(CopilotTurnSchema) });

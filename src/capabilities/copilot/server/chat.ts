@@ -640,6 +640,14 @@ export interface CopilotChatDeps {
     input: Record<string, unknown>;
     toolUseId?: string;
   }) => void;
+  /** YUK-457 — per-call tool-result sink for inline SSE done-state cards. Fires after
+   * DomainTool summarize with the human-facing summary string. */
+  onToolResultEvent?: (result: {
+    toolName: string;
+    input: Record<string, unknown>;
+    summary: string;
+    errorReason?: string;
+  }) => void;
   /** Report-only spawn-budget observation sink. Existing tool/cost logs stay authoritative. */
   onSpawnBudgetObservation?: (observation: SpawnBudgetObservation) => void;
   /** Route-owned absolute edge deadline shared with the runner lifecycle. */
@@ -1145,6 +1153,7 @@ async function runCopilotChatImpl(
       if (toolTrace.length >= COPILOT_EVIDENCE_MAX_TRACE_CALLS) return;
       toolTrace.push(result);
     },
+    onToolComplete: deps.onToolResultEvent,
   });
 
   // YUK-198 — optionally fold in the remote Tavily MCP (web grounding) for the

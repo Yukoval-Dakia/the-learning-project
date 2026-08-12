@@ -500,6 +500,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
           // YUK-457 — per-call tool-use frames for the SPA card renderer.
           // Payload is sanitized at the runner seam; only name + serializable input cross.
           onToolUseEvent: (call) => writeFrame('tool_use', call),
+          onToolResultEvent: (result) => writeFrame('tool_result', result),
           providerSessionDeadlineAt,
         },
         req.signal,

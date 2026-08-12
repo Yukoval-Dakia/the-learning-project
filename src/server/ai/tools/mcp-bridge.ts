@@ -136,6 +136,17 @@ export interface BuildMcpServerOptions {
   /** Observes the exact agent-visible result after input interception and output decoration. */
   onResult?: (result: ToolExecutionResultObservation) => Promise<void> | void;
   /**
+   * YUK-457 — fires after summarize completes with the human-facing summary string.
+   * Used by Copilot inline SSE to render done-state tool-use cards. Failures are
+   * swallowed so visibility cannot abort paid work.
+   */
+  onToolComplete?: (result: {
+    toolName: string;
+    input: Record<string, unknown>;
+    summary: string;
+    errorReason?: string;
+  }) => void;
+  /**
    * Optional per-call input interceptor (P5.1 / YUK-143). Runs AFTER
    * `beforeExecute` clears and BEFORE execute, only on the happy path. Receives
    * the zod-parsed args and returns the (possibly limit-capped) args plus an
@@ -279,6 +290,19 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
         }
       } else {
         summary = `error: ${errorReason}`;
+      }
+
+      if (opts.onToolComplete) {
+        try {
+          opts.onToolComplete({
+            toolName: dt.name,
+            input: (execInput ?? {}) as Record<string, unknown>,
+            summary,
+            ...(errorReason ? { errorReason } : {}),
+          });
+        } catch {
+          // Visibility failures must never abort paid work.
+        }
       }
 
       const latencyMs = Date.now() - startedAt;

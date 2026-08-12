@@ -168,4 +168,30 @@ describe('replayToMessages', () => {
     expect(out[1]?.primary_view).toEqual({ source: 'ephemeral_html', ref: '<div>互动内容</div>' });
     expect(out[2]?.primary_view).toBeUndefined();
   });
+
+  it('forwards tool_calls through replay for persisted tool-use mirrors', () => {
+    const out = replayToMessages([
+      turn({
+        role: 'ai',
+        text: '近 14 天错题集中在通假字。',
+        event_id: 'reply_tools',
+        tool_calls: [
+          {
+            toolName: 'query_mistakes',
+            input: { limit: 8 },
+            summary: 'mistakes · 8 行 · 3 道过期',
+            status: 'done',
+          },
+        ],
+      }),
+    ]);
+    expect(out[0]?.tool_calls).toEqual([
+      {
+        toolName: 'query_mistakes',
+        input: { limit: 8 },
+        summary: 'mistakes · 8 行 · 3 道过期',
+        status: 'done',
+      },
+    ]);
+  });
 });

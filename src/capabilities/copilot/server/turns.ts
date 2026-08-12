@@ -22,7 +22,7 @@ import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { findReusableCopilotConversation } from '@/server/session/conversation';
-import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 
@@ -89,6 +89,17 @@ export interface CopilotTurn {
   skill_context?: CopilotTurnSkillContext;
   /** YUK-307 — present for AI turns whose reply nominated a hero deliverable (§2.3). */
   primary_view?: CopilotPrimaryView;
+  /** YUK-457 — per-call tool-use mirrors chained to this turn's ask/chip parent. */
+  tool_calls?: CopilotTurnToolCall[];
+}
+
+/** YUK-457 — replay projection of a persisted tool_use mirror event. */
+export interface CopilotTurnToolCall {
+  toolName: string;
+  input: Record<string, unknown>;
+  summary?: string;
+  errorReason?: string;
+  status: 'done' | 'failed';
 }
 
 // The ONLY revert root the endpoint accepts (owner-locked). A copilot_chip_trigger is a
@@ -197,6 +208,66 @@ function replySkillContext(payload: Record<string, unknown>): CopilotTurnSkillCo
   return { skill: s.skill, ref: { kind: r.kind, id: r.id } };
 }
 
+function parseToolUseMirror(
+  payload: Record<string, unknown>,
+  outcome: string | null,
+): CopilotTurnToolCall | null {
+  const toolName = typeof payload.tool_name === 'string' ? payload.tool_name : null;
+  if (!toolName) return null;
+  const rawArgs = payload.args;
+  const input =
+    rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
+      ? (rawArgs as Record<string, unknown>)
+      : {};
+  const summary =
+    typeof payload.result_summary === 'string' && payload.result_summary.length > 0
+      ? payload.result_summary
+      : undefined;
+  const errorReason =
+    typeof payload.error_reason === 'string' && payload.error_reason.length > 0
+      ? payload.error_reason
+      : undefined;
+  const failed = outcome === 'failure' || errorReason !== undefined;
+  return {
+    toolName,
+    input,
+    ...(summary ? { summary } : {}),
+    ...(errorReason ? { errorReason } : {}),
+    status: failed ? 'failed' : 'done',
+  };
+}
+
+async function selectToolCallsForReplay(
+  dbArg: DbLike,
+  parentEventIds: readonly string[],
+): Promise<Map<string, CopilotTurnToolCall[]>> {
+  if (parentEventIds.length === 0) return new Map();
+  const rows = await dbArg
+    .select({
+      caused_by: event.caused_by_event_id,
+      payload: event.payload,
+      outcome: event.outcome,
+      created_at: event.created_at,
+      id: event.id,
+    })
+    .from(event)
+    .where(
+      and(eq(event.action, 'tool_use'), inArray(event.caused_by_event_id, [...parentEventIds])),
+    )
+    .orderBy(asc(event.created_at), asc(event.id));
+
+  const byParent = new Map<string, CopilotTurnToolCall[]>();
+  for (const row of rows) {
+    if (!row.caused_by) continue;
+    const parsed = parseToolUseMirror((row.payload ?? {}) as Record<string, unknown>, row.outcome);
+    if (!parsed) continue;
+    const list = byParent.get(row.caused_by) ?? [];
+    list.push(parsed);
+    byParent.set(row.caused_by, list);
+  }
+  return byParent;
+}
+
 type CopilotTurnRow = Pick<
   typeof event.$inferSelect,
   'id' | 'action' | 'payload' | 'created_at' | 'caused_by_event_id'
@@ -225,13 +296,15 @@ async function projectCopilotTurnRows(
   // All typed user-ask ids in the window — the ONLY valid revert roots. A reply's caused_by may be a
   // user_ask OR a chip_trigger; only the former (and in-window) may surface a checkpoint_event_id.
   const askIds = new Set(rows.filter((row) => row.action === USER_ASK_ACTION).map((row) => row.id));
-  // TchmW — these two reads are independent (correction statuses over the window vs the materializing
-  // tool_use scan over the ask ids); run them concurrently.
-  const [statuses, asksWithMaterializingTool] = await Promise.all([
+  const toolCallParentIds = [...new Set([...askIds, ...replyParentIds])];
+  // TchmW — these reads are independent (correction statuses over the window vs the materializing
+  // tool_use scan over the ask ids vs replay tool-call mirrors); run them concurrently.
+  const [statuses, asksWithMaterializingTool, toolCallsByParent] = await Promise.all([
     getCorrectionStatuses(dbArg, [...new Set([...rows.map((row) => row.id), ...replyParentIds])]),
     // YUK-497 wave-4 — asks whose turn called a MATERIALIZING tool (author_question / author_artifact
     // / update_artifact / write_quiz) wrote a domain row cascade-revert can't compensate.
     selectAsksWithMaterializingToolCall(dbArg, [...askIds]),
+    selectToolCallsForReplay(dbArg, toolCallParentIds),
   ]);
   // Retracted roots include out-of-window parents: a reply under such a parent is skipped (its parent
   // row isn't loaded, so it renders as a hidden skip, not a tombstone) rather than shown stale.
@@ -324,6 +397,11 @@ async function projectCopilotTurnRows(
       if (skillTurn) turn.skill_turn = skillTurn;
       if (skillContext) turn.skill_context = skillContext;
       if (primaryView) turn.primary_view = primaryView;
+      const parentId = row.caused_by_event_id;
+      if (parentId) {
+        const toolCalls = toolCallsByParent.get(parentId);
+        if (toolCalls && toolCalls.length > 0) turn.tool_calls = toolCalls;
+      }
       turns.push(turn);
     } else {
       const text = userText(payload);

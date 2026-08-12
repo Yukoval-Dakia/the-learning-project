@@ -158,7 +158,12 @@ async function writeDurableFailureReply(
 // YUK-497 wave-4 — mirror an mcp-bridge tool_use event chained to the ask (caused_by), carrying the
 // tool_name (the persisted key the anchor-suppression reads; tool_use has session_id null in prod and
 // is queried by caused_by, not session).
-async function writeToolUse(causedBy: string, toolName: string, at: Date) {
+async function writeToolUse(
+  causedBy: string,
+  toolName: string,
+  at: Date,
+  extra?: { summary?: string; errorReason?: string; outcome?: 'success' | 'failure' },
+) {
   const id = `tool_use_${createId()}`;
   writtenEventIds.push(id);
   await writeEvent(db, {
@@ -169,8 +174,13 @@ async function writeToolUse(causedBy: string, toolName: string, at: Date) {
     action: 'tool_use',
     subject_kind: 'query',
     subject_id: id,
-    outcome: 'success',
-    payload: { tool_name: toolName, args: {} },
+    outcome: extra?.outcome ?? 'success',
+    payload: {
+      tool_name: toolName,
+      args: { limit: 8 },
+      ...(extra?.summary ? { result_summary: extra.summary } : {}),
+      ...(extra?.errorReason ? { error_reason: extra.errorReason } : {}),
+    },
     caused_by_event_id: causedBy,
     created_at: at,
   });
@@ -794,6 +804,35 @@ describe('getRecentCopilotTurns', () => {
       expect(aiTurn?.text).toBe(`坏形状回复 ${i}`);
       expect(aiTurn?.primary_view).toBeUndefined();
     }
+  });
+
+  // YUK-457 — tool_use mirror events chained to the ask round-trip on the AI turn.
+  it('replay surfaces tool_calls from persisted tool_use mirrors', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    const t0 = new Date('2026-06-08T12:00:00.000Z');
+    const askId = await writeAsk('今天该复习哪些？', sessionId, t0);
+    await writeToolUse(askId, 'query_mistakes', new Date(t0.getTime() + 500), {
+      summary: 'mistakes · 8 行 · 3 道过期',
+    });
+    const replyId = await writeReply(
+      '近 14 天错题集中在通假字。',
+      sessionId,
+      askId,
+      new Date(t0.getTime() + 1000),
+    );
+
+    const turns = await getRecentCopilotTurns(db, { now });
+    const aiTurn = turns.find((t) => t.event_id === replyId);
+    expect(aiTurn?.tool_calls).toEqual([
+      {
+        toolName: 'query_mistakes',
+        input: { limit: 8 },
+        summary: 'mistakes · 8 行 · 3 道过期',
+        status: 'done',
+      },
+    ]);
+    expect(turns.find((t) => t.event_id === askId)?.tool_calls).toBeUndefined();
   });
 });
 
