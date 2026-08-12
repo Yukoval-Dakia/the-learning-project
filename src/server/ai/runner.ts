@@ -229,6 +229,18 @@ export interface RunTaskCtx {
    */
   onTaskEvent?: TaskEventObserver;
   /**
+   * YUK-457 — streaming tool-use observer. Called synchronously for each
+   * tool_use block in an assistant message during streamTaskCollecting. Receives
+   * the sanitized call surface (tool name + serializable input); raw SDK internals
+   * never cross this seam. Only fires during streaming; runTask/runAgentTask omit it.
+   * Failures are swallowed so visibility cannot abort paid work.
+   */
+  onToolUse?: (call: {
+    toolName: string;
+    input: Record<string, unknown>;
+    toolUseId?: string;
+  }) => void;
+  /**
    * YUK-575 (N5/MF-A) seam: per-call budget override for the durable copilot run.
    * The inline `CopilotTask` registry budget (maxIterations:6 / timeout:60_000) is
    * the model-execution share of the retained sync path; the Hono composition
@@ -1154,13 +1166,26 @@ export async function streamTaskCollecting(
           const stepLatencyMs = Date.now() - stepStartTime;
           const blocks = (msg.message.content ?? []) as ContentBlock[];
           for (const block of blocks) {
-            if (block.type === 'tool_use' && ctx.autoLogToolCalls !== false) {
-              await lifecycle.recordToolCall({
-                toolName: block.name,
-                inputJson: (block.input ?? {}) as Record<string, unknown>,
-                iteration,
-                latencyMs: stepLatencyMs,
-              });
+            if (block.type === 'tool_use') {
+              if (ctx.autoLogToolCalls !== false) {
+                await lifecycle.recordToolCall({
+                  toolName: block.name,
+                  inputJson: (block.input ?? {}) as Record<string, unknown>,
+                  iteration,
+                  latencyMs: stepLatencyMs,
+                });
+              }
+              if (ctx.onToolUse) {
+                try {
+                  ctx.onToolUse({
+                    toolName: block.name,
+                    input: (block.input ?? {}) as Record<string, unknown>,
+                    toolUseId: block.id,
+                  });
+                } catch {
+                  // Visibility failures must never abort paid work.
+                }
+              }
             }
           }
           stepStartTime = Date.now();

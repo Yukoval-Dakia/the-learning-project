@@ -497,6 +497,9 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
           // Task lifecycle is projected onto a strict public payload allowlist
           // in the service layer. It shares this FIFO with main-voice deltas.
           onSubtaskEvent: (event) => writeFrame('subtask', event),
+          // YUK-457 — per-call tool-use frames for the SPA card renderer.
+          // Payload is sanitized at the runner seam; only name + serializable input cross.
+          onToolUseEvent: (call) => writeFrame('tool_use', call),
           providerSessionDeadlineAt,
         },
         req.signal,

@@ -558,6 +558,7 @@ type StreamAgentTaskFn = (
     hooks?: Parameters<typeof streamTaskCollecting>[2]['hooks'];
     canUseTool?: Parameters<typeof streamTaskCollecting>[2]['canUseTool'];
     onTaskEvent?: Parameters<typeof streamTaskCollecting>[2]['onTaskEvent'];
+    onToolUse?: Parameters<typeof streamTaskCollecting>[2]['onToolUse'];
   },
   onDelta: (text: string) => void,
 ) => Promise<CopilotStreamResult>;
@@ -631,6 +632,14 @@ export interface CopilotChatDeps {
   copilotSubagentEnabled?: boolean;
   /** Sanitized task lifecycle sink used by inline SSE; never receives SDK prose/reasoning. */
   onSubtaskEvent?: (event: CopilotSubtaskEvent) => Promise<void> | void;
+  /** YUK-457 — per-call tool-use sink for inline SSE rendering. Receives only the sanitized
+   * call surface (tool name + serializable input); never prose/reasoning/thinking blocks.
+   * Failures are swallowed so visibility cannot abort paid work. */
+  onToolUseEvent?: (call: {
+    toolName: string;
+    input: Record<string, unknown>;
+    toolUseId?: string;
+  }) => void;
   /** Report-only spawn-budget observation sink. Existing tool/cost logs stay authoritative. */
   onSpawnBudgetObservation?: (observation: SpawnBudgetObservation) => void;
   /** Route-owned absolute edge deadline shared with the runner lifecycle. */
@@ -1219,6 +1228,7 @@ async function runCopilotChatImpl(
             }
           : {}),
         ...(onTaskEvent ? { onTaskEvent } : {}),
+        ...(deps.onToolUseEvent ? { onToolUse: deps.onToolUseEvent } : {}),
         // YUK-284 (C2) — spread-when-present: when the copilot SKILL.md is absent
         // (copilotSkills === undefined) the ctx omits `skills` entirely, byte-for-byte
         // the pre-C2 shape (runner ctx.skills ?? [] unchanged → no regression).

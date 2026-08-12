@@ -181,6 +181,17 @@ export interface ChatMessage {
   // YUK-757 — public child lifecycle only. The raw nested-agent transcript,
   // prompt and reasoning never enter ChatMessage.
   subtasks?: CopilotSubtaskView[];
+  // YUK-457 — per-call tool-use records streamed live from SSE tool_use events.
+  // Each entry is appended as the runner emits it; cleared and replaced by the
+  // terminal `reply` event (tool call history lives on the AI turn only).
+  tool_calls?: ToolCallRecord[];
+}
+
+/** YUK-457 — a single streamed tool-use record. */
+export interface ToolCallRecord {
+  toolName: string;
+  input: Record<string, unknown>;
+  toolUseId?: string;
 }
 
 // Quick-chips are user-readable prompts; they send via triggered_by:'chat'
@@ -328,6 +339,28 @@ export const MessageRow = memo(function MessageRow({
             case). T5 ribbon dosage: no technical ribbon on a hero. */}
         {m.role === 'ai' && m.primary_view ? (
           <CopilotHeroCard primaryView={m.primary_view} navigate={navigate} />
+        ) : null}
+        {/* YUK-457 — per-call tool-use cards, rendered above the subtask list.
+            Each card is appended live as the agent calls a tool; they persist on
+            the finalized message so the full call log stays visible after the turn
+            completes. Cards are compact (no args expanded by default). */}
+        {m.role === 'ai' && m.tool_calls && m.tool_calls.length > 0 ? (
+          <div className="flex flex-col gap-[4px]" data-testid="copilot-tool-use-list">
+            {m.tool_calls.map((call, idx) => (
+              <div
+                key={call.toolUseId ?? `${call.toolName}-${idx}`}
+                data-testid="copilot-tool-use-card"
+              >
+                <ToolUseCard
+                  toolName={call.toolName}
+                  status={m.streaming ? 'running' : 'done'}
+                  args={Object.keys(call.input).length > 0 ? call.input : undefined}
+                  actor="agent"
+                  running={<span>正在调用…</span>}
+                />
+              </div>
+            ))}
+          </div>
         ) : null}
         {m.role === 'ai' && m.subtasks && m.subtasks.length > 0 ? (
           <div className="flex flex-col gap-[6px]" data-testid="copilot-subtask-list">
@@ -910,6 +943,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     let inlineReplyStarted = false;
     let inlineSubtaskVersion = 0;
     let inlineRunView = createCopilotRunView();
+    const inlineToolCalls: ToolCallRecord[] = [];
     let dispatchResponseReceived = false;
     try {
       const res = await apiFetch('/api/copilot/chat', {
@@ -1074,6 +1108,52 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
               inlineRunView,
               '我正在协调这些子任务，完成后会在这里统一收口。',
             );
+          } else if (evt.event === 'tool_use') {
+            // YUK-457 — per-call tool-use card. Append the call record and patch
+            // the AI message so ToolUseCards appear incrementally while the turn runs.
+            let call: ToolCallRecord | null = null;
+            try {
+              const raw = JSON.parse(evt.data) as {
+                toolName?: unknown;
+                input?: unknown;
+                toolUseId?: unknown;
+              };
+              if (typeof raw.toolName === 'string') {
+                call = {
+                  toolName: raw.toolName,
+                  input:
+                    raw.input !== null && typeof raw.input === 'object' && !Array.isArray(raw.input)
+                      ? (raw.input as Record<string, unknown>)
+                      : {},
+                  ...(typeof raw.toolUseId === 'string' ? { toolUseId: raw.toolUseId } : {}),
+                };
+              }
+            } catch {
+              call = null;
+            }
+            if (call) {
+              inlineToolCalls.push(call);
+              const snapshot = [...inlineToolCalls];
+              if (!aiCreated) {
+                aiCreated = true;
+                setAwaitingFirstFrame(false);
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: aiId,
+                    role: 'ai',
+                    text: '',
+                    streaming: true,
+                    subtasks: inlineRunView.subtasks,
+                    tool_calls: snapshot,
+                  },
+                ]);
+              } else {
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === aiId ? { ...m, tool_calls: snapshot } : m)),
+                );
+              }
+            }
           } else if (evt.event === 'reply') {
             try {
               finalReply = JSON.parse(evt.data) as CopilotChatResponse;
@@ -1133,6 +1213,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         // CopilotChatResult.primary_view). Undefined ⇒ no hero rendered.
         primary_view: res2.primary_view,
         subtasks: inlineRunView.subtasks,
+        // YUK-457 — preserve the tool-use records accumulated during streaming.
+        ...(inlineToolCalls.length > 0 ? { tool_calls: inlineToolCalls } : {}),
       };
       setMessages((prev) =>
         aiCreated ? prev.map((m) => (m.id === aiId ? finalized : m)) : [...prev, finalized],
