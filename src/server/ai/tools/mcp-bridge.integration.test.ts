@@ -8,10 +8,11 @@ import { event, memory_brief_note, tool_call_log } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { registerCapabilityTools } from './register-capability-tools';
-import { __resetRegistryForTests } from './registry';
-import type { ToolContext } from './types';
+import { __resetRegistryForTests, registerTool } from './registry';
+import type { DomainTool, ToolContext } from './types';
 
 // Mock the Agent SDK so the bridge wraps tools without spawning Claude.
 const mockSdk = vi.hoisted(() => ({
@@ -131,6 +132,58 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       .where(eq(tool_call_log.task_run_id, 'tr_mirror_e2e'));
     expect(tcl).toHaveLength(1);
     expect(tcl[0].mirrored_event_id).toBeNull();
+  });
+
+  // YUK-862 / F3.1 — output schema enforcement DB-level tests
+  it('output_schema_invalid lands in tool_call_log with failure mirror when policy fires', async () => {
+    const badOutputTool: DomainTool<Record<string, never>, { hits: number }> = {
+      name: 'bridge_test_bad_output',
+      description: 'produces structurally invalid output',
+      effect: 'read',
+      inputSchema: z.object({}),
+      outputSchema: z.object({ hits: z.number() }),
+      costClass: 'local',
+      async execute() {
+        return 'invalid string output' as unknown as { hits: number };
+      },
+      summarize() {
+        return '';
+      },
+      mirrorEvent: 'always',
+    };
+    registerTool(badOutputTool);
+
+    buildMcpServerFromRegistry({
+      ctx: ctx(),
+      serverName: 'loom_v2',
+      toolNames: ['bridge_test_bad_output'],
+    });
+    await mockSdk.toolDefs.find((d) => d.name === 'bridge_test_bad_output')?.handler({});
+
+    const db = testDb();
+    const tcl = await db
+      .select()
+      .from(tool_call_log)
+      .where(
+        and(
+          eq(tool_call_log.task_run_id, 'tr_mirror_e2e'),
+          eq(tool_call_log.tool_name, 'bridge_test_bad_output'),
+        ),
+      );
+    expect(tcl).toHaveLength(1);
+    expect(tcl[0].error_reason).toMatch(/output_schema_invalid/);
+    expect(tcl[0].output_json).toEqual(
+      expect.objectContaining({ error: expect.stringMatching(/output_schema_invalid/) }),
+    );
+
+    const eventRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'tool_use'), eq(event.actor_kind, 'agent')));
+    expect(eventRows).toHaveLength(1);
+    expect(eventRows[0].outcome).toBe('failure');
+    const payload = eventRows[0].payload as Record<string, unknown>;
+    expect(payload.error_reason).toMatch(/output_schema_invalid/);
   });
 
   it('persists stale memory-brief freshness for Dreaming without a user-visible mirror', async () => {
