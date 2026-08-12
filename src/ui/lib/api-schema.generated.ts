@@ -10447,6 +10447,16 @@ export interface operations {
                 suggested_next?: 'continue' | 'end';
               };
               text: string;
+              tool_calls?: {
+                errorReason?: string;
+                input: {
+                  [key: string]: unknown;
+                };
+                /** @enum {string} */
+                status: 'done' | 'failed';
+                summary?: string;
+                toolName: string;
+              }[];
             }[];
           };
         };
