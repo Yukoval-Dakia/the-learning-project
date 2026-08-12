@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { SPAWN_TOOL_NAME } from '@/server/ai/spawn-contract';
-
 import {
   sanitizeToolResultForSse,
   sanitizeToolUseForSse,
@@ -10,7 +8,7 @@ import {
 describe('tool-use SSE sanitization — YUK-457 P1', () => {
   it('drops native Task tool_use frames that would leak subagent prompts', () => {
     const leaked = sanitizeToolUseForSse({
-      toolName: SPAWN_TOOL_NAME,
+      toolName: 'Task',
       toolUseId: 'toolu-task-42',
       input: {
         subagent_type: 'copilot-researcher',
@@ -37,7 +35,7 @@ describe('tool-use SSE sanitization — YUK-457 P1', () => {
   it('drops Task tool_result frames defensively', () => {
     expect(
       sanitizeToolResultForSse({
-        toolName: SPAWN_TOOL_NAME,
+        toolName: 'Task',
         input: { subagent_type: 'copilot-researcher', prompt: 'hidden' },
         summary: 'should not reach the dock',
       }),

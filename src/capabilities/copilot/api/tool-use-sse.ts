@@ -1,4 +1,5 @@
-import { SPAWN_TOOL_NAME } from '@/server/ai/spawn-contract';
+/** Must stay aligned with SPAWN_TOOL_NAME in src/server/ai/spawn-contract.ts */
+const NATIVE_SPAWN_TOOL_NAME = 'Task';
 
 export interface ToolUseSseCall {
   toolName: string;
@@ -18,7 +19,7 @@ export interface ToolResultSsePayload {
  * reach SPA tool-use cards. Public UX is projected via `subtask` SSE instead.
  */
 export function sanitizeToolUseForSse(call: ToolUseSseCall): ToolUseSseCall | null {
-  if (call.toolName === SPAWN_TOOL_NAME) return null;
+  if (call.toolName === NATIVE_SPAWN_TOOL_NAME) return null;
   return call;
 }
 
@@ -26,6 +27,6 @@ export function sanitizeToolUseForSse(call: ToolUseSseCall): ToolUseSseCall | nu
 export function sanitizeToolResultForSse(
   result: ToolResultSsePayload,
 ): ToolResultSsePayload | null {
-  if (result.toolName === SPAWN_TOOL_NAME) return null;
+  if (result.toolName === NATIVE_SPAWN_TOOL_NAME) return null;
   return result;
 }
