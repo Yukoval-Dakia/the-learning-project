@@ -1,3 +1,4 @@
+import type { TaskKind } from '@/ai/registry';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, cost_ledger, tool_call_log } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
@@ -131,7 +132,7 @@ async function insertCostLedger(
 
 export interface AiTaskRunStartEntry {
   id: string;
-  task_kind: string;
+  task_kind: TaskKind;
   provider: string;
   model: string;
   input_hash: string;
