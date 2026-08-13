@@ -23,89 +23,93 @@ import { ingestionTaskSpecs } from '@/capabilities/ingestion/tasks/index';
 import { knowledgeTaskSpecs } from '@/capabilities/knowledge/tasks/index';
 import { notesTaskSpecs } from '@/capabilities/notes/tasks/index';
 import { practiceTaskSpecs } from '@/capabilities/practice/tasks/index';
+import type { TaskOwner } from './owned-task-specs';
 import type { TaskDefinition } from './task-spec';
 
-export type TaskOwner = 'practice' | 'ingestion' | 'knowledge' | 'notes' | 'agency' | 'copilot';
+export { defineOwnedTaskSpecs, defineTransitionalTask } from './owned-task-specs';
+export type { TaskOwner } from './owned-task-specs';
 
-export interface OwnerTaskSpecs {
-  owner: TaskOwner;
-  specs: Record<string, TaskDefinition>;
-}
+export type OwnerTaskSpecs<Specs extends object = object> = {
+  readonly owner: TaskOwner;
+  readonly specs: Specs;
+};
 
-/**
- * Validate one owner's spec map: each key must equal specs[key].kind, and each
- * spec must have non-empty prompt text/builder, provider, model, and budget.
- * Returns the validated map (identity — throws on violation).
- */
-export function defineOwnedTaskSpecs(
-  owner: TaskOwner,
-  specs: Record<string, TaskDefinition>,
-): Record<string, TaskDefinition> {
-  for (const [key, def] of Object.entries(specs)) {
-    if (key !== def.kind) {
-      throw new Error(
-        `defineOwnedTaskSpecs(${owner}): key "${key}" does not match spec.kind "${def.kind}"`,
-      );
+type CatalogFromOwnerMaps<OwnerMaps extends readonly OwnerTaskSpecs[]> = UnionToIntersection<
+  OwnerMaps[number]['specs']
+> extends infer Entries
+  ? {
+      readonly [Kind in keyof Entries]: Entries[Kind] extends {
+        readonly definition: infer Definition;
+      }
+        ? Definition
+        : never;
     }
-    if (!def.defaultProvider) {
-      throw new Error(`defineOwnedTaskSpecs(${owner}): "${key}" missing defaultProvider`);
-    }
-    if (!def.defaultModel) {
-      throw new Error(`defineOwnedTaskSpecs(${owner}): "${key}" missing defaultModel`);
-    }
-    if (!def.budget || typeof def.budget.maxIterations !== 'number') {
-      throw new Error(`defineOwnedTaskSpecs(${owner}): "${key}" missing or invalid budget`);
-    }
-    const p = def.prompt;
-    if (!p) {
-      throw new Error(`defineOwnedTaskSpecs(${owner}): "${key}" missing prompt`);
-    }
-    if (p.kind === 'inline' && !p.text.trim()) {
-      throw new Error(`defineOwnedTaskSpecs(${owner}): "${key}" has empty inline prompt text`);
-    }
-    if (p.kind === 'profile' && typeof p.build !== 'function') {
-      throw new Error(
-        `defineOwnedTaskSpecs(${owner}): "${key}" profile prompt.build is not a function`,
-      );
-    }
-  }
-  return specs;
-}
+  : never;
+
+type UnionToIntersection<Union> = (Union extends unknown ? (value: Union) => void : never) extends (
+  value: infer Intersection,
+) => void
+  ? Intersection
+  : never;
 
 /**
  * Merge all owner spec maps into one frozen readonly map keyed by TaskKind.
  * Throws on duplicate kinds across owners.
  */
-export function composeTaskCatalog(
-  ownerMaps: OwnerTaskSpecs[],
-): Readonly<Record<string, TaskDefinition>> {
+export function composeTaskCatalog<const OwnerMaps extends readonly OwnerTaskSpecs[]>(
+  ownerMaps: OwnerMaps,
+  expectedCount?: number,
+): Readonly<CatalogFromOwnerMaps<OwnerMaps>> {
   const result: Record<string, TaskDefinition> = {};
-  const kindToOwner: Record<string, TaskOwner> = {};
+  const kindToOwner = new Map<string, TaskOwner>();
+  const owners = new Set<TaskOwner>();
 
   for (const { owner, specs } of ownerMaps) {
-    for (const [kind, def] of Object.entries(specs)) {
+    if (owners.has(owner)) {
+      throw new Error(`composeTaskCatalog: duplicate owner "${owner}"`);
+    }
+    owners.add(owner);
+    for (const [kind, entry] of Object.entries(specs)) {
+      if (typeof entry !== 'object' || entry === null || !('definition' in entry)) {
+        throw new Error(`composeTaskCatalog(${owner}): "${kind}" is not a task owner entry`);
+      }
+      const def = entry.definition as TaskDefinition;
+      if (kind !== def.kind) {
+        throw new Error(
+          `composeTaskCatalog(${owner}): key "${kind}" does not match spec.kind "${def.kind}"`,
+        );
+      }
       if (Object.hasOwn(result, kind)) {
         throw new Error(
-          `composeTaskCatalog: duplicate kind "${kind}" — owned by both "${kindToOwner[kind]}" and "${owner}"`,
+          `composeTaskCatalog: duplicate kind "${kind}" — owned by both "${kindToOwner.get(kind)}" and "${owner}"`,
         );
       }
       result[kind] = def;
-      kindToOwner[kind] = owner;
+      kindToOwner.set(kind, owner);
     }
   }
 
-  return Object.freeze(result);
+  if (expectedCount !== undefined && Object.keys(result).length !== expectedCount) {
+    throw new Error(
+      `composeTaskCatalog: expected ${expectedCount} definitions, received ${Object.keys(result).length}`,
+    );
+  }
+
+  return Object.freeze(result) as Readonly<CatalogFromOwnerMaps<OwnerMaps>>;
 }
 
 /**
  * The composed, frozen catalog of all 51 TaskDefinitions.
  * Indexed by TaskKind string. Runtime may index this by kind.
  */
-export const taskCatalog: Readonly<Record<string, TaskDefinition>> = composeTaskCatalog([
-  { owner: 'practice', specs: practiceTaskSpecs },
-  { owner: 'ingestion', specs: ingestionTaskSpecs },
-  { owner: 'knowledge', specs: knowledgeTaskSpecs },
-  { owner: 'notes', specs: notesTaskSpecs },
-  { owner: 'agency', specs: agencyTaskSpecs },
-  { owner: 'copilot', specs: copilotTaskSpecs },
-]);
+export const taskCatalog = composeTaskCatalog(
+  [
+    { owner: 'practice', specs: practiceTaskSpecs },
+    { owner: 'ingestion', specs: ingestionTaskSpecs },
+    { owner: 'knowledge', specs: knowledgeTaskSpecs },
+    { owner: 'notes', specs: notesTaskSpecs },
+    { owner: 'agency', specs: agencyTaskSpecs },
+    { owner: 'copilot', specs: copilotTaskSpecs },
+  ] as const,
+  51,
+);
