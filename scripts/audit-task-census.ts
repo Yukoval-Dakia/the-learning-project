@@ -1,122 +1,191 @@
-/**
- * audit-task-census.ts — YUK-863 / F3.2
- *
- * Verifies the live TaskKind census against:
- *   1. The 51-entry canonical list
- *   2. All runTask / runAgentTask call sites in src/ and scripts/
- *   3. The compile-profile.ts --critic CLI caller (ProfileCriticTask)
- *   4. No unknown kinds referenced outside the catalog
- *
- * Run: pnpm vitest run --config vitest.unit.config.ts scripts/audit-task-census.unit.test.ts
- * Or:  npx tsx scripts/audit-task-census.ts
- */
-
-export const EXPECTED_CENSUS: readonly string[] = [
-  'AttributionTask',
-  'AttributionRerankTask',
-  'VisionExtractTask',
-  'VisionExtractTaskHeavy',
-  'StructureTask',
-  'MistakeEnrollTask',
-  'KnowledgeEdgeProposeTask',
-  'FrontierPrerequisiteTask',
-  'SessionSummaryTask',
-  'LearningIntentOutlineTask',
-  'NoteGenerateTask',
-  'NoteVerifyTask',
-  'NoteRefineTask',
-  'SemanticJudgeTask',
-  'UnitDimensionFallback',
-  'StepsJudgeTask',
-  'MultimodalDirectJudgeTask',
-  'SourceGroundingVerifyTask',
-  'VariantVerifyTask',
-  'VariantGenTask',
-  'TeachingTurnTask',
-  'ProfileCriticTask',
-  'DreamingTask',
-  'CoachTask',
-  'CopilotDispatchTask',
-  'CopilotEvidenceReviewTask',
-  'CopilotEvidenceVerificationTask',
-  'CopilotTask',
-  'KnowledgeReviewTask',
-  'GoalScopeTask',
-  'MindModelInductionTask',
-  'ConjectureGroupingTask',
-  'ConjectureProbeAuthorTask',
-  'ConjectureProbeReviewTask',
-  'InterventionRecommendationTask',
-  'InterventionPackageAuthorTask',
-  'InterventionPackageReviewTask',
-  'ResearchMeetingDirectorTask',
-  'MemoryBriefTask',
-  'TaggingTask',
-  'ColdStartPlacementBridgeTask',
-  'SolutionGenerateTask',
-  'SolutionGenerateVisionTask',
-  'QuizGenTask',
-  'QuizVerifyTask',
-  'TeachingQualityTask',
-  'QuestionAuthorTask',
-  'ItemPriorTask',
-  'SelectionOrchestratorTask',
-  'SourcingTask',
-  'BlockAssemblyTask',
-] as const;
-
-/** ProfileCriticTask is the only task invoked via a CLI script (compile-profile --critic). */
-export const CLI_ONLY_CALLERS: readonly string[] = ['ProfileCriticTask'] as const;
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { scanForbiddenTaskCatalogPatterns } from './lib/task-census-guards';
+import {
+  type RegistrationEvidence,
+  type RunLogContractEvidence,
+  collectRegistrationEvidence,
+  hasCapabilityJobRegistrationPath,
+  inspectRunLogContract,
+} from './lib/task-census-infrastructure';
+import {
+  type CallerEvidence,
+  type UnresolvedCaller,
+  scanTaskCallers,
+} from './lib/task-census-source';
 
 export type AuditResult = {
-  ok: boolean;
-  censusCount: number;
-  catalogCount: number;
-  missingFromCatalog: string[];
-  extraInCatalog: string[];
-  errors: string[];
+  readonly ok: boolean;
+  readonly catalogCount: number;
+  readonly discoveredKinds: readonly string[];
+  readonly callersByKind: Readonly<Record<string, readonly CallerEvidence[]>>;
+  readonly unresolvedCallers: readonly UnresolvedCaller[];
+  readonly unknownCallers: readonly CallerEvidence[];
+  readonly nonLiveClassifications: Readonly<Record<string, string>>;
+  readonly orphanKinds: readonly string[];
+  readonly registrationEvidence: readonly RegistrationEvidence[];
+  readonly runLogContract: RunLogContractEvidence;
+  readonly profileCriticCaller: CallerEvidence | null;
+  readonly errors: readonly string[];
 };
 
-export function auditTaskCensus(catalogKeys: string[]): AuditResult {
-  const errors: string[] = [];
-  const catalogSet = new Set(catalogKeys);
-  const censusSet = new Set(EXPECTED_CENSUS);
+export type AuditTaskCensusOptions = {
+  readonly catalogKinds: readonly string[];
+  readonly sourceRoot: string;
+  readonly nonLiveClassifications?: Readonly<Record<string, string>>;
+  readonly validateInfrastructure?: boolean;
+};
 
-  const missingFromCatalog = EXPECTED_CENSUS.filter((k) => !catalogSet.has(k));
-  const extraInCatalog = catalogKeys.filter((k) => !censusSet.has(k));
+const LIVE_NON_CALLER_CLASSIFICATIONS = {
+  AttributionTask:
+    'Retained as a registered compatibility task while production failure attribution invokes AttributionRerankTask after deterministic candidate retrieval.',
+} as const;
 
-  if (missingFromCatalog.length > 0) {
-    errors.push(`Missing from catalog: ${missingFromCatalog.join(', ')}`);
-  }
-  if (extraInCatalog.length > 0) {
-    errors.push(`Extra in catalog (not in census): ${extraInCatalog.join(', ')}`);
-  }
-  if (catalogKeys.length !== 51) {
-    errors.push(`Expected 51 entries; got ${catalogKeys.length}`);
-  }
+export function auditTaskCensus(options: AuditTaskCensusOptions): AuditResult {
+  const { callersByKind, unresolvedCallers } = scanTaskCallers(options.sourceRoot);
+  const catalogSet = new Set(options.catalogKinds);
+  const nonLiveClassifications = options.nonLiveClassifications ?? {};
+  const validateInfrastructure = options.validateInfrastructure ?? true;
+  const discoveredKinds = Object.keys(callersByKind).sort();
+  const unknownCallers = discoveredKinds
+    .filter((kind) => !catalogSet.has(kind))
+    .flatMap((kind) => callersByKind[kind] ?? []);
+  const orphanKinds = [...catalogSet]
+    .filter(
+      (kind) => callersByKind[kind] === undefined && nonLiveClassifications[kind] === undefined,
+    )
+    .sort();
+  const invalidClassifications = Object.keys(nonLiveClassifications)
+    .filter((kind) => !catalogSet.has(kind))
+    .sort();
+  const staleClassifications = Object.keys(nonLiveClassifications)
+    .filter((kind) => callersByKind[kind] !== undefined)
+    .sort();
+  const unjustifiedClassifications = Object.entries(nonLiveClassifications)
+    .filter(([, reason]) => reason.trim().length === 0)
+    .map(([kind]) => kind)
+    .sort();
+  const registrationEvidence = validateInfrastructure
+    ? collectRegistrationEvidence(options.sourceRoot, callersByKind)
+    : [];
+  const runLogContract = validateInfrastructure
+    ? inspectRunLogContract(options.sourceRoot)
+    : {
+        schemaTaskKindColumn: true,
+        runnerCatalogGuard: true,
+        lifecycleTaskKind: true,
+        startWriterTaskKind: true,
+      };
+  const profileCriticCallers = callersByKind.ProfileCriticTask ?? [];
+  const profileCriticCaller =
+    profileCriticCallers.find(
+      (caller) => caller.file === 'scripts/compile-profile.ts' && caller.callee === 'runAgentTask',
+    ) ?? null;
+  const forbiddenPatterns = validateInfrastructure
+    ? scanForbiddenTaskCatalogPatterns(options.sourceRoot)
+    : [];
+  const runLogFailures = Object.entries(runLogContract)
+    .filter(([, present]) => !present)
+    .map(([contract]) => `Run-log contract missing: ${contract}`);
+  const manifestRegistrationEvidence = registrationEvidence.filter(
+    (item) => item.registration === 'manifest-job',
+  );
+  const legacyRegistrationEvidence = registrationEvidence.filter(
+    (item) => item.registration === 'legacy-handler',
+  );
+  const errors = [
+    ...(validateInfrastructure && catalogSet.size !== 51
+      ? [`Task catalog must contain exactly 51 kinds, received ${catalogSet.size}`]
+      : []),
+    ...unresolvedCallers.map(
+      (caller) =>
+        `Unresolved task kind at ${caller.file}:${caller.line}:${caller.column} (${caller.callee}(${caller.expression}, ...))`,
+    ),
+    ...unknownCallers.map(
+      (caller) =>
+        `Unknown task kind "${caller.kind}" at ${caller.file}:${caller.line}:${caller.column}`,
+    ),
+    ...orphanKinds.map((kind) => `Catalog task "${kind}" has no production caller`),
+    ...invalidClassifications.map(
+      (kind) => `Non-live classification "${kind}" is not present in the catalog`,
+    ),
+    ...staleClassifications.map(
+      (kind) => `Non-live classification "${kind}" is stale because production callers exist`,
+    ),
+    ...unjustifiedClassifications.map(
+      (kind) => `Non-live classification "${kind}" requires a non-empty reason`,
+    ),
+    ...(validateInfrastructure && !hasCapabilityJobRegistrationPath(options.sourceRoot)
+      ? ['Capability job registration path is unresolved']
+      : []),
+    ...(validateInfrastructure && manifestRegistrationEvidence.length === 0
+      ? ['No registered manifest job reaches a recognized task invocation']
+      : []),
+    ...(validateInfrastructure && legacyRegistrationEvidence.length === 0
+      ? ['No legacy registered handler reaches a recognized task invocation']
+      : []),
+    ...runLogFailures,
+    ...(validateInfrastructure && profileCriticCaller === null
+      ? ['ProfileCriticTask must have its exact CLI caller in scripts/compile-profile.ts']
+      : []),
+    ...forbiddenPatterns.map(
+      (violation) =>
+        `Forbidden task catalog pattern at ${violation.file}:${violation.line}:${violation.column}: ${violation.reason}`,
+    ),
+  ];
 
   return {
     ok: errors.length === 0,
-    censusCount: EXPECTED_CENSUS.length,
-    catalogCount: catalogKeys.length,
-    missingFromCatalog,
-    extraInCatalog,
+    catalogCount: catalogSet.size,
+    discoveredKinds,
+    callersByKind,
+    unresolvedCallers,
+    unknownCallers,
+    nonLiveClassifications,
+    orphanKinds,
+    registrationEvidence,
+    runLogContract,
+    profileCriticCaller,
     errors,
   };
 }
 
-// CLI entry point
-if (import.meta.url === `file://${process.argv[1]}`) {
+async function runCli(): Promise<void> {
   const { taskCatalog } = await import('../src/ai/task-catalog.js');
-  const result = auditTaskCensus(Object.keys(taskCatalog));
-  if (result.ok) {
-    console.log(`✓ Census audit passed: ${result.catalogCount} tasks`);
-    process.exit(0);
-  } else {
-    console.error('✗ Census audit failed:');
-    for (const e of result.errors) {
-      console.error('  -', e);
+  const result = auditTaskCensus({
+    catalogKinds: Object.keys(taskCatalog),
+    sourceRoot: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
+    nonLiveClassifications: LIVE_NON_CALLER_CLASSIFICATIONS,
+  });
+  if (!result.ok) {
+    console.error('Task census audit failed:');
+    for (const error of result.errors) {
+      console.error(`  - ${error}`);
     }
-    process.exit(1);
+    process.exitCode = 1;
+  } else {
+    const callerCount = Object.values(result.callersByKind).reduce(
+      (count, callers) => count + callers.length,
+      0,
+    );
+    const manifestEvidenceCount = result.registrationEvidence.filter(
+      (item) => item.registration === 'manifest-job',
+    ).length;
+    const legacyEvidenceCount = result.registrationEvidence.filter(
+      (item) => item.registration === 'legacy-handler',
+    ).length;
+    console.log(
+      `Task census audit passed: ${result.catalogCount} registered kinds, ${result.discoveredKinds.length} statically invoked kinds, ${Object.keys(result.nonLiveClassifications).length} compatibility kinds, ${callerCount} production call sites, ${manifestEvidenceCount} manifest-job reachability links, ${legacyEvidenceCount} legacy-handler reachability links`,
+    );
+    console.log(
+      '  - run-log contract: ai_task_runs.task_kind -> catalog guard -> TaskKind lifecycle -> start writer',
+    );
+    for (const [kind, reason] of Object.entries(result.nonLiveClassifications)) {
+      console.log(`  - ${kind}: ${reason}`);
+    }
   }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  void runCli();
 }
