@@ -29,6 +29,7 @@ import {
   supersedeNoteVerificationEpoch,
 } from '@/capabilities/notes/server/note-verification-claim';
 import { emitNoteVerificationLifecycleEvent } from '@/capabilities/notes/server/note-verification-lifecycle';
+import { parseNoteVerificationOutput } from '@/capabilities/notes/tasks/note-tasks';
 import { NoteVerificationResult, type NoteVerificationResultT } from '@/core/schema/business';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db, Tx } from '@/db/client';
@@ -86,29 +87,6 @@ type DepsOverride = {
 
 function noteVerificationRetryRequired(artifactId: string, reason: string): Error {
   return new Error(`note verification retry required for ${artifactId}: ${reason}`);
-}
-
-function parseVerificationOutput(text: string): NoteVerificationResultT {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseVerificationOutput: no JSON object found in text');
-  }
-  let json: unknown;
-  try {
-    json = JSON.parse(text.slice(start, end + 1));
-  } catch (error) {
-    throw new Error(
-      `parseVerificationOutput: JSON.parse failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  const parsed = NoteVerificationResult.safeParse(json);
-  if (!parsed.success) {
-    throw new Error(
-      `parseVerificationOutput: schema invalid: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`,
-    );
-  }
-  return parsed.data;
 }
 
 export function noteBodyBlockContractFailure(
@@ -288,7 +266,7 @@ async function finalizeStagedVerification(
           ? current
           : {
               kind: 'parsed',
-              parsed: parseVerificationOutput(current.taskResult.text),
+              parsed: parseNoteVerificationOutput(current.taskResult.text),
               taskResult: current.taskResult,
             };
       const outcome = await persistNoteVerificationResultTx({ tx, artifactId, staged });
