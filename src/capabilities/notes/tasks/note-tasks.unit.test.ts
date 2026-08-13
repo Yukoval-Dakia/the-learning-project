@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
 import { tasks } from '@/ai/registry';
-import { noteGenerateTaskDefinition, noteVerifyTaskDefinition } from './note-tasks';
+import { noteGenerateTaskSpec, noteVerifyTaskSpec } from './note-tasks';
 
 describe('Notes-owned task definitions', () => {
   it('projects the complete Notes definitions into the central registry', () => {
-    expect(tasks.NoteGenerateTask).toBe(noteGenerateTaskDefinition);
-    expect(tasks.NoteVerifyTask).toBe(noteVerifyTaskDefinition);
+    expect(tasks.NoteGenerateTask).toBe(noteGenerateTaskSpec.definition);
+    expect(tasks.NoteVerifyTask).toBe(noteVerifyTaskSpec.definition);
   });
 
   it('preserves provider, model, budgets and profile prompt builders', () => {
-    expect(noteGenerateTaskDefinition).toMatchObject({
+    expect(noteGenerateTaskSpec.definition).toMatchObject({
       kind: 'NoteGenerateTask',
       defaultProvider: 'xiaomi',
       defaultModel: 'mimo-v2.5-pro',
@@ -20,7 +20,7 @@ describe('Notes-owned task definitions', () => {
       allowedTools: [],
       prompt: { kind: 'profile' },
     });
-    expect(noteVerifyTaskDefinition).toMatchObject({
+    expect(noteVerifyTaskSpec.definition).toMatchObject({
       kind: 'NoteVerifyTask',
       defaultProvider: 'xiaomi',
       defaultModel: 'mimo-v2.5-pro',
@@ -30,11 +30,12 @@ describe('Notes-owned task definitions', () => {
       allowedTools: [],
       prompt: { kind: 'profile' },
     });
-    expect(noteGenerateTaskDefinition.prompt.kind).toBe('profile');
-    expect(noteVerifyTaskDefinition.prompt.kind).toBe('profile');
-    if (noteGenerateTaskDefinition.prompt.kind !== 'profile') throw new Error('profile prompt');
-    if (noteVerifyTaskDefinition.prompt.kind !== 'profile') throw new Error('profile prompt');
-    expect(noteGenerateTaskDefinition.prompt.build).toBeInstanceOf(Function);
-    expect(noteVerifyTaskDefinition.prompt.build).toBeInstanceOf(Function);
+    expect(noteGenerateTaskSpec.definition.prompt.kind).toBe('profile');
+    expect(noteVerifyTaskSpec.definition.prompt.kind).toBe('profile');
+    if (noteGenerateTaskSpec.definition.prompt.kind !== 'profile')
+      throw new Error('profile prompt');
+    if (noteVerifyTaskSpec.definition.prompt.kind !== 'profile') throw new Error('profile prompt');
+    expect(noteGenerateTaskSpec.definition.prompt.build).toBeInstanceOf(Function);
+    expect(noteVerifyTaskSpec.definition.prompt.build).toBeInstanceOf(Function);
   });
 });
