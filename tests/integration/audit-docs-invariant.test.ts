@@ -14,6 +14,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { taskCatalog } from '@/ai/task-catalog';
 import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -67,19 +68,10 @@ describe('Audit 2026-06-06 G8-docs invariants', () => {
     ).toBe(true);
   });
 
-  // ── YUK-244 — architecture.md §5.1 Task snapshot stays in sync with registry ─
+  // ── YUK-244 — architecture.md §5.1 Task snapshot stays valid against taskCatalog ─
 
-  it('docs/architecture.md: §5.1 Task table lists every kind in src/ai/registry.ts', () => {
-    // Canonical source: the `kind:` keys in the registry `tasks` object.
-    const registrySrc = read('src/ai/registry.ts');
-    const registryKinds = (registrySrc.match(/^ {2}([A-Za-z][A-Za-z0-9]*): \{/gm) ?? []).map((m) =>
-      m.trim().replace(/: \{$/, ''),
-    );
-    expect(
-      registryKinds.length,
-      'failed to extract task kinds from src/ai/registry.ts',
-    ).toBeGreaterThan(0);
-
+  it('docs/architecture.md: §5.1 Task table contains only live catalog kinds', () => {
+    const catalogKinds = new Set(Object.keys(taskCatalog));
     const doc = read('docs/architecture.md');
     // Restrict to the §5.1 snapshot table: from its header row until the
     // "**与旧 ADR 版本差异**" marker that immediately follows it.
@@ -91,26 +83,35 @@ describe('Audit 2026-06-06 G8-docs invariants', () => {
     expect(tableEnd, 'failed to locate the table-closing diff marker').toBeGreaterThan(tableStart);
     const tableBlock = doc.slice(tableStart, tableEnd);
 
-    // Each task is documented as a `\`TaskKind\`` cell. Word-boundary backtick
-    // match so `VisionExtractTask` does not falsely satisfy `VisionExtractTaskHeavy`.
-    const missing = registryKinds.filter((kind) => !tableBlock.includes(`\`${kind}\``));
+    const documentedKinds = [...tableBlock.matchAll(/^\| `([A-Za-z][A-Za-z0-9]*)` \|/gm)].flatMap(
+      (match) => (match[1] === undefined ? [] : [match[1]]),
+    );
+    const staleKinds = documentedKinds.filter((kind) => !catalogKinds.has(kind));
     expect(
-      missing,
-      `architecture.md §5.1 Task snapshot is stale — these registry tasks are not in the table: ${missing.join(', ')}`,
+      staleKinds,
+      `architecture.md §5.1 contains nonexistent catalog kinds: ${staleKinds.join(', ')}`,
     ).toEqual([]);
   });
 
-  it('docs/architecture.md: §5.1 snapshot marks itself non-exhaustive + cites the registry', () => {
+  it('docs/architecture.md: §5.1 marks itself non-exhaustive and cites the composition root', () => {
     const doc = read('docs/architecture.md');
-    // The fix re-dated the snapshot and added an explicit "权威看 registry" caveat
-    // so future readers know the table is a human overview, not the source of truth.
     expect(
-      doc.includes('src/ai/registry.ts'),
-      'architecture.md §5.1 should cite src/ai/registry.ts as the canonical source',
+      doc.includes('src/ai/task-catalog.ts'),
+      'architecture.md §5.1 should cite src/ai/task-catalog.ts as the canonical composition root',
     ).toBe(true);
+    expect(doc.includes('src/ai/registry.ts')).toBe(true);
+    expect(doc.includes('compatibility projection')).toBe(true);
     expect(
       doc.includes('不是完整清单') || doc.includes('非完整清单'),
       'architecture.md §5.1 should flag the snapshot as a non-exhaustive overview',
     ).toBe(true);
+  });
+
+  it('wires task census through the full test chain, exact-head audits, and verification docs', () => {
+    const packageJson = JSON.parse(read('package.json')) as { scripts?: Record<string, string> };
+    expect(packageJson.scripts?.test).toContain('pnpm audit:task-census');
+    expect(read('.github/workflows/ci-gate.yml')).toContain('pnpm audit:task-census');
+    expect(read('docs/agents/development-workflow.md')).toContain('pnpm audit:task-census');
+    expect(read('README.md')).toContain('pnpm audit:task-census');
   });
 });
