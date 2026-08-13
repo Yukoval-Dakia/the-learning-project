@@ -105,7 +105,10 @@ Question (统一题库，single source of truth)
 > 首个 Failure Learning 竖切已实现并等待 review。ADR-0051 锁定目标：capability 拥有完整
 > product operation 与 typed task contract，中央 runtime 只拥有 provider/SDK/budget/retry/
 > admission/model-attempt logging。Attribution/AttributionRerank/VariantGen 已由 `practice/tasks`
-> 拥有，registry 对三者只做静态 composition projection；其余 tasks 仍按后续竖切迁移。
+> 拥有；Notes 也已拥有 NoteGenerate/NoteVerify 的 parser + output schema。owner maps 当前保存
+> 5 个完整 TaskSpec 与 46 个显式 transitional entry，registry 只做静态 compatibility projection；
+> transitional semantics 仍集中在 `legacy-task-definitions.ts`；owner migration 由 YUK-865–872、
+> YUK-875、YUK-878–879 承接，中央 semantic quarry 最终删除由 YUK-885 承接。
 > 实现附录见 `docs/superpowers/plans/2026-08-08-practice-failure-learning-implementation.md`。
 
 架构债由 `pnpm audit:capability-boundaries` 递减约束。基线单位是去重后的
@@ -116,13 +119,23 @@ Question (统一题库，single source of truth)
 
 ### 5.1 Task 注册
 
-> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-08-08）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 51 个 task）。
+> **Canonical source**: `src/ai/task-catalog.ts` 的 `taskCatalog`。六个 capability owner maps
+> 保存 staged semantic ownership：5 个完整 owned TaskSpec（3 Practice + 2 Notes）和 46 个
+> identity-backed transitional entry；composer 把每个 entry 的精确 `definition` 投影为冻结的
+> runtime map。`src/ai/registry.ts` 仅是带 Copilot dispatch overlay 的 compatibility projection。
+> 当前恰有 **51 个 registered/runnable kinds、50 个静态 production invocation kinds、1 个显式
+> compatibility kind**：`AttributionTask` 为持久历史/registry 兼容而保留，现行 Failure Learning
+> 在 deterministic retrieval 后调用 `AttributionRerankTask`，不伪造 `AttributionTask` caller。
+> `pnpm audit:task-census` 同时验证 capability manifest/job 与 legacy handler 注册可达性，以及
+> `ai_task_runs.task_kind` → catalog guard → typed lifecycle → start writer 的 run-log contract。
+> 本节为同步快照（2026-08-14）。**这是主要 task 的人读概览，不是完整清单**——精确数量、
+> ownership 与字段以 owner maps / `taskCatalog` 为准。
 
 **当前 registry**（runner + registry 都通；实际触发看 route / pg-boss handler）：
 
 | Task | 模型 | 触发 | tool call | 多模态 | 产出 |
 | --- | --- | --- | --- | --- | --- |
-| `AttributionTask` | mimo-v2.5-pro | user action / pg-boss | 否 | — | 错题归因（10 类 cause）+ analysis |
+| `AttributionTask` | mimo-v2.5-pro | compatibility only（当前无静态调用） | 否 | — | 错题归因（10 类 cause）+ analysis |
 | `AttributionRerankTask` | mimo-v2.5-pro | user action / pg-boss | 否 | — | 错题归因 retrieve→rerank stage 2（从 L1 候选 cause 列表重排选 primary + 逐候选理由，YUK-462；小词表时 == AttributionTask） |
 | `KnowledgeEdgeProposeTask` | mimo-v2.5-pro | maintenance / nightly | 否 | — | 0-5 条 knowledge_edge proposal |
 | `FrontierPrerequisiteTask` | mimo-v2.5-pro | maintenance / nightly（frontier bootstrap, YUK-349 PR-2） | 否 | — | 0-5 条 prerequisite knowledge_edge proposal（empty-frontier 时 propose-only 低置信） |
@@ -135,7 +148,6 @@ Question (统一题库，single source of truth)
 | `VisionExtractTask` | mimo-v2.5 | `POST /api/ingestion/[id]/rescue` | 否 | 输入 | bbox blocks |
 | `VisionExtractTaskHeavy` | mimo-v2.5 | 同上（heavy manual rescue） | 否 | 输入 | bbox blocks |
 | `NoteVerifyTask` | mimo-v2.5-pro | pg-boss `note_verify` | 否 | — | atomic note section second-pass verification |
-| `EmbeddedCheckGenerateTask` | mimo-v2.5-pro | pg-boss `embedded_check_generate` | 否 | — | 1-3 inline self-test questions for atomic note |
 | `SemanticJudgeTask` | mimo-v2.5-pro | judge router (rubric_json semantic route) | 否 | — | semantic answer scoring via `required_points` |
 | `UnitDimensionFallback` | mimo-v2.5-pro | judge router (unit_dimension fallback, YUK-36) | 否 | — | natural-language unit / dimension parse when mathjs cannot |
 | `StepsJudgeTask` | mimo-v2.5 | judge router (steps@1 partial credit) | 否 | 输入 | vision-aware math derivation step judging |
