@@ -14,6 +14,10 @@
 // This helper runs that exact lifecycle so sourcing + jyeoo_fetch get identical dedup.
 
 import {
+  type SupplyTraceV1T,
+  withSupplyTraceDifficultyEvidence,
+} from '@/capabilities/practice/public';
+import {
   DifficultyEvidence,
   type DifficultyEvidenceT,
   buildProducerDifficultyEvidence,
@@ -23,10 +27,6 @@ import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
-import {
-  type SupplyTraceV1T,
-  withSupplyTraceDifficultyEvidence,
-} from '@/server/question-supply/evidence-demand';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { mergeExactQuestionDuplicateKnowledgeIds } from '@/server/quiz/content-fingerprint';
 import { sql } from 'drizzle-orm';

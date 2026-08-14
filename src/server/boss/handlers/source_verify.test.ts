@@ -15,17 +15,17 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
-import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
-import { event, knowledge, question } from '@/db/schema';
-import type { SourceGroundingVerifyResult } from '@/server/ai/judges/source-grounding-verify';
-import { getFsrsState } from '@/server/fsrs/state';
 import {
   buildCoverageEvidenceDemand,
   buildSupplyTrace,
   evidenceDemandToTargetContext,
   withSupplyTraceDifficultyEvidence,
-} from '@/server/question-supply/evidence-demand';
+} from '@/capabilities/practice/public';
+import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
+import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
+import { event, knowledge, question } from '@/db/schema';
+import type { SourceGroundingVerifyResult } from '@/server/ai/judges/source-grounding-verify';
+import { getFsrsState } from '@/server/fsrs/state';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { semanticJudgeOutput } from '../../../../tests/helpers/solve-check-fixtures';
 import { type SourceGroundingParams, runSourceVerify } from './source_verify';

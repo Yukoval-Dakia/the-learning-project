@@ -1,3 +1,4 @@
+import type { QuestionSupplyTarget } from '@/capabilities/practice/public';
 // YUK-474 — 动态供题 refill 决策逻辑单测（no-DB；countActive/buildTarget/dispatch 全注入 fake）。
 // flag 门 / 阈值触发 / 去重 / in-flight 节流 / dispatch status 映射 / per-KC 失败隔离。
 // @/db/client 仅 type-only（erased），不连库——故落 unit 分区（enumerated 进 vitest.shared.ts，
@@ -5,7 +6,6 @@
 // cooldown 的集成验证在 refill.db.test.ts。
 import type { Db } from '@/db/client';
 import type { DispatchResult } from '@/server/question-supply/dispatcher';
-import type { QuestionSupplyTarget } from '@/server/question-supply/target-discovery';
 import type { Demand } from '@/server/quiz/matcher';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {

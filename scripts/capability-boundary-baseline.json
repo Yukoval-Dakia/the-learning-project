@@ -3,7 +3,7 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 524,
+      "total": 521,
       "byOwnerPair": {
         "agency -> agency": 7,
         "agency -> ai": 29,
@@ -65,7 +65,7 @@
         "observability -> boss": 1,
         "observability -> events": 2,
         "observability -> export": 2,
-        "observability -> question-supply": 3,
+        "observability -> question-supply": 1,
         "observability -> r2": 2,
         "observability -> subjects": 14,
         "practice -> advisory-locks": 3,
@@ -76,12 +76,12 @@
         "practice -> events": 10,
         "practice -> fsrs": 4,
         "practice -> http": 4,
-        "practice -> mastery": 24,
+        "practice -> mastery": 26,
         "practice -> memory": 1,
         "practice -> orchestrator": 1,
         "practice -> projections": 2,
         "practice -> proposals": 3,
-        "practice -> question-supply": 10,
+        "practice -> question-supply": 7,
         "practice -> questions": 4,
         "practice -> quiz": 3,
         "practice -> records": 1,
@@ -96,7 +96,7 @@
       }
     },
     "serverToCapabilityDeep": {
-      "total": 67,
+      "total": 63,
       "byOwnerPair": {
         "agency -> agency": 3,
         "agency -> notes": 1,
@@ -116,8 +116,7 @@
         "orchestrator -> notes": 2,
         "projections -> knowledge": 1,
         "question-supply -> agency": 1,
-        "question-supply -> knowledge": 4,
-        "question-supply -> practice": 1,
+        "question-supply -> knowledge": 1,
         "questions -> knowledge": 4,
         "quiz -> knowledge": 1,
         "quiz -> practice": 2,
@@ -127,7 +126,7 @@
       }
     },
     "crossCapabilityValue": {
-      "total": 62,
+      "total": 65,
       "byOwnerPair": {
         "agency -> knowledge": 8,
         "agency -> notes": 1,
@@ -144,16 +143,25 @@
         "knowledge -> practice": 3,
         "notes -> knowledge": 2,
         "observability -> agency": 2,
+        "observability -> practice": 1,
         "onboarding -> practice": 1,
         "practice -> agency": 2,
-        "practice -> knowledge": 16,
+        "practice -> knowledge": 18,
         "shell -> agency": 2,
         "shell -> knowledge": 1,
         "shell -> notes": 2,
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },
-      "nontrivialSccs": [["agency", "ingestion", "knowledge", "notes", "practice"]]
+      "nontrivialSccs": [
+        [
+          "agency",
+          "ingestion",
+          "knowledge",
+          "notes",
+          "practice"
+        ]
+      ]
     }
   }
 }

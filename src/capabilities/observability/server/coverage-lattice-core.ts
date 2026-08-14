@@ -15,7 +15,7 @@ import type {
   ScanInput,
   SupplyGapKind,
   SupplyRoute,
-} from '@/server/question-supply/target-discovery';
+} from '@/capabilities/practice/public';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

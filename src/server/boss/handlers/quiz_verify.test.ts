@@ -14,6 +14,12 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { readAgentNotes } from '@/capabilities/agency/server/notes';
+import {
+  buildCoverageEvidenceDemand,
+  buildSupplyTrace,
+  evidenceDemandToTargetContext,
+  withSupplyTraceDifficultyEvidence,
+} from '@/capabilities/practice/public';
 import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
 import type { QuizGenMetadataT } from '@/core/schema/quiz_gen';
 import {
@@ -27,12 +33,6 @@ import {
   question,
   source_document,
 } from '@/db/schema';
-import {
-  buildCoverageEvidenceDemand,
-  buildSupplyTrace,
-  evidenceDemandToTargetContext,
-  withSupplyTraceDifficultyEvidence,
-} from '@/server/question-supply/evidence-demand';
 import { PlacementStarterAdmissionError } from '@/server/question-supply/placement-starter-attempts';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { semanticJudgeOutput, solverOutput } from '../../../../tests/helpers/solve-check-fixtures';

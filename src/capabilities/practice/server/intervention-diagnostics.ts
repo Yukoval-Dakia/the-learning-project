@@ -20,7 +20,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import { initialFsrsState } from './fsrs';
 import { JUDGE_PENDING_ATTEMPT_ACTION } from './judge-run-dispatch';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './judge-run-status';
-import { streamLocalDate } from './stream-store';
+import { streamLocalDate } from './stream-date';
 
 export const INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS = 10 * 60 * 1000;
 

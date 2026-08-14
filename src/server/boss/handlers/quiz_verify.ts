@@ -36,6 +36,7 @@ import { and, eq, ne } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { writeAgentNote } from '@/capabilities/agency/server/notes';
+import { SupplyTraceV1 } from '@/capabilities/practice/public';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { deriveSourceTier } from '@/core/schema/provenance';
@@ -61,7 +62,6 @@ import {
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
 import {
   PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
