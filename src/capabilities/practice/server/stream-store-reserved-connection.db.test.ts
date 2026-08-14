@@ -37,6 +37,7 @@ async function waitForAdvisoryWaiters(
       SELECT count(*)::int AS count
       FROM pg_stat_activity
       WHERE datname = current_database()
+        AND wait_event_type = 'Lock'
         AND wait_event = 'advisory'
     `;
     if (waiting.count >= expectedCount) return;
@@ -125,12 +126,13 @@ describe('Practice stream reserved connection integration', () => {
   });
 
   it('keeps ten same-date reranks on their lock-holder transaction', async () => {
-    // Given one rerank holder and nine same-key waiters filling a production-sized pool.
+    // Given an external holder blocking all ten same-key reranks in a production-sized pool.
     const { db, client } = await createMaxTenSingletonDb(10_000);
     const url = process.env.TEST_DATABASE_URL;
     if (!url) throw new TypeError('TEST_DATABASE_URL is required');
     const observer = postgres(url, { max: 1 });
-    clients.push(observer);
+    const holder = postgres(url, { max: 1 });
+    clients.push(observer, holder);
     const { reRankAfterAnswer } = await import('./stream-store');
     const questionId = await seedSamplableQuestion(db);
     await db.insert(practice_stream_item).values({
@@ -147,13 +149,26 @@ describe('Practice stream reserved connection integration', () => {
       created_at: new Date(),
       updated_at: new Date(),
     });
+    const holderAcquired = Promise.withResolvers<void>();
+    const releaseHolder = Promise.withResolvers<void>();
+    const holderTransaction = holder.begin(async (holderSql) => {
+      await holderSql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${DATES[0]}`}))`;
+      holderAcquired.resolve();
+      await releaseHolder.promise;
+    });
+    await Promise.race([holderAcquired.promise, holderTransaction]);
     const inFlight = Array.from({ length: 10 }, () =>
       reRankAfterAnswer(db, { date: DATES[0], answeredQuestionId: questionId, rng: () => 0 }),
     );
     const settled = Promise.allSettled(inFlight);
 
-    // When all nine followers are waiting, the holder must finish without borrowing slot eleven.
-    await waitForAdvisoryWaiters(observer, 9);
+    // When all ten target transactions are waiting, release the external transaction-level lock.
+    try {
+      await waitForAdvisoryWaiters(observer, 10);
+    } finally {
+      releaseHolder.resolve();
+      await holderTransaction;
+    }
     const completion = await Promise.race([
       Promise.race(inFlight).then(() => 'completed' as const),
       new Promise<'timed_out'>((resolve) => setTimeout(() => resolve('timed_out'), 2_000)),
@@ -163,6 +178,7 @@ describe('Practice stream reserved connection integration', () => {
 
     // Then every rerank stays live because collector reads share the lock-holder transaction.
     expect(completion).toBe('completed');
+    expect(results).toHaveLength(10);
     expect(results.every((result) => result.status === 'fulfilled')).toBe(true);
   });
 
