@@ -30,6 +30,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job, SendOptions } from 'pg-boss';
 
+import { SupplyTraceV1, type SupplyTraceV1T } from '@/capabilities/practice/public';
 import type { DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
 import {
   type SourcedQuestionT,
@@ -64,7 +65,6 @@ import {
 // rather than re-deriving "live" from raw rows.
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
-import { SupplyTraceV1, type SupplyTraceV1T } from '@/server/question-supply/evidence-demand';
 import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,

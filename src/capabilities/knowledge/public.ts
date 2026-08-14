@@ -7,6 +7,7 @@ export {
 } from './server/domain';
 export { loadFailureLearningKnowledgeContext } from './server/failure-learning-context';
 export type { FailureLearningKnowledgeNode } from './server/failure-learning-context';
+export { loadConfusablePairs } from './server/misconception-confusable-read';
 export { loadTreeSnapshot } from './server/tree';
 export {
   ACCEPT_RESULT_KINDS,

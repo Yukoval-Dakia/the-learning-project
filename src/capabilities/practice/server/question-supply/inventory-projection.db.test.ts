@@ -4,7 +4,7 @@ import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb } from '../../../tests/helpers/db';
+import { resetDb } from '../../../../../tests/helpers/db';
 import {
   compareInventoryShadow,
   loadInventoryProjectionInput,
