@@ -225,7 +225,7 @@ type ClaimRow = typeof placement_starter_claim.$inferSelect;
 /**
  * Postgres `lock_not_available` (55P03) — what `FOR UPDATE ... NOWAIT` raises when the row is
  * already locked. drizzle wraps driver errors, so walk the `.cause` chain (same shape as
- * `isNonterminalSingleFlightViolation` in @/server/question-supply/placement-starter).
+ * `isNonterminalSingleFlightViolation` in the owned question-supply placement starter).
  */
 function isGoalLockUnavailable(err: unknown): boolean {
   for (let cur: unknown = err, depth = 0; cur != null && depth < 5; depth++) {

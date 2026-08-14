@@ -1,6 +1,7 @@
 import { buildAutoEnrollHandler } from '@/capabilities/ingestion/jobs/auto_enroll';
 import { buildTencentOcrHandler } from '@/capabilities/ingestion/jobs/tencent_ocr_extract';
 import { buildJudgeRunHandler } from '@/capabilities/practice/jobs/judge_run';
+import type { PlacementVerificationAuthority } from '@/capabilities/practice/public';
 import { JUDGE_RUN_QUEUE } from '@/capabilities/practice/server/judge-durable-config';
 import type { Db } from '@/db/client';
 import {
@@ -12,7 +13,6 @@ import {
 } from '@/server/boss/queue-config';
 import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { registerMemoryHandlers } from '@/server/memory/triggers';
-import type { PlacementVerificationAuthority } from '@/server/question-supply/placement-starter-attempts';
 import { getR2 } from '@/server/r2';
 import type { PgBoss } from 'pg-boss';
 import { buildEchoHandler } from './handlers/echo';

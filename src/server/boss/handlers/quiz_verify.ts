@@ -37,6 +37,18 @@ import type { Job } from 'pg-boss';
 
 import { writeAgentNote } from '@/capabilities/agency/server/notes';
 import { SupplyTraceV1 } from '@/capabilities/practice/public';
+import {
+  PlacementStarterAdmissionError,
+  PlacementStarterStaleAuthorityError,
+  PlacementStarterUnknownCostError,
+  type PlacementVerificationAuthority,
+  assertPlacementAuthority,
+  releaseAuthorizedPaidCall,
+  reserveAuthorizedPaidCall,
+  settleAuthorizedPaidCall,
+  terminalizePlacementUnknownCost,
+} from '@/capabilities/practice/public';
+import { lockPlacementSupplyScopes } from '@/capabilities/practice/public';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { deriveSourceTier } from '@/core/schema/provenance';
@@ -62,18 +74,6 @@ import {
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import {
-  PlacementStarterAdmissionError,
-  PlacementStarterStaleAuthorityError,
-  PlacementStarterUnknownCostError,
-  type PlacementVerificationAuthority,
-  assertPlacementAuthority,
-  releaseAuthorizedPaidCall,
-  reserveAuthorizedPaidCall,
-  settleAuthorizedPaidCall,
-  terminalizePlacementUnknownCost,
-} from '@/server/question-supply/placement-starter-attempts';
-import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import { resolveSolveOverrideFromEnv } from '@/server/quiz/solve-lane';
 import {
   type SolveCheckQuestion,

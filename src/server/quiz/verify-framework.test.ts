@@ -1,7 +1,7 @@
 import {
   PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
-} from '@/server/question-supply/placement-starter-attempts';
+} from '@/capabilities/practice/public';
 import { describe, expect, it, vi } from 'vitest';
 
 import { sha256CanonicalJson } from '@/kernel/canonical-json';

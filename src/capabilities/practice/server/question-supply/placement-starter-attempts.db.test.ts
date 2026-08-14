@@ -8,7 +8,7 @@ import {
 } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import {
   PLACEMENT_ATTEMPT_HEARTBEAT_MS,
   PLACEMENT_ATTEMPT_LEASE_MS,

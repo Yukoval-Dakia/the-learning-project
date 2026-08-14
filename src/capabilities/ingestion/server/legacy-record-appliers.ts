@@ -10,6 +10,7 @@ import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, learning_record, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { lockPlacementSupplyScopes } from '@/kernel/placement';
 import {
   artifactRowToCreateSnapshot,
   emitArtifactCreateEvent,
@@ -35,7 +36,6 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/server/proposals/signals';
-import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { updateLearningRecord } from '@/server/records/queries';
 import { and, eq, isNull } from 'drizzle-orm';

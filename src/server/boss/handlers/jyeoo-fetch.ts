@@ -49,6 +49,19 @@ import {
   jyeooSpawnMaxStdoutBytes,
   jyeooSpawnTimeoutMs,
 } from '@/capabilities/practice/public';
+import {
+  type JyeooFailureClass,
+  classifyJyeooExit,
+  hasMalformedMarkdownImage,
+  isForeignSourceHost,
+  markdownImageSources,
+  parseJyeooLine,
+  rewriteMarkdownImageSources,
+} from '@/capabilities/practice/public';
+import {
+  type SpawnJyeooFn,
+  spawnPracticeJyeooFetch as spawnJyeooFetch,
+} from '@/capabilities/practice/public';
 import { MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import { AgentRef } from '@/core/schema/business';
 import type { DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
@@ -61,16 +74,6 @@ import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
 } from '@/server/boss/verify-dispatch-outbox';
-import {
-  type JyeooFailureClass,
-  classifyJyeooExit,
-  hasMalformedMarkdownImage,
-  isForeignSourceHost,
-  markdownImageSources,
-  parseJyeooLine,
-  rewriteMarkdownImageSources,
-} from '@/server/question-supply/jyeoo-loom-adapter';
-import { type SpawnJyeooFn, spawnJyeooFetch } from '@/server/question-supply/jyeoo-spawn';
 import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
 import {
   canonicalQuestionContentHash,

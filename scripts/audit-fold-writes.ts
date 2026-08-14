@@ -173,7 +173,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'knowledge',
-    file: 'src/server/question-supply/placement-starter-store.ts',
+    file: 'src/capabilities/practice/server/question-supply/placement-starter-store.ts',
     marker: '.insert(knowledge)',
     role: 'event-native-by-caller',
     note: 'placement starter content-KC mint accepts Tx only and writes same-tx experimental:genesis plus deterministic materialized_id_index anchor.',

@@ -1,16 +1,18 @@
-import {
-  EvidenceDemandV1,
-  type QuestionSupplyTarget,
-  evidenceDemandToTargetContext,
-} from '@/capabilities/practice/public';
 import type { Db, Tx } from '@/db/client';
 import { placement_starter_claim } from '@/db/schema';
-import type { QuizGenJobData } from '@/server/boss/handlers/quiz_gen';
-import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
-import { JOB_RETRY_DELAY_SECONDS, JOB_RETRY_LIMIT } from '@/server/boss/queue-config';
+import {
+  JOB_RETRY_DELAY_SECONDS,
+  JOB_RETRY_LIMIT,
+  enqueuePlacementJob,
+  fromPgBossDrizzleTx,
+  placementJobState,
+} from '@/kernel/placement-jobs';
+import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { and, eq } from 'drizzle-orm';
 import type { SendOptions } from 'pg-boss';
 import { dispatchSupplyTarget } from './dispatcher';
+import { EvidenceDemandV1, evidenceDemandToTargetContext } from './evidence-demand';
+import type { QuestionSupplyTarget } from './target-discovery';
 
 const PLACEMENT_STARTER_COUNT = 8;
 
@@ -167,15 +169,8 @@ export async function dispatchPlacementStarterClaim(
   claimId: string,
   admit?: PlacementStarterAdmission,
 ): Promise<string | null> {
-  const { getStartedBoss } = await import('@/server/boss/client');
-  const boss = await getStartedBoss();
   return db.transaction((tx) =>
-    dispatchPlacementStarterClaimTx(
-      tx,
-      claimId,
-      (queue, data, options) => boss.send(queue, data, options),
-      admit,
-    ),
+    dispatchPlacementStarterClaimTx(tx, claimId, enqueuePlacementJob, admit),
   );
 }
 
@@ -213,8 +208,6 @@ const LIVE_PLACEMENT_JOB_STATES: ReadonlySet<string> = new Set(['created', 'retr
  */
 export async function isPlacementStarterJobLive(jobId: string | null): Promise<boolean> {
   if (!jobId) return false;
-  const { getStartedBoss } = await import('@/server/boss/client');
-  const boss = await getStartedBoss();
-  const job = await boss.getJobById('quiz_gen', jobId);
-  return job != null && LIVE_PLACEMENT_JOB_STATES.has(job.state);
+  const state = await placementJobState(jobId);
+  return state != null && LIVE_PLACEMENT_JOB_STATES.has(state);
 }

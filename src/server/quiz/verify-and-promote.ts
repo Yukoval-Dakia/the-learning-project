@@ -17,6 +17,7 @@
 // **绝不** import 或复刻两 handler 的 check 逻辑 / promote 事务 / metadata 构造 / writeAgentNote
 // —— 那是「合并抽取」的滑坡，被 b1 决策否决。
 
+import { lockPlacementSupplyScopes } from '@/capabilities/practice/public';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
@@ -27,7 +28,6 @@ import { runQuizVerify } from '@/server/boss/handlers/quiz_verify';
 import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
 import { runSourceVerify } from '@/server/boss/handlers/source_verify';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import { and, desc, eq, inArray, isNull, ne } from 'drizzle-orm';
 
 export interface VerifyAndPromoteParams {

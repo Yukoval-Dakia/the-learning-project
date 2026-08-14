@@ -59,7 +59,7 @@
     "case_insensitive": true,
     "polarity": "opt-in",
     "reader_marker": "parseFlag(process.env.QUESTION_SUPPLY_REFILL_ENABLED)",
-    "file": "src/server/question-supply/refill.ts",
+    "file": "src/capabilities/practice/server/question-supply/refill.ts",
     "notes": "dark-ship question-supply refill. Opt-in/default OFF; parsed via shared parseFlag."
   },
   "JYEOO_FETCH_ENABLED": {
