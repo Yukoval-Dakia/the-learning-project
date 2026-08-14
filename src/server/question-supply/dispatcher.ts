@@ -21,6 +21,15 @@
 //
 // 不能自动派的路由 → 记 status='manual'（emit + log，不动作），等用户/UI 接手。
 
+import {
+  type QuestionSupplyTarget,
+  type SupplyRoute,
+  SupplyTraceV1,
+  type SupplyTraceV1T,
+  buildSupplyTrace,
+  jyeooFetchEnabled,
+  planSupplyRoutes,
+} from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
@@ -28,10 +37,6 @@ import { writeEvent } from '@/kernel/events';
 import { buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
 import type { QuizGenJobData } from '@/server/boss/handlers/quiz_gen';
 import { and, eq, gte, sql } from 'drizzle-orm';
-import { SupplyTraceV1, type SupplyTraceV1T, buildSupplyTrace } from './evidence-demand';
-import { jyeooFetchEnabled } from './jyeoo-supply-config';
-import { planSupplyRoutes } from './route-planner';
-import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
 
 /** pg-boss queues the dispatcher can auto-enqueue into. */
 type DispatchQueue = 'sourcing' | 'quiz_gen' | 'jyeoo_fetch';
