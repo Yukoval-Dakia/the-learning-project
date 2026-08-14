@@ -18,15 +18,15 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { deriveSourceTier } from '@/core/schema/provenance';
-import { event, knowledge, learning_item, material_fsrs_state, question } from '@/db/schema';
-import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
-import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/server/ai/tools/allowlists';
 import {
   buildCoverageEvidenceDemand,
   buildSupplyTrace,
   evidenceDemandToTargetContext,
-} from '@/server/question-supply/evidence-demand';
+} from '@/capabilities/practice/public';
+import { deriveSourceTier } from '@/core/schema/provenance';
+import { event, knowledge, learning_item, material_fsrs_state, question } from '@/db/schema';
+import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
+import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/server/ai/tools/allowlists';
 import { canonicalQuestionContentHash } from '@/server/quiz/content-fingerprint';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
