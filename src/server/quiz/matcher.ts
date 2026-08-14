@@ -34,6 +34,10 @@ import {
   seedRoutePreference,
   targetFingerprint,
 } from '@/capabilities/practice/public';
+import {
+  type DispatchResult,
+  dispatchPracticeSupplyTarget as dispatchSupplyTarget,
+} from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
@@ -43,7 +47,6 @@ import { knowledge } from '@/db/schema';
 import { type EmbedProviderAttemptOptions, embedText } from '@/server/ai/embed';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
-import { type DispatchResult, dispatchSupplyTarget } from '@/server/question-supply/dispatcher';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
 import { and, eq, isNull } from 'drizzle-orm';
