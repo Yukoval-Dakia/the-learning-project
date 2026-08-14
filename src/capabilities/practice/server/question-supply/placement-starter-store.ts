@@ -1,6 +1,4 @@
 import { createHash } from 'node:crypto';
-import { updateGoalScope } from '@/capabilities/agency/server/goals/queries';
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import type { Db, Tx } from '@/db/client';
 import {
   event,
@@ -14,8 +12,12 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
-import { knowledgeRowToSnapshot } from '@/server/projections/snapshot-mappers';
+import {
+  getEffectiveDomain,
+  knowledgeRowToSnapshot,
+  updateGoalScope,
+  upsertMaterializedIdIndex,
+} from '@/kernel/question-supply-infrastructure';
 import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { PlacementStarterIdentity } from './placement-starter-identity';
