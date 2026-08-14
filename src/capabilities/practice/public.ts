@@ -1,6 +1,3 @@
-import type { Db } from '@/db/client';
-import type { RefillDeps, RefillOutcome } from './server/question-supply/refill';
-
 // Stable server contract for consumers outside the practice capability.
 export {
   SolveError,
@@ -187,13 +184,3 @@ export {
 } from './server/question-supply/placement-starter-store';
 export type { PlacementStarterGoalAuthority } from './server/question-supply/placement-starter-store';
 export { lockPlacementSupplyScopes } from './server/question-supply/placement-supply-lock';
-export type {
-  RefillAction,
-  RefillDeps,
-  RefillOutcome,
-} from './server/question-supply/refill';
-type RefillPracticeQuestionSupply = (db: Db, deps?: RefillDeps) => Promise<RefillOutcome[]>;
-export const refillPracticeQuestionSupply: RefillPracticeQuestionSupply = async (...args) => {
-  const refill = await import('./server/question-supply/refill');
-  return refill.refillActiveLearningPools(...args);
-};

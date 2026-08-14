@@ -44,7 +44,6 @@ const SUPPLY_READ_MODULES = [
 const DIRECTED_COMMAND_EXPORTS = [
   'dispatchSupplyTarget as dispatchPracticeSupplyTarget',
   'dispatchSupplyTargets as dispatchPracticeSupplyTargets',
-  'export const refillPracticeQuestionSupply',
   'spawnJyeooFetch as spawnPracticeJyeooFetch',
 ] as const;
 
