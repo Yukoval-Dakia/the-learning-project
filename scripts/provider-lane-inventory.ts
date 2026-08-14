@@ -179,7 +179,7 @@ export const PROVIDER_RUNTIME_SDK_IMPORTS = [
     laneId: 'tencent.question-mark-agent',
   },
   {
-    path: 'scripts/preflight-vision.ts',
+    path: 'scripts/preflight-vision-one-shot.ts',
     source: '@anthropic-ai/sdk',
     disposition: 'exempt',
     laneId: 'xiaomi.vision-preflight',
@@ -777,11 +777,11 @@ export const PROVIDER_LANES = [
     owner: 'scripts/preflight-vision',
     disposition: 'exempt',
     wire: {
-      path: 'scripts/preflight-vision.ts',
+      path: 'scripts/preflight-vision-one-shot.ts',
       calls: ['client.messages.create'],
-      contains: ['MIMO_VISION_BASE_URL'],
+      contains: ['maxRetries: 0', 'timeout: 30_000'],
     },
-    callers: [{ path: 'scripts/preflight-vision.ts', calls: ['main'] }],
+    callers: [{ path: 'scripts/preflight-vision.ts', calls: ['preflightVisionOneShot'] }],
     directImporters: [],
     roles: ['operator'],
     provider: 'Xiaomi MiMo through the Anthropic-compatible Messages SDK',
@@ -810,7 +810,7 @@ export const PROVIDER_LANES = [
       },
     },
     evidence: {
-      path: 'scripts/preflight-vision.ts',
+      path: 'scripts/preflight-vision-one-shot.ts',
       imports: ['@anthropic-ai/sdk'],
       calls: ['client.messages.create'],
       contains: ['maxRetries: 0', 'timeout: 30_000'],
@@ -825,9 +825,8 @@ export const PROVIDER_LANES = [
       evidence: [
         {
           path: 'scripts/preflight-vision.ts',
-          imports: ['@anthropic-ai/sdk'],
-          calls: ['client.messages.create'],
-          contains: ['maxRetries: 0', 'timeout: 30_000'],
+          imports: ['./preflight-vision-one-shot'],
+          calls: ['preflightVisionOneShot'],
         },
       ],
     },
@@ -840,9 +839,10 @@ export const PROVIDER_LANES = [
       timeoutMs: 30_000,
       clientRetryLimit: 0,
       evidence: {
-        path: 'scripts/preflight-vision.ts',
-        calls: ['client.messages.create', 'writeFileSync'],
-        contains: ['docs/preflight', 'maxRetries: 0', 'timeout: 30_000'],
+        path: 'scripts/preflight-vision-one-shot.ts',
+        imports: ['@anthropic-ai/sdk'],
+        calls: ['client.messages.create'],
+        contains: ['maxRetries: 0', 'timeout: 30_000'],
       },
     },
     costSupport:

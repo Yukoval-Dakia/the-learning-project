@@ -24,8 +24,8 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import Anthropic from '@anthropic-ai/sdk';
 import { config } from 'dotenv';
+import { preflightVisionOneShot } from './preflight-vision-one-shot';
 
 config({ path: '.env' });
 
@@ -44,43 +44,14 @@ if (!apiKey || apiKey.trim().length === 0) {
   process.exit(2);
 }
 
-// A tiny 1x1 red PNG (base64). Enough to test the image content path without
-// external fetch. If model can't see the image, structured JSON won't include
-// the expected fields.
-const TINY_PNG_B64 =
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
-
-async function main(): Promise<void> {
+async function main(apiKey: string): Promise<void> {
   console.log(`[preflight] base=${baseURL} model=${model}`);
-  const client = new Anthropic({ apiKey, baseURL, maxRetries: 0, timeout: 30_000 });
   const start = Date.now();
-  let response: Awaited<ReturnType<typeof client.messages.create>> | null = null;
+  let response: Awaited<ReturnType<typeof preflightVisionOneShot>> | null = null;
   let errorMessage: string | null = null;
 
   try {
-    response = await client.messages.create({
-      model,
-      max_tokens: 256,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: 'image/png',
-                data: TINY_PNG_B64,
-              },
-            },
-            {
-              type: 'text',
-              text: 'You are a JSON-only responder. The image is a tiny 1x1 pixel. Respond with exactly this JSON: {"saw_image": true, "color_guess": "<one word>"}. Do not include any text outside the JSON object.',
-            },
-          ],
-        },
-      ],
-    });
+    response = await preflightVisionOneShot({ apiKey, baseURL, model });
   } catch (err) {
     errorMessage = err instanceof Error ? err.message : String(err);
   }
@@ -139,7 +110,7 @@ async function main(): Promise<void> {
   process.exit(0);
 }
 
-main().catch((err) => {
+main(apiKey).catch((err) => {
   console.error('Pre-flight crashed:', err);
   process.exit(2);
 });

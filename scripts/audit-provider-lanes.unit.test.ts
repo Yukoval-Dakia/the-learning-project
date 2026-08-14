@@ -228,7 +228,10 @@ describe('provider lane inventory', () => {
 
   it('declares the vision preflight as one bounded operator-only exemption', () => {
     const lane = PROVIDER_LANES.find((candidate) => candidate.id === 'xiaomi.vision-preflight');
-    const source = readFileSync(resolve(process.cwd(), 'scripts/preflight-vision.ts'), 'utf8');
+    const source = readFileSync(
+      resolve(process.cwd(), 'scripts/preflight-vision-one-shot.ts'),
+      'utf8',
+    );
 
     expect(lane).toMatchObject({
       disposition: 'exempt',
