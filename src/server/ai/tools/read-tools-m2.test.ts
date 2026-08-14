@@ -1,4 +1,6 @@
 import { capabilities } from '@/capabilities';
+import { getRecordContextTool } from '@/capabilities/ingestion/server/tools/get-record-context';
+import { queryRecordsTool } from '@/capabilities/ingestion/server/tools/query-records';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   buildInterventionSettlement,
@@ -25,10 +27,8 @@ import {
   executeMemoryBrief,
   getLearningItemContextTool,
   getQuestionContextTool,
-  getRecordContextTool,
   getReviewDueTool,
   queryMemoryBriefTool,
-  queryRecordsTool,
 } from './context-readers';
 import {
   expandKnowledgeSubgraphTool,
