@@ -1,3 +1,4 @@
+import { decideKnowledgeEdgeProposal } from '@/capabilities/knowledge/public';
 import { writeKnowledgeProposeEvent } from '@/capabilities/knowledge/server/proposals';
 import {
   artifact,
@@ -20,12 +21,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import {
-  acceptAiProposal,
-  decideKnowledgeEdgeProposal,
-  dismissAiProposal,
-  retractAiProposal,
-} from './actions';
+import { acceptAiProposal, dismissAiProposal, retractAiProposal } from './actions';
 import { writeAiProposal } from './writer';
 
 const KNOWLEDGE_BASE = {
