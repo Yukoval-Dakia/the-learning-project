@@ -1,4 +1,6 @@
 import { capabilities } from '@/capabilities';
+import { getRecordContextTool } from '@/capabilities/ingestion/server/tools/get-record-context';
+import { queryRecordsTool } from '@/capabilities/ingestion/server/tools/query-records';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   buildInterventionSettlement,
@@ -25,10 +27,8 @@ import {
   executeMemoryBrief,
   getLearningItemContextTool,
   getQuestionContextTool,
-  getRecordContextTool,
   getReviewDueTool,
   queryMemoryBriefTool,
-  queryRecordsTool,
 } from './context-readers';
 import {
   expandKnowledgeSubgraphTool,
@@ -522,11 +522,6 @@ describe('Foundation D M2 read tools', () => {
       supports_entity_inventory_claim: false,
       supports_lifecycle_status_count_claim: false,
     });
-    expect(queryRecordsTool.description).toContain(
-      'processing_status is a LearningRecord ingestion/linking state',
-    );
-    expect(queryRecordsTool.description).toContain('cannot prove those entities are absent');
-    expect(queryRecordsTool.description).toContain('entity_status_coverage=not_observed');
 
     const recordContext = await getRecordContextTool.execute(ctx(), {
       recordId: 'rec_mistake',

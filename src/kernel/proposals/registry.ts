@@ -1,35 +1,65 @@
 import type { CapabilityManifest } from '../manifest';
-import type { ProposalAcceptDecl } from './types';
+import type { ProposalAcceptDecl, ProposalDismissDecl, ProposalRetractDecl } from './types';
 
-export type ProposalAcceptRegistry = ReadonlyMap<string, ProposalAcceptDecl>;
+export type ProposalLifecycleDecl = CapabilityManifest['proposals'] extends
+  | { kinds: Array<infer Decl> }
+  | undefined
+  ? Decl & { owner: string }
+  : never;
 
-export function createProposalAcceptRegistry(
+export type ProposalLifecycleRegistry = ReadonlyMap<string, ProposalLifecycleDecl>;
+
+export function createProposalLifecycleRegistry(
   capabilities: CapabilityManifest[],
-): ProposalAcceptRegistry {
-  const owners = new Map<string, string>();
-  const registry = new Map<string, ProposalAcceptDecl>();
+): ProposalLifecycleRegistry {
+  const registry = new Map<string, ProposalLifecycleDecl>();
 
   for (const capability of capabilities) {
     for (const declaration of capability.proposals?.kinds ?? []) {
-      const owner = owners.get(declaration.kind);
-      if (owner !== undefined) {
+      const existing = registry.get(declaration.kind);
+      if (existing !== undefined) {
         throw new Error(
-          `proposal kind '${declaration.kind}' declared by both '${owner}' and '${capability.name}'`,
+          `proposal kind '${declaration.kind}' declared by both '${existing.owner}' and '${capability.name}'`,
         );
       }
-      owners.set(declaration.kind, capability.name);
-      if (declaration.accept !== undefined) {
-        registry.set(declaration.kind, declaration.accept);
-      }
+      registry.set(declaration.kind, { owner: capability.name, ...declaration });
     }
   }
 
   return registry;
 }
 
-export function getProposalAcceptDecl(
-  registry: ProposalAcceptRegistry,
+export function getProposalLifecycleDecl(
+  registry: ProposalLifecycleRegistry,
   kind: string,
-): ProposalAcceptDecl | undefined {
+): ProposalLifecycleDecl | undefined {
   return registry.get(kind);
+}
+
+export function getProposalLifecycleOperation(
+  registry: ProposalLifecycleRegistry,
+  kind: string,
+  operation: 'accept',
+): ProposalAcceptDecl | undefined;
+export function getProposalLifecycleOperation(
+  registry: ProposalLifecycleRegistry,
+  kind: string,
+  operation: 'dismiss',
+): ProposalDismissDecl | undefined;
+export function getProposalLifecycleOperation(
+  registry: ProposalLifecycleRegistry,
+  kind: string,
+  operation: 'retract',
+): ProposalRetractDecl | undefined;
+export function getProposalLifecycleOperation(
+  registry: ProposalLifecycleRegistry,
+  kind: string,
+  operation: 'accept' | 'dismiss' | 'retract',
+): ProposalAcceptDecl | ProposalDismissDecl | ProposalRetractDecl | undefined;
+export function getProposalLifecycleOperation(
+  registry: ProposalLifecycleRegistry,
+  kind: string,
+  operation: 'accept' | 'dismiss' | 'retract',
+): ProposalAcceptDecl | ProposalDismissDecl | ProposalRetractDecl | undefined {
+  return registry.get(kind)?.[operation];
 }

@@ -22,12 +22,12 @@
 // fixtures (own knowledge ids, own reset) so this never shares a mutable count with the propose_edge
 // cost-ledger concurrency flake (YUK-724).
 
+import { decideKnowledgeEdgeProposal } from '@/capabilities/knowledge/public';
 import { createKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
 import { newId } from '@/core/ids';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
-import { decideKnowledgeEdgeProposal } from '@/server/proposals/actions';
 import { eq, inArray, isNull, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';

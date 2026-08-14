@@ -3,7 +3,8 @@
 // Composite read tools for records, questions, due review cards, learning
 // items, and Dreaming-maintained memory briefs.
 
-import { QuestionKind } from '@/core/schema/business';
+import { bodyBlockSummaries, excerpt, knowledgeContext } from '@/capabilities/ingestion/public';
+import { AddressableStructureSchema } from '@/core/schema/addressable-structure';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   InterventionSettlement,
@@ -12,121 +13,32 @@ import { deriveSourceTier } from '@/core/schema/provenance';
 // ADR-0032 D6-R6 / D6-draftread — addressable-structure projection (read≡write
 // coordinate fix). Pure tree-clip; shared by get_question_context(include:
 // ['structure']) and the get_question_block_structure draft reader.
-import {
-  type AddressableStructure,
-  projectAddressableStructure,
-} from '@/core/schema/structured_question';
-import type { Db } from '@/db/client';
+import { projectAddressableStructure } from '@/core/schema/structured_question';
 import { notDraftPredicate } from '@/db/predicates';
 import {
   artifact,
   completion_evidence,
   event,
   intervention,
-  knowledge,
-  knowledge_edge,
   learning_item,
   learning_record,
   material_fsrs_state,
   memory_brief_note,
   mistake_variant,
   question,
-  question_block,
 } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import {
-  getFailureAttemptById,
   getFailureAttempts,
   getQuestionTimeline,
   getRecentReviewEvents,
 } from '@/server/events/queries';
-import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';
 
-const EXCERPT_MAX = 220;
-
-function excerpt(value: string | null | undefined, max = EXCERPT_MAX): string {
-  const clean = (value ?? '').replace(/\s+/g, ' ').trim();
-  return clean.length <= max ? clean : `${clean.slice(0, max - 1)}…`;
-}
-
 function iso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
-}
-
-type KnowledgeRow = {
-  id: string;
-  name: string;
-  parent_id: string | null;
-};
-
-async function loadKnowledgeRows(db: Db, ids: string[]): Promise<Map<string, KnowledgeRow>> {
-  const unique = [...new Set(ids)].filter(Boolean);
-  if (unique.length === 0) return new Map();
-  const idOrParent = or(inArray(knowledge.id, unique), inArray(knowledge.parent_id, unique));
-  const rows = await db
-    .select({ id: knowledge.id, name: knowledge.name, parent_id: knowledge.parent_id })
-    .from(knowledge)
-    .where(idOrParent ?? inArray(knowledge.id, unique));
-
-  // Pull ancestors lazily until no new parent is discovered. Graphs are tiny in
-  // the current single-user runtime, so this bounded loop is clearer than a
-  // recursive SQL CTE inside every tool.
-  const byId = new Map(rows.map((row) => [row.id, row]));
-  for (;;) {
-    const missingParents = [...byId.values()]
-      .map((row) => row.parent_id)
-      .filter((id): id is string => !!id && !byId.has(id));
-    if (missingParents.length === 0) break;
-    const parents = await db
-      .select({ id: knowledge.id, name: knowledge.name, parent_id: knowledge.parent_id })
-      .from(knowledge)
-      .where(inArray(knowledge.id, [...new Set(missingParents)]));
-    if (parents.length === 0) break;
-    for (const parent of parents) byId.set(parent.id, parent);
-  }
-  return byId;
-}
-
-function pathFor(id: string, byId: Map<string, KnowledgeRow>): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  let current = byId.get(id);
-  while (current && !seen.has(current.id)) {
-    seen.add(current.id);
-    out.unshift(current.name);
-    current = current.parent_id ? byId.get(current.parent_id) : undefined;
-  }
-  return out;
-}
-
-async function knowledgeContext(
-  db: Db,
-  ids: string[],
-): Promise<Array<{ knowledge_id: string; path: string[]; mastery: number | null }>> {
-  const byId = await loadKnowledgeRows(db, ids);
-  return [...new Set(ids)].map((id) => ({
-    knowledge_id: id,
-    path: pathFor(id, byId),
-    mastery: null,
-  }));
-}
-
-function knowledgeEdgeTouches(ids: string[]) {
-  return (
-    or(
-      inArray(knowledge_edge.from_knowledge_id, ids),
-      inArray(knowledge_edge.to_knowledge_id, ids),
-    ) ?? inArray(knowledge_edge.from_knowledge_id, ids)
-  );
-}
-
-function recordKnowledgeContainsAny(ids: string[]) {
-  const conditions = ids.map(
-    (id) => sql`${learning_record.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
-  );
-  return or(...conditions) ?? sql`FALSE`;
 }
 
 function questionKnowledgeContainsAny(ids: string[]) {
@@ -134,363 +46,6 @@ function questionKnowledgeContainsAny(ids: string[]) {
     (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
   );
   return or(...conditions) ?? sql`FALSE`;
-}
-
-function bodyBlockSummaries(bodyBlocks: unknown): string[] {
-  if (!bodyBlocks || typeof bodyBlocks !== 'object') return [];
-  const content = (bodyBlocks as { content?: unknown }).content;
-  if (!Array.isArray(content)) return [];
-  return content.slice(0, 6).map((block) => {
-    if (!block || typeof block !== 'object') return 'block';
-    const typed = block as {
-      type?: string;
-      attrs?: { semantic_kind?: string; title?: string };
-      content?: unknown[];
-    };
-    const text = JSON.stringify(typed.content ?? [])
-      .replace(/[{}\[\]",:]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    const label = typed.attrs?.semantic_kind ?? typed.type ?? 'block';
-    return `${label}: ${excerpt(typed.attrs?.title ?? text, 120)}`;
-  });
-}
-
-const QueryRecordsInputSchema = z.object({
-  kind: z.array(z.string()).optional(),
-  knowledgeIds: z.array(z.string()).optional(),
-  subjectId: z.string().optional(),
-  questionId: z.string().optional(),
-  activityKind: z.array(z.string()).optional(),
-  originEventId: z.string().optional(),
-  attemptEventId: z.string().optional(),
-  learningItemId: z.string().optional(),
-  processingStatus: z.array(z.string()).optional(),
-  query: z.string().optional(),
-  sinceDays: z.number().int().positive().max(365).optional(),
-  limit: z.number().int().min(1).max(50).optional(),
-});
-
-const RecordListRowSchema = z.object({
-  record_id: z.string(),
-  kind: z.string(),
-  title: z.string().nullable(),
-  excerpt: z.string(),
-  source: z.string(),
-  capture_mode: z.string(),
-  activity_kind: z.string(),
-  origin_event_id: z.string().nullable(),
-  processing_status: z.string(),
-  knowledge_ids: z.array(z.string()),
-  links: z.object({
-    question_id: z.string().nullable(),
-    attempt_event_id: z.string().nullable(),
-    artifact_id: z.string().nullable(),
-    learning_item_id: z.string().nullable(),
-    source_document_id: z.string().nullable(),
-  }),
-  created_at: z.string(),
-});
-
-const QueryRecordsOutputSchema = z.object({
-  rows: z.array(RecordListRowSchema),
-  claim_boundaries: z.object({
-    zero_rows_scope: z.literal('matching_learning_record_rows_only'),
-    supports_entity_inventory_claim: z.literal(false),
-    supports_lifecycle_status_count_claim: z.literal(false),
-  }),
-});
-
-type QueryRecordsInput = z.infer<typeof QueryRecordsInputSchema>;
-type QueryRecordsOutput = z.infer<typeof QueryRecordsOutputSchema>;
-
-async function executeQueryRecords(
-  ctx: ToolContext,
-  raw: QueryRecordsInput,
-): Promise<QueryRecordsOutput> {
-  const input = QueryRecordsInputSchema.parse(raw);
-  const conditions = [isNull(learning_record.archived_at)];
-  if (input.kind?.length) conditions.push(inArray(learning_record.kind, input.kind));
-  if (input.subjectId) conditions.push(eq(learning_record.subject_id, input.subjectId));
-  if (input.questionId) conditions.push(eq(learning_record.question_id, input.questionId));
-  if (input.activityKind?.length) {
-    conditions.push(inArray(learning_record.activity_kind, input.activityKind));
-  }
-  if (input.originEventId)
-    conditions.push(eq(learning_record.origin_event_id, input.originEventId));
-  if (input.attemptEventId)
-    conditions.push(eq(learning_record.attempt_event_id, input.attemptEventId));
-  if (input.learningItemId)
-    conditions.push(eq(learning_record.learning_item_id, input.learningItemId));
-  if (input.processingStatus?.length) {
-    conditions.push(inArray(learning_record.processing_status, input.processingStatus));
-  }
-  if (input.knowledgeIds?.length) {
-    conditions.push(recordKnowledgeContainsAny(input.knowledgeIds));
-  }
-  if (input.sinceDays) {
-    conditions.push(
-      gte(learning_record.created_at, new Date(Date.now() - input.sinceDays * 86_400_000)),
-    );
-  }
-  if (input.query) {
-    const pattern = `%${input.query}%`;
-    const textCondition = or(
-      sql`${learning_record.title} ILIKE ${pattern}`,
-      sql`${learning_record.content_md} ILIKE ${pattern}`,
-    );
-    if (textCondition) conditions.push(textCondition);
-  }
-  const rows = await ctx.db
-    .select()
-    .from(learning_record)
-    .where(and(...conditions))
-    .orderBy(desc(learning_record.created_at), desc(learning_record.id))
-    .limit(input.limit ?? 20);
-
-  return QueryRecordsOutputSchema.parse({
-    rows: rows.map((row) => ({
-      record_id: row.id,
-      kind: row.kind,
-      title: row.title ?? null,
-      excerpt: excerpt(row.content_md),
-      source: row.source,
-      capture_mode: row.capture_mode,
-      activity_kind: row.activity_kind,
-      origin_event_id: row.origin_event_id ?? null,
-      processing_status: row.processing_status,
-      knowledge_ids: row.knowledge_ids ?? [],
-      links: {
-        question_id: row.question_id ?? null,
-        attempt_event_id: row.attempt_event_id ?? null,
-        artifact_id: row.artifact_id ?? null,
-        learning_item_id: row.learning_item_id ?? null,
-        source_document_id: row.source_document_id ?? null,
-      },
-      created_at: row.created_at.toISOString(),
-    })),
-    claim_boundaries: {
-      zero_rows_scope: 'matching_learning_record_rows_only',
-      supports_entity_inventory_claim: false,
-      supports_lifecycle_status_count_claim: false,
-    },
-  });
-}
-
-const GetRecordContextInputSchema = z.object({
-  recordId: z.string().min(1),
-  include: z
-    .array(
-      z.enum([
-        'question',
-        'attempt',
-        'attribution',
-        'review_history',
-        'artifact',
-        'learning_item',
-        'knowledge_context',
-        'event_chain',
-      ]),
-    )
-    .optional(),
-});
-
-const GetRecordContextOutputSchema = z.object({
-  record: z
-    .object({
-      id: z.string(),
-      kind: z.string(),
-      title: z.string().nullable(),
-      content_md: z.string(),
-      source: z.string(),
-      capture_mode: z.string(),
-      activity_kind: z.string(),
-      origin_event_id: z.string().nullable(),
-      processing_status: z.string(),
-      knowledge_ids: z.array(z.string()),
-      created_at: z.string(),
-    })
-    .nullable(),
-  question: z
-    .object({
-      id: z.string(),
-      prompt_md: z.string(),
-      reference_md: z.string().nullable(),
-      knowledge_ids: z.array(z.string()),
-    })
-    .optional(),
-  attempt: z
-    .object({
-      attempt_event_id: z.string(),
-      answer_md: z.string().nullable(),
-      answer_image_refs: z.array(z.string()),
-      outcome: z.string().nullable(),
-    })
-    .optional(),
-  attribution: z
-    .object({
-      user_cause: z.unknown().optional(),
-      judge: z.unknown().optional(),
-      chosen_source: z.enum(['user', 'judge', 'none']),
-    })
-    .optional(),
-  artifact: z.object({ id: z.string(), type: z.string(), summary: z.string() }).optional(),
-  learning_item: z.object({ id: z.string(), title: z.string(), status: z.string() }).optional(),
-  knowledge_context: z
-    .object({
-      paths: z.array(z.array(z.string())),
-      related_edges: z.array(
-        z.object({
-          from: z.string(),
-          to: z.string(),
-          relation_type: z.string(),
-          reason: z.string(),
-        }),
-      ),
-    })
-    .optional(),
-  event_chain: z
-    .object({
-      parent: z.string().nullable(),
-      children: z.array(z.object({ id: z.string(), action: z.string() })),
-    })
-    .optional(),
-});
-
-type GetRecordContextInput = z.infer<typeof GetRecordContextInputSchema>;
-type GetRecordContextOutput = z.infer<typeof GetRecordContextOutputSchema>;
-
-async function executeGetRecordContext(
-  ctx: ToolContext,
-  raw: GetRecordContextInput,
-): Promise<GetRecordContextOutput> {
-  const input = GetRecordContextInputSchema.parse(raw);
-  const include = new Set(
-    input.include ?? ['question', 'attempt', 'attribution', 'knowledge_context'],
-  );
-  const rows = await ctx.db
-    .select()
-    .from(learning_record)
-    .where(eq(learning_record.id, input.recordId))
-    .limit(1);
-  const record = rows[0] ?? null;
-  if (!record) return GetRecordContextOutputSchema.parse({ record: null });
-
-  const output: GetRecordContextOutput = {
-    record: {
-      id: record.id,
-      kind: record.kind,
-      title: record.title ?? null,
-      content_md: record.content_md,
-      source: record.source,
-      capture_mode: record.capture_mode,
-      activity_kind: record.activity_kind,
-      origin_event_id: record.origin_event_id ?? null,
-      processing_status: record.processing_status,
-      knowledge_ids: record.knowledge_ids ?? [],
-      created_at: record.created_at.toISOString(),
-    },
-  };
-
-  if (include.has('question') && record.question_id) {
-    const [q] = await ctx.db
-      .select()
-      .from(question)
-      .where(eq(question.id, record.question_id))
-      .limit(1);
-    if (q) {
-      output.question = {
-        id: q.id,
-        prompt_md: q.prompt_md,
-        reference_md: q.reference_md ?? null,
-        knowledge_ids: q.knowledge_ids ?? [],
-      };
-    }
-  }
-
-  const failure = record.attempt_event_id
-    ? await getFailureAttemptById(ctx.db, record.attempt_event_id)
-    : null;
-  if (include.has('attempt') && failure) {
-    output.attempt = {
-      attempt_event_id: failure.attempt_event_id,
-      answer_md: failure.answer_md,
-      answer_image_refs: failure.answer_image_refs,
-      outcome: 'failure',
-    };
-  }
-  if (include.has('attribution') && failure) {
-    const cause = effectiveCauseForFailureAttempt(failure);
-    output.attribution = {
-      user_cause: failure.user_cause ?? undefined,
-      judge: failure.judge ?? undefined,
-      chosen_source:
-        cause?.source === 'user' ? 'user' : cause?.source === 'agent' ? 'judge' : 'none',
-    };
-  }
-  if (include.has('artifact') && record.artifact_id) {
-    const [a] = await ctx.db
-      .select()
-      .from(artifact)
-      .where(eq(artifact.id, record.artifact_id))
-      .limit(1);
-    if (a) {
-      output.artifact = {
-        id: a.id,
-        type: a.type,
-        summary: bodyBlockSummaries(a.body_blocks).join(' | ') || a.title,
-      };
-    }
-  }
-  if (include.has('learning_item') && record.learning_item_id) {
-    const [li] = await ctx.db
-      .select()
-      .from(learning_item)
-      .where(eq(learning_item.id, record.learning_item_id))
-      .limit(1);
-    if (li) output.learning_item = { id: li.id, title: li.title, status: li.status };
-  }
-  if (include.has('knowledge_context')) {
-    const paths = await knowledgeContext(ctx.db, record.knowledge_ids ?? []);
-    const edges =
-      record.knowledge_ids.length > 0
-        ? await ctx.db
-            .select({
-              from: knowledge_edge.from_knowledge_id,
-              to: knowledge_edge.to_knowledge_id,
-              relation_type: knowledge_edge.relation_type,
-              reason: knowledge_edge.reasoning,
-            })
-            .from(knowledge_edge)
-            .where(
-              and(isNull(knowledge_edge.archived_at), knowledgeEdgeTouches(record.knowledge_ids)),
-            )
-        : [];
-    output.knowledge_context = {
-      paths: paths.map((p) => p.path),
-      related_edges: edges.map((edge) => ({
-        from: edge.from,
-        to: edge.to,
-        relation_type: edge.relation_type,
-        reason: edge.reason ?? '',
-      })),
-    };
-  }
-  if (include.has('event_chain') && record.origin_event_id) {
-    const [origin] = await ctx.db
-      .select()
-      .from(event)
-      .where(eq(event.id, record.origin_event_id))
-      .limit(1);
-    const children = await ctx.db
-      .select({ id: event.id, action: event.action })
-      .from(event)
-      .where(eq(event.caused_by_event_id, record.origin_event_id))
-      .orderBy(desc(event.created_at))
-      .limit(20);
-    output.event_chain = { parent: origin?.caused_by_event_id ?? null, children };
-  }
-  return GetRecordContextOutputSchema.parse(output);
 }
 
 const GetQuestionContextInputSchema = z.object({
@@ -515,34 +70,6 @@ const GetQuestionContextInputSchema = z.object({
     .optional(),
   attemptLimit: z.number().int().min(1).max(50).optional(),
   reviewLimit: z.number().int().min(1).max(50).optional(),
-});
-
-// ADR-0032 D6-R6 — addressable-structure output shape, shared by
-// get_question_context(include:['structure']) and get_question_block_structure.
-// figures keep only the addressing triple; tree drops bbox/page_index/evidence.
-const AddressableFigureSchema = z.object({
-  asset_id: z.string(),
-  role: z.string(),
-  attached_to_index: z.string(),
-});
-
-const AddressableNodeSchema: z.ZodType<AddressableStructure['tree']> = z.lazy(() =>
-  z.object({
-    id: z.string(),
-    role: z.enum(['stem', 'sub', 'standalone']),
-    question_no: z.string().optional(),
-    prompt_text: z.string(),
-    options: z.array(z.object({ label: z.string(), text: z.string() })).optional(),
-    answers: z.array(z.string()).optional(),
-    analysis: z.string().optional(),
-    kind: QuestionKind.optional(),
-    sub_questions: z.array(AddressableNodeSchema).optional(),
-  }),
-);
-
-const AddressableStructureSchema = z.object({
-  tree: AddressableNodeSchema,
-  figures: z.array(AddressableFigureSchema),
 });
 
 const GetQuestionContextOutputSchema = z.object({
@@ -1573,37 +1100,6 @@ export async function executeMemoryBrief(
   });
 }
 
-export const queryRecordsTool: DomainTool<QueryRecordsInput, QueryRecordsOutput> = {
-  name: 'query_records',
-  description:
-    'Read bounded activity-grounded LearningRecord rows with filters for kind, knowledge, question, attempt, item, and text. processing_status is a LearningRecord ingestion/linking state, not a LearningItem or intervention lifecycle status. rows=[] only means zero matching returned LearningRecord rows and cannot prove those entities are absent. claim_boundaries forbids entity inventory and lifecycle-status claims, and this tool must not override get_review_due.queue_assertion nulls or entity_status_coverage=not_observed.',
-  effect: 'read',
-  inputSchema: QueryRecordsInputSchema,
-  outputSchema: QueryRecordsOutputSchema,
-  costClass: 'local',
-  execute: executeQueryRecords,
-  summarize(input, output) {
-    const kind = input.kind?.join(',') ?? 'all';
-    return `records · ${kind} · ${output.rows.length} rows`;
-  },
-  mirrorEvent: 'when_user_visible',
-};
-
-export const getRecordContextTool: DomainTool<GetRecordContextInput, GetRecordContextOutput> = {
-  name: 'get_record_context',
-  description:
-    'Read one LearningRecord end-to-end, including linked question, attempt, attribution, artifact, item, graph paths, and event chain.',
-  effect: 'read',
-  inputSchema: GetRecordContextInputSchema,
-  outputSchema: GetRecordContextOutputSchema,
-  costClass: 'local',
-  execute: executeGetRecordContext,
-  summarize(input, output) {
-    return `record context · ${input.recordId} · ${output.record?.kind ?? 'missing'}`;
-  },
-  mirrorEvent: 'when_user_visible',
-};
-
 export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQuestionContextOutput> =
   {
     name: 'get_question_context',
@@ -1625,68 +1121,6 @@ export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQues
     },
     mirrorEvent: 'when_user_visible',
   };
-
-// ADR-0032 D6-draftread — draft-layer counterpart of get_question_context's
-// `structure` projection. Reads the ingestion draft `question_block.structured`
-// tree (pre-import) so the agent can read it by node-id the same way the
-// question-edit write tools (split_stem / reassign_figure / ...) address it.
-// RED LINE: this reads the DRAFT layer (question_block); it is granted ONLY on
-// the ingestion_block_edit surface (allowlists.ts) — it must NEVER reach the
-// active question face (copilot / coach / dreaming). Orphan-draft exclusion is a
-// non-concern here: question_block IS the draft pool by construction.
-const GetQuestionBlockStructureInputSchema = z.object({
-  blockId: z.string().min(1),
-});
-
-const GetQuestionBlockStructureOutputSchema = z.object({
-  // null when the block is missing OR carries no `structured` tree yet
-  // (pre-extraction / non-structured block).
-  structure: AddressableStructureSchema.nullable(),
-});
-
-type GetQuestionBlockStructureInput = z.infer<typeof GetQuestionBlockStructureInputSchema>;
-type GetQuestionBlockStructureOutput = z.infer<typeof GetQuestionBlockStructureOutputSchema>;
-
-async function executeGetQuestionBlockStructure(
-  ctx: ToolContext,
-  raw: GetQuestionBlockStructureInput,
-): Promise<GetQuestionBlockStructureOutput> {
-  const input = GetQuestionBlockStructureInputSchema.parse(raw);
-  const [block] = await ctx.db
-    .select()
-    .from(question_block)
-    .where(eq(question_block.id, input.blockId))
-    .limit(1);
-  if (!block?.structured) {
-    return GetQuestionBlockStructureOutputSchema.parse({ structure: null });
-  }
-  return GetQuestionBlockStructureOutputSchema.parse({
-    structure: projectAddressableStructure(block.structured, block.figures ?? []),
-  });
-}
-
-export const getQuestionBlockStructureTool: DomainTool<
-  GetQuestionBlockStructureInput,
-  GetQuestionBlockStructureOutput
-> = {
-  name: 'get_question_block_structure',
-  description:
-    'Read the addressable StructuredQuestion tree of one ingestion draft question_block (pre-import draft layer), clipped to id/role/sub_questions + figure addressing. Pairs with the question-edit write tools so the agent reads the block by node-id the same way it edits it.',
-  effect: 'read',
-  inputSchema: GetQuestionBlockStructureInputSchema,
-  outputSchema: GetQuestionBlockStructureOutputSchema,
-  costClass: 'local',
-  execute: executeGetQuestionBlockStructure,
-  summarize(input, output) {
-    const nodes = output.structure ? countAddressableNodes(output.structure.tree) : 0;
-    return `block structure · ${input.blockId} · ${nodes} nodes`;
-  },
-  mirrorEvent: 'when_user_visible',
-};
-
-function countAddressableNodes(node: AddressableStructure['tree']): number {
-  return 1 + (node.sub_questions?.reduce((sum, c) => sum + countAddressableNodes(c), 0) ?? 0);
-}
 
 export const getReviewDueTool: DomainTool<GetReviewDueInput, GetReviewDueOutput> = {
   name: 'get_review_due',

@@ -1,3 +1,4 @@
+// allow: SIZE_OK — central 51-task catalog contract suite.
 import { readFileSync } from 'node:fs';
 import { agencyTaskSpecs } from '@/capabilities/agency/tasks/index';
 import { copilotTaskSpecs } from '@/capabilities/copilot/tasks/index';
@@ -12,7 +13,12 @@ import {
   visionExtractTaskHeavySpec,
   visionExtractTaskSpec,
 } from '@/capabilities/ingestion/tasks/vision';
-import { knowledgeTaskSpecs } from '@/capabilities/knowledge/tasks/index';
+import {
+  frontierPrerequisiteTaskSpec,
+  knowledgeEdgeProposeTaskSpec,
+  knowledgeReviewTaskSpec,
+  knowledgeTaskSpecs,
+} from '@/capabilities/knowledge/tasks/index';
 import { notesTaskSpecs } from '@/capabilities/notes/tasks/index';
 import { noteGenerateTaskSpec, noteVerifyTaskSpec } from '@/capabilities/notes/tasks/note-tasks';
 import {
@@ -130,6 +136,9 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   coldStartPlacementBridgeTaskSpec,
   blockAssemblyTaskSpec,
   profileCriticTaskSpec,
+  knowledgeEdgeProposeTaskSpec,
+  frontierPrerequisiteTaskSpec,
+  knowledgeReviewTaskSpec,
 ]);
 
 const makeDefinition = <const Kind extends string>(kind: Kind) =>
@@ -278,8 +287,68 @@ describe('taskCatalog', () => {
     }
   });
 
-  it('retains 13 full owned TaskSpecs and 38 identity-backed transitional entries', () => {
-    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(38);
+  it('owns the three Knowledge TaskSpecs without central quarry definitions', () => {
+    const expected = {
+      KnowledgeEdgeProposeTask: {
+        spec: knowledgeEdgeProposeTaskSpec,
+        provider: 'xiaomi',
+        model: 'mimo-v2.5-pro',
+        maxIterations: 2,
+        timeout: 60_000,
+        needsToolCall: false,
+        allowedTools: [],
+      },
+      FrontierPrerequisiteTask: {
+        spec: frontierPrerequisiteTaskSpec,
+        provider: 'xiaomi',
+        model: 'mimo-v2.5-pro',
+        maxIterations: 2,
+        timeout: 60_000,
+        needsToolCall: false,
+        allowedTools: [],
+      },
+      KnowledgeReviewTask: {
+        spec: knowledgeReviewTaskSpec,
+        provider: 'xiaomi',
+        model: 'mimo-v2.5-pro',
+        maxIterations: 12,
+        timeout: 120_000,
+        needsToolCall: true,
+        allowedTools: ['mcp__loom__write_proposal'],
+      },
+    } as const;
+
+    for (const [kind, contract] of Object.entries(expected)) {
+      const entry = knowledgeTaskSpecs[kind as keyof typeof expected];
+      expect(entry.ownership, kind).toBe('owned');
+      expect(entry, kind).toBe(contract.spec);
+      expect(entry.definition, kind).toBe(taskCatalog[kind as keyof typeof taskCatalog]);
+      expect(entry.definition.defaultProvider, kind).toBe(contract.provider);
+      expect(entry.definition.defaultModel, kind).toBe(contract.model);
+      expect(entry.definition.budget.maxIterations, kind).toBe(contract.maxIterations);
+      expect(entry.definition.budget.timeout, kind).toBe(contract.timeout);
+      expect(entry.definition.needsToolCall, kind).toBe(contract.needsToolCall);
+      expect(entry.definition.isMultimodal, kind).toBe(false);
+      expect(entry.definition.allowedTools, kind).toEqual(contract.allowedTools);
+      expect('parseText' in entry && entry.parseText, kind).toBeTypeOf('function');
+      expect('outputSchema' in entry && entry.outputSchema.safeParse, kind).toBeTypeOf('function');
+    }
+
+    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
+    for (const kind of Object.keys(expected)) {
+      expect(source, kind).not.toMatch(new RegExp(`^  ${kind}:`, 'm'));
+    }
+    for (const builder of [
+      'buildKnowledgeEdgeProposePrompt',
+      'buildFrontierPrerequisitePrompt',
+      'buildKnowledgeReviewPrompt',
+    ]) {
+      expect(source, builder).not.toContain(`function ${builder}`);
+    }
+  });
+
+  it('retains 16 full owned TaskSpecs and 35 identity-backed transitional entries', () => {
+    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(35);
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
         if (entry.ownership === 'owned') {
@@ -416,24 +485,24 @@ describe('defineOwnedTaskSpecs', () => {
   });
 
   it('rejects transitional entries with semantic ownership fields', () => {
-    const definition = legacyTaskDefinitions.KnowledgeEdgeProposeTask;
+    const definition = legacyTaskDefinitions.SessionSummaryTask;
     expect(() =>
       invokeEntryValidation({
         ownership: 'transitional',
         definition,
         parseText: (text: string) => text,
       }),
-    ).toThrow('transitional "KnowledgeEdgeProposeTask" must not own parseText or outputSchema');
+    ).toThrow('transitional "SessionSummaryTask" must not own parseText or outputSchema');
     expect(() =>
       invokeEntryValidation({ ownership: 'transitional', definition, outputSchema: z.string() }),
-    ).toThrow('transitional "KnowledgeEdgeProposeTask" must not own parseText or outputSchema');
+    ).toThrow('transitional "SessionSummaryTask" must not own parseText or outputSchema');
   });
 
   it('rejects transitional entries whose definition is not quarry-identical', () => {
     expect(() =>
       invokeEntryValidation({
         ownership: 'transitional',
-        definition: { ...legacyTaskDefinitions.KnowledgeEdgeProposeTask },
+        definition: { ...legacyTaskDefinitions.SessionSummaryTask },
       }),
     ).toThrow('must reference legacyTaskDefinitions by identity');
   });

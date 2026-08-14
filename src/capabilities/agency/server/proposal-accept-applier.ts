@@ -4,11 +4,9 @@ import type {
   ProposalAcceptInput,
   ProposalAcceptResult,
 } from '@/kernel/proposals';
+import { toProposalLifecycleResult } from '@/kernel/proposals';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
-import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/server/proposals/signals';
+import * as ownerRuntime from '@/server/proposals/owner-runtime';
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
 import { acceptGoalScopeProposal } from './goals/accept';
 import {
@@ -17,8 +15,16 @@ import {
   acceptLearningItemProposal,
   acceptRelearnProposal,
 } from './proposal-appliers';
+import { createAgencyProposalLifecycle } from './proposal-lifecycle';
 
 type AgencyAcceptRuntime = AgencyApplierOpts & ConjectureApplierOpts;
+
+export const {
+  completionProposalRetractApplier,
+  goalScopeProposalRetractApplier,
+  learningItemProposalRetractApplier,
+  relearnProposalRetractApplier,
+} = createAgencyProposalLifecycle(ownerRuntime);
 
 function inboxView(input: ProposalAcceptInput): ProposalInboxRow {
   const { proposal } = input;
@@ -35,11 +41,15 @@ function runtimeOptions(input: ProposalAcceptInput, runtime: unknown): AgencyAcc
     ...seams,
     decision: input.decision,
     user_note: input.user_note,
+    corrected_payload: input.corrected_payload,
   };
 }
 
-function wrap(kind: string, result: unknown): ProposalAcceptResult {
-  return { kind, result };
+function wrap(result: {
+  readonly kind: string;
+  readonly idempotent?: boolean;
+}): ProposalAcceptResult {
+  return { kind: result.kind, result: toProposalLifecycleResult(result) };
 }
 
 export const learningItemProposalAcceptApplier: ProposalAcceptApplier = async (
@@ -48,7 +58,6 @@ export const learningItemProposalAcceptApplier: ProposalAcceptApplier = async (
   runtime,
 ) =>
   wrap(
-    'learning_item',
     await acceptLearningItemProposal(
       db as Db,
       input.proposalId,
@@ -59,7 +68,6 @@ export const learningItemProposalAcceptApplier: ProposalAcceptApplier = async (
 
 export const completionProposalAcceptApplier: ProposalAcceptApplier = async (db, input, runtime) =>
   wrap(
-    'completion',
     await acceptCompletionProposal(
       db as Db,
       input.proposalId,
@@ -70,7 +78,6 @@ export const completionProposalAcceptApplier: ProposalAcceptApplier = async (db,
 
 export const relearnProposalAcceptApplier: ProposalAcceptApplier = async (db, input, runtime) =>
   wrap(
-    'relearn',
     await acceptRelearnProposal(
       db as Db,
       input.proposalId,
@@ -85,16 +92,15 @@ export const goalScopeProposalAcceptApplier: ProposalAcceptApplier = async (db, 
     user_note: input.user_note,
   });
   if (result.idempotent) {
-    await ensureProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
+    await ownerRuntime.ensureProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
   } else {
-    await recordProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
+    await ownerRuntime.recordProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
   }
-  return wrap('goal_scope', result);
+  return wrap(result);
 };
 
 export const conjectureProposalAcceptApplier: ProposalAcceptApplier = async (db, input, runtime) =>
   wrap(
-    'conjecture',
     await acceptConjectureProposal(
       db as Db,
       input.proposalId,

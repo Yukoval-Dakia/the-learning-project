@@ -1,3 +1,9 @@
+import type { LearningItemAcceptResult } from '@/capabilities/agency/public';
+import type { RecordPromotionAcceptResult } from '@/capabilities/ingestion/public';
+import {
+  type KnowledgeEdgeProposalDecisionResult,
+  decideKnowledgeEdgeProposal,
+} from '@/capabilities/knowledge/public';
 import { writeKnowledgeProposeEvent } from '@/capabilities/knowledge/server/proposals';
 import {
   artifact,
@@ -17,15 +23,18 @@ import {
 } from '@/server/projections/gather';
 import { knowledgeLiveRowToSnapshot } from '@/server/projections/parity';
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import { assertProposalLifecycleResult } from '../../../tests/helpers/proposal-lifecycle';
 import {
+  type ProposalLifecycleResult,
   acceptAiProposal,
-  decideKnowledgeEdgeProposal,
   dismissAiProposal,
   retractAiProposal,
 } from './actions';
+import { acquireProposalDecisionLock } from './applier-helpers';
 import { writeAiProposal } from './writer';
 
 const KNOWLEDGE_BASE = {
@@ -45,6 +54,22 @@ function paragraphBlock(id: string, text: string) {
   };
 }
 
+function acceptedKnowledgeNodeId(result: ProposalLifecycleResult): string {
+  const ownerResult = result.result;
+  if (
+    result.kind !== 'knowledge_node' ||
+    typeof ownerResult !== 'object' ||
+    ownerResult === null ||
+    !('kind' in ownerResult) ||
+    ownerResult.kind !== 'propose_new_applied' ||
+    !('new_node_id' in ownerResult) ||
+    typeof ownerResult.new_node_id !== 'string'
+  ) {
+    throw new Error('expected a materialized knowledge_node result');
+  }
+  return ownerResult.new_node_id;
+}
+
 async function seedKnowledge(ids: string[]): Promise<void> {
   const db = testDb();
   const now = new Date();
@@ -58,6 +83,32 @@ async function seedKnowledge(ids: string[]): Promise<void> {
       ...KNOWLEDGE_BASE,
     });
   }
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => {};
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function observesBlockedDatabaseSession(): Promise<boolean> {
+  const db = testDb();
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    const rows = await db.execute(
+      sql.raw(`SELECT EXISTS (
+        SELECT 1
+        FROM pg_stat_activity
+        WHERE datname = current_database()
+          AND pid <> pg_backend_pid()
+          AND wait_event_type = 'Lock'
+      ) AS blocked`),
+    );
+    if (rows[0]?.blocked === true) return true;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return false;
 }
 
 describe('proposal lifecycle owner service', () => {
@@ -182,7 +233,7 @@ describe('proposal lifecycle owner service', () => {
 
     const result = await acceptAiProposal(db, 'edge_p1');
     expect(result.kind).toBe('knowledge_edge');
-    if (result.kind !== 'knowledge_edge') throw new Error('unexpected result');
+    assertProposalLifecycleResult<KnowledgeEdgeProposalDecisionResult>(result, 'knowledge_edge');
     expect(result.edge_id).toBeTruthy();
     expect(result.rate_event_id).toBeTruthy();
     if (!result.edge_id) throw new Error('missing edge_id');
@@ -198,6 +249,47 @@ describe('proposal lifecycle owner service', () => {
       relation_type: 'prerequisite',
       weight: 0.7,
     });
+  });
+
+  it('keeps knowledge_edge retract as a generic correction without inverse edge mutation', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2']);
+    await writeAiProposal(db, {
+      id: 'edge_generic_retract',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: 'k1 unlocks k2',
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'prerequisite',
+          weight: 0.7,
+        },
+      },
+    });
+
+    const accepted = await acceptAiProposal(db, 'edge_generic_retract');
+    assertProposalLifecycleResult<KnowledgeEdgeProposalDecisionResult>(accepted, 'knowledge_edge');
+    if (typeof accepted.edge_id !== 'string') throw new Error('expected materialized edge');
+
+    await retractAiProposal(db, 'edge_generic_retract', { reason_md: 'generic correction' });
+
+    const edgeRows = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, accepted.edge_id));
+    expect(edgeRows).toHaveLength(1);
+    expect(edgeRows[0].archived_at).toBeNull();
+    const correctionRows = await db
+      .select()
+      .from(event)
+      .where(
+        and(eq(event.action, 'correct'), eq(event.caused_by_event_id, 'edge_generic_retract')),
+      );
+    expect(correctionRows).toHaveLength(1);
+    expect(correctionRows[0].payload).toMatchObject({ correction_kind: 'retract' });
   });
 
   // ADR-0032 D4-E1 (YUK-203) — edge ARCHIVE accept: a knowledge_edge proposal with
@@ -1158,6 +1250,63 @@ describe('proposal lifecycle owner service', () => {
     expect(signals[0].cooldown_until).toBeInstanceOf(Date);
   });
 
+  it('serializes concurrent generic dismisses into one rate event and one signal increment', async () => {
+    const db = testDb();
+    const proposalId = 'learning_dismiss_race';
+    await writeAiProposal(db, {
+      id: proposalId,
+      payload: {
+        kind: 'learning_item',
+        target: { subject_kind: 'learning_item', subject_id: null },
+        reason_md: 'Create a focused review item',
+        evidence_refs: [],
+        proposed_change: { title: '并发复习' },
+        cooldown_key: 'learning_item:并发复习',
+      },
+    });
+
+    const lockAcquired = deferred();
+    const releaseLock = deferred();
+    const holder = db.transaction(async (tx) => {
+      await acquireProposalDecisionLock(tx, proposalId);
+      lockAcquired.resolve();
+      await releaseLock.promise;
+    });
+    await lockAcquired.promise;
+
+    const concurrentDismisses = [
+      dismissAiProposal(db, proposalId, { user_note: 'not now' }),
+      dismissAiProposal(db, proposalId, { user_note: 'not now' }),
+    ];
+    const observedBlocked = await observesBlockedDatabaseSession();
+    releaseLock.resolve();
+    await holder;
+    const results = await Promise.all(concurrentDismisses);
+
+    expect(observedBlocked).toBe(true);
+    expect(results.filter((result) => result.idempotent === true)).toHaveLength(1);
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)));
+    expect(rateRows).toHaveLength(1);
+    expect(await db.select().from(proposal_signals)).toMatchObject([
+      { kind: 'learning_item', accept_count: 0, dismiss_count: 1 },
+    ]);
+
+    const replay = await dismissAiProposal(db, proposalId, { user_note: 'not now' });
+    expect(replay).toMatchObject({ idempotent: true, rate_event_id: rateRows[0].id });
+    expect(
+      await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId))),
+    ).toHaveLength(1);
+    expect(await db.select().from(proposal_signals)).toMatchObject([
+      { kind: 'learning_item', accept_count: 0, dismiss_count: 1 },
+    ]);
+  });
+
   it('dismiss retry backfills a missing signal after the rate event already exists', async () => {
     const db = testDb();
     await writeAiProposal(db, {
@@ -1497,7 +1646,7 @@ describe('proposal lifecycle owner service', () => {
     const result = await acceptAiProposal(db, 'record_promotion_p1');
 
     expect(result).toMatchObject({ kind: 'record_promotion', record_id: 'rec_promote' });
-    if (result.kind !== 'record_promotion') throw new Error('expected record_promotion result');
+    assertProposalLifecycleResult<RecordPromotionAcceptResult>(result, 'record_promotion');
     const item = (
       await db
         .select()
@@ -1689,7 +1838,7 @@ describe('decideKnowledgeEdgeProposal — PR-B edge SoT flip (PROJECTION_IS_WRIT
     vi.stubEnv('PROJECTION_IS_WRITER', '1');
     const result = await acceptAiProposal(db, 'edge_flip_p1');
     expect(result.kind).toBe('knowledge_edge');
-    if (result.kind !== 'knowledge_edge') throw new Error('unexpected result');
+    assertProposalLifecycleResult<KnowledgeEdgeProposalDecisionResult>(result, 'knowledge_edge');
     if (!result.edge_id) throw new Error('missing edge_id');
 
     // The imperative INSERT was skipped (flip ON). The row exists ONLY because the projection
@@ -2044,9 +2193,7 @@ describe('retractAiProposal — knowledge_node soft-delete + fold==row (YUK-471)
     });
 
     const accept = await acceptAiProposal(db, 'knode_retract_p1');
-    if (accept.kind !== 'knowledge_node') throw new Error('unexpected accept kind');
-    if (!accept.result) throw new Error('expected a materialized result on a fresh accept');
-    const newNodeId = accept.result.kind === 'propose_new_applied' ? accept.result.new_node_id : '';
+    const newNodeId = acceptedKnowledgeNodeId(accept);
     expect(newNodeId).not.toBe('');
 
     // After accept: node is live, and fold==row.
@@ -2094,9 +2241,7 @@ describe('retractAiProposal — knowledge_node soft-delete + fold==row (YUK-471)
       },
     });
     const accept = await acceptAiProposal(db, 'knode_retract_p2');
-    if (accept.kind !== 'knowledge_node') throw new Error('unexpected accept kind');
-    if (!accept.result) throw new Error('expected a materialized result on a fresh accept');
-    const newNodeId = accept.result.kind === 'propose_new_applied' ? accept.result.new_node_id : '';
+    const newNodeId = acceptedKnowledgeNodeId(accept);
 
     await retractAiProposal(db, 'knode_retract_p2', { reason_md: 'first retract' });
     const afterFirst = (
@@ -2130,9 +2275,7 @@ describe('retractAiProposal — knowledge_node soft-delete + fold==row (YUK-471)
       },
     });
     const accept = await acceptAiProposal(db, 'knode_atomic_p1');
-    if (accept.kind !== 'knowledge_node') throw new Error('unexpected accept kind');
-    if (!accept.result) throw new Error('expected a materialized result on a fresh accept');
-    const newNodeId = accept.result.kind === 'propose_new_applied' ? accept.result.new_node_id : '';
+    const newNodeId = acceptedKnowledgeNodeId(accept);
 
     // Corrupt the node row OUT OF BAND (rename it without an event) so the in-tx parity
     // assert (fold != row) THROWS during the knowledge_node retract reversal. In test env

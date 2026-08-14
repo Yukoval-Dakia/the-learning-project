@@ -106,22 +106,23 @@ Question (统一题库，single source of truth)
 > product operation 与 typed task contract，中央 runtime 只拥有 provider/SDK/budget/retry/
 > admission/model-attempt logging。Attribution/AttributionRerank/VariantGen 已由 `practice/tasks`
 > 拥有；Notes 也已拥有 NoteGenerate/NoteVerify 的 parser + output schema；Ingestion 已拥有
-> Vision/Structure/MistakeEnroll/Tagging/ColdStart/BlockAssembly/ProfileCritic 八个 TaskSpec。
-> owner maps 当前保存 13 个完整 TaskSpec 与 38 个显式 transitional entry，registry 只做静态 compatibility projection；
-> transitional semantics 仍集中在 `legacy-task-definitions.ts`；owner migration 由 YUK-865–872、
+> Vision/Structure/MistakeEnroll/Tagging/ColdStart/BlockAssembly/ProfileCritic 八个 TaskSpec；Knowledge
+> 已拥有 KnowledgeEdgePropose/FrontierPrerequisite/KnowledgeReview 三个 TaskSpec。
+> owner maps 当前保存 16 个完整 TaskSpec 与 35 个显式 transitional entry，registry 只做静态 compatibility projection；
+> transitional semantics 仍集中在 `legacy-task-definitions.ts`；owner migration 由 YUK-865–870、
 > YUK-875、YUK-878–879 承接，中央 semantic quarry 最终删除由 YUK-885 承接。
 > 实现附录见 `docs/superpowers/plans/2026-08-08-practice-failure-learning-implementation.md`。
 
 架构债由 `pnpm audit:capability-boundaries` 递减约束。基线单位是去重后的
-`(source file, resolved target module)`：capability → server 531、server → capability deep
-70、cross-capability value 62；后者目前包含一个由 agency/ingestion/knowledge/notes/practice
+`(source file, resolved target module)`：capability → server 520、server → capability deep
+63、cross-capability value 65；后者目前包含一个由 agency/ingestion/knowledge/notes/practice
 组成的非平凡 SCC。任何下降必须在同一变更收紧
 `scripts/capability-boundary-baseline.json`，不能留下回涨额度。
 
 ### 5.1 Task 注册
 
 > **Canonical source**: `src/ai/task-catalog.ts` 的 `taskCatalog`。六个 capability owner maps
-> 保存 staged semantic ownership：13 个完整 owned TaskSpec（3 Practice + 2 Notes + 8 Ingestion）和 38 个
+> 保存 staged semantic ownership：16 个完整 owned TaskSpec（3 Practice + 2 Notes + 8 Ingestion + 3 Knowledge）和 35 个
 > identity-backed transitional entry；composer 把每个 entry 的精确 `definition` 投影为冻结的
 > runtime map。`src/ai/registry.ts` 仅是带 Copilot dispatch overlay 的 compatibility projection。
 > 当前恰有 **51 个 registered/runnable kinds、50 个静态 production invocation kinds、1 个显式
