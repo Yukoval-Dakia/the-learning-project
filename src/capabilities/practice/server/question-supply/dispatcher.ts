@@ -25,11 +25,9 @@ import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import {
-  type QuizGenJobData,
-  buildTavilyMcpServer,
-  getStartedQuestionSupplyBoss,
-} from '@/kernel/question-supply-infrastructure';
+import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
+import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
+import { supplyDispatchTavilyAvailable } from '@/kernel/supply-dispatch-tavily';
 import { and, eq, gte, sql } from 'drizzle-orm';
 import { SupplyTraceV1, type SupplyTraceV1T, buildSupplyTrace } from './evidence-demand';
 import { jyeooFetchEnabled } from './jyeoo-supply-config';
@@ -71,14 +69,14 @@ function resolveDispatchQueue(route: SupplyRoute): DispatchQueue {
 // ── review FINDING #5：sourcing_web 派发前的 Tavily 可用性闸 ─────────────────────
 //
 // 问题：无 TAVILY_API_KEY 的安装里，SourcingTask 的 web 找题线退化（sourcing.ts 的
-// buildTavilyMcpServer() 返 null → 不挂 Tavily MCP → 找题 agent 无 web 搜索/抽取工具）。
+// supplyDispatchTavilyAvailable() false → 不挂 Tavily MCP → 找题 agent 无 web 搜索/抽取工具）。
 // 把 sourcing_web 直接派出去 = 一个注定退化/失败的付费 job。
 //
 // 修复：auto-派 sourcing_web 前查 TAVILY_API_KEY 可用性（复用 worker 同一判据
-// buildTavilyMcpServer() !== null——单一真相，不复制 env 读取）。不可用 → 跳过 sourcing_web，
+// supplyDispatchTavilyAvailable()——单一真相，不复制 env 读取）。不可用 → 跳过 sourcing_web，
 // 落到 route plan 的下一条可派路由（quiz_gen 仍可，不依赖 Tavily 的闭卷生成）；plan 里再无可派
 // 路由 → manual（emit + 留给 UI/copilot），不入队注定失败的 job。
-const defaultTavilyAvailable = (): boolean => buildTavilyMcpServer() !== null;
+const defaultTavilyAvailable = supplyDispatchTavilyAvailable;
 
 // ── YUK-697：jyeoo_fetch 可派性闸（kill switch）─────────────────────────────────
 //
@@ -138,8 +136,7 @@ async function defaultEnqueue(
   queue: DispatchQueue,
   data: Record<string, unknown>,
 ): Promise<string | null> {
-  const boss = await getStartedQuestionSupplyBoss();
-  return boss.send(queue, data);
+  return enqueueSupplyDispatchJob(queue, data);
 }
 
 /**
@@ -186,7 +183,7 @@ export interface DispatchDeps {
    */
   cooldownDays?: number;
   /**
-   * Tavily 可用性判据注入（review FINDING #5）。默认 buildTavilyMcpServer() !== null（= TAVILY_API_KEY
+   * Tavily 可用性判据注入（review FINDING #5）。默认 supplyDispatchTavilyAvailable()（= TAVILY_API_KEY
    * 已配，worker 同一判据，单一真相）。测试注入 false 验证 sourcing_web 不被 auto-派、落下一条路由。
    */
   tavilyAvailable?: () => boolean;
