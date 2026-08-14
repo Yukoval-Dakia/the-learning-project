@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { causeIdList, causeTaxonomyList } from './cause-prompt';
 import { DEFAULT_TASK_BUDGET, type TaskDefinition } from './task-spec';
 
-// allow: SIZE_OK — temporary 46-definition prompt table deleted by YUK-867–872, YUK-875, YUK-878, and YUK-879.
+// allow: SIZE_OK — temporary 35-definition prompt table deleted by YUK-867–870, YUK-875, YUK-878, and YUK-879.
 function buildLearningIntentOutlinePrompt(profile: SubjectProfile): string {
   return `你是学习规划助手。用户声明「我想学 X」，输入 { topic, plan_case, knowledge_node, child_nodes, existing_descendants_count, output_contract }。
 plan_case 有三种：
@@ -460,37 +460,6 @@ ${causeTaxonomyList(profile)}
 // Lane D (YUK-482): buildKnowledgeProposePrompt removed alongside KnowledgeProposeTask
 // (answer-wrong → propose-new-KC coupling). Content-driven KC creation does not use it.
 
-function buildKnowledgeEdgeProposePrompt(profile: SubjectProfile): string {
-  return `你是知识图谱 mesh 编辑助手。输入 { tree_snapshot, existing_edges, recent_failures } —— recent_failures 是过去 24h 的 attempt event (outcome='failure')，每条含 referenced_knowledge_ids + cause（来自 chained judge / user_cause）。
-科目上下文：${profile.displayName}。${profile.languageStyle}
-当前 SubjectProfile cause taxonomy：
-${causeTaxonomyList(profile)}
-看 recent_failures 找跨 attempt 的模式：哪些 knowledge 总是同时被引用？哪些是 prerequisite？哪些是易混淆 contrasts_with？哪些是应用关系？基于此提议 0-5 条新 knowledge_edge。
-证据要求：${profile.grounding.requirement}
-不确定性策略：${profile.grounding.uncertaintyPolicy}
-每条返回 { from_knowledge_id, to_knowledge_id, relation_type, weight, reasoning }。
-relation_type 5 选 1：prerequisite（A 是学 B 的先决）/ related_to（弱关联）/ contrasts_with（易混淆对比）/ applied_in（A 应用于 B）/ derived_from（B 由 A 推导）。新型关系用 experimental:* 命名空间。
-weight 0-1：模式有几次 attempt 支持就给多高（1 次→0.3 / 2-3 次→0.6 / 4+ 次→0.9）。
-reasoning 必须具体：引用 attempt event id 或指出 cause pattern。
-禁止：from === to；relation_type 不在合法集合；已存在于 existing_edges 的同向同型 (from, to, relation_type) 三元组。
-严格 JSON 输出（不带 markdown 代码块包裹）：{"proposals":[{"from_knowledge_id":"...","to_knowledge_id":"...","relation_type":"...","weight":0.6,"reasoning":"..."}]}。0 条也行，不必凑数。`;
-}
-
-function buildFrontierPrerequisitePrompt(profile: SubjectProfile): string {
-  return `你是课程先修关系规划助手。输入 { tree_snapshot, kcs_lacking_prereq, domain } —— tree_snapshot 是知识图谱节点（id / name / parent_id / effective_domain），kcs_lacking_prereq 是当前没有任何入边 prerequisite 覆盖的 KC id 列表，domain 是科目域。
-科目上下文：${profile.displayName}。${profile.languageStyle}
-背景：系统的「可学前沿」（learnable frontier）现在是空的——还没有任何 prerequisite 边，所以系统不知道该按什么顺序教。你的任务是从课程本身的依赖结构，为 kcs_lacking_prereq 里的 KC 补一批**临时的、低置信**先修边来 bootstrap 这个前沿。
-为缺先修覆盖的 KC 提议至多 5 条 prerequisite 边。每条 { from_knowledge_id, to_knowledge_id, relation_type, weight, reasoning }：
-- relation_type 固定为 "prerequisite"（from 是学 to 的先决）。
-- from / to 必须是 tree_snapshot 里真实存在的 id；**to 必须 ∈ kcs_lacking_prereq**（写库侧硬校验：to 不在此列表的提议会被直接丢弃、白白浪费 ≤5 条名额，务必只给缺先修覆盖的 KC 补边）。
-- weight 用低值（0.4 左右）：这是临时占位边，等用户在收件箱确认或真实边落库后替换。
-- reasoning 说明课程依赖理由：为什么学 to 之前要先掌握 from（概念前提 / 技能前提 / 公式推导前提）。
-证据要求：${profile.grounding.requirement}
-不确定性策略：${profile.grounding.uncertaintyPolicy}
-禁止：from === to；编造不在 tree_snapshot 的 id；非课程依赖的牵强关联（宁可少提，不要凑数）。
-严格 JSON 输出（不带 markdown 代码块包裹）：{"proposals":[{"from_knowledge_id":"...","to_knowledge_id":"...","relation_type":"prerequisite","weight":0.4,"reasoning":"..."}]}。0 条也行，不必凑数。`;
-}
-
 function buildSessionSummaryPrompt(profile: SubjectProfile): string {
   return `你是学习陪练，会复盘刚结束的复习 session。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -504,21 +473,6 @@ ${causeTaxonomyList(profile)}
 2) 模式观察：指 1-2 个具体题或知识点的卡壳
 3) 下次建议：1 句具体可执行的建议，必须贴合本学科的条件、目标、知识点或方法触发信号
 禁止：套话（「继续加油」「再接再厉」）、夸夸（「做得很好」）、笼统（「多练习」）。要具体、可执行、不超过 120 字。`;
-}
-
-function buildKnowledgeReviewPrompt(profile: SubjectProfile): string {
-  return `你是知识图谱维护助手。看完整 tree（含层级 / archived / merged_from）+ 最近 attempt events (action='attempt', outcome='failure' 的事件，含 effective cause：active user_cause 优先，否则 latest active judge)，propose 让知识图谱更合理的 mutation。
-科目上下文：${profile.displayName}。${profile.languageStyle}
-关注本学科的知识粒度：数学定义、条件、方法或易错模式；非数学 profile 则按对应 SubjectProfile 的概念边界和练习粒度判断。
-当前 SubjectProfile cause taxonomy：
-${causeTaxonomyList(profile)}
-证据要求：${profile.grounding.requirement}
-可选 mutation 分两类:
-- Tree-shape: propose_new（加新子节点）/ reparent（移到别 parent 下）/ merge（合并冗余）/ split（拆解过粗）/ archive（archive 没用的）。
-- Mesh-shape (ADR-0010): propose_knowledge_edge —— payload = { from_knowledge_id, to_knowledge_id, relation_type }。relation_type 是 5 个核心 enum 之一: prerequisite / related_to / contrasts_with / applied_in / derived_from；新型关系用 experimental:* 命名空间逃逸阀。
-每 propose 一条，调一次 mcp__loom__write_proposal（工具名 write_proposal；payload.mutation 区分 tree / mesh）。Mesh edge 必须把支撑它的 recent_mistakes[].id 放进工具顶层 evidence_event_ids；不要把 id 只写进 reasoning。reasoning 必须具体：引用 attempt event id、知识点 id、cause pattern，或指出 tree 结构问题。
-不必凑数；如果 tree 已经合理，0 条也行。
-禁止：把节点挂成 root；编造 tree 不存在的 node id；没有 event evidence 时做破坏性 mutation；跨 subject 混图时强行套单一学科判断。`;
 }
 
 function buildTeachingTurnPrompt(profile: SubjectProfile): string {
@@ -1161,18 +1115,6 @@ export const legacyTaskDefinitions = {
   // answer correctness; the surviving content-driven KC paths use applyProposeNew /
   // writeKnowledgeProposeEvent directly (cold-start-bridge / image-candidate-accept
   // matcher / agent proposal-tools) and the maintenance producer KnowledgeReviewTask.
-  KnowledgeEdgeProposeTask: {
-    kind: 'KnowledgeEdgeProposeTask',
-    description: '看 tree + 最近 failure attempts + 已有 edge，提议 0-5 条新 knowledge_edge',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 2 },
-    needsToolCall: false,
-    isMultimodal: false,
-    allowedTools: [],
-    // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
-    prompt: { kind: 'profile', build: buildKnowledgeEdgeProposePrompt },
-  },
   // YUK-349 B3 PR-2 — empty-frontier prerequisite bootstrap. Unlike the
   // failure-driven KnowledgeEdgeProposeTask above (cross-attempt pattern mining),
   // this is CURRICULUM-driven: given the tree + the KCs lacking prerequisite
@@ -1181,18 +1123,6 @@ export const legacyTaskDefinitions = {
   // writes a `propose` event (NEVER a live knowledge_edge row), the owner accepts
   // in the inbox, real edges replace the temps. Fires only when learnableFrontier
   // is empty (cold-start bootstrap, ADR-0037 #4).
-  FrontierPrerequisiteTask: {
-    kind: 'FrontierPrerequisiteTask',
-    description:
-      '看 tree + 缺先决覆盖的 KC 列表，提议 0-5 条临时 prerequisite knowledge_edge（empty-frontier 冷启 bootstrap，propose-only 低置信）',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 2 },
-    needsToolCall: false,
-    isMultimodal: false,
-    allowedTools: [],
-    prompt: { kind: 'profile', build: buildFrontierPrerequisitePrompt },
-  },
   SessionSummaryTask: {
     kind: 'SessionSummaryTask',
     description: '复习 session 结束后生成 ≤120 字短结：今天哪几题、哪个 cause 多、给 1 句下次建议',
@@ -1532,22 +1462,6 @@ export const legacyTaskDefinitions = {
       kind: 'inline',
       text: '你是 Copilot，本应用唯一面向用户的对话式学习助手，跨页面随处可用，覆盖讲解 / 解题陪练 / 答疑 / 评析 / 规划 / 查阅。读 DomainTools 拿当前学习信号回答用户问题，并按已加载的 copilot 技能包（SKILL.md）里的方法论行动。\n【写工具 surface】自由对话的 copilot surface 带：propose_knowledge_edge、propose_knowledge_mutation、learning_item 生命周期四件套（propose_learning_item_completion / relearn / defer / archive）；用户点 chip 会切到更宽 surface（额外开放 attribute_mistake / propose_variant）。所有 mutation 仅 propose 不直接写。\n【运行时输入字段】conversation_history（若有）：本次会话最近若干轮，每条 role + text；首条可能是 role:"context" 的本会话学习者状态快照（今日待复习 / 当前目标 / 近期高频误区 / 掌握度 band / 昨夜交班），它是会话锚定的确定性投影、只更新在跨天或有新练习/夜间整理/提议决策时——当作背景基线用，需要更深就自己调 DomainTool，不必逐轮重读同样的内容。其余每条是用户原话与你的回复正文；能从历史直接回答就优先复用，不要再冗余调 DomainTool 读同样的内容。proposal_feedback（若有）：每条是一个 (kind, relation) 单元，带 top_dismiss_reasons / top_rubric_gates，为空时按原行为；它随学习者状态快照一同会话锚定刷新（解读方法论见 copilot 技能包）。ambient_context（若有）：用户当前页面 route + 可选 focused_entity，用它把回答收拢到用户此刻的上下文。\n【证据断言契约】使用 read DomainTools 做审计、因果解释或计数时，下列字段是承重断言边界，优先级高于你根据 prose 或常识做的归纳：query_events 的过滤器按 exact + AND 解释；not_subject_scoped 永不授权对任何特定 subject 做跨阶段否定，required_followup=none 在该状态只表示不适用。subjectId 的 exact window 只覆盖相同 subject_id；all_subject_kinds_included=true 也不包含换了 subject_id 的 causal descendants。causal_descendants_included=false 与 supports_cross_subject_causal_descendant_claim=false 时，即使 complete_for_window=true 也不得否定下游 probe / intervention / review / judge，必须执行 follow_causal_relations_from_returned_events，沿 caused_by / direct children 继续读。若为 requires_complete_pagination_chain，完整 cursor 链也只完成同一 exact filter 的分页；follow_next_cursor_aggregate_then_follow_causal_relations 表示聚合后仍要沿关系读取。repeat_with_subject_id_only 只解除额外 filter，不授权跨 subject 因果后段；subjectId 与 relation 同传时，repeat_with_relation_only_without_subject_id 要求只保留 relation + limit 重查，不能删掉 relation。action=attempt 的 0 行只表示该 exact action 为 0，不表示没有 review 或其他作答事件。因果箭头只能来自 caused_by_event_id；evidence_refs / source_ref / 时间相邻都不是因果边；相同时间戳不能证明同一事务。claim_support.activation_policy=not_observed 或 necessary_conditions=not_supported / sufficient_conditions=not_supported 时，必要条件、充分条件、最低充分集与“全部触发条件满足”一律回答无法裁决，只能列已观测信号和显式边。typed evidence 是 deny-by-default 投影；redacted、未投影、字段缺失与显式 null 必须分开。query_knowledge 空结果只表示本次工具范围内未返回 node/edge，不能写成从未挂载、实体不存在或只存在于 event log；edges 只覆盖 returned active nodes 与 requested relation types，returned_nodes_complete_after_expansion=false 时不得称 children/neighbors 已穷尽。比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。顶层 event outcome 与 evidence.outcome 必须写全路径。用户要求后续动作时继续沿 exact subject 与 direct children 核到该段，未核验就明说。逐个回答请求中的 material subpart，保留 trace 已返回且相关的真实 ID、时间和数值；不能把已有证据缩成泛泛“无法裁决”，只有真实缺段或 coverage 不足才标具体缺口。get_review_due.queue_assertion 是 queue 断言权威面：null 一律回答“无法裁决”，不得转成 0、true、empty 或 cleared；count_scope=returned_actionable_rows_only 的 0 也只能描述本次 returned rows。query_events / query_records / query_mistakes 的 supports_lifecycle_status_count_claim=false 时，空 rows 只能报告各自 matching rows 为 0，不能补成 queued / due / in-progress / failed entity count；entity_status_coverage=not_observed 同理。只有实际调用并收到结果的工具，才能在回复里声称已查询。\n【后台委派】运行时若开放 Task，你只能派名为 copilot-researcher 的 depth=1 只读研究员。调用必须显式传 subagent_type:"copilot-researcher" 与 run_in_background:false，且不得传 model 或 isolation；是否值得派见 copilot 技能包。subagent 只回结论，不把 transcript / reasoning 直接展示给用户；前台始终只有 Copilot 一个声音，由你吸收结论后统一回答。\n【呈现提名】本轮若有面向用户的成品，可提名一个 hero：在回复末尾另起一行、作为整条回复最后一个输出，追加标记 <!--primary_view:{"source":"tool_result"|"artifact"|"ephemeral_html","ref":...}-->（标记后不得再有任何文字）。source 语义：tool_result = 提名本轮某个已存在的工具调用结果，ref={"kind":...,"id":...}；artifact = 提名某个已存在的 artifact（题 / 卷 / note / interactive），ref={"kind":...,"id":...}；ephemeral_html = 本轮现生成的一次性交互 HTML，ref 直接放 HTML 字符串本体（上限 32000 字符；超限则整条提名作废、该 HTML 不会被展示，体量大的内容不要走 ephemeral_html）。判据：本轮有面向用户的成品（查到的题、新建的 artifact、现生成的交互内容）时提名一个已存在的 tool result / artifact；纯答疑 / 纯过程则不要输出该标记。缺省即无 hero；每轮最多提名一个。\n【降级兜底】若未加载到 copilot 技能包：整理知识树形状（reparent / merge / split / archive / 加新节点）用 propose_knowledge_mutation，在两个已存在节点间连关系用 propose_knowledge_edge；只在用户明确表达意图时提议 learning_item 生命周期变更；每次调 propose_* 默认 suggestion_kind=proactive，仅在修正刚观察到的失败时用 corrective（读取返回 0 条属于正常成功，不是失败）。',
     },
-  },
-  KnowledgeReviewTask: {
-    kind: 'KnowledgeReviewTask',
-    description:
-      '看完整 tree + 最近 mistakes，提议任意 mutation（reparent/merge/split/archive/propose_new）让 tree 更合理',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 12, timeout: 120_000 },
-    needsToolCall: true,
-    isMultimodal: false,
-    // MCP-resolved tool name. `streamReviewTask` builds the in-process MCP
-    // server with `createSdkMcpServer({ name: 'loom', tools: [tool('write_proposal',
-    // ...)] })`; the SDK exposes it as `mcp__loom__write_proposal` to the model.
-    allowedTools: ['mcp__loom__write_proposal'],
-    // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
-    prompt: { kind: 'profile', build: buildKnowledgeReviewPrompt },
   },
   GoalScopeTask: {
     kind: 'GoalScopeTask',

@@ -8,8 +8,12 @@
 // 交互式 12 iter 设计，nightly cron 用单次结构化输出更便宜可控。
 
 import { validateProposalQuality } from '@/capabilities/knowledge/server/rubric-validator';
+import {
+  EdgeProposalSchema,
+  type EdgeProposalSchemaT,
+  parseEdgeProposeOutput,
+} from '@/capabilities/knowledge/tasks/knowledge-tasks';
 import type { ActivityRefT } from '@/core/schema/activity';
-import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
@@ -23,7 +27,6 @@ import { writeAiProposal } from '@/server/proposals/writer';
 import type { SubjectProfile } from '@/subjects/profile';
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
-import { z } from 'zod';
 import {
   type EdgeCandidate,
   type EdgeNeighbor,
@@ -42,25 +45,9 @@ import { archiveKnowledgeEdge, createKnowledgeEdge } from './edges';
 import { type TopologyEdge, checkEdgeTopology } from './topology-gate';
 import { loadTreeSnapshot } from './tree';
 
-// Exported so the YUK-349 frontier-fill job can reuse the per-proposal shape
-// WITHOUT the array `.max(5)` cap (it enforces its own FRONTIER_FILL_MAX_PROPOSALS
-// clamp on the write side, so it must tolerate a longer model output rather than
-// hard-reject the whole batch).
-export const EdgeProposalSchema = z.object({
-  from_knowledge_id: z.string().min(1),
-  to_knowledge_id: z.string().min(1),
-  relation_type: RelationTypeSchema,
-  weight: z.number().min(0).max(1).default(0.5),
-  reasoning: z.string().min(1).max(500),
-});
-
-export type EdgeProposalSchemaT = z.infer<typeof EdgeProposalSchema>;
-
-const EdgeOutputSchema = z.object({
-  proposals: z.array(EdgeProposalSchema).max(5),
-});
-
-export type EdgeProposeOutput = z.infer<typeof EdgeOutputSchema>;
+export { EdgeProposalSchema, parseEdgeProposeOutput };
+export type { EdgeProposeOutput } from '@/capabilities/knowledge/tasks/knowledge-tasks';
+export type { EdgeProposalSchemaT };
 
 export type RunTaskFn = TaskTextRunFn;
 
@@ -651,22 +638,6 @@ export async function runEdgeProposeAndWrite(
     // 尝试（见 handler 里 `llm_attempted || !ok` 的合成），绝不能滑成 idle。
     return { ...EMPTY_RESULT, ok: false, llm_attempted: llmAttempted };
   }
-}
-
-export function parseEdgeProposeOutput(text: string): EdgeProposeOutput {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseEdgeProposeOutput: no JSON object found in text');
-  }
-  const slice = text.slice(start, end + 1);
-  let json: unknown;
-  try {
-    json = JSON.parse(slice);
-  } catch (e) {
-    throw new Error(`parseEdgeProposeOutput: JSON.parse failed: ${(e as Error).message}`);
-  }
-  return EdgeOutputSchema.parse(json);
 }
 
 function edgeKey(fromId: string, toId: string, relationType: string): string {
