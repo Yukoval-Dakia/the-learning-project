@@ -12,6 +12,11 @@
 //
 // opening/closing line：M2 为模板（M4 夜链 AI 化后由 composer_nightly 写入）。
 
+// YUK-474 — 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
+import {
+  type RefillDeps,
+  refillPracticeQuestionSupply as refillActiveLearningPools,
+} from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
@@ -27,8 +32,6 @@ import {
   question,
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-// YUK-474 — 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
-import { type RefillDeps, refillActiveLearningPools } from '@/server/question-supply/refill';
 import { Review } from '@/server/session';
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql } from 'drizzle-orm';
 
