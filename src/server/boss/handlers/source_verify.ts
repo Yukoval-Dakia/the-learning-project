@@ -29,6 +29,7 @@ import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { SupplyTraceV1 } from '@/capabilities/practice/public';
+import { lockPlacementSupplyScopes } from '@/capabilities/practice/public';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { deriveSourceTier } from '@/core/schema/provenance';
@@ -47,7 +48,6 @@ import {
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import {
   type SolveCheckImageFetchFn,
   type SolveCheckQuestion,
