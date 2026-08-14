@@ -1,3 +1,7 @@
+import {
+  ColdStartBridgeError,
+  parseColdStartBridgeOutput,
+} from '@/capabilities/ingestion/tasks/cold-start-bridge';
 /**
  * ColdStartPlacementBridgeTask invoker — YUK-478 (cold-start upload→placement bridge).
  *
@@ -23,12 +27,7 @@ import type { Db } from '@/db/client';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 
 /** Thrown when the bridge cannot produce a usable result (provider down, unparseable, or out-of-vocabulary subject). */
-export class ColdStartBridgeError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options);
-    this.name = 'ColdStartBridgeError';
-  }
-}
+export { ColdStartBridgeError };
 
 export type ColdStartBridgeRunTaskFn = (
   kind: string,
@@ -50,23 +49,6 @@ export interface RunColdStartBridgeParams {
   runTaskFn?: ColdStartBridgeRunTaskFn;
   /** Forwarded to runTask ctx (db / subjectProfile). */
   ctx?: unknown;
-}
-
-function extractJsonObject(text: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new ColdStartBridgeError(
-      'ColdStartPlacementBridgeTask output did not contain a JSON object',
-    );
-  }
-  try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch (err) {
-    throw new ColdStartBridgeError('ColdStartPlacementBridgeTask output was not valid JSON', {
-      cause: err,
-    });
-  }
 }
 
 /**
@@ -98,7 +80,7 @@ export async function runColdStartBridge(
 
   let parsed: ColdStartBridgeOutputT;
   try {
-    parsed = ColdStartBridgeOutput.parse(extractJsonObject(llmText));
+    parsed = parseColdStartBridgeOutput(llmText);
   } catch (err) {
     if (err instanceof ColdStartBridgeError) throw err;
     throw new ColdStartBridgeError(

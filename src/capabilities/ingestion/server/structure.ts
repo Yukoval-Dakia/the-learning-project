@@ -23,8 +23,14 @@
  */
 import type { Db } from '@/db/client';
 import { createId } from '@paralleldrive/cuid2';
-import { z } from 'zod';
 
+import {
+  type StructureNodeT,
+  StructureOutput,
+  type StructureOutputT,
+  StructureTaskError,
+  parseStructureOutput,
+} from '@/capabilities/ingestion/tasks/structure';
 import {
   type StructuredQuestionT,
   structuredToPromptMarkdown,
@@ -33,71 +39,7 @@ import {
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { LayoutQuality } from './tencent_mark_parser';
 
-// ---------- VLM output schema (id-less; ids assigned post-parse) ----------
-//
-// The VLM does NOT emit cuids — the prompt tells it to omit id, and we assign
-// `createId()` after parse. This keeps the VLM output robust (no id namespace
-// for the model to manage) and matches how rescue.ts synthesizes ids.
-
-const QuestionOptionOut = z.object({
-  label: z.string(),
-  text: z.string(),
-});
-
-// Recursive node. z.lazy + explicit type (same shape technique as
-// structured_question.ts StructuredQuestion).
-type StructureNodeT = {
-  role: 'stem' | 'sub' | 'standalone';
-  question_no?: string | null;
-  prompt_text: string;
-  options?: { label: string; text: string }[] | null;
-  answers?: string[] | null;
-  analysis?: string | null;
-  page_index?: number | null;
-  sub_questions?: StructureNodeT[] | null;
-  /**
-   * YUK-227 S3 Slice A — VLM self-reported figure indices for this node.
-   * Each entry is a 0-based index into the `preFigures` array passed to
-   * runStructureTask. The VLM fills this when prompted; absence (null/empty)
-   * means the VLM did not assign any figures to this node.
-   */
-  figure_ids?: number[] | null;
-  /**
-   * YUK-482 cut ④ — VLM "this node carries student work" presence flag. The VLM
-   * NEVER transcribes the handwriting (pixels stay pixels); it only reports
-   * PRESENCE so the student-answer grading path can detect a learner's answer on
-   * the page image. Absence (null/false) means no student work was seen here.
-   */
-  student_answer_present?: boolean | null;
-};
-
-const StructureNode: z.ZodType<StructureNodeT> = z.lazy(() =>
-  z.object({
-    role: z.enum(['stem', 'sub', 'standalone']),
-    question_no: z.string().nullable().optional(),
-    prompt_text: z.string(),
-    options: z.array(QuestionOptionOut).nullable().optional(),
-    answers: z.array(z.string()).nullable().optional(),
-    analysis: z.string().nullable().optional(),
-    page_index: z.number().int().min(0).nullable().optional(),
-    sub_questions: z.array(StructureNode).nullable().optional(),
-    // YUK-227 S3 Slice A: figure indices reported by the VLM (see StructureNodeT).
-    figure_ids: z.array(z.number().int().min(0)).nullable().optional(),
-    // YUK-482 cut ④: VLM student-work presence flag (see StructureNodeT).
-    student_answer_present: z.boolean().nullable().optional(),
-  }),
-);
-
-export const StructureOutput = z.object({
-  layout_quality: z.enum(['structured', 'partial', 'text_only']),
-  // A calibrated self-report from the structure model. Older/model-degraded
-  // responses that omit it fail closed to 0 instead of masquerading as certain.
-  extraction_confidence: z.number().min(0).max(1).default(0),
-  warnings: z.array(z.string()).default([]),
-  questions: z.array(StructureNode),
-});
-
-export type StructureOutputT = z.infer<typeof StructureOutput>;
+export { StructureOutput, type StructureOutputT, StructureTaskError };
 
 // ---------- Result shape (consumed by tencent_ocr_extract handler) ----------
 
@@ -133,13 +75,6 @@ export type StructureResult = {
  * down, unparseable output, or zero questions). The handler catches this and
  * falls back to the Tencent structure (regression safety — lane plan §5).
  */
-export class StructureTaskError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options);
-    this.name = 'StructureTaskError';
-  }
-}
-
 // ---------- Tencent text hint rendering ----------
 
 export type TencentPageHint = {
@@ -248,19 +183,6 @@ function nodeToStructured(
   return out;
 }
 
-function extractJsonObject(text: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new StructureTaskError('StructureTask output did not contain a JSON object');
-  }
-  try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch (err) {
-    throw new StructureTaskError('StructureTask output was not valid JSON', { cause: err });
-  }
-}
-
 // ---------- runStructureTask ----------
 
 export type StructureRunTaskFn = (
@@ -331,7 +253,7 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
 
   let parsed: StructureOutputT;
   try {
-    parsed = StructureOutput.parse(extractJsonObject(llmText));
+    parsed = parseStructureOutput(llmText);
   } catch (err) {
     if (err instanceof StructureTaskError) throw err;
     throw new StructureTaskError('StructureTask output did not match StructureOutput schema', {

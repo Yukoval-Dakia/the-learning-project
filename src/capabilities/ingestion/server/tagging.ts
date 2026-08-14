@@ -1,3 +1,4 @@
+import { TaggingTaskError, parseTaggingOutput } from '@/capabilities/ingestion/tasks/tagging';
 /**
  * TaggingTask invoker — T-OC slice 3 (YUK-145, OC-4).
  *
@@ -28,12 +29,7 @@ import { and, inArray, isNull, or } from 'drizzle-orm';
  * unparseable output). Callers (auto-enroll) treat this as "route to review" —
  * a tagging outage must never auto-enroll, only ever fall back to human review.
  */
-export class TaggingTaskError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options);
-    this.name = 'TaggingTaskError';
-  }
-}
+export { TaggingTaskError };
 
 export type TaggingRunTaskFn = (
   kind: string,
@@ -72,19 +68,6 @@ function buildPath(id: string, byId: Map<string, KnowledgeRow>): string[] {
     current = current.parent_id ? byId.get(current.parent_id) : undefined;
   }
   return path;
-}
-
-function extractJsonObject(text: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new TaggingTaskError('TaggingTask output did not contain a JSON object');
-  }
-  try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch (err) {
-    throw new TaggingTaskError('TaggingTask output was not valid JSON', { cause: err });
-  }
 }
 
 /** Loads active knowledge nodes (optionally scoped to one effective domain). */
@@ -180,7 +163,7 @@ export async function runTaggingTask(params: RunTaggingTaskParams): Promise<Tagg
 
   let parsed: TaggingOutputT;
   try {
-    parsed = TaggingOutput.parse(extractJsonObject(llmText));
+    parsed = parseTaggingOutput(llmText);
   } catch (err) {
     if (err instanceof TaggingTaskError) throw err;
     throw new TaggingTaskError('TaggingTask output did not match TaggingOutput schema', {

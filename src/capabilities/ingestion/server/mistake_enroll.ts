@@ -1,3 +1,7 @@
+import {
+  MistakeEnrollTaskError,
+  parseMistakeEnrollOutput,
+} from '@/capabilities/ingestion/tasks/mistake-enroll';
 /**
  * MistakeEnrollTask invoker — T-OC slice A1 (YUK-145).
  *
@@ -35,12 +39,7 @@ import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
  * (logs + writes the audit event WITHOUT a draft) so one bad draft never aborts
  * the batch — exactly the posture TaggingTaskError gets in auto-enroll.
  */
-export class MistakeEnrollTaskError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options);
-    this.name = 'MistakeEnrollTaskError';
-  }
-}
+export { MistakeEnrollTaskError };
 
 export type MistakeEnrollRunTaskFn = (
   kind: string,
@@ -65,19 +64,6 @@ export interface RunMistakeEnrollTaskParams {
   runTaskFn?: MistakeEnrollRunTaskFn;
   /** Forwarded to runTask ctx (subjectProfile only). */
   ctx?: unknown;
-}
-
-function extractJsonObject(text: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new MistakeEnrollTaskError('MistakeEnrollTask output did not contain a JSON object');
-  }
-  try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch (err) {
-    throw new MistakeEnrollTaskError('MistakeEnrollTask output was not valid JSON', { cause: err });
-  }
 }
 
 /**
@@ -126,7 +112,7 @@ export async function runMistakeEnrollTask(
 
   let parsed: MistakeEnrollOutputT;
   try {
-    parsed = MistakeEnrollOutput.parse(extractJsonObject(llmText));
+    parsed = parseMistakeEnrollOutput(llmText);
   } catch (err) {
     if (err instanceof MistakeEnrollTaskError) throw err;
     throw new MistakeEnrollTaskError('MistakeEnrollTask output did not match MistakeEnrollOutput', {
