@@ -252,6 +252,12 @@ export const notesCapability = defineCapability({
               (module) => module.noteUpdateProposalAcceptApplier,
             ),
         },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.noteUpdateProposalRetractApplier,
+            ),
+        },
       },
     ],
   },
