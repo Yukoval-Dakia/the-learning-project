@@ -113,6 +113,7 @@ jobs:
           pnpm audit:learner-copy
           pnpm audit:no-learning-styles
           pnpm audit:structured-judge
+          pnpm audit:task-census
           pnpm audit:draft-status
           pnpm audit:draft-status-reads --strict
           pnpm audit:hub-sync-writers

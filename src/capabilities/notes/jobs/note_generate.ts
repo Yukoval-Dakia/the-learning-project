@@ -12,13 +12,8 @@
 
 import { type SQL, and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-import { z } from 'zod';
 
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
-import {
-  bodyBlocksToNoteSections,
-  noteSectionsToBodyBlocks,
-} from '@/capabilities/notes/server/body-blocks';
 import {
   NOTE_ARTIFACT_TYPES,
   isNoteArtifactType,
@@ -27,12 +22,8 @@ import {
   dispatchNoteVerification,
   writeNoteVerificationIntent,
 } from '@/capabilities/notes/server/note-handoff';
-import {
-  ArtifactBodyBlocks,
-  type ArtifactBodyBlocksT,
-  type ArtifactHistoryEntryT,
-  NoteSection,
-} from '@/core/schema/business';
+import { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
+import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
@@ -55,68 +46,7 @@ type DepsOverride = {
   dispatchVerification?: (artifactId: string) => Promise<boolean>;
 };
 
-const SectionsOutputSchema = z.object({
-  sections: z.array(NoteSection).min(1).max(10),
-});
-const BodyBlocksOutputSchema = z.object({
-  body_blocks: ArtifactBodyBlocks,
-});
-
-function parseJsonObject(text: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseNoteGenerateOutput: no JSON object found in text');
-  }
-  try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch (e) {
-    throw new Error(`parseNoteGenerateOutput: JSON.parse failed: ${(e as Error).message}`);
-  }
-}
-
-export interface ParsedNoteGenerateOutput {
-  body_blocks: z.infer<typeof ArtifactBodyBlocks>;
-  blocks_count: number;
-  sections_count: number;
-}
-
-export function parseNoteGenerateOutput(text: string): ParsedNoteGenerateOutput {
-  const json = parseJsonObject(text);
-
-  const bodyBlocksParsed = BodyBlocksOutputSchema.safeParse(json);
-  if (bodyBlocksParsed.success) {
-    const bodyBlocks = bodyBlocksParsed.data.body_blocks;
-    if (bodyBlocks.content.length === 0) {
-      throw new Error(
-        'parseNoteGenerateOutput: body_blocks.content must contain at least one block',
-      );
-    }
-    return {
-      body_blocks: bodyBlocks,
-      blocks_count: bodyBlocks.content.length,
-      sections_count: bodyBlocksToNoteSections(bodyBlocks).length,
-    };
-  }
-
-  const sectionsParsed = SectionsOutputSchema.safeParse(json);
-  if (sectionsParsed.success) {
-    const bodyBlocks = noteSectionsToBodyBlocks(sectionsParsed.data.sections);
-    return {
-      body_blocks: bodyBlocks,
-      blocks_count: bodyBlocks.content.length,
-      sections_count: sectionsParsed.data.sections.length,
-    };
-  }
-
-  throw new Error(
-    `parseNoteGenerateOutput: schema invalid: body_blocks=${bodyBlocksParsed.error.issues
-      .map((i) => i.message)
-      .join('; ')}; parseSectionsOutput=${sectionsParsed.error.issues
-      .map((i) => i.message)
-      .join('; ')}`,
-  );
-}
+export { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
 
 export interface RunNoteGenerateParams {
   db: Db;

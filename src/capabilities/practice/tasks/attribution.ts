@@ -27,7 +27,7 @@ export interface AttributionRerankInput extends AttributionInput {
   candidates: AttributionCandidate[];
 }
 
-const AttributionOutputSchema = CauseSchema.extend({
+export const AttributionOutputSchema = CauseSchema.extend({
   analysis_md: z.string().min(1).max(2000),
 });
 
@@ -123,6 +123,7 @@ ${metaCauseContract(profile)}
 }
 
 export const attributionTaskSpec = {
+  ownership: 'owned',
   definition: {
     kind: 'AttributionTask',
     description: '错题归因 + 知识点挂载（profile-scoped cause）',
@@ -134,12 +135,14 @@ export const attributionTaskSpec = {
     allowedTools: [],
     prompt: { kind: 'profile', build: buildAttributionPrompt },
   },
+  outputSchema: AttributionOutputSchema,
   parseText(text, { subjectProfile }) {
     return parseAttributionOutput(text, subjectProfile);
   },
 } satisfies TaskSpec<AttributionInput, AttributionOutput>;
 
 export const attributionRerankTaskSpec = {
+  ownership: 'owned',
   definition: {
     kind: 'AttributionRerankTask',
     description:
@@ -152,6 +155,7 @@ export const attributionRerankTaskSpec = {
     allowedTools: [],
     prompt: { kind: 'profile', build: buildAttributionRerankPrompt },
   },
+  outputSchema: AttributionOutputSchema,
   parseText(text, { subjectProfile }) {
     return parseAttributionOutput(text, subjectProfile);
   },

@@ -6,15 +6,23 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 
 ## 边界
 
-- **浏览器端** (`src/ai/`)：注册表 + SubjectProfile prompt builders。不持 API key，也没有通用 `runTask()` client helper。
+- **浏览器端** (`src/ai/`)：owner maps + task catalog + registry compatibility projection + SubjectProfile prompt builders。不持 API key，也没有通用 `runTask()` client helper。
 - **Server 端** (`server/` + `src/server/ai/`)：generic `/api/ai/[task]` route 已退场。所有 task 都走 capability 领域 route / worker，由该入口解析 profile、注入工具或补齐 ingestion context。
 - **Async worker** (`scripts/worker.ts` / pg-boss handlers)：复用同一个 runner 处理 OCR、归因、note generation、maintenance 等后台任务。
 
 这样 PWA 离线时本地复习 / 错题录入仍可用，需要 LLM 的能力自然走在线。
 
+## Owner maps 与 catalog
+
+- 六个 capability owner index 用 `defineOwnedTaskSpecs()` 声明 staged ownership；owner map 保存完整 entry，不是只保存 definition 的别名表。
+- 当前 5 个 owned entry 是 Practice 的 `AttributionTask` / `AttributionRerankTask` / `VariantGenTask` 与 Notes 的 `NoteGenerateTask` / `NoteVerifyTask`。它们保留真实 `TaskSpec`、`parseText` 和 `outputSchema`；Notes jobs 复用 task module 的 parser/schema。
+- 其余 46 个 entry 是显式 `transitional`，只通过 `defineTransitionalTask(legacyTaskDefinitions.X)` 建立，并且必须与中央 quarry 中的 definition 对象同一引用。它们不声称拥有 parser/schema；owner migration 由 YUK-865–872、YUK-875、YUK-878–879 承接，最终中央 semantic quarry 删除由 YUK-885 承接。
+- `composeTaskCatalog()` 只把每个 entry 的精确 `definition` 投影成冻结的 51-definition runtime map。`src/ai/registry.ts` 再加两个 Copilot dispatch overlay，作为旧 runner 的 compatibility projection；它不是 semantic source。
+- `pnpm audit:task-census` 守住 51 registered / 50 statically invoked / 1 explicit compatibility（`AttributionTask`），并检查 manifest/legacy handler reachability 与 `ai_task_runs.task_kind` run-log path。
+
 ## 加新 Task
 
-1. 在 `registry.ts` 加 `TaskDef`（model / 预算 / 允许的 tool / 是否多模态）
+1. 在 owner capability 的 `tasks/` 建真实 `TaskSpec`（definition + parser + output schema），并登记到该 owner index；不要往 `registry.ts` 写业务定义
 2. 在领域 route 或 pg-boss handler 中解析 `SubjectProfile`，再调用 `runTask()` / `runAgentTask()` / `streamTask()`
 3. 如需 HTTP 入口，建 capability 领域入口；不要复活 generic `/api/ai/[task]`
 4. 写 `event` / `tool_call_log` / `cost_ledger` 留痕
