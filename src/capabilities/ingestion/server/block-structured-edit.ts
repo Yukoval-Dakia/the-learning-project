@@ -4,10 +4,7 @@
 // Refs: YUK-164 (T-OC), ADR-0002 §"Agent 修改约束", P3.7.
 //
 // All six structure-edit mutations live here; the six DomainTools in
-// `server/tools/question-block-*-edits.ts` modules are thin wrappers, and the
-// figures PATCH route (`app/api/question-blocks/[id]/figures/[asset_id]`)
-// reassigns figures by calling `reassignFigure` here (single owner, no dup
-// logic).
+// `server/tools/question-block-*-edits.ts` modules are thin wrappers.
 //
 // Cross-cutting mechanics (§3):
 //   - Operates on the pre-import correction layer: draft `question_block`
@@ -614,8 +611,8 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
     // order). Absorbed subtrees keep every node id, so each figure's
     // attached_to_index still resolves inside the merged tree. Dedup by
     // asset_id (keep first): the same cropped asset could be attached to both
-    // the primary and a merge block; reassignFigure / the PATCH route resolve a
-    // figure by first asset_id match, so a duplicate would shadow later updates
+    // the primary and a merge block; reassignFigure resolves a figure by first
+    // asset_id match, so a duplicate would shadow later updates
     // and double-render in the review UI.
     const seenAssetIds = new Set<string>();
     const mergedFigures: FigureRefT[] = [
@@ -710,7 +707,7 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
 }
 
 // ---------------------------------------------------------------------------
-// §4.6 reassignFigure — shared by the figures PATCH route and the agent tool.
+// §4.6 reassignFigure — mutation behind the agent tool.
 // ---------------------------------------------------------------------------
 
 export interface ReassignFigureParams extends BaseEditParams {
@@ -733,13 +730,11 @@ export interface ReassignFigureResult {
 }
 
 /**
- * Core figure-reassignment mutation, owned here so both the PATCH route and the
- * `reassign_figure` DomainTool share one implementation (design note §4.6).
+ * Core figure-reassignment mutation behind the `reassign_figure` DomainTool
+ * (design note §4.6).
  *
- * The PATCH route (user-triggered) does NOT enforce a draft-status guard
- * (preserving existing behavior); the agent tool DOES (`enforceDraft: true`).
- * The route maps the discriminated result to HTTP errors; the tool maps it to
- * soft `skipped:*` Output.
+ * The agent tool enforces the draft-status guard with `enforceDraft: true` and
+ * maps the discriminated result to soft `skipped:*` Output.
  */
 export async function reassignFigure(
   db: Db,
