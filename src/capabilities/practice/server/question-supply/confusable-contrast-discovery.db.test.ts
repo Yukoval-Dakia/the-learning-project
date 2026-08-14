@@ -6,7 +6,7 @@ import { db } from '@/db/client';
 import { knowledge, misconception_edge } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { resetDb } from '../../../tests/helpers/db';
+import { resetDb } from '../../../../../tests/helpers/db';
 import { discoverConfusableContrastTargets } from './confusable-contrast-discovery';
 import { planSupplyRoutes } from './route-planner';
 

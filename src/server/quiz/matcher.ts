@@ -20,6 +20,20 @@
 // 镜像 queryExistingPool (sourcing-sequence.ts:121-145) 的 app 层 kind 过滤 + tier 排序 +
 //   slice 链 (同源单一真相)。CRITICAL: 不传 limit 给 poolFetch — 截断在 app 层 (F2 防线).
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import {
+  type DifficultyBand,
+  type EvidenceDemandV1T,
+  type QuestionSupplyTarget,
+  type SupplyGapKind,
+  type SupplyRoute,
+  acquisitionTierForQuestion,
+  buildCoverageEvidenceDemand,
+  evidenceDemandToTargetContext,
+  parseEvidenceDemand,
+  seedGenerationMethod,
+  seedRoutePreference,
+  targetFingerprint,
+} from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
@@ -30,25 +44,10 @@ import { type EmbedProviderAttemptOptions, embedText } from '@/server/ai/embed';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
 import { type DispatchResult, dispatchSupplyTarget } from '@/server/question-supply/dispatcher';
-import {
-  type EvidenceDemandV1T,
-  buildCoverageEvidenceDemand,
-  evidenceDemandToTargetContext,
-  parseEvidenceDemand,
-} from '@/server/question-supply/evidence-demand';
-import {
-  type DifficultyBand,
-  type QuestionSupplyTarget,
-  type SupplyGapKind,
-  type SupplyRoute,
-  acquisitionTierForQuestion,
-  seedGenerationMethod,
-  seedRoutePreference,
-  targetFingerprint,
-} from '@/server/question-supply/target-discovery';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
 import { and, eq, isNull } from 'drizzle-orm';
+
 import { MATCHER_ANSWER_CLASS_FILTER } from './matcher-flags';
 import { type PoolRow, poolFetch } from './pool-fetch';
 import {

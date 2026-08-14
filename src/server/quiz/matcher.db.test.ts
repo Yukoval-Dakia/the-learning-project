@@ -1,10 +1,7 @@
+import { type QuestionSupplyTarget, targetFingerprint } from '@/capabilities/practice/public';
 import { db } from '@/db/client';
 import { event, knowledge, provider_attempt, question } from '@/db/schema';
 import type { DispatchResult } from '@/server/question-supply/dispatcher';
-import {
-  type QuestionSupplyTarget,
-  targetFingerprint,
-} from '@/server/question-supply/target-discovery';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

@@ -26,8 +26,7 @@
 //     through to routePreference=['quiz_gen'] (the higher-tier/objective branches would
 //     divert to sourcing_web/author_question).
 
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
-import { loadConfusablePairs } from '@/capabilities/knowledge/server/misconception-confusable-read';
+import { getEffectiveDomain, loadConfusablePairs } from '@/capabilities/knowledge/public';
 import { parseFlag } from '@/core/env-flags';
 import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';

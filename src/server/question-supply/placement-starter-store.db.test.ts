@@ -1,4 +1,5 @@
 import { insertGoal } from '@/capabilities/agency/server/goals/queries';
+import { SupplyTraceV1 } from '@/capabilities/practice/public';
 import { selectNextPlacementItem } from '@/capabilities/practice/server/placement-select';
 import {
   event,
@@ -16,7 +17,6 @@ import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { dispatchSupplyTarget } from './dispatcher';
-import { SupplyTraceV1 } from './evidence-demand';
 import { buildPlacementStarterTarget, dispatchPlacementStarterClaimTx } from './placement-starter';
 import {
   markPlacementStarterClaimTerminal,
