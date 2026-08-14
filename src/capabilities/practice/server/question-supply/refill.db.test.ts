@@ -9,18 +9,18 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { discoverSupplyTargets, targetFingerprint } from '@/capabilities/practice/public';
 import { db } from '@/db/client';
 import { event, knowledge, learning_item, question } from '@/db/schema';
-import type { EnqueueFn } from '@/server/question-supply/dispatcher';
-import { demandToSupplyTarget } from '@/server/quiz/matcher';
-import { resetDb } from '../../../tests/helpers/db';
+import { demandToSupplyTarget } from '@/kernel/question-supply-quiz';
+import { resetDb } from '../../../../../tests/helpers/db';
+import type { EnqueueFn } from './dispatcher';
 import {
   REFILL_POOL_THRESHOLD,
   type RefillDeps,
   refillActiveLearningPools,
   refillThinPools,
 } from './refill';
+import { discoverSupplyTargets, targetFingerprint } from './target-discovery';
 
 async function seedKnowledge(id: string, domain = 'yuwen') {
   const now = new Date();

@@ -1,19 +1,19 @@
-import type { QuestionSupplyTarget } from '@/capabilities/practice/public';
 // YUK-474 — 动态供题 refill 决策逻辑单测（no-DB；countActive/buildTarget/dispatch 全注入 fake）。
 // flag 门 / 阈值触发 / 去重 / in-flight 节流 / dispatch status 映射 / per-KC 失败隔离。
 // @/db/client 仅 type-only（erased），不连库——故落 unit 分区（enumerated 进 vitest.shared.ts，
 // 与 target-discovery.test.ts 同款）。真 demandToSupplyTarget fingerprint + 真池计数 + 真 event
 // cooldown 的集成验证在 refill.db.test.ts。
 import type { Db } from '@/db/client';
-import type { DispatchResult } from '@/server/question-supply/dispatcher';
-import type { Demand } from '@/server/quiz/matcher';
+import type { Demand } from '@/kernel/question-supply-quiz';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DispatchResult } from './dispatcher';
 import {
   REFILL_MAX_PER_REQUEST,
   REFILL_POOL_THRESHOLD,
   type RefillDeps,
   refillThinPools,
 } from './refill';
+import type { QuestionSupplyTarget } from './target-discovery';
 
 const db = {} as unknown as Db; // 全 seam 注入 → db 永不被触碰。
 
