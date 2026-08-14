@@ -347,16 +347,20 @@ export const ingestionCapability = defineCapability({
     tools: [
       {
         name: 'query_records',
-        load: () => import('@/server/ai/tools/context-readers').then((m) => m.queryRecordsTool),
+        load: () =>
+          import('./server/tools/query-records').then((module) => module.queryRecordsTool),
       },
       {
         name: 'get_record_context',
-        load: () => import('@/server/ai/tools/context-readers').then((m) => m.getRecordContextTool),
+        load: () =>
+          import('./server/tools/get-record-context').then((module) => module.getRecordContextTool),
       },
       {
         name: 'get_question_block_structure',
         load: () =>
-          import('@/server/ai/tools/context-readers').then((m) => m.getQuestionBlockStructureTool),
+          import('./server/tools/question-block-structure').then(
+            (module) => module.getQuestionBlockStructureTool,
+          ),
       },
       {
         name: 'propose_record_links',
@@ -370,30 +374,41 @@ export const ingestionCapability = defineCapability({
       },
       {
         name: 'update_prompt',
-        load: () => import('@/server/ai/tools/question-edit-tools').then((m) => m.updatePromptTool),
+        load: () =>
+          import('./server/tools/question-block-node-edits').then(
+            (module) => module.updatePromptTool,
+          ),
       },
       {
         name: 'add_option',
-        load: () => import('@/server/ai/tools/question-edit-tools').then((m) => m.addOptionTool),
+        load: () =>
+          import('./server/tools/question-block-node-edits').then((module) => module.addOptionTool),
       },
       {
         name: 'set_question_type',
         load: () =>
-          import('@/server/ai/tools/question-edit-tools').then((m) => m.setQuestionTypeTool),
+          import('./server/tools/question-block-node-edits').then(
+            (module) => module.setQuestionTypeTool,
+          ),
       },
       {
         name: 'split_stem',
-        load: () => import('@/server/ai/tools/question-edit-tools').then((m) => m.splitStemTool),
+        load: () =>
+          import('./server/tools/question-block-node-edits').then((module) => module.splitStemTool),
       },
       {
         name: 'merge_questions',
         load: () =>
-          import('@/server/ai/tools/question-edit-tools').then((m) => m.mergeQuestionsTool),
+          import('./server/tools/question-block-structural-edits').then(
+            (module) => module.mergeQuestionsTool,
+          ),
       },
       {
         name: 'reassign_figure',
         load: () =>
-          import('@/server/ai/tools/question-edit-tools').then((m) => m.reassignFigureTool),
+          import('./server/tools/question-block-structural-edits').then(
+            (module) => module.reassignFigureTool,
+          ),
       },
     ],
   },

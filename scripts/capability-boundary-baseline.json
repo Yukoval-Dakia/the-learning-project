@@ -3,7 +3,7 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 519,
+      "total": 520,
       "byOwnerPair": {
         "agency -> agency": 7,
         "agency -> ai": 29,
@@ -32,10 +32,10 @@
         "copilot -> session": 5,
         "copilot -> today": 3,
         "ingestion -> advisory-locks": 1,
-        "ingestion -> ai": 15,
+        "ingestion -> ai": 14,
         "ingestion -> artifacts": 2,
         "ingestion -> boss": 6,
-        "ingestion -> events": 5,
+        "ingestion -> events": 7,
         "ingestion -> mastery": 2,
         "ingestion -> projections": 12,
         "ingestion -> proposals": 11,
@@ -96,11 +96,10 @@
       }
     },
     "serverToCapabilityDeep": {
-      "total": 64,
+      "total": 63,
       "byOwnerPair": {
         "agency -> agency": 3,
         "agency -> notes": 1,
-        "ai -> ingestion": 1,
         "ai -> knowledge": 8,
         "ai -> practice": 3,
         "artifacts -> notes": 3,

@@ -19,7 +19,7 @@ Tools operate on **draft `question_block.structured` tree + `question_block.figu
 ## 3. Cross-cutting mechanics (all 6 tools)
 
 - `effect: 'write'`, `mirrorEvent: 'when_causal'` (agent callers → bridge auto-writes `tool_use` event; matches `attribute_mistake`).
-- Single-owner service module `src/server/ingestion/block-structured-edit.ts` owns all 6 mutations; the 6 DomainTools (`src/server/ai/tools/question-edit-tools.ts`) are thin wrappers.
+- Single-owner service module `src/capabilities/ingestion/server/block-structured-edit.ts` owns all 6 mutations; the six DomainTools under `src/capabilities/ingestion/server/tools/question-block-*-edits.ts` are thin wrappers.
 - **Guard**: every op asserts target `question_block.status === 'draft'` (→ soft `status: 'skipped:not_draft'` output, not throw) and that node_id / asset_id exists in the block (reuse `idHasMatch`-style walk).
 - **Provenance**: every touched structured node gets `source='agent_edit'` + `last_modified_by=<callerActor.ref>`.
 - **Concurrency**: `block.version` bump on every write; SELECT `.for('update')` inside the tx (mirrors B1b revert).
