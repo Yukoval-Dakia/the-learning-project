@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
 import { event, knowledge, learning_item, question } from '@/db/schema';
-import { demandToSupplyTarget } from '@/kernel/question-supply-quiz';
+import { demandToSupplyTarget } from '@/kernel/practice-refill';
 import { resetDb } from '../../../../../tests/helpers/db';
 import type { EnqueueFn } from './dispatcher';
 import {

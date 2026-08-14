@@ -53,7 +53,7 @@ import { newId } from '@/core/ids';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { learning_item } from '@/db/schema';
-import { type Demand, demandToSupplyTarget, poolFetch } from '@/kernel/question-supply-quiz';
+import { type Demand, demandToSupplyTarget, poolFetch } from '@/kernel/practice-refill';
 import { inArray } from 'drizzle-orm';
 import { type DispatchDeps, type DispatchResult, dispatchSupplyTarget } from './dispatcher';
 import type { QuestionSupplyTarget } from './target-discovery';
