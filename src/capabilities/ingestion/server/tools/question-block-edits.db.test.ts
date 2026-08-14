@@ -3,6 +3,7 @@
 // Covers: registry (all 6 registered + summarized), and per-tool written +
 // skipped:* soft-failure branches against a real Postgres testcontainer.
 // Design note: docs/superpowers/specs/2026-06-01-question-edit-domaintools-design.md
+// allow: SIZE_OK — one inherited DB contract matrix keeps shared fixtures and cross-tool parity.
 
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
@@ -11,22 +12,22 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { capabilities } from '@/capabilities';
 import { idHasMatch } from '@/capabilities/ingestion/server/block-structured-edit';
 import {
+  type FigureRefT,
   StructuredQuestion,
   type StructuredQuestionT,
   structuredToPromptMarkdown,
 } from '@/core/schema/structured_question';
 import { job_events, question_block } from '@/db/schema';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
+import { __resetRegistryForTests, getTool } from '@/server/ai/tools/registry';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import {
   addOptionTool,
-  mergeQuestionsTool,
-  reassignFigureTool,
   setQuestionTypeTool,
   splitStemTool,
   updatePromptTool,
-} from './question-edit-tools';
-import { registerCapabilityTools } from './register-capability-tools';
-import { __resetRegistryForTests, getTool } from './registry';
+} from './question-block-node-edits';
+import { mergeQuestionsTool, reassignFigureTool } from './question-block-structural-edits';
 import type { ToolContext } from './types';
 
 const EDIT_TOOL_NAMES = [
@@ -49,8 +50,7 @@ function ctx(): ToolContext {
 interface SeedOpts {
   status?: string;
   structured?: StructuredQuestionT | null;
-  // biome-ignore lint/suspicious/noExplicitAny: tests pass arbitrary jsonb figure shapes
-  figures?: any[];
+  figures?: FigureRefT[];
   sessionId?: string;
 }
 
@@ -143,8 +143,7 @@ describe('question-edit-tools registry', () => {
     await registerCapabilityTools(capabilities);
     for (const [name, input, output] of samples) {
       const tool = getTool(name);
-      // biome-ignore lint/suspicious/noExplicitAny: cross-typed summarize sample
-      const s = tool?.summarize(input as any, output as any) ?? '';
+      const s = tool?.summarize(input, output) ?? '';
       expect(s.length).toBeGreaterThan(0);
       expect(s.length).toBeLessThanOrEqual(120);
     }
@@ -349,18 +348,17 @@ describe('split_stem', () => {
     expect(out.status).toBe('written');
 
     const block = await readBlock(blockId);
-    const tree = block.structured as StructuredQuestionT;
+    const tree = StructuredQuestion.parse(block.structured);
     // `inner` is gone; its children are promoted as standalone siblings.
     expect(idHasMatch(tree, 'inner')).toBe(false);
     expect(idHasMatch(tree, 'inner-a')).toBe(true);
 
-    const fig = block.figures.find((f: { asset_id: string }) => f.asset_id === 'fig-inner') as
-      | { attached_to_index: string }
-      | undefined;
+    const fig = block.figures.find((figure) => figure.asset_id === 'fig-inner');
     expect(fig).toBeDefined();
+    if (!fig) throw new TypeError('expected carried figure');
     // Re-pointed to the first promoted child, and it resolves in the tree.
     expect(fig?.attached_to_index).toBe('inner-a');
-    expect(idHasMatch(tree, (fig as { attached_to_index: string }).attached_to_index)).toBe(true);
+    expect(idHasMatch(tree, fig.attached_to_index)).toBe(true);
   });
 });
 
@@ -563,7 +561,7 @@ describe('merge_questions', () => {
     expect(out.status).toBe('written');
 
     const primaryBlock = await readBlock(primary);
-    const tree = primaryBlock.structured as StructuredQuestionT;
+    const tree = StructuredQuestion.parse(primaryBlock.structured);
     // The absorbed stem stays a nested stem (NOT flattened to a leaf 'sub').
     const absorbedStem = tree.sub_questions?.find((s) => s.id === 'stem-m1');
     expect(absorbedStem).toBeDefined();
@@ -586,7 +584,7 @@ describe('merge_questions', () => {
       sessionId,
       structured: { id: 'p', role: 'standalone', prompt_text: 'primary' },
     });
-    const mergeFigure = {
+    const mergeFigure: FigureRefT = {
       asset_id: 'fig-m1',
       role: 'diagram',
       source_page_index: 0,
@@ -608,13 +606,12 @@ describe('merge_questions', () => {
 
     const primaryBlock = await readBlock(primary);
     // The merge block's figure is now on the primary.
-    const carried = primaryBlock.figures.find((f: { asset_id: string }) => f.asset_id === 'fig-m1');
+    const carried = primaryBlock.figures.find((figure) => figure.asset_id === 'fig-m1');
     expect(carried).toBeDefined();
+    if (!carried) throw new TypeError('expected merged figure');
     // Its attached_to_index still resolves inside the merged tree.
-    const tree = primaryBlock.structured as StructuredQuestionT;
-    expect(idHasMatch(tree, (carried as { attached_to_index: string }).attached_to_index)).toBe(
-      true,
-    );
+    const tree = StructuredQuestion.parse(primaryBlock.structured);
+    expect(idHasMatch(tree, carried.attached_to_index)).toBe(true);
   });
 
   it('skips null_structured when a merge block has null structured (no mutation)', async () => {
@@ -663,7 +660,7 @@ describe('merge_questions', () => {
 // reassign_figure (§4.6)
 // ---------------------------------------------------------------------------
 
-const FIGURE = {
+const FIGURE: FigureRefT = {
   asset_id: 'fig-1',
   role: 'diagram',
   source_page_index: 0,
