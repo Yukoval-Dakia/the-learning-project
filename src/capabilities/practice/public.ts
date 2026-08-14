@@ -11,7 +11,11 @@ export {
 export type { FrontierResolution } from './server/learnable-frontier';
 export { retrievabilityForKc } from './server/fsrs';
 export { loadAttemptQuestionSnapshot } from './server/question-evidence-snapshot';
-export { handleReviewDue } from './server/due-list';
+type HandleReviewDue = typeof import('./server/due-list').handleReviewDue;
+export const handleReviewDue: HandleReviewDue = async (...args) => {
+  const dueList = await import('./server/due-list');
+  return dueList.handleReviewDue(...args);
+};
 export type {
   EnqueueVariantVerifyFn,
   QuestionDraftAcceptResult,
