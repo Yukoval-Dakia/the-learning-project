@@ -1008,6 +1008,18 @@ export const practiceCapability = defineCapability({
               (module) => module.variantQuestionProposalAcceptApplier,
             ),
         },
+        dismiss: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.variantQuestionProposalDismissApplier,
+            ),
+        },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.variantQuestionProposalRetractApplier,
+            ),
+        },
       },
       {
         kind: 'question_draft',
@@ -1025,6 +1037,12 @@ export const practiceCapability = defineCapability({
           load: () =>
             import('./server/proposal-accept-applier').then(
               (module) => module.questionEditProposalAcceptApplier,
+            ),
+        },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.questionEditProposalRetractApplier,
             ),
         },
       },

@@ -4,9 +4,37 @@ import type {
   ProposalAcceptApplier,
   ProposalAcceptInput,
   ProposalAcceptResult,
+  ProposalDismissInput,
 } from '@/kernel/proposals';
-import { recordProposalDecisionSignal } from '@/server/proposals/signals';
+import * as ownerRuntime from '@/server/proposals/owner-runtime';
+import type { ProposalInboxRow } from '@/server/proposals/owner-runtime';
+import { createKnowledgeProposalLifecycle } from './proposal-lifecycle';
 import { acceptProposal } from './proposals';
+
+const {
+  knowledgeEdgeProposalDismissApplier,
+  knowledgeNodeProposalDismissApplier,
+  knowledgeNodeProposalRetractApplier,
+} = createKnowledgeProposalLifecycle({
+  ...ownerRuntime,
+  recordDismissSignal: (db: Db, input: ProposalDismissInput) =>
+    ownerRuntime.recordProposalDecisionSignal(
+      db,
+      {
+        ...input.proposal,
+        kind: input.proposal.payload.kind,
+        target: input.proposal.payload.target,
+      } as ProposalInboxRow,
+      'dismiss',
+      input.user_note,
+    ),
+});
+
+export {
+  knowledgeEdgeProposalDismissApplier,
+  knowledgeNodeProposalDismissApplier,
+  knowledgeNodeProposalRetractApplier,
+};
 
 async function acceptKnowledgeProposal(
   db: Db,
@@ -38,7 +66,7 @@ async function acceptKnowledgeProposal(
   }
 
   const result = await acceptProposal(db, proposalId);
-  await recordProposalDecisionSignal(db, signalProposal, 'accept', input.user_note);
+  await ownerRuntime.recordProposalDecisionSignal(db, signalProposal, 'accept', input.user_note);
   return { kind, result: { kind, result } };
 }
 

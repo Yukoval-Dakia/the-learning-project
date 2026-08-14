@@ -7,7 +7,11 @@
 
 import { type ZodTypeAny, z } from 'zod';
 import { type JobDagMemberInput, type JobDependencyDecl, validateJobDag } from './job-dag';
-import type { ProposalAcceptDecl } from './proposals/types';
+import type {
+  ProposalAcceptDecl,
+  ProposalDismissDecl,
+  ProposalRetractDecl,
+} from './proposals/types';
 
 /**
  * Web 标准 handler。M1 (YUK-314) 起带路径参数：server 组合根（server/app.ts）
@@ -163,6 +167,8 @@ export interface CopilotToolDecl {
 export interface ProposalKindDecl {
   kind: string;
   accept?: ProposalAcceptDecl;
+  dismiss?: ProposalDismissDecl;
+  retract?: ProposalRetractDecl;
 }
 
 export interface EventSubscriptionDelivery {

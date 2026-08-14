@@ -3,14 +3,50 @@ import type {
   ProposalAcceptApplier,
   ProposalAcceptInput,
   ProposalAcceptResult,
+  ProposalDismissInput,
 } from '@/kernel/proposals';
-import type { ProposalInboxRow } from '@/server/proposals/practice-runtime';
+import { toProposalLifecycleResult } from '@/kernel/proposals';
+import {
+  type ProposalInboxRow,
+  assertCurrentMistakeVariantParity,
+  findExistingRateEvent,
+  hasMistakeVariantGenesisAnchor,
+  projectMistakeVariantGuarded,
+  projectionIsWriter,
+  recordProposalDecisionSignal,
+  writeProposalRateEvent,
+} from '@/server/proposals/practice-runtime';
 import {
   type PracticeApplierOpts,
   acceptQuestionDraftProposal,
   acceptQuestionEditProposal,
   acceptVariantQuestionProposal,
 } from './proposal-appliers';
+import { createPracticeProposalLifecycle } from './proposal-lifecycle';
+
+export const {
+  questionEditProposalRetractApplier,
+  variantQuestionProposalDismissApplier,
+  variantQuestionProposalRetractApplier,
+} = createPracticeProposalLifecycle({
+  assertCurrentMistakeVariantParity,
+  findExistingRateEvent,
+  hasMistakeVariantGenesisAnchor,
+  projectMistakeVariantGuarded,
+  projectionIsWriter,
+  recordDismissSignal: (db: Db, input: ProposalDismissInput) =>
+    recordProposalDecisionSignal(
+      db,
+      {
+        ...input.proposal,
+        kind: input.proposal.payload.kind,
+        target: input.proposal.payload.target,
+      } as ProposalInboxRow,
+      'dismiss',
+      input.user_note,
+    ),
+  writeProposalRateEvent,
+});
 
 function inboxView(input: ProposalAcceptInput): ProposalInboxRow {
   const { proposal } = input;
@@ -30,8 +66,11 @@ function runtimeOptions(input: ProposalAcceptInput, runtime: unknown): PracticeA
   };
 }
 
-function wrap(kind: string, result: unknown): ProposalAcceptResult {
-  return { kind, result };
+function wrap(result: {
+  readonly kind: string;
+  readonly idempotent?: boolean;
+}): ProposalAcceptResult {
+  return { kind: result.kind, result: toProposalLifecycleResult(result) };
 }
 
 export const variantQuestionProposalAcceptApplier: ProposalAcceptApplier = async (
@@ -40,7 +79,6 @@ export const variantQuestionProposalAcceptApplier: ProposalAcceptApplier = async
   runtime,
 ) =>
   wrap(
-    'variant_question',
     await acceptVariantQuestionProposal(
       db as Db,
       input.proposalId,
@@ -55,7 +93,6 @@ export const questionDraftProposalAcceptApplier: ProposalAcceptApplier = async (
   runtime,
 ) =>
   wrap(
-    'question_draft',
     await acceptQuestionDraftProposal(
       db as Db,
       input.proposalId,
@@ -70,7 +107,6 @@ export const questionEditProposalAcceptApplier: ProposalAcceptApplier = async (
   runtime,
 ) =>
   wrap(
-    'question_edit',
     await acceptQuestionEditProposal(
       db as Db,
       input.proposalId,
