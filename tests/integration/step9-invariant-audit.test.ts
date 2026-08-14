@@ -464,7 +464,8 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       'src/capabilities/notes/server/note-verification-claim.ts',
       'src/server/boss/handlers/embedded_check_generate.ts',
       'src/server/boss/handlers/quiz_gen.ts',
-      'src/server/proposals/actions.ts',
+      // YUK-864 — learning_item retract ownership moved whole from the central proposal shell.
+      'src/capabilities/agency/server/proposal-retract-learning-item.ts',
       // M4-T4 (YUK-319) — D11 墓碑：record_links / record_promotion appliers 从
       // actions.ts 等价平移至此（搬迁不改逻辑）；record_promotion 物化 target 为
       // artifact 时的单 INSERT 随代码迁入。无活 producer，旧学习记录域退役时一并删。
