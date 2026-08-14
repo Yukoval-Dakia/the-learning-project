@@ -17,7 +17,7 @@ import {
   knowledgeRowToSnapshot,
   updateGoalScope,
   upsertMaterializedIdIndex,
-} from '@/kernel/question-supply-infrastructure';
+} from '@/kernel/placement-persistence';
 import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { PlacementStarterIdentity } from './placement-starter-identity';
