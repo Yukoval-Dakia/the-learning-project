@@ -3,7 +3,7 @@
 // Composite read tools for records, questions, due review cards, learning
 // items, and Dreaming-maintained memory briefs.
 
-import { QuestionKind } from '@/core/schema/business';
+import { AddressableStructureSchema } from '@/core/schema/addressable-structure';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   InterventionSettlement,
@@ -12,10 +12,7 @@ import { deriveSourceTier } from '@/core/schema/provenance';
 // ADR-0032 D6-R6 / D6-draftread — addressable-structure projection (read≡write
 // coordinate fix). Pure tree-clip; shared by get_question_context(include:
 // ['structure']) and the get_question_block_structure draft reader.
-import {
-  type AddressableStructure,
-  projectAddressableStructure,
-} from '@/core/schema/structured_question';
+import { projectAddressableStructure } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import {
@@ -159,34 +156,6 @@ const GetQuestionContextInputSchema = z.object({
     .optional(),
   attemptLimit: z.number().int().min(1).max(50).optional(),
   reviewLimit: z.number().int().min(1).max(50).optional(),
-});
-
-// ADR-0032 D6-R6 — addressable-structure output shape, shared by
-// get_question_context(include:['structure']) and get_question_block_structure.
-// figures keep only the addressing triple; tree drops bbox/page_index/evidence.
-const AddressableFigureSchema = z.object({
-  asset_id: z.string(),
-  role: z.string(),
-  attached_to_index: z.string(),
-});
-
-const AddressableNodeSchema: z.ZodType<AddressableStructure['tree']> = z.lazy(() =>
-  z.object({
-    id: z.string(),
-    role: z.enum(['stem', 'sub', 'standalone']),
-    question_no: z.string().optional(),
-    prompt_text: z.string(),
-    options: z.array(z.object({ label: z.string(), text: z.string() })).optional(),
-    answers: z.array(z.string()).optional(),
-    analysis: z.string().optional(),
-    kind: QuestionKind.optional(),
-    sub_questions: z.array(AddressableNodeSchema).optional(),
-  }),
-);
-
-const AddressableStructureSchema = z.object({
-  tree: AddressableNodeSchema,
-  figures: z.array(AddressableFigureSchema),
 });
 
 const GetQuestionContextOutputSchema = z.object({

@@ -1,4 +1,4 @@
-import { QuestionKind } from '@/core/schema/business';
+import { AddressableStructureSchema } from '@/core/schema/addressable-structure';
 import {
   type AddressableStructure,
   projectAddressableStructure,
@@ -7,31 +7,6 @@ import { question_block } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';
-
-const AddressableFigureSchema = z.object({
-  asset_id: z.string(),
-  role: z.string(),
-  attached_to_index: z.string(),
-});
-
-const AddressableNodeSchema: z.ZodType<AddressableStructure['tree']> = z.lazy(() =>
-  z.object({
-    id: z.string(),
-    role: z.enum(['stem', 'sub', 'standalone']),
-    question_no: z.string().optional(),
-    prompt_text: z.string(),
-    options: z.array(z.object({ label: z.string(), text: z.string() })).optional(),
-    answers: z.array(z.string()).optional(),
-    analysis: z.string().optional(),
-    kind: QuestionKind.optional(),
-    sub_questions: z.array(AddressableNodeSchema).optional(),
-  }),
-);
-
-const AddressableStructureSchema = z.object({
-  tree: AddressableNodeSchema,
-  figures: z.array(AddressableFigureSchema),
-});
 
 const GetQuestionBlockStructureInputSchema = z.object({
   blockId: z.string().min(1),
