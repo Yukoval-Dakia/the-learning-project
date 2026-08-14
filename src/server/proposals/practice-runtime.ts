@@ -16,3 +16,10 @@ export { hasProposalWithCooldownKey, listProposalInboxRows } from './inbox';
 export type { ProposalInboxRow } from './inbox';
 export { writeVariantQuestionProposal } from './producers';
 export { ensureProposalDecisionSignal, recordProposalDecisionSignal } from './signals';
+export {
+  assertCurrentMistakeVariantParity,
+  hasMistakeVariantGenesisAnchor,
+  projectMistakeVariantGuarded,
+  projectionIsWriter,
+  writeProposalRateEvent,
+} from './owner-runtime';
