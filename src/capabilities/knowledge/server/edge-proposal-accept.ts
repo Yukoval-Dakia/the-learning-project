@@ -546,5 +546,9 @@ export const knowledgeEdgeProposalAcceptApplier: ProposalAcceptApplier = async (
     new_relation_type: input.new_relation_type,
     user_note: input.user_note,
   });
-  return { kind: 'knowledge_edge', result };
+  return {
+    kind: 'knowledge_edge',
+    result,
+    lifecycle_outcome: result.generate_event_id === null ? 'dismissed' : 'accepted',
+  };
 };

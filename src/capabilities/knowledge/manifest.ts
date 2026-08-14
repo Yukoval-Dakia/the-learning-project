@@ -335,6 +335,18 @@ export const knowledgeCapability = defineCapability({
               (m) => m.knowledgeNodeProposalAcceptApplier,
             ),
         },
+        dismiss: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.knowledgeNodeProposalDismissApplier,
+            ),
+        },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.knowledgeNodeProposalRetractApplier,
+            ),
+        },
       },
       {
         kind: 'knowledge_mutation',
@@ -351,6 +363,12 @@ export const knowledgeCapability = defineCapability({
           load: () =>
             import('./server/edge-proposal-accept').then(
               (module) => module.knowledgeEdgeProposalAcceptApplier,
+            ),
+        },
+        dismiss: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.knowledgeEdgeProposalDismissApplier,
             ),
         },
       },
