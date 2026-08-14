@@ -976,6 +976,121 @@ describe('provider lane inventory', () => {
     });
   });
 
+  it('censuses static, export-from, import-equals, require, and dynamic imports by exact extension', () => {
+    const root = makeFixture();
+    write(root, 'src/server/target-ts.ts', 'export const target = 1;\n');
+    write(root, 'src/server/target-tsx.tsx', 'export const target = <div />;\n');
+    write(root, 'src/server/target-js.js', 'export const target = 1;\n');
+    write(root, 'src/server/target-mjs.ts', 'export const wrongTarget = true;\n');
+    write(root, 'src/server/target-mjs.mjs', 'export const target = 1;\n');
+    write(root, 'src/server/target-cjs.cjs', 'module.exports = { target: 1 };\n');
+    write(
+      root,
+      'src/server/static.ts',
+      "import './target-ts.ts';\nimport './target-tsx.tsx';\nimport './target-js.js';\n",
+    );
+    write(root, 'src/server/reexport.ts', "export { target } from './target-mjs.mjs';\n");
+    write(
+      root,
+      'src/server/import-equals.cts',
+      "import target = require('./target-cjs.cjs');\nvoid target;\n",
+    );
+    write(root, 'src/server/require.cjs', "require('./target-mjs.mjs');\n");
+    write(root, 'src/server/dynamic.mjs', "import('./target-cjs.cjs');\n");
+
+    const edges = collectProjectImportEdges(root);
+    expect(edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'src/server/static.ts', source: './target-ts.ts' }),
+        expect.objectContaining({ path: 'src/server/static.ts', source: './target-tsx.tsx' }),
+        expect.objectContaining({ path: 'src/server/static.ts', source: './target-js.js' }),
+        expect.objectContaining({
+          path: 'src/server/reexport.ts',
+          source: './target-mjs.mjs',
+          kind: 're-export',
+          target: resolve(root, 'src/server/target-mjs.mjs'),
+        }),
+        expect.objectContaining({
+          path: 'src/server/import-equals.cts',
+          source: './target-cjs.cjs',
+          kind: 'runtime',
+        }),
+        expect.objectContaining({
+          path: 'src/server/require.cjs',
+          source: './target-mjs.mjs',
+          kind: 'runtime',
+          target: resolve(root, 'src/server/target-mjs.mjs'),
+        }),
+        expect.objectContaining({
+          path: 'src/server/dynamic.mjs',
+          source: './target-cjs.cjs',
+          kind: 'dynamic',
+        }),
+      ]),
+    );
+  });
+
+  it('fails for unlisted provider SDK wires in every supported import form', () => {
+    const root = makeFixture();
+    write(root, 'scripts/unlisted-static.ts', "import Anthropic from '@anthropic-ai/sdk';\n");
+    write(root, 'scripts/unlisted-export.ts', "export { default } from '@anthropic-ai/sdk';\n");
+    write(root, 'scripts/unlisted-require.cjs', "require('@anthropic-ai/sdk');\n");
+    write(
+      root,
+      'scripts/unlisted-import-equals.cts',
+      "import Anthropic = require('@anthropic-ai/sdk');\nvoid Anthropic;\n",
+    );
+    write(root, 'scripts/unlisted-dynamic.mjs', "import('@anthropic-ai/sdk');\n");
+
+    const violations = auditProviderLanes(root, [fixtureLane()]).violations.filter((violation) =>
+      violation.reason.startsWith('unlisted provider SDK runtime import'),
+    );
+    expect(violations.map((violation) => violation.path)).toEqual([
+      'scripts/unlisted-dynamic.mjs',
+      'scripts/unlisted-export.ts',
+      'scripts/unlisted-import-equals.cts',
+      'scripts/unlisted-require.cjs',
+      'scripts/unlisted-static.ts',
+    ]);
+  });
+
+  it('ignores provider import text in comments and ordinary strings', () => {
+    const root = makeFixture();
+    write(
+      root,
+      'scripts/ignored.ts',
+      `// import Anthropic from '@anthropic-ai/sdk';
+const staticText = "export { default } from '@anthropic-ai/sdk'";
+const requireText = "require('@anthropic-ai/sdk')";
+const dynamicText = "import('@anthropic-ai/sdk')";
+void [staticText, requireText, dynamicText];
+`,
+    );
+
+    expect(auditProviderLanes(root, [fixtureLane()]).violations).not.toContainEqual(
+      expect.objectContaining({ path: 'scripts/ignored.ts' }),
+    );
+  });
+
+  it('excludes generated, vendor, and fixture directories from the source census', () => {
+    const root = makeFixture();
+    for (const directory of ['generated', '__generated__', 'vendor', 'fixtures', '__fixtures__']) {
+      write(
+        root,
+        `src/server/${directory}/provider.ts`,
+        "export const call = () => fetch('https://excluded-provider.example/v1');\n",
+      );
+    }
+
+    expect(collectProviderWireFindings(root)).toEqual([
+      {
+        call: 'fetch',
+        kind: 'dashscope-embedding-fetch',
+        path: 'src/server/ai/embed.ts',
+      },
+    ]);
+  });
+
   it('excludes both test and spec source variants from the provider census', () => {
     const root = makeFixture();
     write(
