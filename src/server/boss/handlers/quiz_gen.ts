@@ -23,6 +23,11 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobWithMetadata, SendOptions } from 'pg-boss';
 
 import {
+  SupplyTraceV1,
+  type SupplyTraceV1T,
+  withSupplyTraceDifficultyEvidence,
+} from '@/capabilities/practice/public';
+import {
   DifficultyEvidence,
   type DifficultyEvidenceT,
   buildProducerDifficultyEvidence,
@@ -71,11 +76,6 @@ import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
 } from '@/server/boss/verify-dispatch-outbox';
-import {
-  SupplyTraceV1,
-  type SupplyTraceV1T,
-  withSupplyTraceDifficultyEvidence,
-} from '@/server/question-supply/evidence-demand';
 import {
   PLACEMENT_ATTEMPT_HEARTBEAT_MS,
   PLACEMENT_DECISION_DEADLINE_MS,
@@ -155,7 +155,7 @@ export interface QuizGenJobData {
   // phase-deferred: contrast-aware generation (consuming this field to write a discrimination
   // question) is a flag-flip increment — the dispatcher forwards it now (dark behind
   // CONFUSABLE_CONTRAST_ENABLED) so the seam is data-complete; the handler does not yet read
-  // it. Context: src/server/question-supply/confusable-contrast-discovery.ts.
+  // it. Context: src/capabilities/practice/server/question-supply/confusable-contrast-discovery.ts.
   knowledge_ids?: string[];
   supply_trace?: SupplyTraceV1T;
 }
