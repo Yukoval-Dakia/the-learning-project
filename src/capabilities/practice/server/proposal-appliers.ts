@@ -16,6 +16,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 
+import { lockPlacementSupplyScopes } from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
 import type { QuestionEditOpT } from '@/core/schema/proposal';
 import {
@@ -51,7 +52,6 @@ import {
   recordProposalDecisionSignal,
   requiredString,
 } from '@/server/proposals/practice-runtime';
-import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 
 import { initialFsrsState } from './fsrs';
