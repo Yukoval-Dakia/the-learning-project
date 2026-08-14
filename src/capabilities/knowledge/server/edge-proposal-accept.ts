@@ -7,7 +7,7 @@ import type { Db } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import type { ProposalAcceptApplier } from '@/kernel/proposals';
+import { type ProposalAcceptApplier, toProposalLifecycleResult } from '@/kernel/proposals';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
 import { projectionIsWriter } from '@/server/projections/sot-flag';
 import { findExistingRateEvent } from '@/server/proposals/applier-helpers';
@@ -546,5 +546,9 @@ export const knowledgeEdgeProposalAcceptApplier: ProposalAcceptApplier = async (
     new_relation_type: input.new_relation_type,
     user_note: input.user_note,
   });
-  return { kind: 'knowledge_edge', result };
+  return {
+    kind: 'knowledge_edge',
+    result: toProposalLifecycleResult(result),
+    lifecycle_outcome: result.generate_event_id === null ? 'dismissed' : 'accepted',
+  };
 };

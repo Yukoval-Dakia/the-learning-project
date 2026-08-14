@@ -15,16 +15,16 @@ describe('Notes handoff ownership boundary', () => {
   });
 
   it('removes the legacy onReady callback and agency best-effort send', async () => {
-    const [generateSource, applierSource, actionsSource] = await Promise.all([
+    const [generateSource, applierSource, acceptActionSource] = await Promise.all([
       readFile(new URL('./jobs/note_generate.ts', import.meta.url), 'utf8'),
       readFile(new URL('../agency/server/proposal-appliers.ts', import.meta.url), 'utf8'),
-      readFile(new URL('../../server/proposals/actions.ts', import.meta.url), 'utf8'),
+      readFile(new URL('../../server/proposals/accept-action.ts', import.meta.url), 'utf8'),
     ]);
     expect(generateSource).not.toContain('onReady');
     expect(applierSource).not.toMatch(/boss\.send\s*\(\s*['"]note_generate['"]/);
     expect(applierSource).not.toContain('NOTE_GENERATE_SINGLETON_SECONDS');
     expect(applierSource).not.toContain('@/capabilities/notes/');
-    expect(actionsSource).toContain('dispatchNoteGeneration');
+    expect(acceptActionSource).toContain('dispatchNoteGeneration');
   });
 
   it('uses hub_sync_recovery as the only scheduled Notes handoff recovery floor', async () => {

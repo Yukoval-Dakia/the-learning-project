@@ -255,6 +255,12 @@ export const agencyCapability = defineCapability({
               (module) => module.learningItemProposalAcceptApplier,
             ),
         },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.learningItemProposalRetractApplier,
+            ),
+        },
       },
       {
         kind: 'completion',
@@ -262,6 +268,12 @@ export const agencyCapability = defineCapability({
           load: () =>
             import('./server/proposal-accept-applier').then(
               (module) => module.completionProposalAcceptApplier,
+            ),
+        },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.completionProposalRetractApplier,
             ),
         },
       },
@@ -273,6 +285,12 @@ export const agencyCapability = defineCapability({
               (module) => module.relearnProposalAcceptApplier,
             ),
         },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.relearnProposalRetractApplier,
+            ),
+        },
       },
       {
         kind: 'goal_scope',
@@ -280,6 +298,12 @@ export const agencyCapability = defineCapability({
           load: () =>
             import('./server/proposal-accept-applier').then(
               (module) => module.goalScopeProposalAcceptApplier,
+            ),
+        },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.goalScopeProposalRetractApplier,
             ),
         },
       },
@@ -291,6 +315,7 @@ export const agencyCapability = defineCapability({
       {
         kind: 'conjecture',
         accept: {
+          correctedPayload: true,
           load: () =>
             import('./server/proposal-accept-applier').then(
               (module) => module.conjectureProposalAcceptApplier,

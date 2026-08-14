@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+/* SIZE_OK: the fixture-heavy audit matrix shares one temporary-project DSL and one census contract. */
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -88,6 +89,22 @@ function fixtureLane(overrides: Partial<ProviderLane> = {}): ProviderLane {
       calls: ['fetch'],
       contains: ['fetch', '/embeddings'],
     },
+    attemptSemantics: {
+      admittedUnit: 'one fixture provider request',
+      durableIdentity: 'one fixture attempt identity',
+      timeout: 'bounded fixture timeout',
+      clientRetry: 'no fixture client retry',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'exact',
+        value: 1,
+        fixedRequestCount: 1,
+        fixedFanOutMultiplier: 1,
+      },
+      redelivery: 'no fixture redelivery',
+      fanOut: 'one fixture request',
+      evidence: [{ path: 'src/server/ai/embed.ts', calls: ['fetch'] }],
+    },
     costSupport: 'no project-side per-wire ledger hook',
     ...overrides,
   };
@@ -173,6 +190,268 @@ afterEach(() => {
 });
 
 describe('provider lane inventory', () => {
+  it('declares admitted-unit and multiplication semantics for every inventory lane', () => {
+    expect(
+      PROVIDER_LANES.map((lane) => ({
+        id: lane.id,
+        hasAttemptSemantics: Object.hasOwn(lane, 'attemptSemantics'),
+      })),
+    ).toEqual(PROVIDER_LANES.map((lane) => ({ id: lane.id, hasAttemptSemantics: true })));
+  });
+
+  it('rejects inventory lanes without source-backed attempt semantics', () => {
+    expect(
+      validateProviderLaneInventory([{ ...fixtureLane(), attemptSemantics: undefined }]),
+    ).toContain('dashscope.embedding: missing required attempt semantics');
+  });
+
+  it('rejects attempt semantics without machine-checkable invocation cardinality', () => {
+    const { attemptsPerInvocation: _omitted, ...attemptSemantics } = fixtureLane().attemptSemantics;
+    const lane = { ...fixtureLane(), attemptSemantics };
+
+    expect(validateProviderLaneInventory([lane])).toContain(
+      'dashscope.embedding: missing required attempt cardinality',
+    );
+  });
+
+  it('rejects exact attempt declarations whose arithmetic is inconsistent', () => {
+    const lane = {
+      ...fixtureLane(),
+      attemptSemantics: {
+        ...fixtureLane().attemptSemantics,
+        transportRetryCount: 0,
+        attemptsPerInvocation: {
+          kind: 'exact',
+          value: 3,
+          fixedRequestCount: 2,
+          fixedFanOutMultiplier: 1,
+        },
+      },
+    } as const;
+
+    expect(validateProviderLaneInventory([lane])).toContain(
+      'dashscope.embedding: inconsistent attemptsPerInvocation: declared 3, calculated 2',
+    );
+  });
+
+  it('rejects invalid transport retry counts', () => {
+    const lane = {
+      ...fixtureLane(),
+      attemptSemantics: {
+        ...fixtureLane().attemptSemantics,
+        transportRetryCount: -1,
+        attemptsPerInvocation: {
+          kind: 'exact',
+          value: 1,
+          fixedRequestCount: 1,
+          fixedFanOutMultiplier: 1,
+        },
+      },
+    } as const;
+
+    expect(validateProviderLaneInventory([lane])).toContain(
+      'dashscope.embedding: invalid transport retry count',
+    );
+  });
+
+  it('rejects dynamic fan-out that hides its multiplier rationale', () => {
+    const lane = {
+      ...fixtureLane(),
+      attemptSemantics: {
+        ...fixtureLane().attemptSemantics,
+        transportRetryCount: 0,
+        attemptsPerInvocation: { kind: 'dynamic', multiplierRationale: '' },
+      },
+    } as const;
+
+    expect(validateProviderLaneInventory([lane])).toContain(
+      'dashscope.embedding: dynamic attemptsPerInvocation requires multiplier rationale',
+    );
+  });
+
+  it('rejects expired or incomplete support exemptions', () => {
+    const expired = {
+      ...fixtureLane(),
+      disposition: 'exempt',
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: '2000-01-01',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    };
+    const incomplete = {
+      ...expired,
+      id: 'incomplete.support-probe',
+      exemption: { ...expired.exemption, owner: '' },
+    };
+
+    expect(validateProviderLaneInventory([expired, incomplete])).toEqual(
+      expect.arrayContaining([
+        'dashscope.embedding: expired exemption 2000-01-01',
+        'incomplete.support-probe: missing required exemption metadata',
+      ]),
+    );
+  });
+
+  it.each([
+    { label: 'missing', exemption: undefined },
+    {
+      label: 'missing owner',
+      exemption: {
+        owner: '',
+        reason: 'manual operator probe',
+        expiresOn: '2099-12-31',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    },
+    {
+      label: 'invalid date',
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: 'not-a-date',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    },
+    {
+      label: 'zero attempts',
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: '2099-12-31',
+        maxAttemptsPerInvocation: 0,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    },
+    {
+      label: 'zero timeout',
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: '2099-12-31',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 0,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    },
+    {
+      label: 'negative retry limit',
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: '2099-12-31',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: -1,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    },
+    {
+      label: 'non-AST evidence',
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: '2099-12-31',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', contains: ['fetch'] },
+      },
+    },
+  ])('rejects $label exemption metadata', ({ exemption }) => {
+    const lane = fixtureLane({
+      disposition: 'exempt',
+      roles: ['operator'],
+      directImporters: [],
+      exemption,
+    });
+
+    expect(validateProviderLaneInventory([lane])).toContain(
+      'dashscope.embedding: missing required exemption metadata',
+    );
+  });
+
+  it('rejects exemption metadata on a non-exempt lane', () => {
+    const lane = fixtureLane({
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: '2099-12-31',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    });
+
+    expect(validateProviderLaneInventory([lane])).toContain(
+      'dashscope.embedding: exemption metadata requires exempt disposition',
+    );
+  });
+
+  it('rejects dynamic cardinality for an exemption with an exact attempt ceiling', () => {
+    const lane = fixtureLane({
+      disposition: 'exempt',
+      roles: ['operator'],
+      directImporters: [],
+      attemptSemantics: {
+        ...fixtureLane().attemptSemantics,
+        attemptsPerInvocation: {
+          kind: 'dynamic',
+          multiplierRationale: 'runtime-dependent operator batching',
+        },
+      },
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: '2099-12-31',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    });
+
+    expect(validateProviderLaneInventory([lane])).toContain(
+      'dashscope.embedding: exempt lane requires exact attemptsPerInvocation',
+    );
+  });
+
+  it('declares the vision preflight as one bounded operator-only exemption', () => {
+    const lane = PROVIDER_LANES.find((candidate) => candidate.id === 'xiaomi.vision-preflight');
+    const source = readFileSync(
+      resolve(process.cwd(), 'scripts/preflight-vision-one-shot.ts'),
+      'utf8',
+    );
+
+    expect(lane).toMatchObject({
+      disposition: 'exempt',
+      roles: ['operator'],
+      wire: { calls: ['client.messages.create'] },
+      exemption: {
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+      },
+    });
+    expect(source.match(/client\.messages\.create\(/gu)).toHaveLength(1);
+    expect(source).toContain('maxRetries: 0');
+    expect(source).toContain('timeout: 30_000');
+  });
+
   it('lists each current direct provider lane with complete immutable metadata', () => {
     expect(PROVIDER_LANES.map((lane) => lane.id)).toEqual([
       'dashscope.embedding',
@@ -182,6 +461,7 @@ describe('provider lane inventory', () => {
       'glm.ocr-layout-parsing',
       'mem0.event-memory',
       'tencent.question-mark-agent',
+      'xiaomi.vision-preflight',
     ]);
     expect(validateProviderLaneInventory(PROVIDER_LANES)).toEqual([]);
     expect(PROVIDER_LANES.map((lane) => ({ id: lane.id, calls: lane.wire.calls }))).toEqual([
@@ -198,6 +478,7 @@ describe('provider lane inventory', () => {
         id: 'tencent.question-mark-agent',
         calls: ['client.SubmitQuestionMarkAgentJob', 'client.DescribeQuestionMarkAgentJob'],
       },
+      { id: 'xiaomi.vision-preflight', calls: ['client.messages.create'] },
     ]);
   });
 
@@ -607,6 +888,42 @@ describe('provider lane inventory', () => {
     });
   });
 
+  it('fails closed on an unlisted direct provider SDK operator script', () => {
+    const root = makeFixture();
+    write(
+      root,
+      'scripts/provider-preflight.ts',
+      "import Anthropic from '@anthropic-ai/sdk';\nconst client = new Anthropic({ apiKey: 'test' });\nexport const run = () => client.messages.create({ model: 'test', max_tokens: 1, messages: [] });\n",
+    );
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          path: 'scripts/provider-preflight.ts',
+          reason: 'unlisted provider SDK runtime import: @anthropic-ai/sdk',
+        }),
+      ],
+    });
+  });
+
+  it('fails closed on an unlisted direct provider fetch operator script', () => {
+    const root = makeFixture();
+    write(
+      root,
+      'scripts/provider-fetch-preflight.ts',
+      "export const run = () => fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings');\n",
+    );
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          path: 'scripts/provider-fetch-preflight.ts',
+          reason: 'unlisted direct provider wire: dashscope-embedding-fetch',
+        }),
+      ],
+    });
+  });
+
   it('fails closed on a watched provider SDK import in a registered API loader dependency', () => {
     const root = makeFixture();
     write(root, 'src/capabilities/example/api/route.ts', "import './sdk-helper';\n");
@@ -861,6 +1178,121 @@ describe('provider lane inventory', () => {
         }),
       ],
     });
+  });
+
+  it('censuses static, export-from, import-equals, require, and dynamic imports by exact extension', () => {
+    const root = makeFixture();
+    write(root, 'src/server/target-ts.ts', 'export const target = 1;\n');
+    write(root, 'src/server/target-tsx.tsx', 'export const target = <div />;\n');
+    write(root, 'src/server/target-js.js', 'export const target = 1;\n');
+    write(root, 'src/server/target-mjs.ts', 'export const wrongTarget = true;\n');
+    write(root, 'src/server/target-mjs.mjs', 'export const target = 1;\n');
+    write(root, 'src/server/target-cjs.cjs', 'module.exports = { target: 1 };\n');
+    write(
+      root,
+      'src/server/static.ts',
+      "import './target-ts.ts';\nimport './target-tsx.tsx';\nimport './target-js.js';\n",
+    );
+    write(root, 'src/server/reexport.ts', "export { target } from './target-mjs.mjs';\n");
+    write(
+      root,
+      'src/server/import-equals.cts',
+      "import target = require('./target-cjs.cjs');\nvoid target;\n",
+    );
+    write(root, 'src/server/require.cjs', "require('./target-mjs.mjs');\n");
+    write(root, 'src/server/dynamic.mjs', "import('./target-cjs.cjs');\n");
+
+    const edges = collectProjectImportEdges(root);
+    expect(edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'src/server/static.ts', source: './target-ts.ts' }),
+        expect.objectContaining({ path: 'src/server/static.ts', source: './target-tsx.tsx' }),
+        expect.objectContaining({ path: 'src/server/static.ts', source: './target-js.js' }),
+        expect.objectContaining({
+          path: 'src/server/reexport.ts',
+          source: './target-mjs.mjs',
+          kind: 're-export',
+          target: resolve(root, 'src/server/target-mjs.mjs'),
+        }),
+        expect.objectContaining({
+          path: 'src/server/import-equals.cts',
+          source: './target-cjs.cjs',
+          kind: 'runtime',
+        }),
+        expect.objectContaining({
+          path: 'src/server/require.cjs',
+          source: './target-mjs.mjs',
+          kind: 'runtime',
+          target: resolve(root, 'src/server/target-mjs.mjs'),
+        }),
+        expect.objectContaining({
+          path: 'src/server/dynamic.mjs',
+          source: './target-cjs.cjs',
+          kind: 'dynamic',
+        }),
+      ]),
+    );
+  });
+
+  it('fails for unlisted provider SDK wires in every supported import form', () => {
+    const root = makeFixture();
+    write(root, 'scripts/unlisted-static.ts', "import Anthropic from '@anthropic-ai/sdk';\n");
+    write(root, 'scripts/unlisted-export.ts', "export { default } from '@anthropic-ai/sdk';\n");
+    write(root, 'scripts/unlisted-require.cjs', "require('@anthropic-ai/sdk');\n");
+    write(
+      root,
+      'scripts/unlisted-import-equals.cts',
+      "import Anthropic = require('@anthropic-ai/sdk');\nvoid Anthropic;\n",
+    );
+    write(root, 'scripts/unlisted-dynamic.mjs', "import('@anthropic-ai/sdk');\n");
+
+    const violations = auditProviderLanes(root, [fixtureLane()]).violations.filter((violation) =>
+      violation.reason.startsWith('unlisted provider SDK runtime import'),
+    );
+    expect(violations.map((violation) => violation.path)).toEqual([
+      'scripts/unlisted-dynamic.mjs',
+      'scripts/unlisted-export.ts',
+      'scripts/unlisted-import-equals.cts',
+      'scripts/unlisted-require.cjs',
+      'scripts/unlisted-static.ts',
+    ]);
+  });
+
+  it('ignores provider import text in comments and ordinary strings', () => {
+    const root = makeFixture();
+    write(
+      root,
+      'scripts/ignored.ts',
+      `// import Anthropic from '@anthropic-ai/sdk';
+const staticText = "export { default } from '@anthropic-ai/sdk'";
+const requireText = "require('@anthropic-ai/sdk')";
+const dynamicText = "import('@anthropic-ai/sdk')";
+void [staticText, requireText, dynamicText];
+`,
+    );
+
+    expect(auditProviderLanes(root, [fixtureLane()]).violations).not.toContainEqual(
+      expect.objectContaining({ path: 'scripts/ignored.ts' }),
+    );
+  });
+
+  it('excludes generated, vendor, and fixture directories from the source census', () => {
+    const root = makeFixture();
+    for (const directory of ['generated', '__generated__', 'vendor', 'fixtures', '__fixtures__']) {
+      write(
+        root,
+        `src/server/${directory}/provider.ts`,
+        "export const call = () => fetch('https://excluded-provider.example/v1');\n",
+      );
+    }
+
+    expect(collectProviderWireFindings(root)).toEqual([
+      {
+        call: 'fetch',
+        kind: 'dashscope-embedding-fetch',
+        path: 'src/server/ai/embed.ts',
+      },
+    ]);
   });
 
   it('excludes both test and spec source variants from the provider census', () => {

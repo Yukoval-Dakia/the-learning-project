@@ -1,7 +1,8 @@
+/* SIZE_OK: this AST census keeps one shared parse/import-closure model and one violation vocabulary. */
 import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, extname, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { parse } from '@babel/parser';
+import ts from 'typescript';
 import {
   type DirectImporter,
   type DirectImporterKind,
@@ -15,8 +16,26 @@ import {
   validateProviderLaneInventory,
 } from './provider-lane-inventory';
 
-const SOURCE_FILE = /\.[cm]?[jt]sx?$/;
-const TEST_FILE = /\.(?:unit|db|migration|integration|e2e)?\.?(?:test|spec)\.[cm]?[jt]sx?$/;
+const SOURCE_FILE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/u;
+const TEST_FILE =
+  /\.(?:unit|db|migration|integration|e2e)?\.?(?:test|spec)\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/u;
+const EXCLUDED_SOURCE_DIRECTORIES = new Set([
+  '__fixtures__',
+  '__generated__',
+  'fixtures',
+  'generated',
+  'vendor',
+]);
+const OPERATOR_PROVIDER_MARKERS = [
+  'api.anthropic.com',
+  'api.xiaomimimo.com',
+  'dashscope.aliyuncs.com',
+  'ocr.tencentcloudapi.com',
+  'open.bigmodel.cn',
+  '/chat/completions',
+  '/embeddings',
+  'layout_parsing',
+] as const;
 
 export type ProviderWireFinding = {
   readonly kind:
@@ -25,6 +44,7 @@ export type ProviderWireFinding = {
     | 'glm-memory-reconcile-fetch'
     | 'glm-ocr-layout-parsing-fetch'
     | 'mem0-model-bearing-operation'
+    | 'xiaomi-vision-preflight-sdk'
     | 'tencent-question-mark-agent-sdk'
     | 'unclassified-provider-fetch';
   readonly call: string;
@@ -71,20 +91,18 @@ type RuntimeImportBinding = {
 const SUPPORTED_SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
 const DEFAULT_FETCH_PACKAGES = new Set(['node-fetch', 'cross-fetch']);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
 function sourceFiles(root: string): string[] {
   if (!existsSync(root)) return [];
   const files: string[] = [];
   for (const entry of readdirSync(root).sort((left, right) => left.localeCompare(right))) {
     const path = resolve(root, entry);
-    if (lstatSync(path).isSymbolicLink()) {
+    const stats = lstatSync(path);
+    if (stats.isSymbolicLink()) {
       throw new Error(`${path}: symbolic link found while collecting source files`);
     }
-    if (statSync(path).isDirectory()) files.push(...sourceFiles(path));
-    else if (SOURCE_FILE.test(entry) && !TEST_FILE.test(entry)) files.push(path);
+    if (stats.isDirectory() && !EXCLUDED_SOURCE_DIRECTORIES.has(entry)) {
+      files.push(...sourceFiles(path));
+    } else if (SOURCE_FILE.test(entry) && !TEST_FILE.test(entry)) files.push(path);
   }
   return files;
 }
@@ -115,85 +133,73 @@ function backendSourceFiles(root: string): string[] {
     .sort((left, right) => projectPath(root, left).localeCompare(projectPath(root, right)));
 }
 
-function textValue(node: unknown): string | undefined {
-  if (!isRecord(node)) return undefined;
-  return (node.type === 'StringLiteral' || node.type === 'Literal') &&
-    typeof node.value === 'string'
-    ? node.value
-    : undefined;
-}
-
-function callName(callee: unknown): string | undefined {
-  if (!isRecord(callee)) return undefined;
-  if (callee.type === 'Identifier' && typeof callee.name === 'string') return callee.name;
-  if (callee.type !== 'MemberExpression') return undefined;
-  if (!isRecord(callee.object) || callee.object.type !== 'Identifier') return undefined;
-  const property = callee.computed ? textValue(callee.property) : identifierName(callee.property);
-  if (typeof callee.object.name !== 'string' || !property) return undefined;
-  if (
-    (callee.object.name === 'globalThis' || callee.object.name === 'global') &&
-    property === 'fetch'
-  ) {
-    return 'fetch';
+function scriptKind(filename: string): ts.ScriptKind {
+  switch (extname(filename)) {
+    case '.js':
+    case '.mjs':
+    case '.cjs':
+      return ts.ScriptKind.JS;
+    case '.jsx':
+      return ts.ScriptKind.JSX;
+    case '.tsx':
+      return ts.ScriptKind.TSX;
+    default:
+      return ts.ScriptKind.TS;
   }
-  if (callee.computed) return undefined;
-  return `${callee.object.name}.${property}`;
 }
 
-function identifierName(node: unknown): string | undefined {
-  return isRecord(node) && node.type === 'Identifier' && typeof node.name === 'string'
-    ? node.name
+function parseSource(code: string, filename: string): ts.SourceFile {
+  return ts.createSourceFile(filename, code, ts.ScriptTarget.Latest, true, scriptKind(filename));
+}
+
+function textValue(node: ts.Node | undefined): string | undefined {
+  return node && ts.isStringLiteralLike(node) ? node.text : undefined;
+}
+
+function expressionName(value: ts.Expression | undefined): string | undefined {
+  if (!value) return undefined;
+  if (ts.isIdentifier(value)) return value.text;
+  if (ts.isPropertyAccessExpression(value)) {
+    const object = expressionName(value.expression);
+    return object ? `${object}.${value.name.text}` : undefined;
+  }
+  if (!ts.isElementAccessExpression(value)) return undefined;
+  const object = expressionName(value.expression);
+  const property = textValue(value.argumentExpression);
+  return object && property ? `${object}.${property}` : undefined;
+}
+
+function callName(callee: ts.LeftHandSideExpression): string | undefined {
+  const name = expressionName(callee);
+  return name === 'globalThis.fetch' || name === 'global.fetch' ? 'fetch' : name;
+}
+
+function globalFetchMemberName(node: ts.Expression | undefined): string | undefined {
+  const name = expressionName(node);
+  return name === 'globalThis.fetch' || name === 'global.fetch' ? 'fetch' : undefined;
+}
+
+function envReadName(node: ts.Node): string | undefined {
+  if (!ts.isPropertyAccessExpression(node)) return undefined;
+  const environment = node.expression;
+  if (!ts.isPropertyAccessExpression(environment)) return undefined;
+  return ts.isIdentifier(environment.expression) &&
+    environment.expression.text === 'process' &&
+    environment.name.text === 'env'
+    ? node.name.text
     : undefined;
 }
 
-function globalFetchMemberName(node: unknown): string | undefined {
-  if (!isRecord(node) || node.type !== 'MemberExpression') return undefined;
-  if (!isRecord(node.object) || node.object.type !== 'Identifier') return undefined;
-  const property = node.computed ? textValue(node.property) : identifierName(node.property);
-  return (node.object.name === 'globalThis' || node.object.name === 'global') &&
-    property === 'fetch'
-    ? 'fetch'
-    : undefined;
-}
-
-function envReadName(node: unknown): string | undefined {
-  if (
-    !isRecord(node) ||
-    (node.type !== 'MemberExpression' && node.type !== 'OptionalMemberExpression') ||
-    node.computed
-  )
+function helperEnvReadName(node: ts.Node): string | undefined {
+  if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return undefined;
+  if (node.expression.text !== 'optionalEnv' && node.expression.text !== 'requireEnv') {
     return undefined;
-  if (
-    !isRecord(node.object) ||
-    (node.object.type !== 'MemberExpression' && node.object.type !== 'OptionalMemberExpression') ||
-    node.object.computed
-  )
-    return undefined;
-  if (!isRecord(node.object.object) || node.object.object.type !== 'Identifier') return undefined;
-  if (!isRecord(node.object.property) || node.object.property.type !== 'Identifier')
-    return undefined;
-  if (!isRecord(node.property) || node.property.type !== 'Identifier') return undefined;
-  return node.object.object.name === 'process' && node.object.property.name === 'env'
-    ? typeof node.property.name === 'string'
-      ? node.property.name
-      : undefined
-    : undefined;
-}
-
-function helperEnvReadName(node: unknown): string | undefined {
-  if (!isRecord(node) || node.type !== 'CallExpression') return undefined;
-  if (!isRecord(node.callee) || node.callee.type !== 'Identifier') return undefined;
-  if (node.callee.name !== 'optionalEnv' && node.callee.name !== 'requireEnv') return undefined;
-  if (!Array.isArray(node.arguments)) return undefined;
+  }
   return textValue(node.arguments[1]);
 }
 
 function inspectSource(code: string, filename: string): SourceFacts {
-  const program = parse(code, {
-    sourceType: 'module',
-    sourceFilename: filename,
-    plugins: ['typescript', 'jsx', 'dynamicImport', 'importAttributes'],
-  }).program;
+  const sourceFile = parseSource(code, filename);
   const imports = new Set<string>();
   const calls: string[] = [];
   const requestAliases = new Map<string, string>();
@@ -201,93 +207,72 @@ function inspectSource(code: string, filename: string): SourceFacts {
   const envReads = new Set<string>();
   const literals = new Set<string>();
 
-  function visit(value: unknown): void {
-    if (Array.isArray(value)) {
-      for (const child of value) visit(child);
-      return;
-    }
-    if (!isRecord(value)) return;
-    const literal = textValue(value);
+  function visit(node: ts.Node): void {
+    const literal = textValue(node);
     if (literal) literals.add(literal);
-    if (value.type === 'ImportDeclaration') {
-      const source = textValue(value.source);
+    if (ts.isImportDeclaration(node)) {
+      const source = textValue(node.moduleSpecifier);
       if (source) {
         imports.add(source);
-        if (importKind(value) !== 'type' && Array.isArray(value.specifiers)) {
-          for (const specifier of value.specifiers) {
-            if (!isRecord(specifier) || !isRecord(specifier.local)) continue;
-            const local = identifierName(specifier.local);
-            if (!local) continue;
-            const imported =
-              specifier.type === 'ImportSpecifier' ? identifierName(specifier.imported) : undefined;
-            const isNamedFetch = imported === 'fetch';
-            const isKnownDefaultFetch =
-              specifier.type === 'ImportDefaultSpecifier' && DEFAULT_FETCH_PACKAGES.has(source);
-            if (!isNamedFetch && !isKnownDefaultFetch) continue;
+        const clause = node.importClause;
+        if (clause && !clause.isTypeOnly) {
+          if (clause.name && DEFAULT_FETCH_PACKAGES.has(source)) {
+            const local = clause.name.text;
             importedFetches.push({ source, local });
             requestAliases.set(local, `imported-fetch:${source}:${local}`);
           }
-        }
-      }
-    }
-    if (value.type === 'VariableDeclarator') {
-      if (
-        isRecord(value.id) &&
-        value.id.type === 'Identifier' &&
-        typeof value.id.name === 'string' &&
-        isRecord(value.init) &&
-        value.init.type === 'Identifier' &&
-        typeof value.init.name === 'string'
-      ) {
-        requestAliases.set(value.id.name, value.init.name);
-      }
-      if (
-        isRecord(value.id) &&
-        value.id.type === 'Identifier' &&
-        typeof value.id.name === 'string'
-      ) {
-        const globalFetch = globalFetchMemberName(value.init);
-        if (globalFetch) requestAliases.set(value.id.name, globalFetch);
-      }
-      if (
-        isRecord(value.id) &&
-        value.id.type === 'ObjectPattern' &&
-        isRecord(value.init) &&
-        value.init.type === 'Identifier' &&
-        (value.init.name === 'globalThis' || value.init.name === 'global') &&
-        Array.isArray(value.id.properties)
-      ) {
-        for (const property of value.id.properties) {
-          if (
-            !isRecord(property) ||
-            property.type !== 'ObjectProperty' ||
-            !isRecord(property.key) ||
-            property.key.type !== 'Identifier' ||
-            property.key.name !== 'fetch' ||
-            !isRecord(property.value) ||
-            property.value.type !== 'Identifier' ||
-            typeof property.value.name !== 'string'
-          ) {
-            continue;
+          if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+            for (const specifier of clause.namedBindings.elements) {
+              if (specifier.isTypeOnly) continue;
+              const imported = specifier.propertyName?.text ?? specifier.name.text;
+              if (imported !== 'fetch') continue;
+              const local = specifier.name.text;
+              importedFetches.push({ source, local });
+              requestAliases.set(local, `imported-fetch:${source}:${local}`);
+            }
           }
-          requestAliases.set(property.value.name, 'fetch');
         }
       }
     }
-    if (value.type === 'CallExpression') {
-      const name = callName(value.callee);
+    if (ts.isVariableDeclaration(node)) {
+      if (ts.isIdentifier(node.name) && node.initializer && ts.isIdentifier(node.initializer)) {
+        requestAliases.set(node.name.text, node.initializer.text);
+      }
+      if (ts.isIdentifier(node.name)) {
+        const globalFetch = globalFetchMemberName(node.initializer);
+        if (globalFetch) requestAliases.set(node.name.text, globalFetch);
+      }
+      if (
+        ts.isObjectBindingPattern(node.name) &&
+        node.initializer &&
+        ts.isIdentifier(node.initializer) &&
+        (node.initializer.text === 'globalThis' || node.initializer.text === 'global')
+      ) {
+        for (const element of node.name.elements) {
+          const imported = element.propertyName
+            ? (textValue(element.propertyName) ??
+              (ts.isIdentifier(element.propertyName) ? element.propertyName.text : undefined))
+            : ts.isIdentifier(element.name)
+              ? element.name.text
+              : undefined;
+          if (imported === 'fetch' && ts.isIdentifier(element.name)) {
+            requestAliases.set(element.name.text, 'fetch');
+          }
+        }
+      }
+    }
+    if (ts.isCallExpression(node)) {
+      const name = callName(node.expression);
       if (name) calls.push(name);
     }
-    const envRead = envReadName(value);
+    const envRead = envReadName(node);
     if (envRead) envReads.add(envRead);
-    const helperEnvRead = helperEnvReadName(value);
+    const helperEnvRead = helperEnvReadName(node);
     if (helperEnvRead) envReads.add(helperEnvRead);
-    for (const [key, child] of Object.entries(value)) {
-      if (!['loc', 'start', 'end', 'extra'].includes(key)) visit(child);
-    }
+    ts.forEachChild(node, visit);
   }
 
-  visit(program);
+  visit(sourceFile);
   return {
     imports: [...imports].sort((left, right) => left.localeCompare(right)),
     calls: calls
@@ -319,31 +304,34 @@ function stripSupportedExtension(path: string): string {
   return SUPPORTED_SOURCE_EXTENSIONS.includes(extension) ? path.slice(0, -extension.length) : path;
 }
 
-function importKind(node: Record<string, unknown>): DirectImporterKind {
-  if (node.importKind === 'type') return 'type';
-  const specifiers = Array.isArray(node.specifiers) ? node.specifiers : [];
-  if (
-    specifiers.length > 0 &&
-    specifiers.every((specifier) => isRecord(specifier) && specifier.importKind === 'type')
-  ) {
-    return 'type';
-  }
-  return 'runtime';
+function importKind(node: ts.ImportDeclaration): DirectImporterKind {
+  const clause = node.importClause;
+  if (clause?.isTypeOnly) return 'type';
+  if (!clause?.namedBindings || !ts.isNamedImports(clause.namedBindings)) return 'runtime';
+  return clause.namedBindings.elements.length > 0 &&
+    clause.namedBindings.elements.every((specifier) => specifier.isTypeOnly)
+    ? 'type'
+    : 'runtime';
 }
 
 function resolveImportTarget(root: string, importer: string, source: string): string | undefined {
-  const unextended = stripSupportedExtension(
-    source.startsWith('@/')
-      ? resolve(root, 'src', source.slice(2))
-      : source.startsWith('.')
-        ? resolve(dirname(importer), source)
-        : '',
-  );
-  if (!unextended) return undefined;
-  const candidates = [
-    ...SUPPORTED_SOURCE_EXTENSIONS.map((extension) => `${unextended}${extension}`),
-    ...SUPPORTED_SOURCE_EXTENSIONS.map((extension) => resolve(unextended, `index${extension}`)),
-  ];
+  const localPath = source.startsWith('@/')
+    ? resolve(root, 'src', source.slice(2))
+    : source.startsWith('.')
+      ? resolve(dirname(importer), source)
+      : '';
+  if (!localPath) return undefined;
+  const explicitExtension = SUPPORTED_SOURCE_EXTENSIONS.includes(extname(localPath));
+  const unextended = explicitExtension ? stripSupportedExtension(localPath) : localPath;
+  const candidates =
+    explicitExtension && existsSync(localPath)
+      ? [localPath]
+      : [
+          ...SUPPORTED_SOURCE_EXTENSIONS.map((extension) => `${unextended}${extension}`),
+          ...SUPPORTED_SOURCE_EXTENSIONS.map((extension) =>
+            resolve(unextended, `index${extension}`),
+          ),
+        ];
   for (const candidate of candidates) {
     if (!existsSync(candidate)) continue;
     if (lstatSync(candidate).isSymbolicLink()) {
@@ -380,11 +368,7 @@ function collectImportEdgesFromSource(
   readonly edges: readonly SourceImportEdge[];
   readonly unsupportedDynamicImports: readonly string[];
 } {
-  const program = parse(code, {
-    sourceType: 'module',
-    sourceFilename: path,
-    plugins: ['typescript', 'jsx', 'dynamicImport', 'importAttributes'],
-  }).program;
+  const sourceFile = parseSource(code, path);
   const edges: SourceImportEdge[] = [];
   const unsupportedDynamicImports: string[] = [];
   const addEdge = (
@@ -400,62 +384,60 @@ function collectImportEdgesFromSource(
       bindings,
     });
   };
-  function visit(value: unknown): void {
-    if (Array.isArray(value)) {
-      for (const child of value) visit(child);
-      return;
-    }
-    if (!isRecord(value)) return;
-    if (value.type === 'ImportDeclaration') {
-      const source = textValue(value.source);
+  function visit(node: ts.Node): void {
+    if (ts.isImportDeclaration(node)) {
+      const source = textValue(node.moduleSpecifier);
       if (source) {
-        const kind = importKind(value);
+        const kind = importKind(node);
+        const clause = node.importClause;
         const bindings =
-          kind === 'type' || !Array.isArray(value.specifiers)
+          kind === 'type' || !clause
             ? []
-            : value.specifiers.flatMap((specifier): RuntimeImportBinding[] => {
-                if (!isRecord(specifier) || !isRecord(specifier.local)) return [];
-                const local = identifierName(specifier.local);
-                if (!local || specifier.importKind === 'type') return [];
-                const imported =
-                  specifier.type === 'ImportSpecifier'
-                    ? identifierName(specifier.imported)
-                    : specifier.type === 'ImportDefaultSpecifier'
-                      ? 'default'
-                      : specifier.type === 'ImportNamespaceSpecifier'
-                        ? '*'
-                        : undefined;
-                return imported ? [{ imported, local }] : [];
-              });
+            : [
+                ...(clause.name ? [{ imported: 'default', local: clause.name.text }] : []),
+                ...(clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)
+                  ? [{ imported: '*', local: clause.namedBindings.name.text }]
+                  : []),
+                ...(clause.namedBindings && ts.isNamedImports(clause.namedBindings)
+                  ? clause.namedBindings.elements.flatMap((specifier): RuntimeImportBinding[] =>
+                      specifier.isTypeOnly
+                        ? []
+                        : [
+                            {
+                              imported: specifier.propertyName?.text ?? specifier.name.text,
+                              local: specifier.name.text,
+                            },
+                          ],
+                    )
+                  : []),
+              ];
         addEdge(source, kind, bindings);
       }
     }
-    if (value.type === 'ExportNamedDeclaration' || value.type === 'ExportAllDeclaration') {
-      const source = textValue(value.source);
+    if (ts.isExportDeclaration(node)) {
+      const source = textValue(node.moduleSpecifier);
       if (source) addEdge(source, 're-export');
     }
-    if (value.type === 'CallExpression') {
-      const argumentsList = Array.isArray(value.arguments) ? value.arguments : [];
-      if (isRecord(value.callee) && value.callee.type === 'Import') {
-        const source = textValue(argumentsList[0]);
+    if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      const source = textValue(node.moduleReference.expression);
+      if (source) addEdge(source, 'runtime', [{ imported: '*', local: node.name.text }]);
+      else unsupportedDynamicImports.push(projectPath(root, path));
+    }
+    if (ts.isCallExpression(node)) {
+      if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        const source = textValue(node.arguments[0]);
         if (source) addEdge(source, 'dynamic');
         else unsupportedDynamicImports.push(projectPath(root, path));
       }
-      if (
-        isRecord(value.callee) &&
-        value.callee.type === 'Identifier' &&
-        value.callee.name === 'require'
-      ) {
-        const source = textValue(argumentsList[0]);
+      if (ts.isIdentifier(node.expression) && node.expression.text === 'require') {
+        const source = textValue(node.arguments[0]);
         if (source) addEdge(source, 'runtime');
         else unsupportedDynamicImports.push(projectPath(root, path));
       }
     }
-    for (const [key, child] of Object.entries(value)) {
-      if (!['loc', 'start', 'end', 'extra'].includes(key)) visit(child);
-    }
+    ts.forEachChild(node, visit);
   }
-  visit(program);
+  visit(sourceFile);
   return { edges, unsupportedDynamicImports };
 }
 
@@ -524,66 +506,49 @@ type CompositionRoot = {
 function registeredManifestPaths(root: string): Set<string> {
   const indexPath = resolve(root, 'src/capabilities/index.ts');
   if (!existsSync(indexPath)) return new Set<string>();
-  const program = parse(readFileSync(indexPath, 'utf8'), {
-    sourceType: 'module',
-    sourceFilename: indexPath,
-    plugins: ['typescript', 'jsx', 'dynamicImport', 'importAttributes'],
-  }).program;
+  const sourceFile = parseSource(readFileSync(indexPath, 'utf8'), indexPath);
   const imports = new Map<string, string>();
-  const capabilityArrays: unknown[][] = [];
-  for (const statement of program.body) {
-    if (!isRecord(statement)) continue;
-    if (statement.type === 'ImportDeclaration') {
-      const source = textValue(statement.source);
-      if (!source || statement.importKind === 'type' || !Array.isArray(statement.specifiers)) {
-        continue;
-      }
+  const capabilityArrays: ts.ArrayLiteralExpression[] = [];
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement)) {
+      const source = textValue(statement.moduleSpecifier);
+      const clause = statement.importClause;
+      if (!source || !clause || clause.isTypeOnly) continue;
       const target = resolveImportTarget(root, indexPath, source);
       if (!target) continue;
-      for (const specifier of statement.specifiers) {
-        if (
-          !isRecord(specifier) ||
-          specifier.type !== 'ImportSpecifier' ||
-          specifier.importKind === 'type' ||
-          !isRecord(specifier.local)
-        ) {
-          continue;
+      if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+        for (const specifier of clause.namedBindings.elements) {
+          if (!specifier.isTypeOnly) imports.set(specifier.name.text, projectPath(root, target));
         }
-        const local = identifierName(specifier.local);
-        if (local) imports.set(local, projectPath(root, target));
       }
       continue;
     }
     if (
-      statement.type !== 'ExportNamedDeclaration' ||
-      !isRecord(statement.declaration) ||
-      statement.declaration.type !== 'VariableDeclaration' ||
-      statement.declaration.kind !== 'const' ||
-      !Array.isArray(statement.declaration.declarations)
+      !ts.isVariableStatement(statement) ||
+      !statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ||
+      !(statement.declarationList.flags & ts.NodeFlags.Const)
     ) {
       continue;
     }
-    for (const declarator of statement.declaration.declarations) {
+    for (const declarator of statement.declarationList.declarations) {
       if (
-        !isRecord(declarator) ||
-        !isRecord(declarator.id) ||
-        declarator.id.type !== 'Identifier' ||
-        declarator.id.name !== 'capabilities' ||
-        !isRecord(declarator.init) ||
-        declarator.init.type !== 'ArrayExpression' ||
-        !Array.isArray(declarator.init.elements)
+        !ts.isIdentifier(declarator.name) ||
+        declarator.name.text !== 'capabilities' ||
+        !declarator.initializer ||
+        !ts.isArrayLiteralExpression(declarator.initializer)
       ) {
         continue;
       }
-      capabilityArrays.push(declarator.init.elements);
+      capabilityArrays.push(declarator.initializer);
     }
   }
   if (capabilityArrays.length !== 1) {
     throw new Error(`${indexPath}: exactly one exported static capabilities array is required`);
   }
   const [capabilities] = capabilityArrays;
-  const paths = capabilities.map((element) => {
-    const name = identifierName(element);
+  if (!capabilities) throw new Error(`${indexPath}: capabilities array is missing`);
+  const paths = capabilities.elements.map((element) => {
+    const name = ts.isIdentifier(element) ? element.text : undefined;
     const path = name ? imports.get(name) : undefined;
     if (!path || !path.endsWith('/manifest.ts')) {
       throw new Error(
@@ -600,28 +565,15 @@ function manifestCompositionRoots(root: string): CompositionRoot[] {
   const registered = registeredManifestPaths(root);
   for (const path of sourceFiles(resolve(root, 'src/capabilities'))) {
     if (!path.endsWith('/manifest.ts') || !registered.has(projectPath(root, path))) continue;
-    const program = parse(readFileSync(path, 'utf8'), {
-      sourceType: 'module',
-      sourceFilename: path,
-      plugins: ['typescript', 'jsx', 'dynamicImport', 'importAttributes'],
-    }).program;
-    function visit(value: unknown, keys: readonly string[]): void {
-      if (Array.isArray(value)) {
-        for (const child of value) visit(child, keys);
+    const sourceFile = parseSource(readFileSync(path, 'utf8'), path);
+    function visit(node: ts.Node, keys: readonly string[]): void {
+      if (ts.isPropertyAssignment(node)) {
+        const key = ts.isIdentifier(node.name) ? node.name.text : textValue(node.name);
+        if (key) visit(node.initializer, [...keys, key]);
         return;
       }
-      if (!isRecord(value)) return;
-      if (value.type === 'ObjectProperty') {
-        const key = identifierName(value.key) ?? textValue(value.key);
-        if (key) visit(value.value, [...keys, key]);
-        return;
-      }
-      if (
-        value.type === 'CallExpression' &&
-        isRecord(value.callee) &&
-        value.callee.type === 'Import'
-      ) {
-        const source = Array.isArray(value.arguments) ? textValue(value.arguments[0]) : undefined;
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        const source = textValue(node.arguments[0]);
         const target = source ? resolveImportTarget(root, path, source) : undefined;
         const role =
           keys.join('/') === 'api/routes/load'
@@ -633,11 +585,9 @@ function manifestCompositionRoots(root: string): CompositionRoot[] {
           roots.push({ path: projectPath(root, target), role, blocksCapabilityIndex: false });
         }
       }
-      for (const [key, child] of Object.entries(value)) {
-        if (!['loc', 'start', 'end', 'extra'].includes(key)) visit(child, keys);
-      }
+      ts.forEachChild(node, (child) => visit(child, keys));
     }
-    visit(program, []);
+    visit(sourceFile, []);
   }
   return roots;
 }
@@ -739,6 +689,9 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
     if (call === 'memory.add' || call === 'memory.search') {
       return [{ kind: 'mem0-model-bearing-operation', call, path }];
     }
+    if (facts.imports.includes('@anthropic-ai/sdk') && call === 'client.messages.create') {
+      return [{ kind: 'xiaomi-vision-preflight-sdk', call, path }];
+    }
     if (
       facts.imports.includes('tencentcloud-sdk-nodejs-ocr') &&
       (call === 'client.SubmitQuestionMarkAgentJob' ||
@@ -821,6 +774,20 @@ function isWatchedProviderSdk(source: string): boolean {
   );
 }
 
+function operatorSourceFiles(root: string): string[] {
+  const scriptsRoot = resolve(root, 'scripts');
+  if (!existsSync(scriptsRoot)) return [];
+  return sourceFiles(scriptsRoot).filter(
+    (path) => projectPath(root, path) !== 'scripts/worker.ts' && !/\.d\.[cm]?[jt]sx?$/u.test(path),
+  );
+}
+
+function operatorProviderSdkImportEdges(root: string): SourceImportEdge[] {
+  return operatorSourceFiles(root)
+    .flatMap((path) => collectImportEdgesFromSource(root, path, readFileSync(path, 'utf8')).edges)
+    .filter((edge) => edge.kind !== 'type' && isWatchedProviderSdk(edge.source));
+}
+
 function hasAgentProviderStartBinding(edge: SourceImportEdge): boolean {
   return (
     edge.source.startsWith('@anthropic-ai/claude-agent-sdk') &&
@@ -835,7 +802,7 @@ function sdkEntryMatchesEdge(
   edge: SourceImportEdge,
 ): boolean {
   if (entry.path !== edge.path || entry.source !== edge.source) return false;
-  return entry.disposition !== 'central'
+  return entry.disposition === 'lane'
     ? true
     : (edge.bindings ?? []).some(
         (binding) => binding.imported === entry.imported && binding.local === entry.local,
@@ -882,9 +849,11 @@ function checkProviderSdkImports(
   lanes: readonly ProviderLane[],
   requireDeclaredPaths: boolean,
 ): ProviderLaneViolation[] {
+  const operatorEdges = operatorProviderSdkImportEdges(root);
   const productionPaths = runtimeCompositionPaths(root, edges);
   for (const entry of PROVIDER_RUNTIME_SDK_IMPORTS) productionPaths.add(entry.path);
-  const observed = edges.filter(
+  for (const edge of operatorEdges) productionPaths.add(edge.path);
+  const observed = [...edges, ...operatorEdges].filter(
     (edge) =>
       productionPaths.has(edge.path) &&
       edge.kind !== 'type' &&
@@ -911,7 +880,7 @@ function checkProviderSdkImports(
       }
       continue;
     }
-    if (entry.disposition === 'lane' && !lanes.some((lane) => lane.id === entry.laneId)) {
+    if (entry.disposition !== 'central' && !lanes.some((lane) => lane.id === entry.laneId)) {
       violations.push({
         path: entry.path,
         reason: `provider SDK lane reference does not exist: ${entry.laneId}`,
@@ -928,17 +897,30 @@ function checkProviderSdkImports(
 }
 
 export function collectProviderWireFindings(projectRoot: string): ProviderWireFinding[] {
-  return runtimeSourceClosure(projectRoot, backendSourceFiles(projectRoot))
-    .flatMap((path) => {
-      const code = readFileSync(path, 'utf8');
-      return findingsFor(projectPath(projectRoot, path), code, inspectSource(code, path));
-    })
-    .sort(
-      (left, right) =>
-        left.kind.localeCompare(right.kind) ||
-        left.path.localeCompare(right.path) ||
-        left.call.localeCompare(right.call),
-    );
+  const declaredOperatorWires = PROVIDER_LANES.filter((lane) => lane.disposition === 'exempt')
+    .map((lane) => resolve(projectRoot, lane.wire.path))
+    .filter((path) => existsSync(path));
+  const declaredWirePaths = new Set<string>(PROVIDER_LANES.map((lane) => lane.wire.path));
+  const runtimeFindings = runtimeSourceClosure(projectRoot, [
+    ...backendSourceFiles(projectRoot),
+    ...declaredOperatorWires,
+  ]).flatMap((path) => {
+    const code = readFileSync(path, 'utf8');
+    return findingsFor(projectPath(projectRoot, path), code, inspectSource(code, path));
+  });
+  const operatorFindings = operatorSourceFiles(projectRoot).flatMap((path) => {
+    const pathFromProject = projectPath(projectRoot, path);
+    if (declaredWirePaths.has(pathFromProject)) return [];
+    const code = readFileSync(path, 'utf8');
+    if (!OPERATOR_PROVIDER_MARKERS.some((marker) => code.includes(marker))) return [];
+    return findingsFor(pathFromProject, code, inspectSource(code, path));
+  });
+  return [...runtimeFindings, ...operatorFindings].sort(
+    (left, right) =>
+      left.kind.localeCompare(right.kind) ||
+      left.path.localeCompare(right.path) ||
+      left.call.localeCompare(right.call),
+  );
 }
 
 function checkEvidence(
@@ -997,6 +979,7 @@ function laneForFinding(kind: ProviderWireFinding['kind']): string | undefined {
     'glm-memory-reconcile-fetch': 'glm.memory-reconcile',
     'glm-ocr-layout-parsing-fetch': 'glm.ocr-layout-parsing',
     'mem0-model-bearing-operation': 'mem0.event-memory',
+    'xiaomi-vision-preflight-sdk': 'xiaomi.vision-preflight',
     'tencent-question-mark-agent-sdk': 'tencent.question-mark-agent',
   } as const;
   return kind === 'unclassified-provider-fetch' ? undefined : ids[kind];
@@ -1034,6 +1017,14 @@ export function auditProviderLanes(
   for (const lane of lanes) {
     if (lane.disposition === 'prune') continue;
     violations.push(...checkConfiguration(root, lane.configuration));
+    for (const evidence of lane.attemptSemantics.evidence) {
+      const violation = checkEvidence(root, evidence, 'attempt semantics');
+      if (violation) violations.push(violation);
+    }
+    if (lane.exemption) {
+      const violation = checkEvidence(root, lane.exemption.evidence, 'exemption');
+      if (violation) violations.push(violation);
+    }
     const observedCalls = findings
       .filter(
         (finding) => laneForFinding(finding.kind) === lane.id && finding.path === lane.wire.path,
@@ -1060,7 +1051,10 @@ export function auditProviderLanes(
         reason: `direct importer closure drift: expected ${expectedImporters.join(', ')}; observed ${observedImporters.join(', ')}`,
       });
     }
-    const observedRoles = runtimeRolesForTarget(root, importScan.edges, wirePath);
+    const observedRoles =
+      lane.disposition === 'exempt'
+        ? ['operator']
+        : runtimeRolesForTarget(root, importScan.edges, wirePath);
     const expectedRoles = [...lane.roles].sort((left, right) => left.localeCompare(right));
     if (!sameMultiset(observedRoles, expectedRoles)) {
       violations.push({
