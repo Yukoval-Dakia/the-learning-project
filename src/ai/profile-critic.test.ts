@@ -1,3 +1,7 @@
+import {
+  parseProfileCriticOutput,
+  profileCriticTaskSpec,
+} from '@/capabilities/ingestion/tasks/profile-critic';
 import { physicsProfile } from '@/subjects/physics/profile';
 import { yuwenProfile } from '@/subjects/yuwen/profile';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -51,6 +55,24 @@ describe('ProfileCriticTask registry entry', () => {
     expect(entry.isMultimodal).toBe(false);
     expect(entry.budget.maxIterations).toBe(1);
     expect(entry.budget.timeout).toBe(60_000);
+    expect(profileCriticTaskSpec.definition).toBe(entry);
+  });
+
+  it('owns and validates the proposal-only review output contract', () => {
+    expect(
+      parseProfileCriticOutput(
+        'prefix {"review_md":"ok","patches":[{"field":"judgePolicy","suggestion":"tighten","impact":"minor"}],"blocking":false} suffix',
+      ),
+    ).toEqual({
+      review_md: 'ok',
+      patches: [{ field: 'judgePolicy', suggestion: 'tighten', impact: 'minor' }],
+      blocking: false,
+    });
+    expect(() =>
+      parseProfileCriticOutput(
+        '{"review_md":"ok","patches":[{"field":"x","suggestion":"y","impact":"critical"}],"blocking":false}',
+      ),
+    ).toThrow();
   });
 });
 
