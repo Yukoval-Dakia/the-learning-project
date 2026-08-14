@@ -1,8 +1,5 @@
-import {
-  placementStarterAttemptId,
-  placementStarterIdentity,
-} from '@/server/question-supply/placement-starter-identity';
 import { describe, expect, it } from 'vitest';
+import { placementStarterAttemptId, placementStarterIdentity } from './placement-starter-identity';
 
 const REVISION = 'evt_goal_semantic_1';
 
