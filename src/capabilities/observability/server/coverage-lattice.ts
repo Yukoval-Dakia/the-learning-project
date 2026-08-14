@@ -12,9 +12,9 @@ import {
   assembleScanInput,
   scanCoverageGaps,
 } from '@/capabilities/practice/public';
+import { SUPPLY_DISPATCH_COOLDOWN_DAYS } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
-import { SUPPLY_DISPATCH_COOLDOWN_DAYS } from '@/server/question-supply/dispatcher';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 import { and, asc, eq, gte } from 'drizzle-orm';
 import {
