@@ -8,10 +8,10 @@
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import type { QuestionSupplyTarget } from '@/capabilities/practice/public';
 import { db } from '@/db/client';
 import { dispatchSupplyTarget } from '@/server/question-supply/dispatcher';
 import type { EnqueueFn } from '@/server/question-supply/dispatcher';
-import type { QuestionSupplyTarget } from '@/server/question-supply/target-discovery';
 import { resetDb } from '../../../tests/helpers/db';
 
 function mathTarget(overrides: Partial<QuestionSupplyTarget> = {}): QuestionSupplyTarget {

@@ -11,7 +11,11 @@ export {
 export type { FrontierResolution } from './server/learnable-frontier';
 export { retrievabilityForKc } from './server/fsrs';
 export { loadAttemptQuestionSnapshot } from './server/question-evidence-snapshot';
-export { handleReviewDue } from './server/due-list';
+type HandleReviewDue = typeof import('./server/due-list').handleReviewDue;
+export const handleReviewDue: HandleReviewDue = async (...args) => {
+  const dueList = await import('./server/due-list');
+  return dueList.handleReviewDue(...args);
+};
 export type {
   EnqueueVariantVerifyFn,
   QuestionDraftAcceptResult,
@@ -33,3 +37,48 @@ export type {
   ProposeFailureVariantInput,
   VariantProposalResult,
 } from './server/failure-learning-public';
+export {
+  EvidenceDemandV1,
+  SupplyTraceV1,
+  buildCoverageEvidenceDemand,
+  buildSupplyTrace,
+  evidenceDemandToTargetContext,
+  parseEvidenceDemand,
+  withSupplyTraceDifficultyEvidence,
+} from './server/question-supply/evidence-demand';
+export type {
+  EvidenceDemandV1T,
+  SupplyTraceV1T,
+} from './server/question-supply/evidence-demand';
+export {
+  JYEOO_DEFAULT_PAGES,
+  JYEOO_FETCH_ROUTE,
+  JYEOO_SOURCE_HOST,
+  jyeooBinaryPath,
+  jyeooDgTokenForBand,
+  jyeooFetchEnabled,
+  jyeooSpawnMaxStderrBytes,
+  jyeooSpawnMaxStdoutBytes,
+  jyeooSpawnTimeoutMs,
+} from './server/question-supply/jyeoo-supply-config';
+export { planSupplyRoutes } from './server/question-supply/route-planner';
+export {
+  COVERAGE_DEPTH_THRESHOLD,
+  NEAR_WINDOW,
+  acquisitionTierForQuestion,
+  assembleScanInput,
+  discoverSupplyTargets,
+  scanCoverageGaps,
+  seedGenerationMethod,
+  seedRoutePreference,
+  targetFingerprint,
+} from './server/question-supply/target-discovery';
+export type {
+  DifficultyBand,
+  FrontierKnowledgeInput,
+  PoolQuestion,
+  QuestionSupplyTarget,
+  ScanInput,
+  SupplyGapKind,
+  SupplyRoute,
+} from './server/question-supply/target-discovery';

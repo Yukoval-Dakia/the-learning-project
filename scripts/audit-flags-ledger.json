@@ -5,7 +5,7 @@
     "case_insensitive": true,
     "polarity": "opt-in",
     "reader_marker": "parseFlag(process.env.CONFUSABLE_CONTRAST_ENABLED)",
-    "file": "src/server/question-supply/confusable-contrast-discovery.ts",
+    "file": "src/capabilities/practice/server/question-supply/confusable-contrast-discovery.ts",
     "notes": "dark-ship confusable-contrast supply. Opt-in/default OFF; parsed via shared parseFlag."
   },
   "MISCONCEPTION_PROMOTE_ENABLED": {
@@ -68,7 +68,7 @@
     "case_insensitive": true,
     "polarity": "opt-in",
     "reader_marker": "parseFlag(process.env.JYEOO_FETCH_ENABLED)",
-    "file": "src/server/question-supply/jyeoo-supply-config.ts",
+    "file": "src/capabilities/practice/server/question-supply/jyeoo-supply-config.ts",
     "notes": "YUK-697 kill switch for the jyeoo_fetch deterministic supply route. Dark-ship OPT-IN, default OFF; parsed via shared parseFlag (YUK-793 收敛). OFF ⇒ dispatcher chooseAutoRoute skips jyeoo_fetch and falls back to sourcing_web; handler no-ops (skipped:disabled) if a job still reaches it."
   },
   "NOTES_MASTERY_SUBSCRIPTION_ENABLED": {

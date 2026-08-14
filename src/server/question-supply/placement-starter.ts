@@ -1,3 +1,8 @@
+import {
+  EvidenceDemandV1,
+  type QuestionSupplyTarget,
+  evidenceDemandToTargetContext,
+} from '@/capabilities/practice/public';
 import type { Db, Tx } from '@/db/client';
 import { placement_starter_claim } from '@/db/schema';
 import type { QuizGenJobData } from '@/server/boss/handlers/quiz_gen';
@@ -6,8 +11,6 @@ import { JOB_RETRY_DELAY_SECONDS, JOB_RETRY_LIMIT } from '@/server/boss/queue-co
 import { and, eq } from 'drizzle-orm';
 import type { SendOptions } from 'pg-boss';
 import { dispatchSupplyTarget } from './dispatcher';
-import { EvidenceDemandV1, evidenceDemandToTargetContext } from './evidence-demand';
-import type { QuestionSupplyTarget } from './target-discovery';
 
 const PLACEMENT_STARTER_COUNT = 8;
 

@@ -48,6 +48,7 @@
 //   θ̂/p(L)/选题调度。复用件（demandToSupplyTarget/dispatchSupplyTarget）的内部判据沿用既有
 //   GAP_KIND_BASE_PRIORITY 常数，本模块不新增需 population 方差的权重。
 
+import type { QuestionSupplyTarget } from '@/capabilities/practice/public';
 import { parseFlag } from '@/core/env-flags';
 import { newId } from '@/core/ids';
 import { LearningItemOpenStatus } from '@/core/schema/business';
@@ -58,7 +59,6 @@ import {
   type DispatchResult,
   dispatchSupplyTarget,
 } from '@/server/question-supply/dispatcher';
-import type { QuestionSupplyTarget } from '@/server/question-supply/target-discovery';
 import { type Demand, demandToSupplyTarget } from '@/server/quiz/matcher';
 import { poolFetch } from '@/server/quiz/pool-fetch';
 import { inArray } from 'drizzle-orm';
