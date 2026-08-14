@@ -42,13 +42,11 @@
 
 import type { Job } from 'pg-boss';
 
-import {
-  EdgeProposalSchema,
-  loadPendingEdgeProposalKeys,
-} from '@/capabilities/knowledge/server/propose_edge';
+import { loadPendingEdgeProposalKeys } from '@/capabilities/knowledge/server/propose_edge';
 import { isDirectTreePair } from '@/capabilities/knowledge/server/topology-gate';
 // loadTreeSnapshot is the knowledge package's own tree reader (same-package import).
 import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
+import { parseFrontierProposals } from '@/capabilities/knowledge/tasks/knowledge-tasks';
 // CROSS-PACKAGE seam (YUK-349): learnableFrontier is a practice-package read.
 // This job lives in the KNOWLEDGE package because it PRODUCES knowledge_edge
 // proposals (it is co-located with knowledge_edge_propose_nightly, the other
@@ -65,22 +63,6 @@ import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { z } from 'zod';
-
-// Reuse the per-proposal EdgeProposalSchema but WITHOUT the array `.max(5)` cap
-// (the cost cap is enforced on the write side via FRONTIER_FILL_MAX_PROPOSALS, so
-// an over-long model output is clamped, not hard-rejected). Mirrors
-// parseEdgeProposeOutput's JSON-slice extraction.
-const FrontierOutputSchema = z.object({ proposals: z.array(EdgeProposalSchema) });
-
-function parseFrontierProposals(text: string): z.infer<typeof FrontierOutputSchema> {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseFrontierProposals: no JSON object found in text');
-  }
-  return FrontierOutputSchema.parse(JSON.parse(text.slice(start, end + 1)));
-}
 
 /**
  * Frontier emptiness threshold for the sparsity gate. We bootstrap ONLY when the
