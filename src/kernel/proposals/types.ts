@@ -1,3 +1,4 @@
+import type { ActivityRefT } from '@/core/schema/activity';
 import type { RelationTypeSchemaT } from '@/core/schema/event/blocks';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
 
@@ -24,6 +25,7 @@ export interface ProposalAcceptResult {
   /** Capability-owned public accept result; it must repeat the same `kind`. */
   result: unknown;
   idempotent?: boolean;
+  lifecycle_outcome?: 'accepted' | 'dismissed';
 }
 
 export type ProposalAcceptApplier = (
@@ -38,4 +40,38 @@ export type ProposalAcceptApplier = (
 
 export interface ProposalAcceptDecl {
   load: () => Promise<ProposalAcceptApplier>;
+}
+
+export interface ProposalDismissInput {
+  proposalId: string;
+  proposal: ProposalAcceptProposal;
+  user_note?: string;
+}
+
+export interface ProposalDismissResult {
+  kind: string;
+  result: unknown;
+}
+
+export type ProposalDismissApplier = (
+  db: unknown,
+  input: ProposalDismissInput,
+) => Promise<ProposalDismissResult>;
+
+export interface ProposalDismissDecl {
+  load: () => Promise<ProposalDismissApplier>;
+}
+
+export interface ProposalRetractInput {
+  proposalId: string;
+  proposal: ProposalAcceptProposal;
+  correction_at: Date;
+  reason_md?: string;
+  affected_refs?: ActivityRefT[];
+}
+
+export type ProposalRetractApplier = (db: unknown, input: ProposalRetractInput) => Promise<void>;
+
+export interface ProposalRetractDecl {
+  load: () => Promise<ProposalRetractApplier>;
 }
