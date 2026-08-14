@@ -29,8 +29,14 @@
  * helper, and a typed error. Model = the lightweight TaggingTask tier (input is
  * structured TEXT, not page images — NOT vision/multimodal).
  */
-import { z } from 'zod';
-
+import {
+  BlockAssemblyCandidate,
+  type BlockAssemblyCandidateT,
+  BlockAssemblyOutput,
+  type BlockAssemblyOutputT,
+  BlockAssemblyTaskError,
+  parseBlockAssemblyOutput,
+} from '@/capabilities/ingestion/tasks/block-assembly';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
@@ -44,19 +50,12 @@ import { writeBlockMergeProposal } from '@/server/proposals/producers';
 // continuity cue. `signal` mirrors the proposal's `continuity_signal` enum so the
 // candidate maps 1:1 onto `writeBlockMergeProposal`.
 
-export const BlockAssemblyCandidate = z.object({
-  primary_block_id: z.string().min(1),
-  merge_block_ids: z.array(z.string().min(1)).min(1),
-  confidence: z.number().min(0).max(1),
-  signal: z.enum(['page_edge', 'numbering', 'stem_answer_split', 'carryover']),
-  reason_md: z.string(),
-});
-export type BlockAssemblyCandidateT = z.infer<typeof BlockAssemblyCandidate>;
-
-export const BlockAssemblyOutput = z.object({
-  candidates: z.array(BlockAssemblyCandidate).default([]),
-});
-export type BlockAssemblyOutputT = z.infer<typeof BlockAssemblyOutput>;
+export {
+  BlockAssemblyCandidate,
+  type BlockAssemblyCandidateT,
+  BlockAssemblyOutput,
+  type BlockAssemblyOutputT,
+};
 
 /**
  * Thrown when the BlockAssemblyTask cannot produce a usable result (provider
@@ -64,12 +63,7 @@ export type BlockAssemblyOutputT = z.infer<typeof BlockAssemblyOutput>;
  * its auto_enroll caller SWALLOW this — merge proposals are nice-to-have, never
  * the critical path; an outage must not abort enrollment (§3).
  */
-export class BlockAssemblyTaskError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options);
-    this.name = 'BlockAssemblyTaskError';
-  }
-}
+export { BlockAssemblyTaskError };
 
 // ---------- runBlockAssemblyTask — the AI task wrapper ----------
 
@@ -113,19 +107,6 @@ export interface RunBlockAssemblyTaskParams {
   ctx?: unknown;
 }
 
-function extractJsonObject(text: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new BlockAssemblyTaskError('BlockAssemblyTask output did not contain a JSON object');
-  }
-  try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch (err) {
-    throw new BlockAssemblyTaskError('BlockAssemblyTask output was not valid JSON', { cause: err });
-  }
-}
-
 /**
  * Runs the BlockAssemblyTask. Returns a validated `BlockAssemblyOutput`. Throws
  * `BlockAssemblyTaskError` on provider failure / unparseable output so the
@@ -152,7 +133,7 @@ export async function runBlockAssemblyTask(
 
   let parsed: BlockAssemblyOutputT;
   try {
-    parsed = BlockAssemblyOutput.parse(extractJsonObject(llmText));
+    parsed = parseBlockAssemblyOutput(llmText);
   } catch (err) {
     if (err instanceof BlockAssemblyTaskError) throw err;
     throw new BlockAssemblyTaskError(
