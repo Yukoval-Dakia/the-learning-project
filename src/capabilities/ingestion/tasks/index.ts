@@ -1,15 +1,19 @@
-import { legacyTaskDefinitions } from '@/ai/legacy-task-definitions';
-import { defineOwnedTaskSpecs, defineTransitionalTask } from '@/ai/owned-task-specs';
+import { defineOwnedTaskSpecs } from '@/ai/owned-task-specs';
+import { blockAssemblyTaskSpec } from './block-assembly';
+import { coldStartPlacementBridgeTaskSpec } from './cold-start-bridge';
+import { mistakeEnrollTaskSpec } from './mistake-enroll';
+import { profileCriticTaskSpec } from './profile-critic';
+import { structureTaskSpec } from './structure';
+import { taggingTaskSpec } from './tagging';
+import { visionExtractTaskHeavySpec, visionExtractTaskSpec } from './vision';
 
 export const ingestionTaskSpecs = defineOwnedTaskSpecs('ingestion', {
-  VisionExtractTask: defineTransitionalTask(legacyTaskDefinitions.VisionExtractTask),
-  VisionExtractTaskHeavy: defineTransitionalTask(legacyTaskDefinitions.VisionExtractTaskHeavy),
-  StructureTask: defineTransitionalTask(legacyTaskDefinitions.StructureTask),
-  MistakeEnrollTask: defineTransitionalTask(legacyTaskDefinitions.MistakeEnrollTask),
-  TaggingTask: defineTransitionalTask(legacyTaskDefinitions.TaggingTask),
-  ColdStartPlacementBridgeTask: defineTransitionalTask(
-    legacyTaskDefinitions.ColdStartPlacementBridgeTask,
-  ),
-  BlockAssemblyTask: defineTransitionalTask(legacyTaskDefinitions.BlockAssemblyTask),
-  ProfileCriticTask: defineTransitionalTask(legacyTaskDefinitions.ProfileCriticTask),
+  VisionExtractTask: visionExtractTaskSpec,
+  VisionExtractTaskHeavy: visionExtractTaskHeavySpec,
+  StructureTask: structureTaskSpec,
+  MistakeEnrollTask: mistakeEnrollTaskSpec,
+  TaggingTask: taggingTaskSpec,
+  ColdStartPlacementBridgeTask: coldStartPlacementBridgeTaskSpec,
+  BlockAssemblyTask: blockAssemblyTaskSpec,
+  ProfileCriticTask: profileCriticTaskSpec,
 });

@@ -1,7 +1,17 @@
 import { readFileSync } from 'node:fs';
 import { agencyTaskSpecs } from '@/capabilities/agency/tasks/index';
 import { copilotTaskSpecs } from '@/capabilities/copilot/tasks/index';
+import { blockAssemblyTaskSpec } from '@/capabilities/ingestion/tasks/block-assembly';
+import { coldStartPlacementBridgeTaskSpec } from '@/capabilities/ingestion/tasks/cold-start-bridge';
 import { ingestionTaskSpecs } from '@/capabilities/ingestion/tasks/index';
+import { mistakeEnrollTaskSpec } from '@/capabilities/ingestion/tasks/mistake-enroll';
+import { profileCriticTaskSpec } from '@/capabilities/ingestion/tasks/profile-critic';
+import { structureTaskSpec } from '@/capabilities/ingestion/tasks/structure';
+import { taggingTaskSpec } from '@/capabilities/ingestion/tasks/tagging';
+import {
+  visionExtractTaskHeavySpec,
+  visionExtractTaskSpec,
+} from '@/capabilities/ingestion/tasks/vision';
 import { knowledgeTaskSpecs } from '@/capabilities/knowledge/tasks/index';
 import { notesTaskSpecs } from '@/capabilities/notes/tasks/index';
 import { noteGenerateTaskSpec, noteVerifyTaskSpec } from '@/capabilities/notes/tasks/note-tasks';
@@ -112,6 +122,14 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   variantGenTaskSpec,
   noteGenerateTaskSpec,
   noteVerifyTaskSpec,
+  visionExtractTaskSpec,
+  visionExtractTaskHeavySpec,
+  structureTaskSpec,
+  mistakeEnrollTaskSpec,
+  taggingTaskSpec,
+  coldStartPlacementBridgeTaskSpec,
+  blockAssemblyTaskSpec,
+  profileCriticTaskSpec,
 ]);
 
 const makeDefinition = <const Kind extends string>(kind: Kind) =>
@@ -160,8 +178,108 @@ describe('taskCatalog', () => {
     expect(Object.hasOwn(copilotTaskSpecs, 'ProfileCriticTask')).toBe(false);
   });
 
-  it('retains five full owned TaskSpecs and 46 identity-backed transitional entries', () => {
-    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(46);
+  it('owns all eight ingestion TaskSpecs without central quarry definitions', () => {
+    const expected = {
+      VisionExtractTask: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5',
+        maxIterations: 1,
+        timeout: 60_000,
+        multimodal: true,
+        invocation: 'manual_rescue_only',
+      },
+      VisionExtractTaskHeavy: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5',
+        maxIterations: 1,
+        timeout: 90_000,
+        multimodal: true,
+        invocation: 'manual_rescue_only',
+      },
+      StructureTask: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5',
+        maxIterations: 1,
+        timeout: 120_000,
+        multimodal: true,
+        invocation: undefined,
+      },
+      MistakeEnrollTask: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5-pro',
+        maxIterations: 1,
+        timeout: 60_000,
+        multimodal: false,
+        invocation: undefined,
+      },
+      TaggingTask: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5',
+        maxIterations: 1,
+        timeout: 60_000,
+        multimodal: false,
+        invocation: undefined,
+      },
+      ColdStartPlacementBridgeTask: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5',
+        maxIterations: 1,
+        timeout: 90_000,
+        multimodal: false,
+        invocation: undefined,
+      },
+      BlockAssemblyTask: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5',
+        maxIterations: 1,
+        timeout: 60_000,
+        multimodal: false,
+        invocation: undefined,
+      },
+      ProfileCriticTask: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5-pro',
+        maxIterations: 1,
+        timeout: 60_000,
+        multimodal: false,
+        invocation: undefined,
+      },
+    } as const;
+
+    for (const [kind, contract] of Object.entries(expected)) {
+      const entry = ingestionTaskSpecs[kind as keyof typeof ingestionTaskSpecs];
+      expect(entry.ownership, kind).toBe('owned');
+      expect(entry.definition, kind).toBe(taskCatalog[kind as keyof typeof taskCatalog]);
+      expect(entry.definition.defaultProvider, kind).toBe(contract.provider);
+      expect(entry.definition.defaultModel, kind).toBe(contract.model);
+      expect(entry.definition.budget.maxIterations, kind).toBe(contract.maxIterations);
+      expect(entry.definition.budget.timeout, kind).toBe(contract.timeout);
+      expect(entry.definition.needsToolCall, kind).toBe(false);
+      expect(entry.definition.isMultimodal, kind).toBe(contract.multimodal);
+      expect(entry.definition.allowedTools, kind).toEqual([]);
+      expect('invocation' in entry.definition ? entry.definition.invocation : undefined, kind).toBe(
+        contract.invocation,
+      );
+      expect('parseText' in entry && entry.parseText, kind).toBeTypeOf('function');
+      expect('outputSchema' in entry && entry.outputSchema.safeParse, kind).toBeTypeOf('function');
+    }
+
+    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
+    for (const kind of Object.keys(expected)) {
+      expect(source, kind).not.toMatch(new RegExp(`^  ${kind}:`, 'm'));
+    }
+    for (const builder of [
+      'buildStructurePrompt',
+      'buildMistakeEnrollPrompt',
+      'buildTaggingPrompt',
+      'buildBlockAssemblyPrompt',
+    ]) {
+      expect(source, builder).not.toContain(`function ${builder}`);
+    }
+  });
+
+  it('retains 13 full owned TaskSpecs and 38 identity-backed transitional entries', () => {
+    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(38);
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
         if (entry.ownership === 'owned') {
@@ -298,24 +416,24 @@ describe('defineOwnedTaskSpecs', () => {
   });
 
   it('rejects transitional entries with semantic ownership fields', () => {
-    const definition = legacyTaskDefinitions.VisionExtractTask;
+    const definition = legacyTaskDefinitions.KnowledgeEdgeProposeTask;
     expect(() =>
       invokeEntryValidation({
         ownership: 'transitional',
         definition,
         parseText: (text: string) => text,
       }),
-    ).toThrow('transitional "VisionExtractTask" must not own parseText or outputSchema');
+    ).toThrow('transitional "KnowledgeEdgeProposeTask" must not own parseText or outputSchema');
     expect(() =>
       invokeEntryValidation({ ownership: 'transitional', definition, outputSchema: z.string() }),
-    ).toThrow('transitional "VisionExtractTask" must not own parseText or outputSchema');
+    ).toThrow('transitional "KnowledgeEdgeProposeTask" must not own parseText or outputSchema');
   });
 
   it('rejects transitional entries whose definition is not quarry-identical', () => {
     expect(() =>
       invokeEntryValidation({
         ownership: 'transitional',
-        definition: { ...legacyTaskDefinitions.VisionExtractTask },
+        definition: { ...legacyTaskDefinitions.KnowledgeEdgeProposeTask },
       }),
     ).toThrow('must reference legacyTaskDefinitions by identity');
   });
