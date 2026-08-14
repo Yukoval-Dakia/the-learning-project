@@ -81,11 +81,25 @@ export type ProviderSdkRuntimeImport =
       readonly local: string;
     };
 
+export type ProviderAttemptsPerInvocation =
+  | {
+      readonly kind: 'exact';
+      readonly value: number;
+      readonly fixedRequestCount: number;
+      readonly fixedFanOutMultiplier: number;
+    }
+  | {
+      readonly kind: 'dynamic';
+      readonly multiplierRationale: string;
+    };
+
 export type ProviderAttemptSemantics = {
   readonly admittedUnit: string;
   readonly durableIdentity: string;
   readonly timeout: string;
   readonly clientRetry: string;
+  readonly transportRetryCount: number;
+  readonly attemptsPerInvocation: ProviderAttemptsPerInvocation;
   readonly redelivery: string;
   readonly fanOut: string;
   readonly evidence: readonly SourceEvidence[];
@@ -124,7 +138,13 @@ export type ProviderLaneCandidate = Omit<
   'attemptSemantics' | 'disposition' | 'exemption'
 > & {
   readonly disposition: string;
-  readonly attemptSemantics?: ProviderAttemptSemantics;
+  readonly attemptSemantics?: Omit<
+    ProviderAttemptSemantics,
+    'attemptsPerInvocation' | 'transportRetryCount'
+  > & {
+    readonly attemptsPerInvocation?: ProviderAttemptsPerInvocation;
+    readonly transportRetryCount?: number;
+  };
   readonly exemption?: ProviderLaneExemption;
 };
 
@@ -254,6 +274,12 @@ export const PROVIDER_LANES = [
     },
     attemptSemantics: {
       admittedUnit: 'one HTTP embedding chunk containing at most 10 input texts',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'dynamic',
+        multiplierRationale:
+          'embedMany emits ceil(input_count / 10) sequential requests; the fixed 200-row backfill cap yields 20 requests before pg-boss redelivery',
+      },
       durableIdentity:
         'one provider_attempt per chunk; one operation identity spans the embedMany invocation',
       timeout: '15 seconds per chunk with AbortController cancellation',
@@ -337,13 +363,20 @@ export const PROVIDER_LANES = [
     },
     attemptSemantics: {
       admittedUnit: 'one HTTP chat-completions request for one edge reconciliation judgment',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'dynamic',
+        multiplierRationale:
+          'a proposal with no neighbors emits zero requests; up to five proposed edges can each emit one reconciliation request',
+      },
       durableIdentity:
         'one provider_attempt per judgment fetch under the caller-provided operation identity',
       timeout: '60 seconds by default with AbortController cancellation',
       clientRetry: 'none inside the HTTP client; retryable responses are surfaced to the owner',
       redelivery:
         'the llm worker queue has retryLimit 2, composing one request per delivery to at most three wire attempts; API callers have no redelivery',
-      fanOut: 'one judgment request for the supplied candidate and neighbor set; no client fan-out',
+      fanOut:
+        'zero requests when a proposal has no neighbors; otherwise one request per proposal, with at most five proposals in the owning operation',
       evidence: [
         {
           path: 'src/capabilities/knowledge/server/edge-reconcile.ts',
@@ -408,6 +441,13 @@ export const PROVIDER_LANES = [
     },
     attemptSemantics: {
       admittedUnit: 'none; the unreachable provider implementation was pruned',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'exact',
+        value: 0,
+        fixedRequestCount: 0,
+        fixedFanOutMultiplier: 1,
+      },
       durableIdentity: 'none; historical schema remains read-compatible without a runtime writer',
       timeout: 'not applicable after pruning',
       clientRetry: 'not applicable after pruning',
@@ -471,6 +511,13 @@ export const PROVIDER_LANES = [
     },
     attemptSemantics: {
       admittedUnit: 'one HTTP chat-completions request for one memory reconciliation batch',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'exact',
+        value: 1,
+        fixedRequestCount: 1,
+        fixedFanOutMultiplier: 1,
+      },
       durableIdentity:
         'one provider_attempt per GLM fetch under the pg-boss job operation identity',
       timeout: '60 seconds by default, bounded again by the 65-second caller deadline',
@@ -549,6 +596,12 @@ export const PROVIDER_LANES = [
     },
     attemptSemantics: {
       admittedUnit: 'one synchronous GLM layout_parsing request for one extraction page',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'dynamic',
+        multiplierRationale:
+          'the extraction delivery emits one request per page for a runtime page count capped at 15; pg-boss redelivery is accounted separately',
+      },
       durableIdentity:
         'one provider_attempt per page fetch under a stable session-and-page operation identity',
       timeout: '120 seconds per page with caller abort composed into the same controller',
@@ -556,7 +609,7 @@ export const PROVIDER_LANES = [
       redelivery:
         'the llm worker queue has retryLimit 2; stable page anchors preserve the operation while each actual page retry is a new attempt',
       fanOut:
-        'one sequential request per page, capped at 15 pages and three deliveries for a 45-attempt worst case before partial-page resume reductions',
+        'one sequential request per page, capped at 15 pages and three deliveries for a 45-attempt upper envelope',
       evidence: [
         {
           path: 'src/capabilities/ingestion/server/glm_ocr.ts',
@@ -656,6 +709,12 @@ export const PROVIDER_LANES = [
     attemptSemantics: {
       admittedUnit:
         'one opaque Mem0 SDK add or search operation, never represented as a known wire count',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'dynamic',
+        multiplierRationale:
+          'one opaque SDK attempt is recorded for each add or search boundary, while reconcile memory count and Mem0-internal provider fan-out are intentionally unbounded or unknown',
+      },
       durableIdentity:
         'one provider_attempt opaque_operation row per SDK boundary invocation with stable owner operation identity',
       timeout: '65-second caller deadline; Mem0 internal request timing remains opaque',
@@ -737,6 +796,12 @@ export const PROVIDER_LANES = [
     attemptSemantics: {
       admittedUnit:
         'one Tencent SubmitQuestionMarkAgentJob or DescribeQuestionMarkAgentJob SDK request',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'dynamic',
+        multiplierRationale:
+          'each page has one saved submit plus a runtime poll count capped at 150 per delivery; page count is capped at 15 and redelivery is accounted separately',
+      },
       durableIdentity:
         'submit and polls are distinct provider_attempt rows sharing one page operation; JobId is durable external correlation',
       timeout: 'poll loop is bounded to 300 seconds with a 2-second interval by default',
@@ -745,7 +810,7 @@ export const PROVIDER_LANES = [
       redelivery:
         'the llm worker queue has retryLimit 2; redelivery resumes the saved JobId and must not resubmit, while local poll timeout remains resumable',
       fanOut:
-        'one submit per page operation followed by at most 150 sequential Describe attempts per delivery; 15 pages and three deliveries bound Describe attempts at 6750',
+        'one saved submit per page followed by at most 150 sequential Describe attempts per delivery; 15 pages and three deliveries form a loose upper envelope of 15 submits plus 6750 describes',
       evidence: [
         {
           path: 'src/capabilities/ingestion/server/tencent_mark.ts',
@@ -817,6 +882,13 @@ export const PROVIDER_LANES = [
     },
     attemptSemantics: {
       admittedUnit: 'one manually invoked vision preflight Messages request',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'exact',
+        value: 1,
+        fixedRequestCount: 1,
+        fixedFanOutMultiplier: 1,
+      },
       durableIdentity: 'no provider_attempt row under the bounded operator-only exemption',
       timeout: '30 seconds per invocation',
       clientRetry: 'zero SDK retries',
@@ -866,7 +938,7 @@ function missingConfiguration(value: ConfigurationTruth): boolean {
   return value.summary.trim().length === 0 || missingEvidence(value.source);
 }
 
-function missingAttemptSemantics(value: ProviderAttemptSemantics | undefined): boolean {
+function missingAttemptSemantics(value: ProviderLaneCandidate['attemptSemantics']): boolean {
   return (
     value === undefined ||
     [
@@ -880,6 +952,46 @@ function missingAttemptSemantics(value: ProviderAttemptSemantics | undefined): b
     value.evidence.length === 0 ||
     value.evidence.some((evidence) => missingEvidence(evidence) || lacksAstEvidence(evidence))
   );
+}
+
+function attemptCardinalityProblems(
+  label: string,
+  value: ProviderLaneCandidate['attemptSemantics'],
+): string[] {
+  if (!value?.attemptsPerInvocation) {
+    return [`${label}: missing required attempt cardinality`];
+  }
+  const transportRetryCount = value.transportRetryCount;
+  if (
+    transportRetryCount === undefined ||
+    !Number.isInteger(transportRetryCount) ||
+    transportRetryCount < 0
+  ) {
+    return [`${label}: invalid transport retry count`];
+  }
+  const cardinality = value.attemptsPerInvocation;
+  if (cardinality.kind === 'dynamic') {
+    return cardinality.multiplierRationale.trim().length === 0
+      ? [`${label}: dynamic attemptsPerInvocation requires multiplier rationale`]
+      : [];
+  }
+  if (
+    !Number.isInteger(cardinality.value) ||
+    cardinality.value < 0 ||
+    !Number.isInteger(cardinality.fixedRequestCount) ||
+    cardinality.fixedRequestCount < 0 ||
+    !Number.isInteger(cardinality.fixedFanOutMultiplier) ||
+    cardinality.fixedFanOutMultiplier < 1
+  ) {
+    return [`${label}: invalid exact attemptsPerInvocation arithmetic`];
+  }
+  const calculated =
+    cardinality.fixedRequestCount * cardinality.fixedFanOutMultiplier * (1 + transportRetryCount);
+  return cardinality.value === calculated
+    ? []
+    : [
+        `${label}: inconsistent attemptsPerInvocation: declared ${cardinality.value}, calculated ${calculated}`,
+      ];
 }
 
 function validIsoDate(value: string): boolean {
@@ -948,6 +1060,7 @@ export function validateProviderLaneInventory(lanes: readonly ProviderLaneCandid
     if (missingAttemptSemantics(lane.attemptSemantics)) {
       problems.push(`${label}: missing required attempt semantics`);
     }
+    problems.push(...attemptCardinalityProblems(label, lane.attemptSemantics));
     if (!['migrate', 'opaque', 'prune', 'exempt'].includes(lane.disposition)) {
       problems.push(`${label}: unsupported disposition ${lane.disposition}`);
     }
@@ -956,6 +1069,17 @@ export function validateProviderLaneInventory(lanes: readonly ProviderLaneCandid
         problems.push(`${label}: missing required exemption metadata`);
       } else if (lane.exemption && lane.exemption.expiresOn < today) {
         problems.push(`${label}: expired exemption ${lane.exemption.expiresOn}`);
+      }
+      if (lane.exemption && lane.attemptSemantics?.attemptsPerInvocation?.kind === 'dynamic') {
+        problems.push(`${label}: exempt lane requires exact attemptsPerInvocation`);
+      } else if (
+        lane.exemption &&
+        lane.attemptSemantics?.attemptsPerInvocation?.kind === 'exact' &&
+        (lane.attemptSemantics.attemptsPerInvocation.value !==
+          lane.exemption.maxAttemptsPerInvocation ||
+          lane.attemptSemantics.transportRetryCount !== lane.exemption.clientRetryLimit)
+      ) {
+        problems.push(`${label}: exemption attempt cardinality drift`);
       }
     } else if (lane.exemption !== undefined) {
       problems.push(`${label}: exemption metadata requires exempt disposition`);

@@ -94,6 +94,13 @@ function fixtureLane(overrides: Partial<ProviderLane> = {}): ProviderLane {
       durableIdentity: 'one fixture attempt identity',
       timeout: 'bounded fixture timeout',
       clientRetry: 'no fixture client retry',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'exact',
+        value: 1,
+        fixedRequestCount: 1,
+        fixedFanOutMultiplier: 1,
+      },
       redelivery: 'no fixture redelivery',
       fanOut: 'one fixture request',
       evidence: [{ path: 'src/server/ai/embed.ts', calls: ['fetch'] }],
@@ -198,6 +205,70 @@ describe('provider lane inventory', () => {
     ).toContain('dashscope.embedding: missing required attempt semantics');
   });
 
+  it('rejects attempt semantics without machine-checkable invocation cardinality', () => {
+    const { attemptsPerInvocation: _omitted, ...attemptSemantics } = fixtureLane().attemptSemantics;
+    const lane = { ...fixtureLane(), attemptSemantics };
+
+    expect(validateProviderLaneInventory([lane])).toContain(
+      'dashscope.embedding: missing required attempt cardinality',
+    );
+  });
+
+  it('rejects exact attempt declarations whose arithmetic is inconsistent', () => {
+    const lane = {
+      ...fixtureLane(),
+      attemptSemantics: {
+        ...fixtureLane().attemptSemantics,
+        transportRetryCount: 0,
+        attemptsPerInvocation: {
+          kind: 'exact',
+          value: 3,
+          fixedRequestCount: 2,
+          fixedFanOutMultiplier: 1,
+        },
+      },
+    } as const;
+
+    expect(validateProviderLaneInventory([lane])).toContain(
+      'dashscope.embedding: inconsistent attemptsPerInvocation: declared 3, calculated 2',
+    );
+  });
+
+  it('rejects invalid transport retry counts', () => {
+    const lane = {
+      ...fixtureLane(),
+      attemptSemantics: {
+        ...fixtureLane().attemptSemantics,
+        transportRetryCount: -1,
+        attemptsPerInvocation: {
+          kind: 'exact',
+          value: 1,
+          fixedRequestCount: 1,
+          fixedFanOutMultiplier: 1,
+        },
+      },
+    } as const;
+
+    expect(validateProviderLaneInventory([lane])).toContain(
+      'dashscope.embedding: invalid transport retry count',
+    );
+  });
+
+  it('rejects dynamic fan-out that hides its multiplier rationale', () => {
+    const lane = {
+      ...fixtureLane(),
+      attemptSemantics: {
+        ...fixtureLane().attemptSemantics,
+        transportRetryCount: 0,
+        attemptsPerInvocation: { kind: 'dynamic', multiplierRationale: '' },
+      },
+    } as const;
+
+    expect(validateProviderLaneInventory([lane])).toContain(
+      'dashscope.embedding: dynamic attemptsPerInvocation requires multiplier rationale',
+    );
+  });
+
   it('rejects expired or incomplete support exemptions', () => {
     const expired = {
       ...fixtureLane(),
@@ -223,6 +294,139 @@ describe('provider lane inventory', () => {
         'dashscope.embedding: expired exemption 2000-01-01',
         'incomplete.support-probe: missing required exemption metadata',
       ]),
+    );
+  });
+
+  it.each([
+    { label: 'missing', exemption: undefined },
+    {
+      label: 'missing owner',
+      exemption: {
+        owner: '',
+        reason: 'manual operator probe',
+        expiresOn: '2099-12-31',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    },
+    {
+      label: 'invalid date',
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: 'not-a-date',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    },
+    {
+      label: 'zero attempts',
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: '2099-12-31',
+        maxAttemptsPerInvocation: 0,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    },
+    {
+      label: 'zero timeout',
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: '2099-12-31',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 0,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    },
+    {
+      label: 'negative retry limit',
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: '2099-12-31',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: -1,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    },
+    {
+      label: 'non-AST evidence',
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: '2099-12-31',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', contains: ['fetch'] },
+      },
+    },
+  ])('rejects $label exemption metadata', ({ exemption }) => {
+    const lane = fixtureLane({
+      disposition: 'exempt',
+      roles: ['operator'],
+      directImporters: [],
+      exemption,
+    });
+
+    expect(validateProviderLaneInventory([lane])).toContain(
+      'dashscope.embedding: missing required exemption metadata',
+    );
+  });
+
+  it('rejects exemption metadata on a non-exempt lane', () => {
+    const lane = fixtureLane({
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: '2099-12-31',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    });
+
+    expect(validateProviderLaneInventory([lane])).toContain(
+      'dashscope.embedding: exemption metadata requires exempt disposition',
+    );
+  });
+
+  it('rejects dynamic cardinality for an exemption with an exact attempt ceiling', () => {
+    const lane = fixtureLane({
+      disposition: 'exempt',
+      roles: ['operator'],
+      directImporters: [],
+      attemptSemantics: {
+        ...fixtureLane().attemptSemantics,
+        attemptsPerInvocation: {
+          kind: 'dynamic',
+          multiplierRationale: 'runtime-dependent operator batching',
+        },
+      },
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: '2099-12-31',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    });
+
+    expect(validateProviderLaneInventory([lane])).toContain(
+      'dashscope.embedding: exempt lane requires exact attemptsPerInvocation',
     );
   });
 
