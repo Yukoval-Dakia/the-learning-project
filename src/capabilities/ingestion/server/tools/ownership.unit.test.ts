@@ -82,6 +82,17 @@ describe('ingestion server ownership', () => {
     }
   });
 
+  it('shares record read-model semantics through the ingestion public seam', () => {
+    const centralReaders = source('src/server/ai/tools/context-readers.ts');
+    const ingestionPublic = source('src/capabilities/ingestion/public.ts');
+
+    expect(centralReaders).toContain("from '@/capabilities/ingestion/public'");
+    for (const helperName of ['excerpt', 'knowledgeContext', 'bodyBlockSummaries']) {
+      expect(centralReaders).not.toMatch(new RegExp(`function ${helperName}\\b`));
+      expect(ingestionPublic).toContain(helperName);
+    }
+  });
+
   it('loads the unchanged tool inventory and contracts from the ingestion manifest', async () => {
     expect(ingestionCapability.copilotTools?.tools.map((tool) => tool.name)).toEqual(
       INGESTION_TOOL_NAMES,

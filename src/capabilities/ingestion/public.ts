@@ -13,3 +13,8 @@ export type {
   RecordPromotionAcceptResult,
 } from './server/legacy-record-appliers';
 export type { BlockMergeAcceptResult } from './server/proposal-appliers';
+export {
+  bodyBlockSummaries,
+  excerpt,
+  knowledgeContext,
+} from './server/tools/record-tool-support';

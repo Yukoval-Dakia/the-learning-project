@@ -3,6 +3,7 @@
 // Composite read tools for records, questions, due review cards, learning
 // items, and Dreaming-maintained memory briefs.
 
+import { bodyBlockSummaries, excerpt, knowledgeContext } from '@/capabilities/ingestion/public';
 import { AddressableStructureSchema } from '@/core/schema/addressable-structure';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
@@ -13,14 +14,12 @@ import { deriveSourceTier } from '@/core/schema/provenance';
 // coordinate fix). Pure tree-clip; shared by get_question_context(include:
 // ['structure']) and the get_question_block_structure draft reader.
 import { projectAddressableStructure } from '@/core/schema/structured_question';
-import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import {
   artifact,
   completion_evidence,
   event,
   intervention,
-  knowledge,
   learning_item,
   learning_record,
   material_fsrs_state,
@@ -38,73 +37,8 @@ import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';
 
-const EXCERPT_MAX = 220;
-
-function excerpt(value: string | null | undefined, max = EXCERPT_MAX): string {
-  const clean = (value ?? '').replace(/\s+/g, ' ').trim();
-  return clean.length <= max ? clean : `${clean.slice(0, max - 1)}…`;
-}
-
 function iso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
-}
-
-type KnowledgeRow = {
-  id: string;
-  name: string;
-  parent_id: string | null;
-};
-
-async function loadKnowledgeRows(db: Db, ids: string[]): Promise<Map<string, KnowledgeRow>> {
-  const unique = [...new Set(ids)].filter(Boolean);
-  if (unique.length === 0) return new Map();
-  const idOrParent = or(inArray(knowledge.id, unique), inArray(knowledge.parent_id, unique));
-  const rows = await db
-    .select({ id: knowledge.id, name: knowledge.name, parent_id: knowledge.parent_id })
-    .from(knowledge)
-    .where(idOrParent ?? inArray(knowledge.id, unique));
-
-  // Pull ancestors lazily until no new parent is discovered. Graphs are tiny in
-  // the current single-user runtime, so this bounded loop is clearer than a
-  // recursive SQL CTE inside every tool.
-  const byId = new Map(rows.map((row) => [row.id, row]));
-  for (;;) {
-    const missingParents = [...byId.values()]
-      .map((row) => row.parent_id)
-      .filter((id): id is string => !!id && !byId.has(id));
-    if (missingParents.length === 0) break;
-    const parents = await db
-      .select({ id: knowledge.id, name: knowledge.name, parent_id: knowledge.parent_id })
-      .from(knowledge)
-      .where(inArray(knowledge.id, [...new Set(missingParents)]));
-    if (parents.length === 0) break;
-    for (const parent of parents) byId.set(parent.id, parent);
-  }
-  return byId;
-}
-
-function pathFor(id: string, byId: Map<string, KnowledgeRow>): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  let current = byId.get(id);
-  while (current && !seen.has(current.id)) {
-    seen.add(current.id);
-    out.unshift(current.name);
-    current = current.parent_id ? byId.get(current.parent_id) : undefined;
-  }
-  return out;
-}
-
-async function knowledgeContext(
-  db: Db,
-  ids: string[],
-): Promise<Array<{ knowledge_id: string; path: string[]; mastery: number | null }>> {
-  const byId = await loadKnowledgeRows(db, ids);
-  return [...new Set(ids)].map((id) => ({
-    knowledge_id: id,
-    path: pathFor(id, byId),
-    mastery: null,
-  }));
 }
 
 function questionKnowledgeContainsAny(ids: string[]) {
@@ -112,26 +46,6 @@ function questionKnowledgeContainsAny(ids: string[]) {
     (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
   );
   return or(...conditions) ?? sql`FALSE`;
-}
-
-function bodyBlockSummaries(bodyBlocks: unknown): string[] {
-  if (!bodyBlocks || typeof bodyBlocks !== 'object') return [];
-  const content = (bodyBlocks as { content?: unknown }).content;
-  if (!Array.isArray(content)) return [];
-  return content.slice(0, 6).map((block) => {
-    if (!block || typeof block !== 'object') return 'block';
-    const typed = block as {
-      type?: string;
-      attrs?: { semantic_kind?: string; title?: string };
-      content?: unknown[];
-    };
-    const text = JSON.stringify(typed.content ?? [])
-      .replace(/[{}\[\]",:]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    const label = typed.attrs?.semantic_kind ?? typed.type ?? 'block';
-    return `${label}: ${excerpt(typed.attrs?.title ?? text, 120)}`;
-  });
 }
 
 const GetQuestionContextInputSchema = z.object({
