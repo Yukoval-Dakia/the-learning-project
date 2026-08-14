@@ -12,7 +12,7 @@
 export const COPILOT_RUN_TABLE = 'copilot_run' as const;
 
 // job_events 是 free-form event_type（不经 domain parseEvent union，见
-// src/server/events/writer.ts / ingestion-progress.ts NOTE）。这些是本族的
+// src/server/events/writer.ts / capabilities/ingestion/server/events/extraction-progress.ts）。这些是本族的
 // 事件 type 契约——SSE 客户端 + 状态派生读这套词表。
 export const COPILOT_RUN_EVENTS = {
   /** enqueue 落地后、handler 拾起前的初态（route dispatch 写）。 */
