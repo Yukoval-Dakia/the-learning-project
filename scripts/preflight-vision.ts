@@ -52,7 +52,7 @@ const TINY_PNG_B64 =
 
 async function main(): Promise<void> {
   console.log(`[preflight] base=${baseURL} model=${model}`);
-  const client = new Anthropic({ apiKey, baseURL });
+  const client = new Anthropic({ apiKey, baseURL, maxRetries: 0, timeout: 30_000 });
   const start = Date.now();
   let response: Awaited<ReturnType<typeof client.messages.create>> | null = null;
   let errorMessage: string | null = null;

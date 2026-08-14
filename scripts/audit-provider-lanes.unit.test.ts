@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+/* SIZE_OK: the fixture-heavy audit matrix shares one temporary-project DSL and one census contract. */
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -88,6 +89,15 @@ function fixtureLane(overrides: Partial<ProviderLane> = {}): ProviderLane {
       calls: ['fetch'],
       contains: ['fetch', '/embeddings'],
     },
+    attemptSemantics: {
+      admittedUnit: 'one fixture provider request',
+      durableIdentity: 'one fixture attempt identity',
+      timeout: 'bounded fixture timeout',
+      clientRetry: 'no fixture client retry',
+      redelivery: 'no fixture redelivery',
+      fanOut: 'one fixture request',
+      evidence: [{ path: 'src/server/ai/embed.ts', calls: ['fetch'] }],
+    },
     costSupport: 'no project-side per-wire ledger hook',
     ...overrides,
   };
@@ -173,6 +183,68 @@ afterEach(() => {
 });
 
 describe('provider lane inventory', () => {
+  it('declares admitted-unit and multiplication semantics for every inventory lane', () => {
+    expect(
+      PROVIDER_LANES.map((lane) => ({
+        id: lane.id,
+        hasAttemptSemantics: Object.hasOwn(lane, 'attemptSemantics'),
+      })),
+    ).toEqual(PROVIDER_LANES.map((lane) => ({ id: lane.id, hasAttemptSemantics: true })));
+  });
+
+  it('rejects inventory lanes without source-backed attempt semantics', () => {
+    expect(
+      validateProviderLaneInventory([{ ...fixtureLane(), attemptSemantics: undefined }]),
+    ).toContain('dashscope.embedding: missing required attempt semantics');
+  });
+
+  it('rejects expired or incomplete support exemptions', () => {
+    const expired = {
+      ...fixtureLane(),
+      disposition: 'exempt',
+      exemption: {
+        owner: 'server/ai',
+        reason: 'manual operator probe',
+        expiresOn: '2000-01-01',
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+        evidence: { path: 'src/server/ai/embed.ts', calls: ['fetch'] },
+      },
+    };
+    const incomplete = {
+      ...expired,
+      id: 'incomplete.support-probe',
+      exemption: { ...expired.exemption, owner: '' },
+    };
+
+    expect(validateProviderLaneInventory([expired, incomplete])).toEqual(
+      expect.arrayContaining([
+        'dashscope.embedding: expired exemption 2000-01-01',
+        'incomplete.support-probe: missing required exemption metadata',
+      ]),
+    );
+  });
+
+  it('declares the vision preflight as one bounded operator-only exemption', () => {
+    const lane = PROVIDER_LANES.find((candidate) => candidate.id === 'xiaomi.vision-preflight');
+    const source = readFileSync(resolve(process.cwd(), 'scripts/preflight-vision.ts'), 'utf8');
+
+    expect(lane).toMatchObject({
+      disposition: 'exempt',
+      roles: ['operator'],
+      wire: { calls: ['client.messages.create'] },
+      exemption: {
+        maxAttemptsPerInvocation: 1,
+        timeoutMs: 30_000,
+        clientRetryLimit: 0,
+      },
+    });
+    expect(source.match(/client\.messages\.create\(/gu)).toHaveLength(1);
+    expect(source).toContain('maxRetries: 0');
+    expect(source).toContain('timeout: 30_000');
+  });
+
   it('lists each current direct provider lane with complete immutable metadata', () => {
     expect(PROVIDER_LANES.map((lane) => lane.id)).toEqual([
       'dashscope.embedding',
@@ -182,6 +254,7 @@ describe('provider lane inventory', () => {
       'glm.ocr-layout-parsing',
       'mem0.event-memory',
       'tencent.question-mark-agent',
+      'xiaomi.vision-preflight',
     ]);
     expect(validateProviderLaneInventory(PROVIDER_LANES)).toEqual([]);
     expect(PROVIDER_LANES.map((lane) => ({ id: lane.id, calls: lane.wire.calls }))).toEqual([
@@ -198,6 +271,7 @@ describe('provider lane inventory', () => {
         id: 'tencent.question-mark-agent',
         calls: ['client.SubmitQuestionMarkAgentJob', 'client.DescribeQuestionMarkAgentJob'],
       },
+      { id: 'xiaomi.vision-preflight', calls: ['client.messages.create'] },
     ]);
   });
 
@@ -603,6 +677,42 @@ describe('provider lane inventory', () => {
       ok: false,
       violations: [
         expect.objectContaining({ reason: 'unlisted provider SDK runtime import: openai' }),
+      ],
+    });
+  });
+
+  it('fails closed on an unlisted direct provider SDK operator script', () => {
+    const root = makeFixture();
+    write(
+      root,
+      'scripts/provider-preflight.ts',
+      "import Anthropic from '@anthropic-ai/sdk';\nconst client = new Anthropic({ apiKey: 'test' });\nexport const run = () => client.messages.create({ model: 'test', max_tokens: 1, messages: [] });\n",
+    );
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          path: 'scripts/provider-preflight.ts',
+          reason: 'unlisted provider SDK runtime import: @anthropic-ai/sdk',
+        }),
+      ],
+    });
+  });
+
+  it('fails closed on an unlisted direct provider fetch operator script', () => {
+    const root = makeFixture();
+    write(
+      root,
+      'scripts/provider-fetch-preflight.ts',
+      "export const run = () => fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings');\n",
+    );
+    expect(auditProviderLanes(root, [fixtureLane()])).toMatchObject({
+      ok: false,
+      violations: [
+        expect.objectContaining({
+          path: 'scripts/provider-fetch-preflight.ts',
+          reason: 'unlisted direct provider wire: dashscope-embedding-fetch',
+        }),
       ],
     });
   });

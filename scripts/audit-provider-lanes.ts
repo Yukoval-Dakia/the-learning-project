@@ -1,3 +1,4 @@
+/* SIZE_OK: this AST census keeps one shared parse/import-closure model and one violation vocabulary. */
 import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, extname, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -17,6 +18,16 @@ import {
 
 const SOURCE_FILE = /\.[cm]?[jt]sx?$/;
 const TEST_FILE = /\.(?:unit|db|migration|integration|e2e)?\.?(?:test|spec)\.[cm]?[jt]sx?$/;
+const OPERATOR_PROVIDER_MARKERS = [
+  'api.anthropic.com',
+  'api.xiaomimimo.com',
+  'dashscope.aliyuncs.com',
+  'ocr.tencentcloudapi.com',
+  'open.bigmodel.cn',
+  '/chat/completions',
+  '/embeddings',
+  'layout_parsing',
+] as const;
 
 export type ProviderWireFinding = {
   readonly kind:
@@ -25,6 +36,7 @@ export type ProviderWireFinding = {
     | 'glm-memory-reconcile-fetch'
     | 'glm-ocr-layout-parsing-fetch'
     | 'mem0-model-bearing-operation'
+    | 'xiaomi-vision-preflight-sdk'
     | 'tencent-question-mark-agent-sdk'
     | 'unclassified-provider-fetch';
   readonly call: string;
@@ -123,21 +135,18 @@ function textValue(node: unknown): string | undefined {
     : undefined;
 }
 
+function expressionName(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.type === 'Identifier' && typeof value.name === 'string') return value.name;
+  if (value.type !== 'MemberExpression') return undefined;
+  const object = expressionName(value.object);
+  const property = value.computed ? textValue(value.property) : identifierName(value.property);
+  return object && property ? `${object}.${property}` : undefined;
+}
+
 function callName(callee: unknown): string | undefined {
-  if (!isRecord(callee)) return undefined;
-  if (callee.type === 'Identifier' && typeof callee.name === 'string') return callee.name;
-  if (callee.type !== 'MemberExpression') return undefined;
-  if (!isRecord(callee.object) || callee.object.type !== 'Identifier') return undefined;
-  const property = callee.computed ? textValue(callee.property) : identifierName(callee.property);
-  if (typeof callee.object.name !== 'string' || !property) return undefined;
-  if (
-    (callee.object.name === 'globalThis' || callee.object.name === 'global') &&
-    property === 'fetch'
-  ) {
-    return 'fetch';
-  }
-  if (callee.computed) return undefined;
-  return `${callee.object.name}.${property}`;
+  const name = expressionName(callee);
+  return name === 'globalThis.fetch' || name === 'global.fetch' ? 'fetch' : name;
 }
 
 function identifierName(node: unknown): string | undefined {
@@ -739,6 +748,9 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
     if (call === 'memory.add' || call === 'memory.search') {
       return [{ kind: 'mem0-model-bearing-operation', call, path }];
     }
+    if (facts.imports.includes('@anthropic-ai/sdk') && call === 'client.messages.create') {
+      return [{ kind: 'xiaomi-vision-preflight-sdk', call, path }];
+    }
     if (
       facts.imports.includes('tencentcloud-sdk-nodejs-ocr') &&
       (call === 'client.SubmitQuestionMarkAgentJob' ||
@@ -821,6 +833,20 @@ function isWatchedProviderSdk(source: string): boolean {
   );
 }
 
+function operatorSourceFiles(root: string): string[] {
+  const scriptsRoot = resolve(root, 'scripts');
+  if (!existsSync(scriptsRoot)) return [];
+  return sourceFiles(scriptsRoot).filter(
+    (path) => projectPath(root, path) !== 'scripts/worker.ts' && !/\.d\.[cm]?[jt]sx?$/u.test(path),
+  );
+}
+
+function operatorProviderSdkImportEdges(root: string): SourceImportEdge[] {
+  return operatorSourceFiles(root)
+    .flatMap((path) => collectImportEdgesFromSource(root, path, readFileSync(path, 'utf8')).edges)
+    .filter((edge) => edge.kind !== 'type' && isWatchedProviderSdk(edge.source));
+}
+
 function hasAgentProviderStartBinding(edge: SourceImportEdge): boolean {
   return (
     edge.source.startsWith('@anthropic-ai/claude-agent-sdk') &&
@@ -835,7 +861,7 @@ function sdkEntryMatchesEdge(
   edge: SourceImportEdge,
 ): boolean {
   if (entry.path !== edge.path || entry.source !== edge.source) return false;
-  return entry.disposition !== 'central'
+  return entry.disposition === 'lane'
     ? true
     : (edge.bindings ?? []).some(
         (binding) => binding.imported === entry.imported && binding.local === entry.local,
@@ -882,9 +908,11 @@ function checkProviderSdkImports(
   lanes: readonly ProviderLane[],
   requireDeclaredPaths: boolean,
 ): ProviderLaneViolation[] {
+  const operatorEdges = operatorProviderSdkImportEdges(root);
   const productionPaths = runtimeCompositionPaths(root, edges);
   for (const entry of PROVIDER_RUNTIME_SDK_IMPORTS) productionPaths.add(entry.path);
-  const observed = edges.filter(
+  for (const edge of operatorEdges) productionPaths.add(edge.path);
+  const observed = [...edges, ...operatorEdges].filter(
     (edge) =>
       productionPaths.has(edge.path) &&
       edge.kind !== 'type' &&
@@ -911,7 +939,7 @@ function checkProviderSdkImports(
       }
       continue;
     }
-    if (entry.disposition === 'lane' && !lanes.some((lane) => lane.id === entry.laneId)) {
+    if (entry.disposition !== 'central' && !lanes.some((lane) => lane.id === entry.laneId)) {
       violations.push({
         path: entry.path,
         reason: `provider SDK lane reference does not exist: ${entry.laneId}`,
@@ -928,17 +956,30 @@ function checkProviderSdkImports(
 }
 
 export function collectProviderWireFindings(projectRoot: string): ProviderWireFinding[] {
-  return runtimeSourceClosure(projectRoot, backendSourceFiles(projectRoot))
-    .flatMap((path) => {
-      const code = readFileSync(path, 'utf8');
-      return findingsFor(projectPath(projectRoot, path), code, inspectSource(code, path));
-    })
-    .sort(
-      (left, right) =>
-        left.kind.localeCompare(right.kind) ||
-        left.path.localeCompare(right.path) ||
-        left.call.localeCompare(right.call),
-    );
+  const declaredOperatorWires = PROVIDER_LANES.filter((lane) => lane.disposition === 'exempt')
+    .map((lane) => resolve(projectRoot, lane.wire.path))
+    .filter((path) => existsSync(path));
+  const declaredWirePaths = new Set<string>(PROVIDER_LANES.map((lane) => lane.wire.path));
+  const runtimeFindings = runtimeSourceClosure(projectRoot, [
+    ...backendSourceFiles(projectRoot),
+    ...declaredOperatorWires,
+  ]).flatMap((path) => {
+    const code = readFileSync(path, 'utf8');
+    return findingsFor(projectPath(projectRoot, path), code, inspectSource(code, path));
+  });
+  const operatorFindings = operatorSourceFiles(projectRoot).flatMap((path) => {
+    const pathFromProject = projectPath(projectRoot, path);
+    if (declaredWirePaths.has(pathFromProject)) return [];
+    const code = readFileSync(path, 'utf8');
+    if (!OPERATOR_PROVIDER_MARKERS.some((marker) => code.includes(marker))) return [];
+    return findingsFor(pathFromProject, code, inspectSource(code, path));
+  });
+  return [...runtimeFindings, ...operatorFindings].sort(
+    (left, right) =>
+      left.kind.localeCompare(right.kind) ||
+      left.path.localeCompare(right.path) ||
+      left.call.localeCompare(right.call),
+  );
 }
 
 function checkEvidence(
@@ -997,6 +1038,7 @@ function laneForFinding(kind: ProviderWireFinding['kind']): string | undefined {
     'glm-memory-reconcile-fetch': 'glm.memory-reconcile',
     'glm-ocr-layout-parsing-fetch': 'glm.ocr-layout-parsing',
     'mem0-model-bearing-operation': 'mem0.event-memory',
+    'xiaomi-vision-preflight-sdk': 'xiaomi.vision-preflight',
     'tencent-question-mark-agent-sdk': 'tencent.question-mark-agent',
   } as const;
   return kind === 'unclassified-provider-fetch' ? undefined : ids[kind];
@@ -1034,6 +1076,14 @@ export function auditProviderLanes(
   for (const lane of lanes) {
     if (lane.disposition === 'prune') continue;
     violations.push(...checkConfiguration(root, lane.configuration));
+    for (const evidence of lane.attemptSemantics.evidence) {
+      const violation = checkEvidence(root, evidence, 'attempt semantics');
+      if (violation) violations.push(violation);
+    }
+    if (lane.exemption) {
+      const violation = checkEvidence(root, lane.exemption.evidence, 'exemption');
+      if (violation) violations.push(violation);
+    }
     const observedCalls = findings
       .filter(
         (finding) => laneForFinding(finding.kind) === lane.id && finding.path === lane.wire.path,
@@ -1060,7 +1110,10 @@ export function auditProviderLanes(
         reason: `direct importer closure drift: expected ${expectedImporters.join(', ')}; observed ${observedImporters.join(', ')}`,
       });
     }
-    const observedRoles = runtimeRolesForTarget(root, importScan.edges, wirePath);
+    const observedRoles =
+      lane.disposition === 'exempt'
+        ? ['operator']
+        : runtimeRolesForTarget(root, importScan.edges, wirePath);
     const expectedRoles = [...lane.roles].sort((left, right) => left.localeCompare(right));
     if (!sameMultiset(observedRoles, expectedRoles)) {
       violations.push({
