@@ -9,10 +9,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { capabilities } from '@/capabilities';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import { question_block } from '@/db/schema';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { getQuestionBlockStructureTool } from './context-readers';
-import { registerCapabilityTools } from './register-capability-tools';
-import { __resetRegistryForTests, getTool } from './registry';
+import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
+import { __resetRegistryForTests, getTool } from '@/server/ai/tools/registry';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { getQuestionBlockStructureTool } from './question-block-structure';
 import type { ToolContext } from './types';
 
 const BBOX = { x: 0.1, y: 0.2, width: 0.3, height: 0.4 };
