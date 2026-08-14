@@ -5,10 +5,7 @@ import type {
   ProposalAcceptResult,
 } from '@/kernel/proposals';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
-import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/server/proposals/signals';
+import * as ownerRuntime from '@/server/proposals/owner-runtime';
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
 import { acceptGoalScopeProposal } from './goals/accept';
 import {
@@ -17,8 +14,16 @@ import {
   acceptLearningItemProposal,
   acceptRelearnProposal,
 } from './proposal-appliers';
+import { createAgencyProposalLifecycle } from './proposal-lifecycle';
 
 type AgencyAcceptRuntime = AgencyApplierOpts & ConjectureApplierOpts;
+
+export const {
+  completionProposalRetractApplier,
+  goalScopeProposalRetractApplier,
+  learningItemProposalRetractApplier,
+  relearnProposalRetractApplier,
+} = createAgencyProposalLifecycle(ownerRuntime);
 
 function inboxView(input: ProposalAcceptInput): ProposalInboxRow {
   const { proposal } = input;
@@ -85,9 +90,9 @@ export const goalScopeProposalAcceptApplier: ProposalAcceptApplier = async (db, 
     user_note: input.user_note,
   });
   if (result.idempotent) {
-    await ensureProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
+    await ownerRuntime.ensureProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
   } else {
-    await recordProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
+    await ownerRuntime.recordProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
   }
   return wrap('goal_scope', result);
 };
