@@ -9,10 +9,35 @@ export interface ProposalAcceptProposal {
   actor_ref: string;
 }
 
+export interface ProposalCorrectedPayload {
+  readonly claim_md: string;
+}
+
+export interface ProposalLifecycleResult {
+  readonly kind: string;
+  readonly idempotent?: boolean;
+  readonly [key: string]: unknown;
+}
+
+export function toProposalLifecycleResult(result: {
+  readonly kind: string;
+  readonly idempotent?: boolean;
+}): ProposalLifecycleResult {
+  return { ...result };
+}
+
 type ProposalAcceptDecision =
-  | { decision?: 'accept'; new_relation_type?: never }
-  | { decision: 'reverse'; new_relation_type?: never }
-  | { decision: 'change_type'; new_relation_type: RelationTypeSchemaT };
+  | {
+      decision?: 'accept';
+      new_relation_type?: never;
+      corrected_payload?: ProposalCorrectedPayload;
+    }
+  | { decision: 'reverse'; new_relation_type?: never; corrected_payload?: never }
+  | {
+      decision: 'change_type';
+      new_relation_type: RelationTypeSchemaT;
+      corrected_payload?: never;
+    };
 
 export type ProposalAcceptInput = {
   proposalId: string;
@@ -23,7 +48,7 @@ export type ProposalAcceptInput = {
 export interface ProposalAcceptResult {
   kind: string;
   /** Capability-owned public accept result; it must repeat the same `kind`. */
-  result: unknown;
+  result: ProposalLifecycleResult;
   idempotent?: boolean;
   lifecycle_outcome?: 'accepted' | 'dismissed';
 }
@@ -40,6 +65,7 @@ export type ProposalAcceptApplier = (
 
 export interface ProposalAcceptDecl {
   load: () => Promise<ProposalAcceptApplier>;
+  correctedPayload?: true;
 }
 
 export interface ProposalDismissInput {
@@ -50,7 +76,7 @@ export interface ProposalDismissInput {
 
 export interface ProposalDismissResult {
   kind: string;
-  result: unknown;
+  result: ProposalLifecycleResult;
 }
 
 export type ProposalDismissApplier = (

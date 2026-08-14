@@ -4,6 +4,7 @@ import type {
   ProposalAcceptInput,
   ProposalAcceptResult,
 } from '@/kernel/proposals';
+import { toProposalLifecycleResult } from '@/kernel/proposals';
 import { ensureAcceptOnly } from '@/server/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import {
@@ -40,13 +41,15 @@ function runtimeOptions(input: ProposalAcceptInput, runtime: unknown): Ingestion
   };
 }
 
-function wrap(kind: string, result: unknown): ProposalAcceptResult {
-  return { kind, result };
+function wrap(result: {
+  readonly kind: string;
+  readonly idempotent?: boolean;
+}): ProposalAcceptResult {
+  return { kind: result.kind, result: toProposalLifecycleResult(result) };
 }
 
 export const blockMergeProposalAcceptApplier: ProposalAcceptApplier = async (db, input, runtime) =>
   wrap(
-    'block_merge',
     await acceptBlockMergeProposal(
       db as Db,
       input.proposalId,
@@ -63,7 +66,6 @@ export const imageCandidateProposalAcceptApplier: ProposalAcceptApplier = async 
   const options = runtimeOptions(input, runtime);
   ensureAcceptOnly('image_candidate', options);
   return wrap(
-    'image_candidate',
     await acceptImageCandidateProposal(
       db as Db,
       input.proposalId,
@@ -75,7 +77,6 @@ export const imageCandidateProposalAcceptApplier: ProposalAcceptApplier = async 
 
 export const recordLinksProposalAcceptApplier: ProposalAcceptApplier = async (db, input, runtime) =>
   wrap(
-    'record_links',
     await acceptRecordLinksProposal(
       db as Db,
       input.proposalId,
@@ -90,7 +91,6 @@ export const recordPromotionProposalAcceptApplier: ProposalAcceptApplier = async
   runtime,
 ) =>
   wrap(
-    'record_promotion',
     await acceptRecordPromotionProposal(
       db as Db,
       input.proposalId,

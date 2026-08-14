@@ -43,6 +43,21 @@ describe('proposal lifecycle capability registry', () => {
     expect(getProposalLifecycleOperation(registry, 'judge_retraction', 'accept')).toBeUndefined();
   });
 
+  it('keeps knowledge_edge retract on the generic correction lane', () => {
+    const registry = createProposalLifecycleRegistry(capabilities);
+    expect(getProposalLifecycleOperation(registry, 'knowledge_edge', 'retract')).toBeUndefined();
+  });
+
+  it('declares corrected payload support only on the Agency conjecture accept capability', () => {
+    const correctedPayloadKinds = capabilities.flatMap((capability) =>
+      (capability.proposals?.kinds ?? []).flatMap(({ kind, accept }) =>
+        accept && 'correctedPayload' in accept && accept.correctedPayload === true ? [kind] : [],
+      ),
+    );
+
+    expect(correctedPayloadKinds).toEqual(['conjecture']);
+  });
+
   it.each(['knowledge_node', 'variant_question'] as const)(
     'declares accept, dismiss, and retract semantics for %s',
     async (kind) => {
@@ -67,7 +82,9 @@ describe('proposal lifecycle capability registry', () => {
       await Promise.all(
         [
           'actions.ts',
+          'action-types.ts',
           'accept-action.ts',
+          'decision-resource.ts',
           'dismiss-action.ts',
           'retract-action.ts',
           'lifecycle-context.ts',

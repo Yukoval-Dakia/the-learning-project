@@ -14,12 +14,14 @@
 // artifact_create event + learning_record UPDATE + rate event); cooldown_key is omitted so the
 // post-tx signal write is a no-op.
 
+import type { RecordPromotionAcceptResult } from '@/capabilities/ingestion/public';
+import type { ArtifactBodyBlocksT } from '@/core/schema/business';
+import { artifact, learning_record } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import type { ArtifactBodyBlocksT } from '@/core/schema/business';
-import { artifact, learning_record } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import { assertProposalLifecycleResult } from '../../../tests/helpers/proposal-lifecycle';
 import { acceptAiProposal } from './actions';
 import { writeAiProposal } from './writer';
 
@@ -84,7 +86,7 @@ describe('acceptRecordPromotionProposal — artifact target body_blocks validati
 
     const result = await acceptAiProposal(db, 'prop_ok');
     expect(result.kind).toBe('record_promotion');
-    if (result.kind !== 'record_promotion') throw new Error('unexpected result kind');
+    assertProposalLifecycleResult<RecordPromotionAcceptResult>(result, 'record_promotion');
     expect(result.materialized_kind).toBe('artifact');
 
     const [row] = await db.select().from(artifact).where(eq(artifact.id, result.materialized_id));
@@ -99,7 +101,7 @@ describe('acceptRecordPromotionProposal — artifact target body_blocks validati
     await proposePromotion(db, { proposalId: 'prop_none', recordId: 'rec_none' });
 
     const result = await acceptAiProposal(db, 'prop_none');
-    if (result.kind !== 'record_promotion') throw new Error('unexpected result kind');
+    assertProposalLifecycleResult<RecordPromotionAcceptResult>(result, 'record_promotion');
     const [row] = await db.select().from(artifact).where(eq(artifact.id, result.materialized_id));
     expect(row.body_blocks).toBeNull();
   });

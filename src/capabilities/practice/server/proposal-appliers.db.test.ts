@@ -14,6 +14,12 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { assertProposalLifecycleResult } from '../../../../tests/helpers/proposal-lifecycle';
+import type {
+  QuestionDraftAcceptResult,
+  QuestionEditAcceptResult,
+  VariantQuestionAcceptResult,
+} from './proposal-appliers';
 
 const KNOWLEDGE_BASE = {
   domain: 'yuwen',
@@ -103,7 +109,7 @@ describe('variant_question proposal lifecycle', () => {
 
     const result = await acceptAiProposal(testDb(), proposalId, { enqueueVariantVerify: enqueue });
     expect(result.kind).toBe('variant_question');
-    if (result.kind !== 'variant_question') throw new Error('unexpected result kind');
+    assertProposalLifecycleResult<VariantQuestionAcceptResult>(result, 'variant_question');
     expect(result.mistake_variant_id).toBe(mistakeVariantId);
 
     const newQs = await testDb().select().from(question).where(eq(question.id, result.question_id));
@@ -153,7 +159,7 @@ describe('variant_question proposal lifecycle', () => {
 
     const result = await acceptAiProposal(testDb(), proposalId, { enqueueVariantVerify: enqueue });
     expect(result.kind).toBe('variant_question');
-    if (result.kind !== 'variant_question') throw new Error('unexpected result kind');
+    assertProposalLifecycleResult<VariantQuestionAcceptResult>(result, 'variant_question');
 
     // Side-effect: the variant question IS materialized (identical to any accept).
     const newQs = await testDb().select().from(question).where(eq(question.id, result.question_id));
@@ -234,7 +240,7 @@ describe('variant_question proposal lifecycle', () => {
     const enqueue = vi.fn(async () => {});
 
     const first = await acceptAiProposal(testDb(), proposalId, { enqueueVariantVerify: enqueue });
-    if (first.kind !== 'variant_question') throw new Error('unexpected');
+    assertProposalLifecycleResult<VariantQuestionAcceptResult>(first, 'variant_question');
     const second = await acceptAiProposal(testDb(), proposalId, { enqueueVariantVerify: enqueue });
     expect(second).toMatchObject({
       kind: 'variant_question',
@@ -332,7 +338,7 @@ describe('question_draft accept (ADR-0031 lane B)', () => {
 
     const result = await acceptAiProposal(db, 'qd_p1', { user_note: 'ok' });
     expect(result.kind).toBe('question_draft');
-    if (result.kind !== 'question_draft') throw new Error('unreachable');
+    assertProposalLifecycleResult<QuestionDraftAcceptResult>(result, 'question_draft');
     expect(result.question_id).toBe(questionId);
     expect(result.idempotent).toBeUndefined();
 
@@ -538,7 +544,7 @@ describe('question_edit accept (ADR-0032 D6-B)', () => {
 
     const result = await acceptAiProposal(db, 'qe_p1', { user_note: 'ok' });
     expect(result.kind).toBe('question_edit');
-    if (result.kind !== 'question_edit') throw new Error('unreachable');
+    assertProposalLifecycleResult<QuestionEditAcceptResult>(result, 'question_edit');
     expect(result.question_id).toBe(id);
     expect(result.idempotent).toBeUndefined();
     expect(result.version).toBe(1);
@@ -922,7 +928,7 @@ describe('question_edit accept (ADR-0032 D6-B)', () => {
 
     const result = await acceptAiProposal(db, 'qe_p12');
     expect(result.kind).toBe('question_edit');
-    if (result.kind !== 'question_edit') throw new Error('unreachable');
+    assertProposalLifecycleResult<QuestionEditAcceptResult>(result, 'question_edit');
     expect(result.version).toBe(1);
     expect(result.edit_event_id).toBeTruthy();
 

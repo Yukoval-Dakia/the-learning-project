@@ -8,18 +8,19 @@ import {
 import type {
   ProposalAcceptApplier,
   ProposalAcceptInput,
+  ProposalCorrectedPayload,
   ProposalDismissApplier,
   ProposalRetractApplier,
 } from './types';
 
 const applier: ProposalAcceptApplier = async (_db, { proposal }) => ({
   kind: proposal.payload.kind,
-  result: null,
+  result: { kind: proposal.payload.kind },
 });
 
 const dismiss: ProposalDismissApplier = async (_db, { proposal }) => ({
   kind: proposal.payload.kind,
-  result: null,
+  result: { kind: proposal.payload.kind },
 });
 
 const retract: ProposalRetractApplier = async () => {};
@@ -30,7 +31,9 @@ describe('proposal lifecycle registry', () => {
     expectTypeOf<ProposalAcceptInput['proposal']>().not.toHaveProperty('target');
     expectTypeOf<ProposalAcceptInput>().not.toHaveProperty('enqueueVariantVerify');
     expectTypeOf<ProposalAcceptInput>().not.toHaveProperty('imageCandidateDeps');
-    expectTypeOf<ProposalAcceptInput>().not.toHaveProperty('corrected_payload');
+    expectTypeOf<Extract<ProposalAcceptInput, { decision?: 'accept' }>>()
+      .toHaveProperty('corrected_payload')
+      .toEqualTypeOf<ProposalCorrectedPayload | undefined>();
     expectTypeOf<Extract<ProposalAcceptInput, { decision: 'change_type' }>>()
       .toHaveProperty('new_relation_type')
       .toEqualTypeOf<string>();

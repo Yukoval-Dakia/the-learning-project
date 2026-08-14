@@ -10,6 +10,7 @@ import type {
   ProposalRetractApplier,
   ProposalRetractInput,
 } from '@/kernel/proposals';
+import { toProposalLifecycleResult } from '@/kernel/proposals';
 import { decideKnowledgeEdgeProposal } from './edge-proposal-accept';
 import { applyArchive, dismissProposal } from './proposals';
 
@@ -99,10 +100,12 @@ export function createKnowledgeProposalLifecycle(runtime: KnowledgeLifecycleRunt
     },
     knowledgeEdgeProposalDismissApplier: async (db, input) => ({
       kind: input.proposal.payload.kind,
-      result: await decideKnowledgeEdgeProposal(db as Db, input.proposalId, {
-        decision: 'dismiss',
-        user_note: input.user_note,
-      }),
+      result: toProposalLifecycleResult(
+        await decideKnowledgeEdgeProposal(db as Db, input.proposalId, {
+          decision: 'dismiss',
+          user_note: input.user_note,
+        }),
+      ),
     }),
     knowledgeNodeProposalRetractApplier: (db, input) =>
       retractKnowledgeNode(db as Tx, input, runtime),

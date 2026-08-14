@@ -5,6 +5,7 @@ import type {
   ProposalAcceptResult,
   ProposalDismissInput,
 } from '@/kernel/proposals';
+import { toProposalLifecycleResult } from '@/kernel/proposals';
 import {
   type ProposalInboxRow,
   assertCurrentMistakeVariantParity,
@@ -65,8 +66,11 @@ function runtimeOptions(input: ProposalAcceptInput, runtime: unknown): PracticeA
   };
 }
 
-function wrap(kind: string, result: unknown): ProposalAcceptResult {
-  return { kind, result };
+function wrap(result: {
+  readonly kind: string;
+  readonly idempotent?: boolean;
+}): ProposalAcceptResult {
+  return { kind: result.kind, result: toProposalLifecycleResult(result) };
 }
 
 export const variantQuestionProposalAcceptApplier: ProposalAcceptApplier = async (
@@ -75,7 +79,6 @@ export const variantQuestionProposalAcceptApplier: ProposalAcceptApplier = async
   runtime,
 ) =>
   wrap(
-    'variant_question',
     await acceptVariantQuestionProposal(
       db as Db,
       input.proposalId,
@@ -90,7 +93,6 @@ export const questionDraftProposalAcceptApplier: ProposalAcceptApplier = async (
   runtime,
 ) =>
   wrap(
-    'question_draft',
     await acceptQuestionDraftProposal(
       db as Db,
       input.proposalId,
@@ -105,7 +107,6 @@ export const questionEditProposalAcceptApplier: ProposalAcceptApplier = async (
   runtime,
 ) =>
   wrap(
-    'question_edit',
     await acceptQuestionEditProposal(
       db as Db,
       input.proposalId,

@@ -315,6 +315,7 @@ export const agencyCapability = defineCapability({
       {
         kind: 'conjecture',
         accept: {
+          correctedPayload: true,
           load: () =>
             import('./server/proposal-accept-applier').then(
               (module) => module.conjectureProposalAcceptApplier,

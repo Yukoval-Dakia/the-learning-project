@@ -1,10 +1,14 @@
 import { dispatchNoteGeneration } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
-import { type ProposalAcceptResult, getProposalLifecycleOperation } from '@/kernel/proposals';
+import {
+  type ProposalAcceptResult,
+  type ProposalLifecycleResult,
+  getProposalLifecycleOperation,
+} from '@/kernel/proposals';
 import { extractRecordEvidenceIds, markRecordsActioned } from '@/server/records/record_processing';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
-import type { AcceptAiProposalOpts, AcceptAiProposalResult } from './action-types';
+import type { AcceptAiProposalOpts } from './action-types';
 import { findExistingRateEvent } from './applier-helpers';
 import type { ProposalInboxRow } from './inbox';
 import {
@@ -16,7 +20,7 @@ import {
 import { ensureProposalDecisionSignal } from './signals';
 
 interface DispatchedAccept {
-  result: AcceptAiProposalResult;
+  result: ProposalLifecycleResult;
   lifecycleOutcome: 'accepted' | 'dismissed';
 }
 
@@ -37,6 +41,13 @@ async function dispatchAccept(
       400,
     );
   }
+  if (opts.corrected_payload !== undefined && declaration.correctedPayload !== true) {
+    throw new ApiError(
+      'validation_error',
+      `corrected_payload is not supported by the owner of proposal kind ${proposal.payload.kind}`,
+      400,
+    );
+  }
 
   const applier = await declaration.load();
   let result: ProposalAcceptResult;
@@ -52,7 +63,7 @@ async function dispatchAccept(
       },
       opts,
     );
-  } else {
+  } else if (opts.decision === 'reverse') {
     result = await applier(
       db,
       {
@@ -60,6 +71,18 @@ async function dispatchAccept(
         proposal: ownerInput(proposal),
         decision: opts.decision,
         user_note: opts.user_note,
+      },
+      opts,
+    );
+  } else {
+    result = await applier(
+      db,
+      {
+        proposalId: proposal.id,
+        proposal: ownerInput(proposal),
+        decision: 'accept',
+        user_note: opts.user_note,
+        corrected_payload: opts.corrected_payload,
       },
       opts,
     );
@@ -74,7 +97,7 @@ async function dispatchAccept(
     ownedResult.kind === proposal.payload.kind
   ) {
     return {
-      result: ownedResult as AcceptAiProposalResult,
+      result: ownedResult,
       lifecycleOutcome: result.lifecycle_outcome ?? 'accepted',
     };
   }
@@ -93,7 +116,7 @@ export async function acceptAiProposal(
   db: Db,
   proposalId: string,
   opts: AcceptAiProposalOpts = {},
-): Promise<AcceptAiProposalResult> {
+): Promise<ProposalLifecycleResult> {
   const proposal = await requireProposal(db, proposalId);
   if (proposal.status !== 'pending') {
     const existingRate = await findExistingRateEvent(db, proposal.id);
