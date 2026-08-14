@@ -162,8 +162,7 @@ export const copilotCapability = defineCapability({
         // crashed active delivery into retry/failed evidence promptly; the
         // Copilot reconciler still never guesses from heartbeat timestamps.
         heartbeatSeconds: 30,
-        load: () =>
-          import('@/server/boss/handlers/copilot_run').then((m) => m.buildCopilotRunHandler),
+        load: () => import('./jobs/copilot_run').then((m) => m.buildCopilotRunHandler),
       },
       // YUK-577 — 主动开口触发评估器（按需 job，无 schedule）。producer（ingestion 完成）
       // boss.send(COPILOT_NUDGE_EVALUATE_QUEUE) → 本 handler 确定性判定 + 写触发留痕。
