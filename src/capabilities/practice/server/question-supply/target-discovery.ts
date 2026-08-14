@@ -26,7 +26,7 @@
 //     映射成本引擎的 3 档获取尺度（见 acquisitionTierForQuestion 文档）。
 //   - subject profile sourcingRoutePreference：subjectProfiles（src/subjects/profile.ts）。
 
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import { getEffectiveDomain } from '@/capabilities/knowledge/public';
 import { rotationClassForKind } from '@/capabilities/practice/server/variant-rotation';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import {

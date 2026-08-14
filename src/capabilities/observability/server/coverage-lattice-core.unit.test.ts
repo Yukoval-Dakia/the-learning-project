@@ -17,7 +17,7 @@ import type {
   QuestionSupplyTarget,
   ScanInput,
   SupplyGapKind,
-} from '@/server/question-supply/target-discovery';
+} from '@/capabilities/practice/public';
 import { describe, expect, it } from 'vitest';
 import {
   type LatticeConstants,

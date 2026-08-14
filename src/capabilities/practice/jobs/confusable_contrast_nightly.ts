@@ -18,8 +18,8 @@
 // FSRS) — never auto-active. This job只 discovers (read-only) + dispatches; it writes no
 // question, no b-anchor, no edge. Pure read-only consumption + dispatch.
 
+import { discoverConfusableContrastTargets } from '@/capabilities/practice/server/question-supply/confusable-contrast-discovery';
 import type { Db } from '@/db/client';
-import { discoverConfusableContrastTargets } from '@/server/question-supply/confusable-contrast-discovery';
 import type { DispatchResult } from '@/server/question-supply/dispatcher';
 import { dispatchSupplyTargets } from '@/server/question-supply/dispatcher';
 import type { Job } from 'pg-boss';

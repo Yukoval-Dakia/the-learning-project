@@ -231,13 +231,14 @@ export const fastTestInclude = [
   // @/db/schema 是 table objects 不连库，@/server/mastery/state / domain / provenance /
   // selection-signals / theta / subjects/profile 全是纯函数或 type-only db。端到端的
   // discoverSupplyTargets + dispatcher 派发 db 测在 target-discovery.db.test.ts。
-  // src/server/question-supply/** 无 unit glob，故必须显式列出，否则 db config 的
+  // These moved tests keep their historical names, so list them explicitly instead of relying on
+  // the capability `*.unit.test.ts` convention; their DB-backed siblings remain in the DB partition.
   // src/**/*.test.ts glob 会把它扫进 testcontainer 分区（item-prior.test.ts 同款）。
-  'src/server/question-supply/target-discovery.test.ts',
+  'src/capabilities/practice/server/question-supply/target-discovery.test.ts',
   // YUK-699 — EvidenceDemand/trace contracts + pure scanner correlation. No DB access;
   // the sibling end-to-end propagation assertions live in handler DB tests.
-  'src/server/question-supply/evidence-demand.test.ts',
-  'src/server/question-supply/inventory-projection.test.ts',
+  'src/capabilities/practice/server/question-supply/evidence-demand.test.ts',
+  'src/capabilities/practice/server/question-supply/inventory-projection.test.ts',
   'src/server/quiz/selection-miss.test.ts',
   'src/server/quiz/content-fingerprint.test.ts',
   // YUK-474 — 动态供题 refill 决策逻辑单测. Pure no-DB: countActive/buildTarget/dispatch 全注入
@@ -256,7 +257,7 @@ export const fastTestInclude = [
   // has no unit glob, so these MUST be listed (target-discovery.test.ts precedent).
   'src/server/question-supply/jyeoo-loom-adapter.test.ts',
   'src/server/question-supply/jyeoo-spawn.test.ts',
-  'src/server/question-supply/jyeoo-supply-config.test.ts',
+  'src/capabilities/practice/server/question-supply/jyeoo-supply-config.test.ts',
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
