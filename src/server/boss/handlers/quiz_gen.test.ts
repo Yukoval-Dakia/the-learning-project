@@ -19,6 +19,11 @@ import {
   buildSupplyTrace,
   evidenceDemandToTargetContext,
 } from '@/capabilities/practice/public';
+import {
+  PlacementStarterStaleAuthorityError,
+  PlacementStarterUnknownCostError,
+  acquirePlacementAttempt,
+} from '@/capabilities/practice/public';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
   artifact,
@@ -35,11 +40,6 @@ import {
 } from '@/db/schema';
 import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
 import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/server/ai/tools/allowlists';
-import {
-  PlacementStarterStaleAuthorityError,
-  PlacementStarterUnknownCostError,
-  acquirePlacementAttempt,
-} from '@/server/question-supply/placement-starter-attempts';
 import { canonicalQuestionContentHash } from '@/server/quiz/content-fingerprint';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
