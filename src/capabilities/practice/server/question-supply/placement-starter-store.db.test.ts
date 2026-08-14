@@ -11,7 +11,7 @@ import {
   placement_starter_cost_component,
   question,
 } from '@/db/schema';
-import type { QuizGenJobData } from '@/kernel/question-supply-infrastructure';
+import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';

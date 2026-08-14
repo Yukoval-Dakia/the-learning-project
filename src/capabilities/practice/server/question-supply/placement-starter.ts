@@ -3,10 +3,11 @@ import { placement_starter_claim } from '@/db/schema';
 import {
   JOB_RETRY_DELAY_SECONDS,
   JOB_RETRY_LIMIT,
-  type QuizGenJobData,
+  enqueuePlacementJob,
   fromPgBossDrizzleTx,
-  getStartedQuestionSupplyBoss,
-} from '@/kernel/question-supply-infrastructure';
+  placementJobState,
+} from '@/kernel/placement-jobs';
+import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { and, eq } from 'drizzle-orm';
 import type { SendOptions } from 'pg-boss';
 import { dispatchSupplyTarget } from './dispatcher';
@@ -168,14 +169,8 @@ export async function dispatchPlacementStarterClaim(
   claimId: string,
   admit?: PlacementStarterAdmission,
 ): Promise<string | null> {
-  const boss = await getStartedQuestionSupplyBoss();
   return db.transaction((tx) =>
-    dispatchPlacementStarterClaimTx(
-      tx,
-      claimId,
-      (queue, data, options) => boss.send(queue, data, options),
-      admit,
-    ),
+    dispatchPlacementStarterClaimTx(tx, claimId, enqueuePlacementJob, admit),
   );
 }
 
@@ -213,7 +208,6 @@ const LIVE_PLACEMENT_JOB_STATES: ReadonlySet<string> = new Set(['created', 'retr
  */
 export async function isPlacementStarterJobLive(jobId: string | null): Promise<boolean> {
   if (!jobId) return false;
-  const boss = await getStartedQuestionSupplyBoss();
-  const job = await boss.getJobById('quiz_gen', jobId);
-  return job != null && LIVE_PLACEMENT_JOB_STATES.has(job.state);
+  const state = await placementJobState(jobId);
+  return state != null && LIVE_PLACEMENT_JOB_STATES.has(state);
 }
