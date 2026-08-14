@@ -3,7 +3,7 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 520,
+      "total": 511,
       "byOwnerPair": {
         "agency -> agency": 7,
         "agency -> ai": 29,
@@ -39,7 +39,6 @@
         "ingestion -> mastery": 2,
         "ingestion -> projections": 12,
         "ingestion -> proposals": 11,
-        "ingestion -> question-supply": 1,
         "ingestion -> questions": 5,
         "ingestion -> r2": 12,
         "ingestion -> records": 5,
@@ -65,7 +64,6 @@
         "observability -> boss": 1,
         "observability -> events": 2,
         "observability -> export": 2,
-        "observability -> question-supply": 1,
         "observability -> r2": 2,
         "observability -> subjects": 14,
         "practice -> advisory-locks": 3,
@@ -81,7 +79,6 @@
         "practice -> orchestrator": 1,
         "practice -> projections": 2,
         "practice -> proposals": 3,
-        "practice -> question-supply": 7,
         "practice -> questions": 4,
         "practice -> quiz": 3,
         "practice -> records": 1,
@@ -96,7 +93,7 @@
       }
     },
     "serverToCapabilityDeep": {
-      "total": 64,
+      "total": 62,
       "byOwnerPair": {
         "agency -> agency": 3,
         "agency -> notes": 1,
@@ -116,8 +113,6 @@
         "memory -> knowledge": 1,
         "orchestrator -> notes": 2,
         "projections -> knowledge": 1,
-        "question-supply -> agency": 1,
-        "question-supply -> knowledge": 1,
         "questions -> knowledge": 4,
         "quiz -> knowledge": 1,
         "quiz -> practice": 2,
