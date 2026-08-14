@@ -4,7 +4,7 @@
 // Refs: YUK-164 (T-OC), ADR-0002 §"Agent 修改约束", P3.7.
 //
 // All six structure-edit mutations live here; the six DomainTools in
-// `src/server/ai/tools/question-edit-tools.ts` are thin wrappers, and the
+// `server/tools/question-block-*-edits.ts` modules are thin wrappers, and the
 // figures PATCH route (`app/api/question-blocks/[id]/figures/[asset_id]`)
 // reassigns figures by calling `reassignFigure` here (single owner, no dup
 // logic).
