@@ -3,14 +3,49 @@ import type {
   ProposalAcceptApplier,
   ProposalAcceptInput,
   ProposalAcceptResult,
+  ProposalDismissInput,
 } from '@/kernel/proposals';
-import type { ProposalInboxRow } from '@/server/proposals/practice-runtime';
+import {
+  type ProposalInboxRow,
+  assertCurrentMistakeVariantParity,
+  findExistingRateEvent,
+  hasMistakeVariantGenesisAnchor,
+  projectMistakeVariantGuarded,
+  projectionIsWriter,
+  recordProposalDecisionSignal,
+  writeProposalRateEvent,
+} from '@/server/proposals/practice-runtime';
 import {
   type PracticeApplierOpts,
   acceptQuestionDraftProposal,
   acceptQuestionEditProposal,
   acceptVariantQuestionProposal,
 } from './proposal-appliers';
+import { createPracticeProposalLifecycle } from './proposal-lifecycle';
+
+export const {
+  questionEditProposalRetractApplier,
+  variantQuestionProposalDismissApplier,
+  variantQuestionProposalRetractApplier,
+} = createPracticeProposalLifecycle({
+  assertCurrentMistakeVariantParity,
+  findExistingRateEvent,
+  hasMistakeVariantGenesisAnchor,
+  projectMistakeVariantGuarded,
+  projectionIsWriter,
+  recordDismissSignal: (db: Db, input: ProposalDismissInput) =>
+    recordProposalDecisionSignal(
+      db,
+      {
+        ...input.proposal,
+        kind: input.proposal.payload.kind,
+        target: input.proposal.payload.target,
+      } as ProposalInboxRow,
+      'dismiss',
+      input.user_note,
+    ),
+  writeProposalRateEvent,
+});
 
 function inboxView(input: ProposalAcceptInput): ProposalInboxRow {
   const { proposal } = input;
