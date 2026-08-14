@@ -62,7 +62,7 @@
       "reason": "Proposal-accept edge materialization; trigger fan-out covers the insert."
     },
     {
-      "path": "src/server/question-supply/placement-starter-store.ts",
+      "path": "src/capabilities/practice/server/question-supply/placement-starter-store.ts",
       "tables": ["knowledge"],
       "reason": "YUK-452 placement cold-starter admission: inserts the deterministic starter KC under the subject root (identity-keyed, onConflictDoNothing, admission-gated single writer). Topology trigger fan-out applies exactly as for the other inventoried knowledge writers."
     },
