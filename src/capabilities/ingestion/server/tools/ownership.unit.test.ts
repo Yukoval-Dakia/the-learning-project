@@ -6,9 +6,14 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
 import { ingestionCapability } from '@/capabilities/ingestion/manifest';
-import { PROPOSE_WRITE_TOOLS, READ_TOOLS } from '@/server/ai/tools/allowlists';
+import {
+  DOMAIN_TOOL_ALLOWLISTS,
+  PROPOSE_WRITE_TOOLS,
+  READ_TOOLS,
+} from '@/server/ai/tools/allowlists';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { __resetRegistryForTests, getTool } from '@/server/ai/tools/registry';
+import type { DomainTool } from '@/server/ai/tools/types';
 
 const INGESTION_TOOL_NAMES = [
   'query_records',
@@ -25,15 +30,43 @@ const INGESTION_TOOL_NAMES = [
 ] as const;
 
 const OWNED_TOOL_CONTRACT_HASHES = {
-  query_records: '60064bff0f75131a31dde260c8037e7337b2554910037216709568b02726d94c',
-  get_record_context: 'fe2c7fdf7f4c6838d59fce8b7d9c70bbcdfc40c9ba986d036e2a656ac50312b1',
-  get_question_block_structure: '70c87b1520e2ee10cf813e55c5230a42bc791c988a1d4e3d8176d8b8c9986c96',
-  update_prompt: '6645370b7a0d48ba54084de51da2ca830c08143cf4ef9a720effe25f0f647a41',
-  add_option: '38e65e3f7e3eb5d051312a78059781645b88a2f1aa501713336e86a907da6a54',
-  set_question_type: 'b5a79cbd159f5f9564ea010353a831464f4b4434641f100c3c82d91539e71781',
-  split_stem: 'a296f045b6cac0536c9a904428e52620f611078284da75c5e6857c73afdaea0b',
-  merge_questions: '82bea611241e1bc1f6b1dba6bfcebc344ff82243e8432f39459c74eb35554522',
-  reassign_figure: '5f0ae7c69bcd795cf06de0c6e8ff22f45633b8f3819e689a594605b0877539d1',
+  query_records: '2ec1229c7c328364da8790d2867025fc3487472d09955e9a913598d928d5f1af',
+  get_record_context: '76586011e17e30dbd31caaf90a6c31d0185bb84e281b240d38cedfb85571f695',
+  get_question_block_structure: '272585ed9b9c6cc314ba29d6db2893fba55e3512d00bb161a67ffa527982da64',
+  update_prompt: '91c6e8f9a5bc994fd0f9447110200e6d6176e6dd583d096db3d7137f64e183b8',
+  add_option: '6dcd33a2666b1ade9ee5df906384bcbc575ed91a1b9342c1ed9586f175398069',
+  set_question_type: 'e65f39d2df45357981dac993c07ed469dcb6a8ee794fa08f52d409b82ee9eba9',
+  split_stem: '6832da91dff5ffd3f1c87f209338ac3cc9a7c60d02035cf33e7a851001b13a34',
+  merge_questions: '1fe7abcc20fd8cae429a5e32cc0373188ee8d8c38ad0fee67adce587266a4e06',
+  reassign_figure: '6946efb343bf56018f4f85efdfbb2db2fc9647c368ff6a755f96e75d289961ee',
+} as const;
+
+const INGESTION_TOOL_EFFECTS = {
+  query_records: 'read',
+  get_record_context: 'read',
+  get_question_block_structure: 'read',
+  propose_record_links: 'propose',
+  propose_record_promotion: 'propose',
+  update_prompt: 'write',
+  add_option: 'write',
+  set_question_type: 'write',
+  split_stem: 'write',
+  merge_questions: 'write',
+  reassign_figure: 'write',
+} as const;
+
+const INGESTION_TOOL_EXPOSURES = {
+  query_records: ['copilot', 'copilot_user_suggested_mistake_action', 'dreaming', 'maintenance'],
+  get_record_context: ['copilot', 'copilot_user_suggested_mistake_action', 'maintenance'],
+  get_question_block_structure: ['ingestion_block_edit'],
+  propose_record_links: ['dreaming', 'maintenance'],
+  propose_record_promotion: ['dreaming', 'maintenance'],
+  update_prompt: ['ingestion_block_edit'],
+  add_option: ['ingestion_block_edit'],
+  set_question_type: ['ingestion_block_edit'],
+  split_stem: ['ingestion_block_edit'],
+  merge_questions: ['ingestion_block_edit'],
+  reassign_figure: ['ingestion_block_edit'],
 } as const;
 
 const READER_PATHS = [
@@ -44,6 +77,18 @@ const READER_PATHS = [
 
 function source(path: string): string {
   return readFileSync(join(process.cwd(), path), 'utf8');
+}
+
+function contractFingerprint(tool: DomainTool<unknown, unknown>): string {
+  const contract = {
+    name: tool.name,
+    effect: tool.effect,
+    costClass: tool.costClass,
+    mirrorEvent: tool.mirrorEvent,
+    inputSchema: zodToJsonSchema(tool.inputSchema),
+    outputSchema: zodToJsonSchema(tool.outputSchema),
+  };
+  return createHash('sha256').update(JSON.stringify(contract)).digest('hex');
 }
 
 describe('ingestion server ownership', () => {
@@ -100,25 +145,40 @@ describe('ingestion server ownership', () => {
 
     await registerCapabilityTools([ingestionCapability]);
     const fullAllowlist = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS];
+    for (const name of INGESTION_TOOL_NAMES) {
+      const tool = getTool(name);
+      expect(tool, name).toBeDefined();
+      if (!tool) throw new Error(`missing ingestion tool: ${name}`);
+      expect(tool.name).toBe(name);
+      expect(tool.effect).toBe(INGESTION_TOOL_EFFECTS[name]);
+      expect(fullAllowlist.some((allowedName) => allowedName === name)).toBe(true);
+      expect(
+        Object.entries(DOMAIN_TOOL_ALLOWLISTS)
+          .filter(([, names]) => names.some((allowedName) => allowedName === name))
+          .map(([surface]) => surface),
+      ).toEqual(INGESTION_TOOL_EXPOSURES[name]);
+    }
     for (const [name, expectedHash] of Object.entries(OWNED_TOOL_CONTRACT_HASHES)) {
       const tool = getTool(name);
       expect(tool, name).toBeDefined();
       if (!tool) throw new Error(`missing ingestion tool: ${name}`);
-      expect(fullAllowlist.some((allowedName) => allowedName === name)).toBe(true);
-      const contract = {
-        name: tool.name,
-        description: tool.description,
-        effect: tool.effect,
-        costClass: tool.costClass,
-        mirrorEvent: tool.mirrorEvent,
-        inputSchema: zodToJsonSchema(tool.inputSchema),
-        outputSchema: zodToJsonSchema(tool.outputSchema),
-      };
-      expect(createHash('sha256').update(JSON.stringify(contract)).digest('hex'), name).toBe(
-        expectedHash,
-      );
+      expect(contractFingerprint(tool), name).toBe(expectedHash);
     }
   }, 30_000);
+
+  it('ignores description prose but detects schema and effect drift', async () => {
+    await registerCapabilityTools([ingestionCapability]);
+    const tool = getTool('query_records');
+    expect(tool).toBeDefined();
+    if (!tool) throw new Error('missing ingestion tool: query_records');
+    const baseline = contractFingerprint(tool);
+
+    expect(contractFingerprint({ ...tool, description: 'Reworded reader guidance.' })).toBe(
+      baseline,
+    );
+    expect(contractFingerprint({ ...tool, effect: 'write' })).not.toBe(baseline);
+    expect(contractFingerprint({ ...tool, inputSchema: tool.outputSchema })).not.toBe(baseline);
+  });
 
   it('keeps capability-owned read ports free of mutation calls', () => {
     for (const path of READER_PATHS) {

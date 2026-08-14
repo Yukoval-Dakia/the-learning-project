@@ -220,6 +220,30 @@ describe('add_option', () => {
     expect(block.version).toBe(1);
   });
 
+  it('serializes concurrent option edits without losing either write', async () => {
+    const { blockId } = await seedBlock({
+      structured: { id: 'n1', role: 'standalone', prompt_text: 'q' },
+    });
+
+    await Promise.all([
+      addOptionTool.execute(ctx(), {
+        block_id: blockId,
+        node_id: 'n1',
+        option: { label: 'A', text: 'first' },
+      }),
+      addOptionTool.execute(ctx(), {
+        block_id: blockId,
+        node_id: 'n1',
+        option: { label: 'B', text: 'second' },
+      }),
+    ]);
+
+    const block = await readBlock(blockId);
+    expect(block.structured?.options?.map((option) => option.label).sort()).toEqual(['A', 'B']);
+    expect(block.version).toBe(2);
+    expect(await countEditEvents(blockId)).toBe(2);
+  });
+
   it('skips node_not_found', async () => {
     const { blockId } = await seedBlock({
       structured: { id: 'n1', role: 'standalone', prompt_text: 'q' },
