@@ -16,12 +16,8 @@ import {
   material_fsrs_state,
   question,
 } from '@/db/schema';
-import {
-  type DispatchResult,
-  type EnqueueFn,
-  dispatchSupplyTargets,
-} from '@/server/question-supply/dispatcher';
 import { resetDb } from '../../../../../tests/helpers/db';
+import { type DispatchResult, type EnqueueFn, dispatchSupplyTargets } from './dispatcher';
 import { type SupplyRoute, assembleScanInput, discoverSupplyTargets } from './target-discovery';
 
 async function seedKnowledge(id: string, domain = 'yuwen') {
