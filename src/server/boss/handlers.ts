@@ -15,28 +15,22 @@ import {
   buildVerifyDispatchRecoveryHandler,
 } from './verify-dispatch-outbox';
 
-// M4-T3 (YUK-319)：本文件已渐缩为「未迁域 job 注册簿」。建队配方（YUK-237 三档
-// expire/retention/DLQ + YUK-259 race 防护）抽到 queue-config.ts，与 capability
-// jobs 注册器（register-capability-jobs.ts）共用。已迁入 manifest jobs 声明并由
-// 注册器挂载的 job 不再出现在这里：knowledge 夜链、practice failure-learning、
-// notes 的 hub_auto_sync_nightly + note_refine、agency
-// 四 cron（dreaming/coach_daily/coach_weekly/goal_scope）。
+// YUK-885 (F3.11)：本文件现在只注册 infrastructure/housekeeping——域 job 全部
+// 由 capability manifest jobs 声明、register-capability-jobs.ts 挂载。建队配方
+// （YUK-237 三档 expire/retention/DLQ + YUK-259 race 防护）在 queue-config.ts，
+// 与 capability jobs 注册器共用。域 job 注册（knowledge 夜链、practice
+// failure-learning / 判分链、notes 夜链、agency cron、ingestion OCR 链）
+// 已全部迁入各 capability manifest，一律不得回迁本簿。
 //
-// 仍留簿的注册（M5 拆除采石场时清账）：
+// 留簿注册 = 纯基础设施：
 //   - echo（golden E2E，0.5s polling）
 //   - prune_job_events / prune_orphan_* / promote_conversation_idle（FAST housekeeping cron）
 //   - registerMemoryHandlers（memory_* 队列归 memory 模块）
-//
-// YUK-882 (F3.6c)：腾讯 OCR 提取与 auto-enroll 两条 job 已迁 ingestion
-// manifest jobs 声明（含 0.5s polling + includeMetadata + lazy r2 的 worker
-// 元数据），由注册器挂载；ingestion 域自此无留簿注册。
-// YUK-870 (F3.5b)：rejudge / judge_run / session_summary 三条注册已迁
-// practice manifest jobs 声明（1s polling / includeMetadata / 2s 等价平移），
-// practice 域自此无留簿注册。
+//   - verify_dispatch_recovery（question-supply 安全网，读 durable intents 只补发 verify）
 
 /**
- * Register pg-boss queue handlers + schedules for jobs NOT yet owned by a
- * capability manifest（渐缩簿）。
+ * Register pg-boss queue handlers + schedules for infrastructure/housekeeping
+ * queues only（域 job 走 capability manifest）。
  *
  * 在 worker entrypoint 启动时调一次（start-worker.ts），随后必须紧跟
  * registerCapabilityJobs 挂载各包声明的 job。
