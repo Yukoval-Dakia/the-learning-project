@@ -5,8 +5,8 @@ import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
 
 // ----------------------------------------------------------------------------
 // Schemas — input from judge runner, LLM output, reference solution shape.
-// Runtime execution lives in src/server/ai/judges/steps-judge.ts and is reached
-// through src/server/judge/invoker.ts. The shapes follow spec
+// Runtime execution lives in src/capabilities/practice/server/judge/steps-judge.ts and is reached
+// through its capability-owned invoker. The shapes follow spec
 // docs/superpowers/specs/2026-05-21-math-mvp-vision-design.md §7.
 // ----------------------------------------------------------------------------
 
@@ -104,7 +104,7 @@ function run(input: JudgeRunInput): JudgeResultV2T {
     confidence: 0,
     capability_ref: CAPABILITY_REF,
     feedback_md:
-      'steps@1 requires server JudgeInvoker runtime context. Use src/server/judge/invoker.ts.',
+      'steps@1 requires server JudgeInvoker runtime context. Use the Practice judge invoker.',
     evidence_json: {
       reason: 'server_runtime_required',
       question: input.question,

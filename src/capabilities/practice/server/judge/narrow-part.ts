@@ -16,12 +16,12 @@
 // This helper is pure read-time derivation off the already-stored `structured`
 // jsonb plus the additive `sub_ref` event field.
 
+import type { JudgeQuestionRow } from '@/capabilities/practice/server/judge/question-contract';
 import {
   type StructuredQuestionT,
   structuredToPromptMarkdown,
   structuredToReferenceMarkdown,
 } from '@/core/schema/structured_question';
-import type { JudgeQuestionRow } from '@/server/ai/judges/question-contract';
 
 /**
  * Locate the FIRST node (depth-first pre-order) whose `id` matches `target`,

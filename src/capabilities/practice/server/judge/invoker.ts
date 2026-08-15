@@ -19,16 +19,7 @@ import {
 } from '@/server/ai/providers';
 import { SubjectProfileSchema } from '@/subjects/profile';
 import { z } from 'zod';
-import type { JudgeKind } from '../ai/judges';
-import {
-  FUTURE_JUDGE_ROUTES,
-  type JudgeAnswerParams,
-  RUNNABLE_ROUTES,
-  buildLocalJudgeQuestion,
-  defaultRunTaskFn,
-  runSemanticJudge,
-  unsupportedResult,
-} from '../ai/judges/question-contract';
+import type { JudgeKind } from '.';
 // F0 (PR #309 round-3) — resolver now lives in the dependency-light leaf.
 import { persistJudgeRunDigests } from './execution-provenance-resolve';
 import {
@@ -38,6 +29,15 @@ import {
   taskInputHash,
 } from './judge-execution-provenance';
 import { narrowQuestionToPart } from './narrow-part';
+import {
+  FUTURE_JUDGE_ROUTES,
+  type JudgeAnswerParams,
+  RUNNABLE_ROUTES,
+  buildLocalJudgeQuestion,
+  defaultRunTaskFn,
+  runSemanticJudge,
+  unsupportedResult,
+} from './question-contract';
 import { resolveQuestionJudgeRoute } from './route-resolve';
 
 const unitDimensionOutputSchema = tasks.UnitDimensionFallback.structuredOutputSchema;
@@ -383,7 +383,7 @@ export class JudgeInvoker {
       return await runSemanticJudge({ ...input, runTaskFn });
     }
     if (route === 'steps') {
-      const { runStepsJudge } = await import('../ai/judges/steps-judge');
+      const { runStepsJudge } = await import('./steps-judge');
       return await runStepsJudge({
         db: input.db,
         question: input.question,
@@ -398,7 +398,7 @@ export class JudgeInvoker {
       });
     }
     if (route === 'multimodal_direct') {
-      const { runMultimodalDirectJudge } = await import('../ai/judges/multimodal-direct-judge');
+      const { runMultimodalDirectJudge } = await import('./multimodal-direct-judge');
       return await runMultimodalDirectJudge({
         db: input.db,
         question: input.question,
@@ -459,7 +459,7 @@ export function createDefaultJudgeInvoker(deps: JudgeInvokerDeps = {}): JudgeInv
 // through so provenance metadata is still captured on the default path.
 function judgeDefaultRunTaskFn(db: Db): NonNullable<JudgeAnswerParams['runTaskFn']> {
   return async (kind, input, callCtx) => {
-    const { runTask } = await import('../ai/runner');
+    const { runTask } = await import('@/server/ai/runner');
     const result = await runTask(kind, input, { ...(callCtx ?? {}), db });
     return {
       text: result.text,

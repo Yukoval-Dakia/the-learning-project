@@ -1,7 +1,7 @@
 // F0 (PR #309 round-3, YUK-215) — leaf judge-route resolution module.
 //
 // `resolveQuestionJudgeRoute` used to live in
-// `@/server/ai/judges/question-contract`, which sits inside the judges-barrel
+// `@/capabilities/practice/server/judge/question-contract`, which sits inside the judges-barrel
 // cluster (it re-exports / pulls the semantic-judge runner, the `JudgeKind`
 // union from the judges index, etc.). When `app/api/review/submit/route.ts`
 // began importing that resolver DIRECTLY at the top level (PR #309 round-2,
@@ -35,7 +35,7 @@ import { JudgeKind as JudgeKindSchema, QuestionKind, Rubric } from '@/core/schem
 import type { SubjectProfile } from '@/subjects/profile';
 
 // `JudgeKind` is the bare union declared in the judges barrel
-// (`@/server/ai/judges`). Re-declaring the type-only alias here — instead of
+// (`@/capabilities/practice/server/judge`). Re-declaring the type-only alias here — instead of
 // importing it — keeps this leaf free of any value edge to the barrel. Kept in
 // lockstep with the barrel's `JudgeKind` union.
 export type JudgeRoute =

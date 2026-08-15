@@ -5,8 +5,8 @@
 // semanticInput() passes question.structured into the model message verbatim, so
 // a whole-row structured leaks every sibling sub to the semantic judge.
 
+import type { JudgeQuestionRow } from '@/capabilities/practice/server/judge/question-contract';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
-import type { JudgeQuestionRow } from '@/server/ai/judges/question-contract';
 import { describe, expect, it } from 'vitest';
 import { narrowQuestionToPart } from './narrow-part';
 

@@ -21,6 +21,12 @@
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { scheduleReview } from '@/capabilities/practice/server/fsrs';
+import {
+  IMAGE_CONSUMING_JUDGE_ROUTES,
+  createDefaultJudgeInvoker,
+  resolveInvokedExecutionProvenance,
+  resolveQuestionJudgeRoute,
+} from '@/capabilities/practice/server/judge';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
 import { emitMasteryProgressSignal } from '@/capabilities/practice/server/mastery-progress-signal';
 import { newId } from '@/core/ids';
@@ -32,12 +38,6 @@ import type { Db, Tx } from '@/db/client';
 import { answer, event, learning_session } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import {
-  IMAGE_CONSUMING_JUDGE_ROUTES,
-  createDefaultJudgeInvoker,
-  resolveInvokedExecutionProvenance,
-  resolveQuestionJudgeRoute,
-} from '@/kernel/judge';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { checkRateLimit } from '@/server/http/rate-limit';

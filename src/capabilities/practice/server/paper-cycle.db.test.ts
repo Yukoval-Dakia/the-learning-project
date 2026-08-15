@@ -15,6 +15,7 @@
 // Uses the deterministic `exact` judge (true_false question matched against
 // reference_md) — no LLM / runTask mock needed.
 
+import * as invokerModule from '@/capabilities/practice/server/judge/invoker';
 import {
   answer,
   artifact,
@@ -25,7 +26,6 @@ import {
   question,
 } from '@/db/schema';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
-import * as invokerModule from '@/server/judge/invoker';
 import * as masteryStateModule from '@/server/mastery/state';
 import { Review } from '@/server/session';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
