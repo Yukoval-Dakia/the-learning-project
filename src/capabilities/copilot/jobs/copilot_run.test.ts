@@ -114,13 +114,20 @@ function streamMock(
 // 共享装配器 stub — 不打真 DB 的 learner-state / history 机器，返回最小 run input。
 // handler 只把它透传给 stream；装配器自身的 exclude-cursor / byte-parity 由
 // copilot-run-input.db.test.ts 覆盖。ambient 测用 vi.fn spy 断言参数。
-const stubRunInput: RunCopilotRunParams['resolveCopilotRunInputFn'] = async (_db, params) => ({
+const stubRunInput: NonNullable<RunCopilotRunParams['resolveCopilotRunInputFn']> = async (
+  _db,
+  params,
+) => ({
   surface: params.triggeredBy === 'chip' ? 'copilot_user_suggested_mistake_action' : 'copilot',
   triggered_by: params.triggeredBy,
   user_message: params.userMessage,
   ...(params.chipKind ? { chip_kind: params.chipKind } : {}),
   proposal_feedback: [],
   conversation_history: [],
+  correction_contract: {
+    available_prior_turn_ids: [],
+    required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+  },
   ...(params.ambient ? { ambient_context: params.ambient } : {}),
 });
 
