@@ -1,4 +1,5 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { knowledgeCapability } from '../../capabilities/knowledge/manifest';
 import { defineCapability } from '../manifest';
 import {
   createProposalLifecycleRegistry,
@@ -26,6 +27,17 @@ const dismiss: ProposalDismissApplier = async (_db, { proposal }) => ({
 const retract: ProposalRetractApplier = async () => {};
 
 describe('proposal lifecycle registry', () => {
+  it('loads every Knowledge lifecycle operation from its single owner module', () => {
+    const loaderSources = (knowledgeCapability.proposals?.kinds ?? []).flatMap((declaration) =>
+      [declaration.accept, declaration.dismiss, declaration.retract].flatMap((operation) =>
+        operation ? [operation.load.toString()] : [],
+      ),
+    );
+
+    expect(loaderSources).not.toHaveLength(0);
+    expect(loaderSources.every((source) => source.includes('server/proposal-appliers'))).toBe(true);
+  });
+
   it('uses payload as the only proposal identity and discriminates decision options', () => {
     expectTypeOf<ProposalAcceptInput['proposal']>().not.toHaveProperty('kind');
     expectTypeOf<ProposalAcceptInput['proposal']>().not.toHaveProperty('target');
