@@ -21,7 +21,6 @@ import { writeEvent } from '@/kernel/events';
 import { writeRetryableAiFailureLedger } from '@/server/ai/failure-ledger';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import type { FailureAttempt } from '@/server/events/queries';
 import type { Env } from '@/server/memory/client';
 import { writeAiProposal } from '@/server/proposals/writer';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -42,6 +41,7 @@ import {
   markEdgeReconcileApplied,
 } from './edge-reconcile-store';
 import { archiveKnowledgeEdge, createKnowledgeEdge } from './edges';
+import type { FailureAttempt } from './events/failure-attempts';
 import { type TopologyEdge, checkEdgeTopology } from './topology-gate';
 import { loadTreeSnapshot } from './tree';
 

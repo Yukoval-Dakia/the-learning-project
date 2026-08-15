@@ -11,14 +11,14 @@
 import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
 import type { Db } from '@/db/client';
 import { event, knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema';
-import { getMasteryProjection } from '@/server/mastery/state';
-import { and, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
-import { z } from 'zod';
 // P5.1 / YUK-143 — excerpt cap + courtesy defaults sourced from the single
 // budgets.ts source of truth. KNOWLEDGE_EXCERPT_MAX is 180 (byte-unchanged from
 // the prior file-local TEXT_SNIPPET_MAX); the courtesy defaults below are the
 // tools' CURRENT defaults, just named centrally.
-import { KNOWLEDGE_EXCERPT_MAX, TOOL_COURTESY_DEFAULTS } from './budgets';
+import { KNOWLEDGE_EXCERPT_MAX, TOOL_COURTESY_DEFAULTS } from '@/server/ai/tools/budgets';
+import { getMasteryProjection } from '@/server/mastery/state';
+import { and, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';
 
 const TEXT_SNIPPET_MAX = KNOWLEDGE_EXCERPT_MAX;

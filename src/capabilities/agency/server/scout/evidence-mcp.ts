@@ -17,12 +17,12 @@
 //      done by the orchestration layer after the run via persistToolTrace(); a
 //      per-handler write can't correlate to the ai_task_runs row (scout spec §2 (b)).
 
+import { getFailureAttemptById } from '@/capabilities/knowledge/public';
 import { notesForKnowledge } from '@/capabilities/notes/public';
 import { PROBE_RESOLUTION_RULE_VERSION } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event, kc_typed_state, question } from '@/db/schema';
 import { writeToolCallLog } from '@/server/ai/log';
-import { getFailureAttemptById } from '@/server/events/queries';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';

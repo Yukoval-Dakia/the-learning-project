@@ -7,11 +7,11 @@
 // scan, cross-actor dedup, degrade, shadow isolation, and claim idempotency.
 
 import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
+import type { FailureAttempt } from '@/capabilities/knowledge/public';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { WriteEventInput } from '@/kernel/events';
 import { SPAWN_BUDGET_MODE, SPAWN_TOOL_NAME } from '@/server/ai/spawn-contract';
-import type { FailureAttempt } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';

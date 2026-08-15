@@ -27,7 +27,7 @@
 
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
-import { getFailureAttempts } from '@/server/events/queries';
+import { getFailureAttempts } from './attempt-events';
 
 /**
  * The window we scan for a cause-bearing prior failure. Five attempts is

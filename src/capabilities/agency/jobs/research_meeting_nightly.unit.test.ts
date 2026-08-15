@@ -15,10 +15,13 @@ import {
   type InduceConjectureInput,
   type InduceConjectureResult,
 } from '@/capabilities/agency/server/conjecture/induce';
+import type {
+  FailureAttempt,
+  FailureAttemptWithReasoningTrace,
+} from '@/capabilities/knowledge/public';
 import type { WriteEventInput } from '@/kernel/events';
 import { classifyJobYield } from '@/server/boss/job-yield';
 import type { PredictionAccountability } from '@/server/conjectures/accountability';
-import type { FailureAttempt, FailureAttemptWithReasoningTrace } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';

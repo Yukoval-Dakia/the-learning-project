@@ -64,6 +64,10 @@ import {
   applyConjectureHistoryGate,
   loadConjectureHistory,
 } from '@/capabilities/agency/server/conjecture/history';
+import {
+  type FailureAttempt,
+  getFailureAttemptsWithReasoningTrace,
+} from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event, source_asset } from '@/db/schema';
@@ -71,7 +75,6 @@ import { defaultImageFetch } from '@/server/ai/judges/steps-judge';
 import { type TaskTextRunFn, costUsdToMicroUsd, sumAllKnownCostUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
-import { type FailureAttempt, getFailureAttemptsWithReasoningTrace } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';

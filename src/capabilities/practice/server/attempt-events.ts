@@ -3,9 +3,12 @@ export {
   effectiveCauseCategoryForFailureAttempt,
   effectiveCauseForFailureAttempt,
 } from '@/server/events/cause-policy';
+// YUK-876 — the failure-attempt read models are knowledge-owned now; this
+// capability-local contract re-publishes them through the sanctioned seam.
 export {
+  type FailureAttempt,
   getFailureAttemptById,
   getFailureAttemptWithReasoningTraceById,
   getFailureAttempts,
   getJudgeForAttempt,
-} from '@/server/events/queries';
+} from '@/capabilities/knowledge/public';

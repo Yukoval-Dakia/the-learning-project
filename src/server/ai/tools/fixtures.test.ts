@@ -28,6 +28,11 @@
 // (F-7 / AC-7). The pure-logic helper checks are FOLDED in here (M7), so there
 // is NO separate fixtures-assert.test.ts and NO vitest.shared.ts edit.
 
+import {
+  expandKnowledgeSubgraphTool,
+  queryKnowledgeTool,
+} from '@/capabilities/knowledge/server/tools/knowledge-readers';
+import { proposeKnowledgeEdgeTool } from '@/capabilities/knowledge/server/tools/proposal-tools';
 import { attributeMistakeTool } from '@/capabilities/practice/tools/attribute-mistake';
 import { proposeVariantTool } from '@/capabilities/practice/tools/propose-variant';
 import {
@@ -46,8 +51,7 @@ import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed
 import { getLearningItemContextTool } from './context-readers';
 import { assertAgentReadable, assertCostLabel, resolvePath } from './fixtures-assert';
 import { getAttemptContextTool } from './get-attempt-context';
-import { expandKnowledgeSubgraphTool, queryKnowledgeTool } from './knowledge-readers';
-import { proposeKnowledgeEdgeTool, proposeLearningItemCompletionTool } from './proposal-tools';
+import { proposeLearningItemCompletionTool } from './proposal-tools';
 import { queryMistakesTool } from './query-mistakes';
 import type { DomainTool, ToolContext } from './types';
 

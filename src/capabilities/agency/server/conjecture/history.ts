@@ -3,6 +3,7 @@ import {
   type EffectiveProbeResultStatus,
   getEffectiveProbeResultStatuses,
 } from '@/capabilities/agency/server/conjecture/probe-evidence';
+import type { FailureAttempt } from '@/capabilities/knowledge/public';
 import {
   PROBE_NON_EVIDENCE_RESOLUTION,
   PROBE_RESULT_ACTION,
@@ -13,7 +14,6 @@ import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { type CorrectionStatus, getCorrectionStatuses } from '@/kernel/events';
-import type { FailureAttempt } from '@/server/events/queries';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
 export const CONJECTURE_DISMISS_COOLDOWN_DAYS = 30;

@@ -114,10 +114,13 @@ Question (统一题库，single source of truth)
 > 实现附录见 `docs/superpowers/plans/2026-08-08-practice-failure-learning-implementation.md`。
 
 架构债由 `pnpm audit:capability-boundaries` 递减约束。基线单位是去重后的
-`(source file, resolved target module)`：capability → server 520、server → capability deep
-63、cross-capability value 65；后者目前包含一个由 agency/ingestion/knowledge/notes/practice
+`(source file, resolved target module)`：capability → server 513、server → capability deep
+45、cross-capability value 71；后者目前包含一个由 agency/ingestion/knowledge/notes/practice
 组成的非平凡 SCC。任何下降必须在同一变更收紧
 `scripts/capability-boundary-baseline.json`，不能留下回涨额度。
+（YUK-876 / FULL F3.7b：Knowledge 的 graph reader、edge/mutation propose 工具与
+FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
+`knowledge-readers.ts` 删除；跨包消费改走 `knowledge/public.ts`。）
 
 ### 5.1 Task 注册
 

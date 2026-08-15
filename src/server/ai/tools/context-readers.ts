@@ -4,6 +4,7 @@
 // items, and Dreaming-maintained memory briefs.
 
 import { bodyBlockSummaries, excerpt, knowledgeContext } from '@/capabilities/ingestion/public';
+import { getFailureAttempts } from '@/capabilities/knowledge/public';
 import { AddressableStructureSchema } from '@/core/schema/addressable-structure';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
@@ -28,11 +29,7 @@ import {
   question,
 } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import {
-  getFailureAttempts,
-  getQuestionTimeline,
-  getRecentReviewEvents,
-} from '@/server/events/queries';
+import { getQuestionTimeline, getRecentReviewEvents } from '@/server/events/queries';
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';

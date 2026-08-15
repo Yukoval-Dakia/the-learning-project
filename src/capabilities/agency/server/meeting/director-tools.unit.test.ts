@@ -6,8 +6,8 @@
 
 import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
 import type { WriteAgentNoteInput } from '@/capabilities/agency/server/notes';
+import type { FailureAttempt } from '@/capabilities/knowledge/public';
 import { activeEffectiveTruth } from '@/capabilities/practice/server/effective-truth';
-import type { FailureAttempt } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';

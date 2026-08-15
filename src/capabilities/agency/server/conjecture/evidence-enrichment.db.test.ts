@@ -16,10 +16,10 @@ import {
   CONJECTURE_EVIDENCE_CHOICES_PER_FIELD,
   enrichEvidenceCells,
 } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
+import { getFailureAttemptsWithReasoningTrace } from '@/capabilities/knowledge/public';
 import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
 import type { FigureRefT } from '@/core/schema/structured_question';
 import { event, knowledge, question } from '@/db/schema';
-import { getFailureAttemptsWithReasoningTrace } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

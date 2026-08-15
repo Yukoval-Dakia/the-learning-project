@@ -29,8 +29,8 @@ import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
-import { getFailureAttempts } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { getFailureAttempts } from '../server/events/failure-attempts';
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;

@@ -53,6 +53,7 @@ import {
 import type { ToolTraceEntry } from '@/capabilities/agency/server/scout/evidence-mcp';
 import { createFindingsCapture } from '@/capabilities/agency/server/scout/report-findings';
 import { buildEvidenceScoutAgentDefinition } from '@/capabilities/agency/server/scout/scout-agent';
+import { type FailureAttempt, getFailureAttempts } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
@@ -60,7 +61,6 @@ import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import { SPAWN_BUDGET_MODE, createSpawnContract } from '@/server/ai/spawn-contract';
-import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';

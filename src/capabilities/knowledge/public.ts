@@ -1,4 +1,7 @@
 // Stable server contract for consumers outside the knowledge capability.
+//
+// YUK-876 / FULL F3.7b — the failure-attempt evidence + attribution read models
+// (moved from src/server/events/queries.ts) are part of this contract.
 export {
   batchResolveEffectiveDomains,
   getEffectiveDomain,
@@ -53,3 +56,18 @@ export {
   batchResolveSubjectIds,
   resolveSubjectRenderNotation,
 } from './server/subject-resolution';
+
+export {
+  getFailureAttemptById,
+  getFailureAttemptWithReasoningTraceById,
+  getFailureAttemptsWithReasoningTrace,
+  getFailureAttempts,
+  getJudgeForAttempt,
+} from './server/events/failure-attempts';
+export type {
+  FailureAttempt,
+  FailureAttemptJudge,
+  FailureAttemptUserCause,
+  FailureAttemptWithReasoningTrace,
+  GetFailureAttemptsOpts,
+} from './server/events/failure-attempts';
