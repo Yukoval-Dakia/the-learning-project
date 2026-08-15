@@ -331,19 +331,17 @@ export const knowledgeCapability = defineCapability({
         kind: 'knowledge_node',
         accept: {
           load: () =>
-            import('./server/proposal-accept-applier').then(
-              (m) => m.knowledgeNodeProposalAcceptApplier,
-            ),
+            import('./server/proposal-appliers').then((m) => m.knowledgeNodeProposalAcceptApplier),
         },
         dismiss: {
           load: () =>
-            import('./server/proposal-accept-applier').then(
+            import('./server/proposal-appliers').then(
               (module) => module.knowledgeNodeProposalDismissApplier,
             ),
         },
         retract: {
           load: () =>
-            import('./server/proposal-accept-applier').then(
+            import('./server/proposal-appliers').then(
               (module) => module.knowledgeNodeProposalRetractApplier,
             ),
         },
@@ -352,7 +350,7 @@ export const knowledgeCapability = defineCapability({
         kind: 'knowledge_mutation',
         accept: {
           load: () =>
-            import('./server/proposal-accept-applier').then(
+            import('./server/proposal-appliers').then(
               (m) => m.knowledgeMutationProposalAcceptApplier,
             ),
         },
@@ -361,13 +359,13 @@ export const knowledgeCapability = defineCapability({
         kind: 'knowledge_edge',
         accept: {
           load: () =>
-            import('./server/edge-proposal-accept').then(
+            import('./server/proposal-appliers').then(
               (module) => module.knowledgeEdgeProposalAcceptApplier,
             ),
         },
         dismiss: {
           load: () =>
-            import('./server/proposal-accept-applier').then(
+            import('./server/proposal-appliers').then(
               (module) => module.knowledgeEdgeProposalDismissApplier,
             ),
         },
