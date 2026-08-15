@@ -28,6 +28,8 @@
 // (F-7 / AC-7). The pure-logic helper checks are FOLDED in here (M7), so there
 // is NO separate fixtures-assert.test.ts and NO vitest.shared.ts edit.
 
+import { getLearningItemContextTool } from '@/capabilities/agency/server/tools/learning-item-context';
+import { proposeLearningItemCompletionTool } from '@/capabilities/agency/server/tools/proposal-tools';
 import {
   expandKnowledgeSubgraphTool,
   queryKnowledgeTool,
@@ -48,10 +50,8 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';
-import { getLearningItemContextTool } from './context-readers';
 import { assertAgentReadable, assertCostLabel, resolvePath } from './fixtures-assert';
 import { getAttemptContextTool } from './get-attempt-context';
-import { proposeLearningItemCompletionTool } from './proposal-tools';
 import { queryMistakesTool } from './query-mistakes';
 import type { DomainTool, ToolContext } from './types';
 
