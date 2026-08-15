@@ -1,36 +1,35 @@
-# 当前 handoff — 2026-08-10 YUK-860 closeout / YUK-862 handoff
+# 当前 handoff — 2026-08-16 ticket 归零 + 可用性打磨 启动
 
 ## NOW
 
-- Base/main 为 YUK-860 merge `ce082f54e6e887a3d1627f1badbd733996a23135`；未部署。
-- YUK-858 exact-head CI
-  `31362608190` green，未部署。Mem0 exact event lookup、
-  lookup-before-add、opaque operation-kind provider-start fence、post-reserve event v1 add marker、
-  completion/intents/dispatch completion、exact deterministic pg-boss UUID/readback、append-only
-  recovery cursor、strict 四模式和 bounded wrap hourly recovery 第二 leg。
-- 没有新表、migration、generic handoff core 或 cron；Memory handoff event 均设置 `ingest_at`，
-  避免重新进入 Memory ingest。
-- YUK-861 NO-GO docs 已随 squash `f84fe3bc` 合并 main：Verify transactional outbox、Notes post-commit singleton/readback、Memory batch
-  digest/cursor/fail-closed receipt 不构成一个可经济抽取的 shared protocol；callback workflow shell
-  明确拒绝，协议保持 owner-local（ADR-0052）；Linear 已取消为 not justified。
-- YUK-860 已随 PR #1177 squash `ce082f54` 合并 main；exact-head CI `31371088396`
-  attempt 2 green，correctness / test / quality / final gate 均通过。`sdk-terminal.ts` 统一 SDK
-  assistant usage/thinking 累加与 result terminal evidence；caller policy 未改变。本地 runtime gates
-  未运行，未部署。
-- 生产边界不变：YUK-832 HOLD；YUK-842 production observe。
+- main 在 `f51c206b`（YUK-892 tool failure visibility；架构深化经 F4.1 `62e34a72` 收官，
+  F3.2 组合根 #1202 与 YUK-863 #1183 均已合并）。PLAN.md 已按 8-16 现实重写。
+- owner 指令（2026-08-16）：功能定义 OK；推进 Linear ticket 归零（口径：可操作票归零，
+  战略票出砍/留清单拍板）+ 可用性实际打磨。范围：Track 0 清场 + A1 工程票 + Track B 走查。
+- 本 session 已完成：
+  - 主工作树从陈旧 YUK-812 分支（错位：HEAD 在 main 上）恢复到 main@`f51c206b` 干净态；
+    PLAN.md / .remember/now.md 的冲突标记垃圾块已用 HEAD 干净版覆盖。
+  - dependabot 6 清零：#1184 / #1179 / #1091 合并；#1180 / #1096 / #1094 关闭。
+  - #1182（YUK-457）与 #1137（YUK-813）各起 review-work 五 lane 闸（10 个后台 lane），
+    verdict 待收。
+- 陈旧 worktree 注册（4 detached + yuk-825-closeout）本 session 已不在 `git worktree list`
+  中；仅剩 yuk-822（14 个未合并 YUK-792 提交 + 脏文件，保留待 owner 处置）。
 
 ## NEXT
 
-1. F3.1 / YUK-862 是下一实现 lane（当前 Todo）；从 `ce082f54` 刷新 DomainTool registry / MCP
-   bridge 路径与既有 schema checks，再开始 output-schema enforcement，不夹带 owner migration。
-2. YUK-858 rollout 另行授权，顺序 `observe -> write -> recover`；rollback `recover -> drain -> observe`。
-3. generic core 只有 ADR-0052 Future reopen gates 全满足才可重开；继续执行 Linear capture gate。
+1. 收 #1182 / #1137 五 lane verdict → 全 PASS 则合并并关票；任一 FAIL 则修复后重审。
+2. A1-批1：YUK-845 收尾（先查 08-15 为何从 In Review 退回 Todo）+ Copilot P1
+   YUK-833/834/835/836 各起隔离 lane。
+3. Track B 本地走查（做题/Copilot/笔记/录入/图谱）+ friction 当场立案；A3 战略票清单。
+4. review worktree /tmp/review-pr1182 与 /tmp/review-pr1137 用毕清理。
 
 ## PARKED
 
-- YUK-832 HOLD、YUK-842 observe 与生产未部署均不变。
-- F2.3 / YUK-861 已 NO-GO；F2.5 与 F3.2–F4 保持 open。
+- YUK-832 HOLD / YUK-842 observe / 生产未部署：不变。
+- yuk-822 worktree 处置待 owner。
 
 ## BLOCKED-ON
 
-- Production：无部署授权或真实观察证据。
+- YUK-846 凭据轮换（Urgent，只能 owner 在控制台人工）+ YUK-571/856/887/859/414/320/838
+  人工闸（清单见 PLAN.md）。
+- Production 部署授权（不变）。
