@@ -5,6 +5,13 @@ export {
 } from './server/goals/queries';
 export type { ActiveGoal } from './server/goals/queries';
 export { readAgentNotes, writeAgentNote } from './server/notes';
+export { induceConjecture } from './server/conjecture/induce';
+export { BriefDraftOutputSchema, parseBriefDraftOutput } from './tasks/memory-brief';
+export type { BriefDraftOutput } from './tasks/memory-brief';
+export type {
+  InduceConjectureInput,
+  InduceConjectureResult,
+} from './server/conjecture/induce';
 export type { ConjectureAcceptResult } from './server/conjecture-accept';
 export type { GoalScopeAcceptResult } from './server/goals/accept';
 export {

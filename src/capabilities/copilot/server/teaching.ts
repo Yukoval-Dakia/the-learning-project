@@ -9,90 +9,41 @@
 //   - turn kinds: 'explain' | 'ask_check' | 'end'
 //   - no tool calls; ask_check may carry one structured question for the route to persist
 //   - reuses experimental:teach_message event shape
+//
+// YUK-878 — moved from src/server/orchestrator/teaching.ts into the copilot
+// capability. The turn schemas, TeachingError, and parseTurnOutput now live in
+// tasks/teaching-turn.ts (the TeachingTurnTask owner); this module keeps the
+// DB context loaders + the single-turn orchestration and re-exports the parse
+// surface so existing importers keep one entrypoint.
 
 import { asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
-import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
-import { JudgeKind, QuestionKind, Rubric } from '@/core/schema/business';
+import { bodyBlocksToNoteSections } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge, learning_item } from '@/db/schema';
-import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import {
+  TeachingError,
+  type TeachingStructuredQuestionT,
+  type TeachingTurnOutputT,
+  parseTurnOutput,
+} from '../tasks/teaching-turn';
+
+export {
+  TeachingError,
+  parseTurnOutput,
+  type TeachingStructuredQuestionT,
+  type TeachingTurnOutputT,
+  type TurnKindT,
+} from '../tasks/teaching-turn';
 
 // ---------- Schemas ----------
-
-const TurnKind = z.enum(['explain', 'ask_check', 'end']);
-export type TurnKindT = z.infer<typeof TurnKind>;
-
-// Question kinds that imply choices_md must be present.
-// When the LLM sends choices_md as a string (instead of array) and we cannot
-// coerce it, we downgrade these kinds to 'short_answer' to keep the object
-// semantically self-consistent (no choices → not a choice question).
-const CHOICE_BEARING_KINDS = new Set<string>(['choice', 'true_false']);
-
-// Coerce LLM-emitted choices_md from string → string[] when possible.
-// Returns the original value (array / null / undefined) when no coercion needed.
-// Returns null when the string cannot be parsed as a string array.
-function coerceChoicesMd(raw: unknown): string[] | null | undefined {
-  if (raw === null || raw === undefined || Array.isArray(raw))
-    return raw as string[] | null | undefined;
-  if (typeof raw !== 'string') return null; // unexpected type → null (graceful)
-  // Model sometimes stringifies the array: '["A. foo","B. bar"]'
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.every((x) => typeof x === 'string')) {
-      return parsed as string[];
-    }
-  } catch {
-    // fall through
-  }
-  // Cannot recover a string[]; caller will downgrade kind if needed.
-  return null;
-}
-
-const TeachingStructuredQuestion = z
-  .object({
-    kind: QuestionKind,
-    prompt_md: z.string().min(1).max(4000).optional(),
-    reference_md: z.string().min(1).max(4000),
-    choices_md: z.preprocess(coerceChoicesMd, z.array(z.string().min(1)).nullable().optional()),
-    judge_kind_override: JudgeKind.nullish(),
-    rubric_json: Rubric.nullish(),
-  })
-  .transform((q) => {
-    // If choices_md ended up null/undefined and the kind implies choices are
-    // required, downgrade to short_answer so downstream code stays consistent.
-    if ((q.choices_md === null || q.choices_md === undefined) && CHOICE_BEARING_KINDS.has(q.kind)) {
-      console.warn(
-        `[TeachingStructuredQuestion] choices_md missing/uncoercible for kind=${q.kind}; downgrading to short_answer`,
-      );
-      return { ...q, kind: 'short_answer' as const };
-    }
-    return q;
-  });
-export type TeachingStructuredQuestionT = z.infer<typeof TeachingStructuredQuestion>;
-
-const TeachingTurnBase = {
-  text_md: z.string().min(1).max(2000),
-  suggested_next: z.enum(['continue', 'end']),
-};
-
-const TeachingTurnOutput = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('explain'), ...TeachingTurnBase }),
-  z.object({
-    kind: z.literal('ask_check'),
-    ...TeachingTurnBase,
-    structured_question: TeachingStructuredQuestion,
-  }),
-  z.object({ kind: z.literal('end'), ...TeachingTurnBase }),
-]);
-export type TeachingTurnOutputT = z.infer<typeof TeachingTurnOutput>;
 
 const MessageInput = z.object({
   role: z.enum(['agent', 'user']),
   text_md: z.string(),
-  turn_kind: TurnKind.nullish(),
+  turn_kind: z.enum(['explain', 'ask_check', 'end']).nullish(),
 });
 
 // ---------- Public types ----------
@@ -106,56 +57,7 @@ export interface PlanTeachingTurnParams {
   runTaskFn: RunTaskFn;
 }
 
-export class TeachingError extends Error {
-  constructor(
-    public code: 'learning_item_not_found' | 'llm_parse_failed',
-    message: string,
-  ) {
-    super(message);
-    this.name = 'TeachingError';
-  }
-}
-
 // ---------- Helpers ----------
-
-// AF S4 / YUK-203 U6 — exported (was private) so the Copilot teaching-skill
-// parses the TeachingTurnTask structured JSON with the SAME defensive parser as
-// the legacy route (single contract for ask_check/explain/end + structured_question).
-export function parseTurnOutput(text: string): TeachingTurnOutputT {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new TeachingError('llm_parse_failed', 'TeachingTurnTask output had no JSON object');
-  }
-  let raw: unknown;
-  const slice = text.slice(start, end + 1);
-  try {
-    raw = JSON.parse(slice);
-  } catch (firstErr) {
-    // Fallback: LLM may embed bare control characters inside string literals.
-    // Sanitize and retry once before giving up.
-    try {
-      const sanitized = sanitizeJsonStringLiterals(slice);
-      console.warn(
-        `[TeachingTurnTask] JSON.parse failed (${(firstErr as Error).message}); retrying after control-char sanitization`,
-      );
-      raw = JSON.parse(sanitized);
-    } catch {
-      throw new TeachingError(
-        'llm_parse_failed',
-        `TeachingTurnTask output JSON.parse failed: ${(firstErr as Error).message}`,
-      );
-    }
-  }
-  const parsed = TeachingTurnOutput.safeParse(raw);
-  if (!parsed.success) {
-    throw new TeachingError(
-      'llm_parse_failed',
-      `TeachingTurnTask output schema mismatch: ${parsed.error.message}`,
-    );
-  }
-  return parsed.data;
-}
 
 // AF S4 / YUK-203 U6 — exported (was private) so the Copilot teaching-skill
 // (src/capabilities/copilot/server/skills/teaching-skill.ts) reuses the SINGLE impl rather

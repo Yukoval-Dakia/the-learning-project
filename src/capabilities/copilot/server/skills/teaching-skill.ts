@@ -31,7 +31,7 @@ import {
   type TeachingTurnOutputT,
   loadTeachingContext,
   parseTurnOutput,
-} from '@/server/orchestrator/teaching';
+} from '../teaching';
 
 // Same injectable runner seam the orchestrator uses (kind, input, ctx) → { text }.
 // Defaults to runAgentTask; unit tests inject a fixture so the {}-stub db is

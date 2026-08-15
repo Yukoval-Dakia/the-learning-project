@@ -21,6 +21,7 @@ import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import {
   type BacklinksByArtifactType,
+  getArtifactCorrectionStates,
   groupBacklinksByArtifactType,
   listBacklinks,
   resolveOwningLearningItemIds,
@@ -34,7 +35,6 @@ import { retrievabilityForKc } from '@/capabilities/practice/public';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
-import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
 import { getFsrsStatesByIds } from '@/server/fsrs/state';
 import { getMasteryProjection, getRepresentativeKcBeta } from '@/server/mastery/state';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';

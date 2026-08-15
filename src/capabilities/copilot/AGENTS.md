@@ -12,7 +12,8 @@
 | `api/copilot-summary.ts` | `/api/today/copilot-summary` 今日摘要 |
 | `api/accept-chip.ts` | `/api/teaching-sessions/[id]/accept-chip` 教学 chip 接受 |
 | `api/nudges.ts` | 主动 nudge 列表与 dismiss/opened 幂等处置 |
-| `server/` | chat 编排、turns 读取、summary、stream helpers |
+| `server/` | chat 编排、turns 读取、summary、stream helpers、teaching 编排（`server/teaching.ts`，YUK-878 自 orchestrator 迁入） |
+| `tasks/` + `contracts.ts` | Copilot 自有五个 TaskSpec（dispatch / evidence×2 / agent / teaching-turn）与四条 evidence/dispatch schema（YUK-878） |
 | `ui/CopilotDock.tsx` | 全局 Copilot 抽屉（壳层在 `web/src/router.tsx` 根挂） |
 
 ## CONVENTIONS

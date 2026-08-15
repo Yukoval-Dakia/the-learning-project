@@ -1,4 +1,4 @@
-import type { InduceConjectureResult } from '@/server/agency/conjecture/induce';
+import type { InduceConjectureResult } from '@/capabilities/agency/public';
 import {
   buildGroundingReviewArtifacts,
   createGroundingCanaryTemplate,

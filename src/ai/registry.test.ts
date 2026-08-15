@@ -13,6 +13,11 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
+  CopilotDispatchDecisionSchema,
+  CopilotEvidenceReviewOutputSchema,
+  CopilotEvidenceVerificationOutputSchema,
+} from '@/capabilities/copilot/contracts';
+import {
   attributionRerankTaskSpec,
   attributionTaskSpec,
 } from '@/capabilities/practice/tasks/attribution';
@@ -28,14 +33,7 @@ import {
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
 import promptHashOracle from './fixtures/task-prompt-hashes.6b3233b1.json' with { type: 'json' };
-import {
-  CopilotDispatchDecisionSchema,
-  CopilotEvidenceReviewOutputSchema,
-  CopilotEvidenceVerificationOutputSchema,
-  type TaskDef,
-  type TaskKind,
-  tasks,
-} from './registry';
+import { type TaskDef, type TaskKind, tasks } from './registry';
 import { taskCatalog } from './task-catalog';
 import { getTaskSystemPrompt } from './task-prompts';
 

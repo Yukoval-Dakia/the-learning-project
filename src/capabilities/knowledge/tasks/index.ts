@@ -16,17 +16,5 @@ export const knowledgeTaskSpecs = defineOwnedTaskSpecs('knowledge', {
   KnowledgeEdgeProposeTask: knowledgeEdgeProposeTaskSpec,
   FrontierPrerequisiteTask: frontierPrerequisiteTaskSpec,
   SessionSummaryTask: defineTransitionalTask(legacyTaskDefinitions.SessionSummaryTask),
-  LearningIntentOutlineTask: defineTransitionalTask(
-    legacyTaskDefinitions.LearningIntentOutlineTask,
-  ),
   KnowledgeReviewTask: knowledgeReviewTaskSpec,
-  GoalScopeTask: defineTransitionalTask(legacyTaskDefinitions.GoalScopeTask),
-  MindModelInductionTask: defineTransitionalTask(legacyTaskDefinitions.MindModelInductionTask),
-  ConjectureGroupingTask: defineTransitionalTask(legacyTaskDefinitions.ConjectureGroupingTask),
-  ConjectureProbeAuthorTask: defineTransitionalTask(
-    legacyTaskDefinitions.ConjectureProbeAuthorTask,
-  ),
-  ConjectureProbeReviewTask: defineTransitionalTask(
-    legacyTaskDefinitions.ConjectureProbeReviewTask,
-  ),
 });

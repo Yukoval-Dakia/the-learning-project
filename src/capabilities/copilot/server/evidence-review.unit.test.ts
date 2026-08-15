@@ -1,8 +1,4 @@
 import {
-  CopilotEvidenceReviewOutputSchema,
-  CopilotEvidenceVerificationOutputSchema,
-} from '@/ai/registry';
-import {
   COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS,
   COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS,
   COPILOT_EVIDENCE_SUBMISSION_SERVER_NAME,
@@ -14,6 +10,10 @@ import { getAttemptContextTool } from '@/server/ai/tools/get-attempt-context';
 import { queryKnowledgeTool } from '@/server/ai/tools/knowledge-readers';
 import { queryEventsTool } from '@/server/ai/tools/query-events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  CopilotEvidenceReviewOutputSchema,
+  CopilotEvidenceVerificationOutputSchema,
+} from '../contracts';
 import {
   bindCopilotEvidenceComparison,
   bindCopilotEvidenceReference,
