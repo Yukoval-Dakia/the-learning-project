@@ -14,7 +14,12 @@ class MockPgBoss {
   on = vi.fn();
   once = vi.fn();
   work = vi.fn(async () => undefined);
-  send = vi.fn(async () => undefined);
+
+  // Prototype method (not a class field) so tests can vi.spyOn the prototype
+  // and intercept sends made against instances created inside startBossWorker.
+  send(..._args: unknown[]): Promise<undefined> {
+    return Promise.resolve(undefined);
+  }
 }
 
 vi.mock('pg-boss', () => ({ PgBoss: MockPgBoss, default: MockPgBoss }));
@@ -70,5 +75,44 @@ describe('startBossWorker marks the running boss (YUK-384 wake activation)', () 
     const viaGetter = await getStartedBoss();
     expect(viaGetter).toBe(boss);
     expect(boss.start).toHaveBeenCalledTimes(1); // NOT re-started
+  });
+
+  // YUK-891 — the verify-dispatch startup trigger must fire only AFTER capability
+  // registration created the quiz_verify/source_verify queues. Pre-fix the send
+  // lived at the end of registerHandlers (which runs first), so the already-polling
+  // verify_dispatch_recover worker could execute the recovery before those queues
+  // existed and the first boss.send into them threw pg-boss's missing-queue error.
+  it('YUK-891: fires verify-dispatch startup recovery only after registerCapabilityJobs resolves', async () => {
+    const order: string[] = [];
+    const { registerCapabilityJobs } = await import('@/server/boss/register-capability-jobs');
+    vi.mocked(registerCapabilityJobs).mockImplementation(async () => {
+      // Resolve asynchronously so the test can prove the trigger is not merely
+      // initiated after registration STARTS, but strictly after it resolves.
+      await Promise.resolve();
+      order.push('capability-jobs-resolved');
+    });
+    const sendSpy = vi.spyOn(MockPgBoss.prototype, 'send').mockImplementation(async () => {
+      order.push('startup-recovery-send');
+      return undefined;
+    });
+
+    const { startBossWorker } = await import('./start-worker');
+    const { _resetBossForTests } = await import('./client');
+    _resetBossForTests();
+    await startBossWorker({} as never);
+
+    expect(order.indexOf('capability-jobs-resolved')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('capability-jobs-resolved')).toBeLessThan(
+      order.indexOf('startup-recovery-send'),
+    );
+    // The trigger keeps its exact contract: recovery queue, startup payload, singleton key.
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy).toHaveBeenCalledWith(
+      'verify_dispatch_recover',
+      { trigger: 'startup' },
+      { singletonKey: 'verify-dispatch-startup' },
+    );
+
+    sendSpy.mockRestore();
   });
 });
