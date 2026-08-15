@@ -5,11 +5,10 @@
     "capabilityToServer": {
       "total": 550,
       "byOwnerPair": {
-        "agency -> agency": 7,
-        "agency -> ai": 29,
+        "agency -> ai": 35,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
-        "agency -> events": 4,
+        "agency -> events": 5,
         "agency -> http": 2,
         "agency -> learning-items": 1,
         "agency -> mastery": 3,
@@ -94,10 +93,8 @@
       }
     },
     "serverToCapabilityDeep": {
-      "total": 44,
+      "total": 40,
       "byOwnerPair": {
-        "agency -> agency": 3,
-        "agency -> notes": 1,
         "ai -> knowledge": 8,
         "ai -> practice": 3,
         "artifacts -> notes": 3,
@@ -118,10 +115,10 @@
       }
     },
     "crossCapabilityValue": {
-      "total": 68,
+      "total": 69,
       "byOwnerPair": {
         "agency -> knowledge": 8,
-        "agency -> notes": 1,
+        "agency -> notes": 2,
         "agency -> practice": 4,
         "copilot -> agency": 1,
         "copilot -> knowledge": 1,
@@ -146,7 +143,15 @@
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },
-      "nontrivialSccs": [["agency", "ingestion", "knowledge", "notes", "practice"]]
+      "nontrivialSccs": [
+        [
+          "agency",
+          "ingestion",
+          "knowledge",
+          "notes",
+          "practice"
+        ]
+      ]
     }
   }
 }

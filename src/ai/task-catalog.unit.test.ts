@@ -365,6 +365,59 @@ describe('taskCatalog', () => {
     }
   });
 
+
+  it('owns the thirteen agency TaskSpecs without quarry definitions', () => {
+    expect(Object.keys(agencyTaskSpecs).sort()).toEqual(
+      [
+        'LearningIntentOutlineTask',
+        'GoalScopeTask',
+        'MindModelInductionTask',
+        'ConjectureGroupingTask',
+        'ConjectureProbeAuthorTask',
+        'ConjectureProbeReviewTask',
+        'InterventionRecommendationTask',
+        'InterventionPackageAuthorTask',
+        'InterventionPackageReviewTask',
+        'ResearchMeetingDirectorTask',
+        'DreamingTask',
+        'CoachTask',
+        'MemoryBriefTask',
+      ].sort(),
+    );
+    for (const [kind, entry] of Object.entries(agencyTaskSpecs)) {
+      expect(entry.ownership, kind).toBe('owned');
+      expect(entry.definition, kind).toBe(taskCatalog[kind as keyof typeof taskCatalog]);
+      expect('parseText' in entry, kind).toBe(true);
+      expect('outputSchema' in entry, kind).toBe(true);
+    }
+    for (const kind of [
+      'LearningIntentOutlineTask',
+      'GoalScopeTask',
+      'MindModelInductionTask',
+      'ConjectureGroupingTask',
+      'ConjectureProbeAuthorTask',
+      'ConjectureProbeReviewTask',
+    ] as const) {
+      expect(Object.hasOwn(knowledgeTaskSpecs, kind), kind).toBe(false);
+    }
+
+    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
+    for (const kind of Object.keys(agencyTaskSpecs)) {
+      expect(source, kind).not.toMatch(new RegExp(`^  ${kind}:`, 'm'));
+    }
+    for (const builder of [
+      'buildLearningIntentOutlinePrompt',
+      'buildGoalScopePrompt',
+      'buildMindModelInductionPrompt',
+      'buildConjectureProbeAuthorPrompt',
+      'buildConjectureProbeReviewPrompt',
+      'buildInterventionPackageAuthorPrompt',
+      'buildInterventionPackageReviewPrompt',
+    ]) {
+      expect(source, builder).not.toContain(`function ${builder}`);
+    }
+  });
+
   it('owns the seven Practice sourcing and generation TaskSpecs without quarry definitions', () => {
     const kinds = [
       'SolutionGenerateTask',

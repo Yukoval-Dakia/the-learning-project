@@ -28,10 +28,6 @@
 // `discriminating=true` now means the package passed structural and independent semantic
 // review rather than being a self-asserted induction field.
 
-import type {
-  EnrichedEvidenceCell,
-  LoadedConjectureEvidenceImage,
-} from '@/capabilities/agency/server/conjecture/evidence';
 import {
   CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH,
   type ConjectureAbstainDraftT,
@@ -51,6 +47,7 @@ import {
 } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
+import type { EnrichedEvidenceCell, LoadedConjectureEvidenceImage } from './evidence';
 import {
   ConjectureProbeQualityOperationalError,
   type ConjectureProbeQualityTaskKind,

@@ -42,7 +42,7 @@ import {
   type EvidenceCell,
   effectiveCauseForConjectureFailure,
 } from '@/capabilities/agency/server/conjecture/evidence';
-import { UNTRUSTED_TEXT_CHAR_CAP, wrapTruncatedLearnerText } from '@/kernel/untrusted-text';
+import { UNTRUSTED_TEXT_CHAR_CAP, wrapTruncatedLearnerText } from '../scout/untrusted-text';
 
 type DbLike = Db | Tx;
 

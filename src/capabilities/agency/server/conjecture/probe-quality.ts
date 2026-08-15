@@ -1,4 +1,3 @@
-import type { LoadedConjectureEvidenceImage } from '@/capabilities/agency/server/conjecture/evidence';
 import {
   type ConjectureHypothesisProposalDraftT,
   ConjectureProbePackageV2,
@@ -16,6 +15,7 @@ import {
 } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
+import type { LoadedConjectureEvidenceImage } from './evidence';
 import { parseTaskStructuredOutput } from './structured-output';
 
 export type ConjectureProbeQualityTaskKind =

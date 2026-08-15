@@ -304,7 +304,7 @@ export const fastTestInclude = [
   // The companion accountability.db.test.ts exercises the traceable DB reader and
   // intentionally remains in the DB partition.
   'src/server/conjectures/accountability.unit.test.ts',
-  'src/server/agency/conjecture/**/*.test.ts',
+  'src/capabilities/agency/server/conjecture/induce.test.ts',
   // YUK-814 — pure artifact schemas, deterministic sampling, blind/canary scoring.
   // The sibling candidates.db.test.ts restores the real correction/lifecycle reader chain
   // and intentionally falls through to the DB partition.
@@ -316,7 +316,7 @@ export const fastTestInclude = [
   // src/**/*.test.ts and falls through to the db partition, NOT this fast allowlist. The
   // P0 partition guard still applies: any scout *.unit.test.ts that imports DB unmocked
   // fails audit:partition.
-  'src/server/agency/scout/**/*.unit.test.ts',
+  'src/capabilities/agency/server/scout/**/*.unit.test.ts',
   // src/server/export — the no-DB units (constants / csv / readme) run fast. The
   // wholesale `src/server/export/**/*.test.ts` glob was narrowed to plain
   // `*.test.ts` so the ②d reverse-lockstep test (reverse_lockstep.db.test.ts —

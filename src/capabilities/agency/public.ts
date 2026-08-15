@@ -5,6 +5,11 @@ export {
 } from './server/goals/queries';
 export type { ActiveGoal } from './server/goals/queries';
 export { readAgentNotes } from './server/notes';
+export { induceConjecture } from './server/conjecture/induce';
+export type {
+  InduceConjectureInput,
+  InduceConjectureResult,
+} from './server/conjecture/induce';
 export type { ConjectureAcceptResult } from './server/conjecture-accept';
 export type { GoalScopeAcceptResult } from './server/goals/accept';
 export {
