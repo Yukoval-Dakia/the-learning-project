@@ -13,6 +13,7 @@ import {
   runCopilotChat,
   runCopilotChatStreaming,
 } from './chat';
+import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from './content-validation';
 import { COPILOT_SUBAGENT_NAME } from './subagents';
 
 describe('runCopilotChat (two-surface routing)', () => {
@@ -34,7 +35,7 @@ describe('runCopilotChat (two-surface routing)', () => {
       },
     );
 
-    expect(result.reply).toBe('这份练习内容未完成独立校验，暂不展示。请重试，我会先校验再发送。');
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
     expect(result.reply).not.toContain('1+1');
   });
 
@@ -66,7 +67,7 @@ describe('runCopilotChat (two-surface routing)', () => {
       },
     );
 
-    expect(result.reply).toBe('这份练习内容未完成独立校验，暂不展示。请重试，我会先校验再发送。');
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
     expect(result.reply).not.toContain('provider secret diagnostic');
     expect(runner.mock.calls.length).toBeLessThanOrEqual(4);
   });
@@ -104,9 +105,59 @@ describe('runCopilotChat (two-surface routing)', () => {
       ),
     ]);
 
-    expect(result.reply).toBe('这份练习内容未完成独立校验，暂不展示。请重试，我会先校验再发送。');
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
     expect(result.reply).not.toContain('validation deadline exceeded');
     expect(runner.mock.calls.length).toBeLessThanOrEqual(4);
+  });
+
+  it('rejects a marker whose manifest question differs from the visible reply', async () => {
+    const runner = vi.fn(async () => ({
+      task_run_id: 'task_mismatched_manifest',
+      text: '题目\n1. 求 1+1？\n<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 2+2？","reference_md":"4","choices_md":null,"rubric_json":{}}]}-->',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '给我一道题', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: runner,
+        writeEventFn: vi.fn(async (_db, input) => input.id),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_mismatched_manifest',
+          created: true,
+        }),
+      },
+    );
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(runner).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires a marker for a worked solution to the user question', async () => {
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '请计算 1+1。', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: vi.fn(async () => ({
+          task_run_id: 'task_solution_without_marker',
+          text: '解：1+1=3。',
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        })),
+        writeEventFn: vi.fn(async (_db, input) => input.id),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_solution_without_marker',
+          created: true,
+        }),
+      },
+    );
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
   });
 
   it('chat path uses copilot allowlist and writes experimental:copilot_user_ask', async () => {

@@ -17,7 +17,7 @@ import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { authorArtifactTool, updateArtifactTool } from './author-artifact';
 
 const HTML_V1 =
-  '<!doctype html><html><body><h1>互动式元素周期表</h1><p>氢原子的原子序数是多少？</p></body></html>';
+  '<!doctype html><html><body><h1>互动式元素周期表</h1><section data-copilot-question-id="hydrogen-atomic-number" data-copilot-answer="1"><p>氢原子的原子序数是多少？</p></section></body></html>';
 const HTML_V2 = '<!doctype html><html><body><h1>互动式元素周期表 v2</h1></body></html>';
 const HTML_V3 = '<!doctype html><html><body><h1>互动式元素周期表 v3</h1></body></html>';
 
@@ -356,7 +356,7 @@ describe('author_artifact + update_artifact DomainTools (ADR-0033 lane D)', () =
       authorArtifactTool.execute(badCtx, {
         type: 'interactive',
         title: '矛盾的球面变化率题',
-        html: '<html><body><p>放气时 r=2，dr/dt=+3，且 dS/dt=-48π。求 dV/dt。</p></body></html>',
+        html: '<html><body><section data-copilot-question-id="radius-rate" data-copilot-answer="+48π"><p>放气时 r=2，dr/dt=+3，且 dS/dt=-48π。求 dV/dt。</p></section></body></html>',
         content_validation: {
           subject_id: 'math',
           questions: [
@@ -391,18 +391,47 @@ describe('author_artifact + update_artifact DomainTools (ADR-0033 lane D)', () =
     expect((row.attrs as Record<string, unknown>).content_validation).toBeUndefined();
   });
 
+  it('allows ordinary search and simulation controls without assessment validation', async () => {
+    const validation = vi.fn();
+    await authorArtifactTool.execute(
+      { ...ctx(), validateLearningContent: validation },
+      {
+        type: 'interactive',
+        title: '可筛选元素周期表',
+        html: '<html><body><input type="search"><input type="range"><select><option>气体</option></select></body></html>',
+      },
+    );
+
+    expect(validation).not.toHaveBeenCalled();
+  });
+
   it('rejects assessed HTML without a manifest or with an unrelated manifest', async () => {
     await expect(
       authorArtifactTool.execute(ctx(), {
         type: 'interactive',
         title: '未声明答案的练习',
-        html: '<html><body><input name="answer"><button>提交答案</button></body></html>',
+        html: '<html><body><input data-answer="2"><button>提交答案</button></body></html>',
       }),
     ).rejects.toThrow(/manifest is required/);
 
     await expect(
       authorInteractive({
-        html: '<html><body><p>氧原子的原子序数是多少？</p></body></html>',
+        html: '<html><body><section data-copilot-question-id="oxygen" data-copilot-answer="8"><p>氧原子的原子序数是多少？</p></section></body></html>',
+      }),
+    ).rejects.toThrow(/manifest does not match/);
+    expect(await testDb().select({ id: artifact.id }).from(artifact)).toEqual([]);
+  });
+
+  it('rejects a manifest whose answer or question set differs from assessed HTML', async () => {
+    await expect(
+      authorInteractive({
+        html: '<html><body><section data-copilot-question-id="hydrogen-atomic-number" data-copilot-answer="3"><p>氢原子的原子序数是多少？</p></section></body></html>',
+      }),
+    ).rejects.toThrow(/manifest does not match/);
+
+    await expect(
+      authorInteractive({
+        html: `${HTML_V1}<section data-copilot-question-id="extra" data-copilot-answer="8">氧原子的原子序数是多少？</section>`,
       }),
     ).rejects.toThrow(/manifest does not match/);
     expect(await testDb().select({ id: artifact.id }).from(artifact)).toEqual([]);

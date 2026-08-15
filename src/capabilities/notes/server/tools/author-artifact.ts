@@ -67,13 +67,13 @@ const ContentValidationSchema = z
     questions: z
       .array(
         z.object({
-          id: z.string().min(1),
-          kind: z.string().min(1),
-          prompt_md: z.string().min(1),
-          reference_md: z.string().nullable(),
-          choices_md: z.array(z.string().min(1)).nullable(),
+          id: z.string().min(1).max(120),
+          kind: z.string().min(1).max(80),
+          prompt_md: z.string().min(1).max(6_000),
+          reference_md: z.string().max(12_000).nullable(),
+          choices_md: z.array(z.string().min(1).max(2_000)).max(12).nullable(),
           rubric_json: z.unknown(),
-          knowledge_ids: z.array(z.string().min(1)).nullable().optional(),
+          knowledge_ids: z.array(z.string().min(1).max(120)).max(50).nullable().optional(),
         }),
       )
       .min(1)
@@ -113,21 +113,52 @@ function normalizedBindingText(value: string): string {
 }
 
 function htmlContainsAssessment(html: string): boolean {
-  return (
-    /<(?:input|select|textarea)\b/i.test(html) ||
-    /(?:data-(?:answer|correct)|\b(?:quiz|question|exercise)\b|题目|练习题|测验|作答|答案)/i.test(
-      html,
-    )
+  return /(?:data-(?:copilot-question-id|copilot-answer|answer|correct)|\b(?:quiz|question|exercise)\b|题目|练习题|测验|作答|答案)/i.test(
+    html,
   );
+}
+
+function tagAttribute(tag: string, name: string): string | undefined {
+  const match = tag.match(new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i'));
+  return match?.[1] ?? match?.[2];
+}
+
+function assessmentBindings(html: string): Array<{ id: string; answer: string | undefined }> {
+  return (html.match(/<[^>]*\bdata-copilot-question-id\s*=\s*(?:"[^"]*"|'[^']*')[^>]*>/gi) ?? [])
+    .map((tag) => ({
+      id: tagAttribute(tag, 'data-copilot-question-id') ?? '',
+      answer: tagAttribute(tag, 'data-copilot-answer'),
+    }))
+    .filter((binding) => binding.id.length > 0);
 }
 
 function assertManifestMatchesHtml(html: string, validation: ContentValidationInput): void {
   const normalizedHtml = normalizedBindingText(html);
-  const missingQuestion = validation.questions.find(
-    (question) => !normalizedHtml.includes(normalizedBindingText(question.prompt_md)),
-  );
-  if (missingQuestion) {
+  const bindings = assessmentBindings(html);
+  const manifestIds = new Set(validation.questions.map((question) => question.id));
+  const bindingIds = new Set(bindings.map((binding) => binding.id));
+  if (
+    bindings.length !== bindingIds.size ||
+    validation.questions.length !== manifestIds.size ||
+    bindings.length !== validation.questions.length ||
+    [...bindingIds].some((id) => !manifestIds.has(id))
+  ) {
     throw new Error('learning content manifest does not match artifact HTML');
+  }
+  for (const question of validation.questions) {
+    const binding = bindings.find((candidate) => candidate.id === question.id);
+    const reference = normalizedBindingText(question.reference_md ?? '');
+    if (
+      !binding ||
+      reference.length === 0 ||
+      normalizedBindingText(binding.answer ?? '') !== reference ||
+      !normalizedHtml.includes(normalizedBindingText(question.prompt_md)) ||
+      !(question.choices_md ?? []).every((choice) =>
+        normalizedHtml.includes(normalizedBindingText(choice)),
+      )
+    ) {
+      throw new Error('learning content manifest does not match artifact HTML');
+    }
   }
 }
 
@@ -282,7 +313,7 @@ async function executeAuthorArtifact(
 export const authorArtifactTool: DomainTool<AuthorArtifactInput, AuthorArtifactOutput> = {
   name: 'author_artifact',
   description:
-    'Create a NEW persistent interactive learning artifact (type=interactive) from a complete self-contained HTML document you write yourself (inline CSS/JS, no external network dependencies — it renders inside a sandbox). Provide content_validation with every question, declared answer, options, rubric, and subject_id: the server independently validates each item before it writes. If validation fails, repair the draft and call again; do not claim unsupported version, rollback, or knowledge-existence capabilities. Provide a clear title; tag knowledge_ids so the artifact is discoverable from those knowledge nodes. Returns the artifact_id — keep it to iterate later via update_artifact.',
+    'Create a NEW persistent interactive learning artifact (type=interactive) from a complete self-contained HTML document you write yourself (inline CSS/JS, no external network dependencies — it renders inside a sandbox). For assessed content, wrap every question in an element with data-copilot-question-id matching its manifest id and data-copilot-answer matching reference_md; provide content_validation with every question, declared answer, all options, rubric, and subject_id. The server requires the HTML bindings and manifest to be complete and independently validates each item before writing. Non-assessment controls such as search, filters, and sliders need no manifest. If validation fails, repair the draft and call again. Provide a clear title and knowledge_ids. Returns the artifact_id for later update_artifact calls.',
   effect: 'write',
   inputSchema: AuthorArtifactInputSchema,
   outputSchema: AuthorArtifactOutputSchema,
@@ -434,7 +465,7 @@ async function executeUpdateArtifact(
 export const updateArtifactTool: DomainTool<UpdateArtifactInput, UpdateArtifactOutput> = {
   name: 'update_artifact',
   description:
-    'Update an EXISTING interactive artifact (created by author_artifact) with a new complete HTML document — pass the FULL replacement html, not a diff. Assessed HTML requires content_validation matching every question; replacing HTML always invalidates prior validation evidence. Bumps artifact.version and appends a history entry; pass change_summary so the version timeline stays readable. Only works on type=interactive artifacts.',
+    'Update an EXISTING interactive artifact with a full replacement HTML document, not a diff. Assessed content requires every question element to carry data-copilot-question-id and data-copilot-answer matching a complete content_validation manifest; replacing HTML always invalidates prior evidence. Non-assessment controls need no manifest. Bumps artifact.version and appends a history entry; pass change_summary for the timeline. Only works on type=interactive artifacts.',
   effect: 'write',
   inputSchema: UpdateArtifactInputSchema,
   outputSchema: UpdateArtifactOutputSchema,

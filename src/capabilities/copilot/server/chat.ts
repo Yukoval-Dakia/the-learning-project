@@ -16,8 +16,7 @@
 // Mirror tool-use events still flow via mcp-bridge (caller actor is agent).
 
 import {
-  containsLearningQuestion,
-  extractCopilotLearningContent,
+  reviewCopilotLearningContent,
   validateCopilotLearningContent,
 } from '@/capabilities/copilot/server/content-validation';
 import { writeEvent } from '@/kernel/events';
@@ -1113,28 +1112,31 @@ async function runCopilotChatImpl(
     db,
     signal: lifecycleAbortController.signal,
     lifecycleAbortController,
+    parentTaskRunId: taskRunId,
     ...(deps.providerSessionDeadlineAt !== undefined
       ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
       : {}),
   });
+  const runValidationTask: Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn'] =
+    async (kind, input, callCtx) => {
+      const ctx = validationTaskContext(callCtx);
+      switch (kind) {
+        case 'QuizVerifyTask':
+          return run('QuizVerifyTask', input, ctx);
+        case 'SolutionGenerateTask':
+          return run('SolutionGenerateTask', input, ctx);
+        case 'SemanticJudgeTask':
+          return run('SemanticJudgeTask', input, ctx);
+        case 'TeachingQualityTask':
+          return run('TeachingQualityTask', input, ctx);
+        default:
+          throw new Error(`unsupported learning-content validation task: ${kind}`);
+      }
+    };
   const validateLearningContent: ValidateLearningContentFn = (content) =>
     validateCopilotLearningContent(content, {
       db,
-      runTaskFn: async (kind, input, callCtx) => {
-        const ctx = validationTaskContext(callCtx);
-        switch (kind) {
-          case 'QuizVerifyTask':
-            return run('QuizVerifyTask', input, ctx);
-          case 'SolutionGenerateTask':
-            return run('SolutionGenerateTask', input, ctx);
-          case 'SemanticJudgeTask':
-            return run('SemanticJudgeTask', input, ctx);
-          case 'TeachingQualityTask':
-            return run('TeachingQualityTask', input, ctx);
-          default:
-            throw new Error(`unsupported learning-content validation task: ${kind}`);
-        }
-      },
+      runTaskFn: runValidationTask,
     });
 
   const mcpServer = buildMcpServer({
@@ -1326,18 +1328,15 @@ async function runCopilotChatImpl(
   // see exactly these bytes; a dangling marker may truncate only here, never
   // after a raw suffix was certified.
   const preparedCandidate = extractPrimaryView(replyText, { taskRunId: replyRunId });
-  const preparedLearningContent = extractCopilotLearningContent(preparedCandidate.text);
-  const unverifiedLearningContent =
-    preparedLearningContent.status === 'malformed' ||
-    (preparedLearningContent.status === 'absent' &&
-      containsLearningQuestion(preparedLearningContent.text));
-  const unverifiedReply = '这份练习内容未完成独立校验，暂不展示。请重试，我会先校验再发送。';
-  if (unverifiedLearningContent) {
-    console.warn('[runCopilotChat] learning content marker missing or malformed', {
-      task_run_id: replyRunId,
-      marker_status: preparedLearningContent.status,
-    });
-  }
+  const learningReview = await reviewCopilotLearningContent(
+    preparedCandidate.text,
+    [req.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join('\n'),
+    replyRunId,
+    {
+      db,
+      runTaskFn: runValidationTask,
+    },
+  );
   const evidenceReview = await reviewEvidenceReply({
     db,
     requestContext: {
@@ -1347,7 +1346,7 @@ async function runCopilotChatImpl(
       ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
       ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
     },
-    candidateReply: unverifiedLearningContent ? unverifiedReply : preparedLearningContent.text,
+    candidateReply: learningReview.replyText,
     candidateTaskRunId: replyRunId,
     candidateComplete,
     toolTrace,
@@ -1358,32 +1357,12 @@ async function runCopilotChatImpl(
   });
   streaming?.signal?.throwIfAborted();
   replyText = evidenceReview.replyText;
-  let learningContentPassed = !unverifiedLearningContent;
-  if (preparedLearningContent.status === 'valid') {
-    try {
-      const validation = await validateLearningContent(preparedLearningContent.content);
-      learningContentPassed = validation.verdict === 'pass';
-      if (learningContentPassed) {
-        replyText = `${replyText}\n\n独立内容验证：通过`;
-      } else {
-        console.error('[runCopilotChat] learning content validation rejected', validation);
-        replyText = unverifiedReply;
-      }
-    } catch (error) {
-      learningContentPassed = false;
-      console.error('[runCopilotChat] learning content validation error', {
-        task_run_id: replyRunId,
-        error,
-      });
-      replyText = unverifiedReply;
-    }
-  }
   // primary_view is a second user-visible channel (ephemeral_html can contain
   // substantive prose). The sealed comparator reviews reply text only, so a
   // read-bearing turn must drop this unreviewed metadata even when text passes.
   // No-read/skipped turns retain the established presentation behavior.
   const selectedPrimaryView =
-    evidenceReview.status === 'skipped' && learningContentPassed
+    evidenceReview.status === 'skipped' && learningReview.passed
       ? preparedCandidate.primaryView
       : undefined;
 
