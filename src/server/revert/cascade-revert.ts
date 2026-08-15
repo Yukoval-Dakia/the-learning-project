@@ -76,7 +76,7 @@
 // depth-DESC; the root checkpoint is reverted LAST). Parse-barrier-clean: every
 // snapshot payload is validated against StateSnapshotExperimental before use.
 
-import { archiveKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
+import { archiveKnowledgeEdge } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import {

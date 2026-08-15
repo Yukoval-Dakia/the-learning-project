@@ -1,4 +1,4 @@
-import { reviewInterventionPackageCandidate } from '@/capabilities/practice/server/intervention-author';
+import { reviewInterventionPackageCandidate } from '@/capabilities/practice/public';
 import {
   CurrentInterventionPackageReviewAudit,
   InterventionAuthoringContext,

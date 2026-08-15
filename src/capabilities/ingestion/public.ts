@@ -24,3 +24,9 @@ export {
   excerpt,
   knowledgeContext,
 } from './server/tools/record-tool-support';
+
+// YUK-885 — public port repointed from a central deep import.
+export {
+  AUTO_ENROLL_SINGLETON_SECONDS,
+  autoEnrollJobEnabled,
+} from './server/workflow-judge-config';

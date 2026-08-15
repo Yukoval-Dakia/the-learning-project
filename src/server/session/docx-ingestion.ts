@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import {
   AUTO_ENROLL_SINGLETON_SECONDS,
   autoEnrollJobEnabled,
-} from '@/capabilities/ingestion/server/workflow-judge-config';
+} from '@/capabilities/ingestion/public';
 import {
   type StructuredQuestionT,
   structuredToPromptMarkdown,

@@ -12,7 +12,7 @@
 
 import { z } from 'zod';
 
-import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
+import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/public';
 import { listQuestions } from '@/server/questions/list';
 import type { DomainTool, ToolContext } from './types';
 

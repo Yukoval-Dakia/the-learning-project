@@ -15,7 +15,9 @@ export {
 } from './server/notes-read';
 export type { NoteSummary } from './server/notes-read';
 export {
+  type PersistNoteRefineApplyResult,
   listNoteRefineChanges,
+  persistNoteRefineApply,
   undoNoteRefineApplyEvent,
 } from './server/note-refine-apply';
 export {

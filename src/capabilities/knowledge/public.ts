@@ -40,6 +40,13 @@ export type {
   HubMeshEdge,
 } from './server/hub-mesh';
 export { assertKnowledgeIdsExist } from './server/validate';
+// YUK-885 — public read-model ports repointed from central deep imports.
+export { isDirectTreePair } from './server/topology-gate';
+export { archiveKnowledgeEdge } from './server/edges';
+export {
+  type MasteryDecayBucket,
+  masteryDecayBucket,
+} from './server/node-page';
 export { createLearningIntentKnowledgeNode } from './server/learning-intent-knowledge';
 export type {
   CreateLearningIntentKnowledgeNodeFn,

@@ -1,18 +1,16 @@
 import {
   type ConjectureEvidenceAssetRef,
+  type ConjectureHistory,
   type EnrichedEvidenceCell,
   type EvidenceCell,
   type LoadedConjectureEvidenceImage,
+  applyConjectureHistoryGate,
   collectConjectureEvidenceAssetRefs,
   conjectureKey,
+  enrichEvidenceCells,
   gatherConjectureEvidence,
-} from '@/capabilities/agency/server/conjecture/evidence';
-import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
-import {
-  type ConjectureHistory,
-  applyConjectureHistoryGate,
   loadConjectureHistory,
-} from '@/capabilities/agency/server/conjecture/history';
+} from '@/capabilities/agency/public';
 import {
   type FailureAttempt,
   type FailureAttemptWithReasoningTrace,

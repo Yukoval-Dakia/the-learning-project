@@ -32,7 +32,10 @@ export type {
   QuestionEditAcceptResult,
   VariantQuestionAcceptResult,
 } from './server/proposal-appliers';
-export { authorInterventionPackage } from './server/intervention-author';
+export {
+  authorInterventionPackage,
+  reviewInterventionPackageCandidate,
+} from './server/intervention-author';
 export type { InterventionAuthorDeps } from './server/intervention-author';
 export {
   INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
@@ -43,6 +46,15 @@ export {
 } from './server/intervention-diagnostics';
 export type { CommittedInterventionDiagnosticAttempt } from './server/intervention-diagnostics';
 export { proposeFailureVariant } from './server/failure-learning-public';
+// YUK-885 — public ports repointed from central deep imports.
+export { applyQuestionEdit } from './server/proposal-appliers';
+export type { CollectedSignal } from './server/candidate-signals';
+export {
+  MEM0_PRIOR_BLOCK_CHAR_CAP,
+  MEM0_PRIOR_CAP,
+  MEM0_PRIOR_ITEM_CHAR_CAP,
+  SELECTION_ORCHESTRATOR_CANDIDATE_CAP,
+} from './server/selection-constants';
 export type {
   ProposeFailureVariantInput,
   VariantProposalResult,

@@ -13,7 +13,7 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { Rubric } from '@/core/schema/business';
 import { SolutionGenerateOutput } from '@/core/schema/solution';
 import type { Db } from '@/db/client';

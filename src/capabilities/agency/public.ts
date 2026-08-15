@@ -33,6 +33,23 @@ export type {
   RelearnAcceptResult,
 } from './server/proposal-appliers';
 export { getEffectiveProbeResultStatuses } from './server/conjecture/probe-evidence';
+// YUK-885 — conjecture evidence ports repointed from central deep imports.
+export {
+  type ConjectureEvidenceAssetRef,
+  type ConjectureEvidenceImageSource,
+  type EnrichedEvidenceCell,
+  type EvidenceCell,
+  type LoadedConjectureEvidenceImage,
+  collectConjectureEvidenceAssetRefs,
+  conjectureKey,
+  gatherConjectureEvidence,
+} from './server/conjecture/evidence';
+export { enrichEvidenceCells } from './server/conjecture/evidence-enrichment';
+export {
+  type ConjectureHistory,
+  applyConjectureHistoryGate,
+  loadConjectureHistory,
+} from './server/conjecture/history';
 export type { EffectiveProbeResultStatus } from './server/conjecture/probe-evidence';
 export { misconceptionHardConfirmEnabled } from './server/misconception-promote';
 export {

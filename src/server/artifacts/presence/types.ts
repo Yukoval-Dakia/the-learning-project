@@ -1,4 +1,4 @@
-import type { PersistNoteRefineApplyResult } from '@/capabilities/notes/server/note-refine-apply';
+import type { PersistNoteRefineApplyResult } from '@/capabilities/notes/public';
 import type { NotePatchT } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
 import type { TaskTextResult } from '@/server/ai/provenance';

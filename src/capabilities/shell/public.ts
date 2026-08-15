@@ -1,7 +1,2 @@
-/**
- * Shell currently exposes no server-side cross-capability port.
- *
- * Shell remains a composition surface; any future provider contract must be
- * declared narrowly from this entrypoint.
- */
-export {};
+// YUK-885 — public port repointed from a central deep import.
+export { loadOvernightDigest } from './server/overnight-digest';

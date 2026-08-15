@@ -25,7 +25,7 @@
 
 import { eq, inArray } from 'drizzle-orm';
 
-import { isDirectTreePair } from '@/capabilities/knowledge/server/topology-gate';
+import { isDirectTreePair } from '@/capabilities/knowledge/public';
 import type { KnowledgeEdgeRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
