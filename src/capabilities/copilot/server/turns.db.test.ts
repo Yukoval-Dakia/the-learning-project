@@ -834,6 +834,63 @@ describe('getRecentCopilotTurns', () => {
     ]);
     expect(turns.find((t) => t.event_id === askId)?.tool_calls).toBeUndefined();
   });
+
+  // YUK-457 — failure-outcome mirrors surface as failed cards with errorReason.
+  it('replay marks tool_calls failed on outcome failure + error_reason', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    const t0 = new Date('2026-06-08T12:30:00.000Z');
+    const askId = await writeAsk('帮我查一下错题。', sessionId, t0);
+    await writeToolUse(askId, 'query_mistakes', new Date(t0.getTime() + 500), {
+      outcome: 'failure',
+      errorReason: 'connection reset while reading mistakes',
+    });
+    const replyId = await writeReply(
+      '查询出了点问题，稍后再试。',
+      sessionId,
+      askId,
+      new Date(t0.getTime() + 1000),
+    );
+
+    const turns = await getRecentCopilotTurns(db, { now });
+    const aiTurn = turns.find((t) => t.event_id === replyId);
+    expect(aiTurn?.tool_calls).toEqual([
+      {
+        toolName: 'query_mistakes',
+        input: { limit: 8 },
+        errorReason: 'connection reset while reading mistakes',
+        status: 'failed',
+      },
+    ]);
+  });
+
+  // YUK-457 — defensive replay-seam mirror of the SSE Task filter: a native
+  // Task tool_use row (which the bridge never writes) must not surface its
+  // subagent prompts in tool_calls.
+  it('replay drops Task tool_use mirrors defensively', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    const t0 = new Date('2026-06-08T12:40:00.000Z');
+    const askId = await writeAsk('帮我分析这道题。', sessionId, t0);
+    await writeToolUse(askId, 'Task', new Date(t0.getTime() + 250), {
+      summary: 'spawned hidden subagent',
+    });
+    await writeToolUse(askId, 'query_mistakes', new Date(t0.getTime() + 500), {
+      summary: 'mistakes · 2 行',
+    });
+    const replyId = await writeReply('分析完成。', sessionId, askId, new Date(t0.getTime() + 1000));
+
+    const turns = await getRecentCopilotTurns(db, { now });
+    const aiTurn = turns.find((t) => t.event_id === replyId);
+    expect(aiTurn?.tool_calls).toEqual([
+      {
+        toolName: 'query_mistakes',
+        input: { limit: 8 },
+        summary: 'mistakes · 2 行',
+        status: 'done',
+      },
+    ]);
+  });
 });
 
 describe('runCopilotChat — conversation session envelope (S3a)', () => {

@@ -112,6 +112,12 @@ const REPLY_ACTION = 'experimental:copilot_reply';
 const DEFAULT_TURN_LIMIT = 20;
 const MAX_TURN_LIMIT = 100;
 
+// YUK-457 — native SDK Task spawns never mirror through the bridge, but a
+// corrupt or foreign row must not surface subagent prompts at the replay seam
+// either (mirrors the SSE filter in api/tool-use-sse.ts).
+// Must stay aligned with SPAWN_TOOL_NAME in src/server/ai/spawn-contract.ts.
+const NATIVE_SPAWN_TOOL_NAME = 'Task';
+
 type DbLike = Db | Tx;
 
 function clampLimit(limit: number | undefined): number {
@@ -214,6 +220,7 @@ function parseToolUseMirror(
 ): CopilotTurnToolCall | null {
   const toolName = typeof payload.tool_name === 'string' ? payload.tool_name : null;
   if (!toolName) return null;
+  if (toolName === NATIVE_SPAWN_TOOL_NAME) return null;
   const rawArgs = payload.args;
   const input =
     rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs)

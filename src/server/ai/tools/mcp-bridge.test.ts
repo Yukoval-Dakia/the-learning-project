@@ -54,7 +54,11 @@ vi.mock('@/kernel/events', () => ({
   }),
 }));
 
-import { __resolveMirrorPolicy, buildMcpServerFromRegistry } from './mcp-bridge';
+import {
+  __resolveMirrorPolicy,
+  buildMcpServerFromRegistry,
+  shouldEmitToolUseForCaller,
+} from './mcp-bridge';
 
 function makeReadTool<I, O>(
   name: string,
@@ -702,6 +706,64 @@ describe('buildMcpServerFromRegistry', () => {
     expect(captured.events).toHaveLength(0);
   });
 
+  // YUK-457 — live/replay-same-rows invariant: onToolComplete (the live
+  // tool_result SSE card) must fire iff the same mirror-policy resolution
+  // that persists the tool_use mirror fires. A never-mirror tool must not
+  // emit a live card that vanishes on refresh.
+  it('skips onToolComplete for a never-mirror tool even for an agent copilot caller', async () => {
+    const t = makeReadTool<{ q: string }, { ok: boolean }>(
+      'demo_complete_never',
+      { q: z.string() },
+      () => ({ ok: true }),
+      () => 'demo_complete_never ok',
+    );
+    t.mirrorEvent = 'never';
+    registerTool(t);
+    const onToolComplete = vi.fn();
+
+    buildMcpServerFromRegistry({
+      ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
+      serverName: 'loom_v2',
+      toolNames: ['demo_complete_never'],
+      onToolComplete,
+    });
+    await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+
+    expect(onToolComplete).not.toHaveBeenCalled();
+    // Same decision, same call: no persisted mirror either.
+    expect(captured.events).toHaveLength(0);
+    // The tool still ran and logged — the gate is visibility-only.
+    expect(captured.toolCallLogs).toHaveLength(1);
+  });
+
+  it('fires onToolComplete for a mirrored when_user_visible tool call', async () => {
+    registerTool(
+      makeReadTool<{ q: string }, { len: number }>(
+        'demo_complete_uv',
+        { q: z.string() },
+        (i) => ({ len: i.q.length }),
+        (i, o) => `demo_complete_uv · ${i.q} → ${o.len}`,
+      ),
+    );
+    const onToolComplete = vi.fn();
+
+    buildMcpServerFromRegistry({
+      ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
+      serverName: 'loom_v2',
+      toolNames: ['demo_complete_uv'],
+      onToolComplete,
+    });
+    await mockAgentSdk.toolDefs[0].handler({ q: 'hello' });
+
+    expect(onToolComplete).toHaveBeenCalledTimes(1);
+    expect(onToolComplete).toHaveBeenCalledWith({
+      toolName: 'demo_complete_uv',
+      input: { q: 'hello' },
+      summary: 'demo_complete_uv · hello → 5',
+    });
+    expect(captured.events).toHaveLength(1);
+  });
+
   it('throws when a tool inputSchema is not a z.object', () => {
     const badTool: DomainTool<unknown, unknown> = {
       name: 'bad_schema',
@@ -783,6 +845,48 @@ describe('__resolveMirrorPolicy', () => {
     ).toBe(true);
     expect(__resolveMirrorPolicy('when_causal', { kind: 'agent', ref: 'agent:misc' }, 'read')).toBe(
       false,
+    );
+  });
+});
+
+describe('shouldEmitToolUseForCaller — live tool_use gate (YUK-457)', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+  });
+
+  it('drops registry tools whose mirror policy does not fire for the caller', async () => {
+    await registerCapabilityTools(capabilities);
+    const copilot = { kind: 'agent', ref: 'agent:copilot' } as const;
+
+    // 'never' policy: internal retrieval must not open a live card.
+    expect(shouldEmitToolUseForCaller('mcp__loom__search_memory_facts', 'loom', copilot)).toBe(
+      false,
+    );
+    expect(shouldEmitToolUseForCaller('mcp__loom__query_questions', 'loom', copilot)).toBe(false);
+    // when_user_visible + copilot caller → mirrored → live card.
+    expect(shouldEmitToolUseForCaller('mcp__loom__query_mistakes', 'loom', copilot)).toBe(true);
+  });
+
+  it('applies caller-dependent policies, not just the declared mirrorEvent', async () => {
+    await registerCapabilityTools(capabilities);
+    // when_user_visible resolves false for a dreaming caller: same live/replay
+    // decision as the persisted mirror would make.
+    expect(
+      shouldEmitToolUseForCaller('mcp__loom__query_mistakes', 'loom', {
+        kind: 'agent',
+        ref: 'agent:dreaming',
+      }),
+    ).toBe(false);
+  });
+
+  it('passes through non-registry names (native Task, remote MCP) and unregistered suffixes', () => {
+    const copilot = { kind: 'agent', ref: 'agent:copilot' } as const;
+    // Task is dropped later by the SSE sanitizer; Tavily cards are governed by
+    // the finalize force-done ruling — the gate must not touch either.
+    expect(shouldEmitToolUseForCaller('Task', 'loom', copilot)).toBe(true);
+    expect(shouldEmitToolUseForCaller('mcp__tavily__tavily-search', 'loom', copilot)).toBe(true);
+    expect(shouldEmitToolUseForCaller('mcp__loom__not_a_registered_tool', 'loom', copilot)).toBe(
+      true,
     );
   });
 });

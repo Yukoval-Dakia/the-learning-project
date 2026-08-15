@@ -102,6 +102,7 @@ import {
   type SdkMcpServer,
   type ToolExecutionResultObservation,
   buildMcpServerFromRegistry,
+  shouldEmitToolUseForCaller,
 } from '@/server/ai/tools/mcp-bridge';
 // AF S3a / YUK-203 U3 — durable conversation envelope. runCopilotChat now
 // find-or-creates a learning_session(type='conversation') so turns persist and
@@ -1119,6 +1120,9 @@ async function runCopilotChatImpl(
   // is released. The request signal alone is insufficient: non-streaming calls
   // have none, and the runner's execution timeout is an internal lifecycle event.
   const lifecycleAbortController = new AbortController();
+  // YUK-457 — one actor for the bridge ctx, the persisted mirrors, AND the
+  // live tool_use gate below: all three must resolve the same mirror policy.
+  const callerActor = { kind: 'agent' as const, ref: actorRef };
 
   const mcpServer = buildMcpServer({
     ctx: {
@@ -1129,7 +1133,7 @@ async function runCopilotChatImpl(
       ...(deps.providerSessionDeadlineAt !== undefined
         ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
         : {}),
-      callerActor: { kind: 'agent', ref: actorRef },
+      callerActor,
       causedByEventId,
     },
     serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -1237,7 +1241,30 @@ async function runCopilotChatImpl(
             }
           : {}),
         ...(onTaskEvent ? { onTaskEvent } : {}),
-        ...(deps.onToolUseEvent ? { onToolUse: deps.onToolUseEvent } : {}),
+        ...(deps.onToolUseEvent
+          ? {
+              // YUK-457 — the runner emits raw SDK block names (mcp__loom__*)
+              // before execution; gate the live card on the SAME mirror-policy
+              // resolution that backs the persisted mirror + done-state card, so
+              // a 'never'-mirror tool (search_memory_facts) opens no card that
+              // would vanish on refresh.
+              onToolUse: (call: {
+                toolName: string;
+                input: Record<string, unknown>;
+                toolUseId?: string;
+              }) => {
+                if (
+                  !shouldEmitToolUseForCaller(
+                    call.toolName,
+                    DOMAIN_TOOL_MCP_SERVER_NAME,
+                    callerActor,
+                  )
+                )
+                  return;
+                deps.onToolUseEvent?.(call);
+              },
+            }
+          : {}),
         // YUK-284 (C2) — spread-when-present: when the copilot SKILL.md is absent
         // (copilotSkills === undefined) the ctx omits `skills` entirely, byte-for-byte
         // the pre-C2 shape (runner ctx.skills ?? [] unchanged → no regression).

@@ -96,4 +96,40 @@ describe('CopilotDock tool-use cards', () => {
     expect(screen.getByText('正在调用…')).toBeTruthy();
     expect(screen.getAllByText('review · 12 due 今日').length).toBeGreaterThan(0);
   });
+
+  it('renders failed status pill and errorReason for failed tool calls', () => {
+    const message: ChatMessage = {
+      id: 'reply_failed_tool',
+      role: 'ai',
+      text: '这一步没查成，稍后再试。',
+      tool_calls: [
+        {
+          toolName: 'query_mistakes',
+          input: { limit: 8 },
+          errorReason: 'connection reset while reading mistakes',
+          status: 'failed',
+        },
+      ],
+    };
+
+    render(
+      <MessageRow
+        message={message}
+        navigate={noopNavigate}
+        onAcceptCorrective={noopAccept}
+        chipPending={false}
+        chipAcked={false}
+        revertPending={false}
+      />,
+    );
+
+    const cards = screen.getAllByTestId('copilot-tool-use-card');
+    expect(cards).toHaveLength(1);
+    // StatusPill failed label.
+    expect(screen.getByText('失败')).toBeTruthy();
+    // Failed cards render errorView (the errorReason) in the result slot.
+    expect(screen.getByText('connection reset while reading mistakes')).toBeTruthy();
+    // A failed card never falls back to the done-state body.
+    expect(screen.queryByText('已完成')).toBeNull();
+  });
 });

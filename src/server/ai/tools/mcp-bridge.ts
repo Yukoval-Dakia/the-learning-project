@@ -69,6 +69,29 @@ export function __resolveMirrorPolicy(
   return matchesAgentRef(callerActor.ref, 'dreaming');
 }
 
+/**
+ * YUK-457 — live tool_use SSE gate. The streaming runner observes raw SDK
+ * tool_use block names (`mcp__<server>__<tool>`) BEFORE the bridge executes,
+ * so the tool_use-side card gate resolves the DomainTool behind the name and
+ * applies the SAME {@link __resolveMirrorPolicy} resolution that governs the
+ * persisted tool_use mirror and {@link BuildMcpServerOptions.onToolComplete}.
+ * One policy decision → live cards and replay tool_calls can't diverge.
+ * Names outside `serverName` (native `Task`, remote MCP like Tavily) and
+ * unregistered suffixes pass through: their user-visible surface is governed
+ * elsewhere (subtask SSE / finalize force-done).
+ */
+export function shouldEmitToolUseForCaller(
+  blockName: string,
+  serverName: string,
+  callerActor: ToolCallerActor,
+): boolean {
+  const prefix = `mcp__${serverName}__`;
+  if (!blockName.startsWith(prefix)) return true;
+  const dt = getTool(blockName.slice(prefix.length));
+  if (!dt) return true;
+  return __resolveMirrorPolicy(dt.mirrorEvent, callerActor, dt.effect);
+}
+
 export type SdkMcpServer = ReturnType<typeof createSdkMcpServer>;
 
 export interface ToolExecutionGateInput {
@@ -137,8 +160,11 @@ export interface BuildMcpServerOptions {
   onResult?: (result: ToolExecutionResultObservation) => Promise<void> | void;
   /**
    * YUK-457 — fires after summarize completes with the human-facing summary string.
-   * Used by Copilot inline SSE to render done-state tool-use cards. Failures are
-   * swallowed so visibility cannot abort paid work.
+   * Used by Copilot inline SSE to render done-state tool-use cards. Fires ONLY
+   * when the same {@link __resolveMirrorPolicy} resolution that persists the
+   * tool_use mirror fires: a live card that no persisted mirror backs would
+   * vanish on refresh (live/replay-same-rows invariant, materializing-tools.ts).
+   * Failures are swallowed so visibility cannot abort paid work.
    */
   onToolComplete?: (result: {
     toolName: string;
@@ -292,7 +318,12 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
         summary = `error: ${errorReason}`;
       }
 
-      if (opts.onToolComplete) {
+      // YUK-457 — same resolution as the persisted mirror below: a call that
+      // will not mirror must not emit a live done-state card either.
+      if (
+        opts.onToolComplete &&
+        __resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)
+      ) {
         try {
           opts.onToolComplete({
             toolName: dt.name,
