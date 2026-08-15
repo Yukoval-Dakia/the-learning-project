@@ -94,7 +94,7 @@ jobs:
       - name: Lint
         if: needs.changes.outputs.static_changed == 'true'
         run: pnpm lint
-      - name: OpenCode worktree plugin
+      - name: OpenCode plugins and supply chain
         if: needs.changes.outputs.static_changed == 'true'
         run: pnpm test:opencode-worktree
       # Keep this list equivalent to the standalone pre-PR audits plus the audit prefix of
