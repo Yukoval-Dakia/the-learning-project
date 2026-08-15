@@ -3,7 +3,7 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 550,
+      "total": 549,
       "byOwnerPair": {
         "agency -> agency": 7,
         "agency -> ai": 29,
@@ -23,7 +23,7 @@
         "copilot -> events": 7,
         "copilot -> http": 1,
         "copilot -> mastery": 1,
-        "copilot -> orchestrator": 2,
+        "copilot -> orchestrator": 1,
         "copilot -> proposals": 2,
         "copilot -> questions": 1,
         "copilot -> revert": 1,
@@ -94,7 +94,7 @@
       }
     },
     "serverToCapabilityDeep": {
-      "total": 44,
+      "total": 43,
       "byOwnerPair": {
         "agency -> agency": 3,
         "agency -> notes": 1,
@@ -108,7 +108,6 @@
         "grounding-gate -> practice": 1,
         "mastery -> knowledge": 2,
         "memory -> knowledge": 1,
-        "orchestrator -> notes": 1,
         "projections -> knowledge": 1,
         "questions -> knowledge": 4,
         "quiz -> practice": 1,
@@ -118,14 +117,14 @@
       }
     },
     "crossCapabilityValue": {
-      "total": 68,
+      "total": 69,
       "byOwnerPair": {
         "agency -> knowledge": 8,
         "agency -> notes": 1,
         "agency -> practice": 4,
         "copilot -> agency": 1,
         "copilot -> knowledge": 1,
-        "copilot -> notes": 1,
+        "copilot -> notes": 2,
         "copilot -> practice": 1,
         "ingestion -> knowledge": 4,
         "ingestion -> practice": 2,
