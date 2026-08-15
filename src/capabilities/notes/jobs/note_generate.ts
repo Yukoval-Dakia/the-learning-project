@@ -13,6 +13,10 @@
 import { type SQL, and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
+import {
+  emitArtifactBodyBlocksEditEvent,
+  emitArtifactLifecycleEvent,
+} from '@/capabilities/notes/server/artifacts/mutation-events';
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
 import {
   NOTE_ARTIFACT_TYPES,
@@ -30,10 +34,6 @@ import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/p
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import {
-  emitArtifactBodyBlocksEditEvent,
-  emitArtifactLifecycleEvent,
-} from '../server/artifact-events';
 
 export interface NoteGenerateJobData {
   artifact_id: string;

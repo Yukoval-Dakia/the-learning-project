@@ -34,7 +34,7 @@ import {
   markArtifactIdleAndFlush,
   recordEditingHeartbeat,
   resetEditingSessionStateForTests,
-} from '@/server/artifacts/editing-session';
+} from '@/capabilities/notes/server/artifacts/editing-session';
 
 // Opaque patch — the state machine never inspects ops; it forwards the patch
 // to the (mocked) persist fn. A single op keeps it out of the empty-patch path.

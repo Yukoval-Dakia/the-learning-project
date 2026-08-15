@@ -5,12 +5,12 @@
 // 仲裁（决定1 A-track auto-apply 依赖它），不再 enqueue 任何 note_refine。
 
 import { EditingHeartbeatBodySchema } from '@/capabilities/notes/api/contracts';
-import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/kernel/http';
 import {
   markArtifactIdleAndFlush,
   recordEditingHeartbeat,
-} from '@/server/artifacts/editing-session';
+} from '@/capabilities/notes/server/artifacts/editing-session';
+import { db } from '@/db/client';
+import { ApiError, errorResponse } from '@/kernel/http';
 
 export async function POST(req: Request): Promise<Response> {
   try {

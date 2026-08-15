@@ -1,6 +1,9 @@
+import {
+  type EmitArtifactLifecycleParams,
+  emitArtifactLifecycleEvent,
+} from '@/capabilities/notes/server/artifacts/mutation-events';
 import type { NoteVerificationResultT } from '@/core/schema/business';
 import type { Tx } from '@/db/client';
-import { type EmitArtifactLifecycleParams, emitArtifactLifecycleEvent } from './artifact-events';
 
 type NoteVerificationStatus = 'verified' | 'needs_review' | 'failed';
 

@@ -1,6 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 
+import { emitArtifactBodyBlocksEditEvent } from '@/capabilities/notes/server/artifacts/mutation-events';
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
 import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/business';
@@ -18,7 +19,6 @@ import {
   hasArtifactGenesisAnchor,
 } from '@/server/projections/parity';
 import { projectionIsWriter } from '@/server/projections/sot-flag';
-import { emitArtifactBodyBlocksEditEvent } from './artifact-events';
 
 // ADR-0033 D1 (YUK-309) — body_blocks block-tree editing is a NOTE-ONLY write path.
 // Opaque artifact types (tool_quiz, interactive) MUST keep body_blocks null and never

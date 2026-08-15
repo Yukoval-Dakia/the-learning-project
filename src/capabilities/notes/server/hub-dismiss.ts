@@ -7,6 +7,7 @@
 
 import { eq } from 'drizzle-orm';
 
+import { emitArtifactLifecycleEvent } from '@/capabilities/notes/server/artifacts/mutation-events';
 import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-apply';
 import { newId } from '@/core/ids';
 import { SuppressArtifactLink } from '@/core/schema/event';
@@ -15,7 +16,6 @@ import type { Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { emitArtifactLifecycleEvent } from './artifact-events';
 
 const HUB_TYPE = 'note_hub';
 const SUPPRESS_ACTOR_REF = 'hub_dismiss_link';

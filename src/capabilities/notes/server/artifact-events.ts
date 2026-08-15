@@ -8,4 +8,4 @@ export {
   type EmitBodyBlocksEditParams,
   emitArtifactBodyBlocksEditEvent,
   emitArtifactLifecycleEvent,
-} from '@/server/artifacts/mutation-events';
+} from './artifacts/mutation-events';

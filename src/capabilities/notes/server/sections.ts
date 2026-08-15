@@ -2,6 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import type { z } from 'zod';
 
+import { emitArtifactBodyBlocksEditEvent } from '@/capabilities/notes/server/artifacts/mutation-events';
 import {
   bodyBlocksToNoteSections,
   replaceNoteSectionBody,
@@ -15,7 +16,6 @@ import {
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { emitArtifactBodyBlocksEditEvent } from './artifact-events';
 
 type NoteSectionT = z.infer<typeof NoteSection>;
 
