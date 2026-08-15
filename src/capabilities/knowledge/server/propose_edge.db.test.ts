@@ -13,11 +13,11 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { getCorrectionStatus } from '@/kernel/events';
+import { type FailureAttempt, getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { type FailureAttempt, getFailureAttempts } from './events/failure-attempts';
 import { RECENT_FAILURE_WINDOW_MS } from './tools/knowledge-readers';
 
 beforeEach(() => {

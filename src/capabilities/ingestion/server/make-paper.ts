@@ -18,11 +18,8 @@ import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { ToolState, type ToolStateT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { artifact, question, question_block, source_document } from '@/db/schema';
+import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
 import { ApiError } from '@/kernel/http';
-import {
-  artifactRowToCreateSnapshot,
-  emitArtifactCreateEvent,
-} from '@/server/artifacts/create-event';
 
 /** Minimal question shape the builder needs (subset of the question row). */
 export interface IngestionPaperQuestion {

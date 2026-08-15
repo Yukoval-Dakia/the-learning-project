@@ -39,6 +39,18 @@ import {
 import type { Db } from '@/db/client';
 import { knowledge, learning_item, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+// YUK-227 S3 Slice C — image-type sources become proposals (NOT auto-extracted, 守
+// ADR-0002). writeAiProposal is the实证 writer (writeProposal does not exist).
+// listProposalInboxRows (FIX-6) gives the live-pending dedup the same way variant_gen
+// does (handlers/variant_gen.ts:190) — reuse the inbox projection's status derivation
+// rather than re-deriving "live" from raw rows.
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
+import { writeAiProposal } from '@/kernel/proposals/writer';
+import {
+  DOMAIN_TOOL_MCP_SERVER_NAME,
+  type DomainToolName,
+  toMcpAllowedToolName,
+} from '@/kernel/tools/allowlists';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import {
   TAVILY_MCP_ALLOWED_TOOLS,
@@ -47,23 +59,11 @@ import {
 } from '@/server/ai/mcp/tavily';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { runAgentTask } from '@/server/ai/runner';
-import {
-  DOMAIN_TOOL_MCP_SERVER_NAME,
-  type DomainToolName,
-  toMcpAllowedToolName,
-} from '@/server/ai/tools/allowlists';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
 } from '@/server/boss/verify-dispatch-outbox';
-// YUK-227 S3 Slice C — image-type sources become proposals (NOT auto-extracted, 守
-// ADR-0002). writeAiProposal is the实证 writer (writeProposal does not exist).
-// listProposalInboxRows (FIX-6) gives the live-pending dedup the same way variant_gen
-// does (handlers/variant_gen.ts:190) — reuse the inbox projection's status derivation
-// rather than re-deriving "live" from raw rows.
-import { listProposalInboxRows } from '@/server/proposals/inbox';
-import { writeAiProposal } from '@/server/proposals/writer';
 import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';

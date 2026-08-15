@@ -20,7 +20,6 @@
 // 正确 outcome（第二实例原则）——每次触及 θ̂ 的 overturn 都写 experimental:reproject_
 // deferred marker 喂第二实例重投影引擎（全历史重投影仍属投影引擎契约，独立 issue）。
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
 import { resolveInvokedExecutionProvenance } from '@/capabilities/practice/server/judge';
 import {
@@ -32,6 +31,7 @@ import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervent
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';

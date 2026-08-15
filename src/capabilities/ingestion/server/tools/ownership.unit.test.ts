@@ -6,14 +6,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
 import { ingestionCapability } from '@/capabilities/ingestion/manifest';
-import {
-  DOMAIN_TOOL_ALLOWLISTS,
-  PROPOSE_WRITE_TOOLS,
-  READ_TOOLS,
-} from '@/server/ai/tools/allowlists';
+import { DOMAIN_TOOL_ALLOWLISTS, PROPOSE_WRITE_TOOLS, READ_TOOLS } from '@/kernel/tools/allowlists';
+import type { DomainTool } from '@/kernel/tools/types';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { __resetRegistryForTests, getTool } from '@/server/ai/tools/registry';
-import type { DomainTool } from '@/server/ai/tools/types';
 
 const INGESTION_TOOL_NAMES = [
   'query_records',
@@ -102,14 +98,8 @@ describe('ingestion server ownership', () => {
     );
     expect(existsSync(join(process.cwd(), 'src/server/events/ingestion-progress.ts'))).toBe(false);
 
-    const centralReaders = source('src/server/ai/tools/context-readers.ts');
-    for (const exportName of [
-      'queryRecordsTool',
-      'getRecordContextTool',
-      'getQuestionBlockStructureTool',
-    ]) {
-      expect(centralReaders).not.toContain(`export const ${exportName}`);
-    }
+    // YUK-892 — the transitional central concrete tool files are deleted wholesale.
+    expect(existsSync(join(process.cwd(), 'src/server/ai/tools/context-readers.ts'))).toBe(false);
 
     const manifest = source('src/capabilities/ingestion/manifest.ts');
     expect(manifest).not.toContain('@/server/ai/tools/context-readers');
@@ -128,12 +118,16 @@ describe('ingestion server ownership', () => {
   });
 
   it('shares record read-model semantics through the ingestion public seam', () => {
-    const centralReaders = source('src/server/ai/tools/context-readers.ts');
+    // YUK-892 — the composite question-context reader moved to Practice; it must
+    // still consume ingestion-owned material context through the public seam.
+    const questionContext = source(
+      'src/capabilities/practice/server/tools/question-context.ts',
+    );
     const ingestionPublic = source('src/capabilities/ingestion/public.ts');
 
-    expect(centralReaders).toContain("from '@/capabilities/ingestion/public'");
+    expect(questionContext).toContain("from '@/capabilities/ingestion/public'");
     for (const helperName of ['excerpt', 'knowledgeContext', 'bodyBlockSummaries']) {
-      expect(centralReaders).not.toMatch(new RegExp(`function ${helperName}\\b`));
+      expect(questionContext).not.toMatch(new RegExp(`function ${helperName}\\b`));
       expect(ingestionPublic).toContain(helperName);
     }
   });

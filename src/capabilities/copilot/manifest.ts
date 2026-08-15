@@ -210,7 +210,7 @@ export const copilotCapability = defineCapability({
       },
       {
         name: 'query_memory_brief',
-        load: () => import('@/server/ai/tools/context-readers').then((m) => m.queryMemoryBriefTool),
+        load: () => import('./server/tools/memory-brief').then((m) => m.queryMemoryBriefTool),
       },
       {
         name: 'search_memory_facts',

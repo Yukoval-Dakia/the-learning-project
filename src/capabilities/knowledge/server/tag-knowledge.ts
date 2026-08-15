@@ -40,6 +40,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import {
   type EmbedProviderAttemptOptions,
   embedText,
@@ -53,7 +54,6 @@ import { assertKnowledgeNodeParity, knowledgeLiveRowToSnapshot } from '@/server/
 import { projectionIsWriter } from '@/server/projections/sot-flag';
 import { getDefaultSubjectRegistry, getKnownSubjects } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
-import { getEffectiveDomain } from './domain';
 import { type KnowledgeSimilarityCandidate, matchKnowledgeBySimilarity } from './match-similarity';
 import { applyProposeNew } from './proposals';
 import { MATCH_THRESHOLD } from './tagging-flags';

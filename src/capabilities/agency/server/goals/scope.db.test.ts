@@ -6,8 +6,8 @@
 
 import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import { event, goal, knowledge } from '@/db/schema';
+import { getProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
-import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';

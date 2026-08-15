@@ -12,8 +12,8 @@ import {
 import { db } from '@/db/client';
 import { event, kc_typed_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { gatherDissociationRecordsByIdentity } from '@/server/conjectures/hard-confirm';
-import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 

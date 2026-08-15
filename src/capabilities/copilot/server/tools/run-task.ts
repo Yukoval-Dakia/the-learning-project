@@ -4,8 +4,8 @@ import { tasks } from '@/ai/registry';
 import { QuestionAuthorIntentSchema } from '@/ai/task-intents';
 import type { Db } from '@/db/client';
 import { GoalScopeIntentSchema } from '@/kernel/task-intents';
+import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { type BoundRunTaskFn, type RunTaskCallCtx, makeRunTaskFn } from '@/server/ai/runner-fn';
-import type { DomainTool, ToolContext } from '@/server/ai/tools/types';
 
 export const RunTaskInputSchema = z
   .object({

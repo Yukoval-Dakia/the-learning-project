@@ -9,9 +9,9 @@
 // (x-internal-token); the handler mirrors the sibling list routes (zod safeParse,
 // clamp, errorResponse) and the learning-items pagination convention.
 
-import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/public';
 import { db } from '@/db/client';
 import { ApiError, collectionPayload, errorResponse } from '@/kernel/http';
+import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import {
   type QuestionFamily,
   type QuestionListDraftStatus,
@@ -19,7 +19,7 @@ import {
   type QuestionListSortBy,
   type QuestionListSortDir,
   listQuestions,
-} from '@/server/questions/list';
+} from '@/kernel/read-models/questions';
 import { QuestionListQuerySchema } from './question-solve-contracts';
 
 const DEFAULT_LIMIT = 50;

@@ -18,7 +18,6 @@
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import {
   type BacklinksByArtifactType,
   getArtifactCorrectionStates,
@@ -35,6 +34,7 @@ import { retrievabilityForKc } from '@/capabilities/practice/public';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { getFsrsStatesByIds } from '@/server/fsrs/state';
 import { getMasteryProjection, getRepresentativeKcBeta } from '@/server/mastery/state';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';

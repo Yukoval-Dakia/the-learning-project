@@ -10,7 +10,6 @@
 //   - no answer (response_md null/empty) → no judge invoked, no payload.judge
 //   - CC-1 invariant: rating-only override does NOT write experimental:user_cause
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 // YUK-589 (J1/J2) — execution-provenance regression helpers.
 import {
   JUDGE_PROMPT_TEMPLATE_REVISION,
@@ -43,6 +42,7 @@ import {
   practice_stream_item,
   question,
 } from '@/db/schema';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { runTask } from '@/server/ai/runner';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 // YUK-455 inc-E — flag-off byte-identical 回归锚：seed prereq 图 + 答错 → 断言零 prereq_risk 事件。
@@ -65,9 +65,8 @@ vi.mock('@/server/ai/runner', () => ({
 // '2.0.0' profile. importOriginal keeps the default behaviour (real registry
 // profiles) for every other test in this file; only the D6 e2e test overrides
 // the return with mockResolvedValueOnce.
-vi.mock('@/capabilities/knowledge/server/subject-profile', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('@/capabilities/knowledge/server/subject-profile')>();
+vi.mock('@/kernel/read-models/subject-profile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/kernel/read-models/subject-profile')>();
   return {
     ...actual,
     resolveSubjectProfileForKnowledgeIds: vi.fn(actual.resolveSubjectProfileForKnowledgeIds),

@@ -6,7 +6,7 @@
 // resolver (`resolveEvidenceTimestamps`) lives in brief.ts, which already owns
 // the `event` table + `Db` type; this file is the model-free numerator math only.
 
-import type { LongTermFreshnessBudget } from '@/server/ai/tools/budgets';
+import type { LongTermFreshnessBudget } from '@/kernel/tools/budgets';
 
 const MS_PER_DAY = 86_400_000;
 const LN2 = Math.log(2);

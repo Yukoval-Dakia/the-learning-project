@@ -29,7 +29,7 @@
 // docs/design/2026-06-27-a13-ts-half-design.md.
 
 import type { Db } from '@/db/client';
-import { listProposalInboxPage } from '@/server/proposals/inbox';
+import { listProposalInboxPage } from '@/kernel/proposals/inbox';
 
 // 备课台 surfaces at most 3 conjectures — a guilt-free, finite "为你而备" feed, never a
 // growing backlog. Salience sorts the fetched pending window before this cap.

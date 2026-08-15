@@ -22,8 +22,8 @@ import type { Db } from '@/db/client';
 import { learning_record, question_block } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { archiveLearningRecord } from '@/kernel/records/queries';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
-import { archiveLearningRecord } from '@/server/records/queries';
 
 export interface RevertAutoEnrolledBlockParams {
   blockId: string;

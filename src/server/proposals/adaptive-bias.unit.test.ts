@@ -5,14 +5,14 @@
 // the pure functions; the DB-touching getProposalFeedbackDigest is covered in
 // the sibling adaptive-bias.test.ts (DB partition).
 
-import { describe, expect, it } from 'vitest';
 import {
   type GateBiasConfig,
   type ProposalFeedbackCell,
   computeGateBump,
   deriveRelationFromCooldownKey,
   findFeedbackCell,
-} from './adaptive-bias';
+} from '@/kernel/proposals/adaptive-bias';
+import { describe, expect, it } from 'vitest';
 
 const CONFIG: GateBiasConfig = { acceptanceThreshold: 0.3, minSamples: 5 };
 

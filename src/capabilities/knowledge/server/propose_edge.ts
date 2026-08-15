@@ -18,11 +18,12 @@ import { parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { writeAiProposal } from '@/kernel/proposals/writer';
+import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { writeRetryableAiFailureLedger } from '@/server/ai/failure-ledger';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import type { Env } from '@/server/memory/client';
-import { writeAiProposal } from '@/server/proposals/writer';
 import type { SubjectProfile } from '@/subjects/profile';
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
@@ -41,7 +42,6 @@ import {
   markEdgeReconcileApplied,
 } from './edge-reconcile-store';
 import { archiveKnowledgeEdge, createKnowledgeEdge } from './edges';
-import type { FailureAttempt } from './events/failure-attempts';
 import { type TopologyEdge, checkEdgeTopology } from './topology-gate';
 import { loadTreeSnapshot } from './tree';
 

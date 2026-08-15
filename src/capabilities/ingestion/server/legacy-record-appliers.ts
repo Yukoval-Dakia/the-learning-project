@@ -8,13 +8,16 @@ import { newId } from '@/core/ids';
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, learning_record, question } from '@/db/schema';
+import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { lockPlacementSupplyScopes } from '@/kernel/placement';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
-  artifactRowToCreateSnapshot,
-  emitArtifactCreateEvent,
-} from '@/server/artifacts/create-event';
+  ensureProposalDecisionSignal,
+  recordProposalDecisionSignal,
+} from '@/kernel/proposals/signals';
+import { updateLearningRecord } from '@/kernel/records/queries';
 // YUK-471 W2 — learning_item projection seam (ai_dream record_promotion). The INSERT writes a per-id
 // genesis BASE event + index anchor regardless of the flag; projectionIsWriter('learning_item') gates
 // ONLY who writes the ROW (projection write-through when ON, imperative INSERT when OFF + parity assert).
@@ -31,13 +34,7 @@ import {
   existingAcceptRate,
   requiredString,
 } from '@/server/proposals/applier-helpers';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
-import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/server/proposals/signals';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { updateLearningRecord } from '@/server/records/queries';
 import { and, eq, isNull } from 'drizzle-orm';
 
 // 结构最小化（与 practice / agency / ingestion 包同模式）：只声明本文件 applier

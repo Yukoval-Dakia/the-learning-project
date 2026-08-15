@@ -1,6 +1,6 @@
 import { GoalScopeIntentSchema } from '@/kernel/task-intents';
+import type { ToolContext } from '@/kernel/tools/types';
 import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
-import type { ToolContext } from '@/server/ai/tools/types';
 import type { ZodType } from 'zod';
 import { taskCatalog } from './task-catalog';
 import { QuestionAuthorIntentSchema } from './task-intents';
@@ -36,7 +36,9 @@ const questionAuthorTask = Object.freeze({
   copilot: Object.freeze({
     intentSchema: QuestionAuthorIntentSchema,
     prepare: () =>
-      import('@/server/ai/question-author').then((module) => module.prepareQuestionAuthorTask),
+      import('@/capabilities/practice/server/tools/question-author').then(
+        (module) => module.prepareQuestionAuthorTask,
+      ),
     invocable: true,
   }),
 });

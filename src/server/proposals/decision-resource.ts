@@ -3,9 +3,9 @@ import type { Db } from '@/db/client';
 import { getCorrectionStatus } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import type { ProposalLifecycleResult } from '@/kernel/proposals';
+import { getProposalInboxRow } from '@/kernel/proposals/inbox';
 import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
 import { findExistingRateEvent } from '@/server/proposals/applier-helpers';
-import { getProposalInboxRow } from '@/server/proposals/inbox';
 
 function conflict(proposalId: string, existingDecision: string): ApiError {
   return new ApiError(

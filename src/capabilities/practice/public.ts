@@ -16,7 +16,7 @@ export {
   type EffectiveTruth,
   activeEffectiveTruth,
   getEffectiveTruths,
-} from './server/effective-truth';
+} from '@/kernel/events';
 export { loadAttemptQuestionSnapshot } from './server/question-evidence-snapshot';
 export { mergeExactQuestionDuplicateKnowledgeIds } from './server/quiz/content-fingerprint';
 export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
@@ -206,3 +206,6 @@ export {
 } from './server/question-supply/placement-starter-store';
 export type { PlacementStarterGoalAuthority } from './server/question-supply/placement-starter-store';
 export { lockPlacementSupplyScopes } from './server/question-supply/placement-supply-lock';
+
+// YUK-892 — due-review queue reader for non-LLM read paths (today summary).
+export { executeGetReviewDue } from './server/tools/question-context';

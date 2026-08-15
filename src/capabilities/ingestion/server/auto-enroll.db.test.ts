@@ -24,8 +24,8 @@ import {
   question_block,
 } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
+import { getProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
-import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   type GradeStudentAnswerFn,

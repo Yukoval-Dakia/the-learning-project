@@ -1,7 +1,7 @@
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
+import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { and, inArray, isNull } from 'drizzle-orm';
-import { getEffectiveDomain } from './domain';
 
 export interface FailureLearningKnowledgeNode {
   id: string;

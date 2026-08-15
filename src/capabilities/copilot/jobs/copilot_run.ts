@@ -68,6 +68,17 @@ import {
 import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
+import {
+  DOMAIN_TOOL_MCP_SERVER_NAME,
+  resolveDomainToolNames,
+  resolveMcpAllowedTools,
+} from '@/kernel/tools/allowlists';
+// YUK-364 (bot-review C4) — durable run 的 anti-runaway 护栏：只复用 inline 的
+// tool-call ceiling（beforeExecute seam），不复用 per-message row cap（interceptInput
+// seam，endurance 故意放宽）。endurance 故意跑得久、必然超过 inline 的 per-message
+// 预算，所以 row cap 不适用；但仍需一个 tool-call 上限防 durable run 狂刷工具/proposal。
+import { resolveContextBudget } from '@/kernel/tools/budgets';
+import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 // YUK-364 (bot-review C5) — 共享 Tavily 远程 MCP（web grounding），与 inline copilot
 // （chat.ts runCopilotChatImpl）+ quiz_gen handler 同一份 env-gated builder。配置
 // TAVILY_API_KEY 时挂 search/extract，未配置时 buildTavily() 返回 null → 与之前
@@ -87,17 +98,6 @@ import {
   type SpawnBudgetObservation,
   createSpawnContract,
 } from '@/server/ai/spawn-contract';
-import {
-  DOMAIN_TOOL_MCP_SERVER_NAME,
-  resolveDomainToolNames,
-  resolveMcpAllowedTools,
-} from '@/server/ai/tools/allowlists';
-// YUK-364 (bot-review C4) — durable run 的 anti-runaway 护栏：只复用 inline 的
-// tool-call ceiling（beforeExecute seam），不复用 per-message row cap（interceptInput
-// seam，endurance 故意放宽）。endurance 故意跑得久、必然超过 inline 的 per-message
-// 预算，所以 row cap 不适用；但仍需一个 tool-call 上限防 durable run 狂刷工具/proposal。
-import { resolveContextBudget } from '@/server/ai/tools/budgets';
-import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import {
   type SdkMcpServer,
   type ToolExecutionResultObservation,

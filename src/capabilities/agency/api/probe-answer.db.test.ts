@@ -38,8 +38,8 @@ import {
   question,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
-import { writeAiProposal } from '@/server/proposals/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { ProbeAnswerResponseSchema } from './contracts';
 import { POST } from './probe-answer';

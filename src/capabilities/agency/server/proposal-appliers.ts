@@ -24,16 +24,16 @@ import { artifact, completion_evidence, event, learning_item } from '@/db/schema
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
+  ensureProposalDecisionSignal,
+  recordProposalDecisionSignal,
+} from '@/kernel/proposals/signals';
+import {
   asPlainRecord,
   ensureAcceptOnly,
   existingAcceptRate,
   requiredString,
   stringArray,
 } from '@/server/proposals/applier-helpers';
-import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/server/proposals/signals';
 import {
   type AcceptLearningIntentParams,
   type LearningIntentMaterializeResult,

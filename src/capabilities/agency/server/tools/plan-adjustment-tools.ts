@@ -1,4 +1,4 @@
-import { writeArchiveProposal, writeDeferProposal } from '@/server/proposals/producers';
+import { writeArchiveProposal, writeDeferProposal } from '@/kernel/proposals/producers';
 import { z } from 'zod';
 import {
   type LearningItemProposalOutput,

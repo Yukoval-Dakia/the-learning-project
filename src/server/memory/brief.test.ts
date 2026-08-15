@@ -1,4 +1,4 @@
-import { LONG_TERM_FRESHNESS_BUDGET } from '@/server/ai/tools/budgets';
+import { LONG_TERM_FRESHNESS_BUDGET } from '@/kernel/tools/budgets';
 import { describe, expect, it, vi } from 'vitest';
 import {
   BRIEF_TEMPLATES,

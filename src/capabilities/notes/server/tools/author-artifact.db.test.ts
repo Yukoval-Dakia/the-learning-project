@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { Artifact } from '@/core/schema';
 import { INTERACTIVE_HTML_MAX_CHARS } from '@/core/schema/business';
 import { artifact } from '@/db/schema';
-import type { ToolContext } from '@/server/ai/tools/types';
+import type { ToolContext } from '@/kernel/tools/types';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { authorArtifactTool, updateArtifactTool } from './author-artifact';
 

@@ -1,3 +1,10 @@
+import type { RunTaskFn } from '@/capabilities/practice/jobs/quiz_verify';
+import { newId } from '@/core/ids';
+import type { QuestionKindT } from '@/core/schema/judge-routing';
+import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
+import type { Db } from '@/db/client';
+import { isPoolVisible } from '@/db/predicates';
+import { knowledge } from '@/db/schema';
 // Phase 1 增量 3 (YUK-399/YUK-396) — caller-agnostic matcher 仲裁器骨架.
 //
 // matcher(demand) 召回单 KC 候选 (poolFetch, activeOnly:false) → app 层复合保守仲裁
@@ -19,14 +26,7 @@
 //   含 NULL 行 (§7).
 // 镜像 queryExistingPool (sourcing-sequence.ts:121-145) 的 app 层 kind 过滤 + tier 排序 +
 //   slice 链 (同源单一真相)。CRITICAL: 不传 limit 给 poolFetch — 截断在 app 层 (F2 防线).
-import { getEffectiveDomain } from '@/capabilities/knowledge/public';
-import type { RunTaskFn } from '@/capabilities/practice/jobs/quiz_verify';
-import { newId } from '@/core/ids';
-import type { QuestionKindT } from '@/core/schema/judge-routing';
-import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
-import type { Db } from '@/db/client';
-import { isPoolVisible } from '@/db/predicates';
-import { knowledge } from '@/db/schema';
+import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { type EmbedProviderAttemptOptions, embedText } from '@/server/ai/embed';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';

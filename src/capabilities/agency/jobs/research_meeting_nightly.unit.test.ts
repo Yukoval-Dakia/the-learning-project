@@ -20,10 +20,10 @@ import type {
   FailureAttemptWithReasoningTrace,
 } from '@/capabilities/knowledge/public';
 import type { WriteEventInput } from '@/kernel/events';
+import type { WriteAiProposalInput } from '@/kernel/proposals/writer';
 import { classifyJobYield } from '@/server/boss/job-yield';
 import type { PredictionAccountability } from '@/server/conjectures/accountability';
 import type { MasteryProjection } from '@/server/mastery/state';
-import type { WriteAiProposalInput } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import sharp from 'sharp';
 import { describe, expect, it, vi } from 'vitest';

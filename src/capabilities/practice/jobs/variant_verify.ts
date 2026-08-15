@@ -20,11 +20,12 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
-import { getFailureAttemptById } from '@/capabilities/knowledge/public';
 import { VariantVerificationResult, type VariantVerificationResultT } from '@/core/schema/business';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
+import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import {
   type TaskTextResult,
@@ -33,7 +34,6 @@ import {
   costUsdToMicroUsd,
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 // YUK-471 W2 — mistake_variant verify (E3) write-through. verify already writes the
 // experimental:variant_verify event; the per-entity flag gates whether the projection (ON) or the
 // imperative UPDATE (OFF) writes the row (broken+failure_reasons on fail / touch updated_at on

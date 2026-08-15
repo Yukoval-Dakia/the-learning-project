@@ -8,7 +8,7 @@ import { LegacyKnowledgeMisconceptionVetoResponseSchema } from '@/capabilities/k
 import { newId } from '@/core/ids';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { writeAiProposal } from '@/server/proposals/writer';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

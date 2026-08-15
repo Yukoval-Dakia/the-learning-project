@@ -10,13 +10,13 @@ import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
 } from '@/core/schema/intervention';
 import { event, knowledge, mastery_state, question } from '@/db/schema';
+import { getEffectiveTruth } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { writeAttemptSnapshotBrackets } from '../../practice/server/attempt-snapshot';
 import { POST as appealPost } from '../api/appeal';
-import { getEffectiveTruth } from '../server/effective-truth';
 import { type RejudgeDeps, handleRejudge } from './rejudge';
 
 function mockJudge(outcome: 'correct' | 'partial' | 'incorrect', feedback: string) {

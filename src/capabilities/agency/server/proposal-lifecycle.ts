@@ -4,7 +4,7 @@ import type {
   ProposalDismissInput,
   ProposalRetractApplier,
 } from '@/kernel/proposals';
-export type { ProposalInboxRow } from '@/server/proposals/inbox';
+export type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { type GoalRetractRuntime, retractGoalScopeProposal } from './proposal-retract-goal';
 import {
   type LearningItemRetractRuntime,

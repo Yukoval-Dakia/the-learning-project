@@ -7,10 +7,10 @@ export {
   getEffectiveDomain,
   resolveAllActiveKnowledgeIds,
   resolveSubjectKnowledgeIds,
-} from './server/domain';
+} from '@/kernel/read-models/knowledge-tree';
 export { loadFailureLearningKnowledgeContext } from './server/failure-learning-context';
 export type { FailureLearningKnowledgeNode } from './server/failure-learning-context';
-export { loadConfusablePairs } from './server/misconception-confusable-read';
+export { loadConfusablePairs } from '@/kernel/read-models/confusables';
 export { loadTreeSnapshot } from './server/tree';
 export {
   ACCEPT_RESULT_KINDS,
@@ -26,7 +26,7 @@ export {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
   resolveSubjectProfileForKnowledgeIdsStrict,
-} from './server/subject-profile';
+} from '@/kernel/read-models/subject-profile';
 export { isTagKnowledgeInvariantError, tagKnowledge } from './server/tag-knowledge';
 export type { NameKcFn } from './server/tag-knowledge';
 export {
@@ -39,7 +39,7 @@ export type {
   HubMeshAtomicInput,
   HubMeshEdge,
 } from './server/hub-mesh';
-export { assertKnowledgeIdsExist } from './server/validate';
+export { assertKnowledgeIdsExist } from '@/kernel/read-models/knowledge-validate';
 // YUK-885 — public read-model ports repointed from central deep imports.
 export { isDirectTreePair } from './server/topology-gate';
 export { archiveKnowledgeEdge } from './server/edges';
@@ -62,7 +62,7 @@ export {
   batchResolveSubjectDisplayIds,
   batchResolveSubjectIds,
   resolveSubjectRenderNotation,
-} from './server/subject-resolution';
+} from '@/kernel/read-models/subject-resolution';
 
 export {
   getFailureAttemptById,
@@ -70,11 +70,11 @@ export {
   getFailureAttemptsWithReasoningTrace,
   getFailureAttempts,
   getJudgeForAttempt,
-} from './server/events/failure-attempts';
+} from '@/kernel/read-models/failure-attempts';
 export type {
   FailureAttempt,
   FailureAttemptJudge,
   FailureAttemptUserCause,
   FailureAttemptWithReasoningTrace,
   GetFailureAttemptsOpts,
-} from './server/events/failure-attempts';
+} from '@/kernel/read-models/failure-attempts';

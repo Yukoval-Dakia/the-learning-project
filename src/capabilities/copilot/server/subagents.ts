@@ -7,12 +7,12 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 
 import { parseFlag } from '@/core/env-flags';
-import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   READ_TOOLS,
   toMcpAllowedToolName,
-} from '@/server/ai/tools/allowlists';
+} from '@/kernel/tools/allowlists';
+import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
 
 export const COPILOT_SUBAGENT_NAME = 'copilot-researcher';
 export const COPILOT_SUBAGENT_ENABLED_ENV = 'COPILOT_SUBAGENT_ENABLED';

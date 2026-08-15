@@ -8,8 +8,8 @@
 
 import type { CapabilityManifest } from '@/kernel/manifest';
 
+import type { DomainTool } from '@/kernel/tools/types';
 import { getTool, registerTool } from './registry';
-import type { DomainTool } from './types';
 
 export async function registerCapabilityTools(
   capabilities: readonly CapabilityManifest[],

@@ -7,14 +7,14 @@ import type { Db } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
-import { projectionIsWriter } from '@/server/projections/sot-flag';
-import { findExistingRateEvent } from '@/server/proposals/applier-helpers';
-import { getProposalInboxRow } from '@/server/proposals/inbox';
+import { getProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
-} from '@/server/proposals/signals';
+} from '@/kernel/proposals/signals';
+import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
+import { projectionIsWriter } from '@/server/projections/sot-flag';
+import { findExistingRateEvent } from '@/server/proposals/applier-helpers';
 import {
   acquireEdgeEndpointLocks,
   assertEdgeEndpointsValid,

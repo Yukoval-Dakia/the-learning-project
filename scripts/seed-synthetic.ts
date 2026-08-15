@@ -53,15 +53,15 @@ import {
   question,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
-import { upsertFsrsState } from '@/server/fsrs/state';
-import { listActiveSubjectsSinceRefresh } from '@/server/memory/active-subjects';
-import { resolveEdgeGateBump } from '@/server/proposals/adaptive-bias';
+import { resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
 import {
   getProposalAcceptanceRates,
   recordProposalDecisionSignal,
-} from '@/server/proposals/signals';
-import { writeAiProposal } from '@/server/proposals/writer';
+} from '@/kernel/proposals/signals';
+import { writeAiProposal } from '@/kernel/proposals/writer';
+import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
+import { upsertFsrsState } from '@/server/fsrs/state';
+import { listActiveSubjectsSinceRefresh } from '@/server/memory/active-subjects';
 import { loadYuwenFixtures } from '@/subjects/yuwen/fixtures';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 

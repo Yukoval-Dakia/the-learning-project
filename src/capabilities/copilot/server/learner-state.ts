@@ -32,7 +32,6 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
 
 import { listActiveGoalsWithResolvedScope } from '@/capabilities/agency/public';
-import { type FailureAttempt, getFailureAttempts } from '@/capabilities/knowledge/public';
 // PR #717 round-2 CodeRabbit fix #2 (YUK-574) — imports from src/core/ (RELOCATED
 // from knowledge/ui/mastery-band.ts; see the provenance note in that file). Pure
 // dependency-free band-derivation helpers, no cross-capability / cross-layer reach.
@@ -40,16 +39,18 @@ import { A5_BANDS, masteryBandView } from '@/core/mastery-band';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import {
+  type ProposalFeedbackCell,
+  getProposalFeedbackDigest,
+} from '@/kernel/proposals/adaptive-bias';
+import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
+import {
   LEARNER_STATE_HEADER_BUDGET,
   type LearnerStateHeaderBudget,
   PROPOSAL_FEEDBACK_BUDGET,
-} from '@/server/ai/tools/budgets';
-import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
+} from '@/kernel/tools/budgets';
 import { type MasteryProjection, getMasteryProjection } from '@/server/mastery/state';
-import {
-  type ProposalFeedbackCell,
-  getProposalFeedbackDigest,
-} from '@/server/proposals/adaptive-bias';
 import { type CopilotSummary, loadCopilotSummary } from '@/server/today/copilot-summary';
 import {
   type LoadTodayOvernightDigest,

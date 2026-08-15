@@ -1,10 +1,7 @@
 import { type AiProposalPayloadT, resolveSuggestionKind } from '@/core/schema/proposal';
 import { event, question, question_block } from '@/db/schema';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { listProposalInboxRows } from './inbox';
-import { proposalChangeSummary, proposalDisplayTitle } from './presentation';
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
+import { proposalChangeSummary, proposalDisplayTitle } from '@/kernel/proposals/presentation';
 import {
   writeArchiveProposal,
   writeBlockMergeProposal,
@@ -13,7 +10,10 @@ import {
   writeLearningItemProposal,
   writeRelearnProposal,
   writeVariantQuestionProposal,
-} from './producers';
+} from '@/kernel/proposals/producers';
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { resetDb, testDb } from '../../../tests/helpers/db';
 
 describe('proposal producer helpers', () => {
   beforeEach(async () => {

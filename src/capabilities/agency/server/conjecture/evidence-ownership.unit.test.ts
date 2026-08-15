@@ -9,7 +9,8 @@ describe('conjecture evidence capability ownership', () => {
     const enrichment = source('src/capabilities/agency/server/conjecture/evidence-enrichment.ts');
     const job = source('src/capabilities/agency/jobs/research_meeting_nightly.ts');
 
-    expect(enrichment).toContain("from '@/capabilities/knowledge/public'");
+    // YUK-892 — subject/domain resolution reads moved to kernel read models.
+    expect(enrichment).toContain("from '@/kernel/read-models/knowledge-tree'");
     expect(enrichment).not.toContain('@/capabilities/knowledge/server/');
     expect(enrichment).not.toContain("from '@/server/");
     expect(source('src/capabilities/agency/server/conjecture/evidence.ts')).not.toContain(

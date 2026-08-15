@@ -2,7 +2,7 @@ import { and, desc, eq, gt, inArray, isNull, like, lt, not, or, sql } from 'driz
 
 import type { Db } from '@/db/client';
 import { event, memory_brief_note } from '@/db/schema';
-import { BRIEF_REFRESH_BUDGET, LONG_TERM_FRESHNESS_BUDGET } from '@/server/ai/tools/budgets';
+import { BRIEF_REFRESH_BUDGET, LONG_TERM_FRESHNESS_BUDGET } from '@/kernel/tools/budgets';
 import { scoreLongTermFreshness } from './brief-freshness';
 
 // YUK-565 — reserved rollback-ledger actions that were written before

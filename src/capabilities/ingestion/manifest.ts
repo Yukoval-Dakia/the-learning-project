@@ -397,13 +397,12 @@ export const ingestionCapability = defineCapability({
       },
       {
         name: 'propose_record_links',
-        load: () =>
-          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeRecordLinksTool),
+        load: () => import('./server/tools/proposal-tools').then((m) => m.proposeRecordLinksTool),
       },
       {
         name: 'propose_record_promotion',
         load: () =>
-          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeRecordPromotionTool),
+          import('./server/tools/proposal-tools').then((m) => m.proposeRecordPromotionTool),
       },
       {
         name: 'update_prompt',

@@ -7,12 +7,12 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { ensureAcceptOnly, existingAcceptRate } from '@/server/proposals/applier-helpers';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
-} from '@/server/proposals/signals';
+} from '@/kernel/proposals/signals';
+import { ensureAcceptOnly, existingAcceptRate } from '@/server/proposals/applier-helpers';
 // YUK-202 / BlockAssembly path-B (design 2026-06-02 §4) — accept reuses the
 // verified YUK-195 `mergeQuestions` primitive; no auto-merge path is added.
 import { mergeQuestions } from './block-structured-edit';

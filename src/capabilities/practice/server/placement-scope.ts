@@ -12,11 +12,11 @@
 // scope is a DERIVED axis recomputed each call — the resolved set is never written back onto
 // the goal row. See docs/design/2026-06-20-cold-start-day-one-design.md / YUK-481.
 
+import type { Db, Tx } from '@/db/client';
 import {
   resolveAllActiveKnowledgeIds,
   resolveSubjectKnowledgeIds,
-} from '@/capabilities/knowledge/public';
-import type { Db, Tx } from '@/db/client';
+} from '@/kernel/read-models/knowledge-tree';
 
 export async function resolveGoalPlacementScope(
   db: Db | Tx,

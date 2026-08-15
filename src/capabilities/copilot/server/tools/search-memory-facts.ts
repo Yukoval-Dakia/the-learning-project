@@ -11,8 +11,8 @@
 // internal retrieval out of the user-visible event stream.
 
 import { createHash } from 'node:crypto';
+import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
-import type { DomainTool, ToolContext } from '@/server/ai/tools/types';
 import { type MemoryReadClientFactory, readMemoryFacts } from '@/server/memory/read';
 import { z } from 'zod';
 

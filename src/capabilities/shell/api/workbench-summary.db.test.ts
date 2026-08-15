@@ -3,7 +3,7 @@
 // reviewed_count / week_heat 今日计数）。
 
 import { event, goal, knowledge, learning_session } from '@/db/schema';
-import { writeAiProposal } from '@/server/proposals/writer';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { WorkbenchSummaryResponseSchema } from './contracts';

@@ -35,18 +35,18 @@ import { runGoalScopeProposeNightly } from '@/capabilities/agency/jobs/goal_scop
 import type { GoalScopeAcceptResult } from '@/capabilities/agency/public';
 import type { ActiveGoal } from '@/capabilities/agency/server/goals/queries';
 import { listActiveGoals } from '@/capabilities/agency/server/goals/queries';
+import { executeMemoryBrief } from '@/capabilities/copilot/public';
 import { handleReviewDue } from '@/capabilities/practice/server/due-list';
 import { material_fsrs_state } from '@/db/schema';
+import { resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
+import { getProposalAcceptanceRates } from '@/kernel/proposals/signals';
+import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
+import type { ToolContext } from '@/kernel/tools/types';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
-import { executeMemoryBrief } from '@/server/ai/tools/context-readers';
-import type { ToolContext } from '@/server/ai/tools/types';
 import { listActiveSubjectsSinceRefresh } from '@/server/memory/active-subjects';
 import { regenerateMemoryBrief } from '@/server/memory/brief';
 import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { acceptAiProposal } from '@/server/proposals/actions';
-import { resolveEdgeGateBump } from '@/server/proposals/adaptive-bias';
-import { getProposalAcceptanceRates } from '@/server/proposals/signals';
 import { and, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 

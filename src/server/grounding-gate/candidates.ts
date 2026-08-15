@@ -18,13 +18,13 @@ import {
 } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import {
   type PredictionAccountability,
   loadPredictionAccountabilityByKey,
   rankEvidenceCellsByAccountability,
 } from '@/server/conjectures/accountability';
 import { getMasteryProjection } from '@/server/mastery/state';
-import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { inArray } from 'drizzle-orm';
 
 export const GROUNDING_GATE_WINDOW_DAYS = 14;

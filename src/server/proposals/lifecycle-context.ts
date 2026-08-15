@@ -2,7 +2,7 @@ import { capabilities } from '@/capabilities';
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
 import { type ProposalAcceptProposal, createProposalLifecycleRegistry } from '@/kernel/proposals';
-import { type ProposalInboxRow, getProposalInboxRow } from './inbox';
+import { type ProposalInboxRow, getProposalInboxRow } from '@/kernel/proposals/inbox';
 
 export const proposalLifecycleRegistry = createProposalLifecycleRegistry(capabilities);
 

@@ -6,13 +6,13 @@
 import { capabilities } from '@/capabilities';
 import { event, memory_brief_note, tool_call_log } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, registerTool } from './registry';
-import type { DomainTool, ToolContext } from './types';
 
 // Mock the Agent SDK so the bridge wraps tools without spawning Claude.
 const mockSdk = vi.hoisted(() => ({

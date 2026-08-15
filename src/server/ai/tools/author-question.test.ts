@@ -1,3 +1,7 @@
+import {
+  authorQuestion,
+  authorQuestionTool,
+} from '@/capabilities/practice/server/tools/proposal-tools';
 // ADR-0032 D8 — author_question unified question-authoring core + DomainTool.
 //
 // Proves the front door delegates to the EXISTING code paths without regressing
@@ -11,12 +15,11 @@
 // @/db, seeds a real Postgres testcontainer.
 import { knowledge, learning_record, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
+import type { ToolContext } from '@/kernel/tools/types';
 import { acceptAiProposal } from '@/server/proposals/actions';
-import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { authorQuestion, authorQuestionTool } from './proposal-tools';
-import type { ToolContext } from './types';
 
 const mockRunner = vi.hoisted(() => ({ runTask: vi.fn() }));
 vi.mock('@/server/ai/runner', () => ({ runTask: mockRunner.runTask }));

@@ -23,7 +23,7 @@ import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, learning_item } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { writeLearningItemProposal } from '@/server/proposals/producers';
+import { writeLearningItemProposal } from '@/kernel/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';
 // YUK-879 — the outline output contract (schema + strict parser + domain error)
 // is owned by the agency TaskSpec module; this orchestrator re-exports it so

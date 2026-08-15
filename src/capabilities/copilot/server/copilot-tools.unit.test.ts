@@ -13,8 +13,8 @@ import {
   DOMAIN_TOOL_ALLOWLISTS,
   PROPOSE_WRITE_TOOLS,
   READ_TOOLS,
-} from '@/server/ai/tools/allowlists';
-import type { DomainTool } from '@/server/ai/tools/types';
+} from '@/kernel/tools/allowlists';
+import type { DomainTool } from '@/kernel/tools/types';
 
 const COPILOT_OWNED_TOOL_NAMES = ['run_task', 'query_events', 'search_memory_facts'] as const;
 
@@ -40,7 +40,7 @@ const OWNED_TOOL_EXPOSURES = {
 const OWNED_READER_PATHS = [
   'src/capabilities/copilot/server/tools/query-events.ts',
   'src/capabilities/copilot/server/tools/search-memory-facts.ts',
-  'src/capabilities/copilot/server/events/question-activity.ts',
+  'src/kernel/read-models/question-activity.ts',
 ] as const;
 
 function source(path: string): string {
@@ -111,14 +111,11 @@ describe('copilot server ownership (YUK-884)', () => {
 
   it('moves Copilot event read branches behind the public capability seam', () => {
     const publicPort = source('src/capabilities/copilot/public.ts');
-    const centralQueries = source('src/server/events/queries.ts');
-    for (const name of [
-      'getRecentReviewEvents',
-      'getQuestionTimeline',
-      'getQuestionAttemptOutcomeCounts',
-    ]) {
+    // YUK-892 — the central events transport module is deleted; the read models
+    // live in kernel/read-models and are re-published through the public port.
+    expect(existsSync(join(process.cwd(), 'src/server/events/queries.ts'))).toBe(false);
+    for (const name of ['getRecentReviewEvents', 'getQuestionTimeline', 'getQuestionAttemptOutcomeCounts']) {
       expect(publicPort).toContain(name);
-      expect(centralQueries).not.toContain(`export async function ${name}`);
     }
     expect(publicPort).toContain('QuestionTimelineEntry');
   });

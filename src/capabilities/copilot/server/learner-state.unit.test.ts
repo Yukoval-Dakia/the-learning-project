@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { LEARNER_STATE_HEADER_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
-import type { ProposalFeedbackCell } from '@/server/proposals/adaptive-bias';
+import type { ProposalFeedbackCell } from '@/kernel/proposals/adaptive-bias';
+import { LEARNER_STATE_HEADER_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
 import type { CopilotSummary } from '@/server/today/copilot-summary';
 import {
   OVERNIGHT_HANDOFF_UNAVAILABLE,

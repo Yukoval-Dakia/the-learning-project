@@ -1,7 +1,7 @@
 import type { NotePatchSummary, NotePatchT } from '@/core/schema/note-patch';
 import type { Db, Tx } from '@/db/client';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import type { TaskTextResult } from '@/server/ai/provenance';
-import { writeAiProposal } from '@/server/proposals/writer';
 
 type DbLike = Db | Tx;
 

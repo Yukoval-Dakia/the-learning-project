@@ -39,8 +39,8 @@ import {
 } from '@/capabilities/ingestion/tasks/block-assembly';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
+import { writeBlockMergeProposal } from '@/kernel/proposals/producers';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
-import { writeBlockMergeProposal } from '@/server/proposals/producers';
 
 // ---------- BlockAssemblyOutput schema (the model's structured output) ----------
 //

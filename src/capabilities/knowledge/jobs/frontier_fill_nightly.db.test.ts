@@ -15,7 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
 import { db } from '@/db/client';
 import { event, knowledge, knowledge_edge, mastery_state } from '@/db/schema';
-import { writeAiProposal } from '@/server/proposals/writer';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { resetDb } from '../../../../tests/helpers/db';
 import { FRONTIER_FILL_MAX_PROPOSALS, runFrontierFillAndWrite } from './frontier_fill_nightly';
 

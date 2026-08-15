@@ -53,11 +53,8 @@ import {
   InteractiveArtifactAttrs,
 } from '@/core/schema/business';
 import { artifact } from '@/db/schema';
-import type { DomainTool, ToolContext } from '@/server/ai/tools/types';
-import {
-  artifactRowToCreateSnapshot,
-  emitArtifactCreateEvent,
-} from '@/server/artifacts/create-event';
+import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
+import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { emitArtifactLifecycleEvent } from '../artifacts/mutation-events';
 
 // ---------------------------------------------------------------------------

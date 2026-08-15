@@ -1,5 +1,6 @@
 import { type AiTaskKind, getTaskSystemPrompt } from '@/ai/task-prompts';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
+export { costUsdToMicroUsd, sumAllKnownCostUsd } from '@/kernel/cost';
 import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
 
@@ -37,28 +38,6 @@ export function taskPromptFingerprint(task: AiTaskKind, profile?: SubjectProfile
     task_kind: task,
     system_prompt: getTaskSystemPrompt(task, profile),
   });
-}
-
-export function costUsdToMicroUsd(costUsd: number | null | undefined): number | null {
-  if (costUsd == null || !Number.isFinite(costUsd) || costUsd < 0) return null;
-  const microUsd = costUsd * 1_000_000;
-  if (!Number.isFinite(microUsd)) return null;
-  const roundedMicroUsd = Math.round(microUsd);
-  return Number.isSafeInteger(roundedMicroUsd) &&
-    roundedMicroUsd >= 0 &&
-    roundedMicroUsd <= POSTGRES_INTEGER_MAX
-    ? roundedMicroUsd
-    : null;
-}
-
-export function sumAllKnownCostUsd(costs: readonly (number | null | undefined)[]): number | null {
-  let total = 0;
-  for (const cost of costs) {
-    if (cost == null || !Number.isFinite(cost)) return null;
-    total += cost;
-    if (!Number.isFinite(total)) return null;
-  }
-  return total;
 }
 
 export function aiAgentRef(

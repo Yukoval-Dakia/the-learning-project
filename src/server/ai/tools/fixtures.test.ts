@@ -35,6 +35,8 @@ import {
   queryKnowledgeTool,
 } from '@/capabilities/knowledge/server/tools/knowledge-readers';
 import { proposeKnowledgeEdgeTool } from '@/capabilities/knowledge/server/tools/proposal-tools';
+import { getAttemptContextTool } from '@/capabilities/practice/server/tools/get-attempt-context';
+import { queryMistakesTool } from '@/capabilities/practice/server/tools/query-mistakes';
 import { attributeMistakeTool } from '@/capabilities/practice/tools/attribute-mistake';
 import { proposeVariantTool } from '@/capabilities/practice/tools/propose-variant';
 import {
@@ -46,14 +48,12 @@ import {
   question,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';
 import { assertAgentReadable, assertCostLabel, resolvePath } from './fixtures-assert';
-import { getAttemptContextTool } from './get-attempt-context';
-import { queryMistakesTool } from './query-mistakes';
-import type { DomainTool, ToolContext } from './types';
 
 // BLOCKER 2 — the LLM is ALWAYS stubbed at the module level. There is NO
 // per-call injection point on `tool.execute()`: the fixture calls the real

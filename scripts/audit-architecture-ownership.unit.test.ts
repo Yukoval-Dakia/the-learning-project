@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -54,11 +54,11 @@ describe('scanDeepImports', () => {
     const sources = [
       fixture(
         'src/server/events/deep-dynamic.ts',
-        `const m = await import('@/capabilities/knowledge/server/domain');\n`,
+        `const m = await import('@/capabilities/knowledge/server/tree');\n`,
       ),
       fixture(
         'src/server/mastery/deep-type.ts',
-        `import type { Domain } from '@/capabilities/knowledge/server/domain';\n`,
+        `import type { KnowledgeNode } from '@/capabilities/knowledge/server/tree';\n`,
       ),
     ];
     const violations = scanDeepImports(sources);
@@ -277,7 +277,7 @@ describe('findUncataloguedReciprocalReads', () => {
 describe('scanCentralRoots', () => {
   it('fails the presence of the legacy task quarry file', () => {
     const sources = [fixture('src/ai/legacy-task-definitions.ts', 'export const x = {};\n')];
-    const violations = scanCentralRoots(sources, []);
+    const violations = scanCentralRoots(sources);
     expect(violations.some((violation) => violation.reason.includes('quarry'))).toBe(true);
   });
 
@@ -288,7 +288,7 @@ describe('scanCentralRoots', () => {
         'function buildAttributionPrompt(profile) { return profile; }\nexport const tasks = {};\n',
       ),
     ];
-    const violations = scanCentralRoots(sources, []);
+    const violations = scanCentralRoots(sources);
     expect(violations.some((violation) => violation.reason.includes('registry'))).toBe(true);
   });
 
@@ -299,7 +299,7 @@ describe('scanCentralRoots', () => {
         `switch (proposal.payload.kind) {\n  case 'knowledge_edge':\n    break;\n}\n`,
       ),
     ];
-    const violations = scanCentralRoots(sources, []);
+    const violations = scanCentralRoots(sources);
     expect(violations.some((violation) => violation.reason.includes('proposal-kind'))).toBe(true);
   });
 
@@ -310,7 +310,7 @@ describe('scanCentralRoots', () => {
         `import { buildJudgeRunHandler } from '@/capabilities/practice/jobs/judge_run';\nawait boss.work('judge_run', handler);\n`,
       ),
     ];
-    const violations = scanCentralRoots(sources, []);
+    const violations = scanCentralRoots(sources);
     expect(violations.some((violation) => violation.reason.includes('queue'))).toBe(true);
   });
 
@@ -321,7 +321,7 @@ describe('scanCentralRoots', () => {
         'export async function getFailureAttempts(db) { return []; }\n',
       ),
     ];
-    const violations = scanCentralRoots(sources, []);
+    const violations = scanCentralRoots(sources);
     expect(violations.some((violation) => violation.reason.includes('read model'))).toBe(true);
   });
 
@@ -332,19 +332,65 @@ describe('scanCentralRoots', () => {
         `export const someNewTool: DomainTool = { name: 'some_new_tool' };\n`,
       ),
     ];
-    const violations = scanCentralRoots(sources, []);
+    const violations = scanCentralRoots(sources);
     expect(violations.some((violation) => violation.reason.includes('central concrete tool'))).toBe(
       true,
     );
   });
 
-  it('passes an allowlisted transitional central tool file', () => {
+  it('fails every former transitional central tool file — the YUK-885 allowlist is deleted (YUK-892)', () => {
     const sources = [
       fixture('src/server/ai/tools/proposal-tools.ts', 'export const authorQuestionTool = {};\n'),
+      fixture(
+        'src/server/ai/tools/context-readers.ts',
+        'export const queryMemoryBriefTool = {};\n',
+      ),
+      fixture('src/server/ai/tools/get-attempt-context.ts', 'export const tool = {};\n'),
+      fixture('src/server/ai/tools/query-mistakes.ts', 'export const tool = {};\n'),
+      fixture('src/server/ai/tools/query-questions.ts', 'export const tool = {};\n'),
+      fixture('src/server/ai/tools/write-quiz.ts', 'export const tool = {};\n'),
+      fixture('src/server/ai/tools/tool-quiz-core.ts', 'export const core = {};\n'),
     ];
-    const violations = scanCentralRoots(sources, ['src/server/ai/tools/proposal-tools.ts']);
+    const violations = scanCentralRoots(sources);
     expect(
       violations.filter((violation) => violation.reason.includes('central concrete tool')),
-    ).toEqual([]);
+    ).toHaveLength(7);
+  });
+});
+
+// YUK-892 — the seven transitional central tool files are deleted and their
+// tools live with their owning capabilities. Repo-state deletion test: fails
+// while any central concrete tool file still exists on disk.
+describe('central concrete tool deletion (repo state)', () => {
+  const CENTRAL_CONCRETE_TOOL_PATHS = [
+    'src/server/ai/tools/proposal-tools.ts',
+    'src/server/ai/tools/context-readers.ts',
+    'src/server/ai/tools/get-attempt-context.ts',
+    'src/server/ai/tools/query-mistakes.ts',
+    'src/server/ai/tools/query-questions.ts',
+    'src/server/ai/tools/write-quiz.ts',
+    'src/server/ai/tools/tool-quiz-core.ts',
+  ] as const;
+
+  it('deletes every transitional central tool file (tools live with their owners)', () => {
+    const remaining = CENTRAL_CONCRETE_TOOL_PATHS.filter((path) => existsSync(path));
+    expect(remaining).toEqual([]);
+  });
+
+  it('owns the migrated tools in their capability trees', () => {
+    const OWNED_PATHS = [
+      'src/capabilities/practice/server/tools/get-attempt-context.ts',
+      'src/capabilities/practice/server/tools/query-mistakes.ts',
+      'src/capabilities/practice/server/tools/query-questions.ts',
+      'src/capabilities/practice/server/tools/write-quiz.ts',
+      'src/capabilities/practice/server/tools/tool-quiz-core.ts',
+      'src/capabilities/practice/server/tools/question-context.ts',
+      'src/capabilities/practice/server/tools/proposal-tools.ts',
+      'src/capabilities/practice/server/tools/question-author.ts',
+      'src/capabilities/ingestion/server/tools/proposal-tools.ts',
+      'src/capabilities/copilot/server/tools/memory-brief.ts',
+    ] as const;
+    const missing = OWNED_PATHS.filter((path) => !existsSync(path));
+    expect(missing).toEqual([]);
   });
 });
