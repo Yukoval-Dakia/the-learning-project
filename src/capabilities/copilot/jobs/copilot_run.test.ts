@@ -2332,6 +2332,11 @@ describe('runCopilotRun', () => {
       triggered_by: 'chat' as const,
       user_message: baseData.user_message,
       proposal_feedback: [],
+      correction_contract: {
+        available_prior_turn_ids: [],
+        prior_turn_summaries: {},
+        required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'] as const,
+      },
       conversation_history: Array.from({ length: 48 }, (_, index) => ({
         role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
         text: `historical answer evidence ${index + 1}`,
@@ -2373,6 +2378,54 @@ describe('runCopilotRun', () => {
         durable_failure: { reason: 'cancelled' },
       },
     });
+  });
+
+  it('Stop — validates a targeted correction before persisting its cancellation partial', async () => {
+    const runId = 'copilot_user_ask_stop_targeted_without_envelope';
+    const sessionId = 'sess_stop_targeted_without_envelope';
+    const targetId = 'copilot_reply_water_tank_cancelled';
+    const unsafeReply = '已把水箱题改正为 h*=4/9，但没有 correction envelope。';
+    const run = vi.fn(async () => {
+      await writeJobEvent(testDb(), {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+        payload: { requested_by: 'user', stage: 'after_model_reply' },
+      });
+      return {
+        text: unsafeReply,
+        task_run_id: 'tr_stop_targeted_without_envelope',
+        finishReason: 'error',
+        usage: { inputTokens: 1_200, outputTokens: 90 },
+        partial: true,
+        error: 'cancelled after model reply',
+      };
+    });
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: sessionId,
+        correction_target_turn_id: targetId,
+      },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: targetedRunInput(targetId),
+      buildMcpServerFn: mcpMock() as never,
+    });
+
+    expect(result).toEqual({ status: 'cancelled' });
+    const events = await replay(runId);
+    const failed = events.find((event) => event.event_type === COPILOT_RUN_EVENTS.FAILED);
+    expect(failed?.payload).toMatchObject({
+      reason: 'cancelled',
+      reply_md: expect.stringContaining('上一轮是「水箱 D02：原推导用了错误高度。」'),
+    });
+    expect(failed?.payload).not.toMatchObject({ reply_md: unsafeReply });
+    const replies = await copilotReplyEvents(sessionId);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.payload.reply_md).not.toBe(unsafeReply);
   });
 
   it('Stop — read-bearing cancellation after certification persists neither candidate nor selected repair', async () => {

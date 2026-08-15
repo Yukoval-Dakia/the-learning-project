@@ -1167,23 +1167,23 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     );
     // S3 — 排空 delta 链：所有 delta id 落定后再写 terminal。
     await drainDeltaChain(progressChain, runId);
-    if ((await cancellationControl.probe()) === 'cancel_requested') {
-      // The raw candidate has not passed evidence review and must not become a
-      // cancellation partial after a read. A pure-text/no-reader partial keeps
-      // the established Stop UX because no evidence-review claim is involved.
-      const cancellationReply = toolTrace.some((entry) => entry.effect === 'read')
-        ? undefined
-        : result.text;
-      return await settleObservedCancellation(cancellationReply, result.task_run_id);
-    }
 
-    // Normalize reply-tail presentation metadata before sealed review. The
-    // validator, durable marker and projected DELTA/REPLY must bind the exact
-    // same bytes; no post-review marker stripping is allowed.
+    // Normalize and validate before either cancellation persistence or sealed
+    // evidence review. No terminal path may observe the raw correction candidate.
     const correctionResolution = resolveCorrectionReply(result.text, runInput.correction_contract);
     const preparedCandidate = extractPrimaryView(correctionResolution.reply, {
       taskRunId: result.task_run_id,
     });
+    if ((await cancellationControl.probe()) === 'cancel_requested') {
+      // A read-bearing candidate has not passed evidence review and cannot become
+      // a cancellation partial. Pure-text turns preserve only contract-validated,
+      // presentation-cleaned text.
+      const cancellationReply = toolTrace.some((entry) => entry.effect === 'read')
+        ? undefined
+        : preparedCandidate.text;
+      return await settleObservedCancellation(cancellationReply, result.task_run_id);
+    }
+
     const evidenceReview =
       correctionResolution.kind === 'clarify'
         ? { status: 'skipped' as const, replyText: preparedCandidate.text }
