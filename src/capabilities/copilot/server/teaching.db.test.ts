@@ -1,6 +1,6 @@
 import { knowledge, learning_item } from '@/db/schema';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { type TeachingError, planTeachingTurn } from './teaching';
 
 describe('planTeachingTurn', () => {
