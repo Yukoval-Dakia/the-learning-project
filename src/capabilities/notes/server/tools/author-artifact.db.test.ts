@@ -24,6 +24,43 @@ function ctx(): ToolContext {
     db: testDb(),
     taskRunId: 'tr_author_artifact',
     callerActor: { kind: 'agent', ref: 'agent:copilot' },
+    runTaskFn: async (kind) => {
+      if (kind === 'QuizVerifyTask') {
+        return {
+          task_run_id: 'verify_author_artifact',
+          text: JSON.stringify({
+            grounding: { verdict: 'pass', reason: 'self-contained' },
+            copy_safety: { verdict: 'original', max_overlap: 0 },
+            knowledge_hit: { verdict: 'pass', reason: 'on-topic' },
+            overall: 'pass',
+            summary_md: 'consistent',
+            confidence: 0.99,
+          }),
+        };
+      }
+      if (kind === 'SolutionGenerateTask') {
+        return {
+          task_run_id: 'solve_author_artifact',
+          text: JSON.stringify({
+            reference_solution: {
+              final_answer: '氢原子的原子序数是 1。',
+              expected_signals: ['原子序数'],
+              answer_equivalents: [],
+            },
+            worked_solution_md: '查阅元素周期表。',
+            confidence: 0.99,
+          }),
+        };
+      }
+      return {
+        task_run_id: 'teaching_author_artifact',
+        text: JSON.stringify({
+          clarity: { verdict: 'pass', reason: 'clear' },
+          unique_answer: { verdict: 'pass', reason: 'one answer' },
+          summary: 'pass',
+        }),
+      };
+    },
   };
 }
 
@@ -33,6 +70,17 @@ async function authorInteractive(
     html: string;
     knowledge_ids: string[];
     summary: string;
+    content_validation: {
+      subject_id: string;
+      questions: Array<{
+        id: string;
+        kind: string;
+        prompt_md: string;
+        reference_md: string | null;
+        choices_md: string[] | null;
+        rubric_json: unknown;
+      }>;
+    };
   }> = {},
 ) {
   return authorArtifactTool.execute(ctx(), {
@@ -41,6 +89,19 @@ async function authorInteractive(
     html: HTML_V1,
     knowledge_ids: ['k_chem_elements'],
     summary: '可点击的周期表',
+    content_validation: {
+      subject_id: 'chemistry',
+      questions: [
+        {
+          id: 'hydrogen-atomic-number',
+          kind: 'short_answer',
+          prompt_md: '氢原子的原子序数是多少？',
+          reference_md: '1',
+          choices_md: null,
+          rubric_json: { criteria: ['答出 1'] },
+        },
+      ],
+    },
     ...overrides,
   });
 }
@@ -63,6 +124,19 @@ describe('author_artifact + update_artifact DomainTools (ADR-0033 lane D)', () =
           type: 'interactive',
           title: '互动式元素周期表——一个标题长到需要截断的极端例子'.repeat(3),
           html: HTML_V1,
+          content_validation: {
+            subject_id: 'chemistry',
+            questions: [
+              {
+                id: 'q',
+                kind: 'short_answer',
+                prompt_md: '题目',
+                reference_md: '答案',
+                choices_md: null,
+                rubric_json: {},
+              },
+            ],
+          },
         },
         {
           artifact_id: 'art_x'.padEnd(28, 'x'),
@@ -109,11 +183,28 @@ describe('author_artifact + update_artifact DomainTools (ADR-0033 lane D)', () =
     expect(row.history).toEqual([]);
     expect(row.version).toBe(0);
     expect(row.knowledge_ids).toEqual(['k_chem_elements']);
-    const attrs = row.attrs as { format: string; html: string; summary?: string; origin?: string };
+    const attrs = row.attrs as {
+      format: string;
+      html: string;
+      summary?: string;
+      origin?: string;
+      content_validation?: unknown;
+    };
     expect(attrs.format).toBe('html');
     expect(attrs.html).toBe(HTML_V1);
     expect(attrs.summary).toBe('可点击的周期表');
     expect(attrs.origin).toBe('copilot_author_artifact');
+    expect(attrs.content_validation).toMatchObject({
+      verdict: 'pass',
+      items: [
+        {
+          question_id: 'hydrogen-atomic-number',
+          question_content: { task_run_id: 'verify_author_artifact' },
+          independent_solution: { task_run_id: 'solve_author_artifact' },
+          teaching_quality: { verdict: 'pass' },
+        },
+      ],
+    });
     const generatedBy = row.generated_by as { by: string; task_kind: string; task_run_id: string };
     expect(generatedBy).toMatchObject({
       by: 'ai',
@@ -139,6 +230,19 @@ describe('author_artifact + update_artifact DomainTools (ADR-0033 lane D)', () =
         type: 'note_atomic' as 'interactive',
         title: 't',
         html: HTML_V1,
+        content_validation: {
+          subject_id: 'chemistry',
+          questions: [
+            {
+              id: 'q',
+              kind: 'short_answer',
+              prompt_md: '题目',
+              reference_md: '答案',
+              choices_md: null,
+              rubric_json: {},
+            },
+          ],
+        },
       }),
     ).rejects.toThrow();
 
@@ -261,5 +365,49 @@ describe('author_artifact + update_artifact DomainTools (ADR-0033 lane D)', () =
       );
     expect(matched.map((r) => r.id)).not.toContain(created.artifact_id);
     expect(matched).toEqual([]);
+  });
+
+  it('blocks a contradictory draft before the artifact insert', async () => {
+    const db = testDb();
+    const baseRunTask = ctx().runTaskFn;
+    if (!baseRunTask) throw new Error('author artifact test runner unavailable');
+    const badCtx: ToolContext = {
+      ...ctx(),
+      runTaskFn: async (kind, input, runCtx) => {
+        if (kind === 'TeachingQualityTask') {
+          return {
+            task_run_id: 'teaching_reject',
+            text: JSON.stringify({
+              clarity: { verdict: 'fail', reason: 'givens contradict each other' },
+              unique_answer: { verdict: 'fail', reason: 'no unique answer' },
+              summary: 'reject',
+            }),
+          };
+        }
+        return baseRunTask(kind, input, runCtx);
+      },
+    };
+
+    await expect(
+      authorArtifactTool.execute(badCtx, {
+        type: 'interactive',
+        title: '矛盾的球面变化率题',
+        html: HTML_V1,
+        content_validation: {
+          subject_id: 'math',
+          questions: [
+            {
+              id: 'radius-rate',
+              kind: 'computation',
+              prompt_md: '放气时 r=2，dr/dt=+3，且 dS/dt=-48π。求 dV/dt。',
+              reference_md: '+48π',
+              choices_md: null,
+              rubric_json: { criteria: ['符号一致'] },
+            },
+          ],
+        },
+      }),
+    ).rejects.toThrow(/learning content validation failed/);
+    expect(await db.select({ id: artifact.id }).from(artifact)).toEqual([]);
   });
 });

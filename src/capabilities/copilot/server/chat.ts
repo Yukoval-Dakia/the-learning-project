@@ -20,6 +20,10 @@ import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
 import { type CopilotDispatchDecision, CopilotDispatchDecisionSchema } from '../contracts';
 
+import {
+  extractCopilotLearningContent,
+  validateCopilotLearningContent,
+} from '@/capabilities/copilot/server/content-validation';
 // YUK-575 (A1) — shared free-form run-input assembler (single execution point for
 // inline + durable copilot runs).
 import {
@@ -93,6 +97,7 @@ import {
   runAgentTask,
   streamTaskCollecting,
 } from '@/server/ai/runner';
+import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import {
   SPAWN_TOOL_NAME,
   type SpawnBudgetObservation,
@@ -1312,6 +1317,7 @@ async function runCopilotChatImpl(
   // see exactly these bytes; a dangling marker may truncate only here, never
   // after a raw suffix was certified.
   const preparedCandidate = extractPrimaryView(replyText, { taskRunId: replyRunId });
+  const preparedLearningContent = extractCopilotLearningContent(preparedCandidate.text);
   const evidenceReview = await reviewEvidenceReply({
     db,
     requestContext: {
@@ -1321,7 +1327,7 @@ async function runCopilotChatImpl(
       ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
       ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
     },
-    candidateReply: preparedCandidate.text,
+    candidateReply: preparedLearningContent.text,
     candidateTaskRunId: replyRunId,
     candidateComplete,
     toolTrace,
@@ -1332,6 +1338,18 @@ async function runCopilotChatImpl(
   });
   streaming?.signal?.throwIfAborted();
   replyText = evidenceReview.replyText;
+  if (preparedLearningContent.content) {
+    const validation = await validateCopilotLearningContent(preparedLearningContent.content, {
+      db,
+      runTaskFn: makeRunTaskTextFn(db, {
+        ...(streaming?.signal ? { signal: streaming.signal } : {}),
+        ...(deps.providerSessionDeadlineAt !== undefined
+          ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+          : {}),
+      }),
+    });
+    replyText = `${replyText}\n\n独立内容验证：${validation.verdict === 'pass' ? '通过' : '未通过，需修复。'}`;
+  }
   // primary_view is a second user-visible channel (ephemeral_html can contain
   // substantive prose). The sealed comparator reviews reply text only, so a
   // read-bearing turn must drop this unreviewed metadata even when text passes.

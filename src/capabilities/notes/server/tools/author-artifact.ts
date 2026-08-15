@@ -47,6 +47,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { validateCopilotLearningContent } from '@/capabilities/copilot/server/content-validation';
 import {
   type ArtifactHistoryEntryT,
   INTERACTIVE_HTML_MAX_CHARS,
@@ -55,6 +56,7 @@ import {
 import { artifact } from '@/db/schema';
 import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { emitArtifactLifecycleEvent } from '../artifacts/mutation-events';
 
 // ---------------------------------------------------------------------------
@@ -75,6 +77,22 @@ const AuthorArtifactInputSchema = z.object({
   // a dangling id degrades discovery, it breaks nothing.
   knowledge_ids: z.array(z.string().min(1)).optional(),
   summary: z.string().max(500).optional(),
+  content_validation: z.object({
+    subject_id: z.string().min(1),
+    questions: z
+      .array(
+        z.object({
+          id: z.string().min(1),
+          kind: z.string().min(1),
+          prompt_md: z.string().min(1),
+          reference_md: z.string().nullable(),
+          choices_md: z.array(z.string().min(1)).nullable(),
+          rubric_json: z.unknown(),
+          knowledge_ids: z.array(z.string().min(1)).nullable().optional(),
+        }),
+      )
+      .min(1),
+  }),
 });
 type AuthorArtifactInput = z.input<typeof AuthorArtifactInputSchema>;
 
@@ -92,8 +110,28 @@ async function executeAuthorArtifact(
   rawInput: AuthorArtifactInput,
 ): Promise<AuthorArtifactOutput> {
   const input = AuthorArtifactInputSchema.parse(rawInput);
-  // Validation boundary = the Zod schema above. Everything else is stored
-  // opaquely (D4 — the render sandbox owns security).
+  const validation = await validateCopilotLearningContent(
+    {
+      subjectId: input.content_validation.subject_id,
+      questions: input.content_validation.questions,
+    },
+    {
+      db: ctx.db,
+      runTaskFn:
+        ctx.runTaskFn ??
+        makeRunTaskTextFn(ctx.db, {
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
+          ...(ctx.providerSessionDeadlineAt !== undefined
+            ? { providerSessionDeadlineAt: ctx.providerSessionDeadlineAt }
+            : {}),
+        }),
+    },
+  );
+  if (validation.verdict !== 'pass') {
+    throw new Error(
+      `author_artifact: learning content validation failed: ${JSON.stringify(validation)}`,
+    );
+  }
 
   const now = new Date();
   const artifactId = `art_${createId()}`;
@@ -106,6 +144,7 @@ async function executeAuthorArtifact(
     html: input.html,
     ...(input.summary !== undefined ? { summary: input.summary } : {}),
     origin: 'copilot_author_artifact',
+    content_validation: validation,
   });
 
   // Row shape follows writeToolQuizArtifact (tool-quiz-core.ts) column-for-
@@ -170,7 +209,7 @@ async function executeAuthorArtifact(
 export const authorArtifactTool: DomainTool<AuthorArtifactInput, AuthorArtifactOutput> = {
   name: 'author_artifact',
   description:
-    'Create a NEW persistent interactive learning artifact (type=interactive) from a complete self-contained HTML document you write yourself (inline CSS/JS, no external network dependencies — it renders inside a sandbox). Use it when the user asks for interactive content (e.g. an interactive periodic table). Provide a clear title; tag knowledge_ids so the artifact is discoverable from those knowledge nodes. Returns the artifact_id — keep it to iterate later via update_artifact. Pure local write, no LLM call.',
+    'Create a NEW persistent interactive learning artifact (type=interactive) from a complete self-contained HTML document you write yourself (inline CSS/JS, no external network dependencies — it renders inside a sandbox). Provide content_validation with every question, declared answer, options, rubric, and subject_id: the server independently validates each item before it writes. If validation fails, repair the draft and call again; do not claim unsupported version, rollback, or knowledge-existence capabilities. Provide a clear title; tag knowledge_ids so the artifact is discoverable from those knowledge nodes. Returns the artifact_id — keep it to iterate later via update_artifact.',
   effect: 'write',
   inputSchema: AuthorArtifactInputSchema,
   outputSchema: AuthorArtifactOutputSchema,
