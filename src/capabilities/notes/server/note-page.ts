@@ -28,8 +28,8 @@ import type {
 import { InteractiveArtifactAttrs } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
-import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
+import { getArtifactCorrectionStates } from './artifact-corrections';
 
 const CROSS_LINK_REF_KIND = 'cross_link';
 const NOTE_TYPES = ['note_atomic', 'note_hub', 'note_long'] as const;

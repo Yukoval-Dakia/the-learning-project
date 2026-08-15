@@ -398,7 +398,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/server/ai/tools/author-artifact.ts',
+    file: 'src/capabilities/notes/server/tools/author-artifact.ts',
     marker: '.insert(artifact)',
     role: 'off-path-writer',
     note: 'author-artifact tool inserts/updates an artifact (OFF-path sole writer until the artifact flag flips).',

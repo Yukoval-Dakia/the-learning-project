@@ -1,7 +1,7 @@
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   activeArtifactCorrectionStatus,
   getArtifactCorrectionState,

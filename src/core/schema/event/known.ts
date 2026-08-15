@@ -589,7 +589,7 @@ export type CorrectEventT = z.infer<typeof CorrectEvent>;
 //
 // `corrections.ts:getCorrectionStatuses` filters on subject_kind='event' and
 // does NOT see these rows. Artifact-scoped composition lives in a sibling
-// module (src/server/events/artifact-corrections.ts).
+// module (src/capabilities/notes/server/artifact-corrections.ts).
 
 export const CorrectArtifactEvent = z
   .object({

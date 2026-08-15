@@ -1,6 +1,25 @@
 // allow: SIZE_OK — central 51-task catalog contract suite.
 import { readFileSync } from 'node:fs';
+import { coachTaskSpec } from '@/capabilities/agency/tasks/coach';
+import {
+  conjectureGroupingTaskSpec,
+  mindModelInductionTaskSpec,
+} from '@/capabilities/agency/tasks/conjecture-induction';
+import {
+  conjectureProbeAuthorTaskSpec,
+  conjectureProbeReviewTaskSpec,
+} from '@/capabilities/agency/tasks/conjecture-probe';
+import { dreamingTaskSpec } from '@/capabilities/agency/tasks/dreaming';
+import { goalScopeTaskSpec } from '@/capabilities/agency/tasks/goal-scope';
 import { agencyTaskSpecs } from '@/capabilities/agency/tasks/index';
+import {
+  interventionPackageAuthorTaskSpec,
+  interventionPackageReviewTaskSpec,
+  interventionRecommendationTaskSpec,
+} from '@/capabilities/agency/tasks/intervention';
+import { learningIntentOutlineTaskSpec } from '@/capabilities/agency/tasks/learning-intent';
+import { memoryBriefTaskSpec } from '@/capabilities/agency/tasks/memory-brief';
+import { researchMeetingDirectorTaskSpec } from '@/capabilities/agency/tasks/research-meeting-director';
 import { copilotTaskSpec } from '@/capabilities/copilot/tasks/agent';
 import { copilotDispatchTaskSpec } from '@/capabilities/copilot/tasks/dispatch';
 import {
@@ -134,8 +153,8 @@ const EXPECTED_OWNER_COUNTS = {
   practice: 18,
   notes: 3,
   ingestion: 8,
-  knowledge: 10,
-  agency: 7,
+  knowledge: 4,
+  agency: 13,
   copilot: 5,
 } as const;
 
@@ -169,6 +188,19 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   knowledgeEdgeProposeTaskSpec,
   frontierPrerequisiteTaskSpec,
   knowledgeReviewTaskSpec,
+  learningIntentOutlineTaskSpec,
+  goalScopeTaskSpec,
+  mindModelInductionTaskSpec,
+  conjectureGroupingTaskSpec,
+  conjectureProbeAuthorTaskSpec,
+  conjectureProbeReviewTaskSpec,
+  interventionRecommendationTaskSpec,
+  interventionPackageAuthorTaskSpec,
+  interventionPackageReviewTaskSpec,
+  researchMeetingDirectorTaskSpec,
+  dreamingTaskSpec,
+  coachTaskSpec,
+  memoryBriefTaskSpec,
 ]);
 
 const makeDefinition = <const Kind extends string>(kind: Kind) =>
@@ -377,6 +409,76 @@ describe('taskCatalog', () => {
     }
   });
 
+  it('owns the thirteen agency TaskSpecs without quarry definitions', () => {
+    expect(Object.keys(agencyTaskSpecs).sort()).toEqual(
+      [
+        'LearningIntentOutlineTask',
+        'GoalScopeTask',
+        'MindModelInductionTask',
+        'ConjectureGroupingTask',
+        'ConjectureProbeAuthorTask',
+        'ConjectureProbeReviewTask',
+        'InterventionRecommendationTask',
+        'InterventionPackageAuthorTask',
+        'InterventionPackageReviewTask',
+        'ResearchMeetingDirectorTask',
+        'DreamingTask',
+        'CoachTask',
+        'MemoryBriefTask',
+      ].sort(),
+    );
+    for (const [kind, entry] of Object.entries(agencyTaskSpecs)) {
+      expect(entry.ownership, kind).toBe('owned');
+      expect(entry.definition, kind).toBe(taskCatalog[kind as keyof typeof taskCatalog]);
+      expect('parseText' in entry, kind).toBe(true);
+      expect('outputSchema' in entry, kind).toBe(true);
+    }
+    const specIdentities = {
+      LearningIntentOutlineTask: learningIntentOutlineTaskSpec,
+      GoalScopeTask: goalScopeTaskSpec,
+      MindModelInductionTask: mindModelInductionTaskSpec,
+      ConjectureGroupingTask: conjectureGroupingTaskSpec,
+      ConjectureProbeAuthorTask: conjectureProbeAuthorTaskSpec,
+      ConjectureProbeReviewTask: conjectureProbeReviewTaskSpec,
+      InterventionRecommendationTask: interventionRecommendationTaskSpec,
+      InterventionPackageAuthorTask: interventionPackageAuthorTaskSpec,
+      InterventionPackageReviewTask: interventionPackageReviewTaskSpec,
+      ResearchMeetingDirectorTask: researchMeetingDirectorTaskSpec,
+      DreamingTask: dreamingTaskSpec,
+      CoachTask: coachTaskSpec,
+      MemoryBriefTask: memoryBriefTaskSpec,
+    } as const;
+    for (const [kind, spec] of Object.entries(specIdentities)) {
+      expect(agencyTaskSpecs[kind as keyof typeof agencyTaskSpecs], kind).toBe(spec);
+    }
+    for (const kind of [
+      'LearningIntentOutlineTask',
+      'GoalScopeTask',
+      'MindModelInductionTask',
+      'ConjectureGroupingTask',
+      'ConjectureProbeAuthorTask',
+      'ConjectureProbeReviewTask',
+    ] as const) {
+      expect(Object.hasOwn(knowledgeTaskSpecs, kind), kind).toBe(false);
+    }
+
+    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
+    for (const kind of Object.keys(agencyTaskSpecs)) {
+      expect(source, kind).not.toMatch(new RegExp(`^  ${kind}:`, 'm'));
+    }
+    for (const builder of [
+      'buildLearningIntentOutlinePrompt',
+      'buildGoalScopePrompt',
+      'buildMindModelInductionPrompt',
+      'buildConjectureProbeAuthorPrompt',
+      'buildConjectureProbeReviewPrompt',
+      'buildInterventionPackageAuthorPrompt',
+      'buildInterventionPackageReviewPrompt',
+    ]) {
+      expect(source, builder).not.toContain(`function ${builder}`);
+    }
+  });
+
   it('owns the seven Practice sourcing and generation TaskSpecs without quarry definitions', () => {
     const kinds = [
       'SolutionGenerateTask',
@@ -445,8 +547,8 @@ describe('taskCatalog', () => {
     expect(source).not.toContain('CopilotEvidenceSourceRefSchema');
   });
 
-  it('retains 29 full owned TaskSpecs and 22 identity-backed transitional entries', () => {
-    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(22);
+  it('retains 42 full owned TaskSpecs and 9 identity-backed transitional entries', () => {
+    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(9);
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
         if (entry.ownership === 'owned') {

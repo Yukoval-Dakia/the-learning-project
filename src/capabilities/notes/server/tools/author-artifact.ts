@@ -47,18 +47,18 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
-import { emitArtifactLifecycleEvent } from '@/capabilities/notes/public';
 import {
   type ArtifactHistoryEntryT,
   INTERACTIVE_HTML_MAX_CHARS,
   InteractiveArtifactAttrs,
 } from '@/core/schema/business';
 import { artifact } from '@/db/schema';
+import type { DomainTool, ToolContext } from '@/server/ai/tools/types';
 import {
   artifactRowToCreateSnapshot,
   emitArtifactCreateEvent,
 } from '@/server/artifacts/create-event';
-import type { DomainTool, ToolContext } from './types';
+import { emitArtifactLifecycleEvent } from '../artifacts/mutation-events';
 
 // ---------------------------------------------------------------------------
 // author_artifact — create a new interactive artifact (v0).

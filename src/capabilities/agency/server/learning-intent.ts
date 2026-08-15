@@ -16,7 +16,6 @@
 
 import { newId } from '@/core/ids';
 import { and, eq, isNull } from 'drizzle-orm';
-import { z } from 'zod';
 
 import type { CreateLearningIntentKnowledgeNodeFn } from '@/capabilities/knowledge/public';
 import type { CreateLearningIntentNoteFn } from '@/capabilities/notes/public';
@@ -26,7 +25,13 @@ import { knowledge, learning_item } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeLearningItemProposal } from '@/server/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';
+// YUK-879 — the outline output contract (schema + strict parser + domain error)
+// is owned by the agency TaskSpec module; this orchestrator re-exports it so
+// existing consumers (api route, public surface) keep their import paths.
+import { LearningIntentError, parseLearningIntentOutline } from '../tasks/learning-intent';
 import { type TaskTextRunFn, costUsdToMicroUsd } from './ai-runtime';
+export { LearningIntentError, parseLearningIntentOutline };
+export type { LearningIntentOutline } from '../tasks/learning-intent';
 // YUK-471 W2 — learning_item projection seam. Each creation INSERT writes a per-id genesis BASE
 // event (the recommended Q1 route — learning_item has no fold-blind field, so genesis fully seeds
 // the row) + the materialized_id_index anchor regardless of the flag; projectionIsWriter('learning_item')
@@ -108,81 +113,6 @@ export interface PlanLearningIntentParams {
 }
 
 // ---------- Errors ----------
-
-export class LearningIntentError extends Error {
-  constructor(
-    public code:
-      | 'topic_not_found'
-      | 'topic_no_children'
-      | 'llm_parse_failed'
-      | 'invalid_atomic_knowledge_id'
-      | 'proposal_not_found'
-      | 'proposal_already_rated',
-    message: string,
-  ) {
-    super(message);
-    this.name = 'LearningIntentError';
-  }
-}
-
-// ---------- LLM output schema ----------
-
-const HubProposalSchema = z.object({
-  title: z.string().min(1).max(80),
-  summary_md: z.string().min(1).max(500),
-});
-
-const AtomicProposalSchema = z.object({
-  knowledge_id: z.string().min(1),
-  title: z.string().min(1).max(80),
-  one_line_intent: z.string().min(1).max(200),
-});
-
-const LongProposalSchema = z.object({
-  knowledge_ids: z.array(z.string().min(1)).min(1).max(12),
-  title: z.string().min(1).max(80),
-  one_line_intent: z.string().min(1).max(200),
-});
-
-const ProposedKnowledgeNodeSchema = z.object({
-  temp_id: z.string().min(1).max(80),
-  name: z.string().min(1).max(120),
-  domain: z.string().min(1).nullable().optional(),
-});
-
-const OutlineSchema = z.object({
-  knowledge: z
-    .object({
-      root: ProposedKnowledgeNodeSchema.optional(),
-      children: z.array(ProposedKnowledgeNodeSchema).optional(),
-    })
-    .optional(),
-  hub: HubProposalSchema,
-  atomics: z.array(AtomicProposalSchema).min(1),
-  longs: z.array(LongProposalSchema).default([]),
-});
-
-export function parseLearningIntentOutline(text: string): z.infer<typeof OutlineSchema> {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new LearningIntentError('llm_parse_failed', 'no JSON object found in outline output');
-  }
-  let json: unknown;
-  try {
-    json = JSON.parse(text.slice(start, end + 1));
-  } catch (e) {
-    throw new LearningIntentError('llm_parse_failed', `JSON.parse failed: ${(e as Error).message}`);
-  }
-  const parsed = OutlineSchema.safeParse(json);
-  if (!parsed.success) {
-    throw new LearningIntentError(
-      'llm_parse_failed',
-      `outline schema invalid: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
-    );
-  }
-  return parsed.data;
-}
 
 // ---------- Knowledge graph lookup ----------
 

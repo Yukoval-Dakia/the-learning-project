@@ -28,10 +28,6 @@
 // `discriminating=true` now means the package passed structural and independent semantic
 // review rather than being a self-asserted induction field.
 
-import type {
-  EnrichedEvidenceCell,
-  LoadedConjectureEvidenceImage,
-} from '@/capabilities/agency/server/conjecture/evidence';
 import {
   CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH,
   type ConjectureAbstainDraftT,
@@ -50,7 +46,11 @@ import {
   sumAllKnownCostUsd,
 } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
-import { z } from 'zod';
+import {
+  ConjectureGroupingOutputSchema,
+  MindModelInductionOutputSchema,
+} from '../../tasks/conjecture-induction';
+import type { EnrichedEvidenceCell, LoadedConjectureEvidenceImage } from './evidence';
 import {
   ConjectureProbeQualityOperationalError,
   type ConjectureProbeQualityTaskKind,
@@ -142,10 +142,6 @@ export type InduceConjectureResult =
 export const JUDGE_ONLY_CONFIDENCE_CAP = 0.5;
 /** A grounded proposal needs recurrence, not one isolated attempt. */
 export const MIN_GROUNDED_PROPOSAL_EVIDENCE = 2;
-
-const ConjectureHypothesisStructuredOutput = z.object({
-  draft: ConjectureHypothesisAuthorDraft,
-});
 
 interface GroundedHypothesisSample {
   draft: ConjectureHypothesisProposalDraftT;
@@ -326,12 +322,6 @@ function baseReasonVotes(
   ];
 }
 
-// GroupSchema: structural output contract for ConjectureGroupingTask.
-// Local constant — not exported, not persisted.
-const GroupSchema = z.object({
-  groups: z.array(z.array(z.number().int().min(0)).min(1)).min(1),
-});
-
 interface DeduplicateHypothesesResult {
   ok: boolean;
   groups: number[][];
@@ -376,7 +366,7 @@ async function deduplicateHypotheses(
     result = await runTaskFn(
       'ConjectureGroupingTask',
       { hypotheses },
-      { outputFormat: zodToJsonSchemaOutputFormat(GroupSchema) },
+      { outputFormat: zodToJsonSchemaOutputFormat(ConjectureGroupingOutputSchema) },
     );
   } catch (err) {
     // Warn so nightly pipeline failures are observable (silent degradation masks persistent issues).
@@ -390,7 +380,7 @@ async function deduplicateHypotheses(
   // Parse structured output; then scan balanced JSON objects in the text fallback.
   const parsed = [result.structured_output, ...jsonObjectCandidates(result.text)]
     .filter((candidate) => candidate !== undefined && candidate !== null)
-    .map((candidate) => GroupSchema.safeParse(candidate))
+    .map((candidate) => ConjectureGroupingOutputSchema.safeParse(candidate))
     .find((candidate) => candidate.success) ?? { success: false as const };
   if (!parsed.success) return failure(result);
 
@@ -487,7 +477,7 @@ export async function induceConjecture(
         // Agent SDK structured output is implemented as a custom tool whose
         // input_schema must be a top-level object and rejects a top-level
         // discriminated-union anyOf. Nest the domain union under `draft`.
-        outputFormat: zodToJsonSchemaOutputFormat(ConjectureHypothesisStructuredOutput),
+        outputFormat: zodToJsonSchemaOutputFormat(MindModelInductionOutputSchema),
         // YUK-786 — the prompt renders from the SubjectProfile; without this the
         // renderer falls back to `general` even when the cell's KC is tagged.
         ...(subjectProfile ? { subjectProfile } : {}),

@@ -1,14 +1,11 @@
 // YUK-406 Phase 0 / YUK-440 A13 — induceConjecture orchestrator unit tests
 // (pure: injected runTaskFn, no DB / AI / R2).
 
-import type {
-  ConjectureEvidenceSample,
-  EnrichedEvidenceCell,
-} from '@/capabilities/agency/server/conjecture/evidence';
 import type { ConjectureAbstainDraftT, ConjectureProposalDraftT } from '@/core/schema/business';
 import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it, vi } from 'vitest';
+import type { ConjectureEvidenceSample, EnrichedEvidenceCell } from './evidence';
 
 import {
   type ConjectureInductionOperationalError,

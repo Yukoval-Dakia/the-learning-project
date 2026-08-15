@@ -10,12 +10,12 @@ import type {
   EvidenceCell,
   LoadedConjectureEvidenceImage,
 } from '@/capabilities/agency/server/conjecture/evidence';
-import type { WriteEventInput } from '@/kernel/events';
 import {
   ConjectureInductionOperationalError,
   type InduceConjectureInput,
   type InduceConjectureResult,
-} from '@/server/agency/conjecture/induce';
+} from '@/capabilities/agency/server/conjecture/induce';
+import type { WriteEventInput } from '@/kernel/events';
 import { classifyJobYield } from '@/server/boss/job-yield';
 import type { PredictionAccountability } from '@/server/conjectures/accountability';
 import type { FailureAttempt, FailureAttemptWithReasoningTrace } from '@/server/events/queries';

@@ -23,6 +23,15 @@ export {
   enqueueMasteryNoteRefine,
 } from './server/note-refine-triggers';
 export { emitArtifactLifecycleEvent } from './server/artifacts/mutation-events';
+export {
+  activeArtifactCorrectionStatus,
+  getArtifactCorrectionState,
+  getArtifactCorrectionStates,
+} from './server/artifact-corrections';
+export type {
+  ArtifactCorrectionState,
+  ArtifactCorrectionStatus,
+} from './server/artifact-corrections';
 export type { NoteUpdateAcceptResult } from './server/proposal-accept-applier';
 export { dispatchNoteGeneration, writeNoteGenerationIntent } from './server/note-handoff';
 export { createLearningIntentNote } from './server/learning-intent-note';

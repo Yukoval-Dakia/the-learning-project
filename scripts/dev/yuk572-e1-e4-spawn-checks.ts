@@ -180,12 +180,12 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
   ] = await Promise.all([
     import('@/db/client'),
     import('@/server/ai/runner'),
-    import('@/server/agency/scout/evidence-mcp'),
-    import('@/server/agency/scout/report-findings'),
-    import('@/server/agency/scout/scout-agent'),
+    import('@/capabilities/agency/server/scout/evidence-mcp'),
+    import('@/capabilities/agency/server/scout/report-findings'),
+    import('@/capabilities/agency/server/scout/scout-agent'),
     import('@/capabilities/agency/server/meeting/director-tools'),
     import('@/capabilities/agency/server/meeting/director'),
-    import('@/server/agency/scout/tool-names'),
+    import('@/capabilities/agency/server/scout/tool-names'),
     import('@/server/ai/spawn-contract'),
   ]);
 
