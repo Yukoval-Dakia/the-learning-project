@@ -13,6 +13,10 @@
 import { type SQL, and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
+import {
+  emitArtifactBodyBlocksEditEvent,
+  emitArtifactLifecycleEvent,
+} from '@/capabilities/notes/server/artifacts/mutation-events';
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
 import {
   NOTE_ARTIFACT_TYPES,
@@ -28,10 +32,6 @@ import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import {
-  emitArtifactBodyBlocksEditEvent,
-  emitArtifactLifecycleEvent,
-} from '@/server/artifacts/mutation-events';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 

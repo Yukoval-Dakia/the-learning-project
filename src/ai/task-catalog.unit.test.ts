@@ -20,6 +20,7 @@ import {
   knowledgeTaskSpecs,
 } from '@/capabilities/knowledge/tasks/index';
 import { notesTaskSpecs } from '@/capabilities/notes/tasks/index';
+import { noteRefineTaskSpec } from '@/capabilities/notes/tasks/note-refine';
 import { noteGenerateTaskSpec, noteVerifyTaskSpec } from '@/capabilities/notes/tasks/note-tasks';
 import {
   attributionRerankTaskSpec,
@@ -127,6 +128,7 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   attributionRerankTaskSpec,
   variantGenTaskSpec,
   noteGenerateTaskSpec,
+  noteRefineTaskSpec,
   noteVerifyTaskSpec,
   visionExtractTaskSpec,
   visionExtractTaskHeavySpec,
@@ -347,8 +349,8 @@ describe('taskCatalog', () => {
     }
   });
 
-  it('retains 16 full owned TaskSpecs and 35 identity-backed transitional entries', () => {
-    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(35);
+  it('retains 17 full owned TaskSpecs and 34 identity-backed transitional entries', () => {
+    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(34);
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
         if (entry.ownership === 'owned') {
@@ -368,9 +370,11 @@ describe('taskCatalog', () => {
     expect(practiceTaskSpecs.AttributionRerankTask).toBe(attributionRerankTaskSpec);
     expect(practiceTaskSpecs.VariantGenTask).toBe(variantGenTaskSpec);
     expect(notesTaskSpecs.NoteGenerateTask).toBe(noteGenerateTaskSpec);
+    expect(notesTaskSpecs.NoteRefineTask).toBe(noteRefineTaskSpec);
     expect(notesTaskSpecs.NoteVerifyTask).toBe(noteVerifyTaskSpec);
     expect(taskCatalog.AttributionTask).toBe(attributionTaskSpec.definition);
     expect(taskCatalog.NoteGenerateTask).toBe(noteGenerateTaskSpec.definition);
+    expect(taskCatalog.NoteRefineTask).toBe(noteRefineTaskSpec.definition);
   });
 
   it('keeps semantic definitions out of all six owner index files', () => {
