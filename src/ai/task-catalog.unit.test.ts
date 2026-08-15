@@ -54,6 +54,12 @@ import {
 } from '@/capabilities/practice/tasks/attribution';
 import { practiceTaskSpecs } from '@/capabilities/practice/tasks/index';
 import { itemPriorTaskSpec } from '@/capabilities/practice/tasks/item-prior';
+import {
+  multimodalDirectJudgeTaskSpec,
+  semanticJudgeTaskSpec,
+  stepsJudgeTaskSpec,
+  unitDimensionFallbackTaskSpec,
+} from '@/capabilities/practice/tasks/judges';
 import { questionAuthorTaskSpec } from '@/capabilities/practice/tasks/question-author';
 import { quizGenTaskSpec } from '@/capabilities/practice/tasks/quiz-generation';
 import { quizVerifyTaskSpec } from '@/capabilities/practice/tasks/quiz-verify';
@@ -166,6 +172,10 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   attributionTaskSpec,
   attributionRerankTaskSpec,
   variantGenTaskSpec,
+  semanticJudgeTaskSpec,
+  unitDimensionFallbackTaskSpec,
+  stepsJudgeTaskSpec,
+  multimodalDirectJudgeTaskSpec,
   solutionGenerateTaskSpec,
   solutionGenerateVisionTaskSpec,
   quizGenTaskSpec,
@@ -555,10 +565,8 @@ describe('taskCatalog', () => {
     expect(source).not.toContain('CopilotEvidenceSourceRefSchema');
   });
 
-  it('retains 46 full owned TaskSpecs and 5 identity-backed transitional entries', () => {
-    // YUK-868 — QuizVerifyTask / SourceGroundingVerifyTask / VariantVerifyTask /
-    // TeachingQualityTask moved from transitional to practice-owned specs.
-    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(5);
+  it('retains 50 full owned TaskSpecs and one identity-backed transitional entry', () => {
+    expect(Object.keys(legacyTaskDefinitions)).toEqual(['SessionSummaryTask']);
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
         if (entry.ownership === 'owned') {
@@ -584,6 +592,10 @@ describe('taskCatalog', () => {
     expect(practiceTaskSpecs.SourceGroundingVerifyTask).toBe(sourceGroundingVerifyTaskSpec);
     expect(practiceTaskSpecs.VariantVerifyTask).toBe(variantVerifyTaskSpec);
     expect(practiceTaskSpecs.TeachingQualityTask).toBe(teachingQualityTaskSpec);
+    expect(practiceTaskSpecs.SemanticJudgeTask.ownership).toBe('owned');
+    expect(practiceTaskSpecs.UnitDimensionFallback.ownership).toBe('owned');
+    expect(practiceTaskSpecs.StepsJudgeTask.ownership).toBe('owned');
+    expect(practiceTaskSpecs.MultimodalDirectJudgeTask.ownership).toBe('owned');
     expect(taskCatalog.AttributionTask).toBe(attributionTaskSpec.definition);
     expect(taskCatalog.NoteGenerateTask).toBe(noteGenerateTaskSpec.definition);
     expect(taskCatalog.NoteRefineTask).toBe(noteRefineTaskSpec.definition);
@@ -841,8 +853,8 @@ describe('defineOwnedTaskSpecs', () => {
   });
 
   it('creates transitional entries only through quarry identity', () => {
-    const entry = defineTransitionalTask(legacyTaskDefinitions.SemanticJudgeTask);
-    expect(entry.definition).toBe(legacyTaskDefinitions.SemanticJudgeTask);
+    const entry = defineTransitionalTask(legacyTaskDefinitions.SessionSummaryTask);
+    expect(entry.definition).toBe(legacyTaskDefinitions.SessionSummaryTask);
     expect(Object.isFrozen(entry)).toBe(true);
   });
 });
