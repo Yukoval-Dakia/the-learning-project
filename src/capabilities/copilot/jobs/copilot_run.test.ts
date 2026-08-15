@@ -9,8 +9,6 @@
 //   YUK-575/YUK-832: N2 reviewed full-delta settlement（S3）/ N3+S4 ambient 装配往返 / N5+MF-A budget /
 //            MF1/MF2 transient·exhausted 分诊 + 幂等守卫 / S6 static 约束。
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
 import { writeCopilotReply } from '@/capabilities/copilot/server/chat';
 import {
   COPILOT_RUN_EVENTS,
@@ -35,11 +33,13 @@ import {
 import { createRunLifecycle } from '@/server/ai/run-lifecycle';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/server/ai/tools/allowlists';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
+import { STUCK_RUN_THRESHOLD_MS } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
 import { and, eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { STUCK_RUN_THRESHOLD_MS } from './ai_task_run_reconcile';
 import {
   CLAIMED_EXECUTION_SETTLE_GRACE_MS,
   type CopilotRunJobData,
@@ -192,6 +192,38 @@ describe('runCopilotRun', () => {
       actor_ref: 'agent:copilot',
     });
     expect(replies[0]?.payload).toMatchObject({ reply_md: '这是回答', task_run_id: 'tr_x' });
+  });
+
+  it('preserves the exact pre-ownership job payload shape', async () => {
+    const oldPayload = {
+      run_id: 'copilot_user_ask_old_payload',
+      session_id: 'sess_old_payload',
+      user_message: '核对旧投递在 worker 归属迁移后仍可执行。',
+      triggered_by: 'chat',
+    } satisfies CopilotRunJobData;
+    const assembleSpy = vi.fn(stubRunInput);
+
+    await runCopilotRun({
+      db: testDb(),
+      data: oldPayload,
+      streamTaskCollectingFn: streamMock('旧投递已处理') as never,
+      resolveCopilotRunInputFn: assembleSpy,
+      buildMcpServerFn: mcpMock() as never,
+    });
+
+    expect(Object.keys(oldPayload)).toEqual([
+      'run_id',
+      'session_id',
+      'user_message',
+      'triggered_by',
+    ]);
+    expect(assembleSpy.mock.calls[0]?.[1]).toEqual({
+      sessionId: oldPayload.session_id,
+      userMessage: oldPayload.user_message,
+      triggeredBy: oldPayload.triggered_by,
+      now: expect.any(Date),
+      historyAnchorEventId: oldPayload.run_id,
+    });
   });
 
   it('YUK-832 — raw evidence candidate stays private; repaired reply alone reaches delta, domain history, and terminal', async () => {

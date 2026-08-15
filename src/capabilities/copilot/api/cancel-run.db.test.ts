@@ -1,18 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import {
+  type TerminalProjectionEvent,
+  claimCopilotExecutionFence,
+  markCopilotRunStarted,
+} from '@/capabilities/copilot/jobs/copilot_run';
+import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { event, job_events } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import {
-  type TerminalProjectionEvent,
-  claimCopilotExecutionFence,
-  markCopilotRunStarted,
-} from '@/server/boss/handlers/copilot_run';
 import { writeJobEvent } from '@/server/events/writer';
 import { and, asc, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { writeCopilotUserAsk } from '../server/chat';
 import {

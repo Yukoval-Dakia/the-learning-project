@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-
 import { writeCopilotReply } from '@/capabilities/copilot/server/chat';
 import {
   COPILOT_RUN_EVENTS,
@@ -11,13 +10,13 @@ import {
   reserveCopilotDurableAcceptance,
 } from '@/capabilities/copilot/server/durable-dispatch';
 import { event, job_events } from '@/db/schema';
-import { DURABLE_OWNER_SETTLEMENT_BUDGET_MS } from '@/server/boss/handlers/copilot_run';
 import { writeJobEvent } from '@/server/events/writer';
 import { and, asc, eq } from 'drizzle-orm';
 import type { JobWithMetadata, QueueStats } from 'pg-boss';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { DURABLE_OWNER_SETTLEMENT_BUDGET_MS } from './copilot_run';
 import {
   type CopilotRunReconcileBoss,
   reconcileOutstandingCopilotRuns,

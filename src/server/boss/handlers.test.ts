@@ -40,6 +40,41 @@ describe('registerHandlers + registerCapabilityJobs', () => {
     ]);
   });
 
+  it('preserves the exact copilot_run queue, DLQ, expiry, and worker options', async () => {
+    const boss = {
+      createQueue: vi.fn(async () => undefined),
+      updateQueue: vi.fn(async () => undefined),
+      work: vi.fn(async () => undefined),
+      schedule: vi.fn(async () => undefined),
+      send: vi.fn(async () => 'job-id'),
+    } as unknown as PgBoss;
+
+    await registerAll(boss);
+
+    const mainQueueOptions = {
+      expireInSeconds: 7_200,
+      retentionSeconds: 604_800,
+      deadLetter: 'copilot_run_dlq',
+      retryLimit: 2,
+      retryDelay: 30,
+      retryBackoff: true,
+      heartbeatSeconds: 30,
+    };
+    const deadLetterOptions = {
+      expireInSeconds: 3_600,
+      retentionSeconds: 604_800,
+    };
+    expect(boss.createQueue).toHaveBeenCalledWith('copilot_run_dlq', deadLetterOptions);
+    expect(boss.updateQueue).toHaveBeenCalledWith('copilot_run_dlq', deadLetterOptions);
+    expect(boss.createQueue).toHaveBeenCalledWith('copilot_run', mainQueueOptions);
+    expect(boss.updateQueue).toHaveBeenCalledWith('copilot_run', mainQueueOptions);
+    expect(boss.work).toHaveBeenCalledWith(
+      'copilot_run',
+      { pollingIntervalSeconds: 2, batchSize: 1 },
+      expect.any(Function),
+    );
+  });
+
   it('registers knowledge_maintenance_nightly queue with expiry + DLQ, but no cron (YUK-758 DAG member)', async () => {
     const boss = {
       createQueue: vi.fn(async () => undefined),
