@@ -12,9 +12,9 @@
 
 import { createHash } from 'node:crypto';
 import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
+import type { DomainTool, ToolContext } from '@/server/ai/tools/types';
 import { type MemoryReadClientFactory, readMemoryFacts } from '@/server/memory/read';
 import { z } from 'zod';
-import type { DomainTool, ToolContext } from './types';
 
 // P3 (YUK-351): default topK for the wrapper when the caller omits it. The
 // pre-wrapper code passed `topK: undefined` straight to mem0 (its own default was
