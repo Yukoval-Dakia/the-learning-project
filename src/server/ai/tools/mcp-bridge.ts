@@ -23,6 +23,7 @@
 
 import { writeEvent } from '@/kernel/events';
 import type {
+  ProposalEffectContract,
   ToolCallerActor,
   ToolContext,
   ToolEffect,
@@ -116,6 +117,12 @@ export interface ToolExecutionResultObservation extends ToolExecutionGateInput {
   output: unknown;
   error_reason: string | null;
   executed: boolean;
+  proposal_effect_contract?: ProposalEffectContract;
+}
+
+function proposalEffectContract(effect: ToolEffect): ProposalEffectContract | undefined {
+  if (effect !== 'propose') return undefined;
+  return { owner_gate: 'FULL', direct_write: false, rollback: 'dismiss_before_accept' };
 }
 
 /**
@@ -226,6 +233,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       let truncationNote: object | null = null;
       let executionStarted = false;
       const gateInput = { name: dt.name, effect: dt.effect };
+      const effectContract = proposalEffectContract(dt.effect);
 
       try {
         parsedInput = dt.inputSchema.parse(rawArgs);
@@ -309,6 +317,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
           output: errorReason ? { error: errorReason } : output,
           error_reason: errorReason ?? null,
           executed: executionStarted,
+          ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
         });
       } catch (observationErr) {
         // A reply-review observer is bookkeeping only. It must never turn an
@@ -449,7 +458,17 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
           {
             type: 'text' as const,
             text: JSON.stringify(
-              errorReason ? { error: errorReason, summary } : { summary, output },
+              errorReason
+                ? {
+                    error: errorReason,
+                    summary,
+                    ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
+                  }
+                : {
+                    summary,
+                    output,
+                    ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
+                  },
             ),
           },
         ],

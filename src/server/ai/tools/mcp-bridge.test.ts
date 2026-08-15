@@ -190,6 +190,37 @@ describe('buildMcpServerFromRegistry', () => {
     ]);
   });
 
+  it('binds proposal calls to a server-owned FULL owner gate instead of model prose', async () => {
+    registerTool({
+      name: 'demo_proposal',
+      description: 'Propose a scoped change.',
+      effect: 'propose',
+      inputSchema: z.object({ target_id: z.string() }),
+      outputSchema: z.object({ status: z.literal('proposed') }),
+      costClass: 'local',
+      async execute() {
+        return { status: 'proposed' as const };
+      },
+      summarize() {
+        return 'proposal recorded';
+      },
+      mirrorEvent: 'when_causal',
+    });
+
+    buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['demo_proposal'] });
+
+    const result = (await mockAgentSdk.toolDefs[0]?.handler({ target_id: 'node_b' })) as {
+      content: Array<{ type: string; text: string }>;
+    };
+    const parsed = JSON.parse(result.content[0]?.text ?? '') as Record<string, unknown>;
+
+    expect(parsed.proposal_effect_contract).toEqual({
+      owner_gate: 'FULL',
+      direct_write: false,
+      rollback: 'dismiss_before_accept',
+    });
+  });
+
   it('lets callers block execution before a DomainTool runs', async () => {
     const runFn = vi.fn((i: { q: string }) => ({ len: i.q.length }));
     const beforeExecute = vi.fn(() => 'quota exceeded');
