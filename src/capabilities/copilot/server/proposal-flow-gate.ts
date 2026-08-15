@@ -1,12 +1,5 @@
 import type { ToolExecutionGateInput, ToolExecutionResultObservation } from '@/kernel/tools/types';
 
-const REPLAN_REQUIRED_STATUSES = new Set([
-  'skipped:not_found',
-  'skipped:unknown_node',
-  'skipped:invalid_payload',
-  'failed',
-]);
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -16,7 +9,7 @@ function requiresReplan(result: ToolExecutionResultObservation): boolean {
   if (result.error_reason !== null) return true;
   if (!isRecord(result.output)) return false;
   const status = result.output.status;
-  return typeof status === 'string' && REPLAN_REQUIRED_STATUSES.has(status);
+  return typeof status === 'string' && (status === 'failed' || status.startsWith('skipped:'));
 }
 
 export function createCopilotProposalFlowGate(): {

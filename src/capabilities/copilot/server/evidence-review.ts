@@ -132,6 +132,38 @@ function paidTaskFailureKind(error: unknown): string {
   return error instanceof Error ? error.name : 'unknown';
 }
 
+function proposalContractRepair(
+  toolTrace: readonly ToolExecutionResultObservation[],
+): string | undefined {
+  const proposalCalls = toolTrace.filter((entry) => entry.proposal_effect_contract !== undefined);
+  if (proposalCalls.length === 0) return undefined;
+
+  const callResults = proposalCalls.map((entry) => {
+    const output =
+      entry.output !== null && typeof entry.output === 'object' && !Array.isArray(entry.output)
+        ? (entry.output as Record<string, unknown>)
+        : undefined;
+    const status = typeof output?.status === 'string' ? output.status : undefined;
+    const proposalId = typeof output?.proposal_id === 'string' ? output.proposal_id : undefined;
+    const result = [
+      status ? `status=${status}` : undefined,
+      proposalId ? `proposal_id=${proposalId}` : undefined,
+    ]
+      .filter((value): value is string => value !== undefined)
+      .join(', ');
+    return `- \`${entry.name}\`${result ? `: ${result}` : ''}`;
+  });
+
+  return [
+    '本轮 proposal 结果由服务端契约裁定：',
+    ...callResults,
+    '- owner gate: FULL',
+    '- direct write: false',
+    '- pre-accept rollback: dismiss_before_accept',
+    '任何目标变更都尚未直接写入；只有 owner 接受对应 proposal 后才会应用。',
+  ].join('\n');
+}
+
 async function bindRunResult(params: {
   db: Db;
   kind: 'CopilotEvidenceReviewTask' | 'CopilotEvidenceVerificationTask';
@@ -534,6 +566,14 @@ export async function reviewCopilotEvidenceReply(params: {
   runTaskFn?: CopilotEvidenceReviewRunTaskFn;
 }): Promise<CopilotEvidenceReviewDecision> {
   if (!params.toolTrace.some((entry) => entry.effect === 'read')) {
+    const repairedReply = proposalContractRepair(params.toolTrace);
+    if (repairedReply) {
+      return {
+        status: 'repair',
+        replyText: repairedReply,
+        violations: ['proposal_only_reply_server_normalized'],
+      };
+    }
     return { status: 'skipped', replyText: params.candidateReply };
   }
   if (params.candidateReply.length > MAX_CANDIDATE_CHARS) {
