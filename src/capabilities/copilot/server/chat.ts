@@ -407,7 +407,7 @@ export interface PreparedCopilotReply {
 }
 
 export interface CopilotEvidenceValidationRef {
-  status: 'pass' | 'repair' | 'failed_closed';
+  status: 'pass' | 'repair' | 'degraded' | 'failed_closed';
   reference_task_run_ids: string[];
   comparison_task_run_ids: string[];
 }

@@ -27,6 +27,7 @@ import {
   COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS,
   COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS,
   COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
+  COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION,
   COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS,
   type CopilotEvidenceReviewRunTaskFn,
   reviewCopilotEvidenceReply,
@@ -1336,6 +1337,41 @@ describe('Copilot FULL evidence review', () => {
         reply_check_count: 0,
         completed: false,
       },
+    });
+  });
+
+  it('delivers the blind evidence reply with a low-confidence notice when comparator budget expires', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return submitTaskOutput(kind, input, submission, referenceOutput(input), 'reference');
+        }
+        throw new AgentRunError({
+          kind,
+          taskRunId: `comparison-budget-timeout-${runTaskFn.mock.calls.length}`,
+          subtype: 'budget_timeout',
+          errors: ['verification deadline elapsed'],
+        });
+      },
+    );
+
+    const result = await reviewCopilotEvidenceReply(
+      reviewParams({ candidateReply: unsafeCandidate, runTaskFn }),
+    );
+
+    expect(result).toMatchObject({
+      status: 'degraded',
+      replyText: `${blindSafeReply}\n\n${COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION}`,
+      reviewTaskRunId: 'reference',
+      referenceTaskRunIds: ['reference'],
+      comparisonTaskRunIds: ['comparison-budget-timeout-2', 'comparison-budget-timeout-3'],
+    });
+    expect(warnSpy).toHaveBeenCalledWith('[copilot-evidence-review] verification degraded', {
+      event: 'copilot_evidence_review_verification_timeout_degraded',
+      candidate_task_run_id: 'copilot_task_actual_a01_a03_a04_c01_c04',
+      reference_task_run_ids: ['reference'],
+      comparison_task_run_ids: ['comparison-budget-timeout-2', 'comparison-budget-timeout-3'],
     });
   });
 

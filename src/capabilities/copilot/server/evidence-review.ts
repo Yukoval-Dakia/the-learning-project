@@ -32,6 +32,8 @@ import {
 
 export const COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY =
   '这轮证据审阅未能完成，现有结果无法裁决。为避免把推测当成事实，我无法安全复述本轮结论；已执行的工具动作记录不会因此回滚，请在对应页面核对后重试。';
+export const COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION =
+  '提示：本轮证据复核因时间限制未完成；以下内容来自已完成的证据整理，置信度较低，请在对应页面核对。';
 
 /** Mirrors both inline evidence-task timeout budgets in the task registry. */
 export const COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS = 120_000;
@@ -74,7 +76,7 @@ export type CopilotEvidenceReviewRunTaskFn = (
 ) => Promise<CopilotEvidenceReviewRunResult>;
 
 export interface CopilotEvidenceReviewDecision {
-  status: 'skipped' | 'pass' | 'repair' | 'failed_closed';
+  status: 'skipped' | 'pass' | 'repair' | 'degraded' | 'failed_closed';
   replyText: string;
   /** Compatibility alias for the final successful blind-reference run. */
   reviewTaskRunId?: string;
@@ -507,7 +509,16 @@ async function runConfirmedComparison(params: {
     attempt.task_run_id ? [attempt.task_run_id] : [],
   );
   if (result.status === 'invalid') {
-    return { status: 'invalid', reason: result.reason, taskRunIds };
+    const budgetTimedOut = result.attempts.some(
+      (attempt) =>
+        attempt.outcome === 'contract_invalid' &&
+        attempt.detail?.startsWith('comparison_task_failed:budget_timeout'),
+    );
+    return {
+      status: 'invalid',
+      reason: budgetTimedOut ? 'comparison_budget_timeout' : result.reason,
+      taskRunIds,
+    };
   }
   return {
     status: 'decided',
@@ -626,6 +637,22 @@ export async function reviewCopilotEvidenceReply(params: {
     );
   }
   if (original.status === 'invalid') {
+    if (original.reason === 'comparison_budget_timeout') {
+      const reviewTaskRunId = reference.taskRunIds.at(-1);
+      console.warn('[copilot-evidence-review] verification degraded', {
+        event: 'copilot_evidence_review_verification_timeout_degraded',
+        candidate_task_run_id: params.candidateTaskRunId,
+        reference_task_run_ids: reference.taskRunIds,
+        comparison_task_run_ids: original.taskRunIds,
+      });
+      return {
+        status: 'degraded',
+        replyText: `${reference.reference.output.safe_reply}\n\n${COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION}`,
+        referenceTaskRunIds: reference.taskRunIds,
+        comparisonTaskRunIds: original.taskRunIds,
+        ...(reviewTaskRunId ? { reviewTaskRunId } : {}),
+      };
+    }
     return failClosed(`original_comparison_${original.reason}`, params.candidateTaskRunId, {
       referenceTaskRunIds: reference.taskRunIds,
       comparisonTaskRunIds: original.taskRunIds,
