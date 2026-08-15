@@ -1106,19 +1106,35 @@ async function runCopilotChatImpl(
   // YUK-457 — one actor for the bridge ctx, the persisted mirrors, AND the
   // live tool_use gate below: all three must resolve the same mirror policy.
   const callerActor = { kind: 'agent' as const, ref: actorRef };
+  const validationTaskContext = (
+    callCtx: Parameters<Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']>[2],
+  ) => ({
+    ...callCtx,
+    db,
+    signal: lifecycleAbortController.signal,
+    lifecycleAbortController,
+    ...(deps.providerSessionDeadlineAt !== undefined
+      ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+      : {}),
+  });
   const validateLearningContent: ValidateLearningContentFn = (content) =>
     validateCopilotLearningContent(content, {
       db,
-      runTaskFn: async (kind, input, callCtx) =>
-        run(kind, input, {
-          ...callCtx,
-          db,
-          signal: lifecycleAbortController.signal,
-          lifecycleAbortController,
-          ...(deps.providerSessionDeadlineAt !== undefined
-            ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
-            : {}),
-        }),
+      runTaskFn: async (kind, input, callCtx) => {
+        const ctx = validationTaskContext(callCtx);
+        switch (kind) {
+          case 'QuizVerifyTask':
+            return run('QuizVerifyTask', input, ctx);
+          case 'SolutionGenerateTask':
+            return run('SolutionGenerateTask', input, ctx);
+          case 'SemanticJudgeTask':
+            return run('SemanticJudgeTask', input, ctx);
+          case 'TeachingQualityTask':
+            return run('TeachingQualityTask', input, ctx);
+          default:
+            throw new Error(`unsupported learning-content validation task: ${kind}`);
+        }
+      },
     });
 
   const mcpServer = buildMcpServer({
