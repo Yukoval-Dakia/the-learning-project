@@ -85,7 +85,7 @@ import {
   type ConjectureInductionTaskKind,
   type InduceConjectureResult,
   induceConjecture,
-} from '@/server/agency/conjecture/induce';
+} from '@/capabilities/agency/server/conjecture/induce';
 import {
   type PredictionAccountability,
   loadPredictionAccountabilityByKey,

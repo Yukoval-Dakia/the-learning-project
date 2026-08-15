@@ -8,11 +8,11 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { defaultLoadEvidenceImages } from '@/capabilities/agency/jobs/research_meeting_nightly';
+import { induceConjecture } from '@/capabilities/agency/public';
 import type { ConjectureEvidenceImageSource } from '@/capabilities/agency/server/conjecture/evidence';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { source_asset } from '@/db/schema';
-import { induceConjecture } from '@/server/agency/conjecture/induce';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { restoreFromArchive } from '@/server/export/archive';
 import {
