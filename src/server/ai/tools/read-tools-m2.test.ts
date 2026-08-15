@@ -1,4 +1,5 @@
 import { capabilities } from '@/capabilities';
+import { getLearningItemContextTool } from '@/capabilities/agency/server/tools/learning-item-context';
 import { getRecordContextTool } from '@/capabilities/ingestion/server/tools/get-record-context';
 import { queryRecordsTool } from '@/capabilities/ingestion/server/tools/query-records';
 import {
@@ -31,7 +32,6 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   MEMORY_BRIEF_STALE_AFTER_MS,
   executeMemoryBrief,
-  getLearningItemContextTool,
   getQuestionContextTool,
   getReviewDueTool,
   queryMemoryBriefTool,

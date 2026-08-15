@@ -1,5 +1,3 @@
-import { createLearningIntentKnowledgeNode } from '@/capabilities/knowledge/public';
-import { createLearningIntentNote, dispatchNoteGeneration } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
 import {
@@ -8,7 +6,6 @@ import {
   getProposalLifecycleOperation,
 } from '@/kernel/proposals';
 import { extractRecordEvidenceIds, markRecordsActioned } from '@/server/records/record_processing';
-import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import type { AcceptAiProposalOpts } from './action-types';
 import { findExistingRateEvent } from './applier-helpers';
 import type { ProposalInboxRow } from './inbox';
@@ -136,18 +133,7 @@ export async function acceptAiProposal(
     }
   }
 
-  const enqueueLearningIntentNote =
-    opts.enqueueLearningIntentNote ??
-    (shouldEnqueueBackgroundJobs()
-      ? (artifactId: string) => dispatchNoteGeneration(db, artifactId)
-      : undefined);
-  const proposalRuntime = {
-    ...opts,
-    ...(enqueueLearningIntentNote ? { enqueueLearningIntentNote } : {}),
-    createLearningIntentKnowledgeNode,
-    createLearningIntentNote,
-  };
-  const dispatched = await dispatchAccept(db, proposal, opts, proposalRuntime);
+  const dispatched = await dispatchAccept(db, proposal, opts, opts);
 
   const recordIds = extractRecordEvidenceIds(proposal.payload.evidence_refs);
   if (recordIds.length > 0 && dispatched.lifecycleOutcome === 'accepted') {

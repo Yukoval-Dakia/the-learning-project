@@ -1212,7 +1212,7 @@ describe('proposal lifecycle owner service', () => {
     });
   });
 
-  it('dismissAiProposal records a generic RateEvent for future proposal kinds', async () => {
+  it('dismissAiProposal routes a learning_item dismissal through the Agency owner', async () => {
     const db = testDb();
     await writeAiProposal(db, {
       id: 'learning_p1',
@@ -1250,7 +1250,7 @@ describe('proposal lifecycle owner service', () => {
     expect(signals[0].cooldown_until).toBeInstanceOf(Date);
   });
 
-  it('serializes concurrent generic dismisses into one rate event and one signal increment', async () => {
+  it('serializes concurrent Agency dismisses into one rate event and one signal increment', async () => {
     const db = testDb();
     const proposalId = 'learning_dismiss_race';
     await writeAiProposal(db, {

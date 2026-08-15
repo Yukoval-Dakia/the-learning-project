@@ -1,11 +1,15 @@
+import { createLearningIntentKnowledgeNode } from '@/capabilities/knowledge/public';
+import { createLearningIntentNote, dispatchNoteGeneration } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
 import type {
   ProposalAcceptApplier,
   ProposalAcceptInput,
   ProposalAcceptResult,
+  ProposalDismissInput,
 } from '@/kernel/proposals';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
 import * as ownerRuntime from '@/server/proposals/owner-runtime';
+import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
 import { acceptGoalScopeProposal } from './goals/accept';
 import {
@@ -19,11 +23,25 @@ import { type ProposalInboxRow, createAgencyProposalLifecycle } from './proposal
 type AgencyAcceptRuntime = AgencyApplierOpts & ConjectureApplierOpts;
 
 export const {
+  agencyProposalDismissApplier,
   completionProposalRetractApplier,
   goalScopeProposalRetractApplier,
   learningItemProposalRetractApplier,
   relearnProposalRetractApplier,
-} = createAgencyProposalLifecycle(ownerRuntime);
+} = createAgencyProposalLifecycle({
+  ...ownerRuntime,
+  recordDismissSignal: (db, input: ProposalDismissInput) =>
+    ownerRuntime.recordProposalDecisionSignal(
+      db,
+      {
+        ...input.proposal,
+        kind: input.proposal.payload.kind,
+        target: input.proposal.payload.target,
+      } as ProposalInboxRow,
+      'dismiss',
+      input.user_note,
+    ),
+});
 
 function inboxView(input: ProposalAcceptInput): ProposalInboxRow {
   const { proposal } = input;
@@ -34,10 +52,18 @@ function inboxView(input: ProposalAcceptInput): ProposalInboxRow {
   } as ProposalInboxRow;
 }
 
-function runtimeOptions(input: ProposalAcceptInput, runtime: unknown): AgencyAcceptRuntime {
+function runtimeOptions(db: Db, input: ProposalAcceptInput, runtime: unknown): AgencyAcceptRuntime {
   const seams = runtime && typeof runtime === 'object' ? (runtime as AgencyAcceptRuntime) : {};
+  const enqueueLearningIntentNote =
+    seams.enqueueLearningIntentNote ??
+    (shouldEnqueueBackgroundJobs()
+      ? (artifactId: string) => dispatchNoteGeneration(db, artifactId)
+      : undefined);
   return {
     ...seams,
+    ...(enqueueLearningIntentNote ? { enqueueLearningIntentNote } : {}),
+    createLearningIntentKnowledgeNode,
+    createLearningIntentNote,
     decision: input.decision,
     user_note: input.user_note,
     corrected_payload: input.corrected_payload,
@@ -61,7 +87,7 @@ export const learningItemProposalAcceptApplier: ProposalAcceptApplier = async (
       db as Db,
       input.proposalId,
       inboxView(input),
-      runtimeOptions(input, runtime),
+      runtimeOptions(db as Db, input, runtime),
     ),
   );
 
@@ -71,7 +97,7 @@ export const completionProposalAcceptApplier: ProposalAcceptApplier = async (db,
       db as Db,
       input.proposalId,
       inboxView(input),
-      runtimeOptions(input, runtime),
+      runtimeOptions(db as Db, input, runtime),
     ),
   );
 
@@ -81,7 +107,7 @@ export const relearnProposalAcceptApplier: ProposalAcceptApplier = async (db, in
       db as Db,
       input.proposalId,
       inboxView(input),
-      runtimeOptions(input, runtime),
+      runtimeOptions(db as Db, input, runtime),
     ),
   );
 
@@ -104,6 +130,6 @@ export const conjectureProposalAcceptApplier: ProposalAcceptApplier = async (db,
       db as Db,
       input.proposalId,
       inboxView(input),
-      runtimeOptions(input, runtime),
+      runtimeOptions(db as Db, input, runtime),
     ),
   );

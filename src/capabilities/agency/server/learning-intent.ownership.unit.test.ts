@@ -53,7 +53,7 @@ describe('Agency learning-intent ownership', () => {
       'createLearningIntentKnowledgeNode',
     );
 
-    const composition = source('src/server/proposals/accept-action.ts');
+    const composition = source('src/capabilities/agency/server/proposal-accept-applier.ts');
     expect(composition).toContain("from '@/capabilities/notes/public'");
     expect(composition).toContain("from '@/capabilities/knowledge/public'");
     expect(composition).toContain('createLearningIntentNote');

@@ -1,12 +1,12 @@
 // YUK-525 security regression — completion tool execution is proposal-only.
 
+import { proposeLearningItemCompletionTool } from '@/capabilities/agency/server/tools/proposal-tools';
 import { event, knowledge, learning_item } from '@/db/schema';
 import { acceptAiProposal } from '@/server/proposals/actions';
 import { getProposalInboxRow } from '@/server/proposals/inbox';
 import { and, eq, like } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { proposeLearningItemCompletionTool } from './proposal-tools';
 import type { ToolContext } from './types';
 
 const mockRunner = vi.hoisted(() => ({ runTask: vi.fn() }));

@@ -3,17 +3,18 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 567,
+      "total": 570,
       "byOwnerPair": {
-        "agency -> ai": 34,
+        "agency -> ai": 33,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> http": 2,
         "agency -> learning-items": 1,
         "agency -> mastery": 3,
         "agency -> projections": 15,
-        "agency -> proposals": 21,
+        "agency -> proposals": 24,
         "agency -> questions": 1,
+        "agency -> runtime-env": 1,
         "agency -> subjects": 2,
         "copilot -> advisory-locks": 1,
         "copilot -> ai": 38,
@@ -110,10 +111,11 @@
       }
     },
     "crossCapabilityValue": {
-      "total": 79,
+      "total": 82,
       "byOwnerPair": {
-        "agency -> knowledge": 11,
-        "agency -> notes": 2,
+        "agency -> ingestion": 1,
+        "agency -> knowledge": 12,
+        "agency -> notes": 3,
         "agency -> practice": 4,
         "copilot -> agency": 1,
         "copilot -> knowledge": 2,
