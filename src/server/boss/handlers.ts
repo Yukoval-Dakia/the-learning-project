@@ -1,5 +1,3 @@
-import { buildAutoEnrollHandler } from '@/capabilities/ingestion/jobs/auto_enroll';
-import { buildTencentOcrHandler } from '@/capabilities/ingestion/jobs/tencent_ocr_extract';
 import { buildJudgeRunHandler } from '@/capabilities/practice/jobs/judge_run';
 import type { PlacementVerificationAuthority } from '@/capabilities/practice/public';
 import { JUDGE_RUN_QUEUE } from '@/capabilities/practice/server/judge-durable-config';
@@ -13,7 +11,6 @@ import {
 } from '@/server/boss/queue-config';
 import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { registerMemoryHandlers } from '@/server/memory/triggers';
-import { getR2 } from '@/server/r2';
 import type { PgBoss } from 'pg-boss';
 import { buildEchoHandler } from './handlers/echo';
 import { buildPromoteConversationIdleHandler } from './handlers/promote_conversation_idle';
@@ -44,8 +41,10 @@ import {
 //   - registerMemoryHandlers（memory_* 队列归 memory 模块）
 //   - session_summary（链式 LLM）
 //   - quiz_verify / source_verify / variant_verify
-//   - tencent_ocr_extract（0.5s polling + lazy r2 getter）/ auto_enroll
-//   - 未迁域：ingestion（auto_enroll / tencent_ocr_extract 待 ingestion 包 jobs 声明）
+//
+// YUK-882 (F3.6c)：腾讯 OCR 提取与 auto-enroll 两条 job 已迁 ingestion
+// manifest jobs 声明（含 0.5s polling + includeMetadata + lazy r2 的 worker
+// 元数据），由注册器挂载；ingestion 域自此无留簿注册。
 
 /**
  * Register pg-boss queue handlers + schedules for jobs NOT yet owned by a
@@ -218,37 +217,5 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     'variant_verify',
     { pollingIntervalSeconds: 2, batchSize: 1 },
     buildVariantVerifyHandler(db),
-  );
-
-  // Step 9: Tencent OCR Mark Agent —— 生产 async job
-  // R2 in worker process needs env config; getR2() throws if missing — call inside
-  // handler factory so missing creds don't break test worker setup.
-  await createJobQueue(boss, 'tencent_ocr_extract', EXPIRE_AGENT);
-  await boss.work(
-    'tencent_ocr_extract',
-    { pollingIntervalSeconds: 0.5, batchSize: 1, includeMetadata: true },
-    buildTencentOcrHandler({
-      db,
-      // lazy r2 —— test 环境通过 R2 env 未设也能起 worker；生产 env 必须齐全
-      get r2() {
-        return getR2();
-      },
-    } as Parameters<typeof buildTencentOcrHandler>[0]),
-  );
-
-  // Strategy D Slice B (YUK-190): observe-only auto-enroll. Enqueued inline by
-  // tencent_ocr_extract after a successful extraction. With the enroll flag OFF
-  // + observe ON (the default), it runs TaggingTask + WorkflowJudge per draft
-  // block and writes a durable `experimental:auto_enroll_observed` audit event
-  // per block (zero domain rows, blocks stay 'draft'). A cheap tagging job that
-  // retries on its OWN queue — failure-isolated from the expensive OCR job.
-  // batchSize=1 keeps mimo rate-limit friendly. The LLM call needs
-  // XIAOMI_API_KEY in the worker env; a missing key routes each block to review
-  // (no throw, no retry storm — handled per-block in the runner).
-  await createJobQueue(boss, 'auto_enroll', EXPIRE_LLM);
-  await boss.work(
-    'auto_enroll',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildAutoEnrollHandler(db),
   );
 }

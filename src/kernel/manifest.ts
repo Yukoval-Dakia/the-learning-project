@@ -121,6 +121,14 @@ export interface JobDecl {
    * lease must fail over faster than the queue tier's broad expiry ceiling.
    */
   heartbeatSeconds?: number;
+  /**
+   * YUK-882 — 非默认 worker mount 选项（boss.work 透传）。缺省时注册器用统一
+   * 配方 2s/1（与渐缩簿显式先例等价）；需要更快轮询（tencent_ocr_extract 的
+   * 0.5s）或 includeMetadata（provider-attempt resume 读 retryCount）的 job
+   * 在声明里显式携带，注册器原样透传、不掺默认值。
+   */
+  pollingIntervalSeconds?: number;
+  batchSize?: number;
   /** cron 调度；无 schedule 的是链式/按需 job（如 rejudge） */
   schedule?: JobScheduleDecl;
   /**
