@@ -26,6 +26,15 @@ import {
   attributionTaskSpec,
 } from '@/capabilities/practice/tasks/attribution';
 import { practiceTaskSpecs } from '@/capabilities/practice/tasks/index';
+import { itemPriorTaskSpec } from '@/capabilities/practice/tasks/item-prior';
+import { questionAuthorTaskSpec } from '@/capabilities/practice/tasks/question-author';
+import { quizGenTaskSpec } from '@/capabilities/practice/tasks/quiz-generation';
+import { selectionOrchestratorTaskSpec } from '@/capabilities/practice/tasks/selection-orchestrator';
+import {
+  solutionGenerateTaskSpec,
+  solutionGenerateVisionTaskSpec,
+} from '@/capabilities/practice/tasks/solution-generation';
+import { sourcingTaskSpec } from '@/capabilities/practice/tasks/sourcing';
 import { variantGenTaskSpec } from '@/capabilities/practice/tasks/variant-gen';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
@@ -126,6 +135,13 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   attributionTaskSpec,
   attributionRerankTaskSpec,
   variantGenTaskSpec,
+  solutionGenerateTaskSpec,
+  solutionGenerateVisionTaskSpec,
+  quizGenTaskSpec,
+  questionAuthorTaskSpec,
+  itemPriorTaskSpec,
+  selectionOrchestratorTaskSpec,
+  sourcingTaskSpec,
   noteGenerateTaskSpec,
   noteVerifyTaskSpec,
   visionExtractTaskSpec,
@@ -347,8 +363,45 @@ describe('taskCatalog', () => {
     }
   });
 
-  it('retains 16 full owned TaskSpecs and 35 identity-backed transitional entries', () => {
-    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(35);
+  it('owns the seven Practice sourcing and generation TaskSpecs without quarry definitions', () => {
+    const kinds = [
+      'SolutionGenerateTask',
+      'SolutionGenerateVisionTask',
+      'QuizGenTask',
+      'QuestionAuthorTask',
+      'ItemPriorTask',
+      'SelectionOrchestratorTask',
+      'SourcingTask',
+    ] as const;
+
+    for (const kind of kinds) {
+      const entry = practiceTaskSpecs[kind];
+      expect(entry.ownership, kind).toBe('owned');
+      if (entry.ownership !== 'owned') continue;
+      expect(entry.definition, kind).toBe(taskCatalog[kind]);
+      expect(entry.parseText, kind).toBeTypeOf('function');
+      expect(entry.outputSchema.safeParse, kind).toBeTypeOf('function');
+    }
+
+    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
+    for (const kind of kinds) {
+      expect(source, kind).not.toMatch(new RegExp(`^  ${kind}:`, 'm'));
+    }
+    for (const builder of [
+      'buildSolutionGeneratePrompt',
+      'buildSolutionGenerateVisionPrompt',
+      'buildQuizGenPrompt',
+      'buildQuestionAuthorPrompt',
+      'buildItemPriorPrompt',
+      'buildSelectionOrchestratorPrompt',
+      'buildSourcingPrompt',
+    ]) {
+      expect(source, builder).not.toContain(`function ${builder}`);
+    }
+  });
+
+  it('retains 23 full owned TaskSpecs and 28 identity-backed transitional entries', () => {
+    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(28);
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
         if (entry.ownership === 'owned') {

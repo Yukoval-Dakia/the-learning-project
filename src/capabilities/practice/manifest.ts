@@ -757,6 +757,22 @@ export const practiceCapability = defineCapability({
     // 声明无 load 纯归属元数据。（YUK-349：review_plan 链式 job 已随 B3 退役。）
     handlers: [
       {
+        name: 'sourcing',
+        queue: 'agent',
+        load: () => import('./jobs/sourcing').then((m) => m.buildSourcingHandler),
+      },
+      {
+        name: 'jyeoo_fetch',
+        queue: 'agent',
+        load: () => import('./jobs/jyeoo-fetch').then((m) => m.buildJyeooFetchHandler),
+      },
+      {
+        name: 'quiz_gen',
+        queue: 'agent',
+        includeMetadata: true,
+        load: () => import('./jobs/quiz_gen').then((m) => m.buildQuizGenHandler),
+      },
+      {
         // Durable stage 1: classify an active question failure, write the exact
         // causal judge, then hand off stage 2 with a stable per-attempt job id.
         name: 'attribution_followup',
@@ -834,7 +850,7 @@ export const practiceCapability = defineCapability({
         // YUK-758 DAG 成员。**边考据修订（review To-Iq + ToTas，两位 reviewer 各对一半）**：
         //  · 原声明的 `answer_class_backfill` 硬边**不成立，已移除**：supply 的
         //    discoverSupplyTargets → assembleScanInput → loadQuestionPool 是
-        //    target-discovery.ts 内的**私有** loader（:664），并非 src/server/quiz/pool-fetch.ts；
+        //    target-discovery.ts 内的**私有** loader（:664），并非 Practice quiz/pool-fetch；
         //    它只 select id/kind/source/metadata/difficulty/knowledge_ids(+draft_status 谓词)，
         //    全 src/server/question-supply/ 目录 grep 不到 answer_class。且 pool-fetch 那条
         //    answer_class 谓词本身是 NULL-宽容（`= X OR IS NULL`）且当前无活 caller（唯一

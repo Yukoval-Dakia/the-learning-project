@@ -33,10 +33,10 @@ import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schem
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
-import { poolFetch } from '@/server/quiz/pool-fetch';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile, SubjectQuestionKind } from '@/subjects/profile-schema';
 import { kindsMatch, questionKindToSkillKind } from '@/subjects/question-kind';
+import { poolFetch } from './pool-fetch';
 
 // The downstream production steps, in default order. Step 1 (existing pool) is the
 // synchronous query below and is NOT part of this enum (it never enqueues).

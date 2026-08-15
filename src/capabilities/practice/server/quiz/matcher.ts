@@ -19,25 +19,7 @@
 //   含 NULL 行 (§7).
 // 镜像 queryExistingPool (sourcing-sequence.ts:121-145) 的 app 层 kind 过滤 + tier 排序 +
 //   slice 链 (同源单一真相)。CRITICAL: 不传 limit 给 poolFetch — 截断在 app 层 (F2 防线).
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
-import {
-  type DifficultyBand,
-  type EvidenceDemandV1T,
-  type QuestionSupplyTarget,
-  type SupplyGapKind,
-  type SupplyRoute,
-  acquisitionTierForQuestion,
-  buildCoverageEvidenceDemand,
-  evidenceDemandToTargetContext,
-  parseEvidenceDemand,
-  seedGenerationMethod,
-  seedRoutePreference,
-  targetFingerprint,
-} from '@/capabilities/practice/public';
-import {
-  type DispatchResult,
-  dispatchPracticeSupplyTarget as dispatchSupplyTarget,
-} from '@/capabilities/practice/public';
+import { getEffectiveDomain } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
@@ -50,7 +32,25 @@ import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
 import { and, eq, isNull } from 'drizzle-orm';
+import { type DispatchResult, dispatchSupplyTarget } from '../question-supply/dispatcher';
+import {
+  type EvidenceDemandV1T,
+  buildCoverageEvidenceDemand,
+  evidenceDemandToTargetContext,
+  parseEvidenceDemand,
+} from '../question-supply/evidence-demand';
+import {
+  type DifficultyBand,
+  type QuestionSupplyTarget,
+  type SupplyGapKind,
+  type SupplyRoute,
+  acquisitionTierForQuestion,
+  seedGenerationMethod,
+  seedRoutePreference,
+  targetFingerprint,
+} from '../question-supply/target-discovery';
 
+import { verifyAndPromote } from '@/server/quiz/verify-and-promote';
 import { MATCHER_ANSWER_CLASS_FILTER } from './matcher-flags';
 import { type PoolRow, poolFetch } from './pool-fetch';
 import {
@@ -61,7 +61,6 @@ import {
   writeSelectionMissEvent,
 } from './selection-miss';
 import type { SourcingNeed, SourcingSequenceStep } from './sourcing-sequence';
-import { verifyAndPromote } from './verify-and-promote';
 
 // ── §4 cosine 阈值 ────────────────────────────────────────────────────────────
 // pgvector `<=>` 是 cosine *距离* (0=同向、1=正交、2=反向)：越小越近。候选 cosine_distance

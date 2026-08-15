@@ -1,6 +1,12 @@
 import { legacyTaskDefinitions } from '@/ai/legacy-task-definitions';
 import { defineOwnedTaskSpecs, defineTransitionalTask } from '@/ai/owned-task-specs';
 import { attributionRerankTaskSpec, attributionTaskSpec } from './attribution';
+import { itemPriorTaskSpec } from './item-prior';
+import { questionAuthorTaskSpec } from './question-author';
+import { quizGenTaskSpec } from './quiz-generation';
+import { selectionOrchestratorTaskSpec } from './selection-orchestrator';
+import { solutionGenerateTaskSpec, solutionGenerateVisionTaskSpec } from './solution-generation';
+import { sourcingTaskSpec } from './sourcing';
 import { variantGenTaskSpec } from './variant-gen';
 
 export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
@@ -18,17 +24,13 @@ export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
   ),
   VariantVerifyTask: defineTransitionalTask(legacyTaskDefinitions.VariantVerifyTask),
   TeachingTurnTask: defineTransitionalTask(legacyTaskDefinitions.TeachingTurnTask),
-  SolutionGenerateTask: defineTransitionalTask(legacyTaskDefinitions.SolutionGenerateTask),
-  SolutionGenerateVisionTask: defineTransitionalTask(
-    legacyTaskDefinitions.SolutionGenerateVisionTask,
-  ),
-  QuizGenTask: defineTransitionalTask(legacyTaskDefinitions.QuizGenTask),
+  SolutionGenerateTask: solutionGenerateTaskSpec,
+  SolutionGenerateVisionTask: solutionGenerateVisionTaskSpec,
+  QuizGenTask: quizGenTaskSpec,
   QuizVerifyTask: defineTransitionalTask(legacyTaskDefinitions.QuizVerifyTask),
   TeachingQualityTask: defineTransitionalTask(legacyTaskDefinitions.TeachingQualityTask),
-  QuestionAuthorTask: defineTransitionalTask(legacyTaskDefinitions.QuestionAuthorTask),
-  ItemPriorTask: defineTransitionalTask(legacyTaskDefinitions.ItemPriorTask),
-  SelectionOrchestratorTask: defineTransitionalTask(
-    legacyTaskDefinitions.SelectionOrchestratorTask,
-  ),
-  SourcingTask: defineTransitionalTask(legacyTaskDefinitions.SourcingTask),
+  QuestionAuthorTask: questionAuthorTaskSpec,
+  ItemPriorTask: itemPriorTaskSpec,
+  SelectionOrchestratorTask: selectionOrchestratorTaskSpec,
+  SourcingTask: sourcingTaskSpec,
 });

@@ -33,35 +33,8 @@ import {
   lockImageStorageKey,
   persistImageAsset,
   sha256Hex,
-} from '@/capabilities/ingestion/server/persist-image-asset';
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
-import {
-  type DifficultyBand,
-  JYEOO_DEFAULT_PAGES,
-  JYEOO_FETCH_ROUTE,
-  JYEOO_SOURCE_HOST,
-  SupplyTraceV1,
-  type SupplyTraceV1T,
-  jyeooBinaryPath,
-  jyeooDgTokenForBand,
-  jyeooFetchEnabled,
-  jyeooSpawnMaxStderrBytes,
-  jyeooSpawnMaxStdoutBytes,
-  jyeooSpawnTimeoutMs,
-} from '@/capabilities/practice/public';
-import {
-  type JyeooFailureClass,
-  classifyJyeooExit,
-  hasMalformedMarkdownImage,
-  isForeignSourceHost,
-  markdownImageSources,
-  parseJyeooLine,
-  rewriteMarkdownImageSources,
-} from '@/capabilities/practice/public';
-import {
-  type SpawnJyeooFn,
-  spawnPracticeJyeooFetch as spawnJyeooFetch,
-} from '@/capabilities/practice/public';
+} from '@/capabilities/ingestion/public';
+import { getEffectiveDomain } from '@/capabilities/knowledge/public';
 import { MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import { AgentRef } from '@/core/schema/business';
 import type { DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
@@ -75,19 +48,42 @@ import {
   writeVerifyDispatchIntent,
 } from '@/server/boss/verify-dispatch-outbox';
 import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
-import {
-  canonicalQuestionContentHash,
-  mergeExactQuestionDuplicateKnowledgeIds,
-} from '@/server/quiz/content-fingerprint';
 import { type R2Client, getR2 } from '@/server/r2';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job, SendOptions } from 'pg-boss';
+import { SupplyTraceV1, type SupplyTraceV1T } from '../server/question-supply/evidence-demand';
+import {
+  type JyeooFailureClass,
+  classifyJyeooExit,
+  hasMalformedMarkdownImage,
+  isForeignSourceHost,
+  markdownImageSources,
+  parseJyeooLine,
+  rewriteMarkdownImageSources,
+} from '../server/question-supply/jyeoo-loom-adapter';
+import { type SpawnJyeooFn, spawnJyeooFetch } from '../server/question-supply/jyeoo-spawn';
+import {
+  JYEOO_DEFAULT_PAGES,
+  JYEOO_FETCH_ROUTE,
+  JYEOO_SOURCE_HOST,
+  jyeooBinaryPath,
+  jyeooDgTokenForBand,
+  jyeooFetchEnabled,
+  jyeooSpawnMaxStderrBytes,
+  jyeooSpawnMaxStdoutBytes,
+  jyeooSpawnTimeoutMs,
+} from '../server/question-supply/jyeoo-supply-config';
+import type { DifficultyBand } from '../server/question-supply/target-discovery';
+import {
+  canonicalQuestionContentHash,
+  mergeExactQuestionDuplicateKnowledgeIds,
+} from '../server/quiz/content-fingerprint';
 
-import { maxNgramOverlap } from './quiz_verify';
-import { DEDUP_OVERLAP_THRESHOLD } from './source_verify';
+import { maxNgramOverlap } from '@/server/boss/handlers/quiz_verify';
+import { DEDUP_OVERLAP_THRESHOLD } from '@/server/boss/handlers/source_verify';
 import { matchesWhitelist } from './sourcing';
 
 // Only 'knowledge' + 'manual' — jyeoo_fetch is auto-dispatched by the supply dispatcher

@@ -239,8 +239,8 @@ export const fastTestInclude = [
   // the sibling end-to-end propagation assertions live in handler DB tests.
   'src/capabilities/practice/server/question-supply/evidence-demand.test.ts',
   'src/capabilities/practice/server/question-supply/inventory-projection.test.ts',
-  'src/server/quiz/selection-miss.test.ts',
-  'src/server/quiz/content-fingerprint.test.ts',
+  'src/capabilities/practice/server/quiz/selection-miss.test.ts',
+  'src/capabilities/practice/server/quiz/content-fingerprint.test.ts',
   // YUK-474 — 动态供题 refill 决策逻辑单测. Pure no-DB: countActive/buildTarget/dispatch 全注入
   // fake，db 是未触碰 stub；imports 仅 ./refill（其 @/db/client 是 type-only/erased、@/db/schema
   // 是 table objects 不连库、demandToSupplyTarget/dispatchSupplyTarget/poolFetch 全 type-only db）。
@@ -375,10 +375,10 @@ export const fastTestInclude = [
   // YUK-608 (异源 solve/verify) — pure env-read resolver for the scoped solve_check
   // provider/model override + fail-open pre-flight. Imports only providers.ts →
   // registry.ts (type/zod-only surface), reads process.env; no DB / AI / pg-boss.
-  'src/server/quiz/solve-lane.test.ts',
+  'src/capabilities/practice/server/quiz/solve-lane.test.ts',
   // YUK-225 (S2 slice 4) — pure (no-DB) units: skill resolver (fs fixture root),
   // few-shot block renderer (pure fn), profile thin-section schema parse.
-  'src/server/quiz/fewshot-retrieve.render.test.ts',
+  'src/capabilities/practice/server/quiz/fewshot-retrieve.render.test.ts',
   'src/subjects/quiz-gen-skills.test.ts',
   // YUK-228 (S3 Slice B) — pure (no-DB) note skill resolver (fs fixture root),
   // live SoT discovery, and double-sided cloze防御 (note vs quiz-gen-* prefix).

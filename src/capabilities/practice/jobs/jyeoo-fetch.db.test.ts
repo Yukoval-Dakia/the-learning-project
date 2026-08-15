@@ -15,11 +15,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SpawnJyeooFn, SpawnJyeooResult } from '@/capabilities/practice/public';
 import { db } from '@/db/client';
 import { event, knowledge, question, source_asset } from '@/db/schema';
-import type { EnqueueSourceVerifyFn } from '@/server/boss/handlers/jyeoo-fetch';
-import { runJyeooFetch } from '@/server/boss/handlers/jyeoo-fetch';
-import { canonicalQuestionContentHash } from '@/server/quiz/content-fingerprint';
 import type { R2Client } from '@/server/r2';
 import { resetDb } from '../../../../tests/helpers/db';
+import { canonicalQuestionContentHash } from '../server/quiz/content-fingerprint';
+import { type EnqueueSourceVerifyFn, runJyeooFetch } from './jyeoo-fetch';
 
 async function seedKnowledge(id: string, domain = 'math', name = '函数与导数') {
   const now = new Date();

@@ -14,6 +14,12 @@ export type {
 } from './server/legacy-record-appliers';
 export type { BlockMergeAcceptResult } from './server/proposal-appliers';
 export {
+  lockImageStorageKey,
+  persistImageAsset,
+  sha256Hex,
+} from './server/persist-image-asset';
+export type { SourceAssetRow } from './server/persist-image-asset';
+export {
   bodyBlockSummaries,
   excerpt,
   knowledgeContext,
