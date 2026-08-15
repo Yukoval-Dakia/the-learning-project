@@ -3,6 +3,24 @@ import { describe, expect, it } from 'vitest';
 import { practiceCapability } from './manifest';
 
 describe('practice manifest jobs', () => {
+  it('owns sourcing and generation with exact queue and worker metadata', () => {
+    const handlers = practiceCapability.jobs?.handlers ?? [];
+    const expected = {
+      sourcing: { queue: 'agent', includeMetadata: undefined },
+      jyeoo_fetch: { queue: 'agent', includeMetadata: undefined },
+      quiz_gen: { queue: 'agent', includeMetadata: true },
+    } as const;
+
+    for (const [name, contract] of Object.entries(expected)) {
+      const job = handlers.find((candidate) => candidate.name === name);
+      expect(job?.queue, name).toBe(contract.queue);
+      expect(typeof job?.load, name).toBe('function');
+      expect(job && 'includeMetadata' in job ? job.includeMetadata : undefined, name).toBe(
+        contract.includeMetadata,
+      );
+    }
+  });
+
   it('owns both durable Failure Learning stages', () => {
     const handlers = practiceCapability.jobs?.handlers ?? [];
     for (const name of ['attribution_followup', 'variant_gen']) {

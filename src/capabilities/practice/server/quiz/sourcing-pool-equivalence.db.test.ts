@@ -17,7 +17,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { knowledge, question } from '@/db/schema';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { runSourcingSequence } from './sourcing-sequence';
 
 const db = testDb();

@@ -5,8 +5,9 @@
 //      llm/agent → createJobQueue（先建 `<name>_dlq` 再建主队列，1h/2h expire）；
 //      fast → createOrUpdateQueue 无 DLQ（housekeeping 掉一拍下个 cron 重跑）。
 //      注册器不得给 fast 档统一建 DLQ（plan Critic m3）。
-//   2. boss.work(name, { pollingIntervalSeconds: 2, batchSize: 1 }, factory(db))。
-//      2s/1 与 handlers.ts 全部 LLM/AGENT 注册行的显式 opts 一致；原先两条无
+//   2. boss.work(name, { pollingIntervalSeconds: 2, batchSize: 1, ...metadata }, factory(db))。
+//      2s/1 与 handlers.ts 全部 LLM/AGENT 注册行的显式 opts 一致；需要 retry metadata 的
+//      handler 由 manifest 显式声明 includeMetadata。原先两条无
 //      opts 的注册（knowledge_propose_nightly / knowledge_edge_propose_nightly）
 //      pg-boss 默认值即 2s/1，行为等价（等价平移红线）。
 //   3. 有 schedule 的 decl → boss.schedule(name, cron, {}, { tz })。
@@ -59,7 +60,15 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   }
 
   const factory = await decl.load();
-  await boss.work(decl.name, { pollingIntervalSeconds: 2, batchSize: 1 }, factory(db));
+  await boss.work(
+    decl.name,
+    {
+      pollingIntervalSeconds: 2,
+      batchSize: 1,
+      ...(decl.includeMetadata !== undefined ? { includeMetadata: decl.includeMetadata } : {}),
+    },
+    factory(db),
+  );
 
   if (decl.schedule) {
     if (

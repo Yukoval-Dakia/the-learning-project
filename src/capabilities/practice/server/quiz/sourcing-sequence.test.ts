@@ -19,7 +19,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { knowledge, question } from '@/db/schema';
 import * as profileModule from '@/subjects/profile';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import {
   DEFAULT_SOURCING_ROUTE,
   type EnqueueSequenceJobFn,

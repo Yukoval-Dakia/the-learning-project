@@ -23,42 +23,6 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobWithMetadata, SendOptions } from 'pg-boss';
 
 import {
-  SupplyTraceV1,
-  type SupplyTraceV1T,
-  withSupplyTraceDifficultyEvidence,
-} from '@/capabilities/practice/public';
-import {
-  PLACEMENT_ATTEMPT_HEARTBEAT_MS,
-  PLACEMENT_DECISION_DEADLINE_MS,
-  PLACEMENT_QUEUE_EXPIRY_MS,
-  PLACEMENT_STARTER_REQUIRED_COUNT,
-  PLACEMENT_VERIFY_POLL_MS,
-  type PlacementAttemptAuthority,
-  type PlacementAttemptHeartbeat,
-  PlacementStarterAdmissionError,
-  PlacementStarterBudgetExhaustedError,
-  PlacementStarterDeadlineError,
-  PlacementStarterStaleAuthorityError,
-  PlacementStarterUnderfillError,
-  PlacementStarterUnknownCostError,
-  type PlacementVerificationAuthority,
-  acquirePlacementAttempt,
-  assertPlacementAttemptFence,
-  countEligiblePlacementQuestions,
-  finishPlacementAttempt,
-  markAttemptVerifying,
-  placementAttemptVerificationSettled,
-  placementDeliveryMetadata,
-  placementFulfillmentDisposition,
-  recordPlacementAttemptOutput,
-  releaseAuthorizedPaidCall,
-  renewPlacementAttempt,
-  reservePlacementGenerationCall,
-  startPlacementAttemptHeartbeat,
-  terminalizePlacementUnknownCost,
-} from '@/capabilities/practice/public';
-import { markPlacementStarterClaimTerminal } from '@/capabilities/practice/public';
-import {
   DifficultyEvidence,
   type DifficultyEvidenceT,
   buildProducerDifficultyEvidence,
@@ -108,13 +72,6 @@ import {
   writeVerifyDispatchIntent,
 } from '@/server/boss/verify-dispatch-outbox';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
-import {
-  EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
-  canonicalQuestionContentHash,
-  combineExactDuplicateKnowledgeIds,
-  mergeExactQuestionDuplicateKnowledgeIds,
-} from '@/server/quiz/content-fingerprint';
-import { type FewShotExample, renderFewShotBlock } from '@/server/quiz/fewshot-retrieve';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
 import {
@@ -123,6 +80,49 @@ import {
   skillKindToQuestionKind,
 } from '@/subjects/quiz-gen-skills';
 import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import {
+  SupplyTraceV1,
+  type SupplyTraceV1T,
+  withSupplyTraceDifficultyEvidence,
+} from '../server/question-supply/evidence-demand';
+import {
+  PLACEMENT_ATTEMPT_HEARTBEAT_MS,
+  PLACEMENT_DECISION_DEADLINE_MS,
+  PLACEMENT_QUEUE_EXPIRY_MS,
+  PLACEMENT_STARTER_REQUIRED_COUNT,
+  PLACEMENT_VERIFY_POLL_MS,
+  type PlacementAttemptAuthority,
+  type PlacementAttemptHeartbeat,
+  PlacementStarterAdmissionError,
+  PlacementStarterBudgetExhaustedError,
+  PlacementStarterDeadlineError,
+  PlacementStarterStaleAuthorityError,
+  PlacementStarterUnderfillError,
+  PlacementStarterUnknownCostError,
+  type PlacementVerificationAuthority,
+  acquirePlacementAttempt,
+  assertPlacementAttemptFence,
+  countEligiblePlacementQuestions,
+  finishPlacementAttempt,
+  markAttemptVerifying,
+  placementAttemptVerificationSettled,
+  placementDeliveryMetadata,
+  placementFulfillmentDisposition,
+  recordPlacementAttemptOutput,
+  releaseAuthorizedPaidCall,
+  renewPlacementAttempt,
+  reservePlacementGenerationCall,
+  startPlacementAttemptHeartbeat,
+  terminalizePlacementUnknownCost,
+} from '../server/question-supply/placement-starter-attempts';
+import { markPlacementStarterClaimTerminal } from '../server/question-supply/placement-starter-store';
+import {
+  EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
+  canonicalQuestionContentHash,
+  combineExactDuplicateKnowledgeIds,
+  mergeExactQuestionDuplicateKnowledgeIds,
+} from '../server/quiz/content-fingerprint';
+import { type FewShotExample, renderFewShotBlock } from '../server/quiz/fewshot-retrieve';
 
 // §3 / §4 — the trigger surface. 'manual' carries a free-form ref_id (we still
 // try to resolve it as a knowledge node for the subject profile, but never skip
@@ -241,7 +241,7 @@ async function defaultRetrieveFewShot(params: {
   kind: string;
   knowledgeIds: string[];
 }): Promise<FewShotExample[]> {
-  const { retrieveFewShotExamples } = await import('@/server/quiz/fewshot-retrieve');
+  const { retrieveFewShotExamples } = await import('../server/quiz/fewshot-retrieve');
   return retrieveFewShotExamples(params);
 }
 

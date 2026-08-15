@@ -384,7 +384,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/server/boss/handlers/quiz_gen.ts',
+    file: 'src/capabilities/practice/jobs/quiz_gen.ts',
     marker: '.insert(artifact)',
     role: 'off-path-writer',
     note: 'quiz_gen inserts a quiz artifact (OFF-path sole writer until the artifact flag flips).',

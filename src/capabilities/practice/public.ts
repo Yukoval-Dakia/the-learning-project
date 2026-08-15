@@ -11,6 +11,9 @@ export {
 export type { FrontierResolution } from './server/learnable-frontier';
 export { retrievabilityForKc } from './server/fsrs';
 export { loadAttemptQuestionSnapshot } from './server/question-evidence-snapshot';
+export { mergeExactQuestionDuplicateKnowledgeIds } from './server/quiz/content-fingerprint';
+export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
+export type { QuizGenJobData } from './jobs/quiz_gen';
 type HandleReviewDue = typeof import('./server/due-list').handleReviewDue;
 export const handleReviewDue: HandleReviewDue = async (...args) => {
   const dueList = await import('./server/due-list');

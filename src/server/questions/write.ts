@@ -8,9 +8,9 @@
 // The `question` table has NO `archived_at`/`deleted_at` column. Every pool /
 // due / practice / review / fewshot consumer filters questions with the existing
 // invariant `(draft_status IS NULL OR draft_status <> 'draft')` (see
-// src/server/review/due-list.ts:232, src/server/quiz/fewshot-retrieve.ts:134,
+// src/server/review/due-list.ts:232, Practice quiz/fewshot-retrieve,
 // src/server/ai/tools/context-readers.ts:829, src/server/orchestrator/review.ts:320,
-// src/server/quiz/sourcing-sequence.ts:126, …). Therefore the minimal,
+// Practice quiz/sourcing-sequence, …). Therefore the minimal,
 // naturally-excluded soft-delete is to set `draft_status='draft'`: the question
 // instantly drops out of every consumer with ZERO consumer changes.
 //

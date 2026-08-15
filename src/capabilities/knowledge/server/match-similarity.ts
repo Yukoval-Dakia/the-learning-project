@@ -7,7 +7,7 @@
 // `<=>` reader before this — the dead `knowledge_ids:[]` cold-start gate (YUK-478 false
 // premise) meant the tagger only ever matched against the in-prompt grid, never the vectors.
 //
-// Mirrors the `poolFetch` (src/server/quiz/pool-fetch.ts) ORDER-BY-`<=>` pattern, retargeted
+// Mirrors the Practice `poolFetch` ORDER-BY-`<=>` pattern, retargeted
 // from `question` to `knowledge`. `<=>` is pgvector COSINE DISTANCE (0 = identical direction,
 // 1 = orthogonal, 2 = opposite): SMALLER = NEARER. Rows with a NULL embedding (never embedded
 // / edit-NULLed, awaiting the nightly backfill) and archived rows are excluded.

@@ -25,7 +25,7 @@ const DYNAMIC_IMPORT_TEST_PATTERN =
 // failure that the former full required gate exposed.
 export const DB_FAILURE_SENTINEL_TESTS = [
   'src/capabilities/knowledge/server/propose_edge.db.test.ts',
-  'src/server/boss/handlers/quiz_gen.test.ts',
+  'src/capabilities/practice/jobs/quiz_gen.test.ts',
 ];
 
 function normalizeRepoFile(file, root) {

@@ -5,7 +5,7 @@ import { event, knowledge, provider_attempt, question } from '@/db/schema';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb } from '../../../tests/helpers/db';
+import { resetDb } from '../../../../../tests/helpers/db';
 
 afterEach(() => {
   vi.unstubAllEnvs();

@@ -1,7 +1,7 @@
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb } from '../../../tests/helpers/db';
+import { resetDb } from '../../../../../tests/helpers/db';
 import { poolFetch } from './pool-fetch';
 
 // 1024-dim vector (matches EMBED_DIMS) with the first two components set.

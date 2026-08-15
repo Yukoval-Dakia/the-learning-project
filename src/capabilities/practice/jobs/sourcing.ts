@@ -30,7 +30,6 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job, SendOptions } from 'pg-boss';
 
-import { SupplyTraceV1, type SupplyTraceV1T } from '@/capabilities/practice/public';
 import type { DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
 import {
   type SourcedQuestionT,
@@ -66,16 +65,17 @@ import {
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
+import { resolveSubjectProfile } from '@/subjects/profile';
+import type { SubjectProfile } from '@/subjects/profile-schema';
+import { kindsMatch } from '@/subjects/question-kind';
+import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { SupplyTraceV1, type SupplyTraceV1T } from '../server/question-supply/evidence-demand';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   canonicalQuestionContentHash,
   combineExactDuplicateKnowledgeIds,
   mergeExactQuestionDuplicateKnowledgeIds,
-} from '@/server/quiz/content-fingerprint';
-import { resolveSubjectProfile } from '@/subjects/profile';
-import type { SubjectProfile } from '@/subjects/profile-schema';
-import { kindsMatch } from '@/subjects/question-kind';
-import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+} from '../server/quiz/content-fingerprint';
 
 // The trigger surface mirrors quiz_gen: 'knowledge' / 'learning_item' resolve a
 // real row (for the subject profile + knowledge_ids); 'manual' best-effort resolves
