@@ -2,13 +2,9 @@ import { exactJudgeCapability } from '@/core/capability/judges/exact';
 import { keywordJudgeCapability } from '@/core/capability/judges/keyword';
 import { stepsV1Capability } from '@/core/capability/judges/steps';
 import { JudgeResultV2 } from '@/core/schema/capability';
-import { judgeRouter, judgeRouterV2 } from '@/server/ai/judges';
-import type { JudgeResult } from '@/server/ai/judges/exact';
-import {
-  type JudgeQuestionRow,
-  judgeAnswer,
-  resolveQuestionJudgeRoute,
-} from '@/server/ai/judges/question-contract';
+import { judgeRouter, judgeRouterV2 } from '@/kernel/judge';
+import type { JudgeResult } from '@/kernel/judge';
+import { type JudgeQuestionRow, judgeAnswer, resolveQuestionJudgeRoute } from '@/kernel/judge';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it, vi } from 'vitest';
 

@@ -1,6 +1,6 @@
+import type { JudgeQuestionRow } from '@/capabilities/practice/server/judge/question-contract';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import type { JudgeQuestionRow } from '@/server/ai/judges/question-contract';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it, vi } from 'vitest';
 import { type JudgeInvocationTelemetry, JudgeInvoker, JudgeInvokerOutputSchema } from './invoker';

@@ -21,9 +21,9 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from 'dotenv';
+import type { JudgeQuestionRow } from '../src/capabilities/practice/server/judge/question-contract';
+import { runStepsJudge } from '../src/capabilities/practice/server/judge/steps-judge';
 import type { Db } from '../src/db/client';
-import type { JudgeQuestionRow } from '../src/server/ai/judges/question-contract';
-import { runStepsJudge } from '../src/server/ai/judges/steps-judge';
 import { loadMathDerivationFixtures } from '../src/subjects/math/fixtures/derivation';
 import { resolveSubjectProfile } from '../src/subjects/profile';
 

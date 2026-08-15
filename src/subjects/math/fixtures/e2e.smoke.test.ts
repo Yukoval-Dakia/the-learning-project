@@ -1,6 +1,6 @@
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
-import { type JudgeQuestionRow, judgeAnswer } from '@/server/ai/judges/question-contract';
+import { type JudgeQuestionRow, judgeAnswer } from '@/kernel/judge';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
 /**

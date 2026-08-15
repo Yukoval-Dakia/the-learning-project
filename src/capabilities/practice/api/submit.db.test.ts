@@ -11,6 +11,15 @@
 //   - CC-1 invariant: rating-only override does NOT write experimental:user_cause
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+// YUK-589 (J1/J2) — execution-provenance regression helpers.
+import {
+  JUDGE_PROMPT_TEMPLATE_REVISION,
+  issueJudgePreviewProvenanceToken,
+  sha256Canonical,
+} from '@/capabilities/practice/server/judge';
+// YUK-215 — spy on the judge invoker to assert handwriting-photo refs are
+// threaded through (student_image_refs).
+import * as invokerModule from '@/capabilities/practice/server/judge/invoker';
 // ADR-0040 决定2 — assert the p(L) delta telemetry event is emitted on a graded success.
 import { MASTERY_PROGRESS_ACTION } from '@/capabilities/practice/server/mastery-progress-signal';
 // YUK-432 — softmax 选题观测 seeder（label hook 的 π_i 直 join 需要一条 softmax_mfi selected 观测 +
@@ -34,17 +43,8 @@ import {
   practice_stream_item,
   question,
 } from '@/db/schema';
-// YUK-589 (J1/J2) — execution-provenance regression helpers.
-import {
-  JUDGE_PROMPT_TEMPLATE_REVISION,
-  issueJudgePreviewProvenanceToken,
-  sha256Canonical,
-} from '@/kernel/judge';
 import { runTask } from '@/server/ai/runner';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
-// YUK-215 — spy on the judge invoker to assert handwriting-photo refs are
-// threaded through (student_image_refs).
-import * as invokerModule from '@/server/judge/invoker';
 // YUK-455 inc-E — flag-off byte-identical 回归锚：seed prereq 图 + 答错 → 断言零 prereq_risk 事件。
 import { PREREQ_RISK_ACTION } from '@/server/mastery/prereq-propagation';
 import { resolveSubjectProfile } from '@/subjects/profile';

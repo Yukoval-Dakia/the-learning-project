@@ -53,7 +53,7 @@ import { POST } from './probe-answer';
 // stub, NOT a runtime judge — review PR #705 CRITICAL).
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 
-vi.mock('@/server/judge/invoker', () => ({
+vi.mock('@/capabilities/practice/server/judge/invoker', () => ({
   createDefaultJudgeInvoker: () => ({ invoke: mockInvoke }),
 }));
 

@@ -34,6 +34,21 @@
 import type { Provider } from '@/ai/registry';
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
+import {
+  IMAGE_CONSUMING_JUDGE_ROUTES,
+  createDefaultJudgeInvoker,
+  deterministicExecutionProvenance,
+  isModelBackedJudgeRoute,
+  judgeProvenanceSigningSecret,
+  modelExecutionProvenance,
+  resolveInvokedExecutionProvenance,
+  resolveQuestionJudgeRoute,
+  semanticInput,
+  sha256Canonical,
+  suppliedUnverifiedExecutionProvenance,
+  taskInputHash,
+  verifyJudgePreviewProvenanceToken,
+} from '@/capabilities/practice/server/judge';
 import { emitMasteryProgressSignal } from '@/capabilities/practice/server/mastery-progress-signal';
 import { newId } from '@/core/ids';
 import { JudgeKind as JudgeKindZ } from '@/core/schema/business';
@@ -54,21 +69,6 @@ import {
   deprecatedRouteResponse,
   errorResponse,
 } from '@/kernel/http';
-import {
-  IMAGE_CONSUMING_JUDGE_ROUTES,
-  createDefaultJudgeInvoker,
-  deterministicExecutionProvenance,
-  isModelBackedJudgeRoute,
-  judgeProvenanceSigningSecret,
-  modelExecutionProvenance,
-  resolveInvokedExecutionProvenance,
-  resolveQuestionJudgeRoute,
-  semanticInput,
-  sha256Canonical,
-  suppliedUnverifiedExecutionProvenance,
-  taskInputHash,
-  verifyJudgePreviewProvenanceToken,
-} from '@/kernel/judge';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { writeJobEvent } from '@/server/events/writer';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
@@ -116,7 +116,7 @@ type SubmitBodyT = CreateAttemptBody;
 type QuestionRow = typeof question.$inferSelect;
 
 // F4 (PR #309 round-2, YUK-215) — the image-consuming judge routes set is now
-// shared via the `@/kernel/judge` facade (IMAGE_CONSUMING_JUDGE_ROUTES) so
+// shared via the `@/capabilities/practice/server/judge` facade (IMAGE_CONSUMING_JUDGE_ROUTES) so
 // the photo-only gate cannot drift between this single-question flow and the
 // paper-submit flow (F1).
 

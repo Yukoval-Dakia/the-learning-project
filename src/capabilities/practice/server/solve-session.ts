@@ -10,13 +10,16 @@ import { z } from 'zod';
 import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
+import {
+  type JudgeInvokerOutput,
+  createDefaultJudgeInvoker,
+} from '@/capabilities/practice/server/judge';
+import type { JudgeAnswerParams } from '@/capabilities/practice/server/judge/question-contract';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { type JudgeInvokerOutput, createDefaultJudgeInvoker } from '@/kernel/judge';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
-import type { JudgeAnswerParams } from '@/server/ai/judges/question-contract';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import {
   type GenerateReferenceSolutionResult,

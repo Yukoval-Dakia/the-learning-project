@@ -22,13 +22,16 @@
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
+import { resolveInvokedExecutionProvenance } from '@/capabilities/practice/server/judge';
+import {
+  type JudgeAnswerResult,
+  judgeAnswer,
+} from '@/capabilities/practice/server/judge/question-contract';
 import { newId } from '@/core/ids';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { resolveInvokedExecutionProvenance } from '@/kernel/judge';
-import { type JudgeAnswerResult, judgeAnswer } from '@/server/ai/judges/question-contract';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 

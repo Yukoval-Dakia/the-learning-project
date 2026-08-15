@@ -15,18 +15,18 @@ import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/p
 import { normalizeReviewSubmitActivityRef } from '@/capabilities/practice/server/activity-ref';
 import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/server/cause-context';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
+import {
+  createDefaultJudgeInvoker,
+  issueJudgePreviewProvenanceToken,
+  judgeProvenanceSigningSecret,
+  sha256Canonical,
+} from '@/capabilities/practice/server/judge';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/server/rating-advisor';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
-import {
-  createDefaultJudgeInvoker,
-  issueJudgePreviewProvenanceToken,
-  judgeProvenanceSigningSecret,
-  sha256Canonical,
-} from '@/kernel/judge';
 import { eq } from 'drizzle-orm';
 import { ReviewAdviceBodySchema } from './review-planning-contracts';
 

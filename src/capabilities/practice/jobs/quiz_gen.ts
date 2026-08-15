@@ -22,6 +22,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobWithMetadata, SendOptions } from 'pg-boss';
 
+import { RUNNABLE_ROUTES } from '@/capabilities/practice/server/judge/question-contract';
 import {
   DifficultyEvidence,
   type DifficultyEvidenceT,
@@ -49,7 +50,6 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
-import { RUNNABLE_ROUTES } from '@/server/ai/judges/question-contract';
 import {
   TAVILY_MCP_ALLOWED_TOOLS,
   TAVILY_MCP_SERVER_NAME,

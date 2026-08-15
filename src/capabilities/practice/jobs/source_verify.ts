@@ -28,6 +28,11 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
+import {
+  type RunSourceGroundingVerifyParams,
+  type SourceGroundingVerifyResult,
+  runSourceGroundingVerify,
+} from '@/capabilities/practice/server/judge/source-grounding-verify';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import { WebSourcedProvenance } from '@/core/schema/provenance';
@@ -37,11 +42,6 @@ import { notDraftPredicate } from '@/db/predicates';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import {
-  type RunSourceGroundingVerifyParams,
-  type SourceGroundingVerifyResult,
-  runSourceGroundingVerify,
-} from '@/server/ai/judges/source-grounding-verify';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';

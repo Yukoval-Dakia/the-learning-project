@@ -5,7 +5,7 @@
 // on the image_candidate extraction path, where the extracted prompt + answer can be
 // internally self-consistent yet unrelated to the image.
 //
-// Runtime lives in src/server/ai/judges/source-grounding-verify.ts (reuses the same
+// Runtime lives in src/capabilities/practice/server/judge/source-grounding-verify.ts (reuses the same
 // vision task machinery — image fetch + SDK structured output — as the multimodal
 // judges, but with a grounding-specific prompt/schema). The registry task is
 // SourceGroundingVerifyTask (src/ai/registry.ts).

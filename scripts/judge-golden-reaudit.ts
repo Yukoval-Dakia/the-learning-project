@@ -34,8 +34,11 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import {
+  type JudgeQuestionRow,
+  judgeAnswer,
+} from '@/capabilities/practice/server/judge/question-contract';
 import type { Db } from '@/db/client';
-import { type JudgeQuestionRow, judgeAnswer } from '@/server/ai/judges/question-contract';
 import { subjectProfiles } from '@/subjects/profile';
 import { z } from 'zod';
 

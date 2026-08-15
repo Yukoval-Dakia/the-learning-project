@@ -6,7 +6,7 @@ import { event, learning_record, learning_session, question } from '@/db/schema'
 import { Tutor } from '@/server/session';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
-vi.mock('@/server/judge/invoker', () => ({
+vi.mock('@/capabilities/practice/server/judge/invoker', () => ({
   createDefaultJudgeInvoker: () => ({
     invoke: vi.fn(async (input: { question: { id: string } }) => ({
       route: 'steps',

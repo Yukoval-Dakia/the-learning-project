@@ -9,7 +9,7 @@
  * images (in page order) + the Tencent text hint, and assembles a normalized
  * stem/sub/standalone tree — including 跨页大题 split across pages into ONE stem.
  *
- * Mirrors the `runStepsJudge` (src/server/ai/judges/steps-judge.ts) pattern: an
+ * Mirrors the Practice-owned `runStepsJudge` pattern: an
  * auto-invoked multimodal task that passes `{ text, images }` through `runTask`,
  * parses strict JSON via a Zod schema, and accepts an injectable `runTaskFn` for
  * testability.
