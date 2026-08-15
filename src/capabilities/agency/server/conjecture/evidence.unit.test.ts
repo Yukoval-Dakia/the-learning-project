@@ -1,6 +1,6 @@
 // YUK-406 Phase 0 — unit tests for deterministic 取证 (no DB / no LLM).
 
-import type { FailureAttempt } from '@/server/events/queries';
+import type { FailureAttempt } from '@/capabilities/knowledge/public';
 import type { MasteryProjection } from '@/server/mastery/state';
 import { describe, expect, it } from 'vitest';
 

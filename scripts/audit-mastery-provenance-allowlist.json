@@ -7,7 +7,7 @@
       "expected_by": "2027-06-30"
     }
   },
-  "src/server/ai/tools/knowledge-readers.ts": {
+  "src/capabilities/knowledge/server/tools/knowledge-readers.ts": {
     "reason": "YUK-559 C1 — reads projection .mastery (weak_points filter / mastery_estimate surfacing) without a code-shaped provenance/isObserved/evidence_count guard (its only 'evidence_count' mention is a comment, stripped by the tightened scan → now correctly UNGUARDED). Acceptable TODAY because both borrow flags are dark, so getMasteryProjection returns zero inferred entries — this consumer can only ever see observed rows. Before either flag flips, this site must gate on isObserved / evidence_count.",
     "resolves_when": {
       "kind": "manual",

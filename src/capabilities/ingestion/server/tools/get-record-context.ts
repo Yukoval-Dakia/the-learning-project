@@ -1,3 +1,4 @@
+import { getFailureAttemptById } from '@/capabilities/knowledge/public';
 import {
   artifact,
   event,
@@ -7,7 +8,6 @@ import {
   question,
 } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import { getFailureAttemptById } from '@/server/events/queries';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { bodyBlockSummaries, knowledgeContext, knowledgeEdgeTouches } from './record-tool-support';

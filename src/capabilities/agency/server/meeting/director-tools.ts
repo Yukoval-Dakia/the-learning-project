@@ -32,6 +32,7 @@ import type {
 } from '@/capabilities/agency/server/notes';
 import { writeAgentNote } from '@/capabilities/agency/server/notes';
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
+import { type FailureAttempt, getFailureAttemptById } from '@/capabilities/knowledge/public';
 import {
   ConjectureDiagnosticSpecV2,
   ConjectureHypothesisProposalDraft,
@@ -58,7 +59,6 @@ import {
 } from '@/server/agency/scout/tool-names';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { type FailureAttempt, getFailureAttemptById } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';

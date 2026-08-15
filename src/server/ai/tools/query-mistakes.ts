@@ -6,10 +6,10 @@
 // to ask "what's the user struggling with right now?" without scanning
 // raw event rows.
 
+import { type FailureAttempt, getFailureAttempts } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { material_fsrs_state, mistake_variant, question } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 // P5.1 / YUK-143 — snippet cap + courtesy default sourced from budgets.ts.

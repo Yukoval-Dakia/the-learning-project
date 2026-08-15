@@ -2,6 +2,12 @@ import { capabilities } from '@/capabilities';
 import { getRecordContextTool } from '@/capabilities/ingestion/server/tools/get-record-context';
 import { queryRecordsTool } from '@/capabilities/ingestion/server/tools/query-records';
 import {
+  expandKnowledgeSubgraphTool,
+  findKnowledgePathsTool,
+  getSubjectGraphOverviewTool,
+  queryKnowledgeTool,
+} from '@/capabilities/knowledge/server/tools/knowledge-readers';
+import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   buildInterventionSettlement,
 } from '@/core/schema/intervention';
@@ -30,12 +36,6 @@ import {
   getReviewDueTool,
   queryMemoryBriefTool,
 } from './context-readers';
-import {
-  expandKnowledgeSubgraphTool,
-  findKnowledgePathsTool,
-  getSubjectGraphOverviewTool,
-  queryKnowledgeTool,
-} from './knowledge-readers';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, getTool, listTools } from './registry';
 import type { ToolContext } from './types';

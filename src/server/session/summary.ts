@@ -10,11 +10,11 @@
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
+import { getFailureAttempts } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event, knowledge, learning_session, question } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import { getFailureAttempts } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 const NOTABLE_LIMIT = 3;

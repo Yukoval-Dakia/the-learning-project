@@ -2,6 +2,7 @@ import {
   CopilotEvidenceReviewOutputSchema,
   CopilotEvidenceVerificationOutputSchema,
 } from '@/ai/registry';
+import { queryKnowledgeTool } from '@/capabilities/knowledge/server/tools/knowledge-readers';
 import {
   COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS,
   COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS,
@@ -11,7 +12,6 @@ import type { Db } from '@/db/client';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { getReviewDueTool } from '@/server/ai/tools/context-readers';
 import { getAttemptContextTool } from '@/server/ai/tools/get-attempt-context';
-import { queryKnowledgeTool } from '@/server/ai/tools/knowledge-readers';
 import { queryEventsTool } from '@/server/ai/tools/query-events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
