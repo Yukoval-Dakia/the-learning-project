@@ -7,19 +7,38 @@ import type {
   ProposalAcceptApplier,
   ProposalAcceptInput,
   ProposalAcceptResult,
+  ProposalRetractApplier,
 } from '@/kernel/proposals';
+import { toProposalLifecycleResult } from '@/kernel/proposals';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import {
+  ensureProposalDecisionSignal,
+  recordProposalDecisionSignal,
+} from '@/kernel/proposals/signals';
 import {
   asPlainRecord,
   ensureAcceptOnly,
   existingAcceptRate,
+  findExistingRateEvent,
   requiredString,
 } from '@/server/proposals/applier-helpers';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/server/proposals/signals';
-import { NOTE_REFINE_ACCEPT_ACTOR, persistNoteRefineApply } from './note-refine-apply';
+  NOTE_REFINE_ACCEPT_ACTOR,
+  persistNoteRefineApply,
+  undoNoteRefineApplyEvent,
+} from './note-refine-apply';
+
+export const noteUpdateProposalRetractApplier: ProposalRetractApplier = async (db, input) => {
+  const ownerDb = db as Db;
+  const rate = await findExistingRateEvent(ownerDb, input.proposalId);
+  const applyEventId =
+    rate?.decision === 'accept'
+      ? (rate.payload as { materialized_apply_event_id?: unknown }).materialized_apply_event_id
+      : undefined;
+  if (typeof applyEventId === 'string' && applyEventId.length > 0) {
+    await undoNoteRefineApplyEvent(ownerDb, { applyEventId });
+  }
+};
 
 export interface NoteUpdateAcceptResult {
   kind: 'note_update';
@@ -148,6 +167,6 @@ export const noteUpdateProposalAcceptApplier: ProposalAcceptApplier = async (db,
   });
   return {
     kind: 'note_update',
-    result,
+    result: toProposalLifecycleResult(result),
   } satisfies ProposalAcceptResult;
 };

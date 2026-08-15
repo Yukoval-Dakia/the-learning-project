@@ -2,9 +2,9 @@
 // 挂载；旧壳 Task 9 拆）。等价平移，行为不动。
 
 import { EditingBlurBodySchema } from '@/capabilities/notes/api/contracts';
+import { markArtifactIdleAndFlush } from '@/capabilities/notes/server/artifacts/editing-session';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { markArtifactIdleAndFlush } from '@/server/artifacts/editing-session';
 
 export async function POST(req: Request): Promise<Response> {
   try {

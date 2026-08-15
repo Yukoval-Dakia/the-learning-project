@@ -15,10 +15,10 @@
 //
 // Mirror tool-use events still flow via mcp-bridge (caller actor is agent).
 
-import { type CopilotDispatchDecision, CopilotDispatchDecisionSchema } from '@/ai/registry';
 import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
+import { type CopilotDispatchDecision, CopilotDispatchDecisionSchema } from '../contracts';
 
 // YUK-575 (A1) — shared free-form run-input assembler (single execution point for
 // inline + durable copilot runs).
@@ -68,6 +68,14 @@ import {
 import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 import type { Db, Tx } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
+import {
+  DOMAIN_TOOL_MCP_SERVER_NAME,
+  type DomainToolSurface,
+  resolveDomainToolNames,
+  resolveMcpAllowedTools,
+} from '@/kernel/tools/allowlists';
+import { resolveContextBudget } from '@/kernel/tools/budgets';
+import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 // YUK-198 — Tavily remote MCP (web grounding) for the Copilot surface only.
 // Gated on TAVILY_API_KEY: when absent, buildTavilyMcpServer() returns null and
@@ -90,14 +98,6 @@ import {
   type SpawnBudgetObservation,
   createSpawnContract,
 } from '@/server/ai/spawn-contract';
-import {
-  DOMAIN_TOOL_MCP_SERVER_NAME,
-  type DomainToolSurface,
-  resolveDomainToolNames,
-  resolveMcpAllowedTools,
-} from '@/server/ai/tools/allowlists';
-import { resolveContextBudget } from '@/server/ai/tools/budgets';
-import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import {
   type SdkMcpServer,
   type ToolExecutionResultObservation,
@@ -180,7 +180,7 @@ export interface CopilotSkillTurn {
 //   • SDK outputFormat — the 2026-06-08 structured-output audit rules CopilotTask
 //     plain-text-ok / 保持现状; forcing whole-reply JSON would destroy the
 //     YUK-266 streaming prose deltas, and mimo-endpoint honor is unproven (the
-//     dual-path fallback in src/server/boss/handlers/variant_verify.ts ~:102-125
+//     dual-path fallback in src/capabilities/practice/jobs/variant_verify.ts ~:102-125
 //     exists precisely because of that).
 // The marker is parsed + STRIPPED server-side at the single reply convergence
 // point (extractPrimaryView below), so reply_md / the API reply / replayed

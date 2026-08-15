@@ -7,15 +7,14 @@ import type { Db } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import type { ProposalAcceptApplier } from '@/kernel/proposals';
-import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
-import { projectionIsWriter } from '@/server/projections/sot-flag';
-import { findExistingRateEvent } from '@/server/proposals/applier-helpers';
-import { getProposalInboxRow } from '@/server/proposals/inbox';
+import { getProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
-} from '@/server/proposals/signals';
+} from '@/kernel/proposals/signals';
+import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
+import { projectionIsWriter } from '@/server/projections/sot-flag';
+import { findExistingRateEvent } from '@/server/proposals/applier-helpers';
 import {
   acquireEdgeEndpointLocks,
   assertEdgeEndpointsValid,
@@ -539,12 +538,3 @@ export async function decideKnowledgeEdgeProposal(
     edge_id: edgeId,
   };
 }
-
-export const knowledgeEdgeProposalAcceptApplier: ProposalAcceptApplier = async (db, input) => {
-  const result = await decideKnowledgeEdgeProposal(db as Db, input.proposalId, {
-    decision: input.decision ?? 'accept',
-    new_relation_type: input.new_relation_type,
-    user_note: input.user_note,
-  });
-  return { kind: 'knowledge_edge', result };
-};

@@ -1,4 +1,5 @@
 // YUK-79 / Foundation D M1
+// YUK-862 / F3.1 — global output schema enforcement
 //
 // DomainTool registry — module-level Map<string, DomainTool>. Tools register
 // themselves at module load time (Lane B+ side-effect imports); the in-process
@@ -8,7 +9,7 @@
 // Side-effect-free until tools call `registerTool`. Tests reset via
 // `__resetRegistryForTests` to keep parallel registration deterministic.
 
-import type { DomainTool, ToolEffect } from './types';
+import type { DomainTool, ToolEffect } from '@/kernel/tools/types';
 
 const registry = new Map<string, DomainTool<unknown, unknown>>();
 
@@ -16,6 +17,11 @@ export function registerTool<I, O>(tool: DomainTool<I, O>): void {
   if (registry.has(tool.name)) {
     throw new Error(
       `DomainTool '${tool.name}' already registered. Registration must be unique; check for duplicate side-effect imports.`,
+    );
+  }
+  if (typeof tool.outputSchema?.safeParse !== 'function') {
+    throw new Error(
+      `DomainTool '${tool.name}' outputSchema must be a Zod schema with a safeParse method. Got ${String(tool.outputSchema)}.`,
     );
   }
   registry.set(tool.name, tool as DomainTool<unknown, unknown>);

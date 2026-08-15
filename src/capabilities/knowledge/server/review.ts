@@ -29,18 +29,18 @@ import { parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, knowledge_edge, proposal_signals } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
-import { writeToolCallLog } from '@/server/ai/log';
-import { streamTask } from '@/server/ai/runner';
-import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
-import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import { getFailureAttempts } from '@/server/events/queries';
 // P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
 // the legacy MCP edge path (always actor 'dreaming' → isAgent: true). Bounded
 // digest read; cold-start / below-threshold → no-op bump.
-import type { AdaptiveGateInput } from '@/server/proposals/adaptive-bias';
-import { resolveEdgeGateBump } from '@/server/proposals/adaptive-bias';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
-import { writeAiProposal } from '@/server/proposals/writer';
+import type { AdaptiveGateInput } from '@/kernel/proposals/adaptive-bias';
+import { resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import { writeAiProposal } from '@/kernel/proposals/writer';
+import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
+import { writeToolCallLog } from '@/server/ai/log';
+import { streamTask } from '@/server/ai/runner';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';

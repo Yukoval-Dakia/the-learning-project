@@ -93,7 +93,7 @@ async function loadAttempts(): Promise<LoadResult> {
   const { effectiveB } = await import('@/server/mastery/recalibration');
   const { effectiveFamilyB } = await import('@/server/mastery/personalized-difficulty');
   const { batchResolveFamilyKeys } = await import('@/server/mastery/family-key');
-  const { getEffectiveDomain } = await import('@/capabilities/knowledge/server/domain');
+  const { getEffectiveDomain } = await import('@/kernel/read-models/knowledge-tree');
   const { item_family_calibration } = await import('@/db/schema');
   type ReplayAttempt = import('@/server/calibration/replay').ReplayAttempt;
 

@@ -11,10 +11,7 @@
 
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
-import {
-  batchResolveEffectiveDomains,
-  getEffectiveDomain,
-} from '@/capabilities/knowledge/server/domain';
+import { batchResolveEffectiveDomains, getEffectiveDomain } from '@/capabilities/knowledge/public';
 import {
   GRAPH_LAPLACIAN_ENABLED,
   GRAPH_LAPLACIAN_KAPPA,

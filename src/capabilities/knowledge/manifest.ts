@@ -331,8 +331,18 @@ export const knowledgeCapability = defineCapability({
         kind: 'knowledge_node',
         accept: {
           load: () =>
-            import('./server/proposal-accept-applier').then(
-              (m) => m.knowledgeNodeProposalAcceptApplier,
+            import('./server/proposal-appliers').then((m) => m.knowledgeNodeProposalAcceptApplier),
+        },
+        dismiss: {
+          load: () =>
+            import('./server/proposal-appliers').then(
+              (module) => module.knowledgeNodeProposalDismissApplier,
+            ),
+        },
+        retract: {
+          load: () =>
+            import('./server/proposal-appliers').then(
+              (module) => module.knowledgeNodeProposalRetractApplier,
             ),
         },
       },
@@ -340,7 +350,7 @@ export const knowledgeCapability = defineCapability({
         kind: 'knowledge_mutation',
         accept: {
           load: () =>
-            import('./server/proposal-accept-applier').then(
+            import('./server/proposal-appliers').then(
               (m) => m.knowledgeMutationProposalAcceptApplier,
             ),
         },
@@ -349,8 +359,14 @@ export const knowledgeCapability = defineCapability({
         kind: 'knowledge_edge',
         accept: {
           load: () =>
-            import('./server/edge-proposal-accept').then(
+            import('./server/proposal-appliers').then(
               (module) => module.knowledgeEdgeProposalAcceptApplier,
+            ),
+        },
+        dismiss: {
+          load: () =>
+            import('./server/proposal-appliers').then(
+              (module) => module.knowledgeEdgeProposalDismissApplier,
             ),
         },
       },
@@ -362,32 +378,31 @@ export const knowledgeCapability = defineCapability({
     tools: [
       {
         name: 'query_knowledge',
-        load: () => import('@/server/ai/tools/knowledge-readers').then((m) => m.queryKnowledgeTool),
+        load: () => import('./server/tools/knowledge-readers').then((m) => m.queryKnowledgeTool),
       },
       {
         name: 'get_subject_graph_overview',
         load: () =>
-          import('@/server/ai/tools/knowledge-readers').then((m) => m.getSubjectGraphOverviewTool),
+          import('./server/tools/knowledge-readers').then((m) => m.getSubjectGraphOverviewTool),
       },
       {
         name: 'expand_knowledge_subgraph',
         load: () =>
-          import('@/server/ai/tools/knowledge-readers').then((m) => m.expandKnowledgeSubgraphTool),
+          import('./server/tools/knowledge-readers').then((m) => m.expandKnowledgeSubgraphTool),
       },
       {
         name: 'find_knowledge_paths',
         load: () =>
-          import('@/server/ai/tools/knowledge-readers').then((m) => m.findKnowledgePathsTool),
+          import('./server/tools/knowledge-readers').then((m) => m.findKnowledgePathsTool),
       },
       {
         name: 'propose_knowledge_edge',
-        load: () =>
-          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeKnowledgeEdgeTool),
+        load: () => import('./server/tools/proposal-tools').then((m) => m.proposeKnowledgeEdgeTool),
       },
       {
         name: 'propose_knowledge_mutation',
         load: () =>
-          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeKnowledgeMutationTool),
+          import('./server/tools/proposal-tools').then((m) => m.proposeKnowledgeMutationTool),
       },
     ],
   },

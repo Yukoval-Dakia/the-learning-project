@@ -1,9 +1,9 @@
 import { capabilities } from '@/capabilities';
+import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, registerTool } from './registry';
-import type { DomainTool, ToolContext } from './types';
 
 // Mock the SDK so the bridge can run without a Claude subprocess.
 const mockAgentSdk = vi.hoisted(() => ({
@@ -762,6 +762,241 @@ describe('buildMcpServerFromRegistry', () => {
       summary: 'demo_complete_uv · hello → 5',
     });
     expect(captured.events).toHaveLength(1);
+  });
+
+  // YUK-862 / F3.1 — output schema enforcement tests
+  describe('output schema enforcement', () => {
+    it('rejects invalid primitive output with error_reason=output_schema_invalid and no success result', async () => {
+      const settled: string[] = [];
+      registerTool({
+        name: 'bad_primitive_output',
+        description: 'returns wrong type',
+        effect: 'read',
+        inputSchema: z.object({ q: z.string() }),
+        outputSchema: z.object({ hits: z.number() }),
+        costClass: 'local',
+        async execute() {
+          return 'not an object' as unknown as { hits: number };
+        },
+        summarize() {
+          return 'should not be called';
+        },
+        mirrorEvent: 'never',
+      });
+
+      buildMcpServerFromRegistry({
+        ctx,
+        serverName: 'loom_v2',
+        toolNames: ['bad_primitive_output'],
+        onExecuteSettled: () => {
+          settled.push('settled');
+        },
+      });
+      const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'x' })) as {
+        content: Array<{ type: string; text: string }>;
+      };
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.error).toMatch(/output_schema_invalid/);
+      expect(parsed.output).toBeUndefined();
+      // onExecuteSettled must run exactly once even on schema failure
+      expect(settled).toEqual(['settled']);
+      // tool_call_log must record the failure
+      const log = captured.toolCallLogs[0] as Record<string, unknown>;
+      expect(log.error_reason).toMatch(/output_schema_invalid/);
+    });
+
+    it('rejects object output with unknown key when schema uses strict()', async () => {
+      registerTool({
+        name: 'strict_output',
+        description: 'strict schema rejects extra keys',
+        effect: 'read',
+        inputSchema: z.object({ q: z.string() }),
+        outputSchema: z.object({ hits: z.number() }).strict(),
+        costClass: 'local',
+        async execute() {
+          return { hits: 5, extra: 'not allowed' } as unknown as { hits: number };
+        },
+        summarize() {
+          return 'should not be called';
+        },
+        mirrorEvent: 'never',
+      });
+
+      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['strict_output'] });
+      const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'x' })) as {
+        content: Array<{ type: string; text: string }>;
+      };
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.error).toMatch(/output_schema_invalid/);
+      expect(parsed.output).toBeUndefined();
+    });
+
+    it('uses the parsed (transformed) output when schema applies transforms', async () => {
+      registerTool({
+        name: 'transformed_output',
+        description: 'schema coerces and transforms output',
+        effect: 'read',
+        inputSchema: z.object({ q: z.string() }),
+        outputSchema: z.object({ hits: z.coerce.number() }),
+        costClass: 'local',
+        async execute() {
+          return { hits: '42' } as unknown as { hits: number };
+        },
+        summarize(_input, output) {
+          return `hits=${output.hits}`;
+        },
+        mirrorEvent: 'never',
+      });
+
+      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['transformed_output'] });
+      const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'x' })) as {
+        content: Array<{ type: string; text: string }>;
+      };
+
+      const parsed = JSON.parse(result.content[0].text);
+      // parsed output must use the coerced number, not the raw string
+      expect(parsed.output?.hits).toBe(42);
+      expect(parsed.error).toBeUndefined();
+      const log = captured.toolCallLogs[0] as Record<string, unknown>;
+      expect(log.error_reason).toBeUndefined();
+      expect((log.output_json as Record<string, unknown>).hits).toBe(42);
+    });
+
+    it('records output_schema_invalid in log and mirror even when onResult throws', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      registerTool({
+        name: 'invalid_output_observer_fails',
+        description: 'invalid output + failing observer',
+        effect: 'read',
+        inputSchema: z.object({ q: z.string() }),
+        outputSchema: z.object({ hits: z.number() }),
+        costClass: 'local',
+        async execute() {
+          return 'wrong' as unknown as { hits: number };
+        },
+        summarize() {
+          return '';
+        },
+        mirrorEvent: 'never',
+      });
+
+      buildMcpServerFromRegistry({
+        ctx,
+        serverName: 'loom_v2',
+        toolNames: ['invalid_output_observer_fails'],
+        onResult: () => {
+          throw new Error('observer exploded');
+        },
+      });
+      const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'x' })) as {
+        content: Array<{ type: string; text: string }>;
+      };
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.error).toMatch(/output_schema_invalid/);
+      // observer failure must not escalate to SDK
+      expect(parsed.output).toBeUndefined();
+      const log = captured.toolCallLogs[0] as Record<string, unknown>;
+      expect(log.error_reason).toMatch(/output_schema_invalid/);
+      consoleError.mockRestore();
+    });
+
+    it('releases barrier (onExecuteSettled runs once) on output_schema_invalid', async () => {
+      const settledCalls: string[] = [];
+      registerTool({
+        name: 'schema_fail_barrier',
+        description: 'verify barrier released on schema failure',
+        effect: 'read',
+        inputSchema: z.object({ q: z.string() }),
+        outputSchema: z.object({ hits: z.number() }),
+        costClass: 'local',
+        async execute() {
+          return null as unknown as { hits: number };
+        },
+        summarize() {
+          return '';
+        },
+        mirrorEvent: 'never',
+      });
+
+      buildMcpServerFromRegistry({
+        ctx,
+        serverName: 'loom_v2',
+        toolNames: ['schema_fail_barrier'],
+        onExecuteSettled: () => {
+          settledCalls.push('released');
+        },
+      });
+      await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+
+      expect(settledCalls).toHaveLength(1);
+      expect(settledCalls[0]).toBe('released');
+    });
+
+    it('writes failure mirror with error_reason on output_schema_invalid when policy fires', async () => {
+      registerTool({
+        name: 'schema_fail_mirror',
+        description: 'failure mirror on schema rejection',
+        effect: 'read',
+        inputSchema: z.object({ q: z.string() }),
+        outputSchema: z.object({ hits: z.number() }),
+        costClass: 'local',
+        async execute() {
+          return 'bad' as unknown as { hits: number };
+        },
+        summarize() {
+          return '';
+        },
+        mirrorEvent: 'always',
+      });
+
+      buildMcpServerFromRegistry({
+        ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
+        serverName: 'loom_v2',
+        toolNames: ['schema_fail_mirror'],
+      });
+      await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+
+      const log = captured.toolCallLogs[0] as Record<string, unknown>;
+      expect(log.error_reason).toMatch(/output_schema_invalid/);
+      expect(log.output_json).toEqual(
+        expect.objectContaining({ error: expect.stringMatching(/output_schema_invalid/) }),
+      );
+      expect(captured.events).toHaveLength(1);
+      const ev = captured.events[0] as Record<string, unknown>;
+      expect(ev.outcome).toBe('failure');
+      const payload = ev.payload as Record<string, unknown>;
+      expect(payload.error_reason).toMatch(/output_schema_invalid/);
+    });
+
+    it('redacts actual values — error message contains only paths, not field values', async () => {
+      registerTool({
+        name: 'redact_check',
+        description: 'verify values are not leaked in error',
+        effect: 'read',
+        inputSchema: z.object({ q: z.string() }),
+        outputSchema: z.object({ hits: z.number() }),
+        costClass: 'local',
+        async execute() {
+          return { hits: 'SECRET_VALUE_MUST_NOT_APPEAR' } as unknown as { hits: number };
+        },
+        summarize() {
+          return '';
+        },
+        mirrorEvent: 'never',
+      });
+
+      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['redact_check'] });
+      const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'x' })) as {
+        content: Array<{ type: string; text: string }>;
+      };
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.error).not.toContain('SECRET_VALUE_MUST_NOT_APPEAR');
+      expect(parsed.error).toMatch(/hits/);
+    });
   });
 
   it('throws when a tool inputSchema is not a z.object', () => {

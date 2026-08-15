@@ -1,8 +1,4 @@
 import { event, knowledge, learning_record } from '@/db/schema';
-import { and, eq, sql } from 'drizzle-orm';
-import postgres from 'postgres';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   archiveLearningRecord,
   createLearningRecord,
@@ -11,7 +7,11 @@ import {
   transitionLearningRecord,
   transitionLearningRecords,
   updateLearningRecord,
-} from './queries';
+} from '@/kernel/records/queries';
+import { and, eq, sql } from 'drizzle-orm';
+import postgres from 'postgres';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetDb, testDb } from '../../../tests/helpers/db';
 
 async function seedKnowledge(id = 'k1') {
   const db = testDb();

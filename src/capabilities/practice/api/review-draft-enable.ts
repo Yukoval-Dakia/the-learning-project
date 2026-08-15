@@ -9,10 +9,10 @@
 // the gate's verify event as owner-driven. Auth is enforced upstream by the /api/*
 // internal-token middleware.
 
+import { verifyAndPromote } from '@/capabilities/practice/server/quiz/verify-and-promote';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { verifyAndPromote } from '@/server/quiz/verify-and-promote';
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {

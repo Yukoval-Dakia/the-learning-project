@@ -6,12 +6,12 @@
 // by adaptive-bias.unit.test.ts).
 
 import type { AiProposalPayloadInputT } from '@/core/schema/proposal';
-import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
-import { recordProposalDecisionSignal } from '@/server/proposals/signals';
-import { writeAiProposal } from '@/server/proposals/writer';
+import { getProposalFeedbackDigest, resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
+import { recordProposalDecisionSignal } from '@/kernel/proposals/signals';
+import { writeAiProposal } from '@/kernel/proposals/writer';
+import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { getProposalFeedbackDigest, resolveEdgeGateBump } from './adaptive-bias';
 
 const BUDGET = PROPOSAL_FEEDBACK_BUDGET;
 

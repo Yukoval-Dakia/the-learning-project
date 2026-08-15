@@ -1,5 +1,92 @@
-import { DEFAULT_TASK_BUDGET, type TaskDefinition } from '@/ai/task-spec';
+import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
+import {
+  bodyBlocksToNoteSections,
+  noteSectionsToBodyBlocks,
+} from '@/capabilities/notes/server/body-blocks';
+import { ArtifactBodyBlocks, NoteSection, NoteVerificationResult } from '@/core/schema/business';
 import type { SubjectProfile } from '@/subjects/profile';
+import { z } from 'zod';
+
+const NoteSectionsOutputSchema = z.object({
+  sections: z.array(NoteSection).min(1).max(10),
+});
+
+const NoteBodyBlocksOutputSchema = z.object({
+  body_blocks: ArtifactBodyBlocks,
+});
+
+export const NoteGenerateOutputSchema = z.union([
+  NoteBodyBlocksOutputSchema,
+  NoteSectionsOutputSchema,
+]);
+
+function parseJsonObject(text: string, parserName: string): unknown {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error(`${parserName}: no JSON object found in text`);
+  }
+  try {
+    return JSON.parse(text.slice(start, end + 1));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${parserName}: JSON.parse failed: ${message}`);
+  }
+}
+
+export interface ParsedNoteGenerateOutput {
+  body_blocks: z.infer<typeof ArtifactBodyBlocks>;
+  blocks_count: number;
+  sections_count: number;
+}
+
+export function parseNoteGenerateOutput(text: string): ParsedNoteGenerateOutput {
+  const json = parseJsonObject(text, 'parseNoteGenerateOutput');
+  const bodyBlocksParsed = NoteBodyBlocksOutputSchema.safeParse(json);
+  if (bodyBlocksParsed.success) {
+    const bodyBlocks = bodyBlocksParsed.data.body_blocks;
+    if (bodyBlocks.content.length === 0) {
+      throw new Error(
+        'parseNoteGenerateOutput: body_blocks.content must contain at least one block',
+      );
+    }
+    return {
+      body_blocks: bodyBlocks,
+      blocks_count: bodyBlocks.content.length,
+      sections_count: bodyBlocksToNoteSections(bodyBlocks).length,
+    };
+  }
+
+  const sectionsParsed = NoteSectionsOutputSchema.safeParse(json);
+  if (sectionsParsed.success) {
+    const bodyBlocks = noteSectionsToBodyBlocks(sectionsParsed.data.sections);
+    return {
+      body_blocks: bodyBlocks,
+      blocks_count: bodyBlocks.content.length,
+      sections_count: sectionsParsed.data.sections.length,
+    };
+  }
+
+  throw new Error(
+    `parseNoteGenerateOutput: schema invalid: body_blocks=${bodyBlocksParsed.error.issues
+      .map((issue) => issue.message)
+      .join('; ')}; parseSectionsOutput=${sectionsParsed.error.issues
+      .map((issue) => issue.message)
+      .join('; ')}`,
+  );
+}
+
+export function parseNoteVerificationOutput(text: string): z.infer<typeof NoteVerificationResult> {
+  const parsed = NoteVerificationResult.safeParse(parseJsonObject(text, 'parseVerificationOutput'));
+  if (!parsed.success) {
+    throw new Error(
+      `parseVerificationOutput: schema invalid: ${parsed.error.issues
+        .map((issue) => issue.message)
+        .join('; ')}`,
+    );
+  }
+  return parsed.data;
+}
 
 function methodologySection(profile: SubjectProfile): string {
   const methodology = profile.promptFragments.methodology?.trim();
@@ -48,27 +135,37 @@ function buildNoteVerifyPrompt(profile: SubjectProfile): string {
 禁止：重写整篇 note、markdown 代码块、JSON 之外的文字。`;
 }
 
-export const noteGenerateTaskDefinition = {
-  kind: 'NoteGenerateTask',
-  description:
-    'Phase 2B — 给一个 atomic note 生成 5 种 section（definition/mechanism/example/pitfall/check）',
-  defaultProvider: 'xiaomi',
-  defaultModel: 'mimo-v2.5-pro',
-  budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 90_000 },
-  needsToolCall: false,
-  isMultimodal: false,
-  allowedTools: [],
-  prompt: { kind: 'profile', build: buildNoteGeneratePrompt },
-} satisfies TaskDefinition;
+export const noteGenerateTaskSpec = {
+  ownership: 'owned',
+  definition: {
+    kind: 'NoteGenerateTask',
+    description:
+      'Phase 2B — 给一个 atomic note 生成 5 种 section（definition/mechanism/example/pitfall/check）',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 90_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    prompt: { kind: 'profile', build: buildNoteGeneratePrompt },
+  },
+  outputSchema: NoteGenerateOutputSchema,
+  parseText: parseNoteGenerateOutput,
+} satisfies TaskSpec<unknown, ParsedNoteGenerateOutput>;
 
-export const noteVerifyTaskDefinition = {
-  kind: 'NoteVerifyTask',
-  description: 'Product Track 1 — second-pass verification for generated atomic note sections',
-  defaultProvider: 'xiaomi',
-  defaultModel: 'mimo-v2.5-pro',
-  budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
-  needsToolCall: false,
-  isMultimodal: false,
-  allowedTools: [],
-  prompt: { kind: 'profile', build: buildNoteVerifyPrompt },
-} satisfies TaskDefinition;
+export const noteVerifyTaskSpec = {
+  ownership: 'owned',
+  definition: {
+    kind: 'NoteVerifyTask',
+    description: 'Product Track 1 — second-pass verification for generated atomic note sections',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    prompt: { kind: 'profile', build: buildNoteVerifyPrompt },
+  },
+  outputSchema: NoteVerificationResult,
+  parseText: parseNoteVerificationOutput,
+} satisfies TaskSpec<unknown, z.infer<typeof NoteVerificationResult>>;

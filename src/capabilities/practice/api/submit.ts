@@ -32,28 +32,7 @@
 //   trigger). POST composes the phases and shapes the wire response.
 
 import type { Provider } from '@/ai/registry';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
-import { emitMasteryProgressSignal } from '@/capabilities/practice/server/mastery-progress-signal';
-import { newId } from '@/core/ids';
-import { JudgeKind as JudgeKindZ } from '@/core/schema/business';
-import type { JudgeResultV2T } from '@/core/schema/capability';
-import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
-// YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the per-subject snapshot `before`.
-import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
-import {
-  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-  InterventionDiagnosticQuestionMetadata,
-} from '@/core/schema/intervention';
-import { type Db, type Tx, db } from '@/db/client';
-import { learning_session, mastery_state, material_fsrs_state, question } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
-import {
-  ApiError,
-  canonicalResourceResponse,
-  deprecatedRouteResponse,
-  errorResponse,
-} from '@/kernel/http';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   createDefaultJudgeInvoker,
@@ -68,7 +47,29 @@ import {
   suppliedUnverifiedExecutionProvenance,
   taskInputHash,
   verifyJudgePreviewProvenanceToken,
-} from '@/kernel/judge';
+} from '@/capabilities/practice/server/judge';
+import { emitMasteryProgressSignal } from '@/capabilities/practice/server/mastery-progress-signal';
+import { newId } from '@/core/ids';
+import { JudgeKind as JudgeKindZ } from '@/core/schema/business';
+import type { JudgeResultV2T } from '@/core/schema/capability';
+import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
+// YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the per-subject snapshot `before`.
+import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
+import {
+  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+  InterventionDiagnosticQuestionMetadata,
+} from '@/core/schema/intervention';
+import { type Db, type Tx, db } from '@/db/client';
+import { learning_session, mastery_state, material_fsrs_state, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import { activeEffectiveTruth } from '@/kernel/events';
+import {
+  ApiError,
+  canonicalResourceResponse,
+  deprecatedRouteResponse,
+  errorResponse,
+} from '@/kernel/http';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { writeJobEvent } from '@/server/events/writer';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
@@ -93,7 +94,6 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { writeAttemptSnapshotBrackets } from '../server/attempt-snapshot';
 import { resolveAdviceCauseForQuestion } from '../server/cause-context';
-import { activeEffectiveTruth } from '../server/effective-truth';
 import { enqueueWrongStreakNudge } from '../server/enqueue-wrong-streak-nudge';
 import { initialFsrsState, scheduleReview } from '../server/fsrs';
 import { judgeDurableEnabled } from '../server/judge-durable-config';
@@ -116,7 +116,7 @@ type SubmitBodyT = CreateAttemptBody;
 type QuestionRow = typeof question.$inferSelect;
 
 // F4 (PR #309 round-2, YUK-215) — the image-consuming judge routes set is now
-// shared via the `@/kernel/judge` facade (IMAGE_CONSUMING_JUDGE_ROUTES) so
+// shared via the `@/capabilities/practice/server/judge` facade (IMAGE_CONSUMING_JUDGE_ROUTES) so
 // the photo-only gate cannot drift between this single-question flow and the
 // paper-submit flow (F1).
 

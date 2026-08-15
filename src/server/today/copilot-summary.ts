@@ -24,16 +24,17 @@
 // Output is a typed `CopilotSummary` (parallel-build mock target — see
 // TodayPlanPlaceholder in coach schema).
 
+import { executeMemoryBrief } from '@/capabilities/copilot/public';
+import { executeGetReviewDue } from '@/capabilities/practice/public';
 import type { Db, Tx } from '@/db/client';
 import { getEvents } from '@/kernel/events';
-import { executeGetReviewDue, executeMemoryBrief } from '@/server/ai/tools/context-readers';
-import type { ToolContext } from '@/server/ai/tools/types';
 import {
   PENDING_PROPOSAL_COUNT_BATCH_SIZE,
   PENDING_PROPOSAL_COUNT_MAX_BATCHES,
   countPendingProposalInboxByKind,
   listProposalInboxPage,
-} from '@/server/proposals/inbox';
+} from '@/kernel/proposals/inbox';
+import type { ToolContext } from '@/kernel/tools/types';
 
 type DbLike = Db | Tx;
 

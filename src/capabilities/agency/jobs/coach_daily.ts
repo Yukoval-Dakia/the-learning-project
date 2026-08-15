@@ -23,23 +23,6 @@ import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/not
 import { type TodayPlanT, parseTodayPlan } from '@/core/schema/coach';
 import type { Db } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
-import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import {
-  DOMAIN_TOOL_MCP_SERVER_NAME,
-  resolveDomainToolNames,
-  resolveMcpAllowedTools,
-} from '@/server/ai/tools/allowlists';
-// P5.1 / YUK-143 — single tunable source for Coach run caps. YUK-290 keeps the
-// old max_tool_calls=12 as an advisory warning and moves the accident ceiling
-// to 36; max_proposals remains byte-identical at 5.
-import { COACH_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
-import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
-import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
-// YUK-203 U4 / D11① — feed active/pinned learning items' knowledge_ids into the
-// Coach input as ATTENTION PRESSURE only (CO §7.1:723-726). Purely additive
-// (ND-5): never carries scheduling/bookkeeping, never touches the FSRS-due
-// review backbone. Coach folds it into the brief's knowledge_focus.
-import { type ActiveLearningItem, listActiveLearningItems } from '@/server/learning-items/queries';
 // P5.4-L2 / YUK-174 (Facet A + C, §3.3) — feed the per-(kind, relation) accept-
 // learned reason digest into the Coach input. Scoped to the kinds Coach can act
 // on; Coach now proposes knowledge_edge (AB-4), so its scope INCLUDES edge cells
@@ -47,8 +30,25 @@ import { type ActiveLearningItem, listActiveLearningItems } from '@/server/learn
 import {
   type ProposalFeedbackCell,
   getProposalFeedbackDigest,
-} from '@/server/proposals/adaptive-bias';
-import { type ProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
+} from '@/kernel/proposals/adaptive-bias';
+import { type ProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
+import {
+  DOMAIN_TOOL_MCP_SERVER_NAME,
+  resolveDomainToolNames,
+  resolveMcpAllowedTools,
+} from '@/kernel/tools/allowlists';
+// P5.1 / YUK-143 — single tunable source for Coach run caps. YUK-290 keeps the
+// old max_tool_calls=12 as an advisory warning and moves the accident ceiling
+// to 36; max_proposals remains byte-identical at 5.
+import { COACH_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
+import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
+import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
+import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+// YUK-203 U4 / D11① — feed active/pinned learning items' knowledge_ids into the
+// Coach input as ATTENTION PRESSURE only (CO §7.1:723-726). Purely additive
+// (ND-5): never carries scheduling/bookkeeping, never touches the FSRS-due
+// review backbone. Coach folds it into the brief's knowledge_focus.
+import { type ActiveLearningItem, listActiveLearningItems } from '@/server/learning-items/queries';
 
 // P5.1 / YUK-143 — re-exported alias kept so existing imports / tests don't
 // break (spec §4.2). Sourced from COACH_CONTEXT_BUDGET.maxProposals (= 5),

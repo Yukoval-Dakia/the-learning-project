@@ -1,5 +1,17 @@
 import { capabilities } from '@/capabilities';
+import {
+  proposeLearningItemCompletionTool,
+  proposeLearningItemRelearnTool,
+} from '@/capabilities/agency/server/tools/proposal-tools';
+import {
+  proposeRecordLinksTool,
+  proposeRecordPromotionTool,
+} from '@/capabilities/ingestion/server/tools/proposal-tools';
 import { runWriteProposal } from '@/capabilities/knowledge/server/review';
+import {
+  proposeKnowledgeEdgeTool,
+  proposeKnowledgeMutationTool,
+} from '@/capabilities/knowledge/server/tools/proposal-tools';
 import * as attributeModule from '@/capabilities/practice/server/failure-learning-attribution';
 import { attributeMistakeTool } from '@/capabilities/practice/tools/attribute-mistake';
 import { proposeVariantTool } from '@/capabilities/practice/tools/propose-variant';
@@ -16,7 +28,8 @@ import {
   tool_call_log,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
+import { getProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
+import type { ToolContext } from '@/kernel/tools/types';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -26,17 +39,8 @@ import {
   testDb,
 } from '../../../../tests/helpers/db';
 import { buildMcpServerFromRegistry } from './mcp-bridge';
-import {
-  proposeKnowledgeEdgeTool,
-  proposeKnowledgeMutationTool,
-  proposeLearningItemCompletionTool,
-  proposeLearningItemRelearnTool,
-  proposeRecordLinksTool,
-  proposeRecordPromotionTool,
-} from './proposal-tools';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, getTool, listTools } from './registry';
-import type { ToolContext } from './types';
 
 const mockRunner = vi.hoisted(() => ({
   runTask: vi.fn(),

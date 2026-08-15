@@ -169,7 +169,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
   });
 
   it('learning_record mutations appear only inside the canonical records owner', async () => {
-    const ALLOWED_LEARNING_RECORD_WRITERS = ['src/server/records/queries.ts'] as const;
+    const ALLOWED_LEARNING_RECORD_WRITERS = ['src/kernel/records/queries.ts'] as const;
     const hits = await findWriteHits('learning_record', {
       ops: ['insert', 'update', 'delete'],
     });
@@ -179,7 +179,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       [
         'Disallowed writers of `learning_record` found:',
         ...violations.map((path) => `  ${path}`),
-        'All production mutations must cross src/server/records/queries.ts (ADR-0015 mutation contract v1).',
+        'All production mutations must cross src/kernel/records/queries.ts (ADR-0015 mutation contract v1; YUK-892 moved the records owner to kernel).',
       ].join('\n'),
     ).toEqual([]);
   });
@@ -417,7 +417,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     //   - `embedded_check_generate`: writes `embedded_check_status` and
     //     mirrors the generated question ids back onto the `check` section
     //     after Judge v2 light's question contract is satisfied.
-    //   - YUK-203 P2 `src/server/boss/handlers/quiz_gen.ts`: writes the
+    //   - YUK-203 P2 `src/capabilities/practice/jobs/quiz_gen.ts`: writes the
     //     standalone `tool_quiz` artifact that groups QuizGenTask draft
     //     questions through `tool_state.question_ids[]`.
     //   - YUK-19 `src/server/proposals/actions.ts`: retracting a learning_intent
@@ -456,15 +456,16 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     // Anything else writing `artifact` should still be reviewed.
     const hits = await findWriteHits('artifact', { roots: SCAN_RUNTIME_ROOTS });
     const ALLOWED = [
-      'src/server/orchestrator/learning_intent.ts',
+      'src/capabilities/notes/server/learning-intent-note.ts',
       'src/capabilities/notes/jobs/note_generate.ts',
       'src/capabilities/notes/jobs/note_verify.ts',
       // YUK-857 — provider-attempt exhaustion atomically sets verification_status=failed and emits
       // the matching artifact lifecycle projection in the claim transaction.
       'src/capabilities/notes/server/note-verification-claim.ts',
       'src/server/boss/handlers/embedded_check_generate.ts',
-      'src/server/boss/handlers/quiz_gen.ts',
-      'src/server/proposals/actions.ts',
+      'src/capabilities/practice/jobs/quiz_gen.ts',
+      // YUK-864 — learning_item retract ownership moved whole from the central proposal shell.
+      'src/capabilities/agency/server/proposal-retract-learning-item.ts',
       // M4-T4 (YUK-319) — D11 墓碑：record_links / record_promotion appliers 从
       // actions.ts 等价平移至此（搬迁不改逻辑）；record_promotion 物化 target 为
       // artifact 时的单 INSERT 随代码迁入。无活 producer，旧学习记录域退役时一并删。
@@ -473,12 +474,12 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       'src/capabilities/notes/server/body-blocks-edit.ts',
       'src/capabilities/notes/server/note-refine-apply.ts',
       'src/capabilities/notes/server/hub-dismiss.ts',
-      // ADR-0032 RP-2 / YUK-304 (lane B) — the shared tool_quiz artifact INSERT
+      // ADR-0032 RP-2 / YUK-304 (lane B) — the shared tool_quiz artifact INSERT (YUK-892: practice-owned)
       // core. write_review_plan (review-plan-tools.ts) + write_quiz
       // (write-quiz.ts) delegate their single INSERT here; review-plan-tools.ts
       // itself no longer contains a raw artifact insert. The YUK-262 quiz-skill
       // writer (src/server/copilot/skills/quiz-skill.ts) is retired (quiz C→A).
-      'src/server/ai/tools/tool-quiz-core.ts',
+      'src/capabilities/practice/server/tools/tool-quiz-core.ts',
       // YUK-214 (Strategy D S1) — createIngestionPaper packs an imported
       // ingestion session's questions into an `ingestion_paper` tool_quiz
       // artifact (the ingest→practice bridge). Single INSERT, idempotent
@@ -488,7 +489,8 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       // version-bump UPDATE for type='interactive' rows (opaque to the note
       // block-tree mesh, body_blocks=null; the render-side sandbox owns
       // security, the backend stores attrs.html opaquely).
-      'src/server/ai/tools/author-artifact.ts',
+      // YUK-880 — moved with the Notes capability ownership (server/tools/).
+      'src/capabilities/notes/server/tools/author-artifact.ts',
       // YUK-471 Wave 3 (W3-B1) — projectArtifact / projectArtifactGuarded: the fold→row
       // write-back (upsert/delete the materialized artifact row recomputed from the event fold).
       // INERT until PROJECTION_IS_WRITER_ARTIFACT flips (W3-D); mirrors the W1/W2 projection

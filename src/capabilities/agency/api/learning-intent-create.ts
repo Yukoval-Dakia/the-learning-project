@@ -8,11 +8,10 @@
 import { db } from '@/db/client';
 import type { Db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { checkRateLimit } from '@/server/http/rate-limit';
-import type { RunTaskFn } from '@/server/orchestrator/learning_intent';
-import { LearningIntentError, planLearningIntent } from '@/server/orchestrator/learning_intent';
-import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { makeRunTaskFn } from '../server/ai-runtime';
+import { LearningIntentError, type RunTaskFn, planLearningIntent } from '../server/learning-intent';
 import { CreateLearningIntentBodySchema, LearningIntentProposalResponseSchema } from './contracts';
 
 export interface CreateLearningIntentHandlerDeps {

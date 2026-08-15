@@ -25,8 +25,8 @@
 // only (pinned header still rides).
 
 import type { Db } from '@/db/client';
-import type { DomainToolSurface } from '@/server/ai/tools/allowlists';
-import { COPILOT_HISTORY_BUDGET, type CopilotHistoryBudget } from '@/server/ai/tools/budgets';
+import type { DomainToolSurface } from '@/kernel/tools/allowlists';
+import { COPILOT_HISTORY_BUDGET, type CopilotHistoryBudget } from '@/kernel/tools/budgets';
 
 import {
   type LearnerStateHeader,

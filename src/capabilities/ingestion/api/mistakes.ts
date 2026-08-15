@@ -3,19 +3,19 @@
 
 import { createId } from '@paralleldrive/cuid2';
 
-import {
-  assertCauseAllowedForSubjectProfile,
-  resolveSubjectProfileForKnowledgeIds,
-} from '@/capabilities/knowledge/public';
 import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
 import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { collectionPayload, resourceResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/kernel/http';
+import {
+  assertCauseAllowedForSubjectProfile,
+  resolveSubjectProfileForKnowledgeIds,
+} from '@/kernel/read-models/subject-profile';
+import { createLearningRecord } from '@/kernel/records/queries';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { listMistakeProjectionPage } from '@/server/records/mistakes';
-import { createLearningRecord } from '@/server/records/queries';
 import { and, inArray, isNull } from 'drizzle-orm';
 import { CreateMistakeBodySchema, MistakeListQuerySchema } from './contracts';
 

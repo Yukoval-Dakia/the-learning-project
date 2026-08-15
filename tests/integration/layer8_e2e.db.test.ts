@@ -32,22 +32,24 @@
 import { runCoach } from '@/capabilities/agency/jobs/coach_daily';
 import { runDreamingNightly } from '@/capabilities/agency/jobs/dreaming_nightly';
 import { runGoalScopeProposeNightly } from '@/capabilities/agency/jobs/goal_scope_propose_nightly';
+import type { GoalScopeAcceptResult } from '@/capabilities/agency/public';
 import type { ActiveGoal } from '@/capabilities/agency/server/goals/queries';
 import { listActiveGoals } from '@/capabilities/agency/server/goals/queries';
+import { executeMemoryBrief } from '@/capabilities/copilot/public';
 import { handleReviewDue } from '@/capabilities/practice/server/due-list';
 import { material_fsrs_state } from '@/db/schema';
+import { resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
+import { getProposalAcceptanceRates } from '@/kernel/proposals/signals';
+import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
+import type { ToolContext } from '@/kernel/tools/types';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
-import { executeMemoryBrief } from '@/server/ai/tools/context-readers';
-import type { ToolContext } from '@/server/ai/tools/types';
 import { listActiveSubjectsSinceRefresh } from '@/server/memory/active-subjects';
 import { regenerateMemoryBrief } from '@/server/memory/brief';
 import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { acceptAiProposal } from '@/server/proposals/actions';
-import { resolveEdgeGateBump } from '@/server/proposals/adaptive-bias';
-import { getProposalAcceptanceRates } from '@/server/proposals/signals';
 import { and, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import {
   L2_DISMISS_RELATION,
   NODES,
@@ -55,6 +57,7 @@ import {
   runStubbedNightly,
 } from '../../scripts/seed-synthetic';
 import { resetDb, testDb } from '../helpers/db';
+import { assertProposalLifecycleResult } from '../helpers/proposal-lifecycle';
 
 // Single shared clock threaded into every `now: () => NOW` so freshness /
 // due-windows / 24h cluster windows all agree (plan §Execution order).
@@ -188,7 +191,8 @@ describe('Layer-8 flywheel end-to-end (DB, all LLM stubbed)', () => {
     // 6. Accept — full live chain (real acceptAiProposal, no stub).
     const accepted = await acceptAiProposal(db, goalRes.proposal_id);
     expect(accepted.kind).toBe('goal_scope');
-    const goalId = (accepted as { goal_id: string }).goal_id;
+    assertProposalLifecycleResult<GoalScopeAcceptResult>(accepted, 'goal_scope');
+    const goalId = accepted.goal_id;
 
     const active = await listActiveGoals(db);
     const g = active.find((a) => a.id === goalId);

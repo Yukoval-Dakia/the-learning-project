@@ -21,9 +21,9 @@
 // Each KC's embed text now folds its EFFECTIVE domain (getEffectiveDomain walk),
 // disambiguating same-named cross-subject KCs.
 
-import { getEffectiveDomain } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
+import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { EMBED_MODEL, type EmbedProviderAttemptOptions, embedMany } from '@/server/ai/embed';
 import { embedHash, knowledgeEmbedText, questionEmbedText } from '@/server/ai/embed-source';
 import { and, eq, isNull, lt, or } from 'drizzle-orm';

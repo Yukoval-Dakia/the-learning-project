@@ -292,6 +292,39 @@ export const ingestionCapability = defineCapability({
         load: () =>
           import('./jobs/ingestion_operation').then((m) => m.buildIngestionOperationHandler),
       },
+      // YUK-882 (F3.6c) — Step 9 生产 OCR job 自中央渐缩簿收编（等价平移红线：
+      // AGENT 档 2h expire + DLQ、0.5s polling、batchSize 1、includeMetadata 读
+      // retryCount 驱动 provider-attempt resume、lazy r2 getter——test worker 无
+      // R2 env 也能起，生产 env 必须齐全）。r2 经 load 内动态 import 取
+      // getR2，manifest 顶层保持纯元数据（unit 分区不拉 @/server/r2）。
+      {
+        name: 'tencent_ocr_extract',
+        queue: 'agent',
+        pollingIntervalSeconds: 0.5,
+        batchSize: 1,
+        includeMetadata: true,
+        load: async () => {
+          const [{ buildTencentOcrHandler }, { getR2 }] = await Promise.all([
+            import('./jobs/tencent_ocr_extract'),
+            import('@/server/r2'),
+          ]);
+          return (db: Parameters<typeof buildTencentOcrHandler>[0]['db']) =>
+            buildTencentOcrHandler({
+              db,
+              // lazy r2 —— 首次 OCR 才解析 env；缺 credentials 在 handler 调用点抛
+              get r2() {
+                return getR2();
+              },
+            } as Parameters<typeof buildTencentOcrHandler>[0]);
+        },
+      },
+      // YUK-882 (F3.6c) — Strategy D Slice B observe-only auto-enroll 消费者收编
+      // （LLM 档 1h expire + DLQ；注册器默认 2s/1 与原中央行显式 opts 等价）。
+      {
+        name: 'auto_enroll',
+        queue: 'llm',
+        load: () => import('./jobs/auto_enroll').then((m) => m.buildAutoEnrollHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。block_merge 的 accept applier 真身
@@ -347,53 +380,67 @@ export const ingestionCapability = defineCapability({
     tools: [
       {
         name: 'query_records',
-        load: () => import('@/server/ai/tools/context-readers').then((m) => m.queryRecordsTool),
+        load: () =>
+          import('./server/tools/query-records').then((module) => module.queryRecordsTool),
       },
       {
         name: 'get_record_context',
-        load: () => import('@/server/ai/tools/context-readers').then((m) => m.getRecordContextTool),
+        load: () =>
+          import('./server/tools/get-record-context').then((module) => module.getRecordContextTool),
       },
       {
         name: 'get_question_block_structure',
         load: () =>
-          import('@/server/ai/tools/context-readers').then((m) => m.getQuestionBlockStructureTool),
+          import('./server/tools/question-block-structure').then(
+            (module) => module.getQuestionBlockStructureTool,
+          ),
       },
       {
         name: 'propose_record_links',
-        load: () =>
-          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeRecordLinksTool),
+        load: () => import('./server/tools/proposal-tools').then((m) => m.proposeRecordLinksTool),
       },
       {
         name: 'propose_record_promotion',
         load: () =>
-          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeRecordPromotionTool),
+          import('./server/tools/proposal-tools').then((m) => m.proposeRecordPromotionTool),
       },
       {
         name: 'update_prompt',
-        load: () => import('@/server/ai/tools/question-edit-tools').then((m) => m.updatePromptTool),
+        load: () =>
+          import('./server/tools/question-block-node-edits').then(
+            (module) => module.updatePromptTool,
+          ),
       },
       {
         name: 'add_option',
-        load: () => import('@/server/ai/tools/question-edit-tools').then((m) => m.addOptionTool),
+        load: () =>
+          import('./server/tools/question-block-node-edits').then((module) => module.addOptionTool),
       },
       {
         name: 'set_question_type',
         load: () =>
-          import('@/server/ai/tools/question-edit-tools').then((m) => m.setQuestionTypeTool),
+          import('./server/tools/question-block-node-edits').then(
+            (module) => module.setQuestionTypeTool,
+          ),
       },
       {
         name: 'split_stem',
-        load: () => import('@/server/ai/tools/question-edit-tools').then((m) => m.splitStemTool),
+        load: () =>
+          import('./server/tools/question-block-node-edits').then((module) => module.splitStemTool),
       },
       {
         name: 'merge_questions',
         load: () =>
-          import('@/server/ai/tools/question-edit-tools').then((m) => m.mergeQuestionsTool),
+          import('./server/tools/question-block-structural-edits').then(
+            (module) => module.mergeQuestionsTool,
+          ),
       },
       {
         name: 'reassign_figure',
         load: () =>
-          import('@/server/ai/tools/question-edit-tools').then((m) => m.reassignFigureTool),
+          import('./server/tools/question-block-structural-edits').then(
+            (module) => module.reassignFigureTool,
+          ),
       },
     ],
   },

@@ -34,7 +34,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
 import type { Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
-import { createLearningRecord } from '@/server/records/queries';
+import { createLearningRecord } from '@/kernel/records/queries';
 
 /** The capture outcome signal. `unanswered` = item/material (no attempt). */
 export type EnrollOutcome = 'failure' | 'success' | 'partial' | 'unanswered';

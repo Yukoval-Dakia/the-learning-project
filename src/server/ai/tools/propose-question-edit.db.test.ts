@@ -12,14 +12,14 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { capabilities } from '@/capabilities';
+import { proposeQuestionEditTool } from '@/capabilities/practice/server/tools/proposal-tools';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { event, question } from '@/db/schema';
-import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
+import { getProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
+import type { ToolContext } from '@/kernel/tools/types';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { proposeQuestionEditTool } from './proposal-tools';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, getTool } from './registry';
-import type { ToolContext } from './types';
 
 function ctx(): ToolContext {
   return {

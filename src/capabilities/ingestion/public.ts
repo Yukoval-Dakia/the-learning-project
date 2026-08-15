@@ -13,3 +13,20 @@ export type {
   RecordPromotionAcceptResult,
 } from './server/legacy-record-appliers';
 export type { BlockMergeAcceptResult } from './server/proposal-appliers';
+export {
+  lockImageStorageKey,
+  persistImageAsset,
+  sha256Hex,
+} from './server/persist-image-asset';
+export type { SourceAssetRow } from './server/persist-image-asset';
+export {
+  bodyBlockSummaries,
+  excerpt,
+  knowledgeContext,
+} from './server/tools/record-tool-support';
+
+// YUK-885 — public port repointed from a central deep import.
+export {
+  AUTO_ENROLL_SINGLETON_SECONDS,
+  autoEnrollJobEnabled,
+} from './server/workflow-judge-config';

@@ -1,32 +1,30 @@
 import {
   type ConjectureEvidenceAssetRef,
+  type ConjectureHistory,
   type EnrichedEvidenceCell,
   type EvidenceCell,
   type LoadedConjectureEvidenceImage,
+  applyConjectureHistoryGate,
   collectConjectureEvidenceAssetRefs,
   conjectureKey,
+  enrichEvidenceCells,
   gatherConjectureEvidence,
-} from '@/capabilities/agency/server/conjecture/evidence';
-import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
-import {
-  type ConjectureHistory,
-  applyConjectureHistoryGate,
   loadConjectureHistory,
-} from '@/capabilities/agency/server/conjecture/history';
+} from '@/capabilities/agency/public';
+import {
+  type FailureAttempt,
+  type FailureAttemptWithReasoningTrace,
+  getFailureAttemptsWithReasoningTrace,
+} from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import {
   type PredictionAccountability,
   loadPredictionAccountabilityByKey,
   rankEvidenceCellsByAccountability,
 } from '@/server/conjectures/accountability';
-import {
-  type FailureAttempt,
-  type FailureAttemptWithReasoningTrace,
-  getFailureAttemptsWithReasoningTrace,
-} from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
-import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { inArray } from 'drizzle-orm';
 
 export const GROUNDING_GATE_WINDOW_DAYS = 14;

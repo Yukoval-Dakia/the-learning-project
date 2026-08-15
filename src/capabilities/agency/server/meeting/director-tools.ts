@@ -25,13 +25,17 @@ import {
   applyConjectureHistoryGate,
   loadConjectureHistory,
 } from '@/capabilities/agency/server/conjecture/history';
-import type {
-  AgentNoteTarget,
-  WriteAgentNoteInput,
-  writeAgentNote as WriteAgentNoteReal,
+import {
+  ConjectureProbeQualityOperationalError,
+  type PrepareConjectureProbePairResult,
+  prepareConjectureProbePair,
+} from '@/capabilities/agency/server/conjecture/probe-quality';
+import {
+  type AgentNoteTarget,
+  type WriteAgentNoteInput,
+  type writeAgentNote as WriteAgentNoteReal,
+  writeAgentNote,
 } from '@/capabilities/agency/server/notes';
-import { writeAgentNote } from '@/capabilities/agency/server/notes';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import {
   ConjectureDiagnosticSpecV2,
   ConjectureHypothesisProposalDraft,
@@ -39,31 +43,25 @@ import {
 import { CauseCategoryId } from '@/core/schema/cause';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
-import { UNTRUSTED_TEXT_CHAR_CAP, wrapTruncatedLearnerText } from '@/kernel/untrusted-text';
-import {
-  ConjectureProbeQualityOperationalError,
-  type PrepareConjectureProbePairResult,
-  prepareConjectureProbePair,
-} from '@/server/agency/conjecture/probe-quality';
-import {
-  filterPrimaryEvidenceRefs,
-  isPrimaryEvidenceRef,
-} from '@/server/agency/scout/report-findings';
+import { type WriteAiProposalInput, writeAiProposal } from '@/kernel/proposals/writer';
+import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { getMasteryProjection } from '@/server/mastery/state';
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { and, eq, inArray, ne, or } from 'drizzle-orm';
+import { z } from 'zod';
+import { filterPrimaryEvidenceRefs, isPrimaryEvidenceRef } from '../scout/report-findings';
 import {
   DIRECTOR_SERVER_NAME,
   DIRECTOR_WRITE_TOOL_LOCAL_NAMES,
   EVIDENCE_READ_TOOL_NAMES,
   GET_TRACES_TOOL_NAME,
   SPAWN_TOOL_NAME,
-} from '@/server/agency/scout/tool-names';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { type FailureAttempt, getFailureAttemptById } from '@/server/events/queries';
-import { getMasteryProjection } from '@/server/mastery/state';
-import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { and, eq, inArray, ne, or } from 'drizzle-orm';
-import { z } from 'zod';
+} from '../scout/tool-names';
+import { UNTRUSTED_TEXT_CHAR_CAP, wrapTruncatedLearnerText } from '../scout/untrusted-text';
 
 // ── Server-side caps + constants (§5 / 附录 A #3) ──────────────────────────────
 

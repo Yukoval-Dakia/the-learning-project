@@ -29,13 +29,16 @@
 // AI_PROVIDER_OVERRIDE is never set or consulted for routing; sample rows
 // carry env snapshots + same_lane_suspected so a collapsed lane is visible.
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
+import {
+  IMAGE_CONSUMING_JUDGE_ROUTES,
+  MODEL_BACKED_JUDGE_ROUTES,
+} from '@/capabilities/practice/server/judge';
+import { judgeAnswer } from '@/capabilities/practice/server/judge/question-contract';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { IMAGE_CONSUMING_JUDGE_ROUTES, MODEL_BACKED_JUDGE_ROUTES } from '@/kernel/judge';
-import { judgeAnswer } from '@/server/ai/judges/question-contract';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import type { ResolvedProvider } from '@/server/ai/providers';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { and, eq, gte, inArray, sql } from 'drizzle-orm';
@@ -46,13 +49,13 @@ export const JUDGE_CALIBRATION_RUN_SUMMARY_ACTION = 'experimental:judge_calibrat
 export const JUDGE_CALIBRATION_ACTOR = 'judge_calibration';
 
 // The LLM-backed judge routes worth double-judging (MF4① whitelist). Consumes
-// the canonical `MODEL_BACKED_JUDGE_ROUTES` predicate (@/kernel/judge,
+// the canonical `MODEL_BACKED_JUDGE_ROUTES` predicate (@/capabilities/practice/server/judge,
 // YUK-589 route-resolve.ts) instead of a locally-owned duplicate — YUK-769
 // fixed a drift where this module's own copy omitted `unit_dimension` (its
 // LLM fallback route), silently excluding it from calibration sampling.
 // The routes whose invoker dispatch threads student_image_refs (photo answers).
 // OCR minor (PR #1056): this used to be a locally-owned Set duplicating the
-// canonical `IMAGE_CONSUMING_JUDGE_ROUTES` (@/kernel/judge, YUK-589
+// canonical `IMAGE_CONSUMING_JUDGE_ROUTES` (@/capabilities/practice/server/judge, YUK-589
 // route-resolve.ts) — same double-write drift risk as the MODEL_BACKED_ROUTES
 // fix above. Consume the shared predicate instead of a local copy.
 const VISION_ROUTES: Set<string> = IMAGE_CONSUMING_JUDGE_ROUTES;

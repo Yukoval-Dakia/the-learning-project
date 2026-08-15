@@ -7,7 +7,11 @@
 
 import { type ZodTypeAny, z } from 'zod';
 import { type JobDagMemberInput, type JobDependencyDecl, validateJobDag } from './job-dag';
-import type { ProposalAcceptDecl } from './proposals/types';
+import type {
+  ProposalAcceptDecl,
+  ProposalDismissDecl,
+  ProposalRetractDecl,
+} from './proposals/types';
 
 /**
  * Web 标准 handler。M1 (YUK-314) 起带路径参数：server 组合根（server/app.ts）
@@ -111,11 +115,20 @@ export type JobScheduleDecl = {
 
 export interface JobDecl {
   name: string; // boss 队列名，形如 'dreaming_nightly'
+  includeMetadata?: boolean;
   /**
    * Optional queue-level worker heartbeat. Use only for handlers whose active
    * lease must fail over faster than the queue tier's broad expiry ceiling.
    */
   heartbeatSeconds?: number;
+  /**
+   * YUK-882 — 非默认 worker mount 选项（boss.work 透传）。缺省时注册器用统一
+   * 配方 2s/1（与渐缩簿显式先例等价）；需要更快轮询（tencent_ocr_extract 的
+   * 0.5s）或 includeMetadata（provider-attempt resume 读 retryCount）的 job
+   * 在声明里显式携带，注册器原样透传、不掺默认值。
+   */
+  pollingIntervalSeconds?: number;
+  batchSize?: number;
   /** cron 调度；无 schedule 的是链式/按需 job（如 rejudge） */
   schedule?: JobScheduleDecl;
   /**
@@ -163,6 +176,8 @@ export interface CopilotToolDecl {
 export interface ProposalKindDecl {
   kind: string;
   accept?: ProposalAcceptDecl;
+  dismiss?: ProposalDismissDecl;
+  retract?: ProposalRetractDecl;
 }
 
 export interface EventSubscriptionDelivery {

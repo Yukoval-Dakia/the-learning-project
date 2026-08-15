@@ -1,0 +1,873 @@
+// allow: SIZE_OK — central 51-task catalog contract suite.
+import { existsSync, readFileSync } from 'node:fs';
+import { coachTaskSpec } from '@/capabilities/agency/tasks/coach';
+import {
+  conjectureGroupingTaskSpec,
+  mindModelInductionTaskSpec,
+} from '@/capabilities/agency/tasks/conjecture-induction';
+import {
+  conjectureProbeAuthorTaskSpec,
+  conjectureProbeReviewTaskSpec,
+} from '@/capabilities/agency/tasks/conjecture-probe';
+import { dreamingTaskSpec } from '@/capabilities/agency/tasks/dreaming';
+import { goalScopeTaskSpec } from '@/capabilities/agency/tasks/goal-scope';
+import { agencyTaskSpecs } from '@/capabilities/agency/tasks/index';
+import {
+  interventionPackageAuthorTaskSpec,
+  interventionPackageReviewTaskSpec,
+  interventionRecommendationTaskSpec,
+} from '@/capabilities/agency/tasks/intervention';
+import { learningIntentOutlineTaskSpec } from '@/capabilities/agency/tasks/learning-intent';
+import { memoryBriefTaskSpec } from '@/capabilities/agency/tasks/memory-brief';
+import { researchMeetingDirectorTaskSpec } from '@/capabilities/agency/tasks/research-meeting-director';
+import { copilotTaskSpec } from '@/capabilities/copilot/tasks/agent';
+import { copilotDispatchTaskSpec } from '@/capabilities/copilot/tasks/dispatch';
+import {
+  copilotEvidenceReviewTaskSpec,
+  copilotEvidenceVerificationTaskSpec,
+} from '@/capabilities/copilot/tasks/evidence';
+import { copilotTaskSpecs } from '@/capabilities/copilot/tasks/index';
+import { teachingTurnTaskSpec } from '@/capabilities/copilot/tasks/teaching-turn';
+import { blockAssemblyTaskSpec } from '@/capabilities/ingestion/tasks/block-assembly';
+import { coldStartPlacementBridgeTaskSpec } from '@/capabilities/ingestion/tasks/cold-start-bridge';
+import { ingestionTaskSpecs } from '@/capabilities/ingestion/tasks/index';
+import { mistakeEnrollTaskSpec } from '@/capabilities/ingestion/tasks/mistake-enroll';
+import { profileCriticTaskSpec } from '@/capabilities/ingestion/tasks/profile-critic';
+import { structureTaskSpec } from '@/capabilities/ingestion/tasks/structure';
+import { taggingTaskSpec } from '@/capabilities/ingestion/tasks/tagging';
+import {
+  visionExtractTaskHeavySpec,
+  visionExtractTaskSpec,
+} from '@/capabilities/ingestion/tasks/vision';
+import {
+  frontierPrerequisiteTaskSpec,
+  knowledgeEdgeProposeTaskSpec,
+  knowledgeReviewTaskSpec,
+  knowledgeTaskSpecs,
+} from '@/capabilities/knowledge/tasks/index';
+import { notesTaskSpecs } from '@/capabilities/notes/tasks/index';
+import { noteRefineTaskSpec } from '@/capabilities/notes/tasks/note-refine';
+import { noteGenerateTaskSpec, noteVerifyTaskSpec } from '@/capabilities/notes/tasks/note-tasks';
+import {
+  attributionRerankTaskSpec,
+  attributionTaskSpec,
+} from '@/capabilities/practice/tasks/attribution';
+import { practiceTaskSpecs } from '@/capabilities/practice/tasks/index';
+import { itemPriorTaskSpec } from '@/capabilities/practice/tasks/item-prior';
+import {
+  multimodalDirectJudgeTaskSpec,
+  semanticJudgeTaskSpec,
+  stepsJudgeTaskSpec,
+  unitDimensionFallbackTaskSpec,
+} from '@/capabilities/practice/tasks/judges';
+import { questionAuthorTaskSpec } from '@/capabilities/practice/tasks/question-author';
+import { quizGenTaskSpec } from '@/capabilities/practice/tasks/quiz-generation';
+import { quizVerifyTaskSpec } from '@/capabilities/practice/tasks/quiz-verify';
+import { selectionOrchestratorTaskSpec } from '@/capabilities/practice/tasks/selection-orchestrator';
+import { sessionSummaryTaskSpec } from '@/capabilities/practice/tasks/session-summary';
+import {
+  solutionGenerateTaskSpec,
+  solutionGenerateVisionTaskSpec,
+} from '@/capabilities/practice/tasks/solution-generation';
+import { sourceGroundingVerifyTaskSpec } from '@/capabilities/practice/tasks/source-grounding-verify';
+import { sourcingTaskSpec } from '@/capabilities/practice/tasks/sourcing';
+import { teachingQualityTaskSpec } from '@/capabilities/practice/tasks/teaching-quality';
+import { variantGenTaskSpec } from '@/capabilities/practice/tasks/variant-gen';
+import { variantVerifyTaskSpec } from '@/capabilities/practice/tasks/variant-verify';
+import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
+import type { TaskKind } from './registry';
+import {
+  type TaskOwner,
+  composeTaskCatalog,
+  defineOwnedTaskSpecs,
+  taskCatalog,
+} from './task-catalog';
+import type { TaskDefinition, TaskSpec } from './task-spec';
+
+const EXPECTED_KINDS = [
+  'AttributionTask',
+  'AttributionRerankTask',
+  'VisionExtractTask',
+  'VisionExtractTaskHeavy',
+  'StructureTask',
+  'MistakeEnrollTask',
+  'KnowledgeEdgeProposeTask',
+  'FrontierPrerequisiteTask',
+  'SessionSummaryTask',
+  'LearningIntentOutlineTask',
+  'NoteGenerateTask',
+  'NoteVerifyTask',
+  'NoteRefineTask',
+  'SemanticJudgeTask',
+  'UnitDimensionFallback',
+  'StepsJudgeTask',
+  'MultimodalDirectJudgeTask',
+  'SourceGroundingVerifyTask',
+  'VariantVerifyTask',
+  'VariantGenTask',
+  'TeachingTurnTask',
+  'ProfileCriticTask',
+  'DreamingTask',
+  'CoachTask',
+  'CopilotDispatchTask',
+  'CopilotEvidenceReviewTask',
+  'CopilotEvidenceVerificationTask',
+  'CopilotTask',
+  'KnowledgeReviewTask',
+  'GoalScopeTask',
+  'MindModelInductionTask',
+  'ConjectureGroupingTask',
+  'ConjectureProbeAuthorTask',
+  'ConjectureProbeReviewTask',
+  'InterventionRecommendationTask',
+  'InterventionPackageAuthorTask',
+  'InterventionPackageReviewTask',
+  'ResearchMeetingDirectorTask',
+  'MemoryBriefTask',
+  'TaggingTask',
+  'ColdStartPlacementBridgeTask',
+  'SolutionGenerateTask',
+  'SolutionGenerateVisionTask',
+  'QuizGenTask',
+  'QuizVerifyTask',
+  'TeachingQualityTask',
+  'QuestionAuthorTask',
+  'ItemPriorTask',
+  'SelectionOrchestratorTask',
+  'SourcingTask',
+  'BlockAssemblyTask',
+] as const;
+
+type ExpectedTaskKind = (typeof EXPECTED_KINDS)[number];
+type Equal<Left, Right> = (<Value>() => Value extends Left ? 1 : 2) extends <
+  Value,
+>() => Value extends Right ? 1 : 2
+  ? true
+  : false;
+type Assert<Condition extends true> = Condition;
+type TaskKindIsClosed = Assert<Equal<TaskKind, ExpectedTaskKind>>;
+const TASK_KIND_IS_CLOSED: TaskKindIsClosed = true;
+
+const OWNER_MAPS = {
+  practice: practiceTaskSpecs,
+  notes: notesTaskSpecs,
+  ingestion: ingestionTaskSpecs,
+  knowledge: knowledgeTaskSpecs,
+  agency: agencyTaskSpecs,
+  copilot: copilotTaskSpecs,
+} as const;
+
+const EXPECTED_OWNER_COUNTS = {
+  practice: 19,
+  notes: 3,
+  ingestion: 8,
+  knowledge: 3,
+  agency: 13,
+  copilot: 5,
+} as const;
+
+const OWNED_SPECS: ReadonlySet<object> = new Set([
+  attributionTaskSpec,
+  attributionRerankTaskSpec,
+  variantGenTaskSpec,
+  semanticJudgeTaskSpec,
+  unitDimensionFallbackTaskSpec,
+  stepsJudgeTaskSpec,
+  multimodalDirectJudgeTaskSpec,
+  solutionGenerateTaskSpec,
+  solutionGenerateVisionTaskSpec,
+  quizGenTaskSpec,
+  questionAuthorTaskSpec,
+  itemPriorTaskSpec,
+  selectionOrchestratorTaskSpec,
+  sessionSummaryTaskSpec,
+  sourcingTaskSpec,
+  copilotDispatchTaskSpec,
+  copilotEvidenceReviewTaskSpec,
+  copilotEvidenceVerificationTaskSpec,
+  copilotTaskSpec,
+  teachingTurnTaskSpec,
+  noteGenerateTaskSpec,
+  noteRefineTaskSpec,
+  noteVerifyTaskSpec,
+  quizVerifyTaskSpec,
+  sourceGroundingVerifyTaskSpec,
+  variantVerifyTaskSpec,
+  teachingQualityTaskSpec,
+  visionExtractTaskSpec,
+  visionExtractTaskHeavySpec,
+  structureTaskSpec,
+  mistakeEnrollTaskSpec,
+  taggingTaskSpec,
+  coldStartPlacementBridgeTaskSpec,
+  blockAssemblyTaskSpec,
+  profileCriticTaskSpec,
+  knowledgeEdgeProposeTaskSpec,
+  frontierPrerequisiteTaskSpec,
+  knowledgeReviewTaskSpec,
+  learningIntentOutlineTaskSpec,
+  goalScopeTaskSpec,
+  mindModelInductionTaskSpec,
+  conjectureGroupingTaskSpec,
+  conjectureProbeAuthorTaskSpec,
+  conjectureProbeReviewTaskSpec,
+  interventionRecommendationTaskSpec,
+  interventionPackageAuthorTaskSpec,
+  interventionPackageReviewTaskSpec,
+  researchMeetingDirectorTaskSpec,
+  dreamingTaskSpec,
+  coachTaskSpec,
+  memoryBriefTaskSpec,
+]);
+
+const makeDefinition = <const Kind extends string>(kind: Kind) =>
+  ({
+    kind,
+    description: `${kind} test definition`,
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5',
+    budget: { maxIterations: 1, maxCost: 0.5, transientRetries: 0, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    prompt: { kind: 'inline', text: `prompt for ${kind}` },
+  }) satisfies TaskDefinition;
+
+const makeOwnedSpec = <const Kind extends string>(kind: Kind) =>
+  ({
+    ownership: 'owned',
+    definition: makeDefinition(kind),
+    outputSchema: z.string(),
+    parseText: (text: string) => text,
+  }) satisfies TaskSpec<unknown, string>;
+
+function invokeEntryValidation(entry: object): void {
+  const definition = Reflect.get(entry, 'definition');
+  const kind =
+    typeof definition === 'object' &&
+    definition !== null &&
+    typeof Reflect.get(definition, 'kind') === 'string'
+      ? Reflect.get(definition, 'kind')
+      : 'TestTask';
+  Reflect.apply(defineOwnedTaskSpecs, undefined, ['practice', { [kind]: entry }]);
+}
+
+describe('taskCatalog', () => {
+  it('has the exact closed 51-kind compile-time and runtime census', () => {
+    expect(TASK_KIND_IS_CLOSED).toBe(true);
+    expect(Object.keys(taskCatalog).sort()).toEqual([...EXPECTED_KINDS].sort());
+  });
+
+  it('eagerly composes the exact six owner allocations', () => {
+    for (const owner of Object.keys(OWNER_MAPS) as TaskOwner[]) {
+      expect(Object.keys(OWNER_MAPS[owner]), owner).toHaveLength(EXPECTED_OWNER_COUNTS[owner]);
+    }
+    expect(ingestionTaskSpecs.ProfileCriticTask.definition).toBe(taskCatalog.ProfileCriticTask);
+    expect(Object.hasOwn(copilotTaskSpecs, 'ProfileCriticTask')).toBe(false);
+  });
+
+  it('owns all eight ingestion TaskSpecs without central quarry definitions', () => {
+    const expected = {
+      VisionExtractTask: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5',
+        maxIterations: 1,
+        timeout: 60_000,
+        multimodal: true,
+        invocation: 'manual_rescue_only',
+      },
+      VisionExtractTaskHeavy: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5',
+        maxIterations: 1,
+        timeout: 90_000,
+        multimodal: true,
+        invocation: 'manual_rescue_only',
+      },
+      StructureTask: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5',
+        maxIterations: 1,
+        timeout: 120_000,
+        multimodal: true,
+        invocation: undefined,
+      },
+      MistakeEnrollTask: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5-pro',
+        maxIterations: 1,
+        timeout: 60_000,
+        multimodal: false,
+        invocation: undefined,
+      },
+      TaggingTask: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5',
+        maxIterations: 1,
+        timeout: 60_000,
+        multimodal: false,
+        invocation: undefined,
+      },
+      ColdStartPlacementBridgeTask: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5',
+        maxIterations: 1,
+        timeout: 90_000,
+        multimodal: false,
+        invocation: undefined,
+      },
+      BlockAssemblyTask: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5',
+        maxIterations: 1,
+        timeout: 60_000,
+        multimodal: false,
+        invocation: undefined,
+      },
+      ProfileCriticTask: {
+        provider: 'xiaomi',
+        model: 'mimo-v2.5-pro',
+        maxIterations: 1,
+        timeout: 60_000,
+        multimodal: false,
+        invocation: undefined,
+      },
+    } as const;
+
+    for (const [kind, contract] of Object.entries(expected)) {
+      const entry = ingestionTaskSpecs[kind as keyof typeof ingestionTaskSpecs];
+      expect(entry.ownership, kind).toBe('owned');
+      expect(entry.definition, kind).toBe(taskCatalog[kind as keyof typeof taskCatalog]);
+      expect(entry.definition.defaultProvider, kind).toBe(contract.provider);
+      expect(entry.definition.defaultModel, kind).toBe(contract.model);
+      expect(entry.definition.budget.maxIterations, kind).toBe(contract.maxIterations);
+      expect(entry.definition.budget.timeout, kind).toBe(contract.timeout);
+      expect(entry.definition.needsToolCall, kind).toBe(false);
+      expect(entry.definition.isMultimodal, kind).toBe(contract.multimodal);
+      expect(entry.definition.allowedTools, kind).toEqual([]);
+      expect('invocation' in entry.definition ? entry.definition.invocation : undefined, kind).toBe(
+        contract.invocation,
+      );
+      expect('parseText' in entry && entry.parseText, kind).toBeTypeOf('function');
+      expect('outputSchema' in entry && entry.outputSchema.safeParse, kind).toBeTypeOf('function');
+    }
+
+    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    for (const kind of Object.keys(expected)) {
+    }
+  });
+
+  it('owns the three Knowledge TaskSpecs without central quarry definitions', () => {
+    const expected = {
+      KnowledgeEdgeProposeTask: {
+        spec: knowledgeEdgeProposeTaskSpec,
+        provider: 'xiaomi',
+        model: 'mimo-v2.5-pro',
+        maxIterations: 2,
+        timeout: 60_000,
+        needsToolCall: false,
+        allowedTools: [],
+      },
+      FrontierPrerequisiteTask: {
+        spec: frontierPrerequisiteTaskSpec,
+        provider: 'xiaomi',
+        model: 'mimo-v2.5-pro',
+        maxIterations: 2,
+        timeout: 60_000,
+        needsToolCall: false,
+        allowedTools: [],
+      },
+      KnowledgeReviewTask: {
+        spec: knowledgeReviewTaskSpec,
+        provider: 'xiaomi',
+        model: 'mimo-v2.5-pro',
+        maxIterations: 12,
+        timeout: 120_000,
+        needsToolCall: true,
+        allowedTools: ['mcp__loom__write_proposal'],
+      },
+    } as const;
+
+    for (const [kind, contract] of Object.entries(expected)) {
+      const entry = knowledgeTaskSpecs[kind as keyof typeof expected];
+      expect(entry.ownership, kind).toBe('owned');
+      expect(entry, kind).toBe(contract.spec);
+      expect(entry.definition, kind).toBe(taskCatalog[kind as keyof typeof taskCatalog]);
+      expect(entry.definition.defaultProvider, kind).toBe(contract.provider);
+      expect(entry.definition.defaultModel, kind).toBe(contract.model);
+      expect(entry.definition.budget.maxIterations, kind).toBe(contract.maxIterations);
+      expect(entry.definition.budget.timeout, kind).toBe(contract.timeout);
+      expect(entry.definition.needsToolCall, kind).toBe(contract.needsToolCall);
+      expect(entry.definition.isMultimodal, kind).toBe(false);
+      expect(entry.definition.allowedTools, kind).toEqual(contract.allowedTools);
+      expect('parseText' in entry && entry.parseText, kind).toBeTypeOf('function');
+      expect('outputSchema' in entry && entry.outputSchema.safeParse, kind).toBeTypeOf('function');
+    }
+
+    // YUK-870 (F3.5b) — the last transitional entry left this owner map: knowledge
+    // keeps exactly its three owned specs and no longer holds SessionSummaryTask.
+    expect(Object.keys(knowledgeTaskSpecs).sort()).toEqual([
+      'FrontierPrerequisiteTask',
+      'KnowledgeEdgeProposeTask',
+      'KnowledgeReviewTask',
+    ]);
+
+    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    for (const kind of Object.keys(expected)) {
+    }
+  });
+
+  it('owns the thirteen agency TaskSpecs without quarry definitions', () => {
+    expect(Object.keys(agencyTaskSpecs).sort()).toEqual(
+      [
+        'LearningIntentOutlineTask',
+        'GoalScopeTask',
+        'MindModelInductionTask',
+        'ConjectureGroupingTask',
+        'ConjectureProbeAuthorTask',
+        'ConjectureProbeReviewTask',
+        'InterventionRecommendationTask',
+        'InterventionPackageAuthorTask',
+        'InterventionPackageReviewTask',
+        'ResearchMeetingDirectorTask',
+        'DreamingTask',
+        'CoachTask',
+        'MemoryBriefTask',
+      ].sort(),
+    );
+    for (const [kind, entry] of Object.entries(agencyTaskSpecs)) {
+      expect(entry.ownership, kind).toBe('owned');
+      expect(entry.definition, kind).toBe(taskCatalog[kind as keyof typeof taskCatalog]);
+      expect('parseText' in entry, kind).toBe(true);
+      expect('outputSchema' in entry, kind).toBe(true);
+    }
+    const specIdentities = {
+      LearningIntentOutlineTask: learningIntentOutlineTaskSpec,
+      GoalScopeTask: goalScopeTaskSpec,
+      MindModelInductionTask: mindModelInductionTaskSpec,
+      ConjectureGroupingTask: conjectureGroupingTaskSpec,
+      ConjectureProbeAuthorTask: conjectureProbeAuthorTaskSpec,
+      ConjectureProbeReviewTask: conjectureProbeReviewTaskSpec,
+      InterventionRecommendationTask: interventionRecommendationTaskSpec,
+      InterventionPackageAuthorTask: interventionPackageAuthorTaskSpec,
+      InterventionPackageReviewTask: interventionPackageReviewTaskSpec,
+      ResearchMeetingDirectorTask: researchMeetingDirectorTaskSpec,
+      DreamingTask: dreamingTaskSpec,
+      CoachTask: coachTaskSpec,
+      MemoryBriefTask: memoryBriefTaskSpec,
+    } as const;
+    for (const [kind, spec] of Object.entries(specIdentities)) {
+      expect(agencyTaskSpecs[kind as keyof typeof agencyTaskSpecs], kind).toBe(spec);
+    }
+    for (const kind of [
+      'LearningIntentOutlineTask',
+      'GoalScopeTask',
+      'MindModelInductionTask',
+      'ConjectureGroupingTask',
+      'ConjectureProbeAuthorTask',
+      'ConjectureProbeReviewTask',
+    ] as const) {
+      expect(Object.hasOwn(knowledgeTaskSpecs, kind), kind).toBe(false);
+    }
+
+    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    for (const kind of Object.keys(agencyTaskSpecs)) {
+    }
+  });
+
+  // YUK-870 (F3.5b) — the last transitional quarry entry is now Practice-owned.
+  // SessionSummaryTask moves as a full owned spec: plain-text output contract
+  // mirroring the summary runner's trim + 240-char clamp consumer
+  // (src/server/session/summary.ts), prompt builder moved byte-identical so the
+  // prompt-hash oracle holds.
+  it('owns the SessionSummaryTask spec with the plain-text consumer contract (YUK-870)', () => {
+    const entry = practiceTaskSpecs.SessionSummaryTask;
+    expect(entry.ownership).toBe('owned');
+    expect(entry).toBe(sessionSummaryTaskSpec);
+    expect(entry.definition).toBe(taskCatalog.SessionSummaryTask);
+    expect(entry.definition.defaultProvider).toBe('xiaomi');
+    expect(entry.definition.defaultModel).toBe('mimo-v2.5-pro');
+    expect(entry.definition.budget.maxIterations).toBe(1);
+    expect(entry.definition.budget.timeout).toBe(60_000);
+    expect(entry.definition.needsToolCall).toBe(false);
+    expect(entry.definition.isMultimodal).toBe(false);
+    expect(entry.definition.allowedTools).toEqual([]);
+    expect(entry.definition.prompt.kind).toBe('profile');
+    expect('parseText' in entry && entry.parseText, 'parseText').toBeTypeOf('function');
+    expect('outputSchema' in entry && entry.outputSchema.safeParse, 'outputSchema').toBeTypeOf(
+      'function',
+    );
+
+    // The output is a plain-text summary, not JSON: parseText mirrors the summary
+    // runner consumer — trim, clamp to 240 chars (prompt asks ≤120; clamp, don't
+    // reject), and require non-empty.
+    if ('parseText' in entry) {
+      expect(entry.parseText(`${'x'.repeat(300)}`)).toBe('x'.repeat(240));
+      expect(() => entry.parseText('   ')).toThrow();
+    }
+
+    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+  });
+
+  it('owns the seven Practice sourcing and generation TaskSpecs without quarry definitions', () => {
+    const kinds = [
+      'SolutionGenerateTask',
+      'SolutionGenerateVisionTask',
+      'QuizGenTask',
+      'QuestionAuthorTask',
+      'ItemPriorTask',
+      'SelectionOrchestratorTask',
+      'SourcingTask',
+    ] as const;
+
+    for (const kind of kinds) {
+      const entry = practiceTaskSpecs[kind];
+      expect(entry.ownership, kind).toBe('owned');
+      if (entry.ownership !== 'owned') continue;
+      expect(entry.definition, kind).toBe(taskCatalog[kind]);
+      expect(entry.parseText, kind).toBeTypeOf('function');
+      expect(entry.outputSchema.safeParse, kind).toBeTypeOf('function');
+    }
+
+    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    for (const kind of kinds) {
+    }
+  });
+
+  it('owns the five Copilot TaskSpecs without central quarry definitions', () => {
+    const expected = {
+      CopilotDispatchTask: copilotDispatchTaskSpec,
+      CopilotEvidenceReviewTask: copilotEvidenceReviewTaskSpec,
+      CopilotEvidenceVerificationTask: copilotEvidenceVerificationTaskSpec,
+      CopilotTask: copilotTaskSpec,
+      TeachingTurnTask: teachingTurnTaskSpec,
+    } as const;
+
+    for (const [kind, spec] of Object.entries(expected)) {
+      const entry = copilotTaskSpecs[kind as keyof typeof copilotTaskSpecs];
+      expect(entry.ownership, kind).toBe('owned');
+      expect(entry, kind).toBe(spec);
+      expect(entry.definition, kind).toBe(taskCatalog[kind as keyof typeof taskCatalog]);
+      expect(entry.parseText, kind).toBeTypeOf('function');
+      expect(entry.outputSchema.safeParse, kind).toBeTypeOf('function');
+    }
+
+    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    for (const kind of Object.keys(expected)) {
+    }
+  });
+
+  it('retains 51 full owned TaskSpecs with the quarry deleted (YUK-870/YUK-885)', () => {
+    for (const specs of Object.values(OWNER_MAPS)) {
+      for (const [kind, entry] of Object.entries(specs)) {
+        expect(entry.ownership, kind).toBe('owned');
+        expect(OWNED_SPECS.has(entry), kind).toBe(true);
+        expect(entry.parseText, kind).toBeTypeOf('function');
+        expect(entry.outputSchema.safeParse, kind).toBeTypeOf('function');
+      }
+    }
+    expect(practiceTaskSpecs.SessionSummaryTask).toBe(sessionSummaryTaskSpec);
+    expect(practiceTaskSpecs.AttributionTask).toBe(attributionTaskSpec);
+    expect(practiceTaskSpecs.AttributionRerankTask).toBe(attributionRerankTaskSpec);
+    expect(practiceTaskSpecs.VariantGenTask).toBe(variantGenTaskSpec);
+    expect(notesTaskSpecs.NoteGenerateTask).toBe(noteGenerateTaskSpec);
+    expect(notesTaskSpecs.NoteRefineTask).toBe(noteRefineTaskSpec);
+    expect(notesTaskSpecs.NoteVerifyTask).toBe(noteVerifyTaskSpec);
+    expect(practiceTaskSpecs.QuizVerifyTask).toBe(quizVerifyTaskSpec);
+    expect(practiceTaskSpecs.SourceGroundingVerifyTask).toBe(sourceGroundingVerifyTaskSpec);
+    expect(practiceTaskSpecs.VariantVerifyTask).toBe(variantVerifyTaskSpec);
+    expect(practiceTaskSpecs.TeachingQualityTask).toBe(teachingQualityTaskSpec);
+    expect(practiceTaskSpecs.SemanticJudgeTask.ownership).toBe('owned');
+    expect(practiceTaskSpecs.UnitDimensionFallback.ownership).toBe('owned');
+    expect(practiceTaskSpecs.StepsJudgeTask.ownership).toBe('owned');
+    expect(practiceTaskSpecs.MultimodalDirectJudgeTask.ownership).toBe('owned');
+    expect(taskCatalog.AttributionTask).toBe(attributionTaskSpec.definition);
+    expect(taskCatalog.NoteGenerateTask).toBe(noteGenerateTaskSpec.definition);
+    expect(taskCatalog.NoteRefineTask).toBe(noteRefineTaskSpec.definition);
+  });
+
+  it('keeps semantic definitions out of all six owner index files', () => {
+    const ownerIndexUrls = [
+      new URL('../capabilities/practice/tasks/index.ts', import.meta.url),
+      new URL('../capabilities/notes/tasks/index.ts', import.meta.url),
+      new URL('../capabilities/ingestion/tasks/index.ts', import.meta.url),
+      new URL('../capabilities/knowledge/tasks/index.ts', import.meta.url),
+      new URL('../capabilities/agency/tasks/index.ts', import.meta.url),
+      new URL('../capabilities/copilot/tasks/index.ts', import.meta.url),
+    ];
+    for (const url of ownerIndexUrls) {
+      const source = readFileSync(url, 'utf8');
+      expect(source, url.pathname).toContain('defineOwnedTaskSpecs(');
+      expect(source, url.pathname).not.toMatch(/\bfunction\s+build/);
+      expect(source, url.pathname).not.toMatch(
+        /\b(description|defaultProvider|defaultModel|budget|needsToolCall|allowedTools|prompt)\s*:/,
+      );
+    }
+    const practiceSource = readFileSync(ownerIndexUrls[0], 'utf8');
+    const notesSource = readFileSync(ownerIndexUrls[1], 'utf8');
+    expect(practiceSource).toContain("from './attribution'");
+    expect(practiceSource).toContain("from './variant-gen'");
+    expect(notesSource).toContain("from './note-tasks'");
+  });
+
+  it('freezes every owner map and each definition metadata descriptor', () => {
+    expect(Object.isFrozen(taskCatalog)).toBe(true);
+    for (const specs of Object.values(OWNER_MAPS)) {
+      expect(Object.isFrozen(specs)).toBe(true);
+      for (const entry of Object.values(specs)) {
+        expect(Object.isFrozen(entry), entry.definition.kind).toBe(true);
+        const definition = entry.definition;
+        expect(Object.isFrozen(definition), definition.kind).toBe(true);
+        expect(Object.isFrozen(definition.budget), `${definition.kind}.budget`).toBe(true);
+        expect(Object.isFrozen(definition.allowedTools), `${definition.kind}.allowedTools`).toBe(
+          true,
+        );
+        expect(Object.isFrozen(definition.prompt), `${definition.kind}.prompt`).toBe(true);
+      }
+    }
+  });
+
+  it('throws on actual mutation and redefinition attempts without changing values', () => {
+    const originalCatalogEntry = taskCatalog.AttributionTask;
+    const originalOwnerEntry = practiceTaskSpecs.AttributionTask;
+    const originalDescription = originalCatalogEntry.description;
+    const originalTimeout = originalCatalogEntry.budget.timeout;
+    const originalTools = [...originalCatalogEntry.allowedTools];
+    const originalPromptKind = originalCatalogEntry.prompt.kind;
+
+    expect(() =>
+      Object.assign(taskCatalog, { AttributionTask: taskCatalog.VariantGenTask }),
+    ).toThrow();
+    expect(() =>
+      Object.assign(practiceTaskSpecs, { AttributionTask: practiceTaskSpecs.VariantGenTask }),
+    ).toThrow();
+    expect(() => Object.assign(originalCatalogEntry, { description: 'mutated' })).toThrow();
+    expect(() => Object.assign(originalCatalogEntry.budget, { timeout: 1 })).toThrow();
+    expect(() =>
+      Array.prototype.push.call(originalCatalogEntry.allowedTools, 'forbidden'),
+    ).toThrow();
+    expect(() => Object.assign(originalCatalogEntry.prompt, { kind: 'mutated' })).toThrow();
+    expect(() =>
+      Object.defineProperty(practiceTaskSpecs, 'AttributionTask', {
+        value: practiceTaskSpecs.VariantGenTask,
+      }),
+    ).toThrow();
+    expect(() =>
+      Object.defineProperty(originalCatalogEntry.budget, 'timeout', { value: 1 }),
+    ).toThrow();
+    expect(() =>
+      Object.defineProperty(originalCatalogEntry.allowedTools, '0', { value: 'forbidden' }),
+    ).toThrow();
+    expect(() =>
+      Object.defineProperty(originalCatalogEntry.prompt, 'kind', { value: 'mutated' }),
+    ).toThrow();
+    expect(() =>
+      Object.defineProperty(taskCatalog, 'AttributionTask', { value: taskCatalog.VariantGenTask }),
+    ).toThrow();
+    expect(() =>
+      Object.defineProperty(originalCatalogEntry, 'description', { value: 'redefined' }),
+    ).toThrow();
+
+    expect(taskCatalog.AttributionTask).toBe(originalCatalogEntry);
+    expect(practiceTaskSpecs.AttributionTask).toBe(originalOwnerEntry);
+    expect(originalCatalogEntry.description).toBe(originalDescription);
+    expect(originalCatalogEntry.budget.timeout).toBe(originalTimeout);
+    expect(originalCatalogEntry.allowedTools).toEqual(originalTools);
+    expect(originalCatalogEntry.prompt.kind).toBe(originalPromptKind);
+  });
+});
+
+describe('defineOwnedTaskSpecs', () => {
+  it('preserves literal keys and full TaskSpec identity for valid owned input', () => {
+    const spec = makeOwnedSpec('LiteralTask');
+    const specs = defineOwnedTaskSpecs('practice', { LiteralTask: spec });
+    expect(specs.LiteralTask).toBe(spec);
+    expect(Object.isFrozen(specs)).toBe(true);
+  });
+
+  it('rejects key/kind mismatch', () => {
+    expect(() =>
+      defineOwnedTaskSpecs('practice', { WrongKey: makeOwnedSpec('RightKind') }),
+    ).toThrow('key "WrongKey" does not match spec.kind "RightKind"');
+  });
+
+  it.each(['parseText', 'outputSchema'] as const)('rejects an owned entry missing %s', (field) => {
+    const spec = makeOwnedSpec('TestTask');
+    const malformed = Object.fromEntries(Object.entries(spec).filter(([key]) => key !== field));
+    expect(() => invokeEntryValidation(malformed)).toThrow(`owned "TestTask" missing ${field}`);
+  });
+
+  // YUK-885 — the transitional entry machinery is deleted with the quarry:
+  // TaskOwnerEntry is now exactly OwnedTaskSpec, so a non-'owned' entry is a
+  // type error and defineOwnedTaskSpecs rejects it at runtime via the
+  // mandatory parseText/outputSchema checks below.
+
+  it.each([
+    ['empty description', { ...makeDefinition('TestTask'), description: '  ' }],
+    ['empty provider', { ...makeDefinition('TestTask'), defaultProvider: '' }],
+    ['unknown provider', { ...makeDefinition('TestTask'), defaultProvider: 'other' }],
+    ['empty model', { ...makeDefinition('TestTask'), defaultModel: '  ' }],
+    ['non-boolean needsToolCall', { ...makeDefinition('TestTask'), needsToolCall: 'false' }],
+    ['non-boolean isMultimodal', { ...makeDefinition('TestTask'), isMultimodal: 0 }],
+    ['non-array tools', { ...makeDefinition('TestTask'), allowedTools: 'tool' }],
+    ['empty tool name', { ...makeDefinition('TestTask'), needsToolCall: true, allowedTools: [''] }],
+    [
+      'non-string tool name',
+      { ...makeDefinition('TestTask'), needsToolCall: true, allowedTools: [1] },
+    ],
+    ['invalid invocation', { ...makeDefinition('TestTask'), invocation: 'sometimes' }],
+    [
+      'tools on a no-tool task',
+      { ...makeDefinition('TestTask'), needsToolCall: false, allowedTools: ['tool'] },
+    ],
+    ['invalid prompt discriminant', { ...makeDefinition('TestTask'), prompt: { kind: 'other' } }],
+    [
+      'empty inline prompt',
+      { ...makeDefinition('TestTask'), prompt: { kind: 'inline', text: '  ' } },
+    ],
+    [
+      'non-string inline prompt',
+      { ...makeDefinition('TestTask'), prompt: { kind: 'inline', text: 1 } },
+    ],
+    [
+      'non-function profile builder',
+      { ...makeDefinition('TestTask'), prompt: { kind: 'profile', build: 'builder' } },
+    ],
+    [
+      'inline prompt with contradictory builder',
+      { ...makeDefinition('TestTask'), prompt: { kind: 'inline', text: 'x', build: () => 'x' } },
+    ],
+    [
+      'profile prompt with contradictory text',
+      { ...makeDefinition('TestTask'), prompt: { kind: 'profile', build: () => 'x', text: 'x' } },
+    ],
+    [
+      'invalid structured output schema',
+      { ...makeDefinition('TestTask'), structuredOutputSchema: {} },
+    ],
+  ])('rejects %s', (_label, definition) => {
+    expect(() => invokeEntryValidation({ ...makeOwnedSpec('TestTask'), definition })).toThrow();
+  });
+
+  it.each([
+    ['maxIterations', { maxIterations: 0, maxCost: 0.5, transientRetries: 0, timeout: 60_000 }],
+    [
+      'fractional maxIterations',
+      { maxIterations: 1.5, maxCost: 0.5, transientRetries: 0, timeout: 60_000 },
+    ],
+    [
+      'infinite maxIterations',
+      {
+        maxIterations: Number.POSITIVE_INFINITY,
+        maxCost: 0.5,
+        transientRetries: 0,
+        timeout: 60_000,
+      },
+    ],
+    ['maxCost', { maxIterations: 1, maxCost: -1, transientRetries: 0, timeout: 60_000 }],
+    [
+      'infinite maxCost',
+      { maxIterations: 1, maxCost: Number.POSITIVE_INFINITY, transientRetries: 0, timeout: 60_000 },
+    ],
+    ['transientRetries', { maxIterations: 1, maxCost: 0.5, transientRetries: -1, timeout: 60_000 }],
+    [
+      'fractional transientRetries',
+      { maxIterations: 1, maxCost: 0.5, transientRetries: 0.5, timeout: 60_000 },
+    ],
+    [
+      'infinite transientRetries',
+      {
+        maxIterations: 1,
+        maxCost: 0.5,
+        transientRetries: Number.POSITIVE_INFINITY,
+        timeout: 60_000,
+      },
+    ],
+    ['timeout', { maxIterations: 1, maxCost: 0.5, transientRetries: 0, timeout: 0 }],
+    [
+      'infinite timeout',
+      { maxIterations: 1, maxCost: 0.5, transientRetries: 0, timeout: Number.POSITIVE_INFINITY },
+    ],
+  ])('rejects an invalid %s budget field', (_field, budget) => {
+    expect(() =>
+      invokeEntryValidation({
+        ...makeOwnedSpec('TestTask'),
+        definition: { ...makeDefinition('TestTask'), budget },
+      }),
+    ).toThrow('invalid budget');
+  });
+
+  it('accepts a valid structured output schema', () => {
+    const spec = makeOwnedSpec('StructuredTask');
+    expect(defineOwnedTaskSpecs('practice', { StructuredTask: spec }).StructuredTask).toBe(spec);
+  });
+
+  it('accepts both invocation values and freezes tool metadata', () => {
+    for (const invocation of ['auto', 'manual_rescue_only'] as const) {
+      const spec = {
+        ...makeOwnedSpec(`Invocation-${invocation}`),
+        definition: {
+          ...makeDefinition(`Invocation-${invocation}`),
+          invocation,
+          needsToolCall: true,
+          allowedTools: ['tool'],
+        },
+      };
+      const specs = defineOwnedTaskSpecs('practice', { [spec.definition.kind]: spec });
+      expect(Object.isFrozen(spec.definition.allowedTools)).toBe(true);
+      expect(Object.values(specs)[0]).toBe(spec);
+    }
+  });
+});
+
+describe('composeTaskCatalog', () => {
+  it('preserves literal keys while merging disjoint frozen maps', () => {
+    const practice = defineOwnedTaskSpecs('practice', { TaskA: makeOwnedSpec('TaskA') });
+    const notes = defineOwnedTaskSpecs('notes', { TaskB: makeOwnedSpec('TaskB') });
+    const catalog = composeTaskCatalog([
+      { owner: 'practice', specs: practice },
+      { owner: 'notes', specs: notes },
+    ]);
+    expect(catalog.TaskA).toBe(practice.TaskA.definition);
+    expect(catalog.TaskA.kind).toBe('TaskA');
+    expect(catalog.TaskB.kind).toBe('TaskB');
+    expect(Object.isFrozen(catalog)).toBe(true);
+  });
+
+  it('rejects duplicate owners even when their kinds differ', () => {
+    expect(() =>
+      composeTaskCatalog([
+        { owner: 'practice', specs: { TaskA: makeOwnedSpec('TaskA') } },
+        { owner: 'practice', specs: { TaskB: makeOwnedSpec('TaskB') } },
+      ]),
+    ).toThrow('duplicate owner "practice"');
+  });
+
+  it('rejects duplicate kinds across owners', () => {
+    expect(() =>
+      composeTaskCatalog([
+        { owner: 'practice', specs: { TaskDup: makeOwnedSpec('TaskDup') } },
+        { owner: 'notes', specs: { TaskDup: makeOwnedSpec('TaskDup') } },
+      ]),
+    ).toThrow('duplicate kind "TaskDup"');
+  });
+
+  it('rejects key/kind mismatch even for a directly supplied owner map', () => {
+    expect(() =>
+      composeTaskCatalog([{ owner: 'practice', specs: { WrongKey: makeOwnedSpec('RightKind') } }]),
+    ).toThrow('key "WrongKey" does not match spec.kind "RightKind"');
+  });
+
+  it.each([50, 52])('rejects an expected 51-kind catalog with %i entries', (count) => {
+    const entries = Object.fromEntries(
+      Array.from({ length: count }, (_, index) => {
+        const spec = makeOwnedSpec(`Task${index}`);
+        return [spec.definition.kind, spec];
+      }),
+    );
+    expect(() => composeTaskCatalog([{ owner: 'practice', specs: entries }], 51)).toThrow(
+      `expected 51 definitions, received ${count}`,
+    );
+  });
+});

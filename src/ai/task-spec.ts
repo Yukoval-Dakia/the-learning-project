@@ -13,29 +13,29 @@ export type Provider =
 export type ModelId = string;
 
 export interface TaskBudget {
-  maxIterations: number;
-  maxCost: number;
-  transientRetries: number;
-  timeout: number;
+  readonly maxIterations: number;
+  readonly maxCost: number;
+  readonly transientRetries: number;
+  readonly timeout: number;
 }
 
 export type TaskPrompt =
-  | { kind: 'inline'; text: string }
-  | { kind: 'profile'; build: (profile: SubjectProfile) => string };
+  | { readonly kind: 'inline'; readonly text: string }
+  | { readonly kind: 'profile'; readonly build: (profile: SubjectProfile) => string };
 
 /** Runtime-neutral task definition projected into the central registry. */
 export interface TaskDefinition {
-  kind: string;
-  description: string;
-  defaultProvider: Provider;
-  defaultModel: ModelId;
-  budget: TaskBudget;
-  needsToolCall: boolean;
-  isMultimodal: boolean;
-  allowedTools: string[];
-  prompt: TaskPrompt;
-  invocation?: 'auto' | 'manual_rescue_only';
-  structuredOutputSchema?: ZodTypeAny;
+  readonly kind: string;
+  readonly description: string;
+  readonly defaultProvider: Provider;
+  readonly defaultModel: ModelId;
+  readonly budget: TaskBudget;
+  readonly needsToolCall: boolean;
+  readonly isMultimodal: boolean;
+  readonly allowedTools: readonly string[];
+  readonly prompt: TaskPrompt;
+  readonly invocation?: 'auto' | 'manual_rescue_only';
+  readonly structuredOutputSchema?: ZodTypeAny;
 }
 
 export const DEFAULT_TASK_BUDGET: TaskBudget = {
@@ -52,6 +52,8 @@ export interface TaskParseContext<Input> {
 
 /** Capability-owned model-task semantics; registry composition uses `definition`. */
 export interface TaskSpec<Input, Output> {
-  definition: TaskDefinition;
-  parseText(text: string, context: TaskParseContext<Input>): Output;
+  readonly ownership: 'owned';
+  readonly definition: TaskDefinition;
+  readonly outputSchema: ZodTypeAny;
+  readonly parseText: (text: string, context: TaskParseContext<Input>) => Output;
 }

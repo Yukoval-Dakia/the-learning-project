@@ -162,8 +162,7 @@ export const copilotCapability = defineCapability({
         // crashed active delivery into retry/failed evidence promptly; the
         // Copilot reconciler still never guesses from heartbeat timestamps.
         heartbeatSeconds: 30,
-        load: () =>
-          import('@/server/boss/handlers/copilot_run').then((m) => m.buildCopilotRunHandler),
+        load: () => import('./jobs/copilot_run').then((m) => m.buildCopilotRunHandler),
       },
       // YUK-577 — 主动开口触发评估器（按需 job，无 schedule）。producer（ingestion 完成）
       // boss.send(COPILOT_NUDGE_EVALUATE_QUEUE) → 本 handler 确定性判定 + 写触发留痕。
@@ -195,33 +194,28 @@ export const copilotCapability = defineCapability({
       },
     ],
   },
-  // M5-T3 (YUK-321) — copilot 自有工具（事件流读 + 记忆面读 + artifact authoring 写）。
+  // M5-T3 (YUK-321) — copilot 自有工具（事件流读 + 记忆面读）。
+  // YUK-880 (F3.9b)：author_artifact / update_artifact 的归属声明已移至
+  // notes manifest（实现 = notes/server/tools/author-artifact.ts）；Copilot
+  // 仅保留 allowlist 面授权，不再是 implementation owner。
   copilotTools: {
     tools: [
       {
         name: 'run_task',
-        load: () => import('@/server/ai/tools/run-task').then((m) => m.runTaskTool),
+        load: () => import('./server/tools/run-task').then((m) => m.runTaskTool),
       },
       {
         name: 'query_events',
-        load: () => import('@/server/ai/tools/query-events').then((m) => m.queryEventsTool),
+        load: () => import('./server/tools/query-events').then((m) => m.queryEventsTool),
       },
       {
         name: 'query_memory_brief',
-        load: () => import('@/server/ai/tools/context-readers').then((m) => m.queryMemoryBriefTool),
+        load: () => import('./server/tools/memory-brief').then((m) => m.queryMemoryBriefTool),
       },
       {
         name: 'search_memory_facts',
         load: () =>
-          import('@/server/ai/tools/search-memory-facts').then((m) => m.searchMemoryFactsTool),
-      },
-      {
-        name: 'author_artifact',
-        load: () => import('@/server/ai/tools/author-artifact').then((m) => m.authorArtifactTool),
-      },
-      {
-        name: 'update_artifact',
-        load: () => import('@/server/ai/tools/author-artifact').then((m) => m.updateArtifactTool),
+          import('./server/tools/search-memory-facts').then((m) => m.searchMemoryFactsTool),
       },
     ],
   },

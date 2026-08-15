@@ -84,14 +84,14 @@ import { capabilities } from '@/capabilities';
 import { PROBE_QUESTION_SOURCE } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { ai_task_runs, cost_ledger, event, kc_typed_state, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { ANTHROPIC_SUB_CONTRACT_REF } from '@/server/ai/pricing';
 import {
   PREDICTION_SCORE_ACTION,
   PROBE_RESULT_PROJECTED_ACTION,
 } from '@/server/conjectures/reconcile';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
-import { listProposalInboxRows } from '@/server/proposals/inbox';
-import { writeAiProposal } from '@/server/proposals/writer';
 import { buildHonoApp } from '../../../../server/app';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { RESEARCH_MEETING_SAMPLES, runResearchMeetingNightly } from './research_meeting_nightly';
@@ -488,7 +488,7 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect((rateEvent.payload as Record<string, unknown>).conjecture_id).toBe(proposalId);
 
     // ── 3. ANSWER THE PROBE through the real route + the REAL judge invoker ──
-    // No `vi.mock('@/server/judge/invoker')` here — this is the chokepoint PR #705 proved
+    // No `vi.mock('@/capabilities/practice/server/judge/invoker')` here — this is the chokepoint PR #705 proved
     // can be a dead stub in production while a test double looks complete.
     const answerRes = await answerProbeViaRoute(probeRow.id, '使动用法，译作「使他感到奇异」');
     expect(answerRes.status).toBe(200);

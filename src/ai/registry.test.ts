@@ -11,25 +11,30 @@
 // not "wording was tweaked".
 
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import {
+  CopilotDispatchDecisionSchema,
+  CopilotEvidenceReviewOutputSchema,
+  CopilotEvidenceVerificationOutputSchema,
+} from '@/capabilities/copilot/contracts';
 import {
   attributionRerankTaskSpec,
   attributionTaskSpec,
 } from '@/capabilities/practice/tasks/attribution';
+import { quizVerifyTaskSpec } from '@/capabilities/practice/tasks/quiz-verify';
+import { sourceGroundingVerifyTaskSpec } from '@/capabilities/practice/tasks/source-grounding-verify';
+import { teachingQualityTaskSpec } from '@/capabilities/practice/tasks/teaching-quality';
 import { variantGenTaskSpec } from '@/capabilities/practice/tasks/variant-gen';
+import { variantVerifyTaskSpec } from '@/capabilities/practice/tasks/variant-verify';
 import {
   COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS,
   COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS,
 } from '@/core/copilot-evidence';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
-import promptHashOracle from './fixtures/task-prompt-hashes.4cb5b966.json' with { type: 'json' };
-import {
-  CopilotDispatchDecisionSchema,
-  CopilotEvidenceReviewOutputSchema,
-  CopilotEvidenceVerificationOutputSchema,
-  type TaskDef,
-  tasks,
-} from './registry';
+import promptHashOracle from './fixtures/task-prompt-hashes.6b3233b1.json' with { type: 'json' };
+import { type TaskDef, type TaskKind, tasks } from './registry';
+import { taskCatalog } from './task-catalog';
 import { getTaskSystemPrompt } from './task-prompts';
 
 describe('copilot task dispatch declarations', () => {
@@ -48,6 +53,27 @@ describe('copilot task dispatch declarations', () => {
     }
     expect(Object.keys(tasks)).toHaveLength(51);
   });
+
+  it('is an immutable compatibility projection with only the two dispatch overlays', () => {
+    expect(Object.isFrozen(tasks)).toBe(true);
+    expect(Object.isFrozen(tasks.GoalScopeTask)).toBe(true);
+    expect(Object.isFrozen(tasks.GoalScopeTask.copilot)).toBe(true);
+    expect(Object.isFrozen(tasks.QuestionAuthorTask)).toBe(true);
+    expect(Object.isFrozen(tasks.QuestionAuthorTask.copilot)).toBe(true);
+    expect(tasks.GoalScopeTask).not.toBe(taskCatalog.GoalScopeTask);
+    expect(tasks.QuestionAuthorTask).not.toBe(taskCatalog.QuestionAuthorTask);
+    for (const kind of Object.keys(taskCatalog) as TaskKind[]) {
+      if (kind === 'GoalScopeTask' || kind === 'QuestionAuthorTask') continue;
+      expect(tasks[kind], kind).toBe(taskCatalog[kind]);
+    }
+  });
+
+  it('contains no prompt builders or task business definitions', () => {
+    const source = readFileSync(new URL('./registry.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/\bfunction\s+build/);
+    expect(source).not.toMatch(/\b(description|defaultProvider|defaultModel|budget|prompt)\s*:/);
+    expect(source).not.toContain('DEFAULT_TASK_BUDGET');
+  });
 });
 
 describe('task prompt definitions', () => {
@@ -55,6 +81,21 @@ describe('task prompt definitions', () => {
     expect(tasks.AttributionTask).toBe(attributionTaskSpec.definition);
     expect(tasks.AttributionRerankTask).toBe(attributionRerankTaskSpec.definition);
     expect(tasks.VariantGenTask).toBe(variantGenTaskSpec.definition);
+  });
+
+  // YUK-868 — the registry stays a no-op compatibility projection over the owner
+  // maps: VariantGenTask (already owned before this lane) must remain the exact
+  // variantGenTaskSpec.definition object, never a copy. The four verify tasks
+  // moved to owned practice specs this lane project through identically.
+  it('keeps the registry a no-op projection of the owned variant generation spec', () => {
+    expect(tasks.VariantGenTask === variantGenTaskSpec.definition).toBe(true);
+  });
+
+  it('statically projects the practice-owned verification task specs (YUK-868)', () => {
+    expect(tasks.QuizVerifyTask).toBe(quizVerifyTaskSpec.definition);
+    expect(tasks.SourceGroundingVerifyTask).toBe(sourceGroundingVerifyTaskSpec.definition);
+    expect(tasks.VariantVerifyTask).toBe(variantVerifyTaskSpec.definition);
+    expect(tasks.TeachingQualityTask).toBe(teachingQualityTaskSpec.definition);
   });
 
   it('defines one non-empty inline or profile prompt for every task', () => {
@@ -85,40 +126,15 @@ describe('task prompt definitions', () => {
     }
   });
 
-  it('matches every unchanged prompt byte-for-byte with the exact pre-refactor oracle', () => {
-    expect(promptHashOracle.baseCommit).toBe('4cb5b9669e9343f5bf4a21385626edc5ed9ad257');
+  it('matches all 51 prompts byte-for-byte with the exact pre-refactor oracle', () => {
+    expect(promptHashOracle.baseCommit).toBe('6b3233b10633c93497a8211956fddcb795ebd2da');
     expect(promptHashOracle.algorithm).toBe('sha256');
-    expect(promptHashOracle.taskCount).toBe(43);
-    expect(Object.keys(promptHashOracle.prompts)).toHaveLength(129);
+    expect(promptHashOracle.taskCount).toBe(51);
+    expect(Object.keys(promptHashOracle.prompts)).toHaveLength(204);
 
     for (const profileId of promptHashOracle.profiles) {
       const profile = resolveSubjectProfile(profileId);
       for (const task of Object.keys(tasks) as Array<keyof typeof tasks>) {
-        // YUK-821 intentionally replaces the induction/grouping contracts, adds the
-        // author/reviewer tasks, and updates the director charter. YUK-827 extends the
-        // existing single-call judge with response-signature classification. Dedicated
-        // tests below pin those behaviors; the old oracle still guards unchanged prompts.
-        if (
-          task === 'MindModelInductionTask' ||
-          task === 'ConjectureGroupingTask' ||
-          task === 'ConjectureProbeAuthorTask' ||
-          task === 'ConjectureProbeReviewTask' ||
-          task === 'ResearchMeetingDirectorTask' ||
-          task === 'MultimodalDirectJudgeTask' ||
-          task === 'InterventionRecommendationTask' ||
-          task === 'InterventionPackageAuthorTask' ||
-          task === 'InterventionPackageReviewTask' ||
-          task === 'QuizVerifyTask' ||
-          task === 'SolutionGenerateTask' ||
-          task === 'SolutionGenerateVisionTask' ||
-          task === 'SelectionOrchestratorTask' ||
-          task === 'CopilotDispatchTask' ||
-          task === 'CopilotEvidenceReviewTask' ||
-          task === 'CopilotEvidenceVerificationTask' ||
-          task === 'CopilotTask'
-        ) {
-          continue;
-        }
         const key = `${profileId}:${task}` as keyof typeof promptHashOracle.prompts;
         const actualHash = createHash('sha256')
           .update(getTaskSystemPrompt(task, profile), 'utf8')

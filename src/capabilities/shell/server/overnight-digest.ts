@@ -23,7 +23,7 @@
 import { listNoteRefineChanges } from '@/capabilities/notes/public';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, event } from '@/db/schema';
-import { countProposalsInWindow } from '@/server/proposals/inbox';
+import { countProposalsInWindow } from '@/kernel/proposals/inbox';
 import { and, count, desc, eq, gte, lt, sql } from 'drizzle-orm';
 import {
   type OvernightDigest,

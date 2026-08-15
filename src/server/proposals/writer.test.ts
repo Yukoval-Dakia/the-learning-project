@@ -1,9 +1,9 @@
 import type { AiProposalPayloadInputT } from '@/core/schema/proposal';
 import { event, learning_record } from '@/db/schema';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { writeAiProposal } from './writer';
 
 const base = {
   reason_md: 'Evidence supports this proposal.',

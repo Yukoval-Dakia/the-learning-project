@@ -1,15 +1,15 @@
 import { event, proposal_signals } from '@/db/schema';
-import { writeAiProposal } from '@/server/proposals/writer';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   PROPOSAL_DISMISS_COOLDOWN_DAYS,
   ensureProposalDecisionSignal,
   getProposalAcceptanceRates,
   loadProposalSignalsForRows,
   recordProposalDecisionSignal,
-} from './signals';
+} from '@/kernel/proposals/signals';
+import { writeAiProposal } from '@/kernel/proposals/writer';
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const source = {
   id: 'proposal_1',

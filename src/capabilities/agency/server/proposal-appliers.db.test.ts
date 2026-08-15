@@ -4,11 +4,13 @@
 // 以覆盖「壳路由 → 包 applier」整条链。
 
 import { artifact, event, knowledge, learning_item, proposal_signals } from '@/db/schema';
-import { planLearningIntent } from '@/server/orchestrator/learning_intent';
 import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { assertProposalLifecycleResult } from '../../../../tests/helpers/proposal-lifecycle';
+import { planLearningIntent } from './learning-intent';
+import type { LearningItemAcceptResult } from './proposal-appliers';
 
 // YUK-19 — learning_item lifecycle integration.
 //
@@ -95,7 +97,7 @@ describe('learning_item proposal lifecycle', () => {
       enqueueLearningIntentNote,
     });
     expect(result.kind).toBe('learning_item');
-    if (result.kind !== 'learning_item') throw new Error('unexpected result kind');
+    assertProposalLifecycleResult<LearningItemAcceptResult>(result, 'learning_item');
     expect(result.hub_learning_item_id).toBeTruthy();
     expect(result.atomic_learning_item_ids).toHaveLength(2);
     expect(result.long_learning_item_ids).toEqual([]);
@@ -144,7 +146,7 @@ describe('learning_item proposal lifecycle', () => {
     const { proposalId } = await seedLearningItemProposal({ withLong: true });
     const result = await acceptAiProposal(testDb(), proposalId);
     expect(result.kind).toBe('learning_item');
-    if (result.kind !== 'learning_item') throw new Error('unexpected result kind');
+    assertProposalLifecycleResult<LearningItemAcceptResult>(result, 'learning_item');
 
     expect(result.atomic_artifact_ids).toHaveLength(2);
     expect(result.long_learning_item_ids).toHaveLength(1);
@@ -166,7 +168,7 @@ describe('learning_item proposal lifecycle', () => {
       enqueueLearningIntentNote: firstEnqueue,
     });
     expect(first.kind).toBe('learning_item');
-    if (first.kind !== 'learning_item') throw new Error('unexpected result kind');
+    assertProposalLifecycleResult<LearningItemAcceptResult>(first, 'learning_item');
     expect(first.enqueued_note_generate_jobs).toBe(3);
 
     await testDb()
@@ -179,7 +181,7 @@ describe('learning_item proposal lifecycle', () => {
       enqueueLearningIntentNote: retryEnqueue,
     });
     expect(second.kind).toBe('learning_item');
-    if (second.kind !== 'learning_item') throw new Error('unexpected result kind');
+    assertProposalLifecycleResult<LearningItemAcceptResult>(second, 'learning_item');
     expect(second.idempotent).toBe(true);
     expect(second.enqueued_note_generate_jobs).toBe(2);
     expect(retryEnqueue).not.toHaveBeenCalledWith(first.atomic_artifact_ids[0]);
@@ -226,7 +228,7 @@ describe('learning_item proposal lifecycle', () => {
   it('retract after accept tombstones hub + atomic + long learning_items and all proposal-sourced artifacts', async () => {
     const { proposalId } = await seedLearningItemProposal({ withLong: true });
     const accepted = await acceptAiProposal(testDb(), proposalId);
-    if (accepted.kind !== 'learning_item') throw new Error('expected learning_item accept');
+    assertProposalLifecycleResult<LearningItemAcceptResult>(accepted, 'learning_item');
     const sourceAtomicArtifactId = accepted.atomic_artifact_ids[0];
     if (!sourceAtomicArtifactId) throw new Error('expected atomic artifact id');
     const quizArtifactId = 'quiz_retract_1';
@@ -296,7 +298,7 @@ describe('learning_item proposal lifecycle', () => {
   it('accept idempotent: second accept returns the existing materialization after the first writes a rate event', async () => {
     const { proposalId } = await seedLearningItemProposal();
     const first = await acceptAiProposal(testDb(), proposalId);
-    if (first.kind !== 'learning_item') throw new Error('expected learning_item');
+    assertProposalLifecycleResult<LearningItemAcceptResult>(first, 'learning_item');
 
     const second = await acceptAiProposal(testDb(), proposalId);
     expect(second).toMatchObject({

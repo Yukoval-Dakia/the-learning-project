@@ -16,14 +16,19 @@ import {
   question_block,
   source_asset,
 } from '@/db/schema';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
-import { writeAiProposal } from '@/server/proposals/writer';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import type { ImageCandidateAcceptDeps } from './image-candidate-accept';
+import { assertProposalLifecycleResult } from '../../../../tests/helpers/proposal-lifecycle';
+import type {
+  ImageCandidateAcceptDeps,
+  ImageCandidateAcceptResult,
+} from './image-candidate-accept';
+import type { BlockMergeAcceptResult } from './proposal-appliers';
 
 // The production path intentionally uses npm Undici fetch with its npm Agent (YUK-743).
 // These DB tests still stub network responses through the existing global-fetch spies;
@@ -130,7 +135,7 @@ describe('block_merge proposal lifecycle', () => {
     const result = await acceptAiProposal(db, 'block_merge_p1');
 
     expect(result.kind).toBe('block_merge');
-    if (result.kind !== 'block_merge') throw new Error('expected block_merge result');
+    assertProposalLifecycleResult<BlockMergeAcceptResult>(result, 'block_merge');
     expect(result).toMatchObject({
       kind: 'block_merge',
       primary_block_id: primary,
@@ -180,7 +185,7 @@ describe('block_merge proposal lifecycle', () => {
     });
 
     const result = await acceptAiProposal(db, 'block_merge_dup');
-    if (result.kind !== 'block_merge') throw new Error('expected block_merge result');
+    assertProposalLifecycleResult<BlockMergeAcceptResult>(result, 'block_merge');
     // effective set = [m1]; NOT 3.
     expect(result.merged_count).toBe(1);
     expect(result.stale).toBeUndefined();
@@ -211,7 +216,7 @@ describe('block_merge proposal lifecycle', () => {
 
     const first = await acceptAiProposal(db, 'block_merge_idem');
     expect(first.kind).toBe('block_merge');
-    if (first.kind !== 'block_merge') throw new Error('expected block_merge result');
+    assertProposalLifecycleResult<BlockMergeAcceptResult>(first, 'block_merge');
     expect(first.merged_count).toBe(1);
 
     const second = await acceptAiProposal(db, 'block_merge_idem');
@@ -270,7 +275,7 @@ describe('block_merge proposal lifecycle', () => {
       stale: true,
       skip_reason: 'skipped:not_draft',
     });
-    if (result.kind !== 'block_merge') throw new Error('expected block_merge result');
+    assertProposalLifecycleResult<BlockMergeAcceptResult>(result, 'block_merge');
     expect(result.rate_event_id).toBeUndefined();
 
     // No mutation: primary stays its own standalone, merge block untouched.
@@ -409,7 +414,7 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     const result = await acceptAiProposal(db, 'img_cand_1', { imageCandidateDeps: deps });
 
     expect(result.kind).toBe('image_candidate');
-    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+    assertProposalLifecycleResult<ImageCandidateAcceptResult>(result, 'image_candidate');
 
     // source_asset persisted (the image was downloaded + put to R2).
     expect(r2.put).toHaveBeenCalledTimes(1);
@@ -519,7 +524,7 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     const second = await acceptAiProposal(db, 'img_cand_idem', { imageCandidateDeps: deps });
 
     expect(runTaskFn).toHaveBeenCalledTimes(1); // still ONE — re-accept did not re-spend.
-    if (second.kind !== 'image_candidate') throw new Error('unreachable');
+    assertProposalLifecycleResult<ImageCandidateAcceptResult>(second, 'image_candidate');
     expect(second.idempotent).toBe(true);
     if (first.kind === 'image_candidate') {
       expect(second.question_id).toBe(first.question_id);
@@ -542,7 +547,7 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     const { deps } = imageCandidateDeps();
 
     const result = await acceptAiProposal(db, 'img_cand_kids', { imageCandidateDeps: deps });
-    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+    assertProposalLifecycleResult<ImageCandidateAcceptResult>(result, 'image_candidate');
     const rows = await db.select().from(question).where(eq(question.id, result.question_id));
     expect(rows[0].knowledge_ids).toEqual(['k1', 'k2']);
   });
@@ -553,7 +558,7 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     const { deps } = imageCandidateDeps();
 
     const result = await acceptAiProposal(db, 'img_cand_nokids', { imageCandidateDeps: deps });
-    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+    assertProposalLifecycleResult<ImageCandidateAcceptResult>(result, 'image_candidate');
     const rows = await db.select().from(question).where(eq(question.id, result.question_id));
     expect(rows[0].knowledge_ids).toEqual([]);
   });
@@ -1017,7 +1022,7 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     const { deps } = imageCandidateDeps();
 
     const result = await acceptAiProposal(db, 'img_cand_choice', { imageCandidateDeps: deps });
-    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+    assertProposalLifecycleResult<ImageCandidateAcceptResult>(result, 'image_candidate');
     const rows = await db.select().from(question).where(eq(question.id, result.question_id));
     expect(rows[0].kind).toBe('choice');
   });
@@ -1031,7 +1036,7 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     const { deps } = imageCandidateDeps();
 
     const result = await acceptAiProposal(db, 'img_cand_extract', { imageCandidateDeps: deps });
-    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+    assertProposalLifecycleResult<ImageCandidateAcceptResult>(result, 'image_candidate');
     const rows = await db.select().from(question).where(eq(question.id, result.question_id));
     const meta = rows[0].metadata as {
       web_sourced?: { extract?: string };
@@ -1162,7 +1167,7 @@ describe('image_candidate cold-start bridges (YUK-478)', () => {
     });
 
     const result = await acceptAiProposal(db, 'img_cand_coldstart', { imageCandidateDeps: deps });
-    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+    assertProposalLifecycleResult<ImageCandidateAcceptResult>(result, 'image_candidate');
 
     // P3: the subject-classify bridge ran once (resolving seed:math:root for tagKnowledge), then
     // tagKnowledge ran once under that root.
@@ -1229,7 +1234,7 @@ describe('image_candidate cold-start bridges (YUK-478)', () => {
     const result = await acceptAiProposal(db, 'img_cand_coldstart_withref', {
       imageCandidateDeps: deps,
     });
-    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+    assertProposalLifecycleResult<ImageCandidateAcceptResult>(result, 'image_candidate');
     const rows = await db.select().from(question).where(eq(question.id, result.question_id));
     // The OCR-extracted reference answer is preserved (the cold-start bridge must not
     // overwrite a real OCR answer with a regenerated one).
@@ -1258,7 +1263,7 @@ describe('image_candidate cold-start bridges (YUK-478)', () => {
     const result = await acceptAiProposal(db, 'img_cand_coldstart_fail', {
       imageCandidateDeps: deps,
     });
-    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+    assertProposalLifecycleResult<ImageCandidateAcceptResult>(result, 'image_candidate');
 
     // The question persisted (upload not lost) but un-attributed + still a draft.
     const rows = await db.select().from(question).where(eq(question.id, result.question_id));

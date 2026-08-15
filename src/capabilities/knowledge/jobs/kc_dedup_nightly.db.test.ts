@@ -276,7 +276,7 @@ describe('runKcDedupNightly', () => {
     // proposalWhere() folds only propose / experimental:knowledge_% /
     // experimental:proposal / experimental:propose_learning_intent — the scan
     // action matches NONE, so it is audit-only, never surfaced as a pending item.
-    const { listProposalInboxRows } = await import('@/server/proposals/inbox');
+    const { listProposalInboxRows } = await import('@/kernel/proposals/inbox');
     const inbox = await listProposalInboxRows(db, { status: 'pending' });
     expect(inbox.some((r) => r.source_action === 'experimental:kc_dedup_scan')).toBe(false);
     // The merge proposal IS in the inbox (the human-acceptable item).

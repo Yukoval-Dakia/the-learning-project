@@ -62,7 +62,6 @@ import {
   observeEnabled,
   studentAnswerGradingEnabled,
 } from '@/capabilities/ingestion/server/workflow-judge-config';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import {
   type NameKcFn,
   isTagKnowledgeInvariantError,
@@ -78,13 +77,14 @@ import type { TaggingOutputT } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
   type MultimodalDirectImageFetchFn,
   type MultimodalDirectRunTaskFn,
   runMultimodalDirectJudge,
-} from '@/server/ai/judges/multimodal-direct-judge';
-import type { JudgeQuestionRow } from '@/server/ai/judges/question-contract';
+} from '@/kernel/judge';
+import type { JudgeQuestionRow } from '@/kernel/judge';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
   isObjectiveJudgeRoute,
   recordFamilyObservationForAttempt,

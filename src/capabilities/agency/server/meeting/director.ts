@@ -46,21 +46,25 @@ import {
   applyConjectureHistoryGate,
   loadConjectureHistory,
 } from '@/capabilities/agency/server/conjecture/history';
+import {
+  buildEvidenceServer,
+  persistToolTrace,
+} from '@/capabilities/agency/server/scout/evidence-mcp';
+import type { ToolTraceEntry } from '@/capabilities/agency/server/scout/evidence-mcp';
+import { createFindingsCapture } from '@/capabilities/agency/server/scout/report-findings';
+import { buildEvidenceScoutAgentDefinition } from '@/capabilities/agency/server/scout/scout-agent';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
-import { buildEvidenceServer, persistToolTrace } from '@/server/agency/scout/evidence-mcp';
-import type { ToolTraceEntry } from '@/server/agency/scout/evidence-mcp';
-import { createFindingsCapture } from '@/server/agency/scout/report-findings';
-import { buildEvidenceScoutAgentDefinition } from '@/server/agency/scout/scout-agent';
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import { SPAWN_BUDGET_MODE, createSpawnContract } from '@/server/ai/spawn-contract';
-import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
-import { listProposalInboxRows } from '@/server/proposals/inbox';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   type BuildDirectorServerOpts,

@@ -459,7 +459,7 @@ export const practiceCapability = defineCapability({
       },
       // YUK-402 inc-4a — owner manual gate (draft 池审核面)后端。list draft pool +
       // enable (normal B5 verify→promote) + force-enable (override + reason 留痕)。
-      // gate op = verifyAndPromote (src/server/quiz/verify-and-promote.ts)；/api/*
+      // gate op = verifyAndPromote (server/quiz/verify-and-promote.ts)；/api/*
       // 自动套 internal-token。审核面属练习消费侧（draft 是 practice-pool 题）。
       {
         method: 'GET',
@@ -751,11 +751,49 @@ export const practiceCapability = defineCapability({
     ],
   },
   jobs: {
-    // M4-T3 (YUK-319)：practice 域 job 归属声明。rejudge（M2/D15 申诉自动重判）
-    // 注册留在 handlers.ts 渐缩簿：其注册形态是非默认 1s polling + inline 动态
-    // import handleRejudge（非 buildXHandler 工厂），不走注册器统一配方——此处
-    // 声明无 load 纯归属元数据。（YUK-349：review_plan 链式 job 已随 B3 退役。）
+    // M4-T3 (YUK-319)：practice 域 job 归属声明。（YUK-349：review_plan 链式
+    // job 已随 B3 退役。YUK-870 F3.5b：rejudge / judge_run / session_summary
+    // 三条注册自 handlers.ts 渐缩簿收编，practice 域自此无留簿注册。）
     handlers: [
+      {
+        name: 'sourcing',
+        queue: 'agent',
+        load: () => import('./jobs/sourcing').then((m) => m.buildSourcingHandler),
+      },
+      {
+        name: 'jyeoo_fetch',
+        queue: 'agent',
+        load: () => import('./jobs/jyeoo-fetch').then((m) => m.buildJyeooFetchHandler),
+      },
+      {
+        name: 'quiz_gen',
+        queue: 'agent',
+        includeMetadata: true,
+        load: () => import('./jobs/quiz_gen').then((m) => m.buildQuizGenHandler),
+      },
+      // YUK-868 — verification + promotion jobs owned by Practice. Queue tiers
+      // mirror the retired central registrations byte-for-byte (quiz_verify /
+      // source_verify were EXPIRE_AGENT → 'agent'; variant_verify was EXPIRE_LLM
+      // → 'llm'); worker options come from the registrar default {2s, batchSize 1},
+      // which is exactly what handlers.ts used to pass explicitly.
+      {
+        name: 'quiz_verify',
+        queue: 'agent',
+        load: () => import('./jobs/quiz_verify').then((m) => m.buildQuizVerifyHandler),
+      },
+      {
+        name: 'source_verify',
+        queue: 'agent',
+        load: () => import('./jobs/source_verify').then((m) => m.buildSourceVerifyHandler),
+      },
+      {
+        // YUK-17 / ADR-0018 — second-pass content alignment check for accepted
+        // variants. Enqueued by acceptAiProposal after a variant_question proposal
+        // is accepted; verdict='fail' flips mistake_variant.status to 'broken'.
+        name: 'variant_verify',
+        queue: 'llm',
+        load: () => import('./jobs/variant_verify').then((m) => m.buildVariantVerifyHandler),
+      },
       {
         // Durable stage 1: classify an active question failure, write the exact
         // causal judge, then hand off stage 2 with a stable per-attempt job id.
@@ -770,11 +808,38 @@ export const practiceCapability = defineCapability({
         queue: 'llm',
         load: () => import('./jobs/variant_gen').then((m) => m.buildVariantGenHandler),
       },
-      { name: 'rejudge', queue: 'llm' },
+      // YUK-870 (F3.5b) — rejudge 注册自中央渐缩簿收编（等价平移红线：LLM 档
+      // 1h expire + DLQ、非默认 1s polling、batchSize 1——原中央行的 inline 动态
+      // import + handleRejudge 循环 flatten 成 jobs/rejudge.ts 的标准工厂）。
+      {
+        name: 'rejudge',
+        queue: 'llm',
+        pollingIntervalSeconds: 1,
+        batchSize: 1,
+        load: () => import('./jobs/rejudge').then((m) => m.buildRejudgeHandler),
+      },
       // YUK-594 (durable judge main path, W1) — durable judge_run（异步为主路径）。
-      // 注册留 handlers.ts 渐缩簿：形态要 includeMetadata:true 读 retryCount 驱动
-      // 跨 provider lane 决策（D9），非注册器统一配方——此处无 load 纯归属元数据。
-      { name: 'judge_run', queue: 'llm' },
+      // YUK-870 (F3.5b) — 注册自中央渐缩簿收编：includeMetadata:true 读
+      // retryCount 驱动跨 provider lane 决策（D9），2s polling 与原中央行等价。
+      {
+        name: 'judge_run',
+        queue: 'llm',
+        pollingIntervalSeconds: 2,
+        batchSize: 1,
+        includeMetadata: true,
+        load: () => import('./jobs/judge_run').then((m) => m.buildJudgeRunHandler),
+      },
+      // YUK-870 (F3.5b) — Phase 1d session_summary 注册自中央渐缩簿收编（等价
+      // 平移红线：LLM 档 1h expire + DLQ、2s/1 worker 选项——与原中央行显式 opts
+      // 相同；handler 实现已随 jobs/session_summary.ts 迁入本包；TaskSpec 归
+      // practice owner map，中央 semantic quarry 至此零 transitional entry）。
+      {
+        name: 'session_summary',
+        queue: 'llm',
+        pollingIntervalSeconds: 2,
+        batchSize: 1,
+        load: () => import('./jobs/session_summary').then((m) => m.buildSessionSummaryHandler),
+      },
       // YUK-777 A3 — durable judge 的 domain-state-scan reconcile sweeper。扫「作答已录、
       // 判词未落」的 pending attempt，经同一 rate-limited 入队面重投 judge_run。自身不做
       // LLM 调用（付费发生在 judge_run），故 fast 层。
@@ -834,7 +899,7 @@ export const practiceCapability = defineCapability({
         // YUK-758 DAG 成员。**边考据修订（review To-Iq + ToTas，两位 reviewer 各对一半）**：
         //  · 原声明的 `answer_class_backfill` 硬边**不成立，已移除**：supply 的
         //    discoverSupplyTargets → assembleScanInput → loadQuestionPool 是
-        //    target-discovery.ts 内的**私有** loader（:664），并非 src/server/quiz/pool-fetch.ts；
+        //    target-discovery.ts 内的**私有** loader（:664），并非 Practice quiz/pool-fetch；
         //    它只 select id/kind/source/metadata/difficulty/knowledge_ids(+draft_status 谓词)，
         //    全 src/server/question-supply/ 目录 grep 不到 answer_class。且 pool-fetch 那条
         //    answer_class 谓词本身是 NULL-宽容（`= X OR IS NULL`）且当前无活 caller（唯一
@@ -1008,6 +1073,18 @@ export const practiceCapability = defineCapability({
               (module) => module.variantQuestionProposalAcceptApplier,
             ),
         },
+        dismiss: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.variantQuestionProposalDismissApplier,
+            ),
+        },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.variantQuestionProposalRetractApplier,
+            ),
+        },
       },
       {
         kind: 'question_draft',
@@ -1027,6 +1104,12 @@ export const practiceCapability = defineCapability({
               (module) => module.questionEditProposalAcceptApplier,
             ),
         },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.questionEditProposalRetractApplier,
+            ),
+        },
       },
     ],
   },
@@ -1038,21 +1121,20 @@ export const practiceCapability = defineCapability({
     tools: [
       {
         name: 'get_question_context',
-        load: () =>
-          import('@/server/ai/tools/context-readers').then((m) => m.getQuestionContextTool),
+        load: () => import('./server/tools/question-context').then((m) => m.getQuestionContextTool),
       },
       {
         name: 'get_review_due',
-        load: () => import('@/server/ai/tools/context-readers').then((m) => m.getReviewDueTool),
+        load: () => import('./server/tools/question-context').then((m) => m.getReviewDueTool),
       },
       {
         name: 'get_attempt_context',
         load: () =>
-          import('@/server/ai/tools/get-attempt-context').then((m) => m.getAttemptContextTool),
+          import('./server/tools/get-attempt-context').then((m) => m.getAttemptContextTool),
       },
       {
         name: 'query_mistakes',
-        load: () => import('@/server/ai/tools/query-mistakes').then((m) => m.queryMistakesTool),
+        load: () => import('./server/tools/query-mistakes').then((m) => m.queryMistakesTool),
       },
       {
         name: 'attribute_mistake',
@@ -1064,22 +1146,21 @@ export const practiceCapability = defineCapability({
       },
       {
         name: 'author_question',
-        load: () => import('@/server/ai/tools/proposal-tools').then((m) => m.authorQuestionTool),
+        load: () => import('./server/tools/proposal-tools').then((m) => m.authorQuestionTool),
       },
       {
         name: 'query_questions',
-        load: () => import('@/server/ai/tools/query-questions').then((m) => m.queryQuestionsTool),
+        load: () => import('./server/tools/query-questions').then((m) => m.queryQuestionsTool),
       },
       {
         name: 'write_quiz',
-        load: () => import('@/server/ai/tools/write-quiz').then((m) => m.writeQuizTool),
+        load: () => import('./server/tools/write-quiz').then((m) => m.writeQuizTool),
       },
       // ADR-0032 D6-B (YUK-203 lane L6) — active 题 structured 节点编辑 propose
       // 工具（窄 typed op；accept 经 practice applier + mini verify gate 落地）。
       {
         name: 'propose_question_edit',
-        load: () =>
-          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeQuestionEditTool),
+        load: () => import('./server/tools/proposal-tools').then((m) => m.proposeQuestionEditTool),
       },
     ],
   },

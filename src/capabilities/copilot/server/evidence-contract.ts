@@ -1,11 +1,11 @@
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import type { ToolExecutionResultObservation } from '@/server/ai/tools/mcp-bridge';
 import {
   type CopilotEvidenceReviewOutput,
   CopilotEvidenceReviewOutputSchema,
   type CopilotEvidenceVerificationOutput,
   CopilotEvidenceVerificationOutputSchema,
-} from '@/ai/registry';
-import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import type { ToolExecutionResultObservation } from '@/server/ai/tools/mcp-bridge';
+} from '../contracts';
 
 export const MAX_EVIDENCE_REQUEST_UNITS = 32;
 export const MAX_EVIDENCE_REPLY_UNITS = 192;

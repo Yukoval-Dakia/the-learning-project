@@ -9,7 +9,7 @@ import {
   PENDING_PROPOSAL_COUNT_MAX_BATCHES,
   type ProposalStatus,
   countPendingProposalInboxByKind,
-} from '@/server/proposals/inbox';
+} from '@/kernel/proposals/inbox';
 
 type DbLike = Db | Tx;
 

@@ -8,7 +8,7 @@ import {
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { PrepDeskProbesResponseSchema } from '@/capabilities/shell/api/contracts';
 import { writeEvent } from '@/kernel/events';
-import { writeAiProposal } from '@/server/proposals/writer';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';

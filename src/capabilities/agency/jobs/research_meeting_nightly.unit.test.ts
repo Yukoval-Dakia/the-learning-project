@@ -10,17 +10,20 @@ import type {
   EvidenceCell,
   LoadedConjectureEvidenceImage,
 } from '@/capabilities/agency/server/conjecture/evidence';
-import type { WriteEventInput } from '@/kernel/events';
 import {
   ConjectureInductionOperationalError,
   type InduceConjectureInput,
   type InduceConjectureResult,
-} from '@/server/agency/conjecture/induce';
+} from '@/capabilities/agency/server/conjecture/induce';
+import type {
+  FailureAttempt,
+  FailureAttemptWithReasoningTrace,
+} from '@/capabilities/knowledge/public';
+import type { WriteEventInput } from '@/kernel/events';
+import type { WriteAiProposalInput } from '@/kernel/proposals/writer';
 import { classifyJobYield } from '@/server/boss/job-yield';
 import type { PredictionAccountability } from '@/server/conjectures/accountability';
-import type { FailureAttempt, FailureAttemptWithReasoningTrace } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
-import type { WriteAiProposalInput } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import sharp from 'sharp';
 import { describe, expect, it, vi } from 'vitest';
@@ -1831,7 +1834,7 @@ describe('defaultLoadEvidenceImages', () => {
     const loaded = await defaultLoadEvidenceImages(
       db as never,
       refs,
-      imageFetchFn as typeof import('@/server/ai/judges/steps-judge').defaultImageFetch,
+      imageFetchFn as typeof import('@/kernel/judge').defaultImageFetch,
     );
 
     expect(imageFetchFn).toHaveBeenCalledTimes(1);

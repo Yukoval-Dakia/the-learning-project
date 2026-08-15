@@ -2,6 +2,10 @@ import type { JobWithMetadata } from 'pg-boss';
 import sharp from 'sharp';
 
 import { type PreAttachFigure, cropAndUploadFigures } from '@/capabilities/ingestion/server/crop';
+import {
+  type IngestionExtractionProgressPayloadT,
+  writeExtractionProgress,
+} from '@/capabilities/ingestion/server/events/extraction-progress';
 import { assignFigures, assignFiguresFromVlm } from '@/capabilities/ingestion/server/figure_attach';
 // T-OC slice 2 (YUK-145, OC-1/OC-2): VLM StructureTask owns the structure tree;
 // Tencent structure is demoted to a text hint. See
@@ -49,10 +53,6 @@ import type { FigureRefT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, source_asset } from '@/db/schema';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
-import {
-  type IngestionExtractionProgressPayloadT,
-  writeExtractionProgress,
-} from '@/server/events/ingestion-progress';
 import type { R2Client } from '@/server/r2';
 import { Ingestion } from '@/server/session';
 import { and, eq } from 'drizzle-orm';

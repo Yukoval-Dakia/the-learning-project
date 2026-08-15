@@ -22,7 +22,7 @@ import { type NotePatchT, countNewBlocks, summarizeNotePatch } from '@/core/sche
 import type { Db, Tx } from '@/db/client';
 import { artifact, event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
+import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from './note-ai-provenance';
 
 type DbLike = Db | Tx;
 

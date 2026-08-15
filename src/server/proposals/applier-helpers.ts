@@ -6,8 +6,10 @@
 
 import { and, eq, sql } from 'drizzle-orm';
 
+import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 
 type DbLike = Db | Tx;
@@ -48,6 +50,50 @@ export async function findExistingRateEvent(
   }
   const decision: ExistingRateDecision = rating;
   return Object.assign(existing, { decision });
+}
+
+export interface ProposalRateEventResult {
+  rate_event_id: string | null;
+  idempotent?: boolean;
+  rate_at: Date;
+}
+
+export async function writeProposalRateEvent(
+  db: DbLike,
+  proposalId: string,
+  rating: 'accept' | 'dismiss',
+  userNote?: string,
+): Promise<ProposalRateEventResult> {
+  const existing = await findExistingRateEvent(db, proposalId);
+  if (existing) {
+    if (existing.decision !== rating) {
+      throw new ApiError(
+        'conflict',
+        `proposal ${proposalId} already decided as ${existing.decision}`,
+        409,
+      );
+    }
+    return { rate_event_id: existing.id, idempotent: true, rate_at: existing.created_at };
+  }
+
+  const rateEventId = newId();
+  const rateAt = new Date();
+  await writeEvent(db, {
+    id: rateEventId,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: proposalId,
+    outcome: 'success',
+    payload: {
+      rating,
+      ...(userNote ? { user_note: userNote } : {}),
+    },
+    caused_by_event_id: proposalId,
+    created_at: rateAt,
+  });
+  return { rate_event_id: rateEventId, rate_at: rateAt };
 }
 
 export async function existingAcceptRate(

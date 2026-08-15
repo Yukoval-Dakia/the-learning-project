@@ -1,0 +1,1490 @@
+// Search-grounded QuizGen — Q3 handler.
+//
+// docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §3 / §4.
+//
+// Tool-calling agent (QuizGenTask): plans, searches Tavily for SOURCE MATERIAL
+// (not questions), writes ORIGINAL questions grounded in those sources, and
+// self-declares every used URL into source_refs (§0 — provenance is NOT
+// recoverable from runner logs, so the agent MUST self-report).
+//
+// Skeleton follows the standard boss-handler shape (parse → INSERT → writeEvent →
+// catch). MCP mount copies the verbatim chat.ts:298-306 pattern (Tavily remote
+// MCP via buildTavilyMcpServer() — env-gated graceful degradation — + the
+// in-process domain-tool MCP that reads the user's mistakes + knowledge graph).
+// The chained quiz_verify enqueue mirrors attribution_followup → variant_gen.
+//
+// Gate = Option B (owner-confirmed §3): each generated question is INSERTed with
+// draft_status='draft' (NOT in the review pool, no FSRS yet). The chained
+// quiz_verify job (Q5) promotes draft→active + FSRS-enrolls on pass.
+
+import { randomUUID } from 'node:crypto';
+import { createId } from '@paralleldrive/cuid2';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import type { JobWithMetadata, SendOptions } from 'pg-boss';
+
+import { RUNNABLE_ROUTES } from '@/capabilities/practice/server/judge/question-contract';
+import {
+  DifficultyEvidence,
+  type DifficultyEvidenceT,
+  buildProducerDifficultyEvidence,
+} from '@/core/schema/difficulty-evidence';
+import {
+  PROSE_KINDS,
+  defaultJudgeKindForQuestion,
+  nonEmptyStrings,
+} from '@/core/schema/judge-routing';
+import {
+  type QuizGenMetadataT,
+  QuizGenOutput,
+  type QuizGenOutputT,
+  type QuizGenQuestionT,
+} from '@/core/schema/quiz_gen';
+import type { Db } from '@/db/client';
+import {
+  artifact,
+  knowledge,
+  learning_item,
+  placement_starter_attempt_question,
+  question,
+  source_document,
+} from '@/db/schema';
+import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
+import { writeEvent } from '@/kernel/events';
+import {
+  DOMAIN_TOOL_MCP_SERVER_NAME,
+  type DomainToolName,
+  toMcpAllowedToolName,
+} from '@/kernel/tools/allowlists';
+import { parseJsonObjectLoose } from '@/server/ai/json-extract';
+import {
+  TAVILY_MCP_ALLOWED_TOOLS,
+  TAVILY_MCP_SERVER_NAME,
+  buildTavilyMcpServer,
+} from '@/server/ai/mcp/tavily';
+import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
+import { runAgentTask } from '@/server/ai/runner';
+import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+import {
+  dispatchPendingVerifyIntents,
+  writeVerifyDispatchIntent,
+} from '@/server/boss/verify-dispatch-outbox';
+import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
+import { kindsMatch } from '@/subjects/question-kind';
+import {
+  resolveQuizGenSkills,
+  resolveQuizGenSkillsForSubject,
+  skillKindToQuestionKind,
+} from '@/subjects/quiz-gen-skills';
+import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import {
+  SupplyTraceV1,
+  type SupplyTraceV1T,
+  withSupplyTraceDifficultyEvidence,
+} from '../server/question-supply/evidence-demand';
+import {
+  PLACEMENT_ATTEMPT_HEARTBEAT_MS,
+  PLACEMENT_DECISION_DEADLINE_MS,
+  PLACEMENT_QUEUE_EXPIRY_MS,
+  PLACEMENT_STARTER_REQUIRED_COUNT,
+  PLACEMENT_VERIFY_POLL_MS,
+  type PlacementAttemptAuthority,
+  type PlacementAttemptHeartbeat,
+  PlacementStarterAdmissionError,
+  PlacementStarterBudgetExhaustedError,
+  PlacementStarterDeadlineError,
+  PlacementStarterStaleAuthorityError,
+  PlacementStarterUnderfillError,
+  PlacementStarterUnknownCostError,
+  type PlacementVerificationAuthority,
+  acquirePlacementAttempt,
+  assertPlacementAttemptFence,
+  countEligiblePlacementQuestions,
+  finishPlacementAttempt,
+  markAttemptVerifying,
+  placementAttemptVerificationSettled,
+  placementDeliveryMetadata,
+  placementFulfillmentDisposition,
+  recordPlacementAttemptOutput,
+  releaseAuthorizedPaidCall,
+  renewPlacementAttempt,
+  reservePlacementGenerationCall,
+  startPlacementAttemptHeartbeat,
+  terminalizePlacementUnknownCost,
+} from '../server/question-supply/placement-starter-attempts';
+import { markPlacementStarterClaimTerminal } from '../server/question-supply/placement-starter-store';
+import {
+  EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
+  canonicalQuestionContentHash,
+  combineExactDuplicateKnowledgeIds,
+  mergeExactQuestionDuplicateKnowledgeIds,
+} from '../server/quiz/content-fingerprint';
+import { type FewShotExample, renderFewShotBlock } from '../server/quiz/fewshot-retrieve';
+
+// §3 / §4 — the trigger surface. 'manual' carries a free-form ref_id (we still
+// try to resolve it as a knowledge node for the subject profile, but never skip
+// the run on a manual trigger). 'knowledge' / 'learning_item' resolve a real row.
+export const QUIZ_GEN_TRIGGERS = ['knowledge', 'learning_item', 'manual'] as const;
+export type QuizGenTrigger = (typeof QUIZ_GEN_TRIGGERS)[number];
+
+export interface QuizGenJobData {
+  trigger: QuizGenTrigger;
+  ref_id: string;
+  count?: number;
+  exact_count?: number;
+  placement_starter_claim_id?: string;
+  semantic_goal_revision_id?: string;
+  // YUK-226 S2-5b F1 — the §3.2 找题次序 pins which tier it asked for (step 3
+  // material_grounded vs step 4 closed_book). Absent on a bare manual quiz_gen
+  // trigger, in which case the agent free-chooses the method as before.
+  generation_method?: 'material_grounded' | 'closed_book';
+  // YUK-226 S2-5b F3 — the knowledge node a manual/free-form trigger should attribute
+  // produced questions to (the next 找题次序 round keys off this node's pool).
+  knowledge_id?: string;
+  // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for (additive). Threaded
+  // into the QuizGenTask input so the agent can target the题型.
+  kind?: string;
+  objective_only?: boolean;
+  kind_required?: boolean;
+  // YUK-533 — the full KC set a multi-KC supply target carries (the confusable A↔B pair).
+  // knowledge_id stays the PRIMARY attribution anchor (knowledgeIds[0]); knowledge_ids
+  // carries the whole pair so a contrast/discrimination item can probe the A-vs-B boundary.
+  // phase-deferred: contrast-aware generation (consuming this field to write a discrimination
+  // question) is a flag-flip increment — the dispatcher forwards it now (dark behind
+  // CONFUSABLE_CONTRAST_ENABLED) so the seam is data-complete; the handler does not yet read
+  // it. Context: src/capabilities/practice/server/question-supply/confusable-contrast-discovery.ts.
+  knowledge_ids?: string[];
+  supply_trace?: SupplyTraceV1T;
+}
+
+// §4 — default question count when the trigger doesn't specify one.
+// YUK-554 (spec docs/design/2026-07-03-verify-check-spec.md §Q7) — the MANUAL POST
+// /api/questions/quiz-gen endpoint accepts an UNBOUNDED `count` (only the nightly supply job is
+// capped, at DEFAULT_MAX_PER_RUN=25). Now that quiz_verify spends 2-3 LLM calls per row (verify +
+// independent solve), a large `count` is more load-bearing on the AGENT-queue 2h expire — a
+// manual-endpoint hard cap is an independent Linear follow-up (touches handlers.ts routing/
+// validation), NOT part of this solve-check wiring.
+export const QUIZ_GEN_DEFAULT_COUNT = 3;
+
+// YUK-225 (S2 slice 4) — cap on total few-shot exemplars folded into the prompt
+// across all skill-backed kinds (spec §5: 2-4 per kind; keep the merged block tight).
+const FEWSHOT_MAX_TOTAL = 4;
+
+// The read-only domain-tool surface QuizGen mounts: enough to read the user's
+// mistakes + knowledge graph so the agent can pick difficulty / types / coverage
+// (§1 / §3). Deliberately READ-only — QuizGen never proposes/writes via DomainTools
+// (its only write is the draft question INSERT below). Reuses the same domain MCP
+// builder Copilot / Dreaming use; we keep the list local rather than adding a new
+// `DomainToolSurface` enum (that would widen the shared allowlist matrix).
+export const QUIZ_GEN_READ_TOOLS = [
+  'query_mistakes',
+  'get_attempt_context',
+  'query_knowledge',
+  'get_subject_graph_overview',
+  'expand_knowledge_subgraph',
+  'find_knowledge_paths',
+  'get_question_context',
+] as const satisfies readonly DomainToolName[];
+
+// The handler only consumes { text, task_run_id?, cost_usd? } from the run
+// result (parse + provenance + cost), so the seam returns the loose
+// TaskTextResult shape — structurally satisfied by runAgentTask's RunTaskResult,
+// and easy to fixture in DB tests (the standard run-agent-task seam shape).
+type RunAgentTaskFn = (
+  kind: string,
+  input: unknown,
+  ctx: {
+    db: Db;
+    mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
+    allowedTools?: string[];
+    // YUK-225 (S2 slice 4) — Agent Skill whitelist + subject context threaded to
+    // the runner so the (subject, kind) 规范包 is loaded into the model's listing.
+    skills?: string[];
+    subjectProfile?: SubjectProfile;
+  },
+) => Promise<TaskTextResult>;
+
+type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
+type BuildTavilyMcpServerFn = () => McpHttpServerConfig | null;
+// YUK-225 (S2 slice 4) — 轨 2 few-shot retrieval seam. The handler injects a few
+// already-pooled同题型 examples into the prompt; DB tests inject a vi.fn(). Keyed by
+// the trigger's knowledge ids (the run's target topics).
+export type RetrieveFewShotFn = (params: {
+  db: Db;
+  kind: string;
+  knowledgeIds: string[];
+}) => Promise<FewShotExample[]>;
+// Chained quiz_verify enqueue (Q5 owns the queue + handler). Mirrors
+// attribution_followup's EnqueueVariantGenFn seam so DB tests inject a vi.fn().
+export type EnqueueQuizVerifyFn = (
+  questionIds: string[],
+  options?: SendOptions,
+  placementAuthorities?: PlacementVerificationAuthority[],
+) => Promise<void>;
+
+interface DepsOverride {
+  runAgentTaskFn?: RunAgentTaskFn;
+  buildMcpServerFn?: BuildMcpServerFn;
+  buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
+  enqueueQuizVerify?: EnqueueQuizVerifyFn;
+  retrieveFewShotFn?: RetrieveFewShotFn;
+  now?: () => Date;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  heartbeatSleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+}
+
+async function defaultRetrieveFewShot(params: {
+  db: Db;
+  kind: string;
+  knowledgeIds: string[];
+}): Promise<FewShotExample[]> {
+  const { retrieveFewShotExamples } = await import('../server/quiz/fewshot-retrieve');
+  return retrieveFewShotExamples(params);
+}
+
+async function defaultEnqueueQuizVerify(
+  questionIds: string[],
+  options?: SendOptions,
+  placementAuthorities?: PlacementVerificationAuthority[],
+): Promise<void> {
+  // Worker process already has boss started; getStartedBoss() returns the same
+  // instance (mirrors attribution_followup). Q5 creates + works the queue.
+  const { getStartedBoss } = await import('@/server/boss/client');
+  const boss = await getStartedBoss();
+  await boss.send(
+    'quiz_verify',
+    {
+      question_ids: questionIds,
+      ...(placementAuthorities?.length ? { placement_authorities: placementAuthorities } : {}),
+    },
+    options,
+  );
+}
+
+// §2 / §5 — output JSON parse + judge-contract assertion (shared with
+// EmbeddedCheckGenerate via judge-routing). A generated prose / derivation
+// question that cannot be graded by its declared route is rejected so downstream
+// judges never see an ungradeable question.
+function assertGeneratedQuestionHasJudgeContract(q: QuizGenQuestionT): void {
+  const route = defaultJudgeKindForQuestion(q);
+  if (route === 'keyword' && nonEmptyStrings(q.rubric_json?.keywords).length === 0) {
+    throw new Error(`quiz_gen question '${q.prompt_md}' uses keyword judge without keywords`);
+  }
+  if (route === 'semantic' && nonEmptyStrings(q.rubric_json?.required_points).length === 0) {
+    throw new Error(
+      `quiz_gen question '${q.prompt_md}' uses semantic judge without required_points`,
+    );
+  }
+  if ((PROSE_KINDS.has(q.kind) || q.kind === 'derivation') && route === 'exact') {
+    throw new Error(`quiz_gen ${q.kind} question '${q.prompt_md}' cannot use exact judge`);
+  }
+  // Defense-in-depth: a generated question must route to a judge the invoker can
+  // actually run. The output schema already restricts judge_kind_override to
+  // exact|keyword|semantic and defaultJudgeKindForQuestion never derives a
+  // non-runnable route, so this only fires on an upstream contract change — but it
+  // guarantees we never persist a draft that would return `unsupported` at answer
+  // time.
+  if (!(RUNNABLE_ROUTES as ReadonlySet<string>).has(route)) {
+    throw new Error(`quiz_gen question '${q.prompt_md}' routes to non-runnable judge '${route}'`);
+  }
+}
+
+function parseOutput(text: string): { parsed: QuizGenOutputT; parseRepaired: boolean } {
+  // YUK-607 — 宽松提取（jsonrepair 修复带）：mimo 对长中文字符串题型（阅读理解材料）常产出
+  // 字符串值内未转义引号的 JSON，旧硬解析在此整批阵亡。错误串格式与旧实现逐字节一致。
+  let extracted: ReturnType<typeof parseJsonObjectLoose>;
+  try {
+    extracted = parseJsonObjectLoose(text, 'quiz_gen parseOutput');
+  } catch (e) {
+    throw new Error(`parseOutput: JSON.parse failed: ${(e as Error).message}`);
+  }
+  if (extracted === null) {
+    throw new Error('parseOutput: no JSON object found in text');
+  }
+  const json: unknown = extracted.json;
+  const parsed = QuizGenOutput.safeParse(json);
+  if (!parsed.success) {
+    throw new Error(
+      `parseOutput: schema invalid: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
+    );
+  }
+  for (const q of parsed.data.questions) {
+    assertGeneratedQuestionHasJudgeContract(q);
+  }
+  // jsonrepair 级修复 = 内容完整性无法机证 → 上抛给 metadata（quiz_verify 晋级门隔离）。
+  return { parsed: parsed.data, parseRepaired: extracted.repaired === 'jsonrepair' };
+}
+
+// YUK-224 F1 (PR #314 round-1) — read-model passthrough, v1 self-contained.
+// For a material_grounded question the题干 references a passage the learner can
+// only see if it is rendered alongside the prompt. The review / practice
+// render only reads prompt_md, so we EMBED the passage into prompt_md at persist
+// time as a leading blockquote ("阅读材料") followed by the original prompt. Pure
+// function so it is unit-testable.
+//
+// phase-deferred: the structural fix — a read-model that renders 题面 and 素材
+// separately and de-duplicates one passage across many questions (instead of
+// inlining a copy per question) — is a follow-up. See YUK-216 spec §6.1 row 3.
+// Until that read-model lands, the embedded copy keeps the learner-visible
+// material self-contained.
+export function embedMaterialInPrompt(promptMd: string, materialBodyMd: string): string {
+  const trimmed = materialBodyMd.trim();
+  if (trimmed.length === 0) return promptMd;
+  const quoted = trimmed
+    .split('\n')
+    .map((line) => `> ${line}`)
+    .join('\n');
+  return `> **阅读材料**\n${quoted}\n\n${promptMd}`;
+}
+
+// YUK-224 F3 (PR #314 round-1) — synthesize per-question source_refs from the
+// top-level material so the deterministic copy-safety overlap (quiz_verify reads
+// meta.source_refs[].snippet) has the actual passage to compare against. A
+// material_grounded question that left source_refs empty would lose the overlap
+// signal entirely. We do NOT force the agent to re-emit the passage per question;
+// the handler folds ONE synthesized ref (the material URL + a snippet截段 of the
+// passage) into each question's source_refs, in addition to whatever the agent
+// declared. Pure function so it is unit-testable.
+const MATERIAL_SNIPPET_MAX = 500;
+export function synthesizeMaterialSourceRefs(
+  declared: QuizGenQuestionT['source_refs'],
+  material: { url: string; title: string; body_md: string },
+): QuizGenQuestionT['source_refs'] {
+  const snippet = material.body_md.trim().slice(0, MATERIAL_SNIPPET_MAX);
+  // Skip if the agent already declared a ref carrying the material URL with a
+  // snippet (don't duplicate). Otherwise prepend the synthesized material ref.
+  const alreadyHasMaterialSnippet = declared.some(
+    (r) => r.url === material.url && typeof r.snippet === 'string' && r.snippet.length > 0,
+  );
+  if (alreadyHasMaterialSnippet) return declared;
+  return [
+    {
+      url: material.url,
+      title: material.title,
+      snippet,
+      used_for: 'fact' as const,
+      extracted: true,
+    },
+    ...declared,
+  ];
+}
+
+export interface RunQuizGenParams {
+  db: Db;
+  trigger: QuizGenTrigger;
+  refId: string;
+  count?: number;
+  exactCount?: number;
+  // YUK-226 S2-5b F1 — when set, the 找题次序 pins the generation_method (the agent is
+  // instructed to honour it). Absent → original free-choice behaviour preserved.
+  generationMethod?: 'material_grounded' | 'closed_book';
+  // YUK-226 S2-5b F3 — attribution anchor for manual/free-form triggers: when present,
+  // resolveTrigger keys the produced questions to this knowledge node.
+  knowledgeId?: string;
+  // YUK-226 S2-5b F4 — 题型 hint forwarded into the QuizGenTask input.
+  kind?: string;
+  objectiveOnly?: boolean;
+  kindRequired?: boolean;
+  supplyTrace?: SupplyTraceV1T;
+  placementAttempt?: PlacementAttemptAuthority;
+  placementHeartbeat?: PlacementAttemptHeartbeat;
+  runAgentTaskFn?: RunAgentTaskFn;
+  buildMcpServerFn?: BuildMcpServerFn;
+  buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
+  enqueueQuizVerify?: EnqueueQuizVerifyFn;
+  retrieveFewShotFn?: RetrieveFewShotFn;
+  /** Test seam for synchronizing concurrent producers after exact-duplicate prelookup misses. */
+  afterExactDuplicateLookupMiss?: () => Promise<void>;
+}
+
+export type RunQuizGenStatus = 'ready' | 'skipped:ref_not_found';
+
+export interface RunQuizGenResult {
+  status: RunQuizGenStatus;
+  question_ids?: string[];
+  tool_quiz_artifact_id?: string;
+}
+
+interface ResolvedTrigger {
+  refId: string;
+  knowledgeNode: { id: string; name: string; domain: string | null } | null;
+  knowledgeIds: string[];
+  title: string | null;
+}
+
+async function resolveTrigger(
+  db: Db,
+  trigger: QuizGenTrigger,
+  refId: string,
+  // YUK-226 S2-5b F3 — explicit knowledge anchor (from the 找题次序). When present it
+  // resolves the attribution node directly, regardless of the (free-form) refId.
+  knowledgeId?: string,
+): Promise<ResolvedTrigger | null> {
+  // F3 — a 找题次序-driven job carries the knowledge node explicitly. Resolve it as the
+  // attribution anchor so produced questions key to that node even when refId is a
+  // free-form manual string. ref_id (the trigger pointer) is preserved verbatim.
+  if (knowledgeId) {
+    // YUK-226 S2-5b F3 — the explicit anchor must clear the SAME archived guard as the
+    // other knowledge lookups (knowledge / learning_item primary node + the constrain
+    // step's existence check all filter archived_at). An archived anchor is treated as
+    // missing → fall through to per-trigger resolution (which, for a manual trigger, runs
+    // its own unarchived best-effort lookup), so a stale/archived 找题次序 anchor never
+    // mounts new drafts onto a dead node.
+    const rows = await db
+      .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+      .from(knowledge)
+      .where(and(eq(knowledge.id, knowledgeId), isNull(knowledge.archived_at)))
+      .limit(1);
+    const k = rows[0];
+    if (k) {
+      return { refId, knowledgeNode: k, knowledgeIds: [k.id], title: k.name };
+    }
+    // Fall through to the per-trigger resolution when the anchor node is missing.
+  }
+  if (trigger === 'knowledge') {
+    // YUK-226 S2-5b F2 (PR #320 round-4) — guard archived here too. Without it, an
+    // archived explicit anchor that was rejected above (isNull(archived_at)) would fall
+    // through to THIS branch and, when refId === the same archived id, re-resolve the dead
+    // node WITHOUT the guard — silently mounting drafts onto an archived node (the exact
+    // bypass the anchor guard exists to prevent). The archived knowledge trigger now skips.
+    const rows = await db
+      .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+      .from(knowledge)
+      .where(and(eq(knowledge.id, refId), isNull(knowledge.archived_at)))
+      .limit(1);
+    const k = rows[0];
+    if (!k) return null;
+    return { refId, knowledgeNode: k, knowledgeIds: [k.id], title: k.name };
+  }
+  if (trigger === 'learning_item') {
+    const rows = await db
+      .select({
+        id: learning_item.id,
+        title: learning_item.title,
+        knowledge_ids: learning_item.knowledge_ids,
+      })
+      .from(learning_item)
+      .where(eq(learning_item.id, refId))
+      .limit(1);
+    const li = rows[0];
+    if (!li) return null;
+    let knowledgeNode: ResolvedTrigger['knowledgeNode'] = null;
+    const primaryKnowledgeId = li.knowledge_ids[0] ?? null;
+    if (primaryKnowledgeId) {
+      // F2 — same archived guard: a learning_item pointing at an archived primary node
+      // must not resolve that dead node as the attribution anchor.
+      const kRows = await db
+        .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+        .from(knowledge)
+        .where(and(eq(knowledge.id, primaryKnowledgeId), isNull(knowledge.archived_at)))
+        .limit(1);
+      knowledgeNode = kRows[0] ?? null;
+    }
+    return { refId, knowledgeNode, knowledgeIds: li.knowledge_ids, title: li.title };
+  }
+  // 'manual' — never skips. Best-effort resolve the ref as a knowledge node for
+  // the subject profile; the run proceeds either way (§4 manual-first). F2 — guard
+  // archived: a manual ref pointing at an archived node resolves to no node (run still
+  // proceeds, just without that dead node as the attribution anchor).
+  const rows = await db
+    .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+    .from(knowledge)
+    .where(and(eq(knowledge.id, refId), isNull(knowledge.archived_at)))
+    .limit(1);
+  const k = rows[0] ?? null;
+  return {
+    refId,
+    knowledgeNode: k,
+    knowledgeIds: k ? [k.id] : [],
+    title: k?.name ?? null,
+  };
+}
+
+export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenResult> {
+  const { db, trigger, refId } = params;
+  const count = params.count ?? QUIZ_GEN_DEFAULT_COUNT;
+  const run = params.runAgentTaskFn ?? runAgentTask;
+  const buildMcpServer = params.buildMcpServerFn ?? buildMcpServerFromRegistry;
+  const buildTavily = params.buildTavilyMcpServerFn ?? buildTavilyMcpServer;
+  const enqueueQuizVerify = params.enqueueQuizVerify ?? defaultEnqueueQuizVerify;
+  const retrieveFewShot = params.retrieveFewShotFn ?? defaultRetrieveFewShot;
+
+  const resolved = await resolveTrigger(db, trigger, refId, params.knowledgeId);
+  // knowledge / learning_item triggers must resolve a real row; manual always
+  // resolves (best-effort) so it never skips.
+  if (!resolved) return { status: 'skipped:ref_not_found' };
+
+  const subjectProfile = resolveSubjectProfile(resolved.knowledgeNode?.domain ?? null);
+  const triggerEventId = `quiz_gen_trigger_${createId()}`;
+  const toolContextTaskRunId = `quiz_gen_tool_${createId()}`;
+
+  // ── MCP mount: copy chat.ts:298-306 verbatim pattern ──────────────────────
+  // In-process domain-tool MCP (read user mistakes + knowledge graph) + the
+  // env-gated Tavily remote MCP. When TAVILY_API_KEY is unset, buildTavily()
+  // returns null → no tavily server, no tavily tools (graceful degradation).
+  const domainMcpServer = buildMcpServer({
+    ctx: {
+      db,
+      taskRunId: toolContextTaskRunId,
+      callerActor: { kind: 'agent', ref: 'quiz_gen' },
+      causedByEventId: triggerEventId,
+    },
+    serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
+    toolNames: QUIZ_GEN_READ_TOOLS,
+    taskKind: 'QuizGenTask',
+  });
+
+  const tavilyCfg = buildTavily();
+  const mcpServers: Record<string, SdkMcpServer | McpHttpServerConfig> = {
+    [DOMAIN_TOOL_MCP_SERVER_NAME]: domainMcpServer,
+    ...(tavilyCfg ? { [TAVILY_MCP_SERVER_NAME]: tavilyCfg } : {}),
+  };
+  const allowedTools = [
+    ...QUIZ_GEN_READ_TOOLS.map((name) => toMcpAllowedToolName(name)),
+    ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
+  ];
+
+  // YUK-225 (S2 slice 4) — 规范双轨.
+  // 轨 1: whitelist the subject's quiz-gen SKILL.md规范包 so the model loads them
+  //       (the runner already mirrored every subject skill into the isolated
+  //       CLAUDE_CONFIG_DIR/skills; `skills` keys which ones are visible). 降级链:
+  //       resolveQuizGenSkillsForSubject returns undefined when the subject has no
+  //       pack → no skills option → promptFragments fallback.
+  // 轨 2: retrieve a few already-pooled同题型 examples (high-tier first) and fold a
+  //       few-shot block into the prompt. Best-effort: a retrieval failure must not
+  //       block generation, so we log + continue with no block (降级).
+  const subjectSkills = await resolveQuizGenSkillsForSubject(subjectProfile.id);
+
+  let fewShotBlock = '';
+  if (resolved.knowledgeIds.length > 0) {
+    // QuizGen runs emit mixed kinds; retrieve few-shot across the subject's
+    // skill-backed kinds (translation / reading_comprehension / calculation …)
+    // and merge a small set so each kind the model writes has an exemplar.
+    // resolveQuizGenSkills is async now; a sync Array.filter predicate would see a
+    // Promise (always !== undefined) and mark every kind skill-backed. Pre-compute
+    // the resolved values concurrently, then filter on the resolved array.
+    const allKinds = subjectProfile.questionKinds ?? [];
+    const skillResolved = await Promise.all(
+      allKinds.map((k) => resolveQuizGenSkills(subjectProfile.id, k)),
+    );
+    const skillBackedKinds = allKinds.filter((_, i) => skillResolved[i] !== undefined);
+    const collected: FewShotExample[] = [];
+    for (const k of skillBackedKinds) {
+      try {
+        const examples = await retrieveFewShot({
+          db,
+          // `k` is a profile SubjectQuestionKind ('calculation'); the few-shot SQL
+          // filters persisted `question.kind` which stores 'computation'. Normalize
+          // so the WHERE clause matches real rows (PR #319 F3 — same map as the skill
+          // resolver, so出题/验题/few-shot agree on the kind key).
+          kind: skillKindToQuestionKind(k),
+          knowledgeIds: resolved.knowledgeIds,
+        });
+        collected.push(...examples);
+      } catch (fewShotErr) {
+        console.error('[quiz_gen] few-shot retrieval failed (non-fatal) for kind', k, fewShotErr);
+      }
+    }
+    fewShotBlock = renderFewShotBlock(collected.slice(0, FEWSHOT_MAX_TOTAL));
+  }
+
+  const input = {
+    trigger,
+    ref: {
+      id: resolved.refId,
+      name: resolved.title,
+      knowledge_node: resolved.knowledgeNode,
+    },
+    knowledge_context: resolved.knowledgeNode ? [resolved.knowledgeNode] : [],
+    count,
+    // 轨 2 — injected exemplars (empty string when no hits / no skill-backed kinds).
+    ...(fewShotBlock ? { few_shot_examples_md: fewShotBlock } : {}),
+    // YUK-226 S2-5b F1 — the 找题次序 pins which tier it asked for. The agent prompt
+    // (buildQuizGenPrompt) instructs honouring requested_generation_method when present;
+    // absent → the agent free-chooses (original behaviour).
+    ...(params.generationMethod ? { requested_generation_method: params.generationMethod } : {}),
+    // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for. Forwarded additively
+    // so the agent can target it; absent → the agent free-targets (original behaviour).
+    ...(params.kind ? { requested_kind: params.kind } : {}),
+    ...(params.objectiveOnly ? { objective_only: true } : {}),
+    ...(params.kindRequired ? { kind_required: true } : {}),
+  };
+
+  let taskResult: TaskTextResult | null = null;
+  let failureStage: 'producer' | 'persist' | 'event' | 'dispatch' = 'producer';
+  try {
+    if (params.placementAttempt) {
+      await params.placementHeartbeat?.assertHealthy();
+      await reservePlacementGenerationCall(db, params.placementAttempt);
+    }
+    const result = await run('QuizGenTask', input, {
+      db,
+      mcpServers,
+      allowedTools,
+      subjectProfile,
+      ...(subjectSkills ? { skills: subjectSkills } : {}),
+    });
+    taskResult = result;
+    if (params.placementAttempt) {
+      if (!result.task_run_id) {
+        throw new PlacementStarterUnknownCostError(
+          'placement quiz_gen paid invocation is missing provider task_run_id',
+        );
+      }
+      // recordPlacementAttemptOutput commits the actual provider run id + cost (retention) and
+      // reports over-cap; block the delivery here so the settlement is preserved (codex P2).
+      const { overCap, costUnknown } = await recordPlacementAttemptOutput(
+        db,
+        params.placementAttempt,
+        {
+          taskRunId: result.task_run_id,
+          outputText: result.text,
+          costMicroUsd: costUsdToMicroUsd(result.cost_usd),
+        },
+      );
+      if (costUnknown) {
+        throw new PlacementStarterUnknownCostError('placement generation cost is unknown');
+      }
+      if (overCap) {
+        throw new PlacementStarterAdmissionError(
+          'placement generation exceeded authorized reservation',
+        );
+      }
+    }
+    await params.placementHeartbeat?.assertHealthy();
+    if (params.placementAttempt) {
+      await assertPlacementAttemptFence(db, params.placementAttempt);
+    }
+    const { parsed, parseRepaired } = parseOutput(result.text);
+    if (params.exactCount !== undefined && parsed.questions.length !== params.exactCount) {
+      throw new Error(
+        `quiz_gen exact_count=${params.exactCount} but agent produced ${parsed.questions.length}`,
+      );
+    }
+
+    // YUK-226 S2-5b F1 — when the 找题次序 PINNED a generation_method (step 3
+    // material_grounded vs step 4 closed_book), the agent prompt instructs honouring it,
+    // but the prompt is only a hint — a model that ignores the pin would persist the WRONG
+    // tier (a closed_book draft where the次序 asked for material_grounded, or vice versa).
+    // Assert the pin held; on mismatch throw so the run fails loudly (the catch writes a
+    // failure event and re-throws → pg-boss retries) rather than silently mis-tiering the
+    // draft into the pool. Unpinned runs (bare manual quiz_gen) keep the agent's free choice.
+    if (params.generationMethod && parsed.generation_method !== params.generationMethod) {
+      throw new Error(
+        `quiz_gen pinned generation_method='${params.generationMethod}' but agent produced '${parsed.generation_method}'`,
+      );
+    }
+
+    if ((params.objectiveOnly || params.kindRequired) && params.kind) {
+      for (const q of parsed.questions) {
+        if (!kindsMatch(q.kind, params.kind)) {
+          const constraint = params.objectiveOnly ? 'objective-only' : 'required';
+          throw new Error(
+            `quiz_gen ${constraint} kind='${params.kind}' but agent produced question of kind '${q.kind}'`,
+          );
+        }
+      }
+    }
+
+    // requested_kind is answer-class/structure guidance for generation, not a
+    // whole-output acceptance gate. Persist the actual schema-valid output and let
+    // quiz_verify evaluate its quality instead of rejecting an otherwise usable batch.
+
+    // Constrain self-reported knowledge_ids to REAL knowledge nodes. The agent may
+    // hallucinate ids; an unattributable draft would pass verify yet never resolve
+    // to a real node (knowledge page / subject resolution / aggregation can't place
+    // it). Mirror the ingestion-import guard (reject unknown/archived), but salvage
+    // partial hallucination: intersect each question's ids with existing nodes,
+    // fall back to the trigger's resolved knowledge_ids when the agent's set is
+    // fully bogus, and throw only when neither yields an attribution.
+    const referencedKnowledgeIds = [...new Set(parsed.questions.flatMap((q) => q.knowledge_ids))];
+    const existingKnowledgeRows = referencedKnowledgeIds.length
+      ? await db
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(and(inArray(knowledge.id, referencedKnowledgeIds), isNull(knowledge.archived_at)))
+      : [];
+    const existingKnowledgeIds = new Set(existingKnowledgeRows.map((r) => r.id));
+    const resolvedKnowledgeRows = resolved.knowledgeIds.length
+      ? await db
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(and(inArray(knowledge.id, resolved.knowledgeIds), isNull(knowledge.archived_at)))
+      : [];
+    // SQL IN has no ordering contract. Preserve the resolver's semantic order explicitly because
+    // knowledge_ids[0] is the primary attribution anchor used by verification/profile readers.
+    const liveResolvedKnowledgeIds = new Set(resolvedKnowledgeRows.map((r) => r.id));
+    const fallbackKnowledgeIds = [
+      ...new Set(resolved.knowledgeIds.filter((id) => liveResolvedKnowledgeIds.has(id))),
+    ];
+    // The supply target is the resolved attribution anchor (explicit knowledgeId, knowledge
+    // trigger, or a learning_item's primary KC), not every KC carried by a broad learning item.
+    // Remaining live resolved ids are fallback attribution only when the model supplied none.
+    const targetKnowledgeIds =
+      resolved.knowledgeNode && fallbackKnowledgeIds.includes(resolved.knowledgeNode.id)
+        ? [resolved.knowledgeNode.id]
+        : [];
+    const resolveQuestionKnowledgeIds = (q: QuizGenQuestionT): string[] => {
+      const valid = q.knowledge_ids.filter((kid) => existingKnowledgeIds.has(kid));
+      if (valid.length > 0) return valid;
+      if (fallbackKnowledgeIds.length > 0) return fallbackKnowledgeIds;
+      throw new Error(
+        `quiz_gen question '${q.prompt_md}' references no known knowledge_id (got [${q.knowledge_ids.join(', ')}]) and the trigger resolved none`,
+      );
+    };
+
+    const questionIds: string[] = [];
+    // Placement-authorized questions whose verify intent must be drained THIS attempt but which are
+    // NOT in questionIds — currently exact duplicates of an existing draft (they get an authority +
+    // verify intent but reuse the existing row, so they never enter questionIds). Without draining
+    // them here their intent waits for daily recovery while reconcilePlacementDelivery blocks to the
+    // deadline (codex P2, YUK-452 review).
+    const placementDrainOnlyIds: string[] = [];
+    const difficultyEvidenceByQuestion: Array<{
+      question_id: string;
+      evidence: DifficultyEvidenceT;
+    }> = [];
+    const exactDuplicates: Array<{
+      existing_question_id: string;
+      new_question_id: string;
+      canonical_content_hash: string;
+      source_route: 'quiz_gen';
+      knowledge_merge_status: 'merged' | 'already_covered';
+      added_knowledge_ids: string[];
+      resulting_knowledge_ids: string[];
+      preserved_draft_status: string | null;
+    }> = [];
+    const quizKnowledgeIds = new Set<string>();
+    const syncOwnedDuplicateKnowledge = (duplicate: { id: string; knowledgeIds: string[] }) => {
+      // A duplicate can be a pre-existing/global question (not part of this artifact) or a question
+      // freshly inserted earlier in this same batch. Only the latter belongs to tool_state, so keep
+      // the artifact tags aligned when a later generated item expands that owned row's attribution.
+      if (!questionIds.includes(duplicate.id)) return;
+      for (const knowledgeId of duplicate.knowledgeIds) quizKnowledgeIds.add(knowledgeId);
+    };
+    const toolQuizArtifactId = createId();
+    const now = new Date();
+    // YUK-224 (slice 3, tier 3) — material_grounded persists the fetched REAL source
+    // material to a source_document row FIRST (with the URL in provenance), then every
+    // generated question carries that row id in metadata.quiz_gen.material_source_document_id.
+    // The output schema guarantees `parsed.material` is present when the method is
+    // material_grounded (superRefine). source_document has no step9 invariant audit
+    // (only event / learning_session / material_fsrs_state / artifact are audited), so
+    // this new writer needs no allowlist registration. The id is shared across all
+    // questions in the run (one passage → many questions probing it).
+    let materialSourceDocumentId: string | null = null;
+    failureStage = 'persist';
+    await params.placementHeartbeat?.assertHealthy();
+    await db.transaction(async (tx) => {
+      if (params.placementAttempt) {
+        await assertPlacementAttemptFence(tx, params.placementAttempt);
+      }
+      const authorizeAndDispatchPlacementQuestion = async (
+        questionId: string,
+        canonicalHash: string,
+        supplyTrace: SupplyTraceV1T | undefined,
+        allowPersistedReplay: boolean,
+      ): Promise<boolean> => {
+        if (!params.placementAttempt) return false;
+        const inserted = await tx
+          .insert(placement_starter_attempt_question)
+          .values({
+            attempt_id: params.placementAttempt.attemptId,
+            claim_id: params.placementAttempt.claimId,
+            question_id: questionId,
+            canonical_hash: canonicalHash,
+            verification_authority_epoch: randomUUID(),
+            verification_status: 'authorized',
+            created_at: now,
+          })
+          .onConflictDoNothing()
+          .returning({
+            claimId: placement_starter_attempt_question.claim_id,
+            attemptId: placement_starter_attempt_question.attempt_id,
+            questionId: placement_starter_attempt_question.question_id,
+            epoch: placement_starter_attempt_question.verification_authority_epoch,
+          });
+        let persisted = inserted[0];
+        if (inserted.length > 1) {
+          throw new Error('placement authority insert returned multiple rows');
+        }
+        if (!persisted && allowPersistedReplay) {
+          [persisted] = await tx
+            .select({
+              claimId: placement_starter_attempt_question.claim_id,
+              attemptId: placement_starter_attempt_question.attempt_id,
+              questionId: placement_starter_attempt_question.question_id,
+              epoch: placement_starter_attempt_question.verification_authority_epoch,
+            })
+            .from(placement_starter_attempt_question)
+            .where(
+              and(
+                eq(
+                  placement_starter_attempt_question.attempt_id,
+                  params.placementAttempt.attemptId,
+                ),
+                eq(placement_starter_attempt_question.question_id, questionId),
+              ),
+            )
+            .limit(1);
+        }
+        if (!persisted) return false;
+        const authority: PlacementVerificationAuthority = {
+          claim_id: persisted.claimId,
+          attempt_id: persisted.attemptId,
+          question_id: persisted.questionId,
+          verification_authority_epoch: persisted.epoch,
+          fencing_token: params.placementAttempt.fencingToken,
+        };
+        await writeVerifyDispatchIntent(tx, {
+          questionId: persisted.questionId,
+          verifier: 'quiz_verify',
+          supplyTrace,
+          placementAuthority: authority,
+          createdAt: now,
+        });
+        return true;
+      };
+      if (parsed.generation_method === 'material_grounded' && parsed.material) {
+        materialSourceDocumentId = createId();
+        await tx.insert(source_document).values({
+          id: materialSourceDocumentId,
+          title: parsed.material.title,
+          source_asset_ids: [],
+          body_md: parsed.material.body_md,
+          // URL provenance — the fetched material's origin. source_kind tags it as a
+          // quiz_gen-fetched material so audits can distinguish it from ingestion docs.
+          provenance: {
+            source_kind: 'quiz_gen_material',
+            url: parsed.material.url,
+            fetched_at: parsed.material.fetched_at,
+            captured_by: aiAgentRef('QuizGenTask', result),
+          } as never,
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        });
+      }
+      for (const q of parsed.questions) {
+        const id = createId();
+        const judgeKind = defaultJudgeKindForQuestion(q);
+        const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
+        const declaredDifficultyEvidence =
+          q.difficulty_evidence ?? buildProducerDifficultyEvidence(q.difficulty, 'quiz_gen', now);
+        const difficultyEvidence = DifficultyEvidence.parse({
+          ...declaredDifficultyEvidence,
+          observed_at: declaredDifficultyEvidence.observed_at ?? now.toISOString(),
+          source_route: declaredDifficultyEvidence.source_route ?? 'quiz_gen',
+        });
+        const questionSupplyTrace = params.supplyTrace
+          ? withSupplyTraceDifficultyEvidence(params.supplyTrace, difficultyEvidence)
+          : undefined;
+        // YUK-224 F3 — material_grounded: synthesize a per-question source_ref from
+        // the top-level material (url + passage snippet) so the deterministic
+        // copy-safety overlap has the passage to compare against. Non-material runs
+        // keep the agent-declared refs verbatim.
+        const effectiveSourceRefs =
+          parsed.generation_method === 'material_grounded' && parsed.material
+            ? synthesizeMaterialSourceRefs(q.source_refs, parsed.material)
+            : q.source_refs;
+
+        // YUK-224 F1 — material_grounded: embed the passage into prompt_md so the
+        // review / practice render (which only reads prompt_md) shows the learner
+        // the material the题干 references. Non-material runs keep the prompt verbatim.
+        const effectivePromptMd =
+          parsed.generation_method === 'material_grounded' && parsed.material
+            ? embedMaterialInPrompt(q.prompt_md, parsed.material.body_md)
+            : q.prompt_md;
+        const canonicalContentHash = canonicalQuestionContentHash({
+          promptMd: effectivePromptMd,
+          referenceMd: q.reference_md,
+          choicesMd: q.choices_md,
+          rubricJson: q.rubric_json,
+        });
+        const duplicateKnowledgeIds = combineExactDuplicateKnowledgeIds(
+          questionKnowledgeIds,
+          targetKnowledgeIds,
+        );
+        const existingDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
+          canonicalContentHash,
+          knowledgeIds: duplicateKnowledgeIds,
+          actorRef: 'quiz_gen',
+          taskRunId: result.task_run_id,
+          now,
+        });
+        if (existingDuplicate?.disposition === 'merged') {
+          syncOwnedDuplicateKnowledge(existingDuplicate);
+          exactDuplicates.push({
+            existing_question_id: existingDuplicate.id,
+            new_question_id: id,
+            canonical_content_hash: canonicalContentHash,
+            source_route: 'quiz_gen',
+            knowledge_merge_status:
+              existingDuplicate.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
+            added_knowledge_ids: existingDuplicate.addedKnowledgeIds,
+            resulting_knowledge_ids: existingDuplicate.knowledgeIds,
+            preserved_draft_status: existingDuplicate.draftStatus,
+          });
+          if (params.placementAttempt) {
+            const dupAuthorized = await authorizeAndDispatchPlacementQuestion(
+              existingDuplicate.id,
+              canonicalContentHash,
+              params.supplyTrace,
+              true,
+            );
+            // Drain the duplicate's intent this attempt (it never enters questionIds).
+            if (dupAuthorized) placementDrainOnlyIds.push(existingDuplicate.id);
+          }
+          continue;
+        }
+        await params.afterExactDuplicateLookupMiss?.();
+
+        // §2 — metadata.quiz_gen: the agent self-reports source_pack + per-run
+        // copy_safety; we fold the per-question source_refs into the row's
+        // metadata so each draft carries its own provenance.
+        const metaQuizGen: QuizGenMetadataT = {
+          source_pack: parsed.source_pack,
+          source_refs: effectiveSourceRefs,
+          generation_method: parsed.generation_method,
+          // V1 LOW — the agent self-reports verdict + max_overlap, but the gen
+          // stage MUST stamp checked_by='agent_self' itself; an agent claiming
+          // checked_by='quiz_verify' here would forge a verification it never ran.
+          // QuizVerify (Q5) overwrites this whole block with checked_by='quiz_verify'
+          // once it actually runs.
+          copy_safety: {
+            verdict: parsed.self_copy_safety.verdict,
+            ...(parsed.self_copy_safety.max_overlap !== undefined
+              ? { max_overlap: parsed.self_copy_safety.max_overlap }
+              : {}),
+            checked_by: 'agent_self',
+          },
+          generation_status: 'ready',
+          // YUK-224 tier 3 — back-fill the persisted material's source_document id so
+          // deriveSourceTier lands tier 3 (material_grounded + material_source_document_id).
+          // Only set for material_grounded; the QuizGenMetadata superRefine requires it
+          // when generation_method='material_grounded', so this is the live writer that
+          // naturally satisfies that contract.
+          ...(materialSourceDocumentId
+            ? { material_source_document_id: materialSourceDocumentId }
+            : {}),
+          // YUK-607 review round — jsonrepair 级修复的批整批标记；quiz_verify 据此封顶
+          // needs_review（内容完整性留 owner /drafts 人审）。
+          ...(parseRepaired ? { parse_repaired: true } : {}),
+        };
+        const questionRow = withAnswerClass({
+          id,
+          kind: q.kind,
+          source: 'quiz_gen',
+          prompt_md: effectivePromptMd,
+          reference_md: q.reference_md,
+          rubric_json: q.rubric_json ?? null,
+          choices_md: q.choices_md ?? null,
+          judge_kind_override: judgeKind,
+          // The target KC union is the supply contract: a fresh INSERT and a duplicate MERGE
+          // must attribute identical content the same way, including the trigger's live KCs.
+          knowledge_ids: duplicateKnowledgeIds,
+          difficulty: q.difficulty,
+          // §2 — trigger pointer (knowledge_id / learning_item_id), NOT a web URL.
+          source_ref: resolved.refId,
+          created_by: aiAgentRef('QuizGenTask', result),
+          metadata: {
+            quiz_gen: metaQuizGen,
+            difficulty_evidence: difficultyEvidence,
+            ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
+          },
+          created_at: now,
+          canonical_content_hash: canonicalContentHash,
+          updated_at: now,
+        });
+        let inserted = await tx
+          .insert(question)
+          // Option B (§3) — generated drafts do NOT enter the pool / FSRS until
+          // quiz_verify passes (Q5 promotes draft→active + enrolls). Keep this field
+          // explicit at every INSERT site so audit:draft-status can prove the gate.
+          .values({ ...questionRow, draft_status: 'draft' })
+          // Scope the arbiter to the canonical-hash partial unique index (WHERE
+          // canonical_content_hash IS NOT NULL). A bare ON CONFLICT DO NOTHING would
+          // silently swallow ANY unique conflict (e.g. the PK), making the
+          // `inserted.length === 0` fallback below misread an unrelated conflict as a
+          // hash collision. The `where` predicate is REQUIRED for Postgres to infer a
+          // partial unique index as the arbiter.
+          .onConflictDoNothing({
+            target: question.canonical_content_hash,
+            where: sql`${question.canonical_content_hash} is not null`,
+          })
+          .returning({ id: question.id });
+        if (inserted.length === 0) {
+          const racedDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
+            canonicalContentHash,
+            knowledgeIds: duplicateKnowledgeIds,
+            actorRef: 'quiz_gen',
+            taskRunId: result.task_run_id,
+            now,
+          });
+          if (!racedDuplicate) {
+            throw new Error(`quiz_gen canonical hash conflict did not resolve for ${id}`);
+          }
+          if (racedDuplicate.disposition === 'released_terminal_draft') {
+            inserted = await tx
+              .insert(question)
+              .values({ ...questionRow, draft_status: 'draft' })
+              .onConflictDoNothing({
+                target: question.canonical_content_hash,
+                where: sql`${question.canonical_content_hash} is not null`,
+              })
+              .returning({ id: question.id });
+            if (inserted.length === 0) {
+              throw new Error(`quiz_gen canonical hash retry still conflicted for ${id}`);
+            }
+          } else {
+            syncOwnedDuplicateKnowledge(racedDuplicate);
+            exactDuplicates.push({
+              existing_question_id: racedDuplicate.id,
+              new_question_id: id,
+              canonical_content_hash: canonicalContentHash,
+              source_route: 'quiz_gen',
+              knowledge_merge_status:
+                racedDuplicate.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
+              added_knowledge_ids: racedDuplicate.addedKnowledgeIds,
+              resulting_knowledge_ids: racedDuplicate.knowledgeIds,
+              preserved_draft_status: racedDuplicate.draftStatus,
+            });
+            if (params.placementAttempt) {
+              const racedAuthorized = await authorizeAndDispatchPlacementQuestion(
+                racedDuplicate.id,
+                canonicalContentHash,
+                questionSupplyTrace,
+                true,
+              );
+              // Drain the raced duplicate's intent THIS attempt (it never enters questionIds), same
+              // as the pre-check duplicate branch. Load-bearing for a DRAFT raced duplicate: without
+              // it the intent waits for daily recovery and reconcile strands to the deadline. An
+              // ACTIVE raced duplicate settles via pool-visibility regardless (YUK-452 followup).
+              if (racedAuthorized) placementDrainOnlyIds.push(racedDuplicate.id);
+            }
+            continue;
+          }
+        }
+        if (params.placementAttempt) {
+          const authorized = await authorizeAndDispatchPlacementQuestion(
+            id,
+            canonicalContentHash,
+            questionSupplyTrace,
+            false,
+          );
+          if (!authorized) continue;
+        } else {
+          await writeVerifyDispatchIntent(tx, {
+            questionId: id,
+            verifier: 'quiz_verify',
+            supplyTrace: questionSupplyTrace,
+            createdAt: now,
+          });
+        }
+        // Aggregate exactly the persisted question attribution (model-valid ids + supply target),
+        // not the narrower pre-union model ids. Add only after a fresh row actually landed so the
+        // artifact's tags describe its own tool_state.question_ids, not skipped duplicates.
+        for (const kid of duplicateKnowledgeIds) quizKnowledgeIds.add(kid);
+        questionIds.push(id);
+        difficultyEvidenceByQuestion.push({ question_id: id, evidence: difficultyEvidence });
+      }
+
+      // When every generated question resolved to an exact duplicate there is
+      // nothing new to serve — creating a generation_status='ready' tool_quiz with
+      // tool_state.question_ids: [] would surface a practicable ZERO-question paper.
+      // Skip the artifact; the post-tx event still records the duplicate outcome.
+      if (questionIds.length === 0) return;
+
+      // YUK-471 W3-C1β — INSERT … RETURNING + same-tx artifact_create from the materialized row.
+      // No causing event row exists at this point (the experimental:quiz_gen event is written AFTER
+      // the tx), so the create event is unchained; created_at == the row's `now`.
+      const [insertedArtifact] = await tx
+        .insert(artifact)
+        .values({
+          id: toolQuizArtifactId,
+          type: 'tool_quiz',
+          title: resolved.title ? `${resolved.title} 组卷` : '自定义组卷',
+          parent_artifact_id: null,
+          knowledge_ids: [...quizKnowledgeIds],
+          intent_source: 'quiz_gen',
+          source: 'ai_generated',
+          source_ref: resolved.refId,
+          body_blocks: null,
+          attrs: {
+            trigger,
+            generation_method: parsed.generation_method,
+            source_pack: parsed.source_pack,
+          } as never,
+          tool_kind: 'quiz_gen',
+          tool_state: {
+            question_ids: questionIds,
+            session_meta: {
+              trigger,
+              ref_id: resolved.refId,
+              generation_method: parsed.generation_method,
+              tool_context_task_run_id: toolContextTaskRunId,
+            },
+          } as never,
+          generation_status: 'ready',
+          verification_status: 'not_required',
+          generated_by: aiAgentRef('QuizGenTask', result) as never,
+          history: [],
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        })
+        .returning();
+      await emitArtifactCreateEvent(tx, {
+        row: artifactRowToCreateSnapshot(insertedArtifact),
+        actorKind: 'agent',
+        actorRef: 'quiz_gen',
+        taskRunId: result.task_run_id ?? null,
+        createdAt: now,
+      });
+    });
+    // Past the commit: any throw from here on is a post-persistence failure (the
+    // drafts + verify intents are durably written), so report it distinctly rather
+    // than as 'persist'.
+    failureStage = 'event';
+    for (const duplicate of exactDuplicates) {
+      console.info('[quiz_gen] exact duplicate reconciled:', duplicate);
+    }
+
+    await writeEvent(db, {
+      id: createId(),
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'quiz_gen',
+      action: 'experimental:quiz_gen',
+      subject_kind: 'query',
+      subject_id: triggerEventId,
+      outcome: 'success',
+      payload: {
+        trigger,
+        ref_id: resolved.refId,
+        question_ids: questionIds,
+        // null when the whole batch resolved to exact duplicates and no artifact
+        // was created (zero-question quizzes must never reach the practice face).
+        tool_quiz_artifact_id: questionIds.length > 0 ? toolQuizArtifactId : null,
+        count: questionIds.length,
+        generation_method: parsed.generation_method,
+        tool_context_task_run_id: toolContextTaskRunId,
+        stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
+        difficulty_evidence: difficultyEvidenceByQuestion,
+        exact_duplicate_count: exactDuplicates.length,
+        exact_duplicate_knowledge_merge_count: exactDuplicates.filter(
+          (duplicate) => duplicate.knowledge_merge_status === 'merged',
+        ).length,
+        // Cap the serialized detail so a batch with many duplicates can't bloat the event payload;
+        // exact_duplicate_count above keeps the true total.
+        exact_duplicates: exactDuplicates.slice(0, EXACT_DUPLICATE_EVENT_SAMPLE_CAP),
+        exact_duplicates_truncated: exactDuplicates.length > EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
+        ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
+      },
+      caused_by_event_id: null,
+      task_run_id: result.task_run_id ?? null,
+      cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
+      created_at: new Date(),
+    });
+
+    // Chain the verification job (Q5). Best-effort, mirroring the ingestion route's
+    // attribution_followup enqueue: the draft questions are already committed, so a
+    // transient enqueue failure must NOT re-throw. Re-throwing would let pg-boss
+    // redeliver the quiz_gen job, re-run the expensive QuizGenTask, and INSERT a
+    // DUPLICATE batch of drafts (the handler has no per-trigger idempotency key).
+    // On failure we log the orphaned ids — recoverable by re-enqueueing quiz_verify,
+    // which is itself idempotent per question.
+    failureStage = 'dispatch';
+    const dispatchResult = await dispatchPendingVerifyIntents(db, {
+      questionIds:
+        placementDrainOnlyIds.length > 0 ? [...questionIds, ...placementDrainOnlyIds] : questionIds,
+      enqueue: async (verifier, ids, options, placementAuthorities) => {
+        if (verifier !== 'quiz_verify') {
+          throw new Error(`quiz_gen outbox received unexpected verifier '${verifier}'`);
+        }
+        if (placementAuthorities && placementAuthorities.length > 0) {
+          await enqueueQuizVerify(ids, options, placementAuthorities);
+        } else {
+          await enqueueQuizVerify(ids, options);
+        }
+      },
+    });
+    if (dispatchResult.failed > 0) {
+      console.error(
+        '[quiz_gen] quiz_verify enqueue failed; durable intents left for recovery:',
+        questionIds,
+      );
+    }
+
+    return {
+      status: 'ready',
+      question_ids: questionIds,
+      tool_quiz_artifact_id: toolQuizArtifactId,
+    };
+  } catch (err) {
+    // Release the generation reservation if the paid QuizGenTask threw AFTER reserving 500k but
+    // BEFORE recordPlacementAttemptOutput settled it — otherwise the reservation placeholder leaks
+    // into the claim's known_cost and falsely exhausts the budget across redeliveries. Idempotent /
+    // RETENTION-safe: a no-op once the call settled an actual cost. Skip when the fence is already
+    // lost (StaleAuthority) — a superseding delivery owns that attempt's ledger (YUK-452 review).
+    if (params.placementAttempt && !(err instanceof PlacementStarterStaleAuthorityError)) {
+      try {
+        const attempt = params.placementAttempt;
+        await db.transaction(async (tx) =>
+          releaseAuthorizedPaidCall(tx, {
+            claimId: attempt.claimId,
+            reservationKey: `${attempt.attemptId}:quiz_gen`,
+          }),
+        );
+      } catch (releaseErr) {
+        console.error(
+          '[quiz_gen] placement generation reservation release failed for',
+          params.placementAttempt.attemptId,
+          releaseErr,
+        );
+      }
+    }
+    // A placement stale-authority / admission failure is about the CLAIM's fence/budget, not the
+    // question's quality — do not write a spurious quiz_gen failure event against the trigger; let
+    // the handler terminalize the attempt and re-throw.
+    if (
+      err instanceof PlacementStarterStaleAuthorityError ||
+      err instanceof PlacementStarterAdmissionError
+    )
+      throw err;
+    try {
+      await writeEvent(db, {
+        id: createId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'quiz_gen',
+        action: 'experimental:quiz_gen',
+        subject_kind: 'query',
+        subject_id: triggerEventId,
+        outcome: 'failure',
+        payload: {
+          trigger,
+          ref_id: resolved.refId,
+          error: String((err as Error).message ?? err),
+          failure_stage: failureStage,
+          tool_context_task_run_id: toolContextTaskRunId,
+          ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
+        },
+        caused_by_event_id: null,
+        task_run_id: taskResult?.task_run_id ?? null,
+        cost_micro_usd: costUsdToMicroUsd(taskResult?.cost_usd),
+        created_at: new Date(),
+      });
+    } catch (cleanupErr) {
+      console.error('[quiz_gen] catch-block cleanup failed for', refId, cleanupErr);
+    }
+    throw err;
+  }
+}
+
+export function defaultPlacementSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason ?? new Error('quiz_gen aborted'));
+    // Remove the abort listener on the NORMAL resolve path. `{ once: true }` only auto-removes after
+    // the listener FIRES (on abort); on a normal timeout it would stay attached to the long-lived
+    // job.signal. reconcile polls this every 2s for up to 105 min, so without cleanup thousands of
+    // dead listeners accumulate on one signal (YUK-452 followup, OCR major).
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason ?? new Error('quiz_gen aborted'));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+async function reconcilePlacementDelivery(
+  db: Db,
+  attempt: PlacementAttemptAuthority,
+  signal: AbortSignal,
+  deps: DepsOverride,
+): Promise<void> {
+  const now = deps.now ?? (() => new Date());
+  const sleep = deps.sleep ?? defaultPlacementSleep;
+  const deadline = attempt.startedOn.getTime() + PLACEMENT_DECISION_DEADLINE_MS;
+  while (true) {
+    if (signal.aborted) {
+      await finishPlacementAttempt(db, attempt, 'interrupted', now());
+      throw signal.reason ?? new Error('quiz_gen aborted');
+    }
+    const current = now();
+    if (current.getTime() >= deadline) {
+      await finishPlacementAttempt(db, attempt, 'timed_out', current);
+      throw new PlacementStarterDeadlineError('placement verification decision deadline reached');
+    }
+    const eligibleCount = await countEligiblePlacementQuestions(
+      db,
+      attempt.claimId,
+      attempt.attemptId,
+    );
+    if (placementFulfillmentDisposition(eligibleCount) === 'satisfied') {
+      await finishPlacementAttempt(db, attempt, 'succeeded', current);
+      return;
+    }
+    if (await placementAttemptVerificationSettled(db, attempt.attemptId)) {
+      await finishPlacementAttempt(db, attempt, 'underfilled', current);
+      throw new PlacementStarterUnderfillError('placement delivery verification underfilled');
+    }
+    await sleep(PLACEMENT_VERIFY_POLL_MS, signal);
+  }
+}
+
+export function buildQuizGenHandler(
+  db: Db,
+  deps: DepsOverride = {},
+): (jobs: JobWithMetadata<QuizGenJobData>[]) => Promise<void> {
+  return async (jobs) => {
+    for (const job of jobs) {
+      const data = job.data;
+      if (!data?.trigger || !data?.ref_id) {
+        console.warn('[quiz_gen] job missing trigger/ref_id', job.id);
+        continue;
+      }
+      // supply_trace is best-effort provenance from the dispatcher. Parse it here
+      // (the trust boundary) with safeParse so a malformed job payload drops the trace
+      // rather than throwing BEFORE runQuizGen's failure-bottom can emit a structured
+      // event — an uncaught throw here would surface as a bare pg-boss job failure and
+      // retry identically forever.
+      let supplyTrace: SupplyTraceV1T | undefined;
+      if (data.supply_trace) {
+        const parsed = SupplyTraceV1.safeParse(data.supply_trace);
+        if (parsed.success) {
+          supplyTrace = parsed.data;
+        } else {
+          console.warn('[quiz_gen] ignoring malformed supply_trace in job data', job.id);
+        }
+      }
+      let placementAttempt: PlacementAttemptAuthority | undefined;
+      let placementHeartbeat: PlacementAttemptHeartbeat | undefined;
+      try {
+        if (data.placement_starter_claim_id) {
+          const { deliveryNo } = placementDeliveryMetadata({
+            retryCount: job.retryCount,
+            retryLimit: job.retryLimit,
+          });
+          if (
+            !Number.isFinite(job.expireInSeconds) ||
+            job.expireInSeconds * 1_000 !== PLACEMENT_QUEUE_EXPIRY_MS
+          ) {
+            throw new Error('placement quiz_gen queue expiry must be 120 minutes');
+          }
+          placementAttempt = await acquirePlacementAttempt(db, {
+            claimId: data.placement_starter_claim_id,
+            pgBossJobId: job.id,
+            deliveryNo,
+            startedOn: job.startedOn,
+          });
+          placementHeartbeat = startPlacementAttemptHeartbeat(db, placementAttempt, job.signal, {
+            now: deps.now,
+            sleep: deps.heartbeatSleep,
+          });
+        }
+        const result = await runQuizGen({
+          db,
+          trigger: data.trigger,
+          refId: data.ref_id,
+          count: data.count,
+          exactCount: data.exact_count,
+          // YUK-226 S2-5b F1/F3/F4 — honour the 找题次序's pinned method + attribution anchor + 题型 hint.
+          ...(data.generation_method ? { generationMethod: data.generation_method } : {}),
+          ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
+          ...(data.kind ? { kind: data.kind } : {}),
+          ...(data.objective_only ? { objectiveOnly: true } : {}),
+          ...(data.kind_required ? { kindRequired: true } : {}),
+          ...(supplyTrace ? { supplyTrace } : {}),
+          ...(placementAttempt ? { placementAttempt } : {}),
+          ...(placementHeartbeat ? { placementHeartbeat } : {}),
+          runAgentTaskFn: deps.runAgentTaskFn,
+          buildMcpServerFn: deps.buildMcpServerFn,
+          buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,
+          enqueueQuizVerify: deps.enqueueQuizVerify,
+          retrieveFewShotFn: deps.retrieveFewShotFn,
+        });
+        if (placementAttempt) {
+          await placementHeartbeat?.assertHealthy();
+          await assertPlacementAttemptFence(db, placementAttempt);
+          await markAttemptVerifying(db, placementAttempt);
+          await reconcilePlacementDelivery(db, placementAttempt, job.signal, deps);
+        }
+        console.log(`[quiz_gen] ${data.trigger}:${data.ref_id} -> ${result.status}`);
+      } catch (err) {
+        if (err instanceof PlacementStarterUnknownCostError && data.placement_starter_claim_id) {
+          const claimId = data.placement_starter_claim_id;
+          await terminalizePlacementUnknownCost(db, {
+            claimId,
+            ...(placementAttempt
+              ? {
+                  attemptId: placementAttempt.attemptId,
+                  fencingToken: placementAttempt.fencingToken,
+                }
+              : {}),
+          });
+          continue;
+        }
+        // Pre-attempt budget exhaustion (codex P2-A): acquirePlacementAttempt threw
+        // PlacementStarterBudgetExhaustedError BEFORE placementAttempt was assigned, so the
+        // finishPlacementAttempt path below cannot terminalize. A budget-exhausted claim can never
+        // make progress (known_cost only grows), so terminalize it as 'exhausted' and COMPLETE the
+        // job (no re-throw) — otherwise pg-boss redelivers straight into the same throw until DLQ
+        // while the claim sits non-terminal forever (placement soft-stuck, sourcingNeeded only).
+        if (
+          !placementAttempt &&
+          err instanceof PlacementStarterBudgetExhaustedError &&
+          data.placement_starter_claim_id
+        ) {
+          const claimId = data.placement_starter_claim_id;
+          try {
+            await db.transaction((tx) =>
+              markPlacementStarterClaimTerminal(tx, claimId, 'exhausted', new Date(), {
+                class: 'budget_exhausted',
+                code: 'budget_exhausted',
+                message: 'placement starter budget exhausted before a delivery could be acquired',
+              }),
+            );
+          } catch (terminalizeErr) {
+            console.error(
+              '[quiz_gen] placement budget-exhausted terminalize failed for',
+              claimId,
+              terminalizeErr,
+            );
+          }
+          continue;
+        }
+        // Terminalize the attempt if generation/verify failed BEFORE reconcile finalized it
+        // (parse/exact-count/persist failure, admission block, fence-still-ours abort). Without
+        // this the attempt stays 'running' holding a 20-min lease that blocks every pg-boss retry
+        // (acquirePlacementAttempt rejects behind the live lease), and the claim stays pinned
+        // non-terminal with no recovery — the zombie the codex P1 flagged. 'interrupted' routes the
+        // claim to retry_scheduled (non-final) or exhausted (final delivery) via finishPlacementAttempt.
+        // Skip on StaleAuthority: the fence is already lost, so a superseding delivery owns
+        // termination. reconcile's own terminal paths already finalized the attempt; a redundant
+        // finalize there simply finds a terminal row and throws StaleAuthority, which we swallow so
+        // the ORIGINAL error still propagates (YUK-452 review).
+        if (placementAttempt && !(err instanceof PlacementStarterStaleAuthorityError)) {
+          try {
+            await finishPlacementAttempt(db, placementAttempt, 'interrupted');
+          } catch (finalizeErr) {
+            if (!(finalizeErr instanceof PlacementStarterStaleAuthorityError)) {
+              console.error(
+                '[quiz_gen] placement attempt finalize failed for',
+                placementAttempt.attemptId,
+                finalizeErr,
+              );
+            }
+          }
+        }
+        throw err;
+      } finally {
+        await placementHeartbeat?.stop();
+      }
+    }
+  };
+}

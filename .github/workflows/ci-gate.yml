@@ -82,7 +82,7 @@ jobs:
       # incremental base instead of rebuilding the ~1.3 MB graph on every static lane.
       - name: Restore TypeScript incremental state
         if: needs.changes.outputs.static_changed == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: tsconfig.tsbuildinfo
           key: ts7-buildinfo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'tsconfig.json') }}-${{ github.sha }}
@@ -109,10 +109,12 @@ jobs:
           pnpm audit:api-client
           pnpm audit:api-client-usage
           pnpm audit:capability-boundaries
+          pnpm audit:architecture-deepening
           pnpm audit:profile
           pnpm audit:learner-copy
           pnpm audit:no-learning-styles
           pnpm audit:structured-judge
+          pnpm audit:task-census
           pnpm audit:draft-status
           pnpm audit:draft-status-reads --strict
           pnpm audit:hub-sync-writers
@@ -365,7 +367,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Cache Playwright browsers
         if: needs.changes.outputs.usability_changed == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}

@@ -28,7 +28,7 @@ import { newId } from '@/core/ids';
 import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture-probe-response';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { writeAiProposal } from '@/server/proposals/writer';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../../tests/helpers/conjecture-probe-fixtures';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 

@@ -5,8 +5,8 @@ import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   resolveDomainToolNames,
   resolveMcpAllowedTools,
-} from '@/server/ai/tools/allowlists';
-import { DREAMING_CONTEXT_BUDGET } from '@/server/ai/tools/budgets';
+} from '@/kernel/tools/allowlists';
+import { DREAMING_CONTEXT_BUDGET } from '@/kernel/tools/budgets';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import {
   DREAMING_ACCEPTANCE_RATE_TOP_N,

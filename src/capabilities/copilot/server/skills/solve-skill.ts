@@ -26,11 +26,11 @@
 
 import { eq } from 'drizzle-orm';
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { SolveError, buildSolveHintInput, parseHintTurn } from '@/capabilities/practice/public';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 
 type RunAgentTaskFn = (

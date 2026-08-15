@@ -29,7 +29,7 @@ export const JOB_EVENT_CATCHUP_MS = 10_000;
  * `kind` 现在是用户提供（ingestion 路由里它是字面量 'ingestion_session' 永不空），
  * 没有白名单则任意已认证 caller 都能订阅任意 business_table 的事件流 —— 跨域读权限
  * 隐患。这里枚举所有真实 writeJobEvent 写入站点用过的 business_table（源码反查）：
- *   - ingestion_session  src/server/events/ingestion-progress.ts / session/ingestion.ts / session/docx-ingestion.ts
+ *   - ingestion_session  capabilities/ingestion/server/events/extraction-progress.ts / session/ingestion.ts / session/docx-ingestion.ts
  *   - copilot_run        src/capabilities/copilot/server/copilot-run-status.ts (COPILOT_RUN_TABLE)
  *   - echo_jobs          src/server/boss/handlers/echo.ts
  *   - question_block     src/capabilities/ingestion/server/block-structured-edit.ts

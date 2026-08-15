@@ -29,7 +29,7 @@
 
 import type { Db } from '@/db/client';
 import { misconception, misconception_edge } from '@/db/schema';
-import { listProposalInboxPage } from '@/server/proposals/inbox';
+import { listProposalInboxPage } from '@/kernel/proposals/inbox';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 
 /** Qualitative confidence band — the ONLY confidence signal that crosses the wire. */

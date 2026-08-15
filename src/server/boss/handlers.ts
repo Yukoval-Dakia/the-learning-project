@@ -1,58 +1,36 @@
-import { buildAutoEnrollHandler } from '@/capabilities/ingestion/jobs/auto_enroll';
-import { buildTencentOcrHandler } from '@/capabilities/ingestion/jobs/tencent_ocr_extract';
-import { buildJudgeRunHandler } from '@/capabilities/practice/jobs/judge_run';
-import { JUDGE_RUN_QUEUE } from '@/capabilities/practice/server/judge-durable-config';
+import type { PlacementVerificationAuthority } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
-import {
-  EXPIRE_AGENT,
-  EXPIRE_LLM,
-  FAST_QUEUE_OPTS,
-  createJobQueue,
-  createOrUpdateQueue,
-} from '@/server/boss/queue-config';
+import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
 import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { registerMemoryHandlers } from '@/server/memory/triggers';
-import type { PlacementVerificationAuthority } from '@/server/question-supply/placement-starter-attempts';
-import { getR2 } from '@/server/r2';
 import type { PgBoss } from 'pg-boss';
 import { buildEchoHandler } from './handlers/echo';
-import { buildJyeooFetchHandler } from './handlers/jyeoo-fetch';
 import { buildPromoteConversationIdleHandler } from './handlers/promote_conversation_idle';
 import { buildPruneJobEventsHandler } from './handlers/prune_job_events';
 import { buildPruneOrphanConversationSessionsHandler } from './handlers/prune_orphan_conversation_sessions';
 import { buildPruneOrphanPlacementSessionsHandler } from './handlers/prune_orphan_placement_sessions';
 import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_review_sessions';
-import { buildQuizGenHandler } from './handlers/quiz_gen';
-import { buildQuizVerifyHandler } from './handlers/quiz_verify';
-import { buildSessionSummaryHandler } from './handlers/session_summary';
-import { buildSourceVerifyHandler } from './handlers/source_verify';
-import { buildSourcingHandler } from './handlers/sourcing';
-import { buildVariantVerifyHandler } from './handlers/variant_verify';
 import {
   VERIFY_DISPATCH_RECOVERY_QUEUE,
   buildVerifyDispatchRecoveryHandler,
 } from './verify-dispatch-outbox';
 
-// M4-T3 (YUK-319)：本文件已渐缩为「未迁域 job 注册簿」。建队配方（YUK-237 三档
-// expire/retention/DLQ + YUK-259 race 防护）抽到 queue-config.ts，与 capability
-// jobs 注册器（register-capability-jobs.ts）共用。已迁入 manifest jobs 声明并由
-// 注册器挂载的 job 不再出现在这里：knowledge 夜链、practice failure-learning、
-// notes 的 hub_auto_sync_nightly + note_refine、agency
-// 四 cron（dreaming/coach_daily/coach_weekly/goal_scope）。
+// YUK-885 (F3.11)：本文件现在只注册 infrastructure/housekeeping——域 job 全部
+// 由 capability manifest jobs 声明、register-capability-jobs.ts 挂载。建队配方
+// （YUK-237 三档 expire/retention/DLQ + YUK-259 race 防护）在 queue-config.ts，
+// 与 capability jobs 注册器共用。域 job 注册（knowledge 夜链、practice
+// failure-learning / 判分链、notes 夜链、agency cron、ingestion OCR 链）
+// 已全部迁入各 capability manifest，一律不得回迁本簿。
 //
-// 仍留簿的注册（M5 拆除采石场时清账）：
+// 留簿注册 = 纯基础设施：
 //   - echo（golden E2E，0.5s polling）
-//   - rejudge（非默认 1s polling + inline 动态 import，非工厂形态）
 //   - prune_job_events / prune_orphan_* / promote_conversation_idle（FAST housekeeping cron）
 //   - registerMemoryHandlers（memory_* 队列归 memory 模块）
-//   - session_summary（链式 LLM）
-//   - quiz_gen / quiz_verify / sourcing / source_verify / variant_verify
-//   - tencent_ocr_extract（0.5s polling + lazy r2 getter）/ auto_enroll
-//   - 未迁域：ingestion（auto_enroll / tencent_ocr_extract 待 ingestion 包 jobs 声明）
+//   - verify_dispatch_recovery（question-supply 安全网，读 durable intents 只补发 verify）
 
 /**
- * Register pg-boss queue handlers + schedules for jobs NOT yet owned by a
- * capability manifest（渐缩簿）。
+ * Register pg-boss queue handlers + schedules for infrastructure/housekeeping
+ * queues only（域 job 走 capability manifest）。
  *
  * 在 worker entrypoint 启动时调一次（start-worker.ts），随后必须紧跟
  * registerCapabilityJobs 挂载各包声明的 job。
@@ -61,31 +39,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   // Step 4: echo golden E2E queue (FAST — trivial round-trip)
   await createOrUpdateQueue(boss, 'echo', FAST_QUEUE_OPTS);
   await boss.work('echo', { pollingIntervalSeconds: 0.5, batchSize: 1 }, buildEchoHandler(db));
-
-  // M2 (YUK-316, D15) — 申诉自动重判。appeal API 投递（singletonKey=appeal
-  // event id）；handler 本体在 practice capability 包，manifest 声明无 load
-  // （注册形态是非默认 1s polling + inline 动态 import，非工厂，不走注册器
-  // 统一配方）——注册留簿，M5 清账。
-  await createJobQueue(boss, 'rejudge', EXPIRE_LLM);
-  await boss.work('rejudge', { pollingIntervalSeconds: 1, batchSize: 1 }, async (jobs) => {
-    const { handleRejudge } = await import('@/capabilities/practice/jobs/rejudge');
-    for (const job of jobs) {
-      await handleRejudge(db, job.data as { appeal_event_id: string });
-    }
-  });
-
-  // YUK-594 (durable judge main path, W1) — durable judge_run queue（practice 域）。
-  // handler 本体在 practice capability 包（jobs/judge_run.ts）；manifest 声明无 load
-  // 纯归属（同 rejudge：注册形态要 includeMetadata:true 读 retryCount 驱动跨 provider
-  // lane 决策，非注册器统一配方）。createJobQueue 挂 judge_run_dlq（LLM 档，1h expire，
-  // JOB_RETRY_LIMIT×30-60s backoff → DLQ）。dark-ship：JUDGE_DURABLE_ENABLED 默认 OFF
-  // 时无人投递此队列（submit 面走同步），队列空跑无害。
-  await createJobQueue(boss, JUDGE_RUN_QUEUE, EXPIRE_LLM);
-  await boss.work(
-    JUDGE_RUN_QUEUE,
-    { pollingIntervalSeconds: 2, batchSize: 1, includeMetadata: true },
-    buildJudgeRunHandler(db),
-  );
 
   // Step 5: nightly housekeeping cron（同区段的 knowledge_propose_nightly 已迁
   // knowledge manifest jobs 声明，由注册器挂载）
@@ -137,86 +90,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     { tz: 'Asia/Shanghai' },
   );
 
-  // Phase 1d: SessionSummaryTask — enqueued by review-session completion
-  // after a review session transitions to completed. async so the LLM call
-  // doesn't block the close request.
-  await createJobQueue(boss, 'session_summary', EXPIRE_LLM);
-  await boss.work(
-    'session_summary',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildSessionSummaryHandler(db),
-  );
-
-  // Search-grounded QuizGen (T-SQ, docs/superpowers/specs/2026-06-02-quizgen-
-  // search-grounded-design.md §3 / §4). Manual-first: enqueued by
-  // POST /api/questions/quiz-gen (Q4). The tool-calling QuizGenTask agent mounts
-  // the Tavily remote MCP (env-gated) + the in-process domain-tool MCP, writes
-  // draft questions (Option B: draft_status='draft', NOT in the pool), then
-  // chains a quiz_verify job { question_ids }. batchSize=1 keeps mimo
-  // rate-limit friendly.
-  //
-  await createJobQueue(boss, 'quiz_gen', EXPIRE_AGENT);
-  await boss.work(
-    'quiz_gen',
-    { pollingIntervalSeconds: 2, batchSize: 1, includeMetadata: true },
-    buildQuizGenHandler(db),
-  );
-
-  // Q5 + Q6 (same wave §3 / §5): QuizVerifyTask — chained behind quiz_gen, which
-  // sends `quiz_verify` { question_ids } after writing draft questions. The
-  // single-shot CLOSED-BOOK verifier runs the 3 checks (grounding / copy_safety /
-  // knowledge-hit) + a deterministic n-gram overlap, then gates Option B: on pass
-  // it promotes draft_status 'draft'→'active' AND FSRS-enrolls the question
-  // (initial material_fsrs_state via the single-owner enroll path) so it enters
-  // the review pool; on needs_review / fail / too_close the draft stays out of the
-  // pool. Idempotent per question via the chained verify event guard.
-  // batchSize=1 keeps mimo rate-limit friendly.
-  await createJobQueue(boss, 'quiz_verify', EXPIRE_AGENT);
-  await boss.work(
-    'quiz_verify',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildQuizVerifyHandler(db),
-  );
-
-  // YUK-216 S2 slice 2 (题源扩展 Strategy D, docs/superpowers/plans/2026-06-05-
-  // yuk216-question-source-s2.md §3): the online sourcing line. SourcingTask
-  // searches the web for EXISTING practice questions, restructures each into a
-  // draft (source='web_sourced', tier 2, draft_status='draft' — NOT in the pool),
-  // then chains a source_verify job { question_ids }. Mirrors quiz_gen → quiz_verify.
-  // batchSize=1 keeps mimo rate-limit friendly.
-  await createJobQueue(boss, 'sourcing', EXPIRE_AGENT);
-  await boss.work(
-    'sourcing',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildSourcingHandler(db),
-  );
-
-  // YUK-697 — jyeoo_fetch: deterministic scraper supply route (jyeoo-rs subprocess).
-  // Auto-dispatched by the supply dispatcher on jyeoo-supported subjects behind the
-  // JYEOO_FETCH_ENABLED kill switch (default OFF → dispatcher falls back to sourcing_web).
-  // Spawns jyeoo-rs, validates NDJSON against SourcedQuestion, INSERTs draft_status='draft'
-  // rows (source='web_sourced', tier 2), then chains source_verify — SAME promote gate as
-  // the sourcing line. EXPIRE_AGENT (scrape can take tens of seconds); batchSize=1.
-  await createJobQueue(boss, 'jyeoo_fetch', EXPIRE_AGENT);
-  await boss.work(
-    'jyeoo_fetch',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildJyeooFetchHandler(db),
-  );
-
-  // source_verify — chained behind sourcing. Runs the tier-2 check set
-  // (structure_completeness + source_consistency + solve_check + dedup, from
-  // verify-framework.ts) and gates Option B: pass → promote draft→active +
-  // FSRS-enroll (enters the review pool); fail → stays draft. Idempotent per
-  // question via the chained verify event guard. batchSize=1 keeps mimo
-  // rate-limit friendly.
-  await createJobQueue(boss, 'source_verify', EXPIRE_AGENT);
-  await boss.work(
-    'source_verify',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildSourceVerifyHandler(db),
-  );
-
   // YUK-700 — startup + nightly safety net for drafts whose verify enqueue was
   // interrupted. Recovery reads durable per-question intents and enqueues ONLY
   // source_verify/quiz_verify; it never reruns sourcing or quiz_gen.
@@ -252,47 +125,5 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     VERIFY_DISPATCH_RECOVERY_QUEUE,
     { trigger: 'startup' },
     { singletonKey: 'verify-dispatch-startup' },
-  );
-
-  // YUK-17 / ADR-0018 — second-pass content alignment check for accepted
-  // variants. Enqueued by acceptAiProposal after a variant_question proposal
-  // is accepted; verdict='fail' flips mistake_variant.status to 'broken'.
-  await createJobQueue(boss, 'variant_verify', EXPIRE_LLM);
-  await boss.work(
-    'variant_verify',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildVariantVerifyHandler(db),
-  );
-
-  // Step 9: Tencent OCR Mark Agent —— 生产 async job
-  // R2 in worker process needs env config; getR2() throws if missing — call inside
-  // handler factory so missing creds don't break test worker setup.
-  await createJobQueue(boss, 'tencent_ocr_extract', EXPIRE_AGENT);
-  await boss.work(
-    'tencent_ocr_extract',
-    { pollingIntervalSeconds: 0.5, batchSize: 1, includeMetadata: true },
-    buildTencentOcrHandler({
-      db,
-      // lazy r2 —— test 环境通过 R2 env 未设也能起 worker；生产 env 必须齐全
-      get r2() {
-        return getR2();
-      },
-    } as Parameters<typeof buildTencentOcrHandler>[0]),
-  );
-
-  // Strategy D Slice B (YUK-190): observe-only auto-enroll. Enqueued inline by
-  // tencent_ocr_extract after a successful extraction. With the enroll flag OFF
-  // + observe ON (the default), it runs TaggingTask + WorkflowJudge per draft
-  // block and writes a durable `experimental:auto_enroll_observed` audit event
-  // per block (zero domain rows, blocks stay 'draft'). A cheap tagging job that
-  // retries on its OWN queue — failure-isolated from the expensive OCR job.
-  // batchSize=1 keeps mimo rate-limit friendly. The LLM call needs
-  // XIAOMI_API_KEY in the worker env; a missing key routes each block to review
-  // (no throw, no retry storm — handled per-block in the runner).
-  await createJobQueue(boss, 'auto_enroll', EXPIRE_LLM);
-  await boss.work(
-    'auto_enroll',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildAutoEnrollHandler(db),
   );
 }

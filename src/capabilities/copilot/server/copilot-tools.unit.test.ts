@@ -1,8 +1,63 @@
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 
 import { tasks } from '@/ai/registry';
 import { capabilities } from '@/capabilities';
-import { COPILOT_TOOLS, PROPOSE_WRITE_TOOLS, READ_TOOLS } from '@/server/ai/tools/allowlists';
+import { copilotCapability } from '@/capabilities/copilot/manifest';
+import {
+  COPILOT_TOOLS,
+  DOMAIN_TOOL_ALLOWLISTS,
+  PROPOSE_WRITE_TOOLS,
+  READ_TOOLS,
+} from '@/kernel/tools/allowlists';
+import type { DomainTool } from '@/kernel/tools/types';
+
+const COPILOT_OWNED_TOOL_NAMES = ['run_task', 'query_events', 'search_memory_facts'] as const;
+
+const OWNED_TOOL_CONTRACT_HASHES = {
+  run_task: 'ab12bd0b469e60700f3f36f781d6991346827e0c904f58b865c8fc2bfe4109b5',
+  query_events: '4f11afcf9a6cbd3cc8fa79b9672c6c74f5777c2fba2661a8e996163a459d2147',
+  search_memory_facts: '0ec598c94ba270f20b2ec935e5cdc1efed19883705b8d0f04d28934508b14da1',
+} as const;
+
+const OWNED_TOOL_EXPOSURES = {
+  run_task: ['copilot', 'copilot_user_suggested_mistake_action'],
+  query_events: [
+    'knowledge_review',
+    'copilot',
+    'copilot_user_suggested_mistake_action',
+    'dreaming',
+    'maintenance',
+    'ingestion_block_edit',
+  ],
+  search_memory_facts: ['copilot', 'copilot_user_suggested_mistake_action', 'dreaming', 'coach'],
+} as const;
+
+const OWNED_READER_PATHS = [
+  'src/capabilities/copilot/server/tools/query-events.ts',
+  'src/capabilities/copilot/server/tools/search-memory-facts.ts',
+  'src/kernel/read-models/question-activity.ts',
+] as const;
+
+function source(path: string): string {
+  return readFileSync(join(process.cwd(), path), 'utf8');
+}
+
+function contractFingerprint(tool: DomainTool<unknown, unknown>): string {
+  const contract = {
+    name: tool.name,
+    effect: tool.effect,
+    costClass: tool.costClass,
+    mirrorEvent: tool.mirrorEvent,
+    inputSchema: zodToJsonSchema(tool.inputSchema),
+    outputSchema: zodToJsonSchema(tool.outputSchema),
+  };
+  return createHash('sha256').update(JSON.stringify(contract)).digest('hex');
+}
 
 // 裁决 h：COPILOT_TOOLS 数组保持字面量（src/ai 浏览器共享面不能 import
 // @/capabilities）；归属真相源 = 各包 manifest.copilotTools，本测试强制两面相等。
@@ -34,5 +89,68 @@ describe('copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账', () => {
         .flatMap((capability) => capability.copilotTools?.tools ?? [])
         .filter((tool) => tool.name === 'run_task'),
     ).toHaveLength(1);
+  });
+});
+
+describe('copilot server ownership (YUK-884)', () => {
+  it('deletes central implementations and owns all three tools under Copilot', () => {
+    for (const name of ['run-task', 'query-events', 'search-memory-facts']) {
+      expect(
+        existsSync(join(process.cwd(), `src/capabilities/copilot/server/tools/${name}.ts`)),
+        name,
+      ).toBe(true);
+      expect(existsSync(join(process.cwd(), `src/server/ai/tools/${name}.ts`)), name).toBe(false);
+    }
+
+    const manifest = source('src/capabilities/copilot/manifest.ts');
+    for (const name of ['run-task', 'query-events', 'search-memory-facts']) {
+      expect(manifest).not.toContain(`@/server/ai/tools/${name}`);
+      expect(manifest).toContain(`./server/tools/${name}`);
+    }
+  });
+
+  it('moves Copilot event read branches behind the public capability seam', () => {
+    const publicPort = source('src/capabilities/copilot/public.ts');
+    // YUK-892 — the central events transport module is deleted; the read models
+    // live in kernel/read-models and are re-published through the public port.
+    expect(existsSync(join(process.cwd(), 'src/server/events/queries.ts'))).toBe(false);
+    for (const name of [
+      'getRecentReviewEvents',
+      'getQuestionTimeline',
+      'getQuestionAttemptOutcomeCounts',
+    ]) {
+      expect(publicPort).toContain(name);
+    }
+    expect(publicPort).toContain('QuestionTimelineEntry');
+  });
+
+  it('loads unchanged contracts from Copilot and preserves every permission surface', async () => {
+    const declarations = copilotCapability.copilotTools?.tools ?? [];
+    const fullAllowlist = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS];
+
+    for (const name of COPILOT_OWNED_TOOL_NAMES) {
+      const matches = declarations.filter((declaration) => declaration.name === name);
+      expect(matches).toHaveLength(1);
+      const tool = await matches[0]?.load?.();
+      expect(tool?.name).toBe(name);
+      expect(fullAllowlist.some((allowedName) => allowedName === name)).toBe(true);
+      expect(
+        Object.entries(DOMAIN_TOOL_ALLOWLISTS)
+          .filter(([, names]) => names.some((allowedName) => allowedName === name))
+          .map(([surface]) => surface),
+      ).toEqual(OWNED_TOOL_EXPOSURES[name]);
+      expect(contractFingerprint(tool as DomainTool<unknown, unknown>), name).toBe(
+        OWNED_TOOL_CONTRACT_HASHES[name],
+      );
+    }
+  });
+
+  it('keeps capability-owned public readers free of hidden writes', () => {
+    for (const path of OWNED_READER_PATHS) {
+      expect(existsSync(join(process.cwd(), path)), path).toBe(true);
+      const reader = source(path);
+      expect(reader, path).not.toMatch(/\b(?:ctx\.)?db\s*\.\s*(?:insert|update|delete)\s*\(/);
+      expect(reader, path).not.toMatch(/\bwrite(?:Event|AiProposal|JobEvent|SessionEvent)\s*\(/);
+    }
   });
 });

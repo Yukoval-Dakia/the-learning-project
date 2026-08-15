@@ -26,8 +26,8 @@
 // nothing; together they remain single-owner consumers of the cause SoT.
 
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
-import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
-import { getFailureAttempts } from '@/server/events/queries';
+import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { getFailureAttempts } from './attempt-events';
 
 /**
  * The window we scan for a cause-bearing prior failure. Five attempts is

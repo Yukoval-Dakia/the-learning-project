@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { resolveDomainToolNames, resolveMcpAllowedTools } from '@/kernel/tools/allowlists';
+import { COPILOT_HISTORY_BUDGET } from '@/kernel/tools/budgets';
 import { TAVILY_MCP_ALLOWED_TOOLS, buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
 import type { TaskEventMessage } from '@/server/ai/runner';
 import { SPAWN_TOOL_NAME } from '@/server/ai/spawn-contract';
-import { resolveDomainToolNames, resolveMcpAllowedTools } from '@/server/ai/tools/allowlists';
-import { COPILOT_HISTORY_BUDGET } from '@/server/ai/tools/budgets';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import {
   CopilotChatRequest,

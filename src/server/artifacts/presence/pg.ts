@@ -17,8 +17,10 @@
 
 import { eq, sql } from 'drizzle-orm';
 
-import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-apply';
-import type { PersistNoteRefineApplyResult } from '@/capabilities/notes/server/note-refine-apply';
+import {
+  type PersistNoteRefineApplyResult,
+  persistNoteRefineApply,
+} from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
 import { artifact_edit_session, editing_presence } from '@/db/schema';
 

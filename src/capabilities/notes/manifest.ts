@@ -252,6 +252,29 @@ export const notesCapability = defineCapability({
               (module) => module.noteUpdateProposalAcceptApplier,
             ),
         },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.noteUpdateProposalRetractApplier,
+            ),
+        },
+      },
+    ],
+  },
+  // YUK-880 (F3.9b) — Notes owns the interactive-artifact authoring DomainTools
+  // (moved from the central src/server/ai/tools/author-artifact.ts). Copilot
+  // keeps the surface grant via the allowlist NAMES in allowlists.ts — only the
+  // implementation ownership moved (author = create v0, update = full-html
+  // replace + version bump, ADR-0033 D6).
+  copilotTools: {
+    tools: [
+      {
+        name: 'author_artifact',
+        load: () => import('./server/tools/author-artifact').then((m) => m.authorArtifactTool),
+      },
+      {
+        name: 'update_artifact',
+        load: () => import('./server/tools/author-artifact').then((m) => m.updateArtifactTool),
       },
     ],
   },

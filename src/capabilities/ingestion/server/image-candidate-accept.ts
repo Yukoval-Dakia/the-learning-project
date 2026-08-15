@@ -67,14 +67,14 @@ import type { Db } from '@/db/client';
 import { ai_task_runs, event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { writeCostLedger } from '@/server/ai/log';
-import { aiAgentRef } from '@/server/ai/provenance';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
-} from '@/server/proposals/signals';
+} from '@/kernel/proposals/signals';
+import { writeCostLedger } from '@/server/ai/log';
+import { aiAgentRef } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { type R2Client, getR2 } from '@/server/r2';
 import { getKnownSubjects } from '@/subjects/profile';

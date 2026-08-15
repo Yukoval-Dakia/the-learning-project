@@ -255,6 +255,18 @@ export const agencyCapability = defineCapability({
               (module) => module.learningItemProposalAcceptApplier,
             ),
         },
+        dismiss: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.agencyProposalDismissApplier,
+            ),
+        },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.learningItemProposalRetractApplier,
+            ),
+        },
       },
       {
         kind: 'completion',
@@ -262,6 +274,18 @@ export const agencyCapability = defineCapability({
           load: () =>
             import('./server/proposal-accept-applier').then(
               (module) => module.completionProposalAcceptApplier,
+            ),
+        },
+        dismiss: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.agencyProposalDismissApplier,
+            ),
+        },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.completionProposalRetractApplier,
             ),
         },
       },
@@ -273,6 +297,18 @@ export const agencyCapability = defineCapability({
               (module) => module.relearnProposalAcceptApplier,
             ),
         },
+        dismiss: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.agencyProposalDismissApplier,
+            ),
+        },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.relearnProposalRetractApplier,
+            ),
+        },
       },
       {
         kind: 'goal_scope',
@@ -282,8 +318,28 @@ export const agencyCapability = defineCapability({
               (module) => module.goalScopeProposalAcceptApplier,
             ),
         },
+        dismiss: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.agencyProposalDismissApplier,
+            ),
+        },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.goalScopeProposalRetractApplier,
+            ),
+        },
       },
-      { kind: 'defer' },
+      {
+        kind: 'defer',
+        dismiss: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.agencyProposalDismissApplier,
+            ),
+        },
+      },
       // YUK-406 Phase 0 / YUK-440 A13 — conjecture (subject_kind 'mind_model').
       // The accept applier 真身在 ./server/conjecture-accept (acceptConjectureProposal:
       // accept = calibration anchor / edit → mem0 CORE / reject → digest, never FSRS).
@@ -291,9 +347,16 @@ export const agencyCapability = defineCapability({
       {
         kind: 'conjecture',
         accept: {
+          correctedPayload: true,
           load: () =>
             import('./server/proposal-accept-applier').then(
               (module) => module.conjectureProposalAcceptApplier,
+            ),
+        },
+        dismiss: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.agencyProposalDismissApplier,
             ),
         },
       },
@@ -306,29 +369,27 @@ export const agencyCapability = defineCapability({
       {
         name: 'get_learning_item_context',
         load: () =>
-          import('@/server/ai/tools/context-readers').then((m) => m.getLearningItemContextTool),
+          import('./server/tools/learning-item-context').then((m) => m.getLearningItemContextTool),
       },
       {
         name: 'propose_learning_item_completion',
         load: () =>
-          import('@/server/ai/tools/proposal-tools').then(
-            (m) => m.proposeLearningItemCompletionTool,
-          ),
+          import('./server/tools/proposal-tools').then((m) => m.proposeLearningItemCompletionTool),
       },
       {
         name: 'propose_learning_item_relearn',
         load: () =>
-          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeLearningItemRelearnTool),
+          import('./server/tools/proposal-tools').then((m) => m.proposeLearningItemRelearnTool),
       },
       {
         name: 'propose_learning_item_defer',
         load: () =>
-          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeLearningItemDeferTool),
+          import('./server/tools/proposal-tools').then((m) => m.proposeLearningItemDeferTool),
       },
       {
         name: 'propose_learning_item_archive',
         load: () =>
-          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeLearningItemArchiveTool),
+          import('./server/tools/proposal-tools').then((m) => m.proposeLearningItemArchiveTool),
       },
     ],
   },

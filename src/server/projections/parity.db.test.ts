@@ -283,7 +283,7 @@ describe('decideKnowledgeEdgeProposal — accept-time edge parity (via acceptAiP
 
   it('a clean edge create accept passes the in-tx edge parity assert', async () => {
     const { acceptAiProposal } = await import('@/server/proposals/actions');
-    const { writeAiProposal } = await import('@/server/proposals/writer');
+    const { writeAiProposal } = await import('@/kernel/proposals/writer');
     const db = testDb();
     const now = new Date();
     for (const id of ['ke_from', 'ke_to']) {

@@ -15,9 +15,8 @@
 //
 // Hermetic: resetDb() TRUNCATEs ALL_TABLES (incl. learning_item + materialized_id_index).
 
-import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
+import type { LearningItemAcceptResult } from '@/capabilities/agency/public';
+import { planLearningIntent } from '@/capabilities/agency/public';
 import {
   acceptCompletionProposal,
   acceptRelearnProposal,
@@ -26,13 +25,16 @@ import { newId } from '@/core/ids';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import { event, knowledge, learning_item, materialized_id_index } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { planLearningIntent } from '@/server/orchestrator/learning_intent';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import { writeLearningItemProposal } from '@/kernel/proposals/producers';
 import { acceptAiProposal, retractAiProposal } from '@/server/proposals/actions';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
-import { writeLearningItemProposal } from '@/server/proposals/producers';
+import { eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { auditProjection } from '../../../scripts/audit-projection';
 import { backfillLearningItemGenesis } from '../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import { assertProposalLifecycleResult } from '../../../tests/helpers/proposal-lifecycle';
 import { gatherAndFoldLearningItem } from './gather';
 
 const T0 = new Date('2026-06-01T00:00:00.000Z');
@@ -438,7 +440,7 @@ describe('retractAiProposal (learning_item, flag OFF) — HIGH-1 single-clock + 
     const proposal = await planLearningIntent({ db, topic: 'Hub', runTaskFn });
     const proposalId = proposal.proposal_id;
     const accepted = await acceptAiProposal(db, proposalId);
-    if (accepted.kind !== 'learning_item') throw new Error('unexpected kind');
+    assertProposalLifecycleResult<LearningItemAcceptResult>(accepted, 'learning_item');
     const itemIds = [accepted.hub_learning_item_id, ...accepted.atomic_learning_item_ids];
     // every materialized item is active (not archived) + already event-sourced (genesis at INSERT).
     for (const id of itemIds) {

@@ -19,22 +19,22 @@
 //
 // Verdict shape is STABLE for YUK-174 (RB-9): { ok:true } | { ok:false; gate; reason }.
 
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
-import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
-import {
-  type EffectiveFailureCause,
-  effectiveCauseForFailureAttempt,
-} from '@/server/events/cause-policy';
-import { type FailureAttempt, getFailureAttemptById } from '@/server/events/queries';
 // P5.4-L2 / YUK-174 — OPTIONAL adaptive gate input (Facet B). Type-only import:
 // the validator stays PURE (it does NOT run adaptive-bias.ts at runtime — the
 // import erases). The gate-bump decision + its audit metadata are COMPUTED by
 // adaptive-bias.ts at the call site and carried IN, so the folded reject reason
 // can cite the rate/threshold/sample without re-reading the signal (§3.4).
-import type { AdaptiveGateInput } from '@/server/proposals/adaptive-bias';
+import type { AdaptiveGateInput } from '@/kernel/proposals/adaptive-bias';
+import {
+  type EffectiveFailureCause,
+  effectiveCauseForFailureAttempt,
+} from '@/kernel/read-models/cause-policy';
+import { type FailureAttempt, getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { assertKnowledgeIdsExist } from '@/kernel/read-models/knowledge-validate';
 import { eq } from 'drizzle-orm';
 
 // RB-5 — single-source evidence window. Consumed by the recency check (RB-4)

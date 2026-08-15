@@ -12,7 +12,7 @@ import { newId } from '@/core/ids';
 import { BRIEF_ACK_ACTION } from '@/core/schema/conjecture';
 import { event, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { writeAiProposal } from '@/server/proposals/writer';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { TEACHING_BRIEF_OUTCOME_TTL_MS, loadTeachingBrief } from '../server/teaching-brief';
 import { acknowledgeTeachingBriefOutcome } from '../server/teaching-brief-ack';

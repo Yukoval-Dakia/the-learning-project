@@ -1,7 +1,7 @@
+import type { DomainTool } from '@/kernel/tools/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { __resetRegistryForTests, getTool, listTools, registerTool } from './registry';
-import type { DomainTool } from './types';
 
 function makeReadTool(name: string): DomainTool<{ q: string }, { hits: number }> {
   return {
@@ -81,5 +81,43 @@ describe('DomainTool registry', () => {
     ).toEqual(['r1', 'r2']);
     expect(listTools({ effect: 'propose' }).map((t) => t.name)).toEqual(['p1']);
     expect(listTools({ effect: 'write' })).toEqual([]);
+  });
+
+  it('throws on registration when outputSchema has no safeParse method', () => {
+    const badTool: DomainTool<{ q: string }, unknown> = {
+      name: 'bad_output_schema',
+      description: 'tool with non-Zod outputSchema',
+      effect: 'read',
+      inputSchema: z.object({ q: z.string() }),
+      outputSchema: { notZod: true } as unknown as z.ZodType<unknown>,
+      costClass: 'local',
+      async execute() {
+        return null;
+      },
+      summarize() {
+        return '';
+      },
+      mirrorEvent: 'never',
+    };
+    expect(() => registerTool(badTool)).toThrow(/outputSchema must be a Zod schema/);
+  });
+
+  it('throws on registration when outputSchema is null', () => {
+    const badTool: DomainTool<{ q: string }, unknown> = {
+      name: 'null_output_schema',
+      description: 'tool with null outputSchema',
+      effect: 'read',
+      inputSchema: z.object({ q: z.string() }),
+      outputSchema: null as unknown as z.ZodType<unknown>,
+      costClass: 'local',
+      async execute() {
+        return null;
+      },
+      summarize() {
+        return '';
+      },
+      mirrorEvent: 'never',
+    };
+    expect(() => registerTool(badTool)).toThrow(/outputSchema must be a Zod schema/);
   });
 });

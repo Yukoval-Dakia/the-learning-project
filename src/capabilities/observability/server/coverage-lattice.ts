@@ -6,15 +6,15 @@
 // 活动聚合查询（MF1）。派题、cooldown 皆不改（只读）。should#1：本蓝图只覆盖 scanCoverageGaps 四
 // 规则，confusable_contrast（独立 discovery，同事件不同来源）fingerprint 不匹配 → 正确不 join。
 
-import type { Db } from '@/db/client';
-import { event } from '@/db/schema';
-import { SUPPLY_DISPATCH_COOLDOWN_DAYS } from '@/server/question-supply/dispatcher';
 import {
   COVERAGE_DEPTH_THRESHOLD,
   NEAR_WINDOW,
   assembleScanInput,
   scanCoverageGaps,
-} from '@/server/question-supply/target-discovery';
+} from '@/capabilities/practice/public';
+import { SUPPLY_DISPATCH_COOLDOWN_DAYS } from '@/capabilities/practice/public';
+import type { Db } from '@/db/client';
+import { event } from '@/db/schema';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 import { and, asc, eq, gte } from 'drizzle-orm';
 import {

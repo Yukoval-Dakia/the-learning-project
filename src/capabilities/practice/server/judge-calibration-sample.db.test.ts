@@ -570,7 +570,7 @@ describe('runJudgeCalibrationSample', () => {
     // Regression pin for YUK-769: the sampler used to own a local
     // LLM_JUDGE_ROUTES const that omitted 'unit_dimension', silently
     // excluding its LLM-fallback verdicts from calibration. It now consumes
-    // the canonical MODEL_BACKED_JUDGE_ROUTES (@/kernel/judge), which includes
+    // the canonical MODEL_BACKED_JUDGE_ROUTES (@/capabilities/practice/server/judge), which includes
     // 'unit_dimension'. Student answer is mathjs-unparseable Chinese prose, so
     // the accelerator reports 'unparseable' and the real judge pipeline falls
     // through to the LLM fallback — proving the route reaches the LLM lane,

@@ -12,6 +12,10 @@ describe('POST /api/ingestion/[id]/extract', () => {
 
   beforeAll(async () => {
     const w = await startTestWorker(db);
+    // YUK-882 — tencent_ocr_extract 队列改由 ingestion manifest 声明，而
+    // startTestWorker 只挂中央渐缩簿（registerHandlers），不建 manifest 队列；
+    // 本测试走真实 boss.send，需要先建队列（operations.db.test.ts 同款先例）。
+    await w.boss.createQueue('tencent_ocr_extract');
     teardown = w.teardown;
   });
 

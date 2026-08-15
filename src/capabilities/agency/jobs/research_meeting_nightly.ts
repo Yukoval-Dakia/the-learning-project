@@ -67,14 +67,15 @@ import {
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event, source_asset } from '@/db/schema';
-import { defaultImageFetch } from '@/server/ai/judges/steps-judge';
+import { defaultImageFetch } from '@/kernel/judge';
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
+import { type WriteAiProposalInput, writeAiProposal } from '@/kernel/proposals/writer';
+import { getFailureAttemptsWithReasoningTrace } from '@/kernel/read-models/failure-attempts';
+import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { type TaskTextRunFn, costUsdToMicroUsd, sumAllKnownCostUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
-import { type FailureAttempt, getFailureAttemptsWithReasoningTrace } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
-import { listProposalInboxRows } from '@/server/proposals/inbox';
-import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -85,7 +86,7 @@ import {
   type ConjectureInductionTaskKind,
   type InduceConjectureResult,
   induceConjecture,
-} from '@/server/agency/conjecture/induce';
+} from '@/capabilities/agency/server/conjecture/induce';
 import {
   type PredictionAccountability,
   loadPredictionAccountabilityByKey,

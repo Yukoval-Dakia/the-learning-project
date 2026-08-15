@@ -1,20 +1,51 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { knowledgeCapability } from '../../capabilities/knowledge/manifest';
 import { defineCapability } from '../manifest';
-import { createProposalAcceptRegistry, getProposalAcceptDecl } from './registry';
-import type { ProposalAcceptApplier, ProposalAcceptInput } from './types';
+import {
+  createProposalLifecycleRegistry,
+  getProposalLifecycleDecl,
+  getProposalLifecycleOperation,
+} from './registry';
+import type {
+  ProposalAcceptApplier,
+  ProposalAcceptInput,
+  ProposalCorrectedPayload,
+  ProposalDismissApplier,
+  ProposalRetractApplier,
+} from './types';
 
 const applier: ProposalAcceptApplier = async (_db, { proposal }) => ({
   kind: proposal.payload.kind,
-  result: null,
+  result: { kind: proposal.payload.kind },
 });
 
-describe('proposal accept registry', () => {
+const dismiss: ProposalDismissApplier = async (_db, { proposal }) => ({
+  kind: proposal.payload.kind,
+  result: { kind: proposal.payload.kind },
+});
+
+const retract: ProposalRetractApplier = async () => {};
+
+describe('proposal lifecycle registry', () => {
+  it('loads every Knowledge lifecycle operation from its single owner module', () => {
+    const loaderSources = (knowledgeCapability.proposals?.kinds ?? []).flatMap((declaration) =>
+      [declaration.accept, declaration.dismiss, declaration.retract].flatMap((operation) =>
+        operation ? [operation.load.toString()] : [],
+      ),
+    );
+
+    expect(loaderSources).not.toHaveLength(0);
+    expect(loaderSources.every((source) => source.includes('server/proposal-appliers'))).toBe(true);
+  });
+
   it('uses payload as the only proposal identity and discriminates decision options', () => {
     expectTypeOf<ProposalAcceptInput['proposal']>().not.toHaveProperty('kind');
     expectTypeOf<ProposalAcceptInput['proposal']>().not.toHaveProperty('target');
     expectTypeOf<ProposalAcceptInput>().not.toHaveProperty('enqueueVariantVerify');
     expectTypeOf<ProposalAcceptInput>().not.toHaveProperty('imageCandidateDeps');
-    expectTypeOf<ProposalAcceptInput>().not.toHaveProperty('corrected_payload');
+    expectTypeOf<Extract<ProposalAcceptInput, { decision?: 'accept' }>>()
+      .toHaveProperty('corrected_payload')
+      .toEqualTypeOf<ProposalCorrectedPayload | undefined>();
     expectTypeOf<Extract<ProposalAcceptInput, { decision: 'change_type' }>>()
       .toHaveProperty('new_relation_type')
       .toEqualTypeOf<string>();
@@ -23,40 +54,84 @@ describe('proposal accept registry', () => {
     >().toEqualTypeOf<undefined>();
   });
 
-  it('indexes only proposal kinds with accept loaders without invoking them', () => {
-    const load = vi.fn(async () => applier);
-    const registry = createProposalAcceptRegistry([
+  it('indexes every owned proposal kind without invoking lifecycle loaders', () => {
+    const acceptLoad = vi.fn(async () => applier);
+    const dismissLoad = vi.fn(async () => dismiss);
+    const retractLoad = vi.fn(async () => retract);
+    const registry = createProposalLifecycleRegistry([
       defineCapability({
         name: 'owned',
         description: 'test capability',
         proposals: {
-          kinds: [{ kind: 'implemented', accept: { load } }, { kind: 'declared_only' }],
+          kinds: [
+            {
+              kind: 'implemented',
+              accept: { load: acceptLoad },
+              dismiss: { load: dismissLoad },
+              retract: { load: retractLoad },
+            },
+            { kind: 'declared_only' },
+          ],
         },
       }),
     ]);
 
-    expect([...registry.keys()]).toEqual(['implemented']);
-    expect(load).not.toHaveBeenCalled();
+    expect([...registry.keys()]).toEqual(['implemented', 'declared_only']);
+    expect(acceptLoad).not.toHaveBeenCalled();
+    expect(dismissLoad).not.toHaveBeenCalled();
+    expect(retractLoad).not.toHaveBeenCalled();
   });
 
-  it('loads the typed applier for a registered kind and returns undefined otherwise', async () => {
-    const registry = createProposalAcceptRegistry([
+  it.each([
+    ['first', 'accept'],
+    ['first', 'dismiss'],
+    ['first', 'retract'],
+    ['second', 'accept'],
+    ['second', 'dismiss'],
+    ['second', 'retract'],
+  ] as const)('resolves %s owner %s operation', async (kind, operation) => {
+    const registry = createProposalLifecycleRegistry([
       defineCapability({
         name: 'owned',
         description: 'test capability',
-        proposals: { kinds: [{ kind: 'implemented', accept: { load: async () => applier } }] },
+        proposals: {
+          kinds: ['first', 'second'].map((ownedKind) => ({
+            kind: ownedKind,
+            accept: { load: async () => applier },
+            dismiss: { load: async () => dismiss },
+            retract: { load: async () => retract },
+          })),
+        },
       }),
     ]);
 
-    const decl = getProposalAcceptDecl(registry, 'implemented');
-    expect(decl).toBeDefined();
-    await expect(decl?.load()).resolves.toBe(applier);
-    expect(getProposalAcceptDecl(registry, 'declared_only')).toBeUndefined();
+    const operationDecl = getProposalLifecycleOperation(registry, kind, operation);
+    expect(operationDecl).toBeDefined();
+    await expect(operationDecl?.load()).resolves.toBe(
+      operation === 'accept' ? applier : operation === 'dismiss' ? dismiss : retract,
+    );
+  });
+
+  it('returns the owner declaration while leaving unsupported operations absent', () => {
+    const registry = createProposalLifecycleRegistry([
+      defineCapability({
+        name: 'owned',
+        description: 'test capability',
+        proposals: { kinds: [{ kind: 'declared_only' }] },
+      }),
+    ]);
+
+    expect(getProposalLifecycleDecl(registry, 'declared_only')).toEqual({
+      owner: 'owned',
+      kind: 'declared_only',
+    });
+    expect(getProposalLifecycleOperation(registry, 'declared_only', 'accept')).toBeUndefined();
+    expect(getProposalLifecycleOperation(registry, 'missing', 'dismiss')).toBeUndefined();
   });
 
   it('rejects duplicate proposal kinds defensively', () => {
     expect(() =>
-      createProposalAcceptRegistry([
+      createProposalLifecycleRegistry([
         defineCapability({
           name: 'a',
           description: 'test capability',

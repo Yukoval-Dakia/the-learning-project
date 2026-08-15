@@ -6,10 +6,10 @@ import { alias } from 'drizzle-orm/pg-core';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 
+import type { PlacementVerificationAuthority } from '@/capabilities/practice/public';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
-import type { PlacementVerificationAuthority } from '@/server/question-supply/placement-starter-attempts';
 import { fromPgBossDrizzleTx } from './pg-boss-drizzle';
 
 export const VERIFY_DISPATCH_INTENT_ACTION = 'experimental:verify_dispatch_intent';

@@ -31,6 +31,9 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { writeArchiveProposal } from '@/kernel/proposals/producers';
+import { writeAiProposal } from '@/kernel/proposals/writer';
+import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { embedHash, knowledgeEmbedText } from '@/server/ai/embed-source';
 import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer';
@@ -56,10 +59,7 @@ import {
 } from '@/server/projections/parity';
 // YUK-471 W1 PR-B1 — the SoT-flip gate (default OFF; projection becomes the row writer when ON).
 import { projectionIsWriter } from '@/server/projections/sot-flag';
-import { writeArchiveProposal } from '@/server/proposals/producers';
-import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { getEffectiveDomain } from './domain';
 import {
   archiveKnowledgeEdge,
   createKnowledgeEdge,

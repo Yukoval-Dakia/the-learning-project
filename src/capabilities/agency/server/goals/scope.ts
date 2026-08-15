@@ -9,25 +9,23 @@
 // LLM outage never breaks the goal-create entry point.
 
 import { newId } from '@/core/ids';
-import { z } from 'zod';
 
 import { loadTreeSnapshot } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import type { GoalScopeIntent } from '@/kernel/task-intents';
 // M5 seam（YUK-319 T2 记录）：跨包深 import knowledge 内部模块——M5 收紧包边界时
 // 应换走 knowledge 包对外导出面；M4 等价平移期原样保留。
-import type { ToolContext } from '@/server/ai/tools/types';
-import { writeAiProposal } from '@/server/proposals/writer';
+import type { ToolContext } from '@/kernel/tools/types';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
+import { parseGoalScopeOutput } from '../../tasks/goal-scope';
 import { type TaskTextRunFn, writeRetryableAiFailureLedger } from '../ai-runtime';
 
-const GoalScopeOutputSchema = z.object({
-  scope_knowledge_ids: z.array(z.string().min(1)).default([]),
-  sequence_hint: z.number().int().min(0).default(0),
-  reasoning: z.string().min(1).max(4000),
-});
-export type GoalScopeOutput = z.infer<typeof GoalScopeOutputSchema>;
+// YUK-879 — the GoalScope output contract is owned by the agency TaskSpec
+// module; re-exported here for the existing db-test import surface.
+export { GoalScopeOutputSchema, parseGoalScopeOutput } from '../../tasks/goal-scope';
+export type { GoalScopeOutput } from '../../tasks/goal-scope';
 
 export interface RunGoalScopeAndWriteParams {
   db: Db;
@@ -190,20 +188,4 @@ export async function runGoalScopeAndWrite(
     // from the benign `!prepared` no-op above (both yield proposal_id: null).
     return { ...EMPTY_RESULT, ok: false, llm_attempted: llmAttempted };
   }
-}
-
-export function parseGoalScopeOutput(text: string): GoalScopeOutput {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseGoalScopeOutput: no JSON object found in text');
-  }
-  const slice = text.slice(start, end + 1);
-  let json: unknown;
-  try {
-    json = JSON.parse(slice);
-  } catch (e) {
-    throw new Error(`parseGoalScopeOutput: JSON.parse failed: ${(e as Error).message}`);
-  }
-  return GoalScopeOutputSchema.parse(json);
 }

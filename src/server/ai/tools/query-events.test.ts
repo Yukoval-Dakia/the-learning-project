@@ -1,11 +1,11 @@
+import { queryEventsTool } from '@/capabilities/copilot/server/tools/query-events';
 import { knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import type { ToolContext } from '@/kernel/tools/types';
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { queryEventsTool } from './query-events';
-import type { ToolContext } from './types';
 
 function ctx(): ToolContext {
   return {

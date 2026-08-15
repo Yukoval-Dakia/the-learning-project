@@ -1,11 +1,11 @@
 import { inArray } from 'drizzle-orm';
 
+import { getFailureAttempts } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import { getFailureAttempts } from '@/server/events/queries';
-import { listLearningRecords } from './queries';
+import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { listLearningRecords } from '@/kernel/records/queries';
 
 export interface ListMistakeProjectionFilter {
   limit: number;

@@ -2,9 +2,9 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { JudgeInvokerOutput } from '@/capabilities/practice/server/judge/invoker';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { event, learning_record, learning_session, question } from '@/db/schema';
-import type { JudgeInvokerOutput } from '@/server/judge/invoker';
 import { Tutor } from '@/server/session';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { planSolveHint, startSolveSession, submitSolveAttempt } from './solve-session';

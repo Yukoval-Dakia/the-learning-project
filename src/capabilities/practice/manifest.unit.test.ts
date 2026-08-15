@@ -3,12 +3,83 @@ import { describe, expect, it } from 'vitest';
 import { practiceCapability } from './manifest';
 
 describe('practice manifest jobs', () => {
+  it('owns sourcing and generation with exact queue and worker metadata', () => {
+    const handlers = practiceCapability.jobs?.handlers ?? [];
+    const expected = {
+      sourcing: { queue: 'agent', includeMetadata: undefined },
+      jyeoo_fetch: { queue: 'agent', includeMetadata: undefined },
+      quiz_gen: { queue: 'agent', includeMetadata: true },
+    } as const;
+
+    for (const [name, contract] of Object.entries(expected)) {
+      const job = handlers.find((candidate) => candidate.name === name);
+      expect(job?.queue, name).toBe(contract.queue);
+      expect(typeof job?.load, name).toBe('function');
+      expect(job && 'includeMetadata' in job ? job.includeMetadata : undefined, name).toBe(
+        contract.includeMetadata,
+      );
+    }
+  });
+
+  // YUK-868 — verification + promotion job ownership. Queue tiers must mirror the
+  // retired central registrations byte-for-byte: quiz_verify / source_verify were
+  // EXPIRE_AGENT (agent), variant_verify was EXPIRE_LLM (llm); none used
+  // includeMetadata, so the registrar's {2s, batchSize 1} default worker options
+  // preserve the old handlers.ts registration exactly.
+  it('owns verification with exact queue tiers and no includeMetadata', () => {
+    const handlers = practiceCapability.jobs?.handlers ?? [];
+    const expected = {
+      quiz_verify: 'agent',
+      source_verify: 'agent',
+      variant_verify: 'llm',
+    } as const;
+
+    for (const [name, queue] of Object.entries(expected)) {
+      const job = handlers.find((candidate) => candidate.name === name);
+      expect(job?.queue, name).toBe(queue);
+      expect(typeof job?.load, name).toBe('function');
+      expect(job && 'includeMetadata' in job ? job.includeMetadata : undefined, name).toBe(
+        undefined,
+      );
+      expect(job?.schedule, name).toBeUndefined();
+    }
+  });
+
   it('owns both durable Failure Learning stages', () => {
     const handlers = practiceCapability.jobs?.handlers ?? [];
     for (const name of ['attribution_followup', 'variant_gen']) {
       const job = handlers.find((candidate) => candidate.name === name);
       expect(job?.queue, name).toBe('llm');
       expect(typeof job?.load, name).toBe('function');
+    }
+  });
+
+  // YUK-870 (F3.5b) — rejudge / judge_run / session_summary registrations moved
+  // from the central 渐缩簿 into this manifest. Queue tiers mirror the retired
+  // central blocks byte-for-byte (all three were EXPIRE_LLM → 'llm'); the worker
+  // metadata declares the exact options each central line handed boss.work:
+  // rejudge's non-default 1s polling, judge_run's includeMetadata:true (reads
+  // retryCount to drive the cross-provider lane decision), session_summary's
+  // explicit 2s/1 parity row. The metadata is registration parity, not a
+  // workflow DSL.
+  it('owns rejudge, judge_run and session_summary with exact queue tiers and worker metadata (YUK-870)', () => {
+    const handlers = practiceCapability.jobs?.handlers ?? [];
+    const expected = {
+      rejudge: { queue: 'llm', pollingIntervalSeconds: 1, includeMetadata: undefined },
+      judge_run: { queue: 'llm', pollingIntervalSeconds: 2, includeMetadata: true },
+      session_summary: { queue: 'llm', pollingIntervalSeconds: 2, includeMetadata: undefined },
+    } as const;
+
+    for (const [name, contract] of Object.entries(expected)) {
+      const job = handlers.find((candidate) => candidate.name === name);
+      expect(job?.queue, name).toBe(contract.queue);
+      expect(typeof job?.load, name).toBe('function');
+      expect(job?.pollingIntervalSeconds, name).toBe(contract.pollingIntervalSeconds);
+      expect(job?.batchSize, name).toBe(1);
+      expect(job && 'includeMetadata' in job ? job.includeMetadata : undefined, name).toBe(
+        contract.includeMetadata,
+      );
+      expect(job?.schedule, name).toBeUndefined();
     }
   });
 

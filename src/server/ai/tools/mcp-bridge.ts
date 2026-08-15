@@ -22,12 +22,17 @@
 //      result the LLM can read.
 
 import { writeEvent } from '@/kernel/events';
+import type {
+  ToolCallerActor,
+  ToolContext,
+  ToolEffect,
+  ToolMirrorPolicy,
+} from '@/kernel/tools/types';
 import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
 import { getTool } from './registry';
-import type { ToolCallerActor, ToolContext, ToolEffect, ToolMirrorPolicy } from './types';
 
 /**
  * Decide whether a tool invocation should mirror to the `event` table.
@@ -263,7 +268,20 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
         try {
           await opts.onExecuteStart?.(gateInput);
           executionStarted = true;
-          output = await dt.execute(ctx, execInput as never);
+          const rawOutput = await dt.execute(ctx, execInput as never);
+          // YUK-862 / F3.1 — global output schema enforcement. Runs immediately
+          // after execute, before context-budget decoration, onResult, summarize,
+          // logging, mirroring, or SDK return.
+          const parseResult = dt.outputSchema.safeParse(rawOutput);
+          if (parseResult.success) {
+            output = parseResult.data;
+          } else {
+            // Redact actual values; only emit field paths for machine readability.
+            const paths = parseResult.error.issues
+              .map((iss) => iss.path.join('.') || '(root)')
+              .join(', ');
+            errorReason = `output_schema_invalid: ${paths}`;
+          }
         } catch (err) {
           errorReason = err instanceof Error ? err.message : String(err);
         }

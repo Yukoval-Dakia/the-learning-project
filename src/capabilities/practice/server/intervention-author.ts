@@ -3,7 +3,6 @@ import {
   type InterventionAuthoringContextT,
   guardInterventionPreparationStage,
 } from '@/capabilities/agency/public';
-import { resolveSubjectProfileForKnowledgeIdsStrict } from '@/capabilities/knowledge/public';
 import {
   CurrentInterventionPackageReviewAudit,
   INTERVENTION_CONTRACT_VERSION,
@@ -36,6 +35,7 @@ import {
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import { resolveSubjectProfileForKnowledgeIdsStrict } from '@/kernel/read-models/subject-profile';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
@@ -49,12 +49,12 @@ import {
   persistValidatorRunBinding,
   runConfirmedStructuredReview,
 } from '@/server/ai/sealed-validation';
+import type { SubjectProfile } from '@/subjects/profile';
 import {
   type IndependentSolutionResult,
   runIndependentSolution,
   runQuestionContentValidation,
-} from '@/server/quiz/verify-framework';
-import type { SubjectProfile } from '@/subjects/profile';
+} from './quiz/verify-framework';
 
 export interface InterventionAuthorDeps {
   runTaskFn?: TaskTextRunFn;

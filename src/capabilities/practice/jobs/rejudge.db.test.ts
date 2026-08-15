@@ -3,20 +3,20 @@
 // effective-truth 断言）/ 维持（appeal_upheld 留痕）/ 幂等跳过。
 // FSRS 刻意不在 handler 内重写（设计稿语义：评级是用户确认动作）——见 rejudge.ts 头注。
 
+import type { JudgeAnswerResult } from '@/capabilities/practice/server/judge/question-contract';
 import type { ThetaRowSnapshotT } from '@/core/schema/event/state-snapshot';
 import {
   INTERVENTION_CONTRACT_VERSION,
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
 } from '@/core/schema/intervention';
 import { event, knowledge, mastery_state, question } from '@/db/schema';
-import type { JudgeAnswerResult } from '@/server/ai/judges/question-contract';
+import { getEffectiveTruth } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { writeAttemptSnapshotBrackets } from '../../practice/server/attempt-snapshot';
 import { POST as appealPost } from '../api/appeal';
-import { getEffectiveTruth } from '../server/effective-truth';
 import { type RejudgeDeps, handleRejudge } from './rejudge';
 
 function mockJudge(outcome: 'correct' | 'partial' | 'incorrect', feedback: string) {

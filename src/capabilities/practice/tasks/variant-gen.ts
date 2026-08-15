@@ -16,7 +16,7 @@ export interface VariantGenInput {
   depth: number;
 }
 
-const VariantOutputSchema = z.object({
+export const VariantOutputSchema = z.object({
   prompt_md: z.string().min(1).max(2000),
   reference_md: z.string().min(1).max(2000),
   difficulty: z.number().int().min(1).max(5),
@@ -80,6 +80,7 @@ ${variantCauseStrategyList(profile)}
 }
 
 export const variantGenTaskSpec = {
+  ownership: 'owned',
   definition: {
     kind: 'VariantGenTask',
     description:
@@ -92,6 +93,7 @@ export const variantGenTaskSpec = {
     allowedTools: [],
     prompt: { kind: 'profile', build: buildVariantGenPrompt },
   },
+  outputSchema: VariantOutputSchema,
   parseText(text) {
     return parseVariantOutput(text);
   },

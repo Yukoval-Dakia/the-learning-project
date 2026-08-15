@@ -137,10 +137,10 @@ export type ConsumerEntry = {
 // ── CONSUMER_REGISTRY — 手维护，每条带 file:marker 反查证据 ──────────────────
 //
 // grounding（cite file:line，2026-06-19 实测于 origin/main）：
-//   - src/server/ai/tools/knowledge-readers.ts:84 loadEdges() 无 relationTypes 过滤
+//   - src/capabilities/knowledge/server/tools/knowledge-readers.ts:84 loadEdges() 无 relationTypes 过滤
 //     ⇒ get_knowledge_neighborhood / find_knowledge_paths 把**所有** type 一把灌给
 //     copilot（诊断/推荐上下文）。generic-read，覆盖全 5 type。
-//   - src/server/ai/tools/knowledge-readers.ts:744 paths 工具对 related_to /
+//   - src/capabilities/knowledge/server/tools/knowledge-readers.ts:829 paths 工具对 related_to /
 //     contrasts_with 加反向邻接（双向语义）⇒ 这两 type 的 specialized 路径消费。
 //   - src/capabilities/knowledge/server/topology-gate.ts:52 ORDERED_RELATION =
 //     'prerequisite'，环/传递冗余检测**仅**对 prerequisite ⇒ prerequisite specialized。
@@ -157,7 +157,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
     (relation): ConsumerEntry => ({
       relation,
       tier: 'generic-read',
-      file: 'src/server/ai/tools/knowledge-readers.ts',
+      file: 'src/capabilities/knowledge/server/tools/knowledge-readers.ts',
       // loadEdges 无 relationTypes 时不过滤 ⇒ 所有 type 都被灌进 neighborhood/paths。
       marker: 'async function loadEdges',
       surface: 'recommendation',
@@ -221,7 +221,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'contrasts_with',
     tier: 'specialized',
-    file: 'src/server/ai/tools/knowledge-readers.ts',
+    file: 'src/capabilities/knowledge/server/tools/knowledge-readers.ts',
     marker: "edge.relation_type === 'contrasts_with'",
     surface: 'recommendation',
     evidence: 'find_knowledge_paths 对 contrasts_with 加反向邻接（双向语义），影响路径推荐结果。',
@@ -242,7 +242,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'related_to',
     tier: 'specialized',
-    file: 'src/server/ai/tools/knowledge-readers.ts',
+    file: 'src/capabilities/knowledge/server/tools/knowledge-readers.ts',
     marker: "edge.relation_type === 'related_to'",
     surface: 'recommendation',
     evidence: 'find_knowledge_paths 对 related_to 加反向邻接（双向语义），影响路径推荐结果。',

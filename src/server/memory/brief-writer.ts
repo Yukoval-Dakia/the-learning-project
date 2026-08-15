@@ -16,10 +16,14 @@
 
 import { z } from 'zod';
 
+// YUK-879 — the MemoryBriefTask writer-side output contract moved to the agency
+// TaskSpec module; consume it through the agency public entrypoint.
+import { BriefDraftOutputSchema, parseBriefDraftOutput } from '@/capabilities/agency/public';
+export { BriefDraftOutputSchema, parseBriefDraftOutput };
 import type { Db } from '@/db/client';
+import { KNOWLEDGE_EXCERPT_MAX } from '@/kernel/tools/budgets'; // I-3 — payload excerpt cap
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { KNOWLEDGE_EXCERPT_MAX } from '@/server/ai/tools/budgets'; // I-3 — payload excerpt cap
 import type { BriefDraft, BriefEvent, BriefFact, GenerateBrief } from './brief';
 
 // ── Writer output schema = BriefDraft (brief.ts:37-44). ──
@@ -37,38 +41,6 @@ import type { BriefDraft, BriefEvent, BriefFact, GenerateBrief } from './brief';
 // still allowed (a present-but-empty window is legitimate); only a MISSING KEY
 // throws. The cold-scope early-return builds its empty draft directly and never
 // goes through this parser, so it is unaffected.
-export const BriefDraftOutputSchema = z.object({
-  recent_week_md: z.string(),
-  recent_months_md: z.string(),
-  long_term_md: z.string(),
-  // 1A/2A: `.min(1)` on each id element is intentional tightening — it rejects
-  // empty-string ids at parse time. The D3 subset filter would drop them anyway
-  // (an empty id is never in the input-id Set), so this is belt-and-suspenders.
-  recent_week_evidence_ids: z.array(z.string().min(1)),
-  recent_months_evidence_ids: z.array(z.string().min(1)),
-  long_term_evidence_ids: z.array(z.string().min(1)),
-});
-export type BriefDraftOutput = z.infer<typeof BriefDraftOutputSchema>;
-
-// Brace-slice + Zod-parse — mirror parseGoalScopeOutput (scope.ts:125-139). The
-// slice tolerates a ```json fence (the indexOf('{')..lastIndexOf('}') window
-// skips the fence markers).
-export function parseBriefDraftOutput(text: string): BriefDraftOutput {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseBriefDraftOutput: no JSON object found in text');
-  }
-  const slice = text.slice(start, end + 1);
-  let json: unknown;
-  try {
-    json = JSON.parse(slice);
-  } catch (e) {
-    throw new Error(`parseBriefDraftOutput: JSON.parse failed: ${(e as Error).message}`);
-  }
-  return BriefDraftOutputSchema.parse(json);
-}
-
 // PR #232 review (FIX #5) — a FRESH empty draft per call. A shared module-level
 // singleton would hand every cold-scope caller the SAME `[]` array instances;
 // any downstream in-place mutation of an evidence array would then pollute every

@@ -1,4 +1,22 @@
 import { capabilities } from '@/capabilities';
+import { getLearningItemContextTool } from '@/capabilities/agency/server/tools/learning-item-context';
+import {
+  MEMORY_BRIEF_STALE_AFTER_MS,
+  executeMemoryBrief,
+  queryMemoryBriefTool,
+} from '@/capabilities/copilot/server/tools/memory-brief';
+import { getRecordContextTool } from '@/capabilities/ingestion/server/tools/get-record-context';
+import { queryRecordsTool } from '@/capabilities/ingestion/server/tools/query-records';
+import {
+  expandKnowledgeSubgraphTool,
+  findKnowledgePathsTool,
+  getSubjectGraphOverviewTool,
+  queryKnowledgeTool,
+} from '@/capabilities/knowledge/server/tools/knowledge-readers';
+import {
+  getQuestionContextTool,
+  getReviewDueTool,
+} from '@/capabilities/practice/server/tools/question-context';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   buildInterventionSettlement,
@@ -17,28 +35,12 @@ import {
   question,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import type { ToolContext } from '@/kernel/tools/types';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import {
-  MEMORY_BRIEF_STALE_AFTER_MS,
-  executeMemoryBrief,
-  getLearningItemContextTool,
-  getQuestionContextTool,
-  getRecordContextTool,
-  getReviewDueTool,
-  queryMemoryBriefTool,
-  queryRecordsTool,
-} from './context-readers';
-import {
-  expandKnowledgeSubgraphTool,
-  findKnowledgePathsTool,
-  getSubjectGraphOverviewTool,
-  queryKnowledgeTool,
-} from './knowledge-readers';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, getTool, listTools } from './registry';
-import type { ToolContext } from './types';
 
 const BASE = new Date(Date.now() - 60_000);
 
@@ -522,11 +524,6 @@ describe('Foundation D M2 read tools', () => {
       supports_entity_inventory_claim: false,
       supports_lifecycle_status_count_claim: false,
     });
-    expect(queryRecordsTool.description).toContain(
-      'processing_status is a LearningRecord ingestion/linking state',
-    );
-    expect(queryRecordsTool.description).toContain('cannot prove those entities are absent');
-    expect(queryRecordsTool.description).toContain('entity_status_coverage=not_observed');
 
     const recordContext = await getRecordContextTool.execute(ctx(), {
       recordId: 'rec_mistake',

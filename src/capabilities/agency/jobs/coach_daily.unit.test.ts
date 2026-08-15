@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ProposalFeedbackCell } from '@/kernel/proposals/adaptive-bias';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   resolveDomainToolNames,
   resolveMcpAllowedTools,
-} from '@/server/ai/tools/allowlists';
-import { COACH_CONTEXT_BUDGET } from '@/server/ai/tools/budgets';
+} from '@/kernel/tools/allowlists';
+import { COACH_CONTEXT_BUDGET } from '@/kernel/tools/budgets';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
-import type { ProposalFeedbackCell } from '@/server/proposals/adaptive-bias';
 import {
   COACH_DAILY_OBJECTIVE,
   COACH_MAX_PROPOSALS,

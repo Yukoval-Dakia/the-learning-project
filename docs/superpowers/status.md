@@ -189,7 +189,7 @@ Wave 1 closeout doc：[`plans/2026-05-27-wave1-ready-to-launch.md`](plans/2026-0
 ✅  T-D2 DomainTool read tools full coverage          YUK-102 — 10 M2 readers registered; 13 read tools total with M1 bridge
 ```
 
-T-D2 landed `get_subject_graph_overview`, `query_knowledge`, `expand_knowledge_subgraph`, `find_knowledge_paths`, `query_records`, `get_record_context`, `get_question_context`, `get_review_due`, `get_learning_item_context`, and `query_memory_brief` in `src/server/ai/tools/{knowledge-readers,context-readers}.ts`, covered by DB + MCP bridge regression tests.
+T-D2 landed `get_subject_graph_overview`, `query_knowledge`, `expand_knowledge_subgraph`, `find_knowledge_paths`, `query_records`, `get_record_context`, `get_question_context`, `get_review_due`, `get_learning_item_context`, and `query_memory_brief`, covered by DB + MCP bridge regression tests. `query_records` / `get_record_context` now live under `src/capabilities/ingestion/server/tools/`; the remaining context readers stay central.
 
 ### Wave 3 — DomainTool propose/write tools（shipped 2026-05-28）
 
@@ -202,7 +202,7 @@ T-D2 landed `get_subject_graph_overview`, `query_knowledge`, `expand_knowledge_s
 ✅  YUK-112 T-D4 closeout                               allowlist policy + docs/status/roadmap + Wave gate evidence
 ```
 
-Implementation anchor：`src/server/ai/tools/proposal-tools.ts` registers 8 proposal/action DomainTools through `src/server/ai/tools/bootstrap.ts`; `src/server/ai/tools/allowlists.ts` pins the spec task/surface allowlist matrix; proposal schema/UI were extended for `record_links` and `record_promotion`.
+Implementation anchor：`src/server/ai/tools/proposal-tools.ts` defines 8 proposal/action DomainTools and capability manifests register them; `src/server/ai/tools/allowlists.ts` pins the spec task/surface allowlist matrix; proposal schema/UI were extended for `record_links` and `record_promotion`.
 
 Validation anchor：proposal DB tests, registry/MCP/allowlist unit tests, proposal writer/inbox/accept regressions, `pnpm typecheck`, and Wave closeout audits. T-D4 driver：[`plans/2026-05-28-td4-propose-write-tools-driver.md`](plans/2026-05-28-td4-propose-write-tools-driver.md)。
 

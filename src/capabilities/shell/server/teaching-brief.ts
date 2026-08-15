@@ -21,7 +21,7 @@ import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { event, question } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
-import { type ProposalInboxRow, getProposalInboxRow } from '@/server/proposals/inbox';
+import { type ProposalInboxRow, getProposalInboxRow } from '@/kernel/proposals/inbox';
 import { and, desc, eq, gt, inArray, lte, or, sql } from 'drizzle-orm';
 
 export const TEACHING_BRIEF_FINDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;

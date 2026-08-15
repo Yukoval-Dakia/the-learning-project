@@ -20,17 +20,21 @@
 // 正确 outcome（第二实例原则）——每次触及 θ̂ 的 overturn 都写 experimental:reproject_
 // deferred marker 喂第二实例重投影引擎（全历史重投影仍属投影引擎契约，独立 issue）。
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
+import { resolveInvokedExecutionProvenance } from '@/capabilities/practice/server/judge';
+import {
+  type JudgeAnswerResult,
+  judgeAnswer,
+} from '@/capabilities/practice/server/judge/question-contract';
 import { newId } from '@/core/ids';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { resolveInvokedExecutionProvenance } from '@/kernel/judge';
-import { type JudgeAnswerResult, judgeAnswer } from '@/server/ai/judges/question-contract';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { and, eq, isNull, sql } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
 
 export interface RejudgeJobInput {
   appeal_event_id: string;
@@ -71,6 +75,21 @@ async function lockAppealResolution(tx: Tx, appealId: string): Promise<void> {
   // 64-bit hash keeps unrelated-appeal collision risk negligible; xact scope
   // guarantees release on commit/rollback without a cleanup path.
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${appealId}, 0))`);
+}
+
+/**
+ * YUK-870 (F3.5b) — pg-boss registration adapter for the appeal rejudge queue.
+ * Pure registration shape: the previous central inline work handler (dynamic
+ * import + per-job handleRejudge loop) flattened into the standard
+ * buildXHandler(db) factory the registrar mounts. The judge semantics stay in
+ * handleRejudge above — this adds no duplicate implementation.
+ */
+export function buildRejudgeHandler(db: Db): (jobs: Job<RejudgeJobInput>[]) => Promise<void> {
+  return async (jobs) => {
+    for (const job of jobs) {
+      await handleRejudge(db, job.data);
+    }
+  };
 }
 
 export async function handleRejudge(

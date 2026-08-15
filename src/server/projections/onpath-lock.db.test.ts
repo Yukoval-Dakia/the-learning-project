@@ -23,9 +23,9 @@ import { updateGoalStatus } from '@/capabilities/agency/server/goals/queries';
 import { acceptCompletionProposal } from '@/capabilities/agency/server/proposal-appliers';
 import { newId } from '@/core/ids';
 import { goal, learning_item, materialized_id_index, mistake_variant } from '@/db/schema';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
 import { dismissAiProposal } from '@/server/proposals/actions';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
-import { writeVariantQuestionProposal } from '@/server/proposals/producers';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const T0 = new Date('2026-06-01T00:00:00.000Z');

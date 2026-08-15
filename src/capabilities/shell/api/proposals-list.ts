@@ -10,7 +10,7 @@ import {
   type ProposalInboxLane,
   type ProposalStatus,
   listProposalInboxPage,
-} from '@/server/proposals/inbox';
+} from '@/kernel/proposals/inbox';
 
 // P5.4 / YUK-143 (RB-8) — 'rubric_rejected' is queryable so the folded /
 // low-visibility bucket of rubric-rejected proposals is exposed to clients via

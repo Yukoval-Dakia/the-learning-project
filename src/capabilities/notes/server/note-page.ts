@@ -12,7 +12,6 @@
 
 import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import {
   type BacklinksByArtifactType,
   groupBacklinksByArtifactType,
@@ -28,8 +27,9 @@ import type {
 import { InteractiveArtifactAttrs } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
-import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
+import { getArtifactCorrectionStates } from './artifact-corrections';
 
 const CROSS_LINK_REF_KIND = 'cross_link';
 const NOTE_TYPES = ['note_atomic', 'note_hub', 'note_long'] as const;

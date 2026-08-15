@@ -38,8 +38,8 @@ import {
   question,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
-import { writeAiProposal } from '@/server/proposals/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { ProbeAnswerResponseSchema } from './contracts';
 import { POST } from './probe-answer';
@@ -53,7 +53,7 @@ import { POST } from './probe-answer';
 // stub, NOT a runtime judge — review PR #705 CRITICAL).
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 
-vi.mock('@/server/judge/invoker', () => ({
+vi.mock('@/capabilities/practice/server/judge/invoker', () => ({
   createDefaultJudgeInvoker: () => ({ invoke: mockInvoke }),
 }));
 
