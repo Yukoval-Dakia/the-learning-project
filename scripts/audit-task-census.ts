@@ -36,7 +36,7 @@ export type AuditTaskCensusOptions = {
   readonly validateInfrastructure?: boolean;
 };
 
-const LIVE_NON_CALLER_CLASSIFICATIONS = {
+export const LIVE_NON_CALLER_CLASSIFICATIONS = {
   AttributionTask:
     'Retained as a registered compatibility task while production failure attribution invokes AttributionRerankTask after deterministic candidate retrieval.',
 } as const;
