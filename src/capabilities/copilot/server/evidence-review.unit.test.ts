@@ -1362,7 +1362,7 @@ describe('Copilot FULL evidence review', () => {
 
     expect(result).toMatchObject({
       status: 'degraded',
-      replyText: `${blindSafeReply}\n\n${COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION}`,
+      replyText: `${COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION}\n\n${blindSafeReply}`,
       reviewTaskRunId: 'reference',
       referenceTaskRunIds: ['reference'],
       comparisonTaskRunIds: ['comparison-budget-timeout-2', 'comparison-budget-timeout-3'],
@@ -1372,6 +1372,127 @@ describe('Copilot FULL evidence review', () => {
       candidate_task_run_id: 'copilot_task_actual_a01_a03_a04_c01_c04',
       reference_task_run_ids: ['reference'],
       comparison_task_run_ids: ['comparison-budget-timeout-2', 'comparison-budget-timeout-3'],
+    });
+  });
+
+  it('fails closed when comparator attempts mix a budget timeout with a contract failure', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let comparisonAttempt = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return submitTaskOutput(kind, input, submission, referenceOutput(input), 'reference');
+        }
+        comparisonAttempt += 1;
+        if (comparisonAttempt === 1) {
+          throw new AgentRunError({
+            kind,
+            taskRunId: 'comparison-budget-timeout',
+            subtype: 'budget_timeout',
+            errors: ['verification deadline elapsed'],
+          });
+        }
+        return { task_run_id: 'comparison-contract-invalid', text: '' };
+      },
+    );
+
+    const result = await reviewCopilotEvidenceReply(reviewParams({ runTaskFn }));
+
+    expect(result).toMatchObject({
+      status: 'failed_closed',
+      replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
+      referenceTaskRunIds: ['reference'],
+      comparisonTaskRunIds: ['comparison-budget-timeout', 'comparison-contract-invalid'],
+    });
+  });
+
+  it('fails closed when a contract-invalid original attempt precedes fallback timeouts', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let comparisonAttempt = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return submitTaskOutput(kind, input, submission, referenceOutput(input), 'reference');
+        }
+        comparisonAttempt += 1;
+        if (comparisonAttempt === 1) {
+          return { task_run_id: 'original-contract-invalid', text: '' };
+        }
+        if (comparisonAttempt === 2) {
+          return submitTaskOutput(
+            kind,
+            input,
+            submission,
+            comparisonOutput(input, { fail: true }),
+            'original-fail',
+          );
+        }
+        throw new AgentRunError({
+          kind,
+          taskRunId: `fallback-budget-timeout-${comparisonAttempt}`,
+          subtype: 'budget_timeout',
+          errors: ['verification deadline elapsed'],
+        });
+      },
+    );
+
+    const result = await reviewCopilotEvidenceReply(reviewParams({ runTaskFn }));
+
+    expect(result).toMatchObject({
+      status: 'failed_closed',
+      replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
+      comparisonTaskRunIds: [
+        'original-contract-invalid',
+        'original-fail',
+        'fallback-budget-timeout-3',
+        'fallback-budget-timeout-4',
+      ],
+    });
+  });
+
+  it('degrades to the blind reply when original and fallback invalid attempts only time out', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let comparisonAttempt = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return submitTaskOutput(kind, input, submission, referenceOutput(input), 'reference');
+        }
+        comparisonAttempt += 1;
+        if (comparisonAttempt === 2) {
+          return submitTaskOutput(
+            kind,
+            input,
+            submission,
+            comparisonOutput(input, { fail: true }),
+            'original-fail',
+          );
+        }
+        throw new AgentRunError({
+          kind,
+          taskRunId:
+            comparisonAttempt === 1
+              ? 'original-budget-timeout'
+              : `fallback-budget-timeout-${comparisonAttempt}`,
+          subtype: 'budget_timeout',
+          errors: ['verification deadline elapsed'],
+        });
+      },
+    );
+
+    const result = await reviewCopilotEvidenceReply(reviewParams({ runTaskFn }));
+
+    expect(result).toMatchObject({
+      status: 'degraded',
+      replyText: `${COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION}\n\n${blindSafeReply}`,
+      reviewTaskRunId: 'reference',
+      referenceTaskRunIds: ['reference'],
+      comparisonTaskRunIds: [
+        'original-budget-timeout',
+        'original-fail',
+        'fallback-budget-timeout-3',
+        'fallback-budget-timeout-4',
+      ],
     });
   });
 

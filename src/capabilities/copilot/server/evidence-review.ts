@@ -349,6 +349,7 @@ async function runConfirmedComparison(params: {
       verdict: 'pass' | 'fail';
       comparison: BoundCopilotEvidenceComparison;
       taskRunIds: string[];
+      hasNonTimeoutInvalidAttempt: boolean;
     }
   | { status: 'invalid'; reason: string; taskRunIds: string[] }
 > {
@@ -508,12 +509,18 @@ async function runConfirmedComparison(params: {
   const taskRunIds = result.attempts.flatMap((attempt) =>
     attempt.task_run_id ? [attempt.task_run_id] : [],
   );
+  const invalidAttempts = result.attempts.filter(
+    (attempt) => attempt.outcome === 'contract_invalid',
+  );
+  const hasNonTimeoutInvalidAttempt = invalidAttempts.some(
+    (attempt) => !attempt.detail?.startsWith('comparison_task_failed:budget_timeout'),
+  );
   if (result.status === 'invalid') {
-    const budgetTimedOut = result.attempts.some(
-      (attempt) =>
-        attempt.outcome === 'contract_invalid' &&
+    const budgetTimedOut =
+      invalidAttempts.length > 0 &&
+      invalidAttempts.every((attempt) =>
         attempt.detail?.startsWith('comparison_task_failed:budget_timeout'),
-    );
+      );
     return {
       status: 'invalid',
       reason: budgetTimedOut ? 'comparison_budget_timeout' : result.reason,
@@ -525,6 +532,7 @@ async function runConfirmedComparison(params: {
     verdict: result.verdict,
     comparison: result.result,
     taskRunIds,
+    hasNonTimeoutInvalidAttempt,
   };
 }
 
@@ -607,6 +615,22 @@ export async function reviewCopilotEvidenceReply(params: {
       referenceTaskRunIds: reference.taskRunIds,
     });
   }
+  const degradeWithBlindReply = (comparisonTaskRunIds: string[]): CopilotEvidenceReviewDecision => {
+    const reviewTaskRunId = reference.taskRunIds.at(-1);
+    console.warn('[copilot-evidence-review] verification degraded', {
+      event: 'copilot_evidence_review_verification_timeout_degraded',
+      candidate_task_run_id: params.candidateTaskRunId,
+      reference_task_run_ids: reference.taskRunIds,
+      comparison_task_run_ids: comparisonTaskRunIds,
+    });
+    return {
+      status: 'degraded',
+      replyText: `${COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION}\n\n${reference.reference.output.safe_reply}`,
+      referenceTaskRunIds: reference.taskRunIds,
+      comparisonTaskRunIds,
+      ...(reviewTaskRunId ? { reviewTaskRunId } : {}),
+    };
+  };
 
   let original: Awaited<ReturnType<typeof runConfirmedComparison>>;
   try {
@@ -638,20 +662,7 @@ export async function reviewCopilotEvidenceReply(params: {
   }
   if (original.status === 'invalid') {
     if (original.reason === 'comparison_budget_timeout') {
-      const reviewTaskRunId = reference.taskRunIds.at(-1);
-      console.warn('[copilot-evidence-review] verification degraded', {
-        event: 'copilot_evidence_review_verification_timeout_degraded',
-        candidate_task_run_id: params.candidateTaskRunId,
-        reference_task_run_ids: reference.taskRunIds,
-        comparison_task_run_ids: original.taskRunIds,
-      });
-      return {
-        status: 'degraded',
-        replyText: `${reference.reference.output.safe_reply}\n\n${COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION}`,
-        referenceTaskRunIds: reference.taskRunIds,
-        comparisonTaskRunIds: original.taskRunIds,
-        ...(reviewTaskRunId ? { reviewTaskRunId } : {}),
-      };
+      return degradeWithBlindReply(original.taskRunIds);
     }
     return failClosed(`original_comparison_${original.reason}`, params.candidateTaskRunId, {
       referenceTaskRunIds: reference.taskRunIds,
@@ -708,6 +719,13 @@ export async function reviewCopilotEvidenceReply(params: {
         comparisonTaskRunIds: original.taskRunIds,
       },
     );
+  }
+  if (
+    fallback.status === 'invalid' &&
+    fallback.reason === 'comparison_budget_timeout' &&
+    !original.hasNonTimeoutInvalidAttempt
+  ) {
+    return degradeWithBlindReply([...original.taskRunIds, ...fallback.taskRunIds]);
   }
   if (fallback.status !== 'decided' || fallback.verdict !== 'pass') {
     const reason =
