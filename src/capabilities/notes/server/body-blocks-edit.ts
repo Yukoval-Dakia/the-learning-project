@@ -7,7 +7,6 @@ import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/b
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { emitArtifactBodyBlocksEditEvent } from '@/server/artifacts/mutation-events';
 // YUK-471 W3-C3 — the per-entity SoT-flip wiring. ON → the projection write-through is the row writer;
 // OFF (default) → the imperative UPDATE stays the SoT and the parity assert catches fold↔row drift
 // during the double-write phase. Gated on hasArtifactGenesisAnchor (a pre-W3 un-backfilled artifact
@@ -19,6 +18,7 @@ import {
   hasArtifactGenesisAnchor,
 } from '@/server/projections/parity';
 import { projectionIsWriter } from '@/server/projections/sot-flag';
+import { emitArtifactBodyBlocksEditEvent } from './artifact-events';
 
 // ADR-0033 D1 (YUK-309) — body_blocks block-tree editing is a NOTE-ONLY write path.
 // Opaque artifact types (tool_quiz, interactive) MUST keep body_blocks null and never

@@ -5,7 +5,6 @@ import type {
   ProposalAcceptResult,
 } from '@/kernel/proposals';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import * as ownerRuntime from '@/server/proposals/owner-runtime';
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
 import { acceptGoalScopeProposal } from './goals/accept';
@@ -15,7 +14,7 @@ import {
   acceptLearningItemProposal,
   acceptRelearnProposal,
 } from './proposal-appliers';
-import { createAgencyProposalLifecycle } from './proposal-lifecycle';
+import { type ProposalInboxRow, createAgencyProposalLifecycle } from './proposal-lifecycle';
 
 type AgencyAcceptRuntime = AgencyApplierOpts & ConjectureApplierOpts;
 

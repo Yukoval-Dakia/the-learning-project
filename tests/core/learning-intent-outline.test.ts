@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseLearningIntentOutline } from '@/server/orchestrator/learning_intent';
+import { parseLearningIntentOutline } from '@/capabilities/agency/public';
 
 describe('parseLearningIntentOutline', () => {
   it('accepts optional long-note proposals alongside hub and atomics', () => {

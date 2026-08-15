@@ -7,6 +7,18 @@ export type { ActiveGoal } from './server/goals/queries';
 export { readAgentNotes } from './server/notes';
 export type { ConjectureAcceptResult } from './server/conjecture-accept';
 export type { GoalScopeAcceptResult } from './server/goals/accept';
+export {
+  acceptLearningIntent,
+  parseLearningIntentOutline,
+  planLearningIntent,
+} from './server/learning-intent';
+export type {
+  AcceptLearningIntentParams,
+  LearningIntentMaterializeResult,
+  LearningIntentProposal,
+  PlanLearningIntentParams,
+  RunTaskFn,
+} from './server/learning-intent';
 export type {
   CompletionAcceptResult,
   EnqueueLearningIntentNoteFn,

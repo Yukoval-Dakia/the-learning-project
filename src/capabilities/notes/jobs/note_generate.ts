@@ -28,12 +28,12 @@ import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { resolveNoteSkill } from '@/subjects/note-skills';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   emitArtifactBodyBlocksEditEvent,
   emitArtifactLifecycleEvent,
-} from '@/server/artifacts/mutation-events';
-import { resolveNoteSkill } from '@/subjects/note-skills';
-import { resolveSubjectProfile } from '@/subjects/profile';
+} from '../server/artifact-events';
 
 export interface NoteGenerateJobData {
   artifact_id: string;

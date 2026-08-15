@@ -15,7 +15,7 @@ import type { Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
+import { emitArtifactLifecycleEvent } from './artifact-events';
 
 const HUB_TYPE = 'note_hub';
 const SUPPRESS_ACTOR_REF = 'hub_dismiss_link';

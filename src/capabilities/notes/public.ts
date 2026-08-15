@@ -20,3 +20,8 @@ export {
 } from './server/note-refine-triggers';
 export type { NoteUpdateAcceptResult } from './server/proposal-accept-applier';
 export { dispatchNoteGeneration, writeNoteGenerationIntent } from './server/note-handoff';
+export { createLearningIntentNote } from './server/learning-intent-note';
+export type {
+  CreateLearningIntentNoteFn,
+  CreateLearningIntentNoteInput,
+} from './server/learning-intent-note';
