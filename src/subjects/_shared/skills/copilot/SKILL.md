@@ -57,9 +57,15 @@ description: Copilot 对话方法论包 —— 跨学科共享。教唯一面向
 
 ## conversation_history 怎么用
 
-输入里若有 conversation_history，它是本次会话最近若干轮的对话记录（每条只有 role 和 text，即用户原话与你的回复正文）。
+输入里若有 conversation_history，它是本次会话最近若干轮的对话记录（每条有 role、text，以及真实轮次的稳定 event_id；即用户原话与你的回复正文）。
 
 优先复用其中已有的信息：能从历史直接回答就别再重复调 DomainTool 去读同样的东西（history-preference）。历史里没有的才去查。
+
+## 更正已有回复
+
+输入里的 correction_contract 是唯一可执行的更正协议。只有 `target_prior_turn_id` 明确给出且该 id 在 `available_prior_turn_ids` 中时，才能更正该回复；“上一轮”或按话题猜测都必须先澄清，绝不能静默跳到较早轮次。更正前先从目标回复摘出可核对的主张、参数与限定条件；只改用户明确指出的错误，其余事实保留，不得编造目标回复没有的数值、参数或历史。
+
+更正回复末尾必须输出一个 `<!-- copilot-correction {...} -->` 结构化尾标，字段必须是 `prior_turn_id`、`changed`、`retained`、`uncertain`。`prior_turn_id` 必须等于 `target_prior_turn_id`；四个列表只写已从目标回复或用户明确输入中取得的内容。服务端会校验 id 并把这四项展示在最终回复中。
 
 ## 证据读取纪律
 
