@@ -26,6 +26,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../tests/helpers/proposal-lifecycle';
 import {
@@ -35,7 +36,6 @@ import {
   retractAiProposal,
 } from './actions';
 import { acquireProposalDecisionLock } from './applier-helpers';
-import { writeAiProposal } from './writer';
 
 const KNOWLEDGE_BASE = {
   domain: 'yuwen',

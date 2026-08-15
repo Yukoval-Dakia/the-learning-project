@@ -19,15 +19,6 @@
 // SOFT, goal-relevant re-rank of the overdue review items. ND-5: this is order-
 // only — never touches the FSRS due path, the returned set, counts, or due_at.
 import { type ActiveGoal, listActiveGoalsWithResolvedScope } from '@/capabilities/agency/public';
-// T-CS / YUK-168 — cross-subject scheduling v1 (ADR-0014 §5, line 242). The due
-// pool is round-robin balanced across the learning-subjects that have due items
-// so one busy subject can't dominate the page. batchResolveSubjectIds walks
-// knowledge_ids → parent chain → domain → SubjectProfile (default fallback for
-// orphan ids, YUK-56), memoised across the pool to avoid an N+1 on the
-// parent-chain walk. Extracted to `@/capabilities/knowledge/server/subject-resolution` (P5.2)
-// so the brief-refresh layer shares the SAME canonical bridge.
-import { batchResolveSubjectIds } from '@/capabilities/knowledge/public';
-import type { EffectiveTruth } from '@/capabilities/practice/server/effective-truth';
 // YUK-282 / ADR-0030 — by-kind variant-rotation probe selection. Replaces the
 // inline single-question-avoidance ORDER BY (ADR-0028 seam) with a routed pick:
 // recall kinds repeat the original question, application kinds rotate the
@@ -43,8 +34,17 @@ import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervent
 import { type Db, type Tx, db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { material_fsrs_state, question } from '@/db/schema';
+import type { EffectiveTruth } from '@/kernel/events';
 import { errorResponse } from '@/kernel/http';
-import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
+import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
+// T-CS / YUK-168 — cross-subject scheduling v1 (ADR-0014 §5, line 242). The due
+// pool is round-robin balanced across the learning-subjects that have due items
+// so one busy subject can't dominate the page. batchResolveSubjectIds walks
+// knowledge_ids → parent chain → domain → SubjectProfile (default fallback for
+// orphan ids, YUK-56), memoised across the pool to avoid an N+1 on the
+// parent-chain walk. Extracted to `@/capabilities/knowledge/server/subject-resolution` (P5.2)
+// so the brief-refresh layer shares the SAME canonical bridge.
+import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import { type FailureAttempt, getFailureAttempts } from './attempt-events';
 

@@ -6,14 +6,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
 import { knowledgeCapability } from '@/capabilities/knowledge/manifest';
-import {
-  DOMAIN_TOOL_ALLOWLISTS,
-  PROPOSE_WRITE_TOOLS,
-  READ_TOOLS,
-} from '@/server/ai/tools/allowlists';
+import { DOMAIN_TOOL_ALLOWLISTS, PROPOSE_WRITE_TOOLS, READ_TOOLS } from '@/kernel/tools/allowlists';
+import type { DomainTool } from '@/kernel/tools/types';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { __resetRegistryForTests, getTool } from '@/server/ai/tools/registry';
-import type { DomainTool } from '@/server/ai/tools/types';
 
 const KNOWLEDGE_TOOL_NAMES = [
   'query_knowledge',
@@ -91,7 +87,7 @@ const KNOWLEDGE_TOOL_EXPOSURES = {
 
 const READER_PATHS = [
   'src/capabilities/knowledge/server/tools/knowledge-readers.ts',
-  'src/capabilities/knowledge/server/events/failure-attempts.ts',
+  'src/kernel/read-models/failure-attempts.ts',
 ] as const;
 
 function source(path: string): string {
@@ -117,25 +113,9 @@ describe('knowledge server ownership', () => {
 
   it('deletes central owner paths, exports, and imports', () => {
     expect(existsSync(join(process.cwd(), 'src/server/ai/tools/knowledge-readers.ts'))).toBe(false);
-
-    const centralProposalTools = source('src/server/ai/tools/proposal-tools.ts');
-    for (const exportName of ['proposeKnowledgeEdgeTool', 'proposeKnowledgeMutationTool']) {
-      expect(centralProposalTools).not.toContain(`export const ${exportName}`);
-    }
-
-    const centralQueries = source('src/server/events/queries.ts');
-    for (const exportName of [
-      'getFailureAttempts',
-      'getFailureAttemptById',
-      'getFailureAttemptWithReasoningTraceById',
-      'getFailureAttemptsWithReasoningTrace',
-      'getJudgeForAttempt',
-      'getUserCauseForAttempt',
-    ]) {
-      expect(centralQueries).not.toContain(`export async function ${exportName}`);
-    }
-    expect(centralQueries).not.toContain('export type FailureAttempt');
-    expect(centralQueries).not.toContain('export interface GetFailureAttemptsOpts');
+    // YUK-892 — the transitional central concrete tool files are deleted wholesale.
+    expect(existsSync(join(process.cwd(), 'src/server/ai/tools/proposal-tools.ts'))).toBe(false);
+    expect(existsSync(join(process.cwd(), 'src/server/events/queries.ts'))).toBe(false);
 
     const manifest = source('src/capabilities/knowledge/manifest.ts');
     expect(manifest).not.toContain('@/server/ai/tools/knowledge-readers');
@@ -154,10 +134,12 @@ describe('knowledge server ownership', () => {
       expect(knowledgePublic).toContain(helperName);
     }
 
-    // The practice attempt-events seam must consume the knowledge public seam,
-    // not the central event queries module it used to re-export.
+    // YUK-892 — shared failure-attempt read models live in kernel/read-models;
+    // the practice attempt-events seam re-publishes through the knowledge public
+    // seam (its own capability contract), never a central or deep import.
     const practiceSeam = source('src/capabilities/practice/server/attempt-events.ts');
     expect(practiceSeam).not.toContain("@/server/events/queries'");
+    expect(practiceSeam).not.toContain('@/kernel/read-models/failure-attempts');
     expect(practiceSeam).toContain("from '@/capabilities/knowledge/public'");
   });
 

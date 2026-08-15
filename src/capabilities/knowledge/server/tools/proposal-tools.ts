@@ -4,7 +4,6 @@
 // proposal tools write inbox-visible proposal events (propose-only invariant).
 // Moved byte-identical from src/server/ai/tools/proposal-tools.ts.
 
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 // ADR-0032 D4-E1 (YUK-203) — archive-op edge proposal targets a live edge by id;
 // the single-owner edges module is the read authority.
 import { getKnowledgeEdgeById } from '@/capabilities/knowledge/server/edges';
@@ -27,15 +26,16 @@ import {
 } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
-import { writeToolCallLog } from '@/server/ai/log';
-// P5.4-L2 / YUK-174 — the adaptive gate-bump budget + bias config single source.
-import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
 // P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
 // this edge and pass it as the OPTIONAL adaptive input to the L1 validator. The
 // digest read is bounded; cold-start / below-threshold returns a no-op bump.
-import { resolveEdgeGateBump } from '@/server/proposals/adaptive-bias';
-import { listProposalInboxRows } from '@/server/proposals/inbox';
-import { writeAiProposal } from '@/server/proposals/writer';
+import { resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
+import { writeAiProposal } from '@/kernel/proposals/writer';
+import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+// P5.4-L2 / YUK-174 — the adaptive gate-bump budget + bias config single source.
+import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
+import { writeToolCallLog } from '@/server/ai/log';
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';

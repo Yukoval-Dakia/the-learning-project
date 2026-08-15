@@ -3,6 +3,8 @@ import {
   CopilotEvidenceVerificationOutputSchema,
 } from '@/capabilities/copilot/contracts';
 import { queryKnowledgeTool } from '@/capabilities/knowledge/server/tools/knowledge-readers';
+import { getAttemptContextTool } from '@/capabilities/practice/server/tools/get-attempt-context';
+import { getReviewDueTool } from '@/capabilities/practice/server/tools/question-context';
 import {
   COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS,
   COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS,
@@ -10,8 +12,6 @@ import {
 } from '@/core/copilot-evidence';
 import type { Db } from '@/db/client';
 import { AgentRunError } from '@/server/ai/agent-run-error';
-import { getReviewDueTool } from '@/server/ai/tools/context-readers';
-import { getAttemptContextTool } from '@/server/ai/tools/get-attempt-context';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   bindCopilotEvidenceComparison,

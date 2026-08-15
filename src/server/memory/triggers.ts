@@ -4,12 +4,12 @@ import type { Job, PgBoss } from 'pg-boss';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
 import {
   createDirectProviderOperationContext,
   isDirectProviderAttemptInvariantError,
 } from '@/server/ai/direct-provider-attempt';
 import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
-import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
 import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import {
   EXPIRE_LLM,

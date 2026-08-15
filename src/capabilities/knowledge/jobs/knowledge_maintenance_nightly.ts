@@ -6,7 +6,7 @@
 
 import { streamReviewTask } from '@/capabilities/knowledge/server/review';
 import type { Db } from '@/db/client';
-import { listProposalInboxRows } from '@/server/proposals/inbox';
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import type { Job } from 'pg-boss';
 
 export interface KnowledgeMaintenanceNightlyResult {

@@ -14,25 +14,25 @@ import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/not
 import { enqueueDreamingNoteRefine } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
-import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
+import {
+  type ProposalFeedbackCell,
+  getProposalFeedbackDigest,
+} from '@/kernel/proposals/adaptive-bias';
+import { type ProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   resolveDomainToolNames,
   resolveMcpAllowedTools,
-} from '@/server/ai/tools/allowlists';
+} from '@/kernel/tools/allowlists';
 // P5.1 / YUK-143 — single tunable source for Dreaming run caps. YUK-290 keeps
 // the old max_tool_calls=8 as an advisory warning and moves the accident
 // ceiling to 24; max_proposals remains byte-identical at 5.
 // P5.4-L2 / YUK-174 (Facet A, §3.2) — PROPOSAL_FEEDBACK_BUDGET bounds the new
 // per-(kind, relation) digest (see the getProposalFeedbackDigest import below).
-import { DREAMING_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
-import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
+import { DREAMING_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
+import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
+import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
-import {
-  type ProposalFeedbackCell,
-  getProposalFeedbackDigest,
-} from '@/server/proposals/adaptive-bias';
-import { type ProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 
 // P5.1 / YUK-143 — re-exported alias kept so existing imports / tests don't
 // break (spec §4.2). Sourced from DREAMING_CONTEXT_BUDGET.maxProposals (= 5),

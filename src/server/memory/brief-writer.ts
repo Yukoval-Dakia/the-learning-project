@@ -21,9 +21,9 @@ import { z } from 'zod';
 import { BriefDraftOutputSchema, parseBriefDraftOutput } from '@/capabilities/agency/public';
 export { BriefDraftOutputSchema, parseBriefDraftOutput };
 import type { Db } from '@/db/client';
+import { KNOWLEDGE_EXCERPT_MAX } from '@/kernel/tools/budgets'; // I-3 — payload excerpt cap
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { KNOWLEDGE_EXCERPT_MAX } from '@/server/ai/tools/budgets'; // I-3 — payload excerpt cap
 import type { BriefDraft, BriefEvent, BriefFact, GenerateBrief } from './brief';
 
 // ── Writer output schema = BriefDraft (brief.ts:37-44). ──

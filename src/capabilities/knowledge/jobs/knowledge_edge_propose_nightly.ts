@@ -18,7 +18,6 @@ import { writeEvent } from '@/kernel/events';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import {
   type RunEdgeProposeAndWriteParams,
   type RunTaskFn,
@@ -27,10 +26,11 @@ import {
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { getFailureAttempts } from '../server/events/failure-attempts';
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;

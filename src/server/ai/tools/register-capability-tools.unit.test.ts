@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import type { CapabilityManifest } from '@/kernel/manifest';
+import type { DomainTool } from '@/kernel/tools/types';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { __resetRegistryForTests, getTool, registerTool } from '@/server/ai/tools/registry';
-import type { DomainTool } from '@/server/ai/tools/types';
 
 const fakeTool = (name: string): DomainTool<unknown, unknown> => ({
   name,

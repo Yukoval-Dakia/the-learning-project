@@ -15,7 +15,6 @@
 // Auth is enforced upstream by middleware (x-internal-token); the handlers mirror
 // the sibling notes/learning-items routes (zod, 404 on missing, errorResponse).
 
-import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/public';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   InterventionDiagnosticQuestionMetadata,
@@ -23,6 +22,7 @@ import {
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { assertKnowledgeIdsExist } from '@/kernel/read-models/knowledge-validate';
 import { loadQuestionDetail } from '@/server/questions/detail';
 import {
   BLOODLINE_FIELDS,

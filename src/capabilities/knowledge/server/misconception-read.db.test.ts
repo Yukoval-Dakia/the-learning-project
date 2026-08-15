@@ -9,7 +9,7 @@
 import { KnowledgeMisconceptionListResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { knowledgeCapability } from '@/capabilities/knowledge/manifest';
 import { misconception, misconception_edge } from '@/db/schema';
-import { writeAiProposal } from '@/server/proposals/writer';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

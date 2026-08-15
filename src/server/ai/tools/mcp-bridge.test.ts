@@ -1,9 +1,9 @@
 import { capabilities } from '@/capabilities';
+import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, registerTool } from './registry';
-import type { DomainTool, ToolContext } from './types';
 
 // Mock the SDK so the bridge can run without a Claude subprocess.
 const mockAgentSdk = vi.hoisted(() => ({

@@ -29,7 +29,6 @@
 // AI_PROVIDER_OVERRIDE is never set or consulted for routing; sample rows
 // carry env snapshots + same_lane_suspected so a collapsed lane is visible.
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   MODEL_BACKED_JUDGE_ROUTES,
@@ -39,6 +38,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import type { ResolvedProvider } from '@/server/ai/providers';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { and, eq, gte, inArray, sql } from 'drizzle-orm';

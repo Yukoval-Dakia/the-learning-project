@@ -8,7 +8,7 @@ import { parseAiProposalPayload } from '../../src/core/schema/proposal';
 import {
   proposalChangeSummary,
   proposalDisplayTitle,
-} from '../../src/server/proposals/presentation';
+} from '../../src/kernel/proposals/presentation';
 
 const TOKEN_STORAGE_KEY = 'loom_internal_token';
 const TOKEN = 'usability-fixture-token';

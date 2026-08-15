@@ -1,7 +1,7 @@
 import { event } from '@/db/schema';
+import { getProposalInboxRow } from '@/kernel/proposals/inbox';
+import { writeLearningItemProposal } from '@/kernel/proposals/producers';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
-import { getProposalInboxRow } from '@/server/proposals/inbox';
-import { writeLearningItemProposal } from '@/server/proposals/producers';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

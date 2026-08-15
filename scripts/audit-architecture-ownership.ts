@@ -20,8 +20,8 @@ import { parse } from '@babel/parser';
 //      stays a pure compatibility projection, the central proposal actions
 //      stay kind-branch-free, the central boss handlers stay housekeeping-only,
 //      the central events transport exports envelope functions only, and the
-//      central tools directory grows no new concrete tool outside the
-//      transitional allowlist.
+//      central tools directory holds infrastructure only — no concrete tools
+//      (YUK-892 deleted the transitional allowlist).
 
 const SOURCE_RE = /\.[cm]?[jt]sx?$/;
 const TEST_RE = /\.(?:unit|db|migration|integration|e2e)?\.?(?:test|spec)\.[cm]?[jt]sx?$/;
@@ -396,33 +396,12 @@ const EVENTS_TRANSPORT_EXPORTS = new Set(['newerEventRow', 'takeActiveRows', 'fi
 const CENTRAL_TOOL_INFRASTRUCTURE = new Set([
   'src/server/ai/tools/registry.ts',
   'src/server/ai/tools/mcp-bridge.ts',
-  'src/server/ai/tools/types.ts',
-  'src/server/ai/tools/allowlists.ts',
-  'src/server/ai/tools/budgets.ts',
-  'src/server/ai/tools/context-throttle.ts',
   'src/server/ai/tools/register-capability-tools.ts',
   'src/server/ai/tools/fixtures-assert.ts',
 ]);
 
-// YUK-885 transitional allowlist: the central concrete tools that remain until
-// their capability migration lands (moving them today would raise dependency
-// ratchets and merge copilot into the value SCC — see the PR description).
-const CENTRAL_CONCRETE_TOOL_FILES = new Set([
-  'src/server/ai/tools/proposal-tools.ts',
-  'src/server/ai/tools/context-readers.ts',
-  'src/server/ai/tools/get-attempt-context.ts',
-  'src/server/ai/tools/query-mistakes.ts',
-  'src/server/ai/tools/query-questions.ts',
-  'src/server/ai/tools/write-quiz.ts',
-  'src/server/ai/tools/tool-quiz-core.ts',
-]);
-
-export function scanCentralRoots(
-  sources: readonly SourceFile[],
-  allowedCentralToolFiles: readonly string[],
-): OwnershipViolation[] {
+export function scanCentralRoots(sources: readonly SourceFile[]): OwnershipViolation[] {
   const byPath = new Map(sources.map((source) => [source.path, source.code]));
-  const allowed = new Set(allowedCentralToolFiles);
   const violations: OwnershipViolation[] = [];
 
   if (byPath.has('src/ai/legacy-task-definitions.ts')) {
@@ -488,17 +467,12 @@ export function scanCentralRoots(
 
   for (const { path } of sources) {
     if (!path.startsWith('src/server/ai/tools/') || TEST_RE.test(path)) continue;
-    if (
-      path.endsWith('.ts') &&
-      !CENTRAL_CONCRETE_TOOL_FILES.has(path) &&
-      !CENTRAL_TOOL_INFRASTRUCTURE.has(path) &&
-      !allowed.has(path)
-    ) {
+    if (path.endsWith('.ts') && !CENTRAL_TOOL_INFRASTRUCTURE.has(path)) {
       violations.push({
         path,
         source: '',
         reason:
-          'new central concrete tool — DomainTools live with their owning capability; transitional allowlist entries need a review issue',
+          'central concrete tool — DomainTools live with their owning capability; the central tools directory is infrastructure only (YUK-892)',
       });
     }
   }
@@ -534,7 +508,6 @@ function sourceFilesUnder(projectRoot: string, dir: string): SourceFile[] {
 export function auditArchitectureOwnership(
   projectRoot: string,
   catalog: readonly PublicReadCycleEdge[],
-  allowedCentralToolFiles: readonly string[] = [],
 ): AuditResult {
   const sources = [
     ...sourceFilesUnder(projectRoot, resolve(projectRoot, 'src/capabilities')),
@@ -546,7 +519,7 @@ export function auditArchitectureOwnership(
     ...scanDeepImports(sources),
     ...findUncataloguedReciprocalReads(edges, catalog),
     ...scanCataloguedReads(catalog, sources),
-    ...scanCentralRoots(sources, allowedCentralToolFiles),
+    ...scanCentralRoots(sources),
   ];
   const commandFiles = new Set(catalog.flatMap((entry) => entry.commandFiles));
   return {

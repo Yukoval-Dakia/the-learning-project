@@ -5,8 +5,8 @@ import type {
   ProposalAcceptResult,
 } from '@/kernel/proposals';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { ensureAcceptOnly } from '@/server/proposals/applier-helpers';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import {
   type ImageCandidateAcceptDeps,
   acceptImageCandidateProposal,

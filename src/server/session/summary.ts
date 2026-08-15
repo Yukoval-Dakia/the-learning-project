@@ -13,8 +13,8 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 import { getFailureAttempts } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event, knowledge, learning_session, question } from '@/db/schema';
+import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 const NOTABLE_LIMIT = 3;

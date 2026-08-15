@@ -12,10 +12,13 @@ export {
   findExistingRateEvent,
   requiredString,
 } from './applier-helpers';
-export { hasProposalWithCooldownKey, listProposalInboxRows } from './inbox';
-export type { ProposalInboxRow } from './inbox';
-export { writeVariantQuestionProposal } from './producers';
-export { ensureProposalDecisionSignal, recordProposalDecisionSignal } from './signals';
+export { hasProposalWithCooldownKey, listProposalInboxRows } from '@/kernel/proposals/inbox';
+export type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+export { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
+export {
+  ensureProposalDecisionSignal,
+  recordProposalDecisionSignal,
+} from '@/kernel/proposals/signals';
 export {
   assertCurrentMistakeVariantParity,
   hasMistakeVariantGenesisAnchor,

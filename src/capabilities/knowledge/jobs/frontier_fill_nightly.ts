@@ -57,10 +57,10 @@ import { parseFrontierProposals } from '@/capabilities/knowledge/tasks/knowledge
 import { type FrontierResolution, learnableFrontierResolved } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
-import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 

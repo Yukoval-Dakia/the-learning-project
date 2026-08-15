@@ -8,7 +8,7 @@
 import { event, kc_typed_state, question, tool_call_log } from '@/db/schema';
 import { artifact } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { writeAiProposal } from '@/server/proposals/writer';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';

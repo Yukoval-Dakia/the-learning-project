@@ -30,8 +30,8 @@ import {
 import { type SourceTier, type SourceTierName, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, material_fsrs_state, question } from '@/db/schema';
+import { loadFamilyMembers } from '@/kernel/read-models/questions';
 import { getMasteryProjection } from '@/server/mastery/state';
-import { loadFamilyMembers } from '@/server/questions/list';
 
 const DEFAULT_TIMELINE_LIMIT = 10;
 const MAX_TIMELINE_LIMIT = 50;

@@ -44,7 +44,6 @@
 // A corrupt existing row falls through to `answerProbe`, which surfaces it as a
 // `probe_result_corrupt` 500 (never papered over).
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import {
   ConjectureProbeSpec,
   ConjectureProbeSpecV2,
@@ -65,6 +64,7 @@ import {
   createDefaultJudgeInvoker,
   resolveQuestionJudgeRoute,
 } from '@/kernel/judge';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { eq } from 'drizzle-orm';
 import {

@@ -3,9 +3,9 @@ import {
   buildSearchMemoryFactsTool,
   searchMemoryFactsTool,
 } from '@/capabilities/copilot/server/tools/search-memory-facts';
+import type { ToolContext } from '@/kernel/tools/types';
 import type { MemoryReadClient } from '@/server/memory/read';
 import { describe, expect, it, vi } from 'vitest';
-import type { ToolContext } from './types';
 
 // DI-pure: the smallest read-client adapter stands in for Mem0/pgvector, so no
 // provider env or live vector store is touched. Only search is load-bearing for

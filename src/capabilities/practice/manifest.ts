@@ -1121,21 +1121,20 @@ export const practiceCapability = defineCapability({
     tools: [
       {
         name: 'get_question_context',
-        load: () =>
-          import('@/server/ai/tools/context-readers').then((m) => m.getQuestionContextTool),
+        load: () => import('./server/tools/question-context').then((m) => m.getQuestionContextTool),
       },
       {
         name: 'get_review_due',
-        load: () => import('@/server/ai/tools/context-readers').then((m) => m.getReviewDueTool),
+        load: () => import('./server/tools/question-context').then((m) => m.getReviewDueTool),
       },
       {
         name: 'get_attempt_context',
         load: () =>
-          import('@/server/ai/tools/get-attempt-context').then((m) => m.getAttemptContextTool),
+          import('./server/tools/get-attempt-context').then((m) => m.getAttemptContextTool),
       },
       {
         name: 'query_mistakes',
-        load: () => import('@/server/ai/tools/query-mistakes').then((m) => m.queryMistakesTool),
+        load: () => import('./server/tools/query-mistakes').then((m) => m.queryMistakesTool),
       },
       {
         name: 'attribute_mistake',
@@ -1147,22 +1146,21 @@ export const practiceCapability = defineCapability({
       },
       {
         name: 'author_question',
-        load: () => import('@/server/ai/tools/proposal-tools').then((m) => m.authorQuestionTool),
+        load: () => import('./server/tools/proposal-tools').then((m) => m.authorQuestionTool),
       },
       {
         name: 'query_questions',
-        load: () => import('@/server/ai/tools/query-questions').then((m) => m.queryQuestionsTool),
+        load: () => import('./server/tools/query-questions').then((m) => m.queryQuestionsTool),
       },
       {
         name: 'write_quiz',
-        load: () => import('@/server/ai/tools/write-quiz').then((m) => m.writeQuizTool),
+        load: () => import('./server/tools/write-quiz').then((m) => m.writeQuizTool),
       },
       // ADR-0032 D6-B (YUK-203 lane L6) — active 题 structured 节点编辑 propose
       // 工具（窄 typed op；accept 经 practice applier + mini verify gate 落地）。
       {
         name: 'propose_question_edit',
-        load: () =>
-          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeQuestionEditTool),
+        load: () => import('./server/tools/proposal-tools').then((m) => m.proposeQuestionEditTool),
       },
     ],
   },

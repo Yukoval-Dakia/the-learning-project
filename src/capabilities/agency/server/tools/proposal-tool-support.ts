@@ -1,7 +1,7 @@
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { learning_item } from '@/db/schema';
-import { listProposalInboxRows } from '@/server/proposals/inbox';
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 

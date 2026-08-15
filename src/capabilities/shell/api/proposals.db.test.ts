@@ -4,7 +4,7 @@
 // 纯 pending 集合下新源 == 旧 /api/events 裸查语义，accept 后两源分叉）。
 
 import { event, knowledge } from '@/db/schema';
-import { writeAiProposal } from '@/server/proposals/writer';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { and, eq, inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

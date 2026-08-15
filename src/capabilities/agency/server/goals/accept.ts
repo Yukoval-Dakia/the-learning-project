@@ -17,6 +17,7 @@ import type { Db } from '@/db/client';
 import { event, goal } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 // YUK-471 W2 — goal projection seam. The accept tx always writes the materialized_id_index
 // anchor (goalId → the propose event) so the SoT-flip guard's O(1) genesis-anchor check resolves
 // a proposal-materialized goal; the per-entity flag projectionIsWriter('goal') gates ONLY who
@@ -28,7 +29,6 @@ import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-
 // always applies. Mirrors W1's assertKnowledgeNodeParity at the knowledge accept site.
 import { assertGoalParity, goalLiveRowToSnapshot } from '@/server/projections/parity';
 import { projectionIsWriter } from '@/server/projections/sot-flag';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import { ensureSubjectRoot } from '@/server/subjects/ensure-subject-root';
 import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
 import { insertGoal } from './queries';

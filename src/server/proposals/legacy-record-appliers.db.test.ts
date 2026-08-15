@@ -20,10 +20,10 @@ import { artifact, learning_record } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../tests/helpers/proposal-lifecycle';
 import { acceptAiProposal } from './actions';
-import { writeAiProposal } from './writer';
 
 const VALID_DOC: ArtifactBodyBlocksT = {
   type: 'doc',

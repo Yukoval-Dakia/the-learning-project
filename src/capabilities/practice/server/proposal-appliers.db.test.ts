@@ -7,9 +7,9 @@
 import type { QuestionEditOpT } from '@/core/schema/proposal';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { event, knowledge, mistake_variant, proposal_signals, question } from '@/db/schema';
+import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
-import { writeVariantQuestionProposal } from '@/server/proposals/producers';
-import { writeAiProposal } from '@/server/proposals/writer';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

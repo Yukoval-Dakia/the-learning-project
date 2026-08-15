@@ -15,7 +15,7 @@ import { event, knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema
 // budgets.ts source of truth. KNOWLEDGE_EXCERPT_MAX is 180 (byte-unchanged from
 // the prior file-local TEXT_SNIPPET_MAX); the courtesy defaults below are the
 // tools' CURRENT defaults, just named centrally.
-import { KNOWLEDGE_EXCERPT_MAX, TOOL_COURTESY_DEFAULTS } from '@/server/ai/tools/budgets';
+import { KNOWLEDGE_EXCERPT_MAX, TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { and, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';

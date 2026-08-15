@@ -260,7 +260,7 @@ const REAL_SETTERS = [
   // insertSourcedDraft helper (reused by sourcing.ts + jyeoo-fetch.ts). The explicit
   // draft_status='draft' setter now lives here, so this is the real site to assert.
   'src/server/questions/sourced-draft-insert.ts',
-  'src/server/ai/question-author.ts',
+  'src/capabilities/practice/server/tools/question-author.ts',
   'src/capabilities/practice/jobs/quiz_gen.ts',
   'src/capabilities/ingestion/server/legacy-record-appliers.ts',
   // post-L2 explicit setters (also allowlisted, harmless-redundant):

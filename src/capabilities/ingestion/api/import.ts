@@ -22,15 +22,15 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 // routed by enrollCapturedBlock instead of the old hardcoded
 // attempt(outcome='failure') + learning_record(kind='mistake'). See ADR-0024.
 import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
-import {
-  assertCauseAllowedForSubjectProfile,
-  resolveSubjectProfileForKnowledgeIds,
-} from '@/capabilities/knowledge/public';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/kernel/http';
+import {
+  assertCauseAllowedForSubjectProfile,
+  resolveSubjectProfileForKnowledgeIds,
+} from '@/kernel/read-models/subject-profile';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';

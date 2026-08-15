@@ -11,8 +11,8 @@ import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 // P5.1 / YUK-143 — courtesy default (20) centralized in budgets.ts;
 // byte-unchanged from the prior inline literal.
-import { TOOL_COURTESY_DEFAULTS } from '@/server/ai/tools/budgets';
-import type { DomainTool, ToolContext } from '@/server/ai/tools/types';
+import { TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
+import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { and, desc, eq, gte, lt, lte, max, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 

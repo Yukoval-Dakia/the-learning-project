@@ -34,7 +34,6 @@ import {
   persistImageAsset,
   sha256Hex,
 } from '@/capabilities/ingestion/public';
-import { getEffectiveDomain } from '@/capabilities/knowledge/public';
 import { MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import { AgentRef } from '@/core/schema/business';
 import type { DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
@@ -43,6 +42,7 @@ import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_q
 import type { Db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,

@@ -1,1 +1,1 @@
-export type { DomainTool, ToolContext } from '@/server/ai/tools/types';
+export type { DomainTool, ToolContext } from '@/kernel/tools/types';

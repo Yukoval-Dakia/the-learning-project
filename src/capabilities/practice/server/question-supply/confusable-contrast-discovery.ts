@@ -26,9 +26,10 @@
 //     through to routePreference=['quiz_gen'] (the higher-tier/objective branches would
 //     divert to sourcing_web/author_question).
 
-import { getEffectiveDomain, loadConfusablePairs } from '@/capabilities/knowledge/public';
 import { parseFlag } from '@/core/env-flags';
 import type { Db } from '@/db/client';
+import { loadConfusablePairs } from '@/kernel/read-models/confusables';
+import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { buildCoverageEvidenceDemand, evidenceDemandToTargetContext } from './evidence-demand';
 import {

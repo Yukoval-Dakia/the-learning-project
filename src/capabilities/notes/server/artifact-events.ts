@@ -1,7 +1,7 @@
 export {
   artifactRowToCreateSnapshot,
   emitArtifactCreateEvent,
-} from '@/server/artifacts/create-event';
+} from '@/kernel/artifacts';
 export {
   type ArtifactLifecycleOp,
   type EmitArtifactLifecycleParams,

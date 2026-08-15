@@ -9,7 +9,7 @@
 // Side-effect-free until tools call `registerTool`. Tests reset via
 // `__resetRegistryForTests` to keep parallel registration deterministic.
 
-import type { DomainTool, ToolEffect } from './types';
+import type { DomainTool, ToolEffect } from '@/kernel/tools/types';
 
 const registry = new Map<string, DomainTool<unknown, unknown>>();
 

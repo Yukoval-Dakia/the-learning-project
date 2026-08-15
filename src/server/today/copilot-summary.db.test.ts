@@ -10,7 +10,7 @@
 // at single digits), so this branch only ever manifests in tests that shrink it.
 
 import { event } from '@/db/schema';
-import { countPendingProposalInboxByKind } from '@/server/proposals/inbox';
+import { countPendingProposalInboxByKind } from '@/kernel/proposals/inbox';
 import { loadCopilotSummary } from '@/server/today/copilot-summary';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';

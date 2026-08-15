@@ -1,6 +1,6 @@
 import { buildSearchMemoryFactsTool } from '@/capabilities/copilot/server/tools/search-memory-facts';
 import { provider_attempt } from '@/db/schema';
-import type { ToolContext } from '@/server/ai/tools/types';
+import type { ToolContext } from '@/kernel/tools/types';
 import type { Job } from 'pg-boss';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';

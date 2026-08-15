@@ -22,12 +22,17 @@
 //      result the LLM can read.
 
 import { writeEvent } from '@/kernel/events';
+import type {
+  ToolCallerActor,
+  ToolContext,
+  ToolEffect,
+  ToolMirrorPolicy,
+} from '@/kernel/tools/types';
 import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
 import { getTool } from './registry';
-import type { ToolCallerActor, ToolContext, ToolEffect, ToolMirrorPolicy } from './types';
 
 /**
  * Decide whether a tool invocation should mirror to the `event` table.

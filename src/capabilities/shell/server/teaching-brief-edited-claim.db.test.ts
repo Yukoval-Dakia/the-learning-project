@@ -23,8 +23,8 @@ import { TeachingBriefResponseSchema } from '@/capabilities/shell/api/contracts'
 import { loadTeachingBrief } from '@/capabilities/shell/server/teaching-brief';
 import { classifyConjectureProbeResponseFromJudgeMatch } from '@/core/schema/conjecture-probe-response';
 import { event, question } from '@/db/schema';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { acceptAiProposal } from '@/server/proposals/actions';
-import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../tests/helpers/conjecture-probe-fixtures';

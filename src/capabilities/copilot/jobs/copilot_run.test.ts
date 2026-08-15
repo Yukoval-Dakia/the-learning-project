@@ -26,12 +26,12 @@ import { COPILOT_SUBAGENT_NAME } from '@/capabilities/copilot/server/subagents';
 import type { Db } from '@/db/client';
 import { ai_task_runs, event, job_events, provider_session_admission } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
 import {
   acquireProviderSession,
   resolveProviderSessionAdmissionPlan,
 } from '@/server/ai/provider-session-admission';
 import { createRunLifecycle } from '@/server/ai/run-lifecycle';
-import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/server/ai/tools/allowlists';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import { STUCK_RUN_THRESHOLD_MS } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { computeReplay } from '@/server/events/sse_replay';

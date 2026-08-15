@@ -3,12 +3,12 @@
 // This endpoint must not write review events or mutate FSRS state. It exists so
 // `/review` can show advisory before the user commits a rating.
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import {
   INTERVENTION_CONTRACT_VERSION,
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
 } from '@/core/schema/intervention';
 import { event, material_fsrs_state, question } from '@/db/schema';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -20,9 +20,8 @@ import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed
 import { POST } from './advice';
 import { ReviewAdviceResponseSchema } from './review-planning-contracts';
 
-vi.mock('@/capabilities/knowledge/server/subject-profile', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('@/capabilities/knowledge/server/subject-profile')>();
+vi.mock('@/kernel/read-models/subject-profile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/kernel/read-models/subject-profile')>();
   return {
     ...actual,
     resolveSubjectProfileForKnowledgeIds: vi.fn(actual.resolveSubjectProfileForKnowledgeIds),

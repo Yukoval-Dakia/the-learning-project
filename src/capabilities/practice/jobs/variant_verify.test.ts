@@ -3,7 +3,7 @@
 import { runAttributionAndWriteJudgeEvent } from '@/capabilities/practice/server/failure-learning-attribution';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { writeVariantQuestionProposal } from '@/server/proposals/producers';
+import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';

@@ -21,14 +21,14 @@ import { runCoach } from '@/capabilities/agency/jobs/coach_daily';
 import { runDreamingNightly } from '@/capabilities/agency/jobs/dreaming_nightly';
 import { runGoalScopeProposeNightly } from '@/capabilities/agency/jobs/goal_scope_propose_nightly';
 import { listActiveGoals } from '@/capabilities/agency/server/goals/queries';
+import { executeMemoryBrief } from '@/capabilities/copilot/server/tools/memory-brief';
 import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/jobs/knowledge_edge_propose_nightly';
 import { db } from '@/db/client';
-import { executeMemoryBrief } from '@/server/ai/tools/context-readers';
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { loadSubjectBriefEvents } from '@/server/memory/active-subjects';
 import { regenerateMemoryBrief } from '@/server/memory/brief';
 import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { acceptAiProposal } from '@/server/proposals/actions';
-import { listProposalInboxRows } from '@/server/proposals/inbox';
 
 const NOW = new Date();
 // biome-ignore lint/suspicious/noExplicitAny: demo-only loose typing

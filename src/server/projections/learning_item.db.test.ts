@@ -25,9 +25,9 @@ import { newId } from '@/core/ids';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import { event, knowledge, learning_item, materialized_id_index } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import { writeLearningItemProposal } from '@/kernel/proposals/producers';
 import { acceptAiProposal, retractAiProposal } from '@/server/proposals/actions';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
-import { writeLearningItemProposal } from '@/server/proposals/producers';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

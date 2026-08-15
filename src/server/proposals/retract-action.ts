@@ -4,13 +4,13 @@ import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { getProposalLifecycleOperation } from '@/kernel/proposals';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   extractRecordEvidenceIds,
   rollbackRecordsActioned,
-} from '@/server/records/record_processing';
+} from '@/kernel/records/record-processing';
 import type { RetractAiProposalOpts, RetractAiProposalResult } from './action-types';
 import { acquireProposalDecisionLock } from './applier-helpers';
-import type { ProposalInboxRow } from './inbox';
 import { ownerInput, proposalLifecycleRegistry, requireProposal } from './lifecycle-context';
 
 function activityRefsForProposal(proposal: ProposalInboxRow): ActivityRefT[] {

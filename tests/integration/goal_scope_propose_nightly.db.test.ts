@@ -20,8 +20,8 @@ import {
 import { listActiveGoals } from '@/capabilities/agency/server/goals/queries';
 import { runGoalScopeAndWrite } from '@/capabilities/agency/server/goals/scope';
 import { event, goal } from '@/db/schema';
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { acceptAiProposal, retractAiProposal } from '@/server/proposals/actions';
-import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runSeed } from '../../scripts/seed-synthetic';

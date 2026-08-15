@@ -7,9 +7,9 @@
 import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
 import type { WriteAgentNoteInput } from '@/capabilities/agency/server/notes';
 import type { FailureAttempt } from '@/capabilities/knowledge/public';
-import { activeEffectiveTruth } from '@/capabilities/practice/server/effective-truth';
+import { activeEffectiveTruth } from '@/kernel/events';
+import type { WriteAiProposalInput } from '@/kernel/proposals/writer';
 import type { MasteryProjection } from '@/server/mastery/state';
-import type { WriteAiProposalInput } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../../tests/helpers/conjecture-probe-fixtures';

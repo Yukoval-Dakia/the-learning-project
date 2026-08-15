@@ -1,4 +1,4 @@
-import { writeCompletionProposal, writeRelearnProposal } from '@/server/proposals/producers';
+import { writeCompletionProposal, writeRelearnProposal } from '@/kernel/proposals/producers';
 import { z } from 'zod';
 import {
   type LearningItemProposalOutput,

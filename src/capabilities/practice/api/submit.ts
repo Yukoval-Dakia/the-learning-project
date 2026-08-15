@@ -32,7 +32,6 @@
 //   trigger). POST composes the phases and shapes the wire response.
 
 import type { Provider } from '@/ai/registry';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
@@ -63,12 +62,14 @@ import {
 import { type Db, type Tx, db } from '@/db/client';
 import { learning_session, mastery_state, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { activeEffectiveTruth } from '@/kernel/events';
 import {
   ApiError,
   canonicalResourceResponse,
   deprecatedRouteResponse,
   errorResponse,
 } from '@/kernel/http';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { writeJobEvent } from '@/server/events/writer';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
@@ -93,7 +94,6 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { writeAttemptSnapshotBrackets } from '../server/attempt-snapshot';
 import { resolveAdviceCauseForQuestion } from '../server/cause-context';
-import { activeEffectiveTruth } from '../server/effective-truth';
 import { enqueueWrongStreakNudge } from '../server/enqueue-wrong-streak-nudge';
 import { initialFsrsState, scheduleReview } from '../server/fsrs';
 import { judgeDurableEnabled } from '../server/judge-durable-config';

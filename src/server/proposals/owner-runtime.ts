@@ -30,8 +30,11 @@ export {
   requiredString,
   writeProposalRateEvent,
 } from './applier-helpers';
-export type { ProposalInboxRow } from './inbox';
-export { ensureProposalDecisionSignal, recordProposalDecisionSignal } from './signals';
+export type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+export {
+  ensureProposalDecisionSignal,
+  recordProposalDecisionSignal,
+} from '@/kernel/proposals/signals';
 export {
   hasGoalGenesisAnchor,
   hasLearningItemGenesisAnchor,

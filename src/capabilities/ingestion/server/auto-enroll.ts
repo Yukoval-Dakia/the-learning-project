@@ -62,7 +62,6 @@ import {
   observeEnabled,
   studentAnswerGradingEnabled,
 } from '@/capabilities/ingestion/server/workflow-judge-config';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import {
   type NameKcFn,
   isTagKnowledgeInvariantError,
@@ -84,6 +83,7 @@ import {
   runMultimodalDirectJudge,
 } from '@/kernel/judge';
 import type { JudgeQuestionRow } from '@/kernel/judge';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
   isObjectiveJudgeRoute,

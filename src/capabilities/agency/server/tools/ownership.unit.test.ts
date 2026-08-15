@@ -6,14 +6,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
 import { agencyCapability } from '@/capabilities/agency/manifest';
-import {
-  DOMAIN_TOOL_ALLOWLISTS,
-  PROPOSE_WRITE_TOOLS,
-  READ_TOOLS,
-} from '@/server/ai/tools/allowlists';
+import { DOMAIN_TOOL_ALLOWLISTS, PROPOSE_WRITE_TOOLS, READ_TOOLS } from '@/kernel/tools/allowlists';
+import type { DomainTool } from '@/kernel/tools/types';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { __resetRegistryForTests, getTool } from '@/server/ai/tools/registry';
-import type { DomainTool } from '@/server/ai/tools/types';
 
 const AGENCY_TOOL_NAMES = [
   'get_learning_item_context',
@@ -95,17 +91,9 @@ describe('Agency tool and proposal lifecycle ownership', () => {
     expect(existsSync(join(process.cwd(), readerPath))).toBe(true);
     expect(existsSync(join(process.cwd(), proposalsPath))).toBe(true);
 
-    const centralReaders = source('src/server/ai/tools/context-readers.ts');
-    expect(centralReaders).not.toContain('export const getLearningItemContextTool');
-    const centralProposals = source('src/server/ai/tools/proposal-tools.ts');
-    for (const exportName of [
-      'proposeLearningItemCompletionTool',
-      'proposeLearningItemRelearnTool',
-      'proposeLearningItemDeferTool',
-      'proposeLearningItemArchiveTool',
-    ]) {
-      expect(centralProposals).not.toContain(`export const ${exportName}`);
-    }
+    // YUK-892 — the transitional central concrete tool files are deleted wholesale.
+    expect(existsSync(join(process.cwd(), 'src/server/ai/tools/context-readers.ts'))).toBe(false);
+    expect(existsSync(join(process.cwd(), 'src/server/ai/tools/proposal-tools.ts'))).toBe(false);
 
     const manifest = source('src/capabilities/agency/manifest.ts');
     expect(manifest).not.toContain('@/server/ai/tools/context-readers');

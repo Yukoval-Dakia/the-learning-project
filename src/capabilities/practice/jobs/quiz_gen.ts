@@ -48,7 +48,13 @@ import {
   question,
   source_document,
 } from '@/db/schema';
+import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
 import { writeEvent } from '@/kernel/events';
+import {
+  DOMAIN_TOOL_MCP_SERVER_NAME,
+  type DomainToolName,
+  toMcpAllowedToolName,
+} from '@/kernel/tools/allowlists';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import {
   TAVILY_MCP_ALLOWED_TOOLS,
@@ -57,16 +63,7 @@ import {
 } from '@/server/ai/mcp/tavily';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { runAgentTask } from '@/server/ai/runner';
-import {
-  DOMAIN_TOOL_MCP_SERVER_NAME,
-  type DomainToolName,
-  toMcpAllowedToolName,
-} from '@/server/ai/tools/allowlists';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
-import {
-  artifactRowToCreateSnapshot,
-  emitArtifactCreateEvent,
-} from '@/server/artifacts/create-event';
 import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,

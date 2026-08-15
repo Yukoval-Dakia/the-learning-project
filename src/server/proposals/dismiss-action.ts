@@ -1,15 +1,18 @@
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
 import { getProposalLifecycleOperation } from '@/kernel/proposals';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import {
+  ensureProposalDecisionSignal,
+  recordProposalDecisionSignal,
+} from '@/kernel/proposals/signals';
 import type { DismissAiProposalOpts, DismissAiProposalResult } from './action-types';
 import {
   acquireProposalDecisionLock,
   findExistingRateEvent,
   writeProposalRateEvent,
 } from './applier-helpers';
-import type { ProposalInboxRow } from './inbox';
 import { ownerInput, proposalLifecycleRegistry, requireProposal } from './lifecycle-context';
-import { ensureProposalDecisionSignal, recordProposalDecisionSignal } from './signals';
 
 async function reconcileExistingRateSignal(
   db: Db,

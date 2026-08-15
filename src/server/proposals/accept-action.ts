@@ -5,17 +5,17 @@ import {
   type ProposalLifecycleResult,
   getProposalLifecycleOperation,
 } from '@/kernel/proposals';
-import { extractRecordEvidenceIds, markRecordsActioned } from '@/server/records/record_processing';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import { ensureProposalDecisionSignal } from '@/kernel/proposals/signals';
+import { extractRecordEvidenceIds, markRecordsActioned } from '@/kernel/records/record-processing';
 import type { AcceptAiProposalOpts } from './action-types';
 import { findExistingRateEvent } from './applier-helpers';
-import type { ProposalInboxRow } from './inbox';
 import {
   assertPending,
   ownerInput,
   proposalLifecycleRegistry,
   requireProposal,
 } from './lifecycle-context';
-import { ensureProposalDecisionSignal } from './signals';
 
 interface DispatchedAccept {
   result: ProposalLifecycleResult;

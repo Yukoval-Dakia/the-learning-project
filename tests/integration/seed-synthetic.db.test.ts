@@ -10,10 +10,10 @@
 // fastTestInclude); it imports the testDb helper, so it must NOT be a unit test.
 
 import { event, knowledge, material_fsrs_state, proposal_signals, question } from '@/db/schema';
-import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
+import { resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
+import { getProposalAcceptanceRates } from '@/kernel/proposals/signals';
+import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
 import { listActiveSubjectsSinceRefresh } from '@/server/memory/active-subjects';
-import { resolveEdgeGateBump } from '@/server/proposals/adaptive-bias';
-import { getProposalAcceptanceRates } from '@/server/proposals/signals';
 import { eq, like, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {

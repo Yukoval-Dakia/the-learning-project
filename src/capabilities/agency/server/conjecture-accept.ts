@@ -47,17 +47,17 @@ import {
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import {
+  ensureProposalDecisionSignal,
+  recordProposalDecisionSignal,
+} from '@/kernel/proposals/signals';
 import {
   asPlainRecord,
   ensureAcceptOnly,
   existingAcceptRate,
   requiredString,
 } from '@/server/proposals/applier-helpers';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
-import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/server/proposals/signals';
 
 // YUK-711 — wire error code raised (as a typed ApiError, HTTP 409) when the accept
 // cannot serve its discriminating probe because MAX_CONCURRENT_ACTIVE_PROBES active

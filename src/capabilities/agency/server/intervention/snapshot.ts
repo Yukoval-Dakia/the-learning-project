@@ -18,7 +18,7 @@ import {
 import { ConjectureProposalChange } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, intervention, knowledge, mastery_state } from '@/db/schema';
-import { getProposalInboxRow } from '@/server/proposals/inbox';
+import { getProposalInboxRow } from '@/kernel/proposals/inbox';
 import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 

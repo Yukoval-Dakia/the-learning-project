@@ -40,7 +40,7 @@ describe('notes capability — semantic ownership (YUK-875)', () => {
   });
 
   it('keeps the shared create envelope free of Notes mutation semantics', () => {
-    const createEnvelope = source('src/server/artifacts/create-event.ts');
+    const createEnvelope = source('src/kernel/artifacts.ts');
     expect(createEnvelope).not.toContain('experimental:body_blocks_edit');
     expect(createEnvelope).not.toContain('experimental:artifact_lifecycle');
     expect(createEnvelope).not.toContain('NotePatch');
@@ -84,7 +84,7 @@ describe('notes capability — copilot tools and correction read model (YUK-880)
 
     // Surface allowlist names stay (permissions unchanged) — only the
     // implementation ownership moved.
-    const allowlists = source('src/server/ai/tools/allowlists.ts');
+    const allowlists = source('src/kernel/tools/allowlists.ts');
     expect(allowlists).toContain("'author_artifact'");
     expect(allowlists).toContain("'update_artifact'");
   });

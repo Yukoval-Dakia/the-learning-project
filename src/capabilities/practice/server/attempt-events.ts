@@ -2,7 +2,7 @@
 export {
   effectiveCauseCategoryForFailureAttempt,
   effectiveCauseForFailureAttempt,
-} from '@/server/events/cause-policy';
+} from '@/kernel/read-models/cause-policy';
 // YUK-876 — the failure-attempt read models are knowledge-owned now; this
 // capability-local contract re-publishes them through the sanctioned seam.
 export {

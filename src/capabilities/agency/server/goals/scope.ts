@@ -13,11 +13,11 @@ import { newId } from '@/core/ids';
 import { loadTreeSnapshot } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import type { GoalScopeIntent } from '@/kernel/task-intents';
 // M5 seam（YUK-319 T2 记录）：跨包深 import knowledge 内部模块——M5 收紧包边界时
 // 应换走 knowledge 包对外导出面；M4 等价平移期原样保留。
-import type { ToolContext } from '@/server/ai/tools/types';
-import { writeAiProposal } from '@/server/proposals/writer';
+import type { ToolContext } from '@/kernel/tools/types';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { parseGoalScopeOutput } from '../../tasks/goal-scope';
 import { type TaskTextRunFn, writeRetryableAiFailureLedger } from '../ai-runtime';

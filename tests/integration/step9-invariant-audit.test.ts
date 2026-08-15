@@ -169,7 +169,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
   });
 
   it('learning_record mutations appear only inside the canonical records owner', async () => {
-    const ALLOWED_LEARNING_RECORD_WRITERS = ['src/server/records/queries.ts'] as const;
+    const ALLOWED_LEARNING_RECORD_WRITERS = ['src/kernel/records/queries.ts'] as const;
     const hits = await findWriteHits('learning_record', {
       ops: ['insert', 'update', 'delete'],
     });
@@ -179,7 +179,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       [
         'Disallowed writers of `learning_record` found:',
         ...violations.map((path) => `  ${path}`),
-        'All production mutations must cross src/server/records/queries.ts (ADR-0015 mutation contract v1).',
+        'All production mutations must cross src/kernel/records/queries.ts (ADR-0015 mutation contract v1; YUK-892 moved the records owner to kernel).',
       ].join('\n'),
     ).toEqual([]);
   });
@@ -474,12 +474,12 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       'src/capabilities/notes/server/body-blocks-edit.ts',
       'src/capabilities/notes/server/note-refine-apply.ts',
       'src/capabilities/notes/server/hub-dismiss.ts',
-      // ADR-0032 RP-2 / YUK-304 (lane B) — the shared tool_quiz artifact INSERT
+      // ADR-0032 RP-2 / YUK-304 (lane B) — the shared tool_quiz artifact INSERT (YUK-892: practice-owned)
       // core. write_review_plan (review-plan-tools.ts) + write_quiz
       // (write-quiz.ts) delegate their single INSERT here; review-plan-tools.ts
       // itself no longer contains a raw artifact insert. The YUK-262 quiz-skill
       // writer (src/server/copilot/skills/quiz-skill.ts) is retired (quiz C→A).
-      'src/server/ai/tools/tool-quiz-core.ts',
+      'src/capabilities/practice/server/tools/tool-quiz-core.ts',
       // YUK-214 (Strategy D S1) — createIngestionPaper packs an imported
       // ingestion session's questions into an `ingestion_paper` tool_quiz
       // artifact (the ingest→practice bridge). Single INSERT, idempotent

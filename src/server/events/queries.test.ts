@@ -5,21 +5,21 @@
 // hand-built KnownEvent-shaped rows; no Step 3 migration in test fixtures.
 
 import { getQuestionTimeline, getRecentReviewEvents } from '@/capabilities/copilot/public';
+import { deterministicId, newId } from '@/core/ids';
+import type { EventT } from '@/core/schema/event';
+import type { AttemptQuestionSnapshotT } from '@/core/schema/question-evidence-snapshot';
+import { event, material_fsrs_state } from '@/db/schema';
+import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import {
   getFailureAttemptById,
   getFailureAttemptWithReasoningTraceById,
   getFailureAttempts,
   getJudgeForAttempt,
   getUserCauseForAttempt,
-} from '@/capabilities/knowledge/server/events/failure-attempts';
-import { deterministicId, newId } from '@/core/ids';
-import type { EventT } from '@/core/schema/event';
-import type { AttemptQuestionSnapshotT } from '@/core/schema/question-evidence-snapshot';
-import { event, material_fsrs_state } from '@/db/schema';
+} from '@/kernel/read-models/failure-attempts';
 import { eq, inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { effectiveCauseForFailureAttempt } from './cause-policy';
 
 async function seedAttemptEvent(opts: {
   id?: string;
