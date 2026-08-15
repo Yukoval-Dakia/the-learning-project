@@ -109,6 +109,7 @@ jobs:
           pnpm audit:api-client
           pnpm audit:api-client-usage
           pnpm audit:capability-boundaries
+          pnpm audit:architecture-deepening
           pnpm audit:profile
           pnpm audit:learner-copy
           pnpm audit:no-learning-styles
