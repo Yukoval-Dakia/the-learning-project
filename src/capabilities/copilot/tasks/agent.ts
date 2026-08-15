@@ -11,7 +11,7 @@ import { z } from 'zod';
 const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
 const OWNER_GATE_CONTRACT =
-  '【Owner gate】Every propose result includes the server-owned proposal_effect_contract. owner_gate=FULL overrides any LIGHT/FULL prose; no proposal is a direct write, and the only declared pre-accept rollback is dismiss_before_accept. Do not promise unavailable delete/archive/restore, soft-delete, relearn, or SQL operations. Keep proposed targets within the user-authorized objects; any sibling or extra object requires a new FULL owner gate. After a typed not_found, unknown_node, invalid_payload, or schema error, read and re-plan before another proposal; never call the failure already cleaned up.\n';
+  '【Owner gate】Every propose result includes the server-owned proposal_effect_contract. owner_gate=FULL overrides any LIGHT/FULL prose; no proposal is a direct write, and the only declared pre-accept rollback is dismiss_before_accept. Never claim to directly execute delete, archive, restore, relearn, soft-delete, or SQL; registered archive and relearn tools only create proposals governed by the FULL owner gate. Keep proposed targets within the user-authorized objects; any sibling or extra object requires a new FULL owner gate. After a typed not_found, unknown_node, invalid_payload, failed, or schema error, read and re-plan before another proposal; never call the failure already cleaned up.\n';
 
 export const copilotTaskSpec = {
   ownership: 'owned',
