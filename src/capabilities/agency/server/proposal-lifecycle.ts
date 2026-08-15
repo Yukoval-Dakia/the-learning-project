@@ -1,5 +1,6 @@
 import type { Tx } from '@/db/client';
 import type { ProposalRetractApplier } from '@/kernel/proposals';
+export type { ProposalInboxRow } from '@/server/proposals/inbox';
 import { type GoalRetractRuntime, retractGoalScopeProposal } from './proposal-retract-goal';
 import {
   type LearningItemRetractRuntime,
