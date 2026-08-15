@@ -456,7 +456,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     // Anything else writing `artifact` should still be reviewed.
     const hits = await findWriteHits('artifact', { roots: SCAN_RUNTIME_ROOTS });
     const ALLOWED = [
-      'src/server/orchestrator/learning_intent.ts',
+      'src/capabilities/notes/server/learning-intent-note.ts',
       'src/capabilities/notes/jobs/note_generate.ts',
       'src/capabilities/notes/jobs/note_verify.ts',
       // YUK-857 — provider-attempt exhaustion atomically sets verification_status=failed and emits

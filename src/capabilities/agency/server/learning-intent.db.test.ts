@@ -1,11 +1,28 @@
 // Phase 2B — Learning Intent Orchestrator tests.
 
+import { createLearningIntentKnowledgeNode } from '@/capabilities/knowledge/public';
+import { createLearningIntentNote } from '@/capabilities/notes/public';
 import { NOTE_HANDOFF_ACTION } from '@/capabilities/notes/server/note-handoff';
 import { artifact, event, knowledge, learning_item } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { LearningIntentError, acceptLearningIntent, planLearningIntent } from './learning_intent';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import {
+  type AcceptLearningIntentParams,
+  LearningIntentError,
+  acceptLearningIntent as acceptLearningIntentOwned,
+  planLearningIntent,
+} from './learning-intent';
+
+function acceptLearningIntent(
+  params: Omit<AcceptLearningIntentParams, 'createKnowledgeNode' | 'createNote'>,
+) {
+  return acceptLearningIntentOwned({
+    ...params,
+    createKnowledgeNode: createLearningIntentKnowledgeNode,
+    createNote: createLearningIntentNote,
+  });
+}
 
 async function seedKnowledge(
   rows: Array<{ id: string; name: string; parent_id?: string | null; domain?: string | null }>,
@@ -256,12 +273,13 @@ describe('acceptLearningIntent', () => {
     expect(hubLi.primary_artifact_id).toBe(result.hub_artifact_id);
 
     // Atomic LearningItems link to hub
-    for (const atomicLiId of result.atomic_learning_item_ids) {
+    for (const [index, atomicLiId] of result.atomic_learning_item_ids.entries()) {
       const atomicLi = (
         await db.select().from(learning_item).where(eq(learning_item.id, atomicLiId))
       )[0];
       expect(atomicLi.parent_learning_item_id).toBe(result.hub_learning_item_id);
       expect(atomicLi.source).toBe('learning_intent');
+      expect(atomicLi.primary_artifact_id).toBe(result.atomic_artifact_ids[index]);
     }
 
     // Hub artifact is ready (outline-only)
@@ -347,6 +365,51 @@ describe('acceptLearningIntent', () => {
     expect(longArtifact.generation_status).toBe('pending');
     expect(longArtifact.parent_artifact_id).toBe(result.hub_artifact_id);
     expect(longArtifact.knowledge_ids).toEqual(['k_zhi', 'k_qi']);
+
+    const generationIntents = await db
+      .select({ subject_id: event.subject_id })
+      .from(event)
+      .where(eq(event.action, NOTE_HANDOFF_ACTION));
+    expect(generationIntents).toHaveLength(2);
+    expect(new Set(generationIntents.map((row) => row.subject_id))).toEqual(
+      new Set([...result.atomic_artifact_ids, ...result.long_artifact_ids]),
+    );
+  });
+
+  it('rolls back every materialized row and event when an owner command fails', async () => {
+    const db = testDb();
+    const proposal = await makeProposal();
+
+    await expect(
+      acceptLearningIntentOwned({
+        db,
+        proposalId: proposal.proposal_id,
+        createKnowledgeNode: createLearningIntentKnowledgeNode,
+        createNote: async (tx, input) => {
+          if (input.kind === 'atomic') throw new Error('notes owner unavailable');
+          await createLearningIntentNote(tx, input);
+        },
+      }),
+    ).rejects.toThrow('notes owner unavailable');
+
+    expect(
+      await db
+        .select({ id: learning_item.id })
+        .from(learning_item)
+        .where(eq(learning_item.source_ref, proposal.proposal_id)),
+    ).toEqual([]);
+    expect(
+      await db
+        .select({ id: artifact.id })
+        .from(artifact)
+        .where(eq(artifact.source_ref, proposal.proposal_id)),
+    ).toEqual([]);
+    expect(
+      await db
+        .select({ id: event.id })
+        .from(event)
+        .where(eq(event.caused_by_event_id, proposal.proposal_id)),
+    ).toEqual([]);
   });
 
   it('throws proposal_already_rated on double accept', async () => {

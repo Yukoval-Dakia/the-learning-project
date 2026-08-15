@@ -37,6 +37,11 @@ export type {
   HubMeshEdge,
 } from './server/hub-mesh';
 export { assertKnowledgeIdsExist } from './server/validate';
+export { createLearningIntentKnowledgeNode } from './server/learning-intent-knowledge';
+export type {
+  CreateLearningIntentKnowledgeNodeFn,
+  CreateLearningIntentKnowledgeNodeInput,
+} from './server/learning-intent-knowledge';
 export { decideKnowledgeEdgeProposal } from './server/edge-proposal-accept';
 export type {
   EdgeProposalDecision,

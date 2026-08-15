@@ -5,7 +5,7 @@ import { EditingBlurResponseSchema } from '@/capabilities/notes/api/contracts';
 vi.mock('@/db/client', () => ({ db: {} }));
 
 const markArtifactIdleAndFlush = vi.fn();
-vi.mock('@/server/artifacts/editing-session', () => ({
+vi.mock('@/capabilities/notes/server/artifacts/editing-session', () => ({
   markArtifactIdleAndFlush: (...args: unknown[]) => markArtifactIdleAndFlush(...args),
 }));
 

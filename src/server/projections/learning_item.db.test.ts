@@ -16,6 +16,7 @@
 // Hermetic: resetDb() TRUNCATEs ALL_TABLES (incl. learning_item + materialized_id_index).
 
 import type { LearningItemAcceptResult } from '@/capabilities/agency/public';
+import { planLearningIntent } from '@/capabilities/agency/public';
 import {
   acceptCompletionProposal,
   acceptRelearnProposal,
@@ -24,7 +25,6 @@ import { newId } from '@/core/ids';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import { event, knowledge, learning_item, materialized_id_index } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { planLearningIntent } from '@/server/orchestrator/learning_intent';
 import { acceptAiProposal, retractAiProposal } from '@/server/proposals/actions';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import { writeLearningItemProposal } from '@/server/proposals/producers';

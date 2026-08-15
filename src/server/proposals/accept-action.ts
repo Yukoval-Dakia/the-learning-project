@@ -1,4 +1,5 @@
-import { dispatchNoteGeneration } from '@/capabilities/notes/public';
+import { createLearningIntentKnowledgeNode } from '@/capabilities/knowledge/public';
+import { createLearningIntentNote, dispatchNoteGeneration } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
 import {
@@ -28,6 +29,7 @@ async function dispatchAccept(
   db: Db,
   proposal: ProposalInboxRow,
   opts: AcceptAiProposalOpts,
+  runtime: unknown,
 ): Promise<DispatchedAccept> {
   const declaration = getProposalLifecycleOperation(
     proposalLifecycleRegistry,
@@ -61,7 +63,7 @@ async function dispatchAccept(
         new_relation_type: opts.new_relation_type,
         user_note: opts.user_note,
       },
-      opts,
+      runtime,
     );
   } else if (opts.decision === 'reverse') {
     result = await applier(
@@ -72,7 +74,7 @@ async function dispatchAccept(
         decision: opts.decision,
         user_note: opts.user_note,
       },
-      opts,
+      runtime,
     );
   } else {
     result = await applier(
@@ -84,7 +86,7 @@ async function dispatchAccept(
         user_note: opts.user_note,
         corrected_payload: opts.corrected_payload,
       },
-      opts,
+      runtime,
     );
   }
 
@@ -139,10 +141,13 @@ export async function acceptAiProposal(
     (shouldEnqueueBackgroundJobs()
       ? (artifactId: string) => dispatchNoteGeneration(db, artifactId)
       : undefined);
-  const dispatched = await dispatchAccept(db, proposal, {
+  const proposalRuntime = {
     ...opts,
     ...(enqueueLearningIntentNote ? { enqueueLearningIntentNote } : {}),
-  });
+    createLearningIntentKnowledgeNode,
+    createLearningIntentNote,
+  };
+  const dispatched = await dispatchAccept(db, proposal, opts, proposalRuntime);
 
   const recordIds = extractRecordEvidenceIds(proposal.payload.evidence_refs);
   if (recordIds.length > 0 && dispatched.lifecycleOutcome === 'accepted') {

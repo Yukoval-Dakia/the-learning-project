@@ -3,7 +3,7 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 548,
+      "total": 549,
       "byOwnerPair": {
         "agency -> agency": 7,
         "agency -> ai": 29,
@@ -13,15 +13,14 @@
         "agency -> http": 2,
         "agency -> learning-items": 1,
         "agency -> mastery": 3,
-        "agency -> orchestrator": 2,
         "agency -> projections": 15,
         "agency -> proposals": 21,
         "agency -> questions": 1,
         "agency -> subjects": 2,
         "copilot -> advisory-locks": 1,
-        "copilot -> ai": 30,
-        "copilot -> boss": 7,
-        "copilot -> events": 5,
+        "copilot -> ai": 37,
+        "copilot -> boss": 6,
+        "copilot -> events": 7,
         "copilot -> http": 1,
         "copilot -> mastery": 1,
         "copilot -> orchestrator": 2,
@@ -55,7 +54,7 @@
         "knowledge -> projections": 19,
         "knowledge -> proposals": 17,
         "notes -> ai": 8,
-        "notes -> artifacts": 8,
+        "notes -> artifacts": 3,
         "notes -> boss": 2,
         "notes -> events": 3,
         "notes -> projections": 3,
@@ -95,7 +94,7 @@
       }
     },
     "serverToCapabilityDeep": {
-      "total": 57,
+      "total": 46,
       "byOwnerPair": {
         "agency -> agency": 3,
         "agency -> notes": 1,
@@ -103,7 +102,6 @@
         "ai -> practice": 3,
         "artifacts -> notes": 3,
         "boss -> agency": 1,
-        "boss -> copilot": 10,
         "boss -> ingestion": 2,
         "boss -> practice": 5,
         "events -> practice": 2,
@@ -111,7 +109,7 @@
         "grounding-gate -> practice": 1,
         "mastery -> knowledge": 2,
         "memory -> knowledge": 1,
-        "orchestrator -> notes": 2,
+        "orchestrator -> notes": 1,
         "projections -> knowledge": 1,
         "questions -> knowledge": 4,
         "quiz -> practice": 1,

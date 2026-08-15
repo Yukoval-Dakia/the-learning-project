@@ -1,6 +1,5 @@
 import { db } from '@/db/client';
-
-import { PgPresenceStore } from './presence/pg';
+import { PgPresenceStore } from '@/server/artifacts/presence/pg';
 import type {
   EditingSessionSnapshot,
   EnqueueOrApplyInput,
@@ -9,13 +8,13 @@ import type {
   MarkIdleAndFlushResult,
   PresenceStore,
   RecordHeartbeatInput,
-} from './presence/types';
+} from '@/server/artifacts/presence/types';
 
 export {
   EDITING_FORCE_APPLY_TIMEOUT_MS,
   EDITING_HEARTBEAT_TIMEOUT_MS,
   type EditingStatus,
-} from './presence/types';
+} from '@/server/artifacts/presence/types';
 
 // M5-T5c (YUK-321) — Redis 退役（gate 选项 b）：prod 拓扑保持双进程
 // （app + worker），跨进程 presence 改走 PG 表——恒用 PgPresenceStore

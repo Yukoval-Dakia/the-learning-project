@@ -18,5 +18,11 @@ export {
   enqueueDreamingNoteRefine,
   enqueueMasteryNoteRefine,
 } from './server/note-refine-triggers';
+export { emitArtifactLifecycleEvent } from './server/artifacts/mutation-events';
 export type { NoteUpdateAcceptResult } from './server/proposal-accept-applier';
 export { dispatchNoteGeneration, writeNoteGenerationIntent } from './server/note-handoff';
+export { createLearningIntentNote } from './server/learning-intent-note';
+export type {
+  CreateLearningIntentNoteFn,
+  CreateLearningIntentNoteInput,
+} from './server/learning-intent-note';
