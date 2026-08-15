@@ -22,6 +22,7 @@ import { projectionIsWriter } from '@/server/projections/sot-flag';
 import { eq } from 'drizzle-orm';
 
 export {
+  acquireProposalDecisionLock,
   asPlainRecord,
   ensureAcceptOnly,
   existingAcceptRate,

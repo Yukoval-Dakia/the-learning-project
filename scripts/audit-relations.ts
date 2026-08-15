@@ -140,7 +140,7 @@ export type ConsumerEntry = {
 //   - src/capabilities/knowledge/server/tools/knowledge-readers.ts:84 loadEdges() 无 relationTypes 过滤
 //     ⇒ get_knowledge_neighborhood / find_knowledge_paths 把**所有** type 一把灌给
 //     copilot（诊断/推荐上下文）。generic-read，覆盖全 5 type。
-//   - src/capabilities/knowledge/server/tools/knowledge-readers.ts:744 paths 工具对 related_to /
+//   - src/capabilities/knowledge/server/tools/knowledge-readers.ts:829 paths 工具对 related_to /
 //     contrasts_with 加反向邻接（双向语义）⇒ 这两 type 的 specialized 路径消费。
 //   - src/capabilities/knowledge/server/topology-gate.ts:52 ORDERED_RELATION =
 //     'prerequisite'，环/传递冗余检测**仅**对 prerequisite ⇒ prerequisite specialized。

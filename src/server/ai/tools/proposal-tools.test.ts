@@ -1,4 +1,8 @@
 import { capabilities } from '@/capabilities';
+import {
+  proposeLearningItemCompletionTool,
+  proposeLearningItemRelearnTool,
+} from '@/capabilities/agency/server/tools/proposal-tools';
 import { runWriteProposal } from '@/capabilities/knowledge/server/review';
 import {
   proposeKnowledgeEdgeTool,
@@ -30,12 +34,7 @@ import {
   testDb,
 } from '../../../../tests/helpers/db';
 import { buildMcpServerFromRegistry } from './mcp-bridge';
-import {
-  proposeLearningItemCompletionTool,
-  proposeLearningItemRelearnTool,
-  proposeRecordLinksTool,
-  proposeRecordPromotionTool,
-} from './proposal-tools';
+import { proposeRecordLinksTool, proposeRecordPromotionTool } from './proposal-tools';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, getTool, listTools } from './registry';
 import type { ToolContext } from './types';
