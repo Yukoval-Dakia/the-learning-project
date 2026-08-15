@@ -92,22 +92,8 @@
       }
     },
     "serverToCapabilityDeep": {
-      "total": 26,
-      "byOwnerPair": {
-        "ai -> knowledge": 3,
-        "ai -> practice": 3,
-        "artifacts -> notes": 3,
-        "events -> practice": 1,
-        "grounding-gate -> agency": 4,
-        "grounding-gate -> practice": 1,
-        "mastery -> knowledge": 2,
-        "memory -> knowledge": 1,
-        "projections -> knowledge": 1,
-        "questions -> knowledge": 4,
-        "revert -> knowledge": 1,
-        "session -> ingestion": 1,
-        "today -> shell": 1
-      }
+      "total": 0,
+      "byOwnerPair": {}
     },
     "crossCapabilityValue": {
       "total": 82,
