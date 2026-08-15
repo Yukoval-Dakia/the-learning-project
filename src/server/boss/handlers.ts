@@ -1,14 +1,6 @@
-import { buildJudgeRunHandler } from '@/capabilities/practice/jobs/judge_run';
 import type { PlacementVerificationAuthority } from '@/capabilities/practice/public';
-import { JUDGE_RUN_QUEUE } from '@/capabilities/practice/server/judge-durable-config';
 import type { Db } from '@/db/client';
-import {
-  EXPIRE_AGENT,
-  EXPIRE_LLM,
-  FAST_QUEUE_OPTS,
-  createJobQueue,
-  createOrUpdateQueue,
-} from '@/server/boss/queue-config';
+import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
 import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { registerMemoryHandlers } from '@/server/memory/triggers';
 import type { PgBoss } from 'pg-boss';
@@ -18,7 +10,6 @@ import { buildPruneJobEventsHandler } from './handlers/prune_job_events';
 import { buildPruneOrphanConversationSessionsHandler } from './handlers/prune_orphan_conversation_sessions';
 import { buildPruneOrphanPlacementSessionsHandler } from './handlers/prune_orphan_placement_sessions';
 import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_review_sessions';
-import { buildSessionSummaryHandler } from './handlers/session_summary';
 import {
   VERIFY_DISPATCH_RECOVERY_QUEUE,
   buildVerifyDispatchRecoveryHandler,
@@ -33,14 +24,15 @@ import {
 //
 // 仍留簿的注册（M5 拆除采石场时清账）：
 //   - echo（golden E2E，0.5s polling）
-//   - rejudge（非默认 1s polling + inline 动态 import，非工厂形态）
 //   - prune_job_events / prune_orphan_* / promote_conversation_idle（FAST housekeeping cron）
 //   - registerMemoryHandlers（memory_* 队列归 memory 模块）
-//   - session_summary（链式 LLM）
 //
 // YUK-882 (F3.6c)：腾讯 OCR 提取与 auto-enroll 两条 job 已迁 ingestion
 // manifest jobs 声明（含 0.5s polling + includeMetadata + lazy r2 的 worker
 // 元数据），由注册器挂载；ingestion 域自此无留簿注册。
+// YUK-870 (F3.5b)：rejudge / judge_run / session_summary 三条注册已迁
+// practice manifest jobs 声明（1s polling / includeMetadata / 2s 等价平移），
+// practice 域自此无留簿注册。
 
 /**
  * Register pg-boss queue handlers + schedules for jobs NOT yet owned by a
@@ -53,31 +45,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   // Step 4: echo golden E2E queue (FAST — trivial round-trip)
   await createOrUpdateQueue(boss, 'echo', FAST_QUEUE_OPTS);
   await boss.work('echo', { pollingIntervalSeconds: 0.5, batchSize: 1 }, buildEchoHandler(db));
-
-  // M2 (YUK-316, D15) — 申诉自动重判。appeal API 投递（singletonKey=appeal
-  // event id）；handler 本体在 practice capability 包，manifest 声明无 load
-  // （注册形态是非默认 1s polling + inline 动态 import，非工厂，不走注册器
-  // 统一配方）——注册留簿，M5 清账。
-  await createJobQueue(boss, 'rejudge', EXPIRE_LLM);
-  await boss.work('rejudge', { pollingIntervalSeconds: 1, batchSize: 1 }, async (jobs) => {
-    const { handleRejudge } = await import('@/capabilities/practice/jobs/rejudge');
-    for (const job of jobs) {
-      await handleRejudge(db, job.data as { appeal_event_id: string });
-    }
-  });
-
-  // YUK-594 (durable judge main path, W1) — durable judge_run queue（practice 域）。
-  // handler 本体在 practice capability 包（jobs/judge_run.ts）；manifest 声明无 load
-  // 纯归属（同 rejudge：注册形态要 includeMetadata:true 读 retryCount 驱动跨 provider
-  // lane 决策，非注册器统一配方）。createJobQueue 挂 judge_run_dlq（LLM 档，1h expire，
-  // JOB_RETRY_LIMIT×30-60s backoff → DLQ）。dark-ship：JUDGE_DURABLE_ENABLED 默认 OFF
-  // 时无人投递此队列（submit 面走同步），队列空跑无害。
-  await createJobQueue(boss, JUDGE_RUN_QUEUE, EXPIRE_LLM);
-  await boss.work(
-    JUDGE_RUN_QUEUE,
-    { pollingIntervalSeconds: 2, batchSize: 1, includeMetadata: true },
-    buildJudgeRunHandler(db),
-  );
 
   // Step 5: nightly housekeeping cron（同区段的 knowledge_propose_nightly 已迁
   // knowledge manifest jobs 声明，由注册器挂载）
@@ -127,16 +94,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     '25 4 * * *',
     {},
     { tz: 'Asia/Shanghai' },
-  );
-
-  // Phase 1d: SessionSummaryTask — enqueued by review-session completion
-  // after a review session transitions to completed. async so the LLM call
-  // doesn't block the close request.
-  await createJobQueue(boss, 'session_summary', EXPIRE_LLM);
-  await boss.work(
-    'session_summary',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildSessionSummaryHandler(db),
   );
 
   // YUK-700 — startup + nightly safety net for drafts whose verify enqueue was

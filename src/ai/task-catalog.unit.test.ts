@@ -64,6 +64,7 @@ import { questionAuthorTaskSpec } from '@/capabilities/practice/tasks/question-a
 import { quizGenTaskSpec } from '@/capabilities/practice/tasks/quiz-generation';
 import { quizVerifyTaskSpec } from '@/capabilities/practice/tasks/quiz-verify';
 import { selectionOrchestratorTaskSpec } from '@/capabilities/practice/tasks/selection-orchestrator';
+import { sessionSummaryTaskSpec } from '@/capabilities/practice/tasks/session-summary';
 import {
   solutionGenerateTaskSpec,
   solutionGenerateVisionTaskSpec,
@@ -160,10 +161,10 @@ const OWNER_MAPS = {
 } as const;
 
 const EXPECTED_OWNER_COUNTS = {
-  practice: 18,
+  practice: 19,
   notes: 3,
   ingestion: 8,
-  knowledge: 4,
+  knowledge: 3,
   agency: 13,
   copilot: 5,
 } as const;
@@ -182,6 +183,7 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   questionAuthorTaskSpec,
   itemPriorTaskSpec,
   selectionOrchestratorTaskSpec,
+  sessionSummaryTaskSpec,
   sourcingTaskSpec,
   copilotDispatchTaskSpec,
   copilotEvidenceReviewTaskSpec,
@@ -414,6 +416,14 @@ describe('taskCatalog', () => {
       expect('outputSchema' in entry && entry.outputSchema.safeParse, kind).toBeTypeOf('function');
     }
 
+    // YUK-870 (F3.5b) — the last transitional entry left this owner map: knowledge
+    // keeps exactly its three owned specs and no longer holds SessionSummaryTask.
+    expect(Object.keys(knowledgeTaskSpecs).sort()).toEqual([
+      'FrontierPrerequisiteTask',
+      'KnowledgeEdgeProposeTask',
+      'KnowledgeReviewTask',
+    ]);
+
     const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
     for (const kind of Object.keys(expected)) {
       expect(source, kind).not.toMatch(new RegExp(`^  ${kind}:`, 'm'));
@@ -497,6 +507,42 @@ describe('taskCatalog', () => {
     }
   });
 
+  // YUK-870 (F3.5b) — the last transitional quarry entry is now Practice-owned.
+  // SessionSummaryTask moves as a full owned spec: plain-text output contract
+  // mirroring the summary runner's trim + 240-char clamp consumer
+  // (src/server/session/summary.ts), prompt builder moved byte-identical so the
+  // prompt-hash oracle holds.
+  it('owns the SessionSummaryTask spec with the plain-text consumer contract (YUK-870)', () => {
+    const entry = practiceTaskSpecs.SessionSummaryTask;
+    expect(entry.ownership).toBe('owned');
+    expect(entry).toBe(sessionSummaryTaskSpec);
+    expect(entry.definition).toBe(taskCatalog.SessionSummaryTask);
+    expect(entry.definition.defaultProvider).toBe('xiaomi');
+    expect(entry.definition.defaultModel).toBe('mimo-v2.5-pro');
+    expect(entry.definition.budget.maxIterations).toBe(1);
+    expect(entry.definition.budget.timeout).toBe(60_000);
+    expect(entry.definition.needsToolCall).toBe(false);
+    expect(entry.definition.isMultimodal).toBe(false);
+    expect(entry.definition.allowedTools).toEqual([]);
+    expect(entry.definition.prompt.kind).toBe('profile');
+    expect('parseText' in entry && entry.parseText, 'parseText').toBeTypeOf('function');
+    expect('outputSchema' in entry && entry.outputSchema.safeParse, 'outputSchema').toBeTypeOf(
+      'function',
+    );
+
+    // The output is a plain-text summary, not JSON: parseText mirrors the summary
+    // runner consumer — trim, clamp to 240 chars (prompt asks ≤120; clamp, don't
+    // reject), and require non-empty.
+    if ('parseText' in entry) {
+      expect(entry.parseText(`${'x'.repeat(300)}`)).toBe('x'.repeat(240));
+      expect(() => entry.parseText('   ')).toThrow();
+    }
+
+    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/^ {2}SessionSummaryTask:/m);
+    expect(source).not.toContain('function buildSessionSummaryPrompt');
+  });
+
   it('owns the seven Practice sourcing and generation TaskSpecs without quarry definitions', () => {
     const kinds = [
       'SolutionGenerateTask',
@@ -565,23 +611,17 @@ describe('taskCatalog', () => {
     expect(source).not.toContain('CopilotEvidenceSourceRefSchema');
   });
 
-  it('retains 50 full owned TaskSpecs and one identity-backed transitional entry', () => {
-    expect(Object.keys(legacyTaskDefinitions)).toEqual(['SessionSummaryTask']);
+  it('retains 51 full owned TaskSpecs and zero transitional entries (YUK-870)', () => {
+    expect(Object.keys(legacyTaskDefinitions)).toEqual([]);
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
-        if (entry.ownership === 'owned') {
-          expect(OWNED_SPECS.has(entry), kind).toBe(true);
-          expect(entry.parseText, kind).toBeTypeOf('function');
-          expect(entry.outputSchema.safeParse, kind).toBeTypeOf('function');
-          continue;
-        }
-        expect(entry.definition, kind).toBe(
-          legacyTaskDefinitions[kind as keyof typeof legacyTaskDefinitions],
-        );
-        expect(Object.hasOwn(entry, 'parseText'), kind).toBe(false);
-        expect(Object.hasOwn(entry, 'outputSchema'), kind).toBe(false);
+        expect(entry.ownership, kind).toBe('owned');
+        expect(OWNED_SPECS.has(entry), kind).toBe(true);
+        expect(entry.parseText, kind).toBeTypeOf('function');
+        expect(entry.outputSchema.safeParse, kind).toBeTypeOf('function');
       }
     }
+    expect(practiceTaskSpecs.SessionSummaryTask).toBe(sessionSummaryTaskSpec);
     expect(practiceTaskSpecs.AttributionTask).toBe(attributionTaskSpec);
     expect(practiceTaskSpecs.AttributionRerankTask).toBe(attributionRerankTaskSpec);
     expect(practiceTaskSpecs.VariantGenTask).toBe(variantGenTaskSpec);
@@ -713,7 +753,9 @@ describe('defineOwnedTaskSpecs', () => {
   });
 
   it('rejects transitional entries with semantic ownership fields', () => {
-    const definition = legacyTaskDefinitions.SessionSummaryTask;
+    // YUK-870 — the quarry is empty; a shape-valid synthetic definition exercises
+    // the same validation order (shape check, then the must-not-own guard).
+    const definition = makeDefinition('SessionSummaryTask');
     expect(() =>
       invokeEntryValidation({
         ownership: 'transitional',
@@ -727,10 +769,11 @@ describe('defineOwnedTaskSpecs', () => {
   });
 
   it('rejects transitional entries whose definition is not quarry-identical', () => {
+    // YUK-870 — with an empty quarry EVERY definition is non-quarry-identical.
     expect(() =>
       invokeEntryValidation({
         ownership: 'transitional',
-        definition: { ...legacyTaskDefinitions.SessionSummaryTask },
+        definition: makeDefinition('SessionSummaryTask'),
       }),
     ).toThrow('must reference legacyTaskDefinitions by identity');
   });
@@ -852,10 +895,10 @@ describe('defineOwnedTaskSpecs', () => {
     }
   });
 
-  it('creates transitional entries only through quarry identity', () => {
-    const entry = defineTransitionalTask(legacyTaskDefinitions.SessionSummaryTask);
-    expect(entry.definition).toBe(legacyTaskDefinitions.SessionSummaryTask);
-    expect(Object.isFrozen(entry)).toBe(true);
+  it('rejects any transitional definition now that the quarry is empty (YUK-870)', () => {
+    expect(() => defineTransitionalTask(makeDefinition('SessionSummaryTask') as never)).toThrow(
+      'must reference legacyTaskDefinitions by identity',
+    );
   });
 });
 

@@ -244,6 +244,81 @@ describe('registerHandlers + registerCapabilityJobs', () => {
     expect(workedNames.filter((n) => n === 'auto_enroll')).toHaveLength(1);
   });
 
+  // YUK-870 (F3.5b) — rejudge / judge_run / session_summary 自中央渐缩簿迁入
+  // practice manifest 后，组合序列必须产出与原中央注册行完全相同的队列/DLQ/
+  // expiry/retry 配方与 worker 选项（rejudge 非默认 1s polling；judge_run
+  // includeMetadata:true 读 retryCount 驱动跨 provider lane 决策；session_summary
+  // 2s/1），且每条队列只挂一个 worker；中央簿本身不得再注册这三条队列
+  // （deletion 证明——注册只存在于 manifest 声明）。
+  it('preserves the exact rejudge / judge_run / session_summary queue, DLQ, expiry, and worker options (YUK-870)', async () => {
+    const boss = {
+      createQueue: vi.fn(async () => undefined),
+      updateQueue: vi.fn(async () => undefined),
+      work: vi.fn(async () => undefined),
+      schedule: vi.fn(async () => undefined),
+      send: vi.fn(async () => 'job-id'),
+    } as unknown as PgBoss;
+
+    // Deletion proof: the central 渐缩簿 segment alone must not create queues,
+    // DLQs, or workers for the three moved registrations.
+    await registerHandlers(boss, {} as Db);
+    const centralWorked = (boss.work as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => call[0] as string,
+    );
+    const centralQueued = (boss.createQueue as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => call[0] as string,
+    );
+    for (const name of ['rejudge', 'judge_run', 'session_summary']) {
+      expect(centralWorked.filter((n) => n === name)).toHaveLength(0);
+      expect(centralQueued.filter((n) => n === name || n === `${name}_dlq`)).toHaveLength(0);
+    }
+
+    await registerCapabilityJobs(boss, {} as Db, capabilities);
+
+    // LLM tier (1h expire, DLQ-first, YUK-576 retry policy) — the exact recipe
+    // each retired central line used via createJobQueue(boss, name, EXPIRE_LLM).
+    const llmOpts = (name: string) => ({
+      expireInSeconds: 3_600,
+      retentionSeconds: 604_800,
+      deadLetter: `${name}_dlq`,
+      retryLimit: 2,
+      retryDelay: 30,
+      retryBackoff: true,
+    });
+    const dlqOpts = { expireInSeconds: 3_600, retentionSeconds: 604_800 };
+    for (const name of ['rejudge', 'judge_run', 'session_summary']) {
+      expect(boss.createQueue).toHaveBeenCalledWith(`${name}_dlq`, dlqOpts);
+      expect(boss.createQueue).toHaveBeenCalledWith(name, llmOpts(name));
+      expect(boss.updateQueue).toHaveBeenCalledWith(name, llmOpts(name));
+    }
+
+    // Exact boss.work options — manifest-to-worker parity with the retired rows.
+    expect(boss.work).toHaveBeenCalledWith(
+      'rejudge',
+      { pollingIntervalSeconds: 1, batchSize: 1 },
+      expect.any(Function),
+    );
+    expect(boss.work).toHaveBeenCalledWith(
+      'judge_run',
+      { pollingIntervalSeconds: 2, batchSize: 1, includeMetadata: true },
+      expect.any(Function),
+    );
+    expect(boss.work).toHaveBeenCalledWith(
+      'session_summary',
+      { pollingIntervalSeconds: 2, batchSize: 1 },
+      expect.any(Function),
+    );
+
+    // No duplicate worker: exactly one work() registration per queue across BOTH
+    // registration segments (central book + capability manifests).
+    const workedNames = (boss.work as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => call[0] as string,
+    );
+    for (const name of ['rejudge', 'judge_run', 'session_summary']) {
+      expect(workedNames.filter((n) => n === name)).toHaveLength(1);
+    }
+  });
+
   // YUK-237: every LLM/agent producer queue gets a non-default active expiry
   // (the pg-boss default is 900s, which truncated long tool-calling jobs) and a
   // 7-day retention floor. FAST housekeeping queues get expiry+retention but no

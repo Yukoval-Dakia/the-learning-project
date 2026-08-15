@@ -34,6 +34,7 @@ import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { and, eq, isNull, sql } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
 
 export interface RejudgeJobInput {
   appeal_event_id: string;
@@ -74,6 +75,21 @@ async function lockAppealResolution(tx: Tx, appealId: string): Promise<void> {
   // 64-bit hash keeps unrelated-appeal collision risk negligible; xact scope
   // guarantees release on commit/rollback without a cleanup path.
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${appealId}, 0))`);
+}
+
+/**
+ * YUK-870 (F3.5b) — pg-boss registration adapter for the appeal rejudge queue.
+ * Pure registration shape: the previous central inline work handler (dynamic
+ * import + per-job handleRejudge loop) flattened into the standard
+ * buildXHandler(db) factory the registrar mounts. The judge semantics stay in
+ * handleRejudge above — this adds no duplicate implementation.
+ */
+export function buildRejudgeHandler(db: Db): (jobs: Job<RejudgeJobInput>[]) => Promise<void> {
+  return async (jobs) => {
+    for (const job of jobs) {
+      await handleRejudge(db, job.data);
+    }
+  };
 }
 
 export async function handleRejudge(
