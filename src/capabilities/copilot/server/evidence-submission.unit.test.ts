@@ -17,6 +17,42 @@ const requestContext = {
 };
 
 describe('Copilot evidence incremental submission', () => {
+  it('preserves the server-owned proposal effect contract in the sealed model trace', () => {
+    const proposalTrace = [
+      {
+        name: 'propose_learning_item_archive',
+        effect: 'propose' as const,
+        input: { learning_item_id: 'item_b' },
+        output: { status: 'proposed', proposal_id: 'proposal_b' },
+        error_reason: null,
+        executed: true,
+        proposal_effect_contract: {
+          owner_gate: 'FULL' as const,
+          direct_write: false as const,
+          rollback: 'dismiss_before_accept' as const,
+        },
+      },
+    ];
+
+    const modelTrace = projectCopilotEvidenceModelTrace(proposalTrace, []);
+
+    expect(modelTrace).toEqual([
+      {
+        call_index: 0,
+        tool_name: 'propose_learning_item_archive',
+        effect: 'propose',
+        status: 'unusable',
+        executed: true,
+        error_reason: null,
+        proposal_effect_contract: {
+          owner_gate: 'FULL',
+          direct_write: false,
+          rollback: 'dismiss_before_accept',
+        },
+      },
+    ]);
+  });
+
   it('canonicalizes a 21-call, 55KB+ blind reference from bounded append-only records', () => {
     expect(COMPLEX_TRACE).toHaveLength(21);
     expect(JSON.stringify(COMPLEX_TRACE).length).toBeGreaterThan(55_000);

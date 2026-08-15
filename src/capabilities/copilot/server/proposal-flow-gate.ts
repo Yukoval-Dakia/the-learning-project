@@ -1,12 +1,10 @@
-import type {
-  ToolExecutionGateInput,
-  ToolExecutionResultObservation,
-} from '@/server/ai/tools/mcp-bridge';
+import type { ToolExecutionGateInput, ToolExecutionResultObservation } from '@/kernel/tools/types';
 
 const REPLAN_REQUIRED_STATUSES = new Set([
   'skipped:not_found',
   'skipped:unknown_node',
   'skipped:invalid_payload',
+  'failed',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

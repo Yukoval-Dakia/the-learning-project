@@ -21,6 +21,19 @@ export interface ProposalEffectContract {
   readonly rollback: 'dismiss_before_accept';
 }
 
+export interface ToolExecutionGateInput {
+  readonly name: string;
+  readonly effect: ToolEffect;
+}
+
+export interface ToolExecutionResultObservation extends ToolExecutionGateInput {
+  readonly input: unknown;
+  readonly output: unknown;
+  readonly error_reason: string | null;
+  readonly executed: boolean;
+  readonly proposal_effect_contract?: ProposalEffectContract;
+}
+
 /**
  * mirrorEvent policy — when the bridge (Lane C+D) should write an
  * `event(action='tool_use')` row for this tool's invocation (promoted

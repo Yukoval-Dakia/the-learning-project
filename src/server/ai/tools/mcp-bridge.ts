@@ -27,6 +27,8 @@ import type {
   ToolCallerActor,
   ToolContext,
   ToolEffect,
+  ToolExecutionGateInput,
+  ToolExecutionResultObservation,
   ToolMirrorPolicy,
 } from '@/kernel/tools/types';
 import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
@@ -100,25 +102,7 @@ export function shouldEmitToolUseForCaller(
 
 export type SdkMcpServer = ReturnType<typeof createSdkMcpServer>;
 
-export interface ToolExecutionGateInput {
-  name: string;
-  effect: ToolEffect;
-}
-
-/**
- * Exact DomainTool result observed by the caller that mounted this in-process
- * MCP server. This is an in-memory product seam, not a second execution or a
- * replacement for tool_call_log: Copilot uses it to review the candidate reply
- * against the same typed projections the model actually received before that
- * reply becomes user-visible.
- */
-export interface ToolExecutionResultObservation extends ToolExecutionGateInput {
-  input: unknown;
-  output: unknown;
-  error_reason: string | null;
-  executed: boolean;
-  proposal_effect_contract?: ProposalEffectContract;
-}
+export type { ToolExecutionGateInput, ToolExecutionResultObservation } from '@/kernel/tools/types';
 
 function proposalEffectContract(effect: ToolEffect): ProposalEffectContract | undefined {
   if (effect !== 'propose') return undefined;
