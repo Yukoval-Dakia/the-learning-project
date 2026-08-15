@@ -108,9 +108,10 @@ Question (统一题库，single source of truth)
 > 拥有；Notes 也已拥有 NoteGenerate/NoteVerify 的 parser + output schema；Ingestion 已拥有
 > Vision/Structure/MistakeEnroll/Tagging/ColdStart/BlockAssembly/ProfileCritic 八个 TaskSpec；Knowledge
 > 已拥有 KnowledgeEdgePropose/FrontierPrerequisite/KnowledgeReview 三个 TaskSpec。
-> owner maps 现在保存全部 51 个完整 TaskSpec、零 transitional entry（YUK-870 收编了最后一个
-> `SessionSummaryTask`），registry 只做静态 compatibility projection；中央 semantic quarry
-> （`legacy-task-definitions.ts`）为空，quarry 文件与 transitional 机制删除由 YUK-885 承接。
+> owner maps 现在保存全部 51 个完整 TaskSpec（YUK-870 收编了最后一个 `SessionSummaryTask`），
+> registry 只做静态 compatibility projection；YUK-885 已删除中央 semantic quarry
+> （`legacy-task-definitions.ts`）与 transitional 机制（`defineTransitionalTask`），
+> 由 `scripts/audit-architecture-ownership.ts` 守住。
 > 实现附录见 `docs/superpowers/plans/2026-08-08-practice-failure-learning-implementation.md`。
 
 架构债由 `pnpm audit:capability-boundaries` 递减约束。基线单位是去重后的

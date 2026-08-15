@@ -2,7 +2,8 @@ import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 import { z } from 'zod';
 
 // YUK-878 — Copilot capability contracts. These schemas previously lived in the
-// central src/ai quarry (legacy-task-definitions.ts) and were re-exported by
+// the since-deleted central quarry (legacy-task-definitions.ts, removed by
+// YUK-885) and were re-exported by
 // src/ai/registry.ts; they moved here with the CopilotDispatch/evidence task
 // ownership migration. Byte-identical move — prompt-hash and schema-parse pins
 // in src/ai/registry.test.ts stay green without oracle churn.

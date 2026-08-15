@@ -1,5 +1,5 @@
 // allow: SIZE_OK — central 51-task catalog contract suite.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { coachTaskSpec } from '@/capabilities/agency/tasks/coach';
 import {
   conjectureGroupingTaskSpec,
@@ -76,13 +76,11 @@ import { variantGenTaskSpec } from '@/capabilities/practice/tasks/variant-gen';
 import { variantVerifyTaskSpec } from '@/capabilities/practice/tasks/variant-verify';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { legacyTaskDefinitions } from './legacy-task-definitions';
 import type { TaskKind } from './registry';
 import {
   type TaskOwner,
   composeTaskCatalog,
   defineOwnedTaskSpecs,
-  defineTransitionalTask,
   taskCatalog,
 } from './task-catalog';
 import type { TaskDefinition, TaskSpec } from './task-spec';
@@ -355,17 +353,8 @@ describe('taskCatalog', () => {
       expect('outputSchema' in entry && entry.outputSchema.safeParse, kind).toBeTypeOf('function');
     }
 
-    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
+    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
     for (const kind of Object.keys(expected)) {
-      expect(source, kind).not.toMatch(new RegExp(`^  ${kind}:`, 'm'));
-    }
-    for (const builder of [
-      'buildStructurePrompt',
-      'buildMistakeEnrollPrompt',
-      'buildTaggingPrompt',
-      'buildBlockAssemblyPrompt',
-    ]) {
-      expect(source, builder).not.toContain(`function ${builder}`);
     }
   });
 
@@ -424,16 +413,8 @@ describe('taskCatalog', () => {
       'KnowledgeReviewTask',
     ]);
 
-    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
+    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
     for (const kind of Object.keys(expected)) {
-      expect(source, kind).not.toMatch(new RegExp(`^  ${kind}:`, 'm'));
-    }
-    for (const builder of [
-      'buildKnowledgeEdgeProposePrompt',
-      'buildFrontierPrerequisitePrompt',
-      'buildKnowledgeReviewPrompt',
-    ]) {
-      expect(source, builder).not.toContain(`function ${builder}`);
     }
   });
 
@@ -490,20 +471,8 @@ describe('taskCatalog', () => {
       expect(Object.hasOwn(knowledgeTaskSpecs, kind), kind).toBe(false);
     }
 
-    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
+    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
     for (const kind of Object.keys(agencyTaskSpecs)) {
-      expect(source, kind).not.toMatch(new RegExp(`^  ${kind}:`, 'm'));
-    }
-    for (const builder of [
-      'buildLearningIntentOutlinePrompt',
-      'buildGoalScopePrompt',
-      'buildMindModelInductionPrompt',
-      'buildConjectureProbeAuthorPrompt',
-      'buildConjectureProbeReviewPrompt',
-      'buildInterventionPackageAuthorPrompt',
-      'buildInterventionPackageReviewPrompt',
-    ]) {
-      expect(source, builder).not.toContain(`function ${builder}`);
     }
   });
 
@@ -538,9 +507,7 @@ describe('taskCatalog', () => {
       expect(() => entry.parseText('   ')).toThrow();
     }
 
-    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
-    expect(source).not.toMatch(/^ {2}SessionSummaryTask:/m);
-    expect(source).not.toContain('function buildSessionSummaryPrompt');
+    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
   });
 
   it('owns the seven Practice sourcing and generation TaskSpecs without quarry definitions', () => {
@@ -563,20 +530,8 @@ describe('taskCatalog', () => {
       expect(entry.outputSchema.safeParse, kind).toBeTypeOf('function');
     }
 
-    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
+    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
     for (const kind of kinds) {
-      expect(source, kind).not.toMatch(new RegExp(`^  ${kind}:`, 'm'));
-    }
-    for (const builder of [
-      'buildSolutionGeneratePrompt',
-      'buildSolutionGenerateVisionPrompt',
-      'buildQuizGenPrompt',
-      'buildQuestionAuthorPrompt',
-      'buildItemPriorPrompt',
-      'buildSelectionOrchestratorPrompt',
-      'buildSourcingPrompt',
-    ]) {
-      expect(source, builder).not.toContain(`function ${builder}`);
     }
   });
 
@@ -598,21 +553,12 @@ describe('taskCatalog', () => {
       expect(entry.outputSchema.safeParse, kind).toBeTypeOf('function');
     }
 
-    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
+    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
     for (const kind of Object.keys(expected)) {
-      expect(source, kind).not.toMatch(new RegExp(`^  ${kind}:`, 'm'));
     }
-    for (const builder of ['buildTeachingTurnPrompt']) {
-      expect(source, builder).not.toContain(`function ${builder}`);
-    }
-    expect(source).not.toContain('CopilotDispatchDecisionSchema');
-    expect(source).not.toContain('CopilotEvidenceReviewOutputSchema');
-    expect(source).not.toContain('CopilotEvidenceVerificationOutputSchema');
-    expect(source).not.toContain('CopilotEvidenceSourceRefSchema');
   });
 
-  it('retains 51 full owned TaskSpecs and zero transitional entries (YUK-870)', () => {
-    expect(Object.keys(legacyTaskDefinitions)).toEqual([]);
+  it('retains 51 full owned TaskSpecs with the quarry deleted (YUK-870/YUK-885)', () => {
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
         expect(entry.ownership, kind).toBe('owned');
@@ -752,31 +698,10 @@ describe('defineOwnedTaskSpecs', () => {
     expect(() => invokeEntryValidation(malformed)).toThrow(`owned "TestTask" missing ${field}`);
   });
 
-  it('rejects transitional entries with semantic ownership fields', () => {
-    // YUK-870 — the quarry is empty; a shape-valid synthetic definition exercises
-    // the same validation order (shape check, then the must-not-own guard).
-    const definition = makeDefinition('SessionSummaryTask');
-    expect(() =>
-      invokeEntryValidation({
-        ownership: 'transitional',
-        definition,
-        parseText: (text: string) => text,
-      }),
-    ).toThrow('transitional "SessionSummaryTask" must not own parseText or outputSchema');
-    expect(() =>
-      invokeEntryValidation({ ownership: 'transitional', definition, outputSchema: z.string() }),
-    ).toThrow('transitional "SessionSummaryTask" must not own parseText or outputSchema');
-  });
-
-  it('rejects transitional entries whose definition is not quarry-identical', () => {
-    // YUK-870 — with an empty quarry EVERY definition is non-quarry-identical.
-    expect(() =>
-      invokeEntryValidation({
-        ownership: 'transitional',
-        definition: makeDefinition('SessionSummaryTask'),
-      }),
-    ).toThrow('must reference legacyTaskDefinitions by identity');
-  });
+  // YUK-885 — the transitional entry machinery is deleted with the quarry:
+  // TaskOwnerEntry is now exactly OwnedTaskSpec, so a non-'owned' entry is a
+  // type error and defineOwnedTaskSpecs rejects it at runtime via the
+  // mandatory parseText/outputSchema checks below.
 
   it.each([
     ['empty description', { ...makeDefinition('TestTask'), description: '  ' }],
@@ -893,12 +818,6 @@ describe('defineOwnedTaskSpecs', () => {
       expect(Object.isFrozen(spec.definition.allowedTools)).toBe(true);
       expect(Object.values(specs)[0]).toBe(spec);
     }
-  });
-
-  it('rejects any transitional definition now that the quarry is empty (YUK-870)', () => {
-    expect(() => defineTransitionalTask(makeDefinition('SessionSummaryTask') as never)).toThrow(
-      'must reference legacyTaskDefinitions by identity',
-    );
   });
 });
 

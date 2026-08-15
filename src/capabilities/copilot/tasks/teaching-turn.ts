@@ -1,7 +1,8 @@
 // YUK-878 — TeachingTurnTask spec + the single defensive turn parser.
 //
 // Moved verbatim from src/server/orchestrator/teaching.ts (schemas/parser) and
-// src/ai/legacy-task-definitions.ts (prompt builder + definition). The Copilot
+// the since-deleted src/ai/legacy-task-definitions.ts quarry (prompt builder +
+// definition). The Copilot
 // teaching-skill and the legacy teaching route share parseTurnOutput — there is
 // exactly ONE TeachingTurnTask output contract (ask_check/explain/end +
 // structured_question) and this module owns it.
