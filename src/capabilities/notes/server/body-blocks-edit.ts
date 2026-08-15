@@ -1,13 +1,13 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 
+import { emitArtifactBodyBlocksEditEvent } from '@/capabilities/notes/server/artifacts/mutation-events';
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
 import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { emitArtifactBodyBlocksEditEvent } from '@/server/artifacts/mutation-events';
 // YUK-471 W3-C3 — the per-entity SoT-flip wiring. ON → the projection write-through is the row writer;
 // OFF (default) → the imperative UPDATE stays the SoT and the parity assert catches fold↔row drift
 // during the double-write phase. Gated on hasArtifactGenesisAnchor (a pre-W3 un-backfilled artifact
