@@ -1,0 +1,795 @@
+// Phase 2B — Learning Intent Orchestrator.
+//
+// User declares "我想学 X" → orchestrator reads the knowledge graph for X,
+// asks LLM to propose a 1-hub + N-atomic split, persists the proposal as a
+// `propose` event, awaits user accept, then materializes the LearningItem
+// hierarchy + paired artifact stubs + enqueues N async NoteGenerateTask jobs.
+//
+// Case coverage:
+//   - 3a: topic node missing -> propose root + starter children, materialize on accept.
+//   - 3b: topic exists but child nodes missing -> propose starter children, materialize on accept.
+//   - 3c: topic + children already exist -> propose 1 hub + N atomic outline over existing nodes.
+// Notes default source_tier='llm_only'; no NoteVerifyTask; no Search-grounded.
+// Embedded check is a placeholder (empty question_ids).
+// Hub status auto-aggregation, living-note triggers, ai_propose completion
+// remain out of scope.
+
+import { newId } from '@/core/ids';
+import { and, eq, isNull } from 'drizzle-orm';
+
+import type { CreateLearningIntentKnowledgeNodeFn } from '@/capabilities/knowledge/public';
+import type { CreateLearningIntentNoteFn } from '@/capabilities/notes/public';
+import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
+import type { Db, Tx } from '@/db/client';
+import { knowledge, learning_item } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import { writeLearningItemProposal } from '@/server/proposals/producers';
+import { resolveSubjectProfile } from '@/subjects/profile';
+// YUK-879 — the outline output contract (schema + strict parser + domain error)
+// is owned by the agency TaskSpec module; this orchestrator re-exports it so
+// existing consumers (api route, public surface) keep their import paths.
+import { LearningIntentError, parseLearningIntentOutline } from '../tasks/learning-intent';
+import { type TaskTextRunFn, costUsdToMicroUsd } from './ai-runtime';
+export { LearningIntentError, parseLearningIntentOutline };
+export type { LearningIntentOutline } from '../tasks/learning-intent';
+// YUK-471 W2 — learning_item projection seam. Each creation INSERT writes a per-id genesis BASE
+// event (the recommended Q1 route — learning_item has no fold-blind field, so genesis fully seeds
+// the row) + the materialized_id_index anchor regardless of the flag; projectionIsWriter('learning_item')
+// gates ONLY who writes the ROW (projection write-through when ON, imperative INSERT when OFF).
+import {
+  assertLearningItemParity,
+  learningItemLiveRowToSnapshot,
+  projectLearningItem,
+  projectionIsWriter,
+  upsertMaterializedIdIndex,
+} from './learning-item-projection-port';
+
+// ---------- Public types ----------
+
+export interface HubProposal {
+  title: string;
+  summary_md: string;
+}
+
+export interface AtomicProposal {
+  knowledge_id: string;
+  title: string;
+  one_line_intent: string;
+}
+
+export interface LongProposal {
+  knowledge_ids: string[];
+  title: string;
+  one_line_intent: string;
+}
+
+export type LearningIntentPlanCase =
+  | '3a_topic_missing'
+  | '3b_children_missing'
+  | '3c_existing_graph';
+
+export interface ProposedKnowledgeNode {
+  /** Temporary id used inside the proposal and by atomics before accept. */
+  temp_id: string;
+  name: string;
+  domain: string | null;
+}
+
+export interface ProposedKnowledgeGraph {
+  root?: ProposedKnowledgeNode;
+  children: ProposedKnowledgeNode[];
+}
+
+export interface LearningIntentProposal {
+  /** Event id of the propose event — used as accept handle. */
+  proposal_id: string;
+  topic: string;
+  plan_case: LearningIntentPlanCase;
+  knowledge_node: { id: string; name: string; domain: string | null };
+  proposed_knowledge?: ProposedKnowledgeGraph;
+  hub: HubProposal;
+  atomics: AtomicProposal[];
+  longs: LongProposal[];
+}
+
+export interface LearningIntentMaterializeResult {
+  hub_learning_item_id: string;
+  atomic_learning_item_ids: string[];
+  long_learning_item_ids: string[];
+  hub_artifact_id: string;
+  atomic_artifact_ids: string[];
+  long_artifact_ids: string[];
+  enqueued_note_generate_jobs: number;
+  root_knowledge_id: string;
+  created_knowledge_ids: string[];
+}
+
+export type RunTaskFn = TaskTextRunFn;
+
+export interface PlanLearningIntentParams {
+  db: Db;
+  topic: string;
+  runTaskFn: RunTaskFn;
+}
+
+// ---------- Errors ----------
+
+// ---------- Knowledge graph lookup ----------
+
+interface KnowledgeNodeRow {
+  id: string;
+  name: string;
+  domain: string | null;
+}
+
+interface ProposedKnowledgeNodeRaw {
+  temp_id: string;
+  name: string;
+  domain?: string | null;
+}
+
+function failInvalidOutline(message: string): never {
+  throw new LearningIntentError('llm_parse_failed', message);
+}
+
+function normalizeProposedNode(
+  node: ProposedKnowledgeNodeRaw,
+  fallbackDomain: string | null,
+): ProposedKnowledgeNode {
+  return {
+    temp_id: node.temp_id,
+    name: node.name,
+    domain: node.domain ?? fallbackDomain,
+  };
+}
+
+function validateAtomicKnowledgeIds(
+  allowedIds: Set<string>,
+  atomics: AtomicProposal[],
+  message: string,
+) {
+  for (const atomic of atomics) {
+    if (!allowedIds.has(atomic.knowledge_id)) {
+      throw new LearningIntentError(
+        'invalid_atomic_knowledge_id',
+        `${message}: ${atomic.knowledge_id}`,
+      );
+    }
+  }
+}
+
+function validateLongKnowledgeIds(allowedIds: Set<string>, longs: LongProposal[], message: string) {
+  for (const long of longs) {
+    for (const knowledgeId of long.knowledge_ids) {
+      if (!allowedIds.has(knowledgeId)) {
+        throw new LearningIntentError('invalid_atomic_knowledge_id', `${message}: ${knowledgeId}`);
+      }
+    }
+  }
+}
+
+async function findTopicNode(db: Db, topic: string): Promise<KnowledgeNodeRow | null> {
+  const normalized = topic.trim().toLowerCase();
+  if (!normalized) return null;
+  // Case-insensitive exact match on knowledge.name first; if multiple match the
+  // first by created_at wins (user must disambiguate at /knowledge if they
+  // really have collisions).
+  const rows = await db
+    .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+    .from(knowledge)
+    .where(isNull(knowledge.archived_at));
+  for (const r of rows) {
+    if (r.name.toLowerCase() === normalized) return r;
+  }
+  // Fallback: substring match
+  for (const r of rows) {
+    if (r.name.toLowerCase().includes(normalized)) return r;
+  }
+  return null;
+}
+
+async function loadChildren(db: Db, parentId: string): Promise<KnowledgeNodeRow[]> {
+  return db
+    .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+    .from(knowledge)
+    .where(and(eq(knowledge.parent_id, parentId), isNull(knowledge.archived_at)));
+}
+
+// ---------- planLearningIntent ----------
+
+/**
+ * Locate the topic in the knowledge graph, determine whether the graph needs
+ * bootstrapping, ask LLM for a 1-hub + N-atomic outline, then persist as a
+ * `propose` event. Returns the proposal ready for user accept.
+ *
+ * Throws LearningIntentError on:
+ *   - llm_parse_failed: LLM output didn't match OutlineSchema
+ *   - invalid_atomic_knowledge_id: LLM hallucinated a knowledge_id not in
+ *     child_nodes / proposed child nodes
+ */
+export async function planLearningIntent(
+  params: PlanLearningIntentParams,
+): Promise<LearningIntentProposal> {
+  const { db, topic, runTaskFn } = params;
+
+  const node = await findTopicNode(db, topic);
+  const children = node ? await loadChildren(db, node.id) : [];
+  const planCase: LearningIntentPlanCase =
+    node === null
+      ? '3a_topic_missing'
+      : children.length === 0
+        ? '3b_children_missing'
+        : '3c_existing_graph';
+
+  const input = {
+    topic,
+    plan_case: planCase,
+    knowledge_node: node ? { id: node.id, name: node.name, domain: node.domain } : null,
+    child_nodes: children.map((c) => ({ id: c.id, name: c.name })),
+    existing_descendants_count: children.length,
+    output_contract:
+      planCase === '3c_existing_graph'
+        ? 'Return hub + atomics. Each atomic.knowledge_id must be one of child_nodes[].id.'
+        : 'Return knowledge plus hub + atomics. knowledge.children temp_id values are the only valid atomic.knowledge_id values.',
+  };
+
+  const result = await runTaskFn('LearningIntentOutlineTask', input, {
+    subjectProfile: resolveSubjectProfile(node?.domain),
+  });
+  const outline = parseLearningIntentOutline(result.text);
+
+  let knowledgeNode: LearningIntentProposal['knowledge_node'];
+  let proposedKnowledge: ProposedKnowledgeGraph | undefined;
+
+  if (planCase === '3c_existing_graph') {
+    if (!node) {
+      throw new LearningIntentError('topic_not_found', `knowledge topic vanished: ${topic}`);
+    }
+    // Validate LLM didn't hallucinate child knowledge_ids
+    const childIds = new Set(children.map((c) => c.id));
+    validateAtomicKnowledgeIds(
+      childIds,
+      outline.atomics,
+      "LLM proposed knowledge_id that is not in the topic's child nodes",
+    );
+    validateLongKnowledgeIds(
+      new Set([node.id, ...children.map((c) => c.id)]),
+      outline.longs,
+      'LLM proposed long.knowledge_ids entry that is not in the topic graph',
+    );
+    knowledgeNode = { id: node.id, name: node.name, domain: node.domain };
+  } else {
+    const knowledgeSpec = outline.knowledge;
+    if (!knowledgeSpec) {
+      failInvalidOutline(`${planCase} outline must include knowledge`);
+    }
+    const root =
+      planCase === '3a_topic_missing'
+        ? normalizeProposedNode(
+            knowledgeSpec.root ?? failInvalidOutline('3a outline must include knowledge.root'),
+            null,
+          )
+        : undefined;
+    if (planCase === '3a_topic_missing' && !root?.domain) {
+      failInvalidOutline('3a knowledge.root.domain is required to create a new root node');
+    }
+    const rootDomain = root?.domain ?? node?.domain ?? null;
+    const proposedChildren = (knowledgeSpec.children ?? []).map((child) =>
+      normalizeProposedNode(child, rootDomain),
+    );
+    if (proposedChildren.length === 0) {
+      failInvalidOutline(`${planCase} outline must include at least one knowledge.children entry`);
+    }
+    validateAtomicKnowledgeIds(
+      new Set(proposedChildren.map((child) => child.temp_id)),
+      outline.atomics,
+      'LLM proposed knowledge_id that is not in proposed knowledge.children',
+    );
+    validateLongKnowledgeIds(
+      new Set([
+        ...(root ? [root.temp_id] : []),
+        ...(node ? [node.id] : []),
+        ...proposedChildren.map((child) => child.temp_id),
+      ]),
+      outline.longs,
+      'LLM proposed long.knowledge_ids entry that is not in proposed knowledge graph',
+    );
+
+    proposedKnowledge = {
+      ...(root ? { root } : {}),
+      children: proposedChildren,
+    };
+    knowledgeNode = node
+      ? { id: node.id, name: node.name, domain: node.domain }
+      : { id: root?.temp_id ?? 'root', name: root?.name ?? topic, domain: root?.domain ?? null };
+  }
+
+  const legacyPayload = {
+    topic,
+    plan_case: planCase,
+    knowledge_node_id: node?.id ?? null,
+    knowledge_node: knowledgeNode,
+    proposed_knowledge: proposedKnowledge,
+    task_run_id: result.task_run_id ?? null,
+    cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
+    hub: outline.hub,
+    atomics: outline.atomics,
+    longs: outline.longs,
+  };
+  const proposalId = await writeLearningItemProposal(db, {
+    topic,
+    plan_case: planCase,
+    knowledge_node: knowledgeNode,
+    proposed_knowledge: proposedKnowledge,
+    hub: outline.hub,
+    atomics: outline.atomics,
+    longs: outline.longs,
+    reason_md: `学习路径提议：${topic}`,
+    legacy_subject_id: newId(), // synthetic — hub artifact id assigned at accept
+    legacy_event_payload: legacyPayload,
+    task_run_id: result.task_run_id ?? null,
+    cost_usd: result.cost_usd,
+    created_at: new Date(),
+  });
+
+  return {
+    proposal_id: proposalId,
+    topic,
+    plan_case: planCase,
+    knowledge_node: knowledgeNode,
+    ...(proposedKnowledge ? { proposed_knowledge: proposedKnowledge } : {}),
+    hub: outline.hub,
+    atomics: outline.atomics,
+    longs: outline.longs,
+  };
+}
+
+// ---------- acceptLearningIntent ----------
+
+export interface AcceptLearningIntentParams {
+  db: Db;
+  proposalId: string;
+  createKnowledgeNode: CreateLearningIntentKnowledgeNodeFn;
+  createNote: CreateLearningIntentNoteFn;
+}
+
+interface ProposalEventRow {
+  id: string;
+  payload: {
+    topic: string;
+    plan_case?: LearningIntentPlanCase;
+    knowledge_node_id: string | null;
+    knowledge_node?: { id: string; name: string; domain: string | null };
+    proposed_knowledge?: ProposedKnowledgeGraph;
+    task_run_id?: string | null;
+    cost_micro_usd?: number | null;
+    hub: HubProposal;
+    atomics: AtomicProposal[];
+    longs?: LongProposal[];
+  };
+}
+
+async function readProposal(db: Db, proposalId: string): Promise<ProposalEventRow> {
+  const { event } = await import('@/db/schema');
+  const rows = await db
+    .select({
+      id: event.id,
+      action: event.action,
+      payload: event.payload,
+    })
+    .from(event)
+    .where(eq(event.id, proposalId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) {
+    throw new LearningIntentError('proposal_not_found', `proposal ${proposalId} not found`);
+  }
+  if (row.action !== 'experimental:propose_learning_intent') {
+    throw new LearningIntentError(
+      'proposal_not_found',
+      `event ${proposalId} is not a learning intent proposal (action=${row.action})`,
+    );
+  }
+  return { id: row.id, payload: row.payload as ProposalEventRow['payload'] };
+}
+
+async function assertNotAlreadyRated(db: Db, proposalId: string): Promise<void> {
+  const { event } = await import('@/db/schema');
+  const rows = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'rate'),
+        eq(event.subject_kind, 'event'),
+        eq(event.caused_by_event_id, proposalId),
+      ),
+    )
+    .limit(1);
+  if (rows.length > 0) {
+    throw new LearningIntentError(
+      'proposal_already_rated',
+      `proposal ${proposalId} has already been accepted or dismissed`,
+    );
+  }
+}
+
+// YUK-471 W2 — materialize ONE learning_item under the projection seam (shared by the hub / atomic
+// / long INSERT loops in acceptLearningIntent so all three follow the identical genesis→index→
+// write-through path). The full initial row snapshot is the BASE state; learning_item has NO
+// fold-blind field (unlike mistake_variant), so a per-id experimental:genesis fully seeds the row
+// (design §3②/§3⑥ — NOT a dedicated create event). Steps:
+//   1. ALWAYS write the per-id genesis BASE event (subject_id=row.id) FIRST so the fold (when the
+//      flag is ON) sees it in the same tx. ingest_at=now → outbox opt-out (a creation seed is not a
+//      memory-worthy activity; mirrors the goal/variant accept seams).
+//   2. ALWAYS write the materialized_id_index anchor (id → the genesis event) regardless of the flag
+//      (the event log + anchor is the source of truth; the flag only switches the ROW writer).
+//   3. ROW writer gated on projectionIsWriter('learning_item') (critic A1, defer-flip-not-build):
+//      ON → projectLearningItem folds the genesis + writes the row; OFF → the imperative INSERT
+//      stays the writer + a write-time fold==row parity assert (the item is event-sourced this tx).
+async function materializeLearningItem(
+  tx: Tx,
+  row: LearningItemRowSnapshotT,
+  now: Date,
+): Promise<void> {
+  const flip = projectionIsWriter('learning_item');
+  const genesisEventId = newId();
+  await writeEvent(tx, {
+    id: genesisEventId,
+    actor_kind: 'system',
+    actor_ref: 'genesis-backfill',
+    action: 'experimental:genesis',
+    subject_kind: 'learning_item',
+    subject_id: row.id,
+    outcome: 'success',
+    payload: { row },
+    created_at: now,
+    ingest_at: now,
+  });
+  await upsertMaterializedIdIndex(tx, {
+    materialized_id: row.id,
+    anchor_event_id: genesisEventId,
+    subject_kind: 'learning_item',
+  });
+  if (flip) {
+    await projectLearningItem(tx, row.id);
+  } else {
+    await tx.insert(learning_item).values({
+      id: row.id,
+      source: row.source,
+      source_ref: row.source_ref,
+      title: row.title,
+      content: row.content,
+      knowledge_ids: row.knowledge_ids,
+      primary_artifact_id: row.primary_artifact_id,
+      parent_learning_item_id: row.parent_learning_item_id,
+      child_learning_item_ids: [],
+      status: row.status,
+      // A4 — set ALL snapshot fields explicitly from the genesis `row` (not by DB-default
+      // coincidence) so the imperative OFF-path row matches the genesis payload by construction; a
+      // default change can no longer silently diverge the two from the seeded genesis snapshot.
+      user_pinned: row.user_pinned,
+      completed_at: row.completed_at,
+      dismissed_at: row.dismissed_at,
+      archived_at: row.archived_at,
+      archived_reason: row.archived_reason,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      version: row.version,
+    });
+    // write-time fold==row guard: the item is event-sourced this tx (genesis + index anchor), so
+    // the fold reproduces the seeded row. dev/test throw on mismatch, prod warn.
+    const [written] = await tx
+      .select()
+      .from(learning_item)
+      .where(eq(learning_item.id, row.id))
+      .limit(1);
+    await assertLearningItemParity(
+      tx,
+      row.id,
+      written ? learningItemLiveRowToSnapshot(written) : null,
+    );
+  }
+}
+
+/**
+ * Materializes a proposal: creates 1 hub LearningItem + N atomic LearningItems
+ * (parent_learning_item_id linked) + paired hub artifact + N atomic artifact
+ * stubs (body_blocks=null, generation_status='pending'), then writes a rate
+ * event chained to the proposal. Caller is responsible for enqueueing
+ * note_generate jobs after this returns.
+ *
+ * All DB writes happen in a single transaction.
+ */
+export async function acceptLearningIntent(
+  params: AcceptLearningIntentParams,
+): Promise<LearningIntentMaterializeResult> {
+  const { createKnowledgeNode, createNote, db, proposalId } = params;
+  const proposal = await readProposal(db, proposalId);
+  await assertNotAlreadyRated(db, proposalId);
+
+  const {
+    hub,
+    atomics,
+    topic,
+    knowledge_node_id,
+    plan_case: planCase = '3c_existing_graph',
+    proposed_knowledge: proposedKnowledge,
+    task_run_id: proposalTaskRunId,
+    cost_micro_usd: proposalCostMicroUsd,
+    longs = [],
+  } = proposal.payload;
+  const now = new Date();
+  // YUK-471 W3-C1β — mint the RATE event id up-front so the 3 same-tx artifact_create events can
+  // chain caused_by to it (the accept is what materializes these artifacts). caused_by has no FK
+  // (events/queries.ts), so emitting the create events BEFORE the rate row exists in the tx is safe.
+  const rateEventId = newId();
+
+  return db.transaction(async (tx) => {
+    const createdKnowledgeIds: string[] = [];
+    const tempIdToRealId = new Map<string, string>();
+    let rootKnowledgeId = knowledge_node_id;
+
+    if (planCase === '3a_topic_missing') {
+      const root = proposedKnowledge?.root;
+      if (!root) {
+        throw new LearningIntentError('llm_parse_failed', '3a proposal missing proposed root');
+      }
+      if (!root.domain) {
+        throw new LearningIntentError('llm_parse_failed', '3a proposal root missing domain');
+      }
+      rootKnowledgeId = newId();
+      tempIdToRealId.set(root.temp_id, rootKnowledgeId);
+      createdKnowledgeIds.push(rootKnowledgeId);
+
+      await createKnowledgeNode(tx, {
+        id: rootKnowledgeId,
+        name: root.name,
+        domain: root.domain,
+        parentId: null,
+        createdAt: now,
+      });
+    }
+
+    if (!rootKnowledgeId) {
+      throw new LearningIntentError(
+        'llm_parse_failed',
+        `${planCase} proposal missing knowledge_node_id`,
+      );
+    }
+
+    if (planCase === '3a_topic_missing' || planCase === '3b_children_missing') {
+      const children = proposedKnowledge?.children ?? [];
+      if (children.length === 0) {
+        throw new LearningIntentError(
+          'llm_parse_failed',
+          `${planCase} proposal missing proposed children`,
+        );
+      }
+      const fallbackDomain =
+        proposedKnowledge?.root?.domain ?? proposal.payload.knowledge_node?.domain ?? null;
+      for (const child of children) {
+        const childId = newId();
+        tempIdToRealId.set(child.temp_id, childId);
+        createdKnowledgeIds.push(childId);
+        await createKnowledgeNode(tx, {
+          id: childId,
+          name: child.name,
+          domain: child.domain ?? fallbackDomain,
+          parentId: rootKnowledgeId,
+          createdAt: now,
+        });
+      }
+    }
+
+    const resolvedAtomics = atomics.map((atomic) => {
+      const resolvedKnowledgeId = tempIdToRealId.get(atomic.knowledge_id) ?? atomic.knowledge_id;
+      if (
+        (planCase === '3a_topic_missing' || planCase === '3b_children_missing') &&
+        !tempIdToRealId.has(atomic.knowledge_id)
+      ) {
+        throw new LearningIntentError(
+          'invalid_atomic_knowledge_id',
+          `proposal atomic references unknown proposed knowledge_id=${atomic.knowledge_id}`,
+        );
+      }
+      return { ...atomic, knowledge_id: resolvedKnowledgeId };
+    });
+    const resolvedLongs = longs.map((long) => {
+      const resolvedKnowledgeIds = long.knowledge_ids.map((knowledgeId) => {
+        const resolvedKnowledgeId = tempIdToRealId.get(knowledgeId) ?? knowledgeId;
+        if (
+          (planCase === '3a_topic_missing' || planCase === '3b_children_missing') &&
+          !tempIdToRealId.has(knowledgeId) &&
+          knowledgeId !== rootKnowledgeId
+        ) {
+          throw new LearningIntentError(
+            'invalid_atomic_knowledge_id',
+            `proposal long note references unknown proposed knowledge_id=${knowledgeId}`,
+          );
+        }
+        return resolvedKnowledgeId;
+      });
+      return { ...long, knowledge_ids: resolvedKnowledgeIds };
+    });
+
+    // Hub LearningItem
+    const hubLiId = newId();
+    const hubArtifactId = newId();
+
+    await materializeLearningItem(
+      tx,
+      {
+        id: hubLiId,
+        source: 'learning_intent',
+        source_ref: proposalId,
+        title: hub.title,
+        content: hub.summary_md,
+        knowledge_ids: [rootKnowledgeId],
+        primary_artifact_id: hubArtifactId,
+        parent_learning_item_id: null,
+        status: 'pending',
+        user_pinned: false,
+        completed_at: null,
+        dismissed_at: null,
+        archived_at: null,
+        archived_reason: null,
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      },
+      now,
+    );
+
+    // Atomic LearningItems
+    const atomicLiIds: string[] = [];
+    const atomicArtifactIds: string[] = [];
+    for (const atomic of resolvedAtomics) {
+      const atomicLiId = newId();
+      const atomicArtifactId = newId();
+      atomicLiIds.push(atomicLiId);
+      atomicArtifactIds.push(atomicArtifactId);
+
+      await materializeLearningItem(
+        tx,
+        {
+          id: atomicLiId,
+          source: 'learning_intent',
+          source_ref: proposalId,
+          title: atomic.title,
+          content: atomic.one_line_intent,
+          knowledge_ids: [atomic.knowledge_id],
+          primary_artifact_id: atomicArtifactId,
+          parent_learning_item_id: hubLiId,
+          status: 'pending',
+          user_pinned: false,
+          completed_at: null,
+          dismissed_at: null,
+          archived_at: null,
+          archived_reason: null,
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        },
+        now,
+      );
+    }
+
+    // Long LearningItems
+    const longLiIds: string[] = [];
+    const longArtifactIds: string[] = [];
+    for (const long of resolvedLongs) {
+      const longLiId = newId();
+      const longArtifactId = newId();
+      longLiIds.push(longLiId);
+      longArtifactIds.push(longArtifactId);
+
+      await materializeLearningItem(
+        tx,
+        {
+          id: longLiId,
+          source: 'learning_intent',
+          source_ref: proposalId,
+          title: long.title,
+          content: long.one_line_intent,
+          knowledge_ids: long.knowledge_ids,
+          primary_artifact_id: longArtifactId,
+          parent_learning_item_id: hubLiId,
+          status: 'pending',
+          user_pinned: false,
+          completed_at: null,
+          dismissed_at: null,
+          archived_at: null,
+          archived_reason: null,
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        },
+        now,
+      );
+    }
+
+    // Notes owns artifact rows, create events, and durable generation intents.
+    // Agency supplies the already-minted IDs so LearningItem↔artifact pairing and
+    // atomic/long ordering remain identical inside this single acceptance transaction.
+    await createNote(tx, {
+      kind: 'hub',
+      id: hubArtifactId,
+      title: hub.title,
+      topic,
+      summaryMd: hub.summary_md,
+      knowledgeIds: [rootKnowledgeId],
+      parentArtifactId: null,
+      proposalId,
+      rateEventId,
+      taskRunId: proposalTaskRunId ?? null,
+      linkedArtifactIds: [...atomicArtifactIds, ...longArtifactIds],
+      atomicArtifactIds,
+      longArtifactIds,
+      createdAt: now,
+    });
+
+    for (let i = 0; i < resolvedAtomics.length; i++) {
+      const atomicNode = resolvedAtomics[i];
+      await createNote(tx, {
+        kind: 'atomic',
+        id: atomicArtifactIds[i],
+        title: atomicNode.title,
+        oneLineIntent: atomicNode.one_line_intent,
+        knowledgeIds: [atomicNode.knowledge_id],
+        parentArtifactId: hubArtifactId,
+        proposalId,
+        rateEventId,
+        taskRunId: proposalTaskRunId ?? null,
+        createdAt: now,
+      });
+    }
+
+    for (let i = 0; i < resolvedLongs.length; i++) {
+      const longNode = resolvedLongs[i];
+      await createNote(tx, {
+        kind: 'long',
+        id: longArtifactIds[i],
+        title: longNode.title,
+        oneLineIntent: longNode.one_line_intent,
+        knowledgeIds: longNode.knowledge_ids,
+        parentArtifactId: hubArtifactId,
+        proposalId,
+        rateEventId,
+        taskRunId: proposalTaskRunId ?? null,
+        createdAt: now,
+      });
+    }
+
+    // Rate event: marks proposal accepted, chains via caused_by_event_id
+    await writeEvent(tx, {
+      id: rateEventId,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: { rating: 'accept' },
+      caused_by_event_id: proposalId,
+      task_run_id: proposalTaskRunId ?? null,
+      cost_micro_usd: proposalCostMicroUsd ?? null,
+      // single-clock: the RATE parent shares `now` with its artifact_create children so the
+      // caused_by chain never inverts under created_at ordering (CodeRabbit).
+      created_at: now,
+    });
+
+    return {
+      hub_learning_item_id: hubLiId,
+      atomic_learning_item_ids: atomicLiIds,
+      long_learning_item_ids: longLiIds,
+      hub_artifact_id: hubArtifactId,
+      atomic_artifact_ids: atomicArtifactIds,
+      long_artifact_ids: longArtifactIds,
+      enqueued_note_generate_jobs: 0, // caller enqueues
+      root_knowledge_id: rootKnowledgeId,
+      created_knowledge_ids: createdKnowledgeIds,
+    };
+  });
+}

@@ -20,11 +20,11 @@ import { getFailureAttemptsWithReasoningTrace } from '@/capabilities/knowledge/p
 import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
 import type { FigureRefT } from '@/core/schema/structured_question';
 import { event, knowledge, question } from '@/db/schema';
-import { UNTRUSTED_TEXT_CHAR_CAP } from '@/kernel/untrusted-text';
 import type { MasteryProjection } from '@/server/mastery/state';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { UNTRUSTED_TEXT_CHAR_CAP } from '../scout/untrusted-text';
 
 const CREATED_AT = new Date('2026-07-20T00:00:00Z');
 

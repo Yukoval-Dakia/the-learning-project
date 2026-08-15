@@ -1,5 +1,6 @@
 import { capabilities } from '@/capabilities';
 import type { Db } from '@/db/client';
+import type { CapabilityManifest } from '@/kernel/manifest';
 import type { PgBoss } from 'pg-boss';
 import { describe, expect, it, vi } from 'vitest';
 import { registerHandlers } from './handlers';
@@ -14,6 +15,38 @@ async function registerAll(boss: PgBoss): Promise<void> {
 }
 
 describe('registerHandlers + registerCapabilityJobs', () => {
+  it('preserves per-job includeMetadata worker options from capability manifests', async () => {
+    const worker = vi.fn(async () => undefined);
+    const boss = {
+      createQueue: vi.fn(async () => undefined),
+      updateQueue: vi.fn(async () => undefined),
+      work: vi.fn(async () => undefined),
+      schedule: vi.fn(async () => undefined),
+    } as unknown as PgBoss;
+    const capability = {
+      name: 'practice',
+      description: 'test',
+      jobs: {
+        handlers: [
+          {
+            name: 'quiz_gen',
+            queue: 'agent',
+            includeMetadata: true,
+            load: async () => () => worker,
+          },
+        ],
+      },
+    } as unknown as CapabilityManifest;
+
+    await registerCapabilityJobs(boss, {} as Db, [capability]);
+
+    expect(boss.work).toHaveBeenCalledWith(
+      'quiz_gen',
+      { pollingIntervalSeconds: 2, batchSize: 1, includeMetadata: true },
+      worker,
+    );
+  });
+
   it('registers Notes handoff workers and the shared recovery floor exactly once', async () => {
     const boss = {
       createQueue: vi.fn(async () => undefined),
@@ -145,6 +178,70 @@ describe('registerHandlers + registerCapabilityJobs', () => {
       'copilot_run',
       expect.objectContaining({ heartbeatSeconds: 30 }),
     );
+  });
+
+  // YUK-882 (F3.6c) — tencent_ocr_extract / auto_enroll 自渐缩簿迁入 ingestion
+  // manifest 后，组合序列必须产出与原中央注册行完全相同的队列/DLQ/expire/
+  // worker 选项，且每条队列只挂一个 worker（中央簿 + manifest 不得双注册）。
+  it('preserves the exact tencent_ocr_extract / auto_enroll queue, DLQ, expiry, and worker options (YUK-882)', async () => {
+    const boss = {
+      createQueue: vi.fn(async () => undefined),
+      updateQueue: vi.fn(async () => undefined),
+      work: vi.fn(async () => undefined),
+      schedule: vi.fn(async () => undefined),
+      send: vi.fn(async () => 'job-id'),
+    } as unknown as PgBoss;
+
+    await registerAll(boss);
+
+    // AGENT tier (2h expire, DLQ-first) — the exact recipe the central Step 9
+    // line used via createJobQueue(boss, 'tencent_ocr_extract', EXPIRE_AGENT).
+    const agentOpts = {
+      expireInSeconds: 7_200,
+      retentionSeconds: 604_800,
+      deadLetter: 'tencent_ocr_extract_dlq',
+      retryLimit: 2,
+      retryDelay: 30,
+      retryBackoff: true,
+    };
+    const dlqOpts = { expireInSeconds: 3_600, retentionSeconds: 604_800 };
+    expect(boss.createQueue).toHaveBeenCalledWith('tencent_ocr_extract_dlq', dlqOpts);
+    expect(boss.createQueue).toHaveBeenCalledWith('tencent_ocr_extract', agentOpts);
+    expect(boss.updateQueue).toHaveBeenCalledWith('tencent_ocr_extract', agentOpts);
+    // 0.5s polling + includeMetadata — the non-default worker metadata the
+    // ingestion manifest declares (provider-attempt resume reads retryCount).
+    expect(boss.work).toHaveBeenCalledWith(
+      'tencent_ocr_extract',
+      { pollingIntervalSeconds: 0.5, batchSize: 1, includeMetadata: true },
+      expect.any(Function),
+    );
+
+    // LLM tier (1h expire, DLQ-first) — the exact recipe the central Slice B
+    // line used via createJobQueue(boss, 'auto_enroll', EXPIRE_LLM).
+    const llmOpts = {
+      expireInSeconds: 3_600,
+      retentionSeconds: 604_800,
+      deadLetter: 'auto_enroll_dlq',
+      retryLimit: 2,
+      retryDelay: 30,
+      retryBackoff: true,
+    };
+    expect(boss.createQueue).toHaveBeenCalledWith('auto_enroll_dlq', dlqOpts);
+    expect(boss.createQueue).toHaveBeenCalledWith('auto_enroll', llmOpts);
+    expect(boss.updateQueue).toHaveBeenCalledWith('auto_enroll', llmOpts);
+    expect(boss.work).toHaveBeenCalledWith(
+      'auto_enroll',
+      { pollingIntervalSeconds: 2, batchSize: 1 },
+      expect.any(Function),
+    );
+
+    // No duplicate worker: exactly one work() registration per queue across BOTH
+    // registration segments (central book + capability manifests).
+    const workedNames = (boss.work as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => call[0] as string,
+    );
+    expect(workedNames.filter((n) => n === 'tencent_ocr_extract')).toHaveLength(1);
+    expect(workedNames.filter((n) => n === 'auto_enroll')).toHaveLength(1);
   });
 
   // YUK-237: every LLM/agent producer queue gets a non-default active expiry

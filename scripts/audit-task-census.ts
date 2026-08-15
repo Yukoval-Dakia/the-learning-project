@@ -121,9 +121,13 @@ export function auditTaskCensus(options: AuditTaskCensusOptions): AuditResult {
     ...(validateInfrastructure && manifestRegistrationEvidence.length === 0
       ? ['No registered manifest job reaches a recognized task invocation']
       : []),
-    ...(validateInfrastructure && legacyRegistrationEvidence.length === 0
-      ? ['No legacy registered handler reaches a recognized task invocation']
-      : []),
+    // YUK-868 — the transitional "at least one legacy handler reaches a task
+    // invocation" assertion is retired: the verify handlers (quiz_verify /
+    // source_verify / variant_verify — the last task-invoking central
+    // registrations) are now Practice-owned manifest jobs. handlers.ts still
+    // mounts non-task housekeeping handlers; the legacy scanner stays live and
+    // legacyRegistrationEvidence is still reported, it is just no longer
+    // REQUIRED to be non-empty.
     ...runLogFailures,
     ...(validateInfrastructure && profileCriticCaller === null
       ? ['ProfileCriticTask must have its exact CLI caller in scripts/compile-profile.ts']

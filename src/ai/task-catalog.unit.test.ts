@@ -1,7 +1,33 @@
 // allow: SIZE_OK — central 51-task catalog contract suite.
 import { readFileSync } from 'node:fs';
+import { coachTaskSpec } from '@/capabilities/agency/tasks/coach';
+import {
+  conjectureGroupingTaskSpec,
+  mindModelInductionTaskSpec,
+} from '@/capabilities/agency/tasks/conjecture-induction';
+import {
+  conjectureProbeAuthorTaskSpec,
+  conjectureProbeReviewTaskSpec,
+} from '@/capabilities/agency/tasks/conjecture-probe';
+import { dreamingTaskSpec } from '@/capabilities/agency/tasks/dreaming';
+import { goalScopeTaskSpec } from '@/capabilities/agency/tasks/goal-scope';
 import { agencyTaskSpecs } from '@/capabilities/agency/tasks/index';
+import {
+  interventionPackageAuthorTaskSpec,
+  interventionPackageReviewTaskSpec,
+  interventionRecommendationTaskSpec,
+} from '@/capabilities/agency/tasks/intervention';
+import { learningIntentOutlineTaskSpec } from '@/capabilities/agency/tasks/learning-intent';
+import { memoryBriefTaskSpec } from '@/capabilities/agency/tasks/memory-brief';
+import { researchMeetingDirectorTaskSpec } from '@/capabilities/agency/tasks/research-meeting-director';
+import { copilotTaskSpec } from '@/capabilities/copilot/tasks/agent';
+import { copilotDispatchTaskSpec } from '@/capabilities/copilot/tasks/dispatch';
+import {
+  copilotEvidenceReviewTaskSpec,
+  copilotEvidenceVerificationTaskSpec,
+} from '@/capabilities/copilot/tasks/evidence';
 import { copilotTaskSpecs } from '@/capabilities/copilot/tasks/index';
+import { teachingTurnTaskSpec } from '@/capabilities/copilot/tasks/teaching-turn';
 import { blockAssemblyTaskSpec } from '@/capabilities/ingestion/tasks/block-assembly';
 import { coldStartPlacementBridgeTaskSpec } from '@/capabilities/ingestion/tasks/cold-start-bridge';
 import { ingestionTaskSpecs } from '@/capabilities/ingestion/tasks/index';
@@ -20,13 +46,27 @@ import {
   knowledgeTaskSpecs,
 } from '@/capabilities/knowledge/tasks/index';
 import { notesTaskSpecs } from '@/capabilities/notes/tasks/index';
+import { noteRefineTaskSpec } from '@/capabilities/notes/tasks/note-refine';
 import { noteGenerateTaskSpec, noteVerifyTaskSpec } from '@/capabilities/notes/tasks/note-tasks';
 import {
   attributionRerankTaskSpec,
   attributionTaskSpec,
 } from '@/capabilities/practice/tasks/attribution';
 import { practiceTaskSpecs } from '@/capabilities/practice/tasks/index';
+import { itemPriorTaskSpec } from '@/capabilities/practice/tasks/item-prior';
+import { questionAuthorTaskSpec } from '@/capabilities/practice/tasks/question-author';
+import { quizGenTaskSpec } from '@/capabilities/practice/tasks/quiz-generation';
+import { quizVerifyTaskSpec } from '@/capabilities/practice/tasks/quiz-verify';
+import { selectionOrchestratorTaskSpec } from '@/capabilities/practice/tasks/selection-orchestrator';
+import {
+  solutionGenerateTaskSpec,
+  solutionGenerateVisionTaskSpec,
+} from '@/capabilities/practice/tasks/solution-generation';
+import { sourceGroundingVerifyTaskSpec } from '@/capabilities/practice/tasks/source-grounding-verify';
+import { sourcingTaskSpec } from '@/capabilities/practice/tasks/sourcing';
+import { teachingQualityTaskSpec } from '@/capabilities/practice/tasks/teaching-quality';
 import { variantGenTaskSpec } from '@/capabilities/practice/tasks/variant-gen';
+import { variantVerifyTaskSpec } from '@/capabilities/practice/tasks/variant-verify';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { legacyTaskDefinitions } from './legacy-task-definitions';
@@ -114,20 +154,37 @@ const OWNER_MAPS = {
 } as const;
 
 const EXPECTED_OWNER_COUNTS = {
-  practice: 19,
+  practice: 18,
   notes: 3,
   ingestion: 8,
-  knowledge: 10,
-  agency: 7,
-  copilot: 4,
+  knowledge: 4,
+  agency: 13,
+  copilot: 5,
 } as const;
 
 const OWNED_SPECS: ReadonlySet<object> = new Set([
   attributionTaskSpec,
   attributionRerankTaskSpec,
   variantGenTaskSpec,
+  solutionGenerateTaskSpec,
+  solutionGenerateVisionTaskSpec,
+  quizGenTaskSpec,
+  questionAuthorTaskSpec,
+  itemPriorTaskSpec,
+  selectionOrchestratorTaskSpec,
+  sourcingTaskSpec,
+  copilotDispatchTaskSpec,
+  copilotEvidenceReviewTaskSpec,
+  copilotEvidenceVerificationTaskSpec,
+  copilotTaskSpec,
+  teachingTurnTaskSpec,
   noteGenerateTaskSpec,
+  noteRefineTaskSpec,
   noteVerifyTaskSpec,
+  quizVerifyTaskSpec,
+  sourceGroundingVerifyTaskSpec,
+  variantVerifyTaskSpec,
+  teachingQualityTaskSpec,
   visionExtractTaskSpec,
   visionExtractTaskHeavySpec,
   structureTaskSpec,
@@ -139,6 +196,19 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   knowledgeEdgeProposeTaskSpec,
   frontierPrerequisiteTaskSpec,
   knowledgeReviewTaskSpec,
+  learningIntentOutlineTaskSpec,
+  goalScopeTaskSpec,
+  mindModelInductionTaskSpec,
+  conjectureGroupingTaskSpec,
+  conjectureProbeAuthorTaskSpec,
+  conjectureProbeReviewTaskSpec,
+  interventionRecommendationTaskSpec,
+  interventionPackageAuthorTaskSpec,
+  interventionPackageReviewTaskSpec,
+  researchMeetingDirectorTaskSpec,
+  dreamingTaskSpec,
+  coachTaskSpec,
+  memoryBriefTaskSpec,
 ]);
 
 const makeDefinition = <const Kind extends string>(kind: Kind) =>
@@ -347,8 +417,148 @@ describe('taskCatalog', () => {
     }
   });
 
-  it('retains 16 full owned TaskSpecs and 35 identity-backed transitional entries', () => {
-    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(35);
+  it('owns the thirteen agency TaskSpecs without quarry definitions', () => {
+    expect(Object.keys(agencyTaskSpecs).sort()).toEqual(
+      [
+        'LearningIntentOutlineTask',
+        'GoalScopeTask',
+        'MindModelInductionTask',
+        'ConjectureGroupingTask',
+        'ConjectureProbeAuthorTask',
+        'ConjectureProbeReviewTask',
+        'InterventionRecommendationTask',
+        'InterventionPackageAuthorTask',
+        'InterventionPackageReviewTask',
+        'ResearchMeetingDirectorTask',
+        'DreamingTask',
+        'CoachTask',
+        'MemoryBriefTask',
+      ].sort(),
+    );
+    for (const [kind, entry] of Object.entries(agencyTaskSpecs)) {
+      expect(entry.ownership, kind).toBe('owned');
+      expect(entry.definition, kind).toBe(taskCatalog[kind as keyof typeof taskCatalog]);
+      expect('parseText' in entry, kind).toBe(true);
+      expect('outputSchema' in entry, kind).toBe(true);
+    }
+    const specIdentities = {
+      LearningIntentOutlineTask: learningIntentOutlineTaskSpec,
+      GoalScopeTask: goalScopeTaskSpec,
+      MindModelInductionTask: mindModelInductionTaskSpec,
+      ConjectureGroupingTask: conjectureGroupingTaskSpec,
+      ConjectureProbeAuthorTask: conjectureProbeAuthorTaskSpec,
+      ConjectureProbeReviewTask: conjectureProbeReviewTaskSpec,
+      InterventionRecommendationTask: interventionRecommendationTaskSpec,
+      InterventionPackageAuthorTask: interventionPackageAuthorTaskSpec,
+      InterventionPackageReviewTask: interventionPackageReviewTaskSpec,
+      ResearchMeetingDirectorTask: researchMeetingDirectorTaskSpec,
+      DreamingTask: dreamingTaskSpec,
+      CoachTask: coachTaskSpec,
+      MemoryBriefTask: memoryBriefTaskSpec,
+    } as const;
+    for (const [kind, spec] of Object.entries(specIdentities)) {
+      expect(agencyTaskSpecs[kind as keyof typeof agencyTaskSpecs], kind).toBe(spec);
+    }
+    for (const kind of [
+      'LearningIntentOutlineTask',
+      'GoalScopeTask',
+      'MindModelInductionTask',
+      'ConjectureGroupingTask',
+      'ConjectureProbeAuthorTask',
+      'ConjectureProbeReviewTask',
+    ] as const) {
+      expect(Object.hasOwn(knowledgeTaskSpecs, kind), kind).toBe(false);
+    }
+
+    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
+    for (const kind of Object.keys(agencyTaskSpecs)) {
+      expect(source, kind).not.toMatch(new RegExp(`^  ${kind}:`, 'm'));
+    }
+    for (const builder of [
+      'buildLearningIntentOutlinePrompt',
+      'buildGoalScopePrompt',
+      'buildMindModelInductionPrompt',
+      'buildConjectureProbeAuthorPrompt',
+      'buildConjectureProbeReviewPrompt',
+      'buildInterventionPackageAuthorPrompt',
+      'buildInterventionPackageReviewPrompt',
+    ]) {
+      expect(source, builder).not.toContain(`function ${builder}`);
+    }
+  });
+
+  it('owns the seven Practice sourcing and generation TaskSpecs without quarry definitions', () => {
+    const kinds = [
+      'SolutionGenerateTask',
+      'SolutionGenerateVisionTask',
+      'QuizGenTask',
+      'QuestionAuthorTask',
+      'ItemPriorTask',
+      'SelectionOrchestratorTask',
+      'SourcingTask',
+    ] as const;
+
+    for (const kind of kinds) {
+      const entry = practiceTaskSpecs[kind];
+      expect(entry.ownership, kind).toBe('owned');
+      if (entry.ownership !== 'owned') continue;
+      expect(entry.definition, kind).toBe(taskCatalog[kind]);
+      expect(entry.parseText, kind).toBeTypeOf('function');
+      expect(entry.outputSchema.safeParse, kind).toBeTypeOf('function');
+    }
+
+    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
+    for (const kind of kinds) {
+      expect(source, kind).not.toMatch(new RegExp(`^  ${kind}:`, 'm'));
+    }
+    for (const builder of [
+      'buildSolutionGeneratePrompt',
+      'buildSolutionGenerateVisionPrompt',
+      'buildQuizGenPrompt',
+      'buildQuestionAuthorPrompt',
+      'buildItemPriorPrompt',
+      'buildSelectionOrchestratorPrompt',
+      'buildSourcingPrompt',
+    ]) {
+      expect(source, builder).not.toContain(`function ${builder}`);
+    }
+  });
+
+  it('owns the five Copilot TaskSpecs without central quarry definitions', () => {
+    const expected = {
+      CopilotDispatchTask: copilotDispatchTaskSpec,
+      CopilotEvidenceReviewTask: copilotEvidenceReviewTaskSpec,
+      CopilotEvidenceVerificationTask: copilotEvidenceVerificationTaskSpec,
+      CopilotTask: copilotTaskSpec,
+      TeachingTurnTask: teachingTurnTaskSpec,
+    } as const;
+
+    for (const [kind, spec] of Object.entries(expected)) {
+      const entry = copilotTaskSpecs[kind as keyof typeof copilotTaskSpecs];
+      expect(entry.ownership, kind).toBe('owned');
+      expect(entry, kind).toBe(spec);
+      expect(entry.definition, kind).toBe(taskCatalog[kind as keyof typeof taskCatalog]);
+      expect(entry.parseText, kind).toBeTypeOf('function');
+      expect(entry.outputSchema.safeParse, kind).toBeTypeOf('function');
+    }
+
+    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
+    for (const kind of Object.keys(expected)) {
+      expect(source, kind).not.toMatch(new RegExp(`^  ${kind}:`, 'm'));
+    }
+    for (const builder of ['buildTeachingTurnPrompt']) {
+      expect(source, builder).not.toContain(`function ${builder}`);
+    }
+    expect(source).not.toContain('CopilotDispatchDecisionSchema');
+    expect(source).not.toContain('CopilotEvidenceReviewOutputSchema');
+    expect(source).not.toContain('CopilotEvidenceVerificationOutputSchema');
+    expect(source).not.toContain('CopilotEvidenceSourceRefSchema');
+  });
+
+  it('retains 46 full owned TaskSpecs and 5 identity-backed transitional entries', () => {
+    // YUK-868 — QuizVerifyTask / SourceGroundingVerifyTask / VariantVerifyTask /
+    // TeachingQualityTask moved from transitional to practice-owned specs.
+    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(5);
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
         if (entry.ownership === 'owned') {
@@ -368,9 +578,15 @@ describe('taskCatalog', () => {
     expect(practiceTaskSpecs.AttributionRerankTask).toBe(attributionRerankTaskSpec);
     expect(practiceTaskSpecs.VariantGenTask).toBe(variantGenTaskSpec);
     expect(notesTaskSpecs.NoteGenerateTask).toBe(noteGenerateTaskSpec);
+    expect(notesTaskSpecs.NoteRefineTask).toBe(noteRefineTaskSpec);
     expect(notesTaskSpecs.NoteVerifyTask).toBe(noteVerifyTaskSpec);
+    expect(practiceTaskSpecs.QuizVerifyTask).toBe(quizVerifyTaskSpec);
+    expect(practiceTaskSpecs.SourceGroundingVerifyTask).toBe(sourceGroundingVerifyTaskSpec);
+    expect(practiceTaskSpecs.VariantVerifyTask).toBe(variantVerifyTaskSpec);
+    expect(practiceTaskSpecs.TeachingQualityTask).toBe(teachingQualityTaskSpec);
     expect(taskCatalog.AttributionTask).toBe(attributionTaskSpec.definition);
     expect(taskCatalog.NoteGenerateTask).toBe(noteGenerateTaskSpec.definition);
+    expect(taskCatalog.NoteRefineTask).toBe(noteRefineTaskSpec.definition);
   });
 
   it('keeps semantic definitions out of all six owner index files', () => {

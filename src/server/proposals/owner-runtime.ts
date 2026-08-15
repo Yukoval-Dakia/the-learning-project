@@ -1,6 +1,6 @@
+import { emitArtifactLifecycleEvent } from '@/capabilities/notes/public';
 import type { Tx } from '@/db/client';
 import { goal, knowledge, learning_item, mistake_variant } from '@/db/schema';
-import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
 import { projectGoalGuarded } from '@/server/projections/goal';
 import { projectLearningItemGuarded } from '@/server/projections/learning_item';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';

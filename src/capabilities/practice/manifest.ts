@@ -459,7 +459,7 @@ export const practiceCapability = defineCapability({
       },
       // YUK-402 inc-4a — owner manual gate (draft 池审核面)后端。list draft pool +
       // enable (normal B5 verify→promote) + force-enable (override + reason 留痕)。
-      // gate op = verifyAndPromote (src/server/quiz/verify-and-promote.ts)；/api/*
+      // gate op = verifyAndPromote (server/quiz/verify-and-promote.ts)；/api/*
       // 自动套 internal-token。审核面属练习消费侧（draft 是 practice-pool 题）。
       {
         method: 'GET',
@@ -757,6 +757,45 @@ export const practiceCapability = defineCapability({
     // 声明无 load 纯归属元数据。（YUK-349：review_plan 链式 job 已随 B3 退役。）
     handlers: [
       {
+        name: 'sourcing',
+        queue: 'agent',
+        load: () => import('./jobs/sourcing').then((m) => m.buildSourcingHandler),
+      },
+      {
+        name: 'jyeoo_fetch',
+        queue: 'agent',
+        load: () => import('./jobs/jyeoo-fetch').then((m) => m.buildJyeooFetchHandler),
+      },
+      {
+        name: 'quiz_gen',
+        queue: 'agent',
+        includeMetadata: true,
+        load: () => import('./jobs/quiz_gen').then((m) => m.buildQuizGenHandler),
+      },
+      // YUK-868 — verification + promotion jobs owned by Practice. Queue tiers
+      // mirror the retired central registrations byte-for-byte (quiz_verify /
+      // source_verify were EXPIRE_AGENT → 'agent'; variant_verify was EXPIRE_LLM
+      // → 'llm'); worker options come from the registrar default {2s, batchSize 1},
+      // which is exactly what handlers.ts used to pass explicitly.
+      {
+        name: 'quiz_verify',
+        queue: 'agent',
+        load: () => import('./jobs/quiz_verify').then((m) => m.buildQuizVerifyHandler),
+      },
+      {
+        name: 'source_verify',
+        queue: 'agent',
+        load: () => import('./jobs/source_verify').then((m) => m.buildSourceVerifyHandler),
+      },
+      {
+        // YUK-17 / ADR-0018 — second-pass content alignment check for accepted
+        // variants. Enqueued by acceptAiProposal after a variant_question proposal
+        // is accepted; verdict='fail' flips mistake_variant.status to 'broken'.
+        name: 'variant_verify',
+        queue: 'llm',
+        load: () => import('./jobs/variant_verify').then((m) => m.buildVariantVerifyHandler),
+      },
+      {
         // Durable stage 1: classify an active question failure, write the exact
         // causal judge, then hand off stage 2 with a stable per-attempt job id.
         name: 'attribution_followup',
@@ -834,7 +873,7 @@ export const practiceCapability = defineCapability({
         // YUK-758 DAG 成员。**边考据修订（review To-Iq + ToTas，两位 reviewer 各对一半）**：
         //  · 原声明的 `answer_class_backfill` 硬边**不成立，已移除**：supply 的
         //    discoverSupplyTargets → assembleScanInput → loadQuestionPool 是
-        //    target-discovery.ts 内的**私有** loader（:664），并非 src/server/quiz/pool-fetch.ts；
+        //    target-discovery.ts 内的**私有** loader（:664），并非 Practice quiz/pool-fetch；
         //    它只 select id/kind/source/metadata/difficulty/knowledge_ids(+draft_status 谓词)，
         //    全 src/server/question-supply/ 目录 grep 不到 answer_class。且 pool-fetch 那条
         //    answer_class 谓词本身是 NULL-宽容（`= X OR IS NULL`）且当前无活 caller（唯一

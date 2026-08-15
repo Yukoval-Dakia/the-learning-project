@@ -4,8 +4,8 @@
 // 与 target-discovery.test.ts 同款）。真 demandToSupplyTarget fingerprint + 真池计数 + 真 event
 // cooldown 的集成验证在 refill.db.test.ts。
 import type { Db } from '@/db/client';
-import type { Demand } from '@/kernel/practice-refill';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Demand } from '../quiz/matcher';
 import type { DispatchResult } from './dispatcher';
 import {
   REFILL_MAX_PER_REQUEST,

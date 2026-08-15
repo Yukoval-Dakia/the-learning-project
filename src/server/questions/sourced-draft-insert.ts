@@ -17,6 +17,7 @@ import {
   type SupplyTraceV1T,
   withSupplyTraceDifficultyEvidence,
 } from '@/capabilities/practice/public';
+import { mergeExactQuestionDuplicateKnowledgeIds } from '@/capabilities/practice/public';
 import {
   DifficultyEvidence,
   type DifficultyEvidenceT,
@@ -28,7 +29,6 @@ import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { mergeExactQuestionDuplicateKnowledgeIds } from '@/server/quiz/content-fingerprint';
 import { sql } from 'drizzle-orm';
 
 // question.created_by column type (AgentRef jsonb, notNull) — single-sourced from the

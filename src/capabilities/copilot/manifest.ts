@@ -194,7 +194,10 @@ export const copilotCapability = defineCapability({
       },
     ],
   },
-  // M5-T3 (YUK-321) — copilot 自有工具（事件流读 + 记忆面读 + artifact authoring 写）。
+  // M5-T3 (YUK-321) — copilot 自有工具（事件流读 + 记忆面读）。
+  // YUK-880 (F3.9b)：author_artifact / update_artifact 的归属声明已移至
+  // notes manifest（实现 = notes/server/tools/author-artifact.ts）；Copilot
+  // 仅保留 allowlist 面授权，不再是 implementation owner。
   copilotTools: {
     tools: [
       {
@@ -213,14 +216,6 @@ export const copilotCapability = defineCapability({
         name: 'search_memory_facts',
         load: () =>
           import('@/server/ai/tools/search-memory-facts').then((m) => m.searchMemoryFactsTool),
-      },
-      {
-        name: 'author_artifact',
-        load: () => import('@/server/ai/tools/author-artifact').then((m) => m.authorArtifactTool),
-      },
-      {
-        name: 'update_artifact',
-        load: () => import('@/server/ai/tools/author-artifact').then((m) => m.updateArtifactTool),
       },
     ],
   },

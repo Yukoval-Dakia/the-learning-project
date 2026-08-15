@@ -17,28 +17,12 @@
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 
+import type { CreateLearningIntentKnowledgeNodeFn } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { artifact, completion_evidence, event, learning_item } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import {
-  type LearningIntentMaterializeResult,
-  acceptLearningIntent,
-} from '@/server/orchestrator/learning_intent';
-// YUK-471 W2 — learning_item projection seam (completion / relearn). The accept writes a dedicated
-// subject-keyed action event (experimental:learning_item_complete / _relearn) so the transition is
-// fold-visible via Q1 (the recommended route — no rate-payload side-channel reverse-lookup);
-// projectionIsWriter('learning_item') gates ONLY who writes the ROW (projection write-through when
-// ON, the imperative UPDATE when OFF + a write-time fold==row parity assert, applicability-gated).
-import { projectLearningItemGuarded } from '@/server/projections/learning_item';
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
-import {
-  assertLearningItemParity,
-  hasLearningItemGenesisAnchor,
-  learningItemLiveRowToSnapshot,
-} from '@/server/projections/parity';
-import { projectionIsWriter } from '@/server/projections/sot-flag';
 import {
   asPlainRecord,
   ensureAcceptOnly,
@@ -46,16 +30,36 @@ import {
   requiredString,
   stringArray,
 } from '@/server/proposals/applier-helpers';
-import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/server/proposals/signals';
+import {
+  type AcceptLearningIntentParams,
+  type LearningIntentMaterializeResult,
+  acceptLearningIntent,
+} from './learning-intent';
+// YUK-471 W2 — learning_item projection seam (completion / relearn). The accept writes a dedicated
+// subject-keyed action event (experimental:learning_item_complete / _relearn) so the transition is
+// fold-visible via Q1 (the recommended route — no rate-payload side-channel reverse-lookup);
+// projectionIsWriter('learning_item') gates ONLY who writes the ROW (projection write-through when
+// ON, the imperative UPDATE when OFF + a write-time fold==row parity assert, applicability-gated).
+import {
+  assertLearningItemParity,
+  hasLearningItemGenesisAnchor,
+  learningItemLiveRowToSnapshot,
+  projectLearningItemGuarded,
+  projectionIsWriter,
+  upsertMaterializedIdIndex,
+} from './learning-item-projection-port';
+import type { ProposalInboxRow } from './proposal-lifecycle';
 
 export interface AgencyApplierOpts {
   decision?: string;
   user_note?: string;
   enqueueLearningIntentNote?: EnqueueLearningIntentNoteFn;
+  createLearningIntentKnowledgeNode?: CreateLearningIntentKnowledgeNodeFn;
+  createLearningIntentNote?: AcceptLearningIntentParams['createNote'];
 }
 
 export interface LearningItemAcceptResult {
@@ -173,7 +177,19 @@ export async function acceptLearningItemProposal(
     };
   }
 
-  const result: LearningIntentMaterializeResult = await acceptLearningIntent({ db, proposalId });
+  if (!opts.createLearningIntentKnowledgeNode || !opts.createLearningIntentNote) {
+    throw new ApiError(
+      'inconsistent_state',
+      'learning intent owner commands were not composed',
+      500,
+    );
+  }
+  const result: LearningIntentMaterializeResult = await acceptLearningIntent({
+    db,
+    proposalId,
+    createKnowledgeNode: opts.createLearningIntentKnowledgeNode,
+    createNote: opts.createLearningIntentNote,
+  });
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
   const enqueued = await enqueueLearningIntentNotes(
     db,

@@ -1,7 +1,7 @@
 import {
   CopilotEvidenceReviewOutputSchema,
   CopilotEvidenceVerificationOutputSchema,
-} from '@/ai/registry';
+} from '@/capabilities/copilot/contracts';
 import { queryKnowledgeTool } from '@/capabilities/knowledge/server/tools/knowledge-readers';
 import {
   COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS,

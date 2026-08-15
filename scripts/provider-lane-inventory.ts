@@ -224,7 +224,7 @@ export const PROVIDER_LANES = [
         imports: ['@/server/ai/embed'],
       },
       {
-        path: 'src/server/quiz/matcher.ts',
+        path: 'src/capabilities/practice/server/quiz/matcher.ts',
         imports: ['@/server/ai/embed'],
       },
       {
@@ -243,7 +243,7 @@ export const PROVIDER_LANES = [
     directImporters: [
       { path: 'src/capabilities/knowledge/server/tag-knowledge.ts', kind: 'runtime' },
       { path: 'src/capabilities/practice/jobs/embed_backfill.ts', kind: 'runtime' },
-      { path: 'src/server/quiz/matcher.ts', kind: 'runtime' },
+      { path: 'src/capabilities/practice/server/quiz/matcher.ts', kind: 'runtime' },
     ],
     roles: ['api', 'worker'],
     provider: 'DashScope OpenAI-compatible endpoint; MEM0_EMBEDDING_BASE_URL is env-configurable',

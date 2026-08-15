@@ -9,7 +9,7 @@
 //
 // 路由 → 既有面映射（架构 doc §Route Planner「Mapping to current code」）：
 //   - sourcing_web    → boss.send('sourcing', { trigger:'knowledge', ref_id, count, knowledge_id, kind })
-//                       （SourcingTask web 既存题，链 source_verify，src/server/boss/handlers/sourcing.ts）
+//                       （SourcingTask web 既存题，链 source_verify，src/capabilities/practice/jobs/sourcing.ts）
 //   - quiz_gen        → boss.send('quiz_gen', { trigger:'knowledge', ref_id, count, generation_method,
 //                       knowledge_id, kind })（仅当显式要 material/closed_book 生成卷题时；archive doc
 //                       Open Decision：只在 bundled quiz/paper 显式需要时走）

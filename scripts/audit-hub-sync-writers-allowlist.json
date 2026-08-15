@@ -42,7 +42,7 @@
       "reason": "Nightly embed backfill writes ONLY non-topology columns (embedding/embed_model/embed_version/embed_content_hash) which the trigger ignores; inventoried for table-level completeness (does not dirty hubs)."
     },
     {
-      "path": "src/server/orchestrator/learning_intent.ts",
+      "path": "src/capabilities/knowledge/server/learning-intent-knowledge.ts",
       "tables": ["knowledge"],
       "reason": "Learning-intent KC materialization inserts knowledge; trigger fan-out covers it."
     },

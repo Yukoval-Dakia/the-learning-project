@@ -560,8 +560,23 @@ function registeredManifestPaths(root: string): Set<string> {
   return new Set(paths);
 }
 
-function manifestCompositionRoots(root: string): CompositionRoot[] {
+type ManifestComposition = {
+  readonly roots: CompositionRoot[];
+  /**
+   * YUK-882 — `jobs/handlers/load` thunks as `source=>target` pairs. A
+   * registered manifest is itself api-reachable (e.g. via
+   * src/server/proposals/lifecycle-context.ts → @/capabilities), so treating
+   * the thunk's dynamic import as an ordinary runtime edge would falsely pull
+   * every job implementation — and its worker-only provider wires — into the
+   * api closure. The thunk target is a worker composition ROOT instead; the
+   * role/closure traversals below skip exactly these pairs.
+   */
+  readonly jobThunkEdges: ReadonlySet<string>;
+};
+
+function manifestComposition(root: string): ManifestComposition {
   const roots: CompositionRoot[] = [];
+  const jobThunkEdges = new Set<string>();
   const registered = registeredManifestPaths(root);
   for (const path of sourceFiles(resolve(root, 'src/capabilities'))) {
     if (!path.endsWith('/manifest.ts') || !registered.has(projectPath(root, path))) continue;
@@ -584,16 +599,19 @@ function manifestCompositionRoots(root: string): CompositionRoot[] {
         if (target && role) {
           roots.push({ path: projectPath(root, target), role, blocksCapabilityIndex: false });
         }
+        if (target && keys.join('/') === 'jobs/handlers/load') {
+          jobThunkEdges.add(`${projectPath(root, path)}=>${projectPath(root, target)}`);
+        }
       }
       ts.forEachChild(node, (child) => visit(child, keys));
     }
     visit(sourceFile, []);
   }
-  return roots;
+  return { roots, jobThunkEdges };
 }
 
 function compositionRoots(root: string): CompositionRoot[] {
-  const roots = manifestCompositionRoots(root);
+  const roots = manifestComposition(root).roots;
   const app = resolve(root, 'server/app.ts');
   if (existsSync(app)) {
     roots.push({ path: 'server/app.ts', role: 'api', blocksCapabilityIndex: true });
@@ -619,6 +637,7 @@ function runtimeCompositionPaths(root: string, edges: readonly SourceImportEdge[
   }
   const paths = new Set<string>();
   const visited = new Set<string>();
+  const jobThunkEdges = manifestComposition(root).jobThunkEdges;
   for (const rootEntry of compositionRoots(root)) {
     const queue = [rootEntry.path];
     while (queue.length > 0) {
@@ -628,6 +647,7 @@ function runtimeCompositionPaths(root: string, edges: readonly SourceImportEdge[
       paths.add(current);
       for (const next of reachable.get(current) ?? []) {
         if (rootEntry.blocksCapabilityIndex && next === 'src/capabilities/index.ts') continue;
+        if (jobThunkEdges.has(`${current}=>${next}`)) continue;
         queue.push(next);
       }
     }
@@ -648,6 +668,7 @@ function runtimeRolesForTarget(
     reachable.set(edge.path, targets);
   }
   const roles = new Set<string>();
+  const jobThunkEdges = manifestComposition(root).jobThunkEdges;
   for (const rootEntry of compositionRoots(root)) {
     const queue = [rootEntry.path];
     const visited = new Set<string>();
@@ -661,6 +682,7 @@ function runtimeRolesForTarget(
       }
       for (const next of reachable.get(current) ?? []) {
         if (rootEntry.blocksCapabilityIndex && next === 'src/capabilities/index.ts') continue;
+        if (jobThunkEdges.has(`${current}=>${next}`)) continue;
         queue.push(next);
       }
     }

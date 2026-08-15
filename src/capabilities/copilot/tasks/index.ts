@@ -1,13 +1,13 @@
-import { legacyTaskDefinitions } from '@/ai/legacy-task-definitions';
-import { defineOwnedTaskSpecs, defineTransitionalTask } from '@/ai/owned-task-specs';
+import { defineOwnedTaskSpecs } from '@/ai/owned-task-specs';
+import { copilotTaskSpec } from './agent';
+import { copilotDispatchTaskSpec } from './dispatch';
+import { copilotEvidenceReviewTaskSpec, copilotEvidenceVerificationTaskSpec } from './evidence';
+import { teachingTurnTaskSpec } from './teaching-turn';
 
 export const copilotTaskSpecs = defineOwnedTaskSpecs('copilot', {
-  CopilotDispatchTask: defineTransitionalTask(legacyTaskDefinitions.CopilotDispatchTask),
-  CopilotEvidenceReviewTask: defineTransitionalTask(
-    legacyTaskDefinitions.CopilotEvidenceReviewTask,
-  ),
-  CopilotEvidenceVerificationTask: defineTransitionalTask(
-    legacyTaskDefinitions.CopilotEvidenceVerificationTask,
-  ),
-  CopilotTask: defineTransitionalTask(legacyTaskDefinitions.CopilotTask),
+  CopilotDispatchTask: copilotDispatchTaskSpec,
+  CopilotEvidenceReviewTask: copilotEvidenceReviewTaskSpec,
+  CopilotEvidenceVerificationTask: copilotEvidenceVerificationTaskSpec,
+  CopilotTask: copilotTaskSpec,
+  TeachingTurnTask: teachingTurnTaskSpec,
 });

@@ -239,8 +239,8 @@ export const fastTestInclude = [
   // the sibling end-to-end propagation assertions live in handler DB tests.
   'src/capabilities/practice/server/question-supply/evidence-demand.test.ts',
   'src/capabilities/practice/server/question-supply/inventory-projection.test.ts',
-  'src/server/quiz/selection-miss.test.ts',
-  'src/server/quiz/content-fingerprint.test.ts',
+  'src/capabilities/practice/server/quiz/selection-miss.test.ts',
+  'src/capabilities/practice/server/quiz/content-fingerprint.test.ts',
   // YUK-474 — 动态供题 refill 决策逻辑单测. Pure no-DB: countActive/buildTarget/dispatch 全注入
   // fake，db 是未触碰 stub；imports 仅 ./refill（其 @/db/client 是 type-only/erased、@/db/schema
   // 是 table objects 不连库、demandToSupplyTarget/dispatchSupplyTarget/poolFetch 全 type-only db）。
@@ -304,19 +304,19 @@ export const fastTestInclude = [
   // The companion accountability.db.test.ts exercises the traceable DB reader and
   // intentionally remains in the DB partition.
   'src/server/conjectures/accountability.unit.test.ts',
-  'src/server/agency/conjecture/**/*.test.ts',
+  'src/capabilities/agency/server/conjecture/induce.test.ts',
   // YUK-814 — pure artifact schemas, deterministic sampling, blind/canary scoring.
   // The sibling candidates.db.test.ts restores the real correction/lifecycle reader chain
   // and intentionally falls through to the DB partition.
   'src/server/grounding-gate/**/*.unit.test.ts',
   // YUK-572 — shared scout primitives. CONVENTION glob: every *.unit.test.ts under
-  // src/server/agency/scout/ runs no-DB (pure schema / AgentDefinition assembly /
+  // src/capabilities/agency/server/scout/ runs no-DB (pure schema / AgentDefinition assembly /
   // delimiter helpers importing only Zod + the SDK types). The evidence-mcp.db.test.ts
   // (real testcontainer + seeded rows) is a *.db.test.ts, so it matches allTestInclude's
   // src/**/*.test.ts and falls through to the db partition, NOT this fast allowlist. The
   // P0 partition guard still applies: any scout *.unit.test.ts that imports DB unmocked
   // fails audit:partition.
-  'src/server/agency/scout/**/*.unit.test.ts',
+  'src/capabilities/agency/server/scout/**/*.unit.test.ts',
   // src/server/export — the no-DB units (constants / csv / readme) run fast. The
   // wholesale `src/server/export/**/*.test.ts` glob was narrowed to plain
   // `*.test.ts` so the ②d reverse-lockstep test (reverse_lockstep.db.test.ts —
@@ -371,14 +371,14 @@ export const fastTestInclude = [
   // that the conservative semantic path only forwards — no live Postgres / AI. The
   // transitive @/db/client import (via question-contract → runSemanticJudge) is
   // type-only; same safe surface as the judges unit tests above.
-  'src/server/quiz/verify-framework.test.ts',
+  'src/capabilities/practice/server/quiz/verify-framework.test.ts',
   // YUK-608 (异源 solve/verify) — pure env-read resolver for the scoped solve_check
   // provider/model override + fail-open pre-flight. Imports only providers.ts →
   // registry.ts (type/zod-only surface), reads process.env; no DB / AI / pg-boss.
-  'src/server/quiz/solve-lane.test.ts',
+  'src/capabilities/practice/server/quiz/solve-lane.test.ts',
   // YUK-225 (S2 slice 4) — pure (no-DB) units: skill resolver (fs fixture root),
   // few-shot block renderer (pure fn), profile thin-section schema parse.
-  'src/server/quiz/fewshot-retrieve.render.test.ts',
+  'src/capabilities/practice/server/quiz/fewshot-retrieve.render.test.ts',
   'src/subjects/quiz-gen-skills.test.ts',
   // YUK-228 (S3 Slice B) — pure (no-DB) note skill resolver (fs fixture root),
   // live SoT discovery, and double-sided cloze防御 (note vs quiz-gen-* prefix).

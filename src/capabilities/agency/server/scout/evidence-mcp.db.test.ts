@@ -1,0 +1,826 @@
+// YUK-572 PR-1 — evidence MCP db test. Real Postgres (testcontainer); the SDK is
+// mocked so the tool() factory captures each handler and we invoke it directly against
+// seeded rows (no `claude` subprocess). Asserts: correct tool registration, per-tool
+// query shape + ROW/CHAR bounds, <untrusted_learner_text> delimiting, get_agent_notes
+// self-source exclusion, toolTrace capture order, report_findings capture, and
+// persistToolTrace → tool_call_log (effect 'read', cost 0).
+
+import { event, kc_typed_state, question, tool_call_log } from '@/db/schema';
+import { artifact } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import { writeAiProposal } from '@/server/proposals/writer';
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { writeAgentNote } from '../notes';
+
+// Capture the registered tool handlers + names via a mocked SDK.
+const mockSdk = vi.hoisted(() => ({
+  descriptions: new Map<string, string>(),
+  handlers: new Map<
+    string,
+    (args: unknown) => Promise<{ content: { type: string; text: string }[] }>
+  >(),
+  registeredNames: [] as string[],
+  serverName: undefined as string | undefined,
+}));
+
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  createSdkMcpServer: vi.fn((opts: { name: string; tools: unknown[] }) => {
+    mockSdk.serverName = opts.name;
+    return { type: 'sdk', name: opts.name, instance: {} };
+  }),
+  tool: vi.fn(
+    (
+      name: string,
+      desc: string,
+      _schema: unknown,
+      handler: (args: unknown) => Promise<{ content: { type: string; text: string }[] }>,
+    ) => {
+      mockSdk.handlers.set(name, handler);
+      mockSdk.descriptions.set(name, desc);
+      mockSdk.registeredNames.push(name);
+      return { name };
+    },
+  ),
+}));
+
+import { EVIDENCE_LIMITS, buildEvidenceServer, persistToolTrace } from './evidence-mcp';
+import type { EvidenceServer } from './evidence-mcp';
+import { createFindingsCapture } from './report-findings';
+import type { FindingsCapture } from './report-findings';
+import { EVIDENCE_READ_TOOL_LOCAL_NAMES } from './tool-names';
+
+const NOW = new Date('2026-07-06T00:00:00.000Z');
+const SELF_KIND = 'research_meeting_agent';
+
+let capture: FindingsCapture;
+let evidence: EvidenceServer;
+
+async function callTool(name: string, args: unknown): Promise<Record<string, unknown>> {
+  const handler = mockSdk.handlers.get(name);
+  if (!handler) throw new Error(`no registered handler for ${name}`);
+  const res = await handler(args);
+  return JSON.parse(res.content[0].text) as Record<string, unknown>;
+}
+
+async function seedFailureAttempt(opts: {
+  id: string;
+  questionId: string;
+  answerMd: string;
+  knowledgeIds: string[];
+}): Promise<void> {
+  await testDb()
+    .insert(event)
+    .values({
+      id: opts.id,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: opts.questionId,
+      outcome: 'failure',
+      payload: {
+        answer_md: opts.answerMd,
+        answer_image_refs: [],
+        referenced_knowledge_ids: opts.knowledgeIds,
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: NOW,
+    });
+}
+
+beforeEach(async () => {
+  await resetDb();
+  mockSdk.handlers.clear();
+  mockSdk.descriptions.clear();
+  mockSdk.registeredNames = [];
+  mockSdk.serverName = undefined;
+  capture = createFindingsCapture();
+  evidence = buildEvidenceServer({
+    db: testDb(),
+    now: NOW,
+    selfSourceKind: SELF_KIND,
+    capture,
+  });
+});
+
+describe('buildEvidenceServer — registration', () => {
+  it('registers under research_evidence with 6 read + get_traces + report_findings', () => {
+    expect(mockSdk.serverName).toBe('research_evidence');
+    expect(mockSdk.registeredNames).toEqual([
+      ...EVIDENCE_READ_TOOL_LOCAL_NAMES,
+      'get_traces',
+      'report_findings',
+    ]);
+  });
+
+  it('advertises review ids on the actual detail-reader tool', () => {
+    expect(mockSdk.descriptions.get('get_attempt_details')).toContain('attempt / review event id');
+  });
+
+  it('advertises review events as valid report_findings evidence', () => {
+    expect(mockSdk.descriptions.get('report_findings')).toContain(
+      'attempt / review / probe / prediction_score',
+    );
+  });
+});
+
+describe('get_attempt_details', () => {
+  it('returns the attempt with answer_md wrapped + truncated to the char bound', async () => {
+    const longAnswer = 'x'.repeat(EVIDENCE_LIMITS.attemptTextChars + 500);
+    await seedFailureAttempt({
+      id: 'attempt_1',
+      questionId: 'q1',
+      answerMd: longAnswer,
+      knowledgeIds: ['k1', 'k2'],
+    });
+
+    const out = await callTool('get_attempt_details', { attempt_event_id: 'attempt_1' });
+    expect(out.found).toBe(true);
+    expect(out.question_id).toBe('q1');
+    expect(out.referenced_knowledge_ids).toEqual(['k1', 'k2']);
+    const answer = out.answer_md as string;
+    expect(answer.startsWith('<untrusted_learner_text>')).toBe(true);
+    expect(answer.endsWith('</untrusted_learner_text>')).toBe(true);
+    // Inner text truncated to the char bound (delimiters add fixed overhead).
+    const inner = answer
+      .replace('<untrusted_learner_text>', '')
+      .replace('</untrusted_learner_text>', '');
+    expect(inner).toHaveLength(EVIDENCE_LIMITS.attemptTextChars);
+  });
+
+  it('returns found:false for a missing attempt', async () => {
+    const out = await callTool('get_attempt_details', { attempt_event_id: 'nope' });
+    expect(out.found).toBe(false);
+  });
+
+  it('records a toolTrace entry with the attempt id', async () => {
+    await seedFailureAttempt({
+      id: 'attempt_2',
+      questionId: 'q1',
+      answerMd: 'a',
+      knowledgeIds: ['k1'],
+    });
+    await callTool('get_attempt_details', { attempt_event_id: 'attempt_2' });
+    const trace = evidence.readToolTrace();
+    expect(trace).toHaveLength(1);
+    expect(trace[0].tool).toBe('get_attempt_details');
+    expect(trace[0].returned_ids).toContain('attempt_2');
+  });
+});
+
+describe('get_question', () => {
+  it('returns the question with prompt/reference wrapped + truncated', async () => {
+    const longPrompt = 'p'.repeat(EVIDENCE_LIMITS.questionTextChars + 100);
+    await testDb()
+      .insert(question)
+      .values({
+        id: 'q1',
+        kind: 'short_answer',
+        prompt_md: longPrompt,
+        reference_md: 'ref',
+        knowledge_ids: ['k1'],
+        source: 'test',
+        created_at: NOW,
+        updated_at: NOW,
+      });
+
+    const out = await callTool('get_question', { question_id: 'q1' });
+    expect(out.found).toBe(true);
+    expect(out.kind).toBe('short_answer');
+    const prompt = out.prompt_md as string;
+    expect(prompt.startsWith('<untrusted_learner_text>')).toBe(true);
+    const inner = prompt
+      .replace('<untrusted_learner_text>', '')
+      .replace('</untrusted_learner_text>', '');
+    expect(inner).toHaveLength(EVIDENCE_LIMITS.questionTextChars);
+    expect(out.reference_md).toBe('<untrusted_learner_text>ref</untrusted_learner_text>');
+  });
+
+  it('returns found:false for a missing question', async () => {
+    const out = await callTool('get_question', { question_id: 'ghost' });
+    expect(out.found).toBe(false);
+  });
+});
+
+// The probe_result seeds below mirror the REAL writer shape (probe-lifecycle.ts):
+// payload has NO knowledge_id — {conjecture_event_id, outcome, resolution,
+// retrievability_at_judge, answer_md} keyed by subject_id = the probe question id.
+// Review F1 killed the payload-only filter that made these rows unreachable.
+async function ensureConjectureProposal(): Promise<void> {
+  const db = testDb();
+  const [existing] = await db.select({ id: event.id }).from(event).where(eq(event.id, 'conj_1'));
+  if (existing) return;
+  await writeAiProposal(db, {
+    id: 'conj_1',
+    actor_ref: 'research_meeting',
+    payload: {
+      kind: 'conjecture',
+      target: { subject_kind: 'mind_model', subject_id: 'k1' },
+      reason_md: 'canonical probe-history fixture',
+      evidence_refs: [{ kind: 'event', id: 'failure_1' }],
+      cooldown_key: 'conjecture:test:k1',
+      proposed_change: {
+        claim_md: 'test conjecture',
+        knowledge_id: 'k1',
+        cause_category: 'concept_confusion',
+        confidence: 0.7,
+        recurrence_count: 2,
+        probe_md: 'probe prompt',
+        probe_reference_md: 'probe reference',
+        followup_probe_md: 'follow-up probe prompt',
+        followup_probe_reference_md: 'follow-up probe reference',
+        discriminating: true,
+        corrected_by_owner: false,
+        predicted_p: 0.3,
+        baseline_p_at_induction: 0.6,
+      },
+    },
+  });
+}
+
+async function seedProbeQuestion(
+  id: string,
+  knowledgeIds: string[],
+  sequence: 1 | 2 = 1,
+): Promise<void> {
+  await ensureConjectureProposal();
+  await testDb()
+    .insert(question)
+    .values({
+      id,
+      kind: 'short_answer',
+      prompt_md: sequence === 2 ? 'follow-up probe prompt' : 'probe prompt',
+      reference_md: sequence === 2 ? 'follow-up probe reference' : 'probe reference',
+      knowledge_ids: knowledgeIds,
+      source: 'mind_probe',
+      source_ref: 'conj_1',
+      draft_status: 'draft',
+      metadata: { conjecture_proposal_id: 'conj_1', probe_sequence: sequence },
+      created_at: NOW,
+      updated_at: NOW,
+    });
+}
+
+function probeResultRow(
+  id: string,
+  probeQuestionId: string,
+  answerMd: string,
+  createdAt: Date,
+  resolution: 'evidence_for' | 'confirmed' | 'retired' = 'evidence_for',
+  resolutionRuleVersion?: string,
+) {
+  return {
+    id,
+    session_id: null,
+    actor_kind: 'system' as const,
+    actor_ref: 'mind_probe',
+    action: 'experimental:probe_result',
+    subject_kind: 'question',
+    subject_id: probeQuestionId,
+    outcome: null,
+    payload: {
+      conjecture_event_id: 'conj_1',
+      outcome: resolution === 'retired' ? 1 : 0,
+      resolution,
+      ...(resolutionRuleVersion ? { resolution_rule_version: resolutionRuleVersion } : {}),
+      retrievability_at_judge: 0.8,
+      answer_md: answerMd,
+    },
+    caused_by_event_id: 'conj_1',
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: createdAt,
+  };
+}
+
+function predictionScoreRow(id: string, knowledgeId: string, createdAt: Date) {
+  return {
+    id,
+    session_id: null,
+    actor_kind: 'agent' as const,
+    actor_ref: 'reconcile',
+    action: 'experimental:prediction_score',
+    subject_kind: 'query',
+    subject_id: id,
+    outcome: null,
+    payload: { knowledge_id: knowledgeId, score: 1 },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: createdAt,
+  };
+}
+
+describe('get_probe_history', () => {
+  it('returns probe_result rows via the question join, answer_md delimited (F1)', async () => {
+    const db = testDb();
+    await seedProbeQuestion('q_probe_k1', ['k1']);
+    await seedProbeQuestion('q_probe_k2', ['k2']);
+    await db.insert(event).values([
+      probeResultRow('pr_1', 'q_probe_k1', 'learner probe answer', new Date(NOW.getTime() + 2000)),
+      // Another KC's probe_result — the question join must exclude it.
+      probeResultRow(
+        'pr_other',
+        'q_probe_k2',
+        'other learner answer',
+        new Date(NOW.getTime() + 3000),
+      ),
+      // A prediction_score for the same KC merges into the same history.
+      predictionScoreRow('ps_1', 'k1', new Date(NOW.getTime() + 1000)),
+    ]);
+
+    const out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    const probes = out.probes as Array<{
+      event_id: string;
+      action: string;
+      payload: Record<string, unknown>;
+    }>;
+    // Merged newest-first: the probe_result (t+2000) leads the prediction_score (t+1000);
+    // the k2 probe_result never leaks in.
+    expect(probes.map((p) => p.event_id)).toEqual(['pr_1', 'ps_1']);
+    const pr = probes[0];
+    expect(pr.action).toBe('experimental:probe_result');
+    // The learner's raw probe answer is first-hand evidence — delimited as untrusted.
+    expect(pr.payload.answer_md).toBe(
+      '<untrusted_learner_text>learner probe answer</untrusted_learner_text>',
+    );
+    // Non-learner payload keys pass through untouched.
+    expect(pr.payload.conjecture_event_id).toBe('conj_1');
+    expect(pr.payload.resolution).toBe('evidence_for');
+    expect(pr.payload.evidence_strength).toBe('single_observation');
+  });
+
+  it('does not relabel a legacy confirmed event as recurrence-gated evidence', async () => {
+    const db = testDb();
+    await seedProbeQuestion('q_legacy', ['k1']);
+    await seedProbeQuestion('q_v2', ['k1'], 2);
+    await seedProbeQuestion('q_v2_dependency', ['k1']);
+    const dependency = probeResultRow(
+      'pr_v2_dependency',
+      'q_v2_dependency',
+      'prior',
+      new Date(NOW.getTime() + 500),
+    );
+    const v2 = probeResultRow(
+      'pr_v2',
+      'q_v2',
+      'new',
+      new Date(NOW.getTime() + 2000),
+      'confirmed',
+      'within_learner_probe_recurrence_v2',
+    );
+    (v2.payload as Record<string, unknown>).independent_probe_question_ids = [
+      'q_v2',
+      'q_v2_dependency',
+    ];
+    await db
+      .insert(event)
+      .values([
+        dependency,
+        probeResultRow('pr_legacy', 'q_legacy', 'old', new Date(NOW.getTime() + 1000), 'confirmed'),
+        v2,
+      ]);
+
+    const out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    const strengths = Object.fromEntries(
+      (
+        out.probes as Array<{
+          event_id: string;
+          payload: { evidence_strength: string };
+        }>
+      ).map((row) => [row.event_id, row.payload.evidence_strength]),
+    );
+    expect(strengths.pr_v2).toBe('independent_recurrence');
+    expect(strengths.pr_legacy).toBe('legacy_confirmed_unverified');
+  });
+
+  it('invalidates a recurrence result while one of its supporting results is corrected', async () => {
+    const db = testDb();
+    await seedProbeQuestion('q_dependency', ['k1']);
+    await seedProbeQuestion('q_terminal', ['k1'], 2);
+    const dependency = probeResultRow(
+      'pr_dependency',
+      'q_dependency',
+      'first miss',
+      new Date(NOW.getTime() + 1000),
+    );
+    const terminal = probeResultRow(
+      'pr_terminal',
+      'q_terminal',
+      'second miss',
+      new Date(NOW.getTime() + 2000),
+      'confirmed',
+      'within_learner_probe_recurrence_v2',
+    );
+    (terminal.payload as Record<string, unknown>).independent_probe_question_ids = [
+      'q_dependency',
+      'q_terminal',
+    ];
+    await db.insert(event).values([dependency, terminal]);
+    await writeEvent(db, {
+      id: 'correct_pr_dependency',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'pr_dependency',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'the first observation was invalid',
+        affected_refs: [{ kind: 'open_inquiry', id: 'pr_dependency' }],
+      },
+      created_at: new Date(NOW.getTime() + 3000),
+    });
+
+    let out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    expect(out.probes).toEqual([]);
+
+    await writeEvent(db, {
+      id: 'restore_pr_dependency',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'pr_dependency',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        reason_md: 'the first observation was revalidated',
+        affected_refs: [{ kind: 'open_inquiry', id: 'pr_dependency' }],
+      },
+      created_at: new Date(NOW.getTime() + 4000),
+    });
+
+    out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    expect((out.probes as Array<{ event_id: string }>).map((row) => row.event_id)).toEqual([
+      'pr_terminal',
+      'pr_dependency',
+    ]);
+  });
+
+  it('hides corrected probe evidence and its linked score until restore', async () => {
+    const db = testDb();
+    await seedProbeQuestion('q_corrected', ['k1']);
+    await db.insert(event).values([
+      probeResultRow(
+        'pr_corrected',
+        'q_corrected',
+        'invalid answer',
+        new Date(NOW.getTime() + 2000),
+      ),
+      {
+        ...predictionScoreRow('ps_corrected', 'k1', new Date(NOW.getTime() + 3000)),
+        payload: {
+          knowledge_id: 'k1',
+          score: 1,
+          probe_result_event_id: 'pr_corrected',
+        },
+      },
+    ]);
+    await writeEvent(db, {
+      id: 'correct_pr_corrected',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'pr_corrected',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'probe evidence is invalid',
+        affected_refs: [{ kind: 'open_inquiry', id: 'pr_corrected' }],
+      },
+      created_at: new Date(NOW.getTime() + 4000),
+    });
+
+    let out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    expect(out.probes).toEqual([]);
+
+    await writeEvent(db, {
+      id: 'restore_pr_corrected',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'pr_corrected',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        reason_md: 'probe evidence was revalidated',
+        affected_refs: [{ kind: 'open_inquiry', id: 'pr_corrected' }],
+      },
+      created_at: new Date(NOW.getTime() + 5000),
+    });
+
+    out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    const probes = out.probes as Array<{ event_id: string }>;
+    expect(probes.map((row) => row.event_id)).toEqual(['ps_corrected', 'pr_corrected']);
+  });
+
+  it('marks non-canonical outcome/resolution pairs unclassified', async () => {
+    const db = testDb();
+    await seedProbeQuestion('q_bad_retired', ['k1']);
+    await seedProbeQuestion('q_bad_confirmed', ['k1']);
+    const badRetired = probeResultRow(
+      'pr_bad_retired',
+      'q_bad_retired',
+      'wrong',
+      new Date(NOW.getTime() + 1000),
+      'retired',
+    );
+    badRetired.payload.outcome = 0;
+    const badConfirmed = probeResultRow(
+      'pr_bad_confirmed',
+      'q_bad_confirmed',
+      'right',
+      new Date(NOW.getTime() + 2000),
+      'confirmed',
+      'within_learner_probe_recurrence_v2',
+    );
+    badConfirmed.payload.outcome = 1;
+    await db.insert(event).values([badRetired, badConfirmed]);
+
+    const out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    const strengths = Object.fromEntries(
+      (
+        out.probes as Array<{
+          event_id: string;
+          payload: { evidence_strength: string };
+        }>
+      ).map((row) => [row.event_id, row.payload.evidence_strength]),
+    );
+    expect(strengths).toEqual({
+      pr_bad_confirmed: 'unclassified',
+      pr_bad_retired: 'unclassified',
+    });
+  });
+
+  it('merges both actions newest-first under ONE shared row cap', async () => {
+    const db = testDb();
+    await seedProbeQuestion('q_probe_k1', ['k1']);
+    // 25 interleaved rows (odd i → probe_result, even i → prediction_score), newest =
+    // highest i. Cap 20 ⇒ exactly i ∈ [5, 24] survive, from BOTH actions.
+    const total = EVIDENCE_LIMITS.probeHistoryRows + 5;
+    const rows = [];
+    for (let i = 0; i < total; i++) {
+      const at = new Date(NOW.getTime() + i * 1000);
+      rows.push(
+        i % 2 === 1
+          ? probeResultRow(`row_${i}`, 'q_probe_k1', `answer ${i}`, at)
+          : predictionScoreRow(`row_${i}`, 'k1', at),
+      );
+    }
+    await db.insert(event).values(rows);
+
+    const out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    const probes = out.probes as Array<{ event_id: string; action: string }>;
+    expect(probes).toHaveLength(EVIDENCE_LIMITS.probeHistoryRows);
+    const expected = [];
+    for (let i = total - 1; i >= total - EVIDENCE_LIMITS.probeHistoryRows; i--) {
+      expected.push(`row_${i}`);
+    }
+    expect(probes.map((p) => p.event_id)).toEqual(expected);
+    expect(out.scan_truncated).toBe(false);
+    const actions = new Set(probes.map((p) => p.action));
+    expect(actions).toContain('experimental:probe_result');
+    expect(actions).toContain('experimental:prediction_score');
+  });
+
+  it('marks probe history truncated when the scan ceiling is exhausted by inactive evidence', async () => {
+    const db = testDb();
+    await seedProbeQuestion('q_probe_k1', ['k1']);
+    const total = EVIDENCE_LIMITS.probeHistoryRows * 10 + 1;
+    const results = Array.from({ length: total }, (_, index) =>
+      probeResultRow(
+        `pr_truncated_${index}`,
+        'q_probe_k1',
+        `answer ${index}`,
+        new Date(NOW.getTime() + index * 1000),
+      ),
+    );
+    const corrections: (typeof event.$inferInsert)[] = results.map((result, index) => ({
+      id: `correct_${result.id}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: result.id,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'inactive scan fixture',
+        affected_refs: [{ kind: 'open_inquiry', id: result.id }],
+      },
+      created_at: new Date(NOW.getTime() + total * 1000 + index),
+    }));
+    await db.insert(event).values(results);
+    await db.insert(event).values(corrections);
+
+    const out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    expect(out.probes).toEqual([]);
+    expect(out.scan_truncated).toBe(true);
+  });
+});
+
+describe('get_typed_state', () => {
+  it('returns only subject_kind=knowledge rows for the knowledge id (F3)', async () => {
+    await testDb()
+      .insert(kc_typed_state)
+      .values([
+        {
+          id: 'kts_1',
+          subject_kind: 'knowledge',
+          subject_id: 'k1',
+          typed_state: 'confused-with-X',
+          confused_with_kc_id: 'k2',
+          lifecycle: 'open',
+          evidence_event_ids: ['e1'],
+          last_evidence_at: NOW,
+          updated_at: NOW,
+        },
+        // Same subject_id under another subject_kind — must NOT leak in (F3).
+        {
+          id: 'kts_other_kind',
+          subject_kind: 'question',
+          subject_id: 'k1',
+          typed_state: 'no-evidence',
+          confused_with_kc_id: null,
+          lifecycle: 'open',
+          evidence_event_ids: [],
+          last_evidence_at: null,
+          updated_at: NOW,
+        },
+      ]);
+
+    const out = await callTool('get_typed_state', { knowledge_id: 'k1' });
+    const states = out.typed_states as Array<{
+      id: string;
+      typed_state: string;
+      confused_with_kc_id: string;
+    }>;
+    expect(states).toHaveLength(1);
+    expect(states[0].id).toBe('kts_1');
+    expect(states[0].typed_state).toBe('confused-with-X');
+    expect(states[0].confused_with_kc_id).toBe('k2');
+  });
+});
+
+describe('get_notes', () => {
+  it('returns note summaries capped at the summary bound', async () => {
+    const rows = [];
+    for (let i = 0; i < EVIDENCE_LIMITS.noteSummaries + 3; i++) {
+      rows.push({
+        id: `note_${i}`,
+        type: 'note_atomic',
+        title: `note ${i}`,
+        intent_source: 'test',
+        source: 'test',
+        knowledge_ids: ['k1'],
+        created_at: new Date(NOW.getTime() + i * 1000),
+        updated_at: NOW,
+      });
+    }
+    await testDb().insert(artifact).values(rows);
+
+    const out = await callTool('get_notes', { knowledge_id: 'k1' });
+    const notes = out.notes as Array<{ id: string; title: string }>;
+    expect(notes).toHaveLength(EVIDENCE_LIMITS.noteSummaries);
+    // Note titles can be learner-authored — delimited as untrusted (F2).
+    for (const n of notes) {
+      expect(n.title).toMatch(/^<untrusted_learner_text>note \d+<\/untrusted_learner_text>$/);
+    }
+  });
+});
+
+describe('get_agent_notes', () => {
+  it('excludes the caller own source kind (self-reinforcement guard) + traces', async () => {
+    const db = testDb();
+    const future = new Date(NOW.getTime() + 30 * 24 * 3600 * 1000).toISOString();
+    // Self note — must be excluded.
+    await writeAgentNote(db, {
+      target_agents: ['research_meeting'],
+      source_task_kind: SELF_KIND,
+      refs: [],
+      summary_md: 'my own old conclusion',
+      signal_kind: 'conjecture_deep_dive',
+      expires_at: future,
+    });
+    // Other-agent note — must be returned.
+    const otherId = await writeAgentNote(db, {
+      target_agents: ['research_meeting'],
+      source_task_kind: 'dreaming',
+      refs: [],
+      summary_md: 'dreaming observation',
+      signal_kind: 'attention',
+      expires_at: future,
+    });
+
+    const out = await callTool('get_agent_notes', {});
+    const notes = out.agent_notes as Array<{ id: string; source_task_kind: string }>;
+    expect(notes).toHaveLength(1);
+    expect(notes[0].id).toBe(otherId);
+    expect(notes[0].source_task_kind).toBe('dreaming');
+
+    const trace = evidence.readToolTrace();
+    expect(trace[0].tool).toBe('get_agent_notes');
+    expect(trace[0].returned_ids).toEqual([otherId]);
+  });
+});
+
+describe('get_traces', () => {
+  it('returns the YUK-562 placeholder without touching the DB', async () => {
+    const out = await callTool('get_traces', { knowledge_id: 'k1' });
+    expect(out).toEqual({ available: false, reason: 'traces reader lands with YUK-562' });
+  });
+});
+
+describe('report_findings', () => {
+  it('captures a valid findings object into the capture ref', async () => {
+    const findings = {
+      single_or_multi_mechanism: 'single',
+      evidence_attribution_contradiction: 'none',
+      suggested_probe_angle: 'probe the edge case',
+      findings_md: 'the learner conflates X with Y',
+      evidence_refs: ['attempt_1'],
+      confidence: 0.5,
+    };
+    const out = await callTool('report_findings', findings);
+    expect(out.ok).toBe(true);
+    expect(capture.value).toEqual(findings);
+  });
+
+  it('rejects invalid findings and leaves the capture null', async () => {
+    const out = await callTool('report_findings', {
+      single_or_multi_mechanism: 'nonsense',
+      evidence_attribution_contradiction: 'none',
+      suggested_probe_angle: 'x',
+      findings_md: 'y',
+      evidence_refs: [],
+      confidence: 0.4,
+    });
+    expect(out.ok).toBe(false);
+    expect(capture.value).toBeNull();
+  });
+});
+
+describe('persistToolTrace', () => {
+  it('writes one tool_call_log row per trace entry (effect read, cost 0)', async () => {
+    const db = testDb();
+    await seedFailureAttempt({
+      id: 'attempt_1',
+      questionId: 'q1',
+      answerMd: 'a',
+      knowledgeIds: ['k1'],
+    });
+    await callTool('get_attempt_details', { attempt_event_id: 'attempt_1' });
+    await callTool('get_typed_state', { knowledge_id: 'k1' });
+
+    const trace = evidence.readToolTrace();
+    expect(trace).toHaveLength(2);
+
+    await persistToolTrace(db, trace, {
+      taskRunId: 'run_synthetic_1',
+      taskKind: 'ResearchMeetingDirectorTask',
+    });
+
+    const logs = await db
+      .select()
+      .from(tool_call_log)
+      .where(eq(tool_call_log.task_run_id, 'run_synthetic_1'));
+    expect(logs).toHaveLength(2);
+    for (const log of logs) {
+      expect(log.effect).toBe('read');
+      expect(log.cost).toBe(0);
+      expect(log.task_kind).toBe('ResearchMeetingDirectorTask');
+    }
+    const toolNames = logs.map((l) => l.tool_name).sort();
+    expect(toolNames).toEqual(['get_attempt_details', 'get_typed_state']);
+  });
+});
+
+describe('get_agent_notes summary cap (OCR PR #713)', () => {
+  it('truncates an over-long LLM-generated summary_md to the char bound', async () => {
+    const db = testDb();
+    const future = new Date(NOW.getTime() + 30 * 24 * 3600 * 1000).toISOString();
+    await writeAgentNote(db, {
+      target_agents: ['research_meeting'],
+      source_task_kind: 'dreaming',
+      refs: [],
+      summary_md: 'x'.repeat(EVIDENCE_LIMITS.agentNoteSummaryChars + 500),
+      signal_kind: 'attention',
+      expires_at: future,
+    });
+
+    const out = await callTool('get_agent_notes', {});
+    const notes = out.agent_notes as Array<{ summary_md: string }>;
+    expect(notes).toHaveLength(1);
+    // truncate() is a hard slice — the bound is exact.
+    expect(notes[0].summary_md).toHaveLength(EVIDENCE_LIMITS.agentNoteSummaryChars);
+  });
+});

@@ -1,1 +1,1 @@
-export type { QuizGenJobData } from '@/server/boss/handlers/quiz_gen';
+export type { QuizGenJobData } from '@/capabilities/practice/public';

@@ -21,7 +21,7 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // ── enable route gate-op mock (thin-shell translation test) ──────────────────
 const verifyAndPromoteMock = vi.fn();
-vi.mock('@/server/quiz/verify-and-promote', () => ({
+vi.mock('@/capabilities/practice/server/quiz/verify-and-promote', () => ({
   verifyAndPromote: (...args: unknown[]) => verifyAndPromoteMock(...args),
 }));
 
@@ -263,9 +263,9 @@ describe('POST /api/review/drafts/[id]/force-enable (override, real path)', () =
     // AI-free), but the module-level mock above replaces it. Route the mock straight
     // through to the real implementation for these tests so we exercise the actual
     // override promote + B-section guards end-to-end.
-    const real = await vi.importActual<typeof import('@/server/quiz/verify-and-promote')>(
-      '@/server/quiz/verify-and-promote',
-    );
+    const real = await vi.importActual<
+      typeof import('@/capabilities/practice/server/quiz/verify-and-promote')
+    >('@/capabilities/practice/server/quiz/verify-and-promote');
     verifyAndPromoteMock.mockImplementation(real.verifyAndPromote);
   });
 

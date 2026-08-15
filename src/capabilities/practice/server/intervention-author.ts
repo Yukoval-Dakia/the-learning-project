@@ -49,12 +49,12 @@ import {
   persistValidatorRunBinding,
   runConfirmedStructuredReview,
 } from '@/server/ai/sealed-validation';
+import type { SubjectProfile } from '@/subjects/profile';
 import {
   type IndependentSolutionResult,
   runIndependentSolution,
   runQuestionContentValidation,
-} from '@/server/quiz/verify-framework';
-import type { SubjectProfile } from '@/subjects/profile';
+} from './quiz/verify-framework';
 
 export interface InterventionAuthorDeps {
   runTaskFn?: TaskTextRunFn;

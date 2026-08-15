@@ -11,8 +11,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
 import { event, knowledge, learning_item, question } from '@/db/schema';
-import { demandToSupplyTarget } from '@/kernel/practice-refill';
 import { resetDb } from '../../../../../tests/helpers/db';
+import { demandToSupplyTarget } from '../quiz/matcher';
 import type { EnqueueFn } from './dispatcher';
 import {
   REFILL_POOL_THRESHOLD,

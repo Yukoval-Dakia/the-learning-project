@@ -145,10 +145,10 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'knowledge',
-    file: 'src/server/orchestrator/learning_intent.ts',
-    marker: 'projectionIsWriter(',
-    role: 'gated-dual-path',
-    note: 'orchestrator knowledge mint gated on projectionIsWriter (genesis event + index anchor always written; only the ROW writer is flag-switched).',
+    file: 'src/capabilities/knowledge/server/learning-intent-knowledge.ts',
+    marker: '.insert(knowledge)',
+    role: 'off-path-writer',
+    note: 'Knowledge-owned learning-intent node command; moved without changing proposal materialization events in YUK-873.',
   },
   {
     table: 'knowledge',
@@ -254,7 +254,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'mistake_variant',
-    file: 'src/server/boss/handlers/variant_verify.ts',
+    file: 'src/capabilities/practice/jobs/variant_verify.ts',
     marker: "projectionIsWriter('mistake_variant')",
     role: 'gated-dual-path',
     note: "variant_verify update gated on projectionIsWriter('mistake_variant').",
@@ -284,7 +284,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'learning_item',
-    file: 'src/server/orchestrator/learning_intent.ts',
+    file: 'src/capabilities/agency/server/learning-intent.ts',
     marker: "projectionIsWriter('learning_item')",
     role: 'gated-dual-path',
     note: "orchestrator learning_item mint gated on projectionIsWriter('learning_item').",
@@ -384,7 +384,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/server/boss/handlers/quiz_gen.ts',
+    file: 'src/capabilities/practice/jobs/quiz_gen.ts',
     marker: '.insert(artifact)',
     role: 'off-path-writer',
     note: 'quiz_gen inserts a quiz artifact (OFF-path sole writer until the artifact flag flips).',
@@ -398,17 +398,17 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/server/ai/tools/author-artifact.ts',
+    file: 'src/capabilities/notes/server/tools/author-artifact.ts',
     marker: '.insert(artifact)',
     role: 'off-path-writer',
     note: 'author-artifact tool inserts/updates an artifact (OFF-path sole writer until the artifact flag flips).',
   },
   {
     table: 'artifact',
-    file: 'src/server/orchestrator/learning_intent.ts',
+    file: 'src/capabilities/notes/server/learning-intent-note.ts',
     marker: '.insert(artifact)',
     role: 'off-path-writer',
-    note: 'orchestrator inserts artifacts for materialized intents (OFF-path sole writer until the artifact flag flips).',
+    note: 'Notes-owned command inserts artifacts for materialized intents (OFF-path sole writer until the artifact flag flips).',
   },
   {
     table: 'artifact',

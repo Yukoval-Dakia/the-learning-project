@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { InduceConjectureResult } from '@/capabilities/agency/public';
 import type { ConjectureEvidenceImageSource } from '@/capabilities/agency/server/conjecture/evidence';
 import {
   ConjectureDiagnosticSpec,
@@ -7,7 +8,6 @@ import {
   ConjectureProbeSpecV1,
   ConjectureProbeSpecV2Base,
 } from '@/core/schema/business';
-import type { InduceConjectureResult } from '@/server/agency/conjecture/induce';
 import type { GroundingGateCandidate } from '@/server/grounding-gate/candidates';
 import { z } from 'zod';
 

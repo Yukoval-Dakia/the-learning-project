@@ -2,28 +2,11 @@ import { GoalScopeIntentSchema } from '@/kernel/task-intents';
 import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
 import type { ToolContext } from '@/server/ai/tools/types';
 import type { ZodType } from 'zod';
-import {
-  CopilotDispatchDecisionSchema,
-  CopilotEvidenceReviewOutputSchema,
-  CopilotEvidenceSourceRefSchema,
-  CopilotEvidenceVerificationOutputSchema,
-} from './legacy-task-definitions';
 import { taskCatalog } from './task-catalog';
 import { QuestionAuthorIntentSchema } from './task-intents';
 import type { TaskDefinition } from './task-spec';
 
 export type { ModelId, Provider, TaskBudget, TaskPrompt } from './task-spec';
-export {
-  CopilotDispatchDecisionSchema,
-  CopilotEvidenceReviewOutputSchema,
-  CopilotEvidenceSourceRefSchema,
-  CopilotEvidenceVerificationOutputSchema,
-};
-export type {
-  CopilotDispatchDecision,
-  CopilotEvidenceReviewOutput,
-  CopilotEvidenceVerificationOutput,
-} from './legacy-task-definitions';
 
 export type TaskPrepareResult = { readonly input: unknown; readonly ctx?: RunTaskCallCtx };
 export type TaskPrepare = (ctx: ToolContext, intent: never) => Promise<TaskPrepareResult>;

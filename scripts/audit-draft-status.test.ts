@@ -261,7 +261,7 @@ const REAL_SETTERS = [
   // draft_status='draft' setter now lives here, so this is the real site to assert.
   'src/server/questions/sourced-draft-insert.ts',
   'src/server/ai/question-author.ts',
-  'src/server/boss/handlers/quiz_gen.ts',
+  'src/capabilities/practice/jobs/quiz_gen.ts',
   'src/capabilities/ingestion/server/legacy-record-appliers.ts',
   // post-L2 explicit setters (also allowlisted, harmless-redundant):
   // (YUK-358 决定3: embedded_check_generate.ts removed with the orphan chain.)

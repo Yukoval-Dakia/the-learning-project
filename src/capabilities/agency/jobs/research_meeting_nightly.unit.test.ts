@@ -10,16 +10,16 @@ import type {
   EvidenceCell,
   LoadedConjectureEvidenceImage,
 } from '@/capabilities/agency/server/conjecture/evidence';
+import {
+  ConjectureInductionOperationalError,
+  type InduceConjectureInput,
+  type InduceConjectureResult,
+} from '@/capabilities/agency/server/conjecture/induce';
 import type {
   FailureAttempt,
   FailureAttemptWithReasoningTrace,
 } from '@/capabilities/knowledge/public';
 import type { WriteEventInput } from '@/kernel/events';
-import {
-  ConjectureInductionOperationalError,
-  type InduceConjectureInput,
-  type InduceConjectureResult,
-} from '@/server/agency/conjecture/induce';
 import { classifyJobYield } from '@/server/boss/job-yield';
 import type { PredictionAccountability } from '@/server/conjectures/accountability';
 import type { MasteryProjection } from '@/server/mastery/state';

@@ -6,8 +6,8 @@ import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { getArtifactCorrectionState } from '@/server/events/artifact-corrections';
 import { eq } from 'drizzle-orm';
+import { getArtifactCorrectionState } from '../server/artifact-corrections';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
