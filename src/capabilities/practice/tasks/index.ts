@@ -23,7 +23,6 @@ export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
     legacyTaskDefinitions.SourceGroundingVerifyTask,
   ),
   VariantVerifyTask: defineTransitionalTask(legacyTaskDefinitions.VariantVerifyTask),
-  TeachingTurnTask: defineTransitionalTask(legacyTaskDefinitions.TeachingTurnTask),
   SolutionGenerateTask: solutionGenerateTaskSpec,
   SolutionGenerateVisionTask: solutionGenerateVisionTaskSpec,
   QuizGenTask: quizGenTaskSpec,

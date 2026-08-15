@@ -15,10 +15,10 @@
 //
 // Mirror tool-use events still flow via mcp-bridge (caller actor is agent).
 
-import { type CopilotDispatchDecision, CopilotDispatchDecisionSchema } from '@/ai/registry';
 import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
+import { type CopilotDispatchDecision, CopilotDispatchDecisionSchema } from '../contracts';
 
 // YUK-575 (A1) — shared free-form run-input assembler (single execution point for
 // inline + durable copilot runs).

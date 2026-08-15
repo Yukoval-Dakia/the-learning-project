@@ -20,7 +20,14 @@ import {
 import { learningIntentOutlineTaskSpec } from '@/capabilities/agency/tasks/learning-intent';
 import { memoryBriefTaskSpec } from '@/capabilities/agency/tasks/memory-brief';
 import { researchMeetingDirectorTaskSpec } from '@/capabilities/agency/tasks/research-meeting-director';
+import { copilotTaskSpec } from '@/capabilities/copilot/tasks/agent';
+import { copilotDispatchTaskSpec } from '@/capabilities/copilot/tasks/dispatch';
+import {
+  copilotEvidenceReviewTaskSpec,
+  copilotEvidenceVerificationTaskSpec,
+} from '@/capabilities/copilot/tasks/evidence';
 import { copilotTaskSpecs } from '@/capabilities/copilot/tasks/index';
+import { teachingTurnTaskSpec } from '@/capabilities/copilot/tasks/teaching-turn';
 import { blockAssemblyTaskSpec } from '@/capabilities/ingestion/tasks/block-assembly';
 import { coldStartPlacementBridgeTaskSpec } from '@/capabilities/ingestion/tasks/cold-start-bridge';
 import { ingestionTaskSpecs } from '@/capabilities/ingestion/tasks/index';
@@ -143,12 +150,12 @@ const OWNER_MAPS = {
 } as const;
 
 const EXPECTED_OWNER_COUNTS = {
-  practice: 19,
+  practice: 18,
   notes: 3,
   ingestion: 8,
   knowledge: 4,
   agency: 13,
-  copilot: 4,
+  copilot: 5,
 } as const;
 
 const OWNED_SPECS: ReadonlySet<object> = new Set([
@@ -162,6 +169,11 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   itemPriorTaskSpec,
   selectionOrchestratorTaskSpec,
   sourcingTaskSpec,
+  copilotDispatchTaskSpec,
+  copilotEvidenceReviewTaskSpec,
+  copilotEvidenceVerificationTaskSpec,
+  copilotTaskSpec,
+  teachingTurnTaskSpec,
   noteGenerateTaskSpec,
   noteRefineTaskSpec,
   noteVerifyTaskSpec,
@@ -504,8 +516,39 @@ describe('taskCatalog', () => {
     }
   });
 
-  it('retains 37 full owned TaskSpecs and 14 identity-backed transitional entries', () => {
-    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(14);
+  it('owns the five Copilot TaskSpecs without central quarry definitions', () => {
+    const expected = {
+      CopilotDispatchTask: copilotDispatchTaskSpec,
+      CopilotEvidenceReviewTask: copilotEvidenceReviewTaskSpec,
+      CopilotEvidenceVerificationTask: copilotEvidenceVerificationTaskSpec,
+      CopilotTask: copilotTaskSpec,
+      TeachingTurnTask: teachingTurnTaskSpec,
+    } as const;
+
+    for (const [kind, spec] of Object.entries(expected)) {
+      const entry = copilotTaskSpecs[kind as keyof typeof copilotTaskSpecs];
+      expect(entry.ownership, kind).toBe('owned');
+      expect(entry, kind).toBe(spec);
+      expect(entry.definition, kind).toBe(taskCatalog[kind as keyof typeof taskCatalog]);
+      expect(entry.parseText, kind).toBeTypeOf('function');
+      expect(entry.outputSchema.safeParse, kind).toBeTypeOf('function');
+    }
+
+    const source = readFileSync(new URL('./legacy-task-definitions.ts', import.meta.url), 'utf8');
+    for (const kind of Object.keys(expected)) {
+      expect(source, kind).not.toMatch(new RegExp(`^  ${kind}:`, 'm'));
+    }
+    for (const builder of ['buildTeachingTurnPrompt']) {
+      expect(source, builder).not.toContain(`function ${builder}`);
+    }
+    expect(source).not.toContain('CopilotDispatchDecisionSchema');
+    expect(source).not.toContain('CopilotEvidenceReviewOutputSchema');
+    expect(source).not.toContain('CopilotEvidenceVerificationOutputSchema');
+    expect(source).not.toContain('CopilotEvidenceSourceRefSchema');
+  });
+
+  it('retains 42 full owned TaskSpecs and 9 identity-backed transitional entries', () => {
+    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(9);
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
         if (entry.ownership === 'owned') {

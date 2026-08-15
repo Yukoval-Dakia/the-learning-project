@@ -72,7 +72,7 @@ describe('sanitizeJsonStringLiterals', () => {
 // ---------------------------------------------------------------------------
 // Integration: parseTurnOutput picks up the sanitizer on bad control chars
 // ---------------------------------------------------------------------------
-import { TeachingError, parseTurnOutput } from './teaching';
+import { TeachingError, parseTurnOutput } from '@/capabilities/copilot/server/teaching';
 
 describe('parseTurnOutput — control-char resilience', () => {
   it('parses an explain turn that contains a bare newline in text_md', () => {

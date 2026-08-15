@@ -4,6 +4,10 @@ export {
   listBacklinks,
   resolveOwningLearningItemIds,
 } from './server/block-refs';
+// YUK-878 — the teaching context loader (copilot capability) projects an
+// artifact's body blocks into note sections; expose the single projection
+// instead of a deep import into notes/server.
+export { bodyBlocksToNoteSections } from './server/body-blocks';
 export type { BacklinksByArtifactType } from './server/block-refs';
 export {
   interactiveForKnowledge,
