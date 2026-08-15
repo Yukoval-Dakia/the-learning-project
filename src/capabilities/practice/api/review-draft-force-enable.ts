@@ -10,10 +10,10 @@
 // non-soft-archived drafts may be force-promoted). Auth is enforced upstream by the
 // /api/* internal-token middleware.
 
+import type { RunTaskFn } from '@/capabilities/practice/jobs/quiz_verify';
+import { verifyAndPromote } from '@/capabilities/practice/server/quiz/verify-and-promote';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
-import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
-import { verifyAndPromote } from '@/server/quiz/verify-and-promote';
 import { DraftForceEnableBodySchema } from './draft-moderation-contracts';
 
 // The override branch never consults runTaskFn (no AI on force-enable), but the gate

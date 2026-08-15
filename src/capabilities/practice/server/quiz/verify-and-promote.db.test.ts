@@ -12,16 +12,16 @@
 import { and, eq, ne } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import type {
   QuizVerifyPerQuestionStatus,
   RunQuizVerifyResult,
-} from '@/server/boss/handlers/quiz_verify';
+} from '@/capabilities/practice/jobs/quiz_verify';
 import type {
   RunSourceVerifyResult,
   SourceVerifyPerQuestionStatus,
-} from '@/server/boss/handlers/source_verify';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+} from '@/capabilities/practice/jobs/source_verify';
+import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { verifyAndPromote } from './verify-and-promote';
 
 async function seedKnowledge(id: string, domain = 'yuwen', archivedAt: Date | null = null) {

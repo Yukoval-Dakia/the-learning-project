@@ -80,7 +80,7 @@ async function main() {
   const { knowledge, question, event } = await import('@/db/schema');
   const { and, asc, eq, inArray } = await import('drizzle-orm');
   const { runQuizGen } = await import('@/capabilities/practice/jobs/quiz_gen');
-  const { runQuizVerify } = await import('@/server/boss/handlers/quiz_verify');
+  const { runQuizVerify } = await import('@/capabilities/practice/jobs/quiz_verify');
   const { makeRunTaskFn } = await import('@/server/ai/runner-fn');
 
   const runTaskFn = makeRunTaskFn(db);

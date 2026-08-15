@@ -254,7 +254,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'mistake_variant',
-    file: 'src/server/boss/handlers/variant_verify.ts',
+    file: 'src/capabilities/practice/jobs/variant_verify.ts',
     marker: "projectionIsWriter('mistake_variant')",
     role: 'gated-dual-path',
     note: "variant_verify update gated on projectionIsWriter('mistake_variant').",

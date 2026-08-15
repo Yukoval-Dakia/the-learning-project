@@ -82,8 +82,8 @@ import {
   mergeExactQuestionDuplicateKnowledgeIds,
 } from '../server/quiz/content-fingerprint';
 
-import { maxNgramOverlap } from '@/server/boss/handlers/quiz_verify';
-import { DEDUP_OVERLAP_THRESHOLD } from '@/server/boss/handlers/source_verify';
+import { maxNgramOverlap } from './quiz_verify';
+import { DEDUP_OVERLAP_THRESHOLD } from './source_verify';
 import { matchesWhitelist } from './sourcing';
 
 // Only 'knowledge' + 'manual' — jyeoo_fetch is auto-dispatched by the supply dispatcher

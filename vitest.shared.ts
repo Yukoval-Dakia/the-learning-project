@@ -371,7 +371,7 @@ export const fastTestInclude = [
   // that the conservative semantic path only forwards — no live Postgres / AI. The
   // transitive @/db/client import (via question-contract → runSemanticJudge) is
   // type-only; same safe surface as the judges unit tests above.
-  'src/server/quiz/verify-framework.test.ts',
+  'src/capabilities/practice/server/quiz/verify-framework.test.ts',
   // YUK-608 (异源 solve/verify) — pure env-read resolver for the scoped solve_check
   // provider/model override + fail-open pre-flight. Imports only providers.ts →
   // registry.ts (type/zod-only surface), reads process.env; no DB / AI / pg-boss.

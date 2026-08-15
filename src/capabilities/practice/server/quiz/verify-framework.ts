@@ -1,10 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import {
-  PlacementStarterAdmissionError,
-  PlacementStarterStaleAuthorityError,
-  type PlacementVerificationAuthority,
-  assertPlacementAuthority,
-} from '@/capabilities/practice/public';
 // YUK-216 S2 (题源扩展 Strategy D) — slice 1 verification-gate framework.
 //
 // docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §4
@@ -51,6 +45,12 @@ import {
 } from '@/server/ai/provenance';
 import type { Provider } from '@/server/ai/providers';
 import type { SubjectProfile } from '@/subjects/profile';
+import {
+  PlacementStarterAdmissionError,
+  PlacementStarterStaleAuthorityError,
+  type PlacementVerificationAuthority,
+  assertPlacementAuthority,
+} from '../question-supply/placement-starter-attempts';
 
 const SOLUTION_GENERATE_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(SolutionGenerateOutput);
 

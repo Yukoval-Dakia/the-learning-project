@@ -30,13 +30,17 @@ import { practiceTaskSpecs } from '@/capabilities/practice/tasks/index';
 import { itemPriorTaskSpec } from '@/capabilities/practice/tasks/item-prior';
 import { questionAuthorTaskSpec } from '@/capabilities/practice/tasks/question-author';
 import { quizGenTaskSpec } from '@/capabilities/practice/tasks/quiz-generation';
+import { quizVerifyTaskSpec } from '@/capabilities/practice/tasks/quiz-verify';
 import { selectionOrchestratorTaskSpec } from '@/capabilities/practice/tasks/selection-orchestrator';
 import {
   solutionGenerateTaskSpec,
   solutionGenerateVisionTaskSpec,
 } from '@/capabilities/practice/tasks/solution-generation';
+import { sourceGroundingVerifyTaskSpec } from '@/capabilities/practice/tasks/source-grounding-verify';
 import { sourcingTaskSpec } from '@/capabilities/practice/tasks/sourcing';
+import { teachingQualityTaskSpec } from '@/capabilities/practice/tasks/teaching-quality';
 import { variantGenTaskSpec } from '@/capabilities/practice/tasks/variant-gen';
+import { variantVerifyTaskSpec } from '@/capabilities/practice/tasks/variant-verify';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { legacyTaskDefinitions } from './legacy-task-definitions';
@@ -143,6 +147,10 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   itemPriorTaskSpec,
   selectionOrchestratorTaskSpec,
   sourcingTaskSpec,
+  quizVerifyTaskSpec,
+  sourceGroundingVerifyTaskSpec,
+  variantVerifyTaskSpec,
+  teachingQualityTaskSpec,
   noteGenerateTaskSpec,
   noteRefineTaskSpec,
   noteVerifyTaskSpec,
@@ -402,8 +410,10 @@ describe('taskCatalog', () => {
     }
   });
 
-  it('retains 24 full owned TaskSpecs and 27 identity-backed transitional entries', () => {
-    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(27);
+  it('retains 28 full owned TaskSpecs and 23 identity-backed transitional entries', () => {
+    // YUK-868 — QuizVerifyTask / SourceGroundingVerifyTask / VariantVerifyTask /
+    // TeachingQualityTask moved from transitional to practice-owned specs.
+    expect(Object.keys(legacyTaskDefinitions)).toHaveLength(23);
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
         if (entry.ownership === 'owned') {
@@ -422,6 +432,10 @@ describe('taskCatalog', () => {
     expect(practiceTaskSpecs.AttributionTask).toBe(attributionTaskSpec);
     expect(practiceTaskSpecs.AttributionRerankTask).toBe(attributionRerankTaskSpec);
     expect(practiceTaskSpecs.VariantGenTask).toBe(variantGenTaskSpec);
+    expect(practiceTaskSpecs.QuizVerifyTask).toBe(quizVerifyTaskSpec);
+    expect(practiceTaskSpecs.SourceGroundingVerifyTask).toBe(sourceGroundingVerifyTaskSpec);
+    expect(practiceTaskSpecs.VariantVerifyTask).toBe(variantVerifyTaskSpec);
+    expect(practiceTaskSpecs.TeachingQualityTask).toBe(teachingQualityTaskSpec);
     expect(notesTaskSpecs.NoteGenerateTask).toBe(noteGenerateTaskSpec);
     expect(notesTaskSpecs.NoteRefineTask).toBe(noteRefineTaskSpec);
     expect(notesTaskSpecs.NoteVerifyTask).toBe(noteVerifyTaskSpec);

@@ -1,7 +1,6 @@
 import { db } from '@/db/client';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { archiveQuestion } from '@/server/questions/write';
-import { verifyAndPromote } from '@/server/quiz/verify-and-promote';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb } from '../../../../../tests/helpers/db';
@@ -10,6 +9,7 @@ import {
   findExactQuestionDuplicate,
   mergeExactQuestionDuplicateKnowledgeIds,
 } from './content-fingerprint';
+import { verifyAndPromote } from './verify-and-promote';
 
 async function seed(id: string, draftStatus: string | null, knowledgeIds: string[] = []) {
   const content = { promptMd: 'P', referenceMd: 'A', choicesMd: ['x', 'y'] };

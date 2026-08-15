@@ -21,10 +21,7 @@ import { buildPruneJobEventsHandler } from './handlers/prune_job_events';
 import { buildPruneOrphanConversationSessionsHandler } from './handlers/prune_orphan_conversation_sessions';
 import { buildPruneOrphanPlacementSessionsHandler } from './handlers/prune_orphan_placement_sessions';
 import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_review_sessions';
-import { buildQuizVerifyHandler } from './handlers/quiz_verify';
 import { buildSessionSummaryHandler } from './handlers/session_summary';
-import { buildSourceVerifyHandler } from './handlers/source_verify';
-import { buildVariantVerifyHandler } from './handlers/variant_verify';
 import {
   VERIFY_DISPATCH_RECOVERY_QUEUE,
   buildVerifyDispatchRecoveryHandler,
@@ -43,7 +40,6 @@ import {
 //   - prune_job_events / prune_orphan_* / promote_conversation_idle（FAST housekeeping cron）
 //   - registerMemoryHandlers（memory_* 队列归 memory 模块）
 //   - session_summary（链式 LLM）
-//   - quiz_verify / source_verify / variant_verify
 //   - tencent_ocr_extract（0.5s polling + lazy r2 getter）/ auto_enroll
 //   - 未迁域：ingestion（auto_enroll / tencent_ocr_extract 待 ingestion 包 jobs 声明）
 
@@ -144,35 +140,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     buildSessionSummaryHandler(db),
   );
 
-  // Q5 + Q6 (same wave §3 / §5): QuizVerifyTask — chained behind quiz_gen, which
-  // sends `quiz_verify` { question_ids } after writing draft questions. The
-  // single-shot CLOSED-BOOK verifier runs the 3 checks (grounding / copy_safety /
-  // knowledge-hit) + a deterministic n-gram overlap, then gates Option B: on pass
-  // it promotes draft_status 'draft'→'active' AND FSRS-enrolls the question
-  // (initial material_fsrs_state via the single-owner enroll path) so it enters
-  // the review pool; on needs_review / fail / too_close the draft stays out of the
-  // pool. Idempotent per question via the chained verify event guard.
-  // batchSize=1 keeps mimo rate-limit friendly.
-  await createJobQueue(boss, 'quiz_verify', EXPIRE_AGENT);
-  await boss.work(
-    'quiz_verify',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildQuizVerifyHandler(db),
-  );
-
-  // source_verify — chained behind sourcing. Runs the tier-2 check set
-  // (structure_completeness + source_consistency + solve_check + dedup, from
-  // verify-framework.ts) and gates Option B: pass → promote draft→active +
-  // FSRS-enroll (enters the review pool); fail → stays draft. Idempotent per
-  // question via the chained verify event guard. batchSize=1 keeps mimo
-  // rate-limit friendly.
-  await createJobQueue(boss, 'source_verify', EXPIRE_AGENT);
-  await boss.work(
-    'source_verify',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildSourceVerifyHandler(db),
-  );
-
   // YUK-700 — startup + nightly safety net for drafts whose verify enqueue was
   // interrupted. Recovery reads durable per-question intents and enqueues ONLY
   // source_verify/quiz_verify; it never reruns sourcing or quiz_gen.
@@ -208,16 +175,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     VERIFY_DISPATCH_RECOVERY_QUEUE,
     { trigger: 'startup' },
     { singletonKey: 'verify-dispatch-startup' },
-  );
-
-  // YUK-17 / ADR-0018 — second-pass content alignment check for accepted
-  // variants. Enqueued by acceptAiProposal after a variant_question proposal
-  // is accepted; verdict='fail' flips mistake_variant.status to 'broken'.
-  await createJobQueue(boss, 'variant_verify', EXPIRE_LLM);
-  await boss.work(
-    'variant_verify',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildVariantVerifyHandler(db),
   );
 
   // Step 9: Tencent OCR Mark Agent —— 生产 async job

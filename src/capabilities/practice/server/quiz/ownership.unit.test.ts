@@ -11,9 +11,18 @@ const RETIRED_QUIZ_MODULES = [
   'selection-miss',
   'solve-lane',
   'sourcing-sequence',
+  'verify-and-promote',
+  'verify-framework',
 ] as const;
 
-const RETIRED_JOB_MODULES = ['sourcing', 'jyeoo-fetch', 'quiz_gen'] as const;
+const RETIRED_JOB_MODULES = [
+  'sourcing',
+  'jyeoo-fetch',
+  'quiz_gen',
+  'quiz_verify',
+  'source_verify',
+  'variant_verify',
+] as const;
 const OWNERSHIP_TEST = 'src/capabilities/practice/server/quiz/ownership.unit.test.ts' as const;
 
 function sourceFiles(directory: string): string[] {
@@ -27,7 +36,7 @@ function sourceFiles(directory: string): string[] {
   });
 }
 
-describe('Practice quiz sourcing and generation ownership', () => {
+describe('Practice quiz sourcing, generation, and verification ownership', () => {
   it('keeps predecessor modules deleted and rejects their legacy import paths', () => {
     const root = process.cwd();
     const retiredFiles = [
@@ -59,6 +68,9 @@ describe('Practice quiz sourcing and generation ownership', () => {
       ['@/capabilities/practice', 'jobs/sourcing'].join('/'),
       ['@/capabilities/practice', 'jobs/jyeoo-fetch'].join('/'),
       ['@/capabilities/practice', 'jobs/quiz_gen'].join('/'),
+      ['@/capabilities/practice', 'jobs/quiz_verify'].join('/'),
+      ['@/capabilities/practice', 'jobs/source_verify'].join('/'),
+      ['@/capabilities/practice', 'jobs/variant_verify'].join('/'),
     ];
     const deepConsumers = sourceFiles(resolve(root, 'src'))
       .filter((path) => !path.startsWith(`${practiceRoot}/`))

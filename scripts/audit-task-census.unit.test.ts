@@ -379,9 +379,18 @@ describe('live taskCatalog census', () => {
     expect(result.registrationEvidence.some((item) => item.registration === 'manifest-job')).toBe(
       true,
     );
-    expect(result.registrationEvidence.some((item) => item.registration === 'legacy-handler')).toBe(
-      true,
+    // YUK-868 — the verify handlers were the last task-invoking legacy central
+    // registrations; they are Practice-owned manifest jobs now, so the census no
+    // longer requires a legacy-handler link. Pin the three verify jobs as
+    // manifest-registered instead (the forward invariant).
+    const manifestNames = new Set(
+      result.registrationEvidence
+        .filter((item) => item.registration === 'manifest-job')
+        .map((item) => item.registrationName),
     );
+    for (const name of ['quiz_verify', 'source_verify', 'variant_verify']) {
+      expect(manifestNames, name).toContain(name);
+    }
     expect(result.registrationEvidence.every((item) => item.kind.length > 0)).toBe(true);
     expect(result.runLogContract).toEqual({
       schemaTaskKindColumn: true,
