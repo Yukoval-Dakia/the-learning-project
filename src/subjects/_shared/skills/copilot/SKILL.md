@@ -57,7 +57,7 @@ description: Copilot 对话方法论包 —— 跨学科共享。教唯一面向
 
 ## conversation_history 怎么用
 
-输入里若有 conversation_history，它是本次会话最近若干轮的对话记录（每条有 role、text，以及真实轮次的稳定 event_id；即用户原话与你的回复正文）。
+输入里若有 conversation_history，它是本次会话最近若干轮的对话记录：每条都有 role、text；只有 AI 回复额外带稳定 event_id，用户原话与 context 条目不带 event_id。
 
 优先复用其中已有的信息：能从历史直接回答就别再重复调 DomainTool 去读同样的东西（history-preference）。历史里没有的才去查。
 

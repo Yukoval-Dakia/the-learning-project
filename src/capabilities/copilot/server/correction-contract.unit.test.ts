@@ -3,6 +3,25 @@ import { describe, expect, it } from 'vitest';
 import { resolveCorrectionReply } from './correction-contract';
 
 describe('resolveCorrectionReply', () => {
+  it('fails closed when an explicit target reply omits the correction envelope', () => {
+    const targetId = 'copilot_reply_water_tank_d02';
+
+    const result = resolveCorrectionReply('已把水箱题改正为 h*=4/9，k 不变。', {
+      target_prior_turn_id: targetId,
+      available_prior_turn_ids: [targetId, 'copilot_reply_battery_d04'],
+      prior_turn_summaries: {
+        [targetId]: '水箱 D02：h*=4/9，使用同一个 k。',
+        copilot_reply_battery_d04: '电池 D04：先按当前电量估算。',
+      },
+      required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+    });
+
+    expect(result.kind).toBe('clarify');
+    expect(result.reply).toContain('上一轮是「电池 D04：先按当前电量估算。」');
+    expect(result.reply).toContain('上上轮是「水箱 D02：h*=4/9，使用同一个 k。」');
+    expect(result.reply).not.toContain('已把水箱题改正');
+  });
+
   it('keeps only the explicit target and renders changed retained and uncertain facts', () => {
     const targetId = 'copilot_reply_water_tank_d02';
 
@@ -11,6 +30,10 @@ describe('resolveCorrectionReply', () => {
       {
         target_prior_turn_id: targetId,
         available_prior_turn_ids: [targetId, 'copilot_reply_battery_d04'],
+        prior_turn_summaries: {
+          [targetId]: '水箱 D02：h*=4/9，使用同一个 k。',
+          copilot_reply_battery_d04: '电池 D04：先按当前电量估算。',
+        },
         required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
       },
     );

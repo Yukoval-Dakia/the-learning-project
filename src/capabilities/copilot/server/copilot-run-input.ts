@@ -52,9 +52,10 @@ export function selectActorRef(triggeredBy: CopilotTriggeredBy): string {
   return triggeredBy === 'chip' ? 'agent:copilot_chip' : 'agent:copilot';
 }
 
-// YUK-267 (C2) — the minimal history shape carried in the run input. ONLY role +
-// text (the persisted ask原文 / reply正文); everything else from the turn row is
-// EXPLICITLY dropped (防循环 ①/⑤). YUK-574 adds the 'context' role for the pinned
+// YUK-267 (C2) — the minimal history shape carried in the run input. Every entry
+// keeps role + text; AI replies additionally retain their stable event_id so a
+// correction can bind one exact prior answer. All other turn-row fields are
+// explicitly dropped (防循环 ①/⑤). YUK-574 adds the 'context' role for the pinned
 // learner-state header (a deterministic projection, NOT a persisted turn — it is
 // prepended fresh from the session-anchored cache and never read back from turns).
 export interface CopilotHistoryTurn {
@@ -85,11 +86,10 @@ export interface CopilotRunInput {
 
 // YUK-267 (C2) — assemble the bounded, history-only conversation_history from the
 // session-scoped turn reader. 防循环 invariants enforced here:
-//   ① each entry is {role, text} ONLY — NO skill_turn / skill_context / session_id
-//      / reply_event_id / event_id / at, and certainly NO prior-run assembly
-//      artifact (conversation_history / proposal_feedback / ambient_context). The
-//      reader only exposes role+text (turns.ts), so this map is the structural
-//      guarantee (防循环 ⑤ test feeds a polluted row and asserts {role,text} only).
+//   ① each entry keeps role + text; AI replies alone also keep event_id. NO
+//      skill_turn / skill_context / session_id / reply_event_id / at, and certainly
+//      NO prior-run assembly artifact (conversation_history / proposal_feedback /
+//      ambient_context). This explicit projection is the structural guarantee.
 //   ④ DOUBLE truncation — per-turn char cap, then whole-array char cap dropping the
 //      OLDEST turns first until the serialized array fits (recency matters most).
 // `turns` arrive oldest→newest (the reader reverses to chronological). We keep the
@@ -117,7 +117,7 @@ export function assembleConversationHistory(
         turn.role === 'user' || turn.role === 'ai',
     )
     .slice(-budget.maxTurns);
-  // 防循环 ① — strip to {role, text} ONLY, then per-turn truncate (防循环 ④).
+  // 防循环 ① — project role + text and AI event_id only, then per-turn truncate (防循环 ④).
   const mapped: CopilotHistoryTurn[] = recent.map((t) => ({
     role: t.role,
     text: t.text.length > budget.perTurnChars ? t.text.slice(0, budget.perTurnChars) : t.text,
@@ -277,6 +277,21 @@ export async function assembleCopilotRunInput(
         : {}),
       available_prior_turn_ids: conversationHistory.flatMap((turn) =>
         turn.role === 'ai' && turn.event_id !== undefined ? [turn.event_id] : [],
+      ),
+      prior_turn_summaries: conversationHistory.reduce<Record<string, string>>(
+        (summaries, turn, index) => {
+          if (turn.role === 'ai' && turn.event_id !== undefined) {
+            const priorUserTurn = conversationHistory
+              .slice(0, index)
+              .findLast((candidate) => candidate.role === 'user');
+            summaries[turn.event_id] = (priorUserTurn?.text ?? turn.text)
+              .replace(/\s+/g, ' ')
+              .trim()
+              .slice(0, 40);
+          }
+          return summaries;
+        },
+        {},
       ),
       required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
     },
