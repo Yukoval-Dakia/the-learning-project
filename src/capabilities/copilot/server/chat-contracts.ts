@@ -19,24 +19,37 @@ export const CopilotSkillContext = z.object({
 });
 export type CopilotSkillContextT = z.infer<typeof CopilotSkillContext>;
 
-export const CopilotChatRequest = z.object({
-  user_message: z.string().min(1).max(4000),
-  triggered_by: z.enum(COPILOT_CHAT_TRIGGER_KINDS),
-  chip_kind: z.string().min(1).max(80).optional(),
-  skill_context: CopilotSkillContext.optional(),
-  ambient_context: z
-    .object({
-      route: z.string().min(1).max(200),
-      focused_entity: z
-        .object({
-          kind: z.string().min(1).max(40),
-          id: z.string().min(1).max(120),
-        })
-        .optional(),
-    })
-    .optional(),
-  durable: z.boolean().optional(),
-  correction_target_turn_id: z.string().min(1).max(160).optional(),
-});
+export const CopilotChatRequest = z
+  .object({
+    user_message: z.string().min(1).max(4000),
+    triggered_by: z.enum(COPILOT_CHAT_TRIGGER_KINDS),
+    chip_kind: z.string().min(1).max(80).optional(),
+    skill_context: CopilotSkillContext.optional(),
+    ambient_context: z
+      .object({
+        route: z.string().min(1).max(200),
+        focused_entity: z
+          .object({
+            kind: z.string().min(1).max(40),
+            id: z.string().min(1).max(120),
+          })
+          .optional(),
+      })
+      .optional(),
+    durable: z.boolean().optional(),
+    correction_target_turn_id: z.string().min(1).max(160).optional(),
+  })
+  .superRefine((request, ctx) => {
+    if (
+      request.correction_target_turn_id !== undefined &&
+      request.skill_context?.skill === 'teaching'
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['correction_target_turn_id'],
+        message: 'correction_target_turn_id is not supported for teaching behavior packs',
+      });
+    }
+  });
 
 export type CopilotChatRequestT = z.infer<typeof CopilotChatRequest>;
