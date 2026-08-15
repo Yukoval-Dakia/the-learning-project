@@ -751,10 +751,9 @@ export const practiceCapability = defineCapability({
     ],
   },
   jobs: {
-    // M4-T3 (YUK-319)：practice 域 job 归属声明。rejudge（M2/D15 申诉自动重判）
-    // 注册留在 handlers.ts 渐缩簿：其注册形态是非默认 1s polling + inline 动态
-    // import handleRejudge（非 buildXHandler 工厂），不走注册器统一配方——此处
-    // 声明无 load 纯归属元数据。（YUK-349：review_plan 链式 job 已随 B3 退役。）
+    // M4-T3 (YUK-319)：practice 域 job 归属声明。（YUK-349：review_plan 链式
+    // job 已随 B3 退役。YUK-870 F3.5b：rejudge / judge_run / session_summary
+    // 三条注册自 handlers.ts 渐缩簿收编，practice 域自此无留簿注册。）
     handlers: [
       {
         name: 'sourcing',
@@ -809,11 +808,38 @@ export const practiceCapability = defineCapability({
         queue: 'llm',
         load: () => import('./jobs/variant_gen').then((m) => m.buildVariantGenHandler),
       },
-      { name: 'rejudge', queue: 'llm' },
+      // YUK-870 (F3.5b) — rejudge 注册自中央渐缩簿收编（等价平移红线：LLM 档
+      // 1h expire + DLQ、非默认 1s polling、batchSize 1——原中央行的 inline 动态
+      // import + handleRejudge 循环 flatten 成 jobs/rejudge.ts 的标准工厂）。
+      {
+        name: 'rejudge',
+        queue: 'llm',
+        pollingIntervalSeconds: 1,
+        batchSize: 1,
+        load: () => import('./jobs/rejudge').then((m) => m.buildRejudgeHandler),
+      },
       // YUK-594 (durable judge main path, W1) — durable judge_run（异步为主路径）。
-      // 注册留 handlers.ts 渐缩簿：形态要 includeMetadata:true 读 retryCount 驱动
-      // 跨 provider lane 决策（D9），非注册器统一配方——此处无 load 纯归属元数据。
-      { name: 'judge_run', queue: 'llm' },
+      // YUK-870 (F3.5b) — 注册自中央渐缩簿收编：includeMetadata:true 读
+      // retryCount 驱动跨 provider lane 决策（D9），2s polling 与原中央行等价。
+      {
+        name: 'judge_run',
+        queue: 'llm',
+        pollingIntervalSeconds: 2,
+        batchSize: 1,
+        includeMetadata: true,
+        load: () => import('./jobs/judge_run').then((m) => m.buildJudgeRunHandler),
+      },
+      // YUK-870 (F3.5b) — Phase 1d session_summary 注册自中央渐缩簿收编（等价
+      // 平移红线：LLM 档 1h expire + DLQ、2s/1 worker 选项——与原中央行显式 opts
+      // 相同；handler 实现已随 jobs/session_summary.ts 迁入本包；TaskSpec 归
+      // practice owner map，中央 semantic quarry 至此零 transitional entry）。
+      {
+        name: 'session_summary',
+        queue: 'llm',
+        pollingIntervalSeconds: 2,
+        batchSize: 1,
+        load: () => import('./jobs/session_summary').then((m) => m.buildSessionSummaryHandler),
+      },
       // YUK-777 A3 — durable judge 的 domain-state-scan reconcile sweeper。扫「作答已录、
       // 判词未落」的 pending attempt，经同一 rate-limited 入队面重投 judge_run。自身不做
       // LLM 调用（付费发生在 judge_run），故 fast 层。
