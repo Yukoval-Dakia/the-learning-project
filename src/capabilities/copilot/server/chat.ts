@@ -179,7 +179,7 @@ export interface CopilotSkillTurn {
 //   • SDK outputFormat — the 2026-06-08 structured-output audit rules CopilotTask
 //     plain-text-ok / 保持现状; forcing whole-reply JSON would destroy the
 //     YUK-266 streaming prose deltas, and mimo-endpoint honor is unproven (the
-//     dual-path fallback in src/server/boss/handlers/variant_verify.ts ~:102-125
+//     dual-path fallback in src/capabilities/practice/jobs/variant_verify.ts ~:102-125
 //     exists precisely because of that).
 // The marker is parsed + STRIPPED server-side at the single reply convergence
 // point (extractPrimaryView below), so reply_md / the API reply / replayed

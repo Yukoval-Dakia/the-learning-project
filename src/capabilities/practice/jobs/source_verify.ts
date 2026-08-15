@@ -28,9 +28,6 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
-import { SupplyTraceV1 } from '@/capabilities/practice/public';
-import { lockPlacementSupplyScopes } from '@/capabilities/practice/public';
-import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import { WebSourcedProvenance } from '@/core/schema/provenance';
@@ -48,6 +45,10 @@ import {
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
+import { initialFsrsState } from '../server/fsrs';
+import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
+import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
 import {
   type SolveCheckImageFetchFn,
   type SolveCheckQuestion,
@@ -55,8 +56,7 @@ import {
   type VerifyCheck,
   checksForTier,
   runSolveCheck,
-} from '@/server/quiz/verify-framework';
-import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
+} from '../server/quiz/verify-framework';
 import { maxNgramOverlap } from './quiz_verify';
 
 export interface SourceVerifyJobData {

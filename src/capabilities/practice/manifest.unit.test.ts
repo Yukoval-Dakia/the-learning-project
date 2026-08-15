@@ -21,6 +21,30 @@ describe('practice manifest jobs', () => {
     }
   });
 
+  // YUK-868 — verification + promotion job ownership. Queue tiers must mirror the
+  // retired central registrations byte-for-byte: quiz_verify / source_verify were
+  // EXPIRE_AGENT (agent), variant_verify was EXPIRE_LLM (llm); none used
+  // includeMetadata, so the registrar's {2s, batchSize 1} default worker options
+  // preserve the old handlers.ts registration exactly.
+  it('owns verification with exact queue tiers and no includeMetadata', () => {
+    const handlers = practiceCapability.jobs?.handlers ?? [];
+    const expected = {
+      quiz_verify: 'agent',
+      source_verify: 'agent',
+      variant_verify: 'llm',
+    } as const;
+
+    for (const [name, queue] of Object.entries(expected)) {
+      const job = handlers.find((candidate) => candidate.name === name);
+      expect(job?.queue, name).toBe(queue);
+      expect(typeof job?.load, name).toBe('function');
+      expect(job && 'includeMetadata' in job ? job.includeMetadata : undefined, name).toBe(
+        undefined,
+      );
+      expect(job?.schedule, name).toBeUndefined();
+    }
+  });
+
   it('owns both durable Failure Learning stages', () => {
     const handlers = practiceCapability.jobs?.handlers ?? [];
     for (const name of ['attribution_followup', 'variant_gen']) {

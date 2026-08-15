@@ -13,7 +13,7 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { readAgentNotes } from '@/capabilities/agency/server/notes';
+import { readAgentNotes } from '@/capabilities/agency/public';
 import {
   buildCoverageEvidenceDemand,
   buildSupplyTrace,

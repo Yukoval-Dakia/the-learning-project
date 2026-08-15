@@ -3,7 +3,7 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 546,
+      "total": 564,
       "byOwnerPair": {
         "agency -> ai": 35,
         "agency -> boss": 10,
@@ -63,22 +63,21 @@
         "observability -> export": 2,
         "observability -> r2": 2,
         "observability -> subjects": 14,
-        "practice -> advisory-locks": 4,
-        "practice -> ai": 47,
+        "practice -> advisory-locks": 7,
+        "practice -> ai": 62,
         "practice -> artifacts": 1,
-        "practice -> boss": 21,
+        "practice -> boss": 17,
         "practice -> calibration": 3,
         "practice -> coldstart": 1,
-        "practice -> events": 10,
-        "practice -> fsrs": 5,
+        "practice -> events": 12,
+        "practice -> fsrs": 8,
         "practice -> http": 4,
         "practice -> mastery": 26,
         "practice -> memory": 1,
         "practice -> orchestrator": 1,
-        "practice -> projections": 2,
+        "practice -> projections": 5,
         "practice -> proposals": 5,
         "practice -> questions": 7,
-        "practice -> quiz": 4,
         "practice -> r2": 1,
         "practice -> records": 1,
         "practice -> revert": 1,
@@ -92,13 +91,12 @@
       }
     },
     "serverToCapabilityDeep": {
-      "total": 39,
+      "total": 35,
       "byOwnerPair": {
         "ai -> knowledge": 8,
         "ai -> practice": 3,
         "artifacts -> notes": 3,
-        "boss -> agency": 1,
-        "boss -> practice": 5,
+        "boss -> practice": 3,
         "events -> practice": 2,
         "grounding-gate -> agency": 4,
         "grounding-gate -> practice": 1,
@@ -106,14 +104,13 @@
         "memory -> knowledge": 1,
         "projections -> knowledge": 1,
         "questions -> knowledge": 4,
-        "quiz -> practice": 1,
         "revert -> knowledge": 1,
         "session -> ingestion": 1,
         "today -> shell": 1
       }
     },
     "crossCapabilityValue": {
-      "total": 70,
+      "total": 71,
       "byOwnerPair": {
         "agency -> knowledge": 8,
         "agency -> notes": 2,
@@ -132,7 +129,7 @@
         "observability -> agency": 2,
         "observability -> practice": 1,
         "onboarding -> practice": 1,
-        "practice -> agency": 2,
+        "practice -> agency": 3,
         "practice -> ingestion": 1,
         "practice -> knowledge": 20,
         "shell -> agency": 2,

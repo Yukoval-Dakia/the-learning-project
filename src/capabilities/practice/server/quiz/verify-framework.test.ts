@@ -13,8 +13,8 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   semanticJudgeOutput as semanticOutput,
   solverOutput,
-} from '../../../tests/helpers/solve-check-fixtures';
-import { teachingQualityOutput } from '../../../tests/helpers/teaching-quality-fixtures';
+} from '../../../../../tests/helpers/solve-check-fixtures';
+import { teachingQualityOutput } from '../../../../../tests/helpers/teaching-quality-fixtures';
 import {
   CHECK_SETS_BY_TIER,
   SOLVE_CHECK_SEMANTIC_THRESHOLD,

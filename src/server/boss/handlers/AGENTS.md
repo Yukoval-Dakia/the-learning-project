@@ -63,6 +63,7 @@
 ## 事件触发链（enqueue-by-event，非 cron）
 - `note_generate` / `note_verify` 由 Notes manifest 注册；同事务 intent + 提交后 deterministic dispatch 衔接，由 `hub_sync_recovery` 每分钟补投。
 - `attribution_followup`（替代 inline `after()`）→ `variant_gen`；accept 后 → `variant_verify`
+- `quiz_gen` → `quiz_verify`、`sourcing` / `jyeoo_fetch` → `source_verify`、`variant_verify` —— YUK-868 起全部由 practice/manifest 声明注册（handler 在 `src/capabilities/practice/jobs/`），中央 handlers.ts 不再登记这三条 verify 队列；`verify_dispatch_recover` 仍在此处，只补发 queue 名不变
 - `tencent_ocr_extract` —— 生产 OCR async（R2 creds 缺失不应破坏 test worker：lazy `get r2()`）
 - `session_summary` —— review session end 后 enqueue
 - `note_refine` —— 5 trigger 之一触发；NotePatch `≤3 ops AND ≤2 new blocks → mutator`，否则 propose

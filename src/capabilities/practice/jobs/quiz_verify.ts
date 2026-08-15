@@ -35,22 +35,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, ne } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
-import { writeAgentNote } from '@/capabilities/agency/server/notes';
-import { SupplyTraceV1 } from '@/capabilities/practice/public';
-import {
-  PlacementStarterAdmissionError,
-  PlacementStarterStaleAuthorityError,
-  PlacementStarterUnknownCostError,
-  type PlacementVerificationAuthority,
-  assertPlacementAuthority,
-  releaseAuthorizedPaidCall,
-  reserveAuthorizedPaidCall,
-  settleAuthorizedPaidCall,
-  terminalizePlacementUnknownCost,
-} from '@/capabilities/practice/public';
-import { lockPlacementSupplyScopes } from '@/capabilities/practice/public';
-import { resolveSolveOverrideFromEnv } from '@/capabilities/practice/public';
-import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
+import { writeAgentNote } from '@/capabilities/agency/public';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
@@ -75,6 +60,24 @@ import {
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { resolveSubjectProfile } from '@/subjects/profile';
+import type { SubjectQuestionKind } from '@/subjects/profile-schema';
+import { resolveQuizGenSkills } from '@/subjects/quiz-gen-skills';
+import { initialFsrsState } from '../server/fsrs';
+import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
+import {
+  PlacementStarterAdmissionError,
+  PlacementStarterStaleAuthorityError,
+  PlacementStarterUnknownCostError,
+  type PlacementVerificationAuthority,
+  assertPlacementAuthority,
+  releaseAuthorizedPaidCall,
+  reserveAuthorizedPaidCall,
+  settleAuthorizedPaidCall,
+  terminalizePlacementUnknownCost,
+} from '../server/question-supply/placement-starter-attempts';
+import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
+import { resolveSolveOverrideFromEnv } from '../server/quiz/solve-lane';
 import {
   type SolveCheckQuestion,
   type TeachingQualityQuestion,
@@ -84,10 +87,7 @@ import {
   runTeachingQualityCheck,
   solveCheckBlocks,
   teachingQualityBlocks,
-} from '@/server/quiz/verify-framework';
-import { resolveSubjectProfile } from '@/subjects/profile';
-import type { SubjectQuestionKind } from '@/subjects/profile-schema';
-import { resolveQuizGenSkills } from '@/subjects/quiz-gen-skills';
+} from '../server/quiz/verify-framework';
 
 export interface QuizVerifyJobData {
   question_ids: string[];

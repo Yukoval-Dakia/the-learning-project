@@ -459,7 +459,7 @@ export const practiceCapability = defineCapability({
       },
       // YUK-402 inc-4a — owner manual gate (draft 池审核面)后端。list draft pool +
       // enable (normal B5 verify→promote) + force-enable (override + reason 留痕)。
-      // gate op = verifyAndPromote (src/server/quiz/verify-and-promote.ts)；/api/*
+      // gate op = verifyAndPromote (server/quiz/verify-and-promote.ts)；/api/*
       // 自动套 internal-token。审核面属练习消费侧（draft 是 practice-pool 题）。
       {
         method: 'GET',
@@ -771,6 +771,29 @@ export const practiceCapability = defineCapability({
         queue: 'agent',
         includeMetadata: true,
         load: () => import('./jobs/quiz_gen').then((m) => m.buildQuizGenHandler),
+      },
+      // YUK-868 — verification + promotion jobs owned by Practice. Queue tiers
+      // mirror the retired central registrations byte-for-byte (quiz_verify /
+      // source_verify were EXPIRE_AGENT → 'agent'; variant_verify was EXPIRE_LLM
+      // → 'llm'); worker options come from the registrar default {2s, batchSize 1},
+      // which is exactly what handlers.ts used to pass explicitly.
+      {
+        name: 'quiz_verify',
+        queue: 'agent',
+        load: () => import('./jobs/quiz_verify').then((m) => m.buildQuizVerifyHandler),
+      },
+      {
+        name: 'source_verify',
+        queue: 'agent',
+        load: () => import('./jobs/source_verify').then((m) => m.buildSourceVerifyHandler),
+      },
+      {
+        // YUK-17 / ADR-0018 — second-pass content alignment check for accepted
+        // variants. Enqueued by acceptAiProposal after a variant_question proposal
+        // is accepted; verdict='fail' flips mistake_variant.status to 'broken'.
+        name: 'variant_verify',
+        queue: 'llm',
+        load: () => import('./jobs/variant_verify').then((m) => m.buildVariantVerifyHandler),
       },
       {
         // Durable stage 1: classify an active question failure, write the exact

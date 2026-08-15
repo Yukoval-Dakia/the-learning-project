@@ -21,7 +21,11 @@ import {
   attributionRerankTaskSpec,
   attributionTaskSpec,
 } from '@/capabilities/practice/tasks/attribution';
+import { quizVerifyTaskSpec } from '@/capabilities/practice/tasks/quiz-verify';
+import { sourceGroundingVerifyTaskSpec } from '@/capabilities/practice/tasks/source-grounding-verify';
+import { teachingQualityTaskSpec } from '@/capabilities/practice/tasks/teaching-quality';
 import { variantGenTaskSpec } from '@/capabilities/practice/tasks/variant-gen';
+import { variantVerifyTaskSpec } from '@/capabilities/practice/tasks/variant-verify';
 import {
   COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS,
   COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS,
@@ -77,6 +81,21 @@ describe('task prompt definitions', () => {
     expect(tasks.AttributionTask).toBe(attributionTaskSpec.definition);
     expect(tasks.AttributionRerankTask).toBe(attributionRerankTaskSpec.definition);
     expect(tasks.VariantGenTask).toBe(variantGenTaskSpec.definition);
+  });
+
+  // YUK-868 — the registry stays a no-op compatibility projection over the owner
+  // maps: VariantGenTask (already owned before this lane) must remain the exact
+  // variantGenTaskSpec.definition object, never a copy. The four verify tasks
+  // moved to owned practice specs this lane project through identically.
+  it('keeps the registry a no-op projection of the owned variant generation spec', () => {
+    expect(tasks.VariantGenTask === variantGenTaskSpec.definition).toBe(true);
+  });
+
+  it('statically projects the practice-owned verification task specs (YUK-868)', () => {
+    expect(tasks.QuizVerifyTask).toBe(quizVerifyTaskSpec.definition);
+    expect(tasks.SourceGroundingVerifyTask).toBe(sourceGroundingVerifyTaskSpec.definition);
+    expect(tasks.VariantVerifyTask).toBe(variantVerifyTaskSpec.definition);
+    expect(tasks.TeachingQualityTask).toBe(teachingQualityTaskSpec.definition);
   });
 
   it('defines one non-empty inline or profile prompt for every task', () => {
