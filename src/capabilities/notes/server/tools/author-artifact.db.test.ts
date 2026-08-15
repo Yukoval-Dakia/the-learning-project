@@ -7,7 +7,7 @@
 // existing artifact.version + history mechanics (body-blocks-edit.ts precedent).
 
 import { and, eq, inArray } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Artifact } from '@/core/schema';
 import { INTERACTIVE_HTML_MAX_CHARS } from '@/core/schema/business';
@@ -16,51 +16,27 @@ import type { ToolContext } from '@/kernel/tools/types';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { authorArtifactTool, updateArtifactTool } from './author-artifact';
 
-const HTML_V1 = '<!doctype html><html><body><h1>互动式元素周期表</h1></body></html>';
+const HTML_V1 =
+  '<!doctype html><html><body><h1>互动式元素周期表</h1><p>氢原子的原子序数是多少？</p></body></html>';
 const HTML_V2 = '<!doctype html><html><body><h1>互动式元素周期表 v2</h1></body></html>';
+const HTML_V3 = '<!doctype html><html><body><h1>互动式元素周期表 v3</h1></body></html>';
 
 function ctx(): ToolContext {
   return {
     db: testDb(),
     taskRunId: 'tr_author_artifact',
     callerActor: { kind: 'agent', ref: 'agent:copilot' },
-    runTaskFn: async (kind) => {
-      if (kind === 'QuizVerifyTask') {
-        return {
-          task_run_id: 'verify_author_artifact',
-          text: JSON.stringify({
-            grounding: { verdict: 'pass', reason: 'self-contained' },
-            copy_safety: { verdict: 'original', max_overlap: 0 },
-            knowledge_hit: { verdict: 'pass', reason: 'on-topic' },
-            overall: 'pass',
-            summary_md: 'consistent',
-            confidence: 0.99,
-          }),
-        };
-      }
-      if (kind === 'SolutionGenerateTask') {
-        return {
-          task_run_id: 'solve_author_artifact',
-          text: JSON.stringify({
-            reference_solution: {
-              final_answer: '氢原子的原子序数是 1。',
-              expected_signals: ['原子序数'],
-              answer_equivalents: [],
-            },
-            worked_solution_md: '查阅元素周期表。',
-            confidence: 0.99,
-          }),
-        };
-      }
-      return {
-        task_run_id: 'teaching_author_artifact',
-        text: JSON.stringify({
-          clarity: { verdict: 'pass', reason: 'clear' },
-          unique_answer: { verdict: 'pass', reason: 'one answer' },
-          summary: 'pass',
-        }),
-      };
-    },
+    validateLearningContent: async () => ({
+      verdict: 'pass',
+      items: [
+        {
+          question_id: 'hydrogen-atomic-number',
+          question_content: { task_run_id: 'verify_author_artifact' },
+          solve_check: { task_run_ids: ['solve_author_artifact'] },
+          teaching_quality: { verdict: 'pass' },
+        },
+      ],
+    }),
   };
 }
 
@@ -114,7 +90,7 @@ describe('author_artifact + update_artifact DomainTools (ADR-0033 lane D)', () =
   it('contract fields (both tools)', () => {
     expect(authorArtifactTool.name).toBe('author_artifact');
     expect(authorArtifactTool.effect).toBe('write');
-    expect(authorArtifactTool.costClass).toBe('local');
+    expect(authorArtifactTool.costClass).toBe('expensive_llm');
     expect(authorArtifactTool.mirrorEvent).toBe('when_causal');
     // mcp-bridge requires a plain ZodObject inputSchema.
     expect('shape' in authorArtifactTool.inputSchema).toBe(true);
@@ -150,7 +126,7 @@ describe('author_artifact + update_artifact DomainTools (ADR-0033 lane D)', () =
 
     expect(updateArtifactTool.name).toBe('update_artifact');
     expect(updateArtifactTool.effect).toBe('write');
-    expect(updateArtifactTool.costClass).toBe('local');
+    expect(updateArtifactTool.costClass).toBe('expensive_llm');
     expect(updateArtifactTool.mirrorEvent).toBe('when_causal');
     expect('shape' in updateArtifactTool.inputSchema).toBe(true);
     expect(
@@ -196,11 +172,12 @@ describe('author_artifact + update_artifact DomainTools (ADR-0033 lane D)', () =
     expect(attrs.origin).toBe('copilot_author_artifact');
     expect(attrs.content_validation).toMatchObject({
       verdict: 'pass',
+      html_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       items: [
         {
           question_id: 'hydrogen-atomic-number',
           question_content: { task_run_id: 'verify_author_artifact' },
-          independent_solution: { task_run_id: 'solve_author_artifact' },
+          solve_check: { task_run_ids: ['solve_author_artifact'] },
           teaching_quality: { verdict: 'pass' },
         },
       ],
@@ -272,6 +249,7 @@ describe('author_artifact + update_artifact DomainTools (ADR-0033 lane D)', () =
     expect(attrs.format).toBe('html');
     expect(attrs.summary).toBe('可点击的周期表');
     expect(attrs.origin).toBe('copilot_author_artifact');
+    expect((row.attrs as Record<string, unknown>).content_validation).toBeUndefined();
 
     // History entry follows the body-blocks-edit bookkeeping shape. NOTE: no
     // event_id — the mirror event is minted by the bridge AFTER execute returns
@@ -289,7 +267,7 @@ describe('author_artifact + update_artifact DomainTools (ADR-0033 lane D)', () =
     // Second update: v1→v2, history appends, default summary_md when absent.
     const out2 = await updateArtifactTool.execute(ctx(), {
       artifact_id: created.artifact_id,
-      html: HTML_V1,
+      html: HTML_V3,
     });
     expect(out2).toEqual({ artifact_id: created.artifact_id, previous_version: 1, version: 2 });
     const [row2] = await db.select().from(artifact).where(eq(artifact.id, created.artifact_id));
@@ -369,30 +347,16 @@ describe('author_artifact + update_artifact DomainTools (ADR-0033 lane D)', () =
 
   it('blocks a contradictory draft before the artifact insert', async () => {
     const db = testDb();
-    const baseRunTask = ctx().runTaskFn;
-    if (!baseRunTask) throw new Error('author artifact test runner unavailable');
     const badCtx: ToolContext = {
       ...ctx(),
-      runTaskFn: async (kind, input, runCtx) => {
-        if (kind === 'TeachingQualityTask') {
-          return {
-            task_run_id: 'teaching_reject',
-            text: JSON.stringify({
-              clarity: { verdict: 'fail', reason: 'givens contradict each other' },
-              unique_answer: { verdict: 'fail', reason: 'no unique answer' },
-              summary: 'reject',
-            }),
-          };
-        }
-        return baseRunTask(kind, input, runCtx);
-      },
+      validateLearningContent: async () => ({ verdict: 'fail', items: [] }),
     };
 
     await expect(
       authorArtifactTool.execute(badCtx, {
         type: 'interactive',
         title: '矛盾的球面变化率题',
-        html: HTML_V1,
+        html: '<html><body><p>放气时 r=2，dr/dt=+3，且 dS/dt=-48π。求 dV/dt。</p></body></html>',
         content_validation: {
           subject_id: 'math',
           questions: [
@@ -409,5 +373,38 @@ describe('author_artifact + update_artifact DomainTools (ADR-0033 lane D)', () =
       }),
     ).rejects.toThrow(/learning content validation failed/);
     expect(await db.select({ id: artifact.id }).from(artifact)).toEqual([]);
+  });
+
+  it('allows unassessed HTML without provider validation', async () => {
+    const validation = vi.fn();
+    const out = await authorArtifactTool.execute(
+      { ...ctx(), validateLearningContent: validation },
+      {
+        type: 'interactive',
+        title: '静态元素图谱',
+        html: HTML_V2,
+      },
+    );
+
+    expect(validation).not.toHaveBeenCalled();
+    const [row] = await testDb().select().from(artifact).where(eq(artifact.id, out.artifact_id));
+    expect((row.attrs as Record<string, unknown>).content_validation).toBeUndefined();
+  });
+
+  it('rejects assessed HTML without a manifest or with an unrelated manifest', async () => {
+    await expect(
+      authorArtifactTool.execute(ctx(), {
+        type: 'interactive',
+        title: '未声明答案的练习',
+        html: '<html><body><input name="answer"><button>提交答案</button></body></html>',
+      }),
+    ).rejects.toThrow(/manifest is required/);
+
+    await expect(
+      authorInteractive({
+        html: '<html><body><p>氧原子的原子序数是多少？</p></body></html>',
+      }),
+    ).rejects.toThrow(/manifest does not match/);
+    expect(await testDb().select({ id: artifact.id }).from(artifact)).toEqual([]);
   });
 });

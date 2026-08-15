@@ -15,15 +15,16 @@
 //
 // Mirror tool-use events still flow via mcp-bridge (caller actor is agent).
 
-import { writeEvent } from '@/kernel/events';
-import { createId } from '@paralleldrive/cuid2';
-import { z } from 'zod';
-import { type CopilotDispatchDecision, CopilotDispatchDecisionSchema } from '../contracts';
-
 import {
+  containsLearningQuestion,
   extractCopilotLearningContent,
   validateCopilotLearningContent,
 } from '@/capabilities/copilot/server/content-validation';
+import { writeEvent } from '@/kernel/events';
+import type { ValidateLearningContentFn } from '@/kernel/tools/types';
+import { createId } from '@paralleldrive/cuid2';
+import { z } from 'zod';
+
 // YUK-575 (A1) — shared free-form run-input assembler (single execution point for
 // inline + durable copilot runs).
 import {
@@ -91,13 +92,11 @@ import {
 } from '@/server/ai/mcp/tavily';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import {
-  type RunTaskResult,
   type StreamCollectResult,
   type TaskEventMessage,
   runAgentTask,
   streamTaskCollecting,
 } from '@/server/ai/runner';
-import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import {
   SPAWN_TOOL_NAME,
   type SpawnBudgetObservation,
@@ -121,6 +120,8 @@ import { Conversation } from '@/server/session';
 // (teaching/solve/quiz) service-call paths do NOT.
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
 import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { type CopilotDispatchDecision, CopilotDispatchDecisionSchema } from '../contracts';
+
 import {
   CopilotChatRequest,
   type CopilotChatRequestT,
@@ -511,34 +512,11 @@ export async function writeCopilotReply(
   return primaryView ? { replyEventId, cleanedReply, primaryView } : { replyEventId, cleanedReply };
 }
 
-type CopilotRunnerResult = Pick<RunTaskResult, 'task_run_id' | 'text' | 'structured_output'>;
 type RunAgentTaskFn = (
   kind: string,
   input: unknown,
-  ctx: {
-    db: Db;
-    signal?: AbortSignal;
-    lifecycleAbortController?: AbortController;
-    // YUK-198 — widened to allow remote McpHttpServerConfig (Tavily) alongside
-    // the in-process SdkMcpServer (loom). Mirrors runner ctx.mcpServers, which
-    // is the SDK's Options['mcpServers'].
-    mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
-    allowedTools?: string[];
-    /** Caller-owned id shared with the in-process MCP tool log. */
-    taskRunId?: string;
-    providerSessionDeadlineAt?: number;
-    // YUK-284 (C2) — Agent Skill whitelist forwarded to the runner (ctx.skills,
-    // runner.ts:120). Present on the free-form CopilotTask path so the dialogue
-    // methodology SKILL.md loads. The underlying RunTaskCtx already declares
-    // skills?: string[]; this alias just exposes it so passing skills here does
-    // NOT trip the TS excess-property check.
-    skills?: string[];
-    agents?: Parameters<typeof runAgentTask>[2]['agents'];
-    hooks?: Parameters<typeof runAgentTask>[2]['hooks'];
-    canUseTool?: Parameters<typeof runAgentTask>[2]['canUseTool'];
-    outputFormat?: Parameters<typeof runAgentTask>[2]['outputFormat'];
-  },
-) => Promise<CopilotRunnerResult>;
+  ctx: Parameters<typeof runAgentTask>[2],
+) => Promise<{ task_run_id: string; text: string; structured_output?: unknown }>;
 // YUK-266 (C1) — swappable streaming agent runner. Streams text deltas to
 // `onDelta` then resolves the full StreamCollectResult (text + task_run_id + the
 // optional partial/error degrade flags). Defaults to streamTaskCollecting; unit
@@ -1128,6 +1106,20 @@ async function runCopilotChatImpl(
   // YUK-457 — one actor for the bridge ctx, the persisted mirrors, AND the
   // live tool_use gate below: all three must resolve the same mirror policy.
   const callerActor = { kind: 'agent' as const, ref: actorRef };
+  const validateLearningContent: ValidateLearningContentFn = (content) =>
+    validateCopilotLearningContent(content, {
+      db,
+      runTaskFn: async (kind, input, callCtx) =>
+        run(kind, input, {
+          ...callCtx,
+          db,
+          signal: lifecycleAbortController.signal,
+          lifecycleAbortController,
+          ...(deps.providerSessionDeadlineAt !== undefined
+            ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+            : {}),
+        }),
+    });
 
   const mcpServer = buildMcpServer({
     ctx: {
@@ -1140,6 +1132,7 @@ async function runCopilotChatImpl(
         : {}),
       callerActor,
       causedByEventId,
+      validateLearningContent,
     },
     serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
     toolNames: resolveDomainToolNames(surface),
@@ -1318,6 +1311,17 @@ async function runCopilotChatImpl(
   // after a raw suffix was certified.
   const preparedCandidate = extractPrimaryView(replyText, { taskRunId: replyRunId });
   const preparedLearningContent = extractCopilotLearningContent(preparedCandidate.text);
+  const unverifiedLearningContent =
+    preparedLearningContent.status === 'malformed' ||
+    (preparedLearningContent.status === 'absent' &&
+      containsLearningQuestion(preparedLearningContent.text));
+  const unverifiedReply = '这份练习内容未完成独立校验，暂不展示。请重试，我会先校验再发送。';
+  if (unverifiedLearningContent) {
+    console.warn('[runCopilotChat] learning content marker missing or malformed', {
+      task_run_id: replyRunId,
+      marker_status: preparedLearningContent.status,
+    });
+  }
   const evidenceReview = await reviewEvidenceReply({
     db,
     requestContext: {
@@ -1327,7 +1331,7 @@ async function runCopilotChatImpl(
       ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
       ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
     },
-    candidateReply: preparedLearningContent.text,
+    candidateReply: unverifiedLearningContent ? unverifiedReply : preparedLearningContent.text,
     candidateTaskRunId: replyRunId,
     candidateComplete,
     toolTrace,
@@ -1338,24 +1342,34 @@ async function runCopilotChatImpl(
   });
   streaming?.signal?.throwIfAborted();
   replyText = evidenceReview.replyText;
-  if (preparedLearningContent.content) {
-    const validation = await validateCopilotLearningContent(preparedLearningContent.content, {
-      db,
-      runTaskFn: makeRunTaskTextFn(db, {
-        ...(streaming?.signal ? { signal: streaming.signal } : {}),
-        ...(deps.providerSessionDeadlineAt !== undefined
-          ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
-          : {}),
-      }),
-    });
-    replyText = `${replyText}\n\n独立内容验证：${validation.verdict === 'pass' ? '通过' : '未通过，需修复。'}`;
+  let learningContentPassed = !unverifiedLearningContent;
+  if (preparedLearningContent.status === 'valid') {
+    try {
+      const validation = await validateLearningContent(preparedLearningContent.content);
+      learningContentPassed = validation.verdict === 'pass';
+      if (learningContentPassed) {
+        replyText = `${replyText}\n\n独立内容验证：通过`;
+      } else {
+        console.error('[runCopilotChat] learning content validation rejected', validation);
+        replyText = unverifiedReply;
+      }
+    } catch (error) {
+      learningContentPassed = false;
+      console.error('[runCopilotChat] learning content validation error', {
+        task_run_id: replyRunId,
+        error,
+      });
+      replyText = unverifiedReply;
+    }
   }
   // primary_view is a second user-visible channel (ephemeral_html can contain
   // substantive prose). The sealed comparator reviews reply text only, so a
   // read-bearing turn must drop this unreviewed metadata even when text passes.
   // No-read/skipped turns retain the established presentation behavior.
   const selectedPrimaryView =
-    evidenceReview.status === 'skipped' ? preparedCandidate.primaryView : undefined;
+    evidenceReview.status === 'skipped' && learningContentPassed
+      ? preparedCandidate.primaryView
+      : undefined;
 
   // YUK-307 — single convergence point for BOTH the JSON and streaming paths:
   // parse + strip the primary_view marker ONCE from the collected reply, then

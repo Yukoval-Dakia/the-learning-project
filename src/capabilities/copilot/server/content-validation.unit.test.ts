@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  containsLearningQuestion,
   extractCopilotLearningContent,
   validateCopilotLearningContent,
 } from './content-validation';
@@ -12,7 +13,20 @@ describe('validateCopilotLearningContent', () => {
     );
 
     expect(extracted.text).toBe('题目草稿');
-    expect(extracted.content?.questions).toHaveLength(1);
+    expect(extracted.status).toBe('valid');
+    if (extracted.status !== 'valid') throw new Error('expected valid manifest');
+    expect(extracted.content.questions).toHaveLength(1);
+  });
+
+  it('distinguishes missing and malformed manifests for question-bearing replies', () => {
+    const missing = extractCopilotLearningContent('题目\n1. 求 1+1？');
+    const malformed = extractCopilotLearningContent(
+      '题目\n1. 求 1+1？\n<!--copilot_learning_content:{bad json}-->',
+    );
+
+    expect(containsLearningQuestion(missing.text)).toBe(true);
+    expect(missing.status).toBe('absent');
+    expect(malformed).toMatchObject({ status: 'malformed', text: '题目\n1. 求 1+1？' });
   });
 
   it('fails closed when an independent validator finds a contradictory question pack', async () => {
@@ -60,6 +74,18 @@ describe('validateCopilotLearningContent', () => {
               }),
             };
           }
+          if (kind === 'SemanticJudgeTask') {
+            return {
+              task_run_id: 'semantic-1',
+              text: JSON.stringify({
+                score: 0,
+                coarse_outcome: 'incorrect',
+                confidence: 0.99,
+                feedback_md: 'declared answer contradicts the independent solution',
+                evidence_json: { matched_points: [], missing_points: [] },
+              }),
+            };
+          }
           return {
             task_run_id: 'teaching-1',
             text: JSON.stringify({
@@ -74,8 +100,35 @@ describe('validateCopilotLearningContent', () => {
 
     expect(result.verdict).toBe('fail');
     expect(result.items[0]).toMatchObject({
-      independent_solution: { status: 'solved' },
+      solve_check: { verdict: 'fail' },
       teaching_quality: { verdict: 'fail' },
     });
+  });
+
+  it('fails closed without starting provider work when validation bounds are exceeded', async () => {
+    let calls = 0;
+    const result = await validateCopilotLearningContent(
+      {
+        subjectId: 'math',
+        questions: Array.from({ length: 6 }, (_, index) => ({
+          id: `q${index}`,
+          kind: 'computation',
+          prompt_md: '求 1+1',
+          reference_md: '2',
+          choices_md: null,
+          rubric_json: {},
+        })),
+      },
+      {
+        db: {} as never,
+        runTaskFn: async () => {
+          calls += 1;
+          throw new Error('must not run');
+        },
+      },
+    );
+
+    expect(result).toEqual({ verdict: 'fail', items: [] });
+    expect(calls).toBe(0);
   });
 });

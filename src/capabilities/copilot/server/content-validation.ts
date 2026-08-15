@@ -1,12 +1,17 @@
-import {
-  runIndependentSolution,
-  runQuestionContentValidation,
-  runTeachingQualityCheck,
-} from '@/capabilities/practice/server/quiz/verify-framework';
 import type { Db } from '@/db/client';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
+import {
+  runQuestionContentValidation,
+  runSolveCheck,
+  runTeachingQualityCheck,
+} from './practice-port';
+
+export const COPILOT_LEARNING_CONTENT_MAX_QUESTIONS = 5;
+export const COPILOT_LEARNING_CONTENT_MAX_PROMPT_CHARS = 12_000;
+export const COPILOT_LEARNING_CONTENT_MARKER_START = '<!--copilot_learning_content:';
+
+type ValidationRunTaskFn = Parameters<typeof runQuestionContentValidation>[1]['runTaskFn'];
 
 export interface CopilotLearningContentQuestion {
   id: string;
@@ -37,17 +42,23 @@ const CopilotLearningContentSchema = z.object({
         knowledge_ids: z.array(z.string().min(1)).nullable().optional(),
       }),
     )
-    .min(1),
+    .min(1)
+    .max(COPILOT_LEARNING_CONTENT_MAX_QUESTIONS),
 });
 
-export function extractCopilotLearningContent(text: string): {
-  text: string;
-  content?: CopilotLearningContent;
-} {
+export type CopilotLearningContentExtraction =
+  | { text: string; status: 'absent' }
+  | { text: string; status: 'malformed' }
+  | { text: string; status: 'valid'; content: CopilotLearningContent };
+
+export function extractCopilotLearningContent(text: string): CopilotLearningContentExtraction {
   let content: CopilotLearningContent | undefined;
+  let sawMarker = false;
+  let sawMalformed = false;
   const cleaned = text.replace(
     /<!--copilot_learning_content:([\s\S]*?)-->/g,
     (_match, raw: string) => {
+      sawMarker = true;
       try {
         const parsed = CopilotLearningContentSchema.safeParse(JSON.parse(raw));
         if (parsed.success) {
@@ -55,17 +66,42 @@ export function extractCopilotLearningContent(text: string): {
             subjectId: parsed.data.subject_id,
             questions: parsed.data.questions,
           };
+        } else {
+          sawMalformed = true;
         }
-      } catch {}
+      } catch {
+        sawMalformed = true;
+      }
       return '';
     },
   );
-  return content ? { text: cleaned.trimEnd(), content } : { text: cleaned.trimEnd() };
+  const dangling = cleaned.lastIndexOf(COPILOT_LEARNING_CONTENT_MARKER_START);
+  const visibleText = dangling === -1 ? cleaned : cleaned.slice(0, dangling);
+  if (dangling !== -1) {
+    sawMarker = true;
+    sawMalformed = true;
+  }
+  const trimmed = sawMarker ? visibleText.trimEnd() : visibleText;
+  if (sawMalformed || (sawMarker && !content)) return { text: trimmed, status: 'malformed' };
+  if (content) return { text: trimmed, status: 'valid', content };
+  return { text: trimmed, status: 'absent' };
+}
+
+export function containsLearningQuestion(text: string): boolean {
+  const explicitLabel =
+    /(?:^|\n)\s*(?:#{1,6}\s*)?(?:(?:题目|练习(?:题)?|测验)(?=\s|[:：])|(?:quiz|question|exercise)\b)/im;
+  const numberedQuestion =
+    /(?:^|\n)\s*(?:\d+[.)、]|[（(][一二三四五六七八九十\d]+[）)])[^\n]{1,500}[？?]/m;
+  const instructionalQuestion =
+    /(?:^|\n)[^\n]{0,300}(?:求|计算|证明|选择|判断|解答|solve|calculate|prove|choose)[^\n]{0,300}[？?](?:\n|$)/im;
+  return (
+    explicitLabel.test(text) || numberedQuestion.test(text) || instructionalQuestion.test(text)
+  );
 }
 
 export interface CopilotLearningContentValidationDeps {
   db: Db;
-  runTaskFn: TaskTextRunFn;
+  runTaskFn: ValidationRunTaskFn;
 }
 
 export type CopilotLearningContentValidationItem = {
@@ -73,9 +109,11 @@ export type CopilotLearningContentValidationItem = {
   question_content:
     | { status: 'completed'; task_run_id?: string; overall: 'pass' | 'needs_review' | 'fail' }
     | { status: 'error'; reason: string };
-  independent_solution:
-    | { status: 'solved'; task_run_id: string }
-    | { status: 'unsupported'; reason: string };
+  solve_check: {
+    verdict: 'pass' | 'fail' | 'unsupported';
+    reason: string;
+    task_run_ids?: string[];
+  };
   teaching_quality: { verdict: 'pass' | 'fail' | 'unsupported'; reason: string };
   verdict: 'pass' | 'fail' | 'needs_repair';
 };
@@ -93,10 +131,18 @@ export async function validateCopilotLearningContent(
   content: CopilotLearningContent,
   deps: CopilotLearningContentValidationDeps,
 ): Promise<CopilotLearningContentValidationResult> {
+  if (
+    content.questions.length === 0 ||
+    content.questions.length > COPILOT_LEARNING_CONTENT_MAX_QUESTIONS ||
+    content.questions.reduce((sum, question) => sum + question.prompt_md.length, 0) >
+      COPILOT_LEARNING_CONTENT_MAX_PROMPT_CHARS
+  ) {
+    return { verdict: 'fail', items: [] };
+  }
   const subjectProfile = resolveSubjectProfile(content.subjectId);
   const items = await Promise.all(
     content.questions.map(async (question): Promise<CopilotLearningContentValidationItem> => {
-      const [questionContent, independentSolution, teachingQuality] = await Promise.allSettled([
+      const [questionContent, solveCheck, teachingQuality] = await Promise.allSettled([
         runQuestionContentValidation(
           {
             question: {
@@ -116,12 +162,16 @@ export async function validateCopilotLearningContent(
           },
           { runTaskFn: deps.runTaskFn, db: deps.db, subjectProfile },
         ),
-        runIndependentSolution(
+        runSolveCheck(
           {
             id: question.id,
             kind: question.kind,
             prompt_md: question.prompt_md,
             choices_md: question.choices_md,
+            reference_md: question.reference_md,
+            rubric_json: question.rubric_json ?? null,
+            judge_kind_override: null,
+            knowledge_ids: question.knowledge_ids ?? null,
           },
           {
             runTaskFn: deps.runTaskFn,
@@ -154,34 +204,16 @@ export async function validateCopilotLearningContent(
               overall: questionContent.value.output.overall,
             }
           : { status: 'error' as const, reason: errorReason(questionContent) };
-      let independentSolutionResult: CopilotLearningContentValidationItem['independent_solution'];
-      if (
-        independentSolution.status === 'fulfilled' &&
-        independentSolution.value.status === 'solved'
-      ) {
-        independentSolutionResult = {
-          status: 'solved',
-          task_run_id: independentSolution.value.task_run_id,
-        };
-      } else if (
-        independentSolution.status === 'fulfilled' &&
-        independentSolution.value.status === 'unsupported'
-      ) {
-        independentSolutionResult = {
-          status: 'unsupported',
-          reason: independentSolution.value.reason,
-        };
-      } else if (independentSolution.status === 'fulfilled') {
-        independentSolutionResult = {
-          status: 'unsupported',
-          reason: 'independent solution did not produce a solved or unsupported verdict',
-        };
-      } else {
-        independentSolutionResult = {
-          status: 'unsupported',
-          reason: errorReason(independentSolution),
-        };
-      }
+      const solveCheckResult =
+        solveCheck.status === 'fulfilled'
+          ? {
+              verdict: solveCheck.value.verdict,
+              reason: solveCheck.value.reason,
+              ...(solveCheck.value.task_run_ids
+                ? { task_run_ids: solveCheck.value.task_run_ids }
+                : {}),
+            }
+          : { verdict: 'unsupported' as const, reason: errorReason(solveCheck) };
       const teachingQualityResult =
         teachingQuality.status === 'fulfilled'
           ? { verdict: teachingQuality.value.verdict, reason: teachingQuality.value.reason }
@@ -189,13 +221,13 @@ export async function validateCopilotLearningContent(
       const passes =
         questionContentResult.status === 'completed' &&
         questionContentResult.overall === 'pass' &&
-        independentSolutionResult.status === 'solved' &&
+        solveCheckResult.verdict === 'pass' &&
         teachingQualityResult.verdict === 'pass';
 
       return {
         question_id: question.id,
         question_content: questionContentResult,
-        independent_solution: independentSolutionResult,
+        solve_check: solveCheckResult,
         teaching_quality: teachingQualityResult,
         verdict: passes ? 'pass' : 'fail',
       };

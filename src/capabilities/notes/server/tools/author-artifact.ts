@@ -21,7 +21,7 @@
 // D6: the copilot generates the HTML ITSELF in conversation (Claude Artifacts
 // pattern — the model writes the HTML and passes it as tool input; no separate
 // LLM gen task). Both tools are effect='write' (ADR-0033 D6 explicit: 单用户、
-// 路由守 scope via the surface allowlist、非破坏性创建), costClass='local',
+// 路由守 scope via the surface allowlist、非破坏性创建) and
 // mirrorEvent='when_causal' (write_quiz precedent — evidence-first trail).
 //
 // Rollback / duplication seam (留痕可回滚, ADR-0033): each author/update call
@@ -43,11 +43,11 @@
 // out of D6 scope; within a conversation the copilot holds the id from the
 // author_artifact output.
 
+import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
-import { validateCopilotLearningContent } from '@/capabilities/copilot/server/content-validation';
 import {
   type ArtifactHistoryEntryT,
   INTERACTIVE_HTML_MAX_CHARS,
@@ -56,8 +56,117 @@ import {
 import { artifact } from '@/db/schema';
 import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { emitArtifactLifecycleEvent } from '../artifacts/mutation-events';
+
+const MAX_VALIDATION_QUESTIONS = 5;
+const MAX_VALIDATION_PROMPT_CHARS = 12_000;
+
+const ContentValidationSchema = z
+  .object({
+    subject_id: z.string().min(1),
+    questions: z
+      .array(
+        z.object({
+          id: z.string().min(1),
+          kind: z.string().min(1),
+          prompt_md: z.string().min(1),
+          reference_md: z.string().nullable(),
+          choices_md: z.array(z.string().min(1)).nullable(),
+          rubric_json: z.unknown(),
+          knowledge_ids: z.array(z.string().min(1)).nullable().optional(),
+        }),
+      )
+      .min(1)
+      .max(MAX_VALIDATION_QUESTIONS),
+  })
+  .superRefine((value, ctx) => {
+    const promptChars = value.questions.reduce(
+      (sum, question) => sum + question.prompt_md.length,
+      0,
+    );
+    if (promptChars > MAX_VALIDATION_PROMPT_CHARS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.too_big,
+        maximum: MAX_VALIDATION_PROMPT_CHARS,
+        type: 'string',
+        inclusive: true,
+        path: ['questions'],
+        message: 'total question prompt content exceeds validation limit',
+      });
+    }
+  });
+
+type ContentValidationInput = z.infer<typeof ContentValidationSchema>;
+
+function normalizedBindingText(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase();
+}
+
+function htmlContainsAssessment(html: string): boolean {
+  return (
+    /<(?:input|select|textarea)\b/i.test(html) ||
+    /(?:data-(?:answer|correct)|\b(?:quiz|question|exercise)\b|题目|练习题|测验|作答|答案)/i.test(
+      html,
+    )
+  );
+}
+
+function assertManifestMatchesHtml(html: string, validation: ContentValidationInput): void {
+  const normalizedHtml = normalizedBindingText(html);
+  const missingQuestion = validation.questions.find(
+    (question) => !normalizedHtml.includes(normalizedBindingText(question.prompt_md)),
+  );
+  if (missingQuestion) {
+    throw new Error('learning content manifest does not match artifact HTML');
+  }
+}
+
+async function validateArtifactContent(
+  ctx: ToolContext,
+  html: string,
+  input: ContentValidationInput | undefined,
+): Promise<Record<string, unknown> | undefined> {
+  if (!input) {
+    if (htmlContainsAssessment(html)) {
+      throw new Error('learning content manifest is required for assessed artifact HTML');
+    }
+    return undefined;
+  }
+  assertManifestMatchesHtml(html, input);
+  if (!ctx.validateLearningContent) {
+    throw new Error('learning content validation is unavailable');
+  }
+  try {
+    const result = await ctx.validateLearningContent({
+      subjectId: input.subject_id,
+      questions: input.questions,
+    });
+    if (result.verdict !== 'pass') {
+      console.error('[author-artifact] learning content validation rejected', result);
+      throw new Error('learning content validation failed');
+    }
+    return {
+      ...result,
+      html_sha256: createHash('sha256').update(html).digest('hex'),
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === 'learning content validation failed') {
+      throw error;
+    }
+    console.error('[author-artifact] learning content validation error', error);
+    throw new Error('learning content validation failed');
+  }
+}
 
 // ---------------------------------------------------------------------------
 // author_artifact — create a new interactive artifact (v0).
@@ -77,22 +186,7 @@ const AuthorArtifactInputSchema = z.object({
   // a dangling id degrades discovery, it breaks nothing.
   knowledge_ids: z.array(z.string().min(1)).optional(),
   summary: z.string().max(500).optional(),
-  content_validation: z.object({
-    subject_id: z.string().min(1),
-    questions: z
-      .array(
-        z.object({
-          id: z.string().min(1),
-          kind: z.string().min(1),
-          prompt_md: z.string().min(1),
-          reference_md: z.string().nullable(),
-          choices_md: z.array(z.string().min(1)).nullable(),
-          rubric_json: z.unknown(),
-          knowledge_ids: z.array(z.string().min(1)).nullable().optional(),
-        }),
-      )
-      .min(1),
-  }),
+  content_validation: ContentValidationSchema.optional(),
 });
 type AuthorArtifactInput = z.input<typeof AuthorArtifactInputSchema>;
 
@@ -110,28 +204,7 @@ async function executeAuthorArtifact(
   rawInput: AuthorArtifactInput,
 ): Promise<AuthorArtifactOutput> {
   const input = AuthorArtifactInputSchema.parse(rawInput);
-  const validation = await validateCopilotLearningContent(
-    {
-      subjectId: input.content_validation.subject_id,
-      questions: input.content_validation.questions,
-    },
-    {
-      db: ctx.db,
-      runTaskFn:
-        ctx.runTaskFn ??
-        makeRunTaskTextFn(ctx.db, {
-          ...(ctx.signal ? { signal: ctx.signal } : {}),
-          ...(ctx.providerSessionDeadlineAt !== undefined
-            ? { providerSessionDeadlineAt: ctx.providerSessionDeadlineAt }
-            : {}),
-        }),
-    },
-  );
-  if (validation.verdict !== 'pass') {
-    throw new Error(
-      `author_artifact: learning content validation failed: ${JSON.stringify(validation)}`,
-    );
-  }
+  const validation = await validateArtifactContent(ctx, input.html, input.content_validation);
 
   const now = new Date();
   const artifactId = `art_${createId()}`;
@@ -144,7 +217,7 @@ async function executeAuthorArtifact(
     html: input.html,
     ...(input.summary !== undefined ? { summary: input.summary } : {}),
     origin: 'copilot_author_artifact',
-    content_validation: validation,
+    ...(validation ? { content_validation: validation } : {}),
   });
 
   // Row shape follows writeToolQuizArtifact (tool-quiz-core.ts) column-for-
@@ -213,7 +286,7 @@ export const authorArtifactTool: DomainTool<AuthorArtifactInput, AuthorArtifactO
   effect: 'write',
   inputSchema: AuthorArtifactInputSchema,
   outputSchema: AuthorArtifactOutputSchema,
-  costClass: 'local',
+  costClass: 'expensive_llm',
   // Copilot-initiated write — leave an event trail (evidence-first).
   mirrorEvent: 'when_causal',
   execute: executeAuthorArtifact,
@@ -237,6 +310,7 @@ const UpdateArtifactInputSchema = z.object({
   html: z.string().min(1).max(INTERACTIVE_HTML_MAX_CHARS),
   // Feeds history[].summary_md — the human-readable v1→v2 timeline.
   change_summary: z.string().max(300).optional(),
+  content_validation: ContentValidationSchema.optional(),
 });
 type UpdateArtifactInput = z.input<typeof UpdateArtifactInputSchema>;
 
@@ -252,6 +326,7 @@ async function executeUpdateArtifact(
   rawInput: UpdateArtifactInput,
 ): Promise<UpdateArtifactOutput> {
   const input = UpdateArtifactInputSchema.parse(rawInput);
+  const validation = await validateArtifactContent(ctx, input.html, input.content_validation);
   const now = new Date();
 
   // Version + history mechanics follow body-blocks-edit.ts. Two deliberate
@@ -294,9 +369,14 @@ async function executeUpdateArtifact(
     }
 
     // Merge-parse: replace html, preserve summary/origin + any catchall keys.
+    const { content_validation: _staleValidation, ...preservedAttrs } = row.attrs as Record<
+      string,
+      unknown
+    >;
     const attrs = InteractiveArtifactAttrs.parse({
-      ...(row.attrs as Record<string, unknown>),
+      ...preservedAttrs,
       html: input.html,
+      ...(validation ? { content_validation: validation } : {}),
     });
 
     const nextVersion = row.version + 1;
@@ -354,11 +434,11 @@ async function executeUpdateArtifact(
 export const updateArtifactTool: DomainTool<UpdateArtifactInput, UpdateArtifactOutput> = {
   name: 'update_artifact',
   description:
-    'Update an EXISTING interactive artifact (created by author_artifact) with a new complete HTML document — pass the FULL replacement html, not a diff. Bumps artifact.version and appends a history entry; pass change_summary so the version timeline stays readable. Only works on type=interactive artifacts. Pure local write, no LLM call.',
+    'Update an EXISTING interactive artifact (created by author_artifact) with a new complete HTML document — pass the FULL replacement html, not a diff. Assessed HTML requires content_validation matching every question; replacing HTML always invalidates prior validation evidence. Bumps artifact.version and appends a history entry; pass change_summary so the version timeline stays readable. Only works on type=interactive artifacts.',
   effect: 'write',
   inputSchema: UpdateArtifactInputSchema,
   outputSchema: UpdateArtifactOutputSchema,
-  costClass: 'local',
+  costClass: 'expensive_llm',
   // Copilot-initiated write — leave an event trail (evidence-first).
   mirrorEvent: 'when_causal',
   execute: executeUpdateArtifact,
