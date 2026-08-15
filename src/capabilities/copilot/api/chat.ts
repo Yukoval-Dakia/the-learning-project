@@ -45,6 +45,11 @@ import { checkRateLimit } from '@/server/http/rate-limit';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Conversation } from '@/server/session';
 
+import {
+  sanitizeToolResultForSse,
+  sanitizeToolUseForSse,
+} from '@/capabilities/copilot/api/tool-use-sse';
+
 // Closes the count-then-enqueue race inside the single Hono API process. A slot
 // moves from this counter into durable job_events once QUEUED is committed.
 let durableDispatchReservations = 0;
@@ -497,6 +502,16 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
           // Task lifecycle is projected onto a strict public payload allowlist
           // in the service layer. It shares this FIFO with main-voice deltas.
           onSubtaskEvent: (event) => writeFrame('subtask', event),
+          // YUK-457 — per-call tool-use frames for the SPA card renderer.
+          // Native Task spawn is omitted here; subtask SSE carries the public card.
+          onToolUseEvent: (call) => {
+            const sanitized = sanitizeToolUseForSse(call);
+            if (sanitized) void writeFrame('tool_use', sanitized);
+          },
+          onToolResultEvent: (result) => {
+            const sanitized = sanitizeToolResultForSse(result);
+            if (sanitized) void writeFrame('tool_result', sanitized);
+          },
           providerSessionDeadlineAt,
         },
         req.signal,

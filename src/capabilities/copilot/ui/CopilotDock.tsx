@@ -47,7 +47,7 @@ import { CopilotDrawer } from '@/ui/primitives/CopilotDrawer';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { ToolUseCard } from '@/ui/primitives/ToolUseCard';
+import { ToolUseCard, type ToolUseStatus } from '@/ui/primitives/ToolUseCard';
 import { useQuery } from '@tanstack/react-query';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { CopilotHeroCard } from './CopilotHeroCard';
@@ -181,6 +181,127 @@ export interface ChatMessage {
   // YUK-757 — public child lifecycle only. The raw nested-agent transcript,
   // prompt and reasoning never enter ChatMessage.
   subtasks?: CopilotSubtaskView[];
+  // YUK-457 — per-call tool-use records from live SSE and replay prefill.
+  // Appended on `tool_use`, enriched on `tool_result`, preserved on the terminal
+  // `reply` event so the full call log stays on the AI turn after finalize.
+  tool_calls?: ToolCallRecord[];
+}
+
+/** YUK-457 — a single tool-use record (live stream or replay). */
+export interface ToolCallRecord {
+  toolName: string;
+  input: Record<string, unknown>;
+  toolUseId?: string;
+  summary?: string;
+  status?: 'running' | 'done' | 'failed';
+  errorReason?: string;
+}
+
+function toolCallCardStatus(call: ToolCallRecord): ToolUseStatus {
+  if (call.status === 'failed') return 'failed';
+  if (call.status === 'running') return 'running';
+  return 'done';
+}
+
+function parseToolUseSse(data: string): ToolCallRecord | null {
+  try {
+    const raw = JSON.parse(data) as {
+      toolName?: unknown;
+      input?: unknown;
+      toolUseId?: unknown;
+    };
+    if (typeof raw.toolName !== 'string') return null;
+    return {
+      toolName: raw.toolName,
+      input:
+        raw.input !== null && typeof raw.input === 'object' && !Array.isArray(raw.input)
+          ? (raw.input as Record<string, unknown>)
+          : {},
+      ...(typeof raw.toolUseId === 'string' ? { toolUseId: raw.toolUseId } : {}),
+      status: 'running',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseToolResultSse(data: string): Omit<ToolCallRecord, 'toolUseId'> | null {
+  try {
+    const raw = JSON.parse(data) as {
+      toolName?: unknown;
+      input?: unknown;
+      summary?: unknown;
+      errorReason?: unknown;
+    };
+    if (typeof raw.toolName !== 'string') return null;
+    const summary = typeof raw.summary === 'string' ? raw.summary : undefined;
+    const errorReason =
+      typeof raw.errorReason === 'string' && raw.errorReason.length > 0
+        ? raw.errorReason
+        : undefined;
+    return {
+      toolName: raw.toolName,
+      input:
+        raw.input !== null && typeof raw.input === 'object' && !Array.isArray(raw.input)
+          ? (raw.input as Record<string, unknown>)
+          : {},
+      ...(summary ? { summary } : {}),
+      ...(errorReason ? { errorReason } : {}),
+      status: errorReason ? 'failed' : 'done',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function applyToolResult(
+  calls: ToolCallRecord[],
+  result: Omit<ToolCallRecord, 'toolUseId'>,
+): ToolCallRecord[] {
+  const idx = calls.findIndex(
+    (call) => call.toolName === result.toolName && call.status === 'running',
+  );
+  if (idx === -1) {
+    return [...calls, result];
+  }
+  const next = [...calls];
+  next[idx] = { ...next[idx], ...result };
+  return next;
+}
+
+function CopilotToolUseList({ calls }: { calls: ToolCallRecord[] }) {
+  return (
+    <div className="flex flex-col gap-[6px]" data-testid="copilot-tool-use-list">
+      {calls.map((call, idx) => {
+        const status = toolCallCardStatus(call);
+        const isRunning = status === 'running';
+        const summary = call.summary;
+        return (
+          <div
+            key={call.toolUseId ?? `${call.toolName}-${idx}`}
+            data-testid="copilot-tool-use-card"
+          >
+            <ToolUseCard
+              toolName={call.toolName}
+              summary={summary}
+              status={status}
+              args={isRunning && Object.keys(call.input).length > 0 ? call.input : undefined}
+              actor="agent"
+              running={<span>正在调用…</span>}
+              result={
+                summary ? (
+                  <span>{summary}</span>
+                ) : status === 'done' ? (
+                  <span>已完成</span>
+                ) : undefined
+              }
+              errorView={call.errorReason ? <span>{call.errorReason}</span> : undefined}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 // Quick-chips are user-readable prompts; they send via triggered_by:'chat'
@@ -248,6 +369,11 @@ export const MessageRow = memo(function MessageRow({
         {m.role === 'tombstone' ? null : (
           <div className="msg-name">{m.role === 'ai' ? 'Loom Copilot' : '我'}</div>
         )}
+        {/* YUK-457 — tool-use cards sit between the user ask and the assistant
+            reply (design stack order). Replay + live SSE both feed tool_calls. */}
+        {m.role === 'ai' && m.tool_calls && m.tool_calls.length > 0 ? (
+          <CopilotToolUseList calls={m.tool_calls} />
+        ) : null}
         {/* The Markdown parser is warmed only when the drawer opens. Until
             its chunk arrives, DeferredMarkdownRenderer keeps escaped plain
             text visible instead of blanking or crashing the conversation.
@@ -910,6 +1036,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     let inlineReplyStarted = false;
     let inlineSubtaskVersion = 0;
     let inlineRunView = createCopilotRunView();
+    const inlineToolCalls: ToolCallRecord[] = [];
     let dispatchResponseReceived = false;
     try {
       const res = await apiFetch('/api/copilot/chat', {
@@ -1074,6 +1201,60 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
               inlineRunView,
               '我正在协调这些子任务，完成后会在这里统一收口。',
             );
+          } else if (evt.event === 'tool_use') {
+            const call = parseToolUseSse(evt.data);
+            if (call) {
+              inlineToolCalls.push(call);
+              const snapshot = [...inlineToolCalls];
+              if (!aiCreated) {
+                aiCreated = true;
+                setAwaitingFirstFrame(false);
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: aiId,
+                    role: 'ai',
+                    text: '',
+                    streaming: true,
+                    subtasks: inlineRunView.subtasks,
+                    tool_calls: snapshot,
+                  },
+                ]);
+              } else {
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === aiId ? { ...m, tool_calls: snapshot } : m)),
+                );
+              }
+            }
+          } else if (evt.event === 'tool_result') {
+            const result = parseToolResultSse(evt.data);
+            if (result) {
+              inlineToolCalls.splice(
+                0,
+                inlineToolCalls.length,
+                ...applyToolResult(inlineToolCalls, result),
+              );
+              const snapshot = [...inlineToolCalls];
+              if (!aiCreated) {
+                aiCreated = true;
+                setAwaitingFirstFrame(false);
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: aiId,
+                    role: 'ai',
+                    text: '',
+                    streaming: true,
+                    subtasks: inlineRunView.subtasks,
+                    tool_calls: snapshot,
+                  },
+                ]);
+              } else {
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === aiId ? { ...m, tool_calls: snapshot } : m)),
+                );
+              }
+            }
           } else if (evt.event === 'reply') {
             try {
               finalReply = JSON.parse(evt.data) as CopilotChatResponse;
@@ -1133,6 +1314,17 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         // CopilotChatResult.primary_view). Undefined ⇒ no hero rendered.
         primary_view: res2.primary_view,
         subtasks: inlineRunView.subtasks,
+        // YUK-457 — preserve accumulated tool-use records; mark any still-running
+        // calls done when the terminal reply lands (remote MCP paths may skip tool_result).
+        ...(inlineToolCalls.length > 0
+          ? {
+              tool_calls: inlineToolCalls.map((call) =>
+                call.status === 'running'
+                  ? { ...call, status: 'done' as const, summary: call.summary ?? '已完成' }
+                  : call,
+              ),
+            }
+          : {}),
       };
       setMessages((prev) =>
         aiCreated ? prev.map((m) => (m.id === aiId ? finalized : m)) : [...prev, finalized],

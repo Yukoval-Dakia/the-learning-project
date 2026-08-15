@@ -76,6 +76,8 @@ export interface ReplayTurn {
   skill_context?: ReplaySkillContext;
   // YUK-307 — present on AI turns whose reply nominated a hero deliverable.
   primary_view?: ReplayPrimaryView;
+  // YUK-457 — present on AI turns whose parent emitted tool_use mirror events.
+  tool_calls?: ReplayToolCall[];
 }
 
 export interface ReplayChatMessage {
@@ -94,6 +96,17 @@ export interface ReplayChatMessage {
   // YUK-307 — forwarded so the (future) UI slice can restore the hero
   // nomination on replay; pure passthrough, zero rendering here.
   primary_view?: ReplayPrimaryView;
+  // YUK-457 — forwarded so tool-use cards survive drawer reopen / page refresh.
+  tool_calls?: ReplayToolCall[];
+}
+
+/** YUK-457 — replay projection of a persisted tool_use mirror. */
+export interface ReplayToolCall {
+  toolName: string;
+  input: Record<string, unknown>;
+  summary?: string;
+  errorReason?: string;
+  status: 'done' | 'failed';
 }
 
 /**
@@ -145,6 +158,7 @@ export function replayToMessages(turns: ReplayTurn[]): ReplayChatMessage[] {
       // nomination dies at this boundary and the UI slice would have to reopen
       // backend files. NOT a rendering change.
       primary_view: t.primary_view,
+      tool_calls: t.tool_calls,
     });
   }
   return out;
