@@ -18,7 +18,6 @@
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 
 import type { CreateLearningIntentKnowledgeNodeFn } from '@/capabilities/knowledge/public';
-import type { CreateLearningIntentNoteFn } from '@/capabilities/notes/public';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { artifact, completion_evidence, event, learning_item } from '@/db/schema';
@@ -35,7 +34,11 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/server/proposals/signals';
-import { type LearningIntentMaterializeResult, acceptLearningIntent } from './learning-intent';
+import {
+  type AcceptLearningIntentParams,
+  type LearningIntentMaterializeResult,
+  acceptLearningIntent,
+} from './learning-intent';
 // YUK-471 W2 — learning_item projection seam (completion / relearn). The accept writes a dedicated
 // subject-keyed action event (experimental:learning_item_complete / _relearn) so the transition is
 // fold-visible via Q1 (the recommended route — no rate-payload side-channel reverse-lookup);
@@ -56,7 +59,7 @@ export interface AgencyApplierOpts {
   user_note?: string;
   enqueueLearningIntentNote?: EnqueueLearningIntentNoteFn;
   createLearningIntentKnowledgeNode?: CreateLearningIntentKnowledgeNodeFn;
-  createLearningIntentNote?: CreateLearningIntentNoteFn;
+  createLearningIntentNote?: AcceptLearningIntentParams['createNote'];
 }
 
 export interface LearningItemAcceptResult {
