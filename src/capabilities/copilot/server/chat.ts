@@ -1216,6 +1216,7 @@ async function runCopilotChatImpl(
         ? { target_prior_turn_id: req.correction_target_turn_id }
         : {}),
       available_prior_turn_ids: [],
+      prior_turn_summaries: {},
       required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
     },
     ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
@@ -1326,26 +1327,32 @@ async function runCopilotChatImpl(
   const preparedCandidate = extractPrimaryView(correctionResolution.reply, {
     taskRunId: replyRunId,
   });
-  const evidenceReview = await reviewEvidenceReply({
-    db,
-    requestContext: {
-      user_message: req.user_message,
-      surface,
-      triggered_by: req.triggered_by,
-      ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
-      ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
-    },
-    candidateReply: preparedCandidate.text,
-    candidateTaskRunId: replyRunId,
-    candidateComplete,
-    toolTrace,
-    ...(streaming?.signal ? { signal: streaming.signal } : {}),
-    ...(deps.providerSessionDeadlineAt !== undefined
-      ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
-      : {}),
-  });
+  const evidenceReview =
+    correctionResolution.kind === 'clarify'
+      ? { status: 'skipped' as const, replyText: preparedCandidate.text }
+      : await reviewEvidenceReply({
+          db,
+          requestContext: {
+            user_message: req.user_message,
+            surface,
+            triggered_by: req.triggered_by,
+            ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
+            ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
+          },
+          candidateReply: preparedCandidate.text,
+          candidateTaskRunId: replyRunId,
+          candidateComplete,
+          toolTrace,
+          ...(streaming?.signal ? { signal: streaming.signal } : {}),
+          ...(deps.providerSessionDeadlineAt !== undefined
+            ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+            : {}),
+        });
   streaming?.signal?.throwIfAborted();
-  replyText = evidenceReview.replyText;
+  replyText =
+    evidenceReview.status === 'repair'
+      ? resolveCorrectionReply(evidenceReview.replyText, runInput.correction_contract).reply
+      : evidenceReview.replyText;
   // primary_view is a second user-visible channel (ephemeral_html can contain
   // substantive prose). The sealed comparator reviews reply text only, so a
   // read-bearing turn must drop this unreviewed metadata even when text passes.

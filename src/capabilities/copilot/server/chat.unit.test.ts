@@ -465,6 +465,50 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(result.reply).not.toContain('已把上一轮改正');
   });
 
+  it('fails closed when a targeted correction omits its envelope', async () => {
+    const db = {} as never;
+    const batteryReplyId = 'copilot_reply_battery_d04';
+    const waterTankReplyId = 'copilot_reply_water_tank_d02';
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_copilot_target_without_envelope',
+      text: '已把水箱题改正为 h*=4/9，k 不变。',
+    }));
+
+    const result = await runCopilotChat(
+      db,
+      {
+        user_message: '请改正水箱题',
+        triggered_by: 'chat',
+        correction_target_turn_id: waterTankReplyId,
+      },
+      {
+        buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+        runAgentTaskFn,
+        writeEventFn: async (_db, input) => input.id,
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_targeted', created: false }),
+        loadHistoryFn: async () => [
+          {
+            role: 'ai',
+            text: '水箱 D02：h*=4/9，使用同一个 k。',
+            at: '2026-08-01T10:00:00.000Z',
+            event_id: waterTankReplyId,
+          },
+          {
+            role: 'ai',
+            text: '电池 D04：先按当前电量估算。',
+            at: '2026-08-01T10:01:00.000Z',
+            event_id: batteryReplyId,
+          },
+        ],
+        now: () => new Date('2026-08-01T10:02:00.000Z'),
+      },
+    );
+
+    expect(result.reply).toContain('prior_turn_id');
+    expect(result.reply).not.toContain('已把水箱题改正');
+  });
+
   // YUK-198 — Tavily remote MCP wiring. Copilot folds in the hosted Tavily MCP
   // server (web grounding) ONLY when TAVILY_API_KEY is configured. When the key
   // is absent the run is byte-for-byte the pre-YUK-198 behaviour: no tavily
@@ -760,6 +804,64 @@ describe('YUK-832 inline final evidence review', () => {
     expect(JSON.stringify(persistedReply)).not.toContain(unsafeCandidate);
     expect(result).not.toHaveProperty('primary_view');
     expect(persistedReply.payload).not.toHaveProperty('primary_view');
+  });
+
+  it('rejects an evidence repair that drops the targeted correction binding', async () => {
+    const targetId = 'copilot_reply_water_tank_repair';
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { name: 'fake-loom-correction-repair' } as never;
+    });
+    const runAgentTaskFn = vi.fn(async () => {
+      await mcpOptions?.onResult?.({
+        name: 'query_events',
+        effect: 'read',
+        input: { subject_id: 'water_tank_d02' },
+        output: { events: [], has_more: false },
+        error_reason: null,
+        executed: true,
+      });
+      return {
+        task_run_id: 'task_copilot_correction_repair',
+        text: `水箱更正后的推导。\n\n<!-- copilot-correction {"prior_turn_id":"${targetId}","changed":["h*=4/9"],"retained":["同一个 k"],"uncertain":[]} -->`,
+      };
+    });
+    const unsafeRepair = '证据修复后的正文，但没有 correction envelope。';
+
+    const result = await runCopilotChat(
+      {} as never,
+      {
+        user_message: '请核验并改正水箱题',
+        triggered_by: 'chat',
+        correction_target_turn_id: targetId,
+      },
+      {
+        ...baseEvidenceDeps(),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_correction_repair',
+          created: false,
+        }),
+        loadHistoryFn: async () => [
+          {
+            role: 'ai',
+            text: '水箱 D02：原推导用了错误高度。',
+            at: '2026-08-01T10:00:00.000Z',
+            event_id: targetId,
+          },
+        ],
+        buildMcpServerFn,
+        runAgentTaskFn,
+        writeEventFn: async (_db, input) => input.id,
+        reviewEvidenceReplyFn: async () => ({
+          status: 'repair',
+          replyText: unsafeRepair,
+        }),
+      },
+    );
+
+    expect(result.reply).toContain('prior_turn_id');
+    expect(result.reply).not.toContain(unsafeRepair);
   });
 
   it('reviews, persists, and publishes exact bytes while dropping an unreviewed primary-view side channel', async () => {
