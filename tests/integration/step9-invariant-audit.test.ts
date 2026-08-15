@@ -461,7 +461,9 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       'src/capabilities/notes/jobs/note_verify.ts',
       // YUK-857 — provider-attempt exhaustion atomically sets verification_status=failed and emits
       // the matching artifact lifecycle projection in the claim transaction.
-      'src/capabilities/notes/server/note-verification-claim.ts',
+      // YUK-888 — the terminalization moved with failArtifactVerificationForEpoch into the
+      // reservation/transitions module; the facade re-exports the public surface only.
+      'src/capabilities/notes/server/note-verification-claim-reservation.ts',
       'src/server/boss/handlers/embedded_check_generate.ts',
       'src/capabilities/practice/jobs/quiz_gen.ts',
       // YUK-864 — learning_item retract ownership moved whole from the central proposal shell.

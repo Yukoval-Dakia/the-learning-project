@@ -363,10 +363,10 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/capabilities/notes/server/note-verification-claim.ts',
+    file: 'src/capabilities/notes/server/note-verification-claim-reservation.ts',
     marker: '.update(artifact)',
     role: 'off-path-writer',
-    note: 'note verification claim atomically terminalizes provider-attempt exhaustion with a set_verification_status lifecycle event.',
+    note: 'note verification claim atomically terminalizes provider-attempt exhaustion with a set_verification_status lifecycle event (YUK-888: moved with failArtifactVerificationForEpoch into the reservation/transitions module).',
   },
   {
     table: 'artifact',
