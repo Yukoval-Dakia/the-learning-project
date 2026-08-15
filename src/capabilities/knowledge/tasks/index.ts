@@ -1,5 +1,4 @@
-import { legacyTaskDefinitions } from '@/ai/legacy-task-definitions';
-import { defineOwnedTaskSpecs, defineTransitionalTask } from '@/ai/owned-task-specs';
+import { defineOwnedTaskSpecs } from '@/ai/owned-task-specs';
 import {
   frontierPrerequisiteTaskSpec,
   knowledgeEdgeProposeTaskSpec,
@@ -15,6 +14,5 @@ export {
 export const knowledgeTaskSpecs = defineOwnedTaskSpecs('knowledge', {
   KnowledgeEdgeProposeTask: knowledgeEdgeProposeTaskSpec,
   FrontierPrerequisiteTask: frontierPrerequisiteTaskSpec,
-  SessionSummaryTask: defineTransitionalTask(legacyTaskDefinitions.SessionSummaryTask),
   KnowledgeReviewTask: knowledgeReviewTaskSpec,
 });

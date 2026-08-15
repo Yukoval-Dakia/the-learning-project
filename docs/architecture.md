@@ -108,9 +108,9 @@ Question (统一题库，single source of truth)
 > 拥有；Notes 也已拥有 NoteGenerate/NoteVerify 的 parser + output schema；Ingestion 已拥有
 > Vision/Structure/MistakeEnroll/Tagging/ColdStart/BlockAssembly/ProfileCritic 八个 TaskSpec；Knowledge
 > 已拥有 KnowledgeEdgePropose/FrontierPrerequisite/KnowledgeReview 三个 TaskSpec。
-> owner maps 当前保存 29 个完整 TaskSpec 与 22 个显式 transitional entry，registry 只做静态 compatibility projection；
-> transitional semantics 仍集中在 `legacy-task-definitions.ts`；owner migration 由 YUK-865–870、
-> YUK-875 承接（YUK-879 已把 Agency 13 个 TaskSpec 收进 `src/capabilities/agency/tasks/`），中央 semantic quarry 最终删除由 YUK-885 承接。
+> owner maps 现在保存全部 51 个完整 TaskSpec、零 transitional entry（YUK-870 收编了最后一个
+> `SessionSummaryTask`），registry 只做静态 compatibility projection；中央 semantic quarry
+> （`legacy-task-definitions.ts`）为空，quarry 文件与 transitional 机制删除由 YUK-885 承接。
 > 实现附录见 `docs/superpowers/plans/2026-08-08-practice-failure-learning-implementation.md`。
 
 架构债由 `pnpm audit:capability-boundaries` 递减约束。基线单位是去重后的
@@ -125,8 +125,9 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 ### 5.1 Task 注册
 
 > **Canonical source**: `src/ai/task-catalog.ts` 的 `taskCatalog`。六个 capability owner maps
-> 保存 staged semantic ownership：29 个完整 owned TaskSpec（3 Practice + 2 Notes + 8 Ingestion + 3 Knowledge + 13 Agency）和 22 个
-> identity-backed transitional entry；composer 把每个 entry 的精确 `definition` 投影为冻结的
+> 保存 staged semantic ownership：51 个完整 owned TaskSpec（19 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
+> + 13 Agency + 5 Copilot）与 0 个 identity-backed transitional entry（YUK-870 后中央 semantic
+> quarry 为空）；composer 把每个 entry 的精确 `definition` 投影为冻结的
 > runtime map。`src/ai/registry.ts` 仅是带 Copilot dispatch overlay 的 compatibility projection。
 > 当前恰有 **51 个 registered/runnable kinds、50 个静态 production invocation kinds、1 个显式
 > compatibility kind**：`AttributionTask` 为持久历史/registry 兼容而保留，现行 Failure Learning

@@ -11,6 +11,7 @@ import { questionAuthorTaskSpec } from './question-author';
 import { quizGenTaskSpec } from './quiz-generation';
 import { quizVerifyTaskSpec } from './quiz-verify';
 import { selectionOrchestratorTaskSpec } from './selection-orchestrator';
+import { sessionSummaryTaskSpec } from './session-summary';
 import { solutionGenerateTaskSpec, solutionGenerateVisionTaskSpec } from './solution-generation';
 import { sourceGroundingVerifyTaskSpec } from './source-grounding-verify';
 import { sourcingTaskSpec } from './sourcing';
@@ -36,5 +37,6 @@ export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
   QuestionAuthorTask: questionAuthorTaskSpec,
   ItemPriorTask: itemPriorTaskSpec,
   SelectionOrchestratorTask: selectionOrchestratorTaskSpec,
+  SessionSummaryTask: sessionSummaryTaskSpec,
   SourcingTask: sourcingTaskSpec,
 });
