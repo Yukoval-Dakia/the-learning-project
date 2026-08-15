@@ -5,6 +5,7 @@
 // failure modes and supports both attempt and review events. Same-question
 // history is explicitly non-causal; causal evidence comes from getEventChain.
 
+import { getQuestionTimeline } from '@/capabilities/copilot/public';
 import { getFailureAttemptById } from '@/capabilities/knowledge/public';
 import { PedagogyMethodId } from '@/core/pedagogy/method-library';
 import {
@@ -29,7 +30,6 @@ import { AiProposalPayload } from '@/core/schema/proposal';
 import { event, question } from '@/db/schema';
 import { type EnvelopedEvent, getEventById, getEventChain } from '@/kernel/events';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import { getQuestionTimeline } from '@/server/events/queries';
 import { listLearningRecords } from '@/server/records/queries';
 import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
