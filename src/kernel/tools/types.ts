@@ -11,6 +11,7 @@
 // interface-only.
 
 import type { Db } from '@/db/client';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
 import type { z } from 'zod';
 
 export type ToolEffect = 'read' | 'propose' | 'write';
@@ -37,6 +38,7 @@ export interface ToolCallerActor {
 
 export interface ToolContext {
   db: Db;
+  runTaskFn?: TaskTextRunFn;
   /** Caller-owned cancellation propagated into any nested AI work. */
   signal?: AbortSignal;
   /** Absolute caller wall clock propagated into nested central AI work. */
