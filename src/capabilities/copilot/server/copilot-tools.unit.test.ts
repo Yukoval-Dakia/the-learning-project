@@ -114,7 +114,11 @@ describe('copilot server ownership (YUK-884)', () => {
     // YUK-892 — the central events transport module is deleted; the read models
     // live in kernel/read-models and are re-published through the public port.
     expect(existsSync(join(process.cwd(), 'src/server/events/queries.ts'))).toBe(false);
-    for (const name of ['getRecentReviewEvents', 'getQuestionTimeline', 'getQuestionAttemptOutcomeCounts']) {
+    for (const name of [
+      'getRecentReviewEvents',
+      'getQuestionTimeline',
+      'getQuestionAttemptOutcomeCounts',
+    ]) {
       expect(publicPort).toContain(name);
     }
     expect(publicPort).toContain('QuestionTimelineEntry');

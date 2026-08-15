@@ -120,9 +120,7 @@ describe('ingestion server ownership', () => {
   it('shares record read-model semantics through the ingestion public seam', () => {
     // YUK-892 — the composite question-context reader moved to Practice; it must
     // still consume ingestion-owned material context through the public seam.
-    const questionContext = source(
-      'src/capabilities/practice/server/tools/question-context.ts',
-    );
+    const questionContext = source('src/capabilities/practice/server/tools/question-context.ts');
     const ingestionPublic = source('src/capabilities/ingestion/public.ts');
 
     expect(questionContext).toContain("from '@/capabilities/ingestion/public'");
