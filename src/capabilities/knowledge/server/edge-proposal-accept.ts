@@ -7,7 +7,6 @@ import type { Db } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { type ProposalAcceptApplier, toProposalLifecycleResult } from '@/kernel/proposals';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
 import { projectionIsWriter } from '@/server/projections/sot-flag';
 import { findExistingRateEvent } from '@/server/proposals/applier-helpers';
@@ -539,16 +538,3 @@ export async function decideKnowledgeEdgeProposal(
     edge_id: edgeId,
   };
 }
-
-export const knowledgeEdgeProposalAcceptApplier: ProposalAcceptApplier = async (db, input) => {
-  const result = await decideKnowledgeEdgeProposal(db as Db, input.proposalId, {
-    decision: input.decision ?? 'accept',
-    new_relation_type: input.new_relation_type,
-    user_note: input.user_note,
-  });
-  return {
-    kind: 'knowledge_edge',
-    result: toProposalLifecycleResult(result),
-    lifecycle_outcome: result.generate_event_id === null ? 'dismissed' : 'accepted',
-  };
-};
