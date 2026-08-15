@@ -1184,30 +1184,36 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     const preparedCandidate = extractPrimaryView(correctionResolution.reply, {
       taskRunId: result.task_run_id,
     });
-    const evidenceReview = await reviewEvidenceReply({
-      db,
-      requestContext: {
-        user_message: data.user_message,
-        surface,
-        triggered_by: data.triggered_by,
-        ...(data.chip_kind ? { chip_kind: data.chip_kind } : {}),
-        ...(data.ambient ? { ambient_context: data.ambient } : {}),
-      },
-      candidateReply: preparedCandidate.text,
-      candidateTaskRunId: result.task_run_id,
-      toolTrace,
-      signal: cancellationControl.signal,
-      attemptTimeouts: {
-        referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
-        comparisonMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
-      },
-      beforeVerification: async () => {
-        await cancellationControl.probe();
-        cancellationControl.signal.throwIfAborted();
-      },
-      candidateComplete: !result.partial,
-    });
-    const reviewedReply = evidenceReview.replyText;
+    const evidenceReview =
+      correctionResolution.kind === 'clarify'
+        ? { status: 'skipped' as const, replyText: preparedCandidate.text }
+        : await reviewEvidenceReply({
+            db,
+            requestContext: {
+              user_message: data.user_message,
+              surface,
+              triggered_by: data.triggered_by,
+              ...(data.chip_kind ? { chip_kind: data.chip_kind } : {}),
+              ...(data.ambient ? { ambient_context: data.ambient } : {}),
+            },
+            candidateReply: preparedCandidate.text,
+            candidateTaskRunId: result.task_run_id,
+            toolTrace,
+            signal: cancellationControl.signal,
+            attemptTimeouts: {
+              referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+              comparisonMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
+            },
+            beforeVerification: async () => {
+              await cancellationControl.probe();
+              cancellationControl.signal.throwIfAborted();
+            },
+            candidateComplete: !result.partial,
+          });
+    const reviewedReply =
+      evidenceReview.status === 'repair'
+        ? resolveCorrectionReply(evidenceReview.replyText, runInput.correction_contract).reply
+        : evidenceReview.replyText;
     // The validator seals text, not the presentation side channel. Drop every
     // primary_view on read-bearing pass/repair/fail-closed decisions; otherwise
     // unreviewed ephemeral_html or an unbound artifact ref could contradict the
