@@ -6,6 +6,8 @@ export {
 export type { ActiveGoal } from './server/goals/queries';
 export { readAgentNotes } from './server/notes';
 export { induceConjecture } from './server/conjecture/induce';
+export { BriefDraftOutputSchema, parseBriefDraftOutput } from './tasks/memory-brief';
+export type { BriefDraftOutput } from './tasks/memory-brief';
 export type {
   InduceConjectureInput,
   InduceConjectureResult,

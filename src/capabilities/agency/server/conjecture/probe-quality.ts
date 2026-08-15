@@ -14,7 +14,10 @@ import {
   sumAllKnownCostUsd,
 } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
-import { z } from 'zod';
+import {
+  ConjectureProbeAuthorOutputSchema,
+  ConjectureProbeReviewOutputSchema,
+} from '../../tasks/conjecture-probe';
 import type { LoadedConjectureEvidenceImage } from './evidence';
 import { parseTaskStructuredOutput } from './structured-output';
 
@@ -31,13 +34,6 @@ export class ConjectureProbeQualityOperationalError extends Error {
     this.taskKind = taskKind;
   }
 }
-
-const ProbeAuthorStructuredOutput = z.object({
-  package: ConjectureProbePackageV2,
-});
-const ProbeReviewStructuredOutput = z.object({
-  review: ConjectureProbeReview,
-});
 
 export interface PrepareConjectureProbePairInput {
   hypothesis: ConjectureHypothesisProposalDraftT;
@@ -123,7 +119,7 @@ export async function prepareConjectureProbePair(
         ),
         {
           override: { provider: 'anthropic-sub' as const },
-          outputFormat: zodToJsonSchemaOutputFormat(ProbeAuthorStructuredOutput),
+          outputFormat: zodToJsonSchemaOutputFormat(ConjectureProbeAuthorOutputSchema),
           ...(input.subjectProfile ? { subjectProfile: input.subjectProfile } : {}),
         },
       );
@@ -224,7 +220,7 @@ export async function prepareConjectureProbePair(
         ),
         {
           override: { provider: 'anthropic-sub' as const },
-          outputFormat: zodToJsonSchemaOutputFormat(ProbeReviewStructuredOutput),
+          outputFormat: zodToJsonSchemaOutputFormat(ConjectureProbeReviewOutputSchema),
           ...(input.subjectProfile ? { subjectProfile: input.subjectProfile } : {}),
         },
       );

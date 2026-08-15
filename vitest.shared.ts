@@ -310,7 +310,7 @@ export const fastTestInclude = [
   // and intentionally falls through to the DB partition.
   'src/server/grounding-gate/**/*.unit.test.ts',
   // YUK-572 — shared scout primitives. CONVENTION glob: every *.unit.test.ts under
-  // src/server/agency/scout/ runs no-DB (pure schema / AgentDefinition assembly /
+  // src/capabilities/agency/server/scout/ runs no-DB (pure schema / AgentDefinition assembly /
   // delimiter helpers importing only Zod + the SDK types). The evidence-mcp.db.test.ts
   // (real testcontainer + seeded rows) is a *.db.test.ts, so it matches allTestInclude's
   // src/**/*.test.ts and falls through to the db partition, NOT this fast allowlist. The
