@@ -48,6 +48,49 @@ describe('notes capability — semantic ownership (YUK-875)', () => {
   });
 });
 
+describe('notes capability — copilot tools and correction read model (YUK-880)', () => {
+  it('declares author_artifact + update_artifact with lazy loads that resolve to the tools', async () => {
+    const tools = notesCapability.copilotTools?.tools ?? [];
+    for (const name of ['author_artifact', 'update_artifact']) {
+      const matches = tools.filter((tool) => tool.name === name);
+      expect(matches).toHaveLength(1);
+      expect(matches[0]?.load).toBeInstanceOf(Function);
+      const resolved = await matches[0]?.load?.();
+      expect((resolved as { name: string }).name).toBe(name);
+    }
+  });
+
+  it('owns both tool implementations and the artifact-correction read model under Notes', () => {
+    for (const path of [
+      'src/capabilities/notes/server/tools/author-artifact.ts',
+      'src/capabilities/notes/server/artifact-corrections.ts',
+    ]) {
+      expect(existsSync(join(process.cwd(), path)), path).toBe(true);
+    }
+    for (const path of [
+      'src/server/ai/tools/author-artifact.ts',
+      'src/server/events/artifact-corrections.ts',
+      'src/server/ai/tools/author-artifact.test.ts',
+      'src/server/events/artifact-corrections.test.ts',
+    ]) {
+      expect(existsSync(join(process.cwd(), path)), path).toBe(false);
+    }
+  });
+
+  it('rejects Copilot as the implementation owner of the artifact authoring tools', () => {
+    const copilotManifest = source('src/capabilities/copilot/manifest.ts');
+    expect(copilotManifest).not.toContain("import('@/server/ai/tools/author-artifact')");
+    expect(copilotManifest).not.toContain("'author_artifact'");
+    expect(copilotManifest).not.toContain("'update_artifact'");
+
+    // Surface allowlist names stay (permissions unchanged) — only the
+    // implementation ownership moved.
+    const allowlists = source('src/server/ai/tools/allowlists.ts');
+    expect(allowlists).toContain("'author_artifact'");
+    expect(allowlists).toContain("'update_artifact'");
+  });
+});
+
 describe('notes capability — mastery progress subscription (YUK-751)', () => {
   it('declares the exact live versioned identity and keeps its loader lazy', async () => {
     const subscription = notesCapability.subscriptions?.handlers[0];

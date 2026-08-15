@@ -12,9 +12,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { Artifact } from '@/core/schema';
 import { INTERACTIVE_HTML_MAX_CHARS } from '@/core/schema/business';
 import { artifact } from '@/db/schema';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import type { ToolContext } from '@/server/ai/tools/types';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { authorArtifactTool, updateArtifactTool } from './author-artifact';
-import type { ToolContext } from './types';
 
 const HTML_V1 = '<!doctype html><html><body><h1>互动式元素周期表</h1></body></html>';
 const HTML_V2 = '<!doctype html><html><body><h1>互动式元素周期表 v2</h1></body></html>';

@@ -3,7 +3,7 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 550,
+      "total": 547,
       "byOwnerPair": {
         "agency -> agency": 7,
         "agency -> ai": 29,
@@ -18,7 +18,7 @@
         "agency -> questions": 1,
         "agency -> subjects": 2,
         "copilot -> advisory-locks": 1,
-        "copilot -> ai": 37,
+        "copilot -> ai": 36,
         "copilot -> boss": 6,
         "copilot -> events": 7,
         "copilot -> http": 1,
@@ -47,16 +47,15 @@
         "knowledge -> boss": 3,
         "knowledge -> calibration": 1,
         "knowledge -> conjectures": 1,
-        "knowledge -> events": 8,
+        "knowledge -> events": 7,
         "knowledge -> fsrs": 2,
         "knowledge -> mastery": 5,
         "knowledge -> memory": 2,
         "knowledge -> projections": 19,
         "knowledge -> proposals": 17,
-        "notes -> ai": 8,
-        "notes -> artifacts": 3,
+        "notes -> ai": 9,
+        "notes -> artifacts": 4,
         "notes -> boss": 2,
-        "notes -> events": 3,
         "notes -> projections": 3,
         "notes -> proposals": 4,
         "notes -> runtime-env": 1,
@@ -146,7 +145,15 @@
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },
-      "nontrivialSccs": [["agency", "ingestion", "knowledge", "notes", "practice"]]
+      "nontrivialSccs": [
+        [
+          "agency",
+          "ingestion",
+          "knowledge",
+          "notes",
+          "practice"
+        ]
+      ]
     }
   }
 }
