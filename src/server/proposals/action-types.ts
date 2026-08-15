@@ -1,4 +1,3 @@
-import type { EnqueueLearningIntentNoteFn } from '@/capabilities/agency/public';
 import type { ImageCandidateAcceptDeps } from '@/capabilities/ingestion/public';
 import type { EnqueueVariantVerifyFn } from '@/capabilities/practice/public';
 import type { ActivityRefT } from '@/core/schema/activity';
@@ -7,6 +6,8 @@ import type { ProposalCorrectedPayload, ProposalLifecycleResult } from '@/kernel
 
 export type AcceptAiProposalResult = ProposalLifecycleResult;
 export type DismissAiProposalResult = ProposalLifecycleResult;
+
+type EnqueueLearningIntentNoteFn = (artifactId: string) => Promise<boolean>;
 
 export interface RetractAiProposalResult extends ProposalLifecycleResult {
   kind: 'retracted';
