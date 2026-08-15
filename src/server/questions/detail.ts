@@ -6,7 +6,7 @@
 // mirroring loadNotePage's structure (null → 404). Reuses (never re-implements):
 //   - deriveSourceTier            (@/core/schema/provenance)
 //   - masteryDecayBucket          (@/capabilities/knowledge/server/node-page)
-//   - getQuestionTimeline         (@/server/events/queries)
+//   - getQuestionTimeline         (@/capabilities/copilot/public)
 //   - loadFamilyMembers           (@/server/questions/list)
 //
 // Red lines honoured:
@@ -20,6 +20,7 @@
 
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
+import { type QuestionTimelineEntry, getQuestionTimeline } from '@/capabilities/copilot/public';
 import {
   type MasteryDecayBucket,
   masteryDecayBucket,
@@ -31,7 +32,6 @@ import {
 import { type SourceTier, type SourceTierName, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, material_fsrs_state, question } from '@/db/schema';
-import { type QuestionTimelineEntry, getQuestionTimeline } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { loadFamilyMembers } from '@/server/questions/list';
 

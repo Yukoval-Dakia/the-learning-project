@@ -12,7 +12,6 @@ import type { Db } from '@/db/client';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { getReviewDueTool } from '@/server/ai/tools/context-readers';
 import { getAttemptContextTool } from '@/server/ai/tools/get-attempt-context';
-import { queryEventsTool } from '@/server/ai/tools/query-events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   bindCopilotEvidenceComparison,
@@ -38,6 +37,7 @@ import type {
   CopilotEvidenceModelTraceCall,
   ReferenceEvidenceSubmission,
 } from './evidence-submission';
+import { queryEventsTool } from './tools/query-events';
 
 const db = {} as Db;
 const sourceRef = {

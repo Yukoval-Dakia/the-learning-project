@@ -1,8 +1,8 @@
 import { QuestionAuthorIntentSchema } from '@/ai/task-intents';
 import { GoalScopeIntentSchema } from '@/kernel/task-intents';
 import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
-import { createRunTaskExecutor, runTaskTool } from '@/server/ai/tools/run-task';
 import { describe, expect, it, vi } from 'vitest';
+import { createRunTaskExecutor, runTaskTool } from './tools/run-task';
 
 const db = {} as never;
 const ctx = {

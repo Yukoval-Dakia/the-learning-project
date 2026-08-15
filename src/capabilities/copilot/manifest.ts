@@ -202,11 +202,11 @@ export const copilotCapability = defineCapability({
     tools: [
       {
         name: 'run_task',
-        load: () => import('@/server/ai/tools/run-task').then((m) => m.runTaskTool),
+        load: () => import('./server/tools/run-task').then((m) => m.runTaskTool),
       },
       {
         name: 'query_events',
-        load: () => import('@/server/ai/tools/query-events').then((m) => m.queryEventsTool),
+        load: () => import('./server/tools/query-events').then((m) => m.queryEventsTool),
       },
       {
         name: 'query_memory_brief',
@@ -215,7 +215,7 @@ export const copilotCapability = defineCapability({
       {
         name: 'search_memory_facts',
         load: () =>
-          import('@/server/ai/tools/search-memory-facts').then((m) => m.searchMemoryFactsTool),
+          import('./server/tools/search-memory-facts').then((m) => m.searchMemoryFactsTool),
       },
     ],
   },

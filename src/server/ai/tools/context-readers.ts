@@ -3,7 +3,8 @@
 // Composite read tools for records, questions, due review cards, learning
 // items, and Dreaming-maintained memory briefs.
 
-import { excerpt, knowledgeContext } from '@/capabilities/ingestion/public';
+import { getQuestionTimeline, getRecentReviewEvents } from '@/capabilities/copilot/public';
+import { bodyBlockSummaries, excerpt, knowledgeContext } from '@/capabilities/ingestion/public';
 import { getFailureAttempts } from '@/capabilities/knowledge/public';
 import { AddressableStructureSchema } from '@/core/schema/addressable-structure';
 import {
@@ -26,7 +27,6 @@ import {
   question,
 } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import { getQuestionTimeline, getRecentReviewEvents } from '@/server/events/queries';
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';

@@ -4,6 +4,7 @@
 // must funnel through this module. Tests seed `event` table directly with
 // hand-built KnownEvent-shaped rows; no Step 3 migration in test fixtures.
 
+import { getQuestionTimeline, getRecentReviewEvents } from '@/capabilities/copilot/public';
 import {
   getFailureAttemptById,
   getFailureAttemptWithReasoningTraceById,
@@ -19,7 +20,6 @@ import { eq, inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { effectiveCauseForFailureAttempt } from './cause-policy';
-import { getQuestionTimeline, getRecentReviewEvents } from './queries';
 
 async function seedAttemptEvent(opts: {
   id?: string;
