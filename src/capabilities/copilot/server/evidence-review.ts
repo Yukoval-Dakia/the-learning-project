@@ -7,8 +7,7 @@ import {
 import type { Db } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { AgentRunError } from '@/server/ai/agent-run-error';
-import type { StructuredTaskResult } from '@/server/ai/judges/judge-output-parse';
-import { taskPromptFingerprint } from '@/server/ai/provenance';
+import { type TaskTextResult, taskPromptFingerprint } from '@/server/ai/provenance';
 import { type RunTaskCtx, runTask } from '@/server/ai/runner';
 import {
   persistValidatorRunBinding,
@@ -63,7 +62,7 @@ const MAX_CANDIDATE_CHARS = 64_000;
 const MAX_SERIALIZED_TRACE_CHARS = 160_000;
 const MAX_SERIALIZED_REVIEW_INPUT_CHARS = 320_000;
 
-export interface CopilotEvidenceReviewRunResult extends StructuredTaskResult {
+export interface CopilotEvidenceReviewRunResult extends TaskTextResult {
   task_run_id?: string;
 }
 

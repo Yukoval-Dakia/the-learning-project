@@ -1,5 +1,5 @@
+import { runConfirmedStructuredReview } from '@/server/ai/sealed-validation';
 import { describe, expect, it, vi } from 'vitest';
-import { runConfirmedStructuredReview } from '../sealed-validation';
 
 describe('runConfirmedStructuredReview', () => {
   it('requires two valid passes before authorizing pass', async () => {

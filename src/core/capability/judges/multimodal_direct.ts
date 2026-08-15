@@ -5,8 +5,8 @@ import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
 
 // ----------------------------------------------------------------------------
 // Schemas — input from judge runner, LLM output.
-// Runtime execution lives in src/server/ai/judges/multimodal-direct-judge.ts and
-// is reached through src/server/judge/invoker.ts. Shapes follow spec
+// Runtime execution lives in src/capabilities/practice/server/judge/multimodal-direct-judge.ts and
+// is reached through its capability-owned invoker. Shapes follow spec
 // docs/superpowers/specs/2026-06-02-multimodal-direct-judge-design.md §3.
 //
 // multimodal_direct owns HOLISTIC, no-step-rubric vision judging (physics calc
@@ -86,7 +86,7 @@ function run(input: JudgeRunInput): JudgeResultV2T {
     confidence: 0,
     capability_ref: CAPABILITY_REF,
     feedback_md:
-      'multimodal_direct requires server JudgeInvoker runtime context. Use src/server/judge/invoker.ts.',
+      'multimodal_direct requires server JudgeInvoker runtime context. Use the Practice judge invoker.',
     evidence_json: {
       reason: 'server_runtime_required',
       question: input.question,

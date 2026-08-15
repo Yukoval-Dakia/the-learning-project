@@ -1,6 +1,11 @@
 import type { z } from 'zod';
 
 import { type Provider, tasks } from '@/ai/registry';
+// F0 (PR #309 round-3) — the route resolver now lives in the dependency-light
+// leaf `@/capabilities/practice/server/judge/route-resolve` (see that file's header for the build
+// regression it fixes). Re-exported below so this module's public surface is
+// unchanged; existing importers keep working.
+import { resolveQuestionJudgeRoute } from '@/capabilities/practice/server/judge/route-resolve';
 import { SemanticJudgeOutput, type SemanticJudgeOutputT } from '@/core/capability/judges/semantic';
 import { Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
@@ -9,11 +14,6 @@ import type { Db } from '@/db/client';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
-// F0 (PR #309 round-3) — the route resolver now lives in the dependency-light
-// leaf `@/server/judge/route-resolve` (see that file's header for the build
-// regression it fixes). Re-exported below so this module's public surface is
-// unchanged; existing importers keep working.
-import { resolveQuestionJudgeRoute } from '@/server/judge/route-resolve';
 import type { SubjectProfile } from '@/subjects/profile';
 import type { JudgeKind } from '.';
 import { extractJsonObject } from './judge-output-parse';
@@ -161,7 +161,7 @@ function nonEmpty(values: string[] | undefined): string[] {
   return (values ?? []).map((v) => v.trim()).filter((v) => v.length > 0);
 }
 
-// `resolveQuestionJudgeRoute` moved to `@/server/judge/route-resolve` (F0,
+// `resolveQuestionJudgeRoute` moved to `@/capabilities/practice/server/judge/route-resolve` (F0,
 // PR #309 round-3) and is re-exported at the top of this file. The private
 // helpers it used (`parseRoute` / `isPreferred`) moved with it.
 
@@ -307,7 +307,9 @@ export async function runSemanticJudge(params: JudgeAnswerParams): Promise<Judge
 }
 
 export async function judgeAnswer(params: JudgeAnswerParams): Promise<JudgeAnswerResult> {
-  const { createDefaultJudgeInvoker } = await import('@/server/judge/invoker');
+  const { createDefaultJudgeInvoker } = await import(
+    '@/capabilities/practice/server/judge/invoker'
+  );
   const invoked = await createDefaultJudgeInvoker().invoke(params);
   return {
     route: invoked.route,

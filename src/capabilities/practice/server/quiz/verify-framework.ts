@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import {
+  type JudgeAnswerParams,
+  runSemanticJudge,
+} from '@/capabilities/practice/server/judge/question-contract';
 // YUK-216 S2 (题源扩展 Strategy D) — slice 1 verification-gate framework.
 //
 // docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §4
@@ -36,7 +40,6 @@ import type { Db, Tx } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { type RepairLevel, parseJsonObjectLoose } from '@/server/ai/json-extract';
-import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import {
   type TaskTextResult,
@@ -783,7 +786,8 @@ async function runIndependentSolutionInternal(
     let images: Array<{ data: string; mediaType: string }>;
     try {
       const imageFetchFn =
-        opts.imageFetchFn ?? (await import('@/server/ai/judges/steps-judge')).defaultImageFetch;
+        opts.imageFetchFn ??
+        (await import('@/capabilities/practice/server/judge/steps-judge')).defaultImageFetch;
       images = await imageFetchFn(promptImageRefs, opts.db);
     } catch (err) {
       return {

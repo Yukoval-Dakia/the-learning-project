@@ -1,8 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import {
+  FUTURE_JUDGE_ROUTES,
+  RUNNABLE_ROUTES,
+} from '@/capabilities/practice/server/judge/question-contract';
 import { getDefaultRegistry } from '@/core/capability/judges';
-import { FUTURE_JUDGE_ROUTES, RUNNABLE_ROUTES } from '@/server/ai/judges/question-contract';
 import { subjectProfiles } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
 
@@ -64,12 +67,12 @@ describe('Judge v2 light gap-prevention audit', () => {
     const offenders: string[] = [];
     for (const file of files) {
       const rel = path.relative(REPO_ROOT, file).split(path.sep).join('/');
-      if (rel === 'src/server/ai/judges/question-contract.ts') continue;
+      if (rel === 'src/capabilities/practice/server/judge/question-contract.ts') continue;
       // YUK-215 (PR #309 F0): resolveQuestionJudgeRoute 本体提取到无重依赖 leaf，
       // 打破 judges-barrel 与 client chunk 的 webpack 模块环（route 顶层 import
       // barrel 会毒化共享 chunk 致 prerender 崩溃）。question-contract 仍 re-export，
       // 路由选择的唯一语义入口不变——leaf 是它的物理宿主，同属 canonical。
-      if (rel === 'src/server/judge/route-resolve.ts') continue;
+      if (rel === 'src/capabilities/practice/server/judge/route-resolve.ts') continue;
       // 并行测试竞态容忍（YUK-222 gate 实测）：serialize round-trip 等测试会在
       // src/subjects/ 下创建临时 fixture 目录，walk 时存在、read 时已删 → ENOENT。
       // 消失的文件不可能是 offender，跳过即可；其它错误照常抛。
@@ -87,7 +90,7 @@ describe('Judge v2 light gap-prevention audit', () => {
 
     expect(
       offenders,
-      `Judge route selection must go through src/server/ai/judges/question-contract.ts:\n${offenders.join(
+      `Judge route selection must go through src/capabilities/practice/server/judge/question-contract.ts:\n${offenders.join(
         '\n',
       )}`,
     ).toEqual([]);

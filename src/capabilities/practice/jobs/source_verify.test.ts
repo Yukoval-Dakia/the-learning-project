@@ -21,10 +21,10 @@ import {
   evidenceDemandToTargetContext,
   withSupplyTraceDifficultyEvidence,
 } from '@/capabilities/practice/public';
+import type { SourceGroundingVerifyResult } from '@/capabilities/practice/server/judge/source-grounding-verify';
 import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import { event, knowledge, question } from '@/db/schema';
-import type { SourceGroundingVerifyResult } from '@/server/ai/judges/source-grounding-verify';
 import { getFsrsState } from '@/server/fsrs/state';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { semanticJudgeOutput } from '../../../../tests/helpers/solve-check-fixtures';

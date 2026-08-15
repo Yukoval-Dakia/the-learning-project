@@ -1834,7 +1834,7 @@ describe('defaultLoadEvidenceImages', () => {
     const loaded = await defaultLoadEvidenceImages(
       db as never,
       refs,
-      imageFetchFn as typeof import('@/server/ai/judges/steps-judge').defaultImageFetch,
+      imageFetchFn as typeof import('@/kernel/judge').defaultImageFetch,
     );
 
     expect(imageFetchFn).toHaveBeenCalledTimes(1);

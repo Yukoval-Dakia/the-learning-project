@@ -488,7 +488,7 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect((rateEvent.payload as Record<string, unknown>).conjecture_id).toBe(proposalId);
 
     // ── 3. ANSWER THE PROBE through the real route + the REAL judge invoker ──
-    // No `vi.mock('@/server/judge/invoker')` here — this is the chokepoint PR #705 proved
+    // No `vi.mock('@/capabilities/practice/server/judge/invoker')` here — this is the chokepoint PR #705 proved
     // can be a dead stub in production while a test double looks complete.
     const answerRes = await answerProbeViaRoute(probeRow.id, '使动用法，译作「使他感到奇异」');
     expect(answerRes.status).toBe(200);

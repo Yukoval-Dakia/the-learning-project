@@ -99,7 +99,7 @@ export const fastTestInclude = [
   'src/__tests__/**/*.test.ts',
   'src/ai/**/*.test.ts',
   'src/core/**/*.test.ts',
-  'src/server/ai/judges/**/*.test.ts',
+  'src/capabilities/practice/server/judge/**/*.test.ts',
   // YUK-238 / YUK-240 — streamTask client-disconnect abort + stuck-run warn.
   // Pure no-DB unit: @anthropic-ai/claude-agent-sdk and @/server/ai/log are
   // vi.mock'd and `db` is an untouched stub, so no live Postgres is needed.
@@ -359,7 +359,6 @@ export const fastTestInclude = [
   // global `fetch`, the parser test is pure (real fixtures). No @/db/client /
   // postgres / drizzle / PgBoss import → unit partition. The handler test
   // (tencent_ocr_extract.test.ts) hits live Postgres → db partition.
-  'src/server/judge/**/*.test.ts',
   // YUK-239 (STB-5) — pure env-read guard for the background-job enqueue seam
   // (shouldEnqueueBackgroundJobs). No DB / pg-boss touched (vi.stubEnv only).
   // Lives at src/server/runtime-env.ts (NOT under src/server/boss/) precisely so

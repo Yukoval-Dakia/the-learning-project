@@ -1,7 +1,12 @@
-import { legacyTaskDefinitions } from '@/ai/legacy-task-definitions';
-import { defineOwnedTaskSpecs, defineTransitionalTask } from '@/ai/owned-task-specs';
+import { defineOwnedTaskSpecs } from '@/ai/owned-task-specs';
 import { attributionRerankTaskSpec, attributionTaskSpec } from './attribution';
 import { itemPriorTaskSpec } from './item-prior';
+import {
+  multimodalDirectJudgeTaskSpec,
+  semanticJudgeTaskSpec,
+  stepsJudgeTaskSpec,
+  unitDimensionFallbackTaskSpec,
+} from './judges';
 import { questionAuthorTaskSpec } from './question-author';
 import { quizGenTaskSpec } from './quiz-generation';
 import { quizVerifyTaskSpec } from './quiz-verify';
@@ -17,12 +22,10 @@ export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
   AttributionTask: attributionTaskSpec,
   AttributionRerankTask: attributionRerankTaskSpec,
   VariantGenTask: variantGenTaskSpec,
-  SemanticJudgeTask: defineTransitionalTask(legacyTaskDefinitions.SemanticJudgeTask),
-  UnitDimensionFallback: defineTransitionalTask(legacyTaskDefinitions.UnitDimensionFallback),
-  StepsJudgeTask: defineTransitionalTask(legacyTaskDefinitions.StepsJudgeTask),
-  MultimodalDirectJudgeTask: defineTransitionalTask(
-    legacyTaskDefinitions.MultimodalDirectJudgeTask,
-  ),
+  SemanticJudgeTask: semanticJudgeTaskSpec,
+  UnitDimensionFallback: unitDimensionFallbackTaskSpec,
+  StepsJudgeTask: stepsJudgeTaskSpec,
+  MultimodalDirectJudgeTask: multimodalDirectJudgeTaskSpec,
   SourceGroundingVerifyTask: sourceGroundingVerifyTaskSpec,
   VariantVerifyTask: variantVerifyTaskSpec,
   SolutionGenerateTask: solutionGenerateTaskSpec,

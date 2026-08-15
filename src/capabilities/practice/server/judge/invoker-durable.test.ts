@@ -9,8 +9,8 @@
 // the steps route dispatches through the invoker's judgeDefaultRunTaskFn → runTask, so
 // the spy sees exactly the ctx the runner would receive.
 
+import type { JudgeQuestionRow } from '@/capabilities/practice/server/judge/question-contract';
 import type { Db } from '@/db/client';
-import type { JudgeQuestionRow } from '@/server/ai/judges/question-contract';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 

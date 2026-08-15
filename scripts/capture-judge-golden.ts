@@ -25,7 +25,7 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { JudgeQuestionRow } from '@/server/ai/judges/question-contract';
+import type { JudgeQuestionRow } from '@/capabilities/practice/server/judge/question-contract';
 
 export interface CaptureCandidate {
   samplePayload: {

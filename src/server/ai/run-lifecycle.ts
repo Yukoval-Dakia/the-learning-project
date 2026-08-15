@@ -1,6 +1,5 @@
 import { type TaskKind, tasks } from '@/ai/registry';
 import type { Db } from '@/db/client';
-import { taskInputHash } from '@/server/judge/judge-execution-provenance';
 import { createId } from '@paralleldrive/cuid2';
 import { RETRY_ELAPSED_CAP_MS, isTransientAgentFailure } from './agent-run-error';
 import {
@@ -23,6 +22,7 @@ import {
   resolveProviderSessionAdmissionPlan,
 } from './provider-session-admission';
 import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
+import { taskInputHash } from './task-input-hash';
 
 export type LifecycleUsage = AiTaskUsage;
 

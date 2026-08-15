@@ -20,8 +20,8 @@ const SRC_ROOT = join(process.cwd(), 'src');
 
 /** The ONLY sanctioned opt-in sites (design doc §1.2.2 / §3.2). */
 const SANCTIONED_OPTIN_FILES = [
-  'src/server/ai/judges/multimodal-direct-judge.ts',
-  'src/server/ai/judges/steps-judge.ts',
+  'src/capabilities/practice/server/judge/multimodal-direct-judge.ts',
+  'src/capabilities/practice/server/judge/steps-judge.ts',
 ];
 
 function walk(dir: string, out: string[] = []): string[] {
