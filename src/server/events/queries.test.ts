@@ -4,6 +4,13 @@
 // must funnel through this module. Tests seed `event` table directly with
 // hand-built KnownEvent-shaped rows; no Step 3 migration in test fixtures.
 
+import {
+  getFailureAttemptById,
+  getFailureAttemptWithReasoningTraceById,
+  getFailureAttempts,
+  getJudgeForAttempt,
+  getUserCauseForAttempt,
+} from '@/capabilities/knowledge/server/events/failure-attempts';
 import { deterministicId, newId } from '@/core/ids';
 import type { EventT } from '@/core/schema/event';
 import type { AttemptQuestionSnapshotT } from '@/core/schema/question-evidence-snapshot';
@@ -12,15 +19,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { effectiveCauseForFailureAttempt } from './cause-policy';
-import {
-  getFailureAttemptById,
-  getFailureAttemptWithReasoningTraceById,
-  getFailureAttempts,
-  getJudgeForAttempt,
-  getQuestionTimeline,
-  getRecentReviewEvents,
-  getUserCauseForAttempt,
-} from './queries';
+import { getQuestionTimeline, getRecentReviewEvents } from './queries';
 
 async function seedAttemptEvent(opts: {
   id?: string;

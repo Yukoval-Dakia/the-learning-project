@@ -38,7 +38,7 @@
 // e.g. "之-主谓间用法" --derived_from--> "之-用法". So `from` = the variant/derived
 // node, `to` = the base concept.
 //
-// `src/server/ai/tools/knowledge-readers.ts` DEFAULT_RELATIONS says derived_from
+// `src/capabilities/knowledge/server/tools/knowledge-readers.ts` DEFAULT_RELATIONS says derived_from
 // meaning = "target concept extends source" — that comment is the OPPOSITE of
 // ADR-0010 and is therefore wrong. We follow ADR-0010.
 //

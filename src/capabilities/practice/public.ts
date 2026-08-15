@@ -10,6 +10,13 @@ export {
 } from './server/learnable-frontier';
 export type { FrontierResolution } from './server/learnable-frontier';
 export { retrievabilityForKc } from './server/fsrs';
+// YUK-876 — the knowledge-owned failure-attempt read port consumes the
+// effective-truth resolver through this public seam (not a deep import).
+export {
+  type EffectiveTruth,
+  activeEffectiveTruth,
+  getEffectiveTruths,
+} from './server/effective-truth';
 export { loadAttemptQuestionSnapshot } from './server/question-evidence-snapshot';
 type HandleReviewDue = typeof import('./server/due-list').handleReviewDue;
 export const handleReviewDue: HandleReviewDue = async (...args) => {

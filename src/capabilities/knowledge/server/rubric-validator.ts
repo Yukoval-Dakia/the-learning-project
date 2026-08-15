@@ -28,7 +28,6 @@ import {
   type EffectiveFailureCause,
   effectiveCauseForFailureAttempt,
 } from '@/server/events/cause-policy';
-import { type FailureAttempt, getFailureAttemptById } from '@/server/events/queries';
 // P5.4-L2 / YUK-174 — OPTIONAL adaptive gate input (Facet B). Type-only import:
 // the validator stays PURE (it does NOT run adaptive-bias.ts at runtime — the
 // import erases). The gate-bump decision + its audit metadata are COMPUTED by
@@ -36,6 +35,7 @@ import { type FailureAttempt, getFailureAttemptById } from '@/server/events/quer
 // can cite the rate/threshold/sample without re-reading the signal (§3.4).
 import type { AdaptiveGateInput } from '@/server/proposals/adaptive-bias';
 import { eq } from 'drizzle-orm';
+import { type FailureAttempt, getFailureAttemptById } from './events/failure-attempts';
 
 // RB-5 — single-source evidence window. Consumed by the recency check (RB-4)
 // and the §4.2 level computation. knowledge.md §4.2 "recent window: 30 days".

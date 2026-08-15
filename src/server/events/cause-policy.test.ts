@@ -1,10 +1,10 @@
+import type { FailureAttempt } from '@/capabilities/knowledge/public';
 import { activeEffectiveTruth } from '@/capabilities/practice/server/effective-truth';
 import { describe, expect, it } from 'vitest';
 import {
   effectiveCauseCategoryForFailureAttempt,
   effectiveCauseForFailureAttempt,
 } from './cause-policy';
-import type { FailureAttempt } from './queries';
 
 const now = new Date('2026-05-24T00:00:00Z');
 
