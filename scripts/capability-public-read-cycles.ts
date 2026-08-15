@@ -4,7 +4,7 @@
 // inside the current SCC {agency, ingestion, knowledge, notes, practice} is
 // catalogued here with its owner, consumer, exact public symbols, the DTO it
 // carries, a bounded justification, and the review issue that owns it.
-// scripts/audit-architecture-ownership.ts enforces:
+// scripts/audit-architecture-deepening.ts enforces:
 //   - every intra-SCC edge direction (and every consumer file) appears here;
 //   - files NOT listed in `commandFiles` contain no write signatures and
 //     consume no command symbols from the port (bounded public reads);
@@ -14,7 +14,7 @@
 //     deletion-only scope and the dependency ratchets forbid; tracked as the
 //     F4 follow-up in PLAN.md).
 
-import type { PublicReadCycleEdge } from './audit-architecture-ownership';
+import type { PublicReadCycleEdge } from './audit-architecture-deepening';
 
 export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   {
