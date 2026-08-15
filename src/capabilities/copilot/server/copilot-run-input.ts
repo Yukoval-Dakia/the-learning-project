@@ -28,6 +28,7 @@ import type { Db } from '@/db/client';
 import type { DomainToolSurface } from '@/kernel/tools/allowlists';
 import { COPILOT_HISTORY_BUDGET, type CopilotHistoryBudget } from '@/kernel/tools/budgets';
 
+import type { CopilotCorrectionContract } from './correction-contract';
 import {
   type LearnerStateHeader,
   type ScopedProposalFeedbackCell,
@@ -59,6 +60,7 @@ export function selectActorRef(triggeredBy: CopilotTriggeredBy): string {
 export interface CopilotHistoryTurn {
   role: 'user' | 'ai' | 'context';
   text: string;
+  event_id?: string;
 }
 
 // YUK-267 (C2) — ambient context for THIS message only (防循环 ②). Present only
@@ -77,6 +79,7 @@ export interface CopilotRunInput {
   chip_kind?: string;
   proposal_feedback: ScopedProposalFeedbackCell[];
   conversation_history: CopilotHistoryTurn[];
+  correction_contract: CopilotCorrectionContract;
   ambient_context?: CopilotAmbientContext;
 }
 
@@ -118,6 +121,7 @@ export function assembleConversationHistory(
   const mapped: CopilotHistoryTurn[] = recent.map((t) => ({
     role: t.role,
     text: t.text.length > budget.perTurnChars ? t.text.slice(0, budget.perTurnChars) : t.text,
+    ...(t.role === 'ai' ? { event_id: t.event_id } : {}),
   }));
   const pinned: CopilotHistoryTurn | null =
     pinnedHeaderMd && pinnedHeaderMd.length > 0 ? { role: 'context', text: pinnedHeaderMd } : null;
@@ -162,6 +166,7 @@ export interface AssembleCopilotRunInputParams {
   now: Date;
   /** Durable pickup's run_id (= persisted user_ask event id). Inline omits it. */
   historyAnchorEventId?: string;
+  correctionTargetTurnId?: string;
 }
 
 /**
@@ -266,6 +271,15 @@ export async function assembleCopilotRunInput(
     ...(chipKind ? { chip_kind: chipKind } : {}),
     proposal_feedback: learnerState.proposal_feedback,
     conversation_history: conversationHistory,
+    correction_contract: {
+      ...(params.correctionTargetTurnId
+        ? { target_prior_turn_id: params.correctionTargetTurnId }
+        : {}),
+      available_prior_turn_ids: conversationHistory.flatMap((turn) =>
+        turn.role === 'ai' && turn.event_id !== undefined ? [turn.event_id] : [],
+      ),
+      required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+    },
     ...(ambient ? { ambient_context: ambient } : {}),
   };
 }

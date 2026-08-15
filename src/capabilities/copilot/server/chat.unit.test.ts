@@ -414,6 +414,57 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(taskInput.proposal_feedback).toEqual([]);
   });
 
+  it('clarifies instead of accepting a correction envelope that silently binds “上一轮” to a different prior reply', async () => {
+    const db = {} as never;
+    const batteryReplyId = 'copilot_reply_battery_d04';
+    const waterTankReplyId = 'copilot_reply_water_tank_d02';
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_copilot_d05',
+      text: '已把上一轮改正。\n\n<!-- copilot-correction {"prior_turn_id":"copilot_reply_battery_d04","changed":["h*=4/9"],"retained":["同一个 k"],"uncertain":[]} -->',
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+
+    const result = await runCopilotChat(
+      db,
+      { user_message: '上一轮的水箱题请改正 h*=4/9，k 不变', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+        runAgentTaskFn,
+        writeEventFn,
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_d04_d05', created: false }),
+        loadHistoryFn: async () => [
+          {
+            role: 'ai',
+            text: '水箱 D02：h*=4/9，使用同一个 k。',
+            at: '2026-08-01T10:00:00.000Z',
+            event_id: waterTankReplyId,
+          },
+          {
+            role: 'ai',
+            text: '电池 D04：先按当前电量估算。',
+            at: '2026-08-01T10:01:00.000Z',
+            event_id: batteryReplyId,
+          },
+        ],
+        now: () => new Date('2026-08-01T10:02:00.000Z'),
+      },
+    );
+
+    const taskInput = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      conversation_history: Array<{ event_id?: string }>;
+      correction_contract?: { target_prior_turn_id?: string };
+    };
+    expect(taskInput.conversation_history.map((turn) => turn.event_id)).toEqual([
+      waterTankReplyId,
+      batteryReplyId,
+    ]);
+    expect(taskInput.correction_contract?.target_prior_turn_id).toBeUndefined();
+    expect(result.reply).toContain('prior_turn_id');
+    expect(result.reply).toContain(waterTankReplyId);
+    expect(result.reply).not.toContain('已把上一轮改正');
+  });
+
   // YUK-198 — Tavily remote MCP wiring. Copilot folds in the hosted Tavily MCP
   // server (web grounding) ONLY when TAVILY_API_KEY is configured. When the key
   // is absent the run is byte-for-byte the pre-YUK-198 behaviour: no tavily
@@ -2191,11 +2242,16 @@ describe('runCopilotChat — conversation memory + ambient (C2)', () => {
     const input = captureRunInput(runAgentTaskFn);
     expect(input.conversation_history.length).toBeLessThanOrEqual(8);
     for (const entry of input.conversation_history) {
-      // {role, text} ONLY — no leaked turn-row keys.
-      expect(Object.keys(entry).sort()).toEqual(['role', 'text']);
+      expect(Object.keys(entry).sort()).toEqual(
+        entry.role === 'ai' ? ['event_id', 'role', 'text'] : ['role', 'text'],
+      );
     }
     // Newest kept (tail-slice): the last entry is the newest turn.
-    expect(input.conversation_history.at(-1)).toEqual({ role: 'ai', text: 'turn 11' });
+    expect(input.conversation_history.at(-1)).toEqual({
+      role: 'ai',
+      text: 'turn 11',
+      event_id: 'e_turn',
+    });
   });
 
   it('防循环 ⑤: a polluted source row contributes {role,text} ONLY — no assembly artifact leaks', async () => {
@@ -2230,7 +2286,9 @@ describe('runCopilotChat — conversation memory + ambient (C2)', () => {
     );
 
     const input = captureRunInput(runAgentTaskFn);
-    expect(input.conversation_history).toEqual([{ role: 'ai', text: 'a reply body' }]);
+    expect(input.conversation_history).toEqual([
+      { role: 'ai', text: 'a reply body', event_id: 'e_a re' },
+    ]);
     const serialized = JSON.stringify(input.conversation_history);
     expect(serialized).not.toContain('NESTED');
     expect(serialized).not.toContain('proposal_feedback');
@@ -3074,7 +3132,9 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
       conversation_history: Array<Record<string, unknown>>;
     };
     // {role, text} ONLY — the structural strip keeps primary_view out of the prompt.
-    expect(input.conversation_history).toEqual([{ role: 'ai', text: 'a prior reply body' }]);
+    expect(input.conversation_history).toEqual([
+      { role: 'ai', text: 'a prior reply body', event_id: 'e_pv' },
+    ]);
     const serialized = JSON.stringify(input.conversation_history);
     expect(serialized).not.toContain('SENTINEL_PV_q');
     expect(serialized).not.toContain('primary_view');

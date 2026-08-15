@@ -36,6 +36,7 @@ export const CopilotChatRequest = z.object({
     })
     .optional(),
   durable: z.boolean().optional(),
+  correction_target_turn_id: z.string().min(1).max(160).optional(),
 });
 
 export type CopilotChatRequestT = z.infer<typeof CopilotChatRequest>;

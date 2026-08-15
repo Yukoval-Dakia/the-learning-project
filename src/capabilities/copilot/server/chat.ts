@@ -26,6 +26,7 @@ import {
   type CopilotRunInput,
   assembleCopilotRunInput,
 } from '@/capabilities/copilot/server/copilot-run-input';
+import { resolveCorrectionReply } from '@/capabilities/copilot/server/correction-contract';
 import { reviewCopilotEvidenceReply } from '@/capabilities/copilot/server/evidence-review';
 // YUK-574 — session-anchored learner-state header (assemble-once + invalidation).
 // The Facet A (YUK-174) per-turn `proposal_feedback` digest is MIGRATED into this
@@ -862,6 +863,9 @@ async function runCopilotChatImpl(
         triggeredBy: req.triggered_by,
         ...(req.chip_kind ? { chipKind: req.chip_kind } : {}),
         ...(req.ambient_context ? { ambient: req.ambient_context } : {}),
+        ...(req.correction_target_turn_id
+          ? { correctionTargetTurnId: req.correction_target_turn_id }
+          : {}),
         now,
       },
       {
@@ -1207,6 +1211,13 @@ async function runCopilotChatImpl(
     ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
     proposal_feedback: [],
     conversation_history: [],
+    correction_contract: {
+      ...(req.correction_target_turn_id
+        ? { target_prior_turn_id: req.correction_target_turn_id }
+        : {}),
+      available_prior_turn_ids: [],
+      required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+    },
     ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
   };
 
@@ -1311,7 +1322,10 @@ async function runCopilotChatImpl(
   // persisted domain event, terminal envelope and delayed public DELTA must all
   // see exactly these bytes; a dangling marker may truncate only here, never
   // after a raw suffix was certified.
-  const preparedCandidate = extractPrimaryView(replyText, { taskRunId: replyRunId });
+  const correctionResolution = resolveCorrectionReply(replyText, runInput.correction_contract);
+  const preparedCandidate = extractPrimaryView(correctionResolution.reply, {
+    taskRunId: replyRunId,
+  });
   const evidenceReview = await reviewEvidenceReply({
     db,
     requestContext: {
