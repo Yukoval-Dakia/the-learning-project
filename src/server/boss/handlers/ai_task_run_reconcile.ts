@@ -78,20 +78,40 @@ export async function reconcileStuckAiTaskRuns(
 
   const converged: Array<{ id: string; task_kind: string }> = [];
   for (const run of staleRuns) {
-    const settled = await writeAiTaskAttemptFinished(db, {
-      id: run.id,
-      status: 'failure',
-      finish_reason: RECONCILED_STUCK_FINISH_REASON,
-      usage: { inputTokens: 0, outputTokens: 0 },
-      cost_truth: unknownAttemptCostTruth(run.provider, run.model),
-      // The sweeper cannot distinguish a pre-provider process death from a
-      // post-provider terminal-write fault. Retrying an unknown may double-bill
-      // or repeat side effects, so follow the runner's whitelist-only policy.
-      outcome: 'failed_permanent',
-      error_message:
-        'reconciled by stuck-run sweeper: no terminal write within threshold (process died or finish-write failed)',
-      finished_at: now,
-    });
+    // YUK-843 — isolate per-row settle failures. writeAiTaskAttemptFinished
+    // throws on DB/constraint errors (e.g. a ledger attempt row already
+    // existing for this run) and its transaction rolls back, leaving the run
+    // row 'running' — exactly the state this sweep selects on, so the next
+    // tick retries it. Letting the throw escape would abort the whole sweep
+    // and strand every later row until the next cron, so catch, emit one
+    // structured failure event, and continue.
+    let settled: boolean;
+    try {
+      settled = await writeAiTaskAttemptFinished(db, {
+        id: run.id,
+        status: 'failure',
+        finish_reason: RECONCILED_STUCK_FINISH_REASON,
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_truth: unknownAttemptCostTruth(run.provider, run.model),
+        // The sweeper cannot distinguish a pre-provider process death from a
+        // post-provider terminal-write fault. Retrying an unknown may double-bill
+        // or repeat side effects, so follow the runner's whitelist-only policy.
+        outcome: 'failed_permanent',
+        error_message:
+          'reconciled by stuck-run sweeper: no terminal write within threshold (process died or finish-write failed)',
+        finished_at: now,
+      });
+    } catch (error) {
+      // `err` is the driver error summary (constraint name etc.) — run
+      // input/output payloads are never logged.
+      console.warn('[ai_task_run_reconcile] settle failed for stuck run', {
+        event: 'task_run_reconcile_failed',
+        task_run_id: run.id,
+        kind: run.task_kind,
+        err: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
     if (settled) converged.push({ id: run.id, task_kind: run.task_kind });
   }
 
