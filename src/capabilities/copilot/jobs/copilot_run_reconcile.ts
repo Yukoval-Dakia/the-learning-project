@@ -1,13 +1,14 @@
 import { findOutstandingCopilotDurableRuns } from '@/capabilities/copilot/server/durable-run-observation';
 import type { Db } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';
+import type { BossJobObserver } from '@/server/boss/job-observation';
+import type { Job, QueueStats } from 'pg-boss';
+
 import {
   COPILOT_RUN_QUEUE,
   type CopilotDurableRunObservation,
   reconcileCopilotDurableRun,
-} from '@/server/boss/handlers/copilot_run';
-import type { BossJobObserver } from '@/server/boss/job-observation';
-import type { Job, QueueStats } from 'pg-boss';
+} from './copilot_run';
 
 export const COPILOT_RECONCILE_SCAN_LIMIT = 20;
 
