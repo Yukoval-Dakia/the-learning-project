@@ -38,7 +38,7 @@ import {
 import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
-} from '@/capabilities/knowledge/server/subject-resolution';
+} from '@/capabilities/knowledge/public';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import {
   type SourceTier,

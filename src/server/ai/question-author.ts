@@ -28,7 +28,7 @@ import type { QuestionAuthorIntentSchema } from '@/ai/task-intents';
 import type { ToolContext } from '@/server/ai/tools/types';
 import { and, inArray, isNull } from 'drizzle-orm';
 
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import { getEffectiveDomain } from '@/capabilities/knowledge/public';
 import {
   type QuestionAnswerAnchorT,
   validateSourceLocatorBytes,

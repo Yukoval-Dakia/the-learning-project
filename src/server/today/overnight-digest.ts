@@ -62,7 +62,7 @@ export const OVERNIGHT_HANDOFF_UNAVAILABLE = '夜链数据暂不可用。';
  * The implementation remains owned by shell; this facade is the public aggregation boundary.
  */
 export const loadTodayOvernightDigest: LoadTodayOvernightDigest = async (db, now) => {
-  const { loadOvernightDigest } = await import('@/capabilities/shell/server/overnight-digest');
+  const { loadOvernightDigest } = await import('@/capabilities/shell/public');
   return loadOvernightDigest(db, now);
 };
 

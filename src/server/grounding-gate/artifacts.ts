@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { InduceConjectureResult } from '@/capabilities/agency/public';
-import type { ConjectureEvidenceImageSource } from '@/capabilities/agency/server/conjecture/evidence';
+import type { ConjectureEvidenceImageSource } from '@/capabilities/agency/public';
 import {
   ConjectureDiagnosticSpec,
   ConjectureProbeQualityAttempt,

@@ -23,12 +23,10 @@ import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { type QuestionTimelineEntry, getQuestionTimeline } from '@/capabilities/copilot/public';
 import {
   type MasteryDecayBucket,
-  masteryDecayBucket,
-} from '@/capabilities/knowledge/server/node-page';
-import {
   batchResolveSubjectDisplayIds,
+  masteryDecayBucket,
   resolveSubjectRenderNotation,
-} from '@/capabilities/knowledge/server/subject-resolution';
+} from '@/capabilities/knowledge/public';
 import { type SourceTier, type SourceTierName, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, material_fsrs_state, question } from '@/db/schema';

@@ -36,7 +36,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, sql } from 'drizzle-orm';
 
-import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
+import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/public';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';

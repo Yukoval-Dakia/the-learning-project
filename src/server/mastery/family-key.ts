@@ -20,10 +20,7 @@
 // try/catch 兜成 'unknown'，让 subject 派生永不 crash 调用方（state.ts updateThetaForAttempt
 // 主路径绝不能因 subject 解析失败而 abort θ̂）。
 
-import {
-  batchResolveEffectiveDomains,
-  getEffectiveDomain,
-} from '@/capabilities/knowledge/server/domain';
+import { batchResolveEffectiveDomains, getEffectiveDomain } from '@/capabilities/knowledge/public';
 import type { Db, Tx } from '@/db/client';
 import { resolveKnownSubjectId } from '@/subjects/profile';
 import { buildFamilyKey } from './family-key-format';

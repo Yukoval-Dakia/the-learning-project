@@ -1,21 +1,12 @@
-import { legacyTaskDefinitions } from './legacy-task-definitions';
 import type { TaskDefinition, TaskSpec } from './task-spec';
 
 export type TaskOwner = 'practice' | 'ingestion' | 'knowledge' | 'notes' | 'agency' | 'copilot';
 
 type OwnedTaskSpec = TaskSpec<never, unknown>;
-type LegacyTaskDefinition = (typeof legacyTaskDefinitions)[keyof typeof legacyTaskDefinitions];
 
-export interface TransitionalTaskEntry<
-  Definition extends LegacyTaskDefinition = LegacyTaskDefinition,
-> {
-  readonly ownership: 'transitional';
-  readonly definition: Definition;
-  readonly parseText?: never;
-  readonly outputSchema?: never;
-}
-
-export type TaskOwnerEntry = OwnedTaskSpec | TransitionalTaskEntry;
+// YUK-885 — the transitional entry kind and the central quarry are deleted:
+// every owner entry is a full TaskSpec (definition + parseText + outputSchema).
+export type TaskOwnerEntry = OwnedTaskSpec;
 
 const PROVIDERS = new Set<string>([
   'anthropic',
@@ -26,8 +17,6 @@ const PROVIDERS = new Set<string>([
   'openai',
   'anthropic-sub',
 ]);
-
-const LEGACY_DEFINITION_IDENTITIES = new Set<TaskDefinition>(Object.values(legacyTaskDefinitions));
 
 function assertPositiveFinite(value: unknown, field: string): void {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
@@ -146,45 +135,21 @@ function freezeDefinition(definition: TaskDefinition): void {
   Object.freeze(definition);
 }
 
-export function defineTransitionalTask<const Definition extends LegacyTaskDefinition>(
-  definition: Definition,
-): TransitionalTaskEntry<Definition> {
-  if (!LEGACY_DEFINITION_IDENTITIES.has(definition)) {
-    throw new Error(
-      'defineTransitionalTask: definition must reference legacyTaskDefinitions by identity',
-    );
-  }
-  return Object.freeze({ ownership: 'transitional', definition });
-}
-
 export function defineOwnedTaskSpecs<
   const Specs extends { readonly [Kind in keyof Specs]: TaskOwnerEntry },
 >(owner: TaskOwner, specs: Specs): Readonly<Specs> {
   for (const [key, value] of Object.entries(specs)) {
     const entry = value as TaskOwnerEntry;
     validateDefinition(owner, key, entry.definition);
-    if (entry.ownership === 'owned') {
-      if (typeof entry.parseText !== 'function') {
-        throw new Error(`defineOwnedTaskSpecs(${owner}): owned "${key}" missing parseText`);
-      }
-      if (
-        typeof entry.outputSchema !== 'object' ||
-        entry.outputSchema === null ||
-        typeof entry.outputSchema.safeParse !== 'function'
-      ) {
-        throw new Error(`defineOwnedTaskSpecs(${owner}): owned "${key}" missing outputSchema`);
-      }
-    } else {
-      if (Object.hasOwn(entry, 'parseText') || Object.hasOwn(entry, 'outputSchema')) {
-        throw new Error(
-          `defineOwnedTaskSpecs(${owner}): transitional "${key}" must not own parseText or outputSchema`,
-        );
-      }
-      if (!LEGACY_DEFINITION_IDENTITIES.has(entry.definition)) {
-        throw new Error(
-          `defineOwnedTaskSpecs(${owner}): transitional "${key}" must reference legacyTaskDefinitions by identity`,
-        );
-      }
+    if (typeof entry.parseText !== 'function') {
+      throw new Error(`defineOwnedTaskSpecs(${owner}): owned "${key}" missing parseText`);
+    }
+    if (
+      typeof entry.outputSchema !== 'object' ||
+      entry.outputSchema === null ||
+      typeof entry.outputSchema.safeParse !== 'function'
+    ) {
+      throw new Error(`defineOwnedTaskSpecs(${owner}): owned "${key}" missing outputSchema`);
     }
     freezeDefinition(entry.definition);
     Object.freeze(entry);

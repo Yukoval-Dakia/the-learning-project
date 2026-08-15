@@ -26,7 +26,7 @@ import { practiceTaskSpecs } from '@/capabilities/practice/tasks/index';
 import type { TaskOwner } from './owned-task-specs';
 import type { TaskDefinition } from './task-spec';
 
-export { defineOwnedTaskSpecs, defineTransitionalTask } from './owned-task-specs';
+export { defineOwnedTaskSpecs } from './owned-task-specs';
 export type { TaskOwner } from './owned-task-specs';
 
 export type OwnerTaskSpecs<Specs extends object = object> = {

@@ -1,6 +1,6 @@
 // YUK-870 (F3.5b) — SessionSummaryTask is Practice-owned.
 //
-// Moved verbatim from src/ai/legacy-task-definitions.ts (prompt builder +
+// Moved verbatim from the since-deleted src/ai/legacy-task-definitions.ts quarry (prompt builder +
 // definition; the prompt text is byte-identical so the task-prompt-hash oracle
 // pins the move). The output is a plain-text ≤120-char summary — NOT JSON — so
 // the owned output contract mirrors the summary runner's consumer

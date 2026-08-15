@@ -16,7 +16,7 @@
 // SAME canonical bridge the review scheduler uses (BR-4,
 // `@/capabilities/knowledge/server/subject-resolution`).
 
-import { batchResolveSubjectIds } from '@/capabilities/knowledge/server/subject-resolution';
+import { batchResolveSubjectIds } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event, learning_record, memory_brief_note } from '@/db/schema';
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';

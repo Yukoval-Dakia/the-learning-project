@@ -20,9 +20,8 @@ describe('notes capability — semantic ownership (YUK-875)', () => {
   it('owns NoteRefineTask without a central semantic definition', () => {
     expect(notesTaskSpecs.NoteRefineTask.ownership).toBe('owned');
 
-    const legacyDefinitions = source('src/ai/legacy-task-definitions.ts');
-    expect(legacyDefinitions).not.toContain('function buildNoteRefinePrompt');
-    expect(legacyDefinitions).not.toContain('NoteRefineTask: {');
+    // YUK-885 — the central quarry file is deleted entirely.
+    expect(existsSync(join(process.cwd(), 'src/ai/legacy-task-definitions.ts'))).toBe(false);
   });
 
   it('owns editing-session and mutation-event implementations under Notes', () => {
