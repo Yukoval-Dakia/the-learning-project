@@ -30,14 +30,17 @@ import {
   type PrepareConjectureProbePairResult,
   prepareConjectureProbePair,
 } from '@/capabilities/agency/server/conjecture/probe-quality';
-import type {
-  AgentNoteTarget,
-  WriteAgentNoteInput,
-  writeAgentNote as WriteAgentNoteReal,
+import {
+  type AgentNoteTarget,
+  type WriteAgentNoteInput,
+  type writeAgentNote as WriteAgentNoteReal,
+  writeAgentNote,
 } from '@/capabilities/agency/server/notes';
-import { writeAgentNote } from '@/capabilities/agency/server/notes';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
-import { type FailureAttempt, getFailureAttemptById } from '@/capabilities/knowledge/public';
+import {
+  type FailureAttempt,
+  getFailureAttemptById,
+  resolveSubjectProfileForKnowledgeIds,
+} from '@/capabilities/knowledge/public';
 import {
   ConjectureDiagnosticSpecV2,
   ConjectureHypothesisProposalDraft,
