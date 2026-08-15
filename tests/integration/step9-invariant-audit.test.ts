@@ -417,7 +417,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     //   - `embedded_check_generate`: writes `embedded_check_status` and
     //     mirrors the generated question ids back onto the `check` section
     //     after Judge v2 light's question contract is satisfied.
-    //   - YUK-203 P2 `src/server/boss/handlers/quiz_gen.ts`: writes the
+    //   - YUK-203 P2 `src/capabilities/practice/jobs/quiz_gen.ts`: writes the
     //     standalone `tool_quiz` artifact that groups QuizGenTask draft
     //     questions through `tool_state.question_ids[]`.
     //   - YUK-19 `src/server/proposals/actions.ts`: retracting a learning_intent
@@ -456,14 +456,14 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     // Anything else writing `artifact` should still be reviewed.
     const hits = await findWriteHits('artifact', { roots: SCAN_RUNTIME_ROOTS });
     const ALLOWED = [
-      'src/server/orchestrator/learning_intent.ts',
+      'src/capabilities/notes/server/learning-intent-note.ts',
       'src/capabilities/notes/jobs/note_generate.ts',
       'src/capabilities/notes/jobs/note_verify.ts',
       // YUK-857 — provider-attempt exhaustion atomically sets verification_status=failed and emits
       // the matching artifact lifecycle projection in the claim transaction.
       'src/capabilities/notes/server/note-verification-claim.ts',
       'src/server/boss/handlers/embedded_check_generate.ts',
-      'src/server/boss/handlers/quiz_gen.ts',
+      'src/capabilities/practice/jobs/quiz_gen.ts',
       // YUK-864 — learning_item retract ownership moved whole from the central proposal shell.
       'src/capabilities/agency/server/proposal-retract-learning-item.ts',
       // M4-T4 (YUK-319) — D11 墓碑：record_links / record_promotion appliers 从

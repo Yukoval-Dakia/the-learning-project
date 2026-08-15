@@ -4,7 +4,7 @@ import { archiveQuestion } from '@/server/questions/write';
 import { verifyAndPromote } from '@/server/quiz/verify-and-promote';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb } from '../../../tests/helpers/db';
+import { resetDb } from '../../../../../tests/helpers/db';
 import {
   canonicalQuestionContentHash,
   findExactQuestionDuplicate,

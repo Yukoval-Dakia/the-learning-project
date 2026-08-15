@@ -7,7 +7,7 @@
 // 审阅，outcome marker 提交后才把审阅终稿写进 job_events。SSE 消费者经
 // computeReplay 订阅。
 //
-// 蓝本：src/server/boss/handlers/quiz_gen.ts 的 runQuizGen——MCP mount
+// 蓝本：src/capabilities/practice/jobs/quiz_gen.ts 的 runQuizGen——MCP mount
 // (buildMcpServerFromRegistry) + ToolContext(causedByEventId=triggerEventId) +
 // runAgentTask + 成功/失败 writeEvent。差别：本 handler 走 CopilotTask + copilot
 // 工具全集 surface，进度落 job_events（writeJobEvent）而非 domain event 表，

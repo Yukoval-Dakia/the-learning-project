@@ -25,6 +25,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { POST as revertCheckpointPOST } from '@/capabilities/copilot/api/revert-checkpoint';
 import { repairMergeAttributionForFromId } from '@/capabilities/knowledge/server/proposals';
 import { POST as submitPOST } from '@/capabilities/practice/api/submit';
+import { mergeExactQuestionDuplicateKnowledgeIds } from '@/capabilities/practice/public';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { newId } from '@/core/ids';
 import {
@@ -42,7 +43,6 @@ import {
   updateThetaForAttempt,
   upsertMasteryState,
 } from '@/server/mastery/state';
-import { mergeExactQuestionDuplicateKnowledgeIds } from '@/server/quiz/content-fingerprint';
 import { resetDb, testDb } from '../../tests/helpers/db';
 
 // The contended production writer must stay blocked at least this long. Unobstructed,

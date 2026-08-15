@@ -21,7 +21,7 @@ describe('DB affected-test selector', () => {
   it('keeps real out-of-graph failed-head regressions as explicit sentinels', () => {
     expect(DB_FAILURE_SENTINEL_TESTS).toEqual([
       'src/capabilities/knowledge/server/propose_edge.db.test.ts',
-      'src/server/boss/handlers/quiz_gen.test.ts',
+      'src/capabilities/practice/jobs/quiz_gen.test.ts',
     ]);
     expect(
       mergeDbPredictedFiles({
@@ -38,10 +38,10 @@ describe('DB affected-test selector', () => {
     ).toEqual({
       predictedFiles: [
         'src/capabilities/knowledge/server/propose_edge.db.test.ts',
+        'src/capabilities/practice/jobs/quiz_gen.test.ts',
         'src/dynamic.db.test.ts',
         'src/feature.db.test.ts',
         'src/scanner.db.test.ts',
-        'src/server/boss/handlers/quiz_gen.test.ts',
       ],
       failureSentinelTests: DB_FAILURE_SENTINEL_TESTS,
       missingFailureSentinelTests: [],

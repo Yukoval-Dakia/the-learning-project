@@ -1,5 +1,6 @@
 import { capabilities } from '@/capabilities';
 import type { Db } from '@/db/client';
+import type { CapabilityManifest } from '@/kernel/manifest';
 import type { PgBoss } from 'pg-boss';
 import { describe, expect, it, vi } from 'vitest';
 import { registerHandlers } from './handlers';
@@ -14,6 +15,38 @@ async function registerAll(boss: PgBoss): Promise<void> {
 }
 
 describe('registerHandlers + registerCapabilityJobs', () => {
+  it('preserves per-job includeMetadata worker options from capability manifests', async () => {
+    const worker = vi.fn(async () => undefined);
+    const boss = {
+      createQueue: vi.fn(async () => undefined),
+      updateQueue: vi.fn(async () => undefined),
+      work: vi.fn(async () => undefined),
+      schedule: vi.fn(async () => undefined),
+    } as unknown as PgBoss;
+    const capability = {
+      name: 'practice',
+      description: 'test',
+      jobs: {
+        handlers: [
+          {
+            name: 'quiz_gen',
+            queue: 'agent',
+            includeMetadata: true,
+            load: async () => () => worker,
+          },
+        ],
+      },
+    } as unknown as CapabilityManifest;
+
+    await registerCapabilityJobs(boss, {} as Db, [capability]);
+
+    expect(boss.work).toHaveBeenCalledWith(
+      'quiz_gen',
+      { pollingIntervalSeconds: 2, batchSize: 1, includeMetadata: true },
+      worker,
+    );
+  });
+
   it('registers Notes handoff workers and the shared recovery floor exactly once', async () => {
     const boss = {
       createQueue: vi.fn(async () => undefined),

@@ -20,7 +20,7 @@ const markArtifactIdleAndFlush = vi.fn(async (..._args: unknown[]) => ({
   flushed: 0,
   results: [],
 }));
-vi.mock('@/server/artifacts/editing-session', () => ({
+vi.mock('@/capabilities/notes/server/artifacts/editing-session', () => ({
   recordEditingHeartbeat: (...args: unknown[]) => recordEditingHeartbeat(...args),
   markArtifactIdleAndFlush: (...args: unknown[]) => markArtifactIdleAndFlush(...args),
 }));

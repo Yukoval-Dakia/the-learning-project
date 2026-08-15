@@ -47,6 +47,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { emitArtifactLifecycleEvent } from '@/capabilities/notes/public';
 import {
   type ArtifactHistoryEntryT,
   INTERACTIVE_HTML_MAX_CHARS,
@@ -57,7 +58,6 @@ import {
   artifactRowToCreateSnapshot,
   emitArtifactCreateEvent,
 } from '@/server/artifacts/create-event';
-import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
 import type { DomainTool, ToolContext } from './types';
 
 // ---------------------------------------------------------------------------

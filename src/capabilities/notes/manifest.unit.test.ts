@@ -1,4 +1,9 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
+
+import { notesTaskSpecs } from './tasks';
 
 // The manifest's route/job/tool loads are lazy thunks, so importing the manifest
 // object is cheap — but guard against any transitive eager @/db/client import so
@@ -6,6 +11,42 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@/db/client', () => ({ db: {} }));
 
 import { notesCapability } from './manifest';
+
+function source(path: string): string {
+  return readFileSync(join(process.cwd(), path), 'utf8');
+}
+
+describe('notes capability — semantic ownership (YUK-875)', () => {
+  it('owns NoteRefineTask without a central semantic definition', () => {
+    expect(notesTaskSpecs.NoteRefineTask.ownership).toBe('owned');
+
+    const legacyDefinitions = source('src/ai/legacy-task-definitions.ts');
+    expect(legacyDefinitions).not.toContain('function buildNoteRefinePrompt');
+    expect(legacyDefinitions).not.toContain('NoteRefineTask: {');
+  });
+
+  it('owns editing-session and mutation-event implementations under Notes', () => {
+    for (const path of [
+      'src/capabilities/notes/server/artifacts/editing-session.ts',
+      'src/capabilities/notes/server/artifacts/mutation-events.ts',
+    ]) {
+      expect(existsSync(join(process.cwd(), path)), path).toBe(true);
+    }
+    for (const path of [
+      'src/server/artifacts/editing-session.ts',
+      'src/server/artifacts/mutation-events.ts',
+    ]) {
+      expect(existsSync(join(process.cwd(), path)), path).toBe(false);
+    }
+  });
+
+  it('keeps the shared create envelope free of Notes mutation semantics', () => {
+    const createEnvelope = source('src/server/artifacts/create-event.ts');
+    expect(createEnvelope).not.toContain('experimental:body_blocks_edit');
+    expect(createEnvelope).not.toContain('experimental:artifact_lifecycle');
+    expect(createEnvelope).not.toContain('NotePatch');
+  });
+});
 
 describe('notes capability — mastery progress subscription (YUK-751)', () => {
   it('declares the exact live versioned identity and keeps its loader lazy', async () => {

@@ -8,8 +8,9 @@
 //   2. boss.work(name, worker opts, factory(db))。缺省配方 2s/1 与 handlers.ts
 //      全部 LLM/AGENT 注册行的显式 opts 一致；原先两条无 opts 的注册
 //      （knowledge_propose_nightly / knowledge_edge_propose_nightly）pg-boss
-//      默认值即 2s/1，行为等价（等价平移红线）。YUK-882 起 decl 可声明非默认
-//      pollingIntervalSeconds / batchSize / includeMetadata，注册器原样透传。
+//      默认值即 2s/1，行为等价（等价平移红线）。YUK-867 起 decl 可显式声明
+//      includeMetadata（读 retryCount），YUK-882 起可声明非默认
+//      pollingIntervalSeconds / batchSize；声明值优先，注册器原样透传。
 //   3. 有 schedule 的 decl → boss.schedule(name, cron, {}, { tz })。
 //
 // 无 load 的 decl 是纯归属元数据，不被挂载（kernel JobDecl docblock）——工厂
@@ -61,14 +62,14 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   }
 
   const factory = await decl.load();
-  // YUK-882 — declared worker metadata wins; absent fields keep the uniform
-  // 2s/1 recipe (equivalence red line with the retired central registrations).
+  // Declared worker metadata wins; absent fields keep the uniform 2s/1 recipe
+  // (equivalence red line with the retired central registrations).
   await boss.work(
     decl.name,
     {
       pollingIntervalSeconds: decl.pollingIntervalSeconds ?? 2,
       batchSize: decl.batchSize ?? 1,
-      ...(decl.includeMetadata === true ? { includeMetadata: true } : {}),
+      ...(decl.includeMetadata !== undefined ? { includeMetadata: decl.includeMetadata } : {}),
     },
     factory(db),
   );

@@ -22,6 +22,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
+import { enqueueOrApplyNoteRefinePatch } from '@/capabilities/notes/server/artifacts/editing-session';
 import { bodyBlocksToBlockSummaries } from '@/capabilities/notes/server/body-blocks';
 import {
   checkAutoApplyBreaker,
@@ -32,16 +33,21 @@ import {
   patchTouchesVerifiedBlock,
 } from '@/capabilities/notes/server/note-refine-policy';
 import { writeNoteRefineProposal } from '@/capabilities/notes/server/note-refine-proposals';
+import {
+  type ParsedNoteRefineOutput,
+  parseNoteRefineOutput,
+} from '@/capabilities/notes/tasks/note-refine';
 import { filterMissingNotePatchTargets } from '@/core/blocks/apply-note-patch';
-import { NotePatch, type NotePatchT, summarizeNotePatch } from '@/core/schema/note-patch';
+import { type NotePatchT, summarizeNotePatch } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { enqueueOrApplyNoteRefinePatch } from '@/server/artifacts/editing-session';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
+
+export { type ParsedNoteRefineOutput, parseNoteRefineOutput };
 
 // M3 (YUK-317, D6)：error_rate kind 已删——内嵌自测全链路裁撤后该信号源死亡；
 // 流作答信号 = mastery_change（practice submit persist 接入）。
@@ -101,31 +107,6 @@ type DepsOverride = {
   // deterministically without seeding a full window.
   countRecentAutoApplies?: (input: { now: Date }) => Promise<number>;
 };
-
-export interface ParsedNoteRefineOutput {
-  patch: NotePatchT;
-}
-
-export function parseNoteRefineOutput(text: string): ParsedNoteRefineOutput {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseNoteRefineOutput: no JSON object found in text');
-  }
-  let json: unknown;
-  try {
-    json = JSON.parse(text.slice(start, end + 1));
-  } catch (e) {
-    throw new Error(`parseNoteRefineOutput: JSON.parse failed: ${(e as Error).message}`);
-  }
-  const parsed = NotePatch.safeParse(json);
-  if (!parsed.success) {
-    throw new Error(
-      `parseNoteRefineOutput: schema invalid: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
-    );
-  }
-  return { patch: parsed.data };
-}
 
 export interface RunNoteRefineParams {
   db: Db;

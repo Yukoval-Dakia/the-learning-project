@@ -2,6 +2,11 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  markArtifactIdleAndFlush,
+  recordEditingHeartbeat,
+  resetEditingSessionStateForTests,
+} from '@/capabilities/notes/server/artifacts/editing-session';
 import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import {
   NOTE_REFINE_ACCEPT_ACTOR,
@@ -15,11 +20,6 @@ import { editArtifactSection } from '@/capabilities/notes/server/sections';
 import { artifact, event, knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import * as eventQueries from '@/kernel/events';
-import {
-  markArtifactIdleAndFlush,
-  recordEditingHeartbeat,
-  resetEditingSessionStateForTests,
-} from '@/server/artifacts/editing-session';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { buildNoteRefineHandler, parseNoteRefineOutput, runNoteRefine } from './note-refine';

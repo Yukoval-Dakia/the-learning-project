@@ -49,6 +49,7 @@ import {
   terminalizePlacementUnknownCost,
 } from '@/capabilities/practice/public';
 import { lockPlacementSupplyScopes } from '@/capabilities/practice/public';
+import { resolveSolveOverrideFromEnv } from '@/capabilities/practice/public';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { deriveSourceTier } from '@/core/schema/provenance';
@@ -74,7 +75,6 @@ import {
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import { resolveSolveOverrideFromEnv } from '@/server/quiz/solve-lane';
 import {
   type SolveCheckQuestion,
   type TeachingQualityQuestion,
