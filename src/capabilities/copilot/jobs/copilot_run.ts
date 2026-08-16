@@ -75,7 +75,6 @@ import {
 import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
-import { htmlContainsAssessment } from '@/kernel/learning-content';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   resolveDomainToolNames,
@@ -1243,8 +1242,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       {
         db,
         runTaskFn: validationRunner,
-        ...(preparedCandidate.primaryView?.source === 'ephemeral_html' &&
-        htmlContainsAssessment(preparedCandidate.primaryView.ref)
+        ...(preparedCandidate.primaryView?.source === 'ephemeral_html'
           ? { additionalVisibleText: preparedCandidate.primaryView.ref }
           : {}),
       },
