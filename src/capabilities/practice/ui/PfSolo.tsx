@@ -563,7 +563,7 @@ export function PfSolo({
         <span className="topbar-spacer" />
         {!isInterventionDiagnostic && (
           <Btn size="sm" variant="secondary" icon="teach" onClick={() => setCoach(true)}>
-            卡住了？解题会话
+            需要提示？
           </Btn>
         )}
       </div>
