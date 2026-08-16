@@ -56,6 +56,27 @@ describe('validateCopilotLearningContent', () => {
     expect(copilotLearningContentRequiresValidation(reply)).toBe(false);
   });
 
+  it('does not treat configuration assignments or a factual numeric table as a solution', () => {
+    const reply = [
+      '运行参数：',
+      'version = 4',
+      'timeout = 30',
+      '',
+      '| 套餐 | 价格 |',
+      '| --- | ---: |',
+      '| 基础版 | 20 |',
+      '| 专业版 | 50 |',
+    ].join('\n');
+
+    expect(copilotLearningContentRequiresValidation(reply)).toBe(false);
+  });
+
+  it('requires validation for an unlabeled iterative numeric table', () => {
+    const reply = ['| 迭代步数 | x |', '| --- | ---: |', '| 1 | 0.5 |', '| 2 | 0.25 |'].join('\n');
+
+    expect(copilotLearningContentRequiresValidation(reply)).toBe(true);
+  });
+
   it('fails closed when an independent validator finds a contradictory question pack', async () => {
     const result = await validateCopilotLearningContent(
       {

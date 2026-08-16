@@ -109,18 +109,14 @@ function containsLearningSolution(text: string): boolean {
   const explicitSolution =
     /(?:^|\n)\s*(?:解[:：]|答案[:：]|解答[:：]|solution\b|answer\b)|(?:所以|因此|故|therefore)[^\n]{0,300}(?:答案|=)/im;
   const arithmeticEquation =
-    /(?:^|\n)\s*[()\d.a-z]+(?:\s*[+\-×÷*/^]\s*[()\d.a-z]+)+\s*=\s*[-+]?[()\d.a-z.]+(?:\s*[。.;；]|(?=\s*(?:\n|$)))/im;
-  const equationLineCount = (
-    text.match(
-      /(?:^|\n)\s*(?:\d*\s*)?[a-z][\w^]*\s*=\s*[-+]?(?:\d+(?:\.\d+)?|[a-z][\w^]*)(?=\s*(?:[。.;；]|\n|$))/gim,
-    ) ?? []
-  ).length;
+    /(?:^|\n)\s*(?:\d+(?:\.\d+)?|\d*[a-z](?:\^\d+)?)(?:\s*[+\-×÷*/^]\s*(?:\d+(?:\.\d+)?|\d*[a-z](?:\^\d+)?))+\s*=\s*[-+]?(?:\d+(?:\.\d+)?|\d*[a-z](?:\^\d+)?)(?:\s*[。.;；]|(?=\s*(?:\n|$)))/im;
+  const computationTableHeader =
+    /(?:^|\n)\s*\|[^\n]*(?:step|iteration|迭代|步数|第.?步)[^\n]*\|(?=\n|$)/im;
   const numericTableRowCount = (text.match(/(?:^|\n)\s*\|[^\n]*\d[^\n]*\|(?=\n|$)/gm) ?? []).length;
   return (
     explicitSolution.test(text) ||
     arithmeticEquation.test(text) ||
-    equationLineCount >= 2 ||
-    numericTableRowCount >= 2
+    (computationTableHeader.test(text) && numericTableRowCount >= 2)
   );
 }
 

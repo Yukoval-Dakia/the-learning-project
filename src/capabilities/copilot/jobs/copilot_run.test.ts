@@ -2615,6 +2615,10 @@ describe('runCopilotRun', () => {
     const runId = 'copilot_user_ask_stop_during_learning_validation';
     const controller = new AbortController();
     const observedValidatorSignals: boolean[] = [];
+    let markProviderStarted: (() => void) | undefined;
+    const providerStarted = new Promise<void>((resolve) => {
+      markProviderStarted = resolve;
+    });
     const cancellationControl = {
       signal: controller.signal,
       hasConfirmedCancellation: false,
@@ -2629,7 +2633,11 @@ describe('runCopilotRun', () => {
       prependSdkHook: vi.fn((hooks) => hooks ?? { PreToolUse: [] }),
     };
     const validationRunner = vi.fn(async (kind: string, _input: unknown, ctx: AgentCtx) => {
-      controller.abort(new Error('user requested Stop during learning validation'));
+      markProviderStarted?.();
+      await new Promise<void>((resolve) => {
+        if (ctx.signal?.aborted) resolve();
+        else ctx.signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
       observedValidatorSignals.push(ctx.signal?.aborted === true);
       if (kind === 'QuizVerifyTask') {
         return {
@@ -2682,7 +2690,7 @@ describe('runCopilotRun', () => {
     const candidate =
       '题目\n1. 求 1+1？\n<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 1+1？","reference_md":"2","choices_md":null,"rubric_json":{}}]}-->';
 
-    const result = await runCopilotRun({
+    const runPromise = runCopilotRun({
       db: testDb(),
       data: { ...baseData, run_id: runId, session_id: 'sess_stop_learning_validation' },
       streamTaskCollectingFn: streamMock(candidate) as never,
@@ -2691,6 +2699,9 @@ describe('runCopilotRun', () => {
       buildMcpServerFn: mcpMock() as never,
       createCancellationControlFn: (() => cancellationControl) as never,
     });
+    await providerStarted;
+    controller.abort(new Error('user requested Stop during learning validation'));
+    const result = await runPromise;
 
     expect(result).toEqual({ status: 'cancelled' });
     expect(observedValidatorSignals.length).toBeGreaterThan(0);
