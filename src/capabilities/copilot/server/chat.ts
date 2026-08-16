@@ -26,6 +26,7 @@ import {
   type CopilotRunInput,
   assembleCopilotRunInput,
 } from '@/capabilities/copilot/server/copilot-run-input';
+import { resolveCorrectionReply } from '@/capabilities/copilot/server/correction-contract';
 import { reviewCopilotEvidenceReply } from '@/capabilities/copilot/server/evidence-review';
 // YUK-574 — session-anchored learner-state header (assemble-once + invalidation).
 // The Facet A (YUK-174) per-turn `proposal_feedback` digest is MIGRATED into this
@@ -862,6 +863,9 @@ async function runCopilotChatImpl(
         triggeredBy: req.triggered_by,
         ...(req.chip_kind ? { chipKind: req.chip_kind } : {}),
         ...(req.ambient_context ? { ambient: req.ambient_context } : {}),
+        ...(req.correction_target_turn_id
+          ? { correctionTargetTurnId: req.correction_target_turn_id }
+          : {}),
         now,
       },
       {
@@ -1207,6 +1211,14 @@ async function runCopilotChatImpl(
     ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
     proposal_feedback: [],
     conversation_history: [],
+    correction_contract: {
+      ...(req.correction_target_turn_id
+        ? { target_prior_turn_id: req.correction_target_turn_id }
+        : {}),
+      available_prior_turn_ids: [],
+      prior_turn_summaries: {},
+      required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+    },
     ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
   };
 
@@ -1311,27 +1323,36 @@ async function runCopilotChatImpl(
   // persisted domain event, terminal envelope and delayed public DELTA must all
   // see exactly these bytes; a dangling marker may truncate only here, never
   // after a raw suffix was certified.
-  const preparedCandidate = extractPrimaryView(replyText, { taskRunId: replyRunId });
-  const evidenceReview = await reviewEvidenceReply({
-    db,
-    requestContext: {
-      user_message: req.user_message,
-      surface,
-      triggered_by: req.triggered_by,
-      ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
-      ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
-    },
-    candidateReply: preparedCandidate.text,
-    candidateTaskRunId: replyRunId,
-    candidateComplete,
-    toolTrace,
-    ...(streaming?.signal ? { signal: streaming.signal } : {}),
-    ...(deps.providerSessionDeadlineAt !== undefined
-      ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
-      : {}),
+  const correctionResolution = resolveCorrectionReply(replyText, runInput.correction_contract);
+  const preparedCandidate = extractPrimaryView(correctionResolution.reply, {
+    taskRunId: replyRunId,
   });
+  const evidenceReview =
+    correctionResolution.kind === 'clarify'
+      ? { status: 'skipped' as const, replyText: preparedCandidate.text }
+      : await reviewEvidenceReply({
+          db,
+          requestContext: {
+            user_message: req.user_message,
+            surface,
+            triggered_by: req.triggered_by,
+            ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
+            ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
+          },
+          candidateReply: preparedCandidate.text,
+          candidateTaskRunId: replyRunId,
+          candidateComplete,
+          toolTrace,
+          ...(streaming?.signal ? { signal: streaming.signal } : {}),
+          ...(deps.providerSessionDeadlineAt !== undefined
+            ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+            : {}),
+        });
   streaming?.signal?.throwIfAborted();
-  replyText = evidenceReview.replyText;
+  replyText =
+    evidenceReview.status === 'repair'
+      ? resolveCorrectionReply(evidenceReview.replyText, runInput.correction_contract).reply
+      : evidenceReview.replyText;
   // primary_view is a second user-visible channel (ephemeral_html can contain
   // substantive prose). The sealed comparator reviews reply text only, so a
   // read-bearing turn must drop this unreviewed metadata even when text passes.

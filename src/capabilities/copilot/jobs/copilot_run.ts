@@ -51,6 +51,7 @@ import {
   hasCancelRequest,
   isCopilotRunTerminalEvent,
 } from '@/capabilities/copilot/server/copilot-run-status';
+import { resolveCorrectionReply } from '@/capabilities/copilot/server/correction-contract';
 import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
 import {
   COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
@@ -135,6 +136,7 @@ export interface CopilotRunJobData {
   triggered_by: 'chat' | 'chip';
   /** chip 直触可选标识，透传进 run input（同步面 chip_kind）。 */
   chip_kind?: string;
+  correction_target_turn_id?: string;
   /**
    * YUK-575 (S4) — ambient context（用户当前 route + 可选 focused_entity）。它是
    * request-only、**从不 persisted**（防循环 ②：绝不写进任何 turn payload），所以
@@ -1036,6 +1038,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     triggeredBy: data.triggered_by,
     ...(data.chip_kind ? { chipKind: data.chip_kind } : {}),
     ...(data.ambient ? { ambient: data.ambient } : {}),
+    ...(data.correction_target_turn_id
+      ? { correctionTargetTurnId: data.correction_target_turn_id }
+      : {}),
     now: new Date(),
     historyAnchorEventId: runId,
   });
@@ -1162,46 +1167,53 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     );
     // S3 — 排空 delta 链：所有 delta id 落定后再写 terminal。
     await drainDeltaChain(progressChain, runId);
+
+    // Normalize and validate before either cancellation persistence or sealed
+    // evidence review. No terminal path may observe the raw correction candidate.
+    const correctionResolution = resolveCorrectionReply(result.text, runInput.correction_contract);
+    const preparedCandidate = extractPrimaryView(correctionResolution.reply, {
+      taskRunId: result.task_run_id,
+    });
     if ((await cancellationControl.probe()) === 'cancel_requested') {
-      // The raw candidate has not passed evidence review and must not become a
-      // cancellation partial after a read. A pure-text/no-reader partial keeps
-      // the established Stop UX because no evidence-review claim is involved.
+      // A read-bearing candidate has not passed evidence review and cannot become
+      // a cancellation partial. Pure-text turns preserve only contract-validated,
+      // presentation-cleaned text.
       const cancellationReply = toolTrace.some((entry) => entry.effect === 'read')
         ? undefined
-        : result.text;
+        : preparedCandidate.text;
       return await settleObservedCancellation(cancellationReply, result.task_run_id);
     }
 
-    // Normalize reply-tail presentation metadata before sealed review. The
-    // validator, durable marker and projected DELTA/REPLY must bind the exact
-    // same bytes; no post-review marker stripping is allowed.
-    const preparedCandidate = extractPrimaryView(result.text, {
-      taskRunId: result.task_run_id,
-    });
-    const evidenceReview = await reviewEvidenceReply({
-      db,
-      requestContext: {
-        user_message: data.user_message,
-        surface,
-        triggered_by: data.triggered_by,
-        ...(data.chip_kind ? { chip_kind: data.chip_kind } : {}),
-        ...(data.ambient ? { ambient_context: data.ambient } : {}),
-      },
-      candidateReply: preparedCandidate.text,
-      candidateTaskRunId: result.task_run_id,
-      toolTrace,
-      signal: cancellationControl.signal,
-      attemptTimeouts: {
-        referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
-        comparisonMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
-      },
-      beforeVerification: async () => {
-        await cancellationControl.probe();
-        cancellationControl.signal.throwIfAborted();
-      },
-      candidateComplete: !result.partial,
-    });
-    const reviewedReply = evidenceReview.replyText;
+    const evidenceReview =
+      correctionResolution.kind === 'clarify'
+        ? { status: 'skipped' as const, replyText: preparedCandidate.text }
+        : await reviewEvidenceReply({
+            db,
+            requestContext: {
+              user_message: data.user_message,
+              surface,
+              triggered_by: data.triggered_by,
+              ...(data.chip_kind ? { chip_kind: data.chip_kind } : {}),
+              ...(data.ambient ? { ambient_context: data.ambient } : {}),
+            },
+            candidateReply: preparedCandidate.text,
+            candidateTaskRunId: result.task_run_id,
+            toolTrace,
+            signal: cancellationControl.signal,
+            attemptTimeouts: {
+              referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+              comparisonMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
+            },
+            beforeVerification: async () => {
+              await cancellationControl.probe();
+              cancellationControl.signal.throwIfAborted();
+            },
+            candidateComplete: !result.partial,
+          });
+    const reviewedReply =
+      evidenceReview.status === 'repair'
+        ? resolveCorrectionReply(evidenceReview.replyText, runInput.correction_contract).reply
+        : evidenceReview.replyText;
     // The validator seals text, not the presentation side channel. Drop every
     // primary_view on read-bearing pass/repair/fail-closed decisions; otherwise
     // unreviewed ephemeral_html or an unbound artifact ref could contradict the
