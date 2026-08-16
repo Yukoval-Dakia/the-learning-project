@@ -66,6 +66,13 @@ pnpm smoke:local
 派生本地连接串。浏览器代码不持有 provider key，所有 AI 调用都通过 Hono route 或
 pg-boss worker 在服务端执行。
 
+API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，再通过
+`src/server/env.ts` 的 t3-env server schema 校验运行时配置；`DATABASE_URL` 与
+`INTERNAL_TOKEN` 是启动必需项，其余 provider、R2、OCR、feature flag 配置保持各自原有的
+可缺性与默认值。当前 Vite SPA 没有 `VITE_*` 消费点，因此不设 client schema。Vitest 会
+跳过启动校验，让 DB 分区的 `tests/setup.db-fork.ts` 先改写每个 fork 的连接串；bundle build
+只打包入口，容器实际启动时仍会执行同一校验。
+
 常用检查 / PR 前门禁：
 
 ```bash
