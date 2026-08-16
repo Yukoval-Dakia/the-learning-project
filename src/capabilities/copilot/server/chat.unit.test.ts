@@ -13,9 +13,153 @@ import {
   runCopilotChat,
   runCopilotChatStreaming,
 } from './chat';
+import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from './content-validation';
 import { COPILOT_SUBAGENT_NAME } from './subagents';
 
 describe('runCopilotChat (two-surface routing)', () => {
+  it('replaces a question-bearing direct reply when the validation marker is missing', async () => {
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '给我一道题', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: vi.fn(async () => ({
+          task_run_id: 'task_missing_marker',
+          text: '题目\n1. 求 1+1？',
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        })),
+        writeEventFn: vi.fn(async (_db, input) => input.id),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_missing_marker', created: true }),
+      },
+    );
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(result.reply).not.toContain('1+1');
+  });
+
+  it('uses a bounded generic fallback when a validation provider rejects', async () => {
+    const runner = vi.fn(async (kind: string) => {
+      if (kind === 'CopilotTask') {
+        return {
+          task_run_id: 'task_provider_reject',
+          text: '题目\n1. 求 1+1？\n<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 1+1？","reference_md":"2","choices_md":null,"rubric_json":{}}]}-->',
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        };
+      }
+      throw new Error('provider secret diagnostic');
+    });
+
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '给我一道题', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: runner,
+        writeEventFn: vi.fn(async (_db, input) => input.id),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_provider_reject',
+          created: true,
+        }),
+      },
+    );
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(result.reply).not.toContain('provider secret diagnostic');
+    expect(runner.mock.calls.length).toBeLessThanOrEqual(4);
+  });
+
+  it('settles to the same bounded fallback when validation is aborted by a timeout', async () => {
+    const runner = vi.fn(async (kind: string) => {
+      if (kind === 'CopilotTask') {
+        return {
+          task_run_id: 'task_validation_timeout',
+          text: '题目\n1. 求 2+2？\n<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 2+2？","reference_md":"4","choices_md":null,"rubric_json":{}}]}-->',
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        };
+      }
+      throw new DOMException('validation deadline exceeded', 'AbortError');
+    });
+
+    const result = await Promise.race([
+      runCopilotChat(
+        {} as never,
+        { user_message: '给我一道题', triggered_by: 'chat' },
+        {
+          buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+          runAgentTaskFn: runner,
+          writeEventFn: vi.fn(async (_db, input) => input.id),
+          resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+          findOrCreateConversationFn: async () => ({
+            sessionId: 'ls_validation_timeout',
+            created: true,
+          }),
+        },
+      ),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('validation fallback did not settle')), 500),
+      ),
+    ]);
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(result.reply).not.toContain('validation deadline exceeded');
+    expect(runner.mock.calls.length).toBeLessThanOrEqual(4);
+  });
+
+  it('rejects a marker whose manifest question differs from the visible reply', async () => {
+    const runner = vi.fn(async () => ({
+      task_run_id: 'task_mismatched_manifest',
+      text: '题目\n1. 求 1+1？\n<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 2+2？","reference_md":"4","choices_md":null,"rubric_json":{}}]}-->',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '给我一道题', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: runner,
+        writeEventFn: vi.fn(async (_db, input) => input.id),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_mismatched_manifest',
+          created: true,
+        }),
+      },
+    );
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(runner).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires a marker for a worked solution to the user question', async () => {
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '请计算 1+1。', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: vi.fn(async () => ({
+          task_run_id: 'task_solution_without_marker',
+          text: '解：1+1=3。',
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        })),
+        writeEventFn: vi.fn(async (_db, input) => input.id),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_solution_without_marker',
+          created: true,
+        }),
+      },
+    );
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+  });
+
   it('chat path uses copilot allowlist and writes experimental:copilot_user_ask', async () => {
     const db = {} as never;
     const mcpServer = { name: 'fake-loom' } as never;

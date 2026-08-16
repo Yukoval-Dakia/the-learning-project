@@ -10,6 +10,7 @@
 //            MF1/MF2 transient·exhausted 分诊 + 幂等守卫 / S6 static 约束。
 
 import { writeCopilotReply } from '@/capabilities/copilot/server/chat';
+import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from '@/capabilities/copilot/server/content-validation';
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
@@ -69,6 +70,7 @@ async function copilotReplyEvents(sessionId: string) {
 type AgentCtx = {
   db: unknown;
   taskRunId?: string;
+  parentTaskRunId?: string;
   signal?: AbortSignal;
   lifecycleAbortController?: AbortController;
   mcpServers?: Record<string, unknown>;
@@ -220,6 +222,127 @@ describe('runCopilotRun', () => {
       actor_ref: 'agent:copilot',
     });
     expect(replies[0]?.payload).toMatchObject({ reply_md: '这是回答', task_run_id: 'tr_x' });
+  });
+
+  it('fails closed when a durable solution reply omits the learning-content marker', async () => {
+    const runId = 'copilot_user_ask_durable_unverified_solution';
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: 'sess_durable_unverified_solution',
+        user_message: '请计算 1+1。',
+      },
+      streamTaskCollectingFn: streamMock('解：1+1=3。') as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    });
+
+    expect(result).toMatchObject({
+      status: 'done',
+      reply: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY,
+    });
+    expect(JSON.stringify(await replay(runId))).not.toContain('1+1=3');
+  });
+
+  it('provides durable artifact tools a parent-bound learning validator', async () => {
+    const runId = 'copilot_user_ask_durable_artifact_parent';
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
+    });
+    const validationRunner = vi.fn(async (kind: string, _input: unknown, ctx: AgentCtx) => {
+      expect(ctx).toMatchObject({
+        parentTaskRunId: `copilot_run_tool_${runId}`,
+      });
+      if (kind === 'QuizVerifyTask') {
+        return {
+          task_run_id: 'durable_verify',
+          text: JSON.stringify({
+            grounding: { verdict: 'pass', reason: 'self-contained' },
+            copy_safety: { verdict: 'original', max_overlap: 0 },
+            knowledge_hit: { verdict: 'pass', reason: 'on-topic' },
+            overall: 'pass',
+            summary_md: 'pass',
+            confidence: 0.99,
+          }),
+        };
+      }
+      if (kind === 'SolutionGenerateTask') {
+        return {
+          task_run_id: 'durable_solve',
+          text: JSON.stringify({
+            reference_solution: {
+              final_answer: '2',
+              expected_signals: ['1+1=2'],
+              answer_equivalents: [],
+            },
+            worked_solution_md: '1+1=2',
+            confidence: 0.99,
+          }),
+        };
+      }
+      if (kind === 'SemanticJudgeTask') {
+        return {
+          task_run_id: 'durable_semantic',
+          text: JSON.stringify({
+            score: 1,
+            coarse_outcome: 'correct',
+            confidence: 0.99,
+            feedback_md: 'equivalent',
+            evidence_json: { matched_points: ['1+1=2'], missing_points: [] },
+          }),
+        };
+      }
+      return {
+        task_run_id: 'durable_teaching',
+        text: JSON.stringify({
+          clarity: { verdict: 'pass', reason: 'clear' },
+          unique_answer: { verdict: 'pass', reason: 'unique' },
+          summary: 'pass',
+        }),
+      };
+    });
+    const run = vi.fn(
+      async (_kind: string, _input: unknown, _ctx: AgentCtx, _onDelta: (t: string) => void) => {
+        if (!mcpOptions?.ctx.validateLearningContent) {
+          throw new Error('durable validator port was not mounted');
+        }
+        const validation = await mcpOptions.ctx.validateLearningContent({
+          subjectId: 'math',
+          questions: [
+            {
+              id: 'q1',
+              kind: 'computation',
+              prompt_md: '求 1+1',
+              reference_md: '2',
+              choices_md: null,
+              rubric_json: {},
+            },
+          ],
+        });
+        expect(validation?.verdict).toBe('pass');
+        return {
+          text: '已创建并验证。',
+          task_run_id: 'tr_durable_artifact_parent',
+          finishReason: 'end_turn',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
+      },
+    );
+
+    await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_durable_artifact_parent' },
+      streamTaskCollectingFn: run as never,
+      runValidationTaskFn: validationRunner as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn,
+    });
+
+    expect(validationRunner).toHaveBeenCalledTimes(4);
   });
 
   it('preserves the exact pre-ownership job payload shape', async () => {

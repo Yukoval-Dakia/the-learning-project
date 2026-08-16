@@ -18,6 +18,11 @@ export {
   getEffectiveTruths,
 } from '@/kernel/events';
 export { loadAttemptQuestionSnapshot } from './server/question-evidence-snapshot';
+export {
+  runQuestionContentValidation,
+  runSolveCheck,
+  runTeachingQualityCheck,
+} from './server/quiz/verify-framework';
 export { mergeExactQuestionDuplicateKnowledgeIds } from './server/quiz/content-fingerprint';
 export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
 export type { QuizGenJobData } from './jobs/quiz_gen';

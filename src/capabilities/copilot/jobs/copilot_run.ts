@@ -27,6 +27,11 @@ import {
   writeCopilotReply,
 } from '@/capabilities/copilot/server/chat';
 import {
+  copilotLearningContentRequiresValidation,
+  reviewCopilotLearningContent,
+  validateCopilotLearningContent,
+} from '@/capabilities/copilot/server/content-validation';
+import {
   COPILOT_CANCEL_DRAIN_GRACE_MS,
   type CopilotRunCancellationControl,
   type PersistCopilotRunCancellationArgs,
@@ -80,6 +85,7 @@ import {
 // 预算，所以 row cap 不适用；但仍需一个 tool-call 上限防 durable run 狂刷工具/proposal。
 import { resolveContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
+import type { ValidateLearningContentFn } from '@/kernel/tools/types';
 // YUK-364 (bot-review C5) — 共享 Tavily 远程 MCP（web grounding），与 inline copilot
 // （chat.ts runCopilotChatImpl）+ quiz_gen handler 同一份 env-gated builder。配置
 // TAVILY_API_KEY 时挂 search/extract，未配置时 buildTavily() 返回 null → 与之前
@@ -92,6 +98,7 @@ import {
 import {
   type StreamCollectResult,
   type TaskEventMessage,
+  runAgentTask,
   streamTaskCollecting,
 } from '@/server/ai/runner';
 import {
@@ -191,6 +198,7 @@ export interface RunCopilotRunParams {
    * graceful-degrades（resolve partial，不 throw）；注入 THROW fixture 可测 catch 路径。
    */
   streamTaskCollectingFn?: typeof streamTaskCollecting;
+  runValidationTaskFn?: typeof runAgentTask;
   /**
    * YUK-575 (A1/N3) test seam — 默认 assembleCopilotRunInput。注入 fixture 断言
    * pickup-time 装配参数（historyAnchorEventId=run_id、ambient 透传等）而不打真 DB。
@@ -776,6 +784,7 @@ async function awaitClaimedCopilotExecution(
 export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCopilotRunResult> {
   const { db, data } = params;
   const streamRun = params.streamTaskCollectingFn ?? streamTaskCollecting;
+  const runValidationTask = params.runValidationTaskFn ?? runAgentTask;
   const assembleRunInput = params.resolveCopilotRunInputFn ?? assembleCopilotRunInput;
   const buildMcpServer = params.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const buildTavily = params.buildTavilyMcpServerFn ?? buildTavilyMcpServer;
@@ -957,6 +966,34 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   // the caller signal; the runner additionally aborts this controller on its own
   // timeout or provider-lease fencing before releasing the parent permit.
   const lifecycleAbortController = new AbortController();
+  const validationTaskContext = (
+    callCtx: Parameters<Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']>[2],
+  ) => ({
+    ...callCtx,
+    db,
+    signal: lifecycleAbortController.signal,
+    lifecycleAbortController,
+    parentTaskRunId: taskRunId,
+    providerSessionDeadlineAt: Date.now() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
+  });
+  const validationRunner: Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn'] =
+    async (kind, input, callCtx) => {
+      const ctx = validationTaskContext(callCtx);
+      switch (kind) {
+        case 'QuizVerifyTask':
+          return runValidationTask('QuizVerifyTask', input, ctx);
+        case 'SolutionGenerateTask':
+          return runValidationTask('SolutionGenerateTask', input, ctx);
+        case 'SemanticJudgeTask':
+          return runValidationTask('SemanticJudgeTask', input, ctx);
+        case 'TeachingQualityTask':
+          return runValidationTask('TeachingQualityTask', input, ctx);
+        default:
+          throw new Error(`unsupported learning-content validation task: ${kind}`);
+      }
+    };
+  const validateLearningContent: ValidateLearningContentFn = (content) =>
+    validateCopilotLearningContent(content, { db, runTaskFn: validationRunner });
 
   // ── MCP mount: 照 quiz_gen:415-435 / chat.ts:1038-1098 ────────────────────
   // copilot 全集 surface（chat surface=copilot；chip surface=user-suggested）。
@@ -972,6 +1009,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       providerSessionDeadlineAt: Date.now() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
       callerActor: { kind: 'agent', ref: actorRef },
       causedByEventId: runId,
+      validateLearningContent,
     },
     serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
     toolNames,
@@ -1176,17 +1214,26 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     });
     if ((await cancellationControl.probe()) === 'cancel_requested') {
       // A read-bearing candidate has not passed evidence review and cannot become
-      // a cancellation partial. Pure-text turns preserve only contract-validated,
-      // presentation-cleaned text.
-      const cancellationReply = toolTrace.some((entry) => entry.effect === 'read')
-        ? undefined
-        : preparedCandidate.text;
+      // a cancellation partial. Learning content likewise cannot be persisted
+      // before its independent validators pass. Pure-text turns preserve only
+      // correction-contract-validated, presentation-cleaned text.
+      const cancellationReply =
+        toolTrace.some((entry) => entry.effect === 'read') ||
+        copilotLearningContentRequiresValidation(preparedCandidate.text)
+          ? undefined
+          : preparedCandidate.text;
       return await settleObservedCancellation(cancellationReply, result.task_run_id);
     }
 
+    const learningReview = await reviewCopilotLearningContent(
+      preparedCandidate.text,
+      [data.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join('\n'),
+      result.task_run_id,
+      { db, runTaskFn: validationRunner },
+    );
     const evidenceReview =
       correctionResolution.kind === 'clarify'
-        ? { status: 'skipped' as const, replyText: preparedCandidate.text }
+        ? { status: 'skipped' as const, replyText: learningReview.replyText }
         : await reviewEvidenceReply({
             db,
             requestContext: {
@@ -1196,7 +1243,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
               ...(data.chip_kind ? { chip_kind: data.chip_kind } : {}),
               ...(data.ambient ? { ambient_context: data.ambient } : {}),
             },
-            candidateReply: preparedCandidate.text,
+            candidateReply: learningReview.replyText,
             candidateTaskRunId: result.task_run_id,
             toolTrace,
             signal: cancellationControl.signal,
@@ -1210,17 +1257,33 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
             },
             candidateComplete: !result.partial,
           });
-    const reviewedReply =
+    const correctionReviewedReply =
       evidenceReview.status === 'repair'
         ? resolveCorrectionReply(evidenceReview.replyText, runInput.correction_contract).reply
         : evidenceReview.replyText;
+    // Evidence repair is a new candidate. Re-run the learning-content gate so
+    // repaired prose cannot introduce an unverified question or solution.
+    const repairedLearningReview =
+      evidenceReview.status === 'repair'
+        ? await reviewCopilotLearningContent(
+            correctionReviewedReply,
+            [data.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join(
+              '\n',
+            ),
+            result.task_run_id,
+            { db, runTaskFn: validationRunner },
+          )
+        : undefined;
+    const reviewedReply = repairedLearningReview?.replyText ?? correctionReviewedReply;
     // The validator seals text, not the presentation side channel. Drop every
     // primary_view on read-bearing pass/repair/fail-closed decisions; otherwise
     // unreviewed ephemeral_html or an unbound artifact ref could contradict the
     // certified prose. Pure-text/no-read skipped turns keep legacy behavior.
     const reviewedPreparedReply: PreparedCopilotReply = {
       text: reviewedReply,
-      ...(evidenceReview.status === 'skipped' && preparedCandidate.primaryView
+      ...(evidenceReview.status === 'skipped' &&
+      learningReview.passed &&
+      preparedCandidate.primaryView
         ? { primaryView: preparedCandidate.primaryView }
         : {}),
     };
