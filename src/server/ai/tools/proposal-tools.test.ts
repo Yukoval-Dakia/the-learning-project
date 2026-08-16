@@ -327,6 +327,7 @@ describe('Wave 3 proposal/action DomainTools', () => {
       // replace, version bump + history append).
       'update_artifact',
       'update_prompt',
+      'write_agent_note',
       // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write (draft-allowed,
       // opposite precondition from write_review_plan).
       'write_quiz',
