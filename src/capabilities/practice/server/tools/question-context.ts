@@ -309,7 +309,7 @@ const GetReviewDueOutputSchema = z.object({
       question_id: z.string(),
       prompt_excerpt: z.string(),
       knowledge_ids: z.array(z.string()),
-      fsrs_state: z.unknown().nullable(),
+      fsrs_state: z.unknown().nullable().optional(),
       due_at: z.string().nullable(),
       reason: z.enum(['never_reviewed_failure', 'overdue', 'filtered_match']),
       // YUK-226 S2-5a.2 — source/tier read model. `source` is the question.source
@@ -355,7 +355,7 @@ const GetReviewDueOutputSchema = z.object({
       subject_id: z.string(),
       due_at: z.string().datetime(),
       last_review_event_id: z.string().nullable(),
-      state: z.unknown(),
+      state: z.unknown().optional(),
       timing: z.literal('future'),
     }),
   ),

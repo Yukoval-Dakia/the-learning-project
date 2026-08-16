@@ -557,7 +557,7 @@ function projectEventPayload(value: EnvelopedEvent, rawPayload: unknown): Payloa
     };
   }
   if (value.action === 'experimental:proposal') {
-    const wrapper = z.object({ ai_proposal: z.unknown() }).safeParse(rawPayload);
+    const wrapper = z.object({ ai_proposal: z.unknown().optional() }).safeParse(rawPayload);
     if (!wrapper.success) return invalidPayload();
     const parsed = AiProposalPayload.safeParse(wrapper.data.ai_proposal);
     if (!parsed.success) return invalidPayload();
