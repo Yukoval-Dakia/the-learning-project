@@ -11,7 +11,11 @@ import {
   COPILOT_EVIDENCE_SUBMISSION_SERVER_NAME,
 } from '@/core/copilot-evidence';
 import type { Db } from '@/db/client';
-import { AgentRunError } from '@/server/ai/agent-run-error';
+import {
+  AgentRunError,
+  PROVIDER_SESSION_WALL_CLOCK_BUDGET_MESSAGE,
+  ProviderSessionWallClockBudgetError,
+} from '@/server/ai/agent-run-error';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   bindCopilotEvidenceComparison,
@@ -1436,10 +1440,10 @@ describe('Copilot FULL evidence review', () => {
             errors: ['verification deadline elapsed'],
           });
         }
-        // run-lifecycle.ts throws a plain Error (deliberately — downstream
-        // aborted-binding semantics depend on it) when the provider session
-        // wall-clock budget is already elapsed before the retry can start.
-        throw new Error('provider session wall-clock budget elapsed comparison');
+        // run-lifecycle.ts throws the dedicated wall-clock budget error (a
+        // plain-Error subclass, deliberately not an AgentRunError) when the
+        // provider session budget is already elapsed before the retry starts.
+        throw new ProviderSessionWallClockBudgetError('comparison');
       },
     );
 
@@ -1452,6 +1456,39 @@ describe('Copilot FULL evidence review', () => {
       replyText: `${COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION}\n\n${blindSafeReply}`,
       reviewTaskRunId: 'reference',
     });
+  });
+
+  it('keeps failing closed when a plain Error merely imitates the wall-clock message', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let comparisonAttempt = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return submitTaskOutput(kind, input, submission, referenceOutput(input), 'reference');
+        }
+        comparisonAttempt += 1;
+        if (comparisonAttempt === 1) {
+          throw new AgentRunError({
+            kind,
+            taskRunId: 'comparison-budget-timeout',
+            subtype: 'budget_timeout',
+            errors: ['verification deadline elapsed'],
+          });
+        }
+        // Collision guard: a non-budget plain Error that happens to share the
+        // wall-clock message text must never be laundered into budget_timeout
+        // and downgraded to a degraded reply instead of fail-closed.
+        throw new Error(
+          `${PROVIDER_SESSION_WALL_CLOCK_BUDGET_MESSAGE} comparison but quota remains`,
+        );
+      },
+    );
+
+    const result = await reviewCopilotEvidenceReply(
+      reviewParams({ candidateReply: unsafeCandidate, runTaskFn }),
+    );
+
+    expect(result.status).toBe('failed_closed');
   });
 
   it('fails closed when comparator attempts mix a budget timeout with a contract failure', async () => {
