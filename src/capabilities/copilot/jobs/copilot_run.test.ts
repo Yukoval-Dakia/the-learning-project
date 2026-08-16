@@ -246,6 +246,39 @@ describe('runCopilotRun', () => {
     expect(JSON.stringify(await replay(runId))).not.toContain('1+1=3');
   });
 
+  it.each([
+    {
+      label: 'numeric character references',
+      html: '<section><h2>&#39064;&#30446;</h2><p>17×19？</p><p>&#31572;&#26696;&#65306;323</p></section>',
+    },
+    {
+      label: 'inline tags splitting assessment labels',
+      html: '<section><h2>题<span>目</span></h2><p>17×19？</p><p>答<span>案</span>：323</p></section>',
+    },
+  ])('fails closed for durable ephemeral HTML hidden with $label', async ({ html }) => {
+    const runId = `copilot_user_ask_durable_obfuscated_${html.includes('&#') ? 'entity' : 'tag'}`;
+    const marker = `<!--primary_view:${JSON.stringify({ source: 'ephemeral_html', ref: html })}-->`;
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: `${runId}_session`,
+        user_message: '请生成一道乘法题。',
+      },
+      streamTaskCollectingFn: streamMock(`请在卡片里作答。\n${marker}`) as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    });
+
+    expect(result).toMatchObject({
+      status: 'done',
+      reply: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY,
+    });
+    expect(JSON.stringify(await replay(runId))).not.toContain('323');
+  });
+
   it('provides durable artifact tools a parent-bound learning validator', async () => {
     const runId = 'copilot_user_ask_durable_artifact_parent';
     let mcpOptions: BuildMcpServerOptions | undefined;

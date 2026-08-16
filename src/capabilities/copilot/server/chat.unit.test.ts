@@ -67,6 +67,42 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(result).not.toHaveProperty('primary_view');
   });
 
+  it.each([
+    {
+      label: 'numeric character references',
+      html: '<section><h2>&#39064;&#30446;</h2><p>17×19？</p><p>&#31572;&#26696;&#65306;323</p></section>',
+    },
+    {
+      label: 'inline tags splitting assessment labels',
+      html: '<section><h2>题<span>目</span></h2><p>17×19？</p><p>答<span>案</span>：323</p></section>',
+    },
+  ])('blocks assessed ephemeral HTML hidden with $label', async ({ html }) => {
+    const marker = `<!--primary_view:${JSON.stringify({ source: 'ephemeral_html', ref: html })}-->`;
+
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '给我一道乘法题', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: vi.fn(async () => ({
+          task_run_id: 'task_obfuscated_ephemeral_assessment',
+          text: `请在卡片里作答。\n${marker}`,
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        })),
+        writeEventFn: vi.fn(async (_db, input) => input.id),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_obfuscated_ephemeral_assessment',
+          created: true,
+        }),
+      },
+    );
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(result).not.toHaveProperty('primary_view');
+  });
+
   it('uses a bounded generic fallback when a validation provider rejects', async () => {
     const runner = vi.fn(async (kind: string) => {
       if (kind === 'CopilotTask') {

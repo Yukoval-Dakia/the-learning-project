@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Db } from '@/db/client';
-import { htmlContainsAssessment } from '@/kernel/learning-content';
+import { extractVisibleHtmlText, htmlContainsAssessment } from '@/kernel/learning-content';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   runQuestionContentValidation,
@@ -119,20 +119,6 @@ function containsLearningSolution(text: string): boolean {
     arithmeticEquation.test(text) ||
     (computationTableHeader.test(text) && numericTableRowCount >= 2)
   );
-}
-
-function extractVisibleHtmlText(html: string): string {
-  return html
-    .replace(/<!--([\s\S]*?)-->/g, '\n')
-    .replace(/<\/?(?:script|style)[^>]*>[\s\S]*?<\/(?:script|style)>/gi, '\n')
-    .replace(/<\/?(?:article|aside|br|div|h[1-6]|li|p|section|table|tr)[^>]*>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/\n\s*\n+/g, '\n')
-    .trim();
 }
 
 export function copilotLearningContentRequiresValidation(candidateText: string): boolean {
