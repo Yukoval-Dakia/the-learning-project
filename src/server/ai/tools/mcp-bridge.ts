@@ -115,10 +115,9 @@ function proposalEffectContract(
     direct_write: false,
     rollback: 'dismiss_before_accept',
   } as const;
+  if (output === null || typeof output !== 'object') return base;
   if (
     name === 'author_question' &&
-    output !== null &&
-    typeof output === 'object' &&
     'status' in output &&
     output.status === 'proposed' &&
     'question_ids' in output &&
@@ -129,6 +128,25 @@ function proposalEffectContract(
       ...base,
       retained_draft: {
         kind: 'question',
+        written_before_accept: true,
+        reversible: false,
+        retained_after_dismiss: true,
+      },
+    };
+  }
+  const variantSucceeded =
+    (name === 'propose_variant' && 'status' in output && output.status === 'generated') ||
+    (name === 'author_question' && 'status' in output && output.status === 'proposed');
+  if (
+    variantSucceeded &&
+    'mistake_variant_ids' in output &&
+    Array.isArray(output.mistake_variant_ids) &&
+    output.mistake_variant_ids.length > 0
+  ) {
+    return {
+      ...base,
+      retained_draft: {
+        kind: 'mistake_variant',
         written_before_accept: true,
         reversible: false,
         retained_after_dismiss: true,

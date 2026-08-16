@@ -279,6 +279,72 @@ describe('buildMcpServerFromRegistry', () => {
     });
   });
 
+  it.each([
+    ['propose_variant', 'generated'],
+    ['author_question', 'proposed'],
+  ] as const)(
+    'declares retained mistake_variant drafts only after successful %s output',
+    async (name, successStatus) => {
+      registerTool({
+        name,
+        description: 'Propose a retained variant draft.',
+        effect: 'propose',
+        inputSchema: z.object({
+          attempt_event_id: z.string(),
+          seed_mode: z.literal('variant').optional(),
+          fail: z.boolean(),
+        }),
+        outputSchema: z.object({
+          status: z.enum(['generated', 'proposed', 'failed']),
+          mistake_variant_ids: z.array(z.string()),
+        }),
+        costClass: 'local',
+        async execute(_ctx, input) {
+          return input.fail
+            ? { status: 'failed' as const, mistake_variant_ids: [] }
+            : { status: successStatus, mistake_variant_ids: ['mv_draft'] };
+        },
+        summarize() {
+          return 'variant draft recorded';
+        },
+        mirrorEvent: 'when_causal',
+      });
+
+      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: [name] });
+      const handler = mockAgentSdk.toolDefs[0]?.handler;
+      const baseInput = {
+        attempt_event_id: 'evt_failure',
+        ...(name === 'author_question' ? { seed_mode: 'variant' as const } : {}),
+      };
+
+      const success = (await handler?.({ ...baseInput, fail: false })) as {
+        content: Array<{ type: string; text: string }>;
+      };
+      const successPayload = JSON.parse(success.content[0]?.text ?? '') as Record<string, unknown>;
+      expect(successPayload.proposal_effect_contract).toEqual({
+        owner_gate: 'FULL',
+        direct_write: false,
+        rollback: 'dismiss_before_accept',
+        retained_draft: {
+          kind: 'mistake_variant',
+          written_before_accept: true,
+          reversible: false,
+          retained_after_dismiss: true,
+        },
+      });
+
+      const failed = (await handler?.({ ...baseInput, fail: true })) as {
+        content: Array<{ type: string; text: string }>;
+      };
+      const failedPayload = JSON.parse(failed.content[0]?.text ?? '') as Record<string, unknown>;
+      expect(failedPayload.proposal_effect_contract).toEqual({
+        owner_gate: 'FULL',
+        direct_write: false,
+        rollback: 'dismiss_before_accept',
+      });
+    },
+  );
+
   it('lets callers block execution before a DomainTool runs', async () => {
     const runFn = vi.fn((i: { q: string }) => ({ len: i.q.length }));
     const beforeExecute = vi.fn(() => 'quota exceeded');

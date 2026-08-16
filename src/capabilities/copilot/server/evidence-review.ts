@@ -166,7 +166,7 @@ function proposalContractRepair(
       .join(', ');
     const retainedDraft = entry.proposal_effect_contract?.retained_draft;
     const retainedDraftResult = retainedDraft
-      ? 'retained draft=question (written before accept, irreversible, retained after dismiss)'
+      ? `retained draft=${retainedDraft.kind} (written before accept, irreversible, retained after dismiss)`
       : undefined;
     const details = [result || undefined, retainedDraftResult]
       .filter((value): value is string => value !== undefined)

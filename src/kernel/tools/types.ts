@@ -20,7 +20,7 @@ export interface ProposalEffectContract {
   readonly direct_write: false;
   readonly rollback: 'dismiss_before_accept';
   readonly retained_draft?: {
-    readonly kind: 'question';
+    readonly kind: 'question' | 'mistake_variant';
     readonly written_before_accept: true;
     readonly reversible: false;
     readonly retained_after_dismiss: true;
