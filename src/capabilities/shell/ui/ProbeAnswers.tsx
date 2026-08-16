@@ -16,7 +16,7 @@
 // practice answer flow; a photo-only answer is allowed (the route gates it server-side).
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { uploadAsset, useAssetUrl } from '@/ui/lib/assets';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -34,6 +34,8 @@ import {
 function statefulStatus(loading: boolean, error: boolean): StatefulStatus {
   return loading ? 'loading' : error ? 'error' : 'ok';
 }
+
+const JUDGE_FAILURE_MESSAGE = '判题失败，请稍后重试';
 
 function VerdictMessage({ verdict }: { verdict: ProbeAnswerVerdict['resolution'] }) {
   if (verdict === 'retired') {
@@ -108,7 +110,14 @@ export function ProbeAnswerCard({
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const [verdict, setVerdict] = useState<ProbeAnswerVerdict['resolution'] | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
 
   // "has any answer" = text OR image (mirrors the route's submit gate).
   const hasAnswer = answerMd.trim().length > 0 || imageRefs.length > 0;
@@ -130,6 +139,7 @@ export function ProbeAnswerCard({
     if (!hasAnswer || submitting) return;
     setSubmitting(true);
     setError(null);
+    setToast(null);
     let resolution: ProbeAnswerVerdict['resolution'] | null = null;
     try {
       const res = await submitProbeAnswer(probe.probe_question_id, answerMd.trim(), imageRefs);
@@ -142,7 +152,8 @@ export function ProbeAnswerCard({
     } catch {
       // An actually ungradable judge result or network failure stays retryable.
       // A gradable unrelated error returns the recorded `inconclusive` verdict above.
-      setError('这次没判清 —— 换个说法再答一次');
+      setError(JUDGE_FAILURE_MESSAGE);
+      setToast(JUDGE_FAILURE_MESSAGE);
     } finally {
       setSubmitting(false);
     }
@@ -216,14 +227,21 @@ export function ProbeAnswerCard({
               disabled={!hasAnswer || submitting || uploading}
               onClick={() => void onSubmit()}
             >
-              提交作答
+              {submitting ? '判分中…' : '提交作答'}
             </Btn>
-            {error && (
-              <span className="pa-error" role="alert">
-                {error}
-              </span>
-            )}
           </div>
+          {error && (
+            <div className="pa-error" role="alert">
+              <LoomIcon name="alert" size={13} className="pa-error-icon" />
+              {error}
+            </div>
+          )}
+          {toast && (
+            <div className="pa-toast" role="status" aria-live="polite">
+              <LoomIcon name="alert" size={14} className="pa-toast-icon" />
+              {toast}
+            </div>
+          )}
         </>
       )}
     </LoomCard>

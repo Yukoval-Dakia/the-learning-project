@@ -165,8 +165,8 @@ describe('ProbeAnswers — answer interaction (jsdom)', () => {
     expect(captured[0].answer_md).toBe('');
   });
 
-  it('surfaces a retry and keeps the probe when the submit fails (fail-closed)', async () => {
-    vi.stubGlobal('fetch', mockFetch({ answerStatus: 500 }));
+  it('surfaces a learner-facing retry and keeps the probe when judge submission fails', async () => {
+    vi.stubGlobal('fetch', mockFetch({ answerStatus: 422 }));
     const user = userEvent.setup();
     renderPanel();
 
@@ -174,8 +174,10 @@ describe('ProbeAnswers — answer interaction (jsdom)', () => {
     await user.type(screen.getByPlaceholderText(/写下你的解答/), '试答');
     await user.click(screen.getByRole('button', { name: '提交作答' }));
 
-    expect(await screen.findByText(/这次没判清/)).toBeTruthy();
+    expect((await screen.findByRole('alert')).textContent).toContain('判题失败，请稍后重试');
+    expect(screen.getByRole('button', { name: '提交作答' })).toBeTruthy();
     expect(screen.getByText('求 d/dx sin(x^2)。')).toBeTruthy(); // probe not lost
+    expect((screen.getByPlaceholderText(/写下你的解答/) as HTMLTextAreaElement).value).toBe('试答');
   });
 });
 

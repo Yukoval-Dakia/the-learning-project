@@ -6967,8 +6967,37 @@ button.chip:disabled:hover {
   border: 0;
 }
 .pa-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--s-2);
   font-size: var(--fs-meta);
   color: var(--again-ink);
+}
+.pa-error-icon {
+  flex: none;
+}
+.pa-toast {
+  position: fixed;
+  right: var(--s-5);
+  bottom: var(--s-5);
+  z-index: 70;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  max-width: 340px;
+  padding: var(--s-3) var(--s-4);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-2);
+}
+.pa-toast-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--coral);
 }
 .pa-verdict {
   display: flex;
