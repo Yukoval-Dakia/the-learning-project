@@ -302,14 +302,14 @@ export const NoteSection = z.object({
 export const TipTapMarkJson = z
   .object({
     type: z.string().min(1),
-    attrs: z.record(z.unknown()).optional(),
+    attrs: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
 export const TipTapNodeJson: z.ZodType<Record<string, unknown>> = z
   .object({
     type: z.string().min(1),
-    attrs: z.record(z.unknown()).optional(),
+    attrs: z.record(z.string(), z.unknown()).optional(),
     content: z.array(z.lazy(() => TipTapNodeJson)).optional(),
     marks: z.array(TipTapMarkJson).optional(),
     text: z.string().optional(),
@@ -1156,7 +1156,7 @@ export const ToolStateAssignment = z.object({
   // Snapshot blob of the review profile state at selection time. Narrow later
   // once the shape stabilizes (CO §5.1); kept open so producers don't fork the
   // schema per snapshot key.
-  review_profile_snapshot: z.record(z.unknown()),
+  review_profile_snapshot: z.record(z.string(), z.unknown()),
 });
 export type ToolStateAssignmentT = z.infer<typeof ToolStateAssignment>;
 
@@ -1176,7 +1176,7 @@ export type ToolStateSectionT = z.infer<typeof ToolStateSection>;
 
 export const ToolState = z.object({
   question_ids: z.array(z.string()),
-  session_meta: z.record(z.unknown()).nullish(),
+  session_meta: z.record(z.string(), z.unknown()).nullish(),
   // U5 v2 — promoted first-class structured plan. Optional → back-compat.
   sections: z.array(ToolStateSection).optional(),
 });

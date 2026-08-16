@@ -165,7 +165,7 @@ export const ProposalDecisionResource = z.object({
   proposal_status: z.enum(['pending', 'accepted', 'dismissed', 'stale', 'rubric_rejected']),
   created: z.boolean(),
   idempotent: z.boolean(),
-  result: z.unknown().nullable(),
+  result: z.unknown().nullable().optional(),
 });
 export type ProposalDecisionResourceT = z.infer<typeof ProposalDecisionResource>;
 
