@@ -133,7 +133,6 @@ describe('buildMemoryEventIngestHandler', () => {
         deadlineAt: expect.any(Date),
       }),
       expect.any(Function),
-      'memory-event-ingest:evt_1',
     );
     // 2 brief regen (global + topic:k1) + 1 reconcile
     expect(boss.send).toHaveBeenCalledTimes(3);
@@ -212,7 +211,6 @@ describe('buildMemoryEventIngestHandler', () => {
         operationId: providerOperationIdForInvocation('conjecture-edit:rate_edited_1'),
       }),
       expect.any(Function),
-      'memory-event-ingest:rate_edited_1',
     );
     expect(send).toHaveBeenCalledWith(
       MEMORY_RECONCILE_QUEUE,
@@ -333,7 +331,6 @@ describe('buildMemoryEventIngestHandler', () => {
       expect.objectContaining({ id: 'evt_user' }),
       expect.objectContaining({ caller: 'worker', operationId: expect.any(String) }),
       expect.any(Function),
-      'memory-event-ingest:evt_user',
     );
     expect(send).toHaveBeenCalledWith(
       MEMORY_RECONCILE_QUEUE,

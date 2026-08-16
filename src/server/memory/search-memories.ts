@@ -64,7 +64,6 @@ export type SearchMemoriesOpts = {
   /** Injectable clock for deterministic recency tests. Defaults to `new Date()`. */
   now?: Date;
   providerOperation: Mem0OpaqueOperationContext;
-  costTaskRunId?: string;
 };
 
 // mem0's MemoryItem surfaces non-excluded payload keys (created_ms / kind /
@@ -152,11 +151,14 @@ export async function searchMemories(
   // and "memories unavailable" identically (a softer prior either way).
   let raw: SearchResult;
   try {
-    const searchOpts = { topK: topK * OVERFETCH_FACTOR, filters };
-    raw =
-      opts.costTaskRunId === undefined
-        ? await client.search(query, searchOpts, opts.providerOperation)
-        : await client.search(query, searchOpts, opts.providerOperation, opts.costTaskRunId);
+    raw = await client.search(
+      query,
+      {
+        topK: topK * OVERFETCH_FACTOR,
+        filters,
+      },
+      opts.providerOperation,
+    );
   } catch (err) {
     // ADR-0017: memory is an attention prior, not a source of truth — surface
     // the failure to logs but do not throw. Do not swallow silently.
