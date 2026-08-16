@@ -12,7 +12,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { buildHonoApp } from './app';
 import { loadEnv } from './env';
 
-loadEnv();
+const env = loadEnv();
 assertAgentSdkRuntimeUser();
 // YUK-548: boot-time SoT-flip flag vector + flip-order WARN (never throws — see warnFlipOrder).
 warnFlipOrder();
@@ -22,7 +22,7 @@ warnFlipOrder();
 // of 8787. Trim-then-empty-check + positive-integer guard mirrors the
 // `optionalEnv` (trim → empty=default) fix applied to the mem0 config side in
 // YUK-341. This is the only remaining `Number(process.env.X ?? ...)` site.
-const rawApiPort = process.env.API_PORT?.trim();
+const rawApiPort = env.API_PORT?.trim();
 const parsedApiPort = rawApiPort ? Number(rawApiPort) : 8787;
 if (!Number.isInteger(parsedApiPort) || parsedApiPort <= 0) {
   throw new Error(`API_PORT must be a positive integer, got: ${JSON.stringify(rawApiPort)}`);
@@ -53,8 +53,8 @@ async function hydrateSubjectsBeforeServe(): Promise<void> {
 // dev 不设此变量（Vite dev server 承担静态 + /api proxy）。serveStatic 未命中
 // 文件时 next() 放行 /api/*；catch-all GET 回 index.html（TanStack Router
 // 客户端路由 fallback），注册在 manifest 路由之后所以不抢任何 API 端点。
-if (process.env.RW_STATIC_DIR) {
-  const root = process.env.RW_STATIC_DIR;
+if (env.RW_STATIC_DIR) {
+  const root = env.RW_STATIC_DIR;
   app.use('*', serveStatic({ root }));
   app.get('*', serveStatic({ root, path: 'index.html' }));
 }
@@ -93,7 +93,7 @@ void (async () => {
     console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
   });
 
-  if (process.env.RW_WORKER === '1') {
+  if (env.RW_WORKER === '1') {
     void startInProcessWorker().catch((err) => {
       // worker 起不来不该拖死 API 面：日志醒目 + API 继续服务（上传仍可用，
       // 只是 job 不被消费）；dev 下看到这条就修。
