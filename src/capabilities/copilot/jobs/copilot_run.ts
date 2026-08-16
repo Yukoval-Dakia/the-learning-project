@@ -1262,14 +1262,15 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
             },
             candidateComplete: !result.partial,
           });
+    // Both evidence repair and timeout-degraded blind replies are replacement
+    // prose: re-apply the correction binding, then re-run the learning-content
+    // gate, mirroring the inline chat.ts path.
     const correctionReviewedReply =
-      evidenceReview.status === 'repair'
+      evidenceReview.status === 'repair' || evidenceReview.status === 'degraded'
         ? resolveCorrectionReply(evidenceReview.replyText, runInput.correction_contract).reply
         : evidenceReview.replyText;
-    // Evidence repair is a new candidate. Re-run the learning-content gate so
-    // repaired prose cannot introduce an unverified question or solution.
-    const repairedLearningReview =
-      evidenceReview.status === 'repair'
+    const replacementLearningReview =
+      evidenceReview.status === 'repair' || evidenceReview.status === 'degraded'
         ? await reviewCopilotLearningContent(
             correctionReviewedReply,
             [data.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join(
@@ -1279,7 +1280,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
             { db, runTaskFn: validationRunner },
           )
         : undefined;
-    const reviewedReply = repairedLearningReview?.replyText ?? correctionReviewedReply;
+    const reviewedReply = replacementLearningReview?.replyText ?? correctionReviewedReply;
     // The validator seals text, not the presentation side channel. Drop every
     // primary_view on read-bearing pass/repair/fail-closed decisions; otherwise
     // unreviewed ephemeral_html or an unbound artifact ref could contradict the

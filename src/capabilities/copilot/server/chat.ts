@@ -414,7 +414,7 @@ export interface PreparedCopilotReply {
 }
 
 export interface CopilotEvidenceValidationRef {
-  status: 'pass' | 'repair' | 'failed_closed';
+  status: 'pass' | 'repair' | 'degraded' | 'failed_closed';
   reference_task_run_ids: string[];
   comparison_task_run_ids: string[];
 }
@@ -1378,14 +1378,17 @@ async function runCopilotChatImpl(
             : {}),
         });
   streaming?.signal?.throwIfAborted();
+  // Both evidence repair and timeout-degraded blind replies are replacement
+  // prose. Re-apply the correction binding so replacement text cannot drop
+  // the targeted prior-turn envelope (YUK-836 contract), then re-run the
+  // learning-content gate so neither path can introduce an unverified
+  // question or solution (YUK-833/835).
   const correctionReviewedReply =
-    evidenceReview.status === 'repair'
+    evidenceReview.status === 'repair' || evidenceReview.status === 'degraded'
       ? resolveCorrectionReply(evidenceReview.replyText, runInput.correction_contract).reply
       : evidenceReview.replyText;
-  // Evidence repair is a new candidate. Re-run the learning-content gate so
-  // repaired prose cannot introduce an unverified question or solution.
-  const repairedLearningReview =
-    evidenceReview.status === 'repair'
+  const replacementLearningReview =
+    evidenceReview.status === 'repair' || evidenceReview.status === 'degraded'
       ? await reviewCopilotLearningContent(
           correctionReviewedReply,
           [req.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join('\n'),
@@ -1393,7 +1396,7 @@ async function runCopilotChatImpl(
           { db, runTaskFn: runValidationTask },
         )
       : undefined;
-  replyText = repairedLearningReview?.replyText ?? correctionReviewedReply;
+  replyText = replacementLearningReview?.replyText ?? correctionReviewedReply;
   // primary_view is a second user-visible channel (ephemeral_html can contain
   // substantive prose). The sealed comparator reviews reply text only, so a
   // read-bearing turn must drop this unreviewed metadata even when text passes.
