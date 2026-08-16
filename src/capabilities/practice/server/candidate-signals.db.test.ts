@@ -9,9 +9,8 @@
 //   (5) §9.2 信号无数据时留 undefined（NOT 0）。
 //
 // 纯读、零行为变更。Follow selection-observations.db.test.ts / variant-rotation.db.test.ts
-// 约定：resetDb() in beforeEach，testDb() 取 handle。
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // A3 (YUK-435) — EARLY_KLP_ENABLED is a module-level const. As of YUK-361 P1 go-live
 // step 2 its REAL default is now TRUE (live). This suite controls the flag explicitly
@@ -91,15 +90,28 @@ import {
   question,
 } from '@/db/schema';
 import { eq, sql } from 'drizzle-orm';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import {
+  beginTestTransaction,
+  resetDb,
+  rollbackTestTransaction,
+  testDb,
+} from '../../../../tests/helpers/db';
 
-const db = testDb();
+let db: Db = testDb();
 
-beforeEach(() => {
+beforeAll(resetDb);
+
+beforeEach(async () => {
+  await beginTestTransaction();
+  db = testDb();
   earlyKlpFlag.value = false; // restore dark-ship default before every test
   recurrenceFlag.value = false; // restore misconceptionRecurrence dark-ship default
   gridFlag.value = false; // restore THETA_GRID dark-ship default (A4 inc-2)
-  return resetDb();
+});
+
+afterEach(async () => {
+  await rollbackTestTransaction();
+  db = testDb();
 });
 
 // Seed one mastery_state row for a knowledge node with explicit θ̂ / precision.

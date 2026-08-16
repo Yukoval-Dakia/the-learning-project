@@ -7,8 +7,13 @@ import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import { parseAiProposalPayload } from '@/core/schema/proposal';
 import { knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import {
+  beginTestTransaction,
+  resetDb,
+  rollbackTestTransaction,
+  testDb,
+} from '../../../../tests/helpers/db';
 import {
   RUBRIC_EVIDENCE_WINDOW_DAYS,
   type RubricGate,
@@ -16,6 +21,10 @@ import {
 } from './rubric-validator';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+beforeAll(resetDb);
+beforeEach(beginTestTransaction);
+afterEach(rollbackTestTransaction);
 
 function edgePayload(
   fromId: string,
@@ -316,7 +325,6 @@ const AGENT = { isAgent: true, actorRef: 'agent:maintenance' };
 
 describe('validateProposalQuality — structural class (G1–G6)', () => {
   beforeEach(async () => {
-    await resetDb();
     await seedGraph();
   });
 
@@ -370,7 +378,6 @@ describe('validateProposalQuality — structural class (G1–G6)', () => {
 // only restate tree parentage.
 describe('validateProposalQuality — G6 scope (FIX 2)', () => {
   beforeEach(async () => {
-    await resetDb();
     await seedGraph();
   });
 
@@ -439,7 +446,6 @@ describe('validateProposalQuality — G6 scope (FIX 2)', () => {
 
 describe('validateProposalQuality — reasoning + evidence floor (G7, §4.2)', () => {
   beforeEach(async () => {
-    await resetDb();
     await seedGraph();
   });
 
@@ -570,7 +576,6 @@ describe('validateProposalQuality — reasoning + evidence floor (G7, §4.2)', (
 
 describe('validateProposalQuality — relation predicates (§4.3)', () => {
   beforeEach(async () => {
-    await resetDb();
     await seedGraph();
   });
 
@@ -746,7 +751,6 @@ describe('validateProposalQuality — relation predicates (§4.3)', () => {
 // relaxation now honors explicit user_notes as an OR with judge analysis.
 describe('validateProposalQuality — user-note strong for two-event relations (FIX 4)', () => {
   beforeEach(async () => {
-    await resetDb();
     await seedGraph();
   });
 
@@ -799,7 +803,6 @@ describe('validateProposalQuality — user-note strong for two-event relations (
 // loosen other relations.
 describe('validateProposalQuality — single judge-analysis event rescue (codex P2 r3)', () => {
   beforeEach(async () => {
-    await resetDb();
     await seedGraph();
   });
 
@@ -916,7 +919,6 @@ describe('validateProposalQuality — single judge-analysis event rescue (codex 
 
 describe('validateProposalQuality — agent vs user (RB-3)', () => {
   beforeEach(async () => {
-    await resetDb();
     await seedGraph();
   });
 
@@ -951,7 +953,6 @@ describe('validateProposalQuality — agent vs user (RB-3)', () => {
 // unchanged.
 describe('validateProposalQuality — judge-referenced endpoints count as evidence (codex r4 P2 #3)', () => {
   beforeEach(async () => {
-    await resetDb();
     await seedGraph();
   });
 
@@ -1030,7 +1031,6 @@ describe('validateProposalQuality — judge-referenced endpoints count as eviden
 // contrasts_with when `tightenMediumToStrong === true`.
 describe('validateProposalQuality — adaptive gate bump (Facet B / B1)', () => {
   beforeEach(async () => {
-    await resetDb();
     await seedGraph();
   });
 
