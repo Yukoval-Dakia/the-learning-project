@@ -166,7 +166,7 @@
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
     "esbuild": "^0.28.2",
-    "jsdom": "^29.1.1",
+    "jsdom": "^30.0.1",
     "tailwindcss": "^4.3.3",
     "testcontainers": "^12.1.0",
     "tsx": "^4.23.12",
