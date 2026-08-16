@@ -121,8 +121,16 @@ describe('verify-dispatch startup recovery vs capability queue creation (YUK-891
     expect(await boss.getQueue('quiz_verify')).not.toBeNull();
     expect(await boss.getQueue('source_verify')).not.toBeNull();
 
-    // Boot segment 3 — the startup trigger, in start-worker's post-fix order.
+    // Boot segment 3 — two consecutive startup triggers, matching two completed boots.
+    // The standard-policy recovery queue deliberately receives both; idempotence lives
+    // in the durable-intent recovery handler rather than an inert singletonKey option.
     await sendVerifyDispatchStartupRecovery(boss);
+    await sendVerifyDispatchStartupRecovery(boss);
+
+    const startupTriggers = await sqlClient.unsafe<[{ n: number }]>(
+      `SELECT count(*)::int AS n FROM ${TEST_SCHEMA}.job WHERE name = 'verify_dispatch_recover'`,
+    );
+    expect(startupTriggers[0]?.n).toBe(2);
 
     // The recovery worker executes: both durable intents complete as enqueued.
     const subjectIds = ['q-yuk891-quiz', 'q-yuk891-src'];
@@ -162,7 +170,7 @@ describe('verify-dispatch startup recovery vs capability queue creation (YUK-891
       `SELECT name, count(*)::int AS n FROM ${TEST_SCHEMA}.job WHERE name IN ('quiz_verify', 'source_verify') GROUP BY name`,
     );
     const byName = new Map(enqueued.map((row) => [row.name, row.n]));
-    expect(byName.get('quiz_verify') ?? 0).toBeGreaterThanOrEqual(1);
-    expect(byName.get('source_verify') ?? 0).toBeGreaterThanOrEqual(1);
+    expect(byName.get('quiz_verify') ?? 0).toBe(1);
+    expect(byName.get('source_verify') ?? 0).toBe(1);
   }, 45_000);
 });
