@@ -565,11 +565,12 @@ export function buildVerifyDispatchRecoveryHandler(
  * verifier queue and pg-boss throws `Queue <name> does not exist` — the attempt
  * fails noisily and the drain is delayed to the nightly cron. The trigger
  * lives next to the queue it targets; start-worker owns the ordering.
+ *
+ * Every completed boot enqueues a recovery pass. The standard-policy queue
+ * intentionally has no send-level dedup: durable intent completion makes the
+ * handler idempotent, while suppressing a later boot could delay its drain to
+ * the nightly cron.
  */
 export async function sendVerifyDispatchStartupRecovery(boss: PgBoss): Promise<void> {
-  await boss.send(
-    VERIFY_DISPATCH_RECOVERY_QUEUE,
-    { trigger: 'startup' },
-    { singletonKey: 'verify-dispatch-startup' },
-  );
+  await boss.send(VERIFY_DISPATCH_RECOVERY_QUEUE, { trigger: 'startup' });
 }
