@@ -558,13 +558,13 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(taskInput.proposal_feedback).toEqual([]);
   });
 
-  it('clarifies instead of accepting a correction envelope that silently binds “上一轮” to a different prior reply', async () => {
+  it('clarifies instead of passing through a silent rewrite with multiple implicit candidates', async () => {
     const db = {} as never;
     const batteryReplyId = 'copilot_reply_battery_d04';
     const waterTankReplyId = 'copilot_reply_water_tank_d02';
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_copilot_d05',
-      text: '已把上一轮改正。\n\n<!-- copilot-correction {"prior_turn_id":"copilot_reply_battery_d04","changed":["h*=4/9"],"retained":["同一个 k"],"uncertain":[]} -->',
+      text: '已把上一轮改正为 h*=4/9，k 不变。',
     }));
     const writeEventFn = vi.fn(async (_db, input) => input.id);
 
@@ -591,6 +591,10 @@ describe('runCopilotChat (two-surface routing)', () => {
             event_id: batteryReplyId,
           },
         ],
+        resolveImplicitCorrectionIntentFn: async () => ({
+          intent: 'correction',
+          candidate_prior_turn_ids: [waterTankReplyId, batteryReplyId],
+        }),
         now: () => new Date('2026-08-01T10:02:00.000Z'),
       },
     );
@@ -604,9 +608,94 @@ describe('runCopilotChat (two-surface routing)', () => {
       batteryReplyId,
     ]);
     expect(taskInput.correction_contract?.target_prior_turn_id).toBeUndefined();
+    const taskContext = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
+      allowedTools?: string[];
+    };
+    expect(taskContext.allowedTools).toEqual([]);
     expect(result.reply).toContain('prior_turn_id');
     expect(result.reply).toContain(waterTankReplyId);
     expect(result.reply).not.toContain('已把上一轮改正');
+  });
+
+  it('binds an unambiguous implicit correction before generating the reply', async () => {
+    const db = {} as never;
+    const batteryReplyId = 'copilot_reply_battery_d04';
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_copilot_implicit_single',
+      text: `电池题更正后的解释。\n\n<!-- copilot-correction {"prior_turn_id":"${batteryReplyId}","changed":["改用额定容量"],"retained":["温度假设"],"uncertain":[]} -->`,
+    }));
+
+    const result = await runCopilotChat(
+      db,
+      { user_message: '上一题再按额定容量改一下', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+        runAgentTaskFn,
+        writeEventFn: async (_db, input) => input.id,
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_implicit_single',
+          created: false,
+        }),
+        loadHistoryFn: async () => [
+          {
+            role: 'ai',
+            text: '电池 D04：先按当前电量估算。',
+            at: '2026-08-01T10:01:00.000Z',
+            event_id: batteryReplyId,
+          },
+        ],
+        resolveImplicitCorrectionIntentFn: async () => ({
+          intent: 'correction',
+          candidate_prior_turn_ids: [batteryReplyId],
+        }),
+        now: () => new Date('2026-08-01T10:02:00.000Z'),
+      },
+    );
+
+    const taskInput = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      correction_contract?: { target_prior_turn_id?: string };
+    };
+    expect(taskInput.correction_contract?.target_prior_turn_id).toBe(batteryReplyId);
+    expect(result.reply).toContain(`更正目标 prior_turn_id：${batteryReplyId}`);
+  });
+
+  it('keeps an ordinary follow-up normal when several prior replies exist', async () => {
+    const db = {} as never;
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_copilot_ordinary_followup',
+      text: '可以，我们继续比较两种方法。',
+    }));
+
+    const result = await runCopilotChat(
+      db,
+      { user_message: '这两种方法的差别是什么？', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+        runAgentTaskFn,
+        writeEventFn: async (_db, input) => input.id,
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_ordinary', created: false }),
+        loadHistoryFn: async () => [
+          {
+            role: 'ai',
+            text: '方法一：先列方程。',
+            at: '2026-08-01T10:00:00.000Z',
+            event_id: 'copilot_reply_method_one',
+          },
+          {
+            role: 'ai',
+            text: '方法二：先画图。',
+            at: '2026-08-01T10:01:00.000Z',
+            event_id: 'copilot_reply_method_two',
+          },
+        ],
+        resolveImplicitCorrectionIntentFn: async () => ({ intent: 'not_correction' }),
+        now: () => new Date('2026-08-01T10:02:00.000Z'),
+      },
+    );
+
+    expect(result.reply).toBe('可以，我们继续比较两种方法。');
   });
 
   it('fails closed when a targeted correction omits its envelope', async () => {
