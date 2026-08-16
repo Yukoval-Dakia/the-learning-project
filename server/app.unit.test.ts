@@ -196,19 +196,12 @@ describe('buildHonoApp', () => {
     expect(await unknown.json()).toEqual({ error: 'not_found' });
   });
 
-  // M5 review H1：fail-closed——INTERNAL_TOKEN 未设时拒绝一切 /api/*（缺 header
-  // 时 undefined !== undefined 曾放行）。/api/health 豁免不受影响。
-  it('rejects every /api request when INTERNAL_TOKEN is unset (fail-closed)', async () => {
+  it('fails API assembly when INTERNAL_TOKEN is unset', () => {
+    // Given
     vi.stubEnv('INTERNAL_TOKEN', undefined);
-    const app = buildHonoApp([fakeCapability]);
-    const noHeader = await app.request('/api/fake');
-    expect(noHeader.status).toBe(401);
-    const withHeader = await app.request('/api/fake', {
-      headers: { 'x-internal-token': 'anything' },
-    });
-    expect(withHeader.status).toBe(401);
-    const health = await app.request('/api/health');
-    expect(health.status).toBe(200);
+
+    // When / Then
+    expect(() => buildHonoApp([fakeCapability])).toThrow('INTERNAL_TOKEN');
   });
 
   it('rejects an empty-string token header', async () => {

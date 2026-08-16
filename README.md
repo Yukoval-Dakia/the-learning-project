@@ -67,9 +67,10 @@ pnpm smoke:local
 pg-boss worker 在服务端执行。
 
 API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，再通过
-`src/server/env.ts` 的 t3-env server schema 校验运行时配置；`DATABASE_URL` 与
-`INTERNAL_TOKEN` 是启动必需项，其余 provider、R2、OCR、feature flag 配置保持各自原有的
-可缺性与默认值。当前 Vite SPA 没有 `VITE_*` 消费点，因此不设 client schema。Vitest 会
+`src/server/env.ts` 的 t3-env server schema 校验运行时配置；`DATABASE_URL` 是共享运行时
+必需项，`INTERNAL_TOKEN` 仅由 API 组合根在监听前显式校验，DB-only 脚本不需要 API token。
+其余 provider、R2、OCR、feature flag 配置保持各自原有的可缺性与默认值。当前 Vite SPA
+没有 `VITE_*` 消费点，因此不设 client schema。Vitest 会
 跳过启动校验，让 DB 分区的 `tests/setup.db-fork.ts` 先改写每个 fork 的连接串；bundle build
 只打包入口，容器实际启动时仍会执行同一校验。
 
