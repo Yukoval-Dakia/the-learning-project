@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   containsLearningQuestion,
+  copilotLearningContentRequiresValidation,
   extractCopilotLearningContent,
   validateCopilotLearningContent,
 } from './content-validation';
@@ -27,6 +28,32 @@ describe('validateCopilotLearningContent', () => {
     expect(containsLearningQuestion(missing.text)).toBe(true);
     expect(missing.status).toBe('absent');
     expect(malformed).toMatchObject({ status: 'malformed', text: '题目\n1. 求 1+1？' });
+  });
+
+  it('fails closed when a reply contains more than one learning-content marker', () => {
+    const first =
+      '<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 1+1？","reference_md":"3","choices_md":null}]}-->';
+    const second =
+      '<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 1+1？","reference_md":"2","choices_md":null}]}-->';
+
+    const extracted = extractCopilotLearningContent(
+      `题目\n1. 求 1+1？\n${first}\n修正如下。\n${second}`,
+    );
+
+    expect(extracted.status).toBe('malformed');
+    expect(extracted.text).toBe('题目\n1. 求 1+1？\n\n修正如下。');
+  });
+
+  it('requires validation for an unlabeled multi-step equation solution', () => {
+    const reply = '移项并逐步化简：\n2x + 3 = 11\n2x = 8\nx = 4';
+
+    expect(copilotLearningContentRequiresValidation(reply)).toBe(true);
+  });
+
+  it('does not treat a lone configuration assignment as a learning solution', () => {
+    const reply = '运行参数如下：\nversion = 4\n其余配置保持默认。';
+
+    expect(copilotLearningContentRequiresValidation(reply)).toBe(false);
   });
 
   it('fails closed when an independent validator finds a contradictory question pack', async () => {

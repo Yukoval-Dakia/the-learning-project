@@ -39,6 +39,35 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(result.reply).not.toContain('1+1');
   });
 
+  it('blocks assessed ephemeral HTML when the learning-content marker is missing', async () => {
+    const html =
+      '<section><h2>测验</h2><p data-copilot-question-id="q1">1. 17×19？</p><p data-copilot-answer="323">答案：323</p></section>';
+    const marker = `<!--primary_view:${JSON.stringify({ source: 'ephemeral_html', ref: html })}-->`;
+
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '给我一道乘法题', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: vi.fn(async () => ({
+          task_run_id: 'task_ephemeral_assessment_without_manifest',
+          text: `请在卡片里作答。\n${marker}`,
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        })),
+        writeEventFn: vi.fn(async (_db, input) => input.id),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_ephemeral_assessment_without_manifest',
+          created: true,
+        }),
+      },
+    );
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(result).not.toHaveProperty('primary_view');
+  });
+
   it('uses a bounded generic fallback when a validation provider rejects', async () => {
     const runner = vi.fn(async (kind: string) => {
       if (kind === 'CopilotTask') {

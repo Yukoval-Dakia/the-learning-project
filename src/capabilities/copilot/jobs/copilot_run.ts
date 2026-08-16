@@ -75,6 +75,7 @@ import {
 import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
+import { htmlContainsAssessment } from '@/kernel/learning-content';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   resolveDomainToolNames,
@@ -966,18 +967,24 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   // the caller signal; the runner additionally aborts this controller on its own
   // timeout or provider-lease fencing before releasing the parent permit.
   const lifecycleAbortController = new AbortController();
+  const validationSignal = AbortSignal.any([
+    lifecycleAbortController.signal,
+    cancellationControl.signal,
+  ]);
   const validationTaskContext = (
     callCtx: Parameters<Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']>[2],
   ) => ({
     ...callCtx,
     db,
-    signal: lifecycleAbortController.signal,
+    signal: validationSignal,
     lifecycleAbortController,
     parentTaskRunId: taskRunId,
     providerSessionDeadlineAt: Date.now() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
   });
   const validationRunner: Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn'] =
     async (kind, input, callCtx) => {
+      await cancellationControl.probe();
+      validationSignal.throwIfAborted();
       const ctx = validationTaskContext(callCtx);
       switch (kind) {
         case 'QuizVerifyTask':
@@ -1233,7 +1240,14 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       preparedCandidate.text,
       [data.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join('\n'),
       result.task_run_id,
-      { db, runTaskFn: validationRunner },
+      {
+        db,
+        runTaskFn: validationRunner,
+        ...(preparedCandidate.primaryView?.source === 'ephemeral_html' &&
+        htmlContainsAssessment(preparedCandidate.primaryView.ref)
+          ? { additionalVisibleText: preparedCandidate.primaryView.ref }
+          : {}),
+      },
     );
     const evidenceReview =
       correctionResolution.kind === 'clarify'
