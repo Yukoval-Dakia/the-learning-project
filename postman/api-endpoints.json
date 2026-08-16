@@ -420,7 +420,7 @@
             }
           }
         },
-        "notes": "triggered_by 枚举：chat|chip。未提供 durable 的普通 chat 先由 bounded classifier 分流：inline 返回 200 text/event-stream（event: delta 逐块，event: reply 终止）；多步/多 artifact 工作返回 202 JSON { run_id, session_id, checkpoint_event_id } 并带 Location，进度经通用 job-events SSE replay。durable:false 强制 inline，durable:true 强制 durable；chip 与 skill_context 保持 inline。Zod 失败时返回普通 JSON 错误。客户端应为每个逻辑 turn 发送稳定 Idempotency-Key（最多 200 字符）：同 key + 同规范化输入在 backlog/rate/classifier 之前重放原 202 handle；同 key + 不同输入返回 409 idempotency_conflict。user ask + QUEUED 原子受理，pg-boss 使用稳定 job id；send 状态无法确认时返回 503 copilot_enqueue_ambiguous，须用同 key 重试，不能生成新 turn。durable 原子受理前检测到断开则返回 499 且事务回滚。需 x-internal-token"
+        "notes": "triggered_by 枚举：chat|chip。可选 correction_target_turn_id 必须是 conversation_history 中一个 AI reply 的 event id；它是更正已有回复的唯一显式目标，未提供时服务端不会把“上一轮”自动绑定到任何历史回复。未提供 durable 的普通 chat 先由 bounded classifier 分流：inline 返回 200 text/event-stream（event: delta 逐块，event: reply 终止）；多步/多 artifact 工作返回 202 JSON { run_id, session_id, checkpoint_event_id } 并带 Location，进度经通用 job-events SSE replay。durable:false 强制 inline，durable:true 强制 durable；chip 与 skill_context 保持 inline。Zod 失败时返回普通 JSON 错误。客户端应为每个逻辑 turn 发送稳定 Idempotency-Key（最多 200 字符）：同 key + 同规范化输入在 backlog/rate/classifier 之前重放原 202 handle；同 key + 不同输入返回 409 idempotency_conflict。user ask + QUEUED 原子受理，pg-boss 使用稳定 job id；send 状态无法确认时返回 503 copilot_enqueue_ambiguous，须用同 key 重试，不能生成新 turn。durable 原子受理前检测到断开则返回 499 且事务回滚。需 x-internal-token"
       }
     ]
   },

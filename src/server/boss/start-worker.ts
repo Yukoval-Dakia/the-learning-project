@@ -12,6 +12,7 @@ import { createBoss, isQueueCreateRace, markBossStarted } from '@/server/boss/cl
 import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
+import { sendVerifyDispatchStartupRecovery } from '@/server/boss/verify-dispatch-outbox';
 import { mountSubscriptionDispatch } from '@/server/event-subscriptions/dispatch-mount';
 import { registerOrchestrator } from '@/server/orchestration/register';
 import { hydrateSubjectRegistryFromDb, startSubjectRefresh } from '@/server/subjects/hydrate';
@@ -89,6 +90,14 @@ export async function startBossWorker(db: Db): Promise<PgBoss> {
   // work + cron schedule）。顺序约定：簿先、注册器后——簿里的链式目标
   // （note_verify）先 ready，注册器再挂链式源。
   await registerCapabilityJobs(boss, db, capabilities);
+  // YUK-891 — verify-dispatch startup recovery fires ONLY after
+  // registerCapabilityJobs created the practice-owned quiz_verify/source_verify
+  // queues (YUK-868). registerHandlers mounts the verify_dispatch_recover worker
+  // first, so a trigger fired there would race the registrar: with durable
+  // verify intents present, the first recovery execution sends into
+  // not-yet-created verifier queues, throws on pg-boss's missing-queue check,
+  // and the drain is delayed to the nightly cron.
+  await sendVerifyDispatchStartupRecovery(boss);
   // YUK-751 (review TcWGF)：给持久订阅总线通电——注册器之后挂一个周期 pg-boss job 驱动
   // runSubscriptionDispatchCycle（registry 在此一次性加载）。checkpoint lease 跨 worker 串行化，
   // 故 in-process 与独立 worker 同时挂载无冲突；无任何 capability 声明订阅时挂载器直接 no-op。

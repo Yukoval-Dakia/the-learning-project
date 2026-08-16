@@ -15,10 +15,14 @@
 //
 // Mirror tool-use events still flow via mcp-bridge (caller actor is agent).
 
+import {
+  reviewCopilotLearningContent,
+  validateCopilotLearningContent,
+} from '@/capabilities/copilot/server/content-validation';
 import { writeEvent } from '@/kernel/events';
+import type { ValidateLearningContentFn } from '@/kernel/tools/types';
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
-import { type CopilotDispatchDecision, CopilotDispatchDecisionSchema } from '../contracts';
 
 // YUK-575 (A1) — shared free-form run-input assembler (single execution point for
 // inline + durable copilot runs).
@@ -26,6 +30,7 @@ import {
   type CopilotRunInput,
   assembleCopilotRunInput,
 } from '@/capabilities/copilot/server/copilot-run-input';
+import { resolveCorrectionReply } from '@/capabilities/copilot/server/correction-contract';
 import { reviewCopilotEvidenceReply } from '@/capabilities/copilot/server/evidence-review';
 // YUK-574 — session-anchored learner-state header (assemble-once + invalidation).
 // The Facet A (YUK-174) per-turn `proposal_feedback` digest is MIGRATED into this
@@ -87,7 +92,6 @@ import {
 } from '@/server/ai/mcp/tavily';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import {
-  type RunTaskResult,
   type StreamCollectResult,
   type TaskEventMessage,
   runAgentTask,
@@ -116,6 +120,8 @@ import { Conversation } from '@/server/session';
 // (teaching/solve/quiz) service-call paths do NOT.
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
 import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { type CopilotDispatchDecision, CopilotDispatchDecisionSchema } from '../contracts';
+
 import {
   CopilotChatRequest,
   type CopilotChatRequestT,
@@ -506,34 +512,11 @@ export async function writeCopilotReply(
   return primaryView ? { replyEventId, cleanedReply, primaryView } : { replyEventId, cleanedReply };
 }
 
-type CopilotRunnerResult = Pick<RunTaskResult, 'task_run_id' | 'text' | 'structured_output'>;
 type RunAgentTaskFn = (
   kind: string,
   input: unknown,
-  ctx: {
-    db: Db;
-    signal?: AbortSignal;
-    lifecycleAbortController?: AbortController;
-    // YUK-198 — widened to allow remote McpHttpServerConfig (Tavily) alongside
-    // the in-process SdkMcpServer (loom). Mirrors runner ctx.mcpServers, which
-    // is the SDK's Options['mcpServers'].
-    mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
-    allowedTools?: string[];
-    /** Caller-owned id shared with the in-process MCP tool log. */
-    taskRunId?: string;
-    providerSessionDeadlineAt?: number;
-    // YUK-284 (C2) — Agent Skill whitelist forwarded to the runner (ctx.skills,
-    // runner.ts:120). Present on the free-form CopilotTask path so the dialogue
-    // methodology SKILL.md loads. The underlying RunTaskCtx already declares
-    // skills?: string[]; this alias just exposes it so passing skills here does
-    // NOT trip the TS excess-property check.
-    skills?: string[];
-    agents?: Parameters<typeof runAgentTask>[2]['agents'];
-    hooks?: Parameters<typeof runAgentTask>[2]['hooks'];
-    canUseTool?: Parameters<typeof runAgentTask>[2]['canUseTool'];
-    outputFormat?: Parameters<typeof runAgentTask>[2]['outputFormat'];
-  },
-) => Promise<CopilotRunnerResult>;
+  ctx: Parameters<typeof runAgentTask>[2],
+) => Promise<{ task_run_id: string; text: string; structured_output?: unknown }>;
 // YUK-266 (C1) — swappable streaming agent runner. Streams text deltas to
 // `onDelta` then resolves the full StreamCollectResult (text + task_run_id + the
 // optional partial/error degrade flags). Defaults to streamTaskCollecting; unit
@@ -862,6 +845,9 @@ async function runCopilotChatImpl(
         triggeredBy: req.triggered_by,
         ...(req.chip_kind ? { chipKind: req.chip_kind } : {}),
         ...(req.ambient_context ? { ambient: req.ambient_context } : {}),
+        ...(req.correction_target_turn_id
+          ? { correctionTargetTurnId: req.correction_target_turn_id }
+          : {}),
         now,
       },
       {
@@ -1123,6 +1109,39 @@ async function runCopilotChatImpl(
   // YUK-457 — one actor for the bridge ctx, the persisted mirrors, AND the
   // live tool_use gate below: all three must resolve the same mirror policy.
   const callerActor = { kind: 'agent' as const, ref: actorRef };
+  const validationTaskContext = (
+    callCtx: Parameters<Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']>[2],
+  ) => ({
+    ...callCtx,
+    db,
+    signal: lifecycleAbortController.signal,
+    lifecycleAbortController,
+    parentTaskRunId: taskRunId,
+    ...(deps.providerSessionDeadlineAt !== undefined
+      ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+      : {}),
+  });
+  const runValidationTask: Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn'] =
+    async (kind, input, callCtx) => {
+      const ctx = validationTaskContext(callCtx);
+      switch (kind) {
+        case 'QuizVerifyTask':
+          return run('QuizVerifyTask', input, ctx);
+        case 'SolutionGenerateTask':
+          return run('SolutionGenerateTask', input, ctx);
+        case 'SemanticJudgeTask':
+          return run('SemanticJudgeTask', input, ctx);
+        case 'TeachingQualityTask':
+          return run('TeachingQualityTask', input, ctx);
+        default:
+          throw new Error(`unsupported learning-content validation task: ${kind}`);
+      }
+    };
+  const validateLearningContent: ValidateLearningContentFn = (content) =>
+    validateCopilotLearningContent(content, {
+      db,
+      runTaskFn: runValidationTask,
+    });
 
   const mcpServer = buildMcpServer({
     ctx: {
@@ -1135,6 +1154,7 @@ async function runCopilotChatImpl(
         : {}),
       callerActor,
       causedByEventId,
+      validateLearningContent,
     },
     serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
     toolNames: resolveDomainToolNames(surface),
@@ -1207,6 +1227,14 @@ async function runCopilotChatImpl(
     ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
     proposal_feedback: [],
     conversation_history: [],
+    correction_contract: {
+      ...(req.correction_target_turn_id
+        ? { target_prior_turn_id: req.correction_target_turn_id }
+        : {}),
+      available_prior_turn_ids: [],
+      prior_turn_summaries: {},
+      required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+    },
     ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
   };
 
@@ -1311,33 +1339,65 @@ async function runCopilotChatImpl(
   // persisted domain event, terminal envelope and delayed public DELTA must all
   // see exactly these bytes; a dangling marker may truncate only here, never
   // after a raw suffix was certified.
-  const preparedCandidate = extractPrimaryView(replyText, { taskRunId: replyRunId });
-  const evidenceReview = await reviewEvidenceReply({
-    db,
-    requestContext: {
-      user_message: req.user_message,
-      surface,
-      triggered_by: req.triggered_by,
-      ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
-      ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
-    },
-    candidateReply: preparedCandidate.text,
-    candidateTaskRunId: replyRunId,
-    candidateComplete,
-    toolTrace,
-    ...(streaming?.signal ? { signal: streaming.signal } : {}),
-    ...(deps.providerSessionDeadlineAt !== undefined
-      ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
-      : {}),
+  const correctionResolution = resolveCorrectionReply(replyText, runInput.correction_contract);
+  const preparedCandidate = extractPrimaryView(correctionResolution.reply, {
+    taskRunId: replyRunId,
   });
+  const learningReview = await reviewCopilotLearningContent(
+    preparedCandidate.text,
+    [req.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join('\n'),
+    replyRunId,
+    {
+      db,
+      runTaskFn: runValidationTask,
+    },
+  );
+  const evidenceReview =
+    correctionResolution.kind === 'clarify'
+      ? { status: 'skipped' as const, replyText: learningReview.replyText }
+      : await reviewEvidenceReply({
+          db,
+          requestContext: {
+            user_message: req.user_message,
+            surface,
+            triggered_by: req.triggered_by,
+            ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
+            ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
+          },
+          candidateReply: learningReview.replyText,
+          candidateTaskRunId: replyRunId,
+          candidateComplete,
+          toolTrace,
+          ...(streaming?.signal ? { signal: streaming.signal } : {}),
+          ...(deps.providerSessionDeadlineAt !== undefined
+            ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+            : {}),
+        });
   streaming?.signal?.throwIfAborted();
-  replyText = evidenceReview.replyText;
+  const correctionReviewedReply =
+    evidenceReview.status === 'repair'
+      ? resolveCorrectionReply(evidenceReview.replyText, runInput.correction_contract).reply
+      : evidenceReview.replyText;
+  // Evidence repair is a new candidate. Re-run the learning-content gate so
+  // repaired prose cannot introduce an unverified question or solution.
+  const repairedLearningReview =
+    evidenceReview.status === 'repair'
+      ? await reviewCopilotLearningContent(
+          correctionReviewedReply,
+          [req.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join('\n'),
+          replyRunId,
+          { db, runTaskFn: runValidationTask },
+        )
+      : undefined;
+  replyText = repairedLearningReview?.replyText ?? correctionReviewedReply;
   // primary_view is a second user-visible channel (ephemeral_html can contain
   // substantive prose). The sealed comparator reviews reply text only, so a
   // read-bearing turn must drop this unreviewed metadata even when text passes.
   // No-read/skipped turns retain the established presentation behavior.
   const selectedPrimaryView =
-    evidenceReview.status === 'skipped' ? preparedCandidate.primaryView : undefined;
+    evidenceReview.status === 'skipped' && learningReview.passed
+      ? preparedCandidate.primaryView
+      : undefined;
 
   // YUK-307 — single convergence point for BOTH the JSON and streaming paths:
   // parse + strip the primary_view marker ONCE from the collected reply, then

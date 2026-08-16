@@ -147,6 +147,9 @@ async function dispatchAcceptedRun(
             triggered_by: parsed.triggered_by,
             ...(parsed.chip_kind ? { chip_kind: parsed.chip_kind } : {}),
             ...(parsed.ambient_context ? { ambient: parsed.ambient_context } : {}),
+            ...(parsed.correction_target_turn_id
+              ? { correction_target_turn_id: parsed.correction_target_turn_id }
+              : {}),
           },
           { id: acceptance.bossJobId },
         );

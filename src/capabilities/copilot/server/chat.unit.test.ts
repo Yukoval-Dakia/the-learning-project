@@ -13,9 +13,153 @@ import {
   runCopilotChat,
   runCopilotChatStreaming,
 } from './chat';
+import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from './content-validation';
 import { COPILOT_SUBAGENT_NAME } from './subagents';
 
 describe('runCopilotChat (two-surface routing)', () => {
+  it('replaces a question-bearing direct reply when the validation marker is missing', async () => {
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '给我一道题', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: vi.fn(async () => ({
+          task_run_id: 'task_missing_marker',
+          text: '题目\n1. 求 1+1？',
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        })),
+        writeEventFn: vi.fn(async (_db, input) => input.id),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_missing_marker', created: true }),
+      },
+    );
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(result.reply).not.toContain('1+1');
+  });
+
+  it('uses a bounded generic fallback when a validation provider rejects', async () => {
+    const runner = vi.fn(async (kind: string) => {
+      if (kind === 'CopilotTask') {
+        return {
+          task_run_id: 'task_provider_reject',
+          text: '题目\n1. 求 1+1？\n<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 1+1？","reference_md":"2","choices_md":null,"rubric_json":{}}]}-->',
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        };
+      }
+      throw new Error('provider secret diagnostic');
+    });
+
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '给我一道题', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: runner,
+        writeEventFn: vi.fn(async (_db, input) => input.id),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_provider_reject',
+          created: true,
+        }),
+      },
+    );
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(result.reply).not.toContain('provider secret diagnostic');
+    expect(runner.mock.calls.length).toBeLessThanOrEqual(4);
+  });
+
+  it('settles to the same bounded fallback when validation is aborted by a timeout', async () => {
+    const runner = vi.fn(async (kind: string) => {
+      if (kind === 'CopilotTask') {
+        return {
+          task_run_id: 'task_validation_timeout',
+          text: '题目\n1. 求 2+2？\n<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 2+2？","reference_md":"4","choices_md":null,"rubric_json":{}}]}-->',
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        };
+      }
+      throw new DOMException('validation deadline exceeded', 'AbortError');
+    });
+
+    const result = await Promise.race([
+      runCopilotChat(
+        {} as never,
+        { user_message: '给我一道题', triggered_by: 'chat' },
+        {
+          buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+          runAgentTaskFn: runner,
+          writeEventFn: vi.fn(async (_db, input) => input.id),
+          resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+          findOrCreateConversationFn: async () => ({
+            sessionId: 'ls_validation_timeout',
+            created: true,
+          }),
+        },
+      ),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('validation fallback did not settle')), 500),
+      ),
+    ]);
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(result.reply).not.toContain('validation deadline exceeded');
+    expect(runner.mock.calls.length).toBeLessThanOrEqual(4);
+  });
+
+  it('rejects a marker whose manifest question differs from the visible reply', async () => {
+    const runner = vi.fn(async () => ({
+      task_run_id: 'task_mismatched_manifest',
+      text: '题目\n1. 求 1+1？\n<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 2+2？","reference_md":"4","choices_md":null,"rubric_json":{}}]}-->',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '给我一道题', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: runner,
+        writeEventFn: vi.fn(async (_db, input) => input.id),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_mismatched_manifest',
+          created: true,
+        }),
+      },
+    );
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(runner).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires a marker for a worked solution to the user question', async () => {
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '请计算 1+1。', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: vi.fn(async () => ({
+          task_run_id: 'task_solution_without_marker',
+          text: '解：1+1=3。',
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        })),
+        writeEventFn: vi.fn(async (_db, input) => input.id),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_solution_without_marker',
+          created: true,
+        }),
+      },
+    );
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+  });
+
   it('chat path uses copilot allowlist and writes experimental:copilot_user_ask', async () => {
     const db = {} as never;
     const mcpServer = { name: 'fake-loom' } as never;
@@ -414,6 +558,101 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(taskInput.proposal_feedback).toEqual([]);
   });
 
+  it('clarifies instead of accepting a correction envelope that silently binds “上一轮” to a different prior reply', async () => {
+    const db = {} as never;
+    const batteryReplyId = 'copilot_reply_battery_d04';
+    const waterTankReplyId = 'copilot_reply_water_tank_d02';
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_copilot_d05',
+      text: '已把上一轮改正。\n\n<!-- copilot-correction {"prior_turn_id":"copilot_reply_battery_d04","changed":["h*=4/9"],"retained":["同一个 k"],"uncertain":[]} -->',
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+
+    const result = await runCopilotChat(
+      db,
+      { user_message: '上一轮的水箱题请改正 h*=4/9，k 不变', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+        runAgentTaskFn,
+        writeEventFn,
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_d04_d05', created: false }),
+        loadHistoryFn: async () => [
+          {
+            role: 'ai',
+            text: '水箱 D02：h*=4/9，使用同一个 k。',
+            at: '2026-08-01T10:00:00.000Z',
+            event_id: waterTankReplyId,
+          },
+          {
+            role: 'ai',
+            text: '电池 D04：先按当前电量估算。',
+            at: '2026-08-01T10:01:00.000Z',
+            event_id: batteryReplyId,
+          },
+        ],
+        now: () => new Date('2026-08-01T10:02:00.000Z'),
+      },
+    );
+
+    const taskInput = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      conversation_history: Array<{ event_id?: string }>;
+      correction_contract?: { target_prior_turn_id?: string };
+    };
+    expect(taskInput.conversation_history.map((turn) => turn.event_id)).toEqual([
+      waterTankReplyId,
+      batteryReplyId,
+    ]);
+    expect(taskInput.correction_contract?.target_prior_turn_id).toBeUndefined();
+    expect(result.reply).toContain('prior_turn_id');
+    expect(result.reply).toContain(waterTankReplyId);
+    expect(result.reply).not.toContain('已把上一轮改正');
+  });
+
+  it('fails closed when a targeted correction omits its envelope', async () => {
+    const db = {} as never;
+    const batteryReplyId = 'copilot_reply_battery_d04';
+    const waterTankReplyId = 'copilot_reply_water_tank_d02';
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_copilot_target_without_envelope',
+      text: '已把水箱题改正为 h*=4/9，k 不变。',
+    }));
+
+    const result = await runCopilotChat(
+      db,
+      {
+        user_message: '请改正水箱题',
+        triggered_by: 'chat',
+        correction_target_turn_id: waterTankReplyId,
+      },
+      {
+        buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+        runAgentTaskFn,
+        writeEventFn: async (_db, input) => input.id,
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_targeted', created: false }),
+        loadHistoryFn: async () => [
+          {
+            role: 'ai',
+            text: '水箱 D02：h*=4/9，使用同一个 k。',
+            at: '2026-08-01T10:00:00.000Z',
+            event_id: waterTankReplyId,
+          },
+          {
+            role: 'ai',
+            text: '电池 D04：先按当前电量估算。',
+            at: '2026-08-01T10:01:00.000Z',
+            event_id: batteryReplyId,
+          },
+        ],
+        now: () => new Date('2026-08-01T10:02:00.000Z'),
+      },
+    );
+
+    expect(result.reply).toContain('prior_turn_id');
+    expect(result.reply).not.toContain('已把水箱题改正');
+  });
+
   // YUK-198 — Tavily remote MCP wiring. Copilot folds in the hosted Tavily MCP
   // server (web grounding) ONLY when TAVILY_API_KEY is configured. When the key
   // is absent the run is byte-for-byte the pre-YUK-198 behaviour: no tavily
@@ -709,6 +948,64 @@ describe('YUK-832 inline final evidence review', () => {
     expect(JSON.stringify(persistedReply)).not.toContain(unsafeCandidate);
     expect(result).not.toHaveProperty('primary_view');
     expect(persistedReply.payload).not.toHaveProperty('primary_view');
+  });
+
+  it('rejects an evidence repair that drops the targeted correction binding', async () => {
+    const targetId = 'copilot_reply_water_tank_repair';
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { name: 'fake-loom-correction-repair' } as never;
+    });
+    const runAgentTaskFn = vi.fn(async () => {
+      await mcpOptions?.onResult?.({
+        name: 'query_events',
+        effect: 'read',
+        input: { subject_id: 'water_tank_d02' },
+        output: { events: [], has_more: false },
+        error_reason: null,
+        executed: true,
+      });
+      return {
+        task_run_id: 'task_copilot_correction_repair',
+        text: `水箱更正后的推导。\n\n<!-- copilot-correction {"prior_turn_id":"${targetId}","changed":["h*=4/9"],"retained":["同一个 k"],"uncertain":[]} -->`,
+      };
+    });
+    const unsafeRepair = '证据修复后的正文，但没有 correction envelope。';
+
+    const result = await runCopilotChat(
+      {} as never,
+      {
+        user_message: '请核验并改正水箱题',
+        triggered_by: 'chat',
+        correction_target_turn_id: targetId,
+      },
+      {
+        ...baseEvidenceDeps(),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_correction_repair',
+          created: false,
+        }),
+        loadHistoryFn: async () => [
+          {
+            role: 'ai',
+            text: '水箱 D02：原推导用了错误高度。',
+            at: '2026-08-01T10:00:00.000Z',
+            event_id: targetId,
+          },
+        ],
+        buildMcpServerFn,
+        runAgentTaskFn,
+        writeEventFn: async (_db, input) => input.id,
+        reviewEvidenceReplyFn: async () => ({
+          status: 'repair',
+          replyText: unsafeRepair,
+        }),
+      },
+    );
+
+    expect(result.reply).toContain('prior_turn_id');
+    expect(result.reply).not.toContain(unsafeRepair);
   });
 
   it('reviews, persists, and publishes exact bytes while dropping an unreviewed primary-view side channel', async () => {
@@ -2191,11 +2488,16 @@ describe('runCopilotChat — conversation memory + ambient (C2)', () => {
     const input = captureRunInput(runAgentTaskFn);
     expect(input.conversation_history.length).toBeLessThanOrEqual(8);
     for (const entry of input.conversation_history) {
-      // {role, text} ONLY — no leaked turn-row keys.
-      expect(Object.keys(entry).sort()).toEqual(['role', 'text']);
+      expect(Object.keys(entry).sort()).toEqual(
+        entry.role === 'ai' ? ['event_id', 'role', 'text'] : ['role', 'text'],
+      );
     }
     // Newest kept (tail-slice): the last entry is the newest turn.
-    expect(input.conversation_history.at(-1)).toEqual({ role: 'ai', text: 'turn 11' });
+    expect(input.conversation_history.at(-1)).toEqual({
+      role: 'ai',
+      text: 'turn 11',
+      event_id: 'e_turn',
+    });
   });
 
   it('防循环 ⑤: a polluted source row contributes {role,text} ONLY — no assembly artifact leaks', async () => {
@@ -2230,7 +2532,9 @@ describe('runCopilotChat — conversation memory + ambient (C2)', () => {
     );
 
     const input = captureRunInput(runAgentTaskFn);
-    expect(input.conversation_history).toEqual([{ role: 'ai', text: 'a reply body' }]);
+    expect(input.conversation_history).toEqual([
+      { role: 'ai', text: 'a reply body', event_id: 'e_a re' },
+    ]);
     const serialized = JSON.stringify(input.conversation_history);
     expect(serialized).not.toContain('NESTED');
     expect(serialized).not.toContain('proposal_feedback');
@@ -3074,7 +3378,9 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
       conversation_history: Array<Record<string, unknown>>;
     };
     // {role, text} ONLY — the structural strip keeps primary_view out of the prompt.
-    expect(input.conversation_history).toEqual([{ role: 'ai', text: 'a prior reply body' }]);
+    expect(input.conversation_history).toEqual([
+      { role: 'ai', text: 'a prior reply body', event_id: 'e_pv' },
+    ]);
     const serialized = JSON.stringify(input.conversation_history);
     expect(serialized).not.toContain('SENTINEL_PV_q');
     expect(serialized).not.toContain('primary_view');

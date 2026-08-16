@@ -10,6 +10,7 @@
 //            MF1/MF2 transient·exhausted 分诊 + 幂等守卫 / S6 static 约束。
 
 import { writeCopilotReply } from '@/capabilities/copilot/server/chat';
+import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from '@/capabilities/copilot/server/content-validation';
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
@@ -69,6 +70,7 @@ async function copilotReplyEvents(sessionId: string) {
 type AgentCtx = {
   db: unknown;
   taskRunId?: string;
+  parentTaskRunId?: string;
   signal?: AbortSignal;
   lifecycleAbortController?: AbortController;
   mcpServers?: Record<string, unknown>;
@@ -114,15 +116,43 @@ function streamMock(
 // 共享装配器 stub — 不打真 DB 的 learner-state / history 机器，返回最小 run input。
 // handler 只把它透传给 stream；装配器自身的 exclude-cursor / byte-parity 由
 // copilot-run-input.db.test.ts 覆盖。ambient 测用 vi.fn spy 断言参数。
-const stubRunInput: RunCopilotRunParams['resolveCopilotRunInputFn'] = async (_db, params) => ({
+const stubRunInput: NonNullable<RunCopilotRunParams['resolveCopilotRunInputFn']> = async (
+  _db,
+  params,
+) => ({
   surface: params.triggeredBy === 'chip' ? 'copilot_user_suggested_mistake_action' : 'copilot',
   triggered_by: params.triggeredBy,
   user_message: params.userMessage,
   ...(params.chipKind ? { chip_kind: params.chipKind } : {}),
   proposal_feedback: [],
   conversation_history: [],
+  correction_contract: {
+    available_prior_turn_ids: [],
+    prior_turn_summaries: {},
+    required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+  },
   ...(params.ambient ? { ambient_context: params.ambient } : {}),
 });
+
+function targetedRunInput(
+  targetId: string,
+): NonNullable<RunCopilotRunParams['resolveCopilotRunInputFn']> {
+  return async (_db, params) => ({
+    surface: params.triggeredBy === 'chip' ? 'copilot_user_suggested_mistake_action' : 'copilot',
+    triggered_by: params.triggeredBy,
+    user_message: params.userMessage,
+    proposal_feedback: [],
+    conversation_history: [
+      { role: 'ai', text: '水箱 D02：原推导用了错误高度。', event_id: targetId },
+    ],
+    correction_contract: {
+      target_prior_turn_id: targetId,
+      available_prior_turn_ids: [targetId],
+      prior_turn_summaries: { [targetId]: '水箱 D02：原推导用了错误高度。' },
+      required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+    },
+  });
+}
 
 // 假 MCP server seam（生产进程在 handler 注册前已完成 manifest tool 装配；测试隔离用
 // 一个无害占位，handler 只把它装进 mcpServers map 不解引用）。
@@ -194,6 +224,127 @@ describe('runCopilotRun', () => {
     expect(replies[0]?.payload).toMatchObject({ reply_md: '这是回答', task_run_id: 'tr_x' });
   });
 
+  it('fails closed when a durable solution reply omits the learning-content marker', async () => {
+    const runId = 'copilot_user_ask_durable_unverified_solution';
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: 'sess_durable_unverified_solution',
+        user_message: '请计算 1+1。',
+      },
+      streamTaskCollectingFn: streamMock('解：1+1=3。') as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    });
+
+    expect(result).toMatchObject({
+      status: 'done',
+      reply: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY,
+    });
+    expect(JSON.stringify(await replay(runId))).not.toContain('1+1=3');
+  });
+
+  it('provides durable artifact tools a parent-bound learning validator', async () => {
+    const runId = 'copilot_user_ask_durable_artifact_parent';
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
+    });
+    const validationRunner = vi.fn(async (kind: string, _input: unknown, ctx: AgentCtx) => {
+      expect(ctx).toMatchObject({
+        parentTaskRunId: `copilot_run_tool_${runId}`,
+      });
+      if (kind === 'QuizVerifyTask') {
+        return {
+          task_run_id: 'durable_verify',
+          text: JSON.stringify({
+            grounding: { verdict: 'pass', reason: 'self-contained' },
+            copy_safety: { verdict: 'original', max_overlap: 0 },
+            knowledge_hit: { verdict: 'pass', reason: 'on-topic' },
+            overall: 'pass',
+            summary_md: 'pass',
+            confidence: 0.99,
+          }),
+        };
+      }
+      if (kind === 'SolutionGenerateTask') {
+        return {
+          task_run_id: 'durable_solve',
+          text: JSON.stringify({
+            reference_solution: {
+              final_answer: '2',
+              expected_signals: ['1+1=2'],
+              answer_equivalents: [],
+            },
+            worked_solution_md: '1+1=2',
+            confidence: 0.99,
+          }),
+        };
+      }
+      if (kind === 'SemanticJudgeTask') {
+        return {
+          task_run_id: 'durable_semantic',
+          text: JSON.stringify({
+            score: 1,
+            coarse_outcome: 'correct',
+            confidence: 0.99,
+            feedback_md: 'equivalent',
+            evidence_json: { matched_points: ['1+1=2'], missing_points: [] },
+          }),
+        };
+      }
+      return {
+        task_run_id: 'durable_teaching',
+        text: JSON.stringify({
+          clarity: { verdict: 'pass', reason: 'clear' },
+          unique_answer: { verdict: 'pass', reason: 'unique' },
+          summary: 'pass',
+        }),
+      };
+    });
+    const run = vi.fn(
+      async (_kind: string, _input: unknown, _ctx: AgentCtx, _onDelta: (t: string) => void) => {
+        if (!mcpOptions?.ctx.validateLearningContent) {
+          throw new Error('durable validator port was not mounted');
+        }
+        const validation = await mcpOptions.ctx.validateLearningContent({
+          subjectId: 'math',
+          questions: [
+            {
+              id: 'q1',
+              kind: 'computation',
+              prompt_md: '求 1+1',
+              reference_md: '2',
+              choices_md: null,
+              rubric_json: {},
+            },
+          ],
+        });
+        expect(validation?.verdict).toBe('pass');
+        return {
+          text: '已创建并验证。',
+          task_run_id: 'tr_durable_artifact_parent',
+          finishReason: 'end_turn',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
+      },
+    );
+
+    await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_durable_artifact_parent' },
+      streamTaskCollectingFn: run as never,
+      runValidationTaskFn: validationRunner as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn,
+    });
+
+    expect(validationRunner).toHaveBeenCalledTimes(4);
+  });
+
   it('preserves the exact pre-ownership job payload shape', async () => {
     const oldPayload = {
       run_id: 'copilot_user_ask_old_payload',
@@ -224,6 +375,27 @@ describe('runCopilotRun', () => {
       now: expect.any(Date),
       historyAnchorEventId: oldPayload.run_id,
     });
+  });
+
+  it('fails closed when a durable targeted correction omits its envelope', async () => {
+    const targetId = 'copilot_reply_water_tank_durable';
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: {
+        ...baseData,
+        run_id: 'copilot_user_ask_target_without_envelope',
+        session_id: 'sess_target_without_envelope',
+        correction_target_turn_id: targetId,
+      },
+      streamTaskCollectingFn: streamMock('已把水箱题改正为 h*=4/9，k 不变。') as never,
+      resolveCopilotRunInputFn: targetedRunInput(targetId),
+      buildMcpServerFn: mcpMock() as never,
+    });
+
+    expect(result.status).toBe('done');
+    if (result.status !== 'done') throw new TypeError('expected completed correction run');
+    expect(result.reply).toContain('prior_turn_id');
+    expect(result.reply).not.toContain('已把水箱题改正');
   });
 
   it('YUK-832 — raw evidence candidate stays private; repaired reply alone reaches delta, domain history, and terminal', async () => {
@@ -373,6 +545,56 @@ describe('runCopilotRun', () => {
     });
     expect(JSON.stringify(replies[0])).not.toContain(unsafeCandidate);
     expect(replies[0]?.payload).not.toHaveProperty('primary_view');
+  });
+
+  it('rejects a durable evidence repair that drops the targeted correction binding', async () => {
+    const runId = 'copilot_user_ask_correction_repair';
+    const sessionId = 'sess_correction_repair';
+    const targetId = 'copilot_reply_water_tank_durable_repair';
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
+    });
+    const run = vi.fn(
+      async (_kind: string, _input: unknown, _ctx: AgentCtx, _onDelta: (text: string) => void) => {
+        await mcpOptions?.onResult?.({
+          name: 'query_events',
+          effect: 'read',
+          input: { subject_id: 'water_tank_d02' },
+          output: { events: [], has_more: false },
+          error_reason: null,
+          executed: true,
+        });
+        return {
+          text: `水箱更正后的推导。\n\n<!-- copilot-correction {"prior_turn_id":"${targetId}","changed":["h*=4/9"],"retained":["同一个 k"],"uncertain":[]} -->`,
+          task_run_id: 'tr_correction_repair',
+          finishReason: 'end_turn',
+          usage: { inputTokens: 1_000, outputTokens: 200 },
+        };
+      },
+    );
+    const unsafeRepair = '证据修复后的正文，但没有 correction envelope。';
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: sessionId,
+        correction_target_turn_id: targetId,
+      },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: targetedRunInput(targetId),
+      buildMcpServerFn,
+      buildTavilyMcpServerFn: () => null,
+      reviewEvidenceReplyFn: async () => ({ status: 'repair', replyText: unsafeRepair }),
+    });
+
+    expect(result.status).toBe('done');
+    if (result.status !== 'done') throw new TypeError('expected completed correction repair');
+    expect(result.reply).toContain('prior_turn_id');
+    expect(result.reply).not.toContain(unsafeRepair);
   });
 
   it('YUK-832 — read-bearing partial keeps the real primary run id on its reviewed failure marker', async () => {
@@ -2233,6 +2455,11 @@ describe('runCopilotRun', () => {
       triggered_by: 'chat' as const,
       user_message: baseData.user_message,
       proposal_feedback: [],
+      correction_contract: {
+        available_prior_turn_ids: [],
+        prior_turn_summaries: {},
+        required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'] as const,
+      },
       conversation_history: Array.from({ length: 48 }, (_, index) => ({
         role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
         text: `historical answer evidence ${index + 1}`,
@@ -2274,6 +2501,54 @@ describe('runCopilotRun', () => {
         durable_failure: { reason: 'cancelled' },
       },
     });
+  });
+
+  it('Stop — validates a targeted correction before persisting its cancellation partial', async () => {
+    const runId = 'copilot_user_ask_stop_targeted_without_envelope';
+    const sessionId = 'sess_stop_targeted_without_envelope';
+    const targetId = 'copilot_reply_water_tank_cancelled';
+    const unsafeReply = '已把水箱题改正为 h*=4/9，但没有 correction envelope。';
+    const run = vi.fn(async () => {
+      await writeJobEvent(testDb(), {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+        payload: { requested_by: 'user', stage: 'after_model_reply' },
+      });
+      return {
+        text: unsafeReply,
+        task_run_id: 'tr_stop_targeted_without_envelope',
+        finishReason: 'error',
+        usage: { inputTokens: 1_200, outputTokens: 90 },
+        partial: true,
+        error: 'cancelled after model reply',
+      };
+    });
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: sessionId,
+        correction_target_turn_id: targetId,
+      },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: targetedRunInput(targetId),
+      buildMcpServerFn: mcpMock() as never,
+    });
+
+    expect(result).toEqual({ status: 'cancelled' });
+    const events = await replay(runId);
+    const failed = events.find((event) => event.event_type === COPILOT_RUN_EVENTS.FAILED);
+    expect(failed?.payload).toMatchObject({
+      reason: 'cancelled',
+      reply_md: expect.stringContaining('上一轮是「水箱 D02：原推导用了错误高度。」'),
+    });
+    expect(failed?.payload).not.toMatchObject({ reply_md: unsafeReply });
+    const replies = await copilotReplyEvents(sessionId);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.payload.reply_md).not.toBe(unsafeReply);
   });
 
   it('Stop — read-bearing cancellation after certification persists neither candidate nor selected repair', async () => {
