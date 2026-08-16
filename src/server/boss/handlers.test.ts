@@ -319,6 +319,27 @@ describe('registerHandlers + registerCapabilityJobs', () => {
     }
   });
 
+  // YUK-891 — deletion proof: registerHandlers alone must NOT fire the
+  // verify-dispatch startup trigger. Its verify_dispatch_recover worker starts
+  // polling the moment boss.work returns, while quiz_verify/source_verify only
+  // exist after registerCapabilityJobs (YUK-868 manifest ownership); a trigger
+  // fired here races the registrar and the first recovery execution sends into
+  // a missing queue. start-worker fires sendVerifyDispatchStartupRecovery()
+  // after capability registration instead.
+  it('does not send the verify-dispatch startup trigger (YUK-891)', async () => {
+    const boss = {
+      createQueue: vi.fn(async () => undefined),
+      updateQueue: vi.fn(async () => undefined),
+      work: vi.fn(async () => undefined),
+      schedule: vi.fn(async () => undefined),
+      send: vi.fn(async () => 'job-id'),
+    } as unknown as PgBoss;
+
+    await registerHandlers(boss, {} as Db);
+
+    expect(boss.send).not.toHaveBeenCalled();
+  });
+
   // YUK-237: every LLM/agent producer queue gets a non-default active expiry
   // (the pg-boss default is 900s, which truncated long tool-calling jobs) and a
   // 7-day retention floor. FAST housekeeping queues get expiry+retention but no

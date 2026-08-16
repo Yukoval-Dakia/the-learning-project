@@ -9511,6 +9511,7 @@ export interface operations {
             route: string;
           };
           chip_kind?: string;
+          correction_target_turn_id?: string;
           durable?: boolean;
           skill_context?: {
             ref: {

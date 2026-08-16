@@ -265,7 +265,7 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
     await writeReply('未来轮回答不得泄漏', sessionId, futureAsk, sameMillisecond);
     // The reply is written after the anchor, but is causally rooted at the old
     // ask and therefore belongs to the anchor's conversation history.
-    await writeReply(
+    const priorReplyId = await writeReply(
       '迟到的先验回答：四个边界值均确认 x≠2，退化分支单独处理',
       sessionId,
       priorAsk,
@@ -286,7 +286,11 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
 
     expect(runInput.conversation_history).toEqual([
       { role: 'user', text: '先验轮：用四个极端参数检查定义域' },
-      { role: 'ai', text: '迟到的先验回答：四个边界值均确认 x≠2，退化分支单独处理' },
+      {
+        role: 'ai',
+        text: '迟到的先验回答：四个边界值均确认 x≠2，退化分支单独处理',
+        event_id: priorReplyId,
+      },
     ]);
   });
 
@@ -316,13 +320,16 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
 
     // The worker completes earlier runs only after the current anchor already
     // exists. Their own dispatch_seq must not separate replies from roots.
+    const queuedReplyIds: string[] = [];
     for (const [index, queuedRoot] of queuedRoots.entries()) {
       const i = index + 1;
-      await writeReply(
-        `排队回复 ${i}：已交叉核对 ${i * 9} 次作答，并保留两个反例分支`,
-        sessionId,
-        queuedRoot,
-        new Date(t0.getTime() + i * 60_000),
+      queuedReplyIds.push(
+        await writeReply(
+          `排队回复 ${i}：已交叉核对 ${i * 9} 次作答，并保留两个反例分支`,
+          sessionId,
+          queuedRoot,
+          new Date(t0.getTime() + i * 60_000),
+        ),
       );
     }
 
@@ -340,13 +347,29 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
 
     expect(runInput.conversation_history).toEqual([
       { role: 'user', text: '排队根 2：分析第 18 次作答的定义域、退化项与迁移失败' },
-      { role: 'ai', text: '排队回复 2：已交叉核对 18 次作答，并保留两个反例分支' },
+      {
+        role: 'ai',
+        text: '排队回复 2：已交叉核对 18 次作答，并保留两个反例分支',
+        event_id: queuedReplyIds[1],
+      },
       { role: 'user', text: '排队根 3：分析第 27 次作答的定义域、退化项与迁移失败' },
-      { role: 'ai', text: '排队回复 3：已交叉核对 27 次作答，并保留两个反例分支' },
+      {
+        role: 'ai',
+        text: '排队回复 3：已交叉核对 27 次作答，并保留两个反例分支',
+        event_id: queuedReplyIds[2],
+      },
       { role: 'user', text: '排队根 4：分析第 36 次作答的定义域、退化项与迁移失败' },
-      { role: 'ai', text: '排队回复 4：已交叉核对 36 次作答，并保留两个反例分支' },
+      {
+        role: 'ai',
+        text: '排队回复 4：已交叉核对 36 次作答，并保留两个反例分支',
+        event_id: queuedReplyIds[3],
+      },
       { role: 'user', text: '排队根 5：分析第 45 次作答的定义域、退化项与迁移失败' },
-      { role: 'ai', text: '排队回复 5：已交叉核对 45 次作答，并保留两个反例分支' },
+      {
+        role: 'ai',
+        text: '排队回复 5：已交叉核对 45 次作答，并保留两个反例分支',
+        event_id: queuedReplyIds[4],
+      },
     ]);
   });
 
@@ -354,13 +377,13 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
     const t0 = new Date('2026-08-01T11:30:00.000Z');
     const sessionId = await createLiveCopilotSession(t0);
     const chipId = await writeChip('比较 a=0、a=2 与 a→∞ 三个边界，先不要生成新题', sessionId, t0);
-    await writeReply(
+    const chipReplyId = await writeReply(
       '边界比较：a=0 退化为常量式，a=2 触发定义域空洞，a→∞ 保留主导项。',
       sessionId,
       chipId,
       new Date(t0.getTime() + 1_000),
     );
-    await writeLegacyParentlessReply(
+    const legacyReplyId = await writeLegacyParentlessReply(
       '旧版无父链摘要：前 18 次作答中，定义域遗漏出现 7 次。',
       sessionId,
       new Date(t0.getTime() + 2_000),
@@ -424,8 +447,13 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
       {
         role: 'ai',
         text: '边界比较：a=0 退化为常量式，a=2 触发定义域空洞，a→∞ 保留主导项。',
+        event_id: chipReplyId,
       },
-      { role: 'ai', text: '旧版无父链摘要：前 18 次作答中，定义域遗漏出现 7 次。' },
+      {
+        role: 'ai',
+        text: '旧版无父链摘要：前 18 次作答中，定义域遗漏出现 7 次。',
+        event_id: legacyReplyId,
+      },
     ]);
   });
 
@@ -437,7 +465,7 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
       oldSessionId,
       new Date('2026-08-01T12:01:00Z'),
     );
-    await writeReply(
+    const oldReplyId = await writeReply(
       '旧 session 结论：定义域遗漏在三次延迟复习中均复现',
       oldSessionId,
       priorAsk,
@@ -480,7 +508,11 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
 
     expect(runInput.conversation_history).toEqual([
       { role: 'user', text: '旧 session 先验：核对 27 次作答与三次延迟复习' },
-      { role: 'ai', text: '旧 session 结论：定义域遗漏在三次延迟复习中均复现' },
+      {
+        role: 'ai',
+        text: '旧 session 结论：定义域遗漏在三次延迟复习中均复现',
+        event_id: oldReplyId,
+      },
     ]);
   });
 
@@ -531,7 +563,7 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
       sessionId,
       new Date(t0.getTime() + 1_000),
     );
-    await writeReply(
+    const compatibilityReplyId = await writeReply(
       '兼容历史结论：7 次遗漏集中在参数为零和分母退化两类。',
       sessionId,
       priorAsk,
@@ -554,7 +586,11 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
         );
         expect(runInput.conversation_history).toEqual([
           { role: 'user', text: '兼容历史：复核 21 次作答中的定义域遗漏与退化项' },
-          { role: 'ai', text: '兼容历史结论：7 次遗漏集中在参数为零和分母退化两类。' },
+          {
+            role: 'ai',
+            text: '兼容历史结论：7 次遗漏集中在参数为零和分母退化两类。',
+            event_id: compatibilityReplyId,
+          },
         ]);
       }
       expect(log).toHaveBeenCalledTimes(2);
