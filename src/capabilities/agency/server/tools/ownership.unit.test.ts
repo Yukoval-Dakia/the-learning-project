@@ -28,7 +28,7 @@ const AGENCY_TOOL_CONTRACT_HASHES = {
   propose_learning_item_relearn: '810d7684325138b1309c7952db3c8cf9a29f59bb882e02cfd12d5fdcb38eaadd',
   propose_learning_item_defer: 'd2264b4eb707e7501beb6846766e1de2e8ac7489d4536c3ed14f7817efc2b616',
   propose_learning_item_archive: '82242132dbd7bbf38c06a97203837bb6e06f024e4f8ff097bf0543c3777861f3',
-  read_agent_notes: '6cb58fe1afff2463b339f315a1ad917332e3ed48900e1be5f27a4202462bfd84',
+  read_agent_notes: 'a9bf8abb6ee481df3f64600bfdd80c314367d6f3f5e9521463f4cce975b09d21',
   write_agent_note: '42f8e63a8f140b28a4dd67b46d7ef1c455f9cdca88ed9d39d166c2a30fca19ea',
 } as const;
 
