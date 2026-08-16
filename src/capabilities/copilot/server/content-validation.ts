@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Db } from '@/db/client';
+import { htmlContainsAssessment } from '@/kernel/learning-content';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   runQuestionContentValidation,
@@ -339,7 +340,8 @@ export async function reviewCopilotLearningContent(
     : extracted.text;
   const requiresManifest =
     extracted.status !== 'absent' ||
-    deps.additionalVisibleText !== undefined ||
+    (deps.additionalVisibleText !== undefined &&
+      htmlContainsAssessment(deps.additionalVisibleText)) ||
     containsLearningQuestion(validationSurface) ||
     containsLearningSolution(validationSurface);
   if (extracted.status === 'malformed' || (extracted.status === 'absent' && requiresManifest)) {

@@ -40,8 +40,7 @@ describe('runCopilotChat (two-surface routing)', () => {
   });
 
   it('blocks assessed ephemeral HTML when the learning-content marker is missing', async () => {
-    const html =
-      '<section><h2>测验</h2><p data-copilot-question-id="q1">1. 17×19？</p><p data-copilot-answer="323">答案：323</p></section>';
+    const html = '<section><p>1. 求 17×19？</p><p>17×20-17=323</p></section>';
     const marker = `<!--primary_view:${JSON.stringify({ source: 'ephemeral_html', ref: html })}-->`;
 
     const result = await runCopilotChat(
