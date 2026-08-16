@@ -558,7 +558,7 @@ type WriteEventFn = (db: Db | Tx, input: WriteEventInput) => Promise<string>;
 // Conversation.findOrCreateCopilotConversation.
 type FindOrCreateConversationFn = (
   db: Db,
-  opts: { now?: Date },
+  opts: { now?: Date; sessionId?: string },
 ) => Promise<{ sessionId: string; created: boolean }>;
 // YUK-574 — swappable session-anchored learner-state resolver. Defaults to
 // resolveLearnerStateHeader (cache read + cheap invalidation, assemble-once). Unit
@@ -807,7 +807,10 @@ async function runCopilotChatImpl(
   // (promote_conversation_idle, which joins event.session_id = ls.id AND
   // actor_kind='user') see Copilot user activity instead of idling on started_at.
   // Both chat + chip turns belong to the same Copilot conversation.
-  const { sessionId } = await findOrCreateConversation(db, { now });
+  const { sessionId } = await findOrCreateConversation(db, {
+    now,
+    sessionId: req.session_id,
+  });
 
   // YUK-267 (C2) — read conversation_history BEFORE writing the current ask event
   // so the just-asked message is STRUCTURALLY excluded from its own history (no
