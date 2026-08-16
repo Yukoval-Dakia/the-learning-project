@@ -1,7 +1,11 @@
 import { type TaskKind, tasks } from '@/ai/registry';
 import type { Db } from '@/db/client';
 import { createId } from '@paralleldrive/cuid2';
-import { RETRY_ELAPSED_CAP_MS, isTransientAgentFailure } from './agent-run-error';
+import {
+  ProviderSessionWallClockBudgetError,
+  RETRY_ELAPSED_CAP_MS,
+  isTransientAgentFailure,
+} from './agent-run-error';
 import {
   type AttemptCostTruth,
   resolveAttemptCostTruth,
@@ -302,7 +306,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         Date.now() >= this.config.providerSessionDeadlineAt
       ) {
         this.abortController.abort();
-        throw new Error(`provider session wall-clock budget elapsed ${phase}`);
+        throw new ProviderSessionWallClockBudgetError(phase);
       }
     };
 
@@ -322,11 +326,9 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         // This can be the ordinary model budget or caller cancellation, not an
         // admission/control-plane failure. Keep it as a plain error so the
         // runner's existing `aborted` binding preserves budget_timeout truth.
-        throw new Error(
-          sessionDeadlineElapsed
-            ? 'provider session wall-clock budget elapsed during query'
-            : 'provider attempt aborted during query',
-        );
+        throw sessionDeadlineElapsed
+          ? new ProviderSessionWallClockBudgetError('during query')
+          : new Error('provider attempt aborted during query');
       }
     };
 
