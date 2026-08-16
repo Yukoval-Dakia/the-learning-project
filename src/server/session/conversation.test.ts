@@ -8,9 +8,11 @@ import {
   abandonConversation,
   assertAcceptingTurns,
   assertActive,
+  createCopilotConversation,
   endConversation,
   findOrCreateCopilotConversation,
   idleConversation,
+  listCopilotConversations,
   startConversation,
 } from './conversation';
 
@@ -299,6 +301,44 @@ describe('Conversation.findOrCreateCopilotConversation', () => {
     expect(second.created).toBe(false);
     expect(second.sessionId).toBe(first.sessionId);
     await cleanup(first.sessionId);
+  });
+
+  it('creates and lists distinct Copilot conversations without replacing prior sessions', async () => {
+    await clearLiveConversations();
+    const first = await createCopilotConversation(db, {
+      now: new Date('2026-06-04T10:00:00.000Z'),
+    });
+    const second = await createCopilotConversation(db, {
+      now: new Date('2026-06-04T11:00:00.000Z'),
+    });
+
+    expect(second.sessionId).not.toBe(first.sessionId);
+    expect(await listCopilotConversations(db)).toMatchObject([
+      { id: second.sessionId, status: 'active' },
+      { id: first.sessionId, status: 'active' },
+    ]);
+
+    await cleanup(first.sessionId);
+    await cleanup(second.sessionId);
+  });
+
+  it('uses an explicitly selected Copilot session instead of the latest reusable session', async () => {
+    await clearLiveConversations();
+    const first = await createCopilotConversation(db, {
+      now: new Date('2026-06-04T10:00:00.000Z'),
+    });
+    const second = await createCopilotConversation(db, {
+      now: new Date('2026-06-04T11:00:00.000Z'),
+    });
+
+    const selected = await findOrCreateCopilotConversation(db, {
+      sessionId: first.sessionId,
+      now: new Date('2026-06-04T12:00:00.000Z'),
+    });
+    expect(selected).toEqual({ sessionId: first.sessionId, created: false });
+
+    await cleanup(first.sessionId);
+    await cleanup(second.sessionId);
   });
 
   // codex #3356884503 — reusing an already-`active` session must refresh
