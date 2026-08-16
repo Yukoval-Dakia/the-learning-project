@@ -9,6 +9,8 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { Suspense, lazy, useMemo, useState } from 'react';
+import { SubjectFilterTabs } from '@/ui/components/SubjectFilterTabs';
+import { useSubjects } from '@/ui/hooks/useSubjects';
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -24,7 +26,7 @@ import {
   getEdges,
   getFrontier,
   getReviewDueSummary,
-  getTree,
+  getTreeForSubject,
 } from './knowledge-api';
 import { NodeDrawer, decayCue } from './NodeDrawer';
 
@@ -64,9 +66,18 @@ function dfsOrder(nodes: KnowledgeTreeNode[]): Array<KnowledgeTreeNode & { depth
 export default function KnowledgePage({ navigate }: KnowledgePageProps) {
   const [view, setView] = useState<'tree' | 'graph'>('tree');
   const [picked, setPicked] = useState<KnowledgeTreeNode | null>(null);
+  const [subject, setSubject] = useState('all');
+  const { subjects } = useSubjects();
+  const subjectQuery = subject === 'all' ? undefined : subject;
 
-  const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree });
-  const edgesQ = useQuery({ queryKey: ['knowledge-edges'], queryFn: getEdges });
+  const treeQ = useQuery({
+    queryKey: ['knowledge-tree', subjectQuery],
+    queryFn: () => getTreeForSubject(subjectQuery),
+  });
+  const edgesQ = useQuery({
+    queryKey: ['knowledge-edges', subjectQuery],
+    queryFn: () => getEdges(subjectQuery),
+  });
   const edgePropsQ = useQuery({
     queryKey: ['knowledge-edge-proposals'],
     queryFn: getEdgeProposals,
@@ -120,6 +131,7 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
         <p className="page-lead">
           按层级或关系图浏览知识点；选择节点可以查看掌握状态、证据和关联内容。
         </p>
+        <SubjectFilterTabs value={subject} rows={subjects} onChange={setSubject} />
       </div>
 
       {/* A5 S2 (YUK-354)：「下一步学什么」learnable_frontier 横幅（建议非必经路）。

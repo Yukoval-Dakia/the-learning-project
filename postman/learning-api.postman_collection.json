@@ -1241,10 +1241,16 @@
                   "value": "qid_abc123",
                   "disabled": true,
                   "description": "optional"
+                },
+                {
+                  "key": "subject",
+                  "value": "math",
+                  "disabled": true,
+                  "description": "optional"
                 }
               ]
             },
-            "description": "查询错题列表（event-stream 投影），支持时间过滤和 question 过滤\n\n**Query:**\n- `limit` (optional) e.g. `50`\n- `since` (optional) e.g. `2026-01-01T00:00:00Z`\n- `question_id` (optional) e.g. `qid_abc123`\n\n**Notes:** limit 默认 50 上限 200；since 为 ISO-8601；投影 shape：id/question_id/prompt_md/wrong_answer_md/knowledge_ids/cause/created_at"
+            "description": "查询错题列表（event-stream 投影），支持时间过滤和 question 过滤\n\n**Query:**\n- `limit` (optional) e.g. `50`\n- `since` (optional) e.g. `2026-01-01T00:00:00Z`\n- `question_id` (optional) e.g. `qid_abc123`\n- `subject` (optional) e.g. `math`\n\n**Notes:** limit 默认 50 上限 200；since 为 ISO-8601；subject 按 question → knowledge → effective_domain 派生；投影 shape：id/question_id/prompt_md/wrong_answer_md/knowledge_ids/cause/created_at"
           },
           "response": []
         },
@@ -1273,6 +1279,33 @@
                 }
               }
             }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "notes",
+      "item": [
+        {
+          "name": "GET /api/notes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/notes",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "notes"],
+              "query": [
+                {
+                  "key": "subject",
+                  "value": "math",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "列出已关联知识点的笔记，支持 subject 派生轴过滤\n\n**Query:**\n- `subject` (optional) e.g. `math`\n\n**Notes:** subject 经 note knowledge_ids → knowledge effective_domain 派生；仅返回未归档 note_atomic/note_hub/note_long"
           },
           "response": []
         }

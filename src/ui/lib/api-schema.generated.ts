@@ -1406,6 +1406,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/notes': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['listNotes'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/notes/{id}': {
     parameters: {
       query?: never;
@@ -15084,6 +15100,7 @@ export interface operations {
         include_archived?: string;
         limit?: number;
         relation_type?: string;
+        subject?: string;
         to?: string;
       };
       header?: never;
@@ -16449,6 +16466,7 @@ export interface operations {
         limit?: string;
         question_id?: string;
         since?: string;
+        subject?: string;
       };
       header?: never;
       path?: never;
@@ -16689,6 +16707,138 @@ export interface operations {
             mistake_id: string;
             question_id: string;
             record_id: string;
+          };
+        };
+      };
+      /** @description Malformed request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Resource not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description State or version conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Semantic validation failed */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Rate limited */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Internal error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+    };
+  };
+  listNotes: {
+    parameters: {
+      query?: {
+        subject?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            rows: {
+              generation_status: string;
+              id: string;
+              knowledge_ids: string[];
+              title: string;
+              type: string;
+              /** Format: date-time */
+              updated_at: string;
+              verification_status: string;
+              version: number;
+            }[];
           };
         };
       };
