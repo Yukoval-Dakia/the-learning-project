@@ -6,6 +6,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { getServerEnv, requireApiInternalToken } from '@/server/env';
+
 function parseLine(line: string): [string, string] | null {
   const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
   if (!m) return null;
@@ -23,7 +25,7 @@ function parseLine(line: string): [string, string] | null {
   return [m[1], value];
 }
 
-export function loadEnv(rootDir: string = process.cwd()): void {
+export function loadEnv(rootDir: string = process.cwd()): ReturnType<typeof getServerEnv> {
   // .env 先、.env.local 后——但都「只填空位」，所以 .env.local 想赢必须在
   // process.env 里还没有该 key 时先到。这里按覆盖优先级倒序读：local 先填。
   for (const file of ['.env.local', '.env']) {
@@ -35,4 +37,11 @@ export function loadEnv(rootDir: string = process.cwd()): void {
       if (kv && process.env[kv[0]] === undefined) process.env[kv[0]] = kv[1];
     }
   }
+  return getServerEnv();
+}
+
+export function loadApiEnv(rootDir: string = process.cwd()): ReturnType<typeof getServerEnv> {
+  const env = loadEnv(rootDir);
+  requireApiInternalToken(env);
+  return env;
 }

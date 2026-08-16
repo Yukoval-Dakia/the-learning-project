@@ -1,3 +1,4 @@
+import { getServerEnv } from '@/server/env';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema';
@@ -5,12 +6,8 @@ import * as schema from './schema';
 // Fail fast on missing DATABASE_URL. Empty-string fallback (`?? ''`) would let the
 // module load and defer the failure until the first query hits postgres-js, which
 // surfaces a confusing "tcp connect to ''" error far from the root cause.
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
-  throw new Error(
-    'DATABASE_URL is not set. Configure it in .env.local locally, or in the docker-compose .env file for NAS/self-hosted runtime.',
-  );
-}
+const env = getServerEnv();
+const databaseUrl = env.DATABASE_URL;
 
 // Singleton client. In the standalone app container and the worker process,
 // this module is cached per Node process; postgres-js handles pooling.
@@ -37,7 +34,7 @@ const queryClient =
     ssl: isLocalConnection || hasSslDisable ? false : 'require',
     max: 10, // pool size per app/worker process
   });
-if (process.env.NODE_ENV !== 'production') {
+if (env.NODE_ENV !== 'production') {
   globalForDb.__loomQueryClient = queryClient;
 }
 

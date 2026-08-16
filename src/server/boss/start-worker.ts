@@ -13,11 +13,13 @@ import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
 import { sendVerifyDispatchStartupRecovery } from '@/server/boss/verify-dispatch-outbox';
+import { getServerEnv } from '@/server/env';
 import { mountSubscriptionDispatch } from '@/server/event-subscriptions/dispatch-mount';
 import { registerOrchestrator } from '@/server/orchestration/register';
 import { hydrateSubjectRegistryFromDb, startSubjectRefresh } from '@/server/subjects/hydrate';
 
 export async function startBossWorker(db: Db): Promise<PgBoss> {
+  const env = getServerEnv();
   // YUK-599（v2 §4）— worker 首个 job 落地前水合 SubjectRegistry（never-throws：
   // hydrate 内部 WARN + 代码种子地板，绝不挡 worker boot）。
   await hydrateSubjectRegistryFromDb(db);
@@ -27,7 +29,7 @@ export async function startBossWorker(db: Db): Promise<PgBoss> {
   // at 3 AM and not inside registerMemoryHandlers (which tests also call).
   // One-shot WARN; not fatal: ingest/outbox handlers still run and brief regen
   // degrades to a logged-skip per scope (F-1/D8).
-  if (!process.env.XIAOMI_API_KEY) {
+  if (!env.XIAOMI_API_KEY) {
     console.warn(
       '[worker] XIAOMI_API_KEY unset — memory brief regen will fail (logged-skip per scope, F-1/D8)',
     );
