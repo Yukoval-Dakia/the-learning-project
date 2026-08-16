@@ -1,39 +1,40 @@
 {
   "files": {
-    "ignore": [
-      "dist",
-      "node_modules",
-      "coverage",
-      "drizzle",
-      "docs/design/loom-design",
-      "docs/design/loom-design-v2",
-      "docs/design/loom-design-v2.1",
-      "docs/design/loom-prototype",
-      "docs/design/loom-refresh",
-      "docs/design/2026-06-07-copilot-tool-use-cards",
-      "docs/design/2026-06-08-question-bank-ui",
-      "getting-started-with-browserbase",
-      "docling-docx-parse-output",
-      ".factory",
-      ".cache",
-      ".pnpm-store",
-      ".ykv",
-      ".claude",
-      ".omc",
-      ".omx",
-      ".omo",
-      ".ocx",
-      ".opencode",
-      ".devin",
-      ".mcp.json",
-      ".next",
-      ".remember",
-      ".playwright-mcp",
-      "test-results",
-      "playwright-report",
-      "next-env.d.ts",
-      "crates/calibration-native/target/**",
-      "crates/calibration-native/index.d.ts"
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/coverage",
+      "!**/drizzle",
+      "!**/docs/design/loom-design",
+      "!**/docs/design/loom-design-v2",
+      "!**/docs/design/loom-design-v2.1",
+      "!**/docs/design/loom-prototype",
+      "!**/docs/design/loom-refresh",
+      "!**/docs/design/2026-06-07-copilot-tool-use-cards",
+      "!**/docs/design/2026-06-08-question-bank-ui",
+      "!**/getting-started-with-browserbase",
+      "!**/docling-docx-parse-output",
+      "!**/.factory",
+      "!**/.cache",
+      "!**/.pnpm-store",
+      "!**/.ykv",
+      "!**/.claude",
+      "!**/.omc",
+      "!**/.omx",
+      "!**/.omo",
+      "!**/.ocx",
+      "!**/.opencode",
+      "!**/.devin",
+      "!**/.mcp.json",
+      "!**/.next",
+      "!**/.remember",
+      "!**/.playwright-mcp",
+      "!**/test-results",
+      "!**/playwright-report",
+      "!**/next-env.d.ts",
+      "!**/crates/calibration-native/target",
+      "!**/crates/calibration-native/index.d.ts"
     ]
   },
   "formatter": {
@@ -45,14 +46,17 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
+      "a11y": {
+        "noStaticElementInteractions": "warn",
+        "useAriaPropsSupportedByRole": "warn",
+        "useSemanticElements": "warn"
+      },
+      "correctness": {
+        "noUnsafeOptionalChaining": "warn"
+      },
       "style": {
-        "useImportType": "warn"
-      },
-      "suspicious": {
-        "noExplicitAny": "warn"
-      },
-      "nursery": {
+        "useImportType": "warn",
         "noRestrictedImports": {
           "level": "error",
           "options": {
@@ -63,25 +67,35 @@
             }
           }
         }
-      }
+      },
+      "suspicious": {
+        "noArrayIndexKey": "warn",
+        "noDuplicateProperties": "warn",
+        "noExplicitAny": "warn",
+        "noUnknownAtRules": "warn",
+        "useIterableCallbackReturn": "warn"
+      },
+      "nursery": {}
     }
   },
   "overrides": [
     {
-      "include": ["src/kernel/**", "src/server/http/errors.ts"],
+      "includes": ["**/src/kernel/**", "**/src/server/http/errors.ts"],
       "linter": {
         "rules": {
-          "nursery": {
+          "nursery": {},
+          "style": {
             "noRestrictedImports": "off"
           }
         }
       }
     },
     {
-      "include": ["src/capabilities/**/ui/**"],
+      "includes": ["**/src/capabilities/**/ui/**"],
       "linter": {
         "rules": {
-          "nursery": {
+          "nursery": {},
+          "style": {
             "noRestrictedImports": {
               "level": "error",
               "options": {
@@ -105,7 +119,21 @@
       "trailingCommas": "all"
     }
   },
-  "organizeImports": {
-    "enabled": true
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": {
+          "level": "on",
+          "options": {
+            "identifierOrder": "lexicographic"
+          }
+        }
+      }
+    }
   }
 }
