@@ -125,6 +125,7 @@ import { writeJobEvent } from '@/server/events/writer';
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
 import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { createCopilotProposalFlowGate } from '../server/proposal-flow-gate';
 
 // dispatch 入口投递的 job 体。run_id = checkpoint_id = user_ask event id（route
 // 在 enqueue 前已写 user_ask domain event，本 handler 以它做 causedByEventId 让
@@ -1000,6 +1001,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   // causedByEventId = run_id（= user_ask event id）：tool-use mirror 串到同一
   // 因果链（quiz_gen triggerEventId 同款）。
   const toolNames = resolveDomainToolNames(surface);
+  const proposalFlowGate = createCopilotProposalFlowGate();
   const mcpServer = buildMcpServer({
     ctx: {
       db,
@@ -1017,7 +1019,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     // C4 — tool-call hard ceiling（anti-runaway）。interceptInput 仅回传
     // warning 状态，不执行 capInput，故仍无 per-message row cap。
     beforeExecute: async (tool) =>
-      (await cancellationControl.beforeTool()) ?? budgetTracker.beforeExecute(tool),
+      (await cancellationControl.beforeTool()) ??
+      proposalFlowGate.beforeExecute(tool) ??
+      budgetTracker.beforeExecute(tool),
     onExecuteStart: (tool) => cancellationControl.onToolExecutionStarted(tool),
     onExecuteSettled: () => cancellationControl.onToolExecutionSettled(),
     interceptInput: (_tool, args) => ({
@@ -1026,6 +1030,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       softStop: null,
     }),
     onResult: (result) => {
+      proposalFlowGate.observe(result);
       // Reserve the sealed-review contract ceiling: rejected 61st callbacks must
       // not append after the 60-call budget and trip fail-closed on length alone.
       if (toolTrace.length >= COPILOT_EVIDENCE_MAX_TRACE_CALLS) return;

@@ -129,6 +129,7 @@ import {
   type CopilotSkillContextT,
 } from './chat-contracts';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
+import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import {
   type CopilotSubtaskEvent,
   buildCopilotSubagents,
@@ -1099,6 +1100,7 @@ async function runCopilotChatImpl(
   // accumulator Dreaming/Coach hold. Both chat + chip surfaces run the same
   // user-facing CopilotTask, so both get the Copilot budget.
   const budgetTracker = new ContextBudgetTracker(resolveContextBudget(surface));
+  const proposalFlowGate = createCopilotProposalFlowGate();
   const toolTrace: ToolExecutionResultObservation[] = [];
   // The MCP server is constructed before the central runner creates its
   // lifecycle. Share this controller with both sides so timeout, lease fencing,
@@ -1161,7 +1163,8 @@ async function runCopilotChatImpl(
     taskKind: 'CopilotTask',
     // Tool-call ceiling: soft-stop only at the YUK-290 hard watermark (same
     // mechanism as Dreaming/Coach's proposal cap; the model reads + stops).
-    beforeExecute: (tool) => budgetTracker.beforeExecute(tool),
+    beforeExecute: (tool) =>
+      proposalFlowGate.beforeExecute(tool) ?? budgetTracker.beforeExecute(tool),
     // Two-tier accounting: warning leaves args intact and informs the model;
     // only the materially higher hard ceiling caps or soft-stops.
     interceptInput: (tool, args) => {
@@ -1172,6 +1175,7 @@ async function runCopilotChatImpl(
       return { args: capped, truncationNote: contextBudget, softStop };
     },
     onResult: (result) => {
+      proposalFlowGate.observe(result);
       // Reserve the sealed-review contract ceiling: rejected 61st callbacks must
       // not append after the 60-call budget and trip fail-closed on length alone.
       if (toolTrace.length >= COPILOT_EVIDENCE_MAX_TRACE_CALLS) return;

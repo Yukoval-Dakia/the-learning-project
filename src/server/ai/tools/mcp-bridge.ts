@@ -23,9 +23,12 @@
 
 import { writeEvent } from '@/kernel/events';
 import type {
+  ProposalEffectContract,
   ToolCallerActor,
   ToolContext,
   ToolEffect,
+  ToolExecutionGateInput,
+  ToolExecutionResultObservation,
   ToolMirrorPolicy,
 } from '@/kernel/tools/types';
 import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
@@ -99,23 +102,58 @@ export function shouldEmitToolUseForCaller(
 
 export type SdkMcpServer = ReturnType<typeof createSdkMcpServer>;
 
-export interface ToolExecutionGateInput {
-  name: string;
-  effect: ToolEffect;
-}
+export type { ToolExecutionGateInput, ToolExecutionResultObservation } from '@/kernel/tools/types';
 
-/**
- * Exact DomainTool result observed by the caller that mounted this in-process
- * MCP server. This is an in-memory product seam, not a second execution or a
- * replacement for tool_call_log: Copilot uses it to review the candidate reply
- * against the same typed projections the model actually received before that
- * reply becomes user-visible.
- */
-export interface ToolExecutionResultObservation extends ToolExecutionGateInput {
-  input: unknown;
-  output: unknown;
-  error_reason: string | null;
-  executed: boolean;
+function proposalEffectContract(
+  name: string,
+  effect: ToolEffect,
+  output?: unknown,
+): ProposalEffectContract | undefined {
+  if (effect !== 'propose') return undefined;
+  const base = {
+    owner_gate: 'FULL',
+    direct_write: false,
+    rollback: 'dismiss_before_accept',
+  } as const;
+  if (output === null || typeof output !== 'object') return base;
+  if (
+    name === 'author_question' &&
+    'status' in output &&
+    output.status === 'proposed' &&
+    'question_ids' in output &&
+    Array.isArray(output.question_ids) &&
+    output.question_ids.length > 0
+  ) {
+    return {
+      ...base,
+      retained_draft: {
+        kind: 'question',
+        written_before_accept: true,
+        reversible: false,
+        retained_after_dismiss: true,
+      },
+    };
+  }
+  const variantSucceeded =
+    (name === 'propose_variant' && 'status' in output && output.status === 'generated') ||
+    (name === 'author_question' && 'status' in output && output.status === 'proposed');
+  if (
+    variantSucceeded &&
+    'mistake_variant_ids' in output &&
+    Array.isArray(output.mistake_variant_ids) &&
+    output.mistake_variant_ids.length > 0
+  ) {
+    return {
+      ...base,
+      retained_draft: {
+        kind: 'mistake_variant',
+        written_before_accept: true,
+        reversible: false,
+        retained_after_dismiss: true,
+      },
+    };
+  }
+  return base;
 }
 
 /**
@@ -226,6 +264,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       let truncationNote: object | null = null;
       let executionStarted = false;
       const gateInput = { name: dt.name, effect: dt.effect };
+      let effectContract = proposalEffectContract(dt.name, dt.effect);
 
       try {
         parsedInput = dt.inputSchema.parse(rawArgs);
@@ -275,6 +314,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
           const parseResult = dt.outputSchema.safeParse(rawOutput);
           if (parseResult.success) {
             output = parseResult.data;
+            effectContract = proposalEffectContract(dt.name, dt.effect, output);
           } else {
             // Redact actual values; only emit field paths for machine readability.
             const paths = parseResult.error.issues
@@ -309,6 +349,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
           output: errorReason ? { error: errorReason } : output,
           error_reason: errorReason ?? null,
           executed: executionStarted,
+          ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
         });
       } catch (observationErr) {
         // A reply-review observer is bookkeeping only. It must never turn an
@@ -449,7 +490,17 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
           {
             type: 'text' as const,
             text: JSON.stringify(
-              errorReason ? { error: errorReason, summary } : { summary, output },
+              errorReason
+                ? {
+                    error: errorReason,
+                    summary,
+                    ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
+                  }
+                : {
+                    summary,
+                    output,
+                    ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
+                  },
             ),
           },
         ],

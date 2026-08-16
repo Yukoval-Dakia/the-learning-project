@@ -929,27 +929,71 @@ describe('Copilot FULL evidence review', () => {
     }
   });
 
-  it('skips paid validation when no DomainTool read was attempted', async () => {
+  it('repairs proposal-only replies from the server-owned effect contract without a paid call', async () => {
     const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>();
     const result = await reviewCopilotEvidenceReply(
       reviewParams({
-        candidateReply: '我可以帮你把问题收窄。',
+        candidateReply: '已按 LIGHT 门槛直接归档；可以通过 relearn 自动回滚。',
         toolTrace: [
           {
-            name: 'propose_knowledge_edge',
+            name: 'propose_learning_item_archive',
             effect: 'propose',
-            input: { from_id: 'kc_a', to_id: 'kc_b' },
-            output: { proposal_id: 'proposal_01' },
+            input: { learning_item_id: 'item_b' },
+            output: { status: 'proposed', proposal_id: 'proposal_01' },
             error_reason: null,
             executed: true,
+            proposal_effect_contract: {
+              owner_gate: 'FULL',
+              direct_write: false,
+              rollback: 'dismiss_before_accept',
+            },
           },
         ],
         runTaskFn,
       }),
     );
 
-    expect(result).toEqual({ status: 'skipped', replyText: '我可以帮你把问题收窄。' });
+    expect(result).toMatchObject({
+      status: 'repair',
+      replyText: expect.stringContaining('FULL'),
+      violations: ['proposal_only_reply_server_normalized'],
+    });
+    expect(result.replyText).toContain('direct target write: false');
+    expect(result.replyText).toContain('dismiss_before_accept');
+    expect(result.replyText).toContain('proposal_01');
+    expect(result.replyText).not.toContain('LIGHT');
+    expect(result.replyText).not.toContain('relearn');
     expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['failed', 'author_question 失败；我会先重新读取可用输入，再重新规划。'],
+    ['skipped:not_found', 'author_question 未执行：目标不存在；我会先重新读取，再重新规划。'],
+  ])('does not normalize %s proposal output into a pending proposal', async (status, candidate) => {
+    const result = await reviewCopilotEvidenceReply(
+      reviewParams({
+        candidateReply: candidate,
+        toolTrace: [
+          {
+            name: 'author_question',
+            effect: 'propose',
+            input: { seed_mode: 'knowledge', knowledge_ids: ['kc_missing'] },
+            output: { status, proposal_ids: [] },
+            error_reason: null,
+            executed: true,
+            proposal_effect_contract: {
+              owner_gate: 'FULL',
+              direct_write: false,
+              rollback: 'dismiss_before_accept',
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(result).toEqual({ status: 'skipped', replyText: candidate });
+    expect(result.replyText).toContain('重新');
+    expect(result.replyText).not.toContain('只有 owner 接受对应 proposal 后才会应用');
   });
 
   it('does not treat a failed DomainTool read as evidence but still runs the fail-closed validator', async () => {
