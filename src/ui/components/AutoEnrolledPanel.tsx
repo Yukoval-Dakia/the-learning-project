@@ -1,4 +1,4 @@
-// YUK-164 OC-5 — auto_enrolled review surface (5th tab on /record).
+// YUK-164 OC-5 — auto_enrolled review surface (persistent panel on /record).
 //
 // Self-contained panel: owns its own TanStack Query reads (session list + the
 // selected session's blocks + knowledge names), mirroring RecordContextPanel /

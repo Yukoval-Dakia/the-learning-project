@@ -1353,6 +1353,9 @@ async function runCopilotChatImpl(
     {
       db,
       runTaskFn: runValidationTask,
+      ...(preparedCandidate.primaryView?.source === 'ephemeral_html'
+        ? { additionalVisibleText: preparedCandidate.primaryView.ref }
+        : {}),
     },
   );
   const evidenceReview =

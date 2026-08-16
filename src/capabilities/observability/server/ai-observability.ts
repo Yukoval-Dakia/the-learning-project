@@ -1,10 +1,43 @@
-import { and, asc, desc, eq, gte, inArray, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, cost_ledger, tool_call_log } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { readProviderCostAggregates } from './provider-cost-projection';
 
 type DbLike = Db | Tx;
+
+const ADMIN_RUN_SELECTION = {
+  id: ai_task_runs.id,
+  task_kind: ai_task_runs.task_kind,
+  provider: ai_task_runs.provider,
+  model: ai_task_runs.model,
+  input_hash: ai_task_runs.input_hash,
+  status: ai_task_runs.status,
+  finish_reason: ai_task_runs.finish_reason,
+  usage_json: ai_task_runs.usage_json,
+  cost_usd: ai_task_runs.cost_usd,
+  cost_basis: ai_task_runs.cost_basis,
+  cost_ref: ai_task_runs.cost_ref,
+  error_message: ai_task_runs.error_message,
+  started_at: ai_task_runs.started_at,
+  finished_at: ai_task_runs.finished_at,
+} as const;
+
+const ADMIN_TOOL_CALL_SELECTION = {
+  id: tool_call_log.id,
+  tool_name: tool_call_log.tool_name,
+  iteration: tool_call_log.iteration,
+  latency_ms: tool_call_log.latency_ms,
+  cost: tool_call_log.cost,
+  occurred_at: tool_call_log.occurred_at,
+} as const;
+
+type AdminRunProjection = Pick<typeof ai_task_runs.$inferSelect, keyof typeof ADMIN_RUN_SELECTION>;
+
+type AdminToolCallProjection = Pick<
+  typeof tool_call_log.$inferSelect,
+  keyof typeof ADMIN_TOOL_CALL_SELECTION
+>;
 
 export type AdminRunStatus = 'running' | 'success' | 'failure';
 
@@ -65,7 +98,7 @@ export interface AdminRunTimelineEvent {
 export interface AdminRunTimeline {
   run: AdminRunListRow;
   ledger: Array<typeof cost_ledger.$inferSelect>;
-  tool_calls: Array<typeof tool_call_log.$inferSelect>;
+  tool_calls: AdminToolCallProjection[];
   timeline: AdminRunTimelineEvent[];
 }
 
@@ -144,7 +177,7 @@ interface AdminRunCursor {
   id: string;
 }
 
-function encodeAdminRunCursor(row: typeof ai_task_runs.$inferSelect): string {
+function encodeAdminRunCursor(row: Pick<AdminRunProjection, 'id' | 'started_at'>): string {
   return Buffer.from(
     JSON.stringify({ started_at: row.started_at.toISOString(), id: row.id }),
   ).toString('base64url');
@@ -227,7 +260,7 @@ async function toolCountsByRunId(db: DbLike, runIds: string[]): Promise<Map<stri
 }
 
 function projectRun(
-  row: typeof ai_task_runs.$inferSelect,
+  row: AdminRunProjection,
   ledgerRows: Array<typeof cost_ledger.$inferSelect>,
   toolCallCount: number,
 ): AdminRunListRow {
@@ -307,7 +340,7 @@ export async function listAdminRunsPage(
   const limit = normalizeLimit(opts.limit);
 
   const fetchedRows = await db
-    .select()
+    .select(ADMIN_RUN_SELECTION)
     .from(ai_task_runs)
     .where(where)
     .orderBy(desc(ai_task_runs.started_at), desc(ai_task_runs.id))
@@ -345,7 +378,11 @@ export async function getAdminRunTimeline(
   db: DbLike,
   id: string,
 ): Promise<AdminRunTimeline | null> {
-  const rows = await db.select().from(ai_task_runs).where(eq(ai_task_runs.id, id)).limit(1);
+  const rows = await db
+    .select(ADMIN_RUN_SELECTION)
+    .from(ai_task_runs)
+    .where(eq(ai_task_runs.id, id))
+    .limit(1);
   const runRow = rows[0];
   if (!runRow) return null;
 
@@ -355,7 +392,7 @@ export async function getAdminRunTimeline(
     .where(eq(cost_ledger.task_run_id, id))
     .orderBy(asc(cost_ledger.occurred_at), asc(cost_ledger.id));
   const toolCalls = await db
-    .select()
+    .select(ADMIN_TOOL_CALL_SELECTION)
     .from(tool_call_log)
     .where(eq(tool_call_log.task_run_id, id))
     .orderBy(asc(tool_call_log.occurred_at), asc(tool_call_log.iteration), asc(tool_call_log.id));
@@ -517,7 +554,14 @@ export async function getAdminFailureClusters(
   opts: { limit?: number } = {},
 ): Promise<AdminFailureCluster[]> {
   const rows = await db
-    .select()
+    .select({
+      id: ai_task_runs.id,
+      task_kind: ai_task_runs.task_kind,
+      model: ai_task_runs.model,
+      finish_reason: ai_task_runs.finish_reason,
+      error_message: ai_task_runs.error_message,
+      started_at: ai_task_runs.started_at,
+    })
     .from(ai_task_runs)
     .where(eq(ai_task_runs.status, 'failure'))
     .orderBy(desc(ai_task_runs.started_at), desc(ai_task_runs.id))
