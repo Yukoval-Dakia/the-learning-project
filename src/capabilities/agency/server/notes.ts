@@ -24,10 +24,9 @@
 // (src/core/schema/event/experimental.ts) so it parses through the generic
 // ExperimentalEvent escape hatch — no new Zod schema, no new table/column.
 //
-// MCP DomainTool WRAPPER IS DEFERRED (AF §4 conceptual `leave_agent_note`
-// is a *tool* shape, but no tool-loop agent needs it yet). Narrow task handlers
-// (quiz_verify, etc.) call writeAgentNote() DIRECTLY. When a tool-loop agent
-// genuinely needs to emit notes mid-loop, wrap this helper as a DomainTool then.
+// YUK-293 adds a bounded DomainTool pair over this storage seam for Copilot,
+// Dreaming, and Coach. Deterministic writers (quiz_verify, etc.) continue to call
+// writeAgentNote directly.
 
 import { createId } from '@paralleldrive/cuid2';
 
@@ -49,7 +48,7 @@ type DbLike = Db | Tx;
 // deterministic lane reads no agent_notes. Naming the channel (not the writing actor)
 // keeps it stable across future meeting forms; self-bias is handled orthogonally on
 // the writer axis via excludeSourceKinds (see ReadAgentNotesOpts).
-export type AgentNoteTarget = 'dreaming' | 'maintenance' | 'coach' | 'research_meeting';
+export type AgentNoteTarget = 'dreaming' | 'maintenance' | 'coach' | 'research_meeting' | 'copilot';
 
 export interface AgentNoteRef {
   kind: string;
