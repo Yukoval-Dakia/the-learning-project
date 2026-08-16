@@ -81,6 +81,52 @@ describe('resolveCorrectionReply', () => {
     expect(result.reply).toContain('上上轮是「水箱 D02：h*=4/9，使用同一个 k。」');
   });
 
+  it('lists only the classifier candidates when they are a subset of history', () => {
+    const result = resolveImplicitCorrectionContract(
+      {
+        available_prior_turn_ids: [
+          'copilot_reply_water_tank_d02',
+          'copilot_reply_battery_d04',
+          'copilot_reply_circuit_d05',
+          'copilot_reply_optics_d06',
+          'copilot_reply_kinematics_d07',
+        ],
+        prior_turn_summaries: {
+          copilot_reply_water_tank_d02: '水箱 D02：h*=4/9，使用同一个 k。',
+          copilot_reply_battery_d04: '电池 D04：先按当前电量估算。',
+          copilot_reply_circuit_d05: '电路 D05：串联等效电阻。',
+          copilot_reply_optics_d06: '光学 D06：折射率计算。',
+          copilot_reply_kinematics_d07: '运动学 D07：匀加速位移。',
+        },
+        required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+      },
+      {
+        intent: 'correction',
+        candidate_prior_turn_ids: ['copilot_reply_water_tank_d02', 'copilot_reply_battery_d04'],
+      },
+    );
+
+    expect(result.kind).toBe('clarify');
+    if (result.kind !== 'clarify') throw new Error('expected an ambiguous correction to clarify');
+    expect(result.reply).toContain('往前第 4 轮是「电池 D04：先按当前电量估算。」');
+    expect(result.reply).toContain('往前第 5 轮是「水箱 D02：h*=4/9，使用同一个 k。」');
+    expect(result.reply).not.toContain('电路 D05');
+    expect(result.reply).not.toContain('光学 D06');
+    expect(result.reply).not.toContain('运动学 D07');
+  });
+
+  it('gives deterministic copy when no classifier candidate is available', () => {
+    const result = resolveImplicitCorrectionContract(correctionContract, {
+      intent: 'correction',
+      candidate_prior_turn_ids: ['copilot_reply_optics_d06'],
+    });
+
+    expect(result.kind).toBe('clarify');
+    if (result.kind !== 'clarify') throw new Error('expected a clarify resolution');
+    expect(result.reply).not.toContain('copilot_reply_optics_d06');
+    expect(result.reply).not.toContain('可选历史回复');
+  });
+
   it('leaves an ordinary follow-up outside the correction contract', () => {
     const result = resolveImplicitCorrectionContract(correctionContract, {
       intent: 'not_correction',
