@@ -265,7 +265,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Download shared DB selection
         if: needs.changes.outputs.db_changed == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: db-selector-selection
           path: .cache/ci
