@@ -13,7 +13,6 @@ import {
   validateComposition,
 } from '@/kernel/manifest';
 import { generateOpenApiDocument } from '@/kernel/openapi';
-import { requireApiInternalToken } from '@/server/env';
 import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
@@ -75,7 +74,6 @@ export function buildHonoApp(capabilities: CapabilityManifest[]): Hono {
   // Manifest is both the mount inventory and the API contract source. Validate at
   // boot as well as in CI so a bad operationId/path/status declaration fails closed.
   validateComposition(capabilities);
-  const internalToken = requireApiInternalToken();
   const app = new Hono();
 
   // Register first so successful, auth-failed and unknown responses all receive one policy.
@@ -83,7 +81,7 @@ export function buildHonoApp(capabilities: CapabilityManifest[]): Hono {
 
   app.use('/api/*', async (c, next) => {
     if (c.req.path === '/api/health') return next();
-    if (!tokenMatches(c.req.header('x-internal-token'), internalToken)) {
+    if (!tokenMatches(c.req.header('x-internal-token'), process.env.INTERNAL_TOKEN)) {
       return c.json({ error: 'unauthorized' }, 401);
     }
     return next();

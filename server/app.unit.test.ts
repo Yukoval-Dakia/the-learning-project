@@ -196,12 +196,17 @@ describe('buildHonoApp', () => {
     expect(await unknown.json()).toEqual({ error: 'not_found' });
   });
 
-  it('fails API assembly when INTERNAL_TOKEN is unset', () => {
-    // Given
+  it('rejects every /api request when INTERNAL_TOKEN is unset (fail-closed)', async () => {
     vi.stubEnv('INTERNAL_TOKEN', undefined);
-
-    // When / Then
-    expect(() => buildHonoApp([fakeCapability])).toThrow('INTERNAL_TOKEN');
+    const app = buildHonoApp([fakeCapability]);
+    const noHeader = await app.request('/api/fake');
+    expect(noHeader.status).toBe(401);
+    const withHeader = await app.request('/api/fake', {
+      headers: { 'x-internal-token': 'anything' },
+    });
+    expect(withHeader.status).toBe(401);
+    const health = await app.request('/api/health');
+    expect(health.status).toBe(200);
   });
 
   it('rejects an empty-string token header', async () => {
