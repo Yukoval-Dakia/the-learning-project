@@ -7,6 +7,18 @@ const CorrectionEnvelopeSchema = z.object({
   uncertain: z.array(z.string().min(1).max(500)).max(12),
 });
 
+export const CopilotImplicitCorrectionIntentSchema = z.discriminatedUnion('intent', [
+  z.object({ intent: z.literal('not_correction') }).strict(),
+  z
+    .object({
+      intent: z.literal('correction'),
+      candidate_prior_turn_ids: z.array(z.string().min(1)).min(1).max(12),
+    })
+    .strict(),
+]);
+
+export type CopilotImplicitCorrectionIntent = z.infer<typeof CopilotImplicitCorrectionIntentSchema>;
+
 export type CopilotCorrectionContract = {
   readonly target_prior_turn_id?: string;
   readonly available_prior_turn_ids: readonly string[];
@@ -18,6 +30,11 @@ export type CopilotCorrectionResolution =
   | { readonly kind: 'normal'; readonly reply: string }
   | { readonly kind: 'clarify'; readonly reply: string }
   | { readonly kind: 'corrected'; readonly reply: string };
+
+export type CopilotImplicitCorrectionResolution =
+  | { readonly kind: 'normal'; readonly contract: CopilotCorrectionContract }
+  | { readonly kind: 'bound'; readonly contract: CopilotCorrectionContract }
+  | { readonly kind: 'clarify'; readonly reply: string };
 
 const CORRECTION_ENVELOPE = /\s*<!-- copilot-correction (\{[\s\S]*\}) -->\s*$/;
 
@@ -34,6 +51,24 @@ function clarificationReply(contract: CopilotCorrectionContract): string {
     })
     .join('\n');
   return `请先明确要更正的 prior_turn_id；我不会把“上一轮”自动绑定到较早的回复。可选历史回复：\n${turns}`;
+}
+
+export function resolveImplicitCorrectionContract(
+  contract: CopilotCorrectionContract,
+  decision: CopilotImplicitCorrectionIntent,
+): CopilotImplicitCorrectionResolution {
+  if (decision.intent === 'not_correction') return { kind: 'normal', contract };
+
+  const candidates = [...new Set(decision.candidate_prior_turn_ids)];
+  const target = candidates.length === 1 ? candidates[0] : undefined;
+  if (target === undefined || !contract.available_prior_turn_ids.includes(target)) {
+    return { kind: 'clarify', reply: clarificationReply(contract) };
+  }
+
+  return {
+    kind: 'bound',
+    contract: { ...contract, target_prior_turn_id: target },
+  };
 }
 
 export function resolveCorrectionReply(
