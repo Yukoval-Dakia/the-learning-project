@@ -19,7 +19,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:watch": "tsc --noEmit --watch",
     "typecheck:legacy": "tsc6 --noEmit --incremental false --stableTypeOrdering",
-    "lint": "biome check --formatter-enabled=false --assist-enabled=false .",
+    "lint": "biome check .",
     "format": "biome format --write .",
     "test": "pnpm audit:agent-control-plane && pnpm audit:api-contracts && pnpm audit:api-client && pnpm audit:api-client-usage && pnpm audit:capability-boundaries && pnpm audit:architecture-deepening && pnpm audit:provider-lanes && pnpm audit:provider-attempt-truth && pnpm audit:profile && pnpm audit:learner-copy && pnpm audit:no-learning-styles && pnpm audit:structured-judge && pnpm audit:task-census && pnpm audit:draft-status && pnpm audit:draft-status-reads --strict && pnpm audit:hub-sync-writers && pnpm test:unit && pnpm test:db && pnpm test:migration",
     "test:unit": "vitest run --config vitest.unit.config.ts",
