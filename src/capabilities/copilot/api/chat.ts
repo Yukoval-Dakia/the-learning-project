@@ -395,7 +395,9 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       }
 
       // 1) 复用 inline 同一会话信封——durable run 的 user_ask / 回复事件共享 session_id。
-      const conv = await Conversation.findOrCreateCopilotConversation(db, {});
+      const conv = await Conversation.findOrCreateCopilotConversation(db, {
+        sessionId: parsed.session_id,
+      });
       assertRequestActive(req.signal);
       // 2) One transaction reserves the stable handle and commits user_ask +
       // QUEUED together. Same key + same normalized input reuses that handle;
