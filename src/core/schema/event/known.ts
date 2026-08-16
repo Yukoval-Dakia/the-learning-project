@@ -31,7 +31,7 @@ function stableActorRefAllowed(actorKind: unknown, actorRef: unknown): boolean {
 
 const StableUserActorRef = z.custom<'self'>((actorRef) => stableActorRefAllowed('user', actorRef), {
   message: STABLE_USER_ACTOR_REF_MESSAGE,
-  fatal: false,
+  abort: false,
 });
 
 // YUK-772 / D7 — one policy function protects both the KnownEvent union and the
@@ -591,6 +591,18 @@ export type CorrectEventT = z.infer<typeof CorrectEvent>;
 // does NOT see these rows. Artifact-scoped composition lives in a sibling
 // module (src/capabilities/notes/server/artifact-corrections.ts).
 
+export const CorrectArtifactPayload = z
+  .object({
+    correction_kind: CorrectionKind,
+    // block_id min(1): empty string would create a nonsense `''` bucket in
+    // the per-block projection Map (distinguishable from `undefined`
+    // whole-artifact corrections) — reject at the schema boundary.
+    block_id: z.string().min(1).optional(),
+    reason_md: z.string().min(1).max(2000),
+    replacement_artifact_id: z.string().optional(),
+  })
+  .strict();
+
 export const CorrectArtifactEvent = z
   .object({
     actor_kind: z.literal('user'),
@@ -599,17 +611,7 @@ export const CorrectArtifactEvent = z
     subject_kind: z.literal('artifact'),
     subject_id: z.string(),
     outcome: z.literal('success'),
-    payload: z
-      .object({
-        correction_kind: CorrectionKind,
-        // block_id min(1): empty string would create a nonsense `''` bucket in
-        // the per-block projection Map (distinguishable from `undefined`
-        // whole-artifact corrections) — reject at the schema boundary.
-        block_id: z.string().min(1).optional(),
-        reason_md: z.string().min(1).max(2000),
-        replacement_artifact_id: z.string().optional(),
-      })
-      .strict(),
+    payload: CorrectArtifactPayload,
     ...baseOptionalFields,
   })
   .superRefine((data, ctx) => {

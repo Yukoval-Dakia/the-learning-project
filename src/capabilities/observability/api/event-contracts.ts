@@ -67,7 +67,7 @@ const EventEnvelopeSchema = z
     subject_kind: z.string(),
     subject_id: z.string(),
     outcome: z.string().nullable().optional(),
-    payload: z.unknown(),
+    payload: z.unknown().optional(),
     caused_by_event_id: z.string().optional(),
     task_run_id: z.string().optional(),
     cost_micro_usd: z.number().int().optional(),

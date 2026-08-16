@@ -56,7 +56,7 @@ export const SourceAssetSchema = z
     sha256: z.string(),
     width: z.number().int().nullable(),
     height: z.number().int().nullable(),
-    provenance: z.record(z.unknown()),
+    provenance: z.record(z.string(), z.unknown()),
     created_at: z.string().datetime(),
   })
   .passthrough();

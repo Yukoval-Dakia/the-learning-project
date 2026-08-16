@@ -72,7 +72,7 @@ const ContentValidationSchema = z
           prompt_md: z.string().min(1).max(6_000),
           reference_md: z.string().max(12_000).nullable(),
           choices_md: z.array(z.string().min(1).max(2_000)).max(12).nullable(),
-          rubric_json: z.unknown(),
+          rubric_json: z.unknown().optional(),
           knowledge_ids: z.array(z.string().min(1).max(120)).max(50).nullable().optional(),
         }),
       )
@@ -87,8 +87,8 @@ const ContentValidationSchema = z
     if (promptChars > MAX_VALIDATION_PROMPT_CHARS) {
       ctx.addIssue({
         code: z.ZodIssueCode.too_big,
+        origin: 'string',
         maximum: MAX_VALIDATION_PROMPT_CHARS,
-        type: 'string',
         inclusive: true,
         path: ['questions'],
         message: 'total question prompt content exceeds validation limit',

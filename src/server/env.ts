@@ -141,7 +141,7 @@ export function requireApiInternalToken(
   runtimeEnv: Record<string, string | undefined> = process.env,
 ): string {
   return z
-    .string({ required_error: 'INTERNAL_TOKEN is required for the API' })
+    .string({ error: 'INTERNAL_TOKEN is required for the API' })
     .min(1, 'INTERNAL_TOKEN is required for the API')
     .parse(runtimeEnv.INTERNAL_TOKEN);
 }

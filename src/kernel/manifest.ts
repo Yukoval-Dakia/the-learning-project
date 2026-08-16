@@ -266,9 +266,7 @@ function pathParamNames(path: string): string[] {
 }
 
 function schemaObjectKeys(schema: ZodTypeAny): string[] | null {
-  let current = schema;
-  while (current instanceof z.ZodEffects) current = current.innerType();
-  return current instanceof z.ZodObject ? Object.keys(current.shape) : null;
+  return schema instanceof z.ZodObject ? Object.keys(schema.shape) : null;
 }
 
 function validateApiRouteContract(route: ApiRouteDecl): void {

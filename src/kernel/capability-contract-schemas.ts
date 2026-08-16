@@ -17,7 +17,7 @@ export {
   PROBE_RESOLUTIONS,
 } from '@/core/schema/conjecture';
 export { ConjectureProbeResponseJudgement } from '@/core/schema/conjecture-probe-response';
-export { CorrectArtifactEvent } from '@/core/schema/event';
+export { CorrectArtifactEvent, CorrectArtifactPayload } from '@/core/schema/event';
 export { NudgeKind } from '@/core/schema/event/nudge-events';
 export { SuggestionKind } from '@/core/schema/event/known';
 export { PageSpan } from '@/core/schema/index';

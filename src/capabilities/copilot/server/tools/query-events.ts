@@ -32,9 +32,7 @@ const CursorSchema = z.object({
 // the SQL builder treats it as "filter omitted" via a truthiness check.
 const ExactStringSchema = z.string().trim().min(1);
 
-// Keep the public tool input as a ZodObject. The MCP bridge intentionally
-// consumes `.shape`; a top-level refine/superRefine would turn this into a
-// ZodEffects and make query_events impossible to register.
+// Keep the public tool input as a ZodObject because the MCP bridge consumes `.shape`.
 const InputSchema = z.object({
   filter: z
     .object({
@@ -76,7 +74,7 @@ const OutputSchema = z.object({
   // Compatibility: this remains the number of rows in this page, never the
   // number of all matching rows. Use coverage.has_more before claiming full coverage.
   total: z.number().int().nonnegative(),
-  filter_applied: z.record(z.unknown()),
+  filter_applied: z.record(z.string(), z.unknown()),
   subject_scope: z.object({
     subject_id: z.string().nullable(),
     subject_kind: z.string().nullable(),

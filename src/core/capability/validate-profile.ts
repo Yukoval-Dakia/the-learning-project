@@ -16,8 +16,8 @@ function firstIssueMessage(result: { success: false; error: { issues: { message:
   return result.error.issues[0]?.message ?? 'invalid value';
 }
 
-function formatSchemaIssue(issue: { path: (string | number)[]; message: string }): string {
-  const path = issue.path.length > 0 ? issue.path.join('.') : '<root>';
+function formatSchemaIssue(issue: { path: PropertyKey[]; message: string }): string {
+  const path = issue.path.length > 0 ? issue.path.map(String).join('.') : '<root>';
   return `SubjectProfile.${path}: ${issue.message}`;
 }
 

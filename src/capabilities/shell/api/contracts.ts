@@ -128,7 +128,7 @@ export const WorkbenchSummaryResponseSchema = z.object({
   proposals: z.object({
     total: z.number().int().nonnegative(),
     decision_total: z.number().int().nonnegative(),
-    by_kind: z.record(z.number().int().nonnegative()),
+    by_kind: z.record(z.string(), z.number().int().nonnegative()),
     has_more: z.boolean(),
     limit: z.number().int().positive(),
     status: z.string(),
@@ -174,7 +174,7 @@ export const WorkbenchSummaryResponseSchema = z.object({
 const OvernightRunSchema = z.object({
   task_kind: z.string(),
   count: z.number().int().nonnegative(),
-  status_breakdown: z.record(z.number().int().nonnegative()),
+  status_breakdown: z.record(z.string(), z.number().int().nonnegative()),
 });
 
 export const OvernightDigestResponseSchema = z.object({
@@ -396,10 +396,9 @@ export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z
   ])
   // Cross-field invariants (mirror TeachingBriefBasisSectionSchema's refine): on an outcome
   // brief the ack action must target the very result the outcome reports, and a confirmed
-  // outcome's practice action must target the same KC the finding names. A discriminatedUnion
-  // member cannot itself be refined (that yields a ZodEffects, which the union rejects), so the
-  // checks live on the whole union — a future projection regression that lets these drift fails
-  // the wire loudly instead of silently.
+  // outcome's practice action must target the same KC the finding names. The checks live on the
+  // whole union so a future projection regression that lets these drift fails the wire loudly
+  // instead of silently.
   .superRefine((brief, ctx) => {
     if (
       (brief.state === 'outcome_evidence_for' ||
@@ -498,8 +497,7 @@ export const TeachingBriefInteractionBodySchema = z
       .strict(),
   ])
   // The result_event_id join key is meaningful ONLY for scoped_practice — and REQUIRED there. A
-  // discriminatedUnion member cannot itself carry a refine (that yields a ZodEffects the union
-  // rejects — mirrors TeachingBriefSchema's own union-level superRefine), so both directions live here:
+  // both directions live on the union-level refinement:
   //   - scoped_practice WITHOUT it → reject. The report's confirmed→scoped-practice numerator joins on
   //     it, and the deterministic event id means a first row written without it could never be
   //     back-filled (onConflictDoNothing swallows a later retry), so a missing id must fail loudly at

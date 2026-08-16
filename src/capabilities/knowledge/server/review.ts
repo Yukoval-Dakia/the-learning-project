@@ -586,7 +586,7 @@ async function writeProposalAfterGate(
 
 const WriteProposalSchema = {
   mutation: z.string().optional(),
-  payload: z.unknown(),
+  payload: z.unknown().optional(),
   reasoning: z.string(),
   // resolveEvidence currently resolves refs one-by-one; cap agent input so a
   // malformed tool call cannot amplify into an unbounded query sequence.

@@ -105,7 +105,7 @@ export const SourcePolicyTraitSchema = z
       .strict(),
     sourceWhitelist: z.array(z.string().trim().min(1)).default([]),
     sourcingRoutePreference: z
-      .record(
+      .partialRecord(
         SubjectQuestionKindSchema,
         z.array(z.enum(['sourced', 'material', 'closed_book', 'variant'])).min(1),
       )

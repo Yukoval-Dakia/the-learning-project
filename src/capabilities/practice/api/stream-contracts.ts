@@ -87,7 +87,7 @@ const PersistedPracticeStreamItemSchema = z.object({
   status: PracticeStreamItemStatusSchema,
   reasoning: z.string(),
   added_by: z.enum(['composer_nightly', 'composer_live', 'copilot', 'user']),
-  signals: z.record(z.unknown()),
+  signals: z.record(z.string(), z.unknown()),
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
   estimated_minutes: z.number().nonnegative(),

@@ -118,13 +118,13 @@ export const QuestionDetailResponseSchema = z
     prompt_md: z.string(),
     reference_md: z.string().nullable(),
     choices_md: z.array(z.string()).nullable(),
-    rubric_json: z.unknown(),
+    rubric_json: z.unknown().optional(),
     difficulty: z.number().int(),
     source: z.string(),
     source_ref: z.string().nullable(),
     source_tier: z.object({ tier: z.number().int(), name: z.string() }),
     visual_complexity: z.string().nullable(),
-    figures: z.unknown(),
+    figures: z.unknown().optional(),
     image_refs: z.array(z.string()),
     variant_depth: z.number().int().nonnegative(),
     root_question_id: z.string().nullable(),
@@ -281,7 +281,7 @@ export const DeleteQuestionResponseSchema = z
     archived: z.literal(true),
     event_id: z.string(),
     cascaded_part_ids: z.array(z.string()),
-    associations: z.record(z.number().int().nonnegative()),
+    associations: z.record(z.string(), z.number().int().nonnegative()),
   })
   .passthrough();
 
@@ -330,7 +330,7 @@ export const CreateSolveSubmissionBodySchema = SolveSubmissionBodySchema.extend(
 export const SolveSubmissionResponseSchema = z
   .object({
     attempt_event_id: z.string(),
-    judge: z.unknown(),
+    judge: z.unknown().optional(),
     revealed_solution_md: z.string().nullable(),
     mistake_id: z.string().optional(),
   })

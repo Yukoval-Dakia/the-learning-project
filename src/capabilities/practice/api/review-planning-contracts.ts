@@ -55,7 +55,7 @@ const ReviewAdviceJudgeSchema = z.object({
   coarse_outcome: CoarseOutcome,
   confidence: z.number().min(0).max(1),
   feedback_md: z.string(),
-  evidence_json: z.record(z.unknown()),
+  evidence_json: z.record(z.string(), z.unknown()),
   capability_ref: z.object({
     id: z.string().min(1),
     version: z.string().min(1),

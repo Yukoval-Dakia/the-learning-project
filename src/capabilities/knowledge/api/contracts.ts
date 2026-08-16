@@ -30,7 +30,7 @@ export const LegacyKnowledgeProposalQuerySchema = z.object({
 export const LegacyKnowledgeProposalSchema = z.object({
   id: z.string(),
   kind: z.string(),
-  payload: z.record(z.unknown()),
+  payload: z.record(z.string(), z.unknown()),
   reasoning: z.string(),
   status: z.enum(['pending', 'accepted', 'dismissed', 'stale', 'rubric_rejected']),
   proposed_at: z.string(),
@@ -75,7 +75,7 @@ export const KnowledgeEdgeSchema = z.object({
   to_knowledge_id: z.string(),
   relation_type: RelationTypeSchema,
   weight: z.number(),
-  created_by: z.unknown(),
+  created_by: z.unknown().optional(),
   reasoning: z.string().nullable(),
   created_at: z.string(),
   archived_at: z.string().nullable(),
@@ -119,6 +119,7 @@ export const KnowledgeReviewDueSummaryResponseSchema = z.object({
   now: z.string(),
   due_soon_window_hours: z.number().int().positive(),
   summary: z.record(
+    z.string(),
     z.object({
       overdue: z.number().int().nonnegative(),
       due_soon: z.number().int().nonnegative(),
@@ -230,7 +231,7 @@ export const KnowledgeNodePageResponseSchema = z.object({
   notes: z.array(NodePageNoteSummarySchema),
   interactive_artifacts: z.array(NodePageNoteSummarySchema),
   backlinks: z.array(NodePageBacklinkSchema),
-  backlinks_by_type: z.record(z.array(NodePageBacklinkSchema)),
+  backlinks_by_type: z.record(z.string(), z.array(NodePageBacklinkSchema)),
   timeline: z.array(
     z.object({
       event_id: z.string(),

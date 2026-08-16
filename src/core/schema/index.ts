@@ -174,7 +174,7 @@ export const Artifact = g.ArtifactSelectGenerated.extend({
   ]),
   body_blocks: b.ArtifactBodyBlocks.nullable(),
   knowledge_ids: z.array(z.string()),
-  attrs: z.record(z.unknown()),
+  attrs: z.record(z.string(), z.unknown()),
   tool_state: b.ToolState.nullable(),
   // ADR-0033 D6 (YUK-306) — 'author_artifact' mirrors the intent_source above
   // for type='interactive' rows. Pure additive enum (text column, no DDL).

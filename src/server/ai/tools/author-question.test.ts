@@ -459,8 +459,6 @@ describe('author_question DomainTool — contract + input validation', () => {
   });
 
   it('inputSchema is a plain ZodObject (MCP bridge requires it)', () => {
-    // mcp-bridge.ts does `instanceof z.ZodObject` and reads `.shape`. A
-    // .superRefine/.refine would produce a ZodEffects and break the bridge.
     expect('shape' in authorQuestionTool.inputSchema).toBe(true);
   });
 

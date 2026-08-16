@@ -43,12 +43,10 @@ export const CreateAttemptBodySchema = z.union(
     CreateAttemptBodyBaseSchema.extend({ mistake_id: z.string().min(1) }),
   ],
   {
-    errorMap: (issue, context) => ({
-      message:
-        issue.code === z.ZodIssueCode.invalid_union
-          ? 'activity_ref, question_id, or mistake_id is required'
-          : context.defaultError,
-    }),
+    error: (issue) =>
+      issue.code === z.ZodIssueCode.invalid_union
+        ? 'activity_ref, question_id, or mistake_id is required'
+        : undefined,
   },
 );
 
@@ -93,7 +91,7 @@ const AttemptJudgeResponseSchema = z
     coarse_outcome: z.enum(['correct', 'partial', 'incorrect', 'unsupported']),
     confidence: z.number().min(0).max(1),
     feedback_md: z.string(),
-    evidence_json: z.record(z.unknown()),
+    evidence_json: z.record(z.string(), z.unknown()),
     capability_ref: z.object({ id: z.string(), version: z.string() }),
     suggested_rating: FsrsRating.nullable(),
     auto_rated: z.boolean(),

@@ -1648,7 +1648,7 @@ export type InterventionIndependentSolutionAuditT = z.infer<
 export const InterventionQuestionContentValidationDiagnosticAudit = z
   .object({
     kind: InterventionDiagnosticKind,
-    task_input: z.unknown(),
+    task_input: z.unknown().optional(),
     task_input_sha256: z.string().regex(/^[a-f0-9]{64}$/),
     result: QuizVerificationResult,
     result_sha256: z.string().regex(/^[a-f0-9]{64}$/),

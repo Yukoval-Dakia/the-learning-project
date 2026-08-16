@@ -70,12 +70,9 @@ function excerpt(value: string | null | undefined, max = TEXT_EXCERPT_MAX): stri
 //     target∈{question,learning_item,artifact} surface; author_question's record
 //     seed is deliberately the question-only sub-case per D8 "→question 支".)
 //
-// Tool-bridge constraint (src/server/ai/tools/mcp-bridge.ts:145): a DomainTool's
-// `inputSchema` MUST be a `z.object(...)` — the bridge does `instanceof z.ZodObject`
-// and extracts `.shape`, rejecting non-objects (a `.superRefine`/`.refine` would
-// yield a ZodEffects and break the bridge at runtime). So the public input is a
-// FLAT object with a `seed_mode` discriminator + per-mode optional fields; the
-// cross-field "required-by-mode" check runs in `validateAuthorQuestionInput`
+// The public input remains a flat object with a `seed_mode` discriminator and
+// per-mode optional fields. The cross-field "required-by-mode" check runs in
+// `validateAuthorQuestionInput`
 // (inside execute, OFF the schema), and the core maps the parsed input to an
 // internal discriminated union for exhaustive dispatch.
 
@@ -110,10 +107,8 @@ type AuthorQuestionSeed =
       material_title?: string;
     };
 
-// Public input schema — FLAT `z.object` (HARD bridge constraint: mcp-bridge.ts:145
-// does `instanceof z.ZodObject` and extracts `.shape`; a `.superRefine`/`.refine`
-// would produce a ZodEffects and break the bridge at runtime). All per-mode fields
-// are optional here; the cross-field "required-by-mode" check runs in
+// Public input schema — flat `z.object`. All per-mode fields are optional here;
+// the cross-field "required-by-mode" check runs in
 // `validateAuthorQuestionInput` inside execute (NOT on the schema), keeping the
 // schema a pure ZodObject.
 const AuthorQuestionInputSchema = z.object({

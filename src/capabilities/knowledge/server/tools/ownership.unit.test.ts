@@ -3,11 +3,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { zodToJsonSchema } from 'zod-to-json-schema';
 
 import { knowledgeCapability } from '@/capabilities/knowledge/manifest';
 import { DOMAIN_TOOL_ALLOWLISTS, PROPOSE_WRITE_TOOLS, READ_TOOLS } from '@/kernel/tools/allowlists';
 import type { DomainTool } from '@/kernel/tools/types';
+import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { __resetRegistryForTests, getTool } from '@/server/ai/tools/registry';
 
@@ -21,12 +21,12 @@ const KNOWLEDGE_TOOL_NAMES = [
 ] as const;
 
 const OWNED_TOOL_CONTRACT_HASHES = {
-  query_knowledge: 'd513fdf4d7d999532a105e8e976860489906bfdd419d999ffc3353dbd7498e1c',
+  query_knowledge: 'c52167f3d1333187fa65a39b3ae59915569063ccf950dd021be910286cf10a81',
   get_subject_graph_overview: '0efd4d1287b9935f8063cb0f22a56068d0111091fcf8cf650b4f540239df72c4',
   expand_knowledge_subgraph: '6ac13abdb1753b85158f02fb6ead5b82a4945cf3bbb7330b0be0e4edaa05abd9',
   find_knowledge_paths: 'e7448051fabf6fc4a51e6f0aa92160aeb2c181071f9989778382ad6cc31e029c',
   propose_knowledge_edge: '4a7dda673ec70a811535135b6fccf2f4532ee2e1d1d9fe2722a0c97a7aeeab45',
-  propose_knowledge_mutation: '4d2ebc1600c97eb0a28876508890a1065161e2a4bdc267794a47a349044845d3',
+  propose_knowledge_mutation: '3412ea59dd8a768df7090030308383b5abc3bd9b83ee2de41832435cf60cc401',
 } as const;
 
 const KNOWLEDGE_TOOL_EFFECTS = {
@@ -100,8 +100,16 @@ function contractFingerprint(tool: DomainTool<unknown, unknown>): string {
     effect: tool.effect,
     costClass: tool.costClass,
     mirrorEvent: tool.mirrorEvent,
-    inputSchema: zodToJsonSchema(tool.inputSchema),
-    outputSchema: zodToJsonSchema(tool.outputSchema),
+    inputSchema: zodToJsonSchemaCompat(tool.inputSchema, {
+      target: 'draft-07',
+      io: 'input',
+      reused: 'inline',
+    }),
+    outputSchema: zodToJsonSchemaCompat(tool.outputSchema, {
+      target: 'draft-07',
+      io: 'input',
+      reused: 'inline',
+    }),
   };
   return createHash('sha256').update(JSON.stringify(contract)).digest('hex');
 }

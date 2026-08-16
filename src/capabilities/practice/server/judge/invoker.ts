@@ -51,7 +51,7 @@ export const JudgeInvokerQuestionSchema = z
     kind: z.string().min(1),
     prompt_md: z.string(),
     reference_md: z.string().nullable(),
-    rubric_json: z.unknown(),
+    rubric_json: z.unknown().optional(),
     choices_md: z.array(z.string()).nullable(),
     judge_kind_override: z.string().nullable(),
     knowledge_ids: z.array(z.string()).nullable().optional(),

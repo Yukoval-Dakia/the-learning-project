@@ -1,13 +1,13 @@
 // YUK-299 — unit for the Zod → Agent SDK outputFormat adapter.
 //
-// Pure no-DB unit: imports only ./output-format (→ zod-to-json-schema, a pure JS
-// converter) + @/core/schema/business (Zod). No @/db / pg / drizzle / SDK runtime
+// Pure no-DB unit: imports only ./output-format + @/core/schema/business (Zod).
+// No @/db / pg / drizzle / SDK runtime
 // surface, so this lives in the fast (unit) partition. It MUST be enumerated in
 // fastTestInclude (vitest.shared.ts): src/server/ai/** has no unit glob (only
 // judges/**), so without the explicit entry the db config's src/**/*.test.ts glob
 // would sweep it into the testcontainer partition.
 //
-// Assertions are pinned to a REAL zodToJsonSchema(VariantVerificationResult) run,
+// Assertions are pinned to a real z.toJSONSchema(VariantVerificationResult) run,
 // so OSS upgrades / dialect drift are caught here (this wrapper is the one dialect
 // seam — §3.4 of the plan).
 
