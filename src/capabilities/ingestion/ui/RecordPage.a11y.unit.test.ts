@@ -34,4 +34,17 @@ describe('RecordPage field labels (YUK-718)', () => {
       'aria-label={`知识点搜索（至少 1 个，已选 ${selectedKnowledge.length}）`}',
     );
   });
+
+  it('keeps the AI review panel mounted outside the mode tabs', () => {
+    expect(source).not.toContain("mode === 'auto_enrolled'");
+    expect(source).not.toContain("label: 'AI 录入'");
+
+    const tabBodyStart = source.indexOf('<div className="record-tab-body">');
+    const tabBodyEnd = source.indexOf('</div>', tabBodyStart);
+    const panel = source.indexOf('<AutoEnrolledPanel />');
+
+    expect(tabBodyStart).toBeGreaterThanOrEqual(0);
+    expect(tabBodyEnd).toBeGreaterThan(tabBodyStart);
+    expect(panel).toBeGreaterThan(tabBodyEnd);
+  });
 });
