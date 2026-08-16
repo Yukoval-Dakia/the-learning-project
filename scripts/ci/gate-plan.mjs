@@ -58,6 +58,7 @@ function globalTriggerReason(file) {
       '.node-version',
       'tsconfig.json',
       'biome.json',
+      'biome.jsonc',
       'server/app.ts',
       'tests/global-setup.ts',
       'tests/setup.db-fork.ts',

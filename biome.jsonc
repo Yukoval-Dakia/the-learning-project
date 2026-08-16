@@ -49,11 +49,19 @@
     "rules": {
       "preset": "recommended",
       "a11y": {
+        // Static elements with handlers need keyboard/role semantics. 4 hits need component-level
+        // review in YUK-909; target error, with narrow exceptions only for non-interactive handlers.
         "noStaticElementInteractions": "warn",
+        // ARIA attributes must match the element role. 13 hits may rely on implicit/custom roles, so
+        // YUK-909 will adjudicate them before target error; retain only proven role exceptions.
         "useAriaPropsSupportedByRole": "warn",
+        // Explicit roles should use native semantic elements. 7 hits include custom interaction
+        // surfaces; YUK-909 will migrate them toward error with bounded documented exceptions.
         "useSemanticElements": "warn"
       },
       "correctness": {
+        // Optional-chain results must not flow into unsafe operations. 45 hits, many in tests, need
+        // YUK-909 guard/context review before target error; exempt only demonstrably guarded cases.
         "noUnsafeOptionalChaining": "warn"
       },
       "style": {
@@ -70,10 +78,18 @@
         }
       },
       "suspicious": {
+        // Array indexes make React identity unstable after reorder. 3 hits need data-identity review
+        // in YUK-909; target error with exceptions limited to immutable, position-owned lists.
         "noArrayIndexKey": "warn",
+        // Duplicate CSS properties can silently override earlier values. 1 hit may be a compatibility
+        // fallback; YUK-909 will make this error or document that single bounded fallback.
         "noDuplicateProperties": "warn",
         "noExplicitAny": "warn",
+        // Unknown CSS at-rules catch typos but can be framework syntax. The 1 `@mixin` hit needs
+        // YUK-909 validation; target error with an explicit ignore only if the at-rule is supported.
         "noUnknownAtRules": "warn",
+        // Iterable callbacks should return consistently (and forEach should not return values).
+        // 4 hits need intent review in YUK-909; target error with only explicit, bounded exceptions.
         "useIterableCallbackReturn": "warn"
       }
     }
