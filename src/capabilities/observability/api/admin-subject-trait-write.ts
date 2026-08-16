@@ -41,7 +41,7 @@ function parseParams(
 const EditBody = z.object({
   expectedSubjectRevision: z.number().int().min(0),
   expectedTraitRevision: z.number().int().min(0),
-  payload: z.unknown(),
+  payload: z.unknown().optional(),
 });
 
 export async function PUT(req: Request, params: Record<string, string>): Promise<Response> {

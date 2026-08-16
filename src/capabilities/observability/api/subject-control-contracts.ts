@@ -17,7 +17,7 @@ export const AdminSubjectCasBodySchema = z.object({
 
 export const ValidateAdminSubjectBodySchema = z.object({
   // The preflight endpoint intentionally accepts invalid candidates so it can report errors.
-  // Spell out optional keys because zod-to-json-schema makes enum-keyed records exhaustive.
+  // Spell out optional keys because Zod 4 makes enum-keyed records exhaustive.
   traitPayloadOverrides: z
     .object({
       charter: z.unknown().optional(),

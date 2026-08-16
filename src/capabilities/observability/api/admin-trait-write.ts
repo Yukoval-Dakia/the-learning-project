@@ -28,7 +28,7 @@ function parseTraitId(
 
 const EditBody = z.object({
   expectedRevision: z.number().int().min(0),
-  payload: z.unknown(),
+  payload: z.unknown().optional(),
 });
 
 export async function PUT(req: Request, params: Record<string, string>): Promise<Response> {
