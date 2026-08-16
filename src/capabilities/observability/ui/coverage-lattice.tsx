@@ -12,14 +12,14 @@
 //   「未评估·空池」chip 而非裸 n/a——把「不撒谎逐格覆盖」编码进渲染 artifact。
 // should#1：header 声明本蓝图边界（scanCoverageGaps 四规则的 KC 池覆盖，非全量并集）。
 
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { CSSProperties, ReactNode } from 'react';
 import { apiJson } from '@/ui/lib/api';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { Stateful } from '@/ui/primitives/Stateful';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { CSSProperties, ReactNode } from 'react';
 
 // 字段对齐 server/coverage-lattice.ts 的读模型输出。
 interface GapActivity {
@@ -159,7 +159,10 @@ function gapTone(gapKind: string): BadgeTone {
 function GapActivityNote({
   activity,
   cooldownDays,
-}: { activity: GapActivity | null; cooldownDays: number }) {
+}: {
+  activity: GapActivity | null;
+  cooldownDays: number;
+}) {
   if (!activity || activity.lastActivityAt === null) {
     return <span style={mutedMetaStyle}>无派发记录</span>;
   }

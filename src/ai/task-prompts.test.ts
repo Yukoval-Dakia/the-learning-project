@@ -1,6 +1,6 @@
+import { describe, expect, it } from 'vitest';
 import { MetaCauseFields } from '@/core/schema/business';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { describe, expect, it } from 'vitest';
 import { tasks } from './registry';
 import { getTaskSystemPrompt } from './task-prompts';
 

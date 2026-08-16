@@ -1,8 +1,7 @@
 import type { AiTaskKind } from '@/ai/task-prompts';
 import { getTaskSystemPrompt } from '@/ai/task-prompts';
-import type { SubjectProfile } from '@/subjects/profile';
-
 import { sha256Canonical, stableCanonicalValue } from '@/server/ai/task-input-hash';
+import type { SubjectProfile } from '@/subjects/profile';
 export const JUDGE_PROMPT_ENVELOPE_VERSION = 1 as const;
 export const JUDGE_PROMPT_TEMPLATE_REVISION = 'judge-prompt-v1' as const;
 

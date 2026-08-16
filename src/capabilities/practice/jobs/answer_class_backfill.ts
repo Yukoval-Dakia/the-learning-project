@@ -17,12 +17,12 @@
 // a deferred follow-up — deriveAnswerClass is pure+cheap, so a future insert-site
 // hook / trigger / re-derive pass can keep it fresh trivially. Do not bolt on here.
 
+import { and, eq, isNull } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
 import { type QuestionKindT, deriveAnswerClass } from '@/core/schema/answer-class';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
-import { and, eq, isNull } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
 
 /** Idempotent: classify up to `limit` question rows whose answer_class IS NULL.
  *  Returns the number classified. */

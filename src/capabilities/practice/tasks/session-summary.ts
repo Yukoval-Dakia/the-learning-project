@@ -8,10 +8,10 @@
 // This was the LAST transitional quarry entry; with it owned, the central
 // semantic quarry holds zero entries (quarry deletion is YUK-885).
 
+import { z } from 'zod';
 import { causeTaxonomyList } from '@/ai/cause-prompt';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import type { SubjectProfile } from '@/subjects/profile';
-import { z } from 'zod';
 
 // Legacy quarry alias preserved verbatim inside the moved definitions.
 const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;

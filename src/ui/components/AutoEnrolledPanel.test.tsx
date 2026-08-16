@@ -4,10 +4,10 @@
 // — the live query/mutation/two-step-confirm wiring is NOT unit-tested here (it
 // can't be on the node-only stack; the revert SERVICE is covered by the DB test).
 
-import type { AutoEnrollObservation } from '@/ui/lib/auto-enroll';
-import { EmptyState } from '@/ui/primitives/EmptyState';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import type { AutoEnrollObservation } from '@/ui/lib/auto-enroll';
+import { EmptyState } from '@/ui/primitives/EmptyState';
 import { type ObservedRow, PanelBody } from './AutoEnrolledPanel';
 
 function obs(overrides: Partial<AutoEnrollObservation> = {}): AutoEnrollObservation {

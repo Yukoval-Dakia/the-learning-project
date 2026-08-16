@@ -1,6 +1,6 @@
+import { z } from 'zod';
 import { QuestionKind } from '@/core/schema/business';
 import { MAX_HINT_COUNT, MAX_HINT_INDEX } from '@/core/schema/event/known';
-import { z } from 'zod';
 
 export const QuestionParamsSchema = z.object({ id: z.string().trim().min(1) });
 export const SolveSessionParamsSchema = z.object({ sid: z.string().trim().min(1) });

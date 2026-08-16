@@ -35,6 +35,7 @@
 // mem0 learner-fact collection. This is a pure observational ledger: it writes NO derived status
 // back onto the proposal / question / result, and touches NO FSRS / mastery / θ̂ state.
 
+import { and, eq } from 'drizzle-orm';
 import { learnerLocalDay } from '@/core/learner-day';
 import {
   BRIEF_SEEN_ACTION,
@@ -45,7 +46,6 @@ import {
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { and, eq } from 'drizzle-orm';
 
 export interface RecordInteractionResult {
   /** The append-only interaction event id (the existing row's id on an idempotent repeat). */

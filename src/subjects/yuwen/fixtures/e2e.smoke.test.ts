@@ -1,7 +1,3 @@
-import type { Db } from '@/db/client';
-import { knowledge, question } from '@/db/schema';
-import { type JudgeQuestionRow, judgeAnswer } from '@/kernel/judge';
-import { resolveSubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
 /**
  * P5.8 (YUK-182) — e2e smoke for the yuwen fixture, the FIRST subject fixture
@@ -24,6 +20,10 @@ import { eq } from 'drizzle-orm';
  * that throws on non-semantic kinds proves no live LLM is ever reached (AC-4).
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { Db } from '@/db/client';
+import { knowledge, question } from '@/db/schema';
+import { type JudgeQuestionRow, judgeAnswer } from '@/kernel/judge';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { type YuwenFixtureItem, loadYuwenFixtures } from './index';
 

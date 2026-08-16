@@ -1,8 +1,8 @@
+import { eq, isNull } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { eq, isNull } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { MEMORY_RECONCILE_QUEUE, memoryReconcileJobId } from './memory-reconcile-handoff';
 import { claimMemoryIngest, persistIngestCompleted } from './memory-reconcile-handoff-store';

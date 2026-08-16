@@ -1,3 +1,5 @@
+import { and, count, eq, inArray, sql } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
   authorInterventionPackage,
@@ -32,8 +34,6 @@ import type { EventSubscriptionDelivery } from '@/kernel/manifest';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { and, count, eq, inArray, sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { answerProbe } from '../conjecture/probe-lifecycle';
 import { prepareInterventionWave } from './prepare';

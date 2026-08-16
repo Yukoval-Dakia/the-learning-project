@@ -18,6 +18,8 @@
 // (acceptAiProposal → acceptConjectureProposal → serveProbeOnce, one transaction) and the
 // real probe settlement (answerProbe), never a hand-seeded row.
 
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { answerProbe } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { TeachingBriefResponseSchema } from '@/capabilities/shell/api/contracts';
 import { loadTeachingBrief } from '@/capabilities/shell/server/teaching-brief';
@@ -25,8 +27,6 @@ import { classifyConjectureProbeResponseFromJudgeMatch } from '@/core/schema/con
 import { event, question } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { acceptAiProposal } from '@/server/proposals/actions';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../tests/helpers/conjecture-probe-fixtures';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 

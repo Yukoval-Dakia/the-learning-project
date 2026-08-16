@@ -7,10 +7,10 @@
 // `invalid_structure` (gate part 3: the post-edit whole tree must still satisfy
 // the recursive StructuredQuestion schema).
 
+import { describe, expect, it } from 'vitest';
 import { applyQuestionEdit } from '@/capabilities/practice/server/proposal-appliers';
 import type { QuestionEditOpT } from '@/core/schema/proposal';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
-import { describe, expect, it } from 'vitest';
 
 describe('applyQuestionEdit verify gate (pure)', () => {
   it('rejects with invalid_structure when the post-edit tree breaks the StructuredQuestion invariant', () => {

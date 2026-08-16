@@ -1,5 +1,14 @@
 import { z } from 'zod';
 import { CauseCategory } from './cause';
+
+export type {
+  BloomLevelT,
+  CauseCategoryT,
+  CauseSchemaT,
+  MetaCauseFieldsT,
+  MetaCauseT,
+  MetacogFlagT,
+} from './cause';
 export {
   BloomLevel,
   CauseCategory,
@@ -14,14 +23,6 @@ export {
   getCausePriority,
   getDefaultMetaCause,
   validateCauseAgainstProfile,
-} from './cause';
-export type {
-  BloomLevelT,
-  CauseCategoryT,
-  CauseSchemaT,
-  MetaCauseFieldsT,
-  MetaCauseT,
-  MetacogFlagT,
 } from './cause';
 
 // ---------- 业务 enum ----------

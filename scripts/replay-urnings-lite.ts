@@ -48,11 +48,11 @@
  */
 
 import './load-env'; // loads .env (DATABASE_URL) before @/db/client is constructed
+import { inArray, sql } from 'drizzle-orm';
 import { difficultyToLogitB } from '@/core/theta';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { effectiveB } from '@/server/mastery/recalibration';
-import { inArray, sql } from 'drizzle-orm';
 import {
   DEFAULT_DENSITY_THRESHOLD,
   DEFAULT_REPLAY_CONFIG,

@@ -7,13 +7,13 @@
 //   2. The GET /api/papers aggregation (§4.10 Q8/Q9): paper artifact + its
 //      linked review session + derived pos / right-wrong / gen / source.
 
+import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 import { PAPER_INTENT_SOURCES } from '@/capabilities/practice/server/paper-intent-sources';
 import { countPaperSlots, readPaperSections } from '@/capabilities/practice/server/paper-sections';
 import { Artifact } from '@/core/schema/index';
 import type { Db, Tx } from '@/db/client';
 import { artifact, knowledge, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Shared knowledge name resolver (used by practice-read + paper-detail)

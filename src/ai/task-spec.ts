@@ -1,5 +1,5 @@
-import type { SubjectProfile } from '@/subjects/profile';
 import type { ZodTypeAny } from 'zod';
+import type { SubjectProfile } from '@/subjects/profile';
 
 export type Provider =
   | 'anthropic'

@@ -5,13 +5,13 @@
 // + `import type { CollectedSignal }` (type-only, erased at compile time), so no DB
 // dependency is pulled in at runtime — safe for the unit partition.
 
+import { describe, expect, it } from 'vitest';
 import type { CollectedSignal } from '@/capabilities/practice/server/candidate-signals';
 import {
   MEM0_PRIOR_BLOCK_CHAR_CAP,
   MEM0_PRIOR_CAP,
   MEM0_PRIOR_ITEM_CHAR_CAP,
 } from '@/capabilities/practice/server/selection-constants';
-import { describe, expect, it } from 'vitest';
 import {
   bucketMfi,
   bucketUnit,

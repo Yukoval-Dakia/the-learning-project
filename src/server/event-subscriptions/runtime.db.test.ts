@@ -1,10 +1,10 @@
-import type { Db } from '@/db/client';
-import * as schema from '@/db/schema';
-import { event, event_subscription_checkpoint, event_subscription_delivery } from '@/db/schema';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Db } from '@/db/client';
+import * as schema from '@/db/schema';
+import { event, event_subscription_checkpoint, event_subscription_delivery } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   bootstrapSubscription,

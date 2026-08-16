@@ -1,3 +1,5 @@
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { type AiProposalPayloadT, resolveSuggestionKind } from '@/core/schema/proposal';
 import { event, question, question_block } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
@@ -11,8 +13,6 @@ import {
   writeRelearnProposal,
   writeVariantQuestionProposal,
 } from '@/kernel/proposals/producers';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 describe('proposal producer helpers', () => {

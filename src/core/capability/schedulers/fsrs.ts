@@ -12,9 +12,9 @@
 // capability makes that mapping explicit + registry-visible (per ADR-0014 §5) and
 // lets validateProfile assert `schedulingHints.default_policy` resolves here.
 
+import type { z } from 'zod';
 import type { FsrsRating } from '@/core/schema/business';
 import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
-import type { z } from 'zod';
 import type { SchedulerCapabilityRunner, SchedulingDecision, SchedulingInput } from './types';
 
 type RatingLabel = z.infer<typeof FsrsRating>;

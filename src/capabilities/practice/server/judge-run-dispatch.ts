@@ -24,6 +24,9 @@
 //      can leave a marker with no job).
 
 import { createHash } from 'node:crypto';
+import { and, asc, eq, gt, lt, notExists, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
+import type { JobWithMetadata } from 'pg-boss';
 import { newId } from '@/core/ids';
 import {
   JudgePendingAttemptPayload,
@@ -36,9 +39,6 @@ import { ApiError } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { observeBossJob } from '@/server/boss/job-observation';
 import { checkRateLimit, refundRateLimit } from '@/server/http/rate-limit';
-import { and, asc, eq, gt, lt, notExists, sql } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/pg-core';
-import type { JobWithMetadata } from 'pg-boss';
 import { JUDGE_RUN_QUEUE } from './judge-durable-config';
 import type { JudgeRunJobData } from './judge-run-payload';
 import {

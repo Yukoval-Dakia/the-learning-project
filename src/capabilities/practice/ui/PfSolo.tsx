@@ -11,6 +11,9 @@
 // 不服判：提交重判 = 先 submit（当前评级生效）拿锚点 judge_event_id → appeal
 // → 流继续（设计稿「重判中 · 不阻塞，先继续」；改判回执经 M4 工作台/通知回流）。
 
+import { useQuery } from '@tanstack/react-query';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 // 边界（PR #1069 review 修复）：capability 包只依赖 @/kernel/* + 自身 + 共享 UI 件
 // （src/capabilities/AGENTS.md）。此前这里直 import @/core/schema/event/known 取长度常量，
 // 既违反依赖方向，又把整套 event Zod schema 拖进 SPA 模块图（实测 8 模块 / 46.7 KB）。
@@ -25,14 +28,10 @@ import { Card } from '@/ui/primitives/Card';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
-import { useQuery } from '@tanstack/react-query';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-
+import { toAttemptTimelineEvents } from './attempt-timeline-adapter';
 import { HintLadder } from './HintLadder';
 import { PfSrcBadge } from './PfStream';
 import type { PfToast } from './PracticeFacePage';
-import { toAttemptTimelineEvents } from './attempt-timeline-adapter';
 import {
   type JudgePreview,
   type QuestionDetail,

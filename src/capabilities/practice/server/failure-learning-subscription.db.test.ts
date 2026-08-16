@@ -1,7 +1,7 @@
-import { event, question } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { event, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { ATTRIBUTION_FOLLOWUP_QUEUE, failureLearningJobId } from '../jobs/failure-learning-jobs';
 import { handleFailureLearningAttemptDelivery } from './failure-learning-subscription';

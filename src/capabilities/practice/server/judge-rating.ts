@@ -1,6 +1,6 @@
+import type { z } from 'zod';
 import type { FsrsRating } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
-import type { z } from 'zod';
 
 type CoarseOutcome = JudgeResultV2T['coarse_outcome'];
 type Rating = z.infer<typeof FsrsRating>;

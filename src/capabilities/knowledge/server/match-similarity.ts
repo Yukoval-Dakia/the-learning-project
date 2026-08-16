@@ -17,10 +17,11 @@
 // (same reason poolFetch omits it). The caller (P2 TaggingTask) applies the MATCH_THRESHOLD
 // cutoff and any effective-domain filter on the returned candidates, mirroring how the quiz
 // matcher thresholds poolFetch output in TS rather than in SQL.
+
+import { and, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
-import { and, isNull, sql } from 'drizzle-orm';
 
 export interface KnowledgeSimilarityCandidate {
   knowledge_id: string;

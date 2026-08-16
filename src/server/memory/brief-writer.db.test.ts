@@ -10,12 +10,12 @@
 // any kind !== 'MemoryBriefTask' (no-live-LLM guard, Pattern C). DB-touching →
 // db partition.
 
+import { eq } from 'drizzle-orm';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { executeMemoryBrief } from '@/capabilities/copilot/server/tools/memory-brief';
 import { event, memory_brief_note } from '@/db/schema';
 import type { ToolContext } from '@/kernel/tools/types';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { eq } from 'drizzle-orm';
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { regenerateMemoryBrief } from './brief';
 import { buildBriefGenerator } from './brief-writer';

@@ -4,6 +4,8 @@
 // Copilot / Dreaming callers receive bounded, named context instead of raw SQL
 // row dumps.
 
+import { and, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
+import { z } from 'zod';
 // P5.4 §5-Q5 / YUK-175 — single source of truth for the recent-failure /
 // evidence window. Reusing the rubric validator's constant keeps the readers'
 // "recent failure" window aligned with the rubric's §4.2 evidence window (no
@@ -17,8 +19,6 @@ import { event, knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema
 // tools' CURRENT defaults, just named centrally.
 import { KNOWLEDGE_EXCERPT_MAX, TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
 import { getMasteryProjection } from '@/server/mastery/state';
-import { and, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
-import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';
 
 const TEXT_SNIPPET_MAX = KNOWLEDGE_EXCERPT_MAX;

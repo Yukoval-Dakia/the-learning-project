@@ -1,5 +1,5 @@
-import type { Db } from '@/db/client';
 import { describe, expect, it } from 'vitest';
+import type { Db } from '@/db/client';
 import {
   deterministicExecutionProvenance,
   historicalUnknownExecutionProvenance,

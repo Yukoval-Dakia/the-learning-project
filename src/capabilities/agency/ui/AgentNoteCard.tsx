@@ -4,9 +4,9 @@
 // block and the full-screen view. Read-only: the only interactive element is the
 // evidence link (router.push to the events chain). No accept/dismiss.
 
+import { Fragment } from 'react';
 import { formatRelTime } from '@/ui/lib/utils';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { Fragment } from 'react';
 import { anInlineMd, deriveTtl, humanAgentNoteSummary, resolveEvidence } from './derive';
 import { agentMeta, signalMeta } from './meta';
 import type { BoardAgentNote } from './types';

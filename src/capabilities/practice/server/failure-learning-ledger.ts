@@ -1,10 +1,10 @@
+import { and, eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { cost_ledger } from '@/db/schema';
 import {
   writePermanentAiFailureLedger,
   writeRetryableAiFailureLedger,
 } from '@/server/ai/failure-ledger';
-import { and, eq } from 'drizzle-orm';
 import {
   ATTRIBUTION_FOLLOWUP_QUEUE,
   VARIANT_GEN_QUEUE,

@@ -17,10 +17,6 @@
 import { access, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SubjectQuestionKind } from './profile-schema';
-// YUK-611 — 白名单名从命名空间权威模块拼：populate 把镜像目录名 + 镜像内 frontmatter
-// name 统一改写成 <subjectId>--<pack>，resolver 必须产出同一个键。
-import { namespacedSkillName } from './skill-namespace';
-
 // YUK-226 S2-5b (PR #320 验证轮 A) — kind 词表规范化收编进单一权威模块.
 //
 // persisted `question.kind` (QuestionKind) ↔ profile/skill `SubjectQuestionKind` 的双向
@@ -29,6 +25,9 @@ import { namespacedSkillName } from './skill-namespace';
 // 保持既有 import 路径稳定（skillDirName 仍按名引用），不再在本文件第二份手搓
 // computation↔calculation 特例。
 import { questionKindToSkillKind, skillKindToQuestionKind } from './question-kind';
+// YUK-611 — 白名单名从命名空间权威模块拼：populate 把镜像目录名 + 镜像内 frontmatter
+// name 统一改写成 <subjectId>--<pack>，resolver 必须产出同一个键。
+import { namespacedSkillName } from './skill-namespace';
 
 export { questionKindToSkillKind, skillKindToQuestionKind };
 

@@ -1,3 +1,5 @@
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
 import {
   COPILOT_EVIDENCE_MAX_TRACE_CALLS,
   COPILOT_EVIDENCE_SUBMISSION_SERVER_NAME,
@@ -6,8 +8,6 @@ import {
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import type { ProposalEffectContract, ToolExecutionResultObservation } from '@/kernel/tools/types';
 import type { SdkMcpServer } from '@/server/ai/tools/mcp-bridge';
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { z } from 'zod';
 import type { CopilotEvidenceReviewOutput, CopilotEvidenceVerificationOutput } from '../contracts';
 import {
   type BoundCopilotEvidenceComparison,

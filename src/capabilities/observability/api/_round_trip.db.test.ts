@@ -3,6 +3,10 @@
  * Uses real test DB (postgres-js) + in-memory R2.
  * Verifies that data exported from a seeded DB is fully restored after a wipe.
  */
+
+import { eq } from 'drizzle-orm';
+import { unzipSync } from 'fflate';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   difficulty_calibration_label,
   edge_reconciliation_log,
@@ -14,9 +18,6 @@ import {
   selection_observation,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { eq } from 'drizzle-orm';
-import { unzipSync } from 'fflate';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
 import { GET } from './backup-export';

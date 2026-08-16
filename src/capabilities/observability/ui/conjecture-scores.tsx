@@ -13,13 +13,13 @@
 // 文案两边都不能写错：早先「reconcile 自动铸」是把未来时写成现在时（反向漂移）；反过来写成
 // 「结构性恒空 / 不会铸出」在裁定通电后同样是错的方向。正确措辞是「待通电」。
 
+import { useQuery } from '@tanstack/react-query';
+import type { CSSProperties } from 'react';
 import { apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { Stateful } from '@/ui/primitives/Stateful';
-import { useQuery } from '@tanstack/react-query';
-import type { CSSProperties } from 'react';
 
 // 字段对齐 server/conjecture-scores.ts 的 ConjectureScoresRead。
 interface PredictionScoreRow {

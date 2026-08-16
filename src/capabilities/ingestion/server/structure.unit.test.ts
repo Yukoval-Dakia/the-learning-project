@@ -1,14 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-
+// YUK-227 S3 Slice A test helpers
+import type { FigureAssignment } from './structure';
 import {
   StructureTaskError,
   type TencentPageHint,
   renderTencentHint,
   runStructureTask,
 } from './structure';
-
-// YUK-227 S3 Slice A test helpers
-import type { FigureAssignment } from './structure';
 
 const IMG = { data: 'AAAA', mediaType: 'image/png' } as const;
 

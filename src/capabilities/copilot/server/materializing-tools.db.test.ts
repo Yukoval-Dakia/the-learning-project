@@ -1,10 +1,9 @@
 import { createId } from '@paralleldrive/cuid2';
+import { inArray } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
-
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { inArray } from 'drizzle-orm';
 import {
   MATERIALIZING_TOOL_NAMES,
   selectAsksWithMaterializingToolCall,

@@ -1,7 +1,7 @@
-import { capabilities } from '@/capabilities';
-import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { capabilities } from '@/capabilities';
+import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, registerTool } from './registry';
 

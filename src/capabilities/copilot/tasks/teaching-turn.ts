@@ -7,11 +7,11 @@
 // exactly ONE TeachingTurnTask output contract (ask_check/explain/end +
 // structured_question) and this module owns it.
 
+import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { JudgeKind, QuestionKind, Rubric } from '@/core/schema/business';
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import type { SubjectProfile } from '@/subjects/profile';
-import { z } from 'zod';
 
 const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 

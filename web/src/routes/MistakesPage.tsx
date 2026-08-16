@@ -24,6 +24,8 @@
 // ④ 科目轴：knowledge_ids[0] → getTree effective_domain → subjMeta（科目=视角派生，非实体
 //    列；同 QuestionsPage subjMeta 先例）。
 
+import { useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getTree } from '@/capabilities/knowledge/ui-public';
 import { resolveKnownSubjectId } from '@/subjects/profile';
 import { useSubjects } from '@/ui/hooks/useSubjects';
@@ -40,8 +42,6 @@ import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import { useQuery } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useState } from 'react';
 
 // ── wire 类型（GET /api/mistakes 投影行；listMistakeProjectionRows） ──
 interface MistakeCause {

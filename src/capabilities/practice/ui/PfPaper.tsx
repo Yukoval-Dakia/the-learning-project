@@ -4,12 +4,12 @@
 // 后端语义：草稿 PUT answer 自动保存；「交卷」= 未提交 slot 逐个 POST submit
 //（judge-now-show-later，visible_to_user=false 缓冲）+ session end → 可见性解锁。
 
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { PfToast } from './PracticeFacePage';
 import {

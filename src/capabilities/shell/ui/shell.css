@@ -233,8 +233,9 @@
   border: 1px solid var(--coral-line);
   border-radius: var(--r-pill);
   cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
-    var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .inbox-loom .proposal-image-candidate .ic-reveal-btn:hover {
   border-color: var(--coral);
@@ -590,8 +591,9 @@
   border-radius: var(--r-pill);
   cursor: default;
   text-align: left;
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
-    var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .inbox-loom button.evidence-readable {
   cursor: pointer;
@@ -765,7 +767,9 @@
   border-radius: var(--r-3);
   box-shadow: var(--shadow-1);
   margin-bottom: var(--s-2);
-  transition: opacity var(--dur-base), background var(--dur-base);
+  transition:
+    opacity var(--dur-base),
+    background var(--dur-base);
 }
 .aa-card.consumed {
   background: var(--paper-sunk);
@@ -849,7 +853,9 @@
   padding: 5px 11px;
   border-radius: var(--r-2);
   font: 500 var(--fs-meta) / 1 var(--font-sans);
-  transition: border-color var(--dur-fast), color var(--dur-fast);
+  transition:
+    border-color var(--dur-fast),
+    color var(--dur-fast);
 }
 .aa-revert:hover {
   border-color: var(--coral-line);

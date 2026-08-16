@@ -1,5 +1,5 @@
-import { ActivityKind, ActivityRef } from '@/core/schema/activity';
 import { describe, expect, it } from 'vitest';
+import { ActivityKind, ActivityRef } from '@/core/schema/activity';
 
 describe('ActivityKind', () => {
   it('accepts all defined activity kinds', () => {

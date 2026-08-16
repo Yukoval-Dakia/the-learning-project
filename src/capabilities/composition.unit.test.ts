@@ -1,7 +1,7 @@
+import { describe, expect, it } from 'vitest';
 import { aiProposalKinds } from '@/core/schema/proposal';
 import { validateComposition } from '@/kernel/manifest';
 import { generateOpenApiDocument } from '@/kernel/openapi';
-import { describe, expect, it } from 'vitest';
 import { capabilities } from './index';
 
 describe('composition root', () => {

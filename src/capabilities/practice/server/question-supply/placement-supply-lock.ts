@@ -1,5 +1,5 @@
-import type { Tx } from '@/db/client';
 import { sql } from 'drizzle-orm';
+import type { Tx } from '@/db/client';
 
 const PLACEMENT_SUPPLY_LOCK_NAMESPACE = 'placement-supply:v1:';
 

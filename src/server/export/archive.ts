@@ -1,6 +1,3 @@
-import type { Db, Tx } from '@/db/client';
-import * as schema from '@/db/schema';
-import type { R2Client } from '@/server/r2';
 /**
  * buildBackupArchive — extract all table rows from Postgres + optional R2 assets,
  * then stream a ZIP via client-zip.
@@ -11,6 +8,9 @@ import type { R2Client } from '@/server/r2';
 import { downloadZip } from 'client-zip';
 import { getTableColumns, getTableName, isTable, sql } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
+import type { Db, Tx } from '@/db/client';
+import * as schema from '@/db/schema';
+import type { R2Client } from '@/server/r2';
 import {
   BACKUP_EXCLUDED_TABLES,
   FK_ORDER,
@@ -527,7 +527,7 @@ export async function restoreFromArchive({
   // state. A backup restore starts from an empty memory backend, so restored
   // events must be considered pending for the outbox poller.
   for (const row of data.event ?? []) {
-    if (Object.prototype.hasOwnProperty.call(row, 'ingest_at')) {
+    if (Object.hasOwn(row, 'ingest_at')) {
       row.ingest_at = null;
     }
   }
@@ -546,7 +546,7 @@ export async function restoreFromArchive({
   // Preparing aggregates are picked up by intervention_prepare_recovery with a
   // fresh job UUID; terminal aggregates do not need an operational job id.
   for (const row of data.intervention ?? []) {
-    if (Object.prototype.hasOwnProperty.call(row, 'preparation_job_id')) {
+    if (Object.hasOwn(row, 'preparation_job_id')) {
       row.preparation_job_id = null;
     }
   }

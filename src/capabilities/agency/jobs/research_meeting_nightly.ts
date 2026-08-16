@@ -42,20 +42,20 @@
 // mastery/θ/FSRS.
 
 import { createHash } from 'node:crypto';
-import { type WriteEventInput, writeEvent } from '@/kernel/events';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-
-import {
-  CONJECTURE_RECURRENCE_FLOOR,
-  collectConjectureEvidenceAssetRefs,
-  conjectureKey,
-  gatherConjectureEvidence,
-} from '@/capabilities/agency/server/conjecture/evidence';
+import { z } from 'zod';
 import type {
   ConjectureEvidenceAssetRef,
   EnrichedEvidenceCell,
   EvidenceCell,
   LoadedConjectureEvidenceImage,
+} from '@/capabilities/agency/server/conjecture/evidence';
+import {
+  CONJECTURE_RECURRENCE_FLOOR,
+  collectConjectureEvidenceAssetRefs,
+  conjectureKey,
+  gatherConjectureEvidence,
 } from '@/capabilities/agency/server/conjecture/evidence';
 import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
 import {
@@ -64,29 +64,24 @@ import {
   applyConjectureHistoryGate,
   loadConjectureHistory,
 } from '@/capabilities/agency/server/conjecture/history';
-import { newId } from '@/core/ids';
-import type { Db, Tx } from '@/db/client';
-import { event, source_asset } from '@/db/schema';
-import { defaultImageFetch } from '@/kernel/judge';
-import { listProposalInboxRows } from '@/kernel/proposals/inbox';
-import { type WriteAiProposalInput, writeAiProposal } from '@/kernel/proposals/writer';
-import { getFailureAttemptsWithReasoningTrace } from '@/kernel/read-models/failure-attempts';
-import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
-import { type TaskTextRunFn, costUsdToMicroUsd, sumAllKnownCostUsd } from '@/server/ai/provenance';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
-import { getMasteryProjection } from '@/server/mastery/state';
-import { resolveSubjectProfile } from '@/subjects/profile';
-import { and, eq, inArray, sql } from 'drizzle-orm';
-import { z } from 'zod';
-import { writeRetryableAiFailureLedger } from '../server/ai-runtime';
-
 import {
   ConjectureInductionOperationalError,
   type ConjectureInductionTaskKind,
   type InduceConjectureResult,
   induceConjecture,
 } from '@/capabilities/agency/server/conjecture/induce';
+import { newId } from '@/core/ids';
+import type { Db, Tx } from '@/db/client';
+import { event, source_asset } from '@/db/schema';
+import { type WriteEventInput, writeEvent } from '@/kernel/events';
+import { defaultImageFetch } from '@/kernel/judge';
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
+import { type WriteAiProposalInput, writeAiProposal } from '@/kernel/proposals/writer';
+import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttemptsWithReasoningTrace } from '@/kernel/read-models/failure-attempts';
+import { type TaskTextRunFn, costUsdToMicroUsd, sumAllKnownCostUsd } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import {
   type PredictionAccountability,
   loadPredictionAccountabilityByKey,
@@ -98,6 +93,9 @@ import {
   type ReconcileResult,
   reconcileConjecturePredictions,
 } from '@/server/conjectures/reconcile';
+import { getMasteryProjection } from '@/server/mastery/state';
+import { resolveSubjectProfile } from '@/subjects/profile';
+import { writeRetryableAiFailureLedger } from '../server/ai-runtime';
 
 /** Structural per-run propose cap (top-K salient cells → at most K conjectures). */
 export const RESEARCH_MEETING_MAX_CONJECTURES = 3;

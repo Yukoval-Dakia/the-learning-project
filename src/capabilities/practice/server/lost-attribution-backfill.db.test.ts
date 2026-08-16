@@ -1,8 +1,8 @@
 // YUK-379 / YUK-847 — census + owner backfill for silently-lost attribution.
 
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { censusLostAttributions, runLostAttributionBackfill } from './lost-attribution-backfill';
 

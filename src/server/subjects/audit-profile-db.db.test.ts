@@ -2,9 +2,9 @@
 // 共享 trait（模拟 deprecated/幻 judge 存活装配的漂移形态）后审计标红，且
 // 波及面 = 该 trait 的全部绑定科目。
 
-import { subject_trait } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { subject_trait } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { auditProfilesFromDb, formatDbProfileAuditReport } from './audit-profile-db';
 import { hydrateSubjectRegistryFromDb } from './hydrate';

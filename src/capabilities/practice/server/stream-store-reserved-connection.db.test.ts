@@ -1,9 +1,9 @@
-import type { Db } from '@/db/client';
-import { knowledge, learning_item, practice_stream_item, question } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { sql } from 'drizzle-orm';
 import postgres from 'postgres';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Db } from '@/db/client';
+import { knowledge, learning_item, practice_stream_item, question } from '@/db/schema';
 import { resetDb } from '../../../../tests/helpers/db';
 import { handleReviewDue } from './due-list';
 

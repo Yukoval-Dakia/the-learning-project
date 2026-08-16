@@ -4,10 +4,10 @@
 // queue runs the broader tool-calling KnowledgeReviewTask after them, so it can
 // propose tree maintenance mutations while still writing only inbox proposals.
 
+import type { Job } from 'pg-boss';
 import { streamReviewTask } from '@/capabilities/knowledge/server/review';
 import type { Db } from '@/db/client';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
-import type { Job } from 'pg-boss';
 
 export interface KnowledgeMaintenanceNightlyResult {
   processed: number;

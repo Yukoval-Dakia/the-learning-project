@@ -5,7 +5,9 @@
   "description": "YUK-493 Phase -1 — napi port of src/server/calibration (offline, dev/CI-only, JS-oracle-backed).",
   "napi": {
     "binaryName": "calibration-native",
-    "targets": ["wasm32-wasip1-threads"]
+    "targets": [
+      "wasm32-wasip1-threads"
+    ]
   },
   "devDependencies": {
     "@emnapi/core": "1.11.3",

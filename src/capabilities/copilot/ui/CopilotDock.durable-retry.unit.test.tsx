@@ -70,13 +70,7 @@ vi.mock('@/ui/primitives/LoomBadge', () => ({
   LoomBadge: ({ children }: { children: ReactNode }) => <span>{children}</span>,
 }));
 vi.mock('@/ui/primitives/CopilotDrawer', () => ({
-  CopilotDrawer: ({
-    children,
-    footer,
-  }: {
-    children: ReactNode;
-    footer: ReactNode;
-  }) => (
+  CopilotDrawer: ({ children, footer }: { children: ReactNode; footer: ReactNode }) => (
     <section>
       {children}
       {footer}

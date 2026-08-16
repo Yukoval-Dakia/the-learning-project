@@ -4,13 +4,13 @@
 // 整卷小结 M2 为本地模板（按错数挑选）；M4 夜链接管后改为 AI 生成随卷持久化。
 // 错题去向 trace（归因事件 / 变式排期）等 M4 归因链上线后接真数据。
 
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { ApiError } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
 
 import { type PaperSlot, getPaperDetail } from './practice-api';
 
@@ -109,13 +109,7 @@ export function PfrQRow({
   );
 }
 
-export function PfRetro({
-  artifactId,
-  onBack,
-}: {
-  artifactId: string;
-  onBack: () => void;
-}) {
+export function PfRetro({ artifactId, onBack }: { artifactId: string; onBack: () => void }) {
   const detailQ = useQuery({
     queryKey: ['paper', artifactId, 'retro'],
     queryFn: () => getPaperDetail(artifactId),

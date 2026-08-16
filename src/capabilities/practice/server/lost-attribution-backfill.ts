@@ -25,10 +25,10 @@
 // One-time ops script (scripts/backfill-lost-attribution.ts); NOT wired into any
 // live request path and NOT scheduled.
 
-import type { Db } from '@/db/client';
-import { event } from '@/db/schema';
 import { and, asc, eq, lt, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
+import type { Db } from '@/db/client';
+import { event } from '@/db/schema';
 
 export interface LostAttributionCensus {
   /** attempt event ids lacking a real (non-pending) chained judge, capped at `limit`. */

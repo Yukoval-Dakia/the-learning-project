@@ -2,6 +2,7 @@
 // 场景全部从「reconcile 种 builtin + hydrate 装配」的干净基线出发，thin-create
 // 一个 custom 科目后断言四个读函数 + route 壳的映射（400/404）。
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import { GET as subjectTraitsRoute } from '@/capabilities/observability/api/admin-subject-traits';
 import { GET as journalRoute } from '@/capabilities/observability/api/admin-trait-journal';
 import { GET as traitsRoute } from '@/capabilities/observability/api/admin-traits';
@@ -12,7 +13,6 @@ import {
   AdminTraitsResponseSchema,
 } from '@/capabilities/observability/api/subject-contracts';
 import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   getAdminSubjectTraits,

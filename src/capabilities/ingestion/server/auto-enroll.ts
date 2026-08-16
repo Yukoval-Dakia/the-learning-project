@@ -1,39 +1,6 @@
 import { createHash } from 'node:crypto';
-/**
- * WorkflowJudge auto-enroll path — T-OC slice 3 (YUK-145, OC-4 / OC-5).
- *
- * See `docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md` (OC-4/OC-5) +
- * `docs/superpowers/plans/2026-05-30-yuk145-toc-slice3-lane.md` §5 + ADR-0026.
- *
- * ============================================================================
- * CRITICAL SAFETY — OFF BY DEFAULT. With `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED`
- * unset (the default), this function short-circuits to a no-op BEFORE any
- * tagging / judging / enrollment. Nothing auto-enrolls; every captured block
- * stays 'draft' for the EXISTING human review flow. Production = today,
- * byte-for-byte. See workflow-judge-config.ts file header.
- * ============================================================================
- *
- * When a flag is explicitly ON: for at most AUTO_ENROLL_MAX_BLOCKS_PER_RUN
- * 'draft' question_blocks in the session
- * it runs TaggingTask → WorkflowJudge. Blocks routed 'auto' (high combined
- * confidence) are enrolled WITHOUT human review by INSERTing a `question` and
- * calling `enrollCapturedBlock(tx, { ..., generatedBy: 'workflow_judge' })` (the
- * SAME enrollment owner the human path uses — only the provenance differs).
- * Blocks routed 'review' are left UNTOUCHED ('draft') for the human flow — no
- * behaviour change for them.
- *
- * This runs BETWEEN extraction ('extracted') and human review: it does NOT close
- * the session (no `commitImport`). The human review then handles the remaining
- * draft blocks exactly as before, alongside the auto-enrolled ones.
- *
- * The DEFERRED "AI auto-enrolled N items" review surface (slice 3b) reads the
- * `generated_by='workflow_judge'` event marker to let the user inspect + revert.
- */
-import { writeEvent } from '@/kernel/events';
-
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-
 import {
   type BlockAssemblyRunTaskFn,
   runBlockAssemblyForSession,
@@ -77,12 +44,43 @@ import type { TaggingOutputT } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
+/**
+ * WorkflowJudge auto-enroll path — T-OC slice 3 (YUK-145, OC-4 / OC-5).
+ *
+ * See `docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md` (OC-4/OC-5) +
+ * `docs/superpowers/plans/2026-05-30-yuk145-toc-slice3-lane.md` §5 + ADR-0026.
+ *
+ * ============================================================================
+ * CRITICAL SAFETY — OFF BY DEFAULT. With `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED`
+ * unset (the default), this function short-circuits to a no-op BEFORE any
+ * tagging / judging / enrollment. Nothing auto-enrolls; every captured block
+ * stays 'draft' for the EXISTING human review flow. Production = today,
+ * byte-for-byte. See workflow-judge-config.ts file header.
+ * ============================================================================
+ *
+ * When a flag is explicitly ON: for at most AUTO_ENROLL_MAX_BLOCKS_PER_RUN
+ * 'draft' question_blocks in the session
+ * it runs TaggingTask → WorkflowJudge. Blocks routed 'auto' (high combined
+ * confidence) are enrolled WITHOUT human review by INSERTing a `question` and
+ * calling `enrollCapturedBlock(tx, { ..., generatedBy: 'workflow_judge' })` (the
+ * SAME enrollment owner the human path uses — only the provenance differs).
+ * Blocks routed 'review' are left UNTOUCHED ('draft') for the human flow — no
+ * behaviour change for them.
+ *
+ * This runs BETWEEN extraction ('extracted') and human review: it does NOT close
+ * the session (no `commitImport`). The human review then handles the remaining
+ * draft blocks exactly as before, alongside the auto-enrolled ones.
+ *
+ * The DEFERRED "AI auto-enrolled N items" review surface (slice 3b) reads the
+ * `generated_by='workflow_judge'` event marker to let the user inspect + revert.
+ */
+import { writeEvent } from '@/kernel/events';
+import type { JudgeQuestionRow } from '@/kernel/judge';
 import {
   type MultimodalDirectImageFetchFn,
   type MultimodalDirectRunTaskFn,
   runMultimodalDirectJudge,
 } from '@/kernel/judge';
-import type { JudgeQuestionRow } from '@/kernel/judge';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
@@ -92,8 +90,7 @@ import {
 import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { resolveSubjectProfile } from '@/subjects/profile';
-import { getKnownSubjects } from '@/subjects/profile';
+import { getKnownSubjects, resolveSubjectProfile } from '@/subjects/profile';
 
 export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';
 
@@ -1153,9 +1150,7 @@ const SCAN_SOURCES: ReadonlySet<string> = new Set([
  * found none (cost guard). Holistic per-page grading that drops the extraction dependency
  * entirely = YUK-488.
  */
-export function shouldGradeStudentWork(block: {
-  structured: StructuredQuestionT | null;
-}): boolean {
+export function shouldGradeStudentWork(block: { structured: StructuredQuestionT | null }): boolean {
   if (detectStudentWork(block)) return true;
   const source = block.structured?.source;
   return source != null && SCAN_SOURCES.has(source) && !extractionAssessedHandwriting(block);

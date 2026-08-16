@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import {
   CauseCategoryDeclaration,
   RenderConfig,
@@ -10,7 +11,6 @@ import {
   resolveSubjectProfile,
   subjectProfiles,
 } from '@/subjects/profile';
-import { describe, expect, it } from 'vitest';
 
 function makeCustomProfile(overrides: Partial<SubjectProfile> = {}): SubjectProfile {
   const base = subjectProfiles.math;

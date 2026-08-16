@@ -26,6 +26,9 @@
 //   • mcq 正确答案高亮 → 从 reference_md 首字母解析（best-effort），编辑落 reference_md。
 //   • answerNote / origin（变体生成理由置信度）→ 后端无对应列，不渲。
 
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ApiError } from '@/ui/lib/api';
 import { makeLookup } from '@/ui/lib/makeLookup';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
@@ -37,9 +40,6 @@ import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import './questions.css';
 
 import {

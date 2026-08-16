@@ -7,8 +7,6 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
-
 import {
   type JudgeInvokerOutput,
   createDefaultJudgeInvoker,
@@ -29,6 +27,7 @@ import {
 } from '@/server/ai/solution-generate';
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { Tutor } from '@/server/session';
+import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
 import {
   QuestionEvidenceSnapshotError,
   loadQuestionWithAttemptSnapshot,

@@ -18,11 +18,11 @@
 // with new Date(primary.created_at * 1000), so counting calls bucketed by that
 // timestamp is a faithful per-block render counter.
 
-import type { ApiSubject } from '@/ui/hooks/useSubjects';
-import { formatRelTime } from '@/ui/lib/utils';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useCallback, useRef, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ApiSubject } from '@/ui/hooks/useSubjects';
+import { formatRelTime } from '@/ui/lib/utils';
 import { BlockEditor, type BlockFormState, type BlockRow, buildBlockForm } from './VisionTab';
 
 vi.mock('@/ui/lib/utils', async (importOriginal) => {

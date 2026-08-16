@@ -52,6 +52,11 @@
 // before the importing module's later imports). Scripts load `.env`, NOT `.env.local`.
 import './load-env';
 
+import { and, eq, inArray, or } from 'drizzle-orm';
+// ZodError is the genesis parse-barrier failure (writeEvent → parseEvent). Only THAT is a per-row data
+// problem to accumulate; anything else (DB connectivity / deadlock / constraint from db.insert or
+// upsertMaterializedIdIndex) is infra and must abort the whole backfill loud — see the catch blocks.
+import { ZodError } from 'zod';
 import { newId } from '@/core/ids';
 import type {
   GoalRowSnapshotT,
@@ -96,11 +101,6 @@ import {
   knowledgeRowToSnapshot,
   questionBlockRowToSnapshot,
 } from '@/server/projections/snapshot-mappers';
-import { and, eq, inArray, or } from 'drizzle-orm';
-// ZodError is the genesis parse-barrier failure (writeEvent → parseEvent). Only THAT is a per-row data
-// problem to accumulate; anything else (DB connectivity / deadlock / constraint from db.insert or
-// upsertMaterializedIdIndex) is infra and must abort the whole backfill loud — see the catch blocks.
-import { ZodError } from 'zod';
 
 type DbLike = Db | Tx;
 type EdgeRow = typeof knowledge_edge.$inferSelect;

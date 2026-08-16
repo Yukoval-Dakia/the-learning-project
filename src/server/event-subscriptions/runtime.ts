@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
-
-import type { Db } from '@/db/client';
 import { sql } from 'drizzle-orm';
+import type { Db } from '@/db/client';
 
 import type { EventSubscriptionOutcome } from '@/kernel/manifest';
 

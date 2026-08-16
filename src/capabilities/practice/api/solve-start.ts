@@ -5,8 +5,7 @@
 // status='active'). Returns { session_id, generated }.
 import { SolveError, startSolveSession } from '@/capabilities/practice/server/solve-session';
 import { db } from '@/db/client';
-import { deprecatedRouteResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/kernel/http';
+import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { StartSolveBodySchema } from './question-solve-contracts';
 
 export async function createSolveSession(

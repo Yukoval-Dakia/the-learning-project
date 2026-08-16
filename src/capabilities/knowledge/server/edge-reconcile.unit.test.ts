@@ -8,11 +8,11 @@
 // the superseded-edge-id carry-back, the confidence-threshold downgrade, the
 // ReconcileParseError safe-degrade surface, and the mem0 prompt-hijack red line.
 
+import { describe, expect, it, vi } from 'vitest';
 import type {
   DirectProviderLifecycleFactory,
   DirectProviderOperationOptions,
 } from '@/server/ai/direct-provider-attempt';
-import { describe, expect, it, vi } from 'vitest';
 import {
   type EdgeCandidate,
   type EdgeNeighbor,

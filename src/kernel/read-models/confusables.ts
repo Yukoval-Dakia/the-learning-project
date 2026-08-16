@@ -31,9 +31,9 @@
 // contrast-discovery.ts) — this reader stays flag-agnostic (a pure read model, like
 // misconception-read.ts whose gating lives in the writer/promote layer).
 
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { misconception_edge } from '@/db/schema';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
 
 /** Qualitative confidence band — the ONLY confidence signal that crosses the wire. */
 export type ConfusableConfBand = '高' | '中' | '低';

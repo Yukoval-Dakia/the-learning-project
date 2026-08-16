@@ -26,6 +26,7 @@
 //     映射成本引擎的 3 档获取尺度（见 acquisitionTierForQuestion 文档）。
 //   - subject profile sourcingRoutePreference：subjectProfiles（src/subjects/profile.ts）。
 
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { rotationClassForKind } from '@/capabilities/practice/server/variant-rotation';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import {
@@ -43,7 +44,6 @@ import { effectiveB } from '@/server/mastery/recalibration';
 import { getMasteryState, globalThetaForDomain } from '@/server/mastery/state';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
-import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   DEFAULT_EVIDENCE_DEADLINE_DAYS,
   DEFAULT_MAX_ATTEMPTS,

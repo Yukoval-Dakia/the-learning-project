@@ -3,8 +3,7 @@
 // 继续复用 event single-owner reader，避免在 API 层重写 event 查询语义。
 
 import { db } from '@/db/client';
-import { getEventChain } from '@/kernel/events';
-import { getEventById } from '@/kernel/events';
+import { getEventById, getEventChain } from '@/kernel/events';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { EventParamsSchema } from './event-contracts';
 

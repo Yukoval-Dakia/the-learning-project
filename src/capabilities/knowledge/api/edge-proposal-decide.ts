@@ -23,8 +23,7 @@
 import { LegacyKnowledgeEdgeDecisionBodySchema } from '@/capabilities/knowledge/api/contracts';
 import { decideKnowledgeEdgeProposal } from '@/capabilities/knowledge/public';
 import { db } from '@/db/client';
-import { deprecatedRouteResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/kernel/http';
+import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   const response = await handleLegacyEdgeDecision(req, params);

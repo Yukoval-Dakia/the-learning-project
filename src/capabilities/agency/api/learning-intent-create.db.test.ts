@@ -1,9 +1,9 @@
+import { eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event } from '@/db/schema';
 import { getProposalInboxRow } from '@/kernel/proposals/inbox';
 import { writeLearningItemProposal } from '@/kernel/proposals/producers';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
-import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { buildCreateLearningIntentHandler } from './learning-intent-create';
 

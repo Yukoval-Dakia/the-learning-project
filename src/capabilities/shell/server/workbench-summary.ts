@@ -7,6 +7,7 @@
 // week_heat 是新聚合——旧页 WeekHeat 因无 activity 聚合端点而 OMITTED
 // （page.tsx L362-366），此处补上服务端实现。
 
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { handleReviewDue } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import {
@@ -22,7 +23,6 @@ import {
 } from '@/db/schema';
 import { listMistakeProjectionRows } from '@/server/records/mistakes';
 import { type TodayProposalKpi, loadTodayProposalKpi } from '@/server/today/proposal-kpi';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { type ColdStartState, buildColdStartState } from './cold-start-state';
 
 // 与旧 today 页一致的采样上限：KPI 是「今日量级」信号，不是精确总量。

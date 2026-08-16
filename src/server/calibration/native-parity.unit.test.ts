@@ -12,6 +12,7 @@
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
 import { forwardAuc } from '@/server/calibration/auc';
 import {
   type ClusterForwardPreds,
@@ -19,7 +20,6 @@ import {
   resolveBootstrapB,
 } from '@/server/calibration/bootstrap';
 import { mulberry32 } from '@/server/calibration/rng';
-import { describe, expect, it } from 'vitest';
 
 const NODE_PATH = resolve('crates/calibration-native/calibration-native.node');
 const present = existsSync(NODE_PATH);

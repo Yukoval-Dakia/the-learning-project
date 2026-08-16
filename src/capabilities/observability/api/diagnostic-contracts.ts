@@ -1,5 +1,5 @@
-import { PROBE_RESOLUTIONS } from '@/kernel/capability-contract-schemas';
 import { z } from 'zod';
+import { PROBE_RESOLUTIONS } from '@/kernel/capability-contract-schemas';
 
 export const ConjectureScoresResponseSchema = z.object({
   score_basis: z.literal('single_point'),

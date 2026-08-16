@@ -1,13 +1,13 @@
 // YUK-17 / ADR-0018 — variant_verify handler tests.
 
+import { createId } from '@paralleldrive/cuid2';
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runAttributionAndWriteJudgeEvent } from '@/capabilities/practice/server/failure-learning-attribution';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runVariantVerify } from './variant_verify';
 
@@ -42,10 +42,7 @@ async function seedKnowledge(domain = 'yuwen') {
   });
 }
 
-async function seedParentAndVariant(opts: {
-  parentId: string;
-  variantId: string;
-}) {
+async function seedParentAndVariant(opts: { parentId: string; variantId: string }) {
   const db = testDb();
   const now = new Date();
   await db.insert(question).values({

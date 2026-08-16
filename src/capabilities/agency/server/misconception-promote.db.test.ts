@@ -5,14 +5,15 @@
 //   ② archived_at is NOT unconditionally reset — only an explicit reactivate clears it,
 //   ③ the `misc:<id>` advisory lock serializes concurrent promotes of the same cause×KC.
 // (The flag-gated live accept path is covered in conjecture-accept.db.test.ts.)
+
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type PromoteConjectureInput,
   promoteConjectureToMisconception,
 } from '@/capabilities/agency/server/misconception-promote';
 import type { Tx } from '@/db/client';
 import { misconception, misconception_edge } from '@/db/schema';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const CAUSE = 'concept';

@@ -3,12 +3,12 @@
 // 卷架(?view=shelf)/散题作答/卷模式/结果/复盘；机制不暴露——页面只见 AI 的一句话
 // 理由与判定）。路由耦合走 props 注入（壳层规则，web/src/router.tsx）。
 
-import { Btn } from '@/ui/primitives/Btn';
-import { ErrorState } from '@/ui/primitives/ErrorState';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Btn } from '@/ui/primitives/Btn';
+import { ErrorState } from '@/ui/primitives/ErrorState';
+import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import './practice-face.css';
 
 import { PfPaper } from './PfPaper';

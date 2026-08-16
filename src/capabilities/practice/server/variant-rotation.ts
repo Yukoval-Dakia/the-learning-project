@@ -18,11 +18,11 @@
 // ADR-0029). The seam stays a swappable pure function so a future AI scheduler can
 // replace ONLY this selection step — see ADR-0030 §5.
 
+import { and, inArray, sql } from 'drizzle-orm';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import type { Db, Tx } from '@/db/client';
 import { isPoolVisible, notDraftPredicate } from '@/db/predicates';
 import { event, question } from '@/db/schema';
-import { and, inArray, sql } from 'drizzle-orm';
 
 // ADR-0030 §1 — by-kind routing class.
 export type RotationClass = 'recall' | 'application';

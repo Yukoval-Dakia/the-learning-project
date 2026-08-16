@@ -14,8 +14,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { taskCatalog } from '@/ai/task-catalog';
 import { describe, expect, it } from 'vitest';
+import { taskCatalog } from '@/ai/task-catalog';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 

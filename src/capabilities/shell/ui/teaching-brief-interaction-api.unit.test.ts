@@ -4,8 +4,8 @@
 // token + keepalive, but must NOT invalidate the token on a 401 (that would kick the learner back
 // to the token gate from a background ledger write). These tests pin exactly that.
 
-import { TOKEN_STORAGE_KEY, subscribeAuthInvalidation } from '@/ui/lib/api';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TOKEN_STORAGE_KEY, subscribeAuthInvalidation } from '@/ui/lib/api';
 import { reportBriefInteraction } from './teaching-brief-interaction-api';
 
 function memoryStorage(): Storage {

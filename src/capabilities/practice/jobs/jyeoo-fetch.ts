@@ -28,6 +28,9 @@
 import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
+import { createId } from '@paralleldrive/cuid2';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import type { Job, SendOptions } from 'pg-boss';
 import {
   type SourceAssetRow,
   lockImageStorageKey,
@@ -51,9 +54,6 @@ import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
 import { type R2Client, getR2 } from '@/server/r2';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
-import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import type { Job, SendOptions } from 'pg-boss';
 import { SupplyTraceV1, type SupplyTraceV1T } from '../server/question-supply/evidence-demand';
 import {
   type JyeooFailureClass,

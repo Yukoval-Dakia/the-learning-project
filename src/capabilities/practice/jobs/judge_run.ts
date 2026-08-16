@@ -19,14 +19,14 @@
 //   强制 enableTransientRetry:false）；queue redelivery 是唯一 transient 层，worst-case
 //   付费调用 = 1 + JOB_RETRY_LIMIT。
 
+import { and, desc, eq } from 'drizzle-orm';
+import type { JobWithMetadata } from 'pg-boss';
+import { ZodError } from 'zod';
 import type { Db } from '@/db/client';
 import { event, job_events, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/server/events/writer';
 import { SubjectProfileSchema } from '@/subjects/profile';
-import { and, desc, eq } from 'drizzle-orm';
-import type { JobWithMetadata } from 'pg-boss';
-import { ZodError } from 'zod';
 import { CreateAttemptBodySchema } from '../api/contracts';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { resolveDurableProviderOverride } from '../server/judge-durable-config';

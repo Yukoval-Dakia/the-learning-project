@@ -1,5 +1,5 @@
-import type { Tx } from '@/db/client';
 import { sql } from 'drizzle-orm';
+import type { Tx } from '@/db/client';
 
 /**
  * Acquire the per-run settlement lock inside a caller-owned transaction.

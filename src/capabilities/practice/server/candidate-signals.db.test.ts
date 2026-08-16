@@ -67,6 +67,7 @@ vi.mock('@/core/theta-grid', async (importOriginal) => {
   };
 });
 
+import { eq, sql } from 'drizzle-orm';
 import {
   type CandidateInput,
   batchAggregateMisconceptionRecurrence,
@@ -90,7 +91,6 @@ import {
   mistake_variant,
   question,
 } from '@/db/schema';
-import { eq, sql } from 'drizzle-orm';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const db = testDb();

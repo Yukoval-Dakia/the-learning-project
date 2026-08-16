@@ -4,6 +4,8 @@
 // manual / 拍单题 / 拍试卷 / AI 录入四 tab 保持旧行为。路由耦合走 props 注入
 //（壳层规则，见 web/src/router.tsx）。
 
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
 import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
 import { AutoEnrolledPanel } from '@/ui/components/AutoEnrolledPanel';
 import {
@@ -21,8 +23,6 @@ import { Card } from '@/ui/primitives/Card';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { TabBar } from '@/ui/primitives/TabBar';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
 
 type ModeTab = 'manual' | 'vision_single' | 'vision_paper' | 'auto_enrolled';
 

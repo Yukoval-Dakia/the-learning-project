@@ -3,8 +3,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NoteEditor } from './NoteEditor';
-import { searchArtifacts } from './notes-api';
 import type { BodyBlock } from './notes-api';
+import { searchArtifacts } from './notes-api';
 
 vi.mock('./notes-api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./notes-api')>()),

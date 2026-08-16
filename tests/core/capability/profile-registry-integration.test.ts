@@ -1,7 +1,7 @@
+import { describe, expect, it } from 'vitest';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import { validateProfile } from '@/core/capability/validate-profile';
 import { subjectProfiles } from '@/subjects/profile';
-import { describe, expect, it } from 'vitest';
 
 describe('Profile ↔ Registry integration', () => {
   const registry = getDefaultRegistry();

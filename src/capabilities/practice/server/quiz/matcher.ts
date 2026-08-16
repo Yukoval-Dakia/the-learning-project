@@ -1,3 +1,4 @@
+import { and, eq, isNull } from 'drizzle-orm';
 import type { RunTaskFn } from '@/capabilities/practice/jobs/quiz_verify';
 import { newId } from '@/core/ids';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
@@ -31,7 +32,6 @@ import { type EmbedProviderAttemptOptions, embedText } from '@/server/ai/embed';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
-import { and, eq, isNull } from 'drizzle-orm';
 import { type DispatchResult, dispatchSupplyTarget } from '../question-supply/dispatcher';
 import {
   type EvidenceDemandV1T,

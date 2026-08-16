@@ -3,10 +3,9 @@
 // Verifies the canonical NoteReader backend route returns the aggregated note
 // payload and keeps archived/non-note artifacts out of the reader surface.
 
-import { artifact, knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
-
 import { NotePageResponseSchema } from '@/capabilities/notes/api/contracts';
+import { artifact, knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './note-page-route';
 

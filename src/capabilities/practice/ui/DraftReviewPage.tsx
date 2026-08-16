@@ -14,6 +14,9 @@
 //   • markdown 经 @/ui/lib/math-markdown；notation 由 detail.subject 对应的真实 profile
 //     决定（数学开 KaTeX、文言保留 `$...$` 标点），不再跨科默认开启公式解析。
 
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { makeLookup } from '@/ui/lib/makeLookup';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
@@ -21,9 +24,6 @@ import { Card } from '@/ui/primitives/Card';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import './draft-review.css';
 
 import {

@@ -1,6 +1,6 @@
+import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { z } from 'zod';
 import {
   runQuestionContentValidation,
   runSolveCheck,

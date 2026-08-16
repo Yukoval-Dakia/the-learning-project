@@ -6,8 +6,7 @@
 // proposal; hallucinated knowledge ids are intersected code-side; a fully
 // invalid seed soft-skips; parse failures throw (the DomainTool wrapper maps
 // throws to status:'failed').
-import { describe, expect, it, vi } from 'vitest';
-
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   knowledge,
   question,
@@ -16,7 +15,6 @@ import {
   question_generation_plan,
 } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
-import { beforeEach } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { runQuestionAuthor } from './question-author';
 

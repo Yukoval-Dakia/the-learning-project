@@ -6,6 +6,8 @@
 // to ask "what's the user struggling with right now?" without scanning
 // raw event rows.
 
+import { and, eq, inArray } from 'drizzle-orm';
+import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { material_fsrs_state, mistake_variant, question } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
@@ -14,8 +16,6 @@ import { type FailureAttempt, getFailureAttempts } from '@/kernel/read-models/fa
 // Both are byte-unchanged from the prior file-local literals (160 / 20).
 import { MISTAKE_PROMPT_SNIPPET_MAX, TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { and, eq, inArray } from 'drizzle-orm';
-import { z } from 'zod';
 
 const PROMPT_SNIPPET_MAX = MISTAKE_PROMPT_SNIPPET_MAX;
 

@@ -1,6 +1,6 @@
-import type { Db } from '@/db/client';
 import type { Job } from 'pg-boss';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Db } from '@/db/client';
 import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import { providerOperationIdForInvocation } from '../ai/provider-attempt-runtime';
 import { resolveQualifyingEventSubjects } from './active-subjects';

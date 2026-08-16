@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 import { deleteQuestion } from './practice-api';
 
 function memoryStorage(): Storage {

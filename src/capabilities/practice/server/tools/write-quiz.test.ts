@@ -3,11 +3,11 @@
 // The load-bearing contrast (RP-2): DRAFT questions are ACCEPTED here (opposite
 // precondition from write_review_plan) so a paper can include questions
 // authored in the same copilot turn, pre-accept.
-import { beforeEach, describe, expect, it } from 'vitest';
 
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { artifact, question } from '@/db/schema';
 import type { ToolContext } from '@/kernel/tools/types';
-import { eq } from 'drizzle-orm';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { writeQuizTool } from './write-quiz';
 

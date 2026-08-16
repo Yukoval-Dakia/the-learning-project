@@ -56,10 +56,7 @@ export function mergePredictedFiles(
   additionalFiles?: string[],
 ): string[];
 
-export function findSourceScanningUnitTests(input: {
-  unitFiles: string[];
-  root: string;
-}): string[];
+export function findSourceScanningUnitTests(input: { unitFiles: string[]; root: string }): string[];
 
 export function resolveRequiredUnitFiles(selection?: UnitShadowSelection): string[] | null;
 

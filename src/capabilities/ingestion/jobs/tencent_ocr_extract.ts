@@ -1,6 +1,6 @@
+import { and, eq } from 'drizzle-orm';
 import type { JobWithMetadata } from 'pg-boss';
 import sharp from 'sharp';
-
 import { type PreAttachFigure, cropAndUploadFigures } from '@/capabilities/ingestion/server/crop';
 import {
   type IngestionExtractionProgressPayloadT,
@@ -48,14 +48,13 @@ import {
   AUTO_ENROLL_SINGLETON_SECONDS,
   autoEnrollJobEnabled,
 } from '@/capabilities/ingestion/server/workflow-judge-config';
-import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { FigureRefT } from '@/core/schema/structured_question';
+import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, source_asset } from '@/db/schema';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import type { R2Client } from '@/server/r2';
 import { Ingestion } from '@/server/session';
-import { and, eq } from 'drizzle-orm';
 
 // ---------- helpers ----------
 

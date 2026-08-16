@@ -13,6 +13,7 @@
 // active_goal 非 null 时挂载，故这里 goal 必非空。数据源 getPlacementProfile 是 live 端点，
 // 与 placement probe 是否启用无关（PLACEMENT_PROBE_ENABLED dark-ship 不影响本读路径）。
 
+import { useQuery } from '@tanstack/react-query';
 import {
   type PlacementProfile,
   type ProfileKc,
@@ -24,7 +25,6 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import { useQuery } from '@tanstack/react-query';
 
 const PREVIEW_KC_LIMIT = 3;
 

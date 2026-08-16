@@ -7,6 +7,8 @@
 // appliers live in practice/server/proposal-appliers.ts. Shared proposal
 // inbox/writer machinery lives in @/kernel/proposals.
 
+import { eq } from 'drizzle-orm';
+import { z } from 'zod';
 // ADR-0032 D6-B (YUK-203 lane L6) — the pure verify-gate is reused at PROPOSE
 // time (pre-flight against the live tree) and again at ACCEPT time (the applier).
 import type { VariantProposalResult } from '@/capabilities/practice/public';
@@ -29,8 +31,6 @@ import { getActiveLearningRecord } from '@/kernel/records/queries';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { eq } from 'drizzle-orm';
-import { z } from 'zod';
 import { runQuestionAuthor } from './question-author';
 
 const TEXT_EXCERPT_MAX = 180;

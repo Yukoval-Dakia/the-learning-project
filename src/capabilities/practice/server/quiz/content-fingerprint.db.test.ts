@@ -1,8 +1,8 @@
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from '@/db/client';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { archiveQuestion } from '@/server/questions/write';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb } from '../../../../../tests/helpers/db';
 import {
   canonicalQuestionContentHash,

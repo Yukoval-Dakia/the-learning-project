@@ -2,10 +2,10 @@
 // already ported into app/globals.css. Ported from docs/design/loom-prototype/
 // components.jsx (Btn). Additive — does NOT replace legacy src/ui/primitives/Button.tsx.
 
-import { forwardRef } from 'react';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
-import { LoomIcon } from './LoomIcon';
+import { forwardRef } from 'react';
 import type { LoomIconName } from './LoomIcon';
+import { LoomIcon } from './LoomIcon';
 
 export type BtnVariant = 'primary' | 'secondary' | 'ghost' | 'quiet' | 'good' | 'hard' | 'again';
 

@@ -1,4 +1,16 @@
 // Stable server contract for consumers outside the notes capability.
+
+export type {
+  ArtifactCorrectionState,
+  ArtifactCorrectionStatus,
+} from './server/artifact-corrections';
+export {
+  activeArtifactCorrectionStatus,
+  getArtifactCorrectionState,
+  getArtifactCorrectionStates,
+} from './server/artifact-corrections';
+export { emitArtifactLifecycleEvent } from './server/artifacts/mutation-events';
+export type { BacklinksByArtifactType } from './server/block-refs';
 export {
   groupBacklinksByArtifactType,
   listBacklinks,
@@ -8,12 +20,12 @@ export {
 // artifact's body blocks into note sections; expose the single projection
 // instead of a deep import into notes/server.
 export { bodyBlocksToNoteSections } from './server/body-blocks';
-export type { BacklinksByArtifactType } from './server/block-refs';
-export {
-  interactiveForKnowledge,
-  notesForKnowledge,
-} from './server/notes-read';
-export type { NoteSummary } from './server/notes-read';
+export type {
+  CreateLearningIntentNoteFn,
+  CreateLearningIntentNoteInput,
+} from './server/learning-intent-note';
+export { createLearningIntentNote } from './server/learning-intent-note';
+export { dispatchNoteGeneration, writeNoteGenerationIntent } from './server/note-handoff';
 export {
   type PersistNoteRefineApplyResult,
   listNoteRefineChanges,
@@ -24,20 +36,9 @@ export {
   enqueueDreamingNoteRefine,
   enqueueMasteryNoteRefine,
 } from './server/note-refine-triggers';
-export { emitArtifactLifecycleEvent } from './server/artifacts/mutation-events';
+export type { NoteSummary } from './server/notes-read';
 export {
-  activeArtifactCorrectionStatus,
-  getArtifactCorrectionState,
-  getArtifactCorrectionStates,
-} from './server/artifact-corrections';
-export type {
-  ArtifactCorrectionState,
-  ArtifactCorrectionStatus,
-} from './server/artifact-corrections';
+  interactiveForKnowledge,
+  notesForKnowledge,
+} from './server/notes-read';
 export type { NoteUpdateAcceptResult } from './server/proposal-accept-applier';
-export { dispatchNoteGeneration, writeNoteGenerationIntent } from './server/note-handoff';
-export { createLearningIntentNote } from './server/learning-intent-note';
-export type {
-  CreateLearningIntentNoteFn,
-  CreateLearningIntentNoteInput,
-} from './server/learning-intent-note';

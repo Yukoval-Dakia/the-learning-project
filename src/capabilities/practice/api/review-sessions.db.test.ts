@@ -1,7 +1,7 @@
-import { artifact, learning_session } from '@/db/schema';
-import { Review } from '@/server/session';
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { artifact, learning_session } from '@/db/schema';
+import { Review } from '@/server/session';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { ReviewSessionCreatedSchema } from './contracts';
 import { GET as legacyPracticeGet, POST as legacyPracticePost } from './legacy-practice';

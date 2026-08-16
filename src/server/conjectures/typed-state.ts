@@ -20,11 +20,11 @@
 // contract the producer must satisfy, and keep the four-way conjunction strict. Relaxing the
 // gate would commit unnamed confusions, which is the exact failure §修正-4 exists to prevent.
 
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { kc_typed_state } from '@/db/schema';
 import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
-import { and, eq, inArray, sql } from 'drizzle-orm';
 
 export type TypedState = 'no-evidence' | 'confused-with-X' | 'mastered';
 export type Lifecycle = 'open' | 'resolved';

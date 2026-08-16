@@ -1,5 +1,5 @@
-import type { MemoryClient } from '@/server/memory/client';
 import { vi } from 'vitest';
+import type { MemoryClient } from '@/server/memory/client';
 
 // YUK-557 (F7) — a MemoryClient test double: every method a no-op default, with a
 // spread override for the one or two methods a given test actually drives. Only a

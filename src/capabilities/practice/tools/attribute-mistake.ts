@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import {
   getFailureAttemptWithReasoningTraceById,
   getJudgeForAttempt,
@@ -5,7 +6,6 @@ import {
 import { createFailureLearning } from '@/capabilities/practice/server/failure-learning';
 import { makePracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
 import type { Db } from '@/db/client';
-import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';
 
 const TEXT_EXCERPT_MAX = 180;

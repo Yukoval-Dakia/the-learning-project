@@ -1,10 +1,10 @@
 'use client';
 
+import { type ReactNode, useEffect, useState } from 'react';
 import { getInternalToken, setInternalToken } from '@/ui/lib/api';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
-import { type ReactNode, useEffect, useState } from 'react';
 
 type GateState = 'loading' | 'gate' | 'authed';
 

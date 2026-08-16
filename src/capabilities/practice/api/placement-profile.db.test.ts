@@ -4,10 +4,10 @@
 // (getMasteryProjection SoT), tested-first ordering, untested in-scope KCs surfacing as
 // tested:false, scope-less / unknown-goal / missing-param edges.
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import { goal, knowledge, mastery_state } from '@/db/schema';
 import { upsertLearnerAxisState } from '@/server/calibration/axis-writer';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 import { PlacementProfileResponseSchema } from './placement-contracts';

@@ -2,6 +2,7 @@
 // queue) while its mind_probe question has no experimental:probe_result event; once
 // answered it drops out. Ordered newest-first, capped at ACTIVE_PROBES_MAX.
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   answerProbe,
   serveProbeOnce,
@@ -9,7 +10,6 @@ import {
 import { PrepDeskProbesResponseSchema } from '@/capabilities/shell/api/contracts';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { loadActiveProbes } from './prep-desk-probes';

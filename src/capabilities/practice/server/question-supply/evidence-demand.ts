@@ -1,5 +1,5 @@
-import { DifficultyEvidence, type DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
 import { z } from 'zod';
+import { DifficultyEvidence, type DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
 
 export const EVIDENCE_DEMAND_VERSION = 1 as const;
 export const SUPPLY_TRACE_VERSION = 1 as const;

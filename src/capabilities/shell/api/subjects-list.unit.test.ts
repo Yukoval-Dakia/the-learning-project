@@ -3,9 +3,9 @@
 // 合同：逐字段裁 + server-only AI 字段绝不下发（负测是合同不是巧合）+ general
 // 结构性不在列 + isGeneralFallback 派生经 resolution-cache。
 
+import { afterEach, describe, expect, it } from 'vitest';
 import { replaceSubjectTraitResolutions } from '@/server/subjects/resolution-cache';
 import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
-import { afterEach, describe, expect, it } from 'vitest';
 import { buildSubjectsList } from './subjects-list';
 
 afterEach(() => {

@@ -28,12 +28,12 @@
 // YUK-673 起，两条路径在返回前都经过同一个纯函数 learning-mix post-filter。本模块仍负责
 // 它之外的 async 信号/LLM/sampler 路径。
 
+import { inArray } from 'drizzle-orm';
 import { QuestionKind } from '@/core/schema/business';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { DIFFICULTY_PROXY_WEIGHT } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
-import { inArray } from 'drizzle-orm';
 
 import {
   buildMemoryPriorAdvisoryBlock,

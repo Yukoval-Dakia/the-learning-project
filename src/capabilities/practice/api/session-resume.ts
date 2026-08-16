@@ -3,8 +3,7 @@
 // /review?session=<id> URL-param resume on mount.
 
 import { db } from '@/db/client';
-import { deprecatedRouteResponse } from '@/kernel/http';
-import { errorResponse } from '@/kernel/http';
+import { deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { Review } from '@/server/session';
 
 export async function POST(_req: Request, params: Record<string, string>): Promise<Response> {

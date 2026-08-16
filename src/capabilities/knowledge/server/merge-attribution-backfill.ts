@@ -21,6 +21,7 @@
 // Idempotent by construction: every repair helper queries "rows still referencing fromId" and no-ops
 // when none exist, so a second run finds nothing (the backfill test asserts this).
 
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import type { MergeRepairEntryT } from '@/core/schema/event/known';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -36,7 +37,6 @@ import {
   question,
 } from '@/db/schema';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import { repairMergeAttributionForFromId } from './proposals';
 
 // ── merge-chain resolution (spec §4 decision 4b) ─────────────────────────────────────────────────

@@ -3,10 +3,10 @@
 // 载体承接）。直达加载语义：两个 query 缓存由测试显式喂入（setQueryData），组件
 // 不依赖列表页在场——mock 到缓存命中 = SSR 零请求。
 
-import { ApiError } from '@/ui/lib/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import { ApiError } from '@/ui/lib/api';
 import { AdminSubjectTraitsSurface, isCasStale } from './subject-traits';
 import type { AdminSubjectRow } from './subjects';
 

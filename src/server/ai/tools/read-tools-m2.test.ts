@@ -1,3 +1,5 @@
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { capabilities } from '@/capabilities';
 import { getLearningItemContextTool } from '@/capabilities/agency/server/tools/learning-item-context';
 import {
@@ -36,8 +38,6 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { ToolContext } from '@/kernel/tools/types';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, getTool, listTools } from './registry';

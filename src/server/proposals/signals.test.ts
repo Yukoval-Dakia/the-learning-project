@@ -1,3 +1,5 @@
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { event, proposal_signals } from '@/db/schema';
 import {
   PROPOSAL_DISMISS_COOLDOWN_DAYS,
@@ -7,8 +9,6 @@ import {
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const source = {

@@ -3,12 +3,12 @@
 // job-level guards — the RESEARCH_MEETING_AGENT_ENABLED kill switch and the dayKey
 // nonce-claim idempotency — WITHOUT touching Postgres.
 
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   RESEARCH_MEETING_AGENT_ACTOR,
   SCAN_ACTION,
 } from '@/capabilities/agency/server/meeting/director';
 import type { WriteEventInput } from '@/kernel/events';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   type AgentNightlyDeps,

@@ -1,3 +1,5 @@
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, proposal_signals } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import {
@@ -9,8 +11,6 @@ import {
 } from '@/kernel/proposals/inbox';
 import { recordProposalDecisionSignal } from '@/kernel/proposals/signals';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 describe('proposal inbox reader', () => {

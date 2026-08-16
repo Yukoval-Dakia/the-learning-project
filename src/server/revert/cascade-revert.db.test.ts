@@ -20,6 +20,9 @@
 // / material_fsrs_state → imports tests/helpers/db). Matches allTestInclude's
 // `src/**/*.test.ts` and is NOT in fastTestInclude → db config.
 
+import { and, eq } from 'drizzle-orm';
+import postgres from 'postgres';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { writeAttemptSnapshotBrackets } from '@/capabilities/practice/server/attempt-snapshot';
 import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
@@ -29,9 +32,6 @@ import type {
 } from '@/core/schema/event/state-snapshot';
 import { event, knowledge, knowledge_edge, mastery_state, material_fsrs_state } from '@/db/schema';
 import { gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
-import { and, eq } from 'drizzle-orm';
-import postgres from 'postgres';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { upsertFsrsState } from '../fsrs/state';
 import { upsertMasteryState } from '../mastery/state';

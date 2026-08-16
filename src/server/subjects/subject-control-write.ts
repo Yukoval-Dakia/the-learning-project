@@ -11,6 +11,7 @@
 // rebuild 不再把控制面名称洗回 genesis 旧值（YUK-728）。
 
 import { isDeepStrictEqual } from 'node:util';
+import { and, eq, isNull, ne } from 'drizzle-orm';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import { validateProfile } from '@/core/capability/validate-profile';
 import { newId } from '@/core/ids';
@@ -37,7 +38,6 @@ import {
   type SubjectTraitKind,
   type SubjectTraitPayloads,
 } from '@/subjects/trait-schemas';
-import { and, eq, isNull, ne } from 'drizzle-orm';
 
 export type ControlWriteResult =
   | { kind: 'ok'; subjectRevision: number }

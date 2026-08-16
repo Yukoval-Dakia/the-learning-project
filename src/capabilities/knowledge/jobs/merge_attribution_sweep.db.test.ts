@@ -6,10 +6,10 @@
 // Review-round coverage (YUK-544): per-winner throw isolation (A1), the census→repair TOCTOU
 // winner-liveness re-verify (C1, via the onBeforeRepairPhase test seam), and the WARN water level (S1).
 
-import { db } from '@/db/client';
-import { event, knowledge, mastery_state, misconception_edge, question } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { db } from '@/db/client';
+import { event, knowledge, mastery_state, misconception_edge, question } from '@/db/schema';
 import { resetDb } from '../../../../tests/helpers/db';
 import { runMergeAttributionSweep } from './merge_attribution_sweep';
 

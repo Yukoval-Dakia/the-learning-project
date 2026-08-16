@@ -1,7 +1,7 @@
-import { event, provider_attempt, provider_attempt_admission } from '@/db/schema';
 import { eq, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { event, provider_attempt, provider_attempt_admission } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   createMem0OpaqueOperationContext,

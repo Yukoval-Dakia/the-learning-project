@@ -13,6 +13,7 @@
 // they accepted the conjecture; the 作答区 shows the neutral probe question, not a
 // "we think you're wrong about X" primer.
 
+import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_QUESTION_SOURCE,
@@ -20,7 +21,6 @@ import {
 } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
-import { and, desc, eq, sql } from 'drizzle-orm';
 
 // Single-source the persisted probe contract from core without reaching into the
 // agency capability's server implementation.

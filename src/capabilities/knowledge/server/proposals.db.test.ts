@@ -3,6 +3,8 @@
 // Pre-Step-9 tests INSERTed dreaming_proposal rows; post-Step-9 the legacy
 // table is gone. Seed propose events directly + assert event-driven flow.
 
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KnowledgeRowSnapshot } from '@/core/schema/event/genesis';
 import {
   event,
@@ -21,8 +23,6 @@ import {
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
 } from '@/server/projections/gather';
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   acceptProposal,

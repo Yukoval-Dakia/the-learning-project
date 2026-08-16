@@ -25,6 +25,8 @@
 //     pipeline + ADR-0025 goal strand) not yet exposed to this page. No mock.
 //     Phase-deferred context: docs/design/2026-06-04-u0-decisions.md D5.
 
+import { useQuery } from '@tanstack/react-query';
+import { type KeyboardEvent, type ReactNode, useRef, useState } from 'react';
 import { apiJson } from '@/ui/lib/api';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -32,12 +34,10 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful } from '@/ui/primitives/Stateful';
-import { useQuery } from '@tanstack/react-query';
-import { type KeyboardEvent, type ReactNode, useRef, useState } from 'react';
 import { CoachCalibrationView } from './CoachCalibrationView';
-import { EffectivenessTrendPanel } from './EffectivenessTrendPanel';
 import { COACH_VIEWS, type CoachView, DEFAULT_COACH_VIEW, VIEW_QUERY } from './coach-hub-view';
 import { browserTimeZone, weeklyReviewPath } from './coach-weekly';
+import { EffectivenessTrendPanel } from './EffectivenessTrendPanel';
 
 interface WeeklyResponse {
   window: { days: number; from: number; to: number; time_zone: string };
@@ -248,13 +248,7 @@ function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
   );
 }
 
-function CoachReport({
-  data,
-  navigate,
-}: {
-  data: WeeklyResponse;
-  navigate: (to: string) => void;
-}) {
+function CoachReport({ data, navigate }: { data: WeeklyResponse; navigate: (to: string) => void }) {
   const { totals, ratings, daily, top_causes, top_knowledge } = data;
   const distTotal = ratings.again + ratings.hard + ratings.good + ratings.easy;
   const correctRate =

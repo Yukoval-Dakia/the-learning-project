@@ -1,8 +1,7 @@
 import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import { MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import { db } from '@/db/client';
-import { resourceResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/kernel/http';
+import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
 import { getR2 } from '@/server/r2';
 
 // Single-source the per-image cap (src/core/limits.ts) so the DOCX embedded-media

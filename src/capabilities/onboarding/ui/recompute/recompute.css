@@ -71,7 +71,7 @@
 /* running (B) — near-instant flash, not a spinner-wait */
 .rc-verify.rc-state-running .rc-verify-icon {
   color: var(--ink-3);
-  animation: rc-spin .54s linear;
+  animation: rc-spin 0.54s linear;
 }
 @keyframes rc-spin {
   to {
@@ -204,7 +204,7 @@
       color-mix(in oklab, var(--paper-raised) 75%, transparent),
       transparent
     );
-    animation: rc-shimmer .54s var(--ease-out);
+    animation: rc-shimmer 0.54s var(--ease-out);
   }
   @keyframes rc-shimmer {
     to {
@@ -442,7 +442,7 @@
   color: var(--hard-ink);
 }
 .rc-cal.rc-state-running .rc-cal-icon {
-  animation: rc-spin .54s linear;
+  animation: rc-spin 0.54s linear;
 }
 .rc-cal-text {
   flex: 1 1 auto;

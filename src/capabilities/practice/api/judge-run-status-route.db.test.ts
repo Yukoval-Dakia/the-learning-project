@@ -2,11 +2,11 @@
 // Covers: unknown run_id → 404 (not a dishonest 200 queued, #7); a queued run → 200
 // queued; a done run → 200 done with the structured verdict payload (#11).
 
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { event, job_events } from '@/db/schema';
 import * as bossClient from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import * as judgeDispatch from '../server/judge-run-dispatch';
 import { judgeRunJobId, recordJudgePendingAttempt } from '../server/judge-run-dispatch';

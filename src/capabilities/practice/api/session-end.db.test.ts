@@ -1,9 +1,9 @@
 // ADR-0013 — POST /api/review/sessions/[id]/end closes the session.
 
-import { learning_session } from '@/db/schema';
-import { Review } from '@/server/session';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { learning_session } from '@/db/schema';
+import { Review } from '@/server/session';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { LegacyReviewSessionTransitionResponseSchema } from './contracts';
 import { POST } from './session-end';

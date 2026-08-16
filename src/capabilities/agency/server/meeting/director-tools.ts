@@ -14,6 +14,9 @@
 // runs through buildMcpServer.beforeExecute, hosted here bespoke because the write face
 // does not go through the registry (§0.B).
 
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { and, eq, inArray, ne, or } from 'drizzle-orm';
+import { z } from 'zod';
 import {
   conjectureKey,
   effectiveCauseForConjectureFailure,
@@ -44,15 +47,12 @@ import { CauseCategoryId } from '@/core/schema/cause';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { type WriteAiProposalInput, writeAiProposal } from '@/kernel/proposals/writer';
-import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getMasteryProjection } from '@/server/mastery/state';
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { and, eq, inArray, ne, or } from 'drizzle-orm';
-import { z } from 'zod';
 import { filterPrimaryEvidenceRefs, isPrimaryEvidenceRef } from '../scout/report-findings';
 import {
   DIRECTOR_SERVER_NAME,

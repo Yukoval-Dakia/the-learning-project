@@ -1,5 +1,5 @@
-import { RetryableError } from '@/core/schema/structured_question';
 import { ocr } from 'tencentcloud-sdk-nodejs-ocr';
+import { RetryableError } from '@/core/schema/structured_question';
 
 // DUAL-ENGINE (YUK-253): GLM-OCR is the default extraction engine; this
 // Tencent client is RETAINED PERMANENTLY as the `EXTRACT_OCR_ENGINE='tencent'`

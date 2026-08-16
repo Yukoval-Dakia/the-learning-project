@@ -1,11 +1,11 @@
 // Task #17 — variant_gen handler tests.
 
-import { cost_ledger, event, knowledge, mistake_variant, question } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
-import { resolveSubjectProfile } from '@/subjects/profile';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { cost_ledger, event, knowledge, mistake_variant, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { VARIANT_GEN_QUEUE, failureLearningJobId } from '../jobs/failure-learning-jobs';
 import { runAttributionAndWriteJudgeEvent } from './failure-learning-attribution';

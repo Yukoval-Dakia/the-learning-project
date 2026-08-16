@@ -17,6 +17,7 @@
 // 挂知识点·补参考答案" + "OCR 默认/VLM 兜底" describe YUK-482's end state + the OCR/
 // VLM ordering decision, neither true on this path today.
 
+import { useEffect, useRef, useState } from 'react';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset } from '@/ui/lib/assets';
 import { startIngestionOperation } from '@/ui/lib/ingestion-operations';
@@ -25,7 +26,6 @@ import { useIngestionSSE } from '@/ui/lib/sse';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { useEffect, useRef, useState } from 'react';
 import { ObSteps } from './ObSteps';
 import './onboarding.css';
 

@@ -14,11 +14,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildHubSyncRecoveryHandler } from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
 import { readHubSyncHealth } from '@/capabilities/observability/server/hub-sync';
+import { NoteRefineApplyError } from '@/core/blocks/apply-note-patch';
 import { artifact, knowledge, knowledge_edge } from '@/db/schema';
 import { PgPresenceStore } from '@/server/artifacts/presence/pg';
 import { sendHubSyncMutationWake } from '@/server/boss/hub-sync-wake';
-
-import { NoteRefineApplyError } from '@/core/blocks/apply-note-patch';
 import { gatherAndFoldArtifact } from '@/server/projections/gather';
 import { backfillArtifactGenesis } from '../../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

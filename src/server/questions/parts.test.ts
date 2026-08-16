@@ -3,10 +3,10 @@
 // kind='question_part', linked to its parent via parent_question_id + part_index,
 // with created_by NULL (provenance via metadata).
 
-import { question } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { question } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { QUESTION_PART_KIND, createQuestionPart, representMultiPartQuestion } from './parts';
 

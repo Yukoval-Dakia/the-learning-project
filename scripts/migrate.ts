@@ -9,12 +9,12 @@
 // Idempotent: drizzle tracks applied migrations in `__drizzle_migrations`
 // table — re-runs are no-ops.
 
-import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
-import * as schema from '@/db/schema';
-import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-traits';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
+import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
+import * as schema from '@/db/schema';
+import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-traits';
 
 const url = process.env.DATABASE_URL;
 if (!url) {

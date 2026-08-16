@@ -1,5 +1,5 @@
-import type { Db } from '@/db/client';
 import { sql } from 'drizzle-orm';
+import type { Db } from '@/db/client';
 
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';

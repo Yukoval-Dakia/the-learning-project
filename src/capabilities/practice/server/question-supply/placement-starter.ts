@@ -1,3 +1,5 @@
+import { and, eq } from 'drizzle-orm';
+import type { SendOptions } from 'pg-boss';
 import type { Db, Tx } from '@/db/client';
 import { placement_starter_claim } from '@/db/schema';
 import {
@@ -8,8 +10,6 @@ import {
   placementJobState,
 } from '@/kernel/placement-jobs';
 import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
-import { and, eq } from 'drizzle-orm';
-import type { SendOptions } from 'pg-boss';
 import { dispatchSupplyTarget } from './dispatcher';
 import { EvidenceDemandV1, evidenceDemandToTargetContext } from './evidence-demand';
 import type { QuestionSupplyTarget } from './target-discovery';

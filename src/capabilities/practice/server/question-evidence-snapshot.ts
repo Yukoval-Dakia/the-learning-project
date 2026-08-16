@@ -1,3 +1,5 @@
+import { eq, getTableColumns } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import {
   AttemptQuestionSnapshot,
   type AttemptQuestionSnapshotT,
@@ -5,8 +7,6 @@ import {
 } from '@/core/schema/question-evidence-snapshot';
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
-import { eq, getTableColumns } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/pg-core';
 
 type DbLike = Db | Tx;
 type QuestionEvidenceSnapshotSource = typeof question.$inferSelect;

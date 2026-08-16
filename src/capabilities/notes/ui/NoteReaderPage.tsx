@@ -5,6 +5,8 @@
 // 编辑保存 = PATCH body-blocks 乐观锁（409 → 提示刷新，pre-flight B 偏离②）；
 // AI refine 痕迹与 undo 接 ai-changes 链（T5 已验真）。
 
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
 import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
 import { ApiError } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
@@ -13,8 +15,6 @@ import { ErrorState } from '@/ui/primitives/ErrorState';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
 import './note-reader.css';
 
 import { NoteBlockView, blockOutlineLabel, questionDetailHref } from './NoteBlocks';

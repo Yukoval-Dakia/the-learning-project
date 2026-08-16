@@ -13,9 +13,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { z } from 'zod';
-
-import { targetFingerprint } from '@/capabilities/practice/public';
-import { SUPPLY_DISPATCH_COOLDOWN_DAYS } from '@/capabilities/practice/public';
+import { SUPPLY_DISPATCH_COOLDOWN_DAYS, targetFingerprint } from '@/capabilities/practice/public';
 import { db } from '@/db/client';
 import { event, item_calibration, knowledge, learning_item, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';

@@ -1,6 +1,6 @@
-import { db } from '@/db/client';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { db } from '@/db/client';
 import { resetDb } from '../../../../tests/helpers/db';
 import { withinComposePaidWorkLock } from './compose-paid-work-lock';
 

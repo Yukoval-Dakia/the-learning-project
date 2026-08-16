@@ -3,8 +3,8 @@ import { and, eq } from 'drizzle-orm';
 
 import { emitArtifactBodyBlocksEditEvent } from '@/capabilities/notes/server/artifacts/mutation-events';
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
-import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/business';
+import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { ApiError } from '@/kernel/http';

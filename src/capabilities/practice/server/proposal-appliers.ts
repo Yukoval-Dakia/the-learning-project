@@ -26,8 +26,7 @@ import {
 } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event, mistake_variant, question } from '@/db/schema';
-import { getCorrectionStatus } from '@/kernel/events';
-import { writeEvent } from '@/kernel/events';
+import { getCorrectionStatus, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';

@@ -1,5 +1,8 @@
 // YUK-15 — unit tests for record_processing helpers.
 
+import { createId } from '@paralleldrive/cuid2';
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { learning_record } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import {
@@ -9,9 +12,6 @@ import {
   markRecordsLinked,
   rollbackRecordsActioned,
 } from '@/kernel/records/record-processing';
-import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 async function seedRecord(id: string, status: 'raw' | 'linked' | 'actioned' | 'archived' = 'raw') {

@@ -4,8 +4,9 @@
  * DB-backed (builds the candidate grid from the knowledge table) with an
  * injected runTaskFn so no real LLM is called. See ADR-0026.
  */
-import type { TaggingInputT } from '@/core/schema/tagging';
+
 import { beforeEach, describe, expect, it } from 'vitest';
+import type { TaggingInputT } from '@/core/schema/tagging';
 
 import { knowledge, knowledge_edge } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

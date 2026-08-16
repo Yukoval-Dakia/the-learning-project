@@ -2,12 +2,12 @@
 // writes a rate event + (for accept-class decisions) inserts the edge + writes
 // a generate event, all in one transaction.
 
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { LegacyKnowledgeEdgeDecisionResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { newId } from '@/core/ids';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './edge-proposal-decide';
 

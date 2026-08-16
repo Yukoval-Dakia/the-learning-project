@@ -1,5 +1,5 @@
-import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
 import { z } from 'zod';
+import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
 import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
 
 const KeywordJudgeQuestion = z.object({

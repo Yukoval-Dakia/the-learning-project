@@ -27,7 +27,7 @@
 //
 // NEVER calls reconcile (settlement single-home stays with the deterministic lane).
 
-import { writeEvent } from '@/kernel/events';
+import { and, eq, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import {
@@ -44,7 +44,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
-import { and, eq, sql } from 'drizzle-orm';
+import { writeEvent } from '@/kernel/events';
 
 /** Opt-in dark-ship flag. Handler uses the shared runtime-flag grammar. */
 export const RESEARCH_MEETING_AGENT_ENABLED_ENV = 'RESEARCH_MEETING_AGENT_ENABLED';

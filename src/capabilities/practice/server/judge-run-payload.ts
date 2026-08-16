@@ -9,10 +9,10 @@
 // 依赖轻：db schema 行类型 + zod + drizzle 算子；`Db` 只作参数类型传入，不 import db client
 // 单例（保持本模块可被 api/ 与 jobs/ 双向复用而不牵入运行时连接）。
 
-import type { Db } from '@/db/client';
-import { event, type question } from '@/db/schema';
 import { and, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
+import type { Db } from '@/db/client';
+import { event, type question } from '@/db/schema';
 
 type QuestionRow = typeof question.$inferSelect;
 

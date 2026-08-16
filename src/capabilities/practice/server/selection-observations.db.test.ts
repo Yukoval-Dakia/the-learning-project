@@ -2,14 +2,14 @@
 // 断言来自 roadmap §Task5 Step3：拒 prob 0 / 持久化 selected 题带 signals JSON /
 // 按 date+ref_id 查得到。
 
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   getSelectionObservations,
   recordSelectionObservation,
 } from '@/capabilities/practice/server/selection-observations';
 import { selection_observation } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const db = testDb();

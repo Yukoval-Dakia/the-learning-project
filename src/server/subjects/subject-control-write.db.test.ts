@@ -3,6 +3,8 @@
 // 换绑，共享 payload 未动，孤儿保留）15（validate 无状态零落库）16（retire/
 // restore + general retire 拒 + restore 撞名）。
 
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
 import {
   event,
@@ -16,8 +18,6 @@ import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
 import { knowledgeRowToSnapshot } from '@/server/projections/snapshot-mappers';
 import { subjectRootId } from '@/server/subjects/ensure-subject-root';
 import { isGeneralFallbackFor } from '@/server/subjects/resolution-cache';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { hydrateSubjectRegistryFromDb } from './hydrate';
 import { reconcileBuiltinTraits } from './reconcile-builtin-traits';

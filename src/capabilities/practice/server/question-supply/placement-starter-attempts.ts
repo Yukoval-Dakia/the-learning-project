@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import {
@@ -9,7 +10,6 @@ import {
   placement_starter_cost_component,
   question,
 } from '@/db/schema';
-import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import { placementStarterAttemptId } from './placement-starter-identity';
 import { markPlacementStarterClaimTerminal } from './placement-starter-store';
 
@@ -48,10 +48,10 @@ export class PlacementStarterStaleAuthorityError extends Error {}
 export class PlacementStarterUnderfillError extends Error {}
 export class PlacementStarterDeadlineError extends Error {}
 
-function canonicalSettlementResult(settlement: {
-  cost: number | null;
-  overCap: boolean | null;
-}): { overCap: boolean; costUnknown: boolean } {
+function canonicalSettlementResult(settlement: { cost: number | null; overCap: boolean | null }): {
+  overCap: boolean;
+  costUnknown: boolean;
+} {
   if (settlement.cost === null) {
     if (settlement.overCap !== null) {
       throw new PlacementStarterAdmissionError(
@@ -68,10 +68,9 @@ function canonicalSettlementResult(settlement: {
   return { overCap: settlement.overCap, costUnknown: false };
 }
 
-export function placementDeliveryMetadata(input: {
-  retryCount: unknown;
-  retryLimit: unknown;
-}): { deliveryNo: number } {
+export function placementDeliveryMetadata(input: { retryCount: unknown; retryLimit: unknown }): {
+  deliveryNo: number;
+} {
   if (input.retryLimit !== 2) {
     throw new PlacementStarterAdmissionError('placement quiz_gen retryLimit must be 2');
   }

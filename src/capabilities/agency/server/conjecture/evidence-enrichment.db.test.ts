@@ -11,6 +11,8 @@
 // → real gatherConjectureEvidence → real enrichEvidenceCells — so a regression in
 // any of the three seams shows up here, not only in the mocked job unit test.
 
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { gatherConjectureEvidence } from '@/capabilities/agency/server/conjecture/evidence';
 import {
   CONJECTURE_EVIDENCE_CHOICES_PER_FIELD,
@@ -21,8 +23,6 @@ import type { FigureRefT } from '@/core/schema/structured_question';
 import { event, knowledge, question } from '@/db/schema';
 import { getFailureAttemptsWithReasoningTrace } from '@/kernel/read-models/failure-attempts';
 import type { MasteryProjection } from '@/server/mastery/state';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { UNTRUSTED_TEXT_CHAR_CAP } from '../scout/untrusted-text';
 

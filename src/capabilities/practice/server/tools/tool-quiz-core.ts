@@ -12,11 +12,11 @@
 // tool_kind values) stays in the wrappers, so write_review_plan's observable
 // behavior is byte-identical to its pre-extraction INSERT.
 
+import type { z } from 'zod';
 import { type AgentRef, ToolState } from '@/core/schema/business';
 import type { Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
-import type { z } from 'zod';
 
 type AgentRefT = z.infer<typeof AgentRef>;
 

@@ -41,8 +41,6 @@ vi.mock('@/server/ai/runner', () => ({
   })),
 }));
 
-import { POST } from './import';
-
 // YUK-503 (YUK-471 W3-D test hardening) — fold==row parity helpers for the set_status writers.
 // The import POST emits a canonical `experimental:question_block_lifecycle` (op='set_status') alongside
 // each imperative status UPDATE; these let the test prove the additive double-write keeps the event-log
@@ -52,6 +50,7 @@ import { gatherAndFoldQuestionBlock } from '@/server/projections/gather';
 import { questionBlockLiveRowToSnapshot } from '@/server/projections/parity';
 import { diffSnapshots } from '@/server/projections/snapshot-diff';
 import { backfillQuestionBlockGenesis } from '../../../../scripts/backfill-genesis-events';
+import { POST } from './import';
 
 // ---- helpers ----
 

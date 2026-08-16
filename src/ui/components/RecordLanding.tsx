@@ -16,9 +16,9 @@
 //   - 「挂到哪些知识点」从用户刚刚确认并提交的本地表单快照映射，不依赖 import
 //     响应重复回传 knowledge_ids。
 
+import { useState } from 'react';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { useState } from 'react';
 
 export interface RecordLandingKnowledge {
   id: string;

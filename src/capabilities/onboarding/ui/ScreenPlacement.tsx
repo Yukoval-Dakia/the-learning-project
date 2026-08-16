@@ -17,6 +17,8 @@
 // still needs the cold-start bridge on the upload path (YUK-482); this screen renders all
 // states and works fully on a warm tree / post-bridge.
 
+import { useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   type QuestionDetail,
   computeLatencyMs,
@@ -31,8 +33,6 @@ import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
-import { useQuery } from '@tanstack/react-query';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ObSteps } from './ObSteps';
 import {
   type PlacementQuestionRef,

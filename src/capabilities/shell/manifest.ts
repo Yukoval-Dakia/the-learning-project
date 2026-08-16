@@ -1,8 +1,8 @@
+import { z } from 'zod';
 import { ProposalDecisionInput } from '@/core/schema/proposal';
 import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
-import { z } from 'zod';
 import {
   AutoAppliedProposalDigestSchema,
   LegacyProposalDecisionBodySchema,

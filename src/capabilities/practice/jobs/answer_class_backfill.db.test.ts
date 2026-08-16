@@ -1,7 +1,7 @@
-import { db } from '@/db/client';
-import { question } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { db } from '@/db/client';
+import { question } from '@/db/schema';
 import { resetDb } from '../../../../tests/helpers/db';
 import { runAnswerClassBackfill } from './answer_class_backfill';
 

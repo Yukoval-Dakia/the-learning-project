@@ -13,6 +13,7 @@
 // (insert/update knowledge rows) happens transactionally with the rate event
 // write to keep accept atomic.
 
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { updateGoalScope } from '@/capabilities/agency/public';
 import { newId } from '@/core/ids';
 import { applyKnowledgeMergeToIds } from '@/core/projections/learning_item';
@@ -43,23 +44,20 @@ import { retireMasteryStateOnMerge } from '@/server/mastery/state';
 import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
-import {
-  assertLearningItemParity,
-  learningItemLiveRowToSnapshot,
-  learningItemsWithGenesisAnchor,
-} from '@/server/projections/parity';
 // YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns) +
 // the applicability gate (skip nodes that predate event-sourcing — no genesis anchor → fold
 // is null → not a real mismatch; the backfill establishes those anchors later).
 import {
   assertKnowledgeNodeParity,
+  assertLearningItemParity,
   knowledgeEdgesWithGenesisAnchor,
   knowledgeLiveRowToSnapshot,
   knowledgeNodesWithGenesisAnchor,
+  learningItemLiveRowToSnapshot,
+  learningItemsWithGenesisAnchor,
 } from '@/server/projections/parity';
 // YUK-471 W1 PR-B1 — the SoT-flip gate (default OFF; projection becomes the row writer when ON).
 import { projectionIsWriter } from '@/server/projections/sot-flag';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import {
   archiveKnowledgeEdge,
   createKnowledgeEdge,

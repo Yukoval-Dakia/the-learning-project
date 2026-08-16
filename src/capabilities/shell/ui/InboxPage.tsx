@@ -8,6 +8,8 @@
 // shell.css）。偏差（design pre-flight 预批）：①不渲 demo window 全局数据，A 块走真读模型；
 // ②C 块「去向」用 KIND_META label + reason_md（真 wire，非设计 demo 文案）。
 
+import { type InfiniteData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
 import { getTree } from '@/capabilities/knowledge/ui-public';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -16,10 +18,6 @@ import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import { type InfiniteData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
-
-import { ProposalCard } from './ProposalCard';
 import {
   type AutoAppliedRowWire,
   KIND_META,
@@ -42,6 +40,7 @@ import {
   bucketPendingByTier,
   undoRemainingMs,
 } from './inbox-tier';
+import { ProposalCard } from './ProposalCard';
 import './shell.css';
 
 function tierIcon(name: string): LoomIconName {

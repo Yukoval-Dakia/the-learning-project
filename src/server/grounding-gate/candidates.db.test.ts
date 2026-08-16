@@ -1,6 +1,6 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, knowledge, question } from '@/db/schema';
 import { collectGroundingGateCandidates } from '@/server/grounding-gate/candidates';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const NOW = new Date('2026-07-29T00:00:00.000Z');

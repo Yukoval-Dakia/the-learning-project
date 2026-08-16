@@ -91,8 +91,8 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: logMock.tool,
 }));
 
-import { tasks } from '@/ai/registry';
 import type { JsonSchemaOutputFormat } from '@anthropic-ai/claude-agent-sdk';
+import { tasks } from '@/ai/registry';
 import { runTask, streamTask, streamTaskCollecting } from './runner';
 
 // Minimal db stub — never dereferenced because every ai/log writer is mocked.

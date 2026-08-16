@@ -1,5 +1,5 @@
-import { resolveKnownSubjectId } from '@/subjects/profile';
 import { z } from 'zod';
+import { resolveKnownSubjectId } from '@/subjects/profile';
 import {
   GenesisExperimental,
   GoalRowSnapshot,

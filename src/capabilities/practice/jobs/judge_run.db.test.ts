@@ -6,6 +6,8 @@
 // a non-retryable caller writes FAILED without rethrowing. The judge itself is mocked
 // at the judgeSubmit seam (no LLM call); the REAL persistSubmit runs the backfill tx.
 
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
 import {
@@ -22,8 +24,6 @@ import {
 } from '@/db/schema';
 import { computeReplay } from '@/server/events/sse_replay';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { freezeQuestionForJudge } from '../server/judge-run-payload';
 import {

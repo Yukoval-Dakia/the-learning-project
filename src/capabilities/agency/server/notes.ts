@@ -29,11 +29,10 @@
 // writeAgentNote directly.
 
 import { createId } from '@paralleldrive/cuid2';
-
+import { and, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { and, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 

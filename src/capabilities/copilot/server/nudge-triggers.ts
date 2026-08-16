@@ -9,12 +9,12 @@
 // cut-1 只实现 ingestion_complete kind。streak（kc_wrong_streak）是 cut-2 fast-follow，
 // 纯 additive 挂进本 evaluate 的 kind 分支。
 
+import { type AnyColumn, type SQL, and, desc, eq, inArray, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type { NudgePayloadT } from '@/core/schema/event/nudge-events';
 import type { Db, Tx } from '@/db/client';
 import { event, learning_session, question_block, source_document } from '@/db/schema';
 import { type CorrectionStatus, getCorrectionStatuses } from '@/kernel/events';
-import { type AnyColumn, type SQL, and, desc, eq, inArray, or, sql } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/pg-core';
 import type { NudgeConfig } from './nudge-config';
 
 export const NUDGE_ACTION = 'experimental:copilot_nudge';

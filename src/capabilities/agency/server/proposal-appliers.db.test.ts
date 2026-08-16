@@ -3,10 +3,10 @@
 // 公共 API（acceptAiProposal / dismissAiProposal / retractAiProposal）进入，
 // 以覆盖「壳路由 → 包 applier」整条链。
 
-import { artifact, event, knowledge, learning_item, proposal_signals } from '@/db/schema';
-import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { artifact, event, knowledge, learning_item, proposal_signals } from '@/db/schema';
+import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../../tests/helpers/proposal-lifecycle';
 import { planLearningIntent } from './learning-intent';

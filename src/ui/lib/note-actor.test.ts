@@ -4,8 +4,8 @@
 // author, latest-entry author selection, Date-vs-ISO-string `at`, actor
 // label/icon mapping incl. the loose catchall + unknown fallback).
 
-import type { ArtifactHistoryEntryT } from '@/core/schema/business';
 import { describe, expect, it } from 'vitest';
+import type { ArtifactHistoryEntryT } from '@/core/schema/business';
 import { ACTOR_ICON, deriveNoteActorView } from './note-actor';
 
 // History arrives JSON-deserialized in the browser (at: ISO string), but the

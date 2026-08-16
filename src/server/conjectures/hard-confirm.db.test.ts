@@ -1,3 +1,5 @@
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { event, question } from '@/db/schema';
 // YUK-531 (A5 S4 / RT1) — gatherDissociationEvidence DB reader (Tier-1, dark).
 // Proves the thin reader: it reads a KC's `experimental:prediction_score` LOG events, JOINS each
@@ -8,8 +10,6 @@ import { event, question } from '@/db/schema';
 // hard track structurally cannot fire off current data). The cause-scoped join is the FAIL-2 fix:
 // two rival misconceptions on the SAME KC (different cause) are never pooled into one summary.
 import { decideDissociation, gatherDissociationEvidence } from '@/server/conjectures/hard-confirm';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const PREDICTION_SCORE_ACTION = 'experimental:prediction_score';

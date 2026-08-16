@@ -1,3 +1,5 @@
+import { and, desc, eq, isNull } from 'drizzle-orm';
+import { z } from 'zod';
 import {
   artifact,
   event,
@@ -8,8 +10,6 @@ import {
 } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
-import { and, desc, eq, isNull } from 'drizzle-orm';
-import { z } from 'zod';
 import { bodyBlockSummaries, knowledgeContext, knowledgeEdgeTouches } from './record-tool-support';
 import type { DomainTool, ToolContext } from './types';
 

@@ -1,13 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-
+import { describe, expect, it } from 'vitest';
 import {
   FUTURE_JUDGE_ROUTES,
   RUNNABLE_ROUTES,
 } from '@/capabilities/practice/server/judge/question-contract';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import { subjectProfiles } from '@/subjects/profile';
-import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const RUNTIME_ROOTS = ['app', 'src/server', 'src/core', 'src/subjects'] as const;

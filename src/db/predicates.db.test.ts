@@ -8,10 +8,10 @@
 // truth table + equivalence live in the sibling unit test predicates.test.ts). This is the
 // SQL-side half of the §8.1 equivalence: emitted SQL == the model == isPoolVisible.
 
-import { notDraftPredicate } from '@/db/predicates';
-import { question } from '@/db/schema';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'vitest';
+import { notDraftPredicate } from '@/db/predicates';
+import { question } from '@/db/schema';
 
 describe('notDraftPredicate — compiled SQL shape (§5.1 canonical NULL-safe blocklist)', () => {
   const { sql, params } = new PgDialect().sqlToQuery(notDraftPredicate(question.draft_status));

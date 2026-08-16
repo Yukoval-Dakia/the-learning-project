@@ -6,9 +6,9 @@
 // title/JSON validation. Asserts the goal row lands with source='manual' (the additive
 // entry path that coexists with the ADR-0025 proposal-materialize path).
 
-import { goal, knowledge } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { goal, knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 import { POST as createGoal, GET as getGoal } from './goal-create';

@@ -14,20 +14,21 @@
 // 形态 PORT 自设计 docs/design/loom-refresh/project/screen-calibration.jsx（去掉 admin-h / cal-lede——
 // 复盘中枢壳已统一持 head + lede）；纯视图逻辑（tier / 排序 / SE 定位 / lane）抽在 calibration-view.ts。
 
-import { RcMaturityBadge } from '@/capabilities/onboarding/ui-public';
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import {
   type CalibrationMaturityResponse,
+  RECOMPUTE_BADGE_ENABLED,
+  RcMaturityBadge,
   getCalibrationMaturity,
+  summarizeMaturity,
 } from '@/capabilities/onboarding/ui-public';
-import { RECOMPUTE_BADGE_ENABLED, summarizeMaturity } from '@/capabilities/onboarding/ui-public';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
-import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
 import {
   type CalRow,
   type CalSort,

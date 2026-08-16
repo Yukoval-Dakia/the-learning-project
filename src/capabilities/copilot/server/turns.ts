@@ -18,12 +18,12 @@
 // event now writes (ask/chip + reply), the column being the event's conversation
 // session (teaching + copilot share it; payload.session_id is a portable copy).
 
+import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { findReusableCopilotConversation } from '@/server/session/conversation';
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/pg-core';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 
 export type CopilotTurnRole = 'user' | 'ai' | 'tombstone';

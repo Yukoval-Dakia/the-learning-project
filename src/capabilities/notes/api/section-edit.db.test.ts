@@ -1,12 +1,11 @@
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { EditArtifactSectionResponseSchema } from '@/capabilities/notes/api/contracts';
 import {
   bodyBlocksToNoteSections,
   noteSectionsToBodyBlocks,
 } from '@/capabilities/notes/server/body-blocks';
 import { artifact, event, learning_item } from '@/db/schema';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
-
-import { EditArtifactSectionResponseSchema } from '@/capabilities/notes/api/contracts';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { PATCH } from './section-edit';
 

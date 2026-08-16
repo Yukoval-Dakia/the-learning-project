@@ -8,12 +8,12 @@
 //   (3) a row genuinely lacking the structural input (no kind) stays NULL — no
 //       garbage.
 
-import { deriveAnswerClass } from '@/core/schema/answer-class';
-import { question } from '@/db/schema';
-import { createQuestionPart } from '@/server/questions/parts';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { deriveAnswerClass } from '@/core/schema/answer-class';
+import { question } from '@/db/schema';
+import { createQuestionPart } from '@/server/questions/parts';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { deriveAnswerClassForValues, withAnswerClass } from './answer-class-write';
 import { editQuestion } from './write';

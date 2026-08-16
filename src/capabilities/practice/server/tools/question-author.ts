@@ -22,25 +22,24 @@
 // record_promotion's pendingProposalWithCooldown.
 
 import { createId } from '@paralleldrive/cuid2';
-import type { z } from 'zod';
-
-import type { QuestionAuthorIntentSchema } from '@/ai/task-intents';
-import type { ToolContext } from '@/kernel/tools/types';
 import { and, inArray, isNull } from 'drizzle-orm';
-
-import {
-  type QuestionAnswerAnchorT,
-  validateSourceLocatorBytes,
-} from '@/core/schema/question-generation-grounding';
+import type { z } from 'zod';
+import type { QuestionAuthorIntentSchema } from '@/ai/task-intents';
 import {
   QuestionAuthorDraft,
   type QuestionAuthorDraftT,
   normalizeAuthorStructured,
 } from '@/core/schema/question_author';
+
+import {
+  type QuestionAnswerAnchorT,
+  validateSourceLocatorBytes,
+} from '@/core/schema/question-generation-grounding';
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import type { ToolContext } from '@/kernel/tools/types';
 import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {

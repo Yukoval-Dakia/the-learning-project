@@ -1,8 +1,8 @@
+import { describe, expect, it } from 'vitest';
 import {
   validateInterventionReviewEvalProviderEnv,
   validateShadowProviderEnv,
 } from '@/server/grounding-gate/preflight';
-import { describe, expect, it } from 'vitest';
 
 const providerEnv = {
   CLAUDE_CODE_OAUTH_TOKEN: 'oauth-test-token',

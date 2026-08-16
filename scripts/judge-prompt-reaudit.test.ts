@@ -7,9 +7,8 @@
 import { cpSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
-import { subjectProfiles } from '@/subjects/profile';
 import { afterEach, describe, expect, it } from 'vitest';
+import { subjectProfiles } from '@/subjects/profile';
 
 import {
   JUDGE_PROMPT_TASKS,

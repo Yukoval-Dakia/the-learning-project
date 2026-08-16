@@ -11,9 +11,9 @@
 // general 不进本 provider（selectable 视图结构性排除；渲染回退用
 // DEFAULT_SLIM_SUBJECT_PROFILE，ui/lib/subject.ts）。
 
+import { useQuery } from '@tanstack/react-query';
 import { BUILTIN_IDS, subjectProfiles } from '@/subjects/profile';
 import { apiJson } from '@/ui/lib/api';
-import { useQuery } from '@tanstack/react-query';
 
 export interface ApiSubject {
   id: string;

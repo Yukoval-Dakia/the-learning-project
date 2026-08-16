@@ -4,8 +4,8 @@
 // (EmptyState); prototype's `future` prop is exposed here as `futureTag` per spec.
 
 import type { ReactNode } from 'react';
-import { LoomIcon } from './LoomIcon';
 import type { LoomIconName } from './LoomIcon';
+import { LoomIcon } from './LoomIcon';
 
 export interface EmptyStateProps {
   icon?: LoomIconName;

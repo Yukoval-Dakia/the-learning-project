@@ -4,9 +4,9 @@
 //      ——**<5 KC 的 custom 零 LLM 调用**（验收原文）。
 // runTaskFn 注入 spy：gate 挡下时必须一次都不打模型。
 
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { goal, knowledge } from '@/db/schema';
 import { classifyJobYield } from '@/server/boss/job-yield';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { hydrateSubjectRegistryFromDb } from '../../../server/subjects/hydrate';
 import { reconcileBuiltinTraits } from '../../../server/subjects/reconcile-builtin-traits';

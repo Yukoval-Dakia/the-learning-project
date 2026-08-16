@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import {
   CapabilityManifest,
   CapabilityRef,
@@ -5,7 +6,6 @@ import {
   JudgeResultV2,
   ScoreMeaning,
 } from '@/core/schema/capability';
-import { describe, expect, it } from 'vitest';
 
 describe('CapabilityManifest', () => {
   const validManifest = {

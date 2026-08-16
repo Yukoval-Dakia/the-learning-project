@@ -47,6 +47,7 @@
 // separate DB row — it IS the `experimental:proposal` event, so its stable id is
 // the proposalId. conjecture_event_id === conjectureProposalId.
 
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import {
   ConjectureProbeSpec,
@@ -80,7 +81,6 @@ import {
   findExistingRateEvent,
 } from '@/server/proposals/applier-helpers';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   type PriorProbeResult,
   isEvidenceResult,

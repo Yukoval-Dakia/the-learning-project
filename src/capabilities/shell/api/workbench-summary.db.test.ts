@@ -2,9 +2,9 @@
 // week_heat 七天补零）+ 种子形态（archived 排除 / 提议 KPI / review 会话
 // reviewed_count / week_heat 今日计数）。
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import { event, goal, knowledge, learning_session } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { WorkbenchSummaryResponseSchema } from './contracts';
 import { GET as getWorkbenchSummary } from './workbench-summary';

@@ -1,7 +1,7 @@
-import { db } from '@/db/client';
-import { knowledge, question } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { db } from '@/db/client';
+import { knowledge, question } from '@/db/schema';
 import { resetDb } from '../../../../tests/helpers/db';
 
 const embedMany = vi.fn(async (texts: string[]) => texts.map(() => Array(1024).fill(0.02)));

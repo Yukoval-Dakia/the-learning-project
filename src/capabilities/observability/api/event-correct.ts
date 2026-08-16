@@ -5,8 +5,12 @@
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { getEventById, writeEvent } from '@/kernel/events';
-import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/kernel/http';
+import {
+  ApiError,
+  canonicalResourceResponse,
+  deprecatedRouteResponse,
+  errorResponse,
+} from '@/kernel/http';
 import { EventCorrectionBodySchema, EventParamsSchema } from './event-contracts';
 
 export async function createCorrection(

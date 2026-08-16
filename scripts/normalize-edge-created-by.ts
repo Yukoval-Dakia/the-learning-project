@@ -44,11 +44,11 @@
 // Load `.env` BEFORE importing `@/db/client`. Must be first (see backfill-genesis-events.ts).
 import './load-env';
 
+import { eq } from 'drizzle-orm';
 import { type Db, type Tx, db } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
 import { edgeRowToSnapshot, gatherAndFoldKnowledgeEdgeWithMesh } from '@/server/projections/gather';
 import { diffSnapshots } from '@/server/projections/snapshot-diff';
-import { eq } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 

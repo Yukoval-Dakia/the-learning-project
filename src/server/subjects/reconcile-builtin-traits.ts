@@ -20,6 +20,7 @@
 // 绑定 ×24 / subject 行 ×4 / claims 全部 insert-if-missing：owner 的换绑/rename
 // 不被 migrate 重跑覆写（reconcile 只治理 trait 内容血统，不治理控制行）。
 
+import { and, eq } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import {
   subject,
@@ -37,7 +38,6 @@ import {
 } from '@/subjects/builtin-trait-seeds';
 import { BUILTIN_SUBJECT_ALIASES, normalizeSubjectKey, subjectProfiles } from '@/subjects/profile';
 import { SUBJECT_TRAIT_KINDS, type SubjectTraitKind } from '@/subjects/trait-schemas';
-import { and, eq } from 'drizzle-orm';
 import { acquireControlPlaneLockSql } from './control-plane-lock';
 
 // drizzle 事务句柄类型（tx 不带 $client，不能用裸 Db）。

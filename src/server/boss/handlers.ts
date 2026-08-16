@@ -1,9 +1,9 @@
+import type { PgBoss } from 'pg-boss';
 import type { PlacementVerificationAuthority } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
 import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { registerMemoryHandlers } from '@/server/memory/triggers';
-import type { PgBoss } from 'pg-boss';
 import { buildEchoHandler } from './handlers/echo';
 import { buildPromoteConversationIdleHandler } from './handlers/promote_conversation_idle';
 import { buildPruneJobEventsHandler } from './handlers/prune_job_events';

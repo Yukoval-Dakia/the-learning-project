@@ -1,11 +1,11 @@
 // SessionSummaryTask runner tests.
 
-import { event, knowledge, learning_session, question } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
-import { Review } from '@/server/session';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { event, knowledge, learning_session, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import { Review } from '@/server/session';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { runSessionSummary } from './summary';
 

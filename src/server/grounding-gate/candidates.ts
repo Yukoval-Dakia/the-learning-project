@@ -1,3 +1,4 @@
+import { inArray } from 'drizzle-orm';
 import {
   type ConjectureEvidenceAssetRef,
   type ConjectureHistory,
@@ -25,7 +26,6 @@ import {
   rankEvidenceCellsByAccountability,
 } from '@/server/conjectures/accountability';
 import { getMasteryProjection } from '@/server/mastery/state';
-import { inArray } from 'drizzle-orm';
 
 export const GROUNDING_GATE_WINDOW_DAYS = 14;
 export const GROUNDING_GATE_ENRICH_BATCH_SIZE = 3;

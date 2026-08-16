@@ -1,5 +1,5 @@
-import { RubricReferenceSolution } from '@/core/schema/business';
 import { z } from 'zod';
+import { RubricReferenceSolution } from '@/core/schema/business';
 import fixtureData from './derivation-data.json' with { type: 'json' };
 
 export const DerivationFixtureItemSchema = z.object({

@@ -18,10 +18,11 @@
  *
  * Real Postgres (testcontainer) → DB partition. Mirrors _round_trip.test.ts.
  */
-import { knowledge } from '@/db/schema';
-import { SCHEMA_VERSION } from '@/server/export/constants';
+
 import { zipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { knowledge } from '@/db/schema';
+import { SCHEMA_VERSION } from '@/server/export/constants';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
 import { GET } from './backup-export';

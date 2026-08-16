@@ -14,10 +14,10 @@
 //   (1) family 行按 kQ（题的 knowledge_ids[0]）成键，**不**按 kSlot；
 //   (2) distinct 计数基 = knowledge_ids[0]=kQ 的题集，与 family_key 同源（数得到）。
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import { artifact, event, item_family_calibration, knowledge, question } from '@/db/schema';
 import { Review } from '@/server/session';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   countDistinctQuestionsInFamily,

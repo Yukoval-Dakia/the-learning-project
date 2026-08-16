@@ -1,7 +1,7 @@
+import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { BBox } from '@/core/schema';
 import { QuestionBlockRole, VisualComplexity } from '@/core/schema/business';
-import { z } from 'zod';
 
 const VisionBlockSchema = z.object({
   extracted_prompt_md: z.string().min(1).max(5000),

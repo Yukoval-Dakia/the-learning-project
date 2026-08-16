@@ -1,6 +1,6 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseMultimodalDirectResult, runMultimodalDirectJudge } from './multimodal-direct-judge';
 import type { JudgeQuestionRow } from './question-contract';
 

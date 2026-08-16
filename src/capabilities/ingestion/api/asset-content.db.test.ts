@@ -1,7 +1,7 @@
 // Phase 1c.2.C — GET /api/assets/[id]/content streams R2 bytes for the UI.
 
-import { source_asset } from '@/db/schema';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { source_asset } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // Stub R2 BEFORE importing the route (the route resolves getR2 at module load

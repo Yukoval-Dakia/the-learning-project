@@ -12,8 +12,8 @@
 // No DB, no IO. The reducer is pure: liveMesh (the live-edge topology fixture)
 // is PASSED IN.
 
-import type { KnowledgeEdgeRowSnapshotT } from '@/core/schema/event/genesis';
 import { describe, expect, it } from 'vitest';
+import type { KnowledgeEdgeRowSnapshotT } from '@/core/schema/event/genesis';
 import type { FoldEvent } from './fold-event';
 import { foldKnowledgeEdge } from './knowledge_edge';
 

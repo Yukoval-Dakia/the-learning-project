@@ -1,22 +1,4 @@
 import {
-  type AiProposalKindT,
-  type AiProposalPayloadT,
-  aiProposalKindStrength,
-  parseAiProposalPayload,
-} from '@/core/schema/proposal';
-import type { Db, Tx } from '@/db/client';
-import { event, proposal_signals } from '@/db/schema';
-import { getCorrectionStatuses } from '@/kernel/events';
-import { ApiError } from '@/kernel/http';
-import {
-  type ProposalPresentation,
-  loadProposalPresentations,
-} from '@/kernel/proposals/presentation';
-import {
-  type ProposalSignalSnapshot,
-  loadProposalSignalsForRows,
-} from '@/kernel/proposals/signals';
-import {
   type SQL,
   and,
   asc,
@@ -37,6 +19,24 @@ import {
   sql,
 } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
+import {
+  type AiProposalKindT,
+  type AiProposalPayloadT,
+  aiProposalKindStrength,
+  parseAiProposalPayload,
+} from '@/core/schema/proposal';
+import type { Db, Tx } from '@/db/client';
+import { event, proposal_signals } from '@/db/schema';
+import { getCorrectionStatuses } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
+import {
+  type ProposalPresentation,
+  loadProposalPresentations,
+} from '@/kernel/proposals/presentation';
+import {
+  type ProposalSignalSnapshot,
+  loadProposalSignalsForRows,
+} from '@/kernel/proposals/signals';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;

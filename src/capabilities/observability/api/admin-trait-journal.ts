@@ -2,11 +2,10 @@
 // （rollback UI 数据源），倒序。不下发 payload（doc v1.1 §2.2：纯 revision 列表；
 // diff 查看器 = owner 点名后的 follow-up）。业务在 src/server/subjects/admin-read.ts。
 
-import { db } from '@/db/client';
-import { collectionPayload } from '@/kernel/http';
-import { errorResponse } from '@/kernel/http';
-import { getTraitJournalPage } from '@/server/subjects/admin-read';
 import { z } from 'zod';
+import { db } from '@/db/client';
+import { collectionPayload, errorResponse } from '@/kernel/http';
+import { getTraitJournalPage } from '@/server/subjects/admin-read';
 
 const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 

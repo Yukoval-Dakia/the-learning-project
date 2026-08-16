@@ -8,6 +8,8 @@
 // 取数、每条被访问的 claim 都推进游标（防「同一批老 claim 每夜霸占额度、后面的僵尸永不被收割」
 // 的饿死路径）。
 
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/db/client';
 import {
   goal,
@@ -23,8 +25,6 @@ import {
   resolvePlacementStarterGoalAuthority,
   terminalizeLostPlacementDelivery,
 } from '@/kernel/placement';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb } from '../../../../tests/helpers/db';
 import {
   PLACEMENT_STARTER_RECOVERY_BACKOFF_MS,

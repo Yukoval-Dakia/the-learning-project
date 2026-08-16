@@ -3,11 +3,11 @@
 // Covers: salience sort + cap-at-3, the confidence-never-leaks invariant, and route
 // registration on the shell manifest.
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import { PrepDeskConjecturesResponseSchema } from '@/capabilities/shell/api/contracts';
 import { shellCapability } from '@/capabilities/shell/manifest';
 import { loadPrepDeskConjectures } from '@/capabilities/shell/server/prep-desk';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 function conjecture(opts: {

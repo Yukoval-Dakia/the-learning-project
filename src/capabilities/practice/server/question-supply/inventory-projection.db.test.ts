@@ -1,9 +1,9 @@
-import { db } from '@/db/client';
-import { event, question } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { db } from '@/db/client';
+import { event, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { resetDb } from '../../../../../tests/helpers/db';
 import {
   compareInventoryShadow,

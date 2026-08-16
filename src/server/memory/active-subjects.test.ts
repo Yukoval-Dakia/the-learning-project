@@ -4,8 +4,8 @@
 // §7 "per-run budget enforced", 20+ active subjects) is testable here without
 // seeding 12+ real subject profiles (only yuwen/math/physics exist).
 
-import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
 import { describe, expect, it } from 'vitest';
+import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
 import { type ActiveSubject, selectSubjectsForRun } from './active-subjects';
 
 function makeActive(id: string, daysAgo: number): ActiveSubject {

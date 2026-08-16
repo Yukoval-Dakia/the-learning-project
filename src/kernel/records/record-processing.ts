@@ -10,10 +10,10 @@
 // already committed the rate/correction event before invoking us, so the
 // record-flip is a best-effort follow-up.
 
+import { sql } from 'drizzle-orm';
 import type { AiProposalPayloadT, ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { sql } from 'drizzle-orm';
 import { transitionLearningRecords } from './queries';
 import type { LearningRecordProcessingStatus } from './types';
 

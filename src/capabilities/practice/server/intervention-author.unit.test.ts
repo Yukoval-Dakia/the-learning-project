@@ -1,3 +1,4 @@
+import { describe, expect, it, vi } from 'vitest';
 import {
   CurrentInterventionPackageReviewAudit,
   INTERVENTION_CONTRACT_VERSION,
@@ -25,7 +26,6 @@ import interventionRegressionFixture from '@/server/grounding-gate/fixtures/inte
   type: 'json',
 };
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { describe, expect, it, vi } from 'vitest';
 import {
   bindInterventionPackageReviewDecision,
   enforceInterventionPackageReviewDecision,

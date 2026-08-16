@@ -1,7 +1,7 @@
+import { eq, isNull } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { normalizeSubjectKey, resolveKnownSubjectId } from '@/subjects/profile';
-import { eq, isNull } from 'drizzle-orm';
 
 const MAX_DEPTH = 32; // 防 cycle
 

@@ -1,6 +1,6 @@
+import { z } from 'zod';
 import type { RtCorrectBuffer } from '@/core/theta'; // FIX-5 shape-lock source (type-only, erased)
 import type { ThetaGridPosterior } from '@/core/theta-grid'; // FIX-5 shape-lock source (type-only, erased)
-import { z } from 'zod';
 import { FsrsStateSchema } from './blocks'; // blocks.ts:68 — z.coerce.date()-based, jsonb-roundtrip-safe
 
 // ====================================================================
@@ -56,9 +56,8 @@ const ThetaGridPosteriorSnapshot = z.object({
 // field at restore time. Type-only imports keep this a pure compile-time guard (no
 // runtime coupling; the mirrors stay locally defined so the parse barrier still validates
 // the FULL row — see the note above).
-type AssertEqual<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
-  ? true
-  : false;
+type AssertEqual<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 const _rtCorrectBufferShapeLock: AssertEqual<
   z.infer<typeof RtCorrectBufferSnapshot>,
   RtCorrectBuffer

@@ -2,8 +2,9 @@
 // for predictable cosine distances: <=>(unit(i), unit(i)) = 0 (identical direction),
 // <=>(unit(i), unit(j≠i)) = 1 (orthogonal). Verifies nearest-first ordering, topK, and that
 // NULL-embedding + archived KCs are excluded.
-import { knowledge } from '@/db/schema';
+
 import { beforeEach, describe, expect, it } from 'vitest';
+import { knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { matchKnowledgeBySimilarity } from './match-similarity';
 

@@ -21,6 +21,9 @@
 //   5. return an MCP-shaped { content: [{ type: 'text', text: <json> }] }
 //      result the LLM can read.
 
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { createId } from '@paralleldrive/cuid2';
+import { z } from 'zod';
 import { writeEvent } from '@/kernel/events';
 import type {
   ProposalEffectContract,
@@ -32,9 +35,6 @@ import type {
   ToolMirrorPolicy,
 } from '@/kernel/tools/types';
 import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { createId } from '@paralleldrive/cuid2';
-import { z } from 'zod';
 import { getTool } from './registry';
 
 /**

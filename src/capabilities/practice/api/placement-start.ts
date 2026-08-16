@@ -11,16 +11,22 @@
 // so no placement session is ever created and the live paths are untouched (the flag's only
 // effect). Flipping it on is the cold-start first-session go-live decision.
 
-import { dispatchPlacementStarterClaim } from '@/capabilities/practice/public';
-import { materializePlacementStartersForGoal } from '@/capabilities/practice/public';
-import { lockPlacementSupplyScopes } from '@/capabilities/practice/public';
+import { eq } from 'drizzle-orm';
+import {
+  dispatchPlacementStarterClaim,
+  lockPlacementSupplyScopes,
+  materializePlacementStartersForGoal,
+} from '@/capabilities/practice/public';
 import { db } from '@/db/client';
 import { goal } from '@/db/schema';
-import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/kernel/http';
+import {
+  ApiError,
+  canonicalResourceResponse,
+  deprecatedRouteResponse,
+  errorResponse,
+} from '@/kernel/http';
 import { Placement } from '@/server/session';
 import { PLACEMENT_PROBE_ENABLED } from '@/server/session/placement';
-import { eq } from 'drizzle-orm';
 import { resolveGoalPlacementScope } from '../server/placement-scope';
 import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../server/placement-select';
 import { CreatePlacementSessionBodySchema } from './placement-contracts';

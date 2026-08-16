@@ -21,8 +21,8 @@
 // 'easy' branches collapse to 'good' (route.ts:80-82 documents the same
 // 3-state UI surface).
 
-import type { JudgeResultV2T } from '@/core/schema/capability';
 import { describe, expect, it } from 'vitest';
+import type { JudgeResultV2T } from '@/core/schema/capability';
 import { judgeResultToRatingAdvice } from './rating-advisor';
 
 const CAPABILITY_REF = { id: 'steps', version: '1' } as const;

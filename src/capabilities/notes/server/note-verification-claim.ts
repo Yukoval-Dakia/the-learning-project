@@ -7,17 +7,21 @@
 //     release, ambiguity/deferral, and finalization.
 //   - note-verification-claim-recovery.ts — recovery selection + preparation.
 // Consumers import from this facade; the split modules stay Notes-internal.
+
+export {
+  listRecoverableNoteVerificationResults,
+  prepareNoteVerificationResultRecovery,
+} from './note-verification-claim-recovery';
 export {
   NOTE_VERIFICATION_PROVIDER_ATTEMPT_LIMIT,
-  discardReservedNoteVerificationClaim,
-  markNoteVerificationProviderStarted,
   type NoteVerificationLease,
   type NoteVerificationReservation,
-  reserveNoteVerification,
   type StagedNoteVerification,
+  discardReservedNoteVerificationClaim,
+  markNoteVerificationProviderStarted,
+  reserveNoteVerification,
   supersedeNoteVerificationEpoch,
 } from './note-verification-claim-reservation';
-
 export {
   deferNoteVerificationResultForRetry,
   finalizeNoteVerificationResult,
@@ -27,8 +31,3 @@ export {
   stageNoteVerificationContractResult,
   stageNoteVerificationResult,
 } from './note-verification-claim-result';
-
-export {
-  listRecoverableNoteVerificationResults,
-  prepareNoteVerificationResultRecovery,
-} from './note-verification-claim-recovery';

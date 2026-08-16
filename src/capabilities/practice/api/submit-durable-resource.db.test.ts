@@ -5,6 +5,8 @@
 // shouldEnqueueBackgroundJobs → true and getStartedBoss → a fake, then asserts the
 // resource wrapper returns the 202 verbatim (no crash, Location preserved).
 
+import { eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import {
   INTERVENTION_CONTRACT_VERSION,
@@ -12,8 +14,6 @@ import {
 } from '@/core/schema/intervention';
 import { event, material_fsrs_state, question } from '@/db/schema';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
-import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 vi.mock('@/server/runtime-env', async (importOriginal) => {

@@ -3152,9 +3152,7 @@ export const subject_name_claim = pgTable(
   },
   (t) => [
     // 每 subject 恰一 canonical 行（v2 §2.2 部分唯一索引）。
-    uniqueIndex('subject_name_claim_canonical_uq')
-      .on(t.subject_id)
-      .where(sql`kind = 'canonical'`),
+    uniqueIndex('subject_name_claim_canonical_uq').on(t.subject_id).where(sql`kind = 'canonical'`),
   ],
 );
 

@@ -2,8 +2,8 @@
 // KIND_META 与 core aiProposalKinds 对账（新增 kind 必须同步补 UI 元数据）、
 // kindMeta/evidenceReadable fallback 语义、heatLevel 分桶边界。
 
-import { acceptSupportedProposalKinds, aiProposalKinds } from '@/core/schema/proposal';
 import { describe, expect, it } from 'vitest';
+import { acceptSupportedProposalKinds, aiProposalKinds } from '@/core/schema/proposal';
 
 import {
   KIND_META,

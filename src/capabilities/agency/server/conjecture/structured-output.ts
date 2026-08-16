@@ -1,5 +1,5 @@
-import type { TaskTextResult } from '@/server/ai/provenance';
 import type { z } from 'zod';
+import type { TaskTextResult } from '@/server/ai/provenance';
 
 /** Parse balanced JSON objects while recovering after malformed prose candidates. */
 export function jsonObjectCandidates(text: string): unknown[] {

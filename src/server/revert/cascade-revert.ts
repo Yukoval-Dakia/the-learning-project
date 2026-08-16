@@ -76,6 +76,7 @@
 // depth-DESC; the root checkpoint is reverted LAST). Parse-barrier-clean: every
 // snapshot payload is validated against StateSnapshotExperimental before use.
 
+import { and, eq, inArray } from 'drizzle-orm';
 import { archiveKnowledgeEdge } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
@@ -88,7 +89,6 @@ import { event, knowledge_edge, mastery_state, material_fsrs_state } from '@/db/
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { type CollectCascadeOptions, collectCascadeFromCheckpoint } from '@/server/events/cascade';
-import { and, eq, inArray } from 'drizzle-orm';
 import { restoreStateSnapshot } from './restore-snapshot';
 
 type DbLike = Db | Tx;

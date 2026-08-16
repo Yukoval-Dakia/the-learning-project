@@ -1,15 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
+import { and, eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setDocxConverterForTests } from '@/capabilities/ingestion/server/docx/convert';
 import {
   AUTO_ENROLL_FLAG,
   OBSERVE_FLAG,
 } from '@/capabilities/ingestion/server/workflow-judge-config';
 import { event, job_events, learning_session, question_block, source_asset } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
 import { DocxIngestionResponseSchema } from './contracts';

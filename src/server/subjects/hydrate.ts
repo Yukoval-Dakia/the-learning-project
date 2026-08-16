@@ -23,6 +23,7 @@
 // - reconcileCustomIds 防御网：内存 custom id 不在本轮 DB 行集 → 摘除（唯一真实
 //   触发 = restore 使行集收缩）；builtin 四种子永不摘。
 
+import { desc, eq } from 'drizzle-orm';
 import { db as defaultDb } from '@/db/client';
 import {
   subject,
@@ -48,16 +49,15 @@ import {
   type SubjectTraitPayloads,
   TRAIT_PAYLOAD_SCHEMAS,
 } from '@/subjects/trait-schemas';
-import { desc, eq } from 'drizzle-orm';
 import { type TraitResolution, replaceSubjectTraitResolutions } from './resolution-cache';
 
 // 缓存与派生的权威在 resolution-cache.ts（db-free）；这里 re-export 维持既有
 // import 面（hydrate.db.test / 管理读面）不破。
 export {
-  getSubjectTraitResolutions,
-  isGeneralFallbackFor,
   type TraitDegradation,
   type TraitResolution,
+  getSubjectTraitResolutions,
+  isGeneralFallbackFor,
 } from './resolution-cache';
 
 type Db = typeof defaultDb;

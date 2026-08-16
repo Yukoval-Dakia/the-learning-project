@@ -1,6 +1,3 @@
-import { question } from '@/db/schema';
-import { type JudgeQuestionRow, judgeAnswer } from '@/kernel/judge';
-import { resolveSubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
 /**
  * M2.2 — e2e smoke for derivation question end-to-end.
@@ -16,6 +13,9 @@ import { eq } from 'drizzle-orm';
  *     StepsLlmOutput with 2/3 correct signals → partial credit composed.
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { question } from '@/db/schema';
+import { type JudgeQuestionRow, judgeAnswer } from '@/kernel/judge';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { loadMathDerivationFixtures } from './derivation';
 

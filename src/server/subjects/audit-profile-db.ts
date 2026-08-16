@@ -7,10 +7,10 @@
 // 复用 validateSubject（subject-control-write.ts）——审计与写门预检同一条装配
 // 路径，防双真相源。
 
+import { asc } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { subject } from '@/db/schema';
 import { validateSubject } from '@/server/subjects/subject-control-write';
-import { asc } from 'drizzle-orm';
 
 export interface DbProfileAuditEntry {
   id: string;

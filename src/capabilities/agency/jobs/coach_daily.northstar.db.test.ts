@@ -12,10 +12,10 @@
 //
 // DB test (testDb): NOT in fastTestInclude → runs in the vitest db config.
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { ActiveGoal } from '@/capabilities/agency/server/goals/queries';
 import { GET as getDue } from '@/capabilities/practice/api/due';
 import { event, goal, material_fsrs_state, question } from '@/db/schema';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runCoach } from './coach_daily';
 

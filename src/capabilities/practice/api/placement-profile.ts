@@ -15,6 +15,7 @@
 // to the probe-time snapshot. Untested in-scope KCs come back as tested:false so the picture
 // stays honest about coverage (subject = view, no root node).
 
+import { eq, inArray } from 'drizzle-orm';
 import { POLY_SIGMOID_ENABLED } from '@/core/poly-exp';
 import { db } from '@/db/client';
 import { goal, knowledge } from '@/db/schema';
@@ -22,7 +23,6 @@ import { ApiError, errorResponse } from '@/kernel/http';
 import { readLearnerAxisStates } from '@/server/calibration/axis-writer';
 import { loadDayOnePriors } from '@/server/coldstart/propagate-priors';
 import { getMasteryProjection } from '@/server/mastery/state';
-import { eq, inArray } from 'drizzle-orm';
 import { resolveGoalPlacementScope } from '../server/placement-scope';
 import type { PlacementProfileKc, TestedPlacementProfileKc } from './placement-contracts';
 

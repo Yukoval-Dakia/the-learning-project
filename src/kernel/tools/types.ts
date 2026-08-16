@@ -10,8 +10,8 @@
 // out of `experimental:tool_use` per ADR-0011 §1.1). This file is
 // interface-only.
 
-import type { Db } from '@/db/client';
 import type { z } from 'zod';
+import type { Db } from '@/db/client';
 
 export type ToolEffect = 'read' | 'propose' | 'write';
 

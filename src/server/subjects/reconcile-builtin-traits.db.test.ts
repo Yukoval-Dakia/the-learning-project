@@ -5,10 +5,10 @@
 // JYEOO_FETCH_ENABLED=1 would still fall back to sourcing_web). This proves the bump makes
 // reconcile upgrade an old-version row.
 
-import { subject_trait } from '@/db/schema';
-import { seedTraitId } from '@/subjects/builtin-trait-seeds';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { subject_trait } from '@/db/schema';
+import { seedTraitId } from '@/subjects/builtin-trait-seeds';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { reconcileBuiltinTraits } from './reconcile-builtin-traits';
 

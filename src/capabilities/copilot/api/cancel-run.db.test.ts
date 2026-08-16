@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { and, asc, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type TerminalProjectionEvent,
   claimCopilotExecutionFence,
@@ -11,8 +13,6 @@ import {
 import { event, job_events } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeJobEvent } from '@/server/events/writer';
-import { and, asc, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { writeCopilotUserAsk } from '../server/chat';

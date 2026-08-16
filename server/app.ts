@@ -4,7 +4,8 @@
 // 鉴权沿用单用户不变量：/api/* 全拦 x-internal-token，/api/health 豁免。
 
 import { createHash, timingSafeEqual } from 'node:crypto';
-
+import { Hono } from 'hono';
+import { secureHeaders } from 'hono/secure-headers';
 import {
   ApiRouteContractError,
   type CapabilityManifest,
@@ -17,8 +18,6 @@ import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
 } from '@/server/http/provider-session-deadline';
-import { Hono } from 'hono';
-import { secureHeaders } from 'hono/secure-headers';
 
 // YUK-233 — the old Next shell carried baseline headers but deliberately omitted CSP.
 // M5 removed that shell, so Hono is now the single response boundary for both the API and

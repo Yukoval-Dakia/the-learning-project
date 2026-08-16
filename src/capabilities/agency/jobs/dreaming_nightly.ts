@@ -1,7 +1,5 @@
-import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import type { Job } from 'pg-boss';
-
 // YUK-143 / ADR-0025 — North-Star: feed active goals into the Dreaming input so
 // it can BIAS proposals toward weak/under-covered knowledge in their scope.
 // Purely ADDITIVE (ND-5): Dreaming still only PROPOSES via the inbox and never
@@ -14,6 +12,7 @@ import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/not
 import { enqueueDreamingNoteRefine } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
+import { writeEvent } from '@/kernel/events';
 import {
   type ProposalFeedbackCell,
   getProposalFeedbackDigest,

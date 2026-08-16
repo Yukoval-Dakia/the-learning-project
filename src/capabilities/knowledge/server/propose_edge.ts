@@ -7,6 +7,8 @@
 // 不复用 KnowledgeReviewTask 的 streaming + tool-calling 路径 —— ReviewTask 是
 // 交互式 12 iter 设计，nightly cron 用单次结构化输出更便宜可控。
 
+import { createId } from '@paralleldrive/cuid2';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { validateProposalQuality } from '@/capabilities/knowledge/server/rubric-validator';
 import {
   EdgeProposalSchema,
@@ -25,8 +27,6 @@ import { writeRetryableAiFailureLedger } from '@/server/ai/failure-ledger';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import type { Env } from '@/server/memory/client';
 import type { SubjectProfile } from '@/subjects/profile';
-import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
   type EdgeCandidate,
   type EdgeNeighbor,
@@ -45,9 +45,9 @@ import { archiveKnowledgeEdge, createKnowledgeEdge } from './edges';
 import { type TopologyEdge, checkEdgeTopology } from './topology-gate';
 import { loadTreeSnapshot } from './tree';
 
-export { EdgeProposalSchema, parseEdgeProposeOutput };
 export type { EdgeProposeOutput } from '@/capabilities/knowledge/tasks/knowledge-tasks';
 export type { EdgeProposalSchemaT };
+export { EdgeProposalSchema, parseEdgeProposeOutput };
 
 export type RunTaskFn = TaskTextRunFn;
 

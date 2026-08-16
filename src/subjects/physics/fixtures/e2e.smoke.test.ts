@@ -1,8 +1,3 @@
-import { unitDimensionV1Capability } from '@/core/capability/judges/unit_dimension';
-import type { Db } from '@/db/client';
-import { knowledge, question } from '@/db/schema';
-import { type JudgeQuestionRow, judgeAnswer } from '@/kernel/judge';
-import { resolveSubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
 /**
  * P0 — e2e smoke for physics fixture happy path.
@@ -16,6 +11,11 @@ import { eq } from 'drizzle-orm';
  * return unsupported until P2 implements deterministic + fallback judging.
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { unitDimensionV1Capability } from '@/core/capability/judges/unit_dimension';
+import type { Db } from '@/db/client';
+import { knowledge, question } from '@/db/schema';
+import { type JudgeQuestionRow, judgeAnswer } from '@/kernel/judge';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { loadPhysicsFixtures } from './index';
 

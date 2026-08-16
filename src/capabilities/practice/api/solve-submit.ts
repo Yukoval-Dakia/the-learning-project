@@ -9,8 +9,7 @@
 // subscription; this request path only commits the product fact.
 import { SolveError, submitSolveAttempt } from '@/capabilities/practice/server/solve-session';
 import { db } from '@/db/client';
-import { deprecatedRouteResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/kernel/http';
+import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { SolveSubmissionBodySchema } from './question-solve-contracts';
 
 export async function createSolveSubmission(

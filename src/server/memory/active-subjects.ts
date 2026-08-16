@@ -16,11 +16,11 @@
 // SAME canonical bridge the review scheduler uses (BR-4,
 // `@/capabilities/knowledge/server/subject-resolution`).
 
+import { and, eq, gt, inArray, like, sql } from 'drizzle-orm';
 import { batchResolveSubjectIds } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event, learning_record, memory_brief_note } from '@/db/schema';
 import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
-import { and, eq, gt, inArray, like, sql } from 'drizzle-orm';
 import type { BriefEvent } from './brief';
 
 // Actions that count as "the user did learning work on this subject" (BR-3).

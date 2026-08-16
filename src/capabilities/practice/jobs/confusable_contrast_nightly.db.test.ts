@@ -8,12 +8,12 @@
 //
 // hermetic 契约：每个 db 测在 beforeEach resetDb()，不假设跨文件状态/执行序。
 
-import type { EnqueueFn } from '@/capabilities/practice/public';
-import { db } from '@/db/client';
-import { event, knowledge, misconception_edge } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { EnqueueFn } from '@/capabilities/practice/public';
+import { db } from '@/db/client';
+import { event, knowledge, misconception_edge } from '@/db/schema';
 import { resetDb } from '../../../../tests/helpers/db';
 import { runConfusableContrastNightly } from './confusable_contrast_nightly';
 

@@ -5,11 +5,10 @@
 //   name_conflict（custom↔builtin 撞名 / retired 占坑）→ 422。
 // client 不参与 id/root/claim/绑定任何构造（YUK-602 onboarding UI 只调这里）。
 
-import { db } from '@/db/client';
-import { resourceResponse } from '@/kernel/http';
-import { errorResponse } from '@/kernel/http';
-import { thinCreateSubject } from '@/server/subjects/thin-create';
 import { z } from 'zod';
+import { db } from '@/db/client';
+import { errorResponse, resourceResponse } from '@/kernel/http';
+import { thinCreateSubject } from '@/server/subjects/thin-create';
 
 const Body = z.object({ displayName: z.string() });
 

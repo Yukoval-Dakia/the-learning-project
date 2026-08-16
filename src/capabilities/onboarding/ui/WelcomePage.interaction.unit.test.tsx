@@ -4,11 +4,11 @@
 // 是 owner review 两度点名的高危交互，SSR 覆盖不到）。fetch 全程 mock（201
 // thin-create payload）；token 走 jsdom localStorage。
 
-import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 import WelcomePage from './WelcomePage';
 
 // fetch 按 method 分流：useSubjects 的 GET /api/subjects 也走同一 fetch——

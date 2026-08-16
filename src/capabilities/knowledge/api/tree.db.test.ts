@@ -1,6 +1,6 @@
+import { beforeEach, describe, expect, it } from 'vitest';
 import { KnowledgeTreeResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { knowledge } from '@/db/schema';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './tree';
 

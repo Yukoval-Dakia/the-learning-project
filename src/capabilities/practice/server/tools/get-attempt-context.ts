@@ -5,6 +5,8 @@
 // failure modes and supports both attempt and review events. Same-question
 // history is explicitly non-causal; causal evidence comes from getEventChain.
 
+import { eq, inArray } from 'drizzle-orm';
+import { z } from 'zod';
 import { PedagogyMethodId } from '@/core/pedagogy/method-library';
 import {
   PREDICTION_SCORE_ACTION,
@@ -33,8 +35,6 @@ import { getQuestionTimeline } from '@/kernel/read-models/question-activity';
 import { listLearningRecords } from '@/kernel/records/queries';
 import { TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { eq, inArray } from 'drizzle-orm';
-import { z } from 'zod';
 
 const InputSchema = z.object({
   attemptEventId: z.string().min(1),

@@ -17,8 +17,9 @@
 // YUK-328 后独立 worker 在注册 handlers 前从 capability manifests 装配完整
 // DomainTool registry；buildMcpServerFromRegistry 只读该启动期 inventory。
 
+import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-
 import { isDurableWorkerTouchEvent } from '@/capabilities/copilot/durable-pickup';
 import {
   type CopilotEvidenceValidationRef,
@@ -123,8 +124,6 @@ import { writeJobEvent } from '@/server/events/writer';
 // 行为偏离正常 copilot）。resolveCopilotSkills 已是 cross-subject 共享 resolver（无
 // subjectId 参数），inline + durable 直接复用同一份，零漂移。
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
-import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { createCopilotProposalFlowGate } from '../server/proposal-flow-gate';
 
 // dispatch 入口投递的 job 体。run_id = checkpoint_id = user_ask event id（route

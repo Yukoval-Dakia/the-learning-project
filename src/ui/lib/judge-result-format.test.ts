@@ -1,5 +1,5 @@
-import type { JudgeResultV2T } from '@/core/schema/capability';
 import { describe, expect, it } from 'vitest';
+import type { JudgeResultV2T } from '@/core/schema/capability';
 import {
   buildVerdictRows,
   extractStepsEvidence,

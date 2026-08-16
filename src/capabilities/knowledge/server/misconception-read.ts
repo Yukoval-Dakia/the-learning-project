@@ -27,10 +27,10 @@
 // See docs/design/2026-06-29-yuk-a5-knowledge-explorer-build-plan.md (S4) and screen-
 // knowledge-a5.jsx (MisconceptionList / MisconceptionCard) for the PR-5 render contract.
 
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { misconception, misconception_edge } from '@/db/schema';
 import { listProposalInboxPage } from '@/kernel/proposals/inbox';
-import { and, desc, eq, isNull } from 'drizzle-orm';
 
 /** Qualitative confidence band — the ONLY confidence signal that crosses the wire. */
 export type MisconceptionConfBand = '高' | '中' | '低';

@@ -6,11 +6,11 @@
 // mistake-shape baseline. Step 9 removed the legacy `mistake` table; this
 // test now exclusively exercises the event-stream projection path.
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import { getRecentReviewEvents } from '@/capabilities/copilot/public';
 import { getFailureAttempts } from '@/capabilities/knowledge/public';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { buildMistakesCsv, buildReviewEventsCsv } from '@/server/export/csv';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../helpers/db';
 
 const FIXTURE_TIME = new Date('2026-05-15T12:00:00Z');

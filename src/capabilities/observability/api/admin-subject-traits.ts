@@ -4,10 +4,10 @@
 // revision（live）与 effectiveRevision（实际采用）分列——降级中的 trait 在编辑器
 // 可见「实际在用哪份」（v3.2）。业务在 src/server/subjects/admin-read.ts。
 
+import { z } from 'zod';
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
 import { getAdminSubjectTraits } from '@/server/subjects/admin-read';
-import { z } from 'zod';
 
 const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 

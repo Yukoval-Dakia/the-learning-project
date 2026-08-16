@@ -1,12 +1,17 @@
+import { describe, expect, it, vi } from 'vitest';
 import { exactJudgeCapability } from '@/core/capability/judges/exact';
 import { keywordJudgeCapability } from '@/core/capability/judges/keyword';
 import { stepsV1Capability } from '@/core/capability/judges/steps';
 import { JudgeResultV2 } from '@/core/schema/capability';
-import { judgeRouter, judgeRouterV2 } from '@/kernel/judge';
 import type { JudgeResult } from '@/kernel/judge';
-import { type JudgeQuestionRow, judgeAnswer, resolveQuestionJudgeRoute } from '@/kernel/judge';
+import {
+  type JudgeQuestionRow,
+  judgeAnswer,
+  judgeRouter,
+  judgeRouterV2,
+  resolveQuestionJudgeRoute,
+} from '@/kernel/judge';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { describe, expect, it, vi } from 'vitest';
 
 describe('exactJudgeCapability', () => {
   it('has a valid manifest', () => {

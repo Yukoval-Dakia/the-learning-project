@@ -16,6 +16,8 @@
 // never ×N), and all *_md render as PLAIN TEXT (no markdown renderer), mirroring
 // PrepDeskCard / ProbeAnswerCard.
 
+import { type QueryClient, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { learnerLocalDay } from '@/core/learner-day';
 import { CONJECTURE_CLAIM_MAX_CHARS } from '@/core/schema/proposal';
 import { scopedPracticeHref } from '@/ui/lib/routes';
@@ -24,11 +26,8 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import { type QueryClient, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
-
-import { ProbeAnswerCard } from './ProbeAnswers';
 import { decideProposal, evidenceReadable } from './inbox-api';
+import { ProbeAnswerCard } from './ProbeAnswers';
 import type { PrepDeskProbeWire } from './probe-answer-api';
 import {
   type TeachingBrief,

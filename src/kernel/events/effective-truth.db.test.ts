@@ -1,5 +1,5 @@
-import { writeEvent } from '@/kernel/events';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { getEffectiveTruth } from './effective-truth';
 

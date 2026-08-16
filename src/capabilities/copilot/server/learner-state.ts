@@ -27,10 +27,8 @@
 // so the mem0 outbox NEVER ingests it — the projection reads mem0-derived signals
 // (the memory brief), so ingesting the header back would be circular injection.
 
-import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
-
 import { listActiveGoalsWithResolvedScope } from '@/capabilities/agency/public';
 // PR #717 round-2 CodeRabbit fix #2 (YUK-574) — imports from src/core/ (RELOCATED
 // from knowledge/ui/mastery-band.ts; see the provenance note in that file). Pure
@@ -38,13 +36,14 @@ import { listActiveGoalsWithResolvedScope } from '@/capabilities/agency/public';
 import { A5_BANDS, masteryBandView } from '@/core/mastery-band';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import {
   type ProposalFeedbackCell,
   getProposalFeedbackDigest,
 } from '@/kernel/proposals/adaptive-bias';
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
-import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import {
   LEARNER_STATE_HEADER_BUDGET,
   type LearnerStateHeaderBudget,

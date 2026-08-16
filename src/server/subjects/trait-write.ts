@@ -19,6 +19,8 @@
 // 本层保持纯事务语义便于测试直驱。
 
 import { isDeepStrictEqual } from 'node:util';
+import { createId } from '@paralleldrive/cuid2';
+import { and, eq, inArray } from 'drizzle-orm';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import { validateProfile } from '@/core/capability/validate-profile';
 import type { Db, Tx } from '@/db/client';
@@ -43,8 +45,6 @@ import {
   TRAIT_PAYLOAD_SCHEMAS,
   TRAIT_PAYLOAD_SCHEMA_VERSIONS,
 } from '@/subjects/trait-schemas';
-import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray } from 'drizzle-orm';
 
 // ---------- 结果联合（route 壳映射状态码） ----------
 

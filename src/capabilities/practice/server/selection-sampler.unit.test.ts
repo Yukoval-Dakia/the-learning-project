@@ -6,8 +6,8 @@
 // 核心证明：Monte Carlo 测——经验入选频率 ≈ 记录的 π_i，客观验证记录的 π_i 是
 // 真随机抽样的 inclusion probability（ADR-0043 §7）。
 
-import { softmaxProbabilities } from '@/core/selection-signals';
 import { describe, expect, it } from 'vitest';
+import { softmaxProbabilities } from '@/core/selection-signals';
 import { DEFAULT_TEMPERATURE } from './selection-constants';
 import {
   SAMPLING_EPSILON,

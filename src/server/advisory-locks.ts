@@ -10,8 +10,8 @@
 // updateThetaForAttempt (src/server/mastery/state.ts) and mirrored by every YUK-543 retire fn.
 // Locks are transaction-scoped: released automatically at tx commit/rollback.
 
-import type { Db, Tx } from '@/db/client';
 import { sql } from 'drizzle-orm';
+import type { Db, Tx } from '@/db/client';
 
 export const LEARNING_STATE_WRITE_LOCK = 'learning-state:write';
 

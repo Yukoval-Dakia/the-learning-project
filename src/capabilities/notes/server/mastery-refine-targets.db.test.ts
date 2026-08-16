@@ -1,5 +1,5 @@
-import { artifact } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { artifact } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { MAX_NOTE_REFINE_FANOUT, collectMasteryRefineTargets } from './mastery-refine-targets';
 

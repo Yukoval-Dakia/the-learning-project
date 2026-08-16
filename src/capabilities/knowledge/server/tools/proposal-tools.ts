@@ -4,6 +4,8 @@
 // proposal tools write inbox-visible proposal events (propose-only invariant).
 // Moved byte-identical from src/server/ai/tools/proposal-tools.ts.
 
+import { and, eq, inArray, isNull, or } from 'drizzle-orm';
+import { z } from 'zod';
 // ADR-0032 D4-E1 (YUK-203) — archive-op edge proposal targets a live edge by id;
 // the single-owner edges module is the read authority.
 import { getKnowledgeEdgeById } from '@/capabilities/knowledge/server/edges';
@@ -36,8 +38,6 @@ import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 // P5.4-L2 / YUK-174 — the adaptive gate-bump budget + bias config single source.
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
 import { writeToolCallLog } from '@/server/ai/log';
-import { and, eq, inArray, isNull, or } from 'drizzle-orm';
-import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';
 
 function evidenceRefsFromEventIds(ids: string[]): ProposalEvidenceRefT[] {

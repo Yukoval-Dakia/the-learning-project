@@ -11,6 +11,9 @@
 // LLM **永不命中 live endpoint**——全程注入 mock runTaskFn（composeDeps.runTaskFn）。
 // rng 注入 seeded（全选 / 全不选）以确定化 Poisson 抽样。
 
+import { createId } from '@paralleldrive/cuid2';
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { streamLocalDate } from '@/capabilities/practice/server/stream-store';
 import {
   event,
@@ -22,9 +25,6 @@ import {
   question,
   selection_observation,
 } from '@/db/schema';
-import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import * as observationsModule from '../server/selection-observations';
 import { composeSoftmaxStream } from '../server/softmax-selection';

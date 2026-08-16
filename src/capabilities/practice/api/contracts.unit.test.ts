@@ -1,6 +1,6 @@
-import { generateOpenApiDocument } from '@/kernel/openapi';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { generateOpenApiDocument } from '@/kernel/openapi';
 import { CreateAppealBodySchema, CreateAttemptBodySchema } from './contracts';
 
 describe('practice attempt and appeal contracts', () => {

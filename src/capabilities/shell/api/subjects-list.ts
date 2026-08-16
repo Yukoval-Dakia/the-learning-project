@@ -6,6 +6,7 @@
 //
 // 字段仍逐项裁剪；promptFragments / judgePolicy 等 server-only AI 合同绝不下发。
 
+import { and, isNotNull, isNull } from 'drizzle-orm';
 import { knowledge } from '@/db/schema';
 import { errorResponse } from '@/kernel/http';
 import { isGeneralFallbackFor } from '@/server/subjects/resolution-cache';
@@ -14,7 +15,6 @@ import {
   getDefaultSubjectRegistry,
   normalizeSubjectKey,
 } from '@/subjects/profile';
-import { and, isNotNull, isNull } from 'drizzle-orm';
 
 export type SubjectConfigurationStatus = 'configured' | 'general-fallback' | 'unconfigured';
 

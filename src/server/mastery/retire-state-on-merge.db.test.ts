@@ -3,6 +3,8 @@
 // NEVER merges a statistic. Plus: the mastery lock is the SHARED fsrs:knowledge namespace (mutual
 // exclusion with grading), and kc_typed ALSO rewrites the confused_with_kc_id pointer.
 
+import { eq, sql } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from '@/db/client';
 import {
   kc_typed_state,
@@ -10,8 +12,6 @@ import {
   mastery_state,
   material_fsrs_state,
 } from '@/db/schema';
-import { eq, sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb } from '../../../tests/helpers/db';
 import { retireLearnerAxisStateOnMerge } from '../calibration/axis-writer';
 import { retireKcTypedStateOnMerge } from '../conjectures/typed-state';

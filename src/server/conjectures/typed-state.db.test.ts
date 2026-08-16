@@ -1,10 +1,10 @@
 // YUK-440 (A13) — kc_typed_state single-writer tests. Pure §修正-4 gate + DB upsert
 // (concurrency serialization / deterministic transitions / evidence append-union).
 
-import { db } from '@/db/client';
-import { kc_typed_state } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { db } from '@/db/client';
+import { kc_typed_state } from '@/db/schema';
 
 import { resetDb } from '../../../tests/helpers/db';
 import {

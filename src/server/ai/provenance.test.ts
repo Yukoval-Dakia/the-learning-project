@@ -1,5 +1,5 @@
-import { costUsdToMicroUsd, sumAllKnownCostUsd } from '@/server/ai/provenance';
 import { describe, expect, it } from 'vitest';
+import { costUsdToMicroUsd, sumAllKnownCostUsd } from '@/server/ai/provenance';
 
 describe('all-known product-operation cost', () => {
   it('returns zero for an operation with no child calls', () => {

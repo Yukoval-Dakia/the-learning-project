@@ -34,8 +34,7 @@ import {
   runSourceGroundingVerify,
 } from '@/capabilities/practice/server/judge/source-grounding-verify';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
-import { deriveSourceTier } from '@/core/schema/provenance';
-import { WebSourcedProvenance } from '@/core/schema/provenance';
+import { WebSourcedProvenance, deriveSourceTier } from '@/core/schema/provenance';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
