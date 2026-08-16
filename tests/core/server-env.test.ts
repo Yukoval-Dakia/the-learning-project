@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createServerEnv, getServerEnv } from '@/server/env';
-import { loadEnv } from '../../server/env';
+import { loadApiEnv, loadEnv } from '../../server/env';
 
 const REQUIRED_ENV = {
   DATABASE_URL: 'postgres://loom:loom@127.0.0.1:5433/loom?sslmode=disable',
@@ -77,5 +77,15 @@ describe('createServerEnv', () => {
 
     // Then
     expect(env.DOCX_CONVERT_ENGINE).toBeUndefined();
+  });
+
+  it('fails API startup when INTERNAL_TOKEN is missing', () => {
+    // Given
+    vi.stubEnv('DATABASE_URL', REQUIRED_ENV.DATABASE_URL);
+    vi.stubEnv('INTERNAL_TOKEN', undefined);
+    vi.stubEnv('VITEST', undefined);
+
+    // When / Then
+    expect(() => loadApiEnv('/tmp/nonexistent-env-root')).toThrow('INTERNAL_TOKEN');
   });
 });

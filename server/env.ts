@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { getServerEnv } from '@/server/env';
+import { getServerEnv, requireApiInternalToken } from '@/server/env';
 
 function parseLine(line: string): [string, string] | null {
   const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
@@ -38,4 +38,10 @@ export function loadEnv(rootDir: string = process.cwd()): ReturnType<typeof getS
     }
   }
   return getServerEnv();
+}
+
+export function loadApiEnv(rootDir: string = process.cwd()): ReturnType<typeof getServerEnv> {
+  const env = loadEnv(rootDir);
+  requireApiInternalToken(env);
+  return env;
 }

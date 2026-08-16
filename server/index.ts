@@ -10,9 +10,9 @@ import { warnFlipOrder } from '@/server/projections/sot-flag';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { buildHonoApp } from './app';
-import { loadEnv } from './env';
+import { loadApiEnv } from './env';
 
-const env = loadEnv();
+const env = loadApiEnv();
 assertAgentSdkRuntimeUser();
 // YUK-548: boot-time SoT-flip flag vector + flip-order WARN (never throws — see warnFlipOrder).
 warnFlipOrder();
