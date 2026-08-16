@@ -122,6 +122,55 @@ function normalizeNode(value: unknown): unknown {
   );
 }
 
+function inlineDefinitions(
+  value: unknown,
+  definitions: JsonObject,
+  preserveCycles: boolean,
+  resolving: ReadonlySet<string> = new Set(),
+): unknown {
+  if (Array.isArray(value)) {
+    return value.map((nested) => inlineDefinitions(nested, definitions, preserveCycles, resolving));
+  }
+  if (!isJsonObject(value)) return value;
+
+  if (typeof value.$ref === 'string' && value.$ref.startsWith('#/definitions/')) {
+    const name = value.$ref.slice('#/definitions/'.length);
+    const definition = definitions[name];
+    if (definition === undefined || resolving.has(name)) return preserveCycles ? value : {};
+    return inlineDefinitions(
+      definition,
+      definitions,
+      preserveCycles,
+      new Set([...resolving, name]),
+    );
+  }
+
+  const inlined = Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== 'definitions')
+      .map(([key, nested]) => [
+        key,
+        inlineDefinitions(nested, definitions, preserveCycles, resolving),
+      ]),
+  );
+  if (
+    Array.isArray(inlined.allOf) &&
+    inlined.allOf.length === 1 &&
+    isJsonObject(inlined.allOf[0])
+  ) {
+    const { allOf: _allOf, ...siblings } = inlined;
+    return { ...inlined.allOf[0], ...siblings };
+  }
+  return inlined;
+}
+
+function containsDefinitionRef(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsDefinitionRef);
+  if (!isJsonObject(value)) return false;
+  if (typeof value.$ref === 'string' && value.$ref.startsWith('#/definitions/')) return true;
+  return Object.values(value).some(containsDefinitionRef);
+}
+
 export function zodToJsonSchemaCompat(
   schema: ZodTypeAny,
   params: ZodJsonSchemaCompatParams,
@@ -147,5 +196,17 @@ export function zodToJsonSchemaCompat(
     }),
   );
   if (!isJsonObject(normalized)) throw new TypeError('Zod JSON Schema output must be an object');
+  if (isJsonObject(normalized.definitions)) {
+    const inlined = inlineDefinitions(
+      normalized,
+      normalized.definitions,
+      params.target === 'draft-07',
+    );
+    if (!isJsonObject(inlined)) throw new TypeError('Inlined JSON Schema output must be an object');
+    if (params.target === 'draft-07' && containsDefinitionRef(inlined)) {
+      inlined.definitions = normalized.definitions;
+    }
+    return inlined;
+  }
   return normalized;
 }

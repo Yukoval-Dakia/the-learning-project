@@ -73,7 +73,7 @@ describe('zodToJsonSchemaCompat', () => {
 
     // Then
     expect(converted.definitions).toBeDefined();
-    expect(collectRefs(converted)).toContain('#/definitions/__schema0');
+    expect(collectRefs(converted).some((ref) => ref.startsWith('#/definitions/'))).toBe(true);
   });
 
   it('sorts equal-rank metadata keys independently of insertion order', () => {
