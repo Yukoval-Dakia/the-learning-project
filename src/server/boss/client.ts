@@ -1,5 +1,7 @@
 import { PgBoss } from 'pg-boss';
 
+import { getServerEnv } from '@/server/env';
+
 // Singleton PgBoss instance —— pg-boss 内部维护连接池，每进程一个。
 // 复用模式与 src/db/client.ts 的 db 单例一致。
 //
@@ -17,6 +19,7 @@ import { PgBoss } from 'pg-boss';
 // node-postgres (`pg.Pool`, pg-boss/dist/db.js), so a duplicate-key surfaces as
 // a raw `pg` error with `.code === '23505'` directly on the thrown object.
 const PG_UNIQUE_VIOLATION = '23505';
+const env = getServerEnv();
 
 /**
  * True when `err` is a benign pg-boss queue create race — a Postgres 23505
@@ -68,16 +71,13 @@ const bossState: BossState = globalForBoss.__loomBossState ?? {
   startPromise: null,
   started: null,
 };
-if (process.env.NODE_ENV !== 'production') {
+if (env.NODE_ENV !== 'production') {
   globalForBoss.__loomBossState = bossState;
 }
 
 export function createBoss(): PgBoss {
   if (bossState.instance) return bossState.instance;
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    throw new Error('DATABASE_URL is required to create PgBoss instance');
-  }
+  const connectionString = env.DATABASE_URL;
   // Under vitest, cap the internal connection pool aggressively. Multiple test
   // files re-create the singleton via _resetBossForTests; pg-boss's default
   // pool (~10) + testcontainer Postgres's default `max_connections=100` leave
@@ -86,7 +86,7 @@ export function createBoss(): PgBoss {
   // ceiling and removes the "too many clients already" flake seen in
   // boss/client.test when run with the full suite. Production (worker /
   // route processes) keeps the library default.
-  const isVitest = !!process.env.VITEST;
+  const isVitest = Boolean(env.VITEST);
   bossState.instance = new PgBoss({
     connectionString,
     schema: 'pgboss',
