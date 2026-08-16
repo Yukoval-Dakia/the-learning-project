@@ -9,6 +9,15 @@ const DRAFT_07_INPUT = {
   reused: 'inline',
 } as const;
 
+function collectRefs(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(collectRefs);
+  if (value === null || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([key, nested]) => {
+    if (key === '$ref' && typeof nested === 'string') return [nested];
+    return collectRefs(nested);
+  });
+}
+
 describe('zodToJsonSchemaCompat', () => {
   it('preserves exclusive-union semantics when converting z.xor()', () => {
     // Given
@@ -46,6 +55,25 @@ describe('zodToJsonSchemaCompat', () => {
     // Then
     expect(converted.anyOf).toHaveLength(2);
     expect(converted).not.toHaveProperty('oneOf');
+  });
+
+  it('preserves recursive references instead of widening cycles to empty schemas', () => {
+    // Given
+    type RecursiveNode = {
+      readonly value: string;
+      readonly children?: readonly RecursiveNode[];
+    };
+    const recursiveNode: z.ZodType<RecursiveNode> = z.lazy(() =>
+      z.object({ value: z.string(), children: z.array(recursiveNode).optional() }),
+    );
+    const schema = z.object({ root: recursiveNode.nullable() });
+
+    // When
+    const converted = zodToJsonSchemaCompat(schema, DRAFT_07_INPUT);
+
+    // Then
+    expect(converted.definitions).toBeDefined();
+    expect(collectRefs(converted)).toContain('#/definitions/__schema0');
   });
 
   it('sorts equal-rank metadata keys independently of insertion order', () => {

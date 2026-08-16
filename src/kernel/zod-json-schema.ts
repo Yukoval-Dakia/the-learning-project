@@ -122,39 +122,6 @@ function normalizeNode(value: unknown): unknown {
   );
 }
 
-function inlineDefinitions(
-  value: unknown,
-  definitions: JsonObject,
-  resolving: ReadonlySet<string> = new Set(),
-): unknown {
-  if (Array.isArray(value)) {
-    return value.map((nested) => inlineDefinitions(nested, definitions, resolving));
-  }
-  if (!isJsonObject(value)) return value;
-
-  if (typeof value.$ref === 'string' && value.$ref.startsWith('#/definitions/')) {
-    const name = value.$ref.slice('#/definitions/'.length);
-    const definition = definitions[name];
-    if (definition === undefined || resolving.has(name)) return {};
-    return inlineDefinitions(definition, definitions, new Set([...resolving, name]));
-  }
-
-  const inlined = Object.fromEntries(
-    Object.entries(value)
-      .filter(([key]) => key !== 'definitions')
-      .map(([key, nested]) => [key, inlineDefinitions(nested, definitions, resolving)]),
-  );
-  if (
-    Array.isArray(inlined.allOf) &&
-    inlined.allOf.length === 1 &&
-    isJsonObject(inlined.allOf[0])
-  ) {
-    const { allOf: _allOf, ...siblings } = inlined;
-    return { ...inlined.allOf[0], ...siblings };
-  }
-  return inlined;
-}
-
 export function zodToJsonSchemaCompat(
   schema: ZodTypeAny,
   params: ZodJsonSchemaCompatParams,
@@ -180,8 +147,5 @@ export function zodToJsonSchemaCompat(
     }),
   );
   if (!isJsonObject(normalized)) throw new TypeError('Zod JSON Schema output must be an object');
-  if (!isJsonObject(normalized.definitions)) return normalized;
-  const inlined = inlineDefinitions(normalized, normalized.definitions);
-  if (!isJsonObject(inlined)) throw new TypeError('Inlined JSON Schema output must be an object');
-  return inlined;
+  return normalized;
 }
