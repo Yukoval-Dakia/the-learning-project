@@ -100,9 +100,14 @@ export function ProbeAnswers() {
 export function ProbeAnswerCard({
   probe,
   onAnswered,
+  onFailed,
 }: {
   probe: PrepDeskProbeWire;
   onAnswered?: (resolution: ProbeAnswerVerdict['resolution']) => void;
+  // YUK-895 goal lane — a failed judge submit must also surface in the teaching
+  // brief's 当前结果 band (the server brief is unchanged on fail-closed 422, so the
+  // brief needs a local failure state). Mirrors onAnswered's symmetry hook.
+  onFailed?: () => void;
 }) {
   const qc = useQueryClient();
   const [answerMd, setAnswerMd] = useState('');
@@ -154,6 +159,7 @@ export function ProbeAnswerCard({
       // A gradable unrelated error returns the recorded `inconclusive` verdict above.
       setError(JUDGE_FAILURE_MESSAGE);
       setToast(JUDGE_FAILURE_MESSAGE);
+      onFailed?.();
     } finally {
       setSubmitting(false);
     }

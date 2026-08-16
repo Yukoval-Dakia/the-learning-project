@@ -45,7 +45,6 @@ import './onboarding.css';
 // raises it above this ceiling — the 8-segment track + last-question gate stay valid (a
 // pace-driven cap ABOVE 8 would need a dynamic-cap UI = separate design pre-flight, deferred).
 const CAP = 8;
-const JUDGE_FAILURE_MESSAGE = '判题失败，请稍后重试';
 
 const VALID_PACES = ['light', 'medium', 'dense'] as const;
 
@@ -60,7 +59,7 @@ function readSelfReport(search: string): PlacementSelfReport {
   return { leanings, pace };
 }
 
-type Phase = 'loading' | 'answer' | 'sourcing' | 'settling' | 'nogoal' | 'error';
+type Phase = 'loading' | 'answer' | 'sourcing' | 'settling' | 'judgefail' | 'nogoal' | 'error';
 
 export interface ScreenPlacementProps {
   navigate: (to: string) => void;
@@ -72,8 +71,6 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   const [qRef, setQRef] = useState<PlacementQuestionRef | null>(null);
   const [answeredCount, setAnsweredCount] = useState(0);
   const [errMsg, setErrMsg] = useState<string | null>(null);
-  const [judgeError, setJudgeError] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
   // Captured at mount from ?goal; reused to land on /profile?goal after the probe.
   const goalIdRef = useRef<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -101,12 +98,6 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     if (event.persisted) return;
     return transitionPlacement('abandoned', true);
   });
-
-  useEffect(() => {
-    if (!toast) return;
-    const timeout = window.setTimeout(() => setToast(null), 5000);
-    return () => window.clearTimeout(timeout);
-  }, [toast]);
 
   // Mount: read ?goal and start the probe. The probe's scope is the goal's
   // scope_knowledge_ids (server-side). 400 = empty scope (cold) → sourcing; 404 =
@@ -193,8 +184,6 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     latencyMs: number | null;
   }) => {
     if (!sessionId || !qRef) return;
-    setJudgeError(null);
-    setToast(null);
     try {
       await submitProbeAnswer({ sessionId, questionId: qRef.questionId, ...payload });
       setAnsweredCount((c) => c + 1);
@@ -208,9 +197,13 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
         return;
       }
       setQRef(nx.question);
-    } catch {
-      setJudgeError(JUDGE_FAILURE_MESSAGE);
-      setToast(JUDGE_FAILURE_MESSAGE);
+    } catch (e) {
+      // submit 422 (judge unsupported) or network — the probe can't score this answer.
+      // Slice-3 review: abandon the probe so it doesn't dangle in 'started' (the orphan
+      // sweep would catch it eventually, but closing it now is cleaner).
+      void transitionPlacement('abandoned').catch(() => {});
+      setErrMsg(e instanceof Error ? e.message : String(e));
+      setPhase('judgefail');
     }
   };
 
@@ -278,6 +271,21 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     );
   }
 
+  if (phase === 'judgefail') {
+    return (
+      <PlacementShell answeredCount={answeredCount} done onExit={() => navigate('/today')}>
+        <LoomCard pad padLg>
+          <ErrorState text="评分管道暂时不可用 · judge 降级。你已答的题会保留，画像稍后补算。" />
+          <div className="hero-cta" style={{ justifyContent: 'center', marginTop: 'var(--s-3)' }}>
+            <Btn variant="primary" iconEnd="arrow" onClick={() => navigate(profileDest())}>
+              先看初步档案
+            </Btn>
+          </div>
+        </LoomCard>
+      </PlacementShell>
+    );
+  }
+
   if (phase === 'settling') {
     return (
       <PlacementShell answeredCount={answeredCount} done onExit={() => navigate('/today')}>
@@ -300,8 +308,6 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
           key={qRef.questionId}
           qRef={qRef}
           answeredCount={answeredCount}
-          errorMessage={judgeError}
-          toast={toast}
           onAnswered={onAnswered}
         />
       )}
@@ -366,14 +372,10 @@ function PlacementShell({
 function PlacementQuestionCard({
   qRef,
   answeredCount,
-  errorMessage,
-  toast,
   onAnswered,
 }: {
   qRef: PlacementQuestionRef;
   answeredCount: number;
-  errorMessage: string | null;
-  toast: string | null;
   onAnswered: (payload: {
     responseMd: string;
     referencedKnowledgeIds: string[];
@@ -558,18 +560,6 @@ function PlacementQuestionCard({
           {isChoice ? '选择即记录 · 攒到末尾统一判分' : '作答攒到末尾统一判分'}
         </span>
       </div>
-      {errorMessage && (
-        <div className="ob-pl-error" role="alert">
-          <LoomIcon name="alert" size={13} />
-          {errorMessage}
-        </div>
-      )}
-      {toast && (
-        <div className="ob-pl-toast" role="status" aria-live="polite">
-          <LoomIcon name="alert" size={14} className="ob-pl-toast-icon" />
-          {toast}
-        </div>
-      )}
     </LoomCard>
   );
 }

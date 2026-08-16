@@ -653,36 +653,6 @@
   gap: var(--s-3);
   margin-top: var(--s-5);
 }
-.ob-pl-error {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: var(--s-2);
-  font-size: var(--fs-caption);
-  color: var(--again-ink);
-}
-.ob-pl-toast {
-  position: fixed;
-  right: var(--s-5);
-  bottom: var(--s-5);
-  z-index: 70;
-  display: inline-flex;
-  align-items: flex-start;
-  gap: var(--s-2);
-  max-width: 340px;
-  padding: var(--s-3) var(--s-4);
-  color: var(--ink-2);
-  font-size: var(--fs-caption);
-  background: var(--paper-raised);
-  border: 1px solid var(--line);
-  border-radius: var(--r-3);
-  box-shadow: var(--shadow-2);
-}
-.ob-pl-toast-icon {
-  flex: none;
-  margin-top: 1px;
-  color: var(--coral);
-}
 .ob-pl-saved {
   display: inline-flex;
   align-items: center;

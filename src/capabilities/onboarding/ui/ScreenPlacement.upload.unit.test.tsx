@@ -102,22 +102,3 @@ describe('ScreenPlacement handwriting upload failure (YUK-713)', () => {
     expect(mocks.uploadAsset).toHaveBeenCalledTimes(2);
   });
 });
-
-describe('ScreenPlacement judge failure feedback (YUK-895)', () => {
-  it('keeps the answer, shows a retry message, and resets the submit button', async () => {
-    mocks.submitProbeAnswer.mockRejectedValueOnce(new Error('unsupported_judge_route'));
-    const user = userEvent.setup();
-    renderPlacement();
-
-    await screen.findByText('用一句话解释导数。');
-    const answer = screen.getByRole('textbox', { name: '作答' });
-    await user.type(answer, '导数表示变化率');
-    await user.click(screen.getByRole('button', { name: '下一题' }));
-
-    expect((await screen.findByRole('alert')).textContent).toContain('判题失败，请稍后重试');
-    expect(screen.getByRole('button', { name: '下一题' })).toBeTruthy();
-    expect((answer as HTMLTextAreaElement).value).toBe('导数表示变化率');
-    expect(mocks.placementNext).not.toHaveBeenCalled();
-    expect(mocks.placementEnd).not.toHaveBeenCalled();
-  });
-});

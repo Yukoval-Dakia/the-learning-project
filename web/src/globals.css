@@ -6836,6 +6836,11 @@ button.chip:disabled:hover {
 .tb-outcome-confirmed {
   color: var(--good-ink);
 }
+/* YUK-895 goal lane — 当前结果 failure state (probe submit failed; server brief
+   unchanged on fail-closed 422). Error tone, same as .tb-error. */
+.tb-outcome-failed {
+  color: var(--again-ink);
+}
 .tb-error {
   font-size: var(--fs-meta);
   color: var(--again-ink);
