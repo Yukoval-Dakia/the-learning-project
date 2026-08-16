@@ -319,6 +319,16 @@ describe('TeachingBriefBand — state rendering (SSR)', () => {
 });
 
 describe('TeachingBriefBand — evidence provenance (SSR)', () => {
+  it('does not repeat the claim when the server basis summary matches it', () => {
+    const html = render(
+      findingBrief({
+        basis: { summary_md: FINDING_CLAIM, evidence_trace: [] },
+      }),
+    );
+    expect(html).toContain('相关学习依据如下。');
+    expect(html.match(new RegExp(FINDING_CLAIM, 'g'))).toHaveLength(1);
+  });
+
   it('renders one prose chip per ref, never folded, never ×N', () => {
     // Two same-kind induction refs (different ids) → two identical neutral chips, no ×2.
     const html = render(

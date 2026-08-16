@@ -287,6 +287,9 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     }
   }
 
+  const basisSummaryIsClaim =
+    brief !== null && brief.basis.summary_md.trim() === brief.finding.claim_md.trim();
+
   return (
     <div className="tb-band-wrap">
       {/* aria-live region persists across state changes; announced once per forward move. */}
@@ -403,7 +406,9 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
               <h3 id="tb-h-basis" className="tb-block-title">
                 为什么这么判断
               </h3>
-              <p className="tb-basis">{brief.basis.summary_md}</p>
+              <p className="tb-basis">
+                {basisSummaryIsClaim ? '相关学习依据如下。' : brief.basis.summary_md}
+              </p>
               <div className="tb-evidence">
                 {brief.basis.evidence_trace.map((ref, i) => {
                   // Reuse the inbox readable label; IGNORE route (prose-only, never <a>).
