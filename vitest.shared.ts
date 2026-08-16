@@ -439,6 +439,7 @@ export const fastTestInclude = [
   // falls through to the DB partition.
   'src/server/memory/brief-writer.test.ts',
   'src/server/memory/client.test.ts',
+  'src/server/memory/usage-fetch.test.ts',
   'src/server/memory/provider-operation.test.ts',
   'src/server/memory/provider-operation-invariant.test.ts',
   'src/server/memory/provider-operation-untracked.test.ts',

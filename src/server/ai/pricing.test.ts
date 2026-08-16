@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { localCostUsd } from './pricing';
+import { bailianEmbedCostCny, glmChatCostCny, localCostUsd } from './pricing';
 
 function knownCost(model: string, inputTokens: number, outputTokens: number): number {
   const cost = localCostUsd(model, { inputTokens, outputTokens });
@@ -44,5 +44,15 @@ describe('localCostUsd', () => {
     expect(cachedInput ?? 0).toBeGreaterThan(0);
     expect(cachedInput ?? Number.POSITIVE_INFINITY).toBeLessThan(freshInput);
     expect(withZeroCache).toBe(withoutCache);
+  });
+});
+
+describe('memory provider CNY pricing', () => {
+  it('prices GLM prompt and completion tokens independently', () => {
+    expect(glmChatCostCny(1_000_000, 500_000)).toBe(2.5);
+  });
+
+  it('prices 百炼 embedding prompt tokens only', () => {
+    expect(bailianEmbedCostCny(2_000_000)).toBe(1);
   });
 });
