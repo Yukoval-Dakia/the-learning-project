@@ -37,6 +37,7 @@ const TEST_SCHEMA = 'pgboss_yuk891_startup_recovery';
 
 let boss: PgBoss;
 let sqlClient: ReturnType<typeof postgres>;
+let connectionString: string;
 
 // Mount ONLY the two practice verifier decls, with inert handler factories:
 // the registrar still builds the exact production queues (the decl tier drives
@@ -72,8 +73,9 @@ async function seedDraftWithIntent(
 }
 
 beforeAll(async () => {
-  const connectionString = process.env.DATABASE_URL ?? process.env.TEST_DATABASE_URL;
-  if (!connectionString) throw new Error('DATABASE_URL required');
+  const databaseUrl = process.env.DATABASE_URL ?? process.env.TEST_DATABASE_URL;
+  if (!databaseUrl) throw new Error('DATABASE_URL required');
+  connectionString = databaseUrl;
   sqlClient = postgres(connectionString, { max: 1 });
   // Fresh pg-boss schema for this run (also cleans watch-mode re-runs): the
   // regression requires the verifier queues to NOT exist when boot starts.
@@ -97,7 +99,7 @@ describe('verify-dispatch startup recovery vs capability queue creation (YUK-891
     await seedDraftWithIntent('q-yuk891-src', 'web_sourced', 'source_verify');
   });
 
-  it('enqueues durable verify intents on the FIRST startup recovery execution (no missing-queue send)', async () => {
+  it('completes two boot recoveries while dispatching each durable verify intent once', async () => {
     // Boot segment 1 — central ledger: mounts the verify_dispatch_recover worker
     // (already polling) and, post-YUK-891, fires NO startup trigger.
     await registerHandlers(boss, db);
@@ -121,13 +123,15 @@ describe('verify-dispatch startup recovery vs capability queue creation (YUK-891
     expect(await boss.getQueue('quiz_verify')).not.toBeNull();
     expect(await boss.getQueue('source_verify')).not.toBeNull();
 
-    // Boot segment 3 — the startup trigger, in start-worker's post-fix order.
+    // Boot segment 3 — the first completed boot sends its startup trigger.
     await sendVerifyDispatchStartupRecovery(boss);
 
-    // The recovery worker executes: both durable intents complete as enqueued.
+    // The first recovery worker executes: both durable intents complete as enqueued,
+    // and the recovery job itself reaches completed before the worker is stopped.
     const subjectIds = ['q-yuk891-quiz', 'q-yuk891-src'];
     const deadline = Date.now() + 20_000;
     let completions: { subjectId: string; payload: unknown }[] = [];
+    let completedRecoveryJobs = 0;
     while (Date.now() < deadline) {
       completions = await db
         .select({ subjectId: event.subject_id, payload: event.payload })
@@ -139,13 +143,44 @@ describe('verify-dispatch startup recovery vs capability queue creation (YUK-891
             eq(event.outcome, 'success'),
           ),
         );
-      if (completions.length === subjectIds.length) break;
+      const completed = await sqlClient.unsafe<[{ n: number }]>(
+        `SELECT count(*)::int AS n FROM ${TEST_SCHEMA}.job WHERE name = 'verify_dispatch_recover' AND state = 'completed'`,
+      );
+      completedRecoveryJobs = completed[0]?.n ?? 0;
+      if (completions.length === subjectIds.length && completedRecoveryJobs === 1) break;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     expect(completions).toHaveLength(2);
+    expect(completedRecoveryJobs).toBe(1);
     for (const completion of completions) {
       expect(completion.payload).toMatchObject({ recovery: true, disposition: 'enqueued' });
     }
+
+    // A second real boot lifecycle reopens pg-boss, remounts both registration tiers,
+    // and sends the next startup trigger. Its recovery job must also complete before
+    // duplicate-dispatch assertions are evaluated.
+    await boss.stop({ graceful: false });
+    boss = new PgBoss({ connectionString, schema: TEST_SCHEMA, max: 2 });
+    await boss.start();
+    await registerHandlers(boss, db);
+    await registerCapabilityJobs(boss, db, [verifierOnlyPractice]);
+    await sendVerifyDispatchStartupRecovery(boss);
+
+    const secondBootDeadline = Date.now() + 20_000;
+    while (Date.now() < secondBootDeadline) {
+      const completed = await sqlClient.unsafe<[{ n: number }]>(
+        `SELECT count(*)::int AS n FROM ${TEST_SCHEMA}.job WHERE name = 'verify_dispatch_recover' AND state = 'completed'`,
+      );
+      completedRecoveryJobs = completed[0]?.n ?? 0;
+      if (completedRecoveryJobs === 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    expect(completedRecoveryJobs).toBe(2);
+
+    const startupTriggers = await sqlClient.unsafe<[{ n: number }]>(
+      `SELECT count(*)::int AS n FROM ${TEST_SCHEMA}.job WHERE name = 'verify_dispatch_recover'`,
+    );
+    expect(startupTriggers[0]?.n).toBe(2);
 
     // First-execution proof: the pre-fix missing-queue throw would have written
     // an enqueue-failure metric (outcome='failure') before self-healing on
@@ -162,7 +197,7 @@ describe('verify-dispatch startup recovery vs capability queue creation (YUK-891
       `SELECT name, count(*)::int AS n FROM ${TEST_SCHEMA}.job WHERE name IN ('quiz_verify', 'source_verify') GROUP BY name`,
     );
     const byName = new Map(enqueued.map((row) => [row.name, row.n]));
-    expect(byName.get('quiz_verify') ?? 0).toBeGreaterThanOrEqual(1);
-    expect(byName.get('source_verify') ?? 0).toBeGreaterThanOrEqual(1);
+    expect(byName.get('quiz_verify') ?? 0).toBe(1);
+    expect(byName.get('source_verify') ?? 0).toBe(1);
   }, 45_000);
 });

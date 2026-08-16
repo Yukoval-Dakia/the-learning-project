@@ -966,18 +966,24 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   // the caller signal; the runner additionally aborts this controller on its own
   // timeout or provider-lease fencing before releasing the parent permit.
   const lifecycleAbortController = new AbortController();
+  const validationSignal = AbortSignal.any([
+    lifecycleAbortController.signal,
+    cancellationControl.signal,
+  ]);
   const validationTaskContext = (
     callCtx: Parameters<Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']>[2],
   ) => ({
     ...callCtx,
     db,
-    signal: lifecycleAbortController.signal,
+    signal: validationSignal,
     lifecycleAbortController,
     parentTaskRunId: taskRunId,
     providerSessionDeadlineAt: Date.now() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
   });
   const validationRunner: Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn'] =
     async (kind, input, callCtx) => {
+      await cancellationControl.probe();
+      validationSignal.throwIfAborted();
       const ctx = validationTaskContext(callCtx);
       switch (kind) {
         case 'QuizVerifyTask':
@@ -1233,7 +1239,13 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       preparedCandidate.text,
       [data.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join('\n'),
       result.task_run_id,
-      { db, runTaskFn: validationRunner },
+      {
+        db,
+        runTaskFn: validationRunner,
+        ...(preparedCandidate.primaryView?.source === 'ephemeral_html'
+          ? { additionalVisibleText: preparedCandidate.primaryView.ref }
+          : {}),
+      },
     );
     const evidenceReview =
       correctionResolution.kind === 'clarify'

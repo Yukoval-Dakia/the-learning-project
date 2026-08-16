@@ -142,21 +142,22 @@ function paidTaskFailureKind(error: unknown): string {
 function proposalContractRepair(
   toolTrace: readonly ToolExecutionResultObservation[],
 ): string | undefined {
-  const proposalCalls = toolTrace.filter((entry) => {
-    if (
-      entry.proposal_effect_contract === undefined ||
-      !entry.executed ||
-      entry.error_reason !== null ||
-      entry.output === null ||
-      typeof entry.output !== 'object' ||
-      Array.isArray(entry.output)
-    ) {
-      return false;
-    }
-    const status = (entry.output as Record<string, unknown>).status;
-    return status !== 'failed' && !(typeof status === 'string' && status.startsWith('skipped:'));
-  });
+  const proposalCalls = toolTrace.filter((entry) => entry.proposal_effect_contract !== undefined);
   if (proposalCalls.length === 0) return undefined;
+  const proposalIsPending = (entry: ToolExecutionResultObservation): boolean => {
+    const output =
+      entry.output !== null && typeof entry.output === 'object' && !Array.isArray(entry.output)
+        ? (entry.output as Record<string, unknown>)
+        : undefined;
+    const status = typeof output?.status === 'string' ? output.status : undefined;
+    return (
+      entry.executed &&
+      entry.error_reason === null &&
+      status !== undefined &&
+      status !== 'failed' &&
+      !status.startsWith('skipped:')
+    );
+  };
 
   const callResults = proposalCalls.map((entry) => {
     const output =
@@ -178,8 +179,12 @@ function proposalContractRepair(
     const details = [result || undefined, retainedDraftResult]
       .filter((value): value is string => value !== undefined)
       .join('; ');
-    return `- \`${entry.name}\`${details ? `: ${details}` : ''}`;
+    return [
+      `- \`${entry.name}\`${details ? `: ${details}` : ''}`,
+      ...(proposalIsPending(entry) ? [] : ['  未执行目标变更；未产生待 owner 接受的 proposal。']),
+    ].join('\n');
   });
+  const hasPendingProposal = proposalCalls.some(proposalIsPending);
 
   return [
     '本轮 proposal 结果由服务端契约裁定：',
@@ -187,7 +192,9 @@ function proposalContractRepair(
     '- owner gate: FULL',
     '- direct target write: false',
     '- pre-accept rollback: dismiss_before_accept',
-    '任何目标变更都尚未直接写入；只有 owner 接受对应 proposal 后才会应用。',
+    hasPendingProposal
+      ? '任何目标变更都尚未直接写入；只有 owner 接受对应 proposal 后才会应用。'
+      : '本轮没有可接受的 proposal，未执行任何目标变更。',
   ].join('\n');
 }
 
@@ -688,6 +695,18 @@ export async function reviewCopilotEvidenceReply(params: {
   }
   const degradeWithBlindReply = (comparisonTaskRunIds: string[]): CopilotEvidenceReviewDecision => {
     const reviewTaskRunId = reference.taskRunIds.at(-1);
+    const contractRepair = proposalContractRepair(params.toolTrace);
+    const blindReadFacts = contractRepair
+      ? (reference.reference.output.safe_reply.match(/[^；。！？\n]+[；。！？\n]?/gu) ?? [])
+          .filter(
+            (clause) =>
+              !/\bLIGHT\b|无需\s*owner|(?:已|已经|直接).{0,16}(?:归档|写入|执行|应用|删除|合并|重挂|改挂|创建|生成)|(?:relearn.{0,16}(?:回滚|恢复)|(?:回滚|恢复).{0,16}relearn)/iu.test(
+                clause,
+              ),
+          )
+          .join('')
+          .trim()
+      : reference.reference.output.safe_reply;
     console.warn('[copilot-evidence-review] verification degraded', {
       event: 'copilot_evidence_review_verification_timeout_degraded',
       candidate_task_run_id: params.candidateTaskRunId,
@@ -696,7 +715,13 @@ export async function reviewCopilotEvidenceReply(params: {
     });
     return {
       status: 'degraded',
-      replyText: `${COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION}\n\n${reference.reference.output.safe_reply}`,
+      replyText: [
+        COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION,
+        blindReadFacts || undefined,
+        contractRepair,
+      ]
+        .filter((section): section is string => section !== undefined)
+        .join('\n\n'),
       referenceTaskRunIds: reference.taskRunIds,
       comparisonTaskRunIds,
       ...(reviewTaskRunId ? { reviewTaskRunId } : {}),

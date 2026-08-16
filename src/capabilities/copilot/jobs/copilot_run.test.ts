@@ -246,6 +246,39 @@ describe('runCopilotRun', () => {
     expect(JSON.stringify(await replay(runId))).not.toContain('1+1=3');
   });
 
+  it.each([
+    {
+      label: 'numeric character references',
+      html: '<section><h2>&#39064;&#30446;</h2><p>17×19？</p><p>&#31572;&#26696;&#65306;323</p></section>',
+    },
+    {
+      label: 'inline tags splitting assessment labels',
+      html: '<section><h2>题<span>目</span></h2><p>17×19？</p><p>答<span>案</span>：323</p></section>',
+    },
+  ])('fails closed for durable ephemeral HTML hidden with $label', async ({ html }) => {
+    const runId = `copilot_user_ask_durable_obfuscated_${html.includes('&#') ? 'entity' : 'tag'}`;
+    const marker = `<!--primary_view:${JSON.stringify({ source: 'ephemeral_html', ref: html })}-->`;
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: `${runId}_session`,
+        user_message: '请生成一道乘法题。',
+      },
+      streamTaskCollectingFn: streamMock(`请在卡片里作答。\n${marker}`) as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    });
+
+    expect(result).toMatchObject({
+      status: 'done',
+      reply: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY,
+    });
+    expect(JSON.stringify(await replay(runId))).not.toContain('323');
+  });
+
   it('provides durable artifact tools a parent-bound learning validator', async () => {
     const runId = 'copilot_user_ask_durable_artifact_parent';
     let mcpOptions: BuildMcpServerOptions | undefined;
@@ -2609,6 +2642,103 @@ describe('runCopilotRun', () => {
         durable_failure: { reason: 'cancelled' },
       },
     });
+  });
+
+  it('Stop — aborts validator provider calls through the durable cancellation signal', async () => {
+    const runId = 'copilot_user_ask_stop_during_learning_validation';
+    const controller = new AbortController();
+    const observedValidatorSignals: boolean[] = [];
+    let markProviderStarted: (() => void) | undefined;
+    const providerStarted = new Promise<void>((resolve) => {
+      markProviderStarted = resolve;
+    });
+    const cancellationControl = {
+      signal: controller.signal,
+      hasConfirmedCancellation: false,
+      materializingToolStarted: false,
+      startPolling: vi.fn(),
+      dispose: vi.fn(),
+      probe: vi.fn(async () => (controller.signal.aborted ? 'cancel_requested' : 'clear')),
+      beforeTool: vi.fn(async () => undefined),
+      onToolExecutionStarted: vi.fn(),
+      onToolExecutionSettled: vi.fn(),
+      waitForInFlight: vi.fn(async () => true),
+      prependSdkHook: vi.fn((hooks) => hooks ?? { PreToolUse: [] }),
+    };
+    const validationRunner = vi.fn(async (kind: string, _input: unknown, ctx: AgentCtx) => {
+      markProviderStarted?.();
+      await new Promise<void>((resolve) => {
+        if (ctx.signal?.aborted) resolve();
+        else ctx.signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+      observedValidatorSignals.push(ctx.signal?.aborted === true);
+      if (kind === 'QuizVerifyTask') {
+        return {
+          task_run_id: 'verify-stop',
+          text: JSON.stringify({
+            grounding: { verdict: 'pass', reason: 'self-contained' },
+            copy_safety: { verdict: 'original', max_overlap: 0 },
+            knowledge_hit: { verdict: 'pass', reason: 'on topic' },
+            overall: 'pass',
+            summary_md: 'pass',
+            confidence: 0.99,
+          }),
+        };
+      }
+      if (kind === 'SolutionGenerateTask') {
+        return {
+          task_run_id: 'solve-stop',
+          text: JSON.stringify({
+            reference_solution: {
+              final_answer: '2',
+              expected_signals: ['1+1'],
+              answer_equivalents: [],
+            },
+            worked_solution_md: '1+1=2',
+            confidence: 0.99,
+          }),
+        };
+      }
+      if (kind === 'SemanticJudgeTask') {
+        return {
+          task_run_id: 'judge-stop',
+          text: JSON.stringify({
+            score: 1,
+            coarse_outcome: 'correct',
+            confidence: 0.99,
+            feedback_md: 'pass',
+            evidence_json: { matched_points: ['1+1=2'], missing_points: [] },
+          }),
+        };
+      }
+      return {
+        task_run_id: 'teaching-stop',
+        text: JSON.stringify({
+          clarity: { verdict: 'pass', reason: 'clear' },
+          unique_answer: { verdict: 'pass', reason: 'unique' },
+          summary: 'pass',
+        }),
+      };
+    });
+    const candidate =
+      '题目\n1. 求 1+1？\n<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 1+1？","reference_md":"2","choices_md":null,"rubric_json":{}}]}-->';
+
+    const runPromise = runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_stop_learning_validation' },
+      streamTaskCollectingFn: streamMock(candidate) as never,
+      runValidationTaskFn: validationRunner as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+      createCancellationControlFn: (() => cancellationControl) as never,
+    });
+    await providerStarted;
+    controller.abort(new Error('user requested Stop during learning validation'));
+    const result = await runPromise;
+
+    expect(result).toEqual({ status: 'cancelled' });
+    expect(observedValidatorSignals.length).toBeGreaterThan(0);
+    expect(observedValidatorSignals.every(Boolean)).toBe(true);
   });
 
   it('Stop — validates a targeted correction before persisting its cancellation partial', async () => {
