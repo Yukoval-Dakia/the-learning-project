@@ -1,7 +1,7 @@
 import type { SearchResult } from 'mem0ai/oss';
 import type { Mem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
 export { createMem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
-import { type MemoryClient, createMemoryClient } from './client';
+import { type MemoryClient, type MemoryCostTracking, createMemoryClient } from './client';
 import { type SearchMemoriesOpts, searchMemories } from './search-memories';
 
 /** The smallest client surface required by the read-only memory path. */
@@ -21,8 +21,8 @@ export async function readMemoryFacts(
   query: string,
   opts: Omit<SearchMemoriesOpts, 'providerOperation'>,
   providerOperation: Mem0OpaqueOperationContext,
-  deps: { createClient?: MemoryReadClientFactory } = {},
+  deps: { createClient?: MemoryReadClientFactory; costTracking?: MemoryCostTracking } = {},
 ): Promise<SearchResult> {
-  const client = (deps.createClient ?? createMemoryClient)();
+  const client = deps.createClient?.() ?? createMemoryClient({ costTracking: deps.costTracking });
   return searchMemories(client, query, { ...opts, providerOperation });
 }
