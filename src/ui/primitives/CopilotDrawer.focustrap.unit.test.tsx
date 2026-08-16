@@ -5,13 +5,27 @@
 // primitive (same as NodeDrawer / CommandPalette). These tests exercise the real
 // focus behavior in jsdom.
 
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CopilotDrawer } from './CopilotDrawer';
 
 afterEach(cleanup);
 
 describe('CopilotDrawer focus trap (YUK-718)', () => {
+  it('toggles the drawer into a full-width state', () => {
+    render(
+      <CopilotDrawer open onClose={vi.fn()}>
+        <div>chat</div>
+      </CopilotDrawer>,
+    );
+    const panel = screen.getByTestId('copilot-drawer-panel');
+    const expand = screen.getByTestId('copilot-drawer-expand');
+    expect(panel.className).toContain('sm:w-[420px]');
+    fireEvent.click(expand);
+    expect(panel.className).toContain('sm:w-full');
+    expect(expand.getAttribute('aria-pressed')).toBe('true');
+  });
+
   it('moves focus into the panel on open', () => {
     render(
       <CopilotDrawer open onClose={vi.fn()} footer={<input data-testid="composer" />}>
