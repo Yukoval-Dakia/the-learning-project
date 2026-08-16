@@ -3,7 +3,7 @@ import { writeEvent, writeEvents } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { type AnyColumn, and, eq, inArray, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
-import type { Job } from 'pg-boss';
+import type { Job, PgBoss } from 'pg-boss';
 import { z } from 'zod';
 
 import type { PlacementVerificationAuthority } from '@/capabilities/practice/public';
@@ -553,4 +553,24 @@ export function buildVerifyDispatchRecoveryHandler(
   return async () => {
     await recoverOrphanVerifyDispatches(db, { enqueue });
   };
+}
+
+/**
+ * YUK-891 — fire the verify-dispatch startup recovery trigger.
+ *
+ * Called by start-worker AFTER registerCapabilityJobs has created the
+ * practice-owned quiz_verify / source_verify queues. registerHandlers mounts
+ * the verify_dispatch_recover worker (polling) BEFORE those queues exist, so a
+ * trigger fired from there races the registrar: with durable verify intents
+ * present, the first recovery execution boss.sends into a not-yet-created
+ * verifier queue and pg-boss throws `Queue <name> does not exist` — the attempt
+ * fails noisily and the drain is delayed to the nightly cron. The trigger
+ * lives next to the queue it targets; start-worker owns the ordering.
+ */
+export async function sendVerifyDispatchStartupRecovery(boss: PgBoss): Promise<void> {
+  await boss.send(
+    VERIFY_DISPATCH_RECOVERY_QUEUE,
+    { trigger: 'startup' },
+    { singletonKey: 'verify-dispatch-startup' },
+  );
 }

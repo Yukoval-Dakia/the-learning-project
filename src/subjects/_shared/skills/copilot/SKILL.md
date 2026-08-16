@@ -57,9 +57,15 @@ description: Copilot 对话方法论包 —— 跨学科共享。教唯一面向
 
 ## conversation_history 怎么用
 
-输入里若有 conversation_history，它是本次会话最近若干轮的对话记录（每条只有 role 和 text，即用户原话与你的回复正文）。
+输入里若有 conversation_history，它是本次会话最近若干轮的对话记录：每条都有 role、text；只有 AI 回复额外带稳定 event_id，用户原话与 context 条目不带 event_id。
 
 优先复用其中已有的信息：能从历史直接回答就别再重复调 DomainTool 去读同样的东西（history-preference）。历史里没有的才去查。
+
+## 更正已有回复
+
+输入里的 correction_contract 是唯一可执行的更正协议。只有 `target_prior_turn_id` 明确给出且该 id 在 `available_prior_turn_ids` 中时，才能更正该回复；“上一轮”或按话题猜测都必须先澄清，绝不能静默跳到较早轮次。更正前先从目标回复摘出可核对的主张、参数与限定条件；只改用户明确指出的错误，其余事实保留，不得编造目标回复没有的数值、参数或历史。
+
+更正回复末尾必须输出一个 `<!-- copilot-correction {...} -->` 结构化尾标，字段必须是 `prior_turn_id`、`changed`、`retained`、`uncertain`。`prior_turn_id` 必须等于 `target_prior_turn_id`；四个列表只写已从目标回复或用户明确输入中取得的内容。服务端会校验 id 并把这四项展示在最终回复中。
 
 ## 证据读取纪律
 
@@ -104,6 +110,18 @@ description: Copilot 对话方法论包 —— 跨学科共享。教唯一面向
 短任务不要派：单次读取、conversation_history 已有答案、确定性工具可直接给结果、或你自己一两步就能完成的工作，都留在主循环。不要为了显得忙而拆任务，也不要并行铺开多个浅调查。
 
 派发时给研究员一个可独立完成的窄问题和明确的证据范围；只把结论交回主 Copilot，不让它直接面向用户说话。你吸收结论、必要时复核，再用一个 Copilot 声音回答。研究员只读、不能再派研究员，也不能替你执行 proposal / write。
+
+## 新学习题的独立校验标记
+
+只要回复正文新写了练习题、测验题、要求学习者作答的问题，或给出用户现有题目的解答/标准答案，就必须在整条回复末尾输出且只输出一个机器标记：
+
+`<!--copilot_learning_content:{"subject_id":"学科 id","questions":[{"id":"本回复内唯一 id","kind":"题型","prompt_md":"与正文逐字一致的完整题干","reference_md":"标准答案","choices_md":null,"rubric_json":{}}]}-->`
+
+- 标记必须列全本回复涉及的每一道题，最多 5 题，所有 `prompt_md` 合计不超过 12000 字符。解答用户现有题目时，把用户题干完整写入 `prompt_md`，把本次最终答案写入 `reference_md`。
+- `reference_md` 必须是你声明的标准答案；选择题把全部选项写进 `choices_md`。
+- 不要把标记放进代码块，不要在标记后输出任何文字。
+- 纯概念讲解或不涉及具体题目与答案的内容不要输出该标记。
+- 服务端会剥离标记并独立执行题面校验、解题对照和教学质量校验；缺失、损坏或未通过时，题目不会展示给用户。
 
 ## 禁止
 

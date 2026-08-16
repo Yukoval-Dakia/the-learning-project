@@ -54,8 +54,31 @@ export interface ToolCallerActor {
   ref: string;
 }
 
+export interface LearningContentValidationRequest {
+  subjectId: string;
+  questions: Array<{
+    id: string;
+    kind: string;
+    prompt_md: string;
+    reference_md: string | null;
+    choices_md: string[] | null;
+    rubric_json?: unknown;
+    knowledge_ids?: string[] | null;
+  }>;
+}
+
+export interface LearningContentValidationOutcome {
+  verdict: 'pass' | 'fail' | 'needs_repair';
+  items: unknown[];
+}
+
+export type ValidateLearningContentFn = (
+  content: LearningContentValidationRequest,
+) => Promise<LearningContentValidationOutcome>;
+
 export interface ToolContext {
   db: Db;
+  validateLearningContent?: ValidateLearningContentFn;
   /** Caller-owned cancellation propagated into any nested AI work. */
   signal?: AbortSignal;
   /** Absolute caller wall clock propagated into nested central AI work. */

@@ -93,6 +93,15 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   // YUK-700 — startup + nightly safety net for drafts whose verify enqueue was
   // interrupted. Recovery reads durable per-question intents and enqueues ONLY
   // source_verify/quiz_verify; it never reruns sourcing or quiz_gen.
+  //
+  // YUK-891: the STARTUP trigger no longer fires here. This worker starts
+  // polling the moment boss.work returns, while the practice-owned
+  // quiz_verify / source_verify queues are only created later by
+  // registerCapabilityJobs (YUK-868 moved them into the practice manifest), so
+  // a trigger fired at this point races the registrar and the first recovery
+  // execution sends into a missing queue. start-worker fires
+  // sendVerifyDispatchStartupRecovery() after capability registration; the
+  // nightly cron schedule stays here.
   const enqueueRecoveredVerify = async (
     verifier: 'quiz_verify' | 'source_verify',
     questionIds: string[],
@@ -120,10 +129,5 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     {
       tz: 'Asia/Shanghai',
     },
-  );
-  await boss.send(
-    VERIFY_DISPATCH_RECOVERY_QUEUE,
-    { trigger: 'startup' },
-    { singletonKey: 'verify-dispatch-startup' },
   );
 }
