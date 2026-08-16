@@ -1,7 +1,7 @@
 import {
   ArtifactBodyBlocks,
   ArtifactHistoryEntry,
-  CorrectArtifactEvent,
+  CorrectArtifactPayload,
   NoteSection,
   NoteVerificationResult,
   SubjectProfileSchema,
@@ -48,7 +48,7 @@ const NotePageBacklinkSchema = z.object({
   from_block_id: z.string(),
 });
 
-// zod-to-json-schema cannot faithfully emit the recursive TipTap node graph.
+// JSON Schema output cannot faithfully emit the recursive TipTap node graph.
 // Keep the public wire boundary explicit and one node deep while route handlers
 // still validate writes with the canonical recursive ArtifactBodyBlocks schema.
 const ArtifactBodyBlockWireSchema = z
@@ -103,7 +103,7 @@ export const NotePageResponseSchema = z.object({
   version: z.number().int().nonnegative(),
   history: z.array(ArtifactHistoryEntry),
   backlinks: z.array(NotePageBacklinkSchema),
-  backlinks_by_type: z.record(z.array(NotePageBacklinkSchema)),
+  backlinks_by_type: z.record(z.string(), z.array(NotePageBacklinkSchema)),
   related_learning_items: z.array(
     z.object({
       id: z.string(),
@@ -181,12 +181,10 @@ export const ArtifactCorrectionStatusSchema = z.discriminatedUnion('state', [
 export const ArtifactCorrectionStateResponseSchema = z.object({
   artifact_id: z.string(),
   whole: ArtifactCorrectionStatusSchema,
-  blocks: z.record(ArtifactCorrectionStatusSchema),
+  blocks: z.record(z.string(), ArtifactCorrectionStatusSchema),
 });
 
-const CorrectArtifactPayloadSchema = CorrectArtifactEvent.innerType().shape.payload;
-
-export const CorrectArtifactBodySchema = CorrectArtifactPayloadSchema.superRefine((data, ctx) => {
+export const CorrectArtifactBodySchema = CorrectArtifactPayload.superRefine((data, ctx) => {
   if (data.correction_kind === 'supersede' && !data.replacement_artifact_id) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
