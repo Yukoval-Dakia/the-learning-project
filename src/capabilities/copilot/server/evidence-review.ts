@@ -349,7 +349,7 @@ async function runConfirmedComparison(params: {
       verdict: 'pass' | 'fail';
       comparison: BoundCopilotEvidenceComparison;
       taskRunIds: string[];
-      hasNonTimeoutInvalidAttempt: boolean;
+      hasNonTimeoutNegativeAttempt: boolean;
     }
   | { status: 'invalid'; reason: string; taskRunIds: string[] }
 > {
@@ -512,8 +512,11 @@ async function runConfirmedComparison(params: {
   const invalidAttempts = result.attempts.filter(
     (attempt) => attempt.outcome === 'contract_invalid',
   );
-  const hasNonTimeoutInvalidAttempt = invalidAttempts.some(
-    (attempt) => !attempt.detail?.startsWith('comparison_task_failed:budget_timeout'),
+  const hasNonTimeoutNegativeAttempt = result.attempts.some(
+    (attempt) =>
+      (attempt.outcome === 'contract_invalid' &&
+        !attempt.detail?.startsWith('comparison_task_failed:budget_timeout')) ||
+      (attempt.outcome === 'valid' && attempt.verdict === 'fail'),
   );
   if (result.status === 'invalid') {
     const budgetTimedOut =
@@ -532,7 +535,7 @@ async function runConfirmedComparison(params: {
     verdict: result.verdict,
     comparison: result.result,
     taskRunIds,
-    hasNonTimeoutInvalidAttempt,
+    hasNonTimeoutNegativeAttempt,
   };
 }
 
@@ -610,6 +613,9 @@ export async function reviewCopilotEvidenceReply(params: {
       params.candidateTaskRunId,
     );
   }
+  // Degradation policy: a blind-review failure fails closed; after blind-review success,
+  // only comparator budget timeouts may degrade. Any deterministic non-timeout denial,
+  // whether contract-invalid or a valid fail verdict, keeps the result fail-closed.
   if (!reference.ok) {
     return failClosed(reference.reason, params.candidateTaskRunId, {
       referenceTaskRunIds: reference.taskRunIds,
@@ -723,7 +729,7 @@ export async function reviewCopilotEvidenceReply(params: {
   if (
     fallback.status === 'invalid' &&
     fallback.reason === 'comparison_budget_timeout' &&
-    !original.hasNonTimeoutInvalidAttempt
+    !original.hasNonTimeoutNegativeAttempt
   ) {
     return degradeWithBlindReply([...original.taskRunIds, ...fallback.taskRunIds]);
   }

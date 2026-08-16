@@ -1450,7 +1450,7 @@ describe('Copilot FULL evidence review', () => {
     });
   });
 
-  it('degrades to the blind reply when original and fallback invalid attempts only time out', async () => {
+  it('fails closed when an original valid failure follows a timeout before fallback timeouts', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     let comparisonAttempt = 0;
     const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
@@ -1483,15 +1483,53 @@ describe('Copilot FULL evidence review', () => {
     const result = await reviewCopilotEvidenceReply(reviewParams({ runTaskFn }));
 
     expect(result).toMatchObject({
-      status: 'degraded',
-      replyText: `${COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION}\n\n${blindSafeReply}`,
-      reviewTaskRunId: 'reference',
-      referenceTaskRunIds: ['reference'],
+      status: 'failed_closed',
+      replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
       comparisonTaskRunIds: [
         'original-budget-timeout',
         'original-fail',
         'fallback-budget-timeout-3',
         'fallback-budget-timeout-4',
+      ],
+    });
+  });
+
+  it('fails closed when the original comparator returns valid fail before fallback timeouts', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let comparisonAttempt = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return submitTaskOutput(kind, input, submission, referenceOutput(input), 'reference');
+        }
+        comparisonAttempt += 1;
+        if (comparisonAttempt === 1) {
+          return submitTaskOutput(
+            kind,
+            input,
+            submission,
+            comparisonOutput(input, { fail: true }),
+            'original-fail',
+          );
+        }
+        throw new AgentRunError({
+          kind,
+          taskRunId: `fallback-budget-timeout-${comparisonAttempt}`,
+          subtype: 'budget_timeout',
+          errors: ['verification deadline elapsed'],
+        });
+      },
+    );
+
+    const result = await reviewCopilotEvidenceReply(reviewParams({ runTaskFn }));
+
+    expect(result).toMatchObject({
+      status: 'failed_closed',
+      replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
+      comparisonTaskRunIds: [
+        'original-fail',
+        'fallback-budget-timeout-2',
+        'fallback-budget-timeout-3',
       ],
     });
   });
