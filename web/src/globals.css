@@ -8583,6 +8583,53 @@ button.seg-sm {
 .knowledge-loom .know-node.hot {
   background: color-mix(in srgb, var(--coral-soft) 50%, var(--paper-raised));
 }
+.knowledge-loom .know-node.is-container {
+  background: var(--paper-sunk) !important;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.knowledge-loom .know-container-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-3);
+}
+.mesh-empty-state {
+  margin-bottom: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--paper-sunk);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  color: var(--ink-3);
+  text-align: center;
+}
+.mesh-empty-state strong {
+  color: var(--ink-2);
+}
+.mesh-empty-state span {
+  font-size: var(--fs-meta);
+}
+.mesh-node-label-bg {
+  fill: var(--paper-raised);
+  stroke: var(--line);
+  stroke-width: 1;
+  pointer-events: none;
+}
+.mesh-node-label {
+  pointer-events: none;
+  fill: var(--ink-2);
+  font-size: 13px;
+  paint-order: stroke;
+  stroke: var(--paper-raised);
+  stroke-width: 3px;
+}
 .knowledge-loom .know-twig {
   color: var(--ink-5);
   font-family: var(--font-mono);

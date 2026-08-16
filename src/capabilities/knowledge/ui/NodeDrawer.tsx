@@ -23,6 +23,7 @@ import {
   decideEdgeProposal,
   edgeProposalOperation,
 } from './knowledge-api';
+import { isKnowledgeContainer } from './knowledge-node-kind';
 import { knowledgeNodeDrawerQueryOptions } from './knowledge-node-query';
 import { REL_CUE } from './relation-cue';
 
@@ -204,6 +205,7 @@ export function NodeDrawer({
       p.payload.proposed_change.to_knowledge_id === node.id,
   );
   const cue = decayCue(node.mastery);
+  const isContainer = isKnowledgeContainer(node);
 
   return (
     <>
@@ -226,7 +228,11 @@ export function NodeDrawer({
       >
         <div className="drawer-head">
           {/* ⑥治理：头环去裸 pct，档由下方 node-metrics 的 BandChip 给。 */}
-          <MasteryRing mastery={node.mastery} size={40} showNumber={false} />
+          {isContainer ? (
+            <LoomIcon name="layers" size={22} />
+          ) : (
+            <MasteryRing mastery={node.mastery} size={40} showNumber={false} />
+          )}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="drawer-title serif">{node.name}</div>
           </div>
@@ -235,26 +241,40 @@ export function NodeDrawer({
 
         <div className="drawer-body">
           <div className="node-metrics">
-            <div className="nm">
-              {/* A5 S1 (YUK-354) — 离散档 BandChip 替代裸 {pct}%（⑥治理：绝不裸概率）。 */}
-              <div className="nm-n">
-                <BandChip input={node} />
+            {isContainer ? (
+              <div className="nm">
+                <div className="nm-n">
+                  <span className="badge tone-info">学科容器</span>
+                </div>
+                <div className="nm-l meta">节点类型</div>
               </div>
-              <div className="nm-l meta">掌握度</div>
-            </div>
-            <div className="nm">
-              <div className="nm-n serif">{node.evidence_count}</div>
-              <div className="nm-l meta">学习依据</div>
-            </div>
-            <div className="nm">
-              <div className="nm-n">
-                <span className={`badge tone-${cue.tone}`}>
-                  <LoomIcon name={cue.icon as never} size={12} />
-                  {cue.label}
-                </span>
+            ) : null}
+            {!isContainer && (
+              <div className="nm">
+                {/* A5 S1 (YUK-354) — 离散档 BandChip 替代裸 {pct}%（⑥治理：绝不裸概率）。 */}
+                <div className="nm-n">
+                  <BandChip input={node} />
+                </div>
+                <div className="nm-l meta">掌握度</div>
               </div>
-              <div className="nm-l meta">记忆状态</div>
-            </div>
+            )}
+            {!isContainer && (
+              <div className="nm">
+                <div className="nm-n serif">{node.evidence_count}</div>
+                <div className="nm-l meta">学习依据</div>
+              </div>
+            )}
+            {!isContainer && (
+              <div className="nm">
+                <div className="nm-n">
+                  <span className={`badge tone-${cue.tone}`}>
+                    <LoomIcon name={cue.icon as never} size={12} />
+                    {cue.label}
+                  </span>
+                </div>
+                <div className="nm-l meta">记忆状态</div>
+              </div>
+            )}
           </div>
 
           {/* 层级块——与 typed 关系视觉分离（设计稿 L187 注释） */}
@@ -332,7 +352,11 @@ export function NodeDrawer({
                 <LoomIcon name="sparkle" size={14} />
                 互动产物 · {interactiveArtifacts.length}
               </div>
-              <InteractiveArtifactDiscovery artifacts={interactiveArtifacts} go={go} />
+              <InteractiveArtifactDiscovery
+                artifacts={interactiveArtifacts}
+                go={go}
+                entryId={node.id}
+              />
             </div>
           )}
 

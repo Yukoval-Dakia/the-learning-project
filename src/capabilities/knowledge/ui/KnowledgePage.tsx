@@ -26,6 +26,7 @@ import {
   getReviewDueSummary,
   getTree,
 } from './knowledge-api';
+import { isKnowledgeContainer } from './knowledge-node-kind';
 import { NodeDrawer, decayCue } from './NodeDrawer';
 
 const LazyMeshGraph = lazy(async () => {
@@ -179,6 +180,7 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
         <div className="card">
           {ordered.map((n) => {
             const cue = decayCue(n.mastery);
+            const isContainer = isKnowledgeContainer(n);
             const meshCount = edges.filter(
               (e) => e.from_knowledge_id === n.id || e.to_knowledge_id === n.id,
             ).length;
@@ -186,7 +188,7 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
               <button
                 type="button"
                 key={n.id}
-                className={`know-node${cue.tone === 'again' ? ' hot' : ''}`}
+                className={`know-node${cue.tone === 'again' && !isContainer ? ' hot' : ''}${isContainer ? ' is-container' : ''}`}
                 style={{
                   paddingLeft: `calc(var(--s-5) + ${n.depth * 22}px)`,
                   width: '100%',
@@ -197,24 +199,33 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
                 onClick={() => setPicked(n)}
               >
                 {n.depth > 0 && <span className="know-twig">└</span>}
-                {/* ⑥治理：树行环去裸 pct（showNumber=false），档由 know-end 的 BandChip 给。 */}
-                <MasteryRing mastery={n.mastery} size={30} showNumber={false} />
+                {isContainer ? (
+                  <span className="know-container-icon">
+                    <LoomIcon name="layers" size={18} />
+                  </span>
+                ) : (
+                  <MasteryRing mastery={n.mastery} size={30} showNumber={false} />
+                )}
                 {/* subject-driven: serif-CJK only for genuine yuwen nodes */}
                 <span
                   {...subjectContentPropsForDomain(n.effective_domain, { className: 'know-title' })}
                 >
                   {n.name}
                 </span>
-                <span className={`badge tone-${cue.tone}`}>
-                  <LoomIcon name={cue.icon as never} size={11} />
-                  {cue.label}
-                </span>
+                {isContainer ? (
+                  <span className="badge tone-info">学科容器</span>
+                ) : (
+                  <span className={`badge tone-${cue.tone}`}>
+                    <LoomIcon name={cue.icon as never} size={11} />
+                    {cue.label}
+                  </span>
+                )}
                 <div className="know-end">
                   {/* A5 S1 (YUK-354) — 离散档 BandChip（设计源 screen-knowledge.jsx:357
                       在 know-end 内）：档 + 区间 + 来源 + 低置信，定性表达 p(L) 轴。前置
                       MasteryRing(tone 色环)保留——tone 颜色与 band 档正交（⑥ + 阶段4 红线）。 */}
-                  <BandChip input={n} />
-                  <span className="meta">{n.evidence_count} 条学习依据</span>
+                  {!isContainer && <BandChip input={n} />}
+                  {!isContainer && <span className="meta">{n.evidence_count} 条学习依据</span>}
                   {meshCount > 0 && (
                     <span className="badge tone-info">
                       <LoomIcon name="link" size={11} />
@@ -222,7 +233,7 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
                     </span>
                   )}
                   {/* YUK-617 mode-1 — 本 KC 到期复习卡数（overdue，含=now）。有到期才出，红色提醒。 */}
-                  {(dueSummary[n.id]?.overdue ?? 0) > 0 && (
+                  {!isContainer && (dueSummary[n.id]?.overdue ?? 0) > 0 && (
                     <span className="badge tone-again" title="到期待复习的知识卡数">
                       <LoomIcon name="review" size={11} />
                       到期 {dueSummary[n.id]?.overdue}

@@ -9,6 +9,7 @@ import { memo, useMemo, useRef, useState } from 'react';
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import type { KnowledgeEdgeRow, KnowledgeTreeNode } from './knowledge-api';
+import { isKnowledgeContainer } from './knowledge-node-kind';
 import { LAYOUT_HEIGHT, LAYOUT_WIDTH, computeLayout } from './layout';
 import { masteryTone } from './mastery-tone';
 import { REL_CUE } from './relation-cue';
@@ -69,6 +70,7 @@ const MeshNode = memo(function MeshNode({
   y,
   isActive,
   isHub,
+  isContainer,
   onPick,
 }: {
   node: KnowledgeTreeNode;
@@ -76,13 +78,16 @@ const MeshNode = memo(function MeshNode({
   y: number;
   isActive: boolean;
   isHub: boolean;
+  isContainer: boolean;
   onPick: (node: KnowledgeTreeNode) => void;
 }) {
-  const m = node.mastery;
+  const m = isContainer ? null : node.mastery;
   const pct = m == null ? null : Math.round(m * 100);
   const tone = masteryTone(m ?? undefined);
   const r = isHub ? 24 : 18;
   const circ = 2 * Math.PI * r;
+  const label = node.name.length > 8 ? `${node.name.slice(0, 8)}…` : node.name;
+  const labelWidth = Math.min(160, Math.max(56, label.length * 14 + 16));
   return (
     <g
       className={`mesh-node${isActive ? ' is-active' : ''}`}
@@ -125,17 +130,25 @@ const MeshNode = memo(function MeshNode({
         />
       )}
       <text y={4} textAnchor="middle" className="mesh-node-pct mono">
-        {pct == null ? '—' : pct}
+        {isContainer ? '容器' : pct == null ? '—' : pct}
       </text>
+      <rect
+        x={-labelWidth / 2}
+        y={r + 7}
+        width={labelWidth}
+        height={20}
+        rx={8}
+        className="mesh-node-label-bg"
+      />
       {/* subject-driven: serif-CJK only for genuine yuwen nodes */}
       <text
-        y={r + 18}
+        y={r + 21}
         textAnchor="middle"
         {...subjectContentPropsForDomain(node.effective_domain, {
           className: 'mesh-node-label',
         })}
       >
-        {node.name.length > 8 ? `${node.name.slice(0, 8)}…` : node.name}
+        {label}
       </text>
     </g>
   );
@@ -195,6 +208,7 @@ export function MeshGraph({
             y={p.y}
             isActive={activeId === n.id}
             isHub={hasChildren.has(n.id)}
+            isContainer={isKnowledgeContainer(n)}
             onPick={onPick}
           />
         );
@@ -236,6 +250,13 @@ export function MeshGraph({
           <LoomIcon name="refresh" size={15} />
         </button>
       </div>
+      {edges.length === 0 && (
+        <div className="mesh-empty-state" role="status">
+          <LoomIcon name="link" size={16} />
+          <strong>关系图还没有连接</strong>
+          <span>先从树视图打开一个知识点，或在详情里建立关系。</span>
+        </div>
+      )}
 
       {/* 点阵底 stage：复用 globals .kg-svg-stage（radial-gradient 点阵 + paper-sunk
           + grab），消除旧 .mesh-canvas 的「纯白双框」。pan/zoom 指针手势挂在内层
