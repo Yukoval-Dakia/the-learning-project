@@ -69,18 +69,11 @@ const CostLedgerRowSchema = z.object({
 
 const ToolCallRowSchema = z.object({
   id: z.string(),
-  task_run_id: z.string(),
-  task_kind: z.string(),
   tool_name: z.string(),
-  effect: z.string().nullable(),
-  input_json: z.record(z.string(), z.unknown()).nullable(),
-  output_json: z.record(z.string(), z.unknown()).nullable(),
-  error_reason: z.string().nullable(),
   iteration: z.number().int(),
   latency_ms: z.number(),
   cost: z.number(),
   occurred_at: z.string().datetime(),
-  mirrored_event_id: z.string().nullable(),
 });
 
 const AdminRunTimelineEventSchema = z.object({
