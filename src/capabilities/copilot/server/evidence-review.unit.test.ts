@@ -1419,6 +1419,41 @@ describe('Copilot FULL evidence review', () => {
     });
   });
 
+  it('degrades when the session wall-clock deadline kills the comparator retry before its task row', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let comparisonAttempt = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return submitTaskOutput(kind, input, submission, referenceOutput(input), 'reference');
+        }
+        comparisonAttempt += 1;
+        if (comparisonAttempt === 1) {
+          throw new AgentRunError({
+            kind,
+            taskRunId: 'comparison-budget-timeout',
+            subtype: 'budget_timeout',
+            errors: ['verification deadline elapsed'],
+          });
+        }
+        // run-lifecycle.ts throws a plain Error (deliberately — downstream
+        // aborted-binding semantics depend on it) when the provider session
+        // wall-clock budget is already elapsed before the retry can start.
+        throw new Error('provider session wall-clock budget elapsed comparison');
+      },
+    );
+
+    const result = await reviewCopilotEvidenceReply(
+      reviewParams({ candidateReply: unsafeCandidate, runTaskFn }),
+    );
+
+    expect(result).toMatchObject({
+      status: 'degraded',
+      replyText: `${COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION}\n\n${blindSafeReply}`,
+      reviewTaskRunId: 'reference',
+    });
+  });
+
   it('fails closed when comparator attempts mix a budget timeout with a contract failure', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     let comparisonAttempt = 0;

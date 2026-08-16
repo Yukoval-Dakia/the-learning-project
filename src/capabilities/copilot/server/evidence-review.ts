@@ -6,7 +6,7 @@ import {
 } from '@/core/copilot-evidence';
 import type { Db } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import { AgentRunError } from '@/server/ai/agent-run-error';
+import { AgentRunError, isProviderSessionWallClockBudgetError } from '@/server/ai/agent-run-error';
 import { type TaskTextResult, taskPromptFingerprint } from '@/server/ai/provenance';
 import { type RunTaskCtx, runTask } from '@/server/ai/runner';
 import {
@@ -131,6 +131,11 @@ function isAbortError(error: unknown): boolean {
 
 function paidTaskFailureKind(error: unknown): string {
   if (error instanceof AgentRunError) return error.subtype;
+  // run-lifecycle.ts deliberately throws a plain Error when the provider
+  // session wall-clock budget elapses before a retry can start; classify it as
+  // the budget exhaustion it is so the degradation predicate sees the retry
+  // the same way as an in-flight budget_timeout kill.
+  if (isProviderSessionWallClockBudgetError(error)) return 'budget_timeout';
   return error instanceof Error ? error.name : 'unknown';
 }
 

@@ -97,6 +97,24 @@ export class AgentRunError extends Error {
 }
 
 /**
+ * run-lifecycle.ts throws a plain Error when the provider session wall-clock
+ * budget elapses (the plain type is deliberate: downstream aborted-binding
+ * semantics depend on it not being an AgentRunError). Callers that classify
+ * paid-call failures still need to recognize that shape as budget exhaustion
+ * rather than a generic error, so the message contract is single-sourced here.
+ */
+export const PROVIDER_SESSION_WALL_CLOCK_BUDGET_MESSAGE =
+  'provider session wall-clock budget elapsed';
+
+export function isProviderSessionWallClockBudgetError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    !(error instanceof AgentRunError) &&
+    error.message.startsWith(PROVIDER_SESSION_WALL_CLOCK_BUDGET_MESSAGE)
+  );
+}
+
+/**
  * Preserve the durable attempt identity for every exception that escapes a
  * started run lifecycle, not only SDK terminal errors. Unknown exceptions stay
  * permanent by classification, but downstream budget/provenance code can still

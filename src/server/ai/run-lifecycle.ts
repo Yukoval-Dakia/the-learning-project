@@ -1,7 +1,11 @@
 import { type TaskKind, tasks } from '@/ai/registry';
 import type { Db } from '@/db/client';
 import { createId } from '@paralleldrive/cuid2';
-import { RETRY_ELAPSED_CAP_MS, isTransientAgentFailure } from './agent-run-error';
+import {
+  PROVIDER_SESSION_WALL_CLOCK_BUDGET_MESSAGE,
+  RETRY_ELAPSED_CAP_MS,
+  isTransientAgentFailure,
+} from './agent-run-error';
 import {
   type AttemptCostTruth,
   resolveAttemptCostTruth,
@@ -302,7 +306,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         Date.now() >= this.config.providerSessionDeadlineAt
       ) {
         this.abortController.abort();
-        throw new Error(`provider session wall-clock budget elapsed ${phase}`);
+        throw new Error(`${PROVIDER_SESSION_WALL_CLOCK_BUDGET_MESSAGE} ${phase}`);
       }
     };
 
@@ -324,7 +328,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         // runner's existing `aborted` binding preserves budget_timeout truth.
         throw new Error(
           sessionDeadlineElapsed
-            ? 'provider session wall-clock budget elapsed during query'
+            ? `${PROVIDER_SESSION_WALL_CLOCK_BUDGET_MESSAGE} during query`
             : 'provider attempt aborted during query',
         );
       }
