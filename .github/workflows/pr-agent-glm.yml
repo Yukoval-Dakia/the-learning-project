@@ -60,7 +60,7 @@ jobs:
         if: steps.prior_review.outputs.should_review == 'true'
         # Canonical repo (Codium-ai → qodo-ai → The-PR-Agent; old slugs redirect).
         # Pinned to the latest release as of 2026-06-16 for reproducibility.
-        uses: The-PR-Agent/pr-agent@743f52d80f3513193dfc7626f778c73478df6d0a # v0.41.1
+        uses: The-PR-Agent/pr-agent@f6af7d77554ff8d26adffded077e6461329e92fa # v0.42.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
