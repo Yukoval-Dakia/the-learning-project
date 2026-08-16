@@ -23,7 +23,10 @@ import { alias } from 'drizzle-orm/pg-core';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
-import { findReusableCopilotConversation } from '@/server/session/conversation';
+import {
+  findReusableCopilotConversation,
+  getCopilotConversation,
+} from '@/server/session/conversation';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 
 export type CopilotTurnRole = 'user' | 'ai' | 'tombstone';
@@ -442,7 +445,7 @@ async function projectCopilotTurnRows(
  */
 export async function getRecentCopilotTurns(
   dbArg: DbLike,
-  opts: { limit?: number; now?: Date } = {},
+  opts: { limit?: number; now?: Date; sessionId?: string } = {},
 ): Promise<CopilotTurn[]> {
   const limit = clampLimit(opts.limit);
 
@@ -451,7 +454,9 @@ export async function getRecentCopilotTurns(
   // stale prior conversation (ended/abandoned, or last active >24h ago) is never
   // replayed into what the server will treat as a fresh session. No reusable
   // session → this is a brand-new conversation; return nothing to prefill.
-  const session = await findReusableCopilotConversation(dbArg as Db, { now: opts.now });
+  const session = opts.sessionId
+    ? await getCopilotConversation(dbArg, opts.sessionId)
+    : await findReusableCopilotConversation(dbArg as Db, { now: opts.now });
   if (session === null) return [];
 
   // One query over all three actions for THIS session, newest first, bounded by
