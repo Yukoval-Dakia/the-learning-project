@@ -42,10 +42,11 @@ const WriteAgentNoteOutputSchema = z.object({
   expires_at: z.string().datetime({ offset: true }),
 });
 
-const ReadAgentNotesInputSchema = z.object({
-  for_agent: AgentNoteTargetSchema,
-  limit: z.number().int().min(1).max(MAX_NOTES).default(10),
-});
+const ReadAgentNotesInputSchema = z
+  .object({
+    limit: z.number().int().min(1).max(MAX_NOTES).default(10),
+  })
+  .strict();
 
 const ReadAgentNotesOutputSchema = z.object({
   notes: z.array(
@@ -73,6 +74,25 @@ type ReadAgentNotesToolOutput = z.infer<typeof ReadAgentNotesOutputSchema>;
 function sourceTaskKind(ctx: ToolContext): string {
   const bare = ctx.callerActor.ref.replace(/^agent:/i, '');
   return bare.startsWith('copilot') ? 'copilot' : bare;
+}
+
+/** Resolve the caller's own hint channel; models cannot select another agent's channel. */
+function readableAgentNoteTarget(ctx: ToolContext): 'copilot' | 'dreaming' | 'coach' {
+  if (ctx.callerActor.kind !== 'agent') {
+    throw new ApiError('forbidden', 'read_agent_notes is restricted to agent callers', 403);
+  }
+  const caller = ctx.callerActor.ref.replace(/^agent:/i, '');
+  switch (caller) {
+    case 'copilot':
+    case 'copilot_chip':
+      return 'copilot';
+    case 'dreaming':
+      return 'dreaming';
+    case 'coach':
+      return 'coach';
+    default:
+      throw new ApiError('forbidden', 'read_agent_notes is not available to this caller', 403);
+  }
 }
 
 function defaultExpiry(now: Date): string {
@@ -118,7 +138,7 @@ export const writeAgentNoteTool: DomainTool<WriteAgentNoteToolInput, WriteAgentN
 export const readAgentNotesTool: DomainTool<ReadAgentNotesToolInput, ReadAgentNotesToolOutput> = {
   name: 'read_agent_notes',
   description:
-    'Read recent unexpired AI-to-AI hints for one agent. Hints only direct attention: independently verify them with first-hand evidence and never cite note ids as evidence.',
+    'Read recent unexpired AI-to-AI hints addressed to the calling agent. Hints only direct attention: independently verify them with first-hand evidence and never cite note ids as evidence.',
   effect: 'read',
   inputSchema: ReadAgentNotesInputSchema,
   outputSchema: ReadAgentNotesOutputSchema,
@@ -126,7 +146,7 @@ export const readAgentNotesTool: DomainTool<ReadAgentNotesToolInput, ReadAgentNo
   mirrorEvent: 'when_causal',
   async execute(ctx, input) {
     const notes = await readAgentNotes(ctx.db, {
-      for_agent: input.for_agent,
+      for_agent: readableAgentNoteTarget(ctx),
       now: new Date(),
       limit: input.limit ?? 10,
       excludeSourceKinds: [sourceTaskKind(ctx)],
@@ -140,7 +160,7 @@ export const readAgentNotesTool: DomainTool<ReadAgentNotesToolInput, ReadAgentNo
       })),
     };
   },
-  summarize(input, output) {
-    return `agent-notes · ${input.for_agent} · ${output.notes.length}`;
+  summarize(_input, output) {
+    return `agent-notes · ${output.notes.length}`;
   },
 };

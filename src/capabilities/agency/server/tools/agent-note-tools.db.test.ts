@@ -46,6 +46,9 @@ describe('agent-note DomainTools (YUK-293)', () => {
         signal_kind: 'pattern_hint',
       }),
     ).toThrow();
+    expect(() =>
+      readAgentNotesTool.inputSchema.parse({ for_agent: 'dreaming', limit: 5 }),
+    ).toThrow();
   });
 
   it('lets Copilot leave a 30-day expiring, evidence-linked hint that Coach can read', async () => {
@@ -74,7 +77,7 @@ describe('agent-note DomainTools (YUK-293)', () => {
 
     const read = await readAgentNotesTool.execute(
       context('coach'),
-      readAgentNotesTool.inputSchema.parse({ for_agent: 'coach', limit: 5 }),
+      readAgentNotesTool.inputSchema.parse({ limit: 5 }),
     );
     expect(readAgentNotesTool.outputSchema.parse(read)).toEqual(read);
     expect(read.notes).toHaveLength(1);
@@ -151,9 +154,43 @@ describe('agent-note DomainTools (YUK-293)', () => {
 
     const read = await readAgentNotesTool.execute(
       context('dreaming'),
-      readAgentNotesTool.inputSchema.parse({ for_agent: 'dreaming' }),
+      readAgentNotesTool.inputSchema.parse({}),
     );
     expect(read.notes).toEqual([]);
+  });
+
+  it('derives the readable channel from the caller', async () => {
+    await writeAgentNote(testDb(), {
+      target_agents: ['copilot'],
+      source_task_kind: 'coach',
+      refs: [{ kind: 'attempt', id: 'attempt_for_copilot' }],
+      summary_md: 'hint addressed to copilot',
+      signal_kind: 'pattern_hint',
+      expires_at: '2099-02-01T00:00:00.000Z',
+    });
+    await writeAgentNote(testDb(), {
+      target_agents: ['dreaming'],
+      source_task_kind: 'coach',
+      refs: [{ kind: 'attempt', id: 'attempt_for_dreaming' }],
+      summary_md: 'hint addressed to dreaming',
+      signal_kind: 'pattern_hint',
+      expires_at: '2099-02-01T00:00:00.000Z',
+    });
+
+    const read = await readAgentNotesTool.execute(
+      context('agent:copilot_chip'),
+      readAgentNotesTool.inputSchema.parse({ limit: 5 }),
+    );
+    expect(read.notes.map((note) => note.summary_md)).toEqual(['hint addressed to copilot']);
+  });
+
+  it('rejects callers without a readable agent-note channel', async () => {
+    await expect(
+      readAgentNotesTool.execute(
+        context('agent:maintenance'),
+        readAgentNotesTool.inputSchema.parse({ limit: 5 }),
+      ),
+    ).rejects.toMatchObject({ code: 'forbidden', status: 403 });
   });
 
   it('rejects non-agent writers and already-expired notes', async () => {
