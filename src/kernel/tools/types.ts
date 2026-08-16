@@ -19,6 +19,12 @@ export interface ProposalEffectContract {
   readonly owner_gate: 'FULL';
   readonly direct_write: false;
   readonly rollback: 'dismiss_before_accept';
+  readonly retained_draft?: {
+    readonly kind: 'question';
+    readonly written_before_accept: true;
+    readonly reversible: false;
+    readonly retained_after_dismiss: true;
+  };
 }
 
 export interface ToolExecutionGateInput {

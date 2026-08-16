@@ -221,6 +221,47 @@ describe('buildMcpServerFromRegistry', () => {
     });
   });
 
+  it('declares the retained draft write for seeded author_question calls', async () => {
+    registerTool({
+      name: 'author_question',
+      description: 'Author a seeded draft question.',
+      effect: 'propose',
+      inputSchema: z.object({
+        seed_mode: z.literal('knowledge'),
+        knowledge_ids: z.array(z.string()),
+      }),
+      outputSchema: z.object({ status: z.literal('proposed') }),
+      costClass: 'local',
+      async execute() {
+        return { status: 'proposed' as const };
+      },
+      summarize() {
+        return 'draft question recorded';
+      },
+      mirrorEvent: 'when_causal',
+    });
+
+    buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['author_question'] });
+
+    const result = (await mockAgentSdk.toolDefs[0]?.handler({
+      seed_mode: 'knowledge',
+      knowledge_ids: ['kc_seed'],
+    })) as { content: Array<{ type: string; text: string }> };
+    const parsed = JSON.parse(result.content[0]?.text ?? '') as Record<string, unknown>;
+
+    expect(parsed.proposal_effect_contract).toEqual({
+      owner_gate: 'FULL',
+      direct_write: false,
+      rollback: 'dismiss_before_accept',
+      retained_draft: {
+        kind: 'question',
+        written_before_accept: true,
+        reversible: false,
+        retained_after_dismiss: true,
+      },
+    });
+  });
+
   it('lets callers block execution before a DomainTool runs', async () => {
     const runFn = vi.fn((i: { q: string }) => ({ len: i.q.length }));
     const beforeExecute = vi.fn(() => 'quota exceeded');

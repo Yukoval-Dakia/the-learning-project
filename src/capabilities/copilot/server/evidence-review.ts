@@ -135,7 +135,20 @@ function paidTaskFailureKind(error: unknown): string {
 function proposalContractRepair(
   toolTrace: readonly ToolExecutionResultObservation[],
 ): string | undefined {
-  const proposalCalls = toolTrace.filter((entry) => entry.proposal_effect_contract !== undefined);
+  const proposalCalls = toolTrace.filter((entry) => {
+    if (
+      entry.proposal_effect_contract === undefined ||
+      !entry.executed ||
+      entry.error_reason !== null ||
+      entry.output === null ||
+      typeof entry.output !== 'object' ||
+      Array.isArray(entry.output)
+    ) {
+      return false;
+    }
+    const status = (entry.output as Record<string, unknown>).status;
+    return status !== 'failed' && !(typeof status === 'string' && status.startsWith('skipped:'));
+  });
   if (proposalCalls.length === 0) return undefined;
 
   const callResults = proposalCalls.map((entry) => {
@@ -151,14 +164,21 @@ function proposalContractRepair(
     ]
       .filter((value): value is string => value !== undefined)
       .join(', ');
-    return `- \`${entry.name}\`${result ? `: ${result}` : ''}`;
+    const retainedDraft = entry.proposal_effect_contract?.retained_draft;
+    const retainedDraftResult = retainedDraft
+      ? 'retained draft=question (written before accept, irreversible, retained after dismiss)'
+      : undefined;
+    const details = [result || undefined, retainedDraftResult]
+      .filter((value): value is string => value !== undefined)
+      .join('; ');
+    return `- \`${entry.name}\`${details ? `: ${details}` : ''}`;
   });
 
   return [
     '本轮 proposal 结果由服务端契约裁定：',
     ...callResults,
     '- owner gate: FULL',
-    '- direct write: false',
+    '- direct target write: false',
     '- pre-accept rollback: dismiss_before_accept',
     '任何目标变更都尚未直接写入；只有 owner 接受对应 proposal 后才会应用。',
   ].join('\n');

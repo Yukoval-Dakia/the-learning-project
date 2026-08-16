@@ -104,9 +104,35 @@ export type SdkMcpServer = ReturnType<typeof createSdkMcpServer>;
 
 export type { ToolExecutionGateInput, ToolExecutionResultObservation } from '@/kernel/tools/types';
 
-function proposalEffectContract(effect: ToolEffect): ProposalEffectContract | undefined {
+function proposalEffectContract(
+  name: string,
+  effect: ToolEffect,
+  input?: unknown,
+): ProposalEffectContract | undefined {
   if (effect !== 'propose') return undefined;
-  return { owner_gate: 'FULL', direct_write: false, rollback: 'dismiss_before_accept' };
+  const base = {
+    owner_gate: 'FULL',
+    direct_write: false,
+    rollback: 'dismiss_before_accept',
+  } as const;
+  if (
+    name === 'author_question' &&
+    input !== null &&
+    typeof input === 'object' &&
+    'seed_mode' in input &&
+    (input.seed_mode === 'knowledge' || input.seed_mode === 'material')
+  ) {
+    return {
+      ...base,
+      retained_draft: {
+        kind: 'question',
+        written_before_accept: true,
+        reversible: false,
+        retained_after_dismiss: true,
+      },
+    };
+  }
+  return base;
 }
 
 /**
@@ -217,11 +243,12 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       let truncationNote: object | null = null;
       let executionStarted = false;
       const gateInput = { name: dt.name, effect: dt.effect };
-      const effectContract = proposalEffectContract(dt.effect);
+      let effectContract = proposalEffectContract(dt.name, dt.effect);
 
       try {
         parsedInput = dt.inputSchema.parse(rawArgs);
         execInput = parsedInput;
+        effectContract = proposalEffectContract(dt.name, dt.effect, parsedInput);
       } catch (err) {
         errorReason = err instanceof Error ? err.message : String(err);
       }
