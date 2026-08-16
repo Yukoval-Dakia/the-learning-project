@@ -171,7 +171,7 @@ function reviewParams(overrides: Partial<Parameters<typeof reviewCopilotEvidence
   };
 }
 
-function referenceOutput(input: unknown, options: { gaps?: boolean } = {}) {
+function referenceOutput(input: unknown, options: { gaps?: boolean; safeReply?: string } = {}) {
   const value = input as {
     request_units: Array<{ index: number }>;
     evidence_trace?: CopilotEvidenceModelTraceCall[];
@@ -195,7 +195,7 @@ function referenceOutput(input: unknown, options: { gaps?: boolean } = {}) {
       evidence_point_indices: [index],
     })),
     trace_coverage: traceCoverageFor(points, value.evidence_trace ?? REALISTIC_EVIDENCE_TRACE),
-    safe_reply: blindSafeReply,
+    safe_reply: options.safeReply ?? blindSafeReply,
   };
 }
 
@@ -1422,6 +1422,66 @@ describe('Copilot FULL evidence review', () => {
       comparison_task_run_ids: ['comparison-budget-timeout-2', 'comparison-budget-timeout-3'],
     });
   });
+
+  it.each([
+    ['capability', '读取结论保持不变；已按 LIGHT 门槛执行。', 'LIGHT'],
+    ['identity', '读取结论保持不变；我已经直接归档学习项。', '直接归档'],
+    ['attribution', '读取结论保持不变；归档可由 relearn 自动回滚。', 'relearn'],
+  ])(
+    'normalizes an unsafe %s claim in a degraded mixed read-and-propose reply',
+    async (_claimClass, unsafeBlindReply, forbiddenClaim) => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+        async (kind, input, _ctx, submission) => {
+          if (kind === 'CopilotEvidenceReviewTask') {
+            return submitTaskOutput(
+              kind,
+              input,
+              submission,
+              referenceOutput(input, { safeReply: unsafeBlindReply }),
+              'reference',
+            );
+          }
+          throw new AgentRunError({
+            kind,
+            taskRunId: `comparison-budget-timeout-${runTaskFn.mock.calls.length}`,
+            subtype: 'budget_timeout',
+            errors: ['verification deadline elapsed'],
+          });
+        },
+      );
+
+      const result = await reviewCopilotEvidenceReply(
+        reviewParams({
+          candidateReply: unsafeCandidate,
+          toolTrace: [
+            ...REALISTIC_EVIDENCE_TRACE,
+            {
+              name: 'propose_learning_item_archive',
+              effect: 'propose',
+              input: { learning_item_id: 'item_b' },
+              output: { status: 'proposed', proposal_id: 'proposal_01' },
+              error_reason: null,
+              executed: true,
+              proposal_effect_contract: {
+                owner_gate: 'FULL',
+                direct_write: false,
+                rollback: 'dismiss_before_accept',
+              },
+            },
+          ],
+          runTaskFn,
+        }),
+      );
+
+      expect(result).toMatchObject({ status: 'degraded' });
+      expect(result.replyText).toContain(COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION);
+      expect(result.replyText).toContain('owner gate: FULL');
+      expect(result.replyText).toContain('direct target write: false');
+      expect(result.replyText).toContain('dismiss_before_accept');
+      expect(result.replyText).not.toContain(forbiddenClaim);
+    },
+  );
 
   it('degrades when the session wall-clock deadline kills the comparator retry before its task row', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});

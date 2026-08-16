@@ -688,6 +688,7 @@ export async function reviewCopilotEvidenceReply(params: {
   }
   const degradeWithBlindReply = (comparisonTaskRunIds: string[]): CopilotEvidenceReviewDecision => {
     const reviewTaskRunId = reference.taskRunIds.at(-1);
+    const contractRepair = proposalContractRepair(params.toolTrace);
     console.warn('[copilot-evidence-review] verification degraded', {
       event: 'copilot_evidence_review_verification_timeout_degraded',
       candidate_task_run_id: params.candidateTaskRunId,
@@ -696,7 +697,7 @@ export async function reviewCopilotEvidenceReply(params: {
     });
     return {
       status: 'degraded',
-      replyText: `${COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION}\n\n${reference.reference.output.safe_reply}`,
+      replyText: `${COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION}\n\n${contractRepair ?? reference.reference.output.safe_reply}`,
       referenceTaskRunIds: reference.taskRunIds,
       comparisonTaskRunIds,
       ...(reviewTaskRunId ? { reviewTaskRunId } : {}),
