@@ -8,6 +8,11 @@ import {
 // minor, PR #491: the literal was duplicated in both files).
 import { MEM0_COLLECTION_DEFAULT } from '@/server/export/constants';
 import { Memory, type MemoryConfig, type MemoryItem, type SearchResult } from 'mem0ai/oss';
+import {
+  type MemoryCostTracking,
+  ensureMemoryUsageFetchInstalled,
+  runWithMemoryCostTracking,
+} from './usage-fetch';
 
 // P1 (YUK-341)：mem0 个性化半边换血到 GLM 5.2 + 百炼 v4，LLM/embedder 全走
 // openai-compat provider——mem0ai 3.0.6 的 openai provider 转发 config.baseURL
@@ -101,6 +106,7 @@ export type MemoryClient = {
     event: MemoryEventInput,
     providerOperation: Mem0OpaqueOperationContext,
     beforeProviderAdd: BeforeMemoryProviderAdd,
+    costTaskRunId?: string,
   ): Promise<{
     readonly result: MemoryEventResult;
     readonly resolution: 'provider_result' | 'event_lookup';
@@ -109,6 +115,7 @@ export type MemoryClient = {
     query: string,
     opts: { topK?: number; filters?: Record<string, unknown> },
     providerOperation: Mem0OpaqueOperationContext,
+    costTaskRunId?: string,
   ): Promise<SearchResult>;
   /**
    * Idempotent worker projection for canonical verbatim facts. The stable projection
@@ -121,6 +128,7 @@ export type MemoryClient = {
     projectionKey: string,
     providerOperation: Mem0OpaqueOperationContext,
     beforeProviderAdd: BeforeMemoryProviderAdd,
+    costTaskRunId?: string,
   ): Promise<SearchResult>;
   // YUK-557 (Q2a): idempotent hard delete via mem0 official delete() — writes a
   // tombstone (previous_value + is_deleted=1) before the real vector DELETE.
@@ -135,8 +143,11 @@ export type MemoryClient = {
     text: string,
     metadata: Record<string, unknown>,
     providerOperation: Mem0OpaqueOperationContext,
+    costTaskRunId?: string,
   ): Promise<SearchResult>;
 };
+
+export type { MemoryCostTracking };
 
 export type BeforeMemoryProviderAdd = () => Promise<void>;
 
@@ -299,6 +310,7 @@ export function createMemoryClient(
   opts: {
     env?: Env;
     memoryFactory?: (config: MemoryConfig) => Mem0Like;
+    costTracking?: MemoryCostTracking;
   } = {},
 ): MemoryClient {
   const env = opts.env ?? process.env;
@@ -306,8 +318,18 @@ export function createMemoryClient(
   // 凭据全经 config.{llm,embedder}.config.apiKey + baseURL，无需任何 process.env
   // 改写——构造纯同步、无全局副作用（旧 withXiaomiBaseUrl env-dance + YUK-232 mutex 已删）。
   const config = createMem0Config(env);
+  if (opts.costTracking) ensureMemoryUsageFetchInstalled();
   const factory = opts.memoryFactory ?? ((c: MemoryConfig) => new Memory(c));
   const memory = factory(config);
+  const baseCostTracking = opts.costTracking
+    ? {
+        ...opts.costTracking,
+        llmModel: opts.costTracking.llmModel ?? String(config.llm.config.model),
+        embedModel: opts.costTracking.embedModel ?? String(config.embedder.config.model),
+      }
+    : undefined;
+  const costTrackingFor = (taskRunId?: string): MemoryCostTracking | undefined =>
+    baseCostTracking && taskRunId ? { ...baseCostTracking, taskRunId } : baseCostTracking;
   const findByEventId = async (eventId: string): Promise<MemoryEventResult> => {
     const result = parseEventMemoryResult(
       await memory.getAll({
@@ -327,6 +349,7 @@ export function createMemoryClient(
     input: MemoryEventInput,
     providerOperation: Mem0OpaqueOperationContext,
     beforeProviderAdd: BeforeMemoryProviderAdd,
+    costTaskRunId?: string,
   ): Promise<SearchResult> => {
     const add = () =>
       memory.add(eventToText(input), {
@@ -345,26 +368,43 @@ export function createMemoryClient(
         },
         infer: true,
       });
-    return executeMem0OpaqueOperation(providerOperation, 'add_inferred', add, {
-      providerStartFence: 'operation_kind',
-      afterProviderStartReserved: beforeProviderAdd,
-    });
+    return executeMem0OpaqueOperation(
+      providerOperation,
+      'add_inferred',
+      () => runWithMemoryCostTracking(costTrackingFor(costTaskRunId), add),
+      {
+        providerStartFence: 'operation_kind',
+        afterProviderStartReserved: beforeProviderAdd,
+      },
+    );
   };
 
   return {
     findByEventId,
-    async addEventMemoryOnce(input, providerOperation, beforeProviderAdd) {
+    async addEventMemoryOnce(input, providerOperation, beforeProviderAdd, costTaskRunId) {
       const existing = await findByEventId(input.id);
       if (existing.results.length > 0) {
         return { result: existing, resolution: 'event_lookup' };
       }
-      const added = await addEventMemoryOnceAtBoundary(input, providerOperation, beforeProviderAdd);
+      const added = await addEventMemoryOnceAtBoundary(
+        input,
+        providerOperation,
+        beforeProviderAdd,
+        costTaskRunId,
+      );
       return {
         result: parseEventMemoryResult(added, 'Mem0 add(event)'),
         resolution: 'provider_result',
       };
     },
-    async addVerbatimOnce(text, metadata, projectionKey, providerOperation, beforeProviderAdd) {
+    async addVerbatimOnce(
+      text,
+      metadata,
+      projectionKey,
+      providerOperation,
+      beforeProviderAdd,
+      costTaskRunId,
+    ) {
       const filters = { user_id: 'self', projection_key: projectionKey };
       const existing = await memory.getAll({ topK: 2, filters });
       if ((existing.results ?? []).length > 0) return existing;
@@ -372,25 +412,29 @@ export function createMemoryClient(
         providerOperation,
         'add_verbatim',
         () =>
-          memory.add(text, {
-            userId: 'self',
-            metadata: { ...metadata, projection_key: projectionKey },
-            infer: false,
-          }),
+          runWithMemoryCostTracking(costTrackingFor(costTaskRunId), () =>
+            memory.add(text, {
+              userId: 'self',
+              metadata: { ...metadata, projection_key: projectionKey },
+              infer: false,
+            }),
+          ),
         {
           providerStartFence: 'operation_kind',
           afterProviderStartReserved: beforeProviderAdd,
         },
       );
     },
-    async search(query, searchOpts, providerOperation) {
+    async search(query, searchOpts, providerOperation, costTaskRunId) {
       const { scope_key: scopeKey, ...filters } = searchOpts.filters ?? {};
       if (typeof scopeKey === 'string') {
         filters.affected_scopes ??= { contains: scopeKey };
       }
       filters.user_id = 'self';
       return executeMem0OpaqueOperation(providerOperation, 'search', () =>
-        memory.search(query, { topK: searchOpts.topK, filters }),
+        runWithMemoryCostTracking(costTrackingFor(costTaskRunId), () =>
+          memory.search(query, { topK: searchOpts.topK, filters }),
+        ),
       );
     },
     // YUK-557 (Q2a, F1 verify-absence): idempotent — a half-applied batch can
@@ -435,7 +479,7 @@ export function createMemoryClient(
     async history(memoryId) {
       return memory.history(memoryId);
     },
-    async restoreVerbatim(text, metadata, providerOperation) {
+    async restoreVerbatim(text, metadata, providerOperation, costTaskRunId) {
       // infer:false → mem0's addToVectorStore skips the extraction LLM and calls
       // createMemory(text, {}, metadata) directly (index.mjs:6419-6436): the raw
       // text is embedded and inserted as a single new memory (new UUID), with NO
@@ -445,7 +489,9 @@ export function createMemoryClient(
       // re-extracted paraphrase, not the verbatim original). Fallback if this ever changes:
       // direct pgvector INSERT + manual embed (see docs/runbooks/memory-reconcile-undo.md).
       return executeMem0OpaqueOperation(providerOperation, 'restore_verbatim', () =>
-        memory.add(text, { userId: 'self', metadata, infer: false }),
+        runWithMemoryCostTracking(costTrackingFor(costTaskRunId), () =>
+          memory.add(text, { userId: 'self', metadata, infer: false }),
+        ),
       );
     },
   };

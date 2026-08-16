@@ -287,11 +287,12 @@ export function buildMemoryEventIngestHandler(
   const handoffMode = deps.handoffMode ?? memoryReconcileHandoffMode();
   let memoryClient = deps.memoryClient;
   return async (jobs) => {
-    memoryClient ??= createMemoryClient();
+    memoryClient ??= createMemoryClient({ costTracking: { db } });
     const client = memoryClient;
     for (const job of jobs) {
       const row = await loadEvent(db, job.data.event_id);
       if (!row) continue;
+      const ingestCostTaskRunId = `memory-event-ingest:${job.id ?? row.id}`;
 
       // P3 (YUK-351) extraction gate (ADR-0039 §决定 7 (i) / Phase 2 §6.3 C3 / §7 H6):
       // agent-originated events must NEVER feed mem0 extraction (closes the
@@ -350,6 +351,7 @@ export function buildMemoryEventIngestHandler(
               operationAnchor: projectionKey,
             }),
             beforeProviderAdd,
+            ingestCostTaskRunId,
           );
           return { result, resolution: 'provider_result' as const };
         }
@@ -362,6 +364,7 @@ export function buildMemoryEventIngestHandler(
             operationAnchor: row.id,
           }),
           beforeProviderAdd,
+          ingestCostTaskRunId,
         );
         return completed ? { ...once, resolution: completed.resolution } : once;
       })();
@@ -504,7 +507,7 @@ export function buildMemoryBriefRegenHandler(
           // instead throws later inside generateBrief, caught by the F-1
           // per-scope catch → logged skip. Neither path storms the job.
           try {
-            memoryClient ??= createMemoryClient();
+            memoryClient ??= createMemoryClient({ costTracking: { db } });
             // P3 (YUK-351): read through the searchMemories wrapper so the brief
             // never fixes already-superseded facts into its long-term summary
             // (brief.ts:195 design note). Filters soft-superseded + recency-reranks.
@@ -517,6 +520,7 @@ export function buildMemoryBriefRegenHandler(
                 deadlineAt: new Date(Date.now() + 65_000),
                 operationAnchor: `memory-brief:${job.id}:${scopeKey}`,
               }),
+              costTaskRunId: `memory-brief-regen:${job.id ?? scopeKey}`,
             });
             return (result?.results ?? []).map((item) => ({ id: item.id, memory: item.memory }));
           } catch (err) {
@@ -656,7 +660,7 @@ export function buildMemoryReconcileHandler(
 ): (jobs: Job<{ memories: ReconcileMemInput[]; user_id: string }>[]) => Promise<void> {
   let memoryClient = deps.memoryClient;
   const judge = deps.judge ?? judgeReconciliation;
-  const createClient = deps.createClient ?? createMemoryClient;
+  const createClient = deps.createClient ?? (() => createMemoryClient({ costTracking: { db } }));
   return async (jobs) => {
     for (const job of jobs) {
       // F-1 equivalent — per-job try/catch prevents retry storm.
@@ -719,6 +723,7 @@ export function buildMemoryReconcileHandler(
                 deadlineAt: new Date(Date.now() + 65_000),
                 operationAnchor: `memory-reconcile:${job.id}:${input.id}`,
               }),
+              `memory-reconcile:${job.id ?? input.id}:${input.id}`,
             );
             for (const r of searchResult?.results ?? []) {
               if (newIdSet.has(r.id)) continue; // exclude this batch's own new memories
