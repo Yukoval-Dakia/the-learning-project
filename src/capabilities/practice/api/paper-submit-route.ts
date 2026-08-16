@@ -7,14 +7,13 @@
 //
 // Distinct from /api/review/submit (single-question FSRS流, untouched).
 
+import { eq } from 'drizzle-orm';
 import { resolveSlotAssignment } from '@/capabilities/practice/server/paper-sections';
 import { submitPaperSlot } from '@/capabilities/practice/server/paper-submit';
 import { Artifact } from '@/core/schema/index';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { deprecatedRouteResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/kernel/http';
-import { eq } from 'drizzle-orm';
+import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { LegacyPaperSubmissionBodySchema } from './paper-contracts';
 
 export async function createPaperSubmission(

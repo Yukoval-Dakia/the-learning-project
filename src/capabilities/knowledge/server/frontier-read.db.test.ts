@@ -3,11 +3,11 @@
 // PROPOSE (cold-start proposed/non-live prereq edges → low-confidence suggestions), plus
 // the disjointness guards (live-covered KCs and self-mastered KCs never appear as propose).
 
+import { createId } from '@paralleldrive/cuid2';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { KnowledgeFrontierResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { knowledge, knowledge_edge, mastery_state } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { createId } from '@paralleldrive/cuid2';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { loadFrontierRail } from './frontier-read';
 

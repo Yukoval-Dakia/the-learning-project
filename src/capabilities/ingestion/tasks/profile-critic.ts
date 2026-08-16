@@ -1,5 +1,5 @@
-import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { z } from 'zod';
+import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { parseTaskJsonObject } from './parse-json';
 
 export const ProfileCriticOutputSchema = z.object({

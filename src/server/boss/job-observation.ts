@@ -1,5 +1,5 @@
-import { getStartedBoss } from '@/server/boss/client';
 import type { JobWithMetadata } from 'pg-boss';
+import { getStartedBoss } from '@/server/boss/client';
 
 export type LiveBossJobState = 'created' | 'retry' | 'active';
 export type SettledBossJobState = 'completed' | 'cancelled' | 'failed';

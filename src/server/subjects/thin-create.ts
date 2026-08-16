@@ -20,6 +20,8 @@
 //   - 并发 23505 → SELECT 回放（advisory lock 已串行化，这是双保险）；
 //   - 永不产生第二行/第二根/第二 claim。
 
+import { createId } from '@paralleldrive/cuid2';
+import { and, eq, isNull } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import {
   subject,
@@ -30,8 +32,6 @@ import {
 import { seedTraitId } from '@/subjects/builtin-trait-seeds';
 import { normalizeSubjectKey } from '@/subjects/profile';
 import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
-import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull } from 'drizzle-orm';
 import { acquireControlPlaneLockSql } from './control-plane-lock';
 import { ensureSubjectRoot, subjectRootId } from './ensure-subject-root';
 import { hydrateSubjectRegistryFromDb } from './hydrate';

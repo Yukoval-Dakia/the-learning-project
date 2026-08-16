@@ -68,6 +68,7 @@ import {
 // code to surface a non-blaming "probe slots full, retry" inline error (teaching-brief
 // contract §7: accept 交互失败 → 保留当前状态,不乐观转态,允许原位重试,清晰非责备的 inline error).
 export { PROBE_SLOTS_FULL_CODE } from '@/core/schema/conjecture';
+
 import { PROBE_SLOTS_FULL_CODE } from '@/core/schema/conjecture';
 
 export const CONJECTURE_PROBE_QUALITY_REQUIRED_CODE = 'CONJECTURE_PROBE_QUALITY_REQUIRED' as const;

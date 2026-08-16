@@ -8,17 +8,17 @@ import { yuwenProfile } from './yuwen/profile';
 
 export {
   BUILTIN_IDS,
-  JudgeRouteKindSchema,
-  KNOWN_SUBJECT_IDS,
-  SubjectProfileSchema,
-  SubjectQuestionKindSchema,
   type BuiltinId,
   type JudgeRouteKind,
+  JudgeRouteKindSchema,
+  KNOWN_SUBJECT_IDS,
   type KnownSubjectId,
   type SlimSubjectProfile,
   type SubjectId,
   type SubjectProfile,
+  SubjectProfileSchema,
   type SubjectQuestionKind,
+  SubjectQuestionKindSchema,
 } from './profile-schema';
 
 // YUK (wenyan deprotagonist): the neutral default is `general`, NOT a concrete

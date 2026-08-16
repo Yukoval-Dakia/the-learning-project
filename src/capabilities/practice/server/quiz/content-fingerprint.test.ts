@@ -1,5 +1,5 @@
-import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
 import { describe, expect, it } from 'vitest';
+import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
 import {
   canonicalQuestionContentHash,
   combineExactDuplicateKnowledgeIds,

@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import {
   bodyBlocksToNoteSections,
@@ -5,7 +6,6 @@ import {
 } from '@/capabilities/notes/server/body-blocks';
 import { ArtifactBodyBlocks, NoteSection, NoteVerificationResult } from '@/core/schema/business';
 import type { SubjectProfile } from '@/subjects/profile';
-import { z } from 'zod';
 
 const NoteSectionsOutputSchema = z.object({
   sections: z.array(NoteSection).min(1).max(10),

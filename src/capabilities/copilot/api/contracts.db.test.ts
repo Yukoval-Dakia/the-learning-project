@@ -1,6 +1,6 @@
-import { event, learning_session } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { event, learning_session } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST as acceptChip } from './accept-chip';
 import {

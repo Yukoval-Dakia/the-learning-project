@@ -4,6 +4,7 @@
 // immutable JSON contracts in core lets both capabilities validate the same data
 // without importing one another's server implementation or database tables.
 
+import { z } from 'zod';
 import { PedagogyMethodId, PrecisionBand, ThetaBand } from '@/core/pedagogy/method-library';
 import {
   ConjectureDiagnosticSpec,
@@ -14,7 +15,6 @@ import {
 import { QuizVerificationResult } from '@/core/schema/quiz_gen';
 import { SolutionGenerateOutput } from '@/core/schema/solution';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import { z } from 'zod';
 
 export const INTERVENTION_CONTRACT_VERSION = 1 as const;
 export const INTERVENTION_REVIEW_AUDIT_PROTOCOL_VERSION = 3 as const;

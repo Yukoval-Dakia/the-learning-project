@@ -1,3 +1,4 @@
+import { and, eq, inArray } from 'drizzle-orm';
 import {
   PROBE_QUESTION_INITIAL_VERSION,
   PROBE_QUESTION_KIND,
@@ -9,7 +10,6 @@ import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
-import { and, eq, inArray } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 

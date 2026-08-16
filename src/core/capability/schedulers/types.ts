@@ -16,9 +16,9 @@
 // `judges/index.ts`, where server execution does not call the core registry
 // runner directly). No new scheduling algorithm is invented.
 
+import type { z } from 'zod';
 import type { FsrsRating, FsrsState } from '@/core/schema/business';
 import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
-import type { z } from 'zod';
 
 type FsrsStateData = z.infer<typeof FsrsState>;
 type RatingLabel = z.infer<typeof FsrsRating>;

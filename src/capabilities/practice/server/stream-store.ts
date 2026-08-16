@@ -12,9 +12,13 @@
 //
 // opening/closing line：M2 为模板（M4 夜链 AI 化后由 composer_nightly 写入）。
 
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
+import { LearningItemOpenStatus, QuestionKind } from '@/core/schema/business';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
+import type { QuestionKindT } from '@/core/schema/judge-routing';
 import type { Db, Tx } from '@/db/client';
+import { notDraftPredicate } from '@/db/predicates';
 import {
   artifact,
   event,
@@ -28,14 +32,6 @@ import {
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { Review } from '@/server/session';
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql } from 'drizzle-orm';
-// YUK-474 — 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
-import { type RefillDeps, refillActiveLearningPools } from './question-supply/refill';
-
-import { notDraftPredicate } from '@/db/predicates';
-
-import { LearningItemOpenStatus, QuestionKind } from '@/core/schema/business';
-import type { QuestionKindT } from '@/core/schema/judge-routing';
 import {
   type CandidateInput,
   type CollectedSignal,
@@ -46,6 +42,8 @@ import { handleReviewDue } from './due-list';
 import { FRONTIER_MAX_ITEMS, learnableFrontier } from './learnable-frontier';
 import { countPaperSlots } from './paper-sections';
 import { getPracticeList } from './practice-read';
+// YUK-474 — 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
+import { type RefillDeps, refillActiveLearningPools } from './question-supply/refill';
 import {
   DEFAULT_SELECTION_POLICY,
   DEFAULT_TEMPERATURE,

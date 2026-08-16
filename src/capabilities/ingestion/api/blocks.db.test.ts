@@ -3,8 +3,8 @@
 // Reads question_block rows for one session, returns them ordered by
 // created_at asc so the UI shows them in extraction order.
 
-import { event, learning_session, question_block } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { event, learning_session, question_block } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './blocks';
 import { IngestionBlocksResponseSchema } from './contracts';

@@ -290,7 +290,7 @@ export function foldLearningItem(
         continue; // no change — leave the row (and its updated_at/version) untouched
       }
       row = { ...row, knowledge_ids: nextIds };
-      // biome-ignore lint/correctness/noUnnecessaryContinue: OCR O7 — explicit branch terminator so a branch added below later cannot fall through (every sibling branch above ends with continue).
+      // biome-ignore lint/complexity/noUselessContinue: OCR O7 — explicit branch terminator so a branch added below later cannot fall through (every sibling branch above ends with continue).
       continue;
     }
   }

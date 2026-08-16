@@ -1,23 +1,15 @@
 export {
-  getEventById,
-  getEventChain,
-  getEvents,
-  writeEvent,
-  writeEvents,
-} from './events';
-export type { EnvelopedEvent, EventChain, GetEventsFilter, WriteEventInput } from './events';
+  filterActiveRows,
+  newerEventRow,
+  takeActiveRows,
+} from './active-rows';
+export { eventCorrectionLockKey, eventCorrectionsGlobalLockKey } from './correction-lock';
+export type { CorrectionStatus } from './corrections';
 export {
   activeCorrectionStatus,
   getCorrectionStatus,
   getCorrectionStatuses,
 } from './corrections';
-export type { CorrectionStatus } from './corrections';
-export { eventCorrectionLockKey, eventCorrectionsGlobalLockKey } from './correction-lock';
-export {
-  filterActiveRows,
-  newerEventRow,
-  takeActiveRows,
-} from './active-rows';
 export {
   type EffectiveTruth,
   type EffectiveTruthState,
@@ -27,3 +19,11 @@ export {
   getEffectiveTruth,
   getEffectiveTruths,
 } from './effective-truth';
+export type { EnvelopedEvent, EventChain, GetEventsFilter, WriteEventInput } from './events';
+export {
+  getEventById,
+  getEventChain,
+  getEvents,
+  writeEvent,
+  writeEvents,
+} from './events';

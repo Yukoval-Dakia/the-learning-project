@@ -5,10 +5,10 @@
 // src/server import). Only the core copy was table-tested; this pins the practice copy
 // AND adds a drift guard so the two can never silently diverge.
 
+import { describe, expect, it, vi } from 'vitest';
 import { fsrsSchedulerCapability } from '@/core/capability/schedulers/fsrs';
 import type { ComputeNextFn, SchedulerStepResult } from '@/core/capability/schedulers/types';
 import type { JudgeResultV2T } from '@/core/schema/capability';
-import { describe, expect, it, vi } from 'vitest';
 import { ratingFromCoarseOutcome } from './judge-rating';
 
 type CoarseOutcome = JudgeResultV2T['coarse_outcome'];

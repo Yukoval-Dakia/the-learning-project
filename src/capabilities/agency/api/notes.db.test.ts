@@ -1,7 +1,7 @@
 // GET /api/agents/notes — unfiltered agent-notes feed (YUK-294, read-only board).
 
-import { knowledge, question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { knowledge, question } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { writeAgentNote } from '../server/notes';
 import { AgentNotesResponseSchema } from './contracts';

@@ -15,13 +15,13 @@
 // seed and the fold output cannot drift). KnowledgeEdgeRowSnapshot has NO `version`
 // column (unlike knowledge); edges have no embed_* columns.
 
+import { z } from 'zod';
 import { checkEdgeTopology } from '@/capabilities/knowledge/server/topology-gate';
 import {
   GenesisExperimental,
   KnowledgeEdgeRowSnapshot,
   type KnowledgeEdgeRowSnapshotT,
 } from '@/core/schema/event/genesis';
-import { z } from 'zod';
 import type { FoldEvent } from './fold-event';
 
 // ---------- FoldEvent ----------

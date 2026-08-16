@@ -10,8 +10,8 @@
 // classification, (c) image-dependency detection + markdown destination rewriting.
 // No IO, no DB — spawn lives in jyeoo-spawn.ts, persistence in the handler.
 
-import { SourcedQuestion, type SourcedQuestionT } from '@/core/schema/sourcing';
 import { z } from 'zod';
+import { SourcedQuestion, type SourcedQuestionT } from '@/core/schema/sourcing';
 
 // ── exit classification ──────────────────────────────────────────────────────
 //

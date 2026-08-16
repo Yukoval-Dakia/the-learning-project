@@ -2,8 +2,9 @@
  * Tests for runWorkflowJudge — T-OC slice 3 deterministic confidence gate
  * (YUK-145, OC-4). Pure function, no DB / no LLM. See ADR-0026.
  */
-import type { TaggingOutputT } from '@/core/schema/tagging';
+
 import { describe, expect, it } from 'vitest';
+import type { TaggingOutputT } from '@/core/schema/tagging';
 
 import { runWorkflowJudge } from './workflow-judge';
 

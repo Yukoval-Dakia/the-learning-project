@@ -1,8 +1,8 @@
-import { event } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { event } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import type { MemoryClient } from './client';

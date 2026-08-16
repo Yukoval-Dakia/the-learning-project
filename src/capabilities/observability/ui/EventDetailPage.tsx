@@ -1,3 +1,5 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { ApiError, apiJson } from '@/ui/lib/api';
 import { affectedRefsForCorrection } from '@/ui/lib/event-corrections';
 import { formatRelTime } from '@/ui/lib/utils';
@@ -9,8 +11,6 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
 import {
   type EventDetailResponse,
   type EventDetailRow,

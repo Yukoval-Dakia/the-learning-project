@@ -6,11 +6,11 @@
 // trace toggle), the optimistic「已纠偏」verdict card, and the three action onClicks (navigate /
 // trace toggle / 判错了 veto). ⑥ red line: no bare probability / % leaks through any card.
 
-import { scopedPracticeHref } from '@/ui/lib/routes';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { MisconceptionCardView, MisconceptionList, applyVeto } from './MisconceptionList';
+import { scopedPracticeHref } from '@/ui/lib/routes';
 import type { MisconceptionRow } from './knowledge-api';
+import { MisconceptionCardView, MisconceptionList, applyVeto } from './MisconceptionList';
 
 const KNOWLEDGE_ID = 'kc/判断句';
 

@@ -27,10 +27,6 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type TaskKind, tasks } from '@/ai/registry';
-import { getTaskSystemPrompt } from '@/ai/task-prompts';
-import type { Db } from '@/db/client';
-import type { SubjectProfile } from '@/subjects/profile';
 import {
   type Options,
   type OutputFormat,
@@ -46,6 +42,10 @@ import {
   startup as sdkStartup,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
+import { type TaskKind, tasks } from '@/ai/registry';
+import { getTaskSystemPrompt } from '@/ai/task-prompts';
+import type { Db } from '@/db/client';
+import type { SubjectProfile } from '@/subjects/profile';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
 import type { R2Client } from '../r2';
 import {

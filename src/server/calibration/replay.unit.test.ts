@@ -8,6 +8,7 @@
 // background — both SRT variants share it). It is currently `true`, so the A2-global
 // anchors below assert the flag-on behaviour, matching production.
 
+import { describe, expect, it } from 'vitest';
 import {
   ELO_K_GLOBAL,
   HIERARCHICAL_ELO_ENABLED,
@@ -21,7 +22,6 @@ import {
   posteriorMean,
   uniformPrior,
 } from '@/core/theta-grid';
-import { describe, expect, it } from 'vitest';
 import { type ReplayAttempt, replayTheta } from './replay';
 
 function attempt(

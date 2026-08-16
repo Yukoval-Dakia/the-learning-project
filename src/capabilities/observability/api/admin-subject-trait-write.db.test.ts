@@ -1,10 +1,9 @@
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-
 import { subject_trait } from '@/db/schema';
 import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
 import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-traits';
 import { thinCreateSubject } from '@/server/subjects/thin-create';
-import { eq } from 'drizzle-orm';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { BINDING, FORK, PUT as PUT_SUBJECT_TRAIT } from './admin-subject-trait-write';
 import { GET as getTraitJournal } from './admin-trait-journal';

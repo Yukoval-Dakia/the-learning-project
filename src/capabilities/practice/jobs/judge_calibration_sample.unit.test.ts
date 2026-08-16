@@ -8,15 +8,15 @@
 //      degrade-to-undefined.
 //   3. core failure rethrows (pg-boss retry; MF8 unique index guards replays).
 //   4. env config reader defaults + clamps.
-import type { Db } from '@/db/client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Db } from '@/db/client';
+import { buildJudgeCalibrationSampleHandler } from './judge_calibration_sample';
 import {
   JUDGE_CALIBRATION_DEFAULTS,
   JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV,
   readJudgeCalibrationConfig,
 } from './judge-calibration-config';
-import { buildJudgeCalibrationSampleHandler } from './judge_calibration_sample';
 
 const mockDb = {} as Db;
 

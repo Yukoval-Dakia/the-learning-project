@@ -1,3 +1,4 @@
+import { and, asc, eq } from 'drizzle-orm';
 import { parseFlag } from '@/core/env-flags';
 import { MASTERY_PROGRESS_ACTION, MasteryProgressExperimental } from '@/core/schema/event';
 import type { Db } from '@/db/client';
@@ -8,7 +9,6 @@ import type {
   EventSubscriptionHandlerFactory,
   EventSubscriptionOutcome,
 } from '@/kernel/manifest';
-import { and, asc, eq } from 'drizzle-orm';
 import { getNotesBoss } from './boss-port';
 import { reserveAndEnqueueMasteryRefineEffect } from './mastery-refine-effect';
 import { collectMasteryRefineTargets } from './mastery-refine-targets';

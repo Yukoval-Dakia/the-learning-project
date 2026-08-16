@@ -1,3 +1,4 @@
+import { Memory, type MemoryConfig, type MemoryItem, type SearchResult } from 'mem0ai/oss';
 import {
   type Mem0OpaqueOperationContext,
   executeMem0OpaqueOperation,
@@ -7,7 +8,6 @@ import {
 // default so a backup restores to the exact table the client reads from (Cursor OCR
 // minor, PR #491: the literal was duplicated in both files).
 import { MEM0_COLLECTION_DEFAULT } from '@/server/export/constants';
-import { Memory, type MemoryConfig, type MemoryItem, type SearchResult } from 'mem0ai/oss';
 
 // P1 (YUK-341)：mem0 个性化半边换血到 GLM 5.2 + 百炼 v4，LLM/embedder 全走
 // openai-compat provider——mem0ai 3.0.6 的 openai provider 转发 config.baseURL
@@ -52,10 +52,7 @@ export type Mem0Like = {
     query: string,
     config: { topK?: number; filters?: Record<string, unknown> },
   ): Promise<SearchResult>;
-  getAll(config: {
-    topK?: number;
-    filters: Record<string, unknown>;
-  }): Promise<SearchResult>;
+  getAll(config: { topK?: number; filters: Record<string, unknown> }): Promise<SearchResult>;
   // YUK-557 (Q2a): mem0 official delete() — real vector DELETE that first writes
   // payload.data into the SQLite memory_history tombstone (index.mjs:6980→7164).
   delete(memoryId: string): Promise<{ message: string }>;
@@ -296,10 +293,7 @@ function eventToText(input: MemoryEventInput): string {
 }
 
 export function createMemoryClient(
-  opts: {
-    env?: Env;
-    memoryFactory?: (config: MemoryConfig) => Mem0Like;
-  } = {},
+  opts: { env?: Env; memoryFactory?: (config: MemoryConfig) => Mem0Like } = {},
 ): MemoryClient {
   const env = opts.env ?? process.env;
   // P1 (YUK-341)：openai-compat provider 转发 config.baseURL（mem0ai 3.0.6 实证），

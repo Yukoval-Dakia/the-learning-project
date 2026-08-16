@@ -5,12 +5,12 @@
 // → DB partition (NOT in fastTestInclude; the pure decision helpers are covered
 // by adaptive-bias.unit.test.ts).
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { AiProposalPayloadInputT } from '@/core/schema/proposal';
 import { getProposalFeedbackDigest, resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
 import { recordProposalDecisionSignal } from '@/kernel/proposals/signals';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const BUDGET = PROPOSAL_FEEDBACK_BUDGET;

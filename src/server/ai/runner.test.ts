@@ -6,9 +6,9 @@
 // uniformly. We mock the SDK at module boundary so unit tests don't spawn
 // the `claude` binary.
 
-import { ai_task_runs, cost_ledger } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ai_task_runs, cost_ledger } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { memR2 } from '../../../tests/helpers/r2';
 

@@ -1,3 +1,5 @@
+import { and, eq, sql } from 'drizzle-orm';
+import { ZodError } from 'zod';
 import { db } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import { getCorrectionStatus } from '@/kernel/events';
@@ -12,8 +14,6 @@ import {
   findReusableCopilotConversation,
   lockCopilotSessionSelection,
 } from '@/server/session/conversation';
-import { and, eq, sql } from 'drizzle-orm';
-import { ZodError } from 'zod';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from '../server/copilot-run-status';
 import { copilotRunTerminalSql } from '../server/copilot-run-terminal-sql';
 import { CopilotCheckpointParamsSchema, type CopilotCheckpointRevertRefusalT } from './contracts';

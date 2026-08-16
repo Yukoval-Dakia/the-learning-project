@@ -7,9 +7,9 @@
 // transaction, and the event passes the writeEvent parse barrier (ExperimentalEvent
 // escape hatch, Q10). No real trigger scenario is fabricated.
 
-import { artifact, event } from '@/db/schema';
 import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { artifact, event } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { writePaperAdaptationEvent } from './paper-adaptation';
 

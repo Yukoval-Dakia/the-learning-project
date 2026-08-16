@@ -19,12 +19,13 @@ export const Knowledge = g.KnowledgeSelectGenerated.extend({
 });
 export type Knowledge = z.infer<typeof Knowledge>;
 
+export type { Misconception } from './misconception';
 // ---------- Misconception (YUK-454 inc-1, ADR-0036 身份层) ----------
 // HAND-WRITTEN Zod (NOT drizzle-zod): the misconception identity-table skeleton
 // is DORMANT in L1 (no writer, no route/job/copilotTool wiring). Soft-track red
 // line (ADR-0035) + subject=view are enforced by `.strict()` in the module.
 export { MisconceptionInsert, MisconceptionSchema } from './misconception';
-export type { Misconception } from './misconception';
+export type { MisconceptionEdge } from './misconception-edge';
 // YUK-531 (A5 S4 / ADR-0036 RT1): heterogeneous misconception edge. DORMANT until
 // the promotion writer / accept route lands; endpoint×relation validity lives in
 // the parallel topology gate (misconception-topology-gate.ts), not the Zod here.
@@ -35,7 +36,6 @@ export {
   MisconceptionEdgeSchema,
   MisconceptionRelationType,
 } from './misconception-edge';
-export type { MisconceptionEdge } from './misconception-edge';
 
 // ---------- Source ----------
 export const SourceAssetInsert = g.SourceAssetInsertGenerated.extend({ kind: b.SourceAssetKind });

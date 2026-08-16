@@ -32,11 +32,11 @@
 // (scoring.ts), NOT the Rust-deferred window mean (ADR-0046) — the response declares this
 // in `score_basis: 'single_point'` so no consumer mistakes it for a window-calibrated score.
 
+import { and, desc, eq } from 'drizzle-orm';
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
 import { type ProbeResolution, isProbeResolution } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event, kc_typed_state } from '@/db/schema';
-import { and, desc, eq } from 'drizzle-orm';
 
 /** One calibration/accountability score row (mapped from prediction_score). */
 export interface ConjecturePredictionScoreRow {

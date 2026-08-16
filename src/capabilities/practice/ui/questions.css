@@ -23,8 +23,9 @@
   border-radius: var(--r-3);
   padding: 0 var(--s-3);
   color: var(--ink-4);
-  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast)
-    var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 .qb-search:focus-within {
   border-color: var(--coral-line);
@@ -680,8 +681,9 @@
   resize: vertical;
   min-height: 70px;
   outline: none;
-  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast)
-    var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 .qd-textarea:focus {
   border-color: var(--coral-line);
@@ -734,8 +736,9 @@
   border: 1px solid var(--line);
   border-radius: var(--r-2);
   background: var(--paper-raised);
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
-    var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .qd-opt.correct {
   border-color: var(--good-line);
@@ -871,8 +874,9 @@
   border-radius: var(--r-2);
   padding: var(--s-3) var(--s-4);
   cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
-    var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .qd-sub:hover {
   border-color: var(--coral-line);
@@ -1332,7 +1336,7 @@
 /* latex raw fallback + figure inside list */
 .q-tex-raw {
   font-family: var(--font-mono);
-  font-size: .9em;
+  font-size: 0.9em;
   color: var(--ink-2);
   background: var(--paper-sunk);
   border-radius: 3px;
@@ -1356,7 +1360,7 @@
 }
 .q-md .q-code {
   font-family: var(--font-mono);
-  font-size: .9em;
+  font-size: 0.9em;
   background: var(--paper-sunk);
   border-radius: 3px;
   padding: 0 4px;

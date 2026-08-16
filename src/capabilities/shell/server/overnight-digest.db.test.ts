@@ -1,3 +1,4 @@
+import { beforeEach, describe, expect, it } from 'vitest';
 import { OvernightDigestResponseSchema } from '@/capabilities/shell/api/contracts';
 // YUK-520 (A1) — overnight-digest 读模型 db 测（DB 装配端到端）。纯函数边界覆盖（窗口算 /
 // runs 分组 / has_overnight_activity 五源）在 no-DB unit 车道（overnight-digest-summary.unit.test.ts）。
@@ -5,7 +6,6 @@ import { OvernightDigestResponseSchema } from '@/capabilities/shell/api/contract
 //
 // 注入 now 让窗口确定性：overnightWindow(NOW) = [2026-06-26T16:00Z, 2026-06-27T16:00Z)（BJT 前一日历日）。
 import { ai_task_runs, event } from '@/db/schema';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { loadOvernightDigest } from './overnight-digest';
 

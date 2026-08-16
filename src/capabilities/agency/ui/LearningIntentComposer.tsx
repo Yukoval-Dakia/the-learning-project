@@ -2,12 +2,12 @@
 // Planning creates a B-tier proposal only; the owner confirms it in the shared
 // proposal inbox, where acceptance materializes the learning-item/note tree.
 
+import { useMutation } from '@tanstack/react-query';
+import { type FormEvent, useState } from 'react';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
-import { useMutation } from '@tanstack/react-query';
-import { type FormEvent, useState } from 'react';
 import { createLearningIntentProposal } from './learning-intent-api';
 import './learning-intent.css';
 

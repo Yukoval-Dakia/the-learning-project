@@ -1,7 +1,7 @@
-import { event, knowledge } from '@/db/schema';
-import { writeAiProposal } from '@/kernel/proposals/writer';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { event, knowledge } from '@/db/schema';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../tests/helpers/conjecture-probe-fixtures';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET as getEventDetail } from '../../observability/api/event-detail';

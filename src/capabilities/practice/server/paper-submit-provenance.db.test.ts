@@ -13,11 +13,11 @@
 // verdict before persisting) records the unsupported judge event, so this is the
 // reachable site for the model-route branch of the J1 fix.
 
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { artifact, event, question } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
 import { Review } from '@/server/session';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { submitPaperSlot } from './paper-submit';
 

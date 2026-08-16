@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import {
   ConversationStatus,
   IngestionStatus,
@@ -5,7 +6,6 @@ import {
   LearningSessionType,
   ReviewStatus,
 } from '@/core/schema/learning_session';
-import { describe, expect, it } from 'vitest';
 
 describe('LearningSessionType', () => {
   it('accepts all 6 enum values', () => {

@@ -1,6 +1,6 @@
+import { and, eq } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
 
 export type StructuredReviewVerdict = 'pass' | 'fail';
 

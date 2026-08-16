@@ -17,6 +17,7 @@ vi.mock('@/server/boss/client', async (importOriginal) => {
   return { ...actual, getRunningBoss: () => bossMock.getRunningBoss() };
 });
 
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import type { HubSyncCycleResult } from '../server/hub-sync-reconciliation';
 import {
   buildHubAutoSyncNightlyHandler,
@@ -24,8 +25,6 @@ import {
   buildHubSyncRecoveryJobHandler,
   runHubAutoSyncNightly,
 } from './hub_auto_sync_nightly';
-
-import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const NOW = new Date('2026-05-29T18:45:00Z');
 

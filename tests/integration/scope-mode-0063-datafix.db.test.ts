@@ -11,9 +11,9 @@
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { goal } from '@/db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { goal } from '@/db/schema';
 import { resetDb, testDb } from '../helpers/db';
 
 const db = testDb();

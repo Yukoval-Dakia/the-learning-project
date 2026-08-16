@@ -4,6 +4,7 @@
 // propose_conjecture cap / pending-dedup / Zod / baseline_p auto-snapshot, and
 // leave_agent_note cap / target whitelist / summary truncation / primary-ref filter.
 
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
 import type { WriteAgentNoteInput } from '@/capabilities/agency/server/notes';
 import type { FailureAttempt } from '@/capabilities/knowledge/public';
@@ -11,7 +12,6 @@ import { activeEffectiveTruth } from '@/kernel/events';
 import type { WriteAiProposalInput } from '@/kernel/proposals/writer';
 import type { MasteryProjection } from '@/server/mastery/state';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../../tests/helpers/conjecture-probe-fixtures';
 
 // Capture the registered tool handlers via a mocked SDK (same shape as evidence-mcp.db.test).

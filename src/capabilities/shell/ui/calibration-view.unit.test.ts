@@ -2,8 +2,8 @@
 // theta_se=null 回落冷启先验、排序比较器 + 点表头翻向、θ̂ SE → 分布带/填充条定位、同 SE lane 堆叠。
 // ⑥红线相关：tier 只表相对次序、SE 是置信量。纯函数、零 DB → unit 车道。
 
-import type { CalibrationMaturityRow } from '@/capabilities/onboarding/ui/recompute/calibration-maturity-api';
 import { describe, expect, it } from 'vitest';
+import type { CalibrationMaturityRow } from '@/capabilities/onboarding/ui/recompute/calibration-maturity-api';
 import {
   COLD_START_SE,
   type CalSort,

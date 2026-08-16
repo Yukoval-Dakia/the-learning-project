@@ -4,12 +4,12 @@
 // Covers: parser, runGoalScopeAndWrite proposal write + inbox surfacing, and the
 // accept round-trip that materializes the `goal` row (evidence chain).
 
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import { event, goal, knowledge } from '@/db/schema';
 import { getProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { listActiveGoals } from './queries';
 import { parseGoalScopeOutput, runGoalScopeAndWrite } from './scope';

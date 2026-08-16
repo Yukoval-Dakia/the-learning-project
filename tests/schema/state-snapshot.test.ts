@@ -1,6 +1,6 @@
+import { describe, expect, it } from 'vitest';
 import { ExperimentalEvent, parseEvent } from '@/core/schema/event';
 import { StateSnapshotExperimental } from '@/core/schema/event/state-snapshot';
-import { describe, expect, it } from 'vitest';
 
 // ====================================================================
 // StateSnapshotExperimental — A-class snapshot reversibility (YUK-471 Wave 0)

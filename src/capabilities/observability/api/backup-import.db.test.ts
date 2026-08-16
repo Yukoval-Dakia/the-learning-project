@@ -1,6 +1,6 @@
-import { FK_ORDER, RESTORE_WIPE_ONLY_TABLES, SCHEMA_VERSION } from '@/server/export/constants';
 import { zipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { FK_ORDER, RESTORE_WIPE_ONLY_TABLES, SCHEMA_VERSION } from '@/server/export/constants';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
 import { BackupImportResponseSchema } from './backup-contracts';

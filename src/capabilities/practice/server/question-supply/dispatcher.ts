@@ -21,6 +21,7 @@
 //
 // 不能自动派的路由 → 记 status='manual'（emit + log，不动作），等用户/UI 接手。
 
+import { and, eq, gte, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
@@ -28,7 +29,6 @@ import { writeEvent } from '@/kernel/events';
 import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import { supplyDispatchTavilyAvailable } from '@/kernel/supply-dispatch-tavily';
-import { and, eq, gte, sql } from 'drizzle-orm';
 import { SupplyTraceV1, type SupplyTraceV1T, buildSupplyTrace } from './evidence-demand';
 import { jyeooFetchEnabled } from './jyeoo-supply-config';
 import { planSupplyRoutes } from './route-planner';

@@ -4,8 +4,8 @@
 // The grid track's faithfulness to production is proven separately by
 // replay.fixture.db.test.ts; here we test the comparison harness wiring + thresholds.
 
-import { expectedScore } from '@/core/theta';
 import { describe, expect, it } from 'vitest';
+import { expectedScore } from '@/core/theta';
 import type { ClusterForwardPreds } from './bootstrap';
 import type { ReplayAttempt } from './replay';
 import { mulberry32 } from './rng';

@@ -1,3 +1,7 @@
+import { eq, sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ProviderAttemptTerminalEvidence,
   ProviderRequestIdentity,
@@ -5,10 +9,6 @@ import {
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { provider_attempt, provider_attempt_admission } from '@/db/schema';
-import { eq, sql } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   type DirectProviderAttemptControl,

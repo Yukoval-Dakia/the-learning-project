@@ -6,11 +6,11 @@
 // **本 lane 零选题行为变更**：writer 就位但不接进 composeDailyStream；Phase 3
 // 随机化选题落地后才在真实选题路径调用本 helper（roadmap Task 8）。
 
+import { and, asc, eq } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { selection_observation } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { and, asc, eq } from 'drizzle-orm';
 
 export interface SelectionObservationInput {
   /** 选题发生的本地日 YYYY-MM-DD（与 practice_stream_item.date 同度量）。 */

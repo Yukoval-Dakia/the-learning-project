@@ -1,5 +1,5 @@
-import { writeCompletionProposal, writeRelearnProposal } from '@/kernel/proposals/producers';
 import { z } from 'zod';
+import { writeCompletionProposal, writeRelearnProposal } from '@/kernel/proposals/producers';
 import {
   type LearningItemProposalOutput,
   LearningItemProposalOutputSchema,

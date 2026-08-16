@@ -1,7 +1,7 @@
-import { event } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { event } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { memoryReconcileJobId, recoverMemoryReconcileHandoffs } from './memory-reconcile-handoff';
 import {

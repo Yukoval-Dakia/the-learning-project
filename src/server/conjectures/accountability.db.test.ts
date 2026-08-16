@@ -1,3 +1,5 @@
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { PROBE_RESOLUTION_RULE_VERSION } from '@/core/schema/conjecture';
 import { event, question } from '@/db/schema';
 import {
@@ -6,8 +8,6 @@ import {
   rankEvidenceCellsByAccountability,
 } from '@/server/conjectures/accountability';
 import { gatherDissociationRecordsByIdentity } from '@/server/conjectures/hard-confirm';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 function cell(key: string, recurrence: number): AccountabilityCandidate {

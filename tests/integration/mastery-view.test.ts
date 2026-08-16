@@ -15,9 +15,9 @@
 // by writeEvent's runtime gate. This is the standard test-side pattern (Step
 // 4 fixtures use the same direct-insert convention).
 
-import { event, knowledge } from '@/db/schema';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { event, knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../helpers/db';
 
 // Direct-insert seed helpers — bypass writeEvent so we can fix created_at.

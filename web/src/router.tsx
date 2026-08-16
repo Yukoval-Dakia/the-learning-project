@@ -1,6 +1,20 @@
 // M0 (YUK-313) — SPA 路由表。规则（记入 ARCHITECTURE）：capability ui 不 import
 // 路由库；导航以 (to: string) => void prop 注入——路由耦合只存在于本壳层。
 // M0 仅 /agent-notes 一条 surface；后续 surface 随各 M 在此登记。
+
+import { useQuery } from '@tanstack/react-query';
+import {
+  Outlet,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  lazyRouteComponent,
+  redirect,
+  useRouter,
+  useRouterState,
+} from '@tanstack/react-router';
+import type { ComponentType } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { loadAgentNotesPage } from '@/capabilities/agency/ui-public';
 import { CopilotDock } from '@/capabilities/copilot/ui-public';
 import { loadRecordPage } from '@/capabilities/ingestion/ui-public';
@@ -40,19 +54,6 @@ import { AppTopbar } from '@/ui/shell/AppTopbar';
 import { CommandPalette } from '@/ui/shell/CommandPalette';
 import { MobileTabBar } from '@/ui/shell/MobileTabBar';
 import { ShellMain } from '@/ui/shell/ShellMain';
-import { useQuery } from '@tanstack/react-query';
-import {
-  Outlet,
-  createRootRoute,
-  createRoute,
-  createRouter,
-  lazyRouteComponent,
-  redirect,
-  useRouter,
-  useRouterState,
-} from '@tanstack/react-router';
-import type { ComponentType } from 'react';
-import { useCallback, useEffect, useRef, useState } from 'react';
 
 // S13 (YUK-335 批次丙) — 主题持久化 key，与 design app.jsx:86 / 既有
 // ThemeToggle primitive 同 key（'loom-theme'），互不打架。

@@ -14,12 +14,12 @@
 //     <= K_MAX cap, single-char CJK token matching, exact-token (non-substring)
 //     matching.
 
+import { describe, expect, it } from 'vitest';
 import {
   type SubjectProfile,
   getDefaultSubjectRegistry,
   resolveSubjectProfile,
 } from '@/subjects/profile';
-import { describe, expect, it } from 'vitest';
 import { K_MAX, K_SMALL, retrieveCauseCandidates } from './attribute-retrieve';
 import type { AttributionInput } from './attribution';
 

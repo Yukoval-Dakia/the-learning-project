@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
-import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { PfStream } from './PfStream';
 import type { StreamView } from './practice-api';
 

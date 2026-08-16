@@ -1,6 +1,6 @@
-import { learning_record } from '@/db/schema';
 import { and, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { learning_record } from '@/db/schema';
 import { excerpt, recordKnowledgeContainsAny } from './record-tool-support';
 import type { DomainTool, ToolContext } from './types';
 

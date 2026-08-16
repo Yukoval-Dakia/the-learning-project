@@ -1,6 +1,6 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JudgeQuestionRow } from './question-contract';
 import { parseStepsResult, runStepsJudge } from './steps-judge';
 

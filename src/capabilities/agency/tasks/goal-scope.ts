@@ -7,8 +7,9 @@ import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
 // Legacy quarry alias preserved verbatim inside the moved definitions.
 const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
-import type { SubjectProfile } from '@/subjects/profile';
+
 import { z } from 'zod';
+import type { SubjectProfile } from '@/subjects/profile';
 
 export const GoalScopeOutputSchema = z.object({
   scope_knowledge_ids: z.array(z.string().min(1)).default([]),

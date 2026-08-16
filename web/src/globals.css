@@ -73,12 +73,14 @@
   --color-contrasts-ink: #3f2249;
 
   /* ── Type · Families ───────────────────────────────────── */
-  --font-serif: "Source Serif 4", "Noto Serif SC", "Songti SC", "STSong", "FangSong", ui-serif,
-    Georgia, serif;
-  --font-sans: "Noto Sans SC", "PingFang SC", "MiSans", "Hiragino Sans GB", -apple-system,
-    BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "Source Han Mono", ui-monospace, "SFMono-Regular", "Cascadia Code",
-    Consolas, monospace;
+  --font-serif:
+    "Source Serif 4", "Noto Serif SC", "Songti SC", "STSong", "FangSong", ui-serif, Georgia, serif;
+  --font-sans:
+    "Noto Sans SC", "PingFang SC", "MiSans", "Hiragino Sans GB", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", system-ui, sans-serif;
+  --font-mono:
+    "JetBrains Mono", "Source Han Mono", ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas,
+    monospace;
   --font-wenyan: "Source Serif 4", "Noto Serif SC", "Songti SC", "STSong", "FangSong", serif;
 
   /* ── Type · Scale ──────────────────────────────────────── */
@@ -121,10 +123,12 @@
      + dark blocks below must stay in sync — see also the [data-theme="dark"] +
      prefers-dark blocks. */
   --shadow-1: 0 0.5px 1px rgba(60, 50, 30, 0.04), 0 1px 2px rgba(60, 50, 30, 0.035);
-  --shadow-2: 0 1px 2px rgba(60, 50, 30, 0.04), 0 5px 14px -4px rgba(60, 50, 30, 0.08), 0 14px 30px
-    -12px rgba(60, 50, 30, 0.07);
-  --shadow-3: 0 2px 4px rgba(60, 50, 30, 0.05), 0 14px 30px -10px rgba(60, 50, 30, 0.12), 0 38px
-    64px -20px rgba(60, 50, 30, 0.16);
+  --shadow-2:
+    0 1px 2px rgba(60, 50, 30, 0.04), 0 5px 14px -4px rgba(60, 50, 30, 0.08),
+    0 14px 30px -12px rgba(60, 50, 30, 0.07);
+  --shadow-3:
+    0 2px 4px rgba(60, 50, 30, 0.05), 0 14px 30px -10px rgba(60, 50, 30, 0.12),
+    0 38px 64px -20px rgba(60, 50, 30, 0.16);
   --shadow-focus: 0 0 0 3px rgba(217, 119, 87, 0.22);
   --shadow-inset: inset 0 1px 0 rgba(60, 50, 30, 0.04);
 
@@ -199,12 +203,14 @@
   --contrasts-line: #d4bce0;
   --contrasts-ink: #3f2249;
 
-  --font-serif: "Source Serif 4", "Noto Serif SC", "Songti SC", "STSong", "FangSong", ui-serif,
-    Georgia, serif;
-  --font-sans: "Noto Sans SC", "PingFang SC", "MiSans", "Hiragino Sans GB", -apple-system,
-    BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "Source Han Mono", ui-monospace, "SFMono-Regular", "Cascadia Code",
-    Consolas, monospace;
+  --font-serif:
+    "Source Serif 4", "Noto Serif SC", "Songti SC", "STSong", "FangSong", ui-serif, Georgia, serif;
+  --font-sans:
+    "Noto Sans SC", "PingFang SC", "MiSans", "Hiragino Sans GB", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", system-ui, sans-serif;
+  --font-mono:
+    "JetBrains Mono", "Source Han Mono", ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas,
+    monospace;
   --font-wenyan: "Source Serif 4", "Noto Serif SC", "Songti SC", "STSong", "FangSong", serif;
 
   --fs-meta: 13px;
@@ -249,10 +255,12 @@
 
   /* YUK-297 R1 — synced with @theme light block above. */
   --shadow-1: 0 0.5px 1px rgba(60, 50, 30, 0.04), 0 1px 2px rgba(60, 50, 30, 0.035);
-  --shadow-2: 0 1px 2px rgba(60, 50, 30, 0.04), 0 5px 14px -4px rgba(60, 50, 30, 0.08), 0 14px 30px
-    -12px rgba(60, 50, 30, 0.07);
-  --shadow-3: 0 2px 4px rgba(60, 50, 30, 0.05), 0 14px 30px -10px rgba(60, 50, 30, 0.12), 0 38px
-    64px -20px rgba(60, 50, 30, 0.16);
+  --shadow-2:
+    0 1px 2px rgba(60, 50, 30, 0.04), 0 5px 14px -4px rgba(60, 50, 30, 0.08),
+    0 14px 30px -12px rgba(60, 50, 30, 0.07);
+  --shadow-3:
+    0 2px 4px rgba(60, 50, 30, 0.05), 0 14px 30px -10px rgba(60, 50, 30, 0.12),
+    0 38px 64px -20px rgba(60, 50, 30, 0.16);
   --shadow-focus: 0 0 0 3px rgba(217, 119, 87, 0.22);
   --shadow-inset: inset 0 1px 0 rgba(60, 50, 30, 0.04);
 
@@ -362,10 +370,12 @@
 
     /* YUK-297 R1 — three-layer dark elevation, synced with [data-theme="dark"]. */
     --shadow-1: 0 0.5px 1px rgba(0, 0, 0, 0.22), 0 1px 2px rgba(0, 0, 0, 0.2);
-    --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.24), 0 6px 16px -4px rgba(0, 0, 0, 0.42), 0 16px 34px
-      -12px rgba(0, 0, 0, 0.34);
-    --shadow-3: 0 2px 4px rgba(0, 0, 0, 0.26), 0 16px 34px -10px rgba(0, 0, 0, 0.5), 0 40px 70px
-      -20px rgba(0, 0, 0, 0.55);
+    --shadow-2:
+      0 1px 2px rgba(0, 0, 0, 0.24), 0 6px 16px -4px rgba(0, 0, 0, 0.42),
+      0 16px 34px -12px rgba(0, 0, 0, 0.34);
+    --shadow-3:
+      0 2px 4px rgba(0, 0, 0, 0.26), 0 16px 34px -10px rgba(0, 0, 0, 0.5),
+      0 40px 70px -20px rgba(0, 0, 0, 0.55);
     --shadow-focus: 0 0 0 3px rgba(232, 149, 114, 0.32);
     --shadow-inset: inset 0 1px 0 rgba(255, 245, 225, 0.04);
 
@@ -429,10 +439,12 @@
 
   /* YUK-297 R1 — three-layer dark elevation, synced with prefers-dark block. */
   --shadow-1: 0 0.5px 1px rgba(0, 0, 0, 0.22), 0 1px 2px rgba(0, 0, 0, 0.2);
-  --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.24), 0 6px 16px -4px rgba(0, 0, 0, 0.42), 0 16px 34px -12px
-    rgba(0, 0, 0, 0.34);
-  --shadow-3: 0 2px 4px rgba(0, 0, 0, 0.26), 0 16px 34px -10px rgba(0, 0, 0, 0.5), 0 40px 70px -20px
-    rgba(0, 0, 0, 0.55);
+  --shadow-2:
+    0 1px 2px rgba(0, 0, 0, 0.24), 0 6px 16px -4px rgba(0, 0, 0, 0.42),
+    0 16px 34px -12px rgba(0, 0, 0, 0.34);
+  --shadow-3:
+    0 2px 4px rgba(0, 0, 0, 0.26), 0 16px 34px -10px rgba(0, 0, 0, 0.5),
+    0 40px 70px -20px rgba(0, 0, 0, 0.55);
   --shadow-focus: 0 0 0 3px rgba(232, 149, 114, 0.32);
   --shadow-inset: inset 0 1px 0 rgba(255, 245, 225, 0.04);
 
@@ -445,8 +457,9 @@
    without making the transition feel laggy. */
 html,
 body {
-  transition: background-color var(--dur-base) var(--ease-soft), color var(--dur-base)
-    var(--ease-soft);
+  transition:
+    background-color var(--dur-base) var(--ease-soft),
+    color var(--dur-base) var(--ease-soft);
 }
 
 /* ============================================================
@@ -600,8 +613,9 @@ a {
   text-decoration: underline;
   text-decoration-color: var(--coral-line);
   text-underline-offset: 2px;
-  transition: color var(--dur-fast) var(--ease-out), text-decoration-color var(--dur-fast)
-    var(--ease-out);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    text-decoration-color var(--dur-fast) var(--ease-out);
 }
 a:hover {
   color: var(--coral-hover);
@@ -685,11 +699,13 @@ ol {
   padding: 3px;
   margin: 0 0 var(--s-5);
   overflow-x: auto;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--paper-sunk) 88%, var(--paper-tint)) 0%,
       var(--paper-sunk) 100%
-    ), var(--paper-sunk);
+    ),
+    var(--paper-sunk);
   border: 1px solid var(--line-soft);
   border-radius: var(--r-2);
   box-shadow: var(--shadow-inset);
@@ -703,7 +719,9 @@ ol {
   font-weight: 500;
   color: var(--ink-3);
   white-space: nowrap;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out);
 }
 
@@ -714,11 +732,13 @@ ol {
 
 .seg.is-on {
   color: var(--ink);
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--paper-raised) 84%, var(--paper-tint)) 0%,
       var(--paper-raised) 100%
-    ), var(--paper-raised);
+    ),
+    var(--paper-raised);
   box-shadow: var(--shadow-1);
 }
 
@@ -784,8 +804,10 @@ ol {
 }
 .kpi.kpi-clickable {
   cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
-    var(--ease-out), transform var(--dur-fast) var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
   text-decoration: none;
   color: inherit;
 }
@@ -1492,11 +1514,13 @@ ol {
   padding: 36px 24px;
   border: 1.5px dashed var(--line-strong);
   border-radius: var(--r-3);
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--paper-tint) 82%, var(--paper-sunk)) 0%,
       color-mix(in srgb, var(--paper-sunk) 86%, var(--paper)) 100%
-    ), var(--paper-tint);
+    ),
+    var(--paper-tint);
   color: var(--ink-3);
   display: flex;
   flex-direction: column;
@@ -1504,8 +1528,10 @@ ol {
   justify-content: center;
   gap: 12px;
   text-align: center;
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
-    var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 
 .record-dropzone {
@@ -1515,11 +1541,13 @@ ol {
 .record-dropzone:hover {
   border-color: var(--coral-line);
   color: var(--coral-ink);
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--coral-soft) 58%, var(--paper-tint)) 0%,
       color-mix(in srgb, var(--paper-tint) 68%, var(--paper-sunk)) 100%
-    ), var(--paper-tint);
+    ),
+    var(--paper-tint);
 }
 
 .dropzone-title {
@@ -3087,11 +3115,13 @@ ol {
   border: 1px solid var(--coral-line);
   border-left: 3px solid var(--info);
   border-radius: var(--r-2);
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--info-soft) 78%, var(--paper-raised)) 0%,
       color-mix(in srgb, var(--paper-raised) 78%, var(--coral-soft)) 100%
-    ), var(--info-soft);
+    ),
+    var(--info-soft);
   color: var(--ink-2);
 }
 .review-subject-switch__eyebrow {
@@ -3421,8 +3451,11 @@ ol {
   align-items: center;
   font-family: inherit;
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 .btn-rating:active {
   transform: scale(0.98);
@@ -3518,7 +3551,8 @@ ol {
   flex-direction: column;
   position: relative;
   isolation: isolate;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--coral-soft) 70%, transparent) 0%,
       color-mix(in srgb, var(--paper-tint) 42%, transparent) 34%,
@@ -3533,7 +3567,8 @@ ol {
       256deg,
       color-mix(in srgb, var(--info-soft) 22%, transparent) 0%,
       transparent 42%
-    ), var(--paper);
+    ),
+    var(--paper);
 }
 
 .app-shell::before {
@@ -3542,7 +3577,8 @@ ol {
   z-index: 0;
   pointer-events: none;
   content: "";
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, transparent 34%),
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, transparent 34%),
     repeating-linear-gradient(
       90deg,
       rgba(60, 50, 30, 0.018) 0,
@@ -3623,7 +3659,8 @@ ol {
   height: 520px;
   pointer-events: none;
   content: "";
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--coral-soft) 86%, var(--paper)) 0%,
       color-mix(in srgb, var(--hard-soft) 38%, var(--paper)) 28%,
@@ -3806,8 +3843,9 @@ ol {
   text-align: left;
   width: 100%;
   cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
-    var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 
 .tree-node:hover {
@@ -3966,8 +4004,9 @@ ol {
   overflow: hidden;
   cursor: grab;
   user-select: none;
-  background: radial-gradient(circle at 1px 1px, var(--line-soft) 1px, transparent 0) 0 0 / 26px
-    26px, var(--paper-sunk);
+  background:
+    radial-gradient(circle at 1px 1px, var(--line-soft) 1px, transparent 0) 0 0 / 26px 26px,
+    var(--paper-sunk);
 }
 .kg-svg-stage:active {
   cursor: grabbing;
@@ -4010,7 +4049,9 @@ ol {
      drill-down re-layout: position is an inline CSS transform, so existing nodes
      EASE to their new spot here instead of jumping; opacity eases the focus fade. */
   animation: kg-node-fade 0.4s var(--ease-out) both;
-  transition: transform 420ms var(--ease-out), opacity 260ms var(--ease-out);
+  transition:
+    transform 420ms var(--ease-out),
+    opacity 260ms var(--ease-out);
 }
 @keyframes kg-node-fade {
   from {
@@ -4183,7 +4224,9 @@ ol {
   color: var(--ink-3);
   border-radius: var(--r-pill);
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .kg-zoom-btn:hover {
   background: var(--paper-sunk);
@@ -4291,7 +4334,10 @@ ol {
   background: var(--paper-sunk);
   border: 1px solid var(--line);
   border-radius: var(--r-pill);
-  transition: background var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
+  transition:
+    background var(--dur-fast),
+    color var(--dur-fast),
+    border-color var(--dur-fast);
 }
 
 .kg-chip:hover {
@@ -5022,7 +5068,9 @@ ol {
   border: 1px solid var(--line);
   border-radius: var(--r-pill);
   cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 
 :is(.teach-chat-page, .teach-drawer) .suggest-chip:hover {
@@ -5151,7 +5199,9 @@ progress {
   font-size: 11.5px;
   letter-spacing: var(--ls-wide);
   cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
     background var(--dur-fast) var(--ease-out);
 }
 
@@ -5576,13 +5626,17 @@ progress {
 .session-meta .meta-cell,
 .event-card,
 .artifact-view {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--paper-raised) 72%, var(--paper-tint)) 0%,
       color-mix(in srgb, var(--paper-raised) 94%, var(--paper)) 42%,
       color-mix(in srgb, var(--paper-raised) 78%, var(--paper-sunk)) 100%
-    ), var(--paper-raised);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72), inset 0 -1px 0 rgba(60, 50, 30, 0.026),
+    ),
+    var(--paper-raised);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    inset 0 -1px 0 rgba(60, 50, 30, 0.026),
     var(--shadow-1);
 }
 
@@ -5592,13 +5646,17 @@ progress {
 .tree-node.has-proposal,
 .edge-proposal,
 .knowledge-proposal-strip {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--coral-soft) 88%, var(--paper-raised)) 0%,
       color-mix(in srgb, var(--hard-soft) 18%, var(--paper-tint)) 58%,
       color-mix(in srgb, var(--paper-raised) 72%, var(--paper-tint)) 100%
-    ), var(--coral-soft);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58), var(--shadow-1);
+    ),
+    var(--coral-soft);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.58),
+    var(--shadow-1);
 }
 
 .inbox-node-proposal,
@@ -5606,47 +5664,57 @@ progress {
 .session-strip .ss-row.ss-active,
 .review-session-ribbon,
 .session-end-summary .ses-ai {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--info-soft) 82%, var(--paper-raised)) 0%,
       color-mix(in srgb, var(--paper-raised) 74%, var(--info-soft)) 100%
-    ), var(--info-soft);
+    ),
+    var(--info-soft);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
 .edge-proposal.tone-good,
 .session-strip .ss-row.ss-completed,
 .session-end-summary .ses-stat.tone-good {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--good-soft) 78%, var(--paper-raised)) 0%,
       color-mix(in srgb, var(--paper-raised) 78%, var(--good-soft)) 100%
-    ), var(--good-soft);
+    ),
+    var(--good-soft);
 }
 
 .edge-proposal.tone-hard,
 .session-end-summary .ses-stat.tone-hard {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--hard-soft) 80%, var(--paper-raised)) 0%,
       color-mix(in srgb, var(--paper-raised) 78%, var(--hard-soft)) 100%
-    ), var(--hard-soft);
+    ),
+    var(--hard-soft);
 }
 
 .edge-proposal.tone-contrasts {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--contrasts-soft) 80%, var(--paper-raised)) 0%,
       color-mix(in srgb, var(--paper-raised) 78%, var(--contrasts-soft)) 100%
-    ), var(--contrasts-soft);
+    ),
+    var(--contrasts-soft);
 }
 
 .session-end-summary .ses-stat.tone-again {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--again-soft) 80%, var(--paper-raised)) 0%,
       color-mix(in srgb, var(--paper-raised) 78%, var(--again-soft)) 100%
-    ), var(--again-soft);
+    ),
+    var(--again-soft);
 }
 
 .edge-proposal.tone-neutral,
@@ -5656,40 +5724,49 @@ progress {
 .review-stage .ref-reveal,
 .artifact-section,
 .intent-proposal-atomics li {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--paper-raised) 68%, var(--paper-sunk)) 0%,
       var(--paper) 100%
-    ), var(--paper);
+    ),
+    var(--paper);
 }
 
 .tree-node.is-selected {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--coral-soft) 76%, var(--paper-raised)) 0%,
       color-mix(in srgb, var(--paper-raised) 80%, var(--coral-soft)) 100%
-    ), var(--coral-soft);
+    ),
+    var(--coral-soft);
   box-shadow: inset 3px 0 0 var(--coral);
 }
 
 .tree-node:hover {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--paper-tint) 56%, var(--paper-raised)) 0%,
       color-mix(in srgb, var(--paper-raised) 88%, var(--paper-tint)) 100%
-    ), var(--paper-tint);
+    ),
+    var(--paper-tint);
 }
 
 .detail-drawer .dd-head {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       color-mix(in srgb, var(--paper-raised) 84%, var(--paper-tint)) 0%,
       color-mix(in srgb, var(--paper-raised) 94%, var(--paper)) 100%
-    ), var(--paper-raised);
+    ),
+    var(--paper-raised);
 }
 
 :root[data-theme="dark"] .app-shell::before {
-  background: linear-gradient(180deg, rgba(255, 245, 225, 0.035) 0%, transparent 32%),
+  background:
+    linear-gradient(180deg, rgba(255, 245, 225, 0.035) 0%, transparent 32%),
     repeating-linear-gradient(
       90deg,
       rgba(255, 245, 225, 0.018) 0,
@@ -5714,10 +5791,14 @@ progress {
    Mirrored in the @media(prefers-color-scheme: dark) block below for system
    follow — keep the two in sync. */
 :root[data-theme="dark"] .btn-primary {
-  box-shadow: 0 1px 2px rgba(169, 63, 38, 0.16), 0 2px 8px -2px rgba(169, 63, 38, 0.14);
+  box-shadow:
+    0 1px 2px rgba(169, 63, 38, 0.16),
+    0 2px 8px -2px rgba(169, 63, 38, 0.14);
 }
 :root[data-theme="dark"] .btn-primary:hover {
-  box-shadow: 0 1px 2px rgba(169, 63, 38, 0.2), 0 4px 14px -3px rgba(169, 63, 38, 0.18);
+  box-shadow:
+    0 1px 2px rgba(169, 63, 38, 0.2),
+    0 4px 14px -3px rgba(169, 63, 38, 0.18);
 }
 :root[data-theme="dark"] .btn-primary:active {
   box-shadow: 0 1px 2px rgba(169, 63, 38, 0.16);
@@ -5725,16 +5806,21 @@ progress {
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .btn-primary {
-    box-shadow: 0 1px 2px rgba(169, 63, 38, 0.16), 0 2px 8px -2px rgba(169, 63, 38, 0.14);
+    box-shadow:
+      0 1px 2px rgba(169, 63, 38, 0.16),
+      0 2px 8px -2px rgba(169, 63, 38, 0.14);
   }
   :root:not([data-theme="light"]) .btn-primary:hover {
-    box-shadow: 0 1px 2px rgba(169, 63, 38, 0.2), 0 4px 14px -3px rgba(169, 63, 38, 0.18);
+    box-shadow:
+      0 1px 2px rgba(169, 63, 38, 0.2),
+      0 4px 14px -3px rgba(169, 63, 38, 0.18);
   }
   :root:not([data-theme="light"]) .btn-primary:active {
     box-shadow: 0 1px 2px rgba(169, 63, 38, 0.16);
   }
   :root:not([data-theme="light"]) .app-shell::before {
-    background: linear-gradient(180deg, rgba(255, 245, 225, 0.035) 0%, transparent 32%),
+    background:
+      linear-gradient(180deg, rgba(255, 245, 225, 0.035) 0%, transparent 32%),
       repeating-linear-gradient(
         90deg,
         rgba(255, 245, 225, 0.018) 0,
@@ -5876,7 +5962,9 @@ progress {
   text-align: left;
   font-size: var(--fs-body);
   position: relative;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .rail-collapsed .nav-item {
   justify-content: center;
@@ -6100,8 +6188,9 @@ progress {
   overflow: hidden;
   /* YUK-297 refine: searchbox reacts to hover (kept height 34px — production
      chrome density, not the design's 36px). */
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
-    var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .searchbox:hover {
   border-color: var(--line-strong);
@@ -6332,11 +6421,11 @@ progress {
   border: 1px solid transparent;
   white-space: nowrap;
   transition:
-    background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(
-      --dur-fast
-    ) var(--ease-out), transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(
-      --ease-out
-    );
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 .btn:active {
   transform: scale(0.98);
@@ -6357,11 +6446,15 @@ progress {
   /* YUK-297 R6: soft coral lift so the primary action carries its own warm
      elevation (hard-coded coral rgba — does NOT track the --coral token, so the
      dark-theme blocks below dial the opacity down to avoid an over-bright glow). */
-  box-shadow: 0 1px 2px rgba(169, 63, 38, 0.22), 0 2px 8px -2px rgba(169, 63, 38, 0.2);
+  box-shadow:
+    0 1px 2px rgba(169, 63, 38, 0.22),
+    0 2px 8px -2px rgba(169, 63, 38, 0.2);
 }
 .btn-primary:hover {
   background: var(--coral-hover);
-  box-shadow: 0 1px 2px rgba(169, 63, 38, 0.26), 0 4px 14px -3px rgba(169, 63, 38, 0.26);
+  box-shadow:
+    0 1px 2px rgba(169, 63, 38, 0.26),
+    0 4px 14px -3px rgba(169, 63, 38, 0.26);
 }
 .btn-primary:active {
   background: var(--coral-press);
@@ -6930,8 +7023,10 @@ button.seg-sm {
   border: 1px solid var(--line-soft);
   border-radius: var(--r-3);
   box-shadow: var(--shadow-1);
-  transition: box-shadow var(--dur-base) var(--ease-out), border-color var(--dur-base)
-    var(--ease-out), transform var(--dur-base) var(--ease-out);
+  transition:
+    box-shadow var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
 }
 .card-pad {
   padding: var(--s-5);
@@ -7310,14 +7405,18 @@ button.seg-sm {
        滑出动画期间仍可见，结束后才隐藏（避免瞬隐切掉滑出）。仅 ≤720px 生效，桌面
        常驻 rail（此 media 外）不受影响。 */
     visibility: hidden;
-    transition: transform var(--dur-slow) var(--ease-out), visibility 0s linear var(--dur-slow);
+    transition:
+      transform var(--dur-slow) var(--ease-out),
+      visibility 0s linear var(--dur-slow);
     box-shadow: var(--shadow-3);
   }
   .app .sidebar.open {
     transform: translateX(0);
     /* 开态立即可见（无延迟），滑入期间即可聚焦。 */
     visibility: visible;
-    transition: transform var(--dur-slow) var(--ease-out), visibility 0s;
+    transition:
+      transform var(--dur-slow) var(--ease-out),
+      visibility 0s;
   }
   .app .brand-name,
   .app .brand-sub,
@@ -7440,7 +7539,9 @@ button.seg-sm {
   font-size: var(--fs-caption);
   cursor: pointer;
   line-height: 1.4;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .nol-item:hover {
   background: var(--paper-sunk);
@@ -7642,8 +7743,9 @@ button.seg-sm {
   padding: var(--s-3) var(--s-4);
   cursor: pointer;
   box-shadow: var(--shadow-1);
-  transition: box-shadow var(--dur-base) var(--ease-out), border-color var(--dur-base)
-    var(--ease-out);
+  transition:
+    box-shadow var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out);
 }
 .nb-linkcard:hover {
   box-shadow: var(--shadow-2);
@@ -7954,7 +8056,9 @@ button.seg-sm {
 .thread-arrow {
   margin-left: auto;
   color: var(--ink-5);
-  transition: transform var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out);
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    color var(--dur-base) var(--ease-out);
 }
 
 /* ---- KD layout (screens-2b.css L89-100) ---- */
@@ -8247,8 +8351,9 @@ button.seg-sm {
   cursor: pointer;
   color: var(--ink-2);
   margin-bottom: 6px;
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
-    var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .note-link-row:hover {
   border-color: var(--line-strong);
@@ -8788,7 +8893,9 @@ button.seg-sm {
   position: relative;
   overflow: hidden;
   cursor: pointer;
-  transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out),
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
     border-color var(--dur-base) var(--ease-out);
 }
 .today-loom .kpi:hover {
@@ -8843,7 +8950,9 @@ button.seg-sm {
   top: var(--s-4);
   right: var(--s-4);
   color: var(--ink-5);
-  transition: transform var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out);
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    color var(--dur-base) var(--ease-out);
 }
 .today-loom .kpi:hover .kpi-go {
   transform: translateX(3px);
@@ -9574,7 +9683,9 @@ button.seg-sm {
   padding: 0;
   overflow: hidden;
   box-shadow: var(--shadow-1);
-  transition: box-shadow var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out);
+  transition:
+    box-shadow var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
 }
 .tool-use-card.is-rich.is-resolved {
   opacity: 0.62;
@@ -9724,7 +9835,9 @@ button.seg-sm {
   padding: 2px 4px;
   border-radius: var(--r-1);
   cursor: pointer;
-  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .tool-use-card.is-rich .tuc-args-toggle:hover {
   color: var(--coral);
@@ -12289,7 +12402,9 @@ button.seg-sm {
   background: none;
   border: 1px solid transparent;
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  transition:
+    background 0.12s,
+    color 0.12s;
 }
 .practice-loom .status-tab:hover {
   background: var(--paper-raised);
@@ -12397,7 +12512,9 @@ button.seg-sm {
   border-radius: var(--r-2);
   padding: var(--s-2) var(--s-3);
   cursor: pointer;
-  transition: background 0.1s, border-color 0.1s;
+  transition:
+    background 0.1s,
+    border-color 0.1s;
 }
 .practice-loom .practice-choice-btn:hover:not(:disabled) {
   background: var(--paper-sunken, var(--paper-sunk));
@@ -12501,8 +12618,9 @@ button.seg-sm {
   border-radius: var(--r-3);
   padding: 0 var(--s-3);
   color: var(--ink-4);
-  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast)
-    var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 .questions-loom .qb-search:focus-within {
   border-color: var(--coral-line);
@@ -13181,8 +13299,9 @@ button.seg-sm {
   cursor: pointer;
   text-decoration: none;
   color: inherit;
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
-    var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .questions-loom .qd-sub:hover {
   border-color: var(--coral-line);
@@ -13524,8 +13643,9 @@ button.seg-sm {
   font: inherit;
   font-size: var(--fs-meta);
   color: var(--coral-ink);
-  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast)
-    var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
 }
 .an-scope .an-open-full:hover {
   background: var(--coral-soft);
@@ -13938,8 +14058,10 @@ button.seg-sm {
   border: 1px solid var(--line);
   border-radius: var(--r-pill);
   background: var(--paper-raised);
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
-    var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .an-scope .an-fchip b {
   font-family: var(--font-mono);
@@ -14204,7 +14326,9 @@ button.seg-sm {
   color: var(--ink-3);
   padding: 8px 16px;
   border-radius: var(--r-pill);
-  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
   min-width: 0;
 }
 .coachhub-tab .ico {
@@ -15245,7 +15369,9 @@ button.seg-sm {
   color: var(--ink-2);
   padding: 6px 12px;
   border-radius: var(--r-pill);
-  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out),
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
     background var(--dur-fast) var(--ease-out);
 }
 .eff-subj-drill:hover {
@@ -15278,8 +15404,9 @@ button.seg-sm {
   border: 1px solid var(--line);
   border-radius: var(--r-2);
   min-width: 168px;
-  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast)
-    var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 .eff-moved:hover {
   border-color: var(--coral-line);
@@ -15331,7 +15458,9 @@ button.seg-sm {
   color: var(--ink-4);
   padding: 8px 12px;
   border-radius: var(--r-2);
-  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
 }
 .eff-subj-settled:hover {
   color: var(--ink-2);

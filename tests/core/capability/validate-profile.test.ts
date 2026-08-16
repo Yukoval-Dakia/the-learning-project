@@ -1,10 +1,10 @@
+import { describe, expect, it } from 'vitest';
 import { CapabilityRegistry } from '@/core/capability/registry';
 import { fsrsSchedulerCapability } from '@/core/capability/schedulers/fsrs';
 import type { JudgeCapabilityRunner } from '@/core/capability/types';
 import { type ProfileValidationResult, validateProfile } from '@/core/capability/validate-profile';
 import type { CapabilityManifestT } from '@/core/schema/capability';
 import type { SubjectProfile } from '@/subjects/profile';
-import { describe, expect, it } from 'vitest';
 
 function makeStubJudge(id: string): JudgeCapabilityRunner {
   const manifest: CapabilityManifestT = {

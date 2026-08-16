@@ -4,15 +4,15 @@
 // acceptAiProposal/dismissAiProposal/retractAiProposal —— 搬迁不改行为，
 // 测试继续从公共 API 进入以覆盖「壳路由 → 包 applier」整条链。
 
+import { createId } from '@paralleldrive/cuid2';
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuestionEditOpT } from '@/core/schema/proposal';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { event, knowledge, mistake_variant, proposal_signals, question } from '@/db/schema';
 import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
-import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../../tests/helpers/proposal-lifecycle';
 import type {

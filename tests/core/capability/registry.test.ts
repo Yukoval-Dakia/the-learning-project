@@ -1,7 +1,7 @@
+import { describe, expect, it } from 'vitest';
 import { CapabilityRegistry } from '@/core/capability/registry';
 import type { JudgeCapabilityRunner } from '@/core/capability/types';
 import type { CapabilityManifestT } from '@/core/schema/capability';
-import { describe, expect, it } from 'vitest';
 
 function makeStubJudge(id: string, version = '1.0.0'): JudgeCapabilityRunner {
   const manifest: CapabilityManifestT = {

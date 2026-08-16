@@ -545,7 +545,7 @@ function stripLeadingChoiceLabel(value: string): string | null {
   // case-sensitive: treating lowercase function names such as `f(x)` as an
   // option wrapper would add the false candidate `x` and could normalize-pass
   // an actually wrong fill-blank answer.
-  const match = /^([A-F])(?:\s*[(（\[【]\s*(.+?)\s*[)）\]】]\s*$|[\s.、:：)\]）-]+(.+))$/u.exec(
+  const match = /^([A-F])(?:\s*[(（[【]\s*(.+?)\s*[)）\]】]\s*$|[\s.、:：)\]）-]+(.+))$/u.exec(
     normalized,
   );
   const stripped = (match?.[2] ?? match?.[3])?.trim();

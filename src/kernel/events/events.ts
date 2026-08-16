@@ -1,10 +1,10 @@
 // Generic event-envelope storage API (ADR-0005 / ADR-0021).
 // This module is the single INSERT owner for event rows.
 
+import { and, desc, eq, gte, ne, sql } from 'drizzle-orm';
 import { type EventT, parseEvent } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { and, desc, eq, gte, ne, sql } from 'drizzle-orm';
 import { eventCorrectionLockKey, eventCorrectionsGlobalLockKey } from './correction-lock';
 import {
   type CorrectionStatus,

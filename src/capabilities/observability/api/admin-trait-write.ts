@@ -4,11 +4,11 @@
 //   RESET_TO_SEED /api/admin/traits/:id/reset-to-seed  → resetTraitToSeed（恢复出厂，全局显式）
 // 业务在 src/server/subjects/trait-write.ts；写成功后 post-commit 重水合上架。
 
+import { z } from 'zod';
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
 import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
 import { editSharedTrait, resetTraitToSeed, rollbackTrait } from '@/server/subjects/trait-write';
-import { z } from 'zod';
 import { readJsonBody, traitResultResponse } from './subjects-write-http';
 
 const ParamsSchema = z.object({ id: z.string().trim().min(1) });

@@ -16,9 +16,8 @@
 // `ensureOrchestratorQueues`，因为生产库上这个队列早就存在，新配置只能靠 `updateQueue`
 // 覆盖上去（详见 beforeAll 内的注释）。
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-
 import type { PgBoss } from 'pg-boss';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { _resetBossForTests, getStartedBoss } from '@/server/boss/client';
 import {

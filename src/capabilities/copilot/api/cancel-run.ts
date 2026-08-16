@@ -1,3 +1,5 @@
+import { and, asc, eq, inArray } from 'drizzle-orm';
+import { ZodError } from 'zod';
 import { persistCopilotRunCancellationMarker } from '@/capabilities/copilot/server/copilot-run-cancellation';
 import { acquireCopilotExecutionSettlementLock } from '@/capabilities/copilot/server/copilot-run-coordination';
 import {
@@ -14,8 +16,6 @@ import { db } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { writeJobEvent } from '@/server/events/writer';
-import { and, asc, eq, inArray } from 'drizzle-orm';
-import { ZodError } from 'zod';
 import { CopilotRunParamsSchema } from './contracts';
 
 type CancelRunStatus = 'cancel_requested' | 'cancelled' | 'already_requested' | 'already_settled';

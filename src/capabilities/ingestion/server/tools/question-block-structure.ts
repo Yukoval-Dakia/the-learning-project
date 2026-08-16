@@ -1,11 +1,11 @@
+import { eq } from 'drizzle-orm';
+import { z } from 'zod';
 import { AddressableStructureSchema } from '@/core/schema/addressable-structure';
 import {
   type AddressableStructure,
   projectAddressableStructure,
 } from '@/core/schema/structured_question';
 import { question_block } from '@/db/schema';
-import { eq } from 'drizzle-orm';
-import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';
 
 const GetQuestionBlockStructureInputSchema = z.object({

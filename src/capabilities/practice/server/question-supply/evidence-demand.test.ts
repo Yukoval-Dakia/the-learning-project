@@ -1,5 +1,5 @@
-import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
 import { describe, expect, it } from 'vitest';
+import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
 
 import {
   EVIDENCE_DEMAND_VERSION,

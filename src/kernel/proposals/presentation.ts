@@ -1,7 +1,7 @@
+import { inArray } from 'drizzle-orm';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { question, question_block } from '@/db/schema';
-import { inArray } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 type QuestionEditChange = Extract<AiProposalPayloadT, { kind: 'question_edit' }>['proposed_change'];

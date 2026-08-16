@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import {
   AcceptSuggestionChip,
   AttemptOnQuestion,
@@ -19,7 +20,6 @@ import {
   UserCauseExperimental,
   parseEvent,
 } from '@/core/schema/event';
-import { describe, expect, it } from 'vitest';
 
 // ====================================================================
 // 1. AttemptOnQuestion

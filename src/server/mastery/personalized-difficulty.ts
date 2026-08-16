@@ -29,13 +29,13 @@
 // 把家族 delta 接进 live b-resolution 是一个 thin follow-up（见本模块 effectiveFamilyB
 // 文档 + roadmap Task 10 step 5）。本 Phase 只 build + store + expose + test 机器。
 
+import { and, eq, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import { DIFFICULTY_PROXY_WEIGHT, difficultyToLogitB, expectedScore } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, item_family_calibration, mastery_state } from '@/db/schema';
 import { resolveFamilyKeyForQuestion } from '@/server/mastery/family-key';
 import { buildFamilyKey } from '@/server/mastery/family-key-format';
-import { and, eq, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 

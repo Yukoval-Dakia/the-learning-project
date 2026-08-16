@@ -15,12 +15,12 @@
 // 纯视图逻辑（合成根识别 / ⑥映射 / 分桶 / 轨迹几何）抽在 effectiveness-trend-view.ts（DB-free,
 // unit 覆盖）；本文件只做 React 装配。
 
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { resolveSubjectRenderModelForDomain } from '@/ui/lib/subject';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
-import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
 import {
   type EffectivenessTrendResponse,
   type EffectivenessTrendSeries,
@@ -214,13 +214,7 @@ function EffOverview({ series }: { series: EffectivenessTrendSeries[] }) {
 }
 
 // ── 科目整体行（毛刺 ①：seed-root = 科目整体，子 KC 未抽出）───────────────────
-function EffSubjectWholeRow({
-  label,
-  whole,
-}: {
-  label: string;
-  whole: EffectivenessTrendSeries;
-}) {
+function EffSubjectWholeRow({ label, whole }: { label: string; whole: EffectivenessTrendSeries }) {
   const { trend } = whole;
   return (
     <div className="eff-subj is-whole">
@@ -250,13 +244,7 @@ function EffSubjectWholeRow({
 }
 
 // ── 「本期动了的」紧凑项 ──────────────────────────────────────────────────────
-function EffMovedKc({
-  kc,
-  onDrill,
-}: {
-  kc: EffectivenessTrendSeries;
-  onDrill: () => void;
-}) {
+function EffMovedKc({ kc, onDrill }: { kc: EffectivenessTrendSeries; onDrill: () => void }) {
   const m = directionMeta(kc.trend.direction);
   const tender = isTender(kc.trend.direction, kc.trend.confidence);
   return (

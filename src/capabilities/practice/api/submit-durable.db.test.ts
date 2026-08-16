@@ -4,6 +4,8 @@
 // divert predicate (resolveDurableDivert mirrors judgeSubmit's server-invoke gate);
 // and enqueueDurableJudge's 202-pending contract + queued job_event + frozen payload.
 
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { event, job_events, learning_session, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
@@ -11,8 +13,6 @@ import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { JUDGE_PENDING_ATTEMPT_ACTION, judgeRunJobId } from '../server/judge-run-dispatch';

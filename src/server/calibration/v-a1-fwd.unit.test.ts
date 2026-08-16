@@ -3,8 +3,8 @@
 // human report. Synthetic end-to-end tests are answer-BY-CONSTRUCTION (the generating
 // model determines the verdict; RNG seeded for determinism).
 
-import { HIERARCHICAL_ELO_ENABLED } from '@/core/theta';
 import { describe, expect, it } from 'vitest';
+import { HIERARCHICAL_ELO_ENABLED } from '@/core/theta';
 import { type ReplayAttempt, replayTheta } from './replay';
 import { mulberry32 } from './rng';
 import {

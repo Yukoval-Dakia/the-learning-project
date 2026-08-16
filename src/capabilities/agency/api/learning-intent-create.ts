@@ -5,8 +5,8 @@
 // restores proposal creation only. The owner reviews and accepts the resulting
 // learning_item proposal through the canonical proposal inbox decision route.
 
-import { db } from '@/db/client';
 import type { Db } from '@/db/client';
+import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { checkRateLimit } from '@/server/http/rate-limit';

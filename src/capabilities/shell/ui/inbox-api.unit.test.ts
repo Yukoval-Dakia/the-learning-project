@@ -1,5 +1,5 @@
-import { apiOperationJson } from '@/ui/lib/api';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { apiOperationJson } from '@/ui/lib/api';
 import {
   DECISION_MAX_PAGES,
   type ProposalInboxRow,

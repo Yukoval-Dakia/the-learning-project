@@ -1,7 +1,7 @@
-import { bodyBlockSummaries, excerpt, knowledgeContext } from '@/capabilities/ingestion/public';
-import { artifact, completion_evidence, event, learning_item, learning_record } from '@/db/schema';
 import { and, asc, desc, eq, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
+import { bodyBlockSummaries, excerpt, knowledgeContext } from '@/capabilities/ingestion/public';
+import { artifact, completion_evidence, event, learning_item, learning_record } from '@/db/schema';
 import type { DomainTool, ToolContext } from './types';
 
 const GetLearningItemInputSchema = z.object({

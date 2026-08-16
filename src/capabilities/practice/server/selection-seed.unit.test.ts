@@ -2,8 +2,8 @@
 // mulberry32(seed)。日志推迟到首次真实抽签，让已物化流 GET / no-op nightly / 非 rerank PATCH
 // 零 decoy「seeded」行。
 
-import { mulberry32 } from '@/server/calibration/rng';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mulberry32 } from '@/server/calibration/rng';
 import { buildSeededSelectionRng, hashSelectionSeed } from './selection-seed';
 
 describe('buildSeededSelectionRng lazy self-logging thunk (YUK-558 C2)', () => {

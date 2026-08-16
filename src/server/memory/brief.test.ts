@@ -1,5 +1,5 @@
-import { LONG_TERM_FRESHNESS_BUDGET } from '@/kernel/tools/budgets';
 import { describe, expect, it, vi } from 'vitest';
+import { LONG_TERM_FRESHNESS_BUDGET } from '@/kernel/tools/budgets';
 import {
   BRIEF_TEMPLATES,
   type BriefRow,

@@ -1,10 +1,10 @@
+import type { InferSelectModel } from 'drizzle-orm';
+import type { z } from 'zod';
 import type {
   LearningRecordKind as LearningRecordKindSchema,
   LearningRecordProcessingStatus as LearningRecordProcessingStatusSchema,
 } from '@/core/schema';
 import type { learning_record } from '@/db/schema';
-import type { InferSelectModel } from 'drizzle-orm';
-import type { z } from 'zod';
 
 export type LearningRecordKind = z.infer<typeof LearningRecordKindSchema>;
 export type LearningRecordProcessingStatus = z.infer<typeof LearningRecordProcessingStatusSchema>;

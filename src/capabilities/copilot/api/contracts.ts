@@ -1,6 +1,6 @@
+import { z } from 'zod';
 import { NudgeKind, SuggestionKind } from '@/kernel/capability-contract-schemas';
 import { ApiErrorResponseSchema, ApiIdParamsSchema } from '@/kernel/http-contracts';
-import { z } from 'zod';
 import { CopilotChatRequest } from '../server/chat-contracts';
 
 export { CopilotChatRequest };

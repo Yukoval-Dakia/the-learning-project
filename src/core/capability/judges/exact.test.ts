@@ -1,5 +1,5 @@
-import { JudgeResultV2 } from '@/core/schema/capability';
 import { describe, expect, it } from 'vitest';
+import { JudgeResultV2 } from '@/core/schema/capability';
 
 import { exactJudgeCapability } from './exact';
 

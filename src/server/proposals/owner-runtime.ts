@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import { emitArtifactLifecycleEvent } from '@/capabilities/notes/public';
 import type { Tx } from '@/db/client';
 import { goal, knowledge, learning_item, mistake_variant } from '@/db/schema';
@@ -19,8 +20,12 @@ import {
   mistakeVariantLiveRowToSnapshot,
 } from '@/server/projections/parity';
 import { projectionIsWriter } from '@/server/projections/sot-flag';
-import { eq } from 'drizzle-orm';
 
+export type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+export {
+  ensureProposalDecisionSignal,
+  recordProposalDecisionSignal,
+} from '@/kernel/proposals/signals';
 export {
   acquireProposalDecisionLock,
   asPlainRecord,
@@ -30,11 +35,6 @@ export {
   requiredString,
   writeProposalRateEvent,
 } from './applier-helpers';
-export type { ProposalInboxRow } from '@/kernel/proposals/inbox';
-export {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/kernel/proposals/signals';
 export {
   hasGoalGenesisAnchor,
   hasLearningItemGenesisAnchor,

@@ -4,30 +4,30 @@
 // ~40 not-yet-redrawn surfaces. New loom surfaces import from here; legacy
 // surfaces keep importing legacy by path until each is retired per-slice.
 
-export { BrandMark } from './BrandMark';
 export type { BrandMarkProps } from './BrandMark';
-export { Btn } from './Btn';
+export { BrandMark } from './BrandMark';
 export type { BtnProps, BtnSize, BtnVariant } from './Btn';
-export { EmptyState } from './EmptyState';
+export { Btn } from './Btn';
 export type { EmptyStateProps } from './EmptyState';
-export { ErrorState } from './ErrorState';
+export { EmptyState } from './EmptyState';
 export type { ErrorStateProps } from './ErrorState';
-export { IconBtn } from './IconBtn';
+export { ErrorState } from './ErrorState';
 export type { IconBtnProps } from './IconBtn';
-export { LoomBadge } from './LoomBadge';
+export { IconBtn } from './IconBtn';
 export type { LoomBadgeProps, LoomBadgeTone } from './LoomBadge';
-export { LoomCard } from './LoomCard';
+export { LoomBadge } from './LoomBadge';
 export type { LoomCardProps } from './LoomCard';
-export { LoomIcon } from './LoomIcon';
+export { LoomCard } from './LoomCard';
 export type { LoomIconName, LoomIconProps } from './LoomIcon';
-export { Ring } from './Ring';
+export { LoomIcon } from './LoomIcon';
 export type { RingProps } from './Ring';
-export { SectionLabel } from './SectionLabel';
+export { Ring } from './Ring';
 export type { SectionLabelProps } from './SectionLabel';
-export { SkLines } from './SkLines';
+export { SectionLabel } from './SectionLabel';
 export type { SkLinesProps } from './SkLines';
-export { Stateful } from './Stateful';
+export { SkLines } from './SkLines';
 export type { StatefulProps, StatefulStatus } from './Stateful';
-export { useCountUp } from './useCountUp';
+export { Stateful } from './Stateful';
 export type { UseCountUpOptions } from './useCountUp';
+export { useCountUp } from './useCountUp';
 export { useFocusTrap } from './useFocusTrap';

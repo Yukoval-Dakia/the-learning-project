@@ -17,9 +17,9 @@
 // the selection chain; the late slot just avoids same-minute contention. queue=llm: shares the
 // established slow-batch DLQ/retry bucket (this batch is pure CPU + DB, no LLM call).
 
+import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { runAxisStateBatch } from '@/server/calibration/axis-writer';
-import type { Job } from 'pg-boss';
 
 export function buildAxisStateNightlyHandler(
   db: Db,

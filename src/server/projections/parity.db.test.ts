@@ -12,6 +12,8 @@
 // Hermetic: resetDb() truncates `event`, `knowledge`, `knowledge_edge`, and
 // `materialized_id_index` (all in ALL_TABLES), so each test starts clean.
 
+import { and, eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { acceptProposal } from '@/capabilities/knowledge/server/proposals';
 import { KnowledgeRowSnapshot } from '@/core/schema/event/genesis';
 import {
@@ -23,8 +25,6 @@ import {
   materialized_id_index,
   mistake_variant,
 } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   backfillGoalGenesis,
   backfillLearningItemGenesis,

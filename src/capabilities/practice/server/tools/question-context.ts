@@ -6,6 +6,8 @@
 // question/review read surface; shared read models (question activity
 // timeline, failure attempts, cause policy) live in @/kernel/read-models.
 
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { bodyBlockSummaries, excerpt, knowledgeContext } from '@/capabilities/ingestion/public';
 import { AddressableStructureSchema } from '@/core/schema/addressable-structure';
 import {
@@ -30,8 +32,6 @@ import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-poli
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { getQuestionTimeline, getRecentReviewEvents } from '@/kernel/read-models/question-activity';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
-import { z } from 'zod';
 
 function iso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;

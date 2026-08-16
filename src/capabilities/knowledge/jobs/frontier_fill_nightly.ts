@@ -40,8 +40,8 @@
 //      output before writing).
 // ════════════════════════════════════════════════════════════════════════════
 
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-
 import { loadPendingEdgeProposalKeys } from '@/capabilities/knowledge/server/propose_edge';
 import { isDirectTreePair } from '@/capabilities/knowledge/server/topology-gate';
 // loadTreeSnapshot is the knowledge package's own tree reader (same-package import).
@@ -62,7 +62,6 @@ import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 /**
  * Frontier emptiness threshold for the sparsity gate. We bootstrap ONLY when the

@@ -28,11 +28,11 @@
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { polySigmoid } from '@/core/poly-exp';
 import { DAY_ONE_PRIOR_ENABLED, GRID_THETA } from '@/core/theta-grid';
 import type { Db } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
 
 // ── Owner-fixed shrink coefficient — the single tunable knob of the kernel. NEVER estimated
 //    from data (n=1 red line / locked item parameters): it scales how hard a prereq gap pulls

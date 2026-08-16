@@ -179,8 +179,10 @@
   cursor: pointer;
   font: inherit;
   color: inherit;
-  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-base)
-    var(--ease-out), transform var(--dur-base) var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
 }
 .pf-item:hover {
   border-color: var(--ink-5);
@@ -357,7 +359,7 @@
 
 /* new item entrance (§6.3) */
 .pf-row.is-new {
-  animation: pf-rise .45s var(--ease-out) both;
+  animation: pf-rise 0.45s var(--ease-out) both;
 }
 .pf-row.is-new .pf-item {
   animation: pf-glow 3.2s var(--ease-out) both;
@@ -375,7 +377,9 @@
 @keyframes pf-glow {
   0% {
     border-color: var(--coral);
-    box-shadow: 0 0 0 4px var(--coral-soft), var(--shadow-2);
+    box-shadow:
+      0 0 0 4px var(--coral-soft),
+      var(--shadow-2);
   }
   100% {
     border-color: var(--coral-line);
@@ -536,8 +540,9 @@
   cursor: pointer;
   font: inherit;
   color: var(--ink-2);
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
-    var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .pfs-opt:hover:not(:disabled) {
   border-color: var(--ink-5);
@@ -630,7 +635,7 @@
   background: var(--paper-raised);
 }
 .pfs-fb {
-  animation: pf-rise .35s var(--ease-out) both;
+  animation: pf-rise 0.35s var(--ease-out) both;
 }
 .pfs-fb.v-good {
   border-color: var(--good-line);
@@ -774,7 +779,7 @@
   align-items: flex-start;
 }
 .pfs-appeal-reply {
-  animation: pf-rise .35s var(--ease-out) both;
+  animation: pf-rise 0.35s var(--ease-out) both;
 }
 .pfs-appeal-reply .ico {
   flex: none;
@@ -816,7 +821,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
-  animation: pf-rise .35s var(--ease-out) both;
+  animation: pf-rise 0.35s var(--ease-out) both;
 }
 .pfs-conf-q {
   font-size: var(--fs-body);
@@ -920,7 +925,7 @@
   color: var(--ink-2);
 }
 .pfs-hint {
-  animation: pf-rise .3s var(--ease-out) both;
+  animation: pf-rise 0.3s var(--ease-out) both;
 }
 .pfs-hint-k {
   display: block;

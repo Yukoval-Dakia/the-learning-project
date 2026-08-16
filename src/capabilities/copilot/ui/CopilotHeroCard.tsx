@@ -21,10 +21,10 @@
 
 'use client';
 
+import { useQuery } from '@tanstack/react-query';
 import { getNotePage } from '@/capabilities/notes/ui-public';
 import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { useQuery } from '@tanstack/react-query';
 import { type ArtifactHero, isInteractiveArtifactRef, resolveArtifactHero } from './hero';
 import type { ReplayPrimaryView } from './replay';
 

@@ -19,11 +19,12 @@
 // off-whitelist demoted), and (c) slices to limit AFTER that sort. A consumer
 // migrating onto poolFetch MUST re-apply the kind filter + tier sort + slice on
 // top, and project source/metadata, or it will silently change selection.
+
+import { type SQL, and, asc, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { question } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
-import { type SQL, and, asc, isNull, sql } from 'drizzle-orm';
 
 export interface PoolFetchCriteria {
   /** KC containment: question.knowledge_ids @> [knowledgeId] (GIN). */

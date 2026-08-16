@@ -1,10 +1,10 @@
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   ArtifactCorrectionStateResponseSchema,
   CreateArtifactCorrectionResponseSchema,
 } from '@/capabilities/notes/api/contracts';
 import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import { artifact } from '@/db/schema';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { getArtifactCorrectionState } from '../server/artifact-corrections';
 import { GET, POST } from './correct';

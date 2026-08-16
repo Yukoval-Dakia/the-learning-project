@@ -14,10 +14,8 @@
 // ops cost (unregister/re-register queue+schedule); kept as-is until a separate
 // reason to move it.
 
-import { writeEvent } from '@/kernel/events';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-
 import {
   type RunEdgeProposeAndWriteParams,
   type RunTaskFn,
@@ -26,6 +24,7 @@ import {
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';

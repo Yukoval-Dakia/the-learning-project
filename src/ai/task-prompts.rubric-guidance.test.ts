@@ -6,8 +6,8 @@
 //   - methodology → copilot 教学 / note 生成 prompt（空串 → prompt 零变化，§8-19）。
 // 纯函数零 IO；src/ai/** 由 fastTestInclude glob 收编。
 
-import { subjectProfiles } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
+import { subjectProfiles } from '@/subjects/profile';
 import { type AiTaskKind, getTaskSystemPrompt } from './task-prompts';
 
 // biome-ignore lint/style/noNonNullAssertion: builtin 恒在

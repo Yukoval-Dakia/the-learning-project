@@ -7,18 +7,16 @@
 // 活动时间线。「标注笔记」区后端无读路径——M3 空态挂账（pre-flight 偏离③）。
 // 「复习此点」把明确请求交给现有 Copilot；没有已交付 write path 的 AI 起草不展示假入口。
 
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { MasteryRing } from '@/ui/primitives/MasteryRing';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
 
 import { BandChip } from './BandChip';
-import { MisconceptionList } from './MisconceptionList';
-import { DiagnosticDrill, NodeComposite, TransferList } from './NodeComposite';
 import { humanizeActivity } from './humanize-activity';
 import {
   type KnowledgeNodePage,
@@ -27,6 +25,8 @@ import {
   vetoMisconception,
 } from './knowledge-api';
 import { knowledgeNodeQueryOptions } from './knowledge-node-query';
+import { MisconceptionList } from './MisconceptionList';
+import { DiagnosticDrill, NodeComposite, TransferList } from './NodeComposite';
 import { REL_CUE } from './relation-cue';
 import './knowledge.css';
 

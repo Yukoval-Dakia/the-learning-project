@@ -9,11 +9,11 @@
 // permanently: not in the domain event log, and no pending attempt for a sweeper or a
 // human to recover from.
 
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { event, knowledge, question } from '@/db/schema';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { CreateAttemptBodySchema } from './contracts';

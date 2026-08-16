@@ -12,11 +12,11 @@
 // .profile-mini / .avatar 等类已在 web/src/globals.css（loom 端口，§App shell
 // L5705-5927）就位 —— 本组件纯结构覆盖这些类，不重定义 CSS。
 
+import { useCallback, useRef } from 'react';
 import { BrandMark } from '@/ui/primitives/BrandMark';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
-import { useCallback, useRef } from 'react';
 import { NAV, activeFromPath, isSection } from './nav-config';
 
 export interface AppSidebarProps {

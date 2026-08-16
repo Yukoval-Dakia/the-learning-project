@@ -20,15 +20,13 @@ import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
 import {
   type BacklinksByArtifactType,
+  type NoteSummary,
   getArtifactCorrectionStates,
   groupBacklinksByArtifactType,
-  listBacklinks,
-  resolveOwningLearningItemIds,
-} from '@/capabilities/notes/public';
-import {
-  type NoteSummary,
   interactiveForKnowledge,
+  listBacklinks,
   notesForKnowledge,
+  resolveOwningLearningItemIds,
 } from '@/capabilities/notes/public';
 import { retrievabilityForKc } from '@/capabilities/practice/public';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';

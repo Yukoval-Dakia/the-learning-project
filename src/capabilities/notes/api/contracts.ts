@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import {
   ArtifactBodyBlocks,
   ArtifactHistoryEntry,
@@ -6,7 +7,6 @@ import {
   NoteVerificationResult,
   SubjectProfileSchema,
 } from '@/kernel/capability-contract-schemas';
-import { z } from 'zod';
 
 export const NoteIdParamsSchema = z.object({ id: z.string().trim().min(1) });
 

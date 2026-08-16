@@ -2,13 +2,12 @@
 // Task 9 拆）。唯一非机械点：the old after() pattern 改写为 fire-and-forget（见 POST 内注释）。
 
 import { createId } from '@paralleldrive/cuid2';
-
+import { and, inArray, isNull } from 'drizzle-orm';
 import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
 import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { collectionPayload, resourceResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/kernel/http';
+import { ApiError, collectionPayload, errorResponse, resourceResponse } from '@/kernel/http';
 import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
@@ -16,7 +15,6 @@ import {
 import { createLearningRecord } from '@/kernel/records/queries';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { listMistakeProjectionPage } from '@/server/records/mistakes';
-import { and, inArray, isNull } from 'drizzle-orm';
 import { CreateMistakeBodySchema, MistakeListQuerySchema } from './contracts';
 
 async function assertAssetsExist(

@@ -13,10 +13,10 @@
 // enqueue gate are mocked so the send actually fires (the other appeal tests run
 // with shouldEnqueueBackgroundJobs() false and never reach the send).
 
-import { event } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { event } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const bossSend = vi.fn(async () => 'rejudge-job-1');

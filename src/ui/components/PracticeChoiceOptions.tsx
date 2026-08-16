@@ -21,8 +21,8 @@
 
 'use client';
 
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useId } from 'react';
+import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import {
   indexToLetter,
   isReferenceChoice,

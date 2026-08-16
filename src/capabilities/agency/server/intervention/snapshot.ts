@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/server/conjecture/probe-evidence';
 import { parseFlag } from '@/core/env-flags';
 import {
@@ -19,8 +21,6 @@ import { ConjectureProposalChange } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, intervention, knowledge, mastery_state } from '@/db/schema';
 import { getProposalInboxRow } from '@/kernel/proposals/inbox';
-import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
-import { z } from 'zod';
 
 type DbLike = Db | Tx;
 

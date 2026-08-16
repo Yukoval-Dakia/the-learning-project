@@ -1,16 +1,12 @@
-import { event, job_events, learning_session } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import postgres from 'postgres';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { event, job_events, learning_session } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './revert-checkpoint';
 
 async function seedTurn(
-  opts: {
-    sessionId?: string;
-    withReply?: boolean;
-    childAction?: string;
-  } = {},
+  opts: { sessionId?: string; withReply?: boolean; childAction?: string } = {},
 ): Promise<{ checkpointId: string; sessionId: string }> {
   const db = testDb();
   const now = new Date();

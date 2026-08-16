@@ -3,11 +3,11 @@
 // Auth is enforced upstream by middleware (not re-tested here); this exercises
 // the 200 detail path, the 404 on missing id, and 400 timeline_limit validation.
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { initialFsrsState } from '../server/fsrs';
 import { GET } from './question-detail';

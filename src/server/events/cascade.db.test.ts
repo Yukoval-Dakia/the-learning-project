@@ -13,10 +13,10 @@
 // Partition: db (seeds the `event` table → imports tests/helpers/db). Matches
 // allTestInclude's `src/**/*.test.ts` and is NOT in fastTestInclude → db config.
 
-import { newId } from '@/core/ids';
-import { event } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { newId } from '@/core/ids';
+import { event } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { collectCascadeFromCheckpoint } from './cascade';
 

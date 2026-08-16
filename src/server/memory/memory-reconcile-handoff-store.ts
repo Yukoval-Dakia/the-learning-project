@@ -1,8 +1,8 @@
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import { z } from 'zod';
 
 import {
   MEMORY_RECONCILE_HANDOFF_ACTION,
@@ -14,6 +14,7 @@ import {
   memoryReconcileHandoffEventId,
   normalizeReconcileInputs,
 } from './memory-reconcile-handoff-identity';
+
 export {
   MEMORY_RECONCILE_HANDOFF_ACTION,
   MEMORY_RECONCILE_HANDOFF_KINDS,
@@ -24,6 +25,7 @@ export {
   memoryReconcileHandoffEventId,
   normalizeReconcileInputs,
 } from './memory-reconcile-handoff-identity';
+
 const StartedSchema = z
   .object({
     version: z.literal(1),

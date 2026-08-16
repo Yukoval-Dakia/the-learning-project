@@ -9,12 +9,12 @@
 // ignored = 过期无处置。三 action 独立聚合，绝不写 accept_suggestion、不碰 proposal KPI。
 // /api/* token 校验由组合根中间件统一施加。
 
+import { and, eq, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { and, eq, sql } from 'drizzle-orm';
 import { loadActiveNudges } from '../server/nudge-read';
 import {
   NUDGE_ACTION,

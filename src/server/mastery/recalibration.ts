@@ -38,6 +38,7 @@
 // π≈n/N）会多乘一个 N/n_labeled 过度校正——Hájek 的 ÷Σ(1/π) 同样自动消掉这个因子。
 // positivity（§7）：任何 π ≤ 0 抛错（IPW 权重分母，0 或负是上游 bug）。
 
+import { and, desc, eq } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import { difficultyToLogitB, quantile } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
@@ -47,7 +48,6 @@ import {
   practice_stream_item,
   selection_observation,
 } from '@/db/schema';
-import { and, desc, eq } from 'drizzle-orm';
 import { impliedDifficultyResidual, isObjectiveJudgeRoute } from './personalized-difficulty';
 
 type DbLike = Db | Tx;

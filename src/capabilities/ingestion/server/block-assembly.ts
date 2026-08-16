@@ -50,20 +50,19 @@ import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 // continuity cue. `signal` mirrors the proposal's `continuity_signal` enum so the
 // candidate maps 1:1 onto `writeBlockMergeProposal`.
 
-export {
-  BlockAssemblyCandidate,
-  type BlockAssemblyCandidateT,
-  BlockAssemblyOutput,
-  type BlockAssemblyOutputT,
-};
-
 /**
  * Thrown when the BlockAssemblyTask cannot produce a usable result (provider
  * down, unparseable output). The session pass (`runBlockAssemblyForSession`) and
  * its auto_enroll caller SWALLOW this — merge proposals are nice-to-have, never
  * the critical path; an outage must not abort enrollment (§3).
  */
-export { BlockAssemblyTaskError };
+export {
+  BlockAssemblyCandidate,
+  type BlockAssemblyCandidateT,
+  BlockAssemblyOutput,
+  type BlockAssemblyOutputT,
+  BlockAssemblyTaskError,
+};
 
 // ---------- runBlockAssemblyTask — the AI task wrapper ----------
 

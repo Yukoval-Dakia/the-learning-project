@@ -7,11 +7,11 @@
 // 读模型 gate，不 gate 判定/写入。FAST 档无 DLQ 无 retryLimit，但 expire/crash 仍 redeliver +
 // 无 singleton 并发 → partial unique index（caused_by_event_id）+ 23505 捕获是 per-source 幂等保证。
 
+import type { Job } from 'pg-boss';
+import { z } from 'zod';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
-import type { Job } from 'pg-boss';
-import { z } from 'zod';
 import { loadNudgeConfig } from '../server/nudge-config';
 import {
   NUDGE_ACTION,

@@ -8,11 +8,11 @@
 //   ⑤ 全终态 → run 收尾 completed，不再自调度 tick；
 //   ⑥ 单飞：同日重复 start 不建第二条 run。
 
+import { and, eq } from 'drizzle-orm';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dag_orchestration_node, dag_orchestration_run } from '@/db/schema';
 import { type JobDagMemberInput, buildJobDag } from '@/kernel/job-dag';
 import { reportJobYield } from '@/server/boss/job-yield';
-import { and, eq } from 'drizzle-orm';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   beginTestTransaction,
   resetDb,

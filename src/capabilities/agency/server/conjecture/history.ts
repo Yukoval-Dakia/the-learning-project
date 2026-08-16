@@ -1,3 +1,4 @@
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { type EvidenceCell, conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
 import {
   type EffectiveProbeResultStatus,
@@ -14,7 +15,6 @@ import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { type CorrectionStatus, getCorrectionStatuses } from '@/kernel/events';
-import { and, eq, inArray, sql } from 'drizzle-orm';
 
 export const CONJECTURE_DISMISS_COOLDOWN_DAYS = 30;
 export const CONJECTURE_REOPEN_FAILURE_FLOOR = 2;

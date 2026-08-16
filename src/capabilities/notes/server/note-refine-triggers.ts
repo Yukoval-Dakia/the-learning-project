@@ -1,9 +1,9 @@
+import { and, eq, gt, sql } from 'drizzle-orm';
 import type { NoteRefineTriggerKind } from '@/capabilities/notes/jobs/note-refine';
 import { parseFlag } from '@/core/env-flags';
 import type { Db } from '@/db/client';
 import { job_events } from '@/db/schema';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
-import { and, eq, gt, sql } from 'drizzle-orm';
 import { getNotesBoss, notesBossTransaction } from './boss-port';
 
 export const NOTE_REFINE_TRIGGER_DEBOUNCE_MS = 60 * 60_000;

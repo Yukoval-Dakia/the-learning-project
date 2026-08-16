@@ -1,5 +1,5 @@
-import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 import { z } from 'zod';
+import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 
 // YUK-878 — Copilot capability contracts. These schemas previously lived in the
 // the since-deleted central quarry (legacy-task-definitions.ts, removed by

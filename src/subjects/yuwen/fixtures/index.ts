@@ -1,5 +1,5 @@
-import { Rubric } from '@/core/schema/business';
 import { z } from 'zod';
+import { Rubric } from '@/core/schema/business';
 import fixtureData from './data.json' with { type: 'json' };
 
 // P5.8 (2026-05-31, YUK-182): yuwen eval fixture — the FIRST subject fixture

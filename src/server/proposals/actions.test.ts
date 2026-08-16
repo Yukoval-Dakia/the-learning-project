@@ -1,3 +1,6 @@
+import { createId } from '@paralleldrive/cuid2';
+import { and, eq, isNull, sql } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LearningItemAcceptResult } from '@/capabilities/agency/public';
 import type { RecordPromotionAcceptResult } from '@/capabilities/ingestion/public';
 import {
@@ -17,16 +20,12 @@ import {
   proposal_signals,
   question,
 } from '@/db/schema';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import {
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
 } from '@/server/projections/gather';
 import { knowledgeLiveRowToSnapshot } from '@/server/projections/parity';
-import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull, sql } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import { writeAiProposal } from '@/kernel/proposals/writer';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../tests/helpers/proposal-lifecycle';
 import {

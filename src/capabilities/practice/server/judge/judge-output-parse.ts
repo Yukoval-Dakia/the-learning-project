@@ -6,8 +6,8 @@
 // Each caller keeps its OWN error label so the thrown message is byte-identical to the
 // pre-consolidation text (the golden replay + evidence_json.error contracts depend on it).
 
-import type { RunTaskCtx } from '@/server/ai/runner';
 import type { ZodType } from 'zod';
+import type { RunTaskCtx } from '@/server/ai/runner';
 
 /** The structured task result the vision judges consume from runTask. */
 export interface StructuredTaskResult {

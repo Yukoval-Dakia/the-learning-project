@@ -6,12 +6,11 @@
 // advisory-locked upsert + read round-trip, and runAxisStateBatch end-to-end (usage gate,
 // provenance-gated drift_v, primary-KC attribution, RT/outcome filtering).
 
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { event, learner_axis_state, question } from '@/db/schema';
-import { eq } from 'drizzle-orm';
 import { resetDb } from '../../../tests/helpers/db';
 import {
   AXIS_MIN_OBS,

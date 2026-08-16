@@ -1,3 +1,5 @@
+import { eq, sql } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { insertGoal } from '@/capabilities/agency/server/goals/queries';
 import { selectNextPlacementItem } from '@/capabilities/practice/server/placement-select';
 import {
@@ -12,8 +14,6 @@ import {
   question,
 } from '@/db/schema';
 import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
-import { eq, sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { dispatchSupplyTarget } from './dispatcher';
 import { SupplyTraceV1 } from './evidence-demand';

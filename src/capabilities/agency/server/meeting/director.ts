@@ -36,6 +36,7 @@
 // zero-spend retryable path; probe quality outages are the deliberate, possibly-spent
 // retryable path because provider failure must never count as a quality vote.
 
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { tasks } from '@/ai/registry';
 import {
   conjectureKey,
@@ -46,26 +47,25 @@ import {
   applyConjectureHistoryGate,
   loadConjectureHistory,
 } from '@/capabilities/agency/server/conjecture/history';
+import type { ToolTraceEntry } from '@/capabilities/agency/server/scout/evidence-mcp';
 import {
   buildEvidenceServer,
   persistToolTrace,
 } from '@/capabilities/agency/server/scout/evidence-mcp';
-import type { ToolTraceEntry } from '@/capabilities/agency/server/scout/evidence-mcp';
 import { createFindingsCapture } from '@/capabilities/agency/server/scout/report-findings';
 import { buildEvidenceScoutAgentDefinition } from '@/capabilities/agency/server/scout/scout-agent';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
-import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
-import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import { SPAWN_BUDGET_MODE, createSpawnContract } from '@/server/ai/spawn-contract';
 import { getMasteryProjection } from '@/server/mastery/state';
-import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   type BuildDirectorServerOpts,
   DIRECTOR_ALLOWED_TOOLS,

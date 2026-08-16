@@ -44,10 +44,8 @@
 // RESERVED_EXPERIMENTAL_ACTIONS → both validate via the loose generic ExperimentalEvent
 // with zero schema-file change. Do NOT reserve them.
 
-import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
-import { type WriteEventInput, getEventById, writeEvent } from '@/kernel/events';
 import { z } from 'zod';
-
+import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
 import {
   PREDICTION_SCORE_ACTION,
   PROBE_NON_EVIDENCE_RESOLUTION,
@@ -55,10 +53,14 @@ import {
   type ProbeResolution,
   isCanonicalEvidenceProbeOutcomeResolution,
 } from '@/core/schema/conjecture';
+import { type WriteEventInput, getEventById, writeEvent } from '@/kernel/events';
+
 export {
   PREDICTION_SCORE_ACTION,
   PROBE_RESULT_PROJECTED_ACTION,
 } from '@/core/schema/conjecture';
+
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { scorePrediction } from '@/server/conjectures/scoring';
@@ -68,7 +70,6 @@ import {
   replaceKcTypedState,
   upsertKcTypedState,
 } from '@/server/conjectures/typed-state';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 /** The U3 producer's outcome event we consume. */
 const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;

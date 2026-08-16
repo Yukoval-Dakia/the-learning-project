@@ -38,12 +38,12 @@
 //     DB-outage flavor where no restart happens. fast tier has no DLQ by
 //     design: the sweep is idempotent, a dropped tick re-converges next cron.
 
+import { and, eq, lt } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
 import { unknownAttemptCostTruth } from '@/server/ai/attempt-cost';
 import { writeAiTaskAttemptFinished } from '@/server/ai/log';
-import { and, eq, lt } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
 
 /** 1h — 5× the largest effective per-call timeout (12min); see module doc. */
 export const STUCK_RUN_THRESHOLD_MS = 3_600_000;

@@ -1,7 +1,7 @@
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { CorrectEvent } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { and, asc, eq, inArray } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;

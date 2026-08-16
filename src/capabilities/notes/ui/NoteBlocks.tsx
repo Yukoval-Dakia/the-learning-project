@@ -5,8 +5,8 @@
 // - questionRefBlock（pre-flight B 用户增量）= 题面预览 + 类型徽章的纯引用块，
 //   无作答判分；点击进入现有题目详情页。
 
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useQuery } from '@tanstack/react-query';
+import { LoomIcon } from '@/ui/primitives/LoomIcon';
 
 import {
   type BodyBlock,

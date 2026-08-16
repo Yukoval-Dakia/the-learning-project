@@ -4,9 +4,9 @@
 //   BINDING /api/admin/subjects/:id/traits/:kind/binding  → rebindSubjectTrait（换绑）
 // 业务在 src/server/subjects/trait-write.ts；写成功后 post-commit 重水合上架。
 
+import { z } from 'zod';
 import { db } from '@/db/client';
-import { canonicalResourceResponse } from '@/kernel/http';
-import { errorResponse } from '@/kernel/http';
+import { canonicalResourceResponse, errorResponse } from '@/kernel/http';
 import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
 import {
   editSubjectTrait,
@@ -14,7 +14,6 @@ import {
   rebindSubjectTrait,
 } from '@/server/subjects/trait-write';
 import { SUBJECT_TRAIT_KINDS, type SubjectTraitKind } from '@/subjects/trait-schemas';
-import { z } from 'zod';
 import { readJsonBody, traitResultResponse } from './subjects-write-http';
 
 const ParamsSchema = z.object({

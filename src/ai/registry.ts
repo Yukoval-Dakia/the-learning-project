@@ -1,7 +1,7 @@
+import type { ZodType } from 'zod';
 import { GoalScopeIntentSchema } from '@/kernel/task-intents';
 import type { ToolContext } from '@/kernel/tools/types';
 import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
-import type { ZodType } from 'zod';
 import { taskCatalog } from './task-catalog';
 import { QuestionAuthorIntentSchema } from './task-intents';
 import type { TaskDefinition } from './task-spec';

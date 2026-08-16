@@ -7,6 +7,13 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { PostgreSqlContainer } from '@testcontainers/postgresql';
+import { config as loadDotenv } from 'dotenv';
+import { eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { unzipSync } from 'fflate';
+import postgres from 'postgres';
+import { z } from 'zod';
 import { defaultLoadEvidenceImages } from '@/capabilities/agency/jobs/research_meeting_nightly';
 import { induceConjecture } from '@/capabilities/agency/public';
 import type { ConjectureEvidenceImageSource } from '@/capabilities/agency/server/conjecture/evidence';
@@ -39,13 +46,6 @@ import {
 } from '@/server/grounding-gate/preflight';
 import type { R2Client } from '@/server/r2';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { PostgreSqlContainer } from '@testcontainers/postgresql';
-import { config as loadDotenv } from 'dotenv';
-import { eq } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import { unzipSync } from 'fflate';
-import postgres from 'postgres';
-import { z } from 'zod';
 
 const BackupManifestSchema = z.object({
   schema_version: z.string().min(1),
@@ -316,10 +316,7 @@ function archiveImageFetch(r2: R2Client) {
 async function collectFromBackup(
   backupBytes: Uint8Array,
   now: Date,
-  run: (context: {
-    db: Db;
-    report: GroundingGateCandidateReport;
-  }) => Promise<void>,
+  run: (context: { db: Db; report: GroundingGateCandidateReport }) => Promise<void>,
 ): Promise<void> {
   await withRestoredBackup(backupBytes, async ({ db, r2 }) => {
     const report = await collectGroundingGateCandidates(db, {

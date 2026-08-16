@@ -9,6 +9,8 @@
 //   YUK-575/YUK-832: N2 reviewed full-delta settlement（S3）/ N3+S4 ambient 装配往返 / N5+MF-A budget /
 //            MF1/MF2 transient·exhausted 分诊 + 幂等守卫 / S6 static 约束。
 
+import { and, eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeCopilotReply } from '@/capabilities/copilot/server/chat';
 import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from '@/capabilities/copilot/server/content-validation';
 import {
@@ -37,8 +39,6 @@ import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import { STUCK_RUN_THRESHOLD_MS } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
-import { and, eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {

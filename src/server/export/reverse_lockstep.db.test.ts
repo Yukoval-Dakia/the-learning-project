@@ -14,10 +14,11 @@
  * as DB-tainted; see scripts/audit-test-partition.ts). Mirrors the isTable /
  * getTableName reflection archive.ts uses at load.
  */
-import * as schema from '@/db/schema';
-import { BACKUP_EXCLUDED_TABLES, FK_ORDER } from '@/server/export/constants';
+
 import { getTableName, isTable } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
+import * as schema from '@/db/schema';
+import { BACKUP_EXCLUDED_TABLES, FK_ORDER } from '@/server/export/constants';
 
 function schemaTableNames(): string[] {
   const names: string[] = [];

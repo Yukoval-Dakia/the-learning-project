@@ -5,10 +5,9 @@ import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { question_block, source_asset } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { type RunTaskCallCtx, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { R2Client } from '@/server/r2';
 import { Ingestion } from '@/server/session';
-
-import { type RunTaskCallCtx, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { type VisionBlock, runVisionExtract } from './vision';
 
 export type RescueTier = 2 | 3;

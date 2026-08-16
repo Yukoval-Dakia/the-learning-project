@@ -46,7 +46,9 @@ async function seedKnowledge(): Promise<void> {
 
 async function seedConjecture({
   includeFollowup = true,
-}: { includeFollowup?: boolean } = {}): Promise<string> {
+}: {
+  includeFollowup?: boolean;
+} = {}): Promise<string> {
   const db = testDb();
   const proposalId = await writeAiProposal(db, {
     actor_ref: 'research_meeting',

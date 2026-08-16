@@ -18,8 +18,8 @@ import {
 } from '@/capabilities/notes/server/note-refine-breaker';
 import { editArtifactSection } from '@/capabilities/notes/server/sections';
 import { artifact, event, knowledge } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import * as eventQueries from '@/kernel/events';
+import { writeEvent } from '@/kernel/events';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { buildNoteRefineHandler, parseNoteRefineOutput, runNoteRefine } from './note-refine';
@@ -751,11 +751,7 @@ describe('runNoteRefine — A-track rate breaker', () => {
   // Seed `count` prior `experimental:note_refine_apply` events inside the window
   // (created_at = now), all by the AI mutator actor, so countRecentAutoApplies
   // returns exactly `count`.
-  async function seedAutoApplyEvents(opts: {
-    count: number;
-    now: Date;
-    actorRef?: string;
-  }) {
+  async function seedAutoApplyEvents(opts: { count: number; now: Date; actorRef?: string }) {
     const db = testDb();
     for (let i = 0; i < opts.count; i++) {
       await writeEvent(db, {

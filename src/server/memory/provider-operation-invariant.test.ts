@@ -1,8 +1,8 @@
+import { describe, expect, it, vi } from 'vitest';
 import {
   createMem0OpaqueOperationContext,
   executeMem0OpaqueOperation,
 } from '@/server/ai/provider-attempt-runtime';
-import { describe, expect, it, vi } from 'vitest';
 
 describe('Mem0 opaque provider start invariants', () => {
   it.each(['acquire', 'reserve'] as const)(

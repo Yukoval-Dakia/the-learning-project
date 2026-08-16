@@ -1,7 +1,7 @@
 // YUK-495 S5 #41 — UI verdict layer (deriveKcVerdict / summarizeRecompute) over the bit-exact core.
 
-import { deriveProfileKc } from '@/core/recompute/derive-profile-kc';
 import { describe, expect, it } from 'vitest';
+import { deriveProfileKc } from '@/core/recompute/derive-profile-kc';
 import type { ProfileKc } from '../profile-api';
 import type {
   CalibrationMaturityResponse,

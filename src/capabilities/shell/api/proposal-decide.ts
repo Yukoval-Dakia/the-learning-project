@@ -4,8 +4,7 @@
 // optional decision 缺省语义由显式 'accept' 承担）；superRefine 约束照旧。
 
 import { db } from '@/db/client';
-import { deprecatedRouteResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/kernel/http';
+import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
 import { LegacyProposalDecisionBodySchema } from './contracts';
 

@@ -9,10 +9,10 @@
 // physically unreachable in this product (nightly writers cap proposal creation
 // at single digits), so this branch only ever manifests in tests that shrink it.
 
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { event } from '@/db/schema';
 import { countPendingProposalInboxByKind } from '@/kernel/proposals/inbox';
 import { loadCopilotSummary } from '@/server/today/copilot-summary';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 function pendingDeferRow(

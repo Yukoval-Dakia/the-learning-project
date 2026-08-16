@@ -10,6 +10,9 @@
 //   - no answer (response_md null/empty) → no judge invoked, no payload.judge
 //   - CC-1 invariant: rating-only override does NOT write experimental:user_cause
 
+import { createId } from '@paralleldrive/cuid2';
+import { and, eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // YUK-589 (J1/J2) — execution-provenance regression helpers.
 import {
   JUDGE_PROMPT_TEMPLATE_REVISION,
@@ -48,9 +51,6 @@ import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 // YUK-455 inc-E — flag-off byte-identical 回归锚：seed prereq 图 + 答错 → 断言零 prereq_risk 事件。
 import { PREREQ_RISK_ACTION } from '@/server/mastery/prereq-propagation';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 // YUK-101 (iter2 fix F12) — shared seeders from tests/helpers/event-seed.
 import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';

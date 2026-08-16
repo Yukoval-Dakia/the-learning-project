@@ -1,8 +1,8 @@
 // Phase 1c.1 Step 9.C — `/api/knowledge/proposals` over the event stream.
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import { LegacyKnowledgeProposalListResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { event, knowledge } from '@/db/schema';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './proposals-list';
 

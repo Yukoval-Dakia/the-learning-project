@@ -3,12 +3,12 @@
 // design doc §5 手工验收承接）。QueryClientProvider + setQueryData 喂 subjectRows
 // （VisionTab.test.tsx 先例：initialData/缓存命中 → SSR 零请求零 effect）。
 
-import { createSubjectErrorText } from '@/ui/hooks/useCreateSubject';
-import { type ApiSubject, SUBJECTS_QUERY_KEY } from '@/ui/hooks/useSubjects';
-import { ApiAuthError, ApiError } from '@/ui/lib/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import { createSubjectErrorText } from '@/ui/hooks/useCreateSubject';
+import { type ApiSubject, SUBJECTS_QUERY_KEY } from '@/ui/hooks/useSubjects';
+import { ApiAuthError, ApiError } from '@/ui/lib/api';
 import WelcomePage, { CreateSubjectForm } from './WelcomePage';
 
 function subj(overrides: Partial<ApiSubject> & Pick<ApiSubject, 'id' | 'displayName'>): ApiSubject {

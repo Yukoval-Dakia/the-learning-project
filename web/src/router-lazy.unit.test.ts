@@ -1,6 +1,6 @@
-import { UI_SURFACES } from '@/kernel/ui-surfaces';
 import { lazyRouteComponent } from '@tanstack/react-router';
 import { describe, expect, it } from 'vitest';
+import { UI_SURFACES } from '@/kernel/ui-surfaces';
 import { router } from './router';
 
 describe('SPA route chunk policy', () => {

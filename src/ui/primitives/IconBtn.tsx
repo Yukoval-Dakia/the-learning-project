@@ -1,10 +1,10 @@
 // IconBtn — loom icon-only button. className-driven over the .icon-btn class
 // layer in app/globals.css. Ported from docs/design/loom-prototype/components.jsx.
 
-import { forwardRef } from 'react';
 import type { ButtonHTMLAttributes } from 'react';
-import { LoomIcon } from './LoomIcon';
+import { forwardRef } from 'react';
 import type { LoomIconName } from './LoomIcon';
+import { LoomIcon } from './LoomIcon';
 
 export interface IconBtnProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   icon: LoomIconName;

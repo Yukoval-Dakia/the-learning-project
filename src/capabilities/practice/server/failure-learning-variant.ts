@@ -21,13 +21,12 @@
 //   5. Per-(parent, attempt) cooldown via proposal cooldown_key — same attempt
 //      retrying variant_gen never produces a second proposal.
 
-import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { and, count, eq, inArray } from 'drizzle-orm';
-
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 // YUK-471 W2 (critic A4) — mistake_variant creation seam. The creation tx ALWAYS writes the
 // runtime BASE event (experimental:mistake_variant_create, carrying the fold-blind cause_category)
 // + the materialized_id_index anchor so the SoT-flip guard resolves the variant O(1); the

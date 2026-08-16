@@ -16,6 +16,8 @@
 // It re-derives each displayed KC number ON-DEVICE from the raw evidence (recompute-core →
 // src/core/recompute) and checks it against the server. Read-only.
 
+import { useQuery } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
 import { ApiError } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -23,17 +25,15 @@ import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
-import { useQuery } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
 import { ObSteps } from './ObSteps';
 import { type PlacementProfile, type ProfileKc, getPlacementProfile } from './profile-api';
+import { getCalibrationMaturity } from './recompute/calibration-maturity-api';
 import {
   RcDetailPanel,
   RcKcChip,
   RcMaturityBadge,
   RcVerify,
 } from './recompute/RecomputeComponents';
-import { getCalibrationMaturity } from './recompute/calibration-maturity-api';
 import {
   RECOMPUTE_BADGE_ENABLED,
   type RcKcVerdict,

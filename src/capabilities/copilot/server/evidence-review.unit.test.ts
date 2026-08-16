@@ -1,3 +1,4 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CopilotEvidenceReviewOutputSchema,
   CopilotEvidenceVerificationOutputSchema,
@@ -16,7 +17,6 @@ import {
   PROVIDER_SESSION_WALL_CLOCK_BUDGET_MESSAGE,
   ProviderSessionWallClockBudgetError,
 } from '@/server/ai/agent-run-error';
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   bindCopilotEvidenceComparison,
   bindCopilotEvidenceReference,

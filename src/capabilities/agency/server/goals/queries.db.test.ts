@@ -6,8 +6,8 @@
 // now default to THIS resolved read: explicit → frozen passthrough; subject_live →
 // resolveSubjectKnowledgeIds per DISTINCT subject (one resolve per subject, Map-deduped).
 
-import { knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { insertGoal, listActiveGoalsWithResolvedScope } from './queries';
 

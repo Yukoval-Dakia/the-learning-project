@@ -16,6 +16,7 @@
 //   resolution-cache（hydrate 每轮整体替换）；缓存缺位（未水合窗口）回落
 //   live revision + degraded:null，不臆造降级态。
 
+import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { subject, subject_trait, subject_trait_binding, subject_trait_journal } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
@@ -27,7 +28,6 @@ import {
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 import type { TraitVersionComponent } from '@/subjects/trait-compose';
 import { SUBJECT_TRAIT_KINDS, type SubjectTraitKind } from '@/subjects/trait-schemas';
-import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
 
 export interface AdminSubjectListRow {
   id: string;

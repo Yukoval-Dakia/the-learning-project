@@ -6,11 +6,11 @@
 // exclusion after archive, composite parent→part cascade, and the edit/archive
 // audit events.
 
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { artifact, event, knowledge, material_fsrs_state, question } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { DELETE, PATCH } from './question-detail';
 

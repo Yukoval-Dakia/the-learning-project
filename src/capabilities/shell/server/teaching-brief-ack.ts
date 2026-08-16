@@ -31,6 +31,7 @@
 // selection (an older outcome hidden behind a newer primary is not ackable and resurfaces
 // once the newer one is acked — contract §4.2/§5).
 
+import { and, eq, sql } from 'drizzle-orm';
 import { loadOutcomeBrief } from '@/capabilities/shell/server/teaching-brief';
 import { newId } from '@/core/ids';
 import { BRIEF_ACK_ACTION, PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
@@ -38,7 +39,6 @@ import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { and, eq, sql } from 'drizzle-orm';
 
 export interface AcknowledgeBriefResult {
   /** The append-only ack event id (existing one on an idempotent re-ack). */

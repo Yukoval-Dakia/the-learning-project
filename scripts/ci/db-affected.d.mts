@@ -10,18 +10,12 @@ interface DbAffectedSelection {
 }
 
 export const DB_FAILURE_SENTINEL_TESTS: string[];
-export function findSourceScanningDbTests(input: {
-  dbFiles: string[];
-  root: string;
-}): string[];
-export function findDynamicImportDbTests(input: {
-  dbFiles: string[];
-  root: string;
-}): string[];
-export function scanDbTestSources(input: {
-  dbFiles: string[];
-  root: string;
-}): { sourceScanningDbTests: string[]; dynamicImportDbTests: string[] };
+export function findSourceScanningDbTests(input: { dbFiles: string[]; root: string }): string[];
+export function findDynamicImportDbTests(input: { dbFiles: string[]; root: string }): string[];
+export function scanDbTestSources(input: { dbFiles: string[]; root: string }): {
+  sourceScanningDbTests: string[];
+  dynamicImportDbTests: string[];
+};
 export function mergeDbPredictedFiles(input: {
   graphPredictedFiles: string[];
   sourceScanningDbTests: string[];

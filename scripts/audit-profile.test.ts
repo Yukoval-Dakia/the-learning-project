@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import {
   type SubjectProfile,
@@ -5,7 +6,6 @@ import {
   getDefaultSubjectRegistry,
   subjectProfiles,
 } from '@/subjects/profile';
-import { describe, expect, it } from 'vitest';
 import { auditProfiles, formatProfileAuditReport } from './audit-profile';
 
 function makeAuditProfile(overrides: Partial<SubjectProfile> = {}): SubjectProfile {

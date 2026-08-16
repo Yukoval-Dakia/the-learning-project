@@ -5,13 +5,13 @@
 // decide, because getting any of them wrong is expensive in a different direction: a missed
 // stall strands a learner's answer, and a spurious re-enqueue buys a duplicate paid judge.
 
+import { eq } from 'drizzle-orm';
+import type { JobWithMetadata } from 'pg-boss';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { event, job_events, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
-import { eq } from 'drizzle-orm';
-import type { JobWithMetadata } from 'pg-boss';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   JUDGE_PENDING_ATTEMPT_ACTION,

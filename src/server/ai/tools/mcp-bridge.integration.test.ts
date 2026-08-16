@@ -3,13 +3,13 @@
 // (`parseEvent` inside `writeEvent`) and the resulting row + the
 // `tool_call_log.mirrored_event_id` linkage land on disk.
 
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { capabilities } from '@/capabilities';
 import { event, memory_brief_note, tool_call_log } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { z } from 'zod';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, registerTool } from './registry';

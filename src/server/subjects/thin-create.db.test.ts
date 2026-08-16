@@ -3,10 +3,10 @@
 // isGeneralFallback 派生、幂等 200 回放（零第二行/根/claim）、custom↔builtin
 // 显示名与 id/alias 双命名空间撞名 422、registry 即时上架。
 
-import { event, knowledge, subject, subject_name_claim, subject_trait } from '@/db/schema';
-import { getDefaultSubjectRegistry, normalizeSubjectKey } from '@/subjects/profile';
 import { count, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { event, knowledge, subject, subject_name_claim, subject_trait } from '@/db/schema';
+import { getDefaultSubjectRegistry, normalizeSubjectKey } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { hydrateSubjectRegistryFromDb } from './hydrate';
 import { reconcileBuiltinTraits } from './reconcile-builtin-traits';

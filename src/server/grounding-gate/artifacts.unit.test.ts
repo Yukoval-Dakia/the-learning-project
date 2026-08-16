@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import type { InduceConjectureResult } from '@/capabilities/agency/public';
 import {
   buildGroundingReviewArtifacts,
@@ -7,7 +8,6 @@ import {
   selectGroundingCandidates,
 } from '@/server/grounding-gate/artifacts';
 import type { GroundingGateCandidate } from '@/server/grounding-gate/candidates';
-import { describe, expect, it } from 'vitest';
 
 function candidate(key: string): GroundingGateCandidate {
   const [causeCategory, knowledgeId] = key.split('::');

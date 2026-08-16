@@ -13,13 +13,13 @@
 // 壳形态：admin 页套主 app chrome（RootShell）——决策记录见
 // docs/design/2026-07-07-yuk579-coverage-lattice.md §6。
 
+import { useQuery } from '@tanstack/react-query';
+import type { CSSProperties } from 'react';
 import { apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { Stateful } from '@/ui/primitives/Stateful';
-import { useQuery } from '@tanstack/react-query';
-import type { CSSProperties } from 'react';
 
 // §3.5 管理枚举投影（字段对齐 api/admin-subjects.ts；R11 slim 红线不变）。
 export interface AdminSubjectRow {

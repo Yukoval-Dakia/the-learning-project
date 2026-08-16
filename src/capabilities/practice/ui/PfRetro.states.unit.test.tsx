@@ -2,11 +2,11 @@
 // YUK-732 — 复盘三态分离：loading / error(带重试) / empty(真空态)，error ≠ empty。
 // 瞬时加载失败落带重试的错误态，而非把学习者困在「复盘加载失败」死胡同。
 
-import { ApiError } from '@/ui/lib/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '@/ui/lib/api';
 import { PfRetro } from './PfRetro';
 
 const mocks = vi.hoisted(() => ({ getPaperDetail: vi.fn() }));

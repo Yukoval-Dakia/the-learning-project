@@ -4,11 +4,11 @@
 // dev 是单进程拓扑（API + worker 一个进程），旧 worker（pnpm worker:dev）在 M1 期间
 // 仍可独立运行（两者共用 startBossWorker 配方，队列层面共存无冲突）。
 
+import { serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { capabilities } from '@/capabilities';
 import { assertAgentSdkRuntimeUser } from '@/server/ai/runtime-preflight';
 import { warnFlipOrder } from '@/server/projections/sot-flag';
-import { serve } from '@hono/node-server';
-import { serveStatic } from '@hono/node-server/serve-static';
 import { buildHonoApp } from './app';
 import { loadApiEnv } from './env';
 

@@ -6,6 +6,8 @@
 // proposal events only; the accept path owns record updates. Shared proposal
 // inbox/writer machinery lives in @/kernel/proposals.
 
+import { and, eq, isNull } from 'drizzle-orm';
+import { z } from 'zod';
 import { SuggestionKind } from '@/core/schema/event/known';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
@@ -14,8 +16,6 @@ import { pendingProposalWithCooldown } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getActiveLearningRecord } from '@/kernel/records/queries';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { and, eq, isNull } from 'drizzle-orm';
-import { z } from 'zod';
 
 function evidenceRefsFromEventIds(ids: string[]): ProposalEvidenceRefT[] {
   return [...new Set(ids)].map((id) => ({ kind: 'event', id }));

@@ -1,8 +1,8 @@
 // Phase 1c.1 Step 6 — knowledge_edge single-owner module tests.
 
-import { knowledge, knowledge_edge } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { knowledge, knowledge_edge } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   archiveKnowledgeEdge,

@@ -4,6 +4,8 @@
 // 别名证明 JOIN 生效，builtin 别名构造器本就有会假绿）、27（降级态 provenance：
 // journal 回溯 id@rev / 代码种子 id@seed:<v> / builtin 地板）+ reconcileCustomIds。
 
+import { count, eq, sql } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { subject, subject_name_claim, subject_trait, subject_trait_binding } from '@/db/schema';
 import {
   BUILTIN_SUBJECT_IDS,
@@ -12,8 +14,6 @@ import {
 } from '@/subjects/builtin-trait-seeds';
 import { SubjectRegistry, subjectProfiles } from '@/subjects/profile';
 import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
-import { count, eq, sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { getSubjectTraitResolutions, hydrateSubjectRegistryFromDb } from './hydrate';
 import { reconcileBuiltinTraits } from './reconcile-builtin-traits';

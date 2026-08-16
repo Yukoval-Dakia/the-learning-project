@@ -1,7 +1,7 @@
+import { drizzle } from 'drizzle-orm/postgres-js';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { drizzle } from 'drizzle-orm/postgres-js';
 
 export const DEFAULT_COMPOSE_LOCK_WAIT_MS = 30_000;
 

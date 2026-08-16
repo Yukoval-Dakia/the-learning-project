@@ -1,9 +1,9 @@
+import { inArray } from 'drizzle-orm';
 import type { SuggestionKindT } from '@/core/schema/event/known';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { inArray } from 'drizzle-orm';
 import { writeAiProposal } from './writer';
 
 type DbLike = Db | Tx;

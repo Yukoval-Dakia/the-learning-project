@@ -21,9 +21,8 @@
  * consumed by `assignFiguresFromVlm` in figure_attach.ts. The old Tencent-bbox
  * `assignFigures` heuristic is kept as a fallback (see figure_attach.ts).
  */
-import type { Db } from '@/db/client';
-import { createId } from '@paralleldrive/cuid2';
 
+import { createId } from '@paralleldrive/cuid2';
 import {
   type StructureNodeT,
   StructureOutput,
@@ -35,6 +34,7 @@ import {
   type StructuredQuestionT,
   structuredToPromptMarkdown,
 } from '@/core/schema/structured_question';
+import type { Db } from '@/db/client';
 
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { LayoutQuality } from './tencent_mark_parser';

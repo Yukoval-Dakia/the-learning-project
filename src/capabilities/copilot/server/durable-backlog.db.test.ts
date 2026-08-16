@@ -1,5 +1,5 @@
-import { job_events } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { job_events } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { countOutstandingDurableRuns } from './durable-backlog';

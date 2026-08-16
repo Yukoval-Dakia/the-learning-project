@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
-import type { CalibrationMaturityResponse } from '@/capabilities/onboarding/ui/recompute/calibration-maturity-api';
-import type { EffectivenessTrendResponse } from '@/capabilities/shell/ui/effectiveness-trend-api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { CalibrationMaturityResponse } from '@/capabilities/onboarding/ui/recompute/calibration-maturity-api';
+import type { EffectivenessTrendResponse } from '@/capabilities/shell/ui/effectiveness-trend-api';
 import { CoachCalibrationView } from './CoachCalibrationView';
 import CoachHub from './CoachHub';
 import { EffectivenessTrendPanel } from './EffectivenessTrendPanel';

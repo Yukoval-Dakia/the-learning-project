@@ -89,8 +89,9 @@
   border-radius: var(--r-2);
   padding: 7px var(--s-3);
   color: var(--ink-4);
-  transition: box-shadow var(--dur-fast) var(--ease-out), border-color var(--dur-fast)
-    var(--ease-out);
+  transition:
+    box-shadow var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
 }
 .dr-search:focus-within {
   border-color: var(--coral-line);
@@ -176,7 +177,9 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .dr-seg button:hover {
   color: var(--ink);
@@ -242,8 +245,9 @@
   background: var(--paper-raised);
   display: grid;
   place-items: center;
-  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast)
-    var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
 }
 .dr-check:checked {
   background: var(--coral);
@@ -254,9 +258,11 @@
   width: 10px;
   height: 10px;
   background: #fff;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 12 5 5L20 6'/%3E%3C/svg%3E")
+  -webkit-mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 12 5 5L20 6'/%3E%3C/svg%3E")
     center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 12 5 5L20 6'/%3E%3C/svg%3E")
+  mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 12 5 5L20 6'/%3E%3C/svg%3E")
     center / contain no-repeat;
 }
 .dr-check.is-indet {
@@ -505,7 +511,7 @@
   border: 2px solid var(--info-soft);
   border-top-color: var(--info-ink);
   border-radius: 50%;
-  animation: dr-spin .7s linear infinite;
+  animation: dr-spin 0.7s linear infinite;
   flex: none;
 }
 @keyframes dr-spin {

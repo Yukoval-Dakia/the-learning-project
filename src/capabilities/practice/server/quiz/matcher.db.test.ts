@@ -1,10 +1,10 @@
-import { type QuestionSupplyTarget, targetFingerprint } from '@/capabilities/practice/public';
+import { eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DispatchResult } from '@/capabilities/practice/public';
+import { type QuestionSupplyTarget, targetFingerprint } from '@/capabilities/practice/public';
 import { db } from '@/db/client';
 import { event, knowledge, provider_attempt, question } from '@/db/schema';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb } from '../../../../../tests/helpers/db';
 
 afterEach(() => {

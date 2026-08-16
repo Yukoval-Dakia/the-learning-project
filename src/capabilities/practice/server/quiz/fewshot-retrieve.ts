@@ -18,6 +18,7 @@
 // + active, then the TS layer sorts by (tier → knowledge overlap → recency) and
 // takes the top N (LIMIT 2-4). 0 命中降级: returns [].
 
+import { sql } from 'drizzle-orm';
 import {
   type SourceTier,
   compareBySourceTierThenWhitelist,
@@ -26,7 +27,6 @@ import {
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { question } from '@/db/schema';
-import { sql } from 'drizzle-orm';
 
 export interface FewShotExample {
   id: string;

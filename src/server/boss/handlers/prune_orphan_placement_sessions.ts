@@ -12,11 +12,11 @@
 // Selection: type='placement' AND status='started' AND started_at < now() - 6h.
 // Action: abandon via Placement.abandonPlacementSession (single-owner transition).
 
+import { and, eq, lt } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { Placement } from '@/server/session';
-import { and, eq, lt } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
 
 const ORPHAN_AGE_MS = 6 * 60 * 60 * 1000;
 

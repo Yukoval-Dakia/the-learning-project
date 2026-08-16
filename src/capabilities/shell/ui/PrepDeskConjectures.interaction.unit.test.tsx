@@ -3,11 +3,11 @@
 // accept/reject must NOT silently vanish (unhandled rejection): the card stays and
 // a retry affordance surfaces. SSR can't cover the async catch → interaction test.
 
-import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 
 import { PrepDeskConjectures } from './PrepDeskConjectures';
 

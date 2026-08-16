@@ -23,10 +23,10 @@
 // recency-windowed LIMIT 20 event shape (review.ts:308–:319), never the
 // unbounded event log.
 
+import { and, desc, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event, proposal_signals } from '@/db/schema';
 import type { ProposalFeedbackBudget } from '@/kernel/tools/budgets';
-import { and, desc, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 

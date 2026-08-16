@@ -3,11 +3,11 @@
 // branch (RB-3), the §4.2 evidence window (RB-5), and the §4.3 relation
 // predicates. Imports tests/helpers/db → DB partition (not in fastTestInclude).
 
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import { parseAiProposalPayload } from '@/core/schema/proposal';
 import { knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   beginTestTransaction,
   resetDb,

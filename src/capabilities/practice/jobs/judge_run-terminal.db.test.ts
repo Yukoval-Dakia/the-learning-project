@@ -11,12 +11,12 @@
 //
 // The writer is mocked to throw only on the event_type under test.
 
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { event, question } from '@/db/schema';
 import { computeReplay } from '@/server/events/sse_replay';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // `remaining: Infinity` = fail every time (the permanent-failure cases); a finite count makes

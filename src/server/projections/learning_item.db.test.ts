@@ -15,6 +15,8 @@
 //
 // Hermetic: resetDb() TRUNCATEs ALL_TABLES (incl. learning_item + materialized_id_index).
 
+import { eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LearningItemAcceptResult } from '@/capabilities/agency/public';
 import { planLearningIntent } from '@/capabilities/agency/public';
 import {
@@ -28,8 +30,6 @@ import { writeEvent } from '@/kernel/events';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { writeLearningItemProposal } from '@/kernel/proposals/producers';
 import { acceptAiProposal, retractAiProposal } from '@/server/proposals/actions';
-import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { auditProjection } from '../../../scripts/audit-projection';
 import { backfillLearningItemGenesis } from '../../../scripts/backfill-genesis-events';

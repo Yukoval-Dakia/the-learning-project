@@ -1,7 +1,7 @@
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { QRow } from './QuestionsPage';
 import type { QBankQuestion } from './practice-api';
+import { QRow } from './QuestionsPage';
 
 function question(subject: string, notation: string | null, prompt_md: string): QBankQuestion {
   return {

@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import { tasks } from '@/ai/registry';
 import { StepsLlmOutput, type StepsLlmOutputT } from '@/core/capability/judges/steps';
 import { Rubric } from '@/core/schema/business';
@@ -7,7 +8,6 @@ import { source_asset } from '@/db/schema';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
-import { eq } from 'drizzle-orm';
 import { defaultStructuredRunTaskFn, parseStructuredTaskOutput } from './judge-output-parse';
 import type { JudgeQuestionRow } from './question-contract';
 

@@ -15,6 +15,7 @@
 // Auth is enforced upstream by middleware (x-internal-token); the handlers mirror
 // the sibling notes/learning-items routes (zod, 404 on missing, errorResponse).
 
+import { eq } from 'drizzle-orm';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   InterventionDiagnosticQuestionMetadata,
@@ -31,7 +32,6 @@ import {
   editQuestion,
   hasAnyAssociation,
 } from '@/server/questions/write';
-import { eq } from 'drizzle-orm';
 import { loadCommittedInterventionDiagnosticAttempt } from '../server/intervention-diagnostics';
 import { QuestionParamsSchema, UpdateQuestionBodySchema } from './question-solve-contracts';
 

@@ -1,8 +1,8 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ProviderRequestIdentity,
   type ProviderRequestIdentity as ProviderRequestIdentityT,
 } from '@/core/schema/provider-attempt';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type DirectProviderLifecycleFactory,
   type DirectProviderOperationContext,

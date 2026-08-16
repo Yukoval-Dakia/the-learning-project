@@ -5,12 +5,11 @@
 // self-source exclusion, toolTrace capture order, report_findings capture, and
 // persistToolTrace → tool_call_log (effect 'read', cost 0).
 
-import { event, kc_typed_state, question, tool_call_log } from '@/db/schema';
-import { artifact } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
-import { writeAiProposal } from '@/kernel/proposals/writer';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { artifact, event, kc_typed_state, question, tool_call_log } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import { writeAiProposal } from '@/kernel/proposals/writer';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { writeAgentNote } from '../notes';
 
@@ -45,10 +44,10 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   ),
 }));
 
-import { EVIDENCE_LIMITS, buildEvidenceServer, persistToolTrace } from './evidence-mcp';
 import type { EvidenceServer } from './evidence-mcp';
-import { createFindingsCapture } from './report-findings';
+import { EVIDENCE_LIMITS, buildEvidenceServer, persistToolTrace } from './evidence-mcp';
 import type { FindingsCapture } from './report-findings';
+import { createFindingsCapture } from './report-findings';
 import { EVIDENCE_READ_TOOL_LOCAL_NAMES } from './tool-names';
 
 const NOW = new Date('2026-07-06T00:00:00.000Z');

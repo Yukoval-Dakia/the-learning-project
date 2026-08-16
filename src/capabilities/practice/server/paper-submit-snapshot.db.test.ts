@@ -11,13 +11,13 @@
 // ANTI-TAUTOLOGY (w0-PLAN §6.8): `after` is read from the live mastery_state row
 //   (independent oracle), never trusted from the snapshot payload.
 
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { StateSnapshotExperimental } from '@/core/schema/event/state-snapshot';
 import { artifact, event, mastery_state, question } from '@/db/schema';
 import { getFsrsState } from '@/server/fsrs/state';
 import { getMasteryState } from '@/server/mastery/state';
 import { Review } from '@/server/session';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { submitPaperSlot } from './paper-submit';
 

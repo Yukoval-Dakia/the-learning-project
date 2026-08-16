@@ -1,7 +1,7 @@
+import { z } from 'zod';
 import { causeTaxonomyList } from '@/ai/cause-prompt';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import type { SubjectProfile } from '@/subjects/profile';
-import { z } from 'zod';
 
 export interface VariantGenInput {
   original_question: {

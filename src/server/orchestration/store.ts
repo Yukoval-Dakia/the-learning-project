@@ -3,10 +3,10 @@
 // 控制面调度记录，物理隔离于 event 数据面（立票红线）。所有写显式落每个非平凡列
 // （audit:schema write-path 契约）。
 
+import { and, desc, eq, notInArray } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { dag_orchestration_node, dag_orchestration_run } from '@/db/schema';
-import { and, desc, eq, notInArray } from 'drizzle-orm';
 
 /** db 句柄或事务句柄——需在同一事务里链式调用的写走 Tx。 */
 type DbOrTx = Db | Tx;

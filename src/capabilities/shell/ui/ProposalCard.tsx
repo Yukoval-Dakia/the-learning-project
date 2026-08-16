@@ -6,16 +6,16 @@
 // 裁决在卡内 async（busy per-card），错误经 onError 上抛页级 toast；
 // resolved 留痕 map 由 InboxPage 持有（设计稿同构）。
 
+import { useState } from 'react';
+// Type-only (erased at compile time — does NOT pull react-markdown into the main bundle,
+// the deferred loader still owns the runtime import).
+import type { Components } from 'react-markdown';
 import { isPublicHttpUrl } from '@/core/net/private-host';
 import { DeferredMarkdownRenderer } from '@/ui/lib/deferred-markdown-renderer';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { type SuggestionKind, SuggestionKindTag } from '@/ui/primitives/SuggestionKindTag';
-import { useState } from 'react';
-// Type-only (erased at compile time — does NOT pull react-markdown into the main bundle,
-// the deferred loader still owns the runtime import).
-import type { Components } from 'react-markdown';
 
 import {
   type ProposalDecision,

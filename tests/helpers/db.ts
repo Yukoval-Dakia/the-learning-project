@@ -1,8 +1,8 @@
-import type { Db } from '@/db/client';
-import * as schema from '@/db/schema';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import type { Db } from '@/db/client';
+import * as schema from '@/db/schema';
 
 let _client: ReturnType<typeof postgres> | undefined;
 let _db: Db | undefined;

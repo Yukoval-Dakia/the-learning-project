@@ -7,9 +7,9 @@
 // questionRef/check 墓碑）不可嵌套编辑，整块删除/移动。
 // 保存由宿主（NoteReaderPage）发 PATCH body-blocks 乐观锁。
 
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { NoteBlockView, QuestionPicker } from './NoteBlocks';
 import {

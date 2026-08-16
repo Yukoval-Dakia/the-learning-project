@@ -1,4 +1,7 @@
 // M0 (YUK-313) 单用户 token 门；YUK-624 补齐服务端验证、401 re-gate 与可操作表单。
+
+import { useQueryClient } from '@tanstack/react-query';
+import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import {
   ApiAuthError,
   clearInternalToken,
@@ -8,8 +11,6 @@ import {
   validateInternalToken,
 } from '@/ui/lib/api';
 import { Button } from '@/ui/primitives/Button';
-import { useQueryClient } from '@tanstack/react-query';
-import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 
 type GateState = 'checking' | 'gate' | 'authed';
 

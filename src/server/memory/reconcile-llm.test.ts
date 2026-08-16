@@ -1,8 +1,8 @@
+import { describe, expect, it, vi } from 'vitest';
 import type {
   DirectProviderLifecycleFactory,
   DirectProviderOperationContext,
 } from '@/server/ai/direct-provider-attempt';
-import { describe, expect, it, vi } from 'vitest';
 import {
   type CandidateEntry,
   MERGE_RETRACT_SCORE_FLOOR,

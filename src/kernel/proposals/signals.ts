@@ -1,8 +1,8 @@
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { SuggestionKindT } from '@/core/schema/event/known';
 import type { Db, Tx } from '@/db/client';
 import { event, proposal_signals } from '@/db/schema';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;

@@ -4,9 +4,9 @@
 // filtering; the conf band; strongest-band-wins on duplicate pairs; honest empty;
 // the ⑥ conf-strip invariant (no raw weight/confidence keys nor seeded numbers on the wire).
 
-import { misconception_edge } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { misconception_edge } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { loadConfusablePairs } from './confusables';
 

@@ -25,11 +25,11 @@
 // IN-MEMORY purely to derive the right answer_class — we never rewrite the kind
 // column here. This guarantees on-write and backfill produce identical results.
 
+import type { z } from 'zod';
 import { type QuestionKindT, deriveAnswerClass } from '@/core/schema/answer-class';
 import type { Rubric } from '@/core/schema/business';
 import type { question } from '@/db/schema';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
-import type { z } from 'zod';
 
 type QuestionInsert = typeof question.$inferInsert;
 

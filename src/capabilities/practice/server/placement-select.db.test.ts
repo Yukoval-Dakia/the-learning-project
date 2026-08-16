@@ -8,8 +8,8 @@
 //
 // resetDb() in beforeEach, testDb() handle (mirrors candidate-signals.db.test.ts).
 
-import { knowledge, question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { knowledge, question } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { selectNextPlacementItem } from './placement-select';
 

@@ -15,15 +15,13 @@
 //
 // Mirror tool-use events still flow via mcp-bridge (caller actor is agent).
 
+import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { createId } from '@paralleldrive/cuid2';
+import { z } from 'zod';
 import {
   reviewCopilotLearningContent,
   validateCopilotLearningContent,
 } from '@/capabilities/copilot/server/content-validation';
-import { writeEvent } from '@/kernel/events';
-import type { ValidateLearningContentFn } from '@/kernel/tools/types';
-import { createId } from '@paralleldrive/cuid2';
-import { z } from 'zod';
-
 // YUK-575 (A1) — shared free-form run-input assembler (single execution point for
 // inline + durable copilot runs).
 import {
@@ -73,6 +71,7 @@ import {
 import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 import type { Db, Tx } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
+import { writeEvent } from '@/kernel/events';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   type DomainToolSurface,
@@ -81,6 +80,7 @@ import {
 } from '@/kernel/tools/allowlists';
 import { resolveContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
+import type { ValidateLearningContentFn } from '@/kernel/tools/types';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 // YUK-198 — Tavily remote MCP (web grounding) for the Copilot surface only.
 // Gated on TAVILY_API_KEY: when absent, buildTavilyMcpServer() returns null and
@@ -119,7 +119,6 @@ import { Conversation } from '@/server/session';
 // 散文兜底). Only the free-form CopilotTask token loop loads it; the behavior-pack
 // (teaching/solve/quiz) service-call paths do NOT.
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
-import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { type CopilotDispatchDecision, CopilotDispatchDecisionSchema } from '../contracts';
 
 import {

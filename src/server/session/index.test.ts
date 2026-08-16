@@ -1,8 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-
+import type { LearningSessionTypeT } from '.';
 import * as Session from '.';
 import { Ingestion, Review } from '.';
-import type { LearningSessionTypeT } from '.';
 
 describe('src/server/session index', () => {
   it('re-exports Ingestion namespace with expected transitions', () => {

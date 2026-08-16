@@ -1,6 +1,6 @@
+import { inArray, or, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge, learning_record } from '@/db/schema';
-import { inArray, or, sql } from 'drizzle-orm';
 
 const EXCERPT_MAX = 220;
 
@@ -96,7 +96,7 @@ export function bodyBlockSummaries(bodyBlocks: unknown): string[] {
       attrs && 'title' in attrs && typeof attrs.title === 'string' ? attrs.title : undefined;
     const content = 'content' in block && Array.isArray(block.content) ? block.content : [];
     const text = JSON.stringify(content)
-      .replace(/[{}\[\]",:]/g, ' ')
+      .replace(/[{}[\]",:]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
     return `${semanticKind ?? type ?? 'block'}: ${excerpt(title ?? text, 120)}`;

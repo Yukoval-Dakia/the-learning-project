@@ -8,9 +8,8 @@
 // and reversible (ADR-0025). Any failure is swallowed + logged so a transient
 // LLM outage never breaks the goal-create entry point.
 
-import { newId } from '@/core/ids';
-
 import { loadTreeSnapshot } from '@/capabilities/knowledge/public';
+import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
@@ -22,10 +21,10 @@ import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { parseGoalScopeOutput } from '../../tasks/goal-scope';
 import { type TaskTextRunFn, writeRetryableAiFailureLedger } from '../ai-runtime';
 
+export type { GoalScopeOutput } from '../../tasks/goal-scope';
 // YUK-879 — the GoalScope output contract is owned by the agency TaskSpec
 // module; re-exported here for the existing db-test import surface.
 export { GoalScopeOutputSchema, parseGoalScopeOutput } from '../../tasks/goal-scope';
-export type { GoalScopeOutput } from '../../tasks/goal-scope';
 
 export interface RunGoalScopeAndWriteParams {
   db: Db;

@@ -13,8 +13,8 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MeshGraph } from './MeshGraph';
 import type { KnowledgeEdgeRow, KnowledgeTreeNode } from './knowledge-api';
+import { MeshGraph } from './MeshGraph';
 import { masteryTone } from './mastery-tone';
 
 // Wrap masteryTone in a spy while keeping its real implementation — the count is a

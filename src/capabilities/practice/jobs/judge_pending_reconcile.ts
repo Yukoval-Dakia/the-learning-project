@@ -25,9 +25,9 @@
 //                out ahead of observed DLQ traffic).
 // Nothing is ever lost by hitting a bound — the answer is immutable evidence either way.
 
+import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { writeJobEvent } from '@/server/events/writer';
-import type { Job } from 'pg-boss';
 import {
   JUDGE_MAX_RECOVERY_ATTEMPTS,
   JUDGE_RECOVERY_MAX_AGE_MS,

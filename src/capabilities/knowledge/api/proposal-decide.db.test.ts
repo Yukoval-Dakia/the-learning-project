@@ -1,9 +1,9 @@
 // Phase 1c.1 Step 9.I — proposals/[id]/route.test rewritten for event-based proposals.
 
-import { LegacyKnowledgeProposalDecisionResponseSchema } from '@/capabilities/knowledge/api/contracts';
-import { event, knowledge } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { LegacyKnowledgeProposalDecisionResponseSchema } from '@/capabilities/knowledge/api/contracts';
+import { event, knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './proposal-decide';
 

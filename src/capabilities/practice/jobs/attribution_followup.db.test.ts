@@ -1,12 +1,11 @@
 // Task #16 — attribution_followup handler tests.
 
-import { event, knowledge, question } from '@/db/schema';
-import { cost_ledger } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { cost_ledger, event, knowledge, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   type AttributionFollowupJobData,

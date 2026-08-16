@@ -1,6 +1,6 @@
-import { getServerEnv } from '@/server/env';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import { getServerEnv } from '@/server/env';
 import * as schema from './schema';
 
 // Fail fast on missing DATABASE_URL. Empty-string fallback (`?? ''`) would let the

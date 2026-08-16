@@ -1,6 +1,6 @@
-import type { DomainTool } from '@/kernel/tools/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import type { DomainTool } from '@/kernel/tools/types';
 import { __resetRegistryForTests, getTool, listTools, registerTool } from './registry';
 
 function makeReadTool(name: string): DomainTool<{ q: string }, { hits: number }> {

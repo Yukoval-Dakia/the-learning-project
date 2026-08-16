@@ -4,6 +4,8 @@
 // 25（deep-equal no-op）26（外国种子 COW：custom 借 general 种子编辑 → 自动
 // fork，来源血统不动）。
 
+import { count, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   subject,
   subject_control_journal,
@@ -12,8 +14,6 @@ import {
   subject_trait_journal,
 } from '@/db/schema';
 import { isGeneralFallbackFor } from '@/server/subjects/resolution-cache';
-import { count, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { hydrateSubjectRegistryFromDb } from './hydrate';
 import { reconcileBuiltinTraits } from './reconcile-builtin-traits';

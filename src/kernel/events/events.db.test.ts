@@ -4,11 +4,11 @@
 // must funnel through this module. Tests seed `event` table directly with
 // hand-built KnownEvent-shaped rows; no Step 3 migration in test fixtures.
 
+import { eq, inArray } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { deterministicId, newId } from '@/core/ids';
 import type { EventT } from '@/core/schema/event';
 import { event } from '@/db/schema';
-import { eq, inArray } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { getEventById, getEventChain, getEvents, writeEvent, writeEvents } from './index';
 

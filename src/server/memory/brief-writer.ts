@@ -19,7 +19,9 @@ import { z } from 'zod';
 // YUK-879 — the MemoryBriefTask writer-side output contract moved to the agency
 // TaskSpec module; consume it through the agency public entrypoint.
 import { BriefDraftOutputSchema, parseBriefDraftOutput } from '@/capabilities/agency/public';
+
 export { BriefDraftOutputSchema, parseBriefDraftOutput };
+
 import type { Db } from '@/db/client';
 import { KNOWLEDGE_EXCERPT_MAX } from '@/kernel/tools/budgets'; // I-3 — payload excerpt cap
 import type { TaskTextRunFn } from '@/server/ai/provenance';

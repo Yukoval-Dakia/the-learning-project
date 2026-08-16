@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import { loadLatestTrustedInterventionDiagnosticVerdict } from '@/capabilities/practice/public';
 import { JudgeOnEvent, ReviewOnQuestion } from '@/core/schema/event/known';
 import { InterventionDiagnosticQuestionMetadata } from '@/core/schema/intervention';
@@ -9,7 +10,6 @@ import type {
   EventSubscriptionHandlerFactory,
   EventSubscriptionOutcome,
 } from '@/kernel/manifest';
-import { eq } from 'drizzle-orm';
 import { recordInterventionDiagnosticReview } from './store';
 
 export async function handleInterventionDiagnosticJudgeDelivery(

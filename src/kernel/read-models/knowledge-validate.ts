@@ -1,6 +1,6 @@
+import { and, inArray, isNull } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
-import { and, inArray, isNull } from 'drizzle-orm';
 
 export async function assertKnowledgeIdsExist(
   db: Db,

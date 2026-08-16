@@ -7,10 +7,10 @@
 // auto_enroll_observation and is absent for a plain block. The seeded VALUES are
 // asserted in the pure-fn test (auto-enroll.test.ts), not here.
 
-import type { AutoEnrollObservation } from '@/ui/lib/auto-enroll';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToString } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AutoEnrollObservation } from '@/ui/lib/auto-enroll';
 import {
   BlockEditor,
   type BlockRow,

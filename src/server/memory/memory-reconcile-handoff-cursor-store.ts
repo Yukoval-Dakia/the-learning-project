@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { and, desc, eq, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { and, desc, eq, sql } from 'drizzle-orm';
-import { z } from 'zod';
 import {
   MEMORY_RECONCILE_HANDOFF_ACTION,
   MemoryReconcileHandoffError,

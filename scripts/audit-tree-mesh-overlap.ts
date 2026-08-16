@@ -6,9 +6,8 @@ import './load-env';
 
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-import type { Db, Tx } from '@/db/client';
 import { sql } from 'drizzle-orm';
+import type { Db, Tx } from '@/db/client';
 
 type DbLike = Db | Tx;
 

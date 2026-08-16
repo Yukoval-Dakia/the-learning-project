@@ -27,13 +27,13 @@
 // STILL a safety-net, NOT a merge path: it only repairs the residual DRIFT the accept-time repair could
 // not close, using the accept path's own repair mechanics. It never merges/archives a KC itself.
 
+import { eq } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { eq } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
 import {
   countOrphanSurfaces,
   groupResolvedChains,

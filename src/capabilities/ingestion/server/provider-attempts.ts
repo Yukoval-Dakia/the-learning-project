@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import {
@@ -10,7 +11,6 @@ import {
   providerOperationIdForInvocation,
   resolveProviderAttemptAdmission,
 } from '@/server/ai/provider-attempt-runtime';
-import { sql } from 'drizzle-orm';
 
 export { ProviderAttemptLifecycleError };
 

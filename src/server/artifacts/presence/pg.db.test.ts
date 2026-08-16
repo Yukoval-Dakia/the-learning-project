@@ -10,9 +10,9 @@
 // artifact_edit_session 有 FK → artifact，故每个用到的 artifact 必须先 seed。
 // persistNoteRefineApply 被 mock（apply 副作用与 presence 判定解耦）。
 
-import type { NotePatchT } from '@/core/schema/note-patch';
 import { sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NotePatchT } from '@/core/schema/note-patch';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
