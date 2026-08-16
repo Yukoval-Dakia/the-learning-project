@@ -4,7 +4,8 @@ import {
   COPILOT_EVIDENCE_SUBMISSION_TOOLS,
 } from '@/core/copilot-evidence';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import type { SdkMcpServer, ToolExecutionResultObservation } from '@/server/ai/tools/mcp-bridge';
+import type { ProposalEffectContract, ToolExecutionResultObservation } from '@/kernel/tools/types';
+import type { SdkMcpServer } from '@/server/ai/tools/mcp-bridge';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { CopilotEvidenceReviewOutput, CopilotEvidenceVerificationOutput } from '../contracts';
@@ -179,6 +180,7 @@ export interface CopilotEvidenceModelTraceCall {
   output?: unknown;
   executed?: boolean;
   error_reason?: string | null;
+  proposal_effect_contract?: ProposalEffectContract;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -348,6 +350,9 @@ export function projectCopilotEvidenceModelTrace(
         status: 'unusable' as const,
         executed: observation.executed,
         error_reason: observation.error_reason,
+        ...(observation.proposal_effect_contract
+          ? { proposal_effect_contract: observation.proposal_effect_contract }
+          : {}),
       };
     }
     return {

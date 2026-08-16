@@ -190,6 +190,161 @@ describe('buildMcpServerFromRegistry', () => {
     ]);
   });
 
+  it('binds proposal calls to a server-owned FULL owner gate instead of model prose', async () => {
+    registerTool({
+      name: 'demo_proposal',
+      description: 'Propose a scoped change.',
+      effect: 'propose',
+      inputSchema: z.object({ target_id: z.string() }),
+      outputSchema: z.object({ status: z.literal('proposed') }),
+      costClass: 'local',
+      async execute() {
+        return { status: 'proposed' as const };
+      },
+      summarize() {
+        return 'proposal recorded';
+      },
+      mirrorEvent: 'when_causal',
+    });
+
+    buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['demo_proposal'] });
+
+    const result = (await mockAgentSdk.toolDefs[0]?.handler({ target_id: 'node_b' })) as {
+      content: Array<{ type: string; text: string }>;
+    };
+    const parsed = JSON.parse(result.content[0]?.text ?? '') as Record<string, unknown>;
+
+    expect(parsed.proposal_effect_contract).toEqual({
+      owner_gate: 'FULL',
+      direct_write: false,
+      rollback: 'dismiss_before_accept',
+    });
+  });
+
+  it('declares the retained draft write for seeded author_question calls', async () => {
+    registerTool({
+      name: 'author_question',
+      description: 'Author a seeded draft question.',
+      effect: 'propose',
+      inputSchema: z.object({
+        seed_mode: z.literal('knowledge'),
+        knowledge_ids: z.array(z.string()),
+      }),
+      outputSchema: z.object({
+        status: z.enum(['proposed', 'failed']),
+        question_ids: z.array(z.string()).optional(),
+      }),
+      costClass: 'local',
+      async execute(_ctx, input) {
+        return input.knowledge_ids.includes('kc_missing')
+          ? { status: 'failed' as const }
+          : { status: 'proposed' as const, question_ids: ['q_draft'] };
+      },
+      summarize() {
+        return 'draft question recorded';
+      },
+      mirrorEvent: 'when_causal',
+    });
+
+    buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['author_question'] });
+
+    const result = (await mockAgentSdk.toolDefs[0]?.handler({
+      seed_mode: 'knowledge',
+      knowledge_ids: ['kc_seed'],
+    })) as { content: Array<{ type: string; text: string }> };
+    const parsed = JSON.parse(result.content[0]?.text ?? '') as Record<string, unknown>;
+
+    expect(parsed.proposal_effect_contract).toEqual({
+      owner_gate: 'FULL',
+      direct_write: false,
+      rollback: 'dismiss_before_accept',
+      retained_draft: {
+        kind: 'question',
+        written_before_accept: true,
+        reversible: false,
+        retained_after_dismiss: true,
+      },
+    });
+
+    const failedResult = (await mockAgentSdk.toolDefs[0]?.handler({
+      seed_mode: 'knowledge',
+      knowledge_ids: ['kc_missing'],
+    })) as { content: Array<{ type: string; text: string }> };
+    const failedParsed = JSON.parse(failedResult.content[0]?.text ?? '') as Record<string, unknown>;
+
+    expect(failedParsed.proposal_effect_contract).toEqual({
+      owner_gate: 'FULL',
+      direct_write: false,
+      rollback: 'dismiss_before_accept',
+    });
+  });
+
+  it.each([
+    ['propose_variant', 'generated'],
+    ['author_question', 'proposed'],
+  ] as const)(
+    'declares retained mistake_variant drafts only after successful %s output',
+    async (name, successStatus) => {
+      registerTool({
+        name,
+        description: 'Propose a retained variant draft.',
+        effect: 'propose',
+        inputSchema: z.object({
+          attempt_event_id: z.string(),
+          seed_mode: z.literal('variant').optional(),
+          fail: z.boolean(),
+        }),
+        outputSchema: z.object({
+          status: z.enum(['generated', 'proposed', 'failed']),
+          mistake_variant_ids: z.array(z.string()),
+        }),
+        costClass: 'local',
+        async execute(_ctx, input) {
+          return input.fail
+            ? { status: 'failed' as const, mistake_variant_ids: [] }
+            : { status: successStatus, mistake_variant_ids: ['mv_draft'] };
+        },
+        summarize() {
+          return 'variant draft recorded';
+        },
+        mirrorEvent: 'when_causal',
+      });
+
+      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: [name] });
+      const handler = mockAgentSdk.toolDefs[0]?.handler;
+      const baseInput = {
+        attempt_event_id: 'evt_failure',
+        ...(name === 'author_question' ? { seed_mode: 'variant' as const } : {}),
+      };
+
+      const success = (await handler?.({ ...baseInput, fail: false })) as {
+        content: Array<{ type: string; text: string }>;
+      };
+      const successPayload = JSON.parse(success.content[0]?.text ?? '') as Record<string, unknown>;
+      expect(successPayload.proposal_effect_contract).toEqual({
+        owner_gate: 'FULL',
+        direct_write: false,
+        rollback: 'dismiss_before_accept',
+        retained_draft: {
+          kind: 'mistake_variant',
+          written_before_accept: true,
+          reversible: false,
+          retained_after_dismiss: true,
+        },
+      });
+
+      const failed = (await handler?.({ ...baseInput, fail: true })) as {
+        content: Array<{ type: string; text: string }>;
+      };
+      const failedPayload = JSON.parse(failed.content[0]?.text ?? '') as Record<string, unknown>;
+      expect(failedPayload.proposal_effect_contract).toEqual({
+        owner_gate: 'FULL',
+        direct_write: false,
+        rollback: 'dismiss_before_accept',
+      });
+    },
+  );
+
   it('lets callers block execution before a DomainTool runs', async () => {
     const runFn = vi.fn((i: { q: string }) => ({ len: i.q.length }));
     const beforeExecute = vi.fn(() => 'quota exceeded');

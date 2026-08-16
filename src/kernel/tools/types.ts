@@ -15,6 +15,31 @@ import type { z } from 'zod';
 
 export type ToolEffect = 'read' | 'propose' | 'write';
 
+export interface ProposalEffectContract {
+  readonly owner_gate: 'FULL';
+  readonly direct_write: false;
+  readonly rollback: 'dismiss_before_accept';
+  readonly retained_draft?: {
+    readonly kind: 'question' | 'mistake_variant';
+    readonly written_before_accept: true;
+    readonly reversible: false;
+    readonly retained_after_dismiss: true;
+  };
+}
+
+export interface ToolExecutionGateInput {
+  readonly name: string;
+  readonly effect: ToolEffect;
+}
+
+export interface ToolExecutionResultObservation extends ToolExecutionGateInput {
+  readonly input: unknown;
+  readonly output: unknown;
+  readonly error_reason: string | null;
+  readonly executed: boolean;
+  readonly proposal_effect_contract?: ProposalEffectContract;
+}
+
 /**
  * mirrorEvent policy — when the bridge (Lane C+D) should write an
  * `event(action='tool_use')` row for this tool's invocation (promoted
