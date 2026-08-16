@@ -17,6 +17,8 @@ const AGENCY_TOOL_NAMES = [
   'propose_learning_item_relearn',
   'propose_learning_item_defer',
   'propose_learning_item_archive',
+  'read_agent_notes',
+  'write_agent_note',
 ] as const;
 
 const AGENCY_TOOL_CONTRACT_HASHES = {
@@ -26,6 +28,8 @@ const AGENCY_TOOL_CONTRACT_HASHES = {
   propose_learning_item_relearn: '810d7684325138b1309c7952db3c8cf9a29f59bb882e02cfd12d5fdcb38eaadd',
   propose_learning_item_defer: 'd2264b4eb707e7501beb6846766e1de2e8ac7489d4536c3ed14f7817efc2b616',
   propose_learning_item_archive: '82242132dbd7bbf38c06a97203837bb6e06f024e4f8ff097bf0543c3777861f3',
+  read_agent_notes: 'a9bf8abb6ee481df3f64600bfdd80c314367d6f3f5e9521463f4cce975b09d21',
+  write_agent_note: '42f8e63a8f140b28a4dd67b46d7ef1c455f9cdca88ed9d39d166c2a30fca19ea',
 } as const;
 
 const AGENCY_TOOL_EXPOSURES = {
@@ -62,6 +66,8 @@ const AGENCY_TOOL_EXPOSURES = {
     'coach',
     'maintenance',
   ],
+  read_agent_notes: ['copilot', 'copilot_user_suggested_mistake_action', 'dreaming', 'coach'],
+  write_agent_note: ['copilot', 'copilot_user_suggested_mistake_action', 'dreaming', 'coach'],
 } as const;
 
 function source(path: string): string {

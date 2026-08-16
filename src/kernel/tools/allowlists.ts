@@ -37,6 +37,9 @@ export const READ_TOOLS = [
   'get_question_block_structure',
   // YUK-756 — generation-only dispatcher for explicitly invocable registry tasks.
   'run_task',
+  // YUK-293 — expiring AI-to-AI hints. Granted only to copilot / dreaming /
+  // coach below; evaluator and operator surfaces filter it out.
+  'read_agent_notes',
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
@@ -82,6 +85,9 @@ export const PROPOSE_WRITE_TOOLS = [
   // user-driven — editing pooled questions in-conversation is a copilot
   // capability).
   'propose_question_edit',
+  // YUK-293 — direct write to the expiring AI hint channel (not learner data,
+  // not an inbox proposal). Surface grants remain narrow below.
+  'write_agent_note',
 ] as const;
 
 export type ReadDomainToolName = (typeof READ_TOOLS)[number];
@@ -183,6 +189,8 @@ export const COPILOT_TOOLS = [
   // surface inherits via the [...COPILOT_TOOLS, …] spread). No other surface gets
   // it — operator/planner surfaces do not edit active question structure.
   'propose_question_edit',
+  'read_agent_notes',
+  'write_agent_note',
 ] as const satisfies readonly DomainToolName[];
 
 const DREAMING_TOOLS = [
@@ -198,6 +206,8 @@ const DREAMING_TOOLS = [
   'propose_record_promotion',
   // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
   'search_memory_facts',
+  'read_agent_notes',
+  'write_agent_note',
 ] as const satisfies readonly DomainToolName[];
 
 // T-D6/C (YUK-120) — Coach surface allowlist.
@@ -227,6 +237,8 @@ const COACH_TOOLS = [
   'propose_knowledge_edge',
   // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
   'search_memory_facts',
+  'read_agent_notes',
+  'write_agent_note',
 ] as const satisfies readonly DomainToolName[];
 
 // D7③ (docs/design/2026-06-04-u0-decisions.md) — deny-from-wide: the
@@ -248,12 +260,17 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     name,
   ): name is Exclude<
     ReadDomainToolName,
-    'search_memory_facts' | 'query_questions' | 'get_question_block_structure' | 'run_task'
+    | 'search_memory_facts'
+    | 'query_questions'
+    | 'get_question_block_structure'
+    | 'run_task'
+    | 'read_agent_notes'
   > =>
     name !== 'search_memory_facts' &&
     name !== 'query_questions' &&
     name !== 'get_question_block_structure' &&
-    name !== 'run_task',
+    name !== 'run_task' &&
+    name !== 'read_agent_notes',
 );
 
 const MAINTENANCE_TOOLS = [
