@@ -19,7 +19,6 @@ import { getServerEnv } from '@/server/env';
 // node-postgres (`pg.Pool`, pg-boss/dist/db.js), so a duplicate-key surfaces as
 // a raw `pg` error with `.code === '23505'` directly on the thrown object.
 const PG_UNIQUE_VIOLATION = '23505';
-const env = getServerEnv();
 
 /**
  * True when `err` is a benign pg-boss queue create race — a Postgres 23505
@@ -71,12 +70,13 @@ const bossState: BossState = globalForBoss.__loomBossState ?? {
   startPromise: null,
   started: null,
 };
-if (env.NODE_ENV !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   globalForBoss.__loomBossState = bossState;
 }
 
 export function createBoss(): PgBoss {
   if (bossState.instance) return bossState.instance;
+  const env = getServerEnv();
   const connectionString = env.DATABASE_URL;
   // Under vitest, cap the internal connection pool aggressively. Multiple test
   // files re-create the singleton via _resetBossForTests; pg-boss's default
