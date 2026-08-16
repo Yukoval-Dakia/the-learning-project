@@ -3,7 +3,6 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
-import { zodToJsonSchema } from 'zod-to-json-schema';
 
 import { tasks } from '@/ai/registry';
 import { capabilities } from '@/capabilities';
@@ -15,13 +14,14 @@ import {
   READ_TOOLS,
 } from '@/kernel/tools/allowlists';
 import type { DomainTool } from '@/kernel/tools/types';
+import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
 
 const COPILOT_OWNED_TOOL_NAMES = ['run_task', 'query_events', 'search_memory_facts'] as const;
 
 const OWNED_TOOL_CONTRACT_HASHES = {
-  run_task: 'ab12bd0b469e60700f3f36f781d6991346827e0c904f58b865c8fc2bfe4109b5',
-  query_events: '4f11afcf9a6cbd3cc8fa79b9672c6c74f5777c2fba2661a8e996163a459d2147',
-  search_memory_facts: '0ec598c94ba270f20b2ec935e5cdc1efed19883705b8d0f04d28934508b14da1',
+  run_task: '45ead7c822776b00fa3051859f556870cc4525359471928c5fa0e47fd84827ed',
+  query_events: 'f3098863057a3ca16c3180c594c634e2f09bde171af1884ed125740359429587',
+  search_memory_facts: '44cc3f998658c5568711443e9e17c44135055493a39ac9971e0353dd51d9f929',
 } as const;
 
 const OWNED_TOOL_EXPOSURES = {
@@ -53,8 +53,16 @@ function contractFingerprint(tool: DomainTool<unknown, unknown>): string {
     effect: tool.effect,
     costClass: tool.costClass,
     mirrorEvent: tool.mirrorEvent,
-    inputSchema: zodToJsonSchema(tool.inputSchema),
-    outputSchema: zodToJsonSchema(tool.outputSchema),
+    inputSchema: zodToJsonSchemaCompat(tool.inputSchema, {
+      target: 'draft-07',
+      io: 'input',
+      reused: 'inline',
+    }),
+    outputSchema: zodToJsonSchemaCompat(tool.outputSchema, {
+      target: 'draft-07',
+      io: 'input',
+      reused: 'inline',
+    }),
   };
   return createHash('sha256').update(JSON.stringify(contract)).digest('hex');
 }

@@ -40,7 +40,7 @@ const CopilotLearningContentSchema = z.object({
         prompt_md: z.string().min(1).max(6_000),
         reference_md: z.string().max(12_000).nullable(),
         choices_md: z.array(z.string().min(1).max(2_000)).max(12).nullable(),
-        rubric_json: z.unknown(),
+        rubric_json: z.unknown().optional(),
         knowledge_ids: z.array(z.string().min(1).max(120)).max(50).nullable().optional(),
       }),
     )
