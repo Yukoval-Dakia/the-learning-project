@@ -47,7 +47,10 @@ export const ImportBlock = z
     // column — subject is a derived view), so the unified `tagKnowledge` cannot resolve a PROPOSE
     // parent / D1 subject filter for an empty array. Imported blocks stay ids-required; auto-tagging
     // import is a YUK-489 follow-up that needs a request-level subject signal first.
-    knowledge_ids: z.array(z.string().min(1)).min(1).max(MAX_KNOWLEDGE_IDS),
+    knowledge_ids: z
+      .array(z.string().min(1))
+      .min(1, 'Array must contain at least 1 element(s)')
+      .max(MAX_KNOWLEDGE_IDS),
     cause: z
       .object({
         primary_category: CauseCategory,
