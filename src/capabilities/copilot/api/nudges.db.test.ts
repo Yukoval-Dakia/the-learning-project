@@ -1,9 +1,9 @@
-import { newId } from '@/core/ids';
-import { event, learning_session } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 // YUK-577 — nudge routes: GET filters (shadow/expired/consumed/backstop) + dismiss/opened. design §3.5/§3.6.
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { newId } from '@/core/ids';
+import { event, learning_session } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { NUDGE_ACTION } from '../server/nudge-triggers';
 import { CopilotNudgeCompanionResponseSchema, CopilotNudgesResponseSchema } from './contracts';

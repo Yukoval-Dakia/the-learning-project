@@ -1,5 +1,5 @@
-import { event } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { event } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { EventDetailResponseSchema } from './event-contracts';
 import { GET } from './event-detail';

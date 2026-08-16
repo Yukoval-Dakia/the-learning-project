@@ -4,9 +4,9 @@
 // (mirrors multimodal-direct-judge.test.ts). A throwaway Db cast suffices — the runner
 // only forwards db to the stubs. No real R2 / model / DB is touched.
 
+import { describe, expect, it } from 'vitest';
 import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { describe, expect, it } from 'vitest';
 import { parseSourceGroundingResult, runSourceGroundingVerify } from './source-grounding-verify';
 
 const mockDb = {} as Db;

@@ -10,6 +10,7 @@
 //   MF1：aggregateSupplyActivity —— lastActivity/lastStatus 取最新任意 status；inCooldown/
 //     cooldownUntil 只从最近 status='dispatched' 算（无 dispatched → false/null）。
 
+import { describe, expect, it } from 'vitest';
 import type {
   DifficultyBand,
   FrontierKnowledgeInput,
@@ -18,7 +19,6 @@ import type {
   ScanInput,
   SupplyGapKind,
 } from '@/capabilities/practice/public';
-import { describe, expect, it } from 'vitest';
 import {
   type LatticeConstants,
   type SupplyActivityEvent,

@@ -1,8 +1,8 @@
+import { z } from 'zod';
 import {
   mergeQuestions,
   reassignFigure,
 } from '@/capabilities/ingestion/server/block-structured-edit';
-import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';
 
 const MergeQuestionsInputSchema = z.object({

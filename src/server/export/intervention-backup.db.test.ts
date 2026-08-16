@@ -1,6 +1,6 @@
-import { event, intervention } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { event, intervention } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { memR2 } from '../../../tests/helpers/r2';
 import { buildBackupArchive, restoreFromArchive } from './archive';

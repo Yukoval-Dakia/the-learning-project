@@ -1,10 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-import { source_asset } from '@/db/schema';
 import { inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { source_asset } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
 import { PdfExpansionResponseSchema } from './contracts';

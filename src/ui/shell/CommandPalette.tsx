@@ -13,11 +13,11 @@
 // 本组件不 import 任何路由库。.cmdk-* 样式由 globals.css（§App shell 端口，
 // palette.css L9-74）就位。
 
+import { useQuery } from '@tanstack/react-query';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { type KnowledgeTreeNode, getTree } from '@/capabilities/knowledge/ui-public';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
-import { useQuery } from '@tanstack/react-query';
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { COMMAND_PALETTE_PLACEHOLDER, SEARCH_PAGE_ITEMS } from './nav-config';
 
 export interface CommandPaletteProps {

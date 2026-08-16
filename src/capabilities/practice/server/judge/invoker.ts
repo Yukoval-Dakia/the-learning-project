@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { type Provider, type TaskKind, tasks } from '@/ai/registry';
 import { isAiTaskKind } from '@/ai/task-prompts';
 import { getDefaultRegistry } from '@/core/capability/judges';
@@ -18,7 +19,6 @@ import {
   isProviderImplemented,
 } from '@/server/ai/providers';
 import { SubjectProfileSchema } from '@/subjects/profile';
-import { z } from 'zod';
 import type { JudgeKind } from '.';
 // F0 (PR #309 round-3) — resolver now lives in the dependency-light leaf.
 import { persistJudgeRunDigests } from './execution-provenance-resolve';

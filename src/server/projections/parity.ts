@@ -30,6 +30,7 @@
 // null live row + null fold both pass (a node/edge the fold says should not exist and the live
 // path did not write is parity-OK).
 
+import { and, eq, inArray, or } from 'drizzle-orm';
 import type {
   ArtifactRowSnapshotT,
   GoalRowSnapshotT,
@@ -41,7 +42,6 @@ import type {
 } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { event, materialized_id_index } from '@/db/schema';
-import { and, eq, inArray, or } from 'drizzle-orm';
 import {
   gatherAndFoldArtifact,
   gatherAndFoldGoal,

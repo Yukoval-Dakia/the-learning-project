@@ -31,6 +31,7 @@
 // The LLM naming call (PROPOSE path) runs OUTSIDE any DB transaction (design §3 — never a
 // model call inside a DB tx). The only DB writes are applyProposeNew + the audit event.
 
+import { eq } from 'drizzle-orm';
 import {
   ColdStartBridgeError,
   type ColdStartBridgeRunTaskFn,
@@ -53,7 +54,6 @@ import { assertKnowledgeNodeParity, knowledgeLiveRowToSnapshot } from '@/server/
 // YUK-471 W1 PR-B — the SoT-flip gate (default OFF; projection writes the row when ON).
 import { projectionIsWriter } from '@/server/projections/sot-flag';
 import { getDefaultSubjectRegistry, getKnownSubjects } from '@/subjects/profile';
-import { eq } from 'drizzle-orm';
 import { type KnowledgeSimilarityCandidate, matchKnowledgeBySimilarity } from './match-similarity';
 import { applyProposeNew } from './proposals';
 import { MATCH_THRESHOLD } from './tagging-flags';

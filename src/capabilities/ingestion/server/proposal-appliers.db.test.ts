@@ -3,6 +3,9 @@
 // 测试继续从公共 API（acceptAiProposal / dismissAiProposal）进入，以覆盖
 // 「壳路由 → 包 applier」整条链。
 
+import { createId } from '@paralleldrive/cuid2';
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
 import { selectNextPlacementItem } from '@/capabilities/practice/server/placement-select';
 import { deriveSourceTier } from '@/core/schema/provenance';
@@ -19,9 +22,6 @@ import {
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
-import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../../tests/helpers/proposal-lifecycle';
 import type {

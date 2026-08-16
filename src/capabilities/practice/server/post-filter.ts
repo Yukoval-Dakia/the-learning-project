@@ -50,11 +50,7 @@ export function learningMixContextFromInputs(
   frontierSelectedCount = inputs.frontierItems?.length ?? 0,
 ): LearningMixContext {
   const repetitionByRef = new Map<string, RepetitionIdentity>();
-  const add = (item: {
-    questionId: string;
-    knowledgeId?: string;
-    questionKind?: string;
-  }) => {
+  const add = (item: { questionId: string; knowledgeId?: string; questionKind?: string }) => {
     // Composer membership is first-wins in this same source order. Keep the identity attached
     // to the retained item instead of letting a later duplicate source overwrite it.
     if (repetitionByRef.has(item.questionId)) return;

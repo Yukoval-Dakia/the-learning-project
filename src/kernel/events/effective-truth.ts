@@ -1,6 +1,6 @@
+import { inArray } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { inArray } from 'drizzle-orm';
 import {
   type CorrectionStatus,
   activeCorrectionStatus,

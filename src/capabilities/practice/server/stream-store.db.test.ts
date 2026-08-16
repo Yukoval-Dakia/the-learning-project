@@ -4,6 +4,9 @@
 // LLM **永不命中 live endpoint**——全程注入 mock runTaskFn（composeDeps.runTaskFn）。
 // 增量重排走纯统计 sampler（不调 LLM），rng 注入 seeded 确定化 Poisson 抽样。
 
+import { createId } from '@paralleldrive/cuid2';
+import { and, asc, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import {
   artifact,
@@ -20,9 +23,6 @@ import {
   question,
   selection_observation,
 } from '@/db/schema';
-import { createId } from '@paralleldrive/cuid2';
-import { and, asc, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { composeSoftmaxStream } from './softmax-selection';
 import {

@@ -7,12 +7,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { and, eq, inArray, isNull, lte, sql } from 'drizzle-orm';
-
+import { z } from 'zod';
 import type { NoteVerificationResultT } from '@/core/schema/business';
 import { NoteVerificationResult } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { artifact, note_verification_claim } from '@/db/schema';
-import { z } from 'zod';
 
 import { NOTE_ARTIFACT_TYPES, isNoteArtifactType } from './note-artifact-types';
 import { emitNoteVerificationLifecycleEvent } from './note-verification-lifecycle';

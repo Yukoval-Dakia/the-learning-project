@@ -1,11 +1,11 @@
+import { createId } from '@paralleldrive/cuid2';
+import { eq } from 'drizzle-orm';
 import { REJUDGE_SINGLETON_SECONDS } from '@/capabilities/practice/jobs/rejudge-config';
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/http';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
-import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
 import { getPracticeBoss } from '../server/queue-runtime';
 import { CreateAppealBodySchema } from './contracts';
 

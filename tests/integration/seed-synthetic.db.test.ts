@@ -9,13 +9,13 @@
 // `*.db.test.ts` under tests/** lands in the db partition (allTestInclude minus
 // fastTestInclude); it imports the testDb helper, so it must NOT be a unit test.
 
+import { eq, like, sql } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { event, knowledge, material_fsrs_state, proposal_signals, question } from '@/db/schema';
 import { resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
 import { getProposalAcceptanceRates } from '@/kernel/proposals/signals';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
 import { listActiveSubjectsSinceRefresh } from '@/server/memory/active-subjects';
-import { eq, like, sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import {
   L2_DISMISS_RELATION,
   printReport,

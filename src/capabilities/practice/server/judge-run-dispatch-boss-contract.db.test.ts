@@ -15,9 +15,9 @@
 //      existence — otherwise the sweeper would treat every finished-or-dead run as alive and
 //      recover nothing at all.
 
-import { newId } from '@/core/ids';
 import { PgBoss } from 'pg-boss';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { newId } from '@/core/ids';
 import { judgeRunJobId } from './judge-run-dispatch';
 
 /** Isolated schema so this never touches the app's `pgboss` singleton or a parallel fork. */

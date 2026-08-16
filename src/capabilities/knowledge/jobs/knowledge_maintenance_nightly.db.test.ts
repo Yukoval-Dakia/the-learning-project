@@ -1,12 +1,11 @@
 import { createId } from '@paralleldrive/cuid2';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-
 import { type WriteProposalResult, runWriteProposal } from '@/capabilities/knowledge/server/review';
 import { db } from '@/db/client';
 import { knowledge, proposal_signals } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { dismissAiProposal } from '@/server/proposals/actions';
-import { eq } from 'drizzle-orm';
 import { resetDb } from '../../../../tests/helpers/db';
 import { runKnowledgeMaintenanceNightly } from './knowledge_maintenance_nightly';
 

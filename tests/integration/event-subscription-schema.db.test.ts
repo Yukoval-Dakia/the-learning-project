@@ -1,6 +1,6 @@
-import { event, event_subscription_checkpoint, event_subscription_delivery } from '@/db/schema';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { event, event_subscription_checkpoint, event_subscription_delivery } from '@/db/schema';
 import { resetDb, testDb } from '../helpers/db';
 
 const EVENT_VALUES = {

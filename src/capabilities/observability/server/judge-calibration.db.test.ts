@@ -4,9 +4,10 @@
 // insufficient_data gating (S4), same_lane_suspected exclusion from the
 // headline (MF5), run-summary health surface (复核吸收 3), zero-sample safety,
 // and the two honesty notes.
-import { event } from '@/db/schema';
+
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { event } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { JudgeCalibrationResponseSchema } from '../api/diagnostic-contracts';
 import { JUDGE_CALIBRATION_MIN_N, loadJudgeCalibrationStats } from './judge-calibration';

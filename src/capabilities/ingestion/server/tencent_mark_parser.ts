@@ -1,6 +1,6 @@
+import { createId } from '@paralleldrive/cuid2';
 import { clampBBox } from '@/core/schema/bbox-utils';
 import type { BBoxT, StructuredQuestionT } from '@/core/schema/structured_question';
-import { createId } from '@paralleldrive/cuid2';
 
 // DUAL-ENGINE (YUK-253): GLM-OCR is the default extraction engine; this
 // Tencent parser is RETAINED PERMANENTLY as the `EXTRACT_OCR_ENGINE='tencent'`

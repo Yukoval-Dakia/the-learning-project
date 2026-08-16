@@ -14,13 +14,13 @@
 // 降级判据：UI 用 degraded !== null 判「是否降级」（review-764 NOTE：不用
 // effective !== revision——快照滞后窗口会误报 flicker）。
 
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type CSSProperties, useState } from 'react';
 import { ApiError, apiFetch, apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { Stateful } from '@/ui/primitives/Stateful';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { type CSSProperties, useState } from 'react';
 import type { AdminSubjectRow } from './subjects';
 
 // ---------- wire 类型（对齐 admin-read.ts 投影） ----------

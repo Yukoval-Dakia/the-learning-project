@@ -4,6 +4,7 @@
 // 无活 producer；composition 对账以 LEGACY_TOMBSTONE_KINDS 从期望全集减除
 // （src/capabilities/composition.unit.test.ts），不要求任何包声明归属。
 
+import { and, eq, isNull } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
@@ -35,7 +36,6 @@ import {
   requiredString,
 } from '@/server/proposals/applier-helpers';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { and, eq, isNull } from 'drizzle-orm';
 
 // 结构最小化（与 practice / agency / ingestion 包同模式）：只声明本文件 applier
 // 实际读取的字段；壳层 AcceptAiProposalOpts 结构可赋值，调用点无需收窄。

@@ -4,7 +4,7 @@ import {
   parseVisionOutput,
 } from '@/capabilities/ingestion/tasks/vision';
 
-export { parseVisionOutput, type VisionBlock, type VisionOutput };
+export { type VisionBlock, type VisionOutput, parseVisionOutput };
 
 export interface RunVisionExtractParams {
   assetId: string;

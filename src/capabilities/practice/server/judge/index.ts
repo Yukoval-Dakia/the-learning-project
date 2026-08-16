@@ -50,27 +50,21 @@ export async function judgeRouter(input: JudgeRouterInput): Promise<JudgeResult>
 }
 
 export { judgeExact } from './exact';
-export { judgeKeyword } from './keyword';
 export {
+  type JudgeExecutionIdentity,
   deterministicExecutionProvenance,
   historicalUnknownExecutionProvenance,
-  type JudgeExecutionIdentity,
   modelExecutionProvenance,
   resolveInvokedExecutionProvenance,
   suppliedUnverifiedExecutionProvenance,
 } from './execution-provenance-resolve';
-export { createDefaultJudgeInvoker, type JudgeInvokerOutput } from './invoker';
+export { type JudgeInvokerOutput, createDefaultJudgeInvoker } from './invoker';
 export {
   JUDGE_PROMPT_TEMPLATE_REVISION,
   sha256Canonical,
   taskInputHash,
 } from './judge-execution-provenance';
-export {
-  issueJudgePreviewProvenanceToken,
-  judgeProvenanceSigningSecret,
-  verifyJudgePreviewProvenanceToken,
-} from './preview-provenance-token';
-export { semanticInput } from './question-contract';
+export { judgeKeyword } from './keyword';
 export {
   type MultimodalDirectImageFetchFn,
   type MultimodalDirectRunTaskFn,
@@ -78,20 +72,26 @@ export {
   runMultimodalDirectJudge,
 } from './multimodal-direct-judge';
 export {
+  issueJudgePreviewProvenanceToken,
+  judgeProvenanceSigningSecret,
+  verifyJudgePreviewProvenanceToken,
+} from './preview-provenance-token';
+export {
   type JudgeAnswerParams,
   type JudgeAnswerResult,
   type JudgeQuestionRow,
-  judgeAnswer,
   RUNNABLE_ROUTES,
+  judgeAnswer,
   runSemanticJudge,
+  semanticInput,
 } from './question-contract';
 export {
   IMAGE_CONSUMING_JUDGE_ROUTES,
-  isModelBackedJudgeRoute,
   type JudgeRoute,
   type JudgeRouteQuestionRow,
   MODEL_BACKED_JUDGE_ROUTES,
+  isModelBackedJudgeRoute,
   resolveQuestionJudgeRoute,
 } from './route-resolve';
 export { defaultImageFetch, runStepsJudge } from './steps-judge';
-export type { JudgeResult, AnswerInput };
+export type { AnswerInput, JudgeResult };

@@ -6,13 +6,13 @@
 // authoritative scopeKnowledgeIds come from that response, so the inline scope
 // hint here is a static "已圈定范围" reassurance (we do NOT fabricate a count).
 
+import { useMemo, useRef, useState } from 'react';
 import { createSubjectErrorText, useCreateSubject } from '@/ui/hooks/useCreateSubject';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { listSubjectChoices } from '@/ui/lib/subject';
 import { BrandMark } from '@/ui/primitives/BrandMark';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { useMemo, useRef, useState } from 'react';
 import { ObSteps } from './ObSteps';
 import { createGoal } from './onboarding-api';
 import './onboarding.css';

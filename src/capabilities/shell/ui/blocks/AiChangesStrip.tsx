@@ -4,6 +4,8 @@
 // 本地 state 演示，这里用服务器 undone 字段（invalidate 后回读）；真 wire 无
 // artifact 标题，strip-title 收敛为「{actor} 改了笔记」。
 
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Fragment, useState } from 'react';
 import { formatRelTime } from '@/ui/lib/utils';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
@@ -11,8 +13,6 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Fragment, useState } from 'react';
 
 import { getRecentAiChanges, undoAiChange } from '../workbench-api';
 

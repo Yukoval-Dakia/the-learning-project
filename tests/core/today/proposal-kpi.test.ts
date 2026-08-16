@@ -1,6 +1,6 @@
+import { describe, expect, it } from 'vitest';
 import { aiProposalKinds } from '@/core/schema/proposal';
 import { TODAY_PROPOSAL_KPI_LIMIT, summarizeTodayProposalKpi } from '@/server/today/proposal-kpi';
-import { describe, expect, it } from 'vitest';
 
 describe('summarizeTodayProposalKpi', () => {
   it('returns zero counts for every proposal kind when inbox is empty', () => {

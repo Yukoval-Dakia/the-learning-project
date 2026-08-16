@@ -7,10 +7,10 @@
 //   - a missing / malformed / non-conjecture proposal is SKIPPED (parse-barrier),
 //     never throws the whole nightly run.
 
+import { describe, expect, it, vi } from 'vitest';
 import type { Db } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
 import type { UpsertKcTypedStateInput } from '@/server/conjectures/typed-state';
-import { describe, expect, it, vi } from 'vitest';
 
 import {
   PREDICTION_SCORE_ACTION,

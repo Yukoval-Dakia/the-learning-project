@@ -1,5 +1,5 @@
-import { ArtifactBodyBlocks } from '@/core/schema/business';
 import { describe, expect, it } from 'vitest';
+import { ArtifactBodyBlocks } from '@/core/schema/business';
 
 describe('ArtifactBodyBlocks', () => {
   it('requires TipTap marks to carry a non-empty type', () => {

@@ -1,9 +1,9 @@
+import { and, eq, isNull } from 'drizzle-orm';
+import { z } from 'zod';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { learning_item } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
-import { and, eq, isNull } from 'drizzle-orm';
-import { z } from 'zod';
 
 export const LearningItemProposalOutputSchema = z.object({
   status: z.enum([

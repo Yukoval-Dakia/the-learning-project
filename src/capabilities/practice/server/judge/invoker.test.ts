@@ -1,8 +1,8 @@
+import { describe, expect, it, vi } from 'vitest';
 import type { JudgeQuestionRow } from '@/capabilities/practice/server/judge/question-contract';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { describe, expect, it, vi } from 'vitest';
 import { type JudgeInvocationTelemetry, JudgeInvoker, JudgeInvokerOutputSchema } from './invoker';
 
 // A no-op db whose only exercised surface is persistJudgeRunDigests'

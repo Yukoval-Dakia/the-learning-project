@@ -7,10 +7,11 @@
 //   - two NEAR-parallel vectors `[1,ε,0,…]` vs `[1,0,0,…]` → cos ≈ 1/√(1+ε²) ≈
 //     1 - ε²/2, so distance ≈ ε²/2. ε=0.1 → distance ≈ 0.005 (≤ 0.10 ⇒ near-dup).
 //   - two ORTHOGONAL unit vectors → distance ≈ 1 (> 0.10 ⇒ far, no proposal).
-import { newId } from '@/core/ids';
-import { event, knowledge } from '@/db/schema';
+
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { newId } from '@/core/ids';
+import { event, knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import type { WriteProposalEntry } from '../server/proposals';
 import { runKcDedupNightly } from './kc_dedup_nightly';

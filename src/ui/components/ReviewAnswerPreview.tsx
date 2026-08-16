@@ -1,8 +1,8 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { MathMarkdown, isKatexNotation } from '@/ui/lib/math-markdown';
 import { Button } from '@/ui/primitives/Button';
-import { useEffect, useState } from 'react';
 
 export const ANSWER_PREVIEW_DEBOUNCE_MS = 180;
 

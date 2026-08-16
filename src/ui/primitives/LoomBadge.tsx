@@ -4,8 +4,8 @@
 // components.jsx (Badge, the LIVE prototype source). Additive — does NOT replace
 // legacy src/ui/primitives/Badge.tsx.
 
-import { forwardRef } from 'react';
 import type { HTMLAttributes, ReactNode } from 'react';
+import { forwardRef } from 'react';
 
 // Tone vocabulary mirrors the .badge.tone-<tone> classes in app/globals.css.
 export type LoomBadgeTone = 'neutral' | 'coral' | 'info' | 'good' | 'hard' | 'again';

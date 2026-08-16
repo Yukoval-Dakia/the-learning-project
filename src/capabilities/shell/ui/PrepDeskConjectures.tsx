@@ -21,9 +21,9 @@
 // CORE writer is a no-op until a later task (conjecture-accept.ts). The post-accept
 // probe 作答区 is slice-2.
 
-import { PROBE_SLOTS_FULL_CODE } from '@/core/schema/conjecture';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { PROBE_SLOTS_FULL_CODE } from '@/core/schema/conjecture';
 
 import { ApiError } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
@@ -31,9 +31,12 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-
-import { type ProposalEvidenceRefWire, dedupeEvidence, evidenceReadable } from './inbox-api';
-import { decideProposal } from './inbox-api';
+import {
+  type ProposalEvidenceRefWire,
+  decideProposal,
+  dedupeEvidence,
+  evidenceReadable,
+} from './inbox-api';
 import { type PrepDeskConjectureWire, getPrepDeskConjectures } from './prep-desk-api';
 
 function statefulStatus(loading: boolean, error: boolean): StatefulStatus {

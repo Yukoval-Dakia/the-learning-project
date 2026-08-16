@@ -3,14 +3,14 @@
 // This endpoint must not write review events or mutate FSRS state. It exists so
 // `/review` can show advisory before the user commits a rating.
 
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   INTERVENTION_CONTRACT_VERSION,
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
 } from '@/core/schema/intervention';
 import { event, material_fsrs_state, question } from '@/db/schema';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 // YUK-101 (iter2 fix F12) — shared seeders from tests/helpers/event-seed.
 // Iter1 duplicated these byte-for-byte in advice + submit test files; the

@@ -1,7 +1,7 @@
+import { z } from 'zod';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
-import { z } from 'zod';
 
 export const SELECTION_MISS_VERSION = 1 as const;
 export const DEFAULT_SELECTION_POLICY_VERSION = 'matcher-v1';

@@ -19,6 +19,7 @@ import './load-env';
 
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { and, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import {
   isCandidateError,
   validateAckableOutcome,
@@ -38,7 +39,6 @@ import {
 } from '@/core/schema/conjecture';
 import { type Db, db } from '@/db/client';
 import { event, question } from '@/db/schema';
-import { and, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import {
   type AckActionFact,
   type BriefSeenFact,

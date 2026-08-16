@@ -1,5 +1,5 @@
-import { event, learning_session } from '@/db/schema';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { event, learning_session } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import type { NudgeConfig } from './nudge-config';
 import { NUDGE_ACTION, NUDGE_DISMISSED_ACTION, evaluateNudgeTrigger } from './nudge-triggers';

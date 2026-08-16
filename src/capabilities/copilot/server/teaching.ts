@@ -32,10 +32,10 @@ import {
 
 export {
   TeachingError,
-  parseTurnOutput,
   type TeachingStructuredQuestionT,
   type TeachingTurnOutputT,
   type TurnKindT,
+  parseTurnOutput,
 } from '../tasks/teaching-turn';
 
 // ---------- Schemas ----------

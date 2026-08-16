@@ -1,3 +1,4 @@
+import { inArray } from 'drizzle-orm';
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/server/conjecture/probe-evidence';
 import type {
   InterventionPackageT,
@@ -17,7 +18,6 @@ import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { resolveSubjectProfileForKnowledgeIdsStrict } from '@/kernel/read-models/subject-profile';
 import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { inArray } from 'drizzle-orm';
 import { recommendPedagogy } from './recommend';
 import {
   type InterventionRecord,

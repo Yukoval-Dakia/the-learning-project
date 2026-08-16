@@ -40,14 +40,14 @@
 //   无客观锚序列 → 不该有 KT 画像（主观评分不该塑形 KT 参数）省开销。partial outcome 不算二元
 //   （与硬轨 difficulty 标签同纪律，见序列读取）。
 
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { event, item_calibration, question } from '@/db/schema';
 import { applyKtEstimate } from '@/server/mastery/kt-calibration';
 import { estimateBkt } from '@/server/mastery/kt-estimator';
 import { OBJECTIVE_JUDGE_ROUTES } from '@/server/mastery/personalized-difficulty';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
 
 type DepsOverride = {
   /** 每轮最多估多少题（防一次 job 打爆）。default 500。 */

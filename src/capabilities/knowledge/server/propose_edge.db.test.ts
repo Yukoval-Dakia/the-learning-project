@@ -1,5 +1,7 @@
 // Phase 2 Dreaming — knowledge_edge nightly propose tests.
 
+import { and, eq, isNull } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
 import {
@@ -11,12 +13,9 @@ import {
   provider_attempt,
   question,
 } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
-import { getCorrectionStatus } from '@/kernel/events';
+import { getCorrectionStatus, writeEvent } from '@/kernel/events';
 import { type FailureAttempt, getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
-import { and, eq, isNull } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { RECENT_FAILURE_WINDOW_MS } from './tools/knowledge-readers';
 
@@ -33,6 +32,7 @@ beforeEach(() => {
   );
 });
 afterEach(() => vi.unstubAllEnvs());
+
 import type { EdgeReconcileDecision } from './edge-reconcile';
 import { ReconcileParseError } from './edge-reconcile';
 import { parseEdgeProposeOutput, runEdgeProposeAndWrite } from './propose_edge';

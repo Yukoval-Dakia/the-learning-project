@@ -4,8 +4,8 @@
 // components.jsx (Card, the LIVE prototype source). Additive — does NOT replace
 // legacy src/ui/primitives/Card.tsx.
 
-import { forwardRef } from 'react';
 import type { HTMLAttributes, ReactNode } from 'react';
+import { forwardRef } from 'react';
 
 export interface LoomCardProps extends HTMLAttributes<HTMLDivElement> {
   /** standard padding — adds .card-pad */

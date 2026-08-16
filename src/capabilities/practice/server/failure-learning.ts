@@ -1,7 +1,7 @@
+import { eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { eq } from 'drizzle-orm';
 import {
   getFailureAttemptById,
   getFailureAttemptWithReasoningTraceById,

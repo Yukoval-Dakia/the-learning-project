@@ -1,3 +1,5 @@
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   event,
   placement_starter_attempt,
@@ -6,8 +8,6 @@ import {
   placement_starter_cost_component,
   question,
 } from '@/db/schema';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import {
   PLACEMENT_ATTEMPT_HEARTBEAT_MS,

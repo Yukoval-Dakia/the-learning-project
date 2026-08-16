@@ -7,6 +7,7 @@
 // 业务在 src/server/subjects/subject-control-write.ts；写成功后重水合上架
 // （rename/reset 改 displayName/绑定拓扑，retire/restore 改三集合归属）。
 
+import { z } from 'zod';
 import { type Db, db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
 import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
@@ -19,7 +20,6 @@ import {
   validateSubject,
 } from '@/server/subjects/subject-control-write';
 import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
-import { z } from 'zod';
 import { controlResultResponse, readJsonBody } from './subjects-write-http';
 
 const ParamsSchema = z.object({ id: z.string().trim().min(1) });

@@ -14,11 +14,11 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
 import type { Provider } from '@/ai/registry';
 import type { Db, Tx } from '@/db/client';
 import { provider_session_admission } from '@/db/schema';
 import { isKnownProvider } from '@/server/ai/providers';
-import { sql } from 'drizzle-orm';
 
 export type ProviderSessionAdmissionMode = 'off' | 'observe' | 'enforce';
 
@@ -640,7 +640,7 @@ async function settleStoppedWaiter(
                    reason === 'cancelled'
                      ? 'caller_aborted_while_waiting'
                      : 'caller_wait_deadline_elapsed'
-                 }
+}
            WHERE task_run_id = ${input.taskRunId}
              AND lane_id = ${input.plan.laneId}
              AND policy_fingerprint = ${input.plan.policy.fingerprint}

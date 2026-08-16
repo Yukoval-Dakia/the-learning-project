@@ -15,13 +15,13 @@
 //   8. section knowledge_focus_names resolved from DB; unknown id falls back to id.
 //   9. Face has no reference_md field (reference is gated, not pre-answer-visible).
 
+import { sql } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { autosaveAnswerDraft } from '@/capabilities/practice/server/answer-draft';
 import { submitPaperSlot } from '@/capabilities/practice/server/paper-submit';
 import { newId } from '@/core/ids';
 import { artifact, event, knowledge, learning_session, question } from '@/db/schema';
 import { Review } from '@/server/session';
-import { sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { PaperDetailResponseSchema } from './paper-contracts';
 import { GET } from './paper-detail-route';

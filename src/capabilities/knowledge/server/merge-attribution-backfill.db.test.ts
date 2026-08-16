@@ -1,10 +1,10 @@
 // YUK-543 — backfill/sweep db tests: chain resolution (spec §4 decision 4b), repair via the shared
 // applyMerge helpers, idempotency, and the archived-not-merged-terminal skip.
 
-import { db } from '@/db/client';
-import { knowledge, mastery_state, question } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { db } from '@/db/client';
+import { knowledge, mastery_state, question } from '@/db/schema';
 import { resetDb } from '../../../../tests/helpers/db';
 import { resolveMergeChains, runMergeAttributionBackfill } from './merge-attribution-backfill';
 

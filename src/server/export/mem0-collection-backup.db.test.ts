@@ -298,7 +298,7 @@ describe('mem0 collection malformed-entry preflight (PR #491 Bugbot)', () => {
       string,
       unknown
     >;
-    expect(Object.prototype.hasOwnProperty.call(data, COLLECTION)).toBe(false);
+    expect(Object.hasOwn(data, COLLECTION)).toBe(false);
 
     const res = await restoreFromArchive({ db: testDb(), r2: memR2(), bytes });
     // Graceful: absent key is not a shape error; restore proceeds and re-inserts the

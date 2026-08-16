@@ -12,8 +12,8 @@
 // the sibling variant_verify.test.ts (db partition); this file only exercises the
 // three-state parse seam.
 
-import type { TaskTextResult } from '@/server/ai/provenance';
 import { describe, expect, it } from 'vitest';
+import type { TaskTextResult } from '@/server/ai/provenance';
 import { parseVariantVerifyResult } from './variant_verify';
 
 const VALID_STRUCTURED = {

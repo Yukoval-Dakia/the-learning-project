@@ -16,9 +16,9 @@
 //
 // DB test (testDb): imports @/db + tests/helpers/db → runs in the db config.
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import { handleReviewDue } from '@/capabilities/practice/server/due-list';
 import { material_fsrs_state, question } from '@/db/schema';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const NOW = new Date('2026-06-06T12:00:00.000Z');

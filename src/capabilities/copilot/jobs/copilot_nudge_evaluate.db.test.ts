@@ -1,9 +1,9 @@
-import { newId } from '@/core/ids';
-import { event, question_block, source_document } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 // YUK-577 — copilot_nudge_evaluate handler: write + idempotency + shadow + red-line. design §3.3/§3.7.
 import { eq, ne } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { newId } from '@/core/ids';
+import { event, question_block, source_document } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { NUDGE_ACTION } from '../server/nudge-triggers';
 import { runCopilotNudgeEvaluate } from './copilot_nudge_evaluate';

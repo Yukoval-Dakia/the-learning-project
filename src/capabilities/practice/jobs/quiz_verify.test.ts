@@ -15,12 +15,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { readAgentNotes } from '@/capabilities/agency/public';
 import {
+  PlacementStarterAdmissionError,
   buildCoverageEvidenceDemand,
   buildSupplyTrace,
   evidenceDemandToTargetContext,
   withSupplyTraceDifficultyEvidence,
 } from '@/capabilities/practice/public';
-import { PlacementStarterAdmissionError } from '@/capabilities/practice/public';
 import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
 import type { QuizGenMetadataT } from '@/core/schema/quiz_gen';
 import {

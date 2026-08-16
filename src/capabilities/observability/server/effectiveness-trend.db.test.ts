@@ -1,9 +1,10 @@
+import { beforeEach, describe, expect, it } from 'vitest';
 import { MASTERY_PROGRESS_ACTION } from '@/core/schema/event';
 import { event, knowledge } from '@/db/schema';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { EffectivenessTrendResponseSchema } from '../api/diagnostic-contracts';
 import { loadEffectivenessTrend } from './effectiveness-trend';
+
 // NB: pure `summarizeTrend` / `rollupSubjectDirection` confidence-ladder + boundary
 // coverage lives in the no-DB unit lane (effectiveness-trend-summary.unit.test.ts).
 // This file covers the DB-assembled read model (loadEffectivenessTrend) end-to-end.

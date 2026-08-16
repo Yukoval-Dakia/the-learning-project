@@ -1,7 +1,7 @@
+import { eq, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_mastery } from '@/db/schema';
 import { getMasteryProjection } from '@/server/mastery/state';
-import { eq, isNull, sql } from 'drizzle-orm';
 
 interface KnowledgeRow {
   id: string;

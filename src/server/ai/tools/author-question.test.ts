@@ -1,3 +1,4 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   authorQuestion,
   authorQuestionTool,
@@ -18,7 +19,6 @@ import { writeEvent } from '@/kernel/events';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import type { ToolContext } from '@/kernel/tools/types';
 import { acceptAiProposal } from '@/server/proposals/actions';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const mockRunner = vi.hoisted(() => ({ runTask: vi.fn() }));

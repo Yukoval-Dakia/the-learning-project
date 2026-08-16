@@ -1,3 +1,5 @@
+import { and, eq } from 'drizzle-orm';
+import { z } from 'zod';
 import { reviewInterventionPackageCandidate } from '@/capabilities/practice/public';
 import {
   CurrentInterventionPackageReviewAudit,
@@ -13,8 +15,6 @@ import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
-import { and, eq } from 'drizzle-orm';
-import { z } from 'zod';
 
 const InterventionReviewRegressionCase = z
   .object({

@@ -1,12 +1,12 @@
-export {
-  getQuestionAttemptOutcomeCounts,
-  getQuestionTimeline,
-  getRecentReviewEvents,
-} from '@/kernel/read-models/question-activity';
 export type {
   GetRecentReviewEventsOpts,
   QuestionTimelineEntry,
   ReviewEvent,
+} from '@/kernel/read-models/question-activity';
+export {
+  getQuestionAttemptOutcomeCounts,
+  getQuestionTimeline,
+  getRecentReviewEvents,
 } from '@/kernel/read-models/question-activity';
 
 // YUK-892 — memory-brief reader for non-LLM read paths (today summary, demos).

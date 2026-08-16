@@ -8,7 +8,10 @@
 
 import { SSEStreamingApi } from 'hono/streaming';
 import { ZodError } from 'zod';
-
+import {
+  sanitizeToolResultForSse,
+  sanitizeToolUseForSse,
+} from '@/capabilities/copilot/api/tool-use-sse';
 // YUK-575 (N6/MF-C) — the pickup-timeout deadline stamped on the QUEUED event so a
 // consumer (PR2 Dock, isDurablePickupStalled) can detect a worker-down stall.
 import { PICKUP_TIMEOUT_MS } from '@/capabilities/copilot/durable-pickup';
@@ -44,11 +47,6 @@ import { writeJobEvent } from '@/server/events/writer';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Conversation } from '@/server/session';
-
-import {
-  sanitizeToolResultForSse,
-  sanitizeToolUseForSse,
-} from '@/capabilities/copilot/api/tool-use-sse';
 
 // Closes the count-then-enqueue race inside the single Hono API process. A slot
 // moves from this counter into durable job_events once QUEUED is committed.

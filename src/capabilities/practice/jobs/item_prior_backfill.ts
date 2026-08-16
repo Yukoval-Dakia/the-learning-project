@@ -11,15 +11,13 @@
 // 一道坏题不该阻断其余题的标定，下轮 job 再重试它（候选 SELECT 仍命中）。
 // 候选 SELECT（pre-LLM DB read）的 throw 照常传播 → pg-boss 重试。
 
-import { sql } from 'drizzle-orm';
+import { inArray, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { parseItemPriorOutput } from '@/server/ai/item-prior';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
-import { inArray } from 'drizzle-orm';
 import { resolveSubjectProfileForKnowledgeIds } from '../server/knowledge-runtime';
 import { type PracticeTaskRunFn, makePracticeTaskRunFn } from '../server/task-runtime';
 

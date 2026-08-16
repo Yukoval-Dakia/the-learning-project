@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-
-import { deriveProfilePresentation } from './ScreenProfile';
 import type { PlacementProfile, ProfileKc } from './profile-api';
+import { deriveProfilePresentation } from './ScreenProfile';
 
 function kc(id: string, evidenceCount: number, tested = true): ProfileKc {
   return {

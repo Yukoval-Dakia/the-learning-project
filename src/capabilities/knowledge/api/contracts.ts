@@ -1,7 +1,7 @@
+import { z } from 'zod';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { ApiPageSchema } from '@/kernel/http-contracts';
 import { SubjectProfileSchema } from '@/subjects/profile-schema';
-import { z } from 'zod';
 
 export const KnowledgeIdParamsSchema = z.object({ id: z.string().trim().min(1) });
 

@@ -6,9 +6,9 @@
 //   - no row / success=0, fail=0 → σ(0)=0.5 < 0.7 → NOT MASTERED (cold start)
 //   - success=3, fail=0, evidence=3 → σ(1.5)=0.82 ≥ 0.7 but evidence 3 < 4 → NOT mastered-enough
 
-import { knowledge, knowledge_edge, mastery_state } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { knowledge, knowledge_edge, mastery_state } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   FRONTIER_DEPTH_LIMIT,

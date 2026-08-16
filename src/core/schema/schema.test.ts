@@ -2,8 +2,8 @@
 // (Mistake / ReviewEvent / IngestionSession / DreamingProposal) removed.
 // Surviving tests cover the schemas that still exist post-DROP.
 
-import { resolveSubjectProfile, subjectProfiles } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
+import { resolveSubjectProfile, subjectProfiles } from '@/subjects/profile';
 import { parseEvent } from './event';
 import {
   Artifact,

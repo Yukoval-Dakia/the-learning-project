@@ -1,6 +1,6 @@
-import { ai_task_runs } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { ai_task_runs } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { persistValidatorRunBinding } from './sealed-validation';
 

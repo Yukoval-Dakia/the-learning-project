@@ -13,10 +13,10 @@
 // Partition: imports `@/db/schema` (drizzle table metadata) → DB-tainted → db config.
 // It does NOT open a connection — getTableColumns is pure metadata; no resetDb.
 
-import { ThetaRowSnapshot } from '@/core/schema/event/state-snapshot';
-import { mastery_state } from '@/db/schema';
 import { getTableColumns } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
+import { ThetaRowSnapshot } from '@/core/schema/event/state-snapshot';
+import { mastery_state } from '@/db/schema';
 
 // Columns on mastery_state that a θ̂ attempt does NOT write (so they are NOT part of
 // the verbatim snapshot). Each entry is a deliberate exclusion, not an oversight:

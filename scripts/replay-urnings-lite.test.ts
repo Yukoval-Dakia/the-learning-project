@@ -9,8 +9,8 @@
 // allTestInclude; fastTestInclude wins, so this runs no-DB. The DB-touching
 // replay script (scripts/replay-urnings-lite.ts) is NOT imported here.
 
-import { conjunctiveCredits, eloK, expectedScore, updateTheta } from '@/core/theta';
 import { describe, expect, it } from 'vitest';
+import { conjunctiveCredits, eloK, expectedScore, updateTheta } from '@/core/theta';
 import {
   DEFAULT_DENSITY_THRESHOLD,
   DEFAULT_REPLAY_CONFIG,

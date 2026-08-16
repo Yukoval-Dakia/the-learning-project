@@ -26,25 +26,24 @@ import { practiceTaskSpecs } from '@/capabilities/practice/tasks/index';
 import type { TaskOwner } from './owned-task-specs';
 import type { TaskDefinition } from './task-spec';
 
-export { defineOwnedTaskSpecs } from './owned-task-specs';
 export type { TaskOwner } from './owned-task-specs';
+export { defineOwnedTaskSpecs } from './owned-task-specs';
 
 export type OwnerTaskSpecs<Specs extends object = object> = {
   readonly owner: TaskOwner;
   readonly specs: Specs;
 };
 
-type CatalogFromOwnerMaps<OwnerMaps extends readonly OwnerTaskSpecs[]> = UnionToIntersection<
-  OwnerMaps[number]['specs']
-> extends infer Entries
-  ? {
-      readonly [Kind in keyof Entries]: Entries[Kind] extends {
-        readonly definition: infer Definition;
+type CatalogFromOwnerMaps<OwnerMaps extends readonly OwnerTaskSpecs[]> =
+  UnionToIntersection<OwnerMaps[number]['specs']> extends infer Entries
+    ? {
+        readonly [Kind in keyof Entries]: Entries[Kind] extends {
+          readonly definition: infer Definition;
+        }
+          ? Definition
+          : never;
       }
-        ? Definition
-        : never;
-    }
-  : never;
+    : never;
 
 type UnionToIntersection<Union> = (Union extends unknown ? (value: Union) => void : never) extends (
   value: infer Intersection,

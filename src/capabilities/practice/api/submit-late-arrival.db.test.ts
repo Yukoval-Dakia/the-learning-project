@@ -14,13 +14,13 @@
 //                 keyed by DOMAIN, so two attempts on sibling KCs collide there while sharing
 //                 no knowledge id at all.
 
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { HIERARCHICAL_ELO_ENABLED } from '@/core/theta';
 import { knowledge, mastery_state, material_fsrs_state, question } from '@/db/schema';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { upsertMasteryState } from '@/server/mastery/state';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { recordJudgePendingAttempt } from '../server/judge-run-dispatch';

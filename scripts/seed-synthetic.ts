@@ -37,6 +37,7 @@
 // Scripts load `.env`, NOT `.env.local`.
 import './load-env';
 
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/jobs/knowledge_edge_propose_nightly';
 import type { RubricGate } from '@/capabilities/knowledge/server/rubric-validator';
 import { scheduleReview } from '@/capabilities/practice/server/fsrs';
@@ -63,7 +64,6 @@ import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/to
 import { upsertFsrsState } from '@/server/fsrs/state';
 import { listActiveSubjectsSinceRefresh } from '@/server/memory/active-subjects';
 import { loadYuwenFixtures } from '@/subjects/yuwen/fixtures';
-import { and, eq, inArray, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 

@@ -26,6 +26,8 @@
 // the batch continues to the next row — one bad row never aborts the batch. Only
 // a genuinely-escaping infra fault re-throws (pg-boss DLQ retry).
 
+import { and, asc, isNull, sql } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
@@ -35,8 +37,6 @@ import {
   type SolutionGenerateRunTaskFn,
   generateReferenceSolution,
 } from '@/server/ai/solution-generate';
-import { and, asc, isNull, sql } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
 
 export interface ReferenceAnswerBackfillResult {
   /** rows whose reference_md IS NULL that the SELECT returned this run. */

@@ -10,8 +10,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
 import { resetDb } from '../../../../../tests/helpers/db';
-import { dispatchSupplyTarget } from './dispatcher';
 import type { EnqueueFn } from './dispatcher';
+import { dispatchSupplyTarget } from './dispatcher';
 import type { QuestionSupplyTarget } from './target-discovery';
 
 function mathTarget(overrides: Partial<QuestionSupplyTarget> = {}): QuestionSupplyTarget {

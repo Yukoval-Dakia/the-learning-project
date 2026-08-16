@@ -19,6 +19,7 @@
 // fallback (NOT a CauseSchema widening — critic #1) passed through
 // validateCauseAgainstProfile; a later attribution agent supersedes it.
 
+import { and, desc, eq, gte, isNull, not, sql } from 'drizzle-orm';
 import { scheduleReview } from '@/capabilities/practice/server/fsrs';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
@@ -32,8 +33,8 @@ import { newId } from '@/core/ids';
 import { validateCauseAgainstProfile } from '@/core/schema/cause';
 // YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the snapshot `before`.
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
-import { db as defaultDb } from '@/db/client';
 import type { Db, Tx } from '@/db/client';
+import { db as defaultDb } from '@/db/client';
 import { answer, event, learning_session } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
@@ -52,7 +53,6 @@ import {
   getMasteryState,
   updateThetaForAttempt,
 } from '@/server/mastery/state';
-import { and, desc, eq, gte, isNull, not, sql } from 'drizzle-orm';
 import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
 import { writeAttemptSnapshotBrackets } from './attempt-snapshot';
 import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';

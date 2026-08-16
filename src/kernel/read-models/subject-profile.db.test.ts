@@ -1,6 +1,6 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { knowledge } from '@/db/schema';
 import { getDefaultSubjectRegistry, resolveSubjectProfile } from '@/subjects/profile';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { resolveSubjectProfileForKnowledgeIdsStrict } from './subject-profile';
 

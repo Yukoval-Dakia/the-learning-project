@@ -28,6 +28,7 @@ import { assertFromState } from './guards';
 
 const SESSION_TABLE = 'ingestion_session' as const;
 const OPERATION_DISPATCH_SINGLETON_SECONDS = 24 * 60 * 60;
+
 // job_events business_table label kept as 'ingestion_session' for SSE replay
 // continuity (old job_events rows already carry that label). Renaming would
 // require migration; deferred to Phase 1d if/when a session-type-agnostic

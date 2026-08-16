@@ -1,9 +1,9 @@
+import { z } from 'zod';
 import {
   ConjectureProbeResponseJudgement,
   PROBE_NON_EVIDENCE_RESOLUTION,
   PROBE_RESOLUTIONS,
 } from '@/kernel/capability-contract-schemas';
-import { z } from 'zod';
 
 export const CreateLearningIntentBodySchema = z
   .object({

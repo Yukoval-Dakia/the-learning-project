@@ -24,6 +24,7 @@
 // carries scope_mode: 'explicit' (hand-picked frozen set is authoritative) vs
 // 'subject_live' (readers derive from subject_id at read time; frozen stays []).
 
+import { eq } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import { db } from '@/db/client';
@@ -42,7 +43,6 @@ import { assertGoalParity, goalLiveRowToSnapshot } from '@/server/projections/pa
 import { projectionIsWriter } from '@/server/projections/sot-flag';
 import { ensureSubjectRoot } from '@/server/subjects/ensure-subject-root';
 import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
-import { eq } from 'drizzle-orm';
 import { insertGoal } from '../server/goals/queries';
 import { CreateGoalBody } from './goal-contracts';
 

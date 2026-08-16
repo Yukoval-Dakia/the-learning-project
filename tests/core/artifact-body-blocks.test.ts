@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import {
   artifactRefBlock,
   bodyBlocksHaveSemanticKinds,
@@ -5,7 +6,6 @@ import {
   replaceNoteSectionBody,
   setNoteSectionEmbeddedCheckArtifactRef,
 } from '@/capabilities/notes/server/body-blocks';
-import { describe, expect, it } from 'vitest';
 
 describe('body block helpers', () => {
   it('detects required semantic kinds from semantic blocks', () => {

@@ -38,9 +38,9 @@
 //      the PFA/β formula in SQL.
 // ════════════════════════════════════════════════════════════════════════════
 
+import { sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { getMasteryProjection } from '@/server/mastery/state';
-import { sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 

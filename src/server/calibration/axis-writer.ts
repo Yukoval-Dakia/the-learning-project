@@ -20,11 +20,11 @@
 // NOT a flag). Below the gate, or a degenerate EZ recovery (chance Pc / <2 correct RTs), the
 // KC is simply skipped — the descriptor stays absent rather than fabricated.
 
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event, learner_axis_state, question } from '@/db/schema';
 import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { type EzResult, ezFromResponses } from './ez-diffusion';
 
 /** Usage gate: minimum scored, RT-bearing responses on a KC before a recovery is attempted. */

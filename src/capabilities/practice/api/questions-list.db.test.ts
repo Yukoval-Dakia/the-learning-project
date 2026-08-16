@@ -4,9 +4,9 @@
 // tests); this exercises the 200 query path + 400 validation + the response
 // envelope ({ items, families, total, truncated, computed_at_sec }).
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import { knowledge, question } from '@/db/schema';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './questions-list';
 

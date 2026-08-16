@@ -16,12 +16,12 @@
 // No production code is touched; this only reads existing `DomainTool` structs
 // + `Output` shapes and the seeded DB. See §5.1 for partition rationale.
 
-import type { Db } from '@/db/client';
-import { completion_evidence, event, knowledge, learning_item, question } from '@/db/schema';
-import type { DomainTool, ToolCostClass } from '@/kernel/tools/types';
 import { inArray } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { expect } from 'vitest';
+import type { Db } from '@/db/client';
+import { completion_evidence, event, knowledge, learning_item, question } from '@/db/schema';
+import type { DomainTool, ToolCostClass } from '@/kernel/tools/types';
 
 /**
  * The seeded tables the 4 Phase-1 scenarios cite ids into (§9 open item 1 —

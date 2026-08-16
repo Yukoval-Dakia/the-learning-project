@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
-import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 import EventDetailPage from './EventDetailPage';
 import type { EventDetailResponse, EventDetailRow } from './event-detail-model';
 

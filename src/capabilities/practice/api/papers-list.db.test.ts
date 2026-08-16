@@ -4,10 +4,10 @@
 // paper-session start, draft autosave, and per-slot submit (attempt + judge +
 // FSRS + freeze). Uses the deterministic exact judge (true_false vs reference).
 
-import { newId } from '@/core/ids';
-import { artifact, event, knowledge, question } from '@/db/schema';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { newId } from '@/core/ids';
+import { artifact, event, knowledge, question } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET as answerGet, POST as answerPost } from './paper-answer-route';
 import {

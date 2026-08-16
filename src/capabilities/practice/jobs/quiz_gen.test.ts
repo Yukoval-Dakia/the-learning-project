@@ -13,16 +13,13 @@
 
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-import {
-  buildCoverageEvidenceDemand,
-  buildSupplyTrace,
-  evidenceDemandToTargetContext,
-} from '@/capabilities/practice/public';
 import {
   PlacementStarterStaleAuthorityError,
   PlacementStarterUnknownCostError,
   acquirePlacementAttempt,
+  buildCoverageEvidenceDemand,
+  buildSupplyTrace,
+  evidenceDemandToTargetContext,
 } from '@/capabilities/practice/public';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {

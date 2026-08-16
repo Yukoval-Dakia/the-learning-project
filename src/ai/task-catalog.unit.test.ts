@@ -1,5 +1,7 @@
 // allow: SIZE_OK — central 51-task catalog contract suite.
 import { existsSync, readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { coachTaskSpec } from '@/capabilities/agency/tasks/coach';
 import {
   conjectureGroupingTaskSpec,
@@ -74,8 +76,6 @@ import { sourcingTaskSpec } from '@/capabilities/practice/tasks/sourcing';
 import { teachingQualityTaskSpec } from '@/capabilities/practice/tasks/teaching-quality';
 import { variantGenTaskSpec } from '@/capabilities/practice/tasks/variant-gen';
 import { variantVerifyTaskSpec } from '@/capabilities/practice/tasks/variant-verify';
-import { describe, expect, it } from 'vitest';
-import { z } from 'zod';
 import type { TaskKind } from './registry';
 import {
   type TaskOwner,
@@ -140,11 +140,10 @@ const EXPECTED_KINDS = [
 ] as const;
 
 type ExpectedTaskKind = (typeof EXPECTED_KINDS)[number];
-type Equal<Left, Right> = (<Value>() => Value extends Left ? 1 : 2) extends <
-  Value,
->() => Value extends Right ? 1 : 2
-  ? true
-  : false;
+type Equal<Left, Right> =
+  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
+    ? true
+    : false;
 type Assert<Condition extends true> = Condition;
 type TaskKindIsClosed = Assert<Equal<TaskKind, ExpectedTaskKind>>;
 const TASK_KIND_IS_CLOSED: TaskKindIsClosed = true;

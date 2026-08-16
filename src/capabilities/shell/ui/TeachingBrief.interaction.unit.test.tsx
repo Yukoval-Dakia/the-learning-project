@@ -4,11 +4,11 @@
 // inline error, the probe_ready single-card reveal, the [裁决 4] lifecycle announce +
 // focus move, and the getByRole heading/region a11y that SSR strings can't assert.
 
-import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 
 import { TeachingBriefBand } from './TeachingBrief';
 import type {

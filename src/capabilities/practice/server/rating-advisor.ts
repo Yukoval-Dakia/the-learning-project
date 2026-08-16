@@ -20,9 +20,9 @@
 // 'easy' branches collapse to 'good' (route.ts:80-82 documents the same
 // 3-state surface for the review UI today).
 
+import type { z } from 'zod';
 import type { FsrsRating } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
-import type { z } from 'zod';
 
 export type FsrsRatingT = z.infer<typeof FsrsRating>;
 

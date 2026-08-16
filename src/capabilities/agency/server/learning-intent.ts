@@ -14,11 +14,10 @@
 // Hub status auto-aggregation, living-note triggers, ai_propose completion
 // remain out of scope.
 
-import { newId } from '@/core/ids';
 import { and, eq, isNull } from 'drizzle-orm';
-
 import type { CreateLearningIntentKnowledgeNodeFn } from '@/capabilities/knowledge/public';
 import type { CreateLearningIntentNoteFn } from '@/capabilities/notes/public';
+import { newId } from '@/core/ids';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, learning_item } from '@/db/schema';
@@ -30,8 +29,10 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 // existing consumers (api route, public surface) keep their import paths.
 import { LearningIntentError, parseLearningIntentOutline } from '../tasks/learning-intent';
 import { type TaskTextRunFn, costUsdToMicroUsd } from './ai-runtime';
-export { LearningIntentError, parseLearningIntentOutline };
+
 export type { LearningIntentOutline } from '../tasks/learning-intent';
+export { LearningIntentError, parseLearningIntentOutline };
+
 // YUK-471 W2 — learning_item projection seam. Each creation INSERT writes a per-id genesis BASE
 // event (the recommended Q1 route — learning_item has no fold-blind field, so genesis fully seeds
 // the row) + the materialized_id_index anchor regardless of the flag; projectionIsWriter('learning_item')

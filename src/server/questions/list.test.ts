@@ -3,12 +3,12 @@
 // Covers A1a SQL axes + draft exclusion + pagination, A1b in-memory grounding
 // tier filter/sort (NO SQL source_tier), and A1c variant families.
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { knowledge, question } from '@/db/schema';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import { listQuestions } from '@/kernel/read-models/questions';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 async function seedKnowledge(

@@ -1,3 +1,7 @@
+import { and, eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import {
   markNoteVerificationProviderStarted,
@@ -7,10 +11,6 @@ import {
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { ai_task_runs, artifact, event, note_verification_claim } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   type RunTaskFn,

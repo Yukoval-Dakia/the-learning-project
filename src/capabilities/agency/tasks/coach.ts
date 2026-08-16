@@ -8,6 +8,7 @@ import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
 // Legacy quarry alias preserved verbatim inside the moved definitions.
 const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
+
 import { TodayPlan, type TodayPlanT, parseTodayPlan } from '@/core/schema/coach';
 import { parseTaskOutput } from './parse-output';
 

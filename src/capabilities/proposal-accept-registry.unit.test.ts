@@ -1,11 +1,11 @@
 import { readFile } from 'node:fs/promises';
+import { describe, expect, it, vi } from 'vitest';
 import { acceptSupportedProposalKinds } from '@/core/schema/proposal';
 import {
   createProposalLifecycleRegistry,
   getProposalLifecycleDecl,
   getProposalLifecycleOperation,
 } from '@/kernel/proposals';
-import { describe, expect, it, vi } from 'vitest';
 import { capabilities } from './index';
 
 describe('proposal lifecycle capability registry', () => {

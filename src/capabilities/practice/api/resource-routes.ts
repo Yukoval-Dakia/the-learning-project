@@ -1,5 +1,5 @@
-import { ApiError, canonicalResourceResponse, errorResponse } from '@/kernel/http';
 import type { ZodType } from 'zod';
+import { ApiError, canonicalResourceResponse, errorResponse } from '@/kernel/http';
 import { createAnswerDraft } from './paper-answer-route';
 import {
   CreatePaperAnswerDraftBodySchema,

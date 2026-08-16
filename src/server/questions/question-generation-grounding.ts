@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-
+import { and, eq } from 'drizzle-orm';
 import {
   QuestionAnswerAnchor,
   type QuestionAnswerAnchorT,
@@ -16,7 +16,6 @@ import {
   question_generation_binding,
   question_generation_plan,
 } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);

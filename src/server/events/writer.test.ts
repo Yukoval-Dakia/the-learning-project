@@ -1,9 +1,8 @@
+import { and, eq } from 'drizzle-orm';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-
 import { db } from '@/db/client';
 import { job_events } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
 import { writeJobEvent } from './writer';
 
 describe('writeJobEvent', () => {

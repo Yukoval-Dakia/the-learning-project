@@ -2,10 +2,10 @@
 // hermetic 契约：每个 db 测在 beforeEach resetDb()。Covers: flag-OFF NO-OP; flag-ON emits one
 // quiz_gen-routed contrast target per confusable KC pair with the right shape.
 
-import { db } from '@/db/client';
-import { knowledge, misconception_edge } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { db } from '@/db/client';
+import { knowledge, misconception_edge } from '@/db/schema';
 import { resetDb } from '../../../../../tests/helpers/db';
 import { discoverConfusableContrastTargets } from './confusable-contrast-discovery';
 import { planSupplyRoutes } from './route-planner';

@@ -21,13 +21,13 @@
 // Each KC's embed text now folds its EFFECTIVE domain (getEffectiveDomain walk),
 // disambiguating same-named cross-subject KCs.
 
+import { and, eq, isNull, lt, or } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { EMBED_MODEL, type EmbedProviderAttemptOptions, embedMany } from '@/server/ai/embed';
 import { embedHash, knowledgeEmbedText, questionEmbedText } from '@/server/ai/embed-source';
-import { and, eq, isNull, lt, or } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
 
 // Bump when the embedder model or the embed-source join rule changes, to trigger
 // a background re-embed of rows stamped with an older version. v2 (YUK-393):

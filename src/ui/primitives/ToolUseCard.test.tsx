@@ -1,12 +1,12 @@
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import { COPILOT_TOOL_FIXTURES } from './copilot-tool-fixtures';
 import {
   type ToolUseAction,
   ToolUseCard,
   type ToolUseMeta,
   type ToolUseStatus,
 } from './ToolUseCard';
-import { COPILOT_TOOL_FIXTURES } from './copilot-tool-fixtures';
 
 const sample = COPILOT_TOOL_FIXTURES[0];
 if (!sample) throw new Error('expected at least one fixture');

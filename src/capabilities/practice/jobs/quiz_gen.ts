@@ -18,10 +18,10 @@
 // quiz_verify job (Q5) promotes draft→active + FSRS-enrolls on pass.
 
 import { randomUUID } from 'node:crypto';
+import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobWithMetadata, SendOptions } from 'pg-boss';
-
 import { RUNNABLE_ROUTES } from '@/capabilities/practice/server/judge/question-contract';
 import {
   DifficultyEvidence,
@@ -76,7 +76,6 @@ import {
   resolveQuizGenSkillsForSubject,
   skillKindToQuestionKind,
 } from '@/subjects/quiz-gen-skills';
-import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import {
   SupplyTraceV1,
   type SupplyTraceV1T,

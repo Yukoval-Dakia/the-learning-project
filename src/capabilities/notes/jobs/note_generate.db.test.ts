@@ -1,7 +1,7 @@
-import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
-import { artifact, event, knowledge } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
+import { artifact, event, knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { type RunTaskFn, buildNoteGenerateHandler, runNoteGenerate } from './note_generate';
 

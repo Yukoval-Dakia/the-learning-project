@@ -3,8 +3,8 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ProposalCard } from './ProposalCard';
 import type { ProposalInboxRow } from './inbox-api';
+import { ProposalCard } from './ProposalCard';
 
 afterEach(cleanup);
 

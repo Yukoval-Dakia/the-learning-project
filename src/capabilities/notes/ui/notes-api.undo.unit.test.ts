@@ -4,8 +4,8 @@
 // client must turn that false-success into a rejection so every caller (note reader +
 // Today changes strip) sees a failure instead of a 200.
 
-import { ApiError, TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError, TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 import { undoAiChange } from './notes-api';
 
 function mockFetch(status: string) {

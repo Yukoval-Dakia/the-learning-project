@@ -1,8 +1,8 @@
+import type { Job, QueueStats } from 'pg-boss';
 import { findOutstandingCopilotDurableRuns } from '@/capabilities/copilot/server/durable-run-observation';
 import type { Db } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';
 import type { BossJobObserver } from '@/server/boss/job-observation';
-import type { Job, QueueStats } from 'pg-boss';
 
 import {
   COPILOT_RUN_QUEUE,

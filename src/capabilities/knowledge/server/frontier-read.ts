@@ -20,11 +20,11 @@
 //   - ⑥ governance: reasons + bands are QUALITATIVE (prereq COUNTS / proposed-prereq
 //     NAMES + the discrete BandChip), never bare mastery probabilities.
 
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { isMasteredForFrontier, learnableFrontierResolved } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { getMasteryProjection } from '@/server/mastery/state';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 const RELATION_PREREQUISITE = 'prerequisite' as const;
 

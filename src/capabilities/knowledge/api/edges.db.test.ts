@@ -1,3 +1,5 @@
+import { and, eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CreateKnowledgeEdgeResponseSchema,
   KnowledgeEdgeCollectionResponseSchema,
@@ -7,8 +9,6 @@ import { createKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { edgeRowToSnapshot, gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
 import { diffSnapshots } from '@/server/projections/snapshot-diff';
-import { and, eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // YUK-384 — the POST handler fires a best-effort hub-sync wake via getStartedBoss (the

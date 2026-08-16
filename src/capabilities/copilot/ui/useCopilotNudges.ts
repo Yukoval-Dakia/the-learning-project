@@ -1,8 +1,8 @@
 // YUK-577 — copilot 主动开口 nudge 前台 hook（读 GET /nudges + dismiss/opened 处置）。
 // design: docs/design/2026-07-07-yuk577-proactive-triggers.md §4. 新文件，零撞车。
 
-import { apiFetch, apiJson } from '@/ui/lib/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { apiFetch, apiJson } from '@/ui/lib/api';
 
 export interface CopilotNudge {
   id: string;

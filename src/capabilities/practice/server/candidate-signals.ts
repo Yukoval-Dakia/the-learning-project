@@ -14,6 +14,7 @@
 // 严守只读契约（item-更新半边锁死 G4）：本模块**永不写** item_calibration / mastery_state。
 // b 锚只读 track='hard'（软轨 b 永不进 p(L)/调度，ADR-0035）。
 
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import {
   EARLY_KLP_ENABLED,
@@ -38,7 +39,6 @@ import {
   effectiveThetaForKcBatch,
   getMasteryStates,
 } from '@/server/mastery/state';
-import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { MISCONCEPTION_RECURRENCE_ENABLED } from './selection-constants';
 import { rotationClassForKind } from './variant-rotation';
 

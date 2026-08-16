@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { yuwenProfile } from '@/subjects/yuwen/profile';
 import { describe, expect, it } from 'vitest';
+import { yuwenProfile } from '@/subjects/yuwen/profile';
 import {
   JUDGE_PROMPT_TEMPLATE_REVISION,
   judgePromptFingerprint,

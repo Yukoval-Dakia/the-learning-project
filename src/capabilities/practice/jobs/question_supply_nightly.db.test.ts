@@ -7,13 +7,12 @@
 // 防 spam 闸，必须有 job 层证据。
 
 import { createId } from '@paralleldrive/cuid2';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
 import type { EnqueueFn } from '@/capabilities/practice/public';
 import { db } from '@/db/client';
 import { event, knowledge, learning_item } from '@/db/schema';
 import { PLACEMENT_PROBE_ENABLED } from '@/kernel/placement';
-import { eq } from 'drizzle-orm';
 import { resetDb } from '../../../../tests/helpers/db';
 import { emptyPlacementStarterRecoveryResult } from '../server/placement-starter-recovery';
 import {

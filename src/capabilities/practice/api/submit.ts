@@ -31,6 +31,7 @@
 //   persistSubmit (knowledge-set resolution + FSRS txn + event write + refine
 //   trigger). POST composes the phases and shapes the wire response.
 
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Provider } from '@/ai/registry';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
 import {
@@ -61,8 +62,7 @@ import {
 } from '@/core/schema/intervention';
 import { type Db, type Tx, db } from '@/db/client';
 import { learning_session, mastery_state, material_fsrs_state, question } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
-import { activeEffectiveTruth } from '@/kernel/events';
+import { activeEffectiveTruth, writeEvent } from '@/kernel/events';
 import {
   ApiError,
   canonicalResourceResponse,
@@ -90,7 +90,6 @@ import {
 } from '@/server/mastery/state';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import type { SubjectProfile } from '@/subjects/profile';
-import { and, eq, inArray, sql } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { writeAttemptSnapshotBrackets } from '../server/attempt-snapshot';
 import { resolveAdviceCauseForQuestion } from '../server/cause-context';

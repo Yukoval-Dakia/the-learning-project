@@ -3,11 +3,11 @@
 // an AI revision silently did nothing while the row still offered 还原. A failure must
 // surface a toast (mirrors the sibling saveM.onError).
 
-import { ApiError } from '@/ui/lib/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '@/ui/lib/api';
 import NoteReaderPage from './NoteReaderPage';
 
 const mocks = vi.hoisted(() => ({

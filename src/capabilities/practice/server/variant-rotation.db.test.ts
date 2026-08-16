@@ -5,6 +5,7 @@
 // root_question_id family rotation, plus every fallback / dedup / boundary path
 // from ADR-0030 §2/§3 and plan §3.
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   pickProbeForKnowledge,
   prefetchProbeSelection,
@@ -13,7 +14,6 @@ import {
 } from '@/capabilities/practice/server/variant-rotation';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // YUK-716 — count-instrumenting Proxy over a drizzle db: increments `counter.n` per `.select()`

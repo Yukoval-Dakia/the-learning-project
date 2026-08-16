@@ -22,6 +22,8 @@
 //   • ribbon「在复习队列」统计同因后端 list 无 review 聚合 → DEFER，ribbon 改渲「含变体」
 //     替代（真 variant_depth>0 计数），不 fabricate 假复习数。
 
+import { useInfiniteQuery } from '@tanstack/react-query';
+import { Fragment, memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { resolveKnownSubjectId } from '@/subjects/profile';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { makeLookup } from '@/ui/lib/makeLookup';
@@ -33,8 +35,6 @@ import { Card } from '@/ui/primitives/Card';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
-import { useInfiniteQuery } from '@tanstack/react-query';
-import { Fragment, memo, useCallback, useEffect, useMemo, useState } from 'react';
 import './questions.css';
 
 import { type QBankQuestion, getQuestionsList } from './practice-api';

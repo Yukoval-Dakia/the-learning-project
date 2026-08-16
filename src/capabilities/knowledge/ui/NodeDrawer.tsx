@@ -4,14 +4,14 @@
 // 「关系 typed edges」视觉分离、AI 边提议四动作（接受/反向/改类型/忽略）、
 // EdgeCreateForm、foot 打开节点详情页。decay 用非颜色 cue（icon+label）。
 
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRef, useState } from 'react';
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { MasteryRing } from '@/ui/primitives/MasteryRing';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
 
 import { BandChip } from './BandChip';
 import { InteractiveArtifactDiscovery } from './KnowledgeDetailPage';

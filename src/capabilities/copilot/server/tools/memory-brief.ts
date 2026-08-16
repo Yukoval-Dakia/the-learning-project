@@ -4,10 +4,10 @@
 // scope). Copilot owns the memory-brief reader; the brief row itself is
 // written by the Dreaming nightly job.
 
-import { memory_brief_note } from '@/db/schema';
-import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { memory_brief_note } from '@/db/schema';
+import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
 function iso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;

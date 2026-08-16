@@ -1,3 +1,5 @@
+import { eq } from 'drizzle-orm';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { capabilities } from '@/capabilities';
 import {
   proposeLearningItemCompletionTool,
@@ -30,8 +32,6 @@ import {
 import { writeEvent } from '@/kernel/events';
 import { getProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
 import type { ToolContext } from '@/kernel/tools/types';
-import { eq } from 'drizzle-orm';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   beginTestTransaction,
   resetDb,

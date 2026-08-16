@@ -6,12 +6,12 @@
 // zero-filled); the ⑥ conf-strip invariant (no raw weight/confidence keys nor seeded
 // numbers on the wire); manifest route registration.
 
+import { createId } from '@paralleldrive/cuid2';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { KnowledgeMisconceptionListResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { knowledgeCapability } from '@/capabilities/knowledge/manifest';
 import { misconception, misconception_edge } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { createId } from '@paralleldrive/cuid2';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { loadMisconceptionsForKc } from './misconception-read';
 

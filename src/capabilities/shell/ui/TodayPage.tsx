@@ -9,6 +9,8 @@
 // （observability 包端点）；设计稿的预算线（budget + bar 占比）无数据源，
 // 见 CostRibbon 组件注释。
 
+import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 import {
   AgentNotesBoard,
   type AgentNotesResponse,
@@ -24,12 +26,6 @@ import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
-
-import { PrepDeskConjectures } from './PrepDeskConjectures';
-import { ProbeAnswers } from './ProbeAnswers';
-import { TeachingBriefBand } from './TeachingBrief';
 import { AiChangesStrip } from './blocks/AiChangesStrip';
 import { KpiRow } from './blocks/KpiRow';
 import { LoomHero } from './blocks/LoomHero';
@@ -37,7 +33,10 @@ import { ProfileBand } from './blocks/ProfileBand';
 import { ProposalStrip } from './blocks/ProposalStrip';
 import { SessionsStrip } from './blocks/SessionsStrip';
 import { WeekHeat } from './blocks/WeekHeat';
+import { PrepDeskConjectures } from './PrepDeskConjectures';
+import { ProbeAnswers } from './ProbeAnswers';
 import { getActiveProbes } from './probe-answer-api';
+import { TeachingBriefBand } from './TeachingBrief';
 import {
   type OvernightDigest,
   type WorkbenchSummary,

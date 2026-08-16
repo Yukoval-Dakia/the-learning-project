@@ -1,7 +1,7 @@
+import { eq } from 'drizzle-orm';
 import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
-import { eq } from 'drizzle-orm';
 import { JUDGE_PROMPT_TEMPLATE_REVISION, sha256Canonical } from './judge-execution-provenance';
 
 export interface JudgeExecutionIdentity {

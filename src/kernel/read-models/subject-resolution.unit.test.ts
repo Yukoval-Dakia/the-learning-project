@@ -1,5 +1,5 @@
-import { SubjectRegistry, subjectProfiles } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
+import { SubjectRegistry, subjectProfiles } from '@/subjects/profile';
 import { resolveSubjectRenderNotation } from './subject-resolution';
 
 describe('resolveSubjectRenderNotation', () => {

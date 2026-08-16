@@ -1,5 +1,5 @@
-import { SubjectProfileSchema } from '@/subjects/profile-schema';
 import { z } from 'zod';
+import { SubjectProfileSchema } from '@/subjects/profile-schema';
 
 // U7 (YUK-203) — Editable Profile Studio MVP authoring/review wire schemas.
 // Core layer: pure Zod, no IO. Consumed via direct-path import

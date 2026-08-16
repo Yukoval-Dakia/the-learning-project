@@ -2,8 +2,8 @@
 
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ProposalCard } from './ProposalCard';
 import type { ProposalInboxRow } from './inbox-api';
+import { ProposalCard } from './ProposalCard';
 
 afterEach(cleanup);
 

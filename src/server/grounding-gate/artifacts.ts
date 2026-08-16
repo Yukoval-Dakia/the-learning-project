@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
-import type { InduceConjectureResult } from '@/capabilities/agency/public';
-import type { ConjectureEvidenceImageSource } from '@/capabilities/agency/public';
+import { z } from 'zod';
+import type {
+  ConjectureEvidenceImageSource,
+  InduceConjectureResult,
+} from '@/capabilities/agency/public';
 import {
   ConjectureDiagnosticSpec,
   ConjectureProbeQualityAttempt,
@@ -9,7 +12,6 @@ import {
   ConjectureProbeSpecV2Base,
 } from '@/core/schema/business';
 import type { GroundingGateCandidate } from '@/server/grounding-gate/candidates';
-import { z } from 'zod';
 
 export const GROUNDING_GATE_SCHEMA_VERSION = 1;
 export const GROUNDING_GATE_MIN_CLUSTERS = 6;

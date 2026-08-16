@@ -6,6 +6,7 @@
 // active-row machinery (takeActiveRows / filterActiveRows / newerEventRow)
 // stays central and is imported below.
 
+import { and, asc, desc, eq, gt, gte, inArray, or, sql } from 'drizzle-orm';
 import {
   type EffectiveTruth,
   activeEffectiveTruth,
@@ -19,7 +20,6 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { filterActiveRows, newerEventRow, takeActiveRows } from '@/kernel/events';
-import { and, asc, desc, eq, gt, gte, inArray, or, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;

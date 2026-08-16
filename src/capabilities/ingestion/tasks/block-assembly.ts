@@ -1,6 +1,6 @@
+import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import type { SubjectProfile } from '@/subjects/profile';
-import { z } from 'zod';
 import { parseTaskJsonObject } from './parse-json';
 
 export const BlockAssemblyCandidate = z.object({

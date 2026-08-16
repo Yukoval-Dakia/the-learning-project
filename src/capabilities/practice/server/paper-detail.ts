@@ -17,6 +17,7 @@
 // the slot response carries { submitted: true, feedback_buffered: true } — the
 // score/outcome/feedback_md are NOT sent to the client.
 
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { readPaperSections } from '@/capabilities/practice/server/paper-sections';
 import {
   isJudgementVisibleToUser,
@@ -25,7 +26,6 @@ import {
 import { Artifact } from '@/core/schema/index';
 import type { Db } from '@/db/client';
 import { answer, artifact, event, learning_session, question } from '@/db/schema';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Response types (contract for L-practice-ui)

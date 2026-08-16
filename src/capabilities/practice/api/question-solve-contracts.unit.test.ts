@@ -1,5 +1,5 @@
-import { MAX_HINT_COUNT, MAX_HINT_INDEX } from '@/core/schema/event/known';
 import { describe, expect, it } from 'vitest';
+import { MAX_HINT_COUNT, MAX_HINT_INDEX } from '@/core/schema/event/known';
 import {
   DeleteQuestionQuerySchema,
   QuestionDetailQuerySchema,

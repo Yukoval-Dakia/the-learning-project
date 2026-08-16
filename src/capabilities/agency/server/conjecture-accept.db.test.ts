@@ -4,11 +4,8 @@
 // semantics (accept = calibration anchor / edit → mem0 CORE / reject → digest),
 // idempotency, and the ND-5 red line: NO FSRS / review row is ever written.
 
-import {
-  CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
-  PROBE_SLOTS_FULL_CODE,
-  acceptConjectureProposal,
-} from '@/capabilities/agency/server/conjecture-accept';
+import { and, eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_QUESTION_SOURCE,
@@ -16,6 +13,11 @@ import {
   countActiveProbes,
   serveProbeOnce,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
+import {
+  CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
+  PROBE_SLOTS_FULL_CODE,
+  acceptConjectureProposal,
+} from '@/capabilities/agency/server/conjecture-accept';
 import {
   DEFAULT_MISCONCEPTION_WEIGHT,
   misconceptionIdForConjecture,
@@ -33,8 +35,6 @@ import {
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
-import { and, eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 function baseConjecture() {

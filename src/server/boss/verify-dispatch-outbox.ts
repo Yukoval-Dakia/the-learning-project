@@ -1,15 +1,14 @@
 import { createHash } from 'node:crypto';
-import { writeEvent, writeEvents } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { type AnyColumn, and, eq, inArray, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Job, PgBoss } from 'pg-boss';
 import { z } from 'zod';
-
 import type { PlacementVerificationAuthority } from '@/capabilities/practice/public';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
+import { writeEvent, writeEvents } from '@/kernel/events';
 import { fromPgBossDrizzleTx } from './pg-boss-drizzle';
 
 export const VERIFY_DISPATCH_INTENT_ACTION = 'experimental:verify_dispatch_intent';

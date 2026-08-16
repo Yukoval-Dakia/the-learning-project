@@ -26,10 +26,10 @@
 // lands whitelist_match=false. The verification gate is NOT relaxed for demoted
 // questions — demotion only affects selection priority.
 
+import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job, SendOptions } from 'pg-boss';
-
 import type { DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
 import {
   type SourcedQuestionT,
@@ -68,7 +68,6 @@ import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { kindsMatch } from '@/subjects/question-kind';
-import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { SupplyTraceV1, type SupplyTraceV1T } from '../server/question-supply/evidence-demand';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,

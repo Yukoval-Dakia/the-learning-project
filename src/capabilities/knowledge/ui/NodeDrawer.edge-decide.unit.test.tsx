@@ -7,8 +7,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NodeDrawer } from './NodeDrawer';
 import type { EdgeProposalInboxRow, KnowledgeTreeNode } from './knowledge-api';
+import { NodeDrawer } from './NodeDrawer';
 
 const mocks = vi.hoisted(() => ({
   decideEdgeProposal: vi.fn(),

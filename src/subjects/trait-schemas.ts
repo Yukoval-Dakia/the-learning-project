@@ -18,12 +18,12 @@
 // .min(1)：空串是合法初态（带 .min(1) 会让 thin-create 与全部装配校验当场翻红——
 // 分歧有意，测试钉死「全空两节校验绿」）。
 
+import { z } from 'zod';
 import {
   CauseCategoryDeclaration,
   RenderConfig,
   SchedulingHints,
 } from '@/core/schema/profile-decl';
-import { z } from 'zod';
 import { JudgeRouteKindSchema, SubjectQuestionKindSchema } from './profile-schema';
 
 export const SUBJECT_TRAIT_KINDS = [

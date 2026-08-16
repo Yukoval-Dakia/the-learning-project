@@ -4,13 +4,13 @@
 // a single rate(dismiss) event + leaves the per-KC funnel); the dismiss is idempotent (a second
 // veto returns idempotent with no duplicate rate event); an unknown id → 404.
 
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { LegacyKnowledgeMisconceptionVetoResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { newId } from '@/core/ids';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { loadMisconceptionsForKc } from '../server/misconception-read';
 import { POST } from './misconception-veto';

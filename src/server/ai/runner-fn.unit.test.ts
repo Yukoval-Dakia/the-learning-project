@@ -1,15 +1,16 @@
+import { describe, expect, it, vi } from 'vitest';
 import type { Db } from '@/db/client';
 import type { RunTaskCtx, RunTaskResult } from '@/server/ai/runner';
-import { describe, expect, it, vi } from 'vitest';
-import { makeRunTaskFn, makeRunTaskTextFn } from './runner-fn';
 import type { RunTaskCallCtx } from './runner-fn';
+import { makeRunTaskFn, makeRunTaskTextFn } from './runner-fn';
 
 type Assert<T extends true> = T;
-type IsExact<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
-  ? (<T>() => T extends B ? 1 : 2) extends <T>() => T extends A ? 1 : 2
-    ? true
-    : false
-  : false;
+type IsExact<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
+    ? (<T>() => T extends B ? 1 : 2) extends <T>() => T extends A ? 1 : 2
+      ? true
+      : false
+    : false;
 type _RunTaskCallCtxContract = Assert<
   IsExact<RunTaskCallCtx, Omit<RunTaskCtx, 'db' | 'enableTransientRetry'>>
 >;

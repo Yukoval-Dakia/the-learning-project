@@ -7,8 +7,8 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MeshGraph } from './MeshGraph';
 import type { KnowledgeTreeNode } from './knowledge-api';
+import { MeshGraph } from './MeshGraph';
 
 afterEach(cleanup);
 

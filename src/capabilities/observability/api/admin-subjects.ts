@@ -7,8 +7,7 @@
 // 写操作仍必须走 /api/admin/*（RL5）。
 
 import { db } from '@/db/client';
-import { ApiError } from '@/kernel/http';
-import { errorResponse } from '@/kernel/http';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { listAdminSubjects } from '@/server/subjects/admin-read';
 
 export async function GET(): Promise<Response> {

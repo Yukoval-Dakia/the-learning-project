@@ -1,10 +1,10 @@
+import { sql } from 'drizzle-orm';
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { copilotRunTerminalSql } from '@/capabilities/copilot/server/copilot-run-terminal-sql';
 import type { Db } from '@/db/client';
-import { sql } from 'drizzle-orm';
 
 /** Hard backlog ceiling for paid durable Copilot runs (YUK-693). */
 export const MAX_OUTSTANDING_DURABLE_RUNS = 5;

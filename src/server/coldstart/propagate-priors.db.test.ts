@@ -10,9 +10,9 @@
 
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { knowledge, knowledge_edge } from '@/db/schema';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 // Toggle DAY_ONE_PRIOR_ENABLED at call time; ...actual keeps GRID_THETA etc. real.

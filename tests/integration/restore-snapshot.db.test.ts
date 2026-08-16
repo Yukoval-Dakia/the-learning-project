@@ -15,8 +15,8 @@ import type {
   ThetaRowSnapshotT,
 } from '@/core/schema/event/state-snapshot';
 import { GRID_POINTS } from '@/core/theta-grid'; // YUK-561 FIX-3 — grid vector length
-import { db as rootDb } from '@/db/client';
 import type { Tx } from '@/db/client';
+import { db as rootDb } from '@/db/client';
 import { mastery_state, material_fsrs_state } from '@/db/schema';
 import { upsertFsrsState } from '@/server/fsrs/state';
 import { upsertMasteryState } from '@/server/mastery/state';

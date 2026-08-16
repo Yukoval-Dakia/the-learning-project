@@ -29,6 +29,8 @@
 
 'use client';
 
+import { useQuery } from '@tanstack/react-query';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { CopilotSkillContextT } from '@/capabilities/copilot/server/chat';
 import type { CopilotChatRequestT } from '@/capabilities/copilot/server/chat-contracts';
 import { ApiError, apiFetch, apiJson } from '@/ui/lib/api';
@@ -48,8 +50,6 @@ import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { ToolUseCard, type ToolUseStatus } from '@/ui/primitives/ToolUseCard';
-import { useQuery } from '@tanstack/react-query';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { CopilotHeroCard } from './CopilotHeroCard';
 import {
   type PersistedDurableCopilotReconnect,

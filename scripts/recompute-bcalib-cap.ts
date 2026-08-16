@@ -31,11 +31,11 @@
 // Load `.env` BEFORE importing `@/db/client`. Must be first (see backfill-genesis-events.ts).
 import './load-env';
 
-import { db } from '@/db/client';
+import { and, eq, isNotNull } from 'drizzle-orm';
 import type { Db } from '@/db/client';
+import { db } from '@/db/client';
 import { item_calibration } from '@/db/schema';
 import { recalibrateQuestion } from '@/server/mastery/recalibration';
-import { and, eq, isNotNull } from 'drizzle-orm';
 
 export interface RecomputeBCalibCapResult {
   /** 候选题数（b_calib IS NOT NULL 的 hard 轨行）。 */

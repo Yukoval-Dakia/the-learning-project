@@ -1,16 +1,18 @@
 // Capability packages consume shared domain schemas through this pure facade
 // instead of reaching into core/subjects implementation paths directly.
+
+export { MAX_PDF_PAGES } from '@/core/limits';
+export { ActivityRef } from '@/core/schema/activity';
 export {
-  FsrsRating,
   ArtifactBodyBlocks,
   ArtifactHistoryEntry,
   CauseCategory,
+  FsrsRating,
   IngestionEntrypoint,
   NoteSection,
   NoteVerificationResult,
   QuestionKind,
 } from '@/core/schema/business';
-export { ActivityRef } from '@/core/schema/activity';
 export { CoarseOutcome, JudgeResultV2, ScoreMeaning } from '@/core/schema/capability';
 export {
   PROBE_NON_EVIDENCE_RESOLUTION,
@@ -18,10 +20,9 @@ export {
 } from '@/core/schema/conjecture';
 export { ConjectureProbeResponseJudgement } from '@/core/schema/conjecture-probe-response';
 export { CorrectArtifactEvent, CorrectArtifactPayload } from '@/core/schema/event';
-export { NudgeKind } from '@/core/schema/event/nudge-events';
 export { SuggestionKind } from '@/core/schema/event/known';
+export { NudgeKind } from '@/core/schema/event/nudge-events';
 export { PageSpan } from '@/core/schema/index';
 export { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
 export { FigureRef, StructuredQuestion } from '@/core/schema/structured_question';
-export { MAX_PDF_PAGES } from '@/core/limits';
 export { SubjectProfileSchema } from '@/subjects/profile-schema';

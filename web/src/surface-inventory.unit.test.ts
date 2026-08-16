@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
 import { capabilities } from '@/capabilities';
 import { UI_SURFACES, auditUiSurfaceInventory } from '@/kernel/ui-surfaces';
 import {
@@ -10,7 +11,6 @@ import {
   isSection,
   titleFromPath,
 } from '@/ui/shell/nav-config';
-import { describe, expect, it } from 'vitest';
 
 const routerSource = readFileSync(join(process.cwd(), 'web/src/router.tsx'), 'utf8');
 const routerSurfaceIds = [...routerSource.matchAll(/path:\s*surfacePath\('([^']+)'\)/g)].map(

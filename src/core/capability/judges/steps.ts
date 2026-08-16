@@ -1,6 +1,6 @@
+import { z } from 'zod';
 import { RubricReferenceSolution as StepsReferenceSolution } from '@/core/schema/business';
 import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
-import { z } from 'zod';
 import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
 
 // ----------------------------------------------------------------------------
@@ -10,6 +10,7 @@ import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
 // docs/superpowers/specs/2026-05-21-math-mvp-vision-design.md §7.
 // ----------------------------------------------------------------------------
 
+export type { RubricReferenceSolutionT as StepsReferenceSolutionT } from '@/core/schema/business';
 /**
  * Reference solution shape — comes from the question's rubric_json. For math
  * derivation, the rubric carries:
@@ -22,7 +23,6 @@ import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
  * naming convention; consumers of either name see the same Zod instance.
  */
 export { RubricReferenceSolution as StepsReferenceSolution } from '@/core/schema/business';
-export type { RubricReferenceSolutionT as StepsReferenceSolutionT } from '@/core/schema/business';
 
 /**
  * Judge runner input — what the server-side steps runner validates before it

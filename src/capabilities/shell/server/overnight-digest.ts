@@ -20,11 +20,11 @@
 //   4. proposals —— 窗内新 proposals（不含 conjecture）count。
 //   5. prep-desk conjectures —— 窗内新 conjectures count。
 
+import { and, count, desc, eq, gte, lt, sql } from 'drizzle-orm';
 import { listNoteRefineChanges } from '@/capabilities/notes/public';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, event } from '@/db/schema';
 import { countProposalsInWindow } from '@/kernel/proposals/inbox';
-import { and, count, desc, eq, gte, lt, sql } from 'drizzle-orm';
 import {
   type OvernightDigest,
   type RunErrorRow,

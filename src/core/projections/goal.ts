@@ -1,5 +1,5 @@
-import { resolveKnownSubjectId } from '@/subjects/profile';
 import { z } from 'zod';
+import { resolveKnownSubjectId } from '@/subjects/profile';
 import {
   GenesisExperimental,
   GoalRowSnapshot,
@@ -285,7 +285,7 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
       // A5 — trailing continue for parity with every other branch: defends against a fall-through
       // if a new branch is appended after this (currently last) one. Biome flags it as unnecessary
       // TODAY precisely because it is the last branch — the suppression keeps the guard intentional.
-      // biome-ignore lint/correctness/noUnnecessaryContinue: defensive — keeps every reducer branch uniformly terminated so appending a branch can't introduce silent fall-through.
+      // biome-ignore lint/complexity/noUselessContinue: defensive — keeps every reducer branch uniformly terminated so appending a branch can't introduce silent fall-through.
       continue;
     }
   }

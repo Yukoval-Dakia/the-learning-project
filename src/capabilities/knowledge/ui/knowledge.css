@@ -103,7 +103,9 @@
   color: var(--ink-3);
   border-radius: var(--r-pill);
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .mesh-zoom-btn:hover {
   background: var(--paper-sunk);
@@ -318,7 +320,9 @@
   cursor: pointer;
   text-align: left;
   width: 100%;
-  transition: box-shadow var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+  transition:
+    box-shadow var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
 }
 .frontier-card:hover {
   box-shadow: var(--shadow-2);

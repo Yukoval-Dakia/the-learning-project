@@ -1,3 +1,5 @@
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   artifact,
   event,
@@ -6,8 +8,6 @@ import {
   event_subscription_effect,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { handleMasteryProgressNoteRefineDelivery } from './mastery-progress-subscription';
 

@@ -7,9 +7,9 @@
 
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { goal, knowledge, knowledge_edge, mastery_state } from '@/db/schema';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const flag = { value: false };

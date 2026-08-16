@@ -1,5 +1,5 @@
-import { generateOpenApiDocument } from '@/kernel/openapi';
 import { describe, expect, it } from 'vitest';
+import { generateOpenApiDocument } from '@/kernel/openapi';
 import { practiceCapability } from './manifest';
 
 describe('practice manifest jobs', () => {

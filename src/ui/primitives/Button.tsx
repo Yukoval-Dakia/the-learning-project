@@ -1,5 +1,5 @@
-import { forwardRef } from 'react';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { forwardRef } from 'react';
 import type { IconName } from './Icon';
 import { Icon } from './Icon';
 

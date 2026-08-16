@@ -7,10 +7,11 @@
 // rows. Seeds go through direct db.insert(event) (rejudge.db.test.ts
 // precedent); the re-judge LLM is an injected runTaskInner stub so the REAL
 // judgeAnswer pipeline runs end-to-end with zero network.
-import { event, item_calibration, mastery_state, question } from '@/db/schema';
+
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { event, item_calibration, mastery_state, question } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   JUDGE_CALIBRATION_RUN_SUMMARY_ACTION,

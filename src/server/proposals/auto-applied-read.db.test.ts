@@ -2,10 +2,10 @@
 // （title join / level / applied_at）+ reverted join（correct retract 痕）+ 列表窗口过滤
 // + 当前熔断快照透传。
 
-import { learning_item } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { learning_item } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { AUTO_APPLIED_LIST_WINDOW_MS, getAutoAppliedDigest } from './auto-applied-read';
 import { VERDICT_AUTOAPPLY_MAX } from './decide-breaker';

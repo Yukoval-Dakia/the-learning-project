@@ -7,18 +7,17 @@
 // wrapper 带 .knowledge-loom：树类（know-node 族）在 globals.css 按该 scope
 // 落地（collision scoping），SPA 页复用同一 scope；M5 样式收编时统一。
 
+import { useQuery } from '@tanstack/react-query';
+import { Suspense, lazy, useMemo, useState } from 'react';
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { MasteryRing } from '@/ui/primitives/MasteryRing';
-import { useQuery } from '@tanstack/react-query';
-import { Suspense, lazy, useMemo, useState } from 'react';
 import './knowledge.css';
 
 import { BandChip } from './BandChip';
 import { FrontierRail } from './FrontierRail';
-import { NodeDrawer, decayCue } from './NodeDrawer';
 import {
   type KnowledgeTreeNode,
   getEdgeProposals,
@@ -27,6 +26,7 @@ import {
   getReviewDueSummary,
   getTree,
 } from './knowledge-api';
+import { NodeDrawer, decayCue } from './NodeDrawer';
 
 const LazyMeshGraph = lazy(async () => {
   const { MeshGraph } = await import('./MeshGraph');

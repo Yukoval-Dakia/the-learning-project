@@ -1,9 +1,8 @@
-import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
-import { artifact, artifact_block_ref, event } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-
 import { EditArtifactBodyBlocksResponseSchema } from '@/capabilities/notes/api/contracts';
+import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
+import { artifact, artifact_block_ref, event } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { PATCH } from './body-blocks-route';
 

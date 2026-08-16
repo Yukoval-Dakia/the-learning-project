@@ -7,14 +7,14 @@
 // + the knowledge→subject parent-chain walk, so they cannot be unit-mocked
 // (CLAUDE.md partition rules: DB-touching → db partition).
 
+import { eq } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { event, knowledge, learning_record, memory_brief_note } from '@/db/schema';
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
 import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
 import { providerOperationIdForInvocation } from '@/server/ai/provider-attempt-runtime';
-import { eq } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import {

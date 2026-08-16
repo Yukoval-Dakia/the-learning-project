@@ -1,8 +1,8 @@
+import { describe, expect, it, vi } from 'vitest';
 import {
   PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
 } from '@/capabilities/practice/public';
-import { describe, expect, it, vi } from 'vitest';
 
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { AgentRunError } from '@/server/ai/agent-run-error';

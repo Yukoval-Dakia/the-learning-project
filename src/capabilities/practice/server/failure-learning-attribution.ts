@@ -9,6 +9,7 @@
 // skip + warn (mirrors the legacy "cause already set" check). Single-owner write path
 // per ADR-0005 — never INSERT the event row directly; goes through writeEvent.
 
+import { and, eq } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event as eventTable } from '@/db/schema';
@@ -16,7 +17,6 @@ import { writeEvent } from '@/kernel/events';
 // YUK-598 stale-const 收口（v2 §9①）：defaultSubjectProfile 冻结常量 → 活 registry
 // resolveSubjectProfile()（每次调用求值，owner 编辑 general 即跟随）。
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
-import { and, eq } from 'drizzle-orm';
 import { retrieveCauseCandidates } from '../tasks/attribute-retrieve';
 import {
   type AttributionInput,

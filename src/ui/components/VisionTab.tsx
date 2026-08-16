@@ -16,6 +16,8 @@
 //     tree (block.structured) — sub_questions / options / answers /
 //     question_no — sits above the editable prompt textarea.
 
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
 import { RecordLanding, knowledgeLabelsFor } from '@/ui/components/RecordLanding';
 import { type ApiSubject, useSubjects } from '@/ui/hooks/useSubjects';
@@ -35,8 +37,6 @@ import { Badge } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { Icon } from '@/ui/primitives/Icon';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /**
  * M1-T6 (YUK-314)：路由耦合从组件里抽出 —— VisionTab 不再 import 路由库，

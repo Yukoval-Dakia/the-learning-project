@@ -49,11 +49,11 @@
 // Load `.env` BEFORE importing `@/db/client`. Must be first (see backfill-genesis-events.ts).
 import './load-env';
 
+import { asc, eq, gt } from 'drizzle-orm';
 import { type BBoxLike, clampBBox } from '@/core/schema/bbox-utils';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import { type Db, type Tx, db } from '@/db/client';
 import { question_block } from '@/db/schema';
-import { asc, eq, gt } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 

@@ -1,9 +1,9 @@
 // YUK-531 (A5 S4 / ADR-0036 RT1) — misconception_edge single-owner throat tests.
 
-import { misconception_edge } from '@/db/schema';
-import { ApiError } from '@/kernel/http';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { misconception_edge } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { archiveMisconceptionEdge, createMisconceptionEdge } from './misconception-edges';
 

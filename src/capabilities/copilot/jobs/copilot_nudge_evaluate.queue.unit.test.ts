@@ -1,5 +1,5 @@
-import { capabilities } from '@/capabilities';
 import { describe, expect, it } from 'vitest';
+import { capabilities } from '@/capabilities';
 // Relative import (not the @/server/boss/* alias) so the partition audit's pure-module exception
 // applies — queue-names.ts is dependency-free (see DB_TAINTED_DIR_EXCEPTIONS, audit-test-partition.ts).
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '../../../server/boss/queue-names';

@@ -25,6 +25,8 @@
 // single-query top-K retriever; pairwise dedup needs a SELF-JOIN (a different
 // query shape).
 
+import { sql } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
 import {
   DEDUP_DISTANCE_MAX,
   DEDUP_MAX_PAIRS,
@@ -38,8 +40,6 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { sql } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
 
 export interface KcDedupNightlyResult {
   /** unordered near-dup pairs the SELF-JOIN returned (within distance, ≤ maxPairs). */

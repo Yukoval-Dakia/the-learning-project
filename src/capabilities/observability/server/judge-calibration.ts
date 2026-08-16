@@ -21,10 +21,10 @@
 // admin runs/cost surfaces do NOT yet exclude them (out of scope — design doc
 // §8 follow-up).
 
-import type { Db } from '@/db/client';
-import { event } from '@/db/schema';
 import { and, desc, eq, gte } from 'drizzle-orm';
 import { z } from 'zod';
+import type { Db } from '@/db/client';
+import { event } from '@/db/schema';
 
 export const JUDGE_CALIBRATION_MIN_N = 5;
 const RECENT_SAMPLES_LIMIT = 20;

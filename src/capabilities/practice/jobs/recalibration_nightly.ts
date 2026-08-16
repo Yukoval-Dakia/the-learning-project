@@ -36,6 +36,8 @@
 // G3：recalibrateQuestion 只写 b_calib（track='hard'）/ calibration_n / calibration_weight /
 //     last_calibrated_at——never item b / stream / due。本 job 不新增任何写。
 
+import { and, count, eq, gte, sql } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { difficulty_calibration_label, item_calibration, question } from '@/db/schema';
@@ -45,8 +47,6 @@ import {
   attemptLocalDate,
   recalibrateQuestion,
 } from '@/server/mastery/recalibration';
-import { and, count, eq, gte, sql } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
 
 type DepsOverride = {
   /** 候选窗起点覆盖（测试注入固定 now；默认 new Date()）。 */

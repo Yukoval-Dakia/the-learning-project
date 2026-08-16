@@ -13,6 +13,8 @@
 //   3. `streamReviewTask` smoke: mock the Agent SDK module, verify the
 //      streamTask wrapper is built with the right MCP server.
 
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { tasks } from '@/ai/registry';
 import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import { newId } from '@/core/ids';
@@ -26,8 +28,6 @@ import {
   tool_call_log,
 } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // Mock the SDK so streamReviewTask doesn't spawn the `claude` binary.

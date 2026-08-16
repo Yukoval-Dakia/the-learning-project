@@ -6,17 +6,17 @@
 // dayKey claim gate. Asserts: proposal landing + actor + baseline snapshot + cost-bearing
 // scan, cross-actor dedup, degrade, shadow isolation, and claim idempotency.
 
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
 import type { FailureAttempt } from '@/capabilities/knowledge/public';
 import { event } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import type { WriteEventInput } from '@/kernel/events';
+import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { SPAWN_BUDGET_MODE, SPAWN_TOOL_NAME } from '@/server/ai/spawn-contract';
 import type { MasteryProjection } from '@/server/mastery/state';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../../tests/helpers/conjecture-probe-fixtures';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 

@@ -1,6 +1,6 @@
-import { question } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { question } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { loadAttemptQuestionSnapshot } from './question-evidence-snapshot';
 

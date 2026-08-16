@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/server/conjecture/probe-evidence';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -13,7 +14,6 @@ import type {
 } from '@/kernel/manifest';
 import { getStartedBoss } from '@/server/boss/client';
 import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
-import { sql } from 'drizzle-orm';
 import {
   InterventionSourceProbeResultPayload,
   buildInterventionSnapshotFromProbeResult,

@@ -19,6 +19,7 @@
 //
 // Verdict shape is STABLE for YUK-174 (RB-9): { ok:true } | { ok:false; gate; reason }.
 
+import { eq } from 'drizzle-orm';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
@@ -35,7 +36,6 @@ import {
 import { type FailureAttempt, getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { assertKnowledgeIdsExist } from '@/kernel/read-models/knowledge-validate';
-import { eq } from 'drizzle-orm';
 
 // RB-5 — single-source evidence window. Consumed by the recency check (RB-4)
 // and the §4.2 level computation. knowledge.md §4.2 "recent window: 30 days".

@@ -1,6 +1,6 @@
+import { describe, expect, it } from 'vitest';
 import { physicsProfile } from '@/subjects/physics/profile';
 import { yuwenProfile } from '@/subjects/yuwen/profile';
-import { describe, expect, it } from 'vitest';
 import {
   type ProfileImpactReport,
   ProfileImpactReportSchema,

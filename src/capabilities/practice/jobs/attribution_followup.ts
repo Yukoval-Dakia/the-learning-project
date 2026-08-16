@@ -1,3 +1,4 @@
+import type { Job } from 'pg-boss';
 import { createFailureLearning } from '@/capabilities/practice/server/failure-learning';
 import { getPracticeBoss } from '@/capabilities/practice/server/queue-runtime';
 import {
@@ -5,7 +6,6 @@ import {
   makePracticeTaskRunFn,
 } from '@/capabilities/practice/server/task-runtime';
 import type { Db } from '@/db/client';
-import type { Job } from 'pg-boss';
 import {
   type FailureLearningBossSend,
   type FailureLearningJobData,

@@ -1,5 +1,5 @@
-import type { Db } from '@/db/client';
 import { sql } from 'drizzle-orm';
+import type { Db } from '@/db/client';
 
 // YUK-557 (F7) — shared DDL/seed helpers for the mem0 pgvector collection table.
 // The collection (e.g. `learning_project_memories`) is created at RUNTIME by mem0's

@@ -1,6 +1,6 @@
+import type { CSSProperties } from 'react';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Card } from '@/ui/primitives/Card';
-import type { CSSProperties } from 'react';
 
 export interface AdminSurfaceProps {
   navigate: (to: string) => void;

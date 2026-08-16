@@ -4,10 +4,10 @@
 // loading/error state (nor hidden behind the collapsed activity disclosure). This locks
 // the regression: a served probe stays one-click reachable even when the digest errors.
 
-import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 
 import { OvernightDigestBand } from './TodayPage';
 

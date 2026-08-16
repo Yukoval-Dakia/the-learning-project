@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { TeachingBrief } from '@/capabilities/shell/server/teaching-brief';
 import { ActivityRef } from '@/core/schema/activity';
 import { CauseCategory } from '@/core/schema/cause';
@@ -9,7 +10,6 @@ import {
   ProposalDecisionResource,
   ProposalEvidenceRef,
 } from '@/core/schema/proposal';
-import { z } from 'zod';
 
 export const SubjectListResponseSchema = z.object({
   subjects: z.array(

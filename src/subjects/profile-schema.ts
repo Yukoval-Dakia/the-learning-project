@@ -1,9 +1,9 @@
+import { z } from 'zod';
 import {
   CauseCategoryDeclaration,
   RenderConfig,
   SchedulingHints,
 } from '@/core/schema/profile-decl';
-import { z } from 'zod';
 
 export type SubjectId = string;
 

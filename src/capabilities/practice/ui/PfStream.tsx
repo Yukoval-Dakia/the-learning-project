@@ -3,13 +3,13 @@
 // item 挂在线上、AI 开场白与第一人称理由陪练递题、已完成项收紧成织入的一行；
 // 跳过的留流尾可捡回；流尾点播移交真实 Copilot tool loop，不在本地伪造成功态。
 
+import { useState } from 'react';
 import { makeLookup } from '@/ui/lib/makeLookup';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { useState } from 'react';
 
 import type { PfToast } from './PracticeFacePage';
 import {

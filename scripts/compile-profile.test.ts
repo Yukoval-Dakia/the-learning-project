@@ -1,10 +1,10 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
 import { physicsProfile } from '@/subjects/physics/profile';
 import { serializeProfileToTs } from '@/subjects/serialize';
 import { yuwenProfile } from '@/subjects/yuwen/profile';
-import { afterAll, describe, expect, it } from 'vitest';
 import { compileProfile, runCli } from './compile-profile';
 
 // Step 4 acceptance — Critic path is NOT exercised here (no --critic flag), so no

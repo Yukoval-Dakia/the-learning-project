@@ -5,9 +5,9 @@
 // shared /api/review/submit path writes). PLACEMENT_PROBE_ENABLED is mocked true so the
 // dark-ship start gate is exercised in both directions.
 
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { event, goal, knowledge, learning_session, question } from '@/db/schema';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // Mock just the PLACEMENT_PROBE_ENABLED flag (EARLY_KLP pattern) — keep startPlacementSession /

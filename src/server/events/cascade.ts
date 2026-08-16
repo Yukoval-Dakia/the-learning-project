@@ -27,8 +27,8 @@
 //
 // Rides `event_caused_by_idx` (schema.ts:743) for the reverse lookup.
 
-import type { Db, Tx } from '@/db/client';
 import { sql } from 'drizzle-orm';
+import type { Db, Tx } from '@/db/client';
 
 type DbLike = Db | Tx;
 

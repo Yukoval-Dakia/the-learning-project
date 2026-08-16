@@ -1,9 +1,9 @@
+import { describe, expect, it } from 'vitest';
 import {
   CauseCategoryDeclaration,
   RenderConfig,
   SchedulingHints,
 } from '@/core/schema/profile-decl';
-import { describe, expect, it } from 'vitest';
 
 describe('CauseCategoryDeclaration', () => {
   it('accepts valid cause with label only', () => {

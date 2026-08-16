@@ -1,6 +1,6 @@
-import { event } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { event } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { EventCorrectionResponseSchema } from './event-contracts';
 import { POST, createCorrectionResource as createCorrection } from './event-correct';

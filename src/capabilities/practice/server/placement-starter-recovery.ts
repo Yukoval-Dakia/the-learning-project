@@ -82,6 +82,7 @@
 // transition", and the retry_scheduled zombie reap reads `updated_at` as its staleness signal —
 // bumping it on a scheduler visit would push the reap deadline out forever.
 
+import { and, asc, eq, inArray, lte } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { goal, placement_starter_attempt, placement_starter_claim } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
@@ -95,7 +96,6 @@ import {
   resolvePlacementStarterGoalAuthority,
   terminalizeLostPlacementDelivery,
 } from '@/kernel/placement';
-import { and, asc, eq, inArray, lte } from 'drizzle-orm';
 import { resolveGoalPlacementScope } from './placement-scope';
 import { selectNextPlacementItem } from './placement-select';
 

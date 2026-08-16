@@ -1,7 +1,7 @@
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { CorrectArtifactEvent } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { and, asc, eq, inArray } from 'drizzle-orm';
 
 // Artifact-scoped correction projection. Parallel to `corrections.ts` which
 // composes event-scoped state. Per ADR-0020:

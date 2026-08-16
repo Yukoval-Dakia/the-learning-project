@@ -22,13 +22,12 @@
 // param survives only as an optional override (e.g. inc-E prereq-walk widening); when omitted,
 // the persisted scope is authoritative.
 
+import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
-import { deprecatedRouteResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/kernel/http';
+import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { getMasteryState } from '@/server/mastery/state';
 import { loadPlacementSessionForUpdate } from '@/server/session/placement';
-import { and, eq, inArray } from 'drizzle-orm';
 import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../server/placement-select';
 import {
   PLACEMENT_DEFAULT_CAP,

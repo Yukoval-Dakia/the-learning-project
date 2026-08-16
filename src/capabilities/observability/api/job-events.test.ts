@@ -1,8 +1,8 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { job_events } from '@/db/schema';
 import * as sseReplay from '@/server/events/sse_replay';
 import { _clearSubscribersForTests, broadcast } from '@/server/events/sse_router';
 import { writeJobEvent } from '@/server/events/writer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { JobEventStreamResponseSchema } from './event-contracts';
 import { GET, JOB_EVENT_CATCHUP_MS, JOB_EVENT_HEARTBEAT_MS } from './job-events';

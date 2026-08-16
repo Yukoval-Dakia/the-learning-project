@@ -1,6 +1,6 @@
+import { and, inArray, isNull } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { and, inArray, isNull } from 'drizzle-orm';
 import { notesForKnowledge } from './notes-read';
 
 /** Maximum paid note-refine jobs one mastery-progress event may fan out. */

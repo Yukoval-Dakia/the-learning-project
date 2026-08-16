@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import {
   BUILTIN_IDS,
   normalizeSubjectKey,
@@ -6,7 +7,6 @@ import {
   subjectProfiles,
   toSlimSubjectProfile,
 } from '@/subjects/profile';
-import type { CSSProperties } from 'react';
 
 // YUK-249 — registry-driven subject enumeration for UI subject pickers / filters.
 // The concrete subjects a picker shows are DERIVED from the registry
@@ -87,6 +87,7 @@ export function subjectDisplayName(subject: string, rows?: readonly SubjectRowLi
 // Pick<SubjectProfile,...>（RenderConfig 恰三键，结构等价）；re-export 保住
 // 既有 '@/ui/lib/subject' import 面。
 import type { SlimSubjectProfile } from '@/subjects/profile-schema';
+
 export type { SlimSubjectProfile };
 
 export interface SubjectRenderModel extends SlimSubjectProfile {

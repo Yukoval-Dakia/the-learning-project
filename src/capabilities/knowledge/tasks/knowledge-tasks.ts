@@ -1,8 +1,8 @@
+import { z } from 'zod';
 import { causeTaxonomyList } from '@/ai/cause-prompt';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import type { SubjectProfile } from '@/subjects/profile';
-import { z } from 'zod';
 
 export const EdgeProposalSchema = z.object({
   from_knowledge_id: z.string().min(1),

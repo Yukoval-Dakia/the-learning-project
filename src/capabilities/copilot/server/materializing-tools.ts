@@ -1,6 +1,6 @@
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { and, eq, inArray, sql } from 'drizzle-orm';
 
 // INVARIANT (YUK-497 wave-4): a copilot turn may expose a revert checkpoint anchor ⇔ EVERY effect of
 // the turn is event-chain-compensable (a `correct` retract of the ask/reply/propose/rate/tool_use

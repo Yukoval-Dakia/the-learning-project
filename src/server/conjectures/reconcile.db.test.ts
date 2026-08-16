@@ -5,6 +5,8 @@
 // (typed-state stays soft no-evidence, never `mastered`), R(t) lives in the score event but
 // not the typed-state, and NO FSRS/attempt event is ever written (ND-5).
 
+import { and, eq, sql } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   answerProbe,
   serveProbeOnce,
@@ -14,8 +16,6 @@ import { event, kc_typed_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { gatherDissociationRecordsByIdentity } from '@/server/conjectures/hard-confirm';
-import { and, eq, sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetDb } from '../../../tests/helpers/db';
 import {

@@ -15,15 +15,14 @@
 // (action='experimental:variant_verify', subject_id=variant_question_id),
 // the handler short-circuits without calling the LLM. pg-boss retry is safe.
 
-import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-
 import { VariantVerificationResult, type VariantVerificationResultT } from '@/core/schema/business';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';

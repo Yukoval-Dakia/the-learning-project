@@ -5,12 +5,12 @@
 //   3. Concurrency → singletonKey serializes per user
 // Also verifies the two-read-consumer passthrough after supersede injection.
 
+import { sql } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import { cost_ledger, provider_attempt } from '@/db/schema';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { providerOperationIdForInvocation } from '@/server/ai/provider-attempt-runtime';
-import { sql } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 beforeEach(() => {
@@ -30,6 +30,7 @@ beforeEach(() => {
   );
 });
 afterEach(() => vi.unstubAllEnvs());
+
 import { createMem0Collection } from '../../../tests/helpers/mem0-collection';
 import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import type { MemoryClient } from './client';

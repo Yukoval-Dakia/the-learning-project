@@ -5,6 +5,7 @@
 import { type ApiOperationJsonResponse, apiOperationJson } from '@/ui/lib/api';
 
 export { type AiChangeRow, undoAiChange } from '@/capabilities/notes/ui-public';
+
 import type { AiChangeRow } from '@/capabilities/notes/ui-public';
 
 // ── /api/workbench/summary wire（workbench-summary.db.test.ts 同形态） ──

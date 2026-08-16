@@ -5,6 +5,8 @@
 // boundary. The read model deliberately does not depend on overnight-digest or the
 // downstream prediction_score reconcile loop.
 
+import { and, count, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   answerProbe,
   serveProbeOnce,
@@ -22,8 +24,6 @@ import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { and, count, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const NOW = new Date('2026-07-19T12:00:00.000Z');

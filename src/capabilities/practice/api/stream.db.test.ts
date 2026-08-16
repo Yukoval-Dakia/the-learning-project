@@ -1,6 +1,9 @@
 // M2 (YUK-316) — 流 API 行为：lazy compose（仅今日）、状态机推进、双日隔离、
 // recompose 保留非 pending 项。composer 混排规则本体在 stream-composer.unit.test.ts。
 
+import { createId } from '@paralleldrive/cuid2';
+import { and, eq, isNull } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { streamLocalDate } from '@/capabilities/practice/server/stream-store';
 import {
   event,
@@ -15,9 +18,6 @@ import {
   selection_observation,
 } from '@/db/schema';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
-import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // G1 (review)：route 永不传 composeDeps，production lazy-compose 走 defaultRunTaskFn →

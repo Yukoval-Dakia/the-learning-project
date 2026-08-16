@@ -1,11 +1,11 @@
 // Phase 2B — Learning Intent Orchestrator tests.
 
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createLearningIntentKnowledgeNode } from '@/capabilities/knowledge/public';
 import { createLearningIntentNote } from '@/capabilities/notes/public';
 import { NOTE_HANDOFF_ACTION } from '@/capabilities/notes/server/note-handoff';
 import { artifact, event, knowledge, learning_item } from '@/db/schema';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   type AcceptLearningIntentParams,

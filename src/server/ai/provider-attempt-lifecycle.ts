@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
 // allow: SIZE_OK — one transactional state machine owns acquisition, fencing, external-ID CAS, and settlement.
 import {
   ProviderAttemptTerminalEvidence,
@@ -9,7 +10,6 @@ import {
 } from '@/core/schema/provider-attempt';
 import type { Db } from '@/db/client';
 import { provider_attempt, provider_attempt_admission } from '@/db/schema';
-import { sql } from 'drizzle-orm';
 import type { ProviderAttemptAdmissionPolicy } from './provider-attempt-admission-config';
 
 export type ProviderAttemptLifecycleMode = 'off' | 'observe' | 'enforce';

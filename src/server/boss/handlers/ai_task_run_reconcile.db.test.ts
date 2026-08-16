@@ -8,9 +8,9 @@
 // be a live run (cooperative abort bounds real run lifetime), so false
 // convergence of a live run is structurally excluded.
 
-import { ai_task_runs, cost_ledger } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { ai_task_runs, cost_ledger } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   RECONCILED_STUCK_FINISH_REASON,

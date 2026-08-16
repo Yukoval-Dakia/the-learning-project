@@ -1,9 +1,9 @@
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { CSSProperties } from 'react';
 import { apiJson } from '@/ui/lib/api';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { CSSProperties } from 'react';
 import {
   AdminLinks,
   type AdminSurfaceProps,

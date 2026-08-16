@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import {
   addOption,
   setQuestionType,
@@ -5,7 +6,6 @@ import {
   updatePrompt,
 } from '@/capabilities/ingestion/server/block-structured-edit';
 import { QuestionKind } from '@/core/schema/business';
-import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';
 
 const UpdatePromptInputSchema = z.object({

@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import { CorrectArtifactBodySchema } from '@/capabilities/notes/api/contracts';
 import { bodyBlocksContainId } from '@/capabilities/notes/server/body-blocks';
 import { enqueueMarkWrongNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
@@ -6,7 +7,6 @@ import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { eq } from 'drizzle-orm';
 import { getArtifactCorrectionState } from '../server/artifact-corrections';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {

@@ -19,9 +19,9 @@
 // 的特例。slice-4 落在 quiz-gen-skills.ts 的 questionKindToSkillKind /
 // skillKindToQuestionKind 收编进这里（单一实现），原文件改为 re-export。
 
+import type { z } from 'zod';
 import { QuestionKind } from '@/core/schema/business';
 import { type SubjectQuestionKind, SubjectQuestionKindSchema } from '@/subjects/profile-schema';
-import type { z } from 'zod';
 
 // canonical 持久题型 (core/schema/business.ts QuestionKind). 本地派生，避免耦合
 // judge-routing.ts 的 QuestionKindT 别名。

@@ -4,6 +4,18 @@
 // gate. The DB-touching loader lives in scripts/audit-calibration.ts and is NOT exported
 // here (the math core stays import-clean of @/db/client so the unit partition holds).
 
+// forward-AUC — Mann–Whitney U.
+export { type AucResult, forwardAuc } from './auc';
+// paired cluster bootstrap CI for ΔAUC.
+export { type ClusterForwardPreds, type DeltaAucCi, deltaAucClusterBootstrap } from './bootstrap';
+// design-effect / ICC(1,1) / effective-N.
+export {
+  type EffectiveNResult,
+  type IccResult,
+  designEffect,
+  effectiveNFromClusters,
+  iccOneWayAnova,
+} from './design-effect';
 // ECE — Expected Calibration Error + reliability table.
 export { type Binning, type EceOptions, type EceResult, type ReliabilityBin, ece } from './ece';
 // EZ-diffusion — closed-form caution / speed-accuracy axis recovery (A11, YUK-445).
@@ -16,20 +28,8 @@ export {
   edgeCorrectPc,
   ezFromResponses,
 } from './ez-diffusion';
-// forward-AUC — Mann–Whitney U.
-export { type AucResult, forwardAuc } from './auc';
-// design-effect / ICC(1,1) / effective-N.
-export {
-  type EffectiveNResult,
-  type IccResult,
-  designEffect,
-  effectiveNFromClusters,
-  iccOneWayAnova,
-} from './design-effect';
 // Cohen's κ.
 export { type KappaResult, cohenKappa } from './kappa';
-// seeded RNG.
-export { mulberry32 } from './rng';
 // PURE θ̂ replay engine.
 export {
   type ReplayAttempt,
@@ -38,8 +38,8 @@ export {
   type ReplayStep,
   replayTheta,
 } from './replay';
-// paired cluster bootstrap CI for ΔAUC.
-export { type ClusterForwardPreds, type DeltaAucCi, deltaAucClusterBootstrap } from './bootstrap';
+// seeded RNG.
+export { mulberry32 } from './rng';
 // V-A1-fwd gate + assembly + report.
 export {
   type AssembledClusters,

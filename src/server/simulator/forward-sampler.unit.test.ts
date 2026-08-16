@@ -1,7 +1,7 @@
+import { describe, expect, it } from 'vitest';
 import { PFA_GAMMA, PFA_RHO, pLearned } from '@/core/pfa';
 import { expectedScore, srtOutcome } from '@/core/theta';
 import { mulberry32 } from '@/server/calibration/rng';
-import { describe, expect, it } from 'vitest';
 import {
   type SelectionPolicy,
   type SimScenario,

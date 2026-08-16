@@ -1,8 +1,8 @@
 // ADR-0034 §3 / YUK-344 — edge_reconciliation_log audit data layer tests.
 
-import { edge_reconciliation_log } from '@/db/schema';
 import { eq, isNull } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { edge_reconciliation_log } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   insertEdgePlannedRows,

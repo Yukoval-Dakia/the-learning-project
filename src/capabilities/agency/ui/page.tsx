@@ -9,6 +9,8 @@
 // M0 (YUK-313, REV 2)：去旧路由库 import——capability ui 不 import 路由库，
 // 导航以 `navigate` prop 由 web 壳（web/src/router.tsx）注入，页面保持框架无关。
 
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { apiJson } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -17,8 +19,6 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
 import { AgentNoteGroupCard } from './AgentNoteGroupCard';
 import { type AgentNoteGroup, dayGroupOf, groupAgentNotes } from './derive';
 import { SIGNAL_META, signalMeta } from './meta';

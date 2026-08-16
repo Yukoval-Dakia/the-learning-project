@@ -11,6 +11,7 @@
 // scan from limit:1 to a recent-attempt window so a user who labelled an
 // older failure isn't silently masked by a label-less re-failure.
 
+import { eq } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '@/capabilities/practice/server/activity-ref';
 import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/server/cause-context';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
@@ -27,7 +28,6 @@ import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
-import { eq } from 'drizzle-orm';
 import { ReviewAdviceBodySchema } from './review-planning-contracts';
 
 export async function POST(req: Request): Promise<Response> {

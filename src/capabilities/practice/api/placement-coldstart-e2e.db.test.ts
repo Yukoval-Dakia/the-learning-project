@@ -14,10 +14,10 @@
 // placement-api.db.test.ts); everything else is the production code path. If any seam here
 // regresses, the "product is openable" contract breaks before the flag ever flips.
 
-import { newId } from '@/core/ids';
-import { event, goal, knowledge, mastery_state, question } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { newId } from '@/core/ids';
+import { event, goal, knowledge, mastery_state, question } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const placementFlag = { value: true };

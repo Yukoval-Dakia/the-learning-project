@@ -7,11 +7,11 @@
 // Only `boss.send` is mocked (no pg-boss container required); db + outbox
 // SQL (SELECT FOR UPDATE SKIP LOCKED + UPDATE) run for real.
 
+import { eq, isNull } from 'drizzle-orm';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { eq, isNull } from 'drizzle-orm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { _resetBossForTests, createBoss } from '../boss/client';
 import {

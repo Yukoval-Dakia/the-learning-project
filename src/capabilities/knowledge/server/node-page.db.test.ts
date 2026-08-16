@@ -4,6 +4,8 @@
 // single-node metadata, mastery join, mesh neighbors, primary atomic,
 // backlinks read-time filter (XC-5), timeline, and not-found path.
 
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { createKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
 import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
@@ -18,8 +20,6 @@ import {
 } from '@/db/schema';
 import { upsertFsrsState } from '@/server/fsrs/state';
 import { upsertMasteryState } from '@/server/mastery/state';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { loadKnowledgeNodePage, loadRetrievabilityMap } from './node-page';
 

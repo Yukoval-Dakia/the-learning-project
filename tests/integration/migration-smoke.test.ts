@@ -10,13 +10,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { InterventionSettlement } from '@/core/schema/intervention';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres, { type JSONValue } from 'postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { InterventionSettlement } from '@/core/schema/intervention';
 
 // Mirror tests/global-setup.ts docker socket auto-detection (OrbStack / Docker Desktop)
 function ensureDockerHost() {

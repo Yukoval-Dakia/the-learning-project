@@ -308,7 +308,7 @@ export function foldArtifact(artifactId: string, events: FoldEvent[]): ArtifactR
         history: p.history_after !== undefined ? [...p.history_after] : row.history,
         updated_at: fe.created_at,
       };
-      // biome-ignore lint/correctness/noUnnecessaryContinue: defensive — keeps every reducer branch uniformly terminated so appending a branch can't introduce silent fall-through.
+      // biome-ignore lint/complexity/noUselessContinue: defensive — keeps every reducer branch uniformly terminated so appending a branch can't introduce silent fall-through.
       continue;
     }
 

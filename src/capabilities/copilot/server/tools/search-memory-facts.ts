@@ -11,10 +11,10 @@
 // internal retrieval out of the user-visible event stream.
 
 import { createHash } from 'node:crypto';
+import { z } from 'zod';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
 import { type MemoryReadClientFactory, readMemoryFacts } from '@/server/memory/read';
-import { z } from 'zod';
 
 // P3 (YUK-351): default topK for the wrapper when the caller omits it. The
 // pre-wrapper code passed `topK: undefined` straight to mem0 (its own default was

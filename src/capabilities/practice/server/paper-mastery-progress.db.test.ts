@@ -4,11 +4,11 @@
 // note-refine trigger. Previously paper-submit did NEITHER (solo-only), leaving
 // paper attempts a dead line for note refinement. Mirrors submit.db.test.ts:208.
 
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { MASTERY_PROGRESS_ACTION } from '@/capabilities/practice/server/mastery-progress-signal';
 import { artifact, event, knowledge, mastery_state, question } from '@/db/schema';
 import { Review } from '@/server/session';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { submitPaperSlot } from './paper-submit';
 

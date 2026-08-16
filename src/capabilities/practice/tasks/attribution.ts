@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { causeIdList, causeTaxonomyList } from '@/ai/cause-prompt';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import {
@@ -11,7 +12,6 @@ import {
   validateCauseAgainstProfile,
 } from '@/core/schema/business';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
-import { z } from 'zod';
 
 export interface AttributionInput {
   prompt_md: string;

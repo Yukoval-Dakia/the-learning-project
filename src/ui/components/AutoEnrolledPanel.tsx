@@ -15,6 +15,8 @@
 
 'use client';
 
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import {
   type AutoEnrollObservation,
@@ -30,8 +32,6 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful } from '@/ui/primitives/Stateful';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
 
 // ---------------------------------------------------------------------------
 // Wire shapes (reads only — see ingestion capability api/sessions.ts + api/blocks.ts)

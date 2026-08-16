@@ -4,8 +4,8 @@
 // are covered by make-paper.db.test.ts (db partition). This file imports only
 // the builder + Zod schema — zero DB import → unit partition (Cross-统合 F-12).
 
-import { ToolState } from '@/core/schema/business';
 import { describe, expect, it } from 'vitest';
+import { ToolState } from '@/core/schema/business';
 import { type IngestionPaperQuestion, buildIngestionPaperToolState } from './make-paper';
 
 function q(id: string, knowledgeIds: string[]): IngestionPaperQuestion {

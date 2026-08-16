@@ -1,5 +1,5 @@
-import { SourceSpanLocator } from '@/core/schema/question-generation-grounding';
 import { z } from 'zod';
+import { SourceSpanLocator } from '@/core/schema/question-generation-grounding';
 
 export const QuestionAuthorIntentSchema = z
   .object({

@@ -25,15 +25,7 @@
 // SAME helpers the evidence MCP read tools use (scout spec §2 — one
 // implementation, not two).
 
-import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
-import type { QuestionEvidenceContextSnapshotT } from '@/core/schema/question-evidence-snapshot';
-import { FigureRef } from '@/core/schema/structured_question';
-import type { Db, Tx } from '@/db/client';
-import { event, knowledge, question } from '@/db/schema';
-import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tree';
-import { resolveKnownSubjectId, resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq, gte, inArray } from 'drizzle-orm';
-
 import {
   type ConjectureEvidenceFigure,
   type ConjectureEvidenceSample,
@@ -42,6 +34,13 @@ import {
   type EvidenceCell,
   effectiveCauseForConjectureFailure,
 } from '@/capabilities/agency/server/conjecture/evidence';
+import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
+import type { QuestionEvidenceContextSnapshotT } from '@/core/schema/question-evidence-snapshot';
+import { FigureRef } from '@/core/schema/structured_question';
+import type { Db, Tx } from '@/db/client';
+import { event, knowledge, question } from '@/db/schema';
+import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tree';
+import { resolveKnownSubjectId, resolveSubjectProfile } from '@/subjects/profile';
 import { UNTRUSTED_TEXT_CHAR_CAP, wrapTruncatedLearnerText } from '../scout/untrusted-text';
 
 type DbLike = Db | Tx;

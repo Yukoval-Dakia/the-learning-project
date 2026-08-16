@@ -32,8 +32,7 @@ import {
 } from '@/capabilities/knowledge/server/edges';
 import { db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
-import { collectionPayload, resourceResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/kernel/http';
+import { ApiError, collectionPayload, errorResponse, resourceResponse } from '@/kernel/http';
 import { wakeHubSyncAfterCommit } from '@/server/boss/hub-sync-wake';
 
 export async function GET(req: Request): Promise<Response> {

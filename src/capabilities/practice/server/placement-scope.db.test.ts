@@ -7,8 +7,8 @@
 // non-empty frozen scope short-circuits; a subject_live goal always live-resolves
 // (its frozen column is [] by invariant and ignored even if stale-non-empty).
 
-import { knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 import { resolveGoalPlacementScope } from './placement-scope';

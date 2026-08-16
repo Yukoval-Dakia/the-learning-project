@@ -16,9 +16,9 @@
 
 'use client';
 
-import type { CopilotSkillContextT } from '@/capabilities/copilot/ui-public';
 import { useCallback, useState } from 'react';
 import { create } from 'zustand';
+import type { CopilotSkillContextT } from '@/capabilities/copilot/ui-public';
 
 export interface UseCopilotDwellResult {
   open: boolean;

@@ -22,12 +22,12 @@
 // 只 enqueue 既有队列 + emit 观测事件，永不写题的 b 锚（item difficulty）——纯只读消费 +
 // 派发，不污染标定轴。
 
+import type { Job } from 'pg-boss';
 import type { DispatchResult } from '@/capabilities/practice/public';
 import { dispatchPracticeSupplyTargets as dispatchSupplyTargets } from '@/capabilities/practice/public';
 import { runInventoryShadowDualRead } from '@/capabilities/practice/server/question-supply/inventory-projection';
 import { discoverSupplyTargets } from '@/capabilities/practice/server/question-supply/target-discovery';
 import type { Db } from '@/db/client';
-import type { Job } from 'pg-boss';
 import type {
   PlacementStarterRecoveryDeps,
   PlacementStarterRecoveryResult,

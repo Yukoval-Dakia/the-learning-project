@@ -14,12 +14,12 @@
 // — the agent runtime is the Claude CLI subprocess. We call the dispatcher
 // runWriteProposal directly to assert DB shape.
 
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { runWriteProposal } from '@/capabilities/knowledge/server/review';
 import { runAttributionAndWriteJudgeEvent } from '@/capabilities/practice/server/failure-learning-attribution';
 import { parseEvent } from '@/core/schema/event';
 import { event, knowledge, question } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../helpers/db';
 
 describe('AI outputs roundtrip through Lane B Event schema', () => {

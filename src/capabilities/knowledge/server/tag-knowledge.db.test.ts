@@ -4,10 +4,11 @@
 // match-similarity.db.test.ts): <=>(unit(i),unit(i))=0 (a guaranteed MATCH), and
 // <=>(unit(i),unit(j≠i))=1 (well past MATCH_THRESHOLD=0.55 → PROPOSE). NO real model /
 // embedder is called — embedFn + nameKcFn are stubbed.
-import { event, knowledge } from '@/db/schema';
-import { projectKnowledgeNode } from '@/server/projections/knowledge';
+
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { event, knowledge } from '@/db/schema';
+import { projectKnowledgeNode } from '@/server/projections/knowledge';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { tagKnowledge } from './tag-knowledge';
 import { MATCH_THRESHOLD } from './tagging-flags';

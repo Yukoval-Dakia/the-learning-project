@@ -2,10 +2,10 @@
 // jsdom；CTA→navigate 交互路径手工验收）。QueryClient.setQueryData 喂缓存 → 组件零请求。
 // 核心回归锁：珊瑚带标记恒落 p_l（0..1 点估计），绝不 theta_hat（logit，可负/>1）——§9-1。
 
-import type { PlacementProfile, ProfileKc } from '@/capabilities/onboarding/ui/profile-api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import type { PlacementProfile, ProfileKc } from '@/capabilities/onboarding/ui/profile-api';
 import { ProfileBand } from './ProfileBand';
 
 const GOAL = { id: 'g_demo', title: '高考文言文' };

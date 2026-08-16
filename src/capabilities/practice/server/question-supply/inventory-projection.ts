@@ -1,9 +1,9 @@
+import { and, eq, gte, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { isPoolVisible } from '@/db/predicates';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { and, eq, gte, sql } from 'drizzle-orm';
 import {
   COVERAGE_DEPTH_THRESHOLD,
   type QuestionSupplyTarget,

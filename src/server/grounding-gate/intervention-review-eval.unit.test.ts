@@ -1,3 +1,4 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { reviewInterventionPackageCandidate } from '@/capabilities/practice/server/intervention-author';
 import {
   INTERVENTION_REVIEW_AUDIT_PROTOCOL_VERSION,
@@ -16,7 +17,6 @@ import {
   runInterventionReviewActualOutputEval,
 } from '@/server/grounding-gate/intervention-review-eval';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/capabilities/practice/server/intervention-author', () => ({
   reviewInterventionPackageCandidate: vi.fn(),

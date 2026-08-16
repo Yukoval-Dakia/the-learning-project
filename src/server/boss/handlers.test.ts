@@ -1,8 +1,8 @@
+import type { PgBoss } from 'pg-boss';
+import { describe, expect, it, vi } from 'vitest';
 import { capabilities } from '@/capabilities';
 import type { Db } from '@/db/client';
 import type { CapabilityManifest } from '@/kernel/manifest';
-import type { PgBoss } from 'pg-boss';
-import { describe, expect, it, vi } from 'vitest';
 import { registerHandlers } from './handlers';
 import { registerCapabilityJobs } from './register-capability-jobs';
 

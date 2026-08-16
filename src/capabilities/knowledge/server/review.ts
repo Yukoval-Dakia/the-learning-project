@@ -20,6 +20,9 @@
 // SDK-resolved name so the agent runner doesn't strip the tool from the
 // catalog before the model sees it.
 
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { readAgentNotes } from '@/capabilities/agency/public';
 import { validateProposalQuality } from '@/capabilities/knowledge/server/rubric-validator';
 import { newId } from '@/core/ids';
@@ -42,9 +45,6 @@ import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/to
 import { writeToolCallLog } from '@/server/ai/log';
 import { streamTask } from '@/server/ai/runner';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
-import { z } from 'zod';
 import { type KnowledgeMutationPayload, writeKnowledgeProposeEvent } from './proposals';
 
 const RECENT_MISTAKES_LIMIT = 100;

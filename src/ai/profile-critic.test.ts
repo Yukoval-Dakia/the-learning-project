@@ -1,10 +1,10 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   parseProfileCriticOutput,
   profileCriticTaskSpec,
 } from '@/capabilities/ingestion/tasks/profile-critic';
 import { physicsProfile } from '@/subjects/physics/profile';
 import { yuwenProfile } from '@/subjects/yuwen/profile';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tasks } from './registry';
 import { getTaskSystemPrompt } from './task-prompts';
 

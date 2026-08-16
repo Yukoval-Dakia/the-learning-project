@@ -1,8 +1,8 @@
+import type { Job } from 'pg-boss';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildSearchMemoryFactsTool } from '@/capabilities/copilot/server/tools/search-memory-facts';
 import { provider_attempt } from '@/db/schema';
 import type { ToolContext } from '@/kernel/tools/types';
-import type { Job } from 'pg-boss';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { createMem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
 import { type Mem0Like, createMemoryClient } from './client';

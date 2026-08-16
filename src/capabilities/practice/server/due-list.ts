@@ -15,6 +15,7 @@
 // Wire contract preserved: { rows: [{ id, question_id, prompt_md, reference_md,
 // knowledge_ids, cause, fsrs_state, created_at }] }.
 
+import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 // YUK-167 / ADR-0025 — North-Star W10 review soft-bias. Active goals supply a
 // SOFT, goal-relevant re-rank of the overdue review items. ND-5: this is order-
 // only — never touches the FSRS due path, the returned set, counts, or due_at.
@@ -45,7 +46,6 @@ import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/ca
 // parent-chain walk. Extracted to `@/capabilities/knowledge/server/subject-resolution` (P5.2)
 // so the brief-refresh layer shares the SAME canonical bridge.
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
-import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import { type FailureAttempt, getFailureAttempts } from './attempt-events';
 
 // YUK-167 / ADR-0025 — swappable active-goals reader so DB tests inject goal

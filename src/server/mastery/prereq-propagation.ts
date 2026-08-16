@@ -25,6 +25,7 @@
 // subject_id=前置 A）。**绝不写** mastery_state.theta_hat / fail_count——前置 A 从未被作答，
 // 写「假 fail」会污染 Elo 充分统计量。风险是独立投影，不经此路径回流 θ̂/p(L)/选题/FSRS。
 
+import { sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import {
   PREREQ_RISK_BASE_WEIGHT,
@@ -34,7 +35,6 @@ import {
 } from '@/core/prereq-risk';
 import type { Db, Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
-import { sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 // Injectable writeEvent seam（默认真 writeEvent）——测试用来精确制造单 KC emit 失败，

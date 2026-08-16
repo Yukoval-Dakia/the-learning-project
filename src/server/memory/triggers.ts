@@ -83,6 +83,7 @@ export const MEMORY_INGEST_OUTBOX_RECOVER_QUEUE = 'memory_ingest_outbox_recover'
 // Reconcile remains event-driven; YUK-858 recovery shares the existing hourly
 // ingest-outbox floor instead of registering another queue or cron.
 export { MEMORY_RECONCILE_QUEUE } from './memory-reconcile-handoff';
+
 const OUTBOX_POLL_BATCH = 50;
 const REGEN_SINGLETON_SECONDS = 6 * 60;
 // YUK-729 (#965 round-4, codex P2) — cap the per-event brief-regen fan-out.

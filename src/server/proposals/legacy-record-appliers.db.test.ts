@@ -14,11 +14,11 @@
 // artifact_create event + learning_record UPDATE + rate event); cooldown_key is omitted so the
 // post-tx signal write is a no-op.
 
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { RecordPromotionAcceptResult } from '@/capabilities/ingestion/public';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import { artifact, learning_record } from '@/db/schema';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
 
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { resetDb, testDb } from '../../../tests/helpers/db';

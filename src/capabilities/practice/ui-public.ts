@@ -1,9 +1,10 @@
 // Client-only public contribution surface.
+
+export type { QuestionDetail } from './ui/practice-api';
 export {
   computeLatencyMs,
   getQuestion,
 } from './ui/practice-api';
-export type { QuestionDetail } from './ui/practice-api';
 
 export const loadPracticeFacePage = () =>
   import('./ui/PracticeFacePage').then((module) => module.default);

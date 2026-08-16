@@ -18,9 +18,9 @@
 // → no-op（不创建半截的纯软轨行——那会污染锚池 + 破坏「硬轨行先于软轨列」的时序）。
 // 幂等：同输入重复 UPDATE 同结果（kt_json 整列覆盖，无累积副作用）。
 
+import { and, eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 

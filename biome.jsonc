@@ -1,0 +1,153 @@
+{
+  "files": {
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/coverage",
+      "!**/drizzle",
+      "!**/docs/design/loom-design",
+      "!**/docs/design/loom-design-v2",
+      "!**/docs/design/loom-design-v2.1",
+      "!**/docs/design/loom-prototype",
+      "!**/docs/design/loom-refresh",
+      "!**/docs/design/2026-06-07-copilot-tool-use-cards",
+      "!**/docs/design/2026-06-08-question-bank-ui",
+      "!**/docs/audit/*.html",
+      "!**/getting-started-with-browserbase",
+      "!**/docling-docx-parse-output",
+      "!**/.factory",
+      "!**/.cache",
+      "!**/.pnpm-store",
+      "!**/.ykv",
+      "!**/.claude",
+      "!**/.omc",
+      "!**/.omx",
+      "!**/.omo",
+      "!**/.ocx",
+      "!**/.opencode",
+      "!**/.devin",
+      "!**/.mcp.json",
+      "!**/.next",
+      "!**/.remember",
+      "!**/.playwright-mcp",
+      "!**/test-results",
+      "!**/playwright-report",
+      "!**/next-env.d.ts",
+      "!**/crates/calibration-native/target",
+      "!**/crates/calibration-native/index.d.ts"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "a11y": {
+        // Static elements with handlers need keyboard/role semantics. 4 hits need component-level
+        // review in YUK-909; target error, with narrow exceptions only for non-interactive handlers.
+        "noStaticElementInteractions": "warn",
+        // ARIA attributes must match the element role. 13 hits may rely on implicit/custom roles, so
+        // YUK-909 will adjudicate them before target error; retain only proven role exceptions.
+        "useAriaPropsSupportedByRole": "warn",
+        // Explicit roles should use native semantic elements. 7 hits include custom interaction
+        // surfaces; YUK-909 will migrate them toward error with bounded documented exceptions.
+        "useSemanticElements": "warn"
+      },
+      "correctness": {
+        // Optional-chain results must not flow into unsafe operations. 45 hits, many in tests, need
+        // YUK-909 guard/context review before target error; exempt only demonstrably guarded cases.
+        "noUnsafeOptionalChaining": "warn"
+      },
+      "style": {
+        "useImportType": "warn",
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "@/server/http/errors": "ApiError/errorResponse 已迁入 kernel（YUK-770）——从 '@/kernel/http' 导入，勿直穿遗留过渡壳。",
+              "@/kernel/events/events": "事件底层模块不得直穿——从 '@/kernel/events' 公共出口导入（YUK-770）。",
+              "@/kernel/events/corrections": "corrections 底层模块不得直穿——从 '@/kernel/events' 公共出口导入（YUK-770）。"
+            }
+          }
+        }
+      },
+      "suspicious": {
+        // Array indexes make React identity unstable after reorder. 3 hits need data-identity review
+        // in YUK-909; target error with exceptions limited to immutable, position-owned lists.
+        "noArrayIndexKey": "warn",
+        // Duplicate CSS properties can silently override earlier values. 1 hit may be a compatibility
+        // fallback; YUK-909 will make this error or document that single bounded fallback.
+        "noDuplicateProperties": "warn",
+        "noExplicitAny": "warn",
+        // Unknown CSS at-rules catch typos but can be framework syntax. The 1 `@mixin` hit needs
+        // YUK-909 validation; target error with an explicit ignore only if the at-rule is supported.
+        "noUnknownAtRules": "warn",
+        // Iterable callbacks should return consistently (and forEach should not return values).
+        // 4 hits need intent review in YUK-909; target error with only explicit, bounded exceptions.
+        "useIterableCallbackReturn": "warn"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["**/src/kernel/**", "**/src/server/http/errors.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["**/src/capabilities/**/ui/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@/server/http/errors": "ApiError/errorResponse 已迁入 kernel（YUK-770）——从 '@/kernel/http' 导入，勿直穿遗留过渡壳。",
+                  "@/kernel/events/events": "事件底层模块不得直穿——从 '@/kernel/events' 公共出口导入（YUK-770）。",
+                  "@/kernel/events/corrections": "corrections 底层模块不得直穿——从 '@/kernel/events' 公共出口导入（YUK-770）。",
+                  "@/kernel/capability-contract-schemas": "capability-contract-schemas 是 ~11 个 Zod schema 模块的 barrel，顶层 z.object(...) 无法被 tree-shake，会把整个 core schema 面（含全套 event schema）拖进 SPA（YUK-783 实测：34 模块 / 252,892 B，比直连 core 还差 5.4 倍）。capability UI 层禁止 import 此 barrel——改用窄 facade（如 '@/kernel/limits'），或按同形制新增一个窄出口。若只是要类型（如 `import type { X }` 配合 z.infer，编译期擦除、不产生运行时依赖）：请仍用 `import type`，但 Biome 的 noRestrictedImports 不支持按 type-only 豁免（已验证会照样报错）——在该 import 语句正上一行单独加一行注释 `// biome-ignore lint/style/noRestrictedImports: <说明是 type-only，编译期擦除>`（必须独占一行、紧邻 import 上方；写成行尾/同行注释无效，会报 suppressions/unused）放行。"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "semicolons": "always",
+      "trailingCommas": "all"
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": {
+          "level": "on",
+          "options": {
+            "identifierOrder": "lexicographic"
+          }
+        }
+      }
+    }
+  }
+}

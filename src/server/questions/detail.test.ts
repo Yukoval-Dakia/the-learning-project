@@ -3,11 +3,11 @@
 // Covers A1d aggregate (row + source_tier + labels + family + scheduling +
 // timeline) and A1e (per-knowledge decay aggregate + 题级 backlinks).
 
+import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import { artifact, event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { upsertMasteryState } from '@/server/mastery/state';
 import { loadQuestionDetail } from '@/server/questions/detail';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const NOW = new Date('2026-06-07T00:00:00Z');

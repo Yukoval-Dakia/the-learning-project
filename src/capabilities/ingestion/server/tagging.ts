@@ -1,3 +1,4 @@
+import { and, inArray, isNull, or } from 'drizzle-orm';
 import { TaggingTaskError, parseTaggingOutput } from '@/capabilities/ingestion/tasks/tagging';
 /**
  * TaggingTask invoker — T-OC slice 3 (YUK-145, OC-4).
@@ -22,7 +23,6 @@ import {
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
-import { and, inArray, isNull, or } from 'drizzle-orm';
 
 /**
  * Thrown when the TaggingTask cannot produce a usable result (provider down,

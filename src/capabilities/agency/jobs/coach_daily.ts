@@ -4,10 +4,8 @@
 // allowlist MCP bridge, runs `CoachTask`, and writes trigger + scan events
 // (`experimental:trigger_coach_scan` / `experimental:coach_scan`).
 
-import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import type { Job } from 'pg-boss';
-
 // YUK-143 / ADR-0025 — North-Star: feed active goals into the Coach input so it
 // can add a goal-oriented strand. Purely ADDITIVE (ND-5): the FSRS-due / review
 // backbone and other capture tasks are untouched; goals only add direction.
@@ -23,6 +21,7 @@ import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/not
 import { type TodayPlanT, parseTodayPlan } from '@/core/schema/coach';
 import type { Db } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
+import { writeEvent } from '@/kernel/events';
 // P5.4-L2 / YUK-174 (Facet A + C, §3.3) — feed the per-(kind, relation) accept-
 // learned reason digest into the Coach input. Scoped to the kinds Coach can act
 // on; Coach now proposes knowledge_edge (AB-4), so its scope INCLUDES edge cells

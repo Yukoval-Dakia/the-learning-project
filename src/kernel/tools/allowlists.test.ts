@@ -1,7 +1,7 @@
+import { beforeEach, describe, expect, it } from 'vitest';
 import { capabilities } from '@/capabilities';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { __resetRegistryForTests, listTools } from '@/server/ai/tools/registry';
-import { beforeEach, describe, expect, it } from 'vitest';
 import {
   DOMAIN_TOOL_ALLOWLISTS,
   PROPOSE_WRITE_TOOLS,

@@ -15,14 +15,14 @@
 // Image answers reuse the shared uploadAsset/useAssetUrl (→ /api/assets), same as the
 // practice answer flow; a photo-only answer is allowed (the route gates it server-side).
 
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { uploadAsset, useAssetUrl } from '@/ui/lib/assets';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
 
 import {
   type PrepDeskProbeWire,
@@ -35,11 +35,7 @@ function statefulStatus(loading: boolean, error: boolean): StatefulStatus {
   return loading ? 'loading' : error ? 'error' : 'ok';
 }
 
-function VerdictMessage({
-  verdict,
-}: {
-  verdict: ProbeAnswerVerdict['resolution'];
-}) {
+function VerdictMessage({ verdict }: { verdict: ProbeAnswerVerdict['resolution'] }) {
   if (verdict === 'retired') {
     return (
       <span className="pa-verdict-txt">

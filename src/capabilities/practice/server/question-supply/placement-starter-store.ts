@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import {
   event,
@@ -19,7 +20,6 @@ import {
   upsertMaterializedIdIndex,
 } from '@/kernel/placement-persistence';
 import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { PlacementStarterIdentity } from './placement-starter-identity';
 import { placementStarterIdentity } from './placement-starter-identity';
 
