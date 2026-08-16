@@ -43,11 +43,6 @@ updates:
       # optional import bundle-safe (YUK-671).
       - dependency-name: "mem0ai"
         versions: [">=3.1.0"]
-      # Biome 2.x rejects the current 1.x config keys and changes lint policy.
-      # YUK-685 owns the controlled config/rule migration; keep routine dev
-      # dependency updates flowing until that work is complete.
-      - dependency-name: "@biomejs/biome"
-        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
     commit-message:
