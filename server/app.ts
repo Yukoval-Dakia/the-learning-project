@@ -3,7 +3,7 @@
 // 路由注册从「元数据 + Next 壳文件」变为可执行代码，壳文件仪式消失（D19）。
 // 鉴权沿用单用户不变量：/api/* 全拦 x-internal-token，/api/health 豁免。
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
 import {
@@ -74,6 +74,18 @@ export function buildHonoApp(capabilities: CapabilityManifest[]): Hono {
   // boot as well as in CI so a bad operationId/path/status declaration fails closed.
   validateComposition(capabilities);
   const app = new Hono();
+
+  app.onError((error, c) => {
+    const requestId = randomUUID();
+    console.error('[api_error]', {
+      request_id: requestId,
+      method: c.req.method,
+      path: c.req.path,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    c.header('x-request-id', requestId);
+    return c.json({ error: 'internal_error', request_id: requestId }, 500);
+  });
 
   // Register first so successful, auth-failed and unknown responses all receive one policy.
   app.use('*', SECURITY_HEADERS);
