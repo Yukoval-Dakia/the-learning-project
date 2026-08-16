@@ -107,7 +107,7 @@ export type { ToolExecutionGateInput, ToolExecutionResultObservation } from '@/k
 function proposalEffectContract(
   name: string,
   effect: ToolEffect,
-  input?: unknown,
+  output?: unknown,
 ): ProposalEffectContract | undefined {
   if (effect !== 'propose') return undefined;
   const base = {
@@ -117,10 +117,13 @@ function proposalEffectContract(
   } as const;
   if (
     name === 'author_question' &&
-    input !== null &&
-    typeof input === 'object' &&
-    'seed_mode' in input &&
-    (input.seed_mode === 'knowledge' || input.seed_mode === 'material')
+    output !== null &&
+    typeof output === 'object' &&
+    'status' in output &&
+    output.status === 'proposed' &&
+    'question_ids' in output &&
+    Array.isArray(output.question_ids) &&
+    output.question_ids.length > 0
   ) {
     return {
       ...base,
@@ -248,7 +251,6 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       try {
         parsedInput = dt.inputSchema.parse(rawArgs);
         execInput = parsedInput;
-        effectContract = proposalEffectContract(dt.name, dt.effect, parsedInput);
       } catch (err) {
         errorReason = err instanceof Error ? err.message : String(err);
       }
@@ -294,6 +296,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
           const parseResult = dt.outputSchema.safeParse(rawOutput);
           if (parseResult.success) {
             output = parseResult.data;
+            effectContract = proposalEffectContract(dt.name, dt.effect, output);
           } else {
             // Redact actual values; only emit field paths for machine readability.
             const paths = parseResult.error.issues

@@ -230,10 +230,15 @@ describe('buildMcpServerFromRegistry', () => {
         seed_mode: z.literal('knowledge'),
         knowledge_ids: z.array(z.string()),
       }),
-      outputSchema: z.object({ status: z.literal('proposed') }),
+      outputSchema: z.object({
+        status: z.enum(['proposed', 'failed']),
+        question_ids: z.array(z.string()).optional(),
+      }),
       costClass: 'local',
-      async execute() {
-        return { status: 'proposed' as const };
+      async execute(_ctx, input) {
+        return input.knowledge_ids.includes('kc_missing')
+          ? { status: 'failed' as const }
+          : { status: 'proposed' as const, question_ids: ['q_draft'] };
       },
       summarize() {
         return 'draft question recorded';
@@ -259,6 +264,18 @@ describe('buildMcpServerFromRegistry', () => {
         reversible: false,
         retained_after_dismiss: true,
       },
+    });
+
+    const failedResult = (await mockAgentSdk.toolDefs[0]?.handler({
+      seed_mode: 'knowledge',
+      knowledge_ids: ['kc_missing'],
+    })) as { content: Array<{ type: string; text: string }> };
+    const failedParsed = JSON.parse(failedResult.content[0]?.text ?? '') as Record<string, unknown>;
+
+    expect(failedParsed.proposal_effect_contract).toEqual({
+      owner_gate: 'FULL',
+      direct_write: false,
+      rollback: 'dismiss_before_accept',
     });
   });
 
