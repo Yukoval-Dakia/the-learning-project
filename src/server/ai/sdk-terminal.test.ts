@@ -132,6 +132,48 @@ describe('createSdkTerminalEvidenceCollector', () => {
     });
   });
 
+  it('preserves terminal metadata for realistic mixed assistant content', () => {
+    const collector = createSdkTerminalEvidenceCollector();
+    const privateThinking = [
+      'First, inspect the learner request and separate the explicit deliverable from contextual detail.',
+      'Next, compare the available evidence, note where sources agree, keep unresolved ambiguity out of the final claim, and verify that tool input stays within the requested scope.',
+      'After the tool result arrives, reconcile nested facts, citations, and confidence without exposing this private reasoning; produce a concise response and retain only aggregate thinking metadata.',
+    ].join('\n');
+    const structuredOutput = {
+      answer: { summary: 'Review the prerequisite.', confidence: { level: 'high', score: 0.93 } },
+      nextActions: [{ kind: 'review', targets: ['kn_fixture', 'kn_related'] }],
+    };
+
+    collector.observeAssistant(
+      assistant([
+        { type: 'text', text: 'I will verify the supporting evidence.', citations: null },
+        { type: 'thinking', thinking: privateThinking, signature: 'sig-realistic' },
+        { type: 'tool_use', id: 'tool_fixture', name: 'mcp__loom__query', input: { depth: 2 } },
+        { type: 'text', text: 'The evidence supports a focused review.', citations: null },
+      ]),
+    );
+    const evidence = collector.fromResult(successResult({ structuredOutput }));
+
+    expect(evidence).toEqual({
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        thinkingBlocks: 1,
+        thinkingCharacters: privateThinking.length,
+      },
+      tokenCounts: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      },
+      costUsd: 0,
+      finishReason: 'end_turn',
+      structuredOutput,
+    });
+    expect(JSON.stringify(evidence)).not.toContain(privateThinking);
+  });
+
   it('uses the error subtype when stop reason is absent and drops structured output', () => {
     const collector = createSdkTerminalEvidenceCollector();
     const message = errorResult();
