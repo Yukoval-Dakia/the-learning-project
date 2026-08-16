@@ -547,6 +547,61 @@ describe('runCopilotRun', () => {
     expect(replies[0]?.payload).not.toHaveProperty('primary_view');
   });
 
+  it('blocks unverified learning content introduced by a durable degraded blind reply', async () => {
+    const runId = 'copilot_user_ask_durable_degraded_learning';
+    const sessionId = 'sess_durable_degraded_learning';
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
+    });
+    const run = vi.fn(
+      async (_kind: string, _input: unknown, _ctx: AgentCtx, _onDelta: (text: string) => void) => {
+        await mcpOptions?.onResult?.({
+          name: 'query_events',
+          effect: 'read',
+          input: { subject_id: 'durable_degraded_learning_subject' },
+          output: { events: [], has_more: false },
+          error_reason: null,
+          executed: true,
+        });
+        return {
+          text: '现有证据不足以判断队列是否清空。',
+          task_run_id: 'tr_durable_degraded_learning',
+          finishReason: 'end_turn',
+          usage: { inputTokens: 8_000, outputTokens: 300 },
+        };
+      },
+    );
+    const unverifiedLearningReply = '题目：\n1. 请计算 23×29？';
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: sessionId,
+      },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn,
+      buildTavilyMcpServerFn: () => null,
+      reviewEvidenceReplyFn: async () => ({
+        status: 'degraded',
+        replyText: unverifiedLearningReply,
+      }),
+    });
+
+    expect(result).toMatchObject({
+      status: 'done',
+      reply: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY,
+    });
+    expect(JSON.stringify(await replay(runId))).not.toContain(unverifiedLearningReply);
+    expect(JSON.stringify(await copilotReplyEvents(sessionId))).not.toContain(
+      unverifiedLearningReply,
+    );
+  });
+
   it('rejects a durable evidence repair that drops the targeted correction binding', async () => {
     const runId = 'copilot_user_ask_correction_repair';
     const sessionId = 'sess_correction_repair';
@@ -595,6 +650,59 @@ describe('runCopilotRun', () => {
     if (result.status !== 'done') throw new TypeError('expected completed correction repair');
     expect(result.reply).toContain('prior_turn_id');
     expect(result.reply).not.toContain(unsafeRepair);
+  });
+
+  it('rejects a durable degraded blind reply that drops the targeted correction binding', async () => {
+    const runId = 'copilot_user_ask_correction_degraded';
+    const sessionId = 'sess_correction_degraded';
+    const targetId = 'copilot_reply_water_tank_durable_degraded';
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
+    });
+    const run = vi.fn(
+      async (_kind: string, _input: unknown, _ctx: AgentCtx, _onDelta: (text: string) => void) => {
+        await mcpOptions?.onResult?.({
+          name: 'query_events',
+          effect: 'read',
+          input: { subject_id: 'water_tank_d02' },
+          output: { events: [], has_more: false },
+          error_reason: null,
+          executed: true,
+        });
+        return {
+          text: `水箱更正后的推导。\n\n<!-- copilot-correction {"prior_turn_id":"${targetId}","changed":["h*=4/9"],"retained":["同一个 k"],"uncertain":[]} -->`,
+          task_run_id: 'tr_correction_degraded',
+          finishReason: 'end_turn',
+          usage: { inputTokens: 1_000, outputTokens: 200 },
+        };
+      },
+    );
+    const unboundDegradedReply = '盲审替换正文，但没有 correction envelope。';
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: sessionId,
+        correction_target_turn_id: targetId,
+      },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: targetedRunInput(targetId),
+      buildMcpServerFn,
+      buildTavilyMcpServerFn: () => null,
+      reviewEvidenceReplyFn: async () => ({
+        status: 'degraded',
+        replyText: unboundDegradedReply,
+      }),
+    });
+
+    expect(result.status).toBe('done');
+    if (result.status !== 'done') throw new TypeError('expected completed correction degradation');
+    expect(result.reply).toContain('prior_turn_id');
+    expect(result.reply).not.toContain(unboundDegradedReply);
   });
 
   it('YUK-832 — read-bearing partial keeps the real primary run id on its reviewed failure marker', async () => {

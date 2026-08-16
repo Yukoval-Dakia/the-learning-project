@@ -950,6 +950,43 @@ describe('YUK-832 inline final evidence review', () => {
     expect(persistedReply.payload).not.toHaveProperty('primary_view');
   });
 
+  it('blocks unverified learning content introduced by a degraded blind reply', async () => {
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { name: 'fake-loom-degraded-learning' } as never;
+    });
+    const runAgentTaskFn = vi.fn(async () => {
+      await mcpOptions?.onResult?.({
+        name: 'query_events',
+        effect: 'read',
+        input: { subject_id: 'degraded_learning_subject' },
+        output: { events: [], has_more: false },
+        error_reason: null,
+        executed: true,
+      });
+      return {
+        task_run_id: 'task_degraded_learning_inline',
+        text: '现有证据不足以判断队列是否清空。',
+      };
+    });
+    const unverifiedLearningReply = '题目：\n1. 请计算 17×19？';
+
+    const result = await runCopilotChat({} as never, request, {
+      ...baseEvidenceDeps(),
+      buildMcpServerFn,
+      runAgentTaskFn,
+      writeEventFn: async (_db, input) => input.id,
+      reviewEvidenceReplyFn: async () => ({
+        status: 'degraded',
+        replyText: unverifiedLearningReply,
+      }),
+    });
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(result.reply).not.toContain(unverifiedLearningReply);
+  });
+
   it('rejects an evidence repair that drops the targeted correction binding', async () => {
     const targetId = 'copilot_reply_water_tank_repair';
     let mcpOptions: BuildMcpServerOptions | undefined;
@@ -1006,6 +1043,64 @@ describe('YUK-832 inline final evidence review', () => {
 
     expect(result.reply).toContain('prior_turn_id');
     expect(result.reply).not.toContain(unsafeRepair);
+  });
+
+  it('rejects a degraded blind reply that drops the targeted correction binding', async () => {
+    const targetId = 'copilot_reply_water_tank_degraded';
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { name: 'fake-loom-correction-degraded' } as never;
+    });
+    const runAgentTaskFn = vi.fn(async () => {
+      await mcpOptions?.onResult?.({
+        name: 'query_events',
+        effect: 'read',
+        input: { subject_id: 'water_tank_d02' },
+        output: { events: [], has_more: false },
+        error_reason: null,
+        executed: true,
+      });
+      return {
+        task_run_id: 'task_copilot_correction_degraded',
+        text: `水箱更正后的推导。\n\n<!-- copilot-correction {"prior_turn_id":"${targetId}","changed":["h*=4/9"],"retained":["同一个 k"],"uncertain":[]} -->`,
+      };
+    });
+    const unboundDegradedReply = '盲审替换正文，但没有 correction envelope。';
+
+    const result = await runCopilotChat(
+      {} as never,
+      {
+        user_message: '请核验并改正水箱题',
+        triggered_by: 'chat',
+        correction_target_turn_id: targetId,
+      },
+      {
+        ...baseEvidenceDeps(),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_correction_degraded',
+          created: false,
+        }),
+        loadHistoryFn: async () => [
+          {
+            role: 'ai',
+            text: '水箱 D02：原推导用了错误高度。',
+            at: '2026-08-01T10:00:00.000Z',
+            event_id: targetId,
+          },
+        ],
+        buildMcpServerFn,
+        runAgentTaskFn,
+        writeEventFn: async (_db, input) => input.id,
+        reviewEvidenceReplyFn: async () => ({
+          status: 'degraded',
+          replyText: unboundDegradedReply,
+        }),
+      },
+    );
+
+    expect(result.reply).toContain('prior_turn_id');
+    expect(result.reply).not.toContain(unboundDegradedReply);
   });
 
   it('reviews, persists, and publishes exact bytes while dropping an unreviewed primary-view side channel', async () => {
