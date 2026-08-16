@@ -2,6 +2,25 @@ import { type ZodTypeAny, z } from 'zod';
 
 type JsonObject = Record<string, unknown>;
 
+type SchemaOverride = NonNullable<z.core.ToJSONSchemaParams['override']>;
+
+type ZodJsonSchemaCompatParams = Readonly<{
+  io: 'input';
+  reused: 'inline';
+}> &
+  (
+    | Readonly<{
+        target: 'draft-07';
+        override?: never;
+        unrepresentable?: never;
+      }>
+    | Readonly<{
+        target: 'openapi-3.0';
+        override?: SchemaOverride;
+        unrepresentable: 'any';
+      }>
+  );
+
 const KEY_ORDER = [
   '$ref',
   'type',
@@ -74,12 +93,11 @@ function normalizeNode(value: unknown): unknown {
       .filter(([key]) => key !== '$schema')
       .map(([key, nested]) => [key, normalizeNestedSchema(key, nested)]),
   );
-  if (Array.isArray(normalized.oneOf) && normalized.anyOf === undefined) {
-    normalized.anyOf = normalized.oneOf;
-    normalized.oneOf = undefined;
-  }
   const nullableType = nullablePrimitiveType(normalized.anyOf);
-  if (nullableType) return { type: [nullableType, 'null'] };
+  if (nullableType) {
+    normalized.type = [nullableType, 'null'];
+    normalized.anyOf = undefined;
+  }
   if (normalized.type === 'integer' && normalized.minimum === Number.MIN_SAFE_INTEGER) {
     normalized.minimum = undefined;
   }
@@ -94,9 +112,12 @@ function normalizeNode(value: unknown): unknown {
     Object.entries(normalized)
       .filter(([, nested]) => nested !== undefined)
       .sort(([left], [right]) => {
-        const leftRank = KEY_RANK.get(left) ?? KEY_ORDER.length - 1;
-        const rightRank = KEY_RANK.get(right) ?? KEY_ORDER.length - 1;
-        return leftRank - rightRank;
+        const leftRank = KEY_RANK.get(left) ?? KEY_ORDER.length;
+        const rightRank = KEY_RANK.get(right) ?? KEY_ORDER.length;
+        if (leftRank !== rightRank) return leftRank - rightRank;
+        if (left < right) return -1;
+        if (left > right) return 1;
+        return 0;
       }),
   );
 }
@@ -136,7 +157,7 @@ function inlineDefinitions(
 
 export function zodToJsonSchemaCompat(
   schema: ZodTypeAny,
-  params: z.core.ToJSONSchemaParams,
+  params: ZodJsonSchemaCompatParams,
 ): JsonObject {
   const callerOverride = params.override;
   const normalized = normalizeNode(
@@ -148,6 +169,13 @@ export function zodToJsonSchemaCompat(
           context.jsonSchema.format = 'date-time';
         }
         callerOverride?.(context);
+        if (
+          context.zodSchema instanceof z.ZodDiscriminatedUnion &&
+          Array.isArray(context.jsonSchema.oneOf)
+        ) {
+          context.jsonSchema.anyOf = context.jsonSchema.oneOf;
+          context.jsonSchema.oneOf = undefined;
+        }
       },
     }),
   );
