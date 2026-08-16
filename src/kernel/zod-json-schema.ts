@@ -74,6 +74,10 @@ function normalizeNode(value: unknown): unknown {
       .filter(([key]) => key !== '$schema')
       .map(([key, nested]) => [key, normalizeNestedSchema(key, nested)]),
   );
+  if (Array.isArray(normalized.oneOf) && normalized.anyOf === undefined) {
+    normalized.anyOf = normalized.oneOf;
+    normalized.oneOf = undefined;
+  }
   const nullableType = nullablePrimitiveType(normalized.anyOf);
   if (nullableType) return { type: [nullableType, 'null'] };
   if (normalized.type === 'integer' && normalized.minimum === Number.MIN_SAFE_INTEGER) {
