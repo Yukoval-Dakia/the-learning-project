@@ -37,9 +37,7 @@ export type NotePatchInsertAfterT = z.infer<typeof NotePatchInsertAfter>;
 // in-place edit: callers MUST keep `block.attrs.id === target_block_id`.
 // Net new-block delta is 0 — does NOT count toward mutator threshold.
 //
-// The id-equals-target invariant is enforced in `NotePatchOp` below via
-// superRefine — we keep this schema a plain ZodObject so it can sit inside
-// `z.discriminatedUnion('kind', ...)` (which rejects ZodEffects branches).
+// The id-equals-target invariant is enforced once on `NotePatchOp` below.
 export const NotePatchReplaceBlock = z.object({
   kind: z.literal('replace_block'),
   target_block_id: z.string().min(1),

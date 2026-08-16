@@ -51,7 +51,7 @@ export type AtMostOneNewItemT = z.infer<typeof AtMostOneNewItem>;
 
 export const MaintenanceProposal = z.object({
   kind: z.string().min(1),
-  payload: z.unknown(),
+  payload: z.unknown().optional(),
 });
 export type MaintenanceProposalT = z.infer<typeof MaintenanceProposal>;
 
