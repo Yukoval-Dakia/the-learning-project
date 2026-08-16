@@ -32,7 +32,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { CopilotSkillContextT } from '@/capabilities/copilot/server/chat';
-import type { CopilotChatRequestT } from '@/capabilities/copilot/server/chat-contracts';
 import { ApiError, apiFetch, apiJson } from '@/ui/lib/api';
 import {
   DeferredMarkdownRenderer,
@@ -51,8 +50,10 @@ import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { ToolUseCard, type ToolUseStatus } from '@/ui/primitives/ToolUseCard';
 import { CopilotHeroCard } from './CopilotHeroCard';
+import { type CopilotSessionListItem, CopilotSessionPanel } from './CopilotSessionPanel';
 import {
   type PersistedDurableCopilotReconnect,
+  type PersistedPendingCopilotRequestBody,
   type PersistedPendingCopilotTurn,
   clearPersistedDurableCopilotReconnect,
   clearPersistedPendingCopilotTurn,
@@ -153,6 +154,22 @@ interface DurableCopilotReconnect extends PersistedDurableCopilotReconnect {
 // GET /api/copilot/turns response shape — see src/capabilities/copilot/server/turns.ts.
 interface CopilotTurnsResponse {
   turns: ReplayTurn[];
+}
+
+interface CopilotSessionResponse {
+  id: string;
+  status: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface CopilotSessionsResponse {
+  sessions: CopilotSessionResponse[];
+}
+
+interface CopilotCreateSessionResponse {
+  session: CopilotSessionResponse;
 }
 
 export interface ChatMessage {
@@ -506,6 +523,11 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     enabled: open,
     refetchInterval: open ? 60_000 : false,
   });
+  const sessionsQ = useQuery({
+    queryKey: ['copilot-sessions'],
+    queryFn: () => apiJson<CopilotSessionsResponse>('/api/copilot/sessions'),
+    enabled: open,
+  });
 
   const [restoredDurableHandle] = useState<DurableCopilotReconnect | null>(() => {
     const persisted = loadPersistedDurableCopilotReconnect();
@@ -537,6 +559,26 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         ]
       : [],
   );
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(
+    restoredDurableHandle?.sessionId ?? restoredPendingTurn?.requestBody.session_id ?? null,
+  );
+  const currentSessionIdRef = useRef(currentSessionId);
+  currentSessionIdRef.current = currentSessionId;
+  const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
+  const [creatingSession, setCreatingSession] = useState(false);
+  const [optimisticSession, setOptimisticSession] = useState<CopilotSessionResponse | null>(() => {
+    const recoverySessionId =
+      restoredDurableHandle?.sessionId ?? restoredPendingTurn?.requestBody.session_id;
+    if (!recoverySessionId) return null;
+    const recoveredAt = new Date().toISOString();
+    return {
+      id: recoverySessionId,
+      status: 'active',
+      title: '正在恢复的对话',
+      created_at: recoveredAt,
+      updated_at: recoveredAt,
+    };
+  });
   const [sending, setSending] = useState(restoredDurableHandle !== null);
   const [durableRunning, setDurableRunning] = useState(restoredDurableHandle !== null);
   const [awaitingFirstFrame, setAwaitingFirstFrame] = useState(false);
@@ -607,10 +649,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     /** Reuse only while server acceptance is unknown or explicitly ambiguous. */
     retryWithSameKey: boolean;
     userMessageId: string;
-    requestBody: Pick<
-      CopilotChatRequestT,
-      'user_message' | 'triggered_by' | 'skill_context' | 'ambient_context'
-    >;
+    requestBody: PersistedPendingCopilotRequestBody;
   } | null>(
     restoredPendingTurn
       ? {
@@ -642,6 +681,76 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // AF S3a — replay runs once per open; guard so a refetch / re-render does not
   // clobber the live in-memory list with a stale prefill.
   const replayedRef = useRef(false);
+  const sessionBootstrapRef = useRef(false);
+
+  const resetRecoveryForSessionChange = useCallback(() => {
+    discardPersistedPendingCopilotTurn();
+    const reconnect = durableReconnectRef.current;
+    if (reconnect) clearPersistedDurableCopilotReconnect(reconnect.runId);
+    lastUserTurnRef.current = null;
+    durableReconnectRef.current = null;
+    setPendingAcceptanceUnknown(false);
+    setError(null);
+  }, []);
+
+  const createConversation = useCallback(async () => {
+    if (creatingSession || sendingRef.current || pendingAcceptanceUnknown) return;
+    setCreatingSession(true);
+    setError(null);
+    try {
+      const response = await apiJson<CopilotCreateSessionResponse>('/api/copilot/sessions', {
+        method: 'POST',
+      });
+      resetRecoveryForSessionChange();
+      activeSkillRef.current = null;
+      setFocusedKnowledgeId(null);
+      setMessages([]);
+      replayedRef.current = false;
+      setOptimisticSession(response.session);
+      setCurrentSessionId(response.session.id);
+      void sessionsQ.refetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '新对话创建失败');
+    } finally {
+      setCreatingSession(false);
+    }
+  }, [creatingSession, pendingAcceptanceUnknown, resetRecoveryForSessionChange, sessionsQ]);
+
+  const selectConversation = useCallback(
+    (sessionId: string) => {
+      if (sendingRef.current) return;
+      resetRecoveryForSessionChange();
+      activeSkillRef.current = null;
+      setFocusedKnowledgeId(null);
+      setMessages([]);
+      replayedRef.current = false;
+      setOptimisticSession(null);
+      setCurrentSessionId(sessionId);
+    },
+    [resetRecoveryForSessionChange],
+  );
+
+  useEffect(() => {
+    if (!open || !sessionsQ.data) return;
+    const sessions = sessionsQ.data.sessions;
+    if (sessions.length === 0) {
+      if (sessionBootstrapRef.current) return;
+      sessionBootstrapRef.current = true;
+      void createConversation();
+      return;
+    }
+    sessionBootstrapRef.current = false;
+    if (optimisticSession?.id === currentSessionId) {
+      if (sessions.some((session) => session.id === currentSessionId)) {
+        setOptimisticSession(null);
+      } else {
+        return;
+      }
+    }
+    if (!currentSessionId || !sessions.some((session) => session.id === currentSessionId)) {
+      setCurrentSessionId(sessions[0].id);
+    }
+  }, [createConversation, currentSessionId, open, optimisticSession, sessionsQ.data]);
 
   // AF S4 / YUK-203 U6 — restore skill state from a replayed message list: adopt the
   // latest non-end AI skill_context as activeSkillRef, and surface the latest in-scope
@@ -683,12 +792,15 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       replayedRef.current = false;
       return;
     }
+    if (!currentSessionId) return;
     if (replayedRef.current) return;
     replayedRef.current = true;
     let cancelled = false;
     void (async () => {
       try {
-        const res = await apiJson<CopilotTurnsResponse>(`/api/copilot/turns?limit=${REPLAY_LIMIT}`);
+        const res = await apiJson<CopilotTurnsResponse>(
+          `/api/copilot/turns?limit=${REPLAY_LIMIT}&session_id=${encodeURIComponent(currentSessionId)}`,
+        );
         if (cancelled) return;
         const replayed = replayToMessages(res.turns ?? []);
         if (replayed.length === 0 && !restoredPendingTurn) return;
@@ -725,13 +837,16 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     return () => {
       cancelled = true;
     };
-  }, [open, restoreSkillStateFromReplay, restoredPendingTurn]);
+  }, [currentSessionId, open, restoreSkillStateFromReplay, restoredPendingTurn]);
 
   // Returns true when it actually replaced the message list, false when it SKIPPED (a send is in
   // flight). Callers use the flag so they don't report a refresh as done when it was skipped
   // (YUK-497 wave-3).
   const refetchTurns = useCallback(async (): Promise<boolean> => {
-    const res = await apiJson<CopilotTurnsResponse>(`/api/copilot/turns?limit=${REPLAY_LIMIT}`);
+    if (!currentSessionId) return false;
+    const res = await apiJson<CopilotTurnsResponse>(
+      `/api/copilot/turns?limit=${REPLAY_LIMIT}&session_id=${encodeURIComponent(currentSessionId)}`,
+    );
     const replayed = replayToMessages(res.turns ?? []);
     // Don't clobber a live exchange. The revert button on a PRIOR AI message is clickable even
     // while a NEW send is streaming; a full setMessages(replayed) here would drop the locally
@@ -748,7 +863,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     setFocusedKnowledgeId(null);
     restoreSkillStateFromReplay(replayed);
     return true;
-  }, [restoreSkillStateFromReplay]);
+  }, [currentSessionId, restoreSkillStateFromReplay]);
 
   const revertCheckpoint = useCallback(
     async (checkpointEventId: string) => {
@@ -945,6 +1060,11 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   const send = useCallback(async (raw: string, retryIdempotencyKey?: string) => {
     const text = raw.trim();
     if (!text || sendingRef.current) return;
+    const selectedSessionId = currentSessionIdRef.current;
+    if (!selectedSessionId) {
+      setError('对话仍在加载，请稍后再试。');
+      return;
+    }
     sendingRef.current = true;
     const turnAbortController = new AbortController();
     activeTransportAbortRef.current?.abort();
@@ -973,6 +1093,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       ? { route, ...(ambientFocus ? { focused_entity: ambientFocus } : {}) }
       : undefined;
     const requestBody = priorLogicalTurn?.requestBody ?? {
+      session_id: selectedSessionId,
       user_message: text,
       triggered_by: 'chat' as const,
       ...(currentSkillContext ? { skill_context: currentSkillContext } : {}),
@@ -1091,6 +1212,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         }
         durableHandle = {
           v: 1,
+          sessionId: requestBody.session_id ?? selectedSessionId,
           runId,
           location,
           userMessageId,
@@ -1602,9 +1724,43 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     <p className="text-[12.5px] text-[var(--ink-3)]">摘要暂不可用。</p>
   );
 
+  const listedSessions = sessionsQ.data?.sessions ?? [];
+  const visibleSessions =
+    optimisticSession && !listedSessions.some((session) => session.id === optimisticSession.id)
+      ? [optimisticSession, ...listedSessions]
+      : listedSessions;
+  const sessionItems: CopilotSessionListItem[] = visibleSessions.map((session) => ({
+    id: session.id,
+    status: session.status,
+    title: `${
+      session.title?.trim() ||
+      `对话 · ${new Date(session.updated_at).toLocaleString('zh-CN', {
+        month: 'numeric',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })}`
+    }${session.status === 'active' || session.status === 'idle' ? '' : ' · 已结束'}`,
+    updated_at: session.updated_at,
+  }));
+  const selectedSession = visibleSessions.find((session) => session.id === currentSessionId);
+  const conversationReady =
+    !creatingSession &&
+    (selectedSession?.status === 'active' || selectedSession?.status === 'idle');
+
   // YUK-577 — nudge bar rides above the summary body (shows even while summary loads/unavailable).
   const summary = (
     <>
+      {sessionPanelOpen ? (
+        <CopilotSessionPanel
+          sessions={sessionItems}
+          currentSessionId={currentSessionId}
+          creating={creatingSession}
+          disabled={sending || pendingAcceptanceUnknown}
+          onSelect={selectConversation}
+          onCreate={() => void createConversation()}
+        />
+      ) : null}
       {nudgeBar}
       {summaryBody}
     </>
@@ -1618,7 +1774,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             key={chip}
             type="button"
             className="chip"
-            disabled={sending}
+            disabled={sending || !conversationReady}
             onClick={() => void send(chip)}
           >
             {chip}
@@ -1631,7 +1787,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           type="button"
           className="chip"
           data-testid="copilot-quiz-chip"
-          disabled={sending}
+          disabled={sending || !conversationReady}
           onClick={sendQuiz}
         >
           {focusedKnowledgeId ? '出题 · 当前知识点' : '出题'}
@@ -1644,7 +1800,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           placeholder="问 Loom 任何事…"
           aria-label="问 Loom 任何事"
           data-testid="copilot-composer-input"
-          disabled={sending}
+          disabled={sending || !conversationReady}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             // isComposing guard: Enter during IME composition (中文选词确认)
@@ -1661,7 +1817,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           icon="send"
           aria-label="发送"
           data-testid="copilot-composer-send"
-          disabled={sending || input.trim().length === 0}
+          disabled={sending || !conversationReady || input.trim().length === 0}
           onClick={() => void send(input)}
         />
       </div>
@@ -1695,17 +1851,28 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           </LoomBadge>
         }
         headActions={
-          // 教学模式（copilot.jsx L110）：教学是服务端 skill 驱动（skill_context），
-          // 客户端无持久「模式」开关——此按钮发一条教学意图消息触发既有教学 skill，
-          // 语义同 QUICK_CHIPS，不是死按钮也不伪造客户端状态。
-          <IconBtn
-            icon="teach"
-            size={16}
-            title="教学模式"
-            aria-label="教学模式"
-            disabled={sending}
-            onClick={() => void send('我想进入教学模式，请带我一步步学习当前内容')}
-          />
+          <>
+            <IconBtn
+              icon="history"
+              size={16}
+              title={sessionPanelOpen ? '收起对话记录' : '对话记录'}
+              aria-label={sessionPanelOpen ? '收起对话记录' : '对话记录'}
+              aria-pressed={sessionPanelOpen}
+              onClick={() => setSessionPanelOpen((value) => !value)}
+              data-testid="copilot-session-list-toggle"
+            />
+            {/* 教学模式（copilot.jsx L110）：教学是服务端 skill 驱动（skill_context），
+                客户端无持久「模式」开关——此按钮发一条教学意图消息触发既有教学 skill，
+                语义同 QUICK_CHIPS，不是死按钮也不伪造客户端状态。 */}
+            <IconBtn
+              icon="teach"
+              size={16}
+              title="教学模式"
+              aria-label="教学模式"
+              disabled={sending || !conversationReady}
+              onClick={() => void send('我想进入教学模式，请带我一步步学习当前内容')}
+            />
+          </>
         }
         summary={summary}
         footer={footer}

@@ -5,8 +5,9 @@ import userEvent from '@testing-library/user-event';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { apiFetchMock, consumeDurableMock } = vi.hoisted(() => ({
+const { apiFetchMock, apiJsonMock, consumeDurableMock } = vi.hoisted(() => ({
   apiFetchMock: vi.fn(),
+  apiJsonMock: vi.fn(),
   consumeDurableMock: vi.fn(),
 }));
 
@@ -24,14 +25,35 @@ vi.mock('@/ui/lib/api', () => ({
     }
   },
   apiFetch: apiFetchMock,
-  apiJson: vi.fn(async (input: string) => {
-    if (input.startsWith('/api/copilot/turns')) return { turns: [] };
-    throw new Error(`unexpected apiJson call: ${input}`);
-  }),
+  apiJson: apiJsonMock,
 }));
 
 vi.mock('@tanstack/react-query', () => ({
-  useQuery: () => ({ data: null, isLoading: false }),
+  useQuery: ({ queryKey }: { queryKey: string[] }) =>
+    queryKey[0] === 'copilot-sessions'
+      ? {
+          data: {
+            sessions: [
+              {
+                id: 'copilot-session-test',
+                status: 'active',
+                title: '跨章节迁移核对',
+                created_at: '2026-08-16T08:00:00.000Z',
+                updated_at: '2026-08-16T08:00:00.000Z',
+              },
+              {
+                id: 'copilot-session-old',
+                status: 'active',
+                title: '旧对话：定义域复盘',
+                created_at: '2026-08-15T08:00:00.000Z',
+                updated_at: '2026-08-15T08:00:00.000Z',
+              },
+            ],
+          },
+          isLoading: false,
+          refetch: vi.fn(),
+        }
+      : { data: null, isLoading: false, refetch: vi.fn() },
 }));
 
 vi.mock('@/ui/lib/use-copilot-dwell', () => {
@@ -70,8 +92,20 @@ vi.mock('@/ui/primitives/LoomBadge', () => ({
   LoomBadge: ({ children }: { children: ReactNode }) => <span>{children}</span>,
 }));
 vi.mock('@/ui/primitives/CopilotDrawer', () => ({
-  CopilotDrawer: ({ children, footer }: { children: ReactNode; footer: ReactNode }) => (
+  CopilotDrawer: ({
+    children,
+    footer,
+    headActions,
+    summary,
+  }: {
+    children: ReactNode;
+    footer: ReactNode;
+    headActions: ReactNode;
+    summary: ReactNode;
+  }) => (
     <section>
+      {headActions}
+      {summary}
       {children}
       {footer}
     </section>
@@ -335,13 +369,110 @@ const ambiguousFailedView = {
 } satisfies CopilotRunView;
 
 describe('CopilotDock accepted durable reconnect', () => {
-  beforeEach(() => window.sessionStorage.clear());
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    apiJsonMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      if (input.startsWith('/api/copilot/turns')) return { turns: [] };
+      if (input === '/api/copilot/sessions' && init?.method === 'POST') {
+        return {
+          session: {
+            id: 'copilot-session-new',
+            status: 'active',
+            title: null,
+            created_at: '2026-08-16T09:00:00.000Z',
+            updated_at: '2026-08-16T09:00:00.000Z',
+          },
+        };
+      }
+      throw new Error(`unexpected apiJson call: ${input}`);
+    });
+  });
 
   afterEach(() => {
     cleanup();
     window.sessionStorage.clear();
     apiFetchMock.mockReset();
+    apiJsonMock.mockReset();
     consumeDurableMock.mockReset();
+  });
+
+  it('sends a new turn to the session selected from the session panel', async () => {
+    apiFetchMock.mockResolvedValue(
+      new Response(
+        `event: reply\ndata: ${JSON.stringify({
+          reply: '已按旧对话继续。',
+          session_id: 'copilot-session-old',
+          reply_event_id: 'copilot_reply_old',
+          checkpoint_event_id: 'copilot_ask_old',
+        })}\n\n`,
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      ),
+    );
+
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('copilot-session-list-toggle'));
+    await user.click(screen.getByRole('button', { name: /旧对话：定义域复盘/ }));
+    await user.type(screen.getByTestId('copilot-composer-input'), '继续这段对话');
+    await user.click(screen.getByTestId('copilot-composer-send'));
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(1));
+    const request = apiFetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      session_id: 'copilot-session-old',
+      user_message: '继续这段对话',
+    });
+  });
+
+  it('keeps a newly created session selected while the session list refetches', async () => {
+    apiFetchMock.mockResolvedValue(
+      new Response(
+        `event: reply\ndata: ${JSON.stringify({
+          reply: '新对话已开始。',
+          session_id: 'copilot-session-new',
+          reply_event_id: 'copilot_reply_new',
+          checkpoint_event_id: 'copilot_ask_new',
+        })}\n\n`,
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      ),
+    );
+
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('copilot-session-list-toggle'));
+    await user.click(screen.getByRole('button', { name: '新对话' }));
+    await user.type(screen.getByTestId('copilot-composer-input'), '新会话里的第一问');
+    await user.click(screen.getByTestId('copilot-composer-send'));
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(1));
+    const request = apiFetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      session_id: 'copilot-session-new',
+      user_message: '新会话里的第一问',
+    });
+  });
+
+  it('keeps a restored durable run bound to a session absent from the first list response', async () => {
+    window.sessionStorage.setItem(
+      DURABLE_COPILOT_RECONNECT_STORAGE_KEY,
+      JSON.stringify({
+        v: 1,
+        sessionId: 'copilot-session-restored-only',
+        runId: 'ask_restored_only',
+        location: '/api/jobs/copilot_run/ask_restored_only/events',
+        userMessageId: 'm_restored_user',
+        aiMessageId: 'm_restored_ai',
+        userMessage: '恢复仅存在于持久句柄中的旧会话。',
+      }),
+    );
+    consumeDurableMock.mockResolvedValue(completedView);
+
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('copilot-session-list-toggle'));
+
+    const restoredSession = screen.getByRole('button', { name: /正在恢复的对话/ });
+    expect(restoredSession.getAttribute('aria-current')).toBe('true');
   });
 
   it('reuses one Idempotency-Key for pre-202 retry and mints a new key for the next turn', async () => {

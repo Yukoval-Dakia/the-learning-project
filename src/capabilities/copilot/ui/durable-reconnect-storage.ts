@@ -19,7 +19,7 @@ const MAX_IDEMPOTENCY_KEY_CHARS = 200;
 export type PersistedPendingCopilotRequestBody = Pick<
   CopilotChatRequestT,
   'user_message' | 'triggered_by' | 'skill_context' | 'ambient_context'
->;
+> & { session_id: string };
 
 export interface PersistedPendingCopilotTurn {
   v: typeof STORAGE_VERSION;
@@ -31,6 +31,7 @@ export interface PersistedPendingCopilotTurn {
 
 export interface PersistedDurableCopilotReconnect {
   v: typeof STORAGE_VERSION;
+  sessionId: string;
   runId: string;
   location: string;
   userMessageId: string;
@@ -104,6 +105,9 @@ function parsePersistedPendingCopilotTurn(value: unknown): PersistedPendingCopil
     skillContext = { skill: rawSkill.skill, ref };
   }
 
+  const sessionId = boundedString(rawBody.session_id, 160);
+  if (!sessionId) return null;
+
   let ambientContext: CopilotChatRequestT['ambient_context'];
   if (rawBody.ambient_context !== undefined) {
     const rawAmbient = objectRecord(rawBody.ambient_context);
@@ -123,6 +127,7 @@ function parsePersistedPendingCopilotTurn(value: unknown): PersistedPendingCopil
     userMessageId,
     userMessage,
     requestBody: {
+      session_id: sessionId,
       user_message: userMessage,
       triggered_by: 'chat',
       ...(skillContext ? { skill_context: skillContext } : {}),
@@ -209,13 +214,24 @@ function parsePersistedDurableCopilotReconnect(
   const candidate = value as Record<string, unknown>;
   if (candidate.v !== STORAGE_VERSION) return null;
   const location = boundedString(candidate.location, 512);
+  const sessionId = boundedString(candidate.sessionId, 160);
   const runId = boundedString(candidate.runId, MAX_RUN_ID_CHARS);
   const userMessageId = boundedString(candidate.userMessageId, MAX_MESSAGE_ID_CHARS);
   const aiMessageId = boundedString(candidate.aiMessageId, MAX_MESSAGE_ID_CHARS);
   const userMessage = boundedString(candidate.userMessage, MAX_USER_MESSAGE_CHARS);
-  if (!location || !runId || !userMessageId || !aiMessageId || !userMessage) return null;
+  if (!location || !sessionId || !runId || !userMessageId || !aiMessageId || !userMessage) {
+    return null;
+  }
   if (durableRunIdFromLocation(location) !== runId) return null;
-  return { v: STORAGE_VERSION, runId, location, userMessageId, aiMessageId, userMessage };
+  return {
+    v: STORAGE_VERSION,
+    sessionId,
+    runId,
+    location,
+    userMessageId,
+    aiMessageId,
+    userMessage,
+  };
 }
 
 export function loadPersistedDurableCopilotReconnect(
