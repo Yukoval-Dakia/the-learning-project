@@ -5051,14 +5051,7 @@ export interface operations {
                     /** @default [] */
                     sourceWhitelist: string[];
                     sourcingRoutePreference?: {
-                      calculation: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                      multiple_choice: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                      proof: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                      reading_comprehension: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                      short_answer: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                      single_choice: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                      translation: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                      word_problem: ('sourced' | 'material' | 'closed_book' | 'variant')[];
+                      [key: string]: ('sourced' | 'material' | 'closed_book' | 'variant')[];
                     };
                   };
                   revision: number;
@@ -5305,14 +5298,7 @@ export interface operations {
                 /** @default [] */
                 sourceWhitelist?: string[];
                 sourcingRoutePreference?: {
-                  calculation: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                  multiple_choice: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                  proof: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                  reading_comprehension: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                  short_answer: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                  single_choice: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                  translation: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                  word_problem: ('sourced' | 'material' | 'closed_book' | 'variant')[];
+                  [key: string]: ('sourced' | 'material' | 'closed_book' | 'variant')[];
                 };
               }
             | {
@@ -6139,14 +6125,7 @@ export interface operations {
                 /** @default [] */
                 sourceWhitelist?: string[];
                 sourcingRoutePreference?: {
-                  calculation: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                  multiple_choice: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                  proof: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                  reading_comprehension: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                  short_answer: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                  single_choice: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                  translation: ('sourced' | 'material' | 'closed_book' | 'variant')[];
-                  word_problem: ('sourced' | 'material' | 'closed_book' | 'variant')[];
+                  [key: string]: ('sourced' | 'material' | 'closed_book' | 'variant')[];
                 };
               }
             | {
@@ -7597,24 +7576,24 @@ export interface operations {
             blocks: {
               [key: string]:
                 | {
-                    /** @enum {unknown|null} */
-                    correction_event_id: 'null' | null;
-                    /** @enum {unknown|null} */
-                    replacement_artifact_id: 'null' | null;
+                    /** @enum {string|null} */
+                    correction_event_id: null;
+                    /** @enum {string|null} */
+                    replacement_artifact_id: null;
                     /** @enum {string} */
                     state: 'active';
                   }
                 | {
                     correction_event_id: string;
-                    /** @enum {unknown|null} */
-                    replacement_artifact_id: 'null' | null;
+                    /** @enum {string|null} */
+                    replacement_artifact_id: null;
                     /** @enum {string} */
                     state: 'retracted';
                   }
                 | {
                     correction_event_id: string;
-                    /** @enum {unknown|null} */
-                    replacement_artifact_id: 'null' | null;
+                    /** @enum {string|null} */
+                    replacement_artifact_id: null;
                     /** @enum {string} */
                     state: 'marked_wrong';
                   }
@@ -7627,24 +7606,24 @@ export interface operations {
             };
             whole:
               | {
-                  /** @enum {unknown|null} */
-                  correction_event_id: 'null' | null;
-                  /** @enum {unknown|null} */
-                  replacement_artifact_id: 'null' | null;
+                  /** @enum {string|null} */
+                  correction_event_id: null;
+                  /** @enum {string|null} */
+                  replacement_artifact_id: null;
                   /** @enum {string} */
                   state: 'active';
                 }
               | {
                   correction_event_id: string;
-                  /** @enum {unknown|null} */
-                  replacement_artifact_id: 'null' | null;
+                  /** @enum {string|null} */
+                  replacement_artifact_id: null;
                   /** @enum {string} */
                   state: 'retracted';
                 }
               | {
                   correction_event_id: string;
-                  /** @enum {unknown|null} */
-                  replacement_artifact_id: 'null' | null;
+                  /** @enum {string|null} */
+                  replacement_artifact_id: null;
                   /** @enum {string} */
                   state: 'marked_wrong';
                 }
@@ -8797,8 +8776,8 @@ export interface operations {
                       [key: string]: unknown;
                     };
                     feedback_md: string;
-                    /** @enum {unknown|null} */
-                    score: 'null' | null;
+                    /** @enum {string|null} */
+                    score: null;
                     /** @enum {string} */
                     score_meaning:
                       | 'correctness'
@@ -8922,8 +8901,8 @@ export interface operations {
                       [key: string]: unknown;
                     };
                     feedback_md: string;
-                    /** @enum {unknown|null} */
-                    score: 'null' | null;
+                    /** @enum {string|null} */
+                    score: null;
                     /** @enum {string} */
                     score_meaning:
                       | 'correctness'
@@ -9047,8 +9026,8 @@ export interface operations {
                       [key: string]: unknown;
                     };
                     feedback_md: string;
-                    /** @enum {unknown|null} */
-                    score: 'null' | null;
+                    /** @enum {string|null} */
+                    score: null;
                     /** @enum {string} */
                     score_meaning:
                       | 'correctness'
@@ -9363,7 +9342,7 @@ export interface operations {
               | 'probe_without_response_contract';
             gradable: boolean | null;
             idempotent: boolean;
-            outcome: 0 | 1 | ('null' | null);
+            outcome: 0 | 1 | null;
             probe_result_event_id: string;
             resolution: ('evidence_for' | 'confirmed' | 'retired') | 'inconclusive';
             response_evidence_refs:
@@ -11035,24 +11014,24 @@ export interface operations {
                     caused_by_event_id?: string;
                     correction_status:
                       | {
-                          /** @enum {unknown|null} */
-                          correction_event_id: 'null' | null;
-                          /** @enum {unknown|null} */
-                          replacement_event_id: 'null' | null;
+                          /** @enum {string|null} */
+                          correction_event_id: null;
+                          /** @enum {string|null} */
+                          replacement_event_id: null;
                           /** @enum {string} */
                           state: 'active';
                         }
                       | {
                           correction_event_id: string;
-                          /** @enum {unknown|null} */
-                          replacement_event_id: 'null' | null;
+                          /** @enum {string|null} */
+                          replacement_event_id: null;
                           /** @enum {string} */
                           state: 'retracted';
                         }
                       | {
                           correction_event_id: string;
-                          /** @enum {unknown|null} */
-                          replacement_event_id: 'null' | null;
+                          /** @enum {string|null} */
+                          replacement_event_id: null;
                           /** @enum {string} */
                           state: 'marked_wrong';
                         }
@@ -11082,24 +11061,24 @@ export interface operations {
                 caused_by_event_id?: string;
                 correction_status:
                   | {
-                      /** @enum {unknown|null} */
-                      correction_event_id: 'null' | null;
-                      /** @enum {unknown|null} */
-                      replacement_event_id: 'null' | null;
+                      /** @enum {string|null} */
+                      correction_event_id: null;
+                      /** @enum {string|null} */
+                      replacement_event_id: null;
                       /** @enum {string} */
                       state: 'active';
                     }
                   | {
                       correction_event_id: string;
-                      /** @enum {unknown|null} */
-                      replacement_event_id: 'null' | null;
+                      /** @enum {string|null} */
+                      replacement_event_id: null;
                       /** @enum {string} */
                       state: 'retracted';
                     }
                   | {
                       correction_event_id: string;
-                      /** @enum {unknown|null} */
-                      replacement_event_id: 'null' | null;
+                      /** @enum {string|null} */
+                      replacement_event_id: null;
                       /** @enum {string} */
                       state: 'marked_wrong';
                     }
@@ -11128,24 +11107,24 @@ export interface operations {
                 caused_by_event_id?: string;
                 correction_status:
                   | {
-                      /** @enum {unknown|null} */
-                      correction_event_id: 'null' | null;
-                      /** @enum {unknown|null} */
-                      replacement_event_id: 'null' | null;
+                      /** @enum {string|null} */
+                      correction_event_id: null;
+                      /** @enum {string|null} */
+                      replacement_event_id: null;
                       /** @enum {string} */
                       state: 'active';
                     }
                   | {
                       correction_event_id: string;
-                      /** @enum {unknown|null} */
-                      replacement_event_id: 'null' | null;
+                      /** @enum {string|null} */
+                      replacement_event_id: null;
                       /** @enum {string} */
                       state: 'retracted';
                     }
                   | {
                       correction_event_id: string;
-                      /** @enum {unknown|null} */
-                      replacement_event_id: 'null' | null;
+                      /** @enum {string|null} */
+                      replacement_event_id: null;
                       /** @enum {string} */
                       state: 'marked_wrong';
                     }
@@ -11170,24 +11149,24 @@ export interface operations {
             };
             correction_status:
               | {
-                  /** @enum {unknown|null} */
-                  correction_event_id: 'null' | null;
-                  /** @enum {unknown|null} */
-                  replacement_event_id: 'null' | null;
+                  /** @enum {string|null} */
+                  correction_event_id: null;
+                  /** @enum {string|null} */
+                  replacement_event_id: null;
                   /** @enum {string} */
                   state: 'active';
                 }
               | {
                   correction_event_id: string;
-                  /** @enum {unknown|null} */
-                  replacement_event_id: 'null' | null;
+                  /** @enum {string|null} */
+                  replacement_event_id: null;
                   /** @enum {string} */
                   state: 'retracted';
                 }
               | {
                   correction_event_id: string;
-                  /** @enum {unknown|null} */
-                  replacement_event_id: 'null' | null;
+                  /** @enum {string|null} */
+                  replacement_event_id: null;
                   /** @enum {string} */
                   state: 'marked_wrong';
                 }
@@ -11204,24 +11183,24 @@ export interface operations {
               caused_by_event_id?: string;
               correction_status:
                 | {
-                    /** @enum {unknown|null} */
-                    correction_event_id: 'null' | null;
-                    /** @enum {unknown|null} */
-                    replacement_event_id: 'null' | null;
+                    /** @enum {string|null} */
+                    correction_event_id: null;
+                    /** @enum {string|null} */
+                    replacement_event_id: null;
                     /** @enum {string} */
                     state: 'active';
                   }
                 | {
                     correction_event_id: string;
-                    /** @enum {unknown|null} */
-                    replacement_event_id: 'null' | null;
+                    /** @enum {string|null} */
+                    replacement_event_id: null;
                     /** @enum {string} */
                     state: 'retracted';
                   }
                 | {
                     correction_event_id: string;
-                    /** @enum {unknown|null} */
-                    replacement_event_id: 'null' | null;
+                    /** @enum {string|null} */
+                    replacement_event_id: null;
                     /** @enum {string} */
                     state: 'marked_wrong';
                   }
@@ -14486,8 +14465,8 @@ export interface operations {
                 status: 'done';
               }
             | {
-                /** @enum {unknown|null} */
-                result: 'null' | null;
+                /** @enum {string|null} */
+                result: null;
                 run_id: string;
                 /** @enum {string} */
                 status: 'queued' | 'started' | 'failed';
@@ -20481,8 +20460,8 @@ export interface operations {
                         status: 'awaiting_answer';
                         summary_md: string;
                       };
-                      /** @enum {unknown|null} */
-                      expires_at: 'null' | null;
+                      /** @enum {string|null} */
+                      expires_at: null;
                       finding: {
                         cause_category: string;
                         claim_md: string;
@@ -28819,8 +28798,8 @@ export interface operations {
                       [key: string]: unknown;
                     };
                     feedback_md: string;
-                    /** @enum {unknown|null} */
-                    score: 'null' | null;
+                    /** @enum {string|null} */
+                    score: null;
                     /** @enum {string} */
                     score_meaning:
                       | 'correctness'
@@ -28944,8 +28923,8 @@ export interface operations {
                       [key: string]: unknown;
                     };
                     feedback_md: string;
-                    /** @enum {unknown|null} */
-                    score: 'null' | null;
+                    /** @enum {string|null} */
+                    score: null;
                     /** @enum {string} */
                     score_meaning:
                       | 'correctness'
@@ -29069,8 +29048,8 @@ export interface operations {
                       [key: string]: unknown;
                     };
                     feedback_md: string;
-                    /** @enum {unknown|null} */
-                    score: 'null' | null;
+                    /** @enum {string|null} */
+                    score: null;
                     /** @enum {string} */
                     score_meaning:
                       | 'correctness'

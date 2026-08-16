@@ -1,5 +1,4 @@
 import type { ZodTypeAny } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
 import { OPENAPI_BINARY_CONTENT_DESCRIPTION } from './http-contracts';
 import {
   type ApiPaginationDecl,
@@ -9,24 +8,24 @@ import {
   apiResponseMediaType,
   apiSuccessStatuses,
 } from './manifest';
+import { zodToJsonSchemaCompat } from './zod-json-schema';
 
 type JsonObject = Record<string, unknown>;
 
-function toJsonSchema(schema: ZodTypeAny, options: { binaryFiles?: boolean } = {}): JsonObject {
-  return zodToJsonSchema(schema, {
-    target: 'openApi3',
-    $refStrategy: 'none',
-    effectStrategy: 'input',
-    ...(options.binaryFiles
-      ? {
-          postProcess: (jsonSchema) =>
-            typeof jsonSchema === 'object' &&
-            jsonSchema?.description === OPENAPI_BINARY_CONTENT_DESCRIPTION
-              ? { ...jsonSchema, type: 'string' as const, format: 'binary' }
-              : jsonSchema,
+function toJsonSchema(schema: ZodTypeAny, options: { binaryFiles?: boolean } = {}) {
+  return zodToJsonSchemaCompat(schema, {
+    target: 'openapi-3.0',
+    io: 'input',
+    reused: 'inline',
+    unrepresentable: 'any',
+    override: options.binaryFiles
+      ? ({ jsonSchema }) => {
+          if (jsonSchema.description !== OPENAPI_BINARY_CONTENT_DESCRIPTION) return;
+          jsonSchema.type = 'string';
+          jsonSchema.format = 'binary';
         }
-      : {}),
-  }) as JsonObject;
+      : undefined,
+  });
 }
 
 function toOpenApiPath(path: string): string {
