@@ -110,7 +110,10 @@ export function buildSearchMemoryFactsTool(
         deadlineAt: new Date(ctx.providerSessionDeadlineAt),
         operationAnchor: `search-memory-facts:${ctx.taskRunId}:${inputDigest}`,
       }),
-      readDeps,
+      {
+        ...readDeps,
+        costTracking: { db: ctx.db, taskRunId: ctx.taskRunId },
+      },
     );
     const facts = result.results ?? [];
     return SearchMemoryFactsOutputSchema.parse({ facts, count: facts.length });

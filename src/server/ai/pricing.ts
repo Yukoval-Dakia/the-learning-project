@@ -98,3 +98,10 @@ export function glmChatCostCny(promptTokens: number, completionTokens: number): 
     1_000_000
   );
 }
+
+// YUK-360: conservative placeholder until the 百炼 text-embedding-v4 contract rate is confirmed.
+const BAILIAN_EMBED_PER_M_CNY = 0.5;
+
+export function bailianEmbedCostCny(promptTokens: number): number {
+  return (promptTokens * BAILIAN_EMBED_PER_M_CNY) / 1_000_000;
+}
