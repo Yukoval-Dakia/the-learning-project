@@ -391,6 +391,14 @@ export const agencyCapability = defineCapability({
         load: () =>
           import('./server/tools/proposal-tools').then((m) => m.proposeLearningItemArchiveTool),
       },
+      {
+        name: 'read_agent_notes',
+        load: () => import('./server/tools/agent-note-tools').then((m) => m.readAgentNotesTool),
+      },
+      {
+        name: 'write_agent_note',
+        load: () => import('./server/tools/agent-note-tools').then((m) => m.writeAgentNoteTool),
+      },
     ],
   },
 });
