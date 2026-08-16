@@ -107,7 +107,7 @@ export const SubjectProfileSchema = z.object({
   // value = 该题型优先走的四线次序 (slice 5b 的 sourcing-sequence 消费)。如阅读题直奔
   // material 线。未列题型走默认次序 (sourced → material → closed_book)。加性、可选。
   sourcingRoutePreference: z
-    .record(
+    .partialRecord(
       SubjectQuestionKindSchema,
       z.array(z.enum(['sourced', 'material', 'closed_book', 'variant'])).min(1),
     )
