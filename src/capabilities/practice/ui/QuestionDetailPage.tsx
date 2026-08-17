@@ -32,6 +32,7 @@ import { createPortal } from 'react-dom';
 import { ApiError } from '@/ui/lib/api';
 import { makeLookup } from '@/ui/lib/makeLookup';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { subjectContentPropsForDomain } from '@/ui/lib/subject';
 import { formatCnDateOnly } from '@/ui/lib/utils';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Btn } from '@/ui/primitives/Btn';
@@ -757,7 +758,13 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                     <LoomIcon name="eye" size={12} />
                     预览 · 含公式 / 格式
                   </div>
-                  <QMarkdown text={draft.prompt_md} notation={notation} className="wenyan" />
+                  <div
+                    {...subjectContentPropsForDomain(data.subject, {
+                      className: 'qd-preview-content',
+                    })}
+                  >
+                    <QMarkdown text={draft.prompt_md} notation={notation} />
+                  </div>
                 </div>
               )}
             </div>

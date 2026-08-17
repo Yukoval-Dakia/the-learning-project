@@ -131,7 +131,7 @@ export function subjectHref(
       return `/knowledge/${id}`;
     case 'artifact':
     case 'note':
-      return `/notes/${id}`;
+      return `/notes/${encodeURIComponent(id)}`;
     case 'event':
       return `/events/${id}`;
     default:

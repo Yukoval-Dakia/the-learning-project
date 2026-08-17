@@ -273,7 +273,7 @@ export function evidenceReadable(ref: ProposalEvidenceRefWire): {
     case 'knowledge':
       return { text: '源自一个知识点', route: `/knowledge/${ref.id}` };
     case 'artifact':
-      return { text: '源自一篇笔记', route: `/notes/${ref.id}` };
+      return { text: '源自一篇笔记', route: `/notes/${encodeURIComponent(ref.id)}` };
     case 'record':
       return { text: '源自一条学习记录', route: null };
     default:

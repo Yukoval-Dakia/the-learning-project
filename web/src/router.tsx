@@ -19,7 +19,7 @@ import { loadAgentNotesPage } from '@/capabilities/agency/ui-public';
 import { CopilotDock } from '@/capabilities/copilot/ui-public';
 import { loadRecordPage } from '@/capabilities/ingestion/ui-public';
 import { loadKnowledgeDetailPage, loadKnowledgePage } from '@/capabilities/knowledge/ui-public';
-import { loadNoteReaderPage } from '@/capabilities/notes/ui-public';
+import { loadNoteReaderPage, loadNotesIndexPage } from '@/capabilities/notes/ui-public';
 import {
   loadAdminConjectureScoresSurface,
   loadAdminCostSurface,
@@ -530,6 +530,14 @@ const noteReaderRoute = createRoute({
   component: NoteReaderRouteC,
 });
 
+const NotesIndexRoute = lazyNavigableRoute(loadNotesIndexPage);
+
+const notesIndexRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: surfacePath('notes'),
+  component: NotesIndexRoute,
+});
+
 // M5-T4 (YUK-321) — observability 四页 + Coach 周报。
 // S13 (YUK-335)：owner override 设计 app.jsx:106「admin separate shell」——admin
 // 路由现照常套主 chrome（RootShell .app 壳），不为 admin 特判跳过 chrome
@@ -628,6 +636,7 @@ const routeTree = rootRoute.addChildren([
   questionDetailRoute,
   knowledgeRoute,
   knowledgeDetailRoute,
+  notesIndexRoute,
   noteReaderRoute,
   coachRoute,
   adminRunsRoute,

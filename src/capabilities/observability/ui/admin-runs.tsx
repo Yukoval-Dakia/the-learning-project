@@ -69,8 +69,33 @@ interface RunDetail {
   tool_calls: Array<{ id: string; tool_name: string; latency_ms: number; iteration: number }>;
 }
 
+const RUN_STATUS_LABEL: Record<string, string> = {
+  running: '运行中',
+  success: '已完成',
+  failure: '失败',
+};
+
+const TIMELINE_TYPE_LABEL: Record<string, string> = {
+  run_started: '开始运行',
+  tool_call: '工具调用',
+  cost_ledger: '费用记录',
+  run_finished: '运行结束',
+};
+
+function statusLabel(status: string): string {
+  return RUN_STATUS_LABEL[status] ?? '处理中';
+}
+
+function taskLabel(taskKind: string): string {
+  return taskKind
+    .split(/[_:.-]+/)
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 function formatDuration(ms: number | null): string {
-  if (ms === null) return 'running';
+  if (ms === null) return '运行中';
   if (ms < 1000) return `${Math.round(ms)}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
   return `${Math.round(ms / 60_000)}m`;
@@ -125,8 +150,8 @@ function RunOutcomeSummary({ run }: { run: AdminRunRow }) {
   return (
     <div style={outcomeSummaryStyle}>
       <div style={badgeRowStyle}>
-        <Badge tone={statusTone(run.status)}>outcome: {run.status}</Badge>
-        <Badge tone="neutral">finish: {finishReason}</Badge>
+        <Badge tone={statusTone(run.status)}>结果：{statusLabel(run.status)}</Badge>
+        <Badge tone="neutral">结束原因：{finishReason}</Badge>
       </div>
       {errorSummary && (
         <div style={errorSummaryRowStyle}>
@@ -198,9 +223,9 @@ export function AdminRunsSurface({ navigate }: AdminSurfaceProps) {
   return (
     <main className="page wide">
       <PageHeader
-        title="AI Runs"
-        eyebrow="ADMIN · runtime evidence"
-        sub="AI task run 列表、单 run 时间线、pg-boss job id 与 tool_call_log 串联视图。"
+        title="AI 任务运行记录"
+        eyebrow="管理 · 运行证据"
+        sub="查看 AI 任务的状态、费用、工具调用和结束原因。"
       >
         <AdminLinks navigate={navigate} />
         <Button variant="secondary" icon="refresh" onClick={refreshRuns}>
@@ -209,14 +234,18 @@ export function AdminRunsSurface({ navigate }: AdminSurfaceProps) {
       </PageHeader>
 
       <div className="kpi-strip">
-        <Kpi label="runs" value={runs.length} note={`${runs.length} / ${totalRuns} shown`} />
+        <Kpi label="运行记录" value={runs.length} note={`${runs.length} / ${totalRuns} 条`} />
         <Kpi
-          label="failed"
+          label="失败"
           value={totals.failed}
           note={failedWindowNote(totals.failed, runs.length, totalRuns)}
         />
-        <Kpi label="running" value={totals.running} note="currently open" />
-        <Kpi label="spend" value={formatMoney(totals.spend)} note={`${totals.toolCalls} tools`} />
+        <Kpi label="运行中" value={totals.running} note="尚未结束" />
+        <Kpi
+          label="费用"
+          value={formatMoney(totals.spend)}
+          note={`${totals.toolCalls} 次工具调用`}
+        />
       </div>
 
       {runsQ.isLoading && <LoadingCard label="runs" />}
@@ -226,7 +255,7 @@ export function AdminRunsSurface({ navigate }: AdminSurfaceProps) {
         <div className="admin-two-column">
           <Card pad="lg">
             <div style={sectionHeadStyle}>
-              <h2 style={sectionTitleStyle}>Recent runs</h2>
+              <h2 style={sectionTitleStyle}>最近运行</h2>
               <div style={badgeRowStyle}>
                 <Badge tone="neutral">
                   {runs.length} / {totalRuns}
@@ -238,11 +267,11 @@ export function AdminRunsSurface({ navigate }: AdminSurfaceProps) {
               <table style={tableStyle}>
                 <thead>
                   <tr>
-                    <th style={thStyle}>task</th>
-                    <th style={thStyle}>status</th>
-                    <th style={thStyle}>cost</th>
-                    <th style={thStyle}>tools</th>
-                    <th style={thStyle}>started</th>
+                    <th style={thStyle}>任务</th>
+                    <th style={thStyle}>状态</th>
+                    <th style={thStyle}>费用</th>
+                    <th style={thStyle}>工具调用</th>
+                    <th style={thStyle}>开始时间</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -257,12 +286,12 @@ export function AdminRunsSurface({ navigate }: AdminSurfaceProps) {
                             color: selectedRunId === run.id ? 'var(--coral)' : 'var(--ink)',
                           }}
                         >
-                          <span>{run.task_kind}</span>
+                          <span>{taskLabel(run.task_kind)}</span>
                           <code>{shortId(run.id)}</code>
                         </button>
                       </td>
                       <td style={tdStyle}>
-                        <Badge tone={statusTone(run.status)}>{run.status}</Badge>
+                        <Badge tone={statusTone(run.status)}>{statusLabel(run.status)}</Badge>
                       </td>
                       <td style={tdStyle}>{formatMoney(run.cost_usd)}</td>
                       <td style={tdStyle}>{run.tool_call_count}</td>
@@ -278,15 +307,16 @@ export function AdminRunsSurface({ navigate }: AdminSurfaceProps) {
             <div style={sectionHeadStyle}>
               <h2 style={sectionTitleStyle}>Timeline</h2>
               {detailQ.data?.run && (
-                <Badge tone={statusTone(detailQ.data.run.status)}>{detailQ.data.run.status}</Badge>
+                <Badge tone={statusTone(detailQ.data.run.status)}>
+                  {statusLabel(detailQ.data.run.status)}
+                </Badge>
               )}
             </div>
-            {detailQ.isLoading && <p style={mutedTextStyle}>timeline 加载中...</p>}
+            {detailQ.isLoading && <p style={mutedTextStyle}>运行时间线加载中…</p>}
             {detailQ.error && <ErrorCard error={detailQ.error} />}
             {staleRunId && (
               <p style={warningTextStyle}>
-                run {shortId(staleRunId)} left the current list after refresh; showing the latest
-                listed run.
+                运行记录 {shortId(staleRunId)} 刷新后已离开当前列表，已展示最新记录。
               </p>
             )}
             {detailQ.data && (
@@ -300,7 +330,9 @@ export function AdminRunsSurface({ navigate }: AdminSurfaceProps) {
                 <RunOutcomeSummary key={detailQ.data.run.id} run={detailQ.data.run} />
                 {detailQ.data.timeline.map((event, index) => (
                   <div key={`${event.type}-${event.id ?? index}`} style={timelineRowStyle}>
-                    <Badge tone={timelineTone(event)}>{event.type}</Badge>
+                    <Badge tone={timelineTone(event)}>
+                      {TIMELINE_TYPE_LABEL[event.type] ?? '运行事件'}
+                    </Badge>
                     <div style={{ minWidth: 0 }}>
                       <div style={timelineLabelStyle}>
                         {event.label}

@@ -1668,18 +1668,13 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       {summaryQ.data.dreaming_preview.length > 0 ? (
         <ul className="list-disc list-inside text-[12.5px] text-[var(--ink-2)]">
           {summaryQ.data.dreaming_preview.map((row) => (
-            <li key={row.proposal_id}>
-              <span className="font-mono text-[var(--ink-3)]">{row.kind}</span> {row.brief}
-            </li>
+            <li key={row.proposal_id}>{row.brief}</li>
           ))}
         </ul>
       ) : null}
-      <p className="text-[11.5px] text-[var(--ink-3)]">
-        共 {summaryQ.data.pending_proposals_total} 条 pending 提案
-        {summaryQ.data.coach_last_run_at
-          ? ` · Coach ${new Date(summaryQ.data.coach_last_run_at).toLocaleString()}`
-          : ''}
-      </p>
+      {summaryQ.data.pending_proposals_total > 0 ? (
+        <p className="text-[11.5px] text-[var(--ink-3)]">更多建议已整理到收件箱。</p>
+      ) : null}
     </div>
   ) : summaryQ.isLoading ? (
     <p className="text-[12.5px] text-[var(--ink-3)]">加载摘要…</p>
