@@ -53,6 +53,7 @@ type JudgeFeedback = Pick<
 >;
 
 const INTERVENTION_DIAGNOSTIC_SOURCE = 'intervention_diagnostic';
+const JUDGE_FAILURE_MESSAGE = '判题失败，请稍后重试';
 
 export function isInterventionDiagnosticSource(source: string): boolean {
   return source === INTERVENTION_DIAGNOSTIC_SOURCE;
@@ -410,8 +411,14 @@ export function PfSolo({
       }
       // advance=false（客观题自动 commit）→ 留在反馈卡让用户先看判定，「下一项」再 onDone()。
       if (opts.advance !== false) onDone();
-    } catch (e) {
-      addToast(`提交失败：${(e as Error).message}`, 'info', 'alert');
+    } catch {
+      setPreview(null);
+      setPendingPreview(null);
+      setCommittedPreview(null);
+      setRating(null);
+      setAutoCommitted(false);
+      setAutoCommitJudgeEventId(null);
+      addToast(JUDGE_FAILURE_MESSAGE, 'info', 'alert');
     } finally {
       setCommitting(false);
     }
@@ -501,7 +508,7 @@ export function PfSolo({
           return;
         }
       }
-      addToast(`判分失败：${(e as Error).message}`, 'info', 'alert');
+      addToast(JUDGE_FAILURE_MESSAGE, 'info', 'alert');
     } finally {
       setJudging(false);
     }

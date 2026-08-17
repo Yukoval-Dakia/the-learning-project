@@ -104,6 +104,10 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
   const [revealed, setRevealed] = useState(false);
   const [acking, setAcking] = useState(false);
   const [ackFailed, setAckFailed] = useState(false);
+  // YUK-895 goal lane — a failed probe answer submit leaves the server brief
+  // unchanged (fail-closed 422), so the 当前结果 band needs a local failure state
+  // instead of staying on 判别题已备好. Cleared on brief swap / state advance.
+  const [probeFailed, setProbeFailed] = useState(false);
 
   // §6 forward-announce: rank covers the ordinary finding → probe → outcome path;
   // state additionally recognizes preliminary outcome → recurrence probe.
@@ -156,6 +160,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
       // prior candidate's spinner / error never bleeds onto the next one.
       setRevealed(false);
       setFailed(false);
+      setProbeFailed(false);
       setEditingClaim(false);
       setClaimDraft('');
       setAckFailed(false);
@@ -166,6 +171,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
       // different task: collapse the old answer form so the new probe gets its own reveal
       // action and starts from a calm, unexpanded state.
       setRevealed(false);
+      setProbeFailed(false);
     }
     if (!brief) {
       prevRef.current = null; // null → reset baseline; never announce.
@@ -181,6 +187,9 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     const sameBrief = prev !== null && prev.brief_id === brief.brief_id;
     const rankedForward = prev !== null && rank > prev.rank;
     const forward = sameBrief && (rankedForward || recurrenceReady);
+    // A successful retry re-projects the brief to its outcome state — the 当前结果
+    // failure state is stale the moment the brief advances.
+    if (prev !== null && prev.state !== brief.state) setProbeFailed(false);
     prevRef.current = {
       brief_id: brief.brief_id,
       rank,
@@ -458,6 +467,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                 onAccept={() => void decide('accept')}
                 onReject={() => void decide('dismiss')}
                 onAcknowledge={() => void acknowledge()}
+                onProbeFailed={() => setProbeFailed(true)}
                 reportSeen={() => fireSeenIfNew(brief)}
               />
             </section>
@@ -472,10 +482,21 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
               >
                 当前结果
               </h3>
-              <div className={`tb-outcome tb-outcome-${brief.current_outcome.status}`}>
-                <LoomIcon name={outcomeIcon(brief.current_outcome.status)} size={14} />
-                <span>{brief.current_outcome.summary_md}</span>
-              </div>
+              {probeFailed ? (
+                // YUK-895 goal lane — a failed probe submit must leave 判别题已备好: the
+                // server brief is unchanged on fail-closed 422, so surface the failure here
+                // (the answer card's inline alert already announces it; this is the visual
+                // state change the acceptance requires).
+                <div className="tb-outcome tb-outcome-failed">
+                  <LoomIcon name="alert" size={14} />
+                  <span>判题失败，请稍后重试</span>
+                </div>
+              ) : (
+                <div className={`tb-outcome tb-outcome-${brief.current_outcome.status}`}>
+                  <LoomIcon name={outcomeIcon(brief.current_outcome.status)} size={14} />
+                  <span>{brief.current_outcome.summary_md}</span>
+                </div>
+              )}
             </section>
           </LoomCard>
         )}
@@ -522,6 +543,7 @@ function PreparedBlock({
   onAccept,
   onReject,
   onAcknowledge,
+  onProbeFailed,
   reportSeen,
 }: {
   brief: TeachingBrief;
@@ -535,6 +557,8 @@ function PreparedBlock({
   onAccept: () => void;
   onReject: () => void;
   onAcknowledge: () => void;
+  // YUK-895 goal lane — a failed probe submit surfaces in the 当前结果 band.
+  onProbeFailed: () => void;
   // YUK-710 — record today's brief_seen before a tracked action (across-midnight guard).
   reportSeen: () => void;
 }) {
@@ -597,7 +621,7 @@ function PreparedBlock({
         </div>
         {revealed && (
           <div id="tb-probe-reveal" className="prep-desk-expand">
-            <ProbeAnswerCard probe={probeWire} />
+            <ProbeAnswerCard probe={probeWire} onFailed={onProbeFailed} />
           </div>
         )}
       </>
