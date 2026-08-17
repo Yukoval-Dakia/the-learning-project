@@ -24,7 +24,7 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { TabBar } from '@/ui/primitives/TabBar';
 
-type ModeTab = 'manual' | 'vision_single' | 'vision_paper' | 'auto_enrolled';
+type ModeTab = 'manual' | 'vision_single' | 'vision_paper';
 
 interface KnowledgeNode {
   id: string;
@@ -44,7 +44,6 @@ const MODE_TABS = [
   { id: 'manual' as ModeTab, label: '错题' },
   { id: 'vision_single' as ModeTab, label: '拍单题' },
   { id: 'vision_paper' as ModeTab, label: '拍试卷' },
-  { id: 'auto_enrolled' as ModeTab, label: 'AI 录入' },
 ];
 
 export interface RecordPageProps extends VisionTabRouting {}
@@ -67,8 +66,9 @@ export default function RecordPage({ navigate, getQuery, setQuery }: RecordPageP
         {mode === 'manual' && <ManualForm navigate={navigate} />}
         {mode === 'vision_single' && <VisionTab mode="vision_single" routing={routing} />}
         {mode === 'vision_paper' && <VisionTab mode="vision_paper" routing={routing} />}
-        {mode === 'auto_enrolled' && <AutoEnrolledPanel />}
       </div>
+
+      <AutoEnrolledPanel />
     </main>
   );
 }

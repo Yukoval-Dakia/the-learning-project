@@ -19,11 +19,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import {
-  type QuestionDetail,
-  computeLatencyMs,
-  getQuestion,
-} from '@/capabilities/practice/ui-public';
+import { computeLatencyMs, getQuestion } from '@/capabilities/practice/ui-public';
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { ApiError } from '@/ui/lib/api';
 import { uploadAsset } from '@/ui/lib/assets';

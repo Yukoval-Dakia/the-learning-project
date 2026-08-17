@@ -820,6 +820,62 @@ describe('CopilotDock accepted durable reconnect', () => {
     expect(screen.getByText('定位 7 道定义域遗漏与 3 道增根误判。')).toBeTruthy();
   });
 
+  it('stops an accepted durable run and returns the composer to idle', async () => {
+    const runId = 'ask_stop_from_dock';
+    let stopConsumer: (() => void) | undefined;
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ run_id: runId }), {
+        status: 202,
+        headers: {
+          Location: `/api/jobs/copilot_run/${runId}/events`,
+          'Content-Type': 'application/json',
+        },
+      }),
+    );
+    apiJsonMock.mockImplementation(async (input: string) => {
+      if (input.startsWith('/api/copilot/turns')) return { turns: [] };
+      if (input === `/api/copilot/runs/${runId}/cancel`) {
+        return { ok: true, run_id: runId, status: 'cancelled' };
+      }
+      throw new Error(`unexpected apiJson call: ${input}`);
+    });
+    consumeDurableMock.mockImplementationOnce(
+      async (options: { signal?: AbortSignal; onUpdate?: (view: typeof queuedView) => void }) => {
+        options.onUpdate?.(queuedView);
+        await new Promise<never>((_, reject) => {
+          stopConsumer = () => reject(new DOMException('aborted', 'AbortError'));
+          options.signal?.addEventListener('abort', stopConsumer, { once: true });
+        });
+      },
+    );
+
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByTestId('copilot-composer-input'),
+      '请后台核对错题证据并生成一组迁移练习。',
+    );
+    await user.click(screen.getByTestId('copilot-composer-send'));
+
+    expect(await screen.findByTestId('copilot-stop-run')).toBeTruthy();
+    expect(screen.getByTestId('copilot-run-stage-footer').textContent).toContain('调度中…');
+    await user.click(screen.getByTestId('copilot-stop-run'));
+
+    await waitFor(() => {
+      expect(screen.getByText('已停止这次运行。')).toBeTruthy();
+      expect(screen.queryByTestId('copilot-stop-run')).toBeNull();
+      expect(screen.queryByTestId('copilot-run-stage')).toBeNull();
+      expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
+        false,
+      );
+    });
+    expect(apiJsonMock).toHaveBeenCalledWith(
+      `/api/copilot/runs/${runId}/cancel`,
+      expect.objectContaining({ method: 'POST' }),
+    );
+    stopConsumer?.();
+  });
+
   it('reconstructs an accepted durable handle from the 202 JSON when a proxy strips Location', async () => {
     const runId = 'ask_proxy_stripped_location';
     const reconstructedLocation = `/api/jobs/copilot_run/${runId}/events`;
@@ -965,7 +1021,7 @@ describe('CopilotDock accepted durable reconnect', () => {
     expect(
       await screen.findByText('核对 36 道跨章节练习、两轮延迟复习与四个未教学探针'),
     ).toBeTruthy();
-    expect(screen.queryByTestId('copilot-thinking')).toBeNull();
+    expect(screen.getByTestId('copilot-run-stage').textContent).toContain('证据审阅中…');
     expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
       true,
     );

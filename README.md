@@ -82,7 +82,7 @@ pnpm lint             # biome check .
 pnpm test             # CI 全量门禁（含 audit:task-census + unit/db/migration；本机按 AGENTS.md 跑 scoped tests）
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
-pnpm audit:task-census # 51 registered / 50 static / 1 compatibility + wiring/run-log contract
+pnpm audit:task-census # 52 registered / 51 static / 1 compatibility + wiring/run-log contract
 pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
 ```
 

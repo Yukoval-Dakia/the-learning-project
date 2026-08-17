@@ -28,7 +28,12 @@ import {
   type CopilotRunInput,
   assembleCopilotRunInput,
 } from '@/capabilities/copilot/server/copilot-run-input';
-import { resolveCorrectionReply } from '@/capabilities/copilot/server/correction-contract';
+import {
+  type CopilotImplicitCorrectionIntent,
+  CopilotImplicitCorrectionIntentSchema,
+  resolveCorrectionReply,
+  resolveImplicitCorrectionContract,
+} from '@/capabilities/copilot/server/correction-contract';
 import { reviewCopilotEvidenceReply } from '@/capabilities/copilot/server/evidence-review';
 // YUK-574 — session-anchored learner-state header (assemble-once + invalidation).
 // The Facet A (YUK-174) per-turn `proposal_feedback` digest is MIGRATED into this
@@ -574,6 +579,20 @@ type ResolveLearnerStateHeaderFn = (
 // inject a fixture so the {}-stub db is never touched. Session-scoped by
 // construction (turns.ts filters by the current reusable conversation).
 type LoadHistoryFn = typeof getRecentCopilotTurns;
+type ResolveImplicitCorrectionIntentFn = (
+  db: Db,
+  input: {
+    readonly user_message: string;
+    readonly prior_turn_candidates: readonly {
+      readonly prior_turn_id: string;
+      readonly text: string;
+    }[];
+  },
+  opts: {
+    readonly signal?: AbortSignal;
+    readonly providerSessionDeadlineAt?: number;
+  },
+) => Promise<CopilotImplicitCorrectionIntent | undefined>;
 
 export interface CopilotChatDeps {
   runAgentTaskFn?: RunAgentTaskFn;
@@ -597,6 +616,7 @@ export interface CopilotChatDeps {
   // YUK-267 (C2) — defaults to getRecentCopilotTurns. The unit test injects a
   // fixture so the {}-stub db is never touched. A read failure degrades to [].
   loadHistoryFn?: LoadHistoryFn;
+  resolveImplicitCorrectionIntentFn?: ResolveImplicitCorrectionIntentFn;
   // AF S3a / YUK-203 U3 — defaults to Conversation.findOrCreateCopilotConversation.
   findOrCreateConversationFn?: FindOrCreateConversationFn;
   // AF S4 / YUK-203 U6 — swappable skill runners (unit tests inject fixtures so
@@ -683,6 +703,43 @@ export interface DecideCopilotDispatchDeps {
 }
 
 const COPILOT_DISPATCH_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(CopilotDispatchDecisionSchema);
+const COPILOT_CORRECTION_INTENT_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(
+  CopilotImplicitCorrectionIntentSchema,
+);
+
+async function resolveImplicitCorrectionIntent(
+  db: Db,
+  input: Parameters<ResolveImplicitCorrectionIntentFn>[1],
+  opts: Parameters<ResolveImplicitCorrectionIntentFn>[2],
+): Promise<CopilotImplicitCorrectionIntent | undefined> {
+  const taskRunId = `copilot_correction_intent_${createId()}`;
+  try {
+    const result = await runAgentTask('CopilotCorrectionIntentTask', input, {
+      db,
+      taskRunId,
+      signal: opts.signal,
+      outputFormat: COPILOT_CORRECTION_INTENT_OUTPUT_FORMAT,
+      ...(opts.providerSessionDeadlineAt !== undefined
+        ? { providerSessionDeadlineAt: opts.providerSessionDeadlineAt }
+        : {}),
+    });
+    if (result.structured_output !== undefined && result.structured_output !== null) {
+      return CopilotImplicitCorrectionIntentSchema.parse(result.structured_output);
+    }
+    const extracted = parseJsonObjectLoose(result.text, 'copilot correction intent', {
+      riskyRepair: 'reject',
+    });
+    if (!extracted || extracted.repaired !== false) return undefined;
+    return CopilotImplicitCorrectionIntentSchema.parse(extracted.json);
+  } catch (error) {
+    console.warn('[copilot] correction intent classifier unavailable; preserving normal reply', {
+      event: 'copilot_correction_intent_fallback',
+      task_run_id: taskRunId,
+      error_name: error instanceof Error ? error.name : 'UnknownError',
+    });
+    return undefined;
+  }
+}
 
 /**
  * Bounded model judgment that must finish before the route commits 200 SSE or
@@ -1226,7 +1283,7 @@ async function runCopilotChatImpl(
   // byte-parity with the pre-YUK-575 code, which left `conversationHistory` / the
   // learner-state at their empty defaults for this path — build a minimal run input
   // with empty history + empty proposal_feedback (no session memory injected).
-  const runInput: CopilotRunInput = freeFormRunInput ?? {
+  let runInput: CopilotRunInput = freeFormRunInput ?? {
     surface,
     triggered_by: req.triggered_by,
     user_message: req.user_message,
@@ -1243,6 +1300,39 @@ async function runCopilotChatImpl(
     },
     ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
   };
+  let implicitCorrectionClarification: string | undefined;
+  if (
+    runInput.correction_contract.target_prior_turn_id === undefined &&
+    runInput.correction_contract.available_prior_turn_ids.length > 0
+  ) {
+    const priorTurnCandidates = runInput.conversation_history.flatMap((turn) =>
+      turn.role === 'ai' && turn.event_id !== undefined
+        ? [{ prior_turn_id: turn.event_id, text: turn.text }]
+        : [],
+    );
+    const resolveIntent =
+      deps.resolveImplicitCorrectionIntentFn ??
+      (deps.runAgentTaskFn === undefined ? resolveImplicitCorrectionIntent : undefined);
+    const intent = await resolveIntent?.(
+      db,
+      { user_message: req.user_message, prior_turn_candidates: priorTurnCandidates },
+      {
+        ...(streaming?.signal ? { signal: streaming.signal } : {}),
+        ...(deps.providerSessionDeadlineAt !== undefined
+          ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+          : {}),
+      },
+    );
+    if (intent !== undefined) {
+      const resolution = resolveImplicitCorrectionContract(runInput.correction_contract, intent);
+      if (resolution.kind === 'clarify') {
+        implicitCorrectionClarification = resolution.reply;
+      } else {
+        runInput = { ...runInput, correction_contract: resolution.contract };
+      }
+    }
+  }
+  const agentAllowedTools = implicitCorrectionClarification ? [] : allowedTools;
 
   // YUK-266/YUK-832 — the free-form path runs the CopilotTask token loop. The
   // streaming runner still collects original chunk boundaries and gracefully
@@ -1260,7 +1350,7 @@ async function runCopilotChatImpl(
       {
         db,
         mcpServers,
-        allowedTools,
+        allowedTools: agentAllowedTools,
         taskRunId,
         signal: streaming.signal,
         lifecycleAbortController,
@@ -1321,7 +1411,7 @@ async function runCopilotChatImpl(
     const result = await run('CopilotTask', runInput, {
       db,
       mcpServers,
-      allowedTools,
+      allowedTools: agentAllowedTools,
       taskRunId,
       lifecycleAbortController,
       ...(deps.providerSessionDeadlineAt !== undefined
@@ -1345,7 +1435,9 @@ async function runCopilotChatImpl(
   // persisted domain event, terminal envelope and delayed public DELTA must all
   // see exactly these bytes; a dangling marker may truncate only here, never
   // after a raw suffix was certified.
-  const correctionResolution = resolveCorrectionReply(replyText, runInput.correction_contract);
+  const correctionResolution = implicitCorrectionClarification
+    ? { kind: 'clarify' as const, reply: implicitCorrectionClarification }
+    : resolveCorrectionReply(replyText, runInput.correction_contract);
   const preparedCandidate = extractPrimaryView(correctionResolution.reply, {
     taskRunId: replyRunId,
   });
@@ -1356,6 +1448,9 @@ async function runCopilotChatImpl(
     {
       db,
       runTaskFn: runValidationTask,
+      ...(preparedCandidate.primaryView?.source === 'ephemeral_html'
+        ? { additionalVisibleText: preparedCandidate.primaryView.ref }
+        : {}),
     },
   );
   const evidenceReview =

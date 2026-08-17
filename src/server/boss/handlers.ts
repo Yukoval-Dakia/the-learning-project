@@ -101,7 +101,8 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   // a trigger fired at this point races the registrar and the first recovery
   // execution sends into a missing queue. start-worker fires
   // sendVerifyDispatchStartupRecovery() after capability registration; the
-  // nightly cron schedule stays here.
+  // nightly cron schedule stays here. Both triggers use the same payload-agnostic,
+  // idempotent recovery handler; every completed boot deliberately enqueues one pass.
   const enqueueRecoveredVerify = async (
     verifier: 'quiz_verify' | 'source_verify',
     questionIds: string[],
