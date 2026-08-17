@@ -238,12 +238,14 @@ export async function assembleCopilotRunInput(
         rawTurns = await loadHistory(db, {
           limit: COPILOT_HISTORY_BUDGET.maxTurns,
           now,
+          sessionId,
         });
       }
     } else {
       rawTurns = await loadHistory(db, {
         limit: COPILOT_HISTORY_BUDGET.maxTurns,
         now,
+        sessionId,
       });
     }
     conversationHistory = assembleConversationHistory(

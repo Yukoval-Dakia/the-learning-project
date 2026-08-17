@@ -7,10 +7,13 @@ import {
   AcceptTeachingChipResponseSchema,
   CopilotCheckpointRevertErrorSchema,
   CopilotCheckpointRevertSuccessSchema,
+  CopilotCreateSessionResponseSchema,
+  CopilotSessionsResponseSchema,
   CopilotSummaryResponseSchema,
   CopilotTurnsResponseSchema,
 } from './contracts';
 import { GET as getCopilotSummary } from './copilot-summary';
+import { POST as createCopilotSession, GET as getCopilotSessions } from './sessions';
 import { GET as getCopilotTurns } from './turns';
 
 describe('Copilot declared route response contracts', () => {
@@ -167,6 +170,17 @@ describe('Copilot declared route response contracts', () => {
       dreaming_preview: [],
       pending_proposals_total: 0,
     });
+  });
+
+  it('creates and lists Copilot sessions through the declared contracts', async () => {
+    const createdResponse = await createCopilotSession();
+    expect(createdResponse.status).toBe(201);
+    const created = CopilotCreateSessionResponseSchema.parse(await createdResponse.json());
+
+    const listedResponse = await getCopilotSessions();
+    expect(listedResponse.status).toBe(200);
+    const listed = CopilotSessionsResponseSchema.parse(await listedResponse.json());
+    expect(listed.sessions).toContainEqual(created.session);
   });
 
   it('keeps the accept-chip anchor gate and parses its real success response', async () => {

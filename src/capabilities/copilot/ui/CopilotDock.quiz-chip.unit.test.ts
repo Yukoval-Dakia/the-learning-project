@@ -14,7 +14,7 @@ describe('CopilotDock quiz quick-chip', () => {
   const quizChipSource = source.slice(quizChipMarker - 120, quizChipMarker + 320);
 
   it('keeps the prompt actionable without fabricating a knowledge context', () => {
-    expect(quizChipSource).toContain('disabled={sending}');
+    expect(quizChipSource).toContain('disabled={sending || !conversationReady}');
     expect(quizChipSource).not.toContain('disabled={sending || !focusedKnowledgeId}');
     expect(sendQuizSource).not.toContain('if (!focusedKnowledgeId) return;');
     expect(sendQuizSource).toContain('activeSkillRef.current = null;');
