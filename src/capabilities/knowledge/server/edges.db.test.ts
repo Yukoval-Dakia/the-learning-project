@@ -253,6 +253,25 @@ describe('listKnowledgeEdges', () => {
     expect(rows[0].relation_type).toBe('prerequisite');
   });
 
+  it('keeps an edge when the subject matches only one endpoint', async () => {
+    const db = testDb();
+    await seedKnowledge(['yuwen-node', 'math-node']);
+    await db.update(knowledge).set({ domain: 'math' }).where(eq(knowledge.id, 'math-node'));
+    const id = await createKnowledgeEdge(db, {
+      from_knowledge_id: 'yuwen-node',
+      to_knowledge_id: 'math-node',
+      relation_type: 'related_to',
+    });
+
+    const rows = await listKnowledgeEdges(db, { subject: 'yuwen' });
+
+    expect(rows.map((row) => row.id)).toEqual([id]);
+    expect(rows[0]).toMatchObject({
+      from_knowledge_id: 'yuwen-node',
+      to_knowledge_id: 'math-node',
+    });
+  });
+
   it('excludes archived edges by default', async () => {
     const db = testDb();
     await seedKnowledge(['k1', 'k2']);
