@@ -23,6 +23,10 @@ export const KnowledgeTreeNodeSchema = z.object({
 
 export const KnowledgeTreeResponseSchema = z.object({ rows: z.array(KnowledgeTreeNodeSchema) });
 
+export const KnowledgeTreeQuerySchema = z.object({
+  subject: z.string().trim().min(1).optional(),
+});
+
 export const LegacyKnowledgeProposalQuerySchema = z.object({
   status: z.string().default('pending'),
 });
@@ -50,6 +54,7 @@ export const LegacyKnowledgeProposalDecisionResponseSchema = z
   .passthrough();
 
 export const KnowledgeEdgeQuerySchema = z.object({
+  subject: z.string().trim().min(1).optional(),
   from: z.string().min(1).optional(),
   to: z.string().min(1).optional(),
   relation_type: z.string().min(1).optional(),

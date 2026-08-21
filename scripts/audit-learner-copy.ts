@@ -41,6 +41,8 @@ export const LEARNER_COPY_FILES = [
   'src/capabilities/knowledge/ui/node-dims.ts',
   'src/capabilities/knowledge/ui/KnowledgeDetailPage.tsx',
   'src/capabilities/knowledge/ui/MisconceptionList.tsx',
+  'src/capabilities/knowledge/ui/MeshGraph.tsx',
+  'src/capabilities/notes/ui/NotesPage.tsx',
   'src/capabilities/notes/ui/NoteReaderPage.tsx',
 ] as const;
 

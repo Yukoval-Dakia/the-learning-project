@@ -24,8 +24,13 @@ export type KnowledgeTreeNode = Pick<
   | 'evidence_count'
 >;
 
-export const getTree = () =>
-  apiOperationJson('getKnowledgeTreeSnapshot', { url: '/api/knowledge', method: 'GET' });
+export const getTreeForSubject = (subject?: string) =>
+  apiOperationJson('getKnowledgeTreeSnapshot', {
+    url: subject ? `/api/knowledge?subject=${encodeURIComponent(subject)}` : '/api/knowledge',
+    method: 'GET',
+  });
+
+export const getTree = () => getTreeForSubject();
 
 // ── A5 S2 (YUK-354) FrontierRail wire（learnable_frontier 横幅）─────────────
 // 后端 server/frontier-read.ts loadFrontierRail。band 字段（mastery_lo/hi/
@@ -81,9 +86,11 @@ export type KnowledgeEdgeRow = Pick<
   status: 'active' | 'archived';
 };
 
-export const getEdges = () =>
+export const getEdges = (subject?: string) =>
   apiOperationJson('listKnowledgeEdges', {
-    url: '/api/knowledge/edges',
+    url: subject
+      ? `/api/knowledge/edges?subject=${encodeURIComponent(subject)}`
+      : '/api/knowledge/edges',
     method: 'GET',
   }).then((response) => ({
     ...response,

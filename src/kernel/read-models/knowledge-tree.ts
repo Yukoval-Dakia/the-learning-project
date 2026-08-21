@@ -5,6 +5,15 @@ import { normalizeSubjectKey, resolveKnownSubjectId } from '@/subjects/profile';
 
 const MAX_DEPTH = 32; // 防 cycle
 
+export function matchesSubjectDomain(subject: string, effectiveDomain: string | null): boolean {
+  const rawKey = normalizeSubjectKey(subject);
+  if (!rawKey || effectiveDomain === null) return false;
+
+  const canonical = resolveKnownSubjectId(subject);
+  if (canonical !== null) return resolveKnownSubjectId(effectiveDomain) === canonical;
+  return normalizeSubjectKey(effectiveDomain) === rawKey;
+}
+
 /**
  * Walk up parent chain to find first non-null domain.
  * Invariant: parent_id IS NULL ↔ domain IS NOT NULL（root 必有 domain）。
@@ -161,11 +170,7 @@ export async function resolveSubjectKnowledgeIds(db: Db | Tx, subject: string): 
     // YUK-628 adds a separate exact-raw branch only when the requested identity itself is
     // unregistered. Thus `?subject=yuwen` cannot sweep unknown nodes, while
     // `?subject=yingyu` can honestly select nodes whose real domain is exactly yingyu.
-    if (canonical !== null) {
-      if (resolveKnownSubjectId(domain) === canonical) matched.push(row.id);
-    } else if (domain !== null && normalizeSubjectKey(domain) === rawKey) {
-      matched.push(row.id);
-    }
+    if (matchesSubjectDomain(subject, domain)) matched.push(row.id);
   }
   return matched;
 }

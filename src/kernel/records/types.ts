@@ -55,6 +55,7 @@ export interface ListLearningRecordsFilter {
   kind?: LearningRecordKind[];
   knowledge_id?: string;
   question_id?: string;
+  question_ids?: string[];
   attempt_event_id?: string;
   activity_kind?: string;
   processing_status?: LearningRecordProcessingStatus[];
