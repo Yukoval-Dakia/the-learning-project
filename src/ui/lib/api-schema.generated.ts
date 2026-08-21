@@ -14580,7 +14580,9 @@ export interface operations {
   };
   getKnowledgeTreeSnapshot: {
     parameters: {
-      query?: never;
+      query?: {
+        subject?: string;
+      };
       header?: never;
       path?: never;
       cookie?: never;
