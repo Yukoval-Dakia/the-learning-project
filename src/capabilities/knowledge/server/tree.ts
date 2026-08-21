@@ -1,6 +1,7 @@
 import { eq, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_mastery } from '@/db/schema';
+import { matchesSubjectDomain } from '@/kernel/read-models/knowledge-tree';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { normalizeSubjectKey, resolveKnownSubjectId } from '@/subjects/profile';
 
@@ -138,9 +139,9 @@ export async function loadTreeSnapshot(db: Db, subject?: string): Promise<Knowle
 
   const canonical = resolveKnownSubjectId(subject);
   const rawKey = normalizeSubjectKey(subject);
+  const syntheticRootId = `seed:${canonical ?? rawKey}:root`;
   return snapshot.filter((row) => {
-    if (row.id === `seed:${canonical ?? rawKey}:root`) return true;
-    if (canonical !== null) return resolveKnownSubjectId(row.effective_domain) === canonical;
-    return row.effective_domain !== null && normalizeSubjectKey(row.effective_domain) === rawKey;
+    if (row.id === syntheticRootId) return true;
+    return matchesSubjectDomain(subject, row.effective_domain);
   });
 }
