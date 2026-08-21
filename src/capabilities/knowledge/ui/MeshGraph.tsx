@@ -8,6 +8,7 @@ import { memo, useMemo, useRef, useState } from 'react';
 
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import type { MeshGraphNode } from './ghost-endpoints';
 import type { KnowledgeEdgeRow, KnowledgeTreeNode } from './knowledge-api';
 import { LAYOUT_HEIGHT, LAYOUT_WIDTH, computeLayout } from './layout';
 import { masteryTone } from './mastery-tone';
@@ -31,12 +32,14 @@ const MeshEdge = memo(function MeshEdge({
   bx,
   by,
   relationType,
+  isCrossSubject,
 }: {
   ax: number;
   ay: number;
   bx: number;
   by: number;
   relationType: string;
+  isCrossSubject: boolean;
 }) {
   // F2 (Codex #400)：未知/experimental:* 关系类型 cue 回退 related_to，
   // class 必须同源折回——否则 className 拼出无 CSS 匹配的 rel-experimental:*，
@@ -52,8 +55,8 @@ const MeshEdge = memo(function MeshEdge({
           仍是非颜色 cue，typed 边即便色盲也能解码。 */}
       <path
         d={`M ${ax} ${ay} Q ${mx} ${my} ${bx} ${by}`}
-        className={`mesh-edge2 rel-${relKey}`}
-        strokeDasharray={cue.dash === '0' ? undefined : cue.dash}
+        className={`mesh-edge2 rel-${relKey}${isCrossSubject ? ' is-cross' : ''}`}
+        strokeDasharray={isCrossSubject ? '6 4' : cue.dash === '0' ? undefined : cue.dash}
         markerEnd={cue.arrow ? 'url(#mesh-arrow)' : undefined}
       />
       <text x={mx} y={my + 6} textAnchor="middle" className="mesh-edge-label mono">
@@ -71,7 +74,7 @@ const MeshNode = memo(function MeshNode({
   isHub,
   onPick,
 }: {
-  node: KnowledgeTreeNode;
+  node: MeshGraphNode;
   x: number;
   y: number;
   isActive: boolean;
@@ -85,11 +88,12 @@ const MeshNode = memo(function MeshNode({
   const circ = 2 * Math.PI * r;
   return (
     <g
-      className={`mesh-node${isActive ? ' is-active' : ''}`}
+      className={`mesh-node${isActive ? ' is-active' : ''}${node.isGhost ? ' is-ghost' : ''}`}
       transform={`translate(${x} ${y})`}
       // biome-ignore lint/a11y/useSemanticElements: SVG <g> 不能是 <button>；role=button + tabIndex 是可聚焦图节点的正确 ARIA（旧 KnowledgeGraph 同例）
       role="button"
       tabIndex={0}
+      aria-label={`${node.name}${node.isGhost ? '（其他科目）' : ''}`}
       style={{ cursor: 'pointer' }}
       onClick={() => onPick(node)}
       onKeyDown={(e) => {
@@ -147,13 +151,13 @@ export function MeshGraph({
   onPick,
   activeId,
 }: {
-  nodes: KnowledgeTreeNode[];
-  edges: KnowledgeEdgeRow[];
-  onPick: (node: KnowledgeTreeNode) => void;
+  nodes: readonly MeshGraphNode[];
+  edges: readonly KnowledgeEdgeRow[];
+  onPick: (node: MeshGraphNode) => void;
   activeId?: string | null;
 }) {
   // LayoutNode/LayoutEdge 字段名与 wire 一致（parent_id / from_knowledge_id），直传。
-  const pos = useMemo(() => computeLayout(nodes, edges), [nodes, edges]);
+  const pos = useMemo(() => computeLayout([...nodes], [...edges]), [nodes, edges]);
 
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
   const drag = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
@@ -165,6 +169,25 @@ export function MeshGraph({
     return set;
   }, [nodes]);
 
+  const ghostIds = useMemo(
+    () => new Set(nodes.filter((node) => node.isGhost).map((node) => node.id)),
+    [nodes],
+  );
+
+  const crossEdgeCount = useMemo(
+    () =>
+      edges.filter((edge) => {
+        const from = pos.get(edge.from_knowledge_id);
+        const to = pos.get(edge.to_knowledge_id);
+        return (
+          from !== undefined &&
+          to !== undefined &&
+          ghostIds.has(edge.from_knowledge_id) !== ghostIds.has(edge.to_knowledge_id)
+        );
+      }).length,
+    [edges, ghostIds, pos],
+  );
+
   // YUK-717 — 边/节点元素数组只依赖真实输入（pos/edges/nodes/activeId/hasChildren/
   // onPick），与 view 无关。useMemo 后 pan/zoom 帧内引用不变 → 只有父 <g> 的
   // transform 字符串重算，未变元素零重建。activeId 变时数组重建，但 MeshNode 的
@@ -175,11 +198,21 @@ export function MeshGraph({
         const a = pos.get(e.from_knowledge_id);
         const b = pos.get(e.to_knowledge_id);
         if (!a || !b) return null;
+        const isCrossSubject =
+          ghostIds.has(e.from_knowledge_id) !== ghostIds.has(e.to_knowledge_id);
         return (
-          <MeshEdge key={e.id} ax={a.x} ay={a.y} bx={b.x} by={b.y} relationType={e.relation_type} />
+          <MeshEdge
+            key={e.id}
+            ax={a.x}
+            ay={a.y}
+            bx={b.x}
+            by={b.y}
+            relationType={e.relation_type}
+            isCrossSubject={isCrossSubject}
+          />
         );
       }),
-    [edges, pos],
+    [edges, ghostIds, pos],
   );
 
   const nodeEls = useMemo(
@@ -315,6 +348,12 @@ export function MeshGraph({
           </span>
         ))}
       </div>
+      {crossEdgeCount > 0 && (
+        <div className="mesh-cross-legend" role="status" aria-label={`跨科连接 ${crossEdgeCount}`}>
+          <span className="mesh-cross-legend-mark" aria-hidden="true" />
+          <span>跨科连接 {crossEdgeCount}</span>
+        </div>
+      )}
     </div>
   );
 }
