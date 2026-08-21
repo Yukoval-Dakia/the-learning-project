@@ -511,7 +511,7 @@ const knowledgeDetailRoute = createRoute({
   component: KnowledgeDetailRouteC,
 });
 
-const NotesRoute = lazyRouteComponent(loadNotesPage);
+const NotesRoute = lazyNavigableRoute(loadNotesPage);
 
 const notesRoute = createRoute({
   getParentRoute: () => rootRoute,
