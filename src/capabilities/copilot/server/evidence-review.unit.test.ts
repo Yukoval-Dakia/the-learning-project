@@ -171,7 +171,7 @@ function reviewParams(overrides: Partial<Parameters<typeof reviewCopilotEvidence
   };
 }
 
-function referenceOutput(input: unknown, options: { gaps?: boolean } = {}) {
+function referenceOutput(input: unknown, options: { gaps?: boolean; safeReply?: string } = {}) {
   const value = input as {
     request_units: Array<{ index: number }>;
     evidence_trace?: CopilotEvidenceModelTraceCall[];
@@ -195,7 +195,7 @@ function referenceOutput(input: unknown, options: { gaps?: boolean } = {}) {
       evidence_point_indices: [index],
     })),
     trace_coverage: traceCoverageFor(points, value.evidence_trace ?? REALISTIC_EVIDENCE_TRACE),
-    safe_reply: blindSafeReply,
+    safe_reply: options.safeReply ?? blindSafeReply,
   };
 }
 
@@ -974,32 +974,40 @@ describe('Copilot FULL evidence review', () => {
   it.each([
     ['failed', 'author_question 失败；我会先重新读取可用输入，再重新规划。'],
     ['skipped:not_found', 'author_question 未执行：目标不存在；我会先重新读取，再重新规划。'],
-  ])('does not normalize %s proposal output into a pending proposal', async (status, candidate) => {
-    const result = await reviewCopilotEvidenceReply(
-      reviewParams({
-        candidateReply: candidate,
-        toolTrace: [
-          {
-            name: 'author_question',
-            effect: 'propose',
-            input: { seed_mode: 'knowledge', knowledge_ids: ['kc_missing'] },
-            output: { status, proposal_ids: [] },
-            error_reason: null,
-            executed: true,
-            proposal_effect_contract: {
-              owner_gate: 'FULL',
-              direct_write: false,
-              rollback: 'dismiss_before_accept',
+  ])(
+    'normalizes %s proposal output without inventing a pending proposal',
+    async (status, candidate) => {
+      const result = await reviewCopilotEvidenceReply(
+        reviewParams({
+          candidateReply: candidate,
+          toolTrace: [
+            {
+              name: 'author_question',
+              effect: 'propose',
+              input: { seed_mode: 'knowledge', knowledge_ids: ['kc_missing'] },
+              output: { status, proposal_ids: [] },
+              error_reason: null,
+              executed: true,
+              proposal_effect_contract: {
+                owner_gate: 'FULL',
+                direct_write: false,
+                rollback: 'dismiss_before_accept',
+              },
             },
-          },
-        ],
-      }),
-    );
+          ],
+        }),
+      );
 
-    expect(result).toEqual({ status: 'skipped', replyText: candidate });
-    expect(result.replyText).toContain('重新');
-    expect(result.replyText).not.toContain('只有 owner 接受对应 proposal 后才会应用');
-  });
+      expect(result).toMatchObject({
+        status: 'repair',
+        violations: ['proposal_only_reply_server_normalized'],
+      });
+      expect(result.replyText).toContain(`status=${status}`);
+      expect(result.replyText).toContain('未产生待 owner 接受的 proposal');
+      expect(result.replyText).not.toContain(candidate);
+      expect(result.replyText).not.toContain('只有 owner 接受对应 proposal 后才会应用');
+    },
+  );
 
   it('does not treat a failed DomainTool read as evidence but still runs the fail-closed validator', async () => {
     const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(async (kind) => {
@@ -1422,6 +1430,135 @@ describe('Copilot FULL evidence review', () => {
       comparison_task_run_ids: ['comparison-budget-timeout-2', 'comparison-budget-timeout-3'],
     });
   });
+
+  it.each([
+    ['capability', '读取结论保持不变；已按 LIGHT 门槛执行。', 'LIGHT'],
+    ['identity', '读取结论保持不变；我已经直接归档学习项。', '直接归档'],
+    ['attribution', '读取结论保持不变；归档可由 relearn 自动回滚。', 'relearn'],
+  ])(
+    'normalizes an unsafe %s claim in a degraded mixed read-and-propose reply',
+    async (_claimClass, unsafeBlindReply, forbiddenClaim) => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+        async (kind, input, _ctx, submission) => {
+          if (kind === 'CopilotEvidenceReviewTask') {
+            return submitTaskOutput(
+              kind,
+              input,
+              submission,
+              referenceOutput(input, { safeReply: unsafeBlindReply }),
+              'reference',
+            );
+          }
+          throw new AgentRunError({
+            kind,
+            taskRunId: `comparison-budget-timeout-${runTaskFn.mock.calls.length}`,
+            subtype: 'budget_timeout',
+            errors: ['verification deadline elapsed'],
+          });
+        },
+      );
+
+      const result = await reviewCopilotEvidenceReply(
+        reviewParams({
+          candidateReply: unsafeCandidate,
+          toolTrace: [
+            ...REALISTIC_EVIDENCE_TRACE,
+            {
+              name: 'propose_learning_item_archive',
+              effect: 'propose',
+              input: { learning_item_id: 'item_b' },
+              output: { status: 'proposed', proposal_id: 'proposal_01' },
+              error_reason: null,
+              executed: true,
+              proposal_effect_contract: {
+                owner_gate: 'FULL',
+                direct_write: false,
+                rollback: 'dismiss_before_accept',
+              },
+            },
+          ],
+          runTaskFn,
+        }),
+      );
+
+      expect(result).toMatchObject({ status: 'degraded' });
+      expect(result.replyText).toContain(COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION);
+      expect(result.replyText).toContain('owner gate: FULL');
+      expect(result.replyText).toContain('direct target write: false');
+      expect(result.replyText).toContain('dismiss_before_accept');
+      expect(result.replyText).toContain('读取结论保持不变');
+      expect(result.replyText).not.toContain(forbiddenClaim);
+    },
+  );
+
+  it.each([
+    ['failed', 'capability', '读取结论保持不变；已按 LIGHT 门槛执行。', 'LIGHT'],
+    ['failed', 'identity', '读取结论保持不变；我已经直接归档学习项。', '直接归档'],
+    ['failed', 'attribution', '读取结论保持不变；归档可由 relearn 自动回滚。', 'relearn'],
+    ['skipped:not_found', 'capability', '读取结论保持不变；已按 LIGHT 门槛执行。', 'LIGHT'],
+    ['skipped:not_found', 'identity', '读取结论保持不变；我已经直接归档学习项。', '直接归档'],
+    [
+      'skipped:not_found',
+      'attribution',
+      '读取结论保持不变；归档可由 relearn 自动回滚。',
+      'relearn',
+    ],
+  ])(
+    'normalizes an unsafe %s proposal %s claim after a degraded mixed reply',
+    async (status, _claimClass, unsafeBlindReply, forbiddenClaim) => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+        async (kind, input, _ctx, submission) => {
+          if (kind === 'CopilotEvidenceReviewTask') {
+            return submitTaskOutput(
+              kind,
+              input,
+              submission,
+              referenceOutput(input, { safeReply: unsafeBlindReply }),
+              'reference',
+            );
+          }
+          throw new AgentRunError({
+            kind,
+            taskRunId: `comparison-budget-timeout-${runTaskFn.mock.calls.length}`,
+            subtype: 'budget_timeout',
+            errors: ['verification deadline elapsed'],
+          });
+        },
+      );
+
+      const result = await reviewCopilotEvidenceReply(
+        reviewParams({
+          candidateReply: unsafeCandidate,
+          toolTrace: [
+            ...REALISTIC_EVIDENCE_TRACE,
+            {
+              name: 'propose_learning_item_archive',
+              effect: 'propose',
+              input: { learning_item_id: 'item_b' },
+              output: { status, proposal_ids: [] },
+              error_reason: null,
+              executed: true,
+              proposal_effect_contract: {
+                owner_gate: 'FULL',
+                direct_write: false,
+                rollback: 'dismiss_before_accept',
+              },
+            },
+          ],
+          runTaskFn,
+        }),
+      );
+
+      expect(result).toMatchObject({ status: 'degraded' });
+      expect(result.replyText).toContain(COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION);
+      expect(result.replyText).toContain('读取结论保持不变');
+      expect(result.replyText).toContain(`status=${status}`);
+      expect(result.replyText).toContain('未产生待 owner 接受的 proposal');
+      expect(result.replyText).not.toContain(forbiddenClaim);
+    },
+  );
 
   it('degrades when the session wall-clock deadline kills the comparator retry before its task row', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});

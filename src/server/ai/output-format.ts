@@ -20,8 +20,9 @@ import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
  *
  * Dialect coercion (the SINGLE place this lives — verified against a real
  * `z.toJSONSchema(VariantVerificationResult)` run):
- *   - INLINE form (`reused: 'inline'`) emits the schema body directly with no
- *     `$ref`/`definitions` wrapper.
+ *   - INLINE form (`reused: 'inline'`) emits reused, non-recursive schemas directly.
+ *     Recursive cycles retain local `$ref`/`definitions` rather than widening the
+ *     cycle to `{}`; the current structured-output schemas are non-recursive.
  *   - `$schema` (the draft-07 meta-schema pointer) is STRIPPED — the mimo
  *     endpoint does not need a meta-schema indirection and it is pure noise /
  *     latent dialect risk.

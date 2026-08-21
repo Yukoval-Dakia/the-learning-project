@@ -150,6 +150,35 @@ interface DurableCopilotReconnect extends PersistedDurableCopilotReconnect {
   view: CopilotRunView;
 }
 
+type CopilotProgressStage = 'dispatch' | 'generation' | 'evidence-review';
+
+const COPILOT_PROGRESS_LABELS: Record<CopilotProgressStage, string> = {
+  dispatch: '调度中…',
+  generation: '生成中…',
+  'evidence-review': '证据审阅中…',
+};
+
+function progressStageForLabel(label: string): CopilotProgressStage {
+  return /证据|审阅|审查|核对|验证|校验|review|evidence|audit|validat/i.test(label)
+    ? 'evidence-review'
+    : 'generation';
+}
+
+function copilotProgressStage(view: CopilotRunView): CopilotProgressStage {
+  if (view.phase === 'queued') return 'dispatch';
+
+  const latestStep = [...view.frames]
+    .reverse()
+    .find((frame) => frame.event_type === 'copilot_run.step');
+  const latestLabel = latestStep?.payload.label;
+  if (typeof latestLabel === 'string' && latestLabel.length > 0) {
+    return progressStageForLabel(latestLabel);
+  }
+
+  const latestSubtask = view.subtasks.at(-1);
+  return latestSubtask ? progressStageForLabel(latestSubtask.label) : 'generation';
+}
+
 // GET /api/copilot/turns response shape — see src/capabilities/copilot/server/turns.ts.
 interface CopilotTurnsResponse {
   turns: ReplayTurn[];
@@ -394,10 +423,6 @@ export const MessageRow = memo(function MessageRow({
             {revertPending ? '撤回中…' : '撤回本轮更改'}
           </button>
         ) : null}
-        {/* YUK-266 (C1) — typing caret while SSE deltas flow into this
-            message. A NEW testid distinct from copilot-thinking (which
-            only covers the pre-first-byte gap). Reuses the Dock chat
-            tokens — no new visual system. */}
         {m.streaming ? (
           <span className="chat-caret" data-testid="copilot-msg-streaming" aria-hidden="true">
             ▍
@@ -416,8 +441,8 @@ export const MessageRow = memo(function MessageRow({
             {m.skill_turn.structured_question.choices_md &&
             m.skill_turn.structured_question.choices_md.length > 0 ? (
               <ol className="skill-turn-q-choices">
-                {m.skill_turn.structured_question.choices_md.map((choice, i) => (
-                  <li key={`${m.skill_turn?.structured_question?.id}-${i}`}>
+                {m.skill_turn.structured_question.choices_md.map((choice) => (
+                  <li key={`${m.skill_turn?.structured_question?.id}-${choice}`}>
                     <DeferredMarkdownRenderer>{choice}</DeferredMarkdownRenderer>
                   </li>
                 ))}
@@ -539,6 +564,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   );
   const [sending, setSending] = useState(restoredDurableHandle !== null);
   const [durableRunning, setDurableRunning] = useState(restoredDurableHandle !== null);
+  const [progressStage, setProgressStage] = useState<CopilotProgressStage | null>(
+    restoredDurableHandle ? copilotProgressStage(restoredDurableHandle.view) : null,
+  );
+  const [stopPending, setStopPending] = useState(false);
   const [awaitingFirstFrame, setAwaitingFirstFrame] = useState(false);
   const [error, setError] = useState<string | null>(() =>
     restoredPendingTurn
@@ -628,6 +657,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   const durableReconnectRef = useRef<DurableCopilotReconnect | null>(restoredDurableHandle);
   const restoredReconnectStartedRef = useRef(false);
   const activeTransportAbortRef = useRef<AbortController | null>(null);
+  const stoppingRunRef = useRef<string | null>(null);
   useEffect(
     () => () => {
       activeTransportAbortRef.current?.abort();
@@ -817,6 +847,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   const applyRunViewToMessage = useCallback(
     (aiMessageId: string, view: CopilotRunView, fallbackText: string) => {
       const terminal = view.phase === 'completed' || view.phase === 'failed';
+      setProgressStage(terminal ? null : copilotProgressStage(view));
       setMessages((prev) => {
         const existing = prev.find((message) => message.id === aiMessageId);
         const next: ChatMessage = {
@@ -860,6 +891,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       setRefreshSkipped(false);
       setSending(true);
       setDurableRunning(true);
+      setProgressStage(copilotProgressStage(handle.view));
       setAwaitingFirstFrame(false);
       setMessages((prev) =>
         prev.map((message) =>
@@ -901,6 +933,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           reportSendError('后台运行未完成');
         }
       } catch (error) {
+        if (stoppingRunRef.current === handle.runId) {
+          stoppingRunRef.current = null;
+          return;
+        }
         // Keep the accepted handle and its latest cursor. The next click resumes
         // the same Location; it never falls through to a fresh chat dispatch.
         durableReconnectRef.current = handle;
@@ -917,11 +953,53 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         sendingRef.current = false;
         setSending(false);
         setDurableRunning(false);
+        if (durableReconnectRef.current?.runId !== handle.runId) setProgressStage(null);
         setAwaitingFirstFrame(false);
       }
     },
     [applyRunViewToMessage, reportSendError],
   );
+
+  const stopDurableRun = useCallback(async () => {
+    const handle = durableReconnectRef.current;
+    if (!handle || stopPending) return;
+    setStopPending(true);
+    try {
+      const result = await apiJson<{
+        ok: true;
+        run_id: string;
+        status: 'cancel_requested' | 'cancelled' | 'already_requested' | 'already_settled';
+      }>(`/api/copilot/runs/${encodeURIComponent(handle.runId)}/cancel`, { method: 'POST' });
+      if (result.status === 'already_settled') return;
+
+      stoppingRunRef.current = handle.runId;
+      activeTransportAbortRef.current?.abort();
+      activeTransportAbortRef.current = null;
+      durableReconnectRef.current = null;
+      clearPersistedDurableCopilotReconnect(handle.runId);
+      const pending = lastUserTurnRef.current;
+      if (pending) clearPersistedPendingCopilotTurn(pending.idempotencyKey);
+      lastUserTurnRef.current = null;
+      setPendingAcceptanceUnknown(false);
+      setError(null);
+      setRefreshFailed(false);
+      setRefreshSkipped(false);
+      setProgressStage(null);
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === handle.aiMessageId
+            ? { ...message, text: '已停止这次运行。', streaming: false, subtasks: [] }
+            : message,
+        ),
+      );
+    } catch (err) {
+      reportSendError(
+        err instanceof ApiError ? `停止失败（${err.status}）` : '停止失败，请稍后重试。',
+      );
+    } finally {
+      setStopPending(false);
+    }
+  }, [reportSendError, stopPending]);
 
   // A 202 accepted before a page reload/unmount is restored from sessionStorage.
   // Start from cursor zero so job_events, not browser state, rebuilds the view.
@@ -1023,6 +1101,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       setMessages((prev) => [...prev, { id: userMessageId, role: 'user', text }]);
     }
     setSending(true);
+    setProgressStage('dispatch');
     setAwaitingFirstFrame(true);
     // YUK-266 (C1) — the AI message id is minted up-front so the incremental SSE
     // deltas can target the SAME message as it grows; the terminal `reply` event
@@ -1166,6 +1245,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
               aiCreated = true;
               inlineReplyStarted = true;
               setAwaitingFirstFrame(false);
+              setProgressStage('generation');
               setMessages((prev) => [
                 ...prev,
                 {
@@ -1333,6 +1413,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       // surface the error affordance alongside it so the user knows it was cut.
       if (res2.error) reportSendError(res2.error);
     } catch (err) {
+      if (durableHandle && stoppingRunRef.current === durableHandle.runId) {
+        stoppingRunRef.current = null;
+        return;
+      }
       // Network / stream error mid-flight. Drop any partial bubble and show the
       // existing 重试 affordance — the inline turn was best-effort. A durable
       // 202 was already accepted server-side, so keep its row whenever a stable
@@ -1379,6 +1463,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       sendingRef.current = false;
       setSending(false);
       setDurableRunning(false);
+      if (durableReconnectRef.current?.runId !== durableHandle?.runId) setProgressStage(null);
       setAwaitingFirstFrame(false);
     }
   }, []);
@@ -1612,6 +1697,23 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
 
   const footer = (
     <div className="copilot-loom">
+      {durableReconnectRef.current ? (
+        <div className="mb-[8px] flex items-center justify-between gap-[8px]">
+          <span className="text-[12px] text-[var(--ink-3)]" data-testid="copilot-run-stage-footer">
+            {COPILOT_PROGRESS_LABELS[progressStage ?? 'dispatch']}
+          </span>
+          <Btn
+            variant="ghost"
+            size="sm"
+            aria-label="停止这次运行"
+            data-testid="copilot-stop-run"
+            disabled={stopPending}
+            onClick={() => void stopDurableRun()}
+          >
+            {stopPending ? '停止中…' : '停止'}
+          </Btn>
+        </div>
+      ) : null}
       <div className="chat-chips">
         {QUICK_CHIPS.map((chip) => (
           <button
@@ -1737,8 +1839,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                 />
               );
             })}
-            {awaitingFirstFrame && !durableRunning ? (
-              <div className="msg msg-ai" data-testid="copilot-thinking">
+            {progressStage && (awaitingFirstFrame || sending || durableRunning) ? (
+              <div className="msg msg-ai" data-testid="copilot-run-stage-message">
                 <div className="msg-avatar">
                   <LoomIcon name="sparkle" size={14} />
                 </div>
@@ -1746,7 +1848,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                   <div className="msg-name">Loom Copilot</div>
                   <div className="chat-thinking">
                     <LoomIcon name="refresh" size={13} className="spin" />
-                    思考中…
+                    <span data-testid="copilot-run-stage" role="status" aria-live="polite">
+                      {COPILOT_PROGRESS_LABELS[progressStage]}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1787,7 +1891,6 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
               // deferred because a reply is streaming. Calmer copy (no failure wording) + a polite
               // role="status" live region (vs the failure banner's role="alert"), same 刷新 retry. The
               // div keeps styling parity with the sibling chat-error banner (hence role, not <output>).
-              // biome-ignore lint/a11y/useSemanticElements: role="status" polite live region is intended; keep the div for chat-error styling parity
               <div className="chat-error" data-testid="copilot-refresh-skipped" role="status">
                 <LoomIcon name="refresh" size={14} />
                 <span>撤回已生效，当前回复结束后可刷新查看。</span>

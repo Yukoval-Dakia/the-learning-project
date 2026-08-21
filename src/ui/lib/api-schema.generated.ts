@@ -3874,22 +3874,11 @@ export interface operations {
             }[];
             tool_calls: {
               cost: number;
-              effect: string | null;
-              error_reason: string | null;
               id: string;
-              input_json: {
-                [key: string]: unknown;
-              } | null;
               iteration: number;
               latency_ms: number;
-              mirrored_event_id: string | null;
               /** Format: date-time */
               occurred_at: string;
-              output_json: {
-                [key: string]: unknown;
-              } | null;
-              task_kind: string;
-              task_run_id: string;
               tool_name: string;
             }[];
           };

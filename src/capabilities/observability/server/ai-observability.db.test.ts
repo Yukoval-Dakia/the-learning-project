@@ -152,6 +152,38 @@ describe('AI observability admin read model', () => {
     });
   });
 
+  it('projects tool-call metadata without materializing input or output JSON', async () => {
+    await seedRun({ id: 'run_1' });
+    await seedTool({
+      id: 'tool_large',
+      input_json: {
+        request: {
+          prompt: '长输入'.repeat(100_000),
+          filters: { subjects: ['语文', '数学'], includeArchived: false },
+        },
+      },
+      output_json: {
+        rows: Array.from({ length: 100 }, (_, index) => ({
+          id: `row_${index}`,
+          explanation: '长输出'.repeat(1_000),
+        })),
+      },
+    });
+
+    const detail = await getAdminRunTimeline(db, 'run_1');
+
+    expect(detail?.tool_calls).toEqual([
+      {
+        id: 'tool_large',
+        tool_name: 'query_mistakes',
+        iteration: 1,
+        latency_ms: 125,
+        cost: 0.001,
+        occurred_at: at(0.5),
+      },
+    ]);
+  });
+
   it('sorts same-timestamp timeline events by id for stable refresh order', async () => {
     await seedRun({ id: 'run_1', finished_at: at(2) });
     await seedTool({ id: 'a_tool', occurred_at: at(1), tool_name: 'query_events' });

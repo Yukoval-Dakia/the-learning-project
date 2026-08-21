@@ -105,13 +105,10 @@ describe('startBossWorker marks the running boss (YUK-384 wake activation)', () 
     expect(order.indexOf('capability-jobs-resolved')).toBeLessThan(
       order.indexOf('startup-recovery-send'),
     );
-    // The trigger keeps its exact contract: recovery queue, startup payload, singleton key.
+    // Every completed boot sends one trigger. There is no inert send-level dedup option;
+    // duplicate boots are safe because the recovery handler drains durable intents idempotently.
     expect(sendSpy).toHaveBeenCalledTimes(1);
-    expect(sendSpy).toHaveBeenCalledWith(
-      'verify_dispatch_recover',
-      { trigger: 'startup' },
-      { singletonKey: 'verify-dispatch-startup' },
-    );
+    expect(sendSpy).toHaveBeenCalledWith('verify_dispatch_recover', { trigger: 'startup' });
 
     sendSpy.mockRestore();
   });

@@ -39,6 +39,70 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(result.reply).not.toContain('1+1');
   });
 
+  it('blocks assessed ephemeral HTML when the learning-content marker is missing', async () => {
+    const html = '<section><p>1. 求 17×19？</p><p>17×20-17=323</p></section>';
+    const marker = `<!--primary_view:${JSON.stringify({ source: 'ephemeral_html', ref: html })}-->`;
+
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '给我一道乘法题', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: vi.fn(async () => ({
+          task_run_id: 'task_ephemeral_assessment_without_manifest',
+          text: `请在卡片里作答。\n${marker}`,
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        })),
+        writeEventFn: vi.fn(async (_db, input) => input.id),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_ephemeral_assessment_without_manifest',
+          created: true,
+        }),
+      },
+    );
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(result).not.toHaveProperty('primary_view');
+  });
+
+  it.each([
+    {
+      label: 'numeric character references',
+      html: '<section><h2>&#39064;&#30446;</h2><p>17×19？</p><p>&#31572;&#26696;&#65306;323</p></section>',
+    },
+    {
+      label: 'inline tags splitting assessment labels',
+      html: '<section><h2>题<span>目</span></h2><p>17×19？</p><p>答<span>案</span>：323</p></section>',
+    },
+  ])('blocks assessed ephemeral HTML hidden with $label', async ({ html }) => {
+    const marker = `<!--primary_view:${JSON.stringify({ source: 'ephemeral_html', ref: html })}-->`;
+
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '给我一道乘法题', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: vi.fn(async () => ({
+          task_run_id: 'task_obfuscated_ephemeral_assessment',
+          text: `请在卡片里作答。\n${marker}`,
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        })),
+        writeEventFn: vi.fn(async (_db, input) => input.id),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_obfuscated_ephemeral_assessment',
+          created: true,
+        }),
+      },
+    );
+
+    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(result).not.toHaveProperty('primary_view');
+  });
+
   it('uses a bounded generic fallback when a validation provider rejects', async () => {
     const runner = vi.fn(async (kind: string) => {
       if (kind === 'CopilotTask') {
@@ -558,13 +622,13 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(taskInput.proposal_feedback).toEqual([]);
   });
 
-  it('clarifies instead of accepting a correction envelope that silently binds “上一轮” to a different prior reply', async () => {
+  it('clarifies instead of passing through a silent rewrite with multiple implicit candidates', async () => {
     const db = {} as never;
     const batteryReplyId = 'copilot_reply_battery_d04';
     const waterTankReplyId = 'copilot_reply_water_tank_d02';
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_copilot_d05',
-      text: '已把上一轮改正。\n\n<!-- copilot-correction {"prior_turn_id":"copilot_reply_battery_d04","changed":["h*=4/9"],"retained":["同一个 k"],"uncertain":[]} -->',
+      text: '已把上一轮改正为 h*=4/9，k 不变。',
     }));
     const writeEventFn = vi.fn(async (_db, input) => input.id);
 
@@ -591,6 +655,10 @@ describe('runCopilotChat (two-surface routing)', () => {
             event_id: batteryReplyId,
           },
         ],
+        resolveImplicitCorrectionIntentFn: async () => ({
+          intent: 'correction',
+          candidate_prior_turn_ids: [waterTankReplyId, batteryReplyId],
+        }),
         now: () => new Date('2026-08-01T10:02:00.000Z'),
       },
     );
@@ -604,9 +672,94 @@ describe('runCopilotChat (two-surface routing)', () => {
       batteryReplyId,
     ]);
     expect(taskInput.correction_contract?.target_prior_turn_id).toBeUndefined();
+    const taskContext = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
+      allowedTools?: string[];
+    };
+    expect(taskContext.allowedTools).toEqual([]);
     expect(result.reply).toContain('prior_turn_id');
     expect(result.reply).toContain(waterTankReplyId);
     expect(result.reply).not.toContain('已把上一轮改正');
+  });
+
+  it('binds an unambiguous implicit correction before generating the reply', async () => {
+    const db = {} as never;
+    const batteryReplyId = 'copilot_reply_battery_d04';
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_copilot_implicit_single',
+      text: `电池题更正后的解释。\n\n<!-- copilot-correction {"prior_turn_id":"${batteryReplyId}","changed":["改用额定容量"],"retained":["温度假设"],"uncertain":[]} -->`,
+    }));
+
+    const result = await runCopilotChat(
+      db,
+      { user_message: '上一题再按额定容量改一下', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+        runAgentTaskFn,
+        writeEventFn: async (_db, input) => input.id,
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({
+          sessionId: 'ls_implicit_single',
+          created: false,
+        }),
+        loadHistoryFn: async () => [
+          {
+            role: 'ai',
+            text: '电池 D04：先按当前电量估算。',
+            at: '2026-08-01T10:01:00.000Z',
+            event_id: batteryReplyId,
+          },
+        ],
+        resolveImplicitCorrectionIntentFn: async () => ({
+          intent: 'correction',
+          candidate_prior_turn_ids: [batteryReplyId],
+        }),
+        now: () => new Date('2026-08-01T10:02:00.000Z'),
+      },
+    );
+
+    const taskInput = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      correction_contract?: { target_prior_turn_id?: string };
+    };
+    expect(taskInput.correction_contract?.target_prior_turn_id).toBe(batteryReplyId);
+    expect(result.reply).toContain(`更正目标 prior_turn_id：${batteryReplyId}`);
+  });
+
+  it('keeps an ordinary follow-up normal when several prior replies exist', async () => {
+    const db = {} as never;
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_copilot_ordinary_followup',
+      text: '可以，我们继续比较两种方法。',
+    }));
+
+    const result = await runCopilotChat(
+      db,
+      { user_message: '这两种方法的差别是什么？', triggered_by: 'chat' },
+      {
+        buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+        runAgentTaskFn,
+        writeEventFn: async (_db, input) => input.id,
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_ordinary', created: false }),
+        loadHistoryFn: async () => [
+          {
+            role: 'ai',
+            text: '方法一：先列方程。',
+            at: '2026-08-01T10:00:00.000Z',
+            event_id: 'copilot_reply_method_one',
+          },
+          {
+            role: 'ai',
+            text: '方法二：先画图。',
+            at: '2026-08-01T10:01:00.000Z',
+            event_id: 'copilot_reply_method_two',
+          },
+        ],
+        resolveImplicitCorrectionIntentFn: async () => ({ intent: 'not_correction' }),
+        now: () => new Date('2026-08-01T10:02:00.000Z'),
+      },
+    );
+
+    expect(result.reply).toBe('可以，我们继续比较两种方法。');
   });
 
   it('fails closed when a targeted correction omits its envelope', async () => {
