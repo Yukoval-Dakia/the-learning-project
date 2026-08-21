@@ -20,6 +20,7 @@ import './knowledge.css';
 
 import { BandChip } from './BandChip';
 import { FrontierRail } from './FrontierRail';
+import { deriveGhostEndpoints } from './ghost-endpoints';
 import {
   type KnowledgeTreeNode,
   getEdgeProposals,
@@ -74,6 +75,11 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
     queryKey: ['knowledge-tree', subjectQuery],
     queryFn: () => getTreeForSubject(subjectQuery),
   });
+  const fullTreeQ = useQuery({
+    queryKey: ['knowledge-tree', undefined],
+    queryFn: () => getTreeForSubject(),
+    enabled: subjectQuery !== undefined,
+  });
   const edgesQ = useQuery({
     queryKey: ['knowledge-edges', subjectQuery],
     queryFn: () => getEdges(subjectQuery),
@@ -90,6 +96,25 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
 
   const nodes = useMemo(() => treeQ.data?.rows ?? [], [treeQ.data]);
   const edges = useMemo(() => edgesQ.data?.rows ?? [], [edgesQ.data]);
+  const graphModel = useMemo(
+    () =>
+      subjectQuery === undefined
+        ? { nodes, ghostIds: new Set<string>(), crossEdgeIds: new Set<string>() }
+        : deriveGhostEndpoints(nodes, fullTreeQ.data?.rows ?? [], edges),
+    [edges, fullTreeQ.data, nodes, subjectQuery],
+  );
+  const graphNodeIds = useMemo(
+    () => new Set(graphModel.nodes.map((node) => node.id)),
+    [graphModel.nodes],
+  );
+  const graphEdges = useMemo(
+    () =>
+      edges.filter(
+        (edge) =>
+          graphNodeIds.has(edge.from_knowledge_id) && graphNodeIds.has(edge.to_knowledge_id),
+      ),
+    [edges, graphNodeIds],
+  );
   // M4-T5 (YUK-318)：服务端已按 kind=knowledge_edge&status=pending 过滤——
   // 已决提议不复返，旧的客户端 decided 集合 + outcome 过滤随换源删除。
   const edgeProposals = edgePropsQ.data?.rows ?? [];
@@ -254,13 +279,18 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
             </output>
           }
         >
-          <LazyMeshGraph nodes={nodes} edges={edges} onPick={setPicked} activeId={picked?.id} />
+          <LazyMeshGraph
+            nodes={graphModel.nodes}
+            edges={graphEdges}
+            onPick={setPicked}
+            activeId={picked?.id}
+          />
         </Suspense>
       )}
 
       <NodeDrawer
         node={picked}
-        nodes={nodes}
+        nodes={graphModel.nodes}
         edges={edges}
         edgeProposals={edgeProposals}
         open={!!picked}
