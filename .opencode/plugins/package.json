@@ -25,7 +25,7 @@
 		"typescript": "5.9.3"
 	},
 	"overrides": {
-		"@posthog/core": "1.48.2",
-		"posthog-node": "5.49.1"
+		"@posthog/core": "1.48.7",
+		"posthog-node": "5.49.3"
 	}
 }
