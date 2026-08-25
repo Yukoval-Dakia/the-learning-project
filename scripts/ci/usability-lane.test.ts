@@ -13,7 +13,7 @@ import {
 const SHA = 'a'.repeat(40);
 const DIGEST = `sha256:${'9'.repeat(64)}`;
 const PUBLISHED_IMAGE_DIGEST =
-  'sha256:46566435c487fc0e6cb3d736f40bf7bd6ed3f7911ce7f3277590397d9efb460a';
+  'sha256:7c78040230e6b50fcc355ec1bb562ac566ceb4f1dbfcb90a525e4e01af68139d';
 
 const PROBE_OK = {
   schema_version: 1,
@@ -337,8 +337,9 @@ describe('usability lane pins image state', () => {
     );
     expect(fromDigest, 'Dockerfile must pin the Playwright base by full digest').not.toBeNull();
     expect(`sha256:${fromDigest?.[1]}`).toBe(parsed.pins.CI_IMAGE_BASE_DIGEST);
-    const users = [...dockerfile.matchAll(/^USER\s+(\S+)/gm)];
-    expect(users.at(-1)?.[1]).not.toBe('root');
+    expect(dockerfile).toMatch(/id pwuser/);
+    const runner = readFileSync('.buildkite/scripts/run-usability-lane.sh', 'utf8');
+    expect(runner).toMatch(/runuser -u "\$SERVER_USER" -- env/);
   });
 
   it('keeps EXPECTED_SCENARIOS in lockstep with the real spec file', () => {

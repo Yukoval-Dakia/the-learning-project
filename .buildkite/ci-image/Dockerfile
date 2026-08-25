@@ -48,11 +48,10 @@ RUN npm install -g "pnpm@${PNPM_VERSION}" "bun@${BUN_VERSION}" \
 # OS dependencies are broken, instead of failing 13 scenarios on the queue.
 RUN chrome="$(find /ms-playwright -type f -name chrome -path '*chrome-linux*' | head -n 1)" \
  && test -n "$chrome" \
- && "$chrome" --version
+ && "$chrome" --version \
+ && id pwuser
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-
-USER pwuser
 
 LABEL org.opencontainers.image.title="the-learning-project buildkite-ci" \
       org.opencontainers.image.description="Pinned linux-large runner image for the YUK-917 usability lane" \

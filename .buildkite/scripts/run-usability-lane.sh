@@ -29,7 +29,7 @@ API_PORT="${USABILITY_API_PORT:-18787}"
 BASE_URL="http://127.0.0.1:${API_PORT}"
 mkdir -p "$GATE_DIR"
 
-for tool in node pnpm; do
+for tool in node pnpm runuser; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "usability-lane: '$tool' is required on the queue image; the custom CI image (.buildkite/ci-image) provides it" >&2
     exit 1
@@ -46,11 +46,14 @@ echo '--- :hammer: build shipped SPA + server'
 DATABASE_URL=postgres://placeholder pnpm build
 
 echo "--- :server: boot built server on :${API_PORT}"
-RW_STATIC_DIR=web/dist \
-API_PORT="$API_PORT" \
-INTERNAL_TOKEN=usability-ci-token \
-DATABASE_URL=postgres://placeholder:placeholder@127.0.0.1:1/placeholder \
-node dist/server.cjs >"$SERVER_LOG" 2>&1 &
+SERVER_USER="${USABILITY_SERVER_USER:-pwuser}"
+id "$SERVER_USER" >/dev/null
+runuser -u "$SERVER_USER" -- env \
+  RW_STATIC_DIR=web/dist \
+  API_PORT="$API_PORT" \
+  INTERNAL_TOKEN=usability-ci-token \
+  DATABASE_URL=postgres://placeholder:placeholder@127.0.0.1:1/placeholder \
+  node dist/server.cjs >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 cleanup() {
   kill "$SERVER_PID" 2>/dev/null || true
