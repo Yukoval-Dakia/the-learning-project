@@ -167,6 +167,25 @@ describe('verify-build-context context', () => {
     expect(record.metadata).toEqual({ key: 'green-bridge-context', set: true });
   });
 
+  it('records manual shadow PR metadata without Buildkite reserved PR fields', () => {
+    const { record } = validateContext({
+      env: {
+        BUILDKITE: 'true',
+        BUILDKITE_COMMIT: SHA_A,
+        BUILDKITE_PULL_REQUEST: 'false',
+        GREEN_BRIDGE_PR_NUMBER: '1260',
+        GREEN_BRIDGE_PR_BASE_BRANCH: 'main',
+      },
+      git: gitProbe({ bases: { 'origin/main': SHA_C } }),
+    });
+    expect(record.pr).toEqual({
+      number: 1260,
+      head_sha: SHA_A,
+      base_branch: 'main',
+      base_sha: SHA_C,
+    });
+  });
+
   it('fails when BUILDKITE_COMMIT differs from the checked-out HEAD', () => {
     const { record } = validateContext({
       env: { BUILDKITE: 'true', BUILDKITE_COMMIT: SHA_B },

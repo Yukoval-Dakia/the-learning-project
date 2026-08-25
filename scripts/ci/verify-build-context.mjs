@@ -75,7 +75,12 @@ export function validateContext({ env, git, pinsText = null, pinsError = null, n
     );
   }
 
-  const prNumber = pullRequestNumber(env.BUILDKITE_PULL_REQUEST);
+  const buildkitePr = env.BUILDKITE_PULL_REQUEST;
+  const prNumber = pullRequestNumber(
+    buildkitePr === undefined || buildkitePr === '' || buildkitePr === 'false'
+      ? env.GREEN_BRIDGE_PR_NUMBER
+      : buildkitePr,
+  );
   let pr = null;
   if (Number.isNaN(prNumber)) {
     violations.push(
@@ -88,7 +93,8 @@ export function validateContext({ env, git, pinsText = null, pinsError = null, n
     );
   } else if (prNumber !== null) {
     // Buildkite checks the PR head out as HEAD, so the PR head sha is the verified commit itself.
-    const prBaseBranch = env.BUILDKITE_PULL_REQUEST_BASE_BRANCH || defaultBranch;
+    const prBaseBranch =
+      env.BUILDKITE_PULL_REQUEST_BASE_BRANCH || env.GREEN_BRIDGE_PR_BASE_BRANCH || defaultBranch;
     const prBaseSha = mergeBase(prBaseBranch);
     if (!isFullSha(prBaseSha)) {
       violations.push(
