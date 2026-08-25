@@ -117,6 +117,8 @@ Phase 2 runner sub-lane (YUK-917):
    manifest gate (Chromium launch + 13/13 executed proven; exit 0 alone never
    passes). On the hosted image it fails closed with
    `chromium-launch-failed` — leave it red until the image + queue wiring land.
+
+Linux supply seed receipt: Buildkite build `12`, source commit `79deabb27d56ac2392efa5f63e03128cba04cf6b`, archive SHA-256 `7fdebd02825b3f324e4ab1de34d10bd26fcbbd5a103a2bc43c360e049ade48fc`, manifest SHA-256 `8f2b4d1595a92b81c33155f16a6fb4ed82d0715b31d67fcc81529b1713e1b63c`. Normal required builds download these exact artifacts cross-build and run the loader offline.
 | 3 | unchanged; HEAD+tree+base+PR parity harness runs inside the verify step | `cancel_running_branch_builds: true` with filter `codex/yuk-916-ci-buildkite-shadow` to mirror the GitHub `concurrency` group |
 | 4 | open the real PR; enable `build_pull_requests: true` (keep `skip_pull_request_builds_for_existing_commits: false`); after both required canaries pass, make the Buildkite check required and drop the GitHub required check from ruleset 16494930 (additive edit, not Rollback A) | keep Phase 3 cancellation |
 

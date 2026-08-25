@@ -99,11 +99,13 @@ describe('runtime artifact pins validation', () => {
     expect(requirePinnedPlatform(pinned, 'linux-x64').seedBuild).toBe(42);
   });
 
-  it('keeps the required gate fail-closed on the committed bootstrap pins', async () => {
+  it('pins the seeded Linux artifact and keeps unseeded platforms fail-closed', async () => {
     const pins = await loadPins(pinsPath);
-    expect(() => requirePinnedPlatform(pins, 'linux-x64')).toThrow(
-      /bootstrap state \(seedRequired\)/,
-    );
+    expect(requirePinnedPlatform(pins, 'linux-x64')).toMatchObject({
+      archiveSha256: '7fdebd02825b3f324e4ab1de34d10bd26fcbbd5a103a2bc43c360e049ade48fc',
+      manifestSha256: '8f2b4d1595a92b81c33155f16a6fb4ed82d0715b31d67fcc81529b1713e1b63c',
+      seedBuild: 12,
+    });
     expect(() => requirePinnedPlatform(pins, 'darwin-arm64')).toThrow(
       /bootstrap state \(seedRequired\)/,
     );
