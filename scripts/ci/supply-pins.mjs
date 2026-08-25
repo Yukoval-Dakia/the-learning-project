@@ -146,7 +146,7 @@ export function buildArtifactDownloadArgs({
   return [
     'artifact',
     'download',
-    artifactName,
+    `**/${artifactName}`,
     destination,
     '--build',
     String(build),

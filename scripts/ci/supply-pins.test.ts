@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -149,7 +149,7 @@ describe('cross-build artifact download arguments', () => {
     ).toEqual([
       'artifact',
       'download',
-      `runtime-closure-${ARCHIVE}.tar.gz`,
+      `**/runtime-closure-${ARCHIVE}.tar.gz`,
       'artifacts',
       '--build',
       BUILD_ID,
@@ -170,7 +170,7 @@ describe('cross-build artifact download arguments', () => {
     ).toEqual([
       'artifact',
       'download',
-      'opencode-loader-linux-x64.tgz',
+      '**/opencode-loader-linux-x64.tgz',
       'artifacts',
       '--build',
       BUILD_ID,
@@ -183,12 +183,19 @@ describe('cross-build artifact download arguments', () => {
     const pins = await loadPins(
       await pinsFile({ archiveSha256: ARCHIVE, manifestSha256: MANIFEST, seedBuild: BUILD_ID }),
     );
+    const root = await mkdtemp(join(tmpdir(), 'supply-download-'));
+    runs.push(root);
+    const downloadDir = join(root, 'artifacts');
+    const nested = join(downloadDir, 'tmp', 'seed', 'out');
+    await mkdir(nested, { recursive: true });
+    await writeFile(join(nested, `runtime-closure-${ARCHIVE}.tar.gz`), 'closure');
+    await writeFile(join(nested, 'opencode-loader-linux-x64.tgz'), 'loader');
     const calls: unknown[][] = [];
     const downloaded = downloadPinnedArtifacts({
       pins,
       platform: 'linux',
       arch: 'x64',
-      downloadDir: 'artifacts',
+      downloadDir,
       currentPipeline: 'the-learning-project-ci-shadow',
       runAgent: (argv: unknown[]) => {
         calls.push(argv);
@@ -198,8 +205,8 @@ describe('cross-build artifact download arguments', () => {
       [
         'artifact',
         'download',
-        `runtime-closure-${ARCHIVE}.tar.gz`,
-        'artifacts',
+        `**/runtime-closure-${ARCHIVE}.tar.gz`,
+        downloadDir,
         '--build',
         BUILD_ID,
         '--pipeline',
@@ -208,16 +215,18 @@ describe('cross-build artifact download arguments', () => {
       [
         'artifact',
         'download',
-        'opencode-loader-linux-x64.tgz',
-        'artifacts',
+        '**/opencode-loader-linux-x64.tgz',
+        downloadDir,
         '--build',
         BUILD_ID,
         '--pipeline',
         'the-learning-project-ci-shadow',
       ],
     ]);
-    expect(downloaded.archivePath).toBe(`artifacts/runtime-closure-${ARCHIVE}.tar.gz`);
-    expect(downloaded.loaderPath).toBe('artifacts/opencode-loader-linux-x64.tgz');
+    expect(downloaded.archivePath).toBe(
+      join(nested, `runtime-closure-${ARCHIVE}.tar.gz`),
+    );
+    expect(downloaded.loaderPath).toBe(join(nested, 'opencode-loader-linux-x64.tgz'));
   });
 
   it('refuses to download while the platform is still in the bootstrap state', async () => {

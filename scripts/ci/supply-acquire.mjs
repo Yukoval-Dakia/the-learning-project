@@ -3,8 +3,10 @@
 // tarball's sha512 re-verification against bun.lock, and the binary extraction.
 // `runAgent` defaults to the real buildkite-agent; tests record its argv.
 
+import { readdirSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { SupplyContractError } from './supply-graph.mjs';
 import { extractLoaderTarball, verifyLoaderTarball } from './supply-loader.mjs';
 import {
   buildArtifactDownloadArgs,
@@ -13,6 +15,25 @@ import {
   loaderArtifactName,
   requirePinnedPlatform,
 } from './supply-pins.mjs';
+
+export function locateDownloadedArtifact(root, artifactName) {
+  const matches = [];
+  const pending = [root];
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) pending.push(path);
+      else if (entry.isFile() && entry.name === artifactName) matches.push(path);
+    }
+  }
+  if (matches.length !== 1) {
+    throw new SupplyContractError(
+      `downloaded artifact ${artifactName} resolved to ${matches.length} files; expected exactly one`,
+    );
+  }
+  return matches[0];
+}
 
 export function downloadPinnedArtifacts({
   pins,
@@ -36,7 +57,11 @@ export function downloadPinnedArtifacts({
       }),
     );
   }
-  return { archivePath: join(downloadDir, closure), loaderPath: join(downloadDir, loader), pinned };
+  return {
+    archivePath: locateDownloadedArtifact(downloadDir, closure),
+    loaderPath: locateDownloadedArtifact(downloadDir, loader),
+    pinned,
+  };
 }
 
 export async function acquirePinnedArtifacts({

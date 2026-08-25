@@ -1,4 +1,5 @@
 import type { PinnedPlatformPin, PlatformPin, SupplyPins } from './supply-pins.mjs';
+export function locateDownloadedArtifact(root: string, artifactName: string): string;
 export function downloadPinnedArtifacts(fields: {
   pins: SupplyPins;
   platform: string;
