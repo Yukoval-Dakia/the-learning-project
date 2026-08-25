@@ -26,7 +26,7 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import { decideProposal, evidenceReadable } from './inbox-api';
+import { decideProposal, dedupeEvidence, evidenceReadable } from './inbox-api';
 import { ProbeAnswerCard } from './ProbeAnswers';
 import type { PrepDeskProbeWire } from './probe-answer-api';
 import {
@@ -410,7 +410,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                 {basisSummaryIsClaim ? '相关学习依据如下。' : brief.basis.summary_md}
               </p>
               <div className="tb-evidence">
-                {brief.basis.evidence_trace.map((ref, i) => {
+                {dedupeEvidence(brief.basis.evidence_trace).map(({ ref }, i) => {
                   // Reuse the inbox readable label; IGNORE route (prose-only, never <a>).
                   // key is the index — no raw id ever reaches the DOM (contract §8.2).
                   const readable = evidenceReadable({ kind: ref.kind, id: ref.id });

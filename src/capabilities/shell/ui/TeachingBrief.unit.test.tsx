@@ -329,8 +329,7 @@ describe('TeachingBriefBand — evidence provenance (SSR)', () => {
     expect(html.match(new RegExp(FINDING_CLAIM, 'g'))).toHaveLength(1);
   });
 
-  it('renders one prose chip per ref, never folded, never ×N', () => {
-    // Two same-kind induction refs (different ids) → two identical neutral chips, no ×2.
+  it('renders one prose chip per semantic ref, never folded, never ×N', () => {
     const html = render(
       findingBrief({
         basis: {
@@ -343,9 +342,16 @@ describe('TeachingBriefBand — evidence provenance (SSR)', () => {
       }),
     );
     const matches = html.match(/源自一次 AI 判定事件/g) ?? [];
-    expect(matches).toHaveLength(2);
+    expect(matches).toHaveLength(1);
     expect(html).not.toContain('×2');
     expect(html).not.toContain('×');
+  });
+
+  it('keeps a distinct basis summary alongside the claim', () => {
+    const html = render(findingBrief());
+
+    expect(html.match(new RegExp(FINDING_CLAIM, 'g'))).toHaveLength(1);
+    expect(html.match(new RegExp(BASIS_SUMMARY, 'g'))).toHaveLength(1);
   });
 
   it('renders evidence as <span>, never a link — even a navigable knowledge ref', () => {
