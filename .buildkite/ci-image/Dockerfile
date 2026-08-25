@@ -52,6 +52,8 @@ RUN chrome="$(find /ms-playwright -type f -name chrome -path '*chrome-linux*' | 
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
+USER pwuser
+
 LABEL org.opencontainers.image.title="the-learning-project buildkite-ci" \
       org.opencontainers.image.description="Pinned linux-large runner image for the YUK-917 usability lane" \
       org.opencontainers.image.source="https://github.com/Yukoval-Dakia/the-learning-project"

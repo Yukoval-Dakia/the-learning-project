@@ -337,6 +337,8 @@ describe('usability lane pins image state', () => {
     );
     expect(fromDigest, 'Dockerfile must pin the Playwright base by full digest').not.toBeNull();
     expect(`sha256:${fromDigest?.[1]}`).toBe(parsed.pins.CI_IMAGE_BASE_DIGEST);
+    const users = [...dockerfile.matchAll(/^USER\s+(\S+)/gm)];
+    expect(users.at(-1)?.[1]).not.toBe('root');
   });
 
   it('keeps EXPECTED_SCENARIOS in lockstep with the real spec file', () => {
