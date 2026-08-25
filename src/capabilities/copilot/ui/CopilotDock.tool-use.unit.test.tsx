@@ -50,8 +50,9 @@ describe('CopilotDock tool-use cards', () => {
 
     const cards = screen.getAllByTestId('copilot-tool-use-card');
     expect(cards).toHaveLength(2);
-    expect(screen.getAllByText('mistakes · 8 行 · 3 道过期')).toHaveLength(2);
-    expect(screen.getAllByText('review · 12 due 今日 · 4 due 明日')).toHaveLength(2);
+    expect(screen.getByText('错题整理')).toBeTruthy();
+    expect(screen.getByText('复习安排')).toBeTruthy();
+    expect(screen.getAllByText('已完成')).toHaveLength(2);
     expect(screen.getByText('我已核对完错题，建议先复习通假字。')).toBeTruthy();
 
     const list = screen.getByTestId('copilot-tool-use-list');
@@ -94,7 +95,7 @@ describe('CopilotDock tool-use cards', () => {
     expect(screen.getByText('运行中')).toBeTruthy();
     expect(screen.getByText('完成')).toBeTruthy();
     expect(screen.getByText('正在调用…')).toBeTruthy();
-    expect(screen.getAllByText('review · 12 due 今日').length).toBeGreaterThan(0);
+    expect(screen.getByText('已完成')).toBeTruthy();
   });
 
   it('renders failed status pill and errorReason for failed tool calls', () => {
@@ -127,9 +128,53 @@ describe('CopilotDock tool-use cards', () => {
     expect(cards).toHaveLength(1);
     // StatusPill failed label.
     expect(screen.getByText('失败')).toBeTruthy();
-    // Failed cards render errorView (the errorReason) in the result slot.
-    expect(screen.getByText('connection reset while reading mistakes')).toBeTruthy();
+    expect(screen.getByText('错题整理暂时未完成，请稍后再试。')).toBeTruthy();
     // A failed card never falls back to the done-state body.
     expect(screen.queryByText('已完成')).toBeNull();
+  });
+
+  it('keeps internal tool details and event identities out of learner-visible Copilot rows', () => {
+    const eventId = 'copilot_user_ask_4f5e6d7c-8a9b-4012-83d4-5e6f7a8b9c0d';
+    const message: ChatMessage = {
+      id: eventId,
+      role: 'ai',
+      text: '我会把这项建议整理成你可以确认的内容。',
+      tool_calls: [
+        {
+          toolName: 'knowledge_mutation',
+          input: { knowledge_id: '4f5e6d7c-8a9b-4012-83d4-5e6f7a8b9c0d' },
+          summary: 'pending proposal: update node 4f5e6d7c',
+          errorReason: 'proposal rejected because the internal review is pending',
+          status: 'failed',
+        },
+      ],
+      subtasks: [
+        {
+          id: eventId,
+          label: '校验这项建议',
+          status: 'completed',
+          lastEventId: 109,
+        },
+      ],
+    };
+
+    const { container } = render(
+      <MessageRow
+        message={message}
+        navigate={noopNavigate}
+        onAcceptCorrective={noopAccept}
+        chipPending={false}
+        chipAcked={false}
+        revertPending={false}
+      />,
+    );
+
+    expect(screen.getByText('学习内容建议')).toBeTruthy();
+    expect(screen.getByText(/学习内容建议\s*暂时未完成，请稍后再试。/)).toBeTruthy();
+    expect(container.innerHTML).not.toContain('knowledge_mutation');
+    expect(container.innerHTML).not.toContain('copilot_user_ask_');
+    expect(container.innerHTML).not.toContain('4f5e6d7c-8a9b-4012-83d4-5e6f7a8b9c0d');
+    expect(container.innerHTML).not.toContain('pending proposal');
+    expect(container.innerHTML).not.toContain('proposal rejected');
   });
 });

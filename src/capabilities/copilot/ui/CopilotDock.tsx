@@ -197,6 +197,16 @@ export interface ToolCallRecord {
   errorReason?: string;
 }
 
+const LEARNER_TOOL_LABELS: Readonly<Record<string, string>> = {
+  query_mistakes: '错题整理',
+  get_review_due: '复习安排',
+  knowledge_mutation: '学习内容建议',
+};
+
+function learnerToolLabel(toolName: string): string {
+  return LEARNER_TOOL_LABELS[toolName] ?? '学习辅助任务';
+}
+
 function toolCallCardStatus(call: ToolCallRecord): ToolUseStatus {
   if (call.status === 'failed') return 'failed';
   if (call.status === 'running') return 'running';
@@ -274,28 +284,21 @@ function CopilotToolUseList({ calls }: { calls: ToolCallRecord[] }) {
     <div className="flex flex-col gap-[6px]" data-testid="copilot-tool-use-list">
       {calls.map((call, idx) => {
         const status = toolCallCardStatus(call);
-        const isRunning = status === 'running';
-        const summary = call.summary;
+        const label = learnerToolLabel(call.toolName);
         return (
           <div
             key={call.toolUseId ?? `${call.toolName}-${idx}`}
             data-testid="copilot-tool-use-card"
           >
             <ToolUseCard
-              toolName={call.toolName}
-              summary={summary}
+              toolName={label}
               status={status}
-              args={isRunning && Object.keys(call.input).length > 0 ? call.input : undefined}
-              actor="agent"
+              actor="学习助手"
               running={<span>正在调用…</span>}
-              result={
-                summary ? (
-                  <span>{summary}</span>
-                ) : status === 'done' ? (
-                  <span>已完成</span>
-                ) : undefined
+              result={status === 'done' ? <span>已完成</span> : undefined}
+              errorView={
+                status === 'failed' ? <span>{label}暂时未完成，请稍后再试。</span> : undefined
               }
-              errorView={call.errorReason ? <span>{call.errorReason}</span> : undefined}
             />
           </div>
         );
@@ -458,7 +461,7 @@ export const MessageRow = memo(function MessageRow({
         {m.role === 'ai' && m.subtasks && m.subtasks.length > 0 ? (
           <div className="flex flex-col gap-[6px]" data-testid="copilot-subtask-list">
             {m.subtasks.map((subtask) => (
-              <div key={subtask.id} data-testid="copilot-subtask-card" data-subtask-id={subtask.id}>
+              <div key={subtask.id} data-testid="copilot-subtask-card">
                 <ToolUseCard
                   toolName="后台子任务"
                   summary={subtask.label}
