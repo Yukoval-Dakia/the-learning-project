@@ -7,6 +7,7 @@
 import { memo, useMemo, useRef, useState } from 'react';
 
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
+import { Btn } from '@/ui/primitives/Btn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import type { KnowledgeEdgeRow, KnowledgeTreeNode } from './knowledge-api';
 import { isKnowledgeContainer } from './knowledge-node-kind';
@@ -165,11 +166,13 @@ export function MeshGraph({
   edges,
   onPick,
   activeId,
+  navigate,
 }: {
   nodes: KnowledgeTreeNode[];
   edges: KnowledgeEdgeRow[];
   onPick: (node: KnowledgeTreeNode) => void;
   activeId?: string | null;
+  navigate?: (to: string) => void;
 }) {
   // LayoutNode/LayoutEdge 字段名与 wire 一致（parent_id / from_knowledge_id），直传。
   const pos = useMemo(() => computeLayout(nodes, edges), [nodes, edges]);
@@ -261,6 +264,17 @@ export function MeshGraph({
           <LoomIcon name="link" size={16} />
           <strong>关系图还没有连接</strong>
           <span>先从树视图打开一个知识点，或在详情里建立关系。</span>
+          {navigate && (
+            <Btn
+              size="sm"
+              variant="secondary"
+              icon="inbox"
+              iconEnd="arrow"
+              onClick={() => navigate('/inbox')}
+            >
+              查看 AI 关系提议
+            </Btn>
+          )}
         </div>
       )}
 

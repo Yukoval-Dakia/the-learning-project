@@ -253,7 +253,13 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
             </output>
           }
         >
-          <LazyMeshGraph nodes={nodes} edges={edges} onPick={setPicked} activeId={picked?.id} />
+          <LazyMeshGraph
+            nodes={nodes}
+            edges={edges}
+            onPick={setPicked}
+            activeId={picked?.id}
+            navigate={navigate}
+          />
         </Suspense>
       )}
 
