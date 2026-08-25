@@ -12,7 +12,7 @@ import {
   validateClosureGraph,
   validateManifestAgainstInventory,
 } from './supply-graph.mjs';
-import { loadPins } from './supply-pins.mjs';
+import { loadPins, requirePinnedPlatform } from './supply-pins.mjs';
 
 const scriptDir = fileURLToPath(new URL('.', import.meta.url));
 const repoRoot = resolve(scriptDir, '../..');
@@ -212,7 +212,7 @@ describe('manifest and pins', () => {
     ).toThrow(/version|inventory/i);
   });
 
-  it('loads the committed supply pins in the fail-closed bootstrap state', async () => {
+  it('loads the seeded Linux pin while unseeded Darwin stays fail-closed', async () => {
     const pins = await loadPins(join(supplyRoot, 'runtime-artifact-pins.json'));
     expect(pins.approvedRuntimePlugin).toEqual({
       package: '@opencode-ai/plugin',
@@ -221,6 +221,9 @@ describe('manifest and pins', () => {
     });
     expect(pins.artifactSource.pipeline).toBe('the-learning-project-ci-shadow');
     expect(pins.platforms['darwin-arm64'].seedRequired).toBe(true);
-    expect(pins.platforms['linux-x64'].seedRequired).toBe(true);
+    expect(pins.platforms['linux-x64'].seedRequired).toBe(false);
+    expect(requirePinnedPlatform(pins, 'linux-x64').seedBuild).toBe(
+      '01a03968-7cde-4675-9fb6-2cc900d8446a',
+    );
   });
 });

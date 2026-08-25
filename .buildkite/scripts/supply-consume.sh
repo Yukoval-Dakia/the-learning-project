@@ -19,4 +19,4 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-exec node scripts/ci/supply-artifact-consume.mjs --from-pins
+exec node scripts/ci/supply-consume-cli.mjs --from-pins

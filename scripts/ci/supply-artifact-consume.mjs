@@ -10,12 +10,9 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { cp, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { cp, mkdir, readFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createGunzip } from 'node:zlib';
-import { acquirePinnedArtifacts } from './supply-acquire.mjs';
 import {
   bunLockResolutions,
   closureDirName,
@@ -26,8 +23,8 @@ import {
   validateManifestAgainstInventory,
 } from './supply-graph.mjs';
 import {
-  buildOfflineWorkspaceTemplate,
   offlineLoaderEnv,
+  pointWorkspaceAtExtractedPlugins,
   runLoaderSnapshot,
   startNetworkSentinel,
 } from './supply-offline.mjs';
@@ -124,6 +121,12 @@ export async function consumeArtifact({
   }
 
   await cp(workspaceTemplateDir, workspace, { recursive: true });
+  await pointWorkspaceAtExtractedPlugins({
+    workspace,
+    extractRoot,
+    declaredPlugins: manifest.plugins,
+    inventory,
+  });
   await mkdir(join(home, 'tmp'), { recursive: true });
   execFileSync('git', ['init', '--quiet'], { cwd: workspace, stdio: 'ignore' });
 
@@ -176,82 +179,4 @@ export async function consumeArtifact({
     networkAttempts: sentinel.attempts.length,
     entries: entries.length,
   };
-}
-
-async function main() {
-  const args = process.argv.slice(2);
-  const fromPins = args.includes('--from-pins');
-  const repoRoot = resolve(argValue(args, '--repo', process.cwd()));
-  const pinsPath = resolve(
-    argValue(args, '--pins', join(repoRoot, '.buildkite', 'supply', 'runtime-artifact-pins.json')),
-  );
-  const inventory = parseLooseJson(
-    await readFile(
-      join(repoRoot, '.opencode', 'plugins', 'supply-chain', 'inventory.json'),
-      'utf8',
-    ),
-  );
-  const bunLockText = await readFile(join(repoRoot, '.opencode', 'plugins', 'bun.lock'), 'utf8');
-  const runRoot = await mkdtemp(join(tmpdir(), 'supply-consume-'));
-  const workspaceTemplateDir = await buildOfflineWorkspaceTemplate({
-    root: runRoot,
-    repoRoot,
-    inventory,
-  });
-  try {
-    let archivePath = requireArg(args, '--archive', !fromPins);
-    let loaderPath = requireArg(args, '--loader', !fromPins);
-    if (fromPins) {
-      const pins = await loadPins(pinsPath);
-      ({ archivePath, loaderPath } = await acquirePinnedArtifacts({
-        pins,
-        platform: process.platform,
-        arch: process.arch,
-        downloadDir: join(runRoot, 'artifacts'),
-        extractRoot: join(runRoot, 'loader'),
-        currentPipeline: process.env.BUILDKITE_PIPELINE_SLUG,
-        bunLockText,
-        loaderVersion: inventory.opencode.version,
-        runAgent: (argv) => execFileSync('buildkite-agent', argv, { stdio: 'inherit' }),
-      }));
-    }
-    const summary = await consumeArtifact({
-      archivePath,
-      loaderPath,
-      pinsPath,
-      inventory,
-      bunLockText,
-      workspaceTemplateDir,
-      scratchRoot: join(runRoot, 'consume'),
-    });
-    console.log(
-      `offline supply-chain verification passed: archive ${summary.archiveSha256.slice(0, 12)}…, ` +
-        `${summary.tools.length} required tools registered, ${summary.networkAttempts} network attempts.`,
-    );
-  } finally {
-    await rm(runRoot, { recursive: true, force: true });
-  }
-}
-
-function argValue(args, flag, fallback) {
-  const prefix = `${flag}=`;
-  const hit = args.find((arg) => arg.startsWith(prefix));
-  return hit ? hit.slice(prefix.length) : fallback;
-}
-
-function requireArg(args, flag, required) {
-  const value = argValue(args, flag, null);
-  if (required && !value) {
-    console.error(
-      'usage: supply-artifact-consume.mjs --archive=<tar[.gz]> --loader=<opencode-binary> [--repo=.] [--pins=…] | --from-pins',
-    );
-    process.exit(2);
-  }
-  return value;
-}
-
-const invokedDirectly =
-  process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
-if (invokedDirectly) {
-  await main();
 }

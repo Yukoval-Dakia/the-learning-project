@@ -4,6 +4,12 @@ export function buildOfflineWorkspaceTemplate(fields: {
   repoRoot: string;
   inventory: any;
 }): Promise<string>;
+export function pointWorkspaceAtExtractedPlugins(fields: {
+  workspace: string;
+  extractRoot: string;
+  declaredPlugins: Array<{ specifier: string }>;
+  inventory: { npmPlugins: Array<{ specifier: string; package: string }> };
+}): Promise<void>;
 export function startNetworkSentinel(): Promise<{
   port: number;
   attempts: string[];

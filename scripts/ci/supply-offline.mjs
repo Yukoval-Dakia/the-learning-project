@@ -6,10 +6,11 @@
 // recorded, and fails the run.
 
 import { spawn } from 'node:child_process';
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { join } from 'node:path';
-import { parseLooseJson } from './supply-graph.mjs';
+import { isAbsolute, join, relative, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { closureDirName, parseLooseJson } from './supply-graph.mjs';
 
 export class OfflineGuardError extends Error {}
 
@@ -37,6 +38,45 @@ export async function buildOfflineWorkspaceTemplate({ root, repoRoot, inventory 
     await cp(join(repoRoot, relative), join(template, relative));
   }
   return template;
+}
+
+export async function pointWorkspaceAtExtractedPlugins({
+  workspace,
+  extractRoot,
+  declaredPlugins,
+  inventory,
+}) {
+  const localEntries = [];
+  for (const declared of declaredPlugins) {
+    const plugin = inventory.npmPlugins.find((entry) => entry.specifier === declared.specifier);
+    if (!plugin) {
+      throw new OfflineGuardError(`manifest plugin is not inventoried: ${declared.specifier}`);
+    }
+    const packageRoot = join(
+      extractRoot,
+      'closure',
+      closureDirName(declared.specifier),
+      'node_modules',
+      plugin.package,
+    );
+    const packageManifest = parseLooseJson(
+      await readFile(join(packageRoot, 'package.json'), 'utf8'),
+    );
+    const entryRelative = packageManifest.main ?? packageManifest.module ?? 'index.js';
+    if (typeof entryRelative !== 'string') {
+      throw new OfflineGuardError(`${declared.specifier} has no string main/module entrypoint`);
+    }
+    const entryPath = resolve(packageRoot, entryRelative);
+    const fromPackage = relative(packageRoot, entryPath);
+    if (fromPackage.startsWith('..') || isAbsolute(fromPackage)) {
+      throw new OfflineGuardError(`${declared.specifier} entrypoint escapes its package root`);
+    }
+    await access(entryPath);
+    localEntries.push(pathToFileURL(entryPath).href);
+  }
+  const configPath = join(workspace, '.opencode', 'opencode.json');
+  const config = parseLooseJson(await readFile(configPath, 'utf8'));
+  await writeFile(configPath, `${JSON.stringify({ ...config, plugin: localEntries }, null, 2)}\n`);
 }
 
 export async function startNetworkSentinel() {

@@ -48,6 +48,10 @@ async function fixtureStaging(root: string) {
     },
   };
   await writeFile(join(cache, 'package-lock.json'), JSON.stringify(lock, null, 2));
+  await writeFile(
+    join(cache, 'node_modules', 'fixture-plugin', 'package.json'),
+    JSON.stringify({ name: 'fixture-plugin', version: '1.0.0', main: 'index.js' }),
+  );
   await writeFile(join(cache, 'node_modules', 'fixture-plugin', 'index.js'), 'export {};');
   const graphSha = runtimeGraphSha256(runtimeGraphRows(lock));
   const inventory = {
@@ -95,6 +99,10 @@ async function writeLoader(root: string, name: string, body: string) {
 }
 
 const OK_LOADER = `
+const { readFileSync } = await import("node:fs");
+const { join } = await import("node:path");
+const config = JSON.parse(readFileSync(join(process.cwd(), ".opencode", "opencode.json"), "utf8"));
+if (!config.plugin?.[0]?.startsWith("file://") || !config.plugin[0].endsWith("/index.js")) process.exit(14);
 const snapshot = { name: "build", tools: { fixture_tool: true } };
 process.stdout.write(JSON.stringify(snapshot));
 `;
