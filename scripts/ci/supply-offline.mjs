@@ -128,6 +128,7 @@ export function offlineLoaderEnv(home, sentinelPort) {
   env.TMP = env.TMPDIR;
   env.TEMP = env.TMPDIR;
   env.DO_NOT_TRACK = '1';
+  env.OMO_DISABLE_POSTHOG = '1';
   env.GIT_TERMINAL_PROMPT = '0';
   env.OPENCODE_DISABLE_MODELS_FETCH = '1';
   env.npm_config_registry = sentinel;
