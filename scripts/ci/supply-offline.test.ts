@@ -12,8 +12,8 @@ import {
   runtimeGraphSha256,
   sha256Hex,
 } from './supply-graph.mjs';
-import { packageArtifact } from './supply-package.mjs';
 import { offlineLoaderEnv } from './supply-offline.mjs';
+import { packageArtifact } from './supply-package.mjs';
 import { collectTarEntries, writeDeterministicTar } from './supply-tar-writer.mjs';
 
 const runs: string[] = [];

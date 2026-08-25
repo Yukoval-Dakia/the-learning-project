@@ -223,9 +223,7 @@ describe('cross-build artifact download arguments', () => {
         'the-learning-project-ci-shadow',
       ],
     ]);
-    expect(downloaded.archivePath).toBe(
-      join(nested, `runtime-closure-${ARCHIVE}.tar.gz`),
-    );
+    expect(downloaded.archivePath).toBe(join(nested, `runtime-closure-${ARCHIVE}.tar.gz`));
     expect(downloaded.loaderPath).toBe(join(nested, 'opencode-loader-linux-x64.tgz'));
   });
 

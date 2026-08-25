@@ -146,7 +146,8 @@ export async function consumeArtifact({
     await sentinel.stop();
   }
   if (sentinel.attempts.length > 0) {
-    const loaderFailure = failure instanceof Error ? failure.message.replaceAll('\n', ' ').slice(-1000) : '';
+    const loaderFailure =
+      failure instanceof Error ? failure.message.replaceAll('\n', ' ').slice(-1000) : '';
     throw new ConsumeFailure(
       `network attempt during required offline validation: ${sentinel.attempts.length} connection(s) ` +
         `to the sentinel registry (first: ${sentinel.attempts[0]})` +
