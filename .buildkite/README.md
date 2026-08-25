@@ -20,18 +20,23 @@ SHA-256 digest, freshness, and the shard plan before running.
 
 | File | Role |
 | --- | --- |
-| `pipeline.yml` | The uploaded shadow pipeline: checkout identity step + pinned `github-actions` importer for the proven-compatible job subset. |
-| `pins.env` | Importer plugin pin (source, release, commit, observed date) and runtime pins, enforced by the freshness gate. |
+| `pipeline.yml` | The uploaded shadow pipeline: checkout identity step + pinned `github-actions` importer for the proven-compatible job subset, plus the Phase 2 native usability lane step. |
+| `pins.env` | Importer plugin pin (source, release, commit, observed date), runtime pins, and the CI image pin block (`CI_IMAGE_*` incl. the pending-publication state), enforced by the freshness gate. |
+| `ci-image/Dockerfile` | Digest-pinned custom linux-large runner image: Playwright `v1.62.1-noble` base (amd64 manifest digest, matches the repo `@playwright/test` pin and carries Chromium + its OS dependencies), Node 24.0.0 (checksum-verified tarball), pnpm 11.13.1, Bun 1.3.14, git/jq, and a build-time `chrome --version` assertion so a broken browser fails the image build, not 13 scenarios. |
 | `pipeline-settings.json` | Desired external pipeline settings snapshot; diffed against the live pipeline before phase changes. |
 | `scripts/verify-build-context.sh` | Step entry point for the checkout identity verification. |
 | `scripts/db-select-upload.sh` | YUK-918 native DB selector step: run the DB selector once, build the digest-covered manifest, upload it via `buildkite-agent artifact upload`. |
 | `scripts/db-shard-run.sh` | YUK-918 native DB shard step: download/verify the selector manifest via `buildkite-agent artifact download --step db-select`, then run this shard through `db-affected.mjs run`. |
+| `scripts/run-usability-lane.sh` | Phase 2 native usability step: boots the built server, proves a real headless Chromium launch, runs the real 13-scenario `shipped-container` suite, and fails unless the manifest gate passes. |
 | `scripts/pre-command.sh` | Versioned agent pre-command hook; install into a custom base image for job-wide verification (Phase 2+ wiring). |
 | `../scripts/ci/verify-build-context.mjs` | The context verifier itself (identity checks, metadata emission), unit-tested in `../scripts/ci/verify-build-context.test.ts`. |
-| `../scripts/ci/green-bridge-pins.mjs` | The pins policy: parsing plus the freshness gate behind `--pins`, unit-tested in the same test file. |
+| `../scripts/ci/green-bridge-pins.mjs` | The pins policy: parsing plus the freshness gate behind `--pins` (including the `CI_IMAGE_*` lifecycle), unit-tested in the same test file. |
 | `../scripts/ci/db-artifact-manifest.mjs` | YUK-918 selector-side manifest module: builds the schema-validated, SHA-256-covered DB selection manifest (absolute workspace paths, source HEAD/tree, shard assignments, expiry), unit-tested in `../scripts/ci/db-artifact-manifest.test.ts`. |
 | `../scripts/ci/db-artifact-shard.mjs` | YUK-918 shard-side runner: downloads the manifest through `buildkite-agent`, fails closed on corruption/tamper, deterministically falls back to the full DB suite when the manifest is missing/stale/expired, and merges the selector digest into each shard's execution report; unit/CLI-tested in `../scripts/ci/db-artifact-shard.test.ts`. |
+| `../scripts/ci/usability-probe.mjs` | Launches real headless Chromium and emits one JSON probe record (version, launched, error). |
+| `../scripts/ci/usability-lane.mjs` | The manifest gate: parses the Playwright JSON report, requires Chromium launched + exactly 13/13 executed (0 skipped/failed/flaky), and writes `test-results/usability-gate/manifest.json` carrying `image.state` + `cutover_ready`. |
 | `../.github/workflows/buildkite-shadow-subset.yml` | The imported workflow subset: only the `migration` and `build` jobs, verbatim from `ci-gate.yml`. |
+| `../.github/workflows/buildkite-ci-image.yml` | Builds/pushes `ci-image/Dockerfile` to GHCR using only the ephemeral `GITHUB_TOKEN` (`packages: write`); emits the pushed digest as artifact + job summary. Deploys nothing. |
 
 ## What the pipeline runs
 
@@ -62,7 +67,17 @@ SHA-256 digest, freshness, and the shard plan before running.
    closed without running; missing/stale/expired manifest → deterministic
    fallback to the full sharded DB suite (a real non-empty suite), recorded as
    `selector.status: "fallback"`. The DB tests need Docker on the agent image
-   (testcontainers Postgres, same as the GitHub lane).
+    (testcontainers Postgres, same as the GitHub lane).
+5. `usability-lane` (queue `linux-large`, Phase 2) — runs
+   `.buildkite/scripts/run-usability-lane.sh`: install → Playwright Chromium →
+   `pnpm build` → boot `dist/server.cjs` on :18787 → real headless Chromium
+   launch probe → the real 13-scenario `shipped-container` Playwright suite →
+   the manifest gate (`node scripts/ci/usability-lane.mjs --manifest`). The step
+   is green ONLY when the emitted manifest proves Chromium launched AND exactly
+   13/13 scenarios executed (0 skipped/failed/flaky); job exit 0 alone never
+   passes it. On the hosted image (no custom base yet) the probe fails with a
+   machine-readable `chromium-launch-failed` record — that red is the pending
+    state made visible; do not soften it.
 
 ## Importer pin
 
@@ -77,13 +92,30 @@ exercised. Do not restore that pin without re-verifying against the plugin
 repository. Re-observe and refresh pins at least every `PIN_MAX_AGE_DAYS`;
 `node scripts/ci/verify-build-context.mjs --pins` is the freshness gate.
 
+## CI image pin (Phase 2)
+
+`pins.env` carries the runner-image block: the immutable base digest
+(`CI_IMAGE_BASE_DIGEST`, the amd64 manifest of
+`mcr.microsoft.com/playwright:v1.62.1-noble`, resolved 2026-08-25 via
+`docker buildx imagetools inspect`) and the lifecycle state
+`CI_IMAGE_STATE=image_digest_pending_publication`. The final agent image does
+not exist yet — it is created only when the lead runs
+`.github/workflows/buildkite-ci-image.yml` (GHCR push, ephemeral
+`GITHUB_TOKEN`, no deploy). While pending, the pins gate forbids
+`CI_IMAGE_DIGEST`, the usability manifest reports `cutover_ready=false`, and no
+required/cutover use is allowed. After publication the lead records
+`CI_IMAGE_DIGEST` + `CI_IMAGE_PUBLISHED_AT` and flips the state to
+`image_digest_published`; the freshness bound then applies to that observation
+too.
+
 ## Local validation
 
 ```bash
-bash -n .buildkite/scripts/verify-build-context.sh .buildkite/scripts/pre-command.sh .buildkite/scripts/db-select-upload.sh .buildkite/scripts/db-shard-run.sh
+bash -n .buildkite/scripts/verify-build-context.sh .buildkite/scripts/pre-command.sh .buildkite/scripts/db-select-upload.sh .buildkite/scripts/db-shard-run.sh .buildkite/scripts/run-usability-lane.sh
 bk pipeline validate --file .buildkite/pipeline.yml
-pnpm vitest run --config vitest.unit.config.ts scripts/ci/verify-build-context.test.ts scripts/ci/db-artifact-manifest.test.ts scripts/ci/db-artifact-shard.test.ts
+pnpm vitest run --config vitest.unit.config.ts scripts/ci/verify-build-context.test.ts scripts/ci/db-artifact-manifest.test.ts scripts/ci/db-artifact-shard.test.ts scripts/ci/usability-lane.test.ts
 node scripts/ci/verify-build-context.mjs --pins
+node scripts/ci/usability-probe.mjs   # needs local `pnpm test:usability:install`
 ```
 
 ## Troubleshooting
@@ -109,6 +141,13 @@ node scripts/ci/verify-build-context.mjs --pins
   `manifest-missing` points at artifact storage/queue issues worth
   investigating before Phase 4.
 - `shard-count-mismatch` — the manifest was built for a different shard count
-  than the step's `parallelism`. Both live in this directory (`--shards 2` in
-  `db-select-upload.sh`, `parallelism: 2` in `pipeline.yml`); change them
-  together.
+    than the step's `parallelism`. Both live in this directory (`--shards 2` in
+    `db-select-upload.sh`, `parallelism: 2` in `pipeline.yml`); change them
+    together.
+- `chromium-launch-failed` — the runner image lacks Chromium or its OS
+  dependencies (the Build #1 `libnspr4.so` class). This is expected on the
+  hosted `linux-large` image until the lead publishes
+  `.buildkite/ci-image` via `.github/workflows/buildkite-ci-image.yml` and
+  points the queue's agent image at the recorded digest. The manifest artifact
+    (`test-results/usability-gate/manifest.json`) carries the exact missing-library
+    error.

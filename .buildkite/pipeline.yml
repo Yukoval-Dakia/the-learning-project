@@ -55,3 +55,24 @@ steps:
     timeout_in_minutes: 30
     artifact_paths:
       - .cache/ci/db-*.json
+
+  # YUK-917 runner lane: real 13-scenario usability suite with a manifest gate
+  # that proves Chromium launched and 13/13 executed. Expect this step to stay
+  # red on the hosted linux-large image until the lead publishes the CI image
+  # (.github/workflows/buildkite-ci-image.yml), records its digest in pins.env,
+  # and points the queue's agent image at it - that red is the pending state
+  # made visible; do not soften it.
+  - label: ":chromium: usability lane (13 scenarios, manifest-gated)"
+    key: usability-lane
+    depends_on: verify-build-context
+    command: .buildkite/scripts/run-usability-lane.sh
+    artifact_paths:
+      - test-results/usability-gate/manifest.json
+      - test-results/usability-gate/chromium-probe.json
+      - test-results/usability-gate/report.json
+      - "test-results/usability/**/*"
+    env:
+      PINS_FILE: .buildkite/pins.env
+    timeout_in_minutes: 30
+    agents:
+      queue: linux-large

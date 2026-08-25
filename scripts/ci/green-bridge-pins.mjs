@@ -1,6 +1,15 @@
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/;
+const SEMVER = /^\d+\.\d+\.\d+$/;
 const MS_PER_DAY = 86_400_000;
+
+// YUK-917: the runner-lane CI image lifecycle. PENDING means the GHCR image has
+// not been published yet (or not yet recorded); pins validation forbids a
+// digest in that state, and the usability manifest keeps cutover_ready=false.
+export const IMAGE_STATE_PENDING = 'image_digest_pending_publication';
+export const IMAGE_STATE_PUBLISHED = 'image_digest_published';
+const IMAGE_STATES = [IMAGE_STATE_PENDING, IMAGE_STATE_PUBLISHED];
 
 const REQUIRED_PIN_KEYS = [
   'GITHUB_ACTIONS_PLUGIN_SOURCE',
@@ -11,6 +20,11 @@ const REQUIRED_PIN_KEYS = [
   'PNPM_VERSION',
   'BUN_VERSION',
   'PIN_MAX_AGE_DAYS',
+  'CI_IMAGE_REPO',
+  'CI_IMAGE_BASE_REF',
+  'CI_IMAGE_BASE_DIGEST',
+  'CI_IMAGE_PLAYWRIGHT_VERSION',
+  'CI_IMAGE_STATE',
 ];
 
 export function violation(code, message, expected, actual) {
@@ -72,6 +86,78 @@ export function validatePins({ pinsText, now = new Date() }) {
         'GITHUB_ACTIONS_PLUGIN_RELEASE must look like vX.Y.Z',
       ),
     );
+  }
+
+  if (pins.CI_IMAGE_STATE !== undefined && !IMAGE_STATES.includes(pins.CI_IMAGE_STATE)) {
+    violations.push(
+      violation(
+        'ci-image-state-invalid',
+        `CI_IMAGE_STATE must be ${IMAGE_STATES.join(' or ')}`,
+        IMAGE_STATES.join(' | '),
+        pins.CI_IMAGE_STATE,
+      ),
+    );
+  }
+  if (pins.CI_IMAGE_BASE_DIGEST !== undefined && !SHA256_DIGEST.test(pins.CI_IMAGE_BASE_DIGEST)) {
+    violations.push(
+      violation('ci-image-base-digest-malformed', 'CI_IMAGE_BASE_DIGEST must be sha256:<64 hex>'),
+    );
+  }
+  if (
+    pins.CI_IMAGE_PLAYWRIGHT_VERSION !== undefined &&
+    !SEMVER.test(pins.CI_IMAGE_PLAYWRIGHT_VERSION)
+  ) {
+    violations.push(
+      violation(
+        'ci-image-playwright-version-malformed',
+        'CI_IMAGE_PLAYWRIGHT_VERSION must be X.Y.Z',
+      ),
+    );
+  }
+  const imageMaxAgeDays = Number(pins.PIN_MAX_AGE_DAYS);
+  if (pins.CI_IMAGE_STATE === IMAGE_STATE_PENDING) {
+    if (pins.CI_IMAGE_DIGEST !== undefined) {
+      violations.push(
+        violation(
+          'ci-image-digest-forbidden',
+          `a ${IMAGE_STATE_PENDING} image must not claim a digest; publish via .github/workflows/buildkite-ci-image.yml and record it first`,
+        ),
+      );
+    }
+  } else if (pins.CI_IMAGE_STATE === IMAGE_STATE_PUBLISHED) {
+    if (pins.CI_IMAGE_DIGEST === undefined) {
+      violations.push(
+        violation('ci-image-digest-missing', 'a published image must record CI_IMAGE_DIGEST'),
+      );
+    } else if (!SHA256_DIGEST.test(pins.CI_IMAGE_DIGEST)) {
+      violations.push(
+        violation('ci-image-digest-malformed', 'CI_IMAGE_DIGEST must be sha256:<64 hex>'),
+      );
+    }
+    const publishedAt = pins.CI_IMAGE_PUBLISHED_AT;
+    if (publishedAt === undefined) {
+      violations.push(
+        violation(
+          'ci-image-published-at-missing',
+          'a published image must record CI_IMAGE_PUBLISHED_AT (re-observe within PIN_MAX_AGE_DAYS)',
+        ),
+      );
+    } else if (!ISO_DATE.test(publishedAt)) {
+      violations.push(
+        violation('ci-image-published-at-invalid', 'CI_IMAGE_PUBLISHED_AT must be YYYY-MM-DD'),
+      );
+    } else if (
+      Number.isInteger(imageMaxAgeDays) &&
+      Math.floor((now.getTime() - Date.parse(`${publishedAt}T00:00:00Z`)) / MS_PER_DAY) >
+        imageMaxAgeDays
+    ) {
+      violations.push(
+        violation(
+          'ci-image-published-stale',
+          `the published image digest was observed more than ${pins.PIN_MAX_AGE_DAYS} days ago; re-verify it against GHCR`,
+        ),
+      );
+    }
   }
 
   let ageDays = null;

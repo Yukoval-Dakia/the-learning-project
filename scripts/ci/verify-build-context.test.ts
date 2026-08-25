@@ -21,6 +21,11 @@ const VALID_PINS = [
   'PNPM_VERSION=11.13.1',
   'BUN_VERSION=1.3.14',
   'PIN_MAX_AGE_DAYS=30',
+  'CI_IMAGE_REPO=ghcr.io/yukoval-dakia/the-learning-project/buildkite-ci',
+  'CI_IMAGE_BASE_REF=mcr.microsoft.com/playwright:v1.62.1-noble',
+  `CI_IMAGE_BASE_DIGEST=sha256:${'c'.repeat(64)}`,
+  'CI_IMAGE_PLAYWRIGHT_VERSION=1.62.1',
+  'CI_IMAGE_STATE=image_digest_pending_publication',
 ].join('\n');
 
 function gitProbe({

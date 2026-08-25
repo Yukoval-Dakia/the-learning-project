@@ -17,6 +17,8 @@ executed exactly as written here — never improvise a variant during an inciden
 | `branch_configuration` | `codex/yuk-916-ci-buildkite-shadow` only | unchanged until Phase 4 cutover |
 | PR auto-trigger | off (`build_pull_requests: false`) | stays off until Phase 4 |
 | Imported GitHub jobs | `migration`, `build` (`.github/workflows/buildkite-shadow-subset.yml`) | unchanged until Phase 2 lane sign-off |
+| Native steps | `verify-build-context`, `usability-lane` (YUK-917 Phase 2, manifest-gated 13/13) | `usability-lane` stays expected-red on the hosted image until the CI image is published |
+| Runner image | hosted `linux-large` image (`agent_image_ref` null) | custom `.buildkite/ci-image` published to GHCR, digest recorded in `pins.env` |
 | Importer plugin pin | immutable ref `github-actions#98159d5e696d06b70df490b9d7d9eabc32bc2b21` (release provenance `v0.13.0`, observed 2026-08-25) | unchanged; re-observe at least every 30 days |
 
 The authoritative desired snapshot is [`.buildkite/pipeline-settings.json`](../../.buildkite/pipeline-settings.json).
@@ -96,7 +98,27 @@ restore payloads untouched for a full Rollback B afterwards.
 | Phase | Trigger change | Cancellation change |
 | --- | --- | --- |
 | 1 (now) | Branch pushes to `codex/yuk-916-ci-buildkite-shadow` only; PR auto-trigger off | `cancel_running_branch_builds: false` |
-| 2 | unchanged; DB lane lands as **native** Buildkite steps (YUK-918: selector + artifact + shards, no importer handoff); runner/usability still pending their sign-off before joining the importer subset | enable `skip_queued_branch_builds: true` with filter `codex/yuk-916-ci-buildkite-shadow` once queue pressure appears |
+| 2 | unchanged; DB lands as native selector/artifact/shards (no importer handoff) and runner/usability lands as a native manifest-gated step | enable `skip_queued_branch_builds: true` with filter `codex/yuk-916-ci-buildkite-shadow` once queue pressure appears |
+
+Phase 2 runner sub-lane (YUK-917, in-repo only — nothing external mutated yet):
+
+1. `.buildkite/ci-image/Dockerfile` pins the immutable Playwright `v1.62.1-noble`
+   base digest (amd64 manifest, resolved 2026-08-25 via
+   `docker buildx imagetools inspect`), installs Node 24.0.0 / pnpm 11.13.1 /
+   Bun 1.3.14, and asserts `chrome --version` at build time.
+2. `.github/workflows/buildkite-ci-image.yml` (lead-operated) builds + pushes it
+   to `ghcr.io/<repo>/buildkite-ci` with only the ephemeral `GITHUB_TOKEN`
+   (`packages: write`); the digest lands in a job summary + artifact. No deploy.
+3. The lead records that digest in `.buildkite/pins.env`
+   (`CI_IMAGE_STATE=image_digest_published`, `CI_IMAGE_DIGEST`,
+   `CI_IMAGE_PUBLISHED_AT`) — while the state stays
+   `image_digest_pending_publication` the pins gate rejects any claimed digest
+   and every usability manifest reports `cutover_ready=false`, so required /
+   cutover use is impossible by construction.
+4. The `usability-lane` pipeline step runs the real 13-scenario suite behind a
+   manifest gate (Chromium launch + 13/13 executed proven; exit 0 alone never
+   passes). On the hosted image it fails closed with
+   `chromium-launch-failed` — leave it red until the image + queue wiring land.
 | 3 | unchanged; HEAD+tree+base+PR parity harness runs inside the verify step | `cancel_running_branch_builds: true` with filter `codex/yuk-916-ci-buildkite-shadow` to mirror the GitHub `concurrency` group |
 | 4 | open the real PR; enable `build_pull_requests: true` (keep `skip_pull_request_builds_for_existing_commits: false`); after both required canaries pass, make the Buildkite check required and drop the GitHub required check from ruleset 16494930 (additive edit, not Rollback A) | keep Phase 3 cancellation |
 

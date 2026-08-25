@@ -5,6 +5,9 @@ export type Violation = {
   actual?: string;
 };
 
+export const IMAGE_STATE_PENDING: 'image_digest_pending_publication';
+export const IMAGE_STATE_PUBLISHED: 'image_digest_published';
+
 export type PinFreshnessRecord = {
   schema_version: 1;
   mode: 'pins';
