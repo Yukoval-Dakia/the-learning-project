@@ -96,12 +96,50 @@ restore payloads untouched for a full Rollback B afterwards.
 | Phase | Trigger change | Cancellation change |
 | --- | --- | --- |
 | 1 (now) | Branch pushes to `codex/yuk-916-ci-buildkite-shadow` only; PR auto-trigger off | `cancel_running_branch_builds: false` |
-| 2 | unchanged; add runner/usability + DB lanes to the subset workflow after their sign-off | enable `skip_queued_branch_builds: true` with filter `codex/yuk-916-ci-buildkite-shadow` once queue pressure appears |
+| 2 | unchanged; DB lane lands as **native** Buildkite steps (YUK-918: selector + artifact + shards, no importer handoff); runner/usability still pending their sign-off before joining the importer subset | enable `skip_queued_branch_builds: true` with filter `codex/yuk-916-ci-buildkite-shadow` once queue pressure appears |
 | 3 | unchanged; HEAD+tree+base+PR parity harness runs inside the verify step | `cancel_running_branch_builds: true` with filter `codex/yuk-916-ci-buildkite-shadow` to mirror the GitHub `concurrency` group |
 | 4 | open the real PR; enable `build_pull_requests: true` (keep `skip_pull_request_builds_for_existing_commits: false`); after both required canaries pass, make the Buildkite check required and drop the GitHub required check from ruleset 16494930 (additive edit, not Rollback A) | keep Phase 3 cancellation |
 
 Cancellation never applies to `main` builds: `cancel_running_branch_builds_filter`
 stays scoped to the migration branch until Phase 4 review.
+
+## Native DB lane (YUK-918 Phase 2)
+
+The DB lane runs as native Buildkite steps (`db-select` → `db-shard` ×2 in
+`.buildkite/pipeline.yml`), not through the `github-actions` importer: the
+importer's `upload-artifact`/`download-artifact` mapping cannot transfer files
+produced by native steps (Build #1 observed `.cache/ci/db-selection.json`
+being invisible to it), so the lane hands off through Buildkite's own
+artifacts instead.
+
+Flow: `db-select` runs `scripts/ci/db-affected.mjs select` once, seals the
+selection into `.cache/ci/db-manifest.json` (schema v1: source HEAD/tree,
+absolute workspace paths, selected files, round-robin shard assignments,
+created/expiry timestamps, and a SHA-256 digest over every manifest byte
+except the digest itself), and uploads it via `buildkite-agent artifact
+upload`. Each `db-shard` job downloads it via `buildkite-agent artifact
+download --step db-select` and re-verifies schema, digest, freshness
+(`BUILDKITE_COMMIT` match + 24h expiry), and shard-count before running
+`scripts/ci/db-affected.mjs run`.
+
+Acceptance semantics (executable in
+`scripts/ci/db-artifact-manifest.test.ts` / `db-artifact-shard.test.ts`):
+
+- >=2 selected files — both shards execute and report the identical selector
+  digest (`selector.status: "verified"`).
+- exactly 1 selected file — shard 1 executes; shard 2 records the same digest
+  plus `skipped_empty_shard: true`.
+- corrupt/tampered manifest (digest mismatch, schema violation, unparseable
+  bytes) — the shard fails closed without running tests; never an empty green.
+- missing/stale/expired manifest — deterministic fallback to the full sharded
+  DB suite (a real non-empty suite), recorded as `selector.status: "fallback"`
+  with the reason.
+
+A runner/manifest skip disagreement (`skip-consistency-drift`) also fails the
+shard. Rollback for this lane is a repo change: remove the two `db-*` steps
+from `.buildkite/pipeline.yml` (and optionally the two scripts) — no external
+pipeline state is involved. DB shards need Docker on the `linux-large` image
+for testcontainers Postgres, same requirement as the GitHub `db` job.
 
 ## Bridge invariants
 

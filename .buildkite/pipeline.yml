@@ -4,7 +4,8 @@
 # its upload step runs `buildkite-agent pipeline upload .buildkite/pipeline.yml`.
 # Steps run on the linux-large hosted queue; no deploy or production credentials
 # are referenced. The importer is pinned in .buildkite/pins.env and validated by
-# the verify step via the pins freshness gate.
+# the verify step via the pins freshness gate. The DB lane (YUK-918 Phase 2) is
+# native: selector + artifact + shards, with no importer artifact handoff.
 steps:
   - label: ":identification_card: verify build context"
     key: verify-build-context
@@ -25,3 +26,32 @@ steps:
           runners:
             - runs-on: ubuntu-latest
               queue: linux-large
+
+  # YUK-918 Phase 2 native DB lane: the selector step seals the affected DB
+  # selection into a digest-covered manifest uploaded via buildkite-agent
+  # artifacts; the shard step downloads/verifies that manifest before running.
+  # No GitHub importer artifact handoff is used for the DB lane.
+  - label: ":database: select DB tests (native)"
+    key: db-select
+    depends_on: verify-build-context
+    command: .buildkite/scripts/db-select-upload.sh
+    env:
+      PINS_FILE: .buildkite/pins.env
+    agents:
+      queue: linux-large
+    timeout_in_minutes: 20
+    artifact_paths:
+      - .cache/ci/db-selection.json
+
+  - label: ":database: DB tests (native shard)"
+    key: db-shard
+    depends_on: db-select
+    command: .buildkite/scripts/db-shard-run.sh
+    parallelism: 2
+    env:
+      PINS_FILE: .buildkite/pins.env
+    agents:
+      queue: linux-large
+    timeout_in_minutes: 30
+    artifact_paths:
+      - .cache/ci/db-*.json
