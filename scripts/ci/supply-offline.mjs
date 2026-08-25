@@ -82,8 +82,16 @@ export async function pointWorkspaceAtExtractedPlugins({
 export async function startNetworkSentinel() {
   const attempts = [];
   const server = createServer((socket) => {
-    attempts.push(`${socket.remoteAddress ?? 'unknown'}:${socket.remotePort ?? 0}`);
-    socket.destroy();
+    const peer = `${socket.remoteAddress ?? 'unknown'}:${socket.remotePort ?? 0}`;
+    socket.setTimeout(1_000, () => {
+      attempts.push(`${peer} <no-request-bytes>`);
+      socket.destroy();
+    });
+    socket.once('data', (chunk) => {
+      const requestLine = chunk.toString('utf8').split(/\r?\n/, 1)[0].slice(0, 500);
+      attempts.push(`${peer} ${requestLine}`);
+      socket.end('HTTP/1.1 502 Offline\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    });
   });
   await new Promise((resolvePromise, rejectPromise) => {
     server.once('error', rejectPromise);
