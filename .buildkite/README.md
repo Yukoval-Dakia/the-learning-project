@@ -36,10 +36,10 @@ payload location, and rollback commands live in
 
 ## Importer pin
 
-`pins.env` pins the importer plugin by immutable release tag plus verified
-commit. The pin recorded on 2026-08-25 is `github-actions#v0.13.0` @
-`98159d5e696d06b70df490b9d7d9eabc32bc2b21`, verified with `git ls-remote` and a
-tag checkout. The originally claimed pin (`v0.6.0` @
+`pins.env` records the importer release provenance and verified commit, while
+`pipeline.yml` loads the plugin by the immutable commit ref
+`github-actions#98159d5e696d06b70df490b9d7d9eabc32bc2b21` (release `v0.13.0`),
+verified on 2026-08-25 with `git ls-remote` and a tag checkout. The originally claimed pin (`v0.6.0` @
 `a8ea2f2c4af84794a4f18c93b1dc78bcbb252337`) does not exist upstream — GitHub
 returns 422 for that SHA and no ref carries it — and v0.6.0 predates the
 `workflows:` configuration shape that the Phase 0 shadow pipeline actually

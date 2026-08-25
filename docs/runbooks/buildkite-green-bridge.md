@@ -17,7 +17,7 @@ executed exactly as written here — never improvise a variant during an inciden
 | `branch_configuration` | `codex/yuk-916-ci-buildkite-shadow` only | unchanged until Phase 4 cutover |
 | PR auto-trigger | off (`build_pull_requests: false`) | stays off until Phase 4 |
 | Imported GitHub jobs | `migration`, `build` (`.github/workflows/buildkite-shadow-subset.yml`) | unchanged until Phase 2 lane sign-off |
-| Importer plugin pin | `github-actions#v0.13.0` @ `98159d5e696d06b70df490b9d7d9eabc32bc2b21` (observed 2026-08-25) | unchanged; re-observe at least every 30 days |
+| Importer plugin pin | immutable ref `github-actions#98159d5e696d06b70df490b9d7d9eabc32bc2b21` (release provenance `v0.13.0`, observed 2026-08-25) | unchanged; re-observe at least every 30 days |
 
 The authoritative desired snapshot is [`.buildkite/pipeline-settings.json`](../../.buildkite/pipeline-settings.json).
 Before every phase change, diff the live pipeline against it:
@@ -69,17 +69,19 @@ Restores the original `bili-record` pipeline definition from the restore
 payload (direct `github-actions#latest` import, no branch restriction):
 
 ```bash
-bk pipeline update the-learning-project-ci-shadow \
-  --name bili-record --file /private/tmp/buildkite-green-bridge-20260825/external/pipeline-restore.json
+bk api --method PATCH /pipelines/the-learning-project-ci-shadow \
+  --data "$(cat /private/tmp/buildkite-green-bridge-20260825/external/pipeline-restore.json)"
 ```
 
-(If the CLI renames are rejected because the slug differs, first run
-`bk pipeline view the-learning-project-ci-shadow --json` and confirm the slug,
-then apply the restore payload fields with the API
-`PUT /v2/organizations/yuqi-yin/pipelines/the-learning-project-ci-shadow` using
-the same JSON body.)
+Verify the renamed endpoint and original inline importer were restored:
 
-Verify with `bk pipeline view bili-record` and one manual build on `main`.
+```bash
+bk api /pipelines/bili-record | jq -e '
+  .name == "bili-record" and
+  .slug == "bili-record" and
+  (.configuration | contains("github-actions#latest"))
+'
+```
 
 ### Rollback C — stop the shadow without restoring the importer
 

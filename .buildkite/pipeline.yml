@@ -20,7 +20,7 @@ steps:
     agents:
       queue: linux-large
     plugins:
-      - github-actions#v0.13.0:
+      - github-actions#98159d5e696d06b70df490b9d7d9eabc32bc2b21:
           workflow: .github/workflows/buildkite-shadow-subset.yml
           runners:
             - runs-on: ubuntu-latest
