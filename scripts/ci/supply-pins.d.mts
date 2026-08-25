@@ -4,7 +4,7 @@ export type PinnedPlatformPin = {
   seedRequired: false;
   archiveSha256: string;
   manifestSha256: string;
-  seedBuild: number;
+  seedBuild: string;
 };
 export type PlatformPin = BootstrapPlatformPin | PinnedPlatformPin;
 export interface SupplyPins {

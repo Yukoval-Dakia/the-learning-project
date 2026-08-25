@@ -17,6 +17,7 @@ import { SupplyContractError, parseLooseJson } from './supply-graph.mjs';
 
 const ZERO_SHA256 = '0'.repeat(64);
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const BUILDKITE_BUILD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export const PINS_SCHEMA_VERSION = 1;
 export const SEED_RECEIPT_METADATA_KEY = 'supply-seed-receipt';
@@ -25,7 +26,7 @@ export const SEED_RECEIPT_METADATA_KEY = 'supply-seed-receipt';
  * @typedef {object} PinnedPlatform
  * @property {string} archiveSha256
  * @property {string} manifestSha256
- * @property {number|string} seedBuild
+ * @property {string} seedBuild
  */
 
 function parsePlatformEntry(key, entry) {
@@ -55,14 +56,12 @@ function parsePlatformEntry(key, entry) {
       );
     }
   }
-  const build =
-    typeof seedBuild === 'number' ? seedBuild : Number.parseInt(String(seedBuild ?? ''), 10);
-  if (!Number.isInteger(build) || build <= 0) {
+  if (typeof seedBuild !== 'string' || !BUILDKITE_BUILD_ID_PATTERN.test(seedBuild)) {
     throw new SupplyContractError(
-      `runtime artifact pins platform ${key} is missing the positive integer seedBuild to download from`,
+      `runtime artifact pins platform ${key} is missing the immutable Buildkite UUID seedBuild to download from`,
     );
   }
-  return { key, seedRequired: false, archiveSha256, manifestSha256, seedBuild: build };
+  return { key, seedRequired: false, archiveSha256, manifestSha256, seedBuild };
 }
 
 export async function loadPins(pinsPath) {

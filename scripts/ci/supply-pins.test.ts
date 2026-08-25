@@ -23,6 +23,7 @@ const pinsPath = join(repoRoot, '.buildkite', 'supply', 'runtime-artifact-pins.j
 const ZERO = '0'.repeat(64);
 const ARCHIVE = 'a'.repeat(64);
 const MANIFEST = 'b'.repeat(64);
+const BUILD_ID = '01a03968-7cde-4675-9fb6-2cc900d8446a';
 
 const BASE_PINS = {
   schemaVersion: 1,
@@ -65,10 +66,10 @@ describe('runtime artifact pins validation', () => {
     ).rejects.toThrow(/malformed or missing archiveSha256/);
     await expect(
       loadPins(await pinsFile({ archiveSha256: ARCHIVE, manifestSha256: MANIFEST })),
-    ).rejects.toThrow(/missing the positive integer seedBuild/);
+    ).rejects.toThrow(/missing the immutable Buildkite UUID seedBuild/);
     await expect(
       loadPins(await pinsFile({ archiveSha256: ARCHIVE, manifestSha256: MANIFEST, seedBuild: 0 })),
-    ).rejects.toThrow(/positive integer seedBuild/);
+    ).rejects.toThrow(/immutable Buildkite UUID seedBuild/);
     await expect(loadPins(await pinsFile({ seedRequired: false }))).rejects.toThrow(
       /seedRequired: false/,
     );
@@ -93,10 +94,10 @@ describe('runtime artifact pins validation', () => {
     const bootstrap = await loadPins(await pinsFile({ seedRequired: true }));
     expect(isSeedRequired(bootstrap.platforms['linux-x64'])).toBe(true);
     const pinned = await loadPins(
-      await pinsFile({ archiveSha256: ARCHIVE, manifestSha256: MANIFEST, seedBuild: 42 }),
+      await pinsFile({ archiveSha256: ARCHIVE, manifestSha256: MANIFEST, seedBuild: BUILD_ID }),
     );
     expect(isSeedRequired(pinned.platforms['linux-x64'])).toBe(false);
-    expect(requirePinnedPlatform(pinned, 'linux-x64').seedBuild).toBe(42);
+    expect(requirePinnedPlatform(pinned, 'linux-x64').seedBuild).toBe(BUILD_ID);
   });
 
   it('pins the seeded Linux artifact and keeps unseeded platforms fail-closed', async () => {
@@ -104,7 +105,7 @@ describe('runtime artifact pins validation', () => {
     expect(requirePinnedPlatform(pins, 'linux-x64')).toMatchObject({
       archiveSha256: '7fdebd02825b3f324e4ab1de34d10bd26fcbbd5a103a2bc43c360e049ade48fc',
       manifestSha256: '8f2b4d1595a92b81c33155f16a6fb4ed82d0715b31d67fcc81529b1713e1b63c',
-      seedBuild: 12,
+      seedBuild: BUILD_ID,
     });
     expect(() => requirePinnedPlatform(pins, 'darwin-arm64')).toThrow(
       /bootstrap state \(seedRequired\)/,
@@ -141,7 +142,7 @@ describe('cross-build artifact download arguments', () => {
       buildArtifactDownloadArgs({
         artifactName: closureArtifactName(ARCHIVE),
         destination: 'artifacts',
-        build: 42,
+        build: BUILD_ID,
         pipeline: 'the-learning-project-ci-shadow',
         currentPipeline: 'the-learning-project-ci-shadow',
       }),
@@ -151,7 +152,7 @@ describe('cross-build artifact download arguments', () => {
       `runtime-closure-${ARCHIVE}.tar.gz`,
       'artifacts',
       '--build',
-      '42',
+      BUILD_ID,
       '--pipeline',
       'the-learning-project-ci-shadow',
     ]);
@@ -162,7 +163,7 @@ describe('cross-build artifact download arguments', () => {
       buildArtifactDownloadArgs({
         artifactName: loaderArtifactName('linux', 'x64'),
         destination: 'artifacts',
-        build: '42',
+        build: BUILD_ID,
         pipeline: 'the-supply-seed-pipeline',
         currentPipeline: 'the-learning-project-ci-shadow',
       }),
@@ -172,7 +173,7 @@ describe('cross-build artifact download arguments', () => {
       'opencode-loader-linux-x64.tgz',
       'artifacts',
       '--build',
-      '42',
+      BUILD_ID,
       '--pipeline',
       'the-supply-seed-pipeline',
     ]);
@@ -180,7 +181,7 @@ describe('cross-build artifact download arguments', () => {
 
   it('downloads the digest-named closure and loader, in that order, from the pinned build', async () => {
     const pins = await loadPins(
-      await pinsFile({ archiveSha256: ARCHIVE, manifestSha256: MANIFEST, seedBuild: 42 }),
+      await pinsFile({ archiveSha256: ARCHIVE, manifestSha256: MANIFEST, seedBuild: BUILD_ID }),
     );
     const calls: unknown[][] = [];
     const downloaded = downloadPinnedArtifacts({
@@ -200,7 +201,7 @@ describe('cross-build artifact download arguments', () => {
         `runtime-closure-${ARCHIVE}.tar.gz`,
         'artifacts',
         '--build',
-        '42',
+        BUILD_ID,
         '--pipeline',
         'the-learning-project-ci-shadow',
       ],
@@ -210,7 +211,7 @@ describe('cross-build artifact download arguments', () => {
         'opencode-loader-linux-x64.tgz',
         'artifacts',
         '--build',
-        '42',
+        BUILD_ID,
         '--pipeline',
         'the-learning-project-ci-shadow',
       ],

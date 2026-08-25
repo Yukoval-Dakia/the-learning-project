@@ -150,7 +150,7 @@ async function buildFixtureArtifact(root: string) {
       [`${process.platform}-${process.arch}`]: {
         archiveSha256: packaged.tarSha256,
         manifestSha256: packaged.manifestSha256,
-        seedBuild: 7,
+        seedBuild: '01a03968-7cde-4675-9fb6-2cc900d8446a',
       },
     },
   };
@@ -257,7 +257,7 @@ describe('offline artifact consumer', () => {
         [`${process.platform}-${process.arch}`]: {
           archiveSha256: written.sha256,
           manifestSha256: sha256Hex(Buffer.from(manifest)),
-          seedBuild: 7,
+          seedBuild: '01a03968-7cde-4675-9fb6-2cc900d8446a',
         },
       },
     };
