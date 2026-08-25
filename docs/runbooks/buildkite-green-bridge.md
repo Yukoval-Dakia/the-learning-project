@@ -18,7 +18,7 @@ executed exactly as written here — never improvise a variant during an inciden
 | PR auto-trigger | off (`build_pull_requests: false`) | stays off until Phase 4 |
 | Imported GitHub jobs | `migration`, `build` (`.github/workflows/buildkite-shadow-subset.yml`) | unchanged until Phase 2 lane sign-off |
 | Native steps | `verify-build-context`, `usability-lane` (YUK-917 Phase 2, manifest-gated 13/13) | `usability-lane` stays expected-red on the hosted image until the CI image is published |
-| Runner image | queue `bd009abf-5ca8-4d38-8e32-3cdf7b78cda5`, GHCR digest `sha256:7c78040230e6b50fcc355ec1bb562ac566ceb4f1dbfcb90a525e4e01af68139d` | unchanged |
+| Runner image | queue `bd009abf-5ca8-4d38-8e32-3cdf7b78cda5`, GHCR digest `sha256:46566435c487fc0e6cb3d736f40bf7bd6ed3f7911ce7f3277590397d9efb460a` | unchanged |
 | Importer plugin pin | immutable ref `github-actions#98159d5e696d06b70df490b9d7d9eabc32bc2b21` (release provenance `v0.13.0`, observed 2026-08-25) | unchanged; re-observe at least every 30 days |
 
 The authoritative desired snapshot is [`.buildkite/pipeline-settings.json`](../../.buildkite/pipeline-settings.json).

@@ -97,7 +97,7 @@ repository. Re-observe and refresh pins at least every `PIN_MAX_AGE_DAYS`;
 (`CI_IMAGE_BASE_DIGEST`, the amd64 manifest of
 `mcr.microsoft.com/playwright:v1.62.1-noble`, resolved 2026-08-25 via
 `docker buildx imagetools inspect`) and the published image digest from GitHub
-Actions run `32851946449`. Buildkite queue `green-bridge-linux-large`
+Actions run `32858819395`. Buildkite queue `green-bridge-linux-large`
 (`bd009abf-5ca8-4d38-8e32-3cdf7b78cda5`) read-backs the same immutable GHCR
 digest; the freshness bound applies to the publication observation.
 

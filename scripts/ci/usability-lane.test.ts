@@ -13,7 +13,7 @@ import {
 const SHA = 'a'.repeat(40);
 const DIGEST = `sha256:${'9'.repeat(64)}`;
 const PUBLISHED_IMAGE_DIGEST =
-  'sha256:7c78040230e6b50fcc355ec1bb562ac566ceb4f1dbfcb90a525e4e01af68139d';
+  'sha256:46566435c487fc0e6cb3d736f40bf7bd6ed3f7911ce7f3277590397d9efb460a';
 
 const PROBE_OK = {
   schema_version: 1,
