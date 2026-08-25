@@ -54,4 +54,19 @@ describe('MeshGraph node keyboard activation (YUK-718)', () => {
     fireEvent.keyDown(graphNode(), { key: 'Enter' });
     expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ id: 'n1' }));
   });
+
+  it('wraps long CJK labels while retaining the full accessible name (YUK-897 F1)', () => {
+    const fullName = '复合函数链式法则 E2E canary [B/C] 长文本';
+    render(
+      <MeshGraph nodes={[node({ id: 'long', name: fullName })]} edges={[]} onPick={vi.fn()} />,
+    );
+
+    const graph = graphNode();
+    expect(graph.getAttribute('aria-label')).toBe(fullName);
+    expect(graph.querySelector('title')?.textContent).toBe(fullName);
+    expect(graph.querySelectorAll('tspan').length).toBeGreaterThan(1);
+    const labelBackground = graph.querySelector('.mesh-node-label-bg');
+    expect(Number(labelBackground?.getAttribute('width'))).toBeLessThanOrEqual(176);
+    expect(Number(labelBackground?.getAttribute('height'))).toBeGreaterThan(20);
+  });
 });

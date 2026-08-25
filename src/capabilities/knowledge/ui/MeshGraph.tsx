@@ -10,6 +10,7 @@ import { subjectContentPropsForDomain } from '@/ui/lib/subject';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import type { KnowledgeEdgeRow, KnowledgeTreeNode } from './knowledge-api';
 import { isKnowledgeContainer } from './knowledge-node-kind';
+import { layoutMeshLabel } from './label-layout';
 import { LAYOUT_HEIGHT, LAYOUT_WIDTH, computeLayout } from './layout';
 import { masteryTone } from './mastery-tone';
 import { REL_CUE } from './relation-cue';
@@ -86,12 +87,12 @@ const MeshNode = memo(function MeshNode({
   const tone = masteryTone(m ?? undefined);
   const r = isHub ? 24 : 18;
   const circ = 2 * Math.PI * r;
-  const label = node.name.length > 8 ? `${node.name.slice(0, 8)}…` : node.name;
-  const labelWidth = Math.min(160, Math.max(56, label.length * 14 + 16));
+  const label = layoutMeshLabel(node.name);
   return (
     <g
       className={`mesh-node${isActive ? ' is-active' : ''}`}
       transform={`translate(${x} ${y})`}
+      aria-label={label.fullName}
       // biome-ignore lint/a11y/useSemanticElements: SVG <g> 不能是 <button>；role=button + tabIndex 是可聚焦图节点的正确 ARIA（旧 KnowledgeGraph 同例）
       role="button"
       tabIndex={0}
@@ -106,6 +107,7 @@ const MeshNode = memo(function MeshNode({
         }
       }}
     >
+      <title>{label.fullName}</title>
       {/* 三层节点：填充 disc（+shadow）→ 满轨底环 → 掌握度弧。
           S5 (YUK-335): stroke/选中态全交给 CSS——.mesh-node.is-active
           .mesh-disc 的 coral stroke 胜过 .mesh-disc.tone-* 规则。 */}
@@ -133,10 +135,10 @@ const MeshNode = memo(function MeshNode({
         {isContainer ? '容器' : pct == null ? '—' : pct}
       </text>
       <rect
-        x={-labelWidth / 2}
+        x={-label.width / 2}
         y={r + 7}
-        width={labelWidth}
-        height={20}
+        width={label.width}
+        height={label.height}
         rx={8}
         className="mesh-node-label-bg"
       />
@@ -148,7 +150,11 @@ const MeshNode = memo(function MeshNode({
           className: 'mesh-node-label',
         })}
       >
-        {label}
+        {label.lines.map((line, index) => (
+          <tspan key={`${line}-${line.length}`} x="0" dy={index === 0 ? 0 : label.lineHeight}>
+            {line}
+          </tspan>
+        ))}
       </text>
     </g>
   );
@@ -217,7 +223,7 @@ export function MeshGraph({
   );
 
   return (
-    <div className="mesh-wrap" aria-label="知识关系图">
+    <div className="mesh-wrap" role="group" aria-label="知识关系图">
       {/* 缩放 controls（screen-knowledge.jsx L62-68）：缩小 / 百分比 / 放大 / 复位。 */}
       <div className="mesh-controls">
         <button
