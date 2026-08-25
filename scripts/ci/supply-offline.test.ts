@@ -13,6 +13,7 @@ import {
   sha256Hex,
 } from './supply-graph.mjs';
 import { packageArtifact } from './supply-package.mjs';
+import { offlineLoaderEnv } from './supply-offline.mjs';
 import { collectTarEntries, writeDeterministicTar } from './supply-tar-writer.mjs';
 
 const runs: string[] = [];
@@ -188,6 +189,10 @@ async function consumeFixture(
 }
 
 describe('offline artifact consumer', () => {
+  it('disables the OpenCode models catalog refresh in the isolated loader env', () => {
+    expect(offlineLoaderEnv('/tmp/offline-home', 4321).OPENCODE_DISABLE_MODELS_FETCH).toBe('1');
+  });
+
   it('verifies and loads a well-formed artifact with the network sentinel silent', async () => {
     const root = await tempDir('green');
     const fixture = await buildFixtureArtifact(root);
