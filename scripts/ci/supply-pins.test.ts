@@ -152,10 +152,12 @@ describe('cross-build artifact download arguments', () => {
       'artifacts',
       '--build',
       '42',
+      '--pipeline',
+      'the-learning-project-ci-shadow',
     ]);
   });
 
-  it('appends --pipeline only for a genuinely cross-pipeline source', () => {
+  it('scopes a cross-pipeline source explicitly', () => {
     expect(
       buildArtifactDownloadArgs({
         artifactName: loaderArtifactName('linux', 'x64'),
@@ -192,8 +194,26 @@ describe('cross-build artifact download arguments', () => {
       },
     });
     expect(calls).toEqual([
-      ['artifact', 'download', `runtime-closure-${ARCHIVE}.tar.gz`, 'artifacts', '--build', '42'],
-      ['artifact', 'download', 'opencode-loader-linux-x64.tgz', 'artifacts', '--build', '42'],
+      [
+        'artifact',
+        'download',
+        `runtime-closure-${ARCHIVE}.tar.gz`,
+        'artifacts',
+        '--build',
+        '42',
+        '--pipeline',
+        'the-learning-project-ci-shadow',
+      ],
+      [
+        'artifact',
+        'download',
+        'opencode-loader-linux-x64.tgz',
+        'artifacts',
+        '--build',
+        '42',
+        '--pipeline',
+        'the-learning-project-ci-shadow',
+      ],
     ]);
     expect(downloaded.archivePath).toBe(`artifacts/runtime-closure-${ARCHIVE}.tar.gz`);
     expect(downloaded.loaderPath).toBe('artifacts/opencode-loader-linux-x64.tgz');

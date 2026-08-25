@@ -132,8 +132,9 @@ export function loaderArtifactName(platform, arch) {
 
 /**
  * Exact argv for the cross-build artifact download the required gate runs.
- * `--pipeline` is appended only for a genuinely cross-pipeline source; a
- * same-pipeline `--build` download needs no pipeline scope.
+ * A numeric build number needs an explicit pipeline scope even when the source
+ * pipeline matches the current pipeline; otherwise the agent treats it as a
+ * build UUID and requests `/builds/<number>`.
  */
 export function buildArtifactDownloadArgs({
   artifactName,
@@ -142,9 +143,17 @@ export function buildArtifactDownloadArgs({
   pipeline,
   currentPipeline,
 }) {
-  const argv = ['artifact', 'download', artifactName, destination, '--build', String(build)];
-  if (pipeline !== currentPipeline) argv.push('--pipeline', pipeline);
-  return argv;
+  void currentPipeline;
+  return [
+    'artifact',
+    'download',
+    artifactName,
+    destination,
+    '--build',
+    String(build),
+    '--pipeline',
+    pipeline,
+  ];
 }
 
 /** The pinned loader integrity recorded in bun.lock for the platform binary package. */
