@@ -3,16 +3,20 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NoteEditor } from './NoteEditor';
-import type { BodyBlock } from './notes-api';
+import type { BodyBlock, SemanticKind } from './notes-api';
 
 afterEach(cleanup);
 
-function block(id: string, text: string): BodyBlock {
+function block(
+  id: string,
+  text: string,
+  semanticKind: Exclude<SemanticKind, 'check'> = 'definition',
+): BodyBlock {
   return {
     type: 'semanticBlock',
     attrs: {
       id,
-      semantic_kind: 'definition',
+      semantic_kind: semanticKind,
       source_markdown: text,
     },
     content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
@@ -27,6 +31,42 @@ function renderEditor(onChange = vi.fn(), value = blocks) {
 }
 
 describe('NoteEditor block controls', () => {
+  it('names every editable block by its current order and semantic type', () => {
+    const initialBlocks = [block('one', '第一块', 'definition'), block('two', '第二块', 'example')];
+    const { rerender } = render(
+      <NoteEditor blocks={initialBlocks} labels={[]} noteId="note_1" onChange={vi.fn()} />,
+    );
+
+    expect(screen.getByRole('textbox', { name: '第 1 块「定义」内容' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: '第 2 块「例子」内容' })).toBeTruthy();
+
+    const inserted = block('inserted', '插入块', 'pitfall');
+    rerender(
+      <NoteEditor
+        blocks={[inserted, ...initialBlocks]}
+        labels={[]}
+        noteId="note_1"
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('textbox', { name: '第 1 块「易错点」内容' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: '第 2 块「定义」内容' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: '第 3 块「例子」内容' })).toBeTruthy();
+
+    rerender(
+      <NoteEditor
+        blocks={[initialBlocks[1], initialBlocks[0]]}
+        labels={[]}
+        noteId="note_1"
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('textbox', { name: '第 1 块「例子」内容' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: '第 2 块「定义」内容' })).toBeTruthy();
+  });
+
   it('moves the focused block with ArrowDown and prevents page scrolling', () => {
     const onChange = renderEditor();
     const grip = screen.getByRole('button', {

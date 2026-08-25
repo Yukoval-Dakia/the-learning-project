@@ -299,10 +299,15 @@ export function NoteEditor({
             : `重排第 ${i + 1} 块（共 ${blocks.length} 块）；用上下方向键移动`;
         const insertLabel = `在第 ${i + 1} 块后插入块`;
         const deleteLabel = `删除第 ${i + 1} 块`;
+        const textAreaType =
+          b.attrs?.semantic_kind && b.attrs.semantic_kind !== 'check'
+            ? SEMANTIC_KIND_LABEL[b.attrs.semantic_kind]
+            : '文本';
         return (
           <div
             key={b.attrs?.id ?? `${b.type}-${i}`}
             className={`nb-wrap${overIdx === i ? ' is-over' : ''}${dragIdx === i ? ' is-dragging' : ''}`}
+            role="listitem"
             onDragOver={(e) => {
               if (dragIdx != null) {
                 e.preventDefault();
@@ -373,6 +378,7 @@ export function NoteEditor({
                     rows={Math.max(2, (b.attrs?.source_markdown ?? '').split('\n').length)}
                     value={b.attrs?.source_markdown ?? ''}
                     placeholder="写点什么…"
+                    aria-label={`第 ${i + 1} 块「${textAreaType}」内容`}
                     onChange={(e) => {
                       const next = [...blocks];
                       next[i] = withText(b, e.target.value);
