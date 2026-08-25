@@ -1,0 +1,31 @@
+{
+  "$comment": "YUK-916 Green Bridge Phase 1 desired external pipeline settings snapshot. Diff the live pipeline (`bk pipeline view the-learning-project-ci-shadow --json`) against this file before every phase change; the runbook at docs/runbooks/buildkite-green-bridge.md owns the phase plan and rollback commands.",
+  "name": "the-learning-project-ci-shadow",
+  "slug": "the-learning-project-ci-shadow",
+  "description": "YUK-916 Buildkite Green Bridge shadow; no deploy or production credentials",
+  "repository": "https://github.com/Yukoval-Dakia/the-learning-project.git",
+  "configuration": "steps:\n  - label: \":pipeline: Upload versioned shadow pipeline\"\n    key: upload-shadow-pipeline\n    command: buildkite-agent pipeline upload .buildkite/pipeline.yml\n    agents:\n      queue: linux-small\n",
+  "default_branch": "main",
+  "branch_configuration": "codex/yuk-916-ci-buildkite-shadow",
+  "skip_queued_branch_builds": false,
+  "skip_queued_branch_builds_filter": null,
+  "cancel_running_branch_builds": false,
+  "cancel_running_branch_builds_filter": null,
+  "provider_settings": {
+    "build_branches": true,
+    "build_pull_requests": false,
+    "build_tags": false,
+    "filter_enabled": false,
+    "github_webhooks_disabled": false,
+    "github_workflow_access_tokens_enabled": true,
+    "prefix_pull_request_fork_branch_names": true,
+    "prevent_custom_statuses_from_using_buildkite_prefix": true,
+    "publish_commit_status": true,
+    "publish_commit_status_per_step": false,
+    "repository": "Yukoval-Dakia/the-learning-project",
+    "separate_pull_request_statuses": false,
+    "skip_builds_for_existing_commits": false,
+    "skip_pull_request_builds_for_existing_commits": false,
+    "trigger_mode": "code"
+  }
+}

@@ -1,0 +1,27 @@
+# YUK-916 Buildkite Green Bridge - Phase 1 versioned shadow pipeline.
+#
+# The external pipeline `the-learning-project-ci-shadow` bootstraps from this file:
+# its upload step runs `buildkite-agent pipeline upload .buildkite/pipeline.yml`.
+# Steps run on the linux-large hosted queue; no deploy or production credentials
+# are referenced. The importer is pinned in .buildkite/pins.env and validated by
+# the verify step via the pins freshness gate.
+steps:
+  - label: ":identification_card: verify build context"
+    key: verify-build-context
+    command: .buildkite/scripts/verify-build-context.sh
+    env:
+      PINS_FILE: .buildkite/pins.env
+    agents:
+      queue: linux-large
+
+  - label: ":github: import ci-gate subset (migration, build)"
+    key: github-actions-import
+    depends_on: verify-build-context
+    agents:
+      queue: linux-large
+    plugins:
+      - github-actions#v0.13.0:
+          workflow: .github/workflows/buildkite-shadow-subset.yml
+          runners:
+            - runs-on: ubuntu-latest
+              queue: linux-large

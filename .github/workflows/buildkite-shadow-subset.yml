@@ -1,0 +1,57 @@
+name: CI Gate shadow subset
+
+# YUK-916 Buildkite Green Bridge Phase 1: the proven-compatible lane subset
+# (migration smoke + production build) imported by .buildkite/pipeline.yml via
+# the pinned github-actions plugin. Job step lists are copied verbatim from
+# .github/workflows/ci-gate.yml; do not add lanes here before their Phase 2
+# compatibility sign-off. The push trigger exists so Buildkite branch builds
+# select this workflow group; GitHub itself only ever runs it on the migration
+# branch (manual dispatch or branch push), which doubles as the GitHub-side
+# parity run for the same two jobs.
+
+on:
+  push:
+    branches: [codex/yuk-916-ci-buildkite-shadow]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  migration:
+    name: migration smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Migration smoke
+        run: pnpm test:migration
+
+  build:
+    name: production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build server, worker, migrate, and web
+        run: pnpm build
+        env:
+          DATABASE_URL: postgres://placeholder
