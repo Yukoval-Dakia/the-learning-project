@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { type Violation, parsePins, validatePins } from './green-bridge-pins.mjs';
 import {
@@ -27,6 +28,21 @@ const VALID_PINS = [
   'CI_IMAGE_PLAYWRIGHT_VERSION=1.62.1',
   'CI_IMAGE_STATE=image_digest_pending_publication',
 ].join('\n');
+
+const ciGateWorkflow = readFileSync('.github/workflows/ci-gate.yml', 'utf8');
+
+describe('GitHub checkout parity receipt', () => {
+  it('checks every CI Gate lane out at the PR head and uploads one identity receipt', () => {
+    expect(ciGateWorkflow.match(/uses: actions\/checkout@v4/g)).toHaveLength(8);
+    expect(
+      ciGateWorkflow.match(
+        /ref: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/g,
+      ),
+    ).toHaveLength(8);
+    expect(ciGateWorkflow).toContain('name: green-bridge-context-github');
+    expect(ciGateWorkflow).toContain('node scripts/ci/verify-build-context.mjs');
+  });
+});
 
 function gitProbe({
   head = SHA_A,
