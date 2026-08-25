@@ -1,4 +1,4 @@
-import { and, eq, isNull, notLike, sql } from 'drizzle-orm';
+import { eq, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_mastery } from '@/db/schema';
 import { getMasteryProjection } from '@/server/mastery/state';
@@ -79,7 +79,11 @@ export async function loadTreeSnapshot(db: Db): Promise<KnowledgeNode[]> {
     })
     .from(knowledge)
     .leftJoin(knowledge_mastery, eq(knowledge_mastery.knowledge_id, knowledge.id))
-    .where(and(isNull(knowledge.archived_at), notLike(knowledge.id, 'synthetic:%')))
+    .where(isNull(knowledge.archived_at))
+    // NOTE (YUK-897): synthetic:* rows are intentionally INCLUDED here. Internal
+    // consumers (goal-scope, edge-proposal, hub-sync) need the seed scaffolding;
+    // learner-facing exclusion happens at the API projection boundary
+    // (src/capabilities/knowledge/api/tree.ts), not in the shared snapshot.
     // Deterministic order BEFORE the cap (CODEX-3): a bare LIMIT with no ORDER BY
     // lets Postgres return an arbitrary 5000-row subset, so two callers on the
     // same data could see different rows — and a truncated subset could drop a
