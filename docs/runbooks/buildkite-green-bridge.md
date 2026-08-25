@@ -13,12 +13,12 @@ executed exactly as written here — never improvise a variant during an inciden
 | Repository | `https://github.com/Yukoval-Dakia/the-learning-project.git` | unchanged |
 | Bootstrap configuration | one step: `buildkite-agent pipeline upload .buildkite/pipeline.yml` on queue `linux-small` | unchanged |
 | Versioned pipeline | `.buildkite/pipeline.yml` on branch `codex/yuk-916-ci-buildkite-shadow` | same, merged forward with the branch |
-| Step queues | `linux-large` for the identity step and imported jobs | unchanged |
+| Step queues | `green-bridge-linux-large` for identity, imported jobs, DB, and usability | unchanged |
 | `branch_configuration` | `codex/yuk-916-ci-buildkite-shadow` only | unchanged until Phase 4 cutover |
 | PR auto-trigger | off (`build_pull_requests: false`) | stays off until Phase 4 |
 | Imported GitHub jobs | `migration`, `build` (`.github/workflows/buildkite-shadow-subset.yml`) | unchanged until Phase 2 lane sign-off |
 | Native steps | `verify-build-context`, `usability-lane` (YUK-917 Phase 2, manifest-gated 13/13) | `usability-lane` stays expected-red on the hosted image until the CI image is published |
-| Runner image | hosted `linux-large` image (`agent_image_ref` null) | custom `.buildkite/ci-image` published to GHCR, digest recorded in `pins.env` |
+| Runner image | queue `bd009abf-5ca8-4d38-8e32-3cdf7b78cda5`, GHCR digest `sha256:7c78040230e6b50fcc355ec1bb562ac566ceb4f1dbfcb90a525e4e01af68139d` | unchanged |
 | Importer plugin pin | immutable ref `github-actions#98159d5e696d06b70df490b9d7d9eabc32bc2b21` (release provenance `v0.13.0`, observed 2026-08-25) | unchanged; re-observe at least every 30 days |
 
 The authoritative desired snapshot is [`.buildkite/pipeline-settings.json`](../../.buildkite/pipeline-settings.json).
@@ -100,21 +100,19 @@ restore payloads untouched for a full Rollback B afterwards.
 | 1 (now) | Branch pushes to `codex/yuk-916-ci-buildkite-shadow` only; PR auto-trigger off | `cancel_running_branch_builds: false` |
 | 2 | unchanged; DB lands as native selector/artifact/shards (no importer handoff) and runner/usability lands as a native manifest-gated step | enable `skip_queued_branch_builds: true` with filter `codex/yuk-916-ci-buildkite-shadow` once queue pressure appears |
 
-Phase 2 runner sub-lane (YUK-917, in-repo only — nothing external mutated yet):
+Phase 2 runner sub-lane (YUK-917):
 
 1. `.buildkite/ci-image/Dockerfile` pins the immutable Playwright `v1.62.1-noble`
    base digest (amd64 manifest, resolved 2026-08-25 via
    `docker buildx imagetools inspect`), installs Node 24.0.0 / pnpm 11.13.1 /
    Bun 1.3.14, and asserts `chrome --version` at build time.
-2. `.github/workflows/buildkite-ci-image.yml` (lead-operated) builds + pushes it
+2. `.github/workflows/buildkite-ci-image.yml` builds + pushes it
    to `ghcr.io/<repo>/buildkite-ci` with only the ephemeral `GITHUB_TOKEN`
    (`packages: write`); the digest lands in a job summary + artifact. No deploy.
-3. The lead records that digest in `.buildkite/pins.env`
-   (`CI_IMAGE_STATE=image_digest_published`, `CI_IMAGE_DIGEST`,
-   `CI_IMAGE_PUBLISHED_AT`) — while the state stays
-   `image_digest_pending_publication` the pins gate rejects any claimed digest
-   and every usability manifest reports `cutover_ready=false`, so required /
-   cutover use is impossible by construction.
+3. Run `32851946449` published digest `sha256:7c780402…139d`; `pins.env` records
+   `CI_IMAGE_STATE=image_digest_published`, `CI_IMAGE_DIGEST`, and
+   `CI_IMAGE_PUBLISHED_AT`. Dedicated queue `green-bridge-linux-large` read-backs
+   the same digest and leaves shared queues unchanged.
 4. The `usability-lane` pipeline step runs the real 13-scenario suite behind a
    manifest gate (Chromium launch + 13/13 executed proven; exit 0 alone never
    passes). On the hosted image it fails closed with
@@ -160,7 +158,7 @@ Acceptance semantics (executable in
 A runner/manifest skip disagreement (`skip-consistency-drift`) also fails the
 shard. Rollback for this lane is a repo change: remove the two `db-*` steps
 from `.buildkite/pipeline.yml` (and optionally the two scripts) — no external
-pipeline state is involved. DB shards need Docker on the `linux-large` image
+pipeline state is involved. DB shards need Docker on the `green-bridge-linux-large` image
 for testcontainers Postgres, same requirement as the GitHub `db` job.
 
 ## Bridge invariants

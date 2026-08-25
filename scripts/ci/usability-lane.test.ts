@@ -12,6 +12,8 @@ import {
 
 const SHA = 'a'.repeat(40);
 const DIGEST = `sha256:${'9'.repeat(64)}`;
+const PUBLISHED_IMAGE_DIGEST =
+  'sha256:7c78040230e6b50fcc355ec1bb562ac566ceb4f1dbfcb90a525e4e01af68139d';
 
 const PROBE_OK = {
   schema_version: 1,
@@ -320,7 +322,9 @@ describe('usability lane pins image state', () => {
     const pins = readFileSync('.buildkite/pins.env', 'utf8');
     const parsed = validatePins({ pinsText: pins, now: NOW });
     expect(parsed.violations).toEqual([]);
-    expect(parsed.pins.CI_IMAGE_STATE).toBe(IMAGE_STATE_PENDING);
+    expect(parsed.pins.CI_IMAGE_STATE).toBe(IMAGE_STATE_PUBLISHED);
+    expect(parsed.pins.CI_IMAGE_DIGEST).toBe(PUBLISHED_IMAGE_DIGEST);
+    expect(parsed.pins.CI_IMAGE_PUBLISHED_AT).toBe('2026-08-25');
 
     const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as {
       devDependencies: Record<string, string>;

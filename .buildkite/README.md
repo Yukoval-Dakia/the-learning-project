@@ -22,7 +22,7 @@ SHA-256 digest, freshness, and the shard plan before running.
 | --- | --- |
 | `pipeline.yml` | The uploaded shadow pipeline: checkout identity step + pinned `github-actions` importer for the proven-compatible job subset, plus the Phase 2 native usability lane step. |
 | `pins.env` | Importer plugin pin (source, release, commit, observed date), runtime pins, and the CI image pin block (`CI_IMAGE_*` incl. the pending-publication state), enforced by the freshness gate. |
-| `ci-image/Dockerfile` | Digest-pinned custom linux-large runner image: Playwright `v1.62.1-noble` base (amd64 manifest digest, matches the repo `@playwright/test` pin and carries Chromium + its OS dependencies), Node 24.0.0 (checksum-verified tarball), pnpm 11.13.1, Bun 1.3.14, git/jq, and a build-time `chrome --version` assertion so a broken browser fails the image build, not 13 scenarios. |
+| `ci-image/Dockerfile` | Digest-pinned custom `green-bridge-linux-large` runner image: Playwright `v1.62.1-noble` base (amd64 manifest digest, matches the repo `@playwright/test` pin and carries Chromium + its OS dependencies), Node 24.0.0 (checksum-verified tarball), pnpm 11.13.1, Bun 1.3.14, git/jq, and a build-time `chrome --version` assertion so a broken browser fails the image build, not 13 scenarios. |
 | `pipeline-settings.json` | Desired external pipeline settings snapshot; diffed against the live pipeline before phase changes. |
 | `scripts/verify-build-context.sh` | Step entry point for the checkout identity verification. |
 | `scripts/db-select-upload.sh` | YUK-918 native DB selector step: run the DB selector once, build the digest-covered manifest, upload it via `buildkite-agent artifact upload`. |
@@ -40,24 +40,24 @@ SHA-256 digest, freshness, and the shard plan before running.
 
 ## What the pipeline runs
 
-1. `verify-build-context` (queue `linux-large`) — asserts `BUILDKITE_COMMIT`
+1. `verify-build-context` (queue `green-bridge-linux-large`) — asserts `BUILDKITE_COMMIT`
    equals the checked-out `git rev-parse HEAD`, resolves the HEAD tree and the
    merge-base against the default branch (and the PR base branch on PR builds),
    compares `GITHUB_SHA` / `GITHUB_EVENT_BEFORE` when the environment provides
    them, runs the pins freshness gate, emits exactly one JSON record, and stores
    it as Buildkite metadata `green-bridge-context`. Any violation fails the step.
-2. `github-actions-import` (queue `linux-large`) — imports
+2. `github-actions-import` (queue `green-bridge-linux-large`) — imports
    `.github/workflows/buildkite-shadow-subset.yml` through the pinned
-   `github-actions` plugin, mapping `ubuntu-latest` to `linux-large`, and only
+   `github-actions` plugin, mapping `ubuntu-latest` to `green-bridge-linux-large`, and only
    after the identity step passed. No deploy or production credentials are used.
-3. `db-select` (queue `linux-large`, YUK-918) — after the identity step, runs
+3. `db-select` (queue `green-bridge-linux-large`, YUK-918) — after the identity step, runs
    `scripts/ci/db-affected.mjs select` against the merge-base with the default
    branch, seals the result into `.cache/ci/db-manifest.json` via
    `scripts/ci/db-artifact-manifest-cli.mjs build` (schema v1: source HEAD/tree,
    absolute workspace paths, selected files, round-robin shard assignments,
    created/expiry timestamps, SHA-256 content digest over every manifest
    byte), and uploads it with `buildkite-agent artifact upload`.
-4. `db-shard` (queue `linux-large`, `parallelism: 2`, YUK-918) — downloads the
+4. `db-shard` (queue `green-bridge-linux-large`, `parallelism: 2`, YUK-918) — downloads the
    manifest with `buildkite-agent artifact download --step db-select` and
    verifies it before running. Policy, exercised by the unit/CLI tests:
    >=2 selected files → both shards execute and report the identical selector
@@ -68,16 +68,15 @@ SHA-256 digest, freshness, and the shard plan before running.
    fallback to the full sharded DB suite (a real non-empty suite), recorded as
    `selector.status: "fallback"`. The DB tests need Docker on the agent image
     (testcontainers Postgres, same as the GitHub lane).
-5. `usability-lane` (queue `linux-large`, Phase 2) — runs
+5. `usability-lane` (queue `green-bridge-linux-large`, Phase 2) — runs
    `.buildkite/scripts/run-usability-lane.sh`: install → Playwright Chromium →
    `pnpm build` → boot `dist/server.cjs` on :18787 → real headless Chromium
    launch probe → the real 13-scenario `shipped-container` Playwright suite →
    the manifest gate (`node scripts/ci/usability-lane.mjs --manifest`). The step
    is green ONLY when the emitted manifest proves Chromium launched AND exactly
    13/13 scenarios executed (0 skipped/failed/flaky); job exit 0 alone never
-   passes it. On the hosted image (no custom base yet) the probe fails with a
-   machine-readable `chromium-launch-failed` record — that red is the pending
-    state made visible; do not soften it.
+   passes it. The queue is pinned to the published image digest in `pins.env`;
+   `chromium-launch-failed` remains a hard failure rather than a skipped lane.
 
 ## Importer pin
 
@@ -97,16 +96,10 @@ repository. Re-observe and refresh pins at least every `PIN_MAX_AGE_DAYS`;
 `pins.env` carries the runner-image block: the immutable base digest
 (`CI_IMAGE_BASE_DIGEST`, the amd64 manifest of
 `mcr.microsoft.com/playwright:v1.62.1-noble`, resolved 2026-08-25 via
-`docker buildx imagetools inspect`) and the lifecycle state
-`CI_IMAGE_STATE=image_digest_pending_publication`. The final agent image does
-not exist yet — it is created only when the lead runs
-`.github/workflows/buildkite-ci-image.yml` (GHCR push, ephemeral
-`GITHUB_TOKEN`, no deploy). While pending, the pins gate forbids
-`CI_IMAGE_DIGEST`, the usability manifest reports `cutover_ready=false`, and no
-required/cutover use is allowed. After publication the lead records
-`CI_IMAGE_DIGEST` + `CI_IMAGE_PUBLISHED_AT` and flips the state to
-`image_digest_published`; the freshness bound then applies to that observation
-too.
+`docker buildx imagetools inspect`) and the published image digest from GitHub
+Actions run `32851946449`. Buildkite queue `green-bridge-linux-large`
+(`bd009abf-5ca8-4d38-8e32-3cdf7b78cda5`) read-backs the same immutable GHCR
+digest; the freshness bound applies to the publication observation.
 
 ## Local validation
 
@@ -144,10 +137,7 @@ node scripts/ci/usability-probe.mjs   # needs local `pnpm test:usability:install
     than the step's `parallelism`. Both live in this directory (`--shards 2` in
     `db-select-upload.sh`, `parallelism: 2` in `pipeline.yml`); change them
     together.
-- `chromium-launch-failed` — the runner image lacks Chromium or its OS
-  dependencies (the Build #1 `libnspr4.so` class). This is expected on the
-  hosted `linux-large` image until the lead publishes
-  `.buildkite/ci-image` via `.github/workflows/buildkite-ci-image.yml` and
-  points the queue's agent image at the recorded digest. The manifest artifact
-    (`test-results/usability-gate/manifest.json`) carries the exact missing-library
-    error.
+- `chromium-launch-failed` — the digest-pinned queue image failed to launch
+  Chromium or lost an OS dependency (the Build #1 `libnspr4.so` class). The
+  manifest artifact (`test-results/usability-gate/manifest.json`) carries the
+  exact error; do not skip the lane or fall back to the default queue image.

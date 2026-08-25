@@ -2,7 +2,8 @@
 #
 # The external pipeline `the-learning-project-ci-shadow` bootstraps from this file:
 # its upload step runs `buildkite-agent pipeline upload .buildkite/pipeline.yml`.
-# Steps run on the linux-large hosted queue; no deploy or production credentials
+# Steps run on the dedicated digest-pinned green-bridge-linux-large hosted queue;
+# no deploy or production credentials
 # are referenced. The importer is pinned in .buildkite/pins.env and validated by
 # the verify step via the pins freshness gate. The DB lane (YUK-918 Phase 2) is
 # native: selector + artifact + shards, with no importer artifact handoff.
@@ -13,19 +14,19 @@ steps:
     env:
       PINS_FILE: .buildkite/pins.env
     agents:
-      queue: linux-large
+      queue: green-bridge-linux-large
 
   - label: ":github: import ci-gate subset (migration, build)"
     key: github-actions-import
     depends_on: verify-build-context
     agents:
-      queue: linux-large
+      queue: green-bridge-linux-large
     plugins:
       - github-actions#98159d5e696d06b70df490b9d7d9eabc32bc2b21:
           workflow: .github/workflows/buildkite-shadow-subset.yml
           runners:
             - runs-on: ubuntu-latest
-              queue: linux-large
+              queue: green-bridge-linux-large
 
   # YUK-918 Phase 2 native DB lane: the selector step seals the affected DB
   # selection into a digest-covered manifest uploaded via buildkite-agent
@@ -38,7 +39,7 @@ steps:
     env:
       PINS_FILE: .buildkite/pins.env
     agents:
-      queue: linux-large
+      queue: green-bridge-linux-large
     timeout_in_minutes: 20
     artifact_paths:
       - .cache/ci/db-selection.json
@@ -51,17 +52,16 @@ steps:
     env:
       PINS_FILE: .buildkite/pins.env
     agents:
-      queue: linux-large
+      queue: green-bridge-linux-large
     timeout_in_minutes: 30
     artifact_paths:
       - .cache/ci/db-*.json
 
   # YUK-917 runner lane: real 13-scenario usability suite with a manifest gate
   # that proves Chromium launched and 13/13 executed. Expect this step to stay
-  # red on the hosted linux-large image until the lead publishes the CI image
-  # (.github/workflows/buildkite-ci-image.yml), records its digest in pins.env,
-  # and points the queue's agent image at it - that red is the pending state
-  # made visible; do not soften it.
+  # The dedicated queue is pinned to the published image digest recorded in
+  # pins.env. The manifest still proves Chromium launch and 13/13 execution;
+  # do not treat a zero exit code alone as evidence.
   - label: ":chromium: usability lane (13 scenarios, manifest-gated)"
     key: usability-lane
     depends_on: verify-build-context
@@ -75,4 +75,4 @@ steps:
       PINS_FILE: .buildkite/pins.env
     timeout_in_minutes: 30
     agents:
-      queue: linux-large
+      queue: green-bridge-linux-large
