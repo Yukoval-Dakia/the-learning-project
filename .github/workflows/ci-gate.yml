@@ -39,6 +39,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - name: Emit Green Bridge checkout receipt
+        id: green_bridge_context
+        continue-on-error: true
         env:
           GREEN_BRIDGE_LOCAL: '1'
           BUILDKITE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -52,11 +54,17 @@ jobs:
           mkdir -p .cache/ci
           node scripts/ci/verify-build-context.mjs > .cache/ci/green-bridge-context.json
       - name: Upload Green Bridge checkout receipt
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: green-bridge-context-github
           path: .cache/ci/green-bridge-context.json
           if-no-files-found: error
+      - name: Require valid Green Bridge checkout receipt
+        if: steps.green_bridge_context.outcome != 'success'
+        run: |
+          cat .cache/ci/green-bridge-context.json
+          exit 1
       - uses: actions/setup-node@v7
         with:
           node-version-file: '.node-version'

@@ -41,6 +41,7 @@ describe('GitHub checkout parity receipt', () => {
     ).toHaveLength(8);
     expect(ciGateWorkflow).toContain('name: green-bridge-context-github');
     expect(ciGateWorkflow).toContain('node scripts/ci/verify-build-context.mjs');
+    expect(ciGateWorkflow).toContain("if: steps.green_bridge_context.outcome != 'success'");
   });
 });
 
