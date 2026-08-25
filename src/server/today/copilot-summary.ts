@@ -100,17 +100,6 @@ export function learnerProposalSummary(kind: string): string {
   return LEARNER_PROPOSAL_SUMMARIES[kind] ?? '有一项学习建议待你查看。';
 }
 
-const INTERNAL_BRIEF_ID = /\b(?:copilot_user_ask|knowledge_mutation|event|kc)_[a-z0-9_-]+/i;
-
-export function learnerGlobalBrief(raw: string | null | undefined, charCap = 280): string | null {
-  const brief = raw?.split('\n\n')[0]?.slice(0, Math.max(1, charCap)).trim();
-  if (!brief || INTERNAL_BRIEF_ID.test(brief)) return null;
-
-  const latinCharacters = brief.match(/[A-Za-z]/g)?.length ?? 0;
-  const cjkCharacters = brief.match(/[\u3400-\u9fff]/g)?.length ?? 0;
-  return latinCharacters > Math.max(24, cjkCharacters * 2) ? null : brief;
-}
-
 export interface CopilotSummaryOpts {
   /** How many dreaming-authored items to preview. */
   previewLimit?: number;
@@ -269,7 +258,9 @@ export async function loadCopilotSummary(
   // Take the first paragraph (split on the first \n\n boundary) and cap at
   // `briefCharCap` so the drawer stays compact. Null when row missing or
   // the column is empty/whitespace.
-  const briefGlobalMd = learnerGlobalBrief(briefRaw, briefCharCap);
+  const briefGlobalMd = briefRaw
+    ? briefRaw.split('\n\n')[0]?.slice(0, briefCharCap).trim() || null
+    : null;
 
   return {
     daily_focus: dailyFocus,

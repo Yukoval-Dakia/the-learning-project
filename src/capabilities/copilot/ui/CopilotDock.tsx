@@ -51,6 +51,7 @@ import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { ToolUseCard, type ToolUseStatus } from '@/ui/primitives/ToolUseCard';
 import { CopilotHeroCard } from './CopilotHeroCard';
+import { learnerGlobalBrief } from './learner-global-brief';
 import {
   type PersistedDurableCopilotReconnect,
   type PersistedPendingCopilotTurn,
@@ -1564,6 +1565,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       </div>
     ) : null;
 
+  const learnerBriefGlobal = learnerGlobalBrief(summaryQ.data?.brief_global_md);
   const summaryBody = summaryQ.data ? (
     // 4-slot order per Wave 5 ready-to-launch lock §Human decision points:
     // Coach focus → review_due → brief → dreaming → footer.
@@ -1575,12 +1577,12 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           今日待复习 <strong>{summaryQ.data.review_due_count}</strong> 题
         </p>
       ) : null}
-      {summaryQ.data.brief_global_md ? (
+      {learnerBriefGlobal ? (
         <p
           className="text-[12px] text-[var(--ink-3)] italic leading-[1.5]"
           data-testid="copilot-summary-brief-global"
         >
-          {summaryQ.data.brief_global_md}
+          {learnerBriefGlobal}
         </p>
       ) : null}
       {summaryQ.data.dreaming_preview.length > 0 ? (
