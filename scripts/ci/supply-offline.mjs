@@ -83,6 +83,7 @@ export async function startNetworkSentinel() {
   const attempts = [];
   const server = createServer((socket) => {
     const peer = `${socket.remoteAddress ?? 'unknown'}:${socket.remotePort ?? 0}`;
+    socket.on('error', () => socket.destroy());
     socket.setTimeout(1_000, () => {
       attempts.push(`${peer} <no-request-bytes>`);
       socket.destroy();
