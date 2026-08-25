@@ -140,8 +140,8 @@ export function offlineLoaderEnv(home, sentinelPort) {
   env.http_proxy = sentinel;
   env.https_proxy = sentinel;
   env.ALL_PROXY = sentinel;
-  env.NO_PROXY = '';
-  env.no_proxy = '';
+  env.NO_PROXY = 'localhost,127.0.0.1,::1';
+  env.no_proxy = env.NO_PROXY;
   return env;
 }
 

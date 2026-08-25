@@ -190,7 +190,9 @@ async function consumeFixture(
 
 describe('offline artifact consumer', () => {
   it('disables the OpenCode models catalog refresh in the isolated loader env', () => {
-    expect(offlineLoaderEnv('/tmp/offline-home', 4321).OPENCODE_DISABLE_MODELS_FETCH).toBe('1');
+    const env = offlineLoaderEnv('/tmp/offline-home', 4321);
+    expect(env.OPENCODE_DISABLE_MODELS_FETCH).toBe('1');
+    expect(env.NO_PROXY).toBe('localhost,127.0.0.1,::1');
   });
 
   it('verifies and loads a well-formed artifact with the network sentinel silent', async () => {
