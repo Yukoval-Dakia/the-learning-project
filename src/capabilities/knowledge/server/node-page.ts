@@ -32,6 +32,7 @@ import { retrievabilityForKc } from '@/capabilities/practice/public';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
+import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { getFsrsStatesByIds } from '@/server/fsrs/state';
 import { getMasteryProjection, getRepresentativeKcBeta } from '@/server/mastery/state';
@@ -176,6 +177,7 @@ export async function loadKnowledgeNodePage(
   db: Db,
   knowledgeId: string,
 ): Promise<KnowledgeNodePage | null> {
+  if (!isLearnerVisibleKnowledgeId(knowledgeId)) return null;
   // 1. node metadata (single row; no O(N) tree scan). B1 double-truth fix —
   // mastery / evidence_count / last_evidence_at are overlaid below from the SoT
   // mastery_state.theta_hat projection (getMasteryProjection → σ(θ̂)), NOT the
@@ -240,11 +242,13 @@ export async function loadKnowledgeNodePage(
   const nodeMastery = masteryProjection.get(node.id);
   const difficultyAnchored = focalBetaMap.has(node.id);
   const focalBeta = focalBetaMap.get(node.id) ?? nodeMastery?.beta ?? null;
-  const children: NodePageChild[] = childRows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    mastery: masteryProjection.get(row.id)?.mastery ?? null,
-  }));
+  const children: NodePageChild[] = childRows
+    .filter((row) => isLearnerVisibleKnowledgeId(row.id))
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      mastery: masteryProjection.get(row.id)?.mastery ?? null,
+    }));
 
   // 2. mesh neighbors + focal-node R(t). The R read (NodeComposite 三维 R axis; only the
   // focal node carries the three-dim fold, children stay mastery-only) is independent of
@@ -522,7 +526,9 @@ async function loadNames(db: Db, ids: string[]): Promise<Map<string, string>> {
     .select({ id: knowledge.id, name: knowledge.name })
     .from(knowledge)
     .where(and(inArray(knowledge.id, ids), isNull(knowledge.archived_at)));
-  return new Map(rows.map((r) => [r.id, r.name]));
+  return new Map(
+    rows.filter((row) => isLearnerVisibleKnowledgeId(row.id)).map((r) => [r.id, r.name]),
+  );
 }
 
 // Walk up the parent chain until a node carries an explicit domain. Mirrors

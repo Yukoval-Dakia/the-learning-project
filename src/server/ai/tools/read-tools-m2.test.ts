@@ -555,6 +555,41 @@ describe('Foundation D M2 read tools', () => {
     expect(questionContext.records?.[0].record_id).toBe('rec_mistake');
   });
 
+  it('hides known fixture knowledge IDs from record recommendations and context (YUK-897 E1)', async () => {
+    await seedAll();
+    const db = testDb();
+    const fixtureId = 'kc_yuk792_canary_20260731a';
+    await db.insert(knowledge).values({
+      id: fixtureId,
+      name: 'fixture canary',
+      domain: 'yuwen',
+      parent_id: null,
+      created_at: BASE,
+      updated_at: BASE,
+    });
+    await db
+      .update(learning_record)
+      .set({ knowledge_ids: ['k_zhi', fixtureId, 'synthetic:yuwen:fixture'] })
+      .where(eq(learning_record.id, 'rec_mistake'));
+    await db
+      .update(question)
+      .set({ knowledge_ids: ['k_zhi', fixtureId, 'synthetic:yuwen:fixture'] })
+      .where(eq(question.id, 'q_new'));
+
+    const records = await queryRecordsTool.execute(ctx(), { kind: ['mistake'] });
+    expect(records.rows[0]?.knowledge_ids).toEqual(['k_zhi']);
+
+    const context = await getRecordContextTool.execute(ctx(), {
+      recordId: 'rec_mistake',
+      include: ['question', 'knowledge_context'],
+    });
+    expect(context.record?.knowledge_ids).toEqual(['k_zhi']);
+    expect(context.question?.knowledge_ids).toEqual(['k_zhi']);
+    expect(context.knowledge_context?.paths).toEqual([['文言虚词', '之的用法']]);
+    expect(JSON.stringify(context)).not.toContain(fixtureId);
+    expect(JSON.stringify(context)).not.toContain('synthetic:');
+  });
+
   it('hides intervention diagnostic prompts and answers from generic Copilot context reads', async () => {
     await seedAll();
     await testDb()

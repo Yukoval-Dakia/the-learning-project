@@ -24,6 +24,7 @@ import { and, desc, eq, inArray, isNull, notLike, sql } from 'drizzle-orm';
 import { isMasteredForFrontier, learnableFrontierResolved } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
+import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import { getMasteryProjection } from '@/server/mastery/state';
 
 const RELATION_PREREQUISITE = 'prerequisite' as const;
@@ -209,7 +210,9 @@ async function loadKcNames(db: Db, ids: string[]): Promise<Map<string, string>> 
         notLike(knowledge.id, 'seed:%:root'),
       ),
     );
-  return new Map(rows.map((r) => [r.id, r.name]));
+  return new Map(
+    rows.filter((row) => isLearnerVisibleKnowledgeId(row.id)).map((r) => [r.id, r.name]),
+  );
 }
 
 /**

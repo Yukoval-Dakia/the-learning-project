@@ -41,6 +41,7 @@ import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
 import { db } from '@/db/client';
 import { event, question_block } from '@/db/schema';
 import { errorResponse } from '@/kernel/http';
+import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -125,7 +126,9 @@ function toAutoEnrollObservation(row: {
     confidence: numberOrNull(payload.confidence),
     threshold: numberOrNull(payload.threshold),
     reasoning: stringOrNull(payload.reasoning),
-    suggested_knowledge_ids: stringArray(payload.suggested_knowledge_ids),
+    suggested_knowledge_ids: learnerVisibleKnowledgeIds(
+      stringArray(payload.suggested_knowledge_ids),
+    ),
     mistake_draft: toMistakeDraft(payload.mistake_draft),
     observed_at: row.created_at.toISOString(),
   };

@@ -194,6 +194,39 @@ describe('GET /api/knowledge/edges', () => {
   it('rejects an invalid cursor', async () => {
     expect((await getEdges('cursor=not-a-cursor')).status).toBe(400);
   });
+
+  it('does not expose fixture endpoints in learner edge payloads (YUK-897 E1)', async () => {
+    const db = testDb();
+    await seedKnowledge([
+      'k_visible',
+      'kc_yuk792_canary_20260731a',
+      'kc_yuk792_canary_20260731b',
+      'kc_yuk792_canary_20260731c',
+      'synthetic:yuwen:fixture',
+    ]);
+    await createKnowledgeEdge(db, {
+      from_knowledge_id: 'k_visible',
+      to_knowledge_id: 'kc_yuk792_canary_20260731a',
+      relation_type: 'related_to',
+    });
+    await createKnowledgeEdge(db, {
+      from_knowledge_id: 'kc_yuk792_canary_20260731b',
+      to_knowledge_id: 'k_visible',
+      relation_type: 'related_to',
+    });
+    await createKnowledgeEdge(db, {
+      from_knowledge_id: 'synthetic:yuwen:fixture',
+      to_knowledge_id: 'kc_yuk792_canary_20260731c',
+      relation_type: 'related_to',
+    });
+
+    const res = await getEdges();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.rows).toEqual([]);
+    expect(JSON.stringify(body)).not.toContain('kc_yuk792_canary_20260731');
+    expect(JSON.stringify(body)).not.toContain('synthetic:');
+  });
 });
 
 describe('POST /api/knowledge/edges', () => {

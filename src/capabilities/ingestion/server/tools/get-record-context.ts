@@ -10,6 +10,10 @@ import {
 } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import {
+  isLearnerVisibleKnowledgeId,
+  learnerVisibleKnowledgeIds,
+} from '@/kernel/read-models/learner-knowledge-visibility';
 import { bodyBlockSummaries, knowledgeContext, knowledgeEdgeTouches } from './record-tool-support';
 import type { DomainTool, ToolContext } from './types';
 
@@ -123,7 +127,7 @@ async function executeGetRecordContext(
       activity_kind: record.activity_kind,
       origin_event_id: record.origin_event_id ?? null,
       processing_status: record.processing_status,
-      knowledge_ids: record.knowledge_ids ?? [],
+      knowledge_ids: learnerVisibleKnowledgeIds(record.knowledge_ids ?? []),
       created_at: record.created_at.toISOString(),
     },
   };
@@ -139,7 +143,7 @@ async function executeGetRecordContext(
         id: linkedQuestion.id,
         prompt_md: linkedQuestion.prompt_md,
         reference_md: linkedQuestion.reference_md ?? null,
-        knowledge_ids: linkedQuestion.knowledge_ids ?? [],
+        knowledge_ids: learnerVisibleKnowledgeIds(linkedQuestion.knowledge_ids ?? []),
       };
     }
   }
@@ -187,9 +191,10 @@ async function executeGetRecordContext(
     if (item) output.learning_item = { id: item.id, title: item.title, status: item.status };
   }
   if (include.has('knowledge_context')) {
-    const paths = await knowledgeContext(ctx.db, record.knowledge_ids ?? []);
+    const visibleKnowledgeIds = learnerVisibleKnowledgeIds(record.knowledge_ids ?? []);
+    const paths = await knowledgeContext(ctx.db, visibleKnowledgeIds);
     const edges =
-      record.knowledge_ids.length > 0
+      visibleKnowledgeIds.length > 0
         ? await ctx.db
             .select({
               from: knowledge_edge.from_knowledge_id,
@@ -199,17 +204,21 @@ async function executeGetRecordContext(
             })
             .from(knowledge_edge)
             .where(
-              and(isNull(knowledge_edge.archived_at), knowledgeEdgeTouches(record.knowledge_ids)),
+              and(isNull(knowledge_edge.archived_at), knowledgeEdgeTouches(visibleKnowledgeIds)),
             )
         : [];
     output.knowledge_context = {
       paths: paths.map((path) => path.path),
-      related_edges: edges.map((edge) => ({
-        from: edge.from,
-        to: edge.to,
-        relation_type: edge.relation_type,
-        reason: edge.reason ?? '',
-      })),
+      related_edges: edges
+        .filter(
+          (edge) => isLearnerVisibleKnowledgeId(edge.from) && isLearnerVisibleKnowledgeId(edge.to),
+        )
+        .map((edge) => ({
+          from: edge.from,
+          to: edge.to,
+          relation_type: edge.relation_type,
+          reason: edge.reason ?? '',
+        })),
     };
   }
   if (include.has('event_chain') && record.origin_event_id) {

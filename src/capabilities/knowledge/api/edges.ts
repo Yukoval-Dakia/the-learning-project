@@ -33,6 +33,7 @@ import {
 import { db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { ApiError, collectionPayload, errorResponse, resourceResponse } from '@/kernel/http';
+import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import { wakeHubSyncAfterCommit } from '@/server/boss/hub-sync-wake';
 
 export async function GET(req: Request): Promise<Response> {
@@ -55,11 +56,17 @@ export async function GET(req: Request): Promise<Response> {
       limit: parsed.data.limit,
       cursor: parsed.data.cursor,
     });
+    const learnerRows = page.rows.filter(
+      (edge) =>
+        isLearnerVisibleKnowledgeId(edge.from_knowledge_id) &&
+        isLearnerVisibleKnowledgeId(edge.to_knowledge_id),
+    );
+    const learnerPage = { ...page, rows: learnerRows };
     return Response.json(
       collectionPayload(
-        page.rows,
+        learnerRows,
         { limit: parsed.data.limit, next_cursor: page.next_cursor },
-        page,
+        learnerPage,
       ),
     );
   } catch (err) {
@@ -70,7 +77,13 @@ export async function GET(req: Request): Promise<Response> {
 export async function getEdge(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const edge = await getKnowledgeEdgeById(db, params.id);
-    if (!edge) throw new ApiError('not_found', `knowledge edge ${params.id} not found`, 404);
+    if (
+      !edge ||
+      !isLearnerVisibleKnowledgeId(edge.from_knowledge_id) ||
+      !isLearnerVisibleKnowledgeId(edge.to_knowledge_id)
+    ) {
+      throw new ApiError('not_found', `knowledge edge ${params.id} not found`, 404);
+    }
     return Response.json(edge);
   } catch (err) {
     return errorResponse(err);

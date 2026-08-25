@@ -203,4 +203,17 @@ describe('loadFrontierRail (A5 S2, YUK-354)', () => {
     expect(rail[0].kid).toBe('almost');
     expect(rail[0].propose).toBe(true);
   });
+
+  it('does not surface known fixture namespaces in learner recommendations (YUK-897 E1)', async () => {
+    await proposePrereq(
+      'synthetic:yuwen:fixture',
+      'kc_yuk792_canary_20260731b',
+      'fixture recommendation',
+    );
+
+    const rail = await loadFrontierRail(testDb());
+    expect(rail).toEqual([]);
+    expect(JSON.stringify(rail)).not.toContain('kc_yuk792_canary_20260731');
+    expect(JSON.stringify(rail)).not.toContain('synthetic:');
+  });
 });
