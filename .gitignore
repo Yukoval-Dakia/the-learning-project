@@ -162,3 +162,6 @@ docs/preflight/*-vision-rejudge.json
 /m4-visual-*.png
 /visual-demo-today.png
 /yuk[0-9]*.png
+
+# YUK-914 local producer output (digest-named closure archives); never committed
+/.supply-out/

@@ -29,6 +29,9 @@ SHA-256 digest, freshness, and the shard plan before running.
 | `scripts/db-shard-run.sh` | YUK-918 native DB shard step: download/verify the selector manifest via `buildkite-agent artifact download --step db-select`, then run this shard through `db-affected.mjs run`. |
 | `scripts/run-usability-lane.sh` | Phase 2 native usability step: boots the built server, proves a real headless Chromium launch, runs the real 13-scenario `shipped-container` suite, and fails unless the manifest gate passes. |
 | `scripts/pre-command.sh` | Versioned agent pre-command hook; install into a custom base image for job-wide verification (Phase 2+ wiring). |
+| `scripts/supply-seed.sh` | YUK-914 manual seed step (`SUPPLY_SEED=1` only): materializes + uploads the digest-pinned closure and loader, emits the seed receipt. |
+| `scripts/supply-consume.sh` | YUK-914 required offline gate: downloads the pinned artifacts from the recorded seed build, verifies, runs the real loader offline. |
+| `scripts/supply-drift-observe.sh` | YUK-914 advisory registry drift observation (always `soft_fail`, never gates success). |
 | `../scripts/ci/verify-build-context.mjs` | The context verifier itself (identity checks, metadata emission), unit-tested in `../scripts/ci/verify-build-context.test.ts`. |
 | `../scripts/ci/green-bridge-pins.mjs` | The pins policy: parsing plus the freshness gate behind `--pins` (including the `CI_IMAGE_*` lifecycle), unit-tested in the same test file. |
 | `../scripts/ci/db-artifact-manifest.mjs` | YUK-918 selector-side manifest module: builds the schema-validated, SHA-256-covered DB selection manifest (absolute workspace paths, source HEAD/tree, shard assignments, expiry), unit-tested in `../scripts/ci/db-artifact-manifest.test.ts`. |
@@ -49,7 +52,8 @@ SHA-256 digest, freshness, and the shard plan before running.
 2. `github-actions-import` (queue `green-bridge-linux-large`) — imports
    `.github/workflows/buildkite-shadow-subset.yml` through the pinned
    `github-actions` plugin, mapping `ubuntu-latest` to `green-bridge-linux-large`, and only
-   after the identity step passed. No deploy or production credentials are used.
+   after the offline supply-chain gate passed (a skipped gate in a seed build
+   counts as satisfied). No deploy or production credentials are used.
 3. `db-select` (queue `green-bridge-linux-large`, YUK-918) — after the identity step, runs
    `scripts/ci/db-affected.mjs select` against the merge-base with the default
    branch, seals the result into `.cache/ci/db-manifest.json` via
@@ -78,6 +82,25 @@ SHA-256 digest, freshness, and the shard plan before running.
    passes it. The queue is pinned to the published image digest in `pins.env`;
    `chromium-launch-failed` remains a hard failure rather than a skipped lane.
 
+### YUK-914 offline supply-chain gate
+
+- `supply-seed` runs **only** when the build is created with `SUPPLY_SEED=1`:
+  `npm ci` the committed per-specifier locks, validate every graph against the
+  inventory, package the deterministic archive, `npm pack` the pinned loader,
+  upload the exact digest-named artifacts, and print + store the seed receipt
+  as Buildkite metadata `supply-seed-receipt`.
+- `supply-offline-gate` runs on every normal build (`SUPPLY_SEED != 1`):
+  `buildkite-agent artifact download runtime-closure-<sha>.tar.gz <dir> --build
+  <seedBuild>` (and the loader tarball), verify archive/manifest/loader/graphs,
+  then run the real loader fully offline under the loopback network sentinel.
+  While `supply/runtime-artifact-pins.json` is in the `seedRequired` bootstrap
+  state the gate is a hard RED: a lead must run the seed build on the target
+  platform and record the receipt's `archiveSha256` / `manifestSha256` /
+  `seedBuild` in a reviewed commit.
+- `supply-registry-drift` is advisory (`soft_fail: true`): it observes what the
+  live registry would resolve for the drift-prone packages and stores the
+  observation as metadata; it never decides required success.
+
 ## Importer pin
 
 `pins.env` records the importer release provenance and verified commit, while
@@ -104,11 +127,12 @@ digest; the freshness bound applies to the publication observation.
 ## Local validation
 
 ```bash
-bash -n .buildkite/scripts/verify-build-context.sh .buildkite/scripts/pre-command.sh .buildkite/scripts/db-select-upload.sh .buildkite/scripts/db-shard-run.sh .buildkite/scripts/run-usability-lane.sh
+bash -n .buildkite/scripts/*.sh
 bk pipeline validate --file .buildkite/pipeline.yml
 pnpm vitest run --config vitest.unit.config.ts scripts/ci/verify-build-context.test.ts scripts/ci/db-artifact-manifest.test.ts scripts/ci/db-artifact-shard.test.ts scripts/ci/usability-lane.test.ts
 node scripts/ci/verify-build-context.mjs --pins
 node scripts/ci/usability-probe.mjs   # needs local `pnpm test:usability:install`
+pnpm vitest run --config vitest.unit.config.ts scripts/ci/supply-core.test.ts scripts/ci/supply-tar.test.ts scripts/ci/supply-pins.test.ts scripts/ci/supply-loader.test.ts scripts/ci/supply-pipeline.test.ts scripts/ci/supply-offline.test.ts
 ```
 
 ## Troubleshooting

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "approvedRuntimePlugin": {
+    "package": "@opencode-ai/plugin",
+    "version": "1.18.18",
+    "ownerSpecifier": "@cortexkit/opencode-magic-context@0.33.0"
+  },
+  "artifactSource": {
+    "pipeline": "the-learning-project-ci-shadow"
+  },
+  "platforms": {
+    "darwin-arm64": {
+      "seedRequired": true
+    },
+    "linux-x64": {
+      "seedRequired": true
+    }
+  }
+}

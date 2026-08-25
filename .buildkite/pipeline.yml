@@ -7,6 +7,12 @@
 # are referenced. The importer is pinned in .buildkite/pins.env and validated by
 # the verify step via the pins freshness gate. The DB lane (YUK-918 Phase 2) is
 # native: selector + artifact + shards, with no importer artifact handoff.
+# YUK-914 offline supply-chain gate: the manual `SUPPLY_SEED=1` seed step
+# materializes and uploads the digest-pinned closure+loader and emits a receipt;
+# every normal build instead runs the required offline gate, which downloads
+# the pinned artifacts from the recorded seed build and fails closed while the
+# pins are still in the seedRequired bootstrap state. The registry drift
+# observation is advisory (soft_fail) and never decides required success.
 steps:
   - label: ":identification_card: verify build context"
     key: verify-build-context
@@ -16,9 +22,33 @@ steps:
     agents:
       queue: green-bridge-linux-large
 
+  - label: ":seedling: supply seed (manual SUPPLY_SEED=1)"
+    key: supply-seed
+    if: build.env("SUPPLY_SEED") == "1"
+    depends_on: verify-build-context
+    command: .buildkite/scripts/supply-seed.sh
+    agents:
+      queue: green-bridge-linux-large
+
+  - label: ":lock: offline supply-chain gate"
+    key: supply-offline-gate
+    if: build.env("SUPPLY_SEED") != "1"
+    depends_on: verify-build-context
+    command: .buildkite/scripts/supply-consume.sh
+    agents:
+      queue: green-bridge-linux-large
+
+  - label: ":satellite: supply registry drift (advisory)"
+    key: supply-registry-drift
+    soft_fail: true
+    depends_on: verify-build-context
+    command: .buildkite/scripts/supply-drift-observe.sh
+    agents:
+      queue: green-bridge-linux-large
+
   - label: ":github: import ci-gate subset (migration, build)"
     key: github-actions-import
-    depends_on: verify-build-context
+    depends_on: supply-offline-gate
     agents:
       queue: green-bridge-linux-large
     plugins:
@@ -57,8 +87,7 @@ steps:
     artifact_paths:
       - .cache/ci/db-*.json
 
-  # YUK-917 runner lane: real 13-scenario usability suite with a manifest gate
-  # that proves Chromium launched and 13/13 executed. Expect this step to stay
+  # YUK-917 runner lane: real 13-scenario usability suite with a manifest gate.
   # The dedicated queue is pinned to the published image digest recorded in
   # pins.env. The manifest still proves Chromium launch and 13/13 execution;
   # do not treat a zero exit code alone as evidence.
