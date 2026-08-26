@@ -90,6 +90,11 @@ jobs:
       - name: Lint
         if: needs.changes.outputs.static_changed == 'true'
         run: pnpm lint
+      # YUK-909 — warning-count ratchet at the Biome 2 baseline: warning/info totals
+      # may only decrease. Lower the baseline after a fixing batch: pnpm lint:ratchet:update
+      - name: Lint warning ratchet
+        if: needs.changes.outputs.static_changed == 'true'
+        run: node scripts/ci/lint-ratchet.mjs
       # OpenCode plugin checks are tooling-only and live outside this required
       # gate; project-level plugin pinning was removed via YUK-898. Run
       # `pnpm test:opencode-worktree` locally when touching .opencode/.
