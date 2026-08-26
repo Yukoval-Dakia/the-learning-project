@@ -106,7 +106,7 @@ export function CopilotDrawer({
         data-testid="copilot-drawer-panel"
         className={[
           'absolute right-0 top-0 h-full w-full',
-          expanded ? 'sm:w-[min(900px,92vw)]' : 'sm:w-[420px]',
+          expanded ? 'sm:w-full' : 'sm:w-[420px]',
           'bg-[var(--paper-raised)] border-l border-[var(--line)]',
           'shadow-[var(--shadow-3)] flex flex-col outline-none transition-[width]',
           'animate-in slide-in-from-right duration-[var(--dur-fast)]',
@@ -122,14 +122,17 @@ export function CopilotDrawer({
           {headBadge}
           <div className="ml-auto flex items-center gap-[6px]">
             {expandable ? (
-              <IconBtn
-                icon={expanded ? 'minimize' : 'maximize'}
-                size={16}
-                title={expanded ? '还原宽度' : '全屏 Copilot'}
-                aria-label={expanded ? '还原宽度' : '全屏 Copilot'}
-                onClick={() => setExpanded((v) => !v)}
-                data-testid="copilot-drawer-expand"
-              />
+              <span className="hidden sm:inline-flex">
+                <IconBtn
+                  icon={expanded ? 'minimize' : 'maximize'}
+                  size={16}
+                  title={expanded ? '还原宽度' : '全屏 Copilot'}
+                  aria-label={expanded ? '还原宽度' : '全屏 Copilot'}
+                  aria-pressed={expanded}
+                  onClick={() => setExpanded((v) => !v)}
+                  data-testid="copilot-drawer-expand"
+                />
+              </span>
             ) : null}
             {headActions}
             <IconBtn
@@ -144,21 +147,21 @@ export function CopilotDrawer({
         {summary ? (
           <section
             data-testid="copilot-drawer-summary"
-            className="px-[18px] py-[12px] border-b border-[var(--line-soft)] text-[13px] text-[var(--ink-2)] leading-[1.55]"
+            className="max-h-[45vh] shrink-0 overflow-y-auto px-[18px] py-[12px] border-b border-[var(--line-soft)] text-[13px] text-[var(--ink-2)] leading-[1.55]"
           >
             {summary}
           </section>
         ) : null}
         <section
           data-testid="copilot-drawer-chat"
-          className="flex-1 overflow-y-auto px-[18px] py-[12px] flex flex-col gap-[8px]"
+          className="min-h-0 flex-1 overflow-y-auto px-[18px] py-[12px] flex flex-col gap-[8px]"
         >
           {children}
         </section>
         {footer ? (
           <footer
             data-testid="copilot-drawer-footer"
-            className="px-[18px] py-[12px] border-t border-[var(--line-soft)]"
+            className="shrink-0 px-[18px] py-[12px] border-t border-[var(--line-soft)]"
           >
             {footer}
           </footer>

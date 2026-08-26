@@ -21,6 +21,7 @@ export type CopilotSkillContextT = z.infer<typeof CopilotSkillContext>;
 
 export const CopilotChatRequest = z
   .object({
+    session_id: z.string().min(1).max(160).optional(),
     user_message: z.string().min(1).max(4000),
     triggered_by: z.enum(COPILOT_CHAT_TRIGGER_KINDS),
     chip_kind: z.string().min(1).max(80).optional(),
