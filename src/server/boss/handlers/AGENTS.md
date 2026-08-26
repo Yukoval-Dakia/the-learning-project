@@ -18,6 +18,7 @@
 | `embed_backfill` | 根 | practice/manifest | `embedding IS NULL` 扫描（question+knowledge，limit 100）|
 | `kc_dedup_nightly` | ← `embed_backfill` **硬**（跨包）| knowledge/manifest | pgvector 近重 KC → merge 提议。硬 gate `embedding IS NOT NULL`——**旧 02:00 恒滞后一天**的时钟 bug 现由边根治（YUK-377 复审 §3.3）|
 | `answer_class_backfill` | 根（**无下游**）| practice/manifest | 纯派生 NULL 尾兜底（on-write `withAnswerClass` 已全量上线）。曾被当作 supply 上游，YUK-758 考据证伪 |
+| `kind_cleanup_backfill` | 根（**无下游**）| practice/manifest | YUK-390 残留：脏 kind（single_choice/calculation…）→ canonical 幂等重写（`normalizeToCanonicalKind`，对 neither-vocab 值 fail-closed 只计数）；fixture 插入缝已同步收紧 |
 | `knowledge_edge_propose_nightly` | 根 | knowledge/manifest | 24h 失败窗提边（空窗早退；watermark 续扫 = YUK-377 轻量档待做）|
 | `knowledge_maintenance_nightly` | ← `knowledge_edge_propose_nightly` **软** | knowledge/manifest | KnowledgeReviewTask 维护流。软边：读 proposal inbox 当去重基线，上游挂了照样正确产出 |
 | `dreaming_nightly` | ← `edge_propose` **软** + `knowledge_maintenance_nightly` **软** | agency/manifest | Dreaming producer（DomainTool MCP bridge）|

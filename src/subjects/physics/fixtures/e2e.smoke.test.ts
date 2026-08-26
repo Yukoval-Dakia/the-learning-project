@@ -150,8 +150,8 @@ describe('physics fixture e2e smoke', () => {
     expect(result.coarse_outcome).toBe('correct');
   });
 
-  it('calculation fixtures are inserted', async () => {
-    const rows = await db.select().from(question).where(eq(question.kind, 'calculation'));
+  it('computation fixtures are inserted', async () => {
+    const rows = await db.select().from(question).where(eq(question.kind, 'computation'));
     expect(rows.length).toBeGreaterThanOrEqual(7);
   });
 

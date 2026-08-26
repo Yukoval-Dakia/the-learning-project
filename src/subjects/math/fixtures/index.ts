@@ -4,7 +4,10 @@ import fixtureData from './data.json' with { type: 'json' };
 
 export const MathFixtureItemSchema = z.object({
   ref: z.string().min(1),
-  kind: z.enum(['single_choice', 'fill_blank']),
+  // Canonical QuestionKind only (YUK-390 residual): the fixture schema is the
+  // insertion seam into question.kind — profile-vocab values (single_choice …)
+  // are rejected here so dirty kinds cannot re-enter the column via fixtures.
+  kind: z.enum(['choice', 'fill_blank']),
   prompt_md: z.string().min(1),
   choices_md: z.array(z.string().min(1)).optional(),
   reference_md: z.string().min(1),

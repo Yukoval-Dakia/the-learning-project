@@ -26,7 +26,10 @@ export type PhysicsFixtureTestCaseT = z.infer<typeof PhysicsFixtureTestCase>;
 
 export const PhysicsFixtureItemSchema = z.object({
   ref: z.string().min(1),
-  kind: z.enum(['single_choice', 'calculation']),
+  // Canonical QuestionKind only (YUK-390 residual): the fixture schema is the
+  // insertion seam into question.kind — profile-vocab values (single_choice /
+  // calculation …) are rejected here so dirty kinds cannot re-enter the column.
+  kind: z.enum(['choice', 'computation']),
   prompt_md: z.string().min(1),
   choices_md: z.array(z.string().min(1)).optional(),
   reference_md: z.string().min(1),

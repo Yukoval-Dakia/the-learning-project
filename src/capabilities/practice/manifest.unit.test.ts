@@ -143,6 +143,24 @@ describe('practice manifest jobs', () => {
     }
   });
 
+  // YUK-390 residual — kind canonicalization backfill is a pure-SQL DAG root
+  // (mirror answer_class_backfill): anchor-triggered, no cron, no downstream.
+  it('registers kind_cleanup_backfill as a DAG root with no downstream edge', () => {
+    const handlers = practiceCapability.jobs?.handlers ?? [];
+    const job = handlers.find((j) => j.name === 'kind_cleanup_backfill');
+    expect(job).toBeTruthy();
+    expect(job?.schedule).toBeUndefined();
+    expect(job?.dependsOn).toEqual([]);
+    expect(job?.queue).toBe('llm');
+    expect(typeof job?.load).toBe('function');
+    for (const other of handlers) {
+      expect(
+        (other.dependsOn ?? []).map((d) => (typeof d === 'string' ? d : d.job)),
+        other.name,
+      ).not.toContain('kind_cleanup_backfill');
+    }
+  });
+
   // YUK-758 — the migrated backfill chain edges (real read-after-write dependencies).
   it('wires the calibration chain: item_prior → recalibration → {compose, supply}', () => {
     const handlers = practiceCapability.jobs?.handlers ?? [];

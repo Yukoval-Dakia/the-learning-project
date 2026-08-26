@@ -283,13 +283,13 @@ describe('yuwen fixture e2e smoke', () => {
   // Route coverage: assert every fixture resolves to its expected route per kind.
   it('every fixture routes to its expected route per kind', async () => {
     const expectedRoute = (item: YuwenFixtureItem): string => {
-      if (item.kind === 'single_choice') return 'exact';
+      if (item.kind === 'choice') return 'exact';
       if (item.kind === 'fill_blank') return 'keyword';
-      return 'semantic'; // translation + reading_comprehension
+      return 'semantic'; // translation + reading
     };
     for (const item of loadYuwenFixtures()) {
       const row = await getRow(item.ref);
-      const answer = item.kind === 'single_choice' ? (item.reference_md ?? '') : '占位作答';
+      const answer = item.kind === 'choice' ? (item.reference_md ?? '') : '占位作答';
       const { route } = await judgeAnswer({
         db,
         question: toJudgeRow(row),

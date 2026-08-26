@@ -5,6 +5,8 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { QuestionKind } from '@/core/schema/business';
+import { SubjectQuestionKindSchema } from './profile-schema';
 import {
   canonicalKindToPersistedForms,
   kindsMatch,
@@ -142,5 +144,58 @@ describe('skillKindToQuestionKind (profile key → persisted canonical)', () => 
     expect(skillKindToQuestionKind(questionKindToSkillKind('computation'))).toBe('computation');
     expect(questionKindToSkillKind(skillKindToQuestionKind('calculation'))).toBe('calculation');
     expect(skillKindToQuestionKind(questionKindToSkillKind('reading'))).toBe('reading');
+  });
+});
+
+// YUK-390 residual groundwork — lock the single-mapper convergence state over
+// the FULL vocabularies (not just spot values): the profile→canonical mapping
+// is total + consistent, every canonical family normalizes back to itself, the
+// two vocabularies partition with no orphan values, and representative
+// selection is stable. If a future kind is added to either vocabulary without
+// updating the single mapping, these go red — the compile-time Record
+// exhaustiveness catches missing keys; these catch semantic drift.
+describe('vocabulary convergence invariants (full-vocab)', () => {
+  it('every SubjectQuestionKind maps total + consistently into canonical', () => {
+    for (const skillKind of SubjectQuestionKindSchema.options) {
+      expect(QuestionKind.safeParse(skillKindToQuestionKind(skillKind)).success, skillKind).toBe(
+        true,
+      );
+      expect(normalizeToCanonicalKind(skillKind), skillKind).toBe(
+        skillKindToQuestionKind(skillKind),
+      );
+    }
+  });
+
+  it('every canonical kind expands to a family that normalizes back to it', () => {
+    for (const canonical of QuestionKind.options) {
+      expect(new Set(canonicalKindToPersistedForms(canonical)).has(canonical), canonical).toBe(
+        true,
+      );
+      for (const form of canonicalKindToPersistedForms(canonical)) {
+        expect(normalizeToCanonicalKind(form), `${canonical} ← ${form}`).toBe(canonical);
+      }
+    }
+  });
+
+  it('no orphan values: every persisted form is a member of one of the two vocabularies', () => {
+    const known = new Set<string>([...QuestionKind.options, ...SubjectQuestionKindSchema.options]);
+    for (const canonical of QuestionKind.options) {
+      for (const form of canonicalKindToPersistedForms(canonical)) {
+        expect(known.has(form), form).toBe(true);
+      }
+    }
+  });
+
+  it('representative selection is stable and family-preserving for every profile kind', () => {
+    for (const skillKind of SubjectQuestionKindSchema.options) {
+      const canonical = skillKindToQuestionKind(skillKind);
+      const representative = questionKindToSkillKind(canonical);
+      // stays in the same canonical family (lossy fold picks one member)...
+      expect(skillKindToQuestionKind(representative), skillKind).toBe(canonical);
+      // ...and is stable: applying the round-trip again changes nothing.
+      expect(questionKindToSkillKind(skillKindToQuestionKind(representative)), skillKind).toBe(
+        representative,
+      );
+    }
   });
 });
