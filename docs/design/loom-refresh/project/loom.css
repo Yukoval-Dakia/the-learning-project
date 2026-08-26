@@ -14,7 +14,6 @@
      native control rendering; the app's own dark mirror handles dark. */
   color-scheme: light;
   /* not in the canonical token layer */
-  --info-line: #BACBDC;
   --rail-w: 240px; --rail-w-collapsed: 76px;
   --scrim: rgba(40,33,22,.34);
   /* app-shell prefers a slightly wider working canvas than --cap-wide */

@@ -66,7 +66,7 @@ describe('CopilotDock inline subtask cards', () => {
     expect(screen.getByText('运行中')).toBeTruthy();
     expect(screen.getByText('完成')).toBeTruthy();
     expect(screen.getByText('失败')).toBeTruthy();
-    expect(screen.getAllByText('Loom Copilot')).toHaveLength(1);
+    expect(screen.getAllByText('编排者')).toHaveLength(1);
     expect(screen.queryByText(/subagent|子 agent|reasoning|transcript/i)).toBeNull();
   });
 });

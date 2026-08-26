@@ -283,9 +283,9 @@
   --scrim: rgba(40, 33, 22, 0.34);
   /* app-shell prefers a slightly wider working canvas than --cap-wide */
   --cap-shell: 1240px;
-  /* informational hairline — not in the canonical token layer; the
-     existing .note-entry-banner already references var(--info-line, …)
-     with a fallback, this promotes it to a real token. */
+  /* informational hairline — registered in the design truth source
+     (loom-refresh/project/tokens.css info quartet; dark mirror #324252
+     lives in the [data-theme=dark] blocks below), values unchanged. */
   --info-line: #bacbdc;
 
   /* Tell the UA which color schemes are supported so native UI (scrollbars,

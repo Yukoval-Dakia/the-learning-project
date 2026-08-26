@@ -76,6 +76,7 @@
   /* informational · used sparingly, AI-attributed */
   --info:         #4F6E8E;
   --info-soft:    #E2E9F1;
+  --info-line:    #BACBDC;  /* dark mirror #324252 — loom.css [data-theme=dark] */
   --info-ink:     #1F3247;
 
   /* ════════════════════════════════════════════════════════
