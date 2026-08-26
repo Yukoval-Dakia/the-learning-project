@@ -379,6 +379,9 @@ interface MessageRowProps {
   message: ChatMessage;
   navigate: (to: string) => void;
   onAcceptCorrective: (sessionId: string, questionId: string, replyEventId?: string) => void;
+  onSelectCorrection?: (turnId: string, turnNumber: number) => void;
+  correctionTurnNumber?: number;
+  correctionSelected?: boolean;
   onRevert?: (checkpointEventId: string) => void;
   // Per-row (not global) chip flags so a corrective-chip click on ONE message
   // does not re-render every other row: only the matching row sees its flag flip.
@@ -400,11 +403,15 @@ export const MessageRow = memo(function MessageRow({
   message: m,
   navigate,
   onAcceptCorrective,
+  onSelectCorrection,
+  correctionTurnNumber,
+  correctionSelected = false,
   onRevert,
   chipPending,
   chipAcked,
   revertPending,
 }: MessageRowProps) {
+  const correctionTurnId = m.role === 'ai' ? m.reply_event_id : undefined;
   return (
     <div
       className={`msg msg-${m.role}${m.streaming ? ' is-streaming' : ''}`}
@@ -429,6 +436,19 @@ export const MessageRow = memo(function MessageRow({
             text visible instead of blanking or crashing the conversation.
             Copilot has no subject profile, so dollar syntax stays plain. */}
         <DeferredMarkdownRenderer className="msg-text">{m.text}</DeferredMarkdownRenderer>
+        {correctionTurnId &&
+        correctionTurnNumber !== undefined &&
+        !m.streaming &&
+        onSelectCorrection ? (
+          <button
+            type="button"
+            className={`chip${correctionSelected ? ' is-corrective' : ''}`}
+            aria-pressed={correctionSelected}
+            onClick={() => onSelectCorrection(correctionTurnId, correctionTurnNumber)}
+          >
+            更正这轮
+          </button>
+        ) : null}
         {m.role === 'ai' && m.checkpoint_event_id && !m.streaming && onRevert ? (
           <button
             type="button"
@@ -633,6 +653,12 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // family, but the skip is not an error — it gets a calmer copy (no alert tone).
   const [refreshSkipped, setRefreshSkipped] = useState(false);
   const [input, setInput] = useState('');
+  const [correctionTarget, setCorrectionTarget] = useState<{
+    turnId: string;
+    turnNumber: number;
+  } | null>(null);
+  const correctionTargetRef = useRef(correctionTarget);
+  correctionTargetRef.current = correctionTarget;
   // YUK-267 (C2) — the current page route, sent as ambient_context.route so the
   // agent can scope its answer to where the user is. Held in a ref + synced each
   // render so `send` stays stable (its deps are []), matching the activeSkillRef
@@ -671,6 +697,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     // YUK-272 (C3) — also drop the quiz-chip's in-scope knowledge entity so a
     // re-open does not offer a quiz for a stale knowledge node.
     setFocusedKnowledgeId(null);
+    correctionTargetRef.current = null;
+    setCorrectionTarget(null);
     closeDrawerDwell();
   }, [closeDrawerDwell]);
   // A logical turn keeps one stable key until it is accepted. If the server
@@ -738,6 +766,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       resetRecoveryForSessionChange();
       activeSkillRef.current = null;
       setFocusedKnowledgeId(null);
+      correctionTargetRef.current = null;
+      setCorrectionTarget(null);
       setMessages([]);
       replayedRef.current = false;
       setOptimisticSession(response.session);
@@ -756,6 +786,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       resetRecoveryForSessionChange();
       activeSkillRef.current = null;
       setFocusedKnowledgeId(null);
+      correctionTargetRef.current = null;
+      setCorrectionTarget(null);
       setMessages([]);
       replayedRef.current = false;
       setOptimisticSession(null);
@@ -1167,7 +1199,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     // drawer can stay open while navigation/skill focus changes; recomputing
     // ambient_context here would correctly trigger a server 409 but prevent
     // recovery of the already accepted original turn.
-    const currentSkillContext = activeSkillRef.current;
+    const selectedCorrectionTarget = correctionTargetRef.current;
+    const currentSkillContext = selectedCorrectionTarget ? null : activeSkillRef.current;
     const route = pathnameRef.current;
     const focusedEntity = currentSkillContext?.ref;
     const ambientFocus = resolveTurnAmbientFocus(focusedEntity, nudgeSessionRef.current);
@@ -1180,6 +1213,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       triggered_by: 'chat' as const,
       ...(currentSkillContext ? { skill_context: currentSkillContext } : {}),
       ...(ambientContext ? { ambient_context: ambientContext } : {}),
+      ...(selectedCorrectionTarget
+        ? { correction_target_turn_id: selectedCorrectionTarget.turnId }
+        : {}),
     };
     const skillContext = requestBody.skill_context;
     lastUserTurnRef.current = {
@@ -1209,6 +1245,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     setRefreshFailed(false);
     setRefreshSkipped(false);
     setInput('');
+    correctionTargetRef.current = null;
+    setCorrectionTarget(null);
     if (priorLogicalTurn) {
       // Same-key recovery may already be visible from replay under a different
       // server event id. Avoid duplicating that one logical turn.
@@ -1833,6 +1871,17 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     !creatingSession &&
     (selectedSession?.status === 'active' || selectedSession?.status === 'idle');
 
+  const selectCorrectionTarget = useCallback((turnId: string, turnNumber: number) => {
+    const target = { turnId, turnNumber };
+    correctionTargetRef.current = target;
+    setCorrectionTarget(target);
+  }, []);
+
+  const clearCorrectionTarget = useCallback(() => {
+    correctionTargetRef.current = null;
+    setCorrectionTarget(null);
+  }, []);
+
   // YUK-577 — nudge bar rides above the summary body (shows even while summary loads/unavailable).
   const summary = (
     <>
@@ -1868,6 +1917,18 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           >
             {stopPending ? '停止中…' : '停止'}
           </Btn>
+        </div>
+      ) : null}
+      {correctionTarget ? (
+        <div className="chat-chips" data-testid="copilot-correction-target">
+          <button
+            type="button"
+            className="chip is-corrective"
+            aria-label="取消更正目标"
+            onClick={clearCorrectionTarget}
+          >
+            将更正第 {correctionTarget.turnNumber} 轮<span aria-hidden="true">×</span>
+          </button>
         </div>
       ) : null}
       <div className="chat-chips">
@@ -1986,7 +2047,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                 问 Loom 任何事 —— 它会读你的错题、知识图谱与今日计划来回答。
               </p>
             ) : null}
-            {messages.map((m) => {
+            {messages.map((m, messageIndex) => {
               // Per-row chip flags: only the message whose structured question is
               // pending/acked flips, so a corrective-chip state change re-renders
               // that one row instead of every memoized row.
@@ -1997,6 +2058,17 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                   message={m}
                   navigate={navigate}
                   onAcceptCorrective={acceptCorrectiveChip}
+                  onSelectCorrection={selectCorrectionTarget}
+                  correctionTurnNumber={
+                    m.role === 'ai'
+                      ? messages
+                          .slice(0, messageIndex + 1)
+                          .filter((message) => message.role === 'ai').length
+                      : undefined
+                  }
+                  correctionSelected={
+                    m.reply_event_id != null && correctionTarget?.turnId === m.reply_event_id
+                  }
                   onRevert={revertCheckpoint}
                   chipPending={qid != null && chipPending === qid}
                   chipAcked={qid != null && chipAcked === qid}

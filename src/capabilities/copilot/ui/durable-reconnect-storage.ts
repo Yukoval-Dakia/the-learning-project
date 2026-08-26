@@ -18,7 +18,11 @@ const MAX_IDEMPOTENCY_KEY_CHARS = 200;
 
 export type PersistedPendingCopilotRequestBody = Pick<
   CopilotChatRequestT,
-  'user_message' | 'triggered_by' | 'skill_context' | 'ambient_context'
+  | 'user_message'
+  | 'triggered_by'
+  | 'skill_context'
+  | 'ambient_context'
+  | 'correction_target_turn_id'
 > & { session_id: string };
 
 export interface PersistedPendingCopilotTurn {
@@ -108,6 +112,12 @@ function parsePersistedPendingCopilotTurn(value: unknown): PersistedPendingCopil
   const sessionId = boundedString(rawBody.session_id, 160);
   if (!sessionId) return null;
 
+  const correctionTargetTurnId =
+    rawBody.correction_target_turn_id === undefined
+      ? undefined
+      : boundedString(rawBody.correction_target_turn_id, 160);
+  if (rawBody.correction_target_turn_id !== undefined && !correctionTargetTurnId) return null;
+
   let ambientContext: CopilotChatRequestT['ambient_context'];
   if (rawBody.ambient_context !== undefined) {
     const rawAmbient = objectRecord(rawBody.ambient_context);
@@ -132,6 +142,7 @@ function parsePersistedPendingCopilotTurn(value: unknown): PersistedPendingCopil
       triggered_by: 'chat',
       ...(skillContext ? { skill_context: skillContext } : {}),
       ...(ambientContext ? { ambient_context: ambientContext } : {}),
+      ...(correctionTargetTurnId ? { correction_target_turn_id: correctionTargetTurnId } : {}),
     },
   };
 }

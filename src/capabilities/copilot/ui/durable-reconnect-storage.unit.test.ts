@@ -104,6 +104,22 @@ describe('durable Copilot reconnect storage', () => {
     expect(loadPersistedPendingCopilotTurn()).toBeNull();
   });
 
+  it('preserves an explicit correction target in the exact retry body', () => {
+    const correctionTurn = {
+      ...richPendingTurn,
+      requestBody: {
+        session_id: richPendingTurn.requestBody.session_id,
+        user_message: richPendingTurn.requestBody.user_message,
+        triggered_by: 'chat' as const,
+        ambient_context: richPendingTurn.requestBody.ambient_context,
+        correction_target_turn_id: 'copilot_reply_parametric_domain_41',
+      },
+    };
+
+    expect(persistPendingCopilotTurn(correctionTurn)).toBe(true);
+    expect(loadPersistedPendingCopilotTurn()).toEqual(correctionTurn);
+  });
+
   it('rejects a pending record whose visible message and replay body diverge', () => {
     window.sessionStorage.setItem(
       PENDING_COPILOT_TURN_STORAGE_KEY,
