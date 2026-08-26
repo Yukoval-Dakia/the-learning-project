@@ -16,7 +16,7 @@
 // practice answer flow; a photo-only answer is allowed (the route gates it server-side).
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { uploadAsset, useAssetUrl } from '@/ui/lib/assets';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -115,14 +115,7 @@ export function ProbeAnswerCard({
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
   const [verdict, setVerdict] = useState<ProbeAnswerVerdict['resolution'] | null>(null);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timeout = window.setTimeout(() => setToast(null), 5000);
-    return () => window.clearTimeout(timeout);
-  }, [toast]);
 
   // "has any answer" = text OR image (mirrors the route's submit gate).
   const hasAnswer = answerMd.trim().length > 0 || imageRefs.length > 0;
@@ -144,7 +137,6 @@ export function ProbeAnswerCard({
     if (!hasAnswer || submitting) return;
     setSubmitting(true);
     setError(null);
-    setToast(null);
     let resolution: ProbeAnswerVerdict['resolution'] | null = null;
     try {
       const res = await submitProbeAnswer(probe.probe_question_id, answerMd.trim(), imageRefs);
@@ -157,8 +149,9 @@ export function ProbeAnswerCard({
     } catch {
       // An actually ungradable judge result or network failure stays retryable.
       // A gradable unrelated error returns the recorded `inconclusive` verdict above.
+      // YUK-911 — exactly ONE live region carries this failure (the role="alert"
+      // .pa-error below); no second polite/status region may double-announce it.
       setError(JUDGE_FAILURE_MESSAGE);
-      setToast(JUDGE_FAILURE_MESSAGE);
       onFailed?.();
     } finally {
       setSubmitting(false);
@@ -240,12 +233,6 @@ export function ProbeAnswerCard({
             <div className="pa-error" role="alert">
               <LoomIcon name="alert" size={13} className="pa-error-icon" />
               {error}
-            </div>
-          )}
-          {toast && (
-            <div className="pa-toast" role="status" aria-live="polite">
-              <LoomIcon name="alert" size={14} className="pa-toast-icon" />
-              {toast}
             </div>
           )}
         </>
