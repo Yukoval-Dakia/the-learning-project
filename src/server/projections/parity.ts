@@ -1013,6 +1013,63 @@ export async function questionBlocksWithGenesisAnchor(
   return out;
 }
 
+// ── item_calibration genesis-anchor helpers (YUK-496 — ADR-0044 §7 item_calibration 例外, 方案 A) ──
+//
+// An item_calibration row is EVENT-SOURCED (reproducible by foldItemCalibration) iff it carries an
+// `experimental:genesis` backfill anchor — the ONLY event kind the anchor-only fold consumes (the
+// table has no runtime create / mutation events; 方案 A deliberately keeps the B1 imperative
+// writers untouched). NO materialized_id_index leg: item_calibration does NOT enter the index (the
+// question_block design §5.3 precedent — the row id is ALWAYS the subject_id, so the anchor is
+// always a subject-keyed event and this event-table check is complete).
+
+const ITEM_CALIBRATION_ANCHOR_ACTIONS = ['experimental:genesis'] as const;
+
+/**
+ * Does this `item_calibration` row have a genesis anchor — i.e. is it event-sourced (reproducible by
+ * foldItemCalibration) at all? READ-ONLY. Used by projectItemCalibrationGuarded (a fold-null on a
+ * NON-anchored row must NOT delete the imperative row — it is fold-blindness, not a revert).
+ */
+export async function hasItemCalibrationGenesisAnchor(db: DbLike, rowId: string): Promise<boolean> {
+  const ev = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'item_calibration'),
+        eq(event.subject_id, rowId),
+        inArray(event.action, [...ITEM_CALIBRATION_ANCHOR_ACTIONS]),
+      ),
+    )
+    .limit(1);
+  return ev.length > 0;
+}
+
+/**
+ * Batch form of hasItemCalibrationGenesisAnchor — the subset of `rowIds` that ARE anchored.
+ * READ-ONLY (event leg ONLY — item_calibration is not in the index). Used by the YUK-496 backfill
+ * to SKIP rows that already carry an anchor; DOUBLES as the idempotency pre-scan (a previously-
+ * backfilled row carries a genesis event → skipped, mirroring every sibling lane).
+ */
+export async function itemCalibrationsWithGenesisAnchor(
+  db: DbLike,
+  rowIds: string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (rowIds.length === 0) return out;
+  const evRows = await db
+    .select({ subject_id: event.subject_id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'item_calibration'),
+        inArray(event.subject_id, rowIds),
+        inArray(event.action, [...ITEM_CALIBRATION_ANCHOR_ACTIONS]),
+      ),
+    );
+  for (const r of evRows) out.add(r.subject_id);
+  return out;
+}
+
 // ── artifact parity assert (YUK-471 Wave 3 — C3) ─────────────────────────────────────────────────
 //
 // The write-time fold==row guard for the artifact imperative sites (the body_blocks edit seam + the

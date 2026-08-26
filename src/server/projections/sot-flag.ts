@@ -64,6 +64,11 @@ const PER_ENTITY_FLAG_ENV = {
   artifact: 'PROJECTION_IS_WRITER_ARTIFACT',
   // YUK-471 W3-C3 — question_block fold flips independently (default OFF until its own W3-D B3 gate).
   question_block: 'PROJECTION_IS_WRITER_QUESTION_BLOCK',
+  // YUK-496 (方案 A) — item_calibration anchor-only coverage. Default OFF and NO flip is planned:
+  // the B1 imperative writers stay the live row writers; a future canonical-event route (方案 B) is
+  // the prerequisite for ever flipping it. The flag exists so the kind can ride the per-entity
+  // isolation model (never the bare W1 global) like every post-W1 entity.
+  item_calibration: 'PROJECTION_IS_WRITER_ITEM_CALIBRATION',
 } as const;
 
 /** Which named entities have a per-entity SoT-flip flag (the overloaded arg domain). */

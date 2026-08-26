@@ -222,10 +222,17 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
   });
 
   // B1-W1 (ADR-0035) — item_calibration is the item difficulty anchor (item-half
-  // locked, G4). Its only writer is the applier in src/server/mastery/
-  // (item-calibration.ts). The θ̂ update path only READS item_calibration.b.
-  it('db.{insert,update}(item_calibration) appears only in src/server/mastery/', async () => {
-    const ALLOWED_CALIBRATION_WRITERS = ['src/server/mastery/'] as const;
+  // locked, G4). Its only LIVE writer is the applier family in src/server/mastery/
+  // (item-calibration.ts / fixed-anchor.ts / kt-calibration.ts / recalibration.ts).
+  // The θ̂ update path only READS item_calibration.b. YUK-496 adds ONE offline projection
+  // shell (src/server/projections/item_calibration.ts — rebuild:projection / B3 gate on a
+  // CLONE only; the per-entity SoT flag is default OFF with no flip planned under 方案 A),
+  // so the single-writer surface widens by exactly that registered offline lane.
+  it('db.{insert,update}(item_calibration) appears only in src/server/mastery/ + the offline YUK-496 projection shell', async () => {
+    const ALLOWED_CALIBRATION_WRITERS = [
+      'src/server/mastery/',
+      'src/server/projections/item_calibration.ts',
+    ] as const;
     const hits = await findWriteHits('item_calibration');
     const violations = hits.filter((h) => !isAllowed(h, ALLOWED_CALIBRATION_WRITERS));
     expect(

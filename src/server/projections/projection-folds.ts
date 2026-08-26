@@ -13,6 +13,7 @@
 import { foldArtifact } from '@/core/projections/artifact';
 import type { FoldEvent } from '@/core/projections/fold-event';
 import { foldGoal } from '@/core/projections/goal';
+import { foldItemCalibration } from '@/core/projections/item_calibration';
 import { foldKnowledgeNode } from '@/core/projections/knowledge';
 import { foldKnowledgeEdge } from '@/core/projections/knowledge_edge';
 import { foldLearningItem } from '@/core/projections/learning_item';
@@ -41,4 +42,6 @@ export const PROJECTION_FOLDS: Record<ProjectionKind, PureFold> = {
   learning_item: (id, events) => foldLearningItem(id, events) as Record<string, unknown> | null,
   artifact: (id, events) => foldArtifact(id, events) as Record<string, unknown> | null,
   question_block: (id, events) => foldQuestionBlock(id, events) as Record<string, unknown> | null,
+  item_calibration: (id, events) =>
+    foldItemCalibration(id, events) as Record<string, unknown> | null,
 };

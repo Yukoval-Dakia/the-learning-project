@@ -76,6 +76,7 @@ export interface AuditResult {
   checkedLearningItems: number;
   checkedArtifacts: number;
   checkedQuestionBlocks: number;
+  checkedItemCalibrations: number;
   drift: DriftRecord[]; // non-allowlisted drift (the failures)
   allowed: DriftRecord[]; // drifted ids covered by the allowlist (reported, not failures)
 }
@@ -108,6 +109,7 @@ export async function auditProjection(
     checkedLearningItems: checked.learning_item?.checked ?? 0,
     checkedArtifacts: checked.artifact?.checked ?? 0,
     checkedQuestionBlocks: checked.question_block?.checked ?? 0,
+    checkedItemCalibrations: checked.item_calibration?.checked ?? 0,
     drift,
     allowed,
   };
@@ -122,7 +124,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(result, null, 2));
   } else {
     console.log(
-      `audit:projection — checked ${result.checkedNodes} node(s) + ${result.checkedEdges} edge(s) + ${result.checkedGoals} goal(s) + ${result.checkedMistakeVariants} mistake_variant(s) + ${result.checkedLearningItems} learning_item(s) + ${result.checkedArtifacts} artifact(s) + ${result.checkedQuestionBlocks} question_block(s).`,
+      `audit:projection — checked ${result.checkedNodes} node(s) + ${result.checkedEdges} edge(s) + ${result.checkedGoals} goal(s) + ${result.checkedMistakeVariants} mistake_variant(s) + ${result.checkedLearningItems} learning_item(s) + ${result.checkedArtifacts} artifact(s) + ${result.checkedQuestionBlocks} question_block(s) + ${result.checkedItemCalibrations} item_calibration(s).`,
     );
     if (result.allowed.length > 0) {
       console.log(`\nALLOWED drift (covered by allowlist):  ${result.allowed.length}`);

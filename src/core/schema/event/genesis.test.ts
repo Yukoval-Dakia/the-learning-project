@@ -351,3 +351,137 @@ describe('parseEvent — RateEvent.materialized_ids optionality', () => {
     expect((parsed as { action: string }).action).toBe('rate');
   });
 });
+
+// ====================================================================
+// YUK-496 — item_calibration genesis parse-barrier tests (方案 A anchor).
+//
+// item_calibration is B-class backfilled (anchor-only fold): a malformed genesis payload for
+// subject_kind='item_calibration' must be REJECTED at parseEvent, NOT fall through to the generic
+// ExperimentalEvent. Mirrors the W2/W3 lanes: wrong row shape, subject_id != row.id, the .strict()
+// extra-field case, and the discriminating-column (question_id + track) guard.
+// ====================================================================
+
+// A well-formed ItemCalibrationRowSnapshot — the FULL row (dates as ISO strings, z.coerce.date()
+// accepts them; jsonb columns as plain records).
+function itemCalibrationRow(id = 'ic_1') {
+  return {
+    id,
+    question_id: 'q_1',
+    b: -0.842,
+    confidence: 0.62,
+    track: 'hard' as const,
+    source: 'llm_prior',
+    b_anchor: -0.842,
+    b_calib: null,
+    calibration_n: 0,
+    calibration_weight: null,
+    last_calibrated_at: null,
+    irt_a: null,
+    irt_c: null,
+    cdm_json: null,
+    kt_json: null,
+    created_at: '2026-08-26T00:00:00.000Z',
+    updated_at: '2026-08-26T00:00:00.000Z',
+  };
+}
+
+describe('parseEvent — experimental:genesis item_calibration routing + coherence (YUK-496)', () => {
+  it('ACCEPTS a well-formed genesis for an item_calibration row', () => {
+    const parsed = parseEvent(
+      genesisEnvelope({
+        subject_kind: 'item_calibration',
+        subject_id: 'ic_1',
+        payload: { row: itemCalibrationRow('ic_1') },
+      }),
+    );
+    expect((parsed as { subject_kind: string }).subject_kind).toBe('item_calibration');
+    expect((parsed as { subject_id: string }).subject_id).toBe('ic_1');
+  });
+
+  it('REJECTS an item_calibration genesis whose payload.row is a KNOWLEDGE row (wrong shape, superRefine)', () => {
+    expect(() =>
+      parseEvent(
+        genesisEnvelope({
+          subject_kind: 'item_calibration',
+          subject_id: 'k_1',
+          payload: { row: knowledgeRow('k_1') },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS an item_calibration genesis where subject_id !== payload.row.id (superRefine)', () => {
+    expect(() =>
+      parseEvent(
+        genesisEnvelope({
+          subject_kind: 'item_calibration',
+          subject_id: 'ic_mismatch',
+          payload: { row: itemCalibrationRow('ic_1') },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS an item_calibration genesis with an EXTRA unknown field (.strict())', () => {
+    const badRow = itemCalibrationRow('ic_1') as Record<string, unknown>;
+    badRow.bogus_extra = 'nope';
+    expect(() =>
+      parseEvent(
+        genesisEnvelope({
+          subject_kind: 'item_calibration',
+          subject_id: 'ic_1',
+          payload: { row: badRow },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS a genesis MISSING a required column (b_anchor)', () => {
+    const badRow = itemCalibrationRow('ic_1') as Record<string, unknown>;
+    badRow.b_anchor = undefined;
+    expect(() =>
+      parseEvent(
+        genesisEnvelope({
+          subject_kind: 'item_calibration',
+          subject_id: 'ic_1',
+          payload: { row: badRow },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS a sibling-ish row LACKING the item_calibration discriminating columns', () => {
+    // Shape-similar (id/dates) but missing question_id + track — the discriminating-column guard
+    // must not let it false-pass as an item_calibration seed.
+    const siblingish = {
+      id: 'ic_1',
+      b: 0.5,
+      confidence: 0.5,
+      created_at: '2026-08-26T00:00:00.000Z',
+      updated_at: '2026-08-26T00:00:00.000Z',
+    };
+    expect(() =>
+      parseEvent(
+        genesisEnvelope({
+          subject_kind: 'item_calibration',
+          subject_id: 'ic_1',
+          payload: { row: siblingish },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS an out-of-range confidence (0-1 refinement — a writer bug fails the barrier)', () => {
+    const badRow = itemCalibrationRow('ic_1') as Record<string, unknown>;
+    badRow.confidence = 1.5;
+    expect(() =>
+      parseEvent(
+        genesisEnvelope({
+          subject_kind: 'item_calibration',
+          subject_id: 'ic_1',
+          payload: { row: badRow },
+        }),
+      ),
+    ).toThrow();
+  });
+});
