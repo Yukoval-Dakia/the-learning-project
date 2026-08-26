@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import fixtureData from './data.json' with { type: 'json' };
-import { ExpectedSignal, PhysicsFixtureFileSchema, loadPhysicsFixtures } from './index';
+import {
+  ExpectedSignal,
+  PhysicsFixtureFileSchema,
+  PhysicsFixtureItemSchema,
+  loadPhysicsFixtures,
+} from './index';
 
 describe('physics fixtures', () => {
   it('data.json conforms to PhysicsFixtureFileSchema', () => {
@@ -46,5 +51,16 @@ describe('physics fixtures', () => {
     const items = loadPhysicsFixtures();
     const refs = items.map((i) => i.ref);
     expect(new Set(refs).size).toBe(refs.length);
+  });
+
+  // YUK-390 residual — canonical-only insertion seam: the fixture schema must
+  // reject profile-vocab kinds so dirty values cannot re-enter question.kind via
+  // fixture loads.
+  it('rejects profile-vocab kinds at parse time (canonical-only seam)', () => {
+    const items = loadPhysicsFixtures();
+    const dirty = items.map((i) => ({ ...i, kind: 'calculation' }));
+    for (const item of dirty) {
+      expect(() => PhysicsFixtureItemSchema.parse(item)).toThrow();
+    }
   });
 });

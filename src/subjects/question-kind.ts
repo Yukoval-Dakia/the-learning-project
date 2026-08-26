@@ -127,6 +127,11 @@ export function skillKindToQuestionKind(skillKind: SubjectQuestionKind): string 
  *
  * 入参若不是合法 canonical QuestionKind（如已是 profile key 或未知串）→ 先归一；归一不到
  * 则原样返回单元素集合（调用方据此仍做精确匹配，不放大）。
+ *
+ * YUK-390 residual：`kind_cleanup_backfill` 夜批已把持久化脏值重写为 canonical（对
+ * neither-vocab 值 fail-closed），fixture 插入缝也已收紧，脏尾巴只剩尚未被 job 覆盖
+ * 的行（job 未跑的环境 / unknown 值）。本展开在读侧保留到该尾巴可证为空；是否退役随
+ * YUK-391/392 一并重估。
  */
 export function canonicalKindToPersistedForms(kind: string): string[] {
   const canonical = normalizeToCanonicalKind(kind);

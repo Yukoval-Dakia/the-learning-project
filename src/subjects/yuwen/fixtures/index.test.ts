@@ -21,15 +21,15 @@ describe('yuwen fixtures', () => {
     expect(items.length).toBeLessThanOrEqual(12);
   });
 
-  it('per-kind counts: >=5 single_choice + >=3 translation + >=2 reading_comprehension + 1 fill_blank', () => {
+  it('per-kind counts: >=5 choice + >=3 translation + >=2 reading + 1 fill_blank', () => {
     const items = loadYuwenFixtures();
     const byKind = items.reduce<Record<string, number>>((acc, i) => {
       acc[i.kind] = (acc[i.kind] ?? 0) + 1;
       return acc;
     }, {});
-    expect(byKind.single_choice).toBeGreaterThanOrEqual(5);
+    expect(byKind.choice).toBeGreaterThanOrEqual(5);
     expect(byKind.translation).toBeGreaterThanOrEqual(3);
-    expect(byKind.reading_comprehension).toBeGreaterThanOrEqual(2);
+    expect(byKind.reading).toBeGreaterThanOrEqual(2);
     expect(byKind.fill_blank ?? 0).toBe(1);
   });
 
@@ -44,16 +44,16 @@ describe('yuwen fixtures', () => {
     expect(readCount).toBeGreaterThanOrEqual(2);
     expect(shortCount).toBe(1);
     for (const item of items) {
-      if (item.ref.startsWith('yuwen-choice-')) expect(item.kind).toBe('single_choice');
+      if (item.ref.startsWith('yuwen-choice-')) expect(item.kind).toBe('choice');
       if (item.ref.startsWith('yuwen-trans-')) expect(item.kind).toBe('translation');
-      if (item.ref.startsWith('yuwen-read-')) expect(item.kind).toBe('reading_comprehension');
+      if (item.ref.startsWith('yuwen-read-')) expect(item.kind).toBe('reading');
       if (item.ref.startsWith('yuwen-short-')) expect(item.kind).toBe('fill_blank');
     }
   });
 
-  it('every single_choice item has 2-6 choices and reference is one of them', () => {
+  it('every choice item has 2-6 choices and reference is one of them', () => {
     const items = loadYuwenFixtures();
-    const choiceItems = items.filter((i) => i.kind === 'single_choice');
+    const choiceItems = items.filter((i) => i.kind === 'choice');
     for (const it of choiceItems) {
       expect(it.choices_md).toBeDefined();
       const choices = it.choices_md ?? [];
@@ -63,11 +63,9 @@ describe('yuwen fixtures', () => {
     }
   });
 
-  it('every semantic item (translation/reading_comprehension) has rubric_json.required_points', () => {
+  it('every semantic item (translation/reading) has rubric_json.required_points', () => {
     const items = loadYuwenFixtures();
-    const semanticItems = items.filter(
-      (i) => i.kind === 'translation' || i.kind === 'reading_comprehension',
-    );
+    const semanticItems = items.filter((i) => i.kind === 'translation' || i.kind === 'reading');
     for (const it of semanticItems) {
       const required = it.rubric_json?.required_points ?? [];
       expect(required.length).toBeGreaterThan(0);
@@ -105,10 +103,10 @@ describe('yuwen fixtures', () => {
   // schema (superRefine), so prove the guard actually rejects malformed items —
   // not just that the shipped data.json happens to satisfy them.
   describe('schema superRefine rejects kind/field mismatches', () => {
-    it('single_choice without choices_md fails', () => {
+    it('choice without choices_md fails', () => {
       const r = YuwenFixtureItemSchema.safeParse({
         ref: 'x',
-        kind: 'single_choice',
+        kind: 'choice',
         prompt_md: 'p',
         reference_md: 'a',
         difficulty: 1,
@@ -142,5 +140,19 @@ describe('yuwen fixtures', () => {
       });
       expect(r.success).toBe(false);
     });
+  });
+
+  // YUK-390 residual — canonical-only insertion seam: the fixture schema must
+  // reject profile-vocab kinds so dirty values cannot re-enter question.kind via
+  // fixture loads (seed-synthetic persists item.kind verbatim).
+  describe('schema rejects profile-vocab kinds (canonical-only seam)', () => {
+    it.each(['single_choice', 'reading_comprehension'])(
+      'dirty kind %s fails at parse time',
+      (dirtyKind) => {
+        const [choiceItem] = loadYuwenFixtures().filter((i) => i.kind === 'choice');
+        const r = YuwenFixtureItemSchema.safeParse({ ...choiceItem, kind: dirtyKind });
+        expect(r.success).toBe(false);
+      },
+    );
   });
 });
