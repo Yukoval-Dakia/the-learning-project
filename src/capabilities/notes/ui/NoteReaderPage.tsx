@@ -21,6 +21,8 @@ import { NoteBlockView, blockOutlineLabel, questionDetailHref } from './NoteBloc
 import { NoteEditor } from './NoteEditor';
 import {
   type BodyBlock,
+  SEMANTIC_KIND_LABEL,
+  type SemanticKind,
   editingBlur,
   editingHeartbeat,
   getAiChanges,
@@ -52,6 +54,33 @@ function isVersionConflict(e: unknown): boolean {
   if (e instanceof ApiError && e.status === 409) return true;
   const msg = errMessage(e);
   return msg.includes('409') || msg.includes('conflict');
+}
+
+// YUK-339 — 块锚点深链（设计源 NoteReaderBody anchor()，screen-note-reader.jsx:36-40）。
+// hash-only pushState：地址栏变为可分享的 #nb-<blockId>（保留 ?entry= 入口上下文），
+// 不触发 router 导航也不引发原生锚点瞬跳；滚动交给 scrollIntoView + globals
+// .nrb-block 的 scroll-margin-top(84px)（与设计源 scrollTop-84 同源，无 JS 硬编码）。
+function jumpToBlockAnchor(anchorId: string) {
+  window.history.pushState(null, '', `#${anchorId}`);
+  document.getElementById(anchorId)?.scrollIntoView({ behavior: 'smooth' });
+}
+
+// 设计源每块发 nrb-{type} 类；生产非 section 块型映射到同语义短类（无 CSS 钩子，
+// 供测试/后续样式使用）。section 块固定 .nrb-h-block（globals 的 gutter 常亮规则
+// .nrb-h-block .nrb-gutter 锚定它）。
+const NRB_PLAIN_CLASS: Record<string, string> = {
+  semanticBlock: 'nrb-plain',
+  crossLinkBlock: 'nrb-cross',
+  questionRefBlock: 'nrb-qref',
+};
+
+// 小节标题：semanticBlock 的 kind 标签（五段式解剖与 bodyBlocksToNoteSections
+// 1:1）。「check」是 D6 墓碑占位（无标签文案）不构成小节；kind 缺失/未知回退普通块。
+function sectionKindLabel(b: BodyBlock): string | null {
+  if (b.type !== 'semanticBlock') return null;
+  const kind = b.attrs?.semantic_kind;
+  if (typeof kind !== 'string' || kind === 'check') return null;
+  return SEMANTIC_KIND_LABEL[kind as Exclude<SemanticKind, 'check'>] ?? null;
 }
 
 export default function NoteReaderPage({
@@ -123,6 +152,19 @@ export default function NoteReaderPage({
       editorSessionIdRef.current = null;
     };
   }, [mode, id]);
+
+  // YUK-339 — 深链 → 块锚点滚动：URL 带 #nb-<blockId|index> 时，笔记数据到位后
+  // 滚到该块。ref 守卫按笔记 id 只跑一次：窗口聚焦/重连 refetch 会换 note 引用，
+  // 不加守卫会在每次后台刷新时重复跳滚；换笔记 id 后新深链可再触发。
+  const deepLinkedNoteRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!note || deepLinkedNoteRef.current === id) return;
+    deepLinkedNoteRef.current = id;
+    const hash = window.location.hash;
+    if (hash.startsWith('#nb-')) {
+      document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [id, note]);
 
   const say = (text: string) => {
     setToast(text);
@@ -536,6 +578,19 @@ export function NoteDocBody({
   navigate: (to: string) => void;
   onOpenQuestion: (questionId: string) => void;
 }) {
+  // YUK-339：section 折叠态（blockId → collapsed）。hook 必须在 interactive 早退
+  // 分支之前——组件实例的 type 稳定，但 React 规则禁止条件调用 hook。初始渲染在
+  // renderToString 下照常工作，ADR-0033 D5 的静态 HTML 测试不受影响。
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleSection = (blockId: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(blockId)) next.delete(blockId);
+      else next.add(blockId);
+      return next;
+    });
+  };
+
   if (type === 'interactive') {
     if (interactive) {
       return (
@@ -557,19 +612,78 @@ export function NoteDocBody({
   // NoteBlockView variant="read"（crossLink 渲整宽 BlockLinkCard）。批次乙合并
   // #397 的 NoteDocBody（interactive 渲染）时，把 S12 的读态 prose 改进并入此
   // note-types 分支——两特性共存（interactive 分支仍 .note-doc）。
+  // YUK-339：note-types 分支进一步 Notion 化（设计源 NoteReaderBody，
+  // screen-note-reader.jsx:46-69）——每块 .nrb-block（28px gutter 网格）+
+  // .nrb-gutter 手柄（section 折叠 / 非 section 锚点）+ .nrb-content；section =
+  // semanticBlock 小节（标题 h2.nrb-h serif，折叠隐体留标题）。已如下偏离设计源
+  // 并在 PR 记录：锚点 id 沿用既有 nb-<blockId|index> 方案（outline 同源，非设计
+  // 的 nb-anchor- 前缀）；锚点按钮做深链（hash + 滚动），不做剪贴板复制；生产无
+  // b.link 链接行语义（crossLink 整块即 BlockLinkCard，YUK-541），.nrb-linkrow 不引。
   return (
     <div className="note-reader-body">
       {blocks.length === 0 && <p className="quiet-empty">空笔记——切到编辑写第一块。</p>}
-      {blocks.map((b, i) => (
-        <div key={b.attrs?.id ?? i} id={`nb-${b.attrs?.id ?? i}`}>
-          <NoteBlockView
-            block={b}
-            variant="read"
-            onLink={(artifactId) => navigate(`/notes/${artifactId}`)}
-            onOpenQuestion={onOpenQuestion}
-          />
-        </div>
-      ))}
+      {blocks.map((b, i) => {
+        const anchorId = `nb-${b.attrs?.id ?? i}`;
+        const blockKey = b.attrs?.id ?? String(i);
+        const sectionLabel = sectionKindLabel(b);
+        const isSection = sectionLabel !== null;
+        const isCollapsed = collapsed.has(blockKey);
+        return (
+          <div
+            key={blockKey}
+            id={anchorId}
+            className={
+              isSection
+                ? 'nrb-block nrb-h-block'
+                : `nrb-block ${NRB_PLAIN_CLASS[b.type] ?? 'nrb-plain'}`
+            }
+          >
+            <div className="nrb-gutter">
+              {isSection ? (
+                <button
+                  type="button"
+                  className="nrb-collapse"
+                  aria-expanded={!isCollapsed}
+                  aria-label={
+                    isCollapsed ? `展开「${sectionLabel}」小节` : `折叠「${sectionLabel}」小节`
+                  }
+                  onClick={() => toggleSection(blockKey)}
+                >
+                  <LoomIcon
+                    name="arrow"
+                    size={13}
+                    style={{
+                      transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)',
+                      transition: 'transform var(--dur-fast)',
+                    }}
+                  />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="nrb-anchor-btn"
+                  title="锚点链接"
+                  aria-label="锚点链接：更新地址栏并直达此块"
+                  onClick={() => jumpToBlockAnchor(anchorId)}
+                >
+                  <LoomIcon name="link" size={12} />
+                </button>
+              )}
+            </div>
+            <div className="nrb-content">
+              {isSection && <h2 className="nrb-h">{sectionLabel}</h2>}
+              {(!isSection || !isCollapsed) && (
+                <NoteBlockView
+                  block={b}
+                  variant="read"
+                  onLink={(artifactId) => navigate(`/notes/${artifactId}`)}
+                  onOpenQuestion={onOpenQuestion}
+                />
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
