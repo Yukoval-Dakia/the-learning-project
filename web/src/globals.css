@@ -10434,6 +10434,76 @@ button.seg-sm {
 }
 
 /* ============================================================
+   COPILOT compact tool-call rows — YUK-913
+   One logical tool call = ONE single-line row (label + tuc-pill status +
+   one-line summary) whose state evolves in place 调用中 → 已完成/失败.
+   Replaces the previous per-call rich ToolUseCard (two stacked bands) in
+   the CopilotDock chat stream; details collapse behind the row button.
+   Reuses the .tuc-pill status tokens above — no new design system.
+   ============================================================ */
+
+.copilot-tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.copilot-tool-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: var(--fs-meta);
+  line-height: 1.5;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.copilot-tool-name {
+  flex: none;
+  color: var(--ink-2);
+}
+.copilot-tool-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.copilot-tool-line:hover .copilot-tool-name,
+button.copilot-tool-line:hover .copilot-tool-summary {
+  color: var(--ink-2);
+}
+button.copilot-tool-line:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: 2px;
+  border-radius: var(--r-1);
+}
+div.copilot-tool-line.is-static {
+  cursor: default;
+}
+.copilot-tool-line .ico {
+  flex: none;
+  color: var(--ink-5);
+}
+.copilot-tool-line .tuc-pill {
+  flex: none;
+  font-size: 10.5px;
+  padding: 1px 7px 1px 6px;
+  gap: 3px;
+}
+.copilot-tool-detail {
+  padding: 0 0 2px 19px;
+  font-size: var(--fs-meta);
+  line-height: 1.5;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+/* ============================================================
    LOOM MISTAKES LAYER — Wave 2 (YUK-169)
    /mistakes (错题本) card + chrome classes ported additively from
    loom-prototype @ f85aca6d (screen-mistakes.jsx MistakeCard).
