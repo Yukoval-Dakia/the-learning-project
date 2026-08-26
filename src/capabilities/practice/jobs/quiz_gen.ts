@@ -27,16 +27,13 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobWithMetadata, SendOptions } from 'pg-boss';
 import { RUNNABLE_ROUTES } from '@/capabilities/practice/server/judge/question-contract';
+import { isLlmGradedAnswerKind } from '@/core/schema/answer-class';
 import {
   DifficultyEvidence,
   type DifficultyEvidenceT,
   buildProducerDifficultyEvidence,
 } from '@/core/schema/difficulty-evidence';
-import {
-  PROSE_KINDS,
-  defaultJudgeKindForQuestion,
-  nonEmptyStrings,
-} from '@/core/schema/judge-routing';
+import { defaultJudgeKindForQuestion, nonEmptyStrings } from '@/core/schema/judge-routing';
 import {
   type QuizGenMetadataT,
   QuizGenOutput,
@@ -287,7 +284,11 @@ function assertGeneratedQuestionHasJudgeContract(q: QuizGenQuestionT): void {
       `quiz_gen question '${q.prompt_md}' uses semantic judge without required_points`,
     );
   }
-  if ((PROSE_KINDS.has(q.kind) || q.kind === 'derivation') && route === 'exact') {
+  // YUK-391: the retired hand-rolled check (PROSE_KINDS.has(kind) || kind ===
+  // 'derivation') is the LLM-graded kind family read off the answer-class axis
+  // (prose ∪ {derivation} — kinds whose class is semantic/steps under EVERY
+  // keyword shape). computation stays out (its keyword shape grades deterministic).
+  if (isLlmGradedAnswerKind(q.kind) && route === 'exact') {
     throw new Error(`quiz_gen ${q.kind} question '${q.prompt_md}' cannot use exact judge`);
   }
   // Defense-in-depth: a generated question must route to a judge the invoker can

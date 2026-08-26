@@ -28,6 +28,7 @@
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { rotationClassForKind } from '@/capabilities/practice/server/variant-rotation';
+import { OBJECTIVE_ANSWER_KINDS } from '@/core/schema/answer-class';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import {
   type DifficultyEvidenceT,
@@ -330,7 +331,11 @@ function isRecallKind(kind: QuestionKindT): boolean {
 // 客观题（可机判，校准首选 grounded 客观题）。判分路由落 exact/keyword（OBJECTIVE_JUDGE_ROUTES，
 // src/server/mastery/personalized-difficulty.ts）的题型：choice/true_false → exact，
 // fill_blank → exact|keyword（defaultJudgeKindForQuestion）。三者皆 active-PPI 可标定。
-const OBJECTIVE_KINDS = new Set<QuestionKindT>(['choice', 'true_false', 'fill_blank']);
+// YUK-391 (kind Step 4)：不再手维护 kind 集合——由 answer-class 单一真相派生
+// （OBJECTIVE_ANSWER_KINDS = class 在任何 keyword 形态下都落 exact|keyword 的
+// canonical kinds = {choice, true_false, fill_blank}，core/schema/answer-class.ts）。
+const OBJECTIVE_KINDS: ReadonlySet<QuestionKindT> =
+  OBJECTIVE_ANSWER_KINDS as ReadonlySet<QuestionKindT>;
 
 // review FINDING #2：R3 诊断/校准目标必须请求**客观** kind。active-PPI 校准（Phase 6）只在
 // OBJECTIVE_JUDGE_ROUTES（exact/keyword）判分的题上产标签——一个请求 kind='any' 的 R3 目标可能

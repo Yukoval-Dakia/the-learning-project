@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PROSE_KINDS, defaultJudgeKindForQuestion, nonEmptyStrings } from './judge-routing';
+import { defaultJudgeKindForQuestion, nonEmptyStrings } from './judge-routing';
 
 describe('nonEmptyStrings', () => {
   it('trims and drops blank entries', () => {
@@ -48,7 +48,9 @@ describe('defaultJudgeKindForQuestion', () => {
   });
 
   it('routes prose kinds to semantic', () => {
-    for (const kind of [...PROSE_KINDS]) {
+    // The retired PROSE_KINDS set, enumerated literally (YUK-391 deleted the
+    // export; the family now derives from the answer-class axis).
+    for (const kind of ['short_answer', 'reading', 'translation', 'essay'] as const) {
       expect(defaultJudgeKindForQuestion({ kind })).toBe('semantic');
     }
   });

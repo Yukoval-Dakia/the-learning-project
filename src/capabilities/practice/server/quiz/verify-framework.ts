@@ -3,6 +3,7 @@ import {
   type JudgeAnswerParams,
   runSemanticJudge,
 } from '@/capabilities/practice/server/judge/question-contract';
+import { isObjectiveAnswerKind } from '@/core/schema/answer-class';
 // YUK-216 S2 (题源扩展 Strategy D) — slice 1 verification-gate framework.
 //
 // docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §4
@@ -448,12 +449,14 @@ export function solveCheckBlocks(
   return false; // compared_by === 'none' never accompanies verdict='fail'; defensive.
 }
 
-// Question kinds whose answer is an EXACT token (compare by normalization). Open
-// kinds (prose) route to the conservative semantic path. Mirrors the judge layer's
-// exact-vs-semantic split without importing it (this is a content-quality check, not
-// a student-grading judge).
-const EXACT_KINDS = new Set(['choice', 'true_false', 'fill_blank']);
-
+// YUK-391 (kind Step 4): "answer is an EXACT token (compare by normalization)"
+// is now derived from the answer-class axis instead of the hand-maintained
+// EXACT_KINDS set: the objective kind family (isObjectiveAnswerKind — kinds
+// whose answer-class is exact/keyword under EVERY keyword shape → choice /
+// true_false / fill_blank) is byte-equivalent to the retired set, including on
+// raw profile-vocab strings (single_choice etc. derive semantic → NOT exact —
+// only persisted choices carry such a row to the normalize path, exactly like
+// before). Open kinds (prose) route to the conservative semantic path.
 function isExactQuestion(q: SolveCheckQuestion): boolean {
   if (q.judge_kind_override === 'exact') return true;
   if (q.judge_kind_override === 'keyword' || q.judge_kind_override === 'semantic') return false;
@@ -465,7 +468,7 @@ function isExactQuestion(q: SolveCheckQuestion): boolean {
   // rows fell through to the conservative semantic path and a wrong reference answer
   // went undetected by solve-check.
   if ((q.choices_md ?? []).length > 0) return true;
-  return EXACT_KINDS.has(q.kind);
+  return isObjectiveAnswerKind(q.kind);
 }
 
 // F2: the question's declared answer for solve-check comparison. solution-generate.ts
@@ -485,8 +488,8 @@ function isExactQuestion(q: SolveCheckQuestion): boolean {
 // decimals like "3.14" never truncate) as candidates; the quiz_gen prompt contract puts the
 // bare answer first (choice/true_false: correct option text). Reverse (false-pass) risk: a
 // solver final_answer would have to normalize-equal a NON-answer prose line — implausible
-// for exact-shaped rows (the exact path is already gated to EXACT_KINDS / persisted choices
-// / judge='exact'), and a rare false pass merely reproduces the pre-solve-check status quo,
+// for exact-shaped rows (the exact path is already gated to the objective kind family
+//  / persisted choices / judge='exact'), and a rare false pass merely reproduces the pre-solve-check status quo,
 // vs. the certain false FAIL today. Whole-text candidate kept (multi-candidate `.includes`
 // = any hit passes); candidate[0] stays the whole text so the semantic path's reference is
 // unchanged. No kind gate — spec 附录 B (review A1 裁决).
