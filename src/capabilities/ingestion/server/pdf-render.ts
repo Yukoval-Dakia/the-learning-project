@@ -36,13 +36,14 @@ const RENDER_SCALE = 150 / 72;
 //
 // CAVEAT (timeout bounds the RESPONSE, not the work): on timeout we lose the
 // `Promise.race` and return 400, but the underlying `renderPages` is NOT
-// cancelled — there is no AbortController / cooperative cancel into PDFium, so
-// a pathological page keeps consuming CPU + WASM heap to completion in the
-// background, freeing only in renderPages' own `finally`. Bounded and
-// acceptable on this single-user NAS tool given the 15-page cap (MAX_PDF_PAGES);
-// if this ever moves off the single-user envelope, thread cancellation by
-// checking an aborted flag between the per-page `document.getPage(i).render(...)`
-// iterations and bailing.
+// cancelled by the timer itself — a still-connected client's pathological page
+// keeps consuming CPU + WASM heap to completion in the background, freeing only
+// in renderPages' own `finally`. Bounded and acceptable on this single-user NAS
+// tool given the 15-page cap (MAX_PDF_PAGES).
+// YUK-522 adds the SEPARATE cooperative path: a client that disconnects (the
+// route threads `req.signal`) aborts between per-page renders via the loop's
+// `signal.aborted` check below. The 30s timeout + page cap stay unchanged —
+// cooperative abort is additive, not a replacement.
 export const PDF_RENDER_TIMEOUT_MS = 30_000;
 
 // Per-rendered-page byte ceiling — rendered page assets still flow through the
@@ -85,6 +86,14 @@ function hasPdfMagic(bytes: Uint8Array): boolean {
   return false;
 }
 
+// 499 is this repo's conventional status for a client-closed request (same
+// shape as copilot/api/chat.ts's requestAbortedError). The caller is already
+// gone; the contract that matters is that no further page is rendered after the
+// guard observes the abort.
+function renderAbortedError(): ApiError {
+  return new ApiError('request_aborted', 'PDF 渲染已中止（客户端已断开连接）', 499);
+}
+
 async function renderToPng(options: PDFiumPageRenderOptions): Promise<Uint8Array> {
   const png = await sharp(options.data, {
     raw: { width: options.width, height: options.height, channels: 4 },
@@ -94,7 +103,7 @@ async function renderToPng(options: PDFiumPageRenderOptions): Promise<Uint8Array
   return new Uint8Array(png.buffer, png.byteOffset, png.byteLength);
 }
 
-async function renderPages(pdfBytes: Uint8Array): Promise<RenderedPage[]> {
+async function renderPages(pdfBytes: Uint8Array, signal?: AbortSignal): Promise<RenderedPage[]> {
   const library = await PDFiumLibrary.init();
   let document: Awaited<ReturnType<typeof library.loadDocument>> | undefined;
   try {
@@ -122,6 +131,13 @@ async function renderPages(pdfBytes: Uint8Array): Promise<RenderedPage[]> {
 
     const pages: RenderedPage[] = [];
     for (let i = 0; i < pageCount; i++) {
+      // YUK-522 — cooperative abort between the per-page PDFium WASM calls: a
+      // client disconnect (route-threaded req.signal) bails here instead of
+      // burning CPU/WASM heap on the remaining pages. Additive to — not a
+      // replacement for — the 30s timeout + page cap above.
+      if (signal?.aborted) {
+        throw renderAbortedError();
+      }
       // `await` per page keeps the Node event loop fed (sharp's toBuffer is
       // async), so a multi-page render does not starve the loop.
       const rendered = await document.getPage(i).render({
@@ -150,8 +166,15 @@ async function renderPages(pdfBytes: Uint8Array): Promise<RenderedPage[]> {
  * failure (corrupt / encrypted / zero pages / over the page cap / render
  * timeout / oversized rendered page). The caller's try/catch → errorResponse
  * turns these into a 400 with the message.
+ *
+ * `signal` (YUK-522) is the caller's AbortSignal — the route threads `req.signal`
+ * so a client disconnect aborts cooperatively between page renders, rejecting
+ * with `ApiError('request_aborted', ..., 499)` (WASM handles still freed).
  */
-export async function renderPdfToPngPages(pdfBytes: Uint8Array): Promise<RenderedPage[]> {
+export async function renderPdfToPngPages(
+  pdfBytes: Uint8Array,
+  signal?: AbortSignal,
+): Promise<RenderedPage[]> {
   if (!hasPdfMagic(pdfBytes)) {
     throw new ApiError('validation_error', '无法解析 PDF（文件可能损坏或不是有效 PDF）', 400);
   }
@@ -170,7 +193,7 @@ export async function renderPdfToPngPages(pdfBytes: Uint8Array): Promise<Rendere
   });
 
   try {
-    return await Promise.race([renderPages(pdfBytes), timeout]);
+    return await Promise.race([renderPages(pdfBytes, signal), timeout]);
   } finally {
     if (timer) clearTimeout(timer);
   }
