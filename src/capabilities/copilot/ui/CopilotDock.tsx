@@ -525,7 +525,7 @@ export const MessageRow = memo(function MessageRow({
       )}
       <div className="msg-body">
         {m.role === 'tombstone' ? null : (
-          <div className="msg-name">{m.role === 'ai' ? 'Loom Copilot' : '我'}</div>
+          <div className="msg-name">{m.role === 'ai' ? '编排者' : '我'}</div>
         )}
         {/* YUK-457 / YUK-913 — compact tool-call rows sit between the user ask
             and the assistant reply (design stack order). Replay + live SSE both
@@ -2099,7 +2099,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       <CopilotDrawer
         open={open}
         onClose={closeDrawer}
-        title="Copilot"
+        title="编排者"
         icon="copilot"
         headBadge={
           <LoomBadge tone="good" dot pulse>
@@ -2136,9 +2136,15 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         <div className="copilot-loom" data-testid="copilot-chat">
           <div className="chat-stream" ref={streamRef}>
             {messages.length === 0 && !sending ? (
-              <p className="chat-empty">
-                问 Loom 任何事 —— 它会读你的错题、知识图谱与今日计划来回答。
-              </p>
+              // YUK-340 — 空线程开场白回写设计稿手稿语气（copilot.jsx L135-141
+              // cop-blank 文案逐字），copy 层零结构改动：仍走 .chat-empty。
+              <>
+                <p className="chat-empty">我是你的编排者</p>
+                <p className="chat-empty">
+                  前台和昨夜后台的我是同一个 ——
+                  我能引用它为你备的东西。问我今天该学什么、为什么这么排，或让我改动；每一句话我都给你一份可留可撤的改动。
+                </p>
+              </>
             ) : null}
             {messages.map((m, messageIndex) => {
               // Per-row chip flags: only the message whose structured question is
@@ -2177,7 +2183,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                   <LoomIcon name="sparkle" size={14} />
                 </div>
                 <div className="msg-body">
-                  <div className="msg-name">Loom Copilot</div>
+                  <div className="msg-name">编排者</div>
                   <div className="chat-thinking">
                     <LoomIcon name="refresh" size={13} className="spin" />
                     <span data-testid="copilot-run-stage" role="status" aria-live="polite">

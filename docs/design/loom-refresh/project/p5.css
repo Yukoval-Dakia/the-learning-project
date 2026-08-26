@@ -54,7 +54,7 @@
 .q-count { text-align: right; margin-top: var(--s-3); }
 
 /* ── Knowledge detail: note kinds ─────────────────────────── */
-.note-kind-tag { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 11px; letter-spacing: var(--ls-wide); padding: 2px 8px; border-radius: var(--r-1); border: 1px solid; flex: none; }
+.note-kind-tag { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: var(--fs-meta); letter-spacing: var(--ls-wide); padding: 2px 8px; border-radius: var(--r-1); border: 1px solid; flex: none; }
 .note-kind-atomic { background: var(--coral-soft); color: var(--coral-ink); border-color: var(--coral-line); }
 .note-kind-hub { background: var(--info-soft); color: var(--info-ink); border-color: var(--info-line); }
 .note-kind-long { background: var(--paper-sunk); color: var(--ink-3); border-color: var(--line-strong); }
@@ -94,7 +94,7 @@
 .bl-kind { display: flex; align-items: center; gap: 5px; }
 .bl-row-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .bl-row-t { font-size: var(--fs-caption); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bl-row-m { font-size: 11px; }
+.bl-row-m { font-size: var(--fs-meta); }
 
 /* ── Learning items: archive zone ─────────────────────────── */
 .archive-zone { margin-top: var(--s-8); border-top: 1px solid var(--line); padding-top: var(--s-5); }
