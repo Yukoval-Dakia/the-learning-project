@@ -47,7 +47,7 @@ jobs:
           BUILDKITE_PIPELINE_DEFAULT_BRANCH: ${{ github.event.pull_request.base.ref || 'main' }}
           BUILDKITE_PULL_REQUEST: ${{ github.event.pull_request.number || 'false' }}
           BUILDKITE_PULL_REQUEST_BASE_BRANCH: ${{ github.event.pull_request.base.ref || 'main' }}
-          GITHUB_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          GREEN_BRIDGE_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_EVENT_BEFORE: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
         run: |

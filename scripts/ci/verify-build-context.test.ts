@@ -218,6 +218,21 @@ describe('verify-build-context context', () => {
     expect(record.checks.github_sha_matches).toBe(false);
   });
 
+  it('prefers GREEN_BRIDGE_EXPECTED_SHA over the reserved GITHUB_SHA', () => {
+    const { record } = validateContext({
+      env: {
+        BUILDKITE: 'true',
+        BUILDKITE_COMMIT: SHA_A,
+        GITHUB_SHA: SHA_B,
+        GREEN_BRIDGE_EXPECTED_SHA: SHA_A,
+      },
+      git: gitProbe(),
+    });
+    expect(record.status).toBe('ok');
+    expect(record.github?.sha).toBe(SHA_A);
+    expect(record.checks.github_sha_matches).toBe(true);
+  });
+
   it('fails when the PR base merge-base does not resolve or the PR number is malformed', () => {
     const noBase = validateContext({
       env: { BUILDKITE: 'true', BUILDKITE_COMMIT: SHA_A, BUILDKITE_PULL_REQUEST: '9' },

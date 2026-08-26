@@ -113,7 +113,7 @@ export function validateContext({ env, git, pinsText = null, pinsError = null, n
     }
   }
 
-  const githubSha = env.GITHUB_SHA;
+  const githubSha = env.GREEN_BRIDGE_EXPECTED_SHA ?? env.GITHUB_SHA;
   let github = null;
   if (
     githubSha !== undefined ||
