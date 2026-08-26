@@ -12,6 +12,7 @@
 //   2. LLM output shape  — `QuizGenOutput` (what the QuizGenTask agent emits;
 //      the Q3 handler maps it into questions + metadata).
 import { z } from 'zod';
+import { OBJECTIVE_ANSWER_KINDS } from './answer-class';
 import { AgentRef, QuestionKind, Rubric, RubricReferenceSolution } from './business';
 import { ProducerDifficultyEvidence } from './difficulty-evidence';
 import { defaultJudgeKindForQuestion } from './judge-routing';
@@ -313,12 +314,12 @@ export type QuizGenOutputT = z.infer<typeof QuizGenOutput>;
 
 // 客观题 set per ADR-0038 决定#2 second bullet: fill_blank / choice / true_false —
 // answers that can be deterministically compared against the material.
-// `translation` is NOT here (judge-routing puts it in PROSE_KINDS — subjective).
-export const QUIZ_PLAN_OBJECTIVE_KINDS: ReadonlySet<QuestionKindT> = new Set([
-  'choice',
-  'true_false',
-  'fill_blank',
-]);
+// `translation` is NOT here (its answer-class is semantic — subjective).
+// YUK-391 (kind Step 4)：不再手维护集合——由 answer-class 单一真相派生
+// （OBJECTIVE_ANSWER_KINDS = class 在任何 keyword 形态下都落 exact|keyword 的
+// canonical kinds，core/schema/answer-class.ts；PROSE_KINDS 时代的注释语义不变）。
+export const QUIZ_PLAN_OBJECTIVE_KINDS: ReadonlySet<QuestionKindT> =
+  OBJECTIVE_ANSWER_KINDS as ReadonlySet<QuestionKindT>;
 
 export const QuizGenPlanItem = z
   .object({

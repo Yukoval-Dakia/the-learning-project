@@ -31,6 +31,7 @@
 
 import type { z } from 'zod';
 
+import { deriveAnswerClass, isKeywordConditionalAnswerKind } from '@/core/schema/answer-class';
 import { JudgeKind as JudgeKindSchema, QuestionKind, Rubric } from '@/core/schema/business';
 import type { SubjectProfile } from '@/subjects/profile';
 
@@ -121,10 +122,6 @@ function parseRubric(raw: unknown): z.infer<typeof Rubric> | null {
   return parsed.success ? parsed.data : null;
 }
 
-function nonEmpty(values: string[] | undefined): string[] {
-  return (values ?? []).map((v) => v.trim()).filter((v) => v.length > 0);
-}
-
 function parseRoute(value: string | null | undefined): JudgeRoute | null {
   const parsed = JudgeKindSchema.safeParse(value);
   return parsed.success ? (parsed.data as JudgeRoute) : null;
@@ -138,6 +135,13 @@ function isPreferred(profile: SubjectProfile, route: JudgeRoute): boolean {
  * Resolve the judge route the invoker WOULD dispatch for a question. Pure +
  * dependency-light (no judge runners, no capability registry, no DB). Behaviour
  * is byte-for-byte identical to the former question-contract.ts implementation.
+ *
+ * YUK-391 (kind Step 4): the exact/keyword/semantic/steps classification is a
+ * read of the answer-class axis (deriveAnswerClass, core/schema/answer-class.ts
+ * — the single source of truth); the profile-aware gates (unit_dimension,
+ * derivation steps ladder, multimodal_direct) keep their legacy positions on
+ * top of it. Route parity with the pre-convergence chain is pinned cell-for-cell
+ * by src/core/schema/answer-class-route-parity.test.ts.
  */
 export function resolveQuestionJudgeRoute(
   q: JudgeRouteQuestionRow,
@@ -164,40 +168,53 @@ export function resolveQuestionJudgeRoute(
     return 'unit_dimension';
   }
 
-  const kind = QuestionKind.safeParse(q.kind).success ? q.kind : 'short_answer';
+  const parsedKind = QuestionKind.safeParse(q.kind);
+  const kind = parsedKind.success ? parsedKind.data : 'short_answer';
   const rubric = parseRubric(q.rubric_json);
-  const keywords = nonEmpty(rubric?.keywords);
+  const answerClass = deriveAnswerClass({ kind, rubric_json: rubric, choices_md: choices });
 
-  if (kind === 'choice' || kind === 'true_false') return 'exact';
-  if (kind === 'fill_blank') return keywords.length > 0 ? 'keyword' : 'exact';
-  if (kind === 'computation') return keywords.length > 0 ? 'keyword' : 'semantic';
-  // M2.1 (2026-05-22): derivation always routes via steps@1 for profiles that
-  // declare it (math); other profiles fall back to semantic if preferred, else
-  // keyword. M2.2 made 'steps' runnable via runStepsJudge (vision LLM call).
-  if (kind === 'derivation') {
-    if (isPreferred(subjectProfile, 'steps')) return 'steps';
-    return isPreferred(subjectProfile, 'semantic') ? 'semantic' : 'keyword';
+  switch (answerClass) {
+    case 'exact':
+      // choice / true_false / fill_blank without rubric keywords
+      return 'exact';
+    case 'keyword':
+      // fill_blank / computation carrying rubric keywords
+      return 'keyword';
+    case 'steps': {
+      // M2.1 (2026-05-22): derivation always routes via steps@1 for profiles that
+      // declare it (math); other profiles fall back to semantic if preferred, else
+      // keyword. M2.2 made 'steps' runnable via runStepsJudge (vision LLM call).
+      if (isPreferred(subjectProfile, 'steps')) return 'steps';
+      return isPreferred(subjectProfile, 'semantic') ? 'semantic' : 'keyword';
+    }
+    case 'semantic': {
+      // Two producers land here: the keyword-conditional kind (computation
+      // without keywords — its class would be 'keyword' WITH keywords), whose
+      // semantic route is unconditional and, in the legacy chain, returned
+      // BEFORE the multimodal_direct gate; and prose, which keeps both the gate
+      // and the profile ladder below.
+      if (isKeywordConditionalAnswerKind(kind)) {
+        return 'semantic';
+      }
+      // YUK-201 — gated auto-route to multimodal_direct (holistic vision judging).
+      // Placed AFTER the physics unit_dimension branch and AFTER the
+      // derivation→steps branch so steps@1 keeps math derivations and physics calc
+      // keeps unit_dimension. Additive — fires only when ALL hold:
+      //   - kind is non-choice (choices short-circuit to 'exact' earlier) and
+      //     non-derivation (handled above);
+      //   - the question carries prompt figures (q.image_refs?.length > 0);
+      //   - the profile declares multimodal_direct as a preferred route (yuwen/math
+      //     do NOT → unaffected; only physics opts in);
+      //   - there is NO step-rubric reference_solution (a rubric reference_solution
+      //     belongs to steps@1, never multimodal_direct).
+      if (
+        (q.image_refs?.length ?? 0) > 0 &&
+        isPreferred(subjectProfile, 'multimodal_direct') &&
+        rubric?.reference_solution == null
+      ) {
+        return 'multimodal_direct';
+      }
+      return isPreferred(subjectProfile, 'semantic') ? 'semantic' : 'keyword';
+    }
   }
-  // YUK-201 — gated auto-route to multimodal_direct (holistic vision judging).
-  // Placed AFTER the physics unit_dimension branch and AFTER the
-  // derivation→steps branch so steps@1 keeps math derivations and physics calc
-  // keeps unit_dimension. Additive — fires only when ALL hold:
-  //   - kind is non-choice (choices short-circuit to 'exact' earlier) and
-  //     non-derivation (handled above);
-  //   - the question carries prompt figures (q.image_refs?.length > 0);
-  //   - the profile declares multimodal_direct as a preferred route (yuwen/math
-  //     do NOT → unaffected; only physics opts in);
-  //   - there is NO step-rubric reference_solution (a rubric reference_solution
-  //     belongs to steps@1, never multimodal_direct).
-  if (
-    (q.image_refs?.length ?? 0) > 0 &&
-    isPreferred(subjectProfile, 'multimodal_direct') &&
-    rubric?.reference_solution == null
-  ) {
-    return 'multimodal_direct';
-  }
-  if (kind === 'short_answer' || kind === 'reading' || kind === 'translation' || kind === 'essay') {
-    return isPreferred(subjectProfile, 'semantic') ? 'semantic' : 'keyword';
-  }
-  return 'exact';
 }
