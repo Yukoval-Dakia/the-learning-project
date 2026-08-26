@@ -1,50 +1,52 @@
 # PLAN — 活看板 (cockpit)
 
 > Linear 是权威 tracker；本文件只镜像 NOW / NEXT / PARKED / BLOCKED-ON。
-> 更新于：2026-08-26（二版：YUK-898 落地 + YUK-846 结案）
+> 更新于：2026-08-27 凌晨（三版：mass-ulw 连续推进日终态，main @ 82196ffa）
 
 ## NOW
 
-- **owner 叫停 Buildkite 切换**（2026-08-26）：YUK-916/917/918 Canceled，PR
-  #1259/#1260/#1261 关闭（分支保留），/private/tmp worktree 移除；main 从未落
-  Buildkite 文件，无需代码回滚。GitHub CI Gate 保持唯一 required gate。
-- **工具链检查移出 required gate**：#1262 合并——static lane 删除
-  `test:opencode-worktree` step；`verify:supply-chain` 降级为本地手跑（改
-  `.opencode/` 时）。YUK-912/914 Done；registry 漂移不再阻塞任何 PR。
-- **mass-ulw 产品三连落地**：#1250（YUK-289 科目筛选 tabs + notes list）、
-  #1252（YUK-268 copilot session 管理 + 全屏）、#1251（YUK-897 P2 十项包）。
-  集成裁决：notes 列表以 289 版为准，897 的 NotesIndexPage 删除；
-  capability 债务吸收 copilot→session 5→6 / 总量 461→462（0bd5decb）。
-  main @ `6a04523d`，push gate 绿。
-
-- **YUK-898 落地（owner 裁决：移除项目级声明）**：#1264 合并——删
-  `.opencode/opencode.json`、两份 oh-my-openagent.json、supply-chain verifier；
-  插件版本回归用户级单一真相源，registry 漂移 treadmill 彻底终结。
-  **YUK-846 同日结案**：Claude Max 订阅停用、凭证全过期，泄露风险实质解除；
-  anthropic-sub 作为 opt-in lane 保留在代码库（与项目无关）。
+- **mass-ulw 连续推进日收官**：全天累计 **28 PR 合并 / 31 票 Done + 12 Canceled**，
+  开放 PR = 0。主线纪事（按序）：
+  - 纠偏四连：Buildkite 停止（916/917/918 Canceled）→ 工具链移出 required gate
+    （#1262）→ 产品三连（#1250/1251/1252）→ YUK-898 移除项目级插件声明（#1264，
+    treadmill 终结）+ YUK-846 结案（凭证过期）。
+  - 批准件落地：903 更正 picker（#1267）/ 596 收口盘点（#1268）/ A 包五张
+    （915 #1269 / 919 #1270 / 911 #1276 / 339 #1278 / 913 #1279 / 340 #1284 /
+    784 #1285）。
+  - 工程面：522 PDF abort（#1271）/ 909 Biome ratchet 上线基线 337（#1272）/
+    605+555 quiz_gen 手动端点（#1273）/ 893 judge lane 语义分离（#1274）/
+    739 rating/cause 进 SubjectProfile（#1281）/ 496 calibration genesis（#1280）/
+    plan-then-generate 对齐 ADR-0038（#1282）/ ADR-0038 solve_check 修订（#1277）。
+  - **YUK-839 双轮 burn-in**：工程落地（#1275）→ R1 产品预算 FAIL → R2 owner 授权
+    诊断（1h/leg + thinking cap 16k）**acceptance #6 机械层 PASS**——resume 获真实
+    流量铁证（digest 前缀保持 / accepted 零重提 / 续跑 usage），报告 #1283+#1286，
+    spend $8.08。产品 480s 预算下维持不可达判定。
 
 ## NEXT
 
-1. owner 门槛项（见 BLOCKED-ON）：903/596 N4 UI 待批。
-2. 走查遗留小项随批捎带：YUK-915（QuestionsPage 复用 SubjectFilterTabs）、
-   YUK-899（reconciler 结算 P3）/ YUK-900✓已清。
+1. **在飞**（mass-ulw wave-7，session 内推进）：YUK-390 residual（脏 kind 清理 +
+   词表收敛，解锁 391/392 链）/ YUK-537 item1（边 un-archive 仅 reactivate 清除）。
+2. **待 owner 五件**：
+   - ① glm-5.3-flash 是否进生产 validator lane（需 ≥25min 预算 vs 产品 480s，
+     YUK-839 留 In Review）；
+   - ② copilot 回复语气基调（YUK-340 唯一停下的分叉）；
+   - ③ YUK-679 二选一：LIGHT（ADR-0046 豁免段成文）vs FULL（port 进 crate，
+     需 Rust 线 owner lane）；
+   - ④ YUK-371 关闭或改写（其「零-LLM 确定判定」验收与 ADR-0038 修订冲突）；
+   - ⑤ 多 provider 方案一重启时点（YUK-921 停放中，开放问题已记录在票）。
+3. **工程池后续**：YUK-391/392（判分镜像收敛/生成端塌缩，依赖 390 residual）。
 
 ## PARKED
 
-- **A3 已拍板（2026-08-26）**：确认关票包 350/285/536/815/816/320/254/414 全部 Canceled
-  （各票留理由）；human-gated 除 887/859/856（维持生产授权闸）外先躺；strategic 维持。
-  分诊快照与裁决记录：`.remember/a3-backlog-triage-2026-08-16.md` 头部附录。
-- 本地 main 脏树残余 = `.codex/config.toml` 个人工具配置改动 + 未跟踪工具目录
-  （.cortexkit/.qoder）；其余草稿内容已随 #1264 落地。
-- YUK-360 blocked-on-upstream（等 mem0 官方 usage API），维持 owner 07-23 处置。
-- Production rollout / observation 需独立授权（不变）。
-- yuk-822 worktree 持未合并提交，待 owner 决定。
-- 战略 epic 票 ~60 张保持 backlog，等 A3 清单拍板。
+- **多 provider 方案一**（YUK-921）：方向已批、实施搁置待 owner 重启；内部耦合
+  地图完成（runner.ts 唯一硬绑点，生命周期/记账/durable 层全中立）；市场调研因
+  agent 循环止损，不作决策依赖。
+- A3 裁决维持：确认关票包 8 张 Canceled、human-gated 除 887/859/856 外先躺、
+  strategic ~40 张不动；记录 `.remember/a3-backlog-triage-2026-08-16.md` 附录。
+- 本地 main 脏树残余 = `.codex/config.toml` + 未跟踪工具目录（无害）。
+- YUK-360 blocked-on-upstream（mem0 usage API）；yuk-822 worktree 待 owner。
 
 ## BLOCKED-ON
 
-- **YUK-846（Urgent）provider 凭据轮换**：只能 owner 人工执行；wizard 就绪
-  （`.remember/yuk-846-rotate-wizard.sh`）。
-- **YUK-903（Dock「更正这轮」picker）/ YUK-596（durable flip + N4 Dock）**：
-  待 owner UI 设计 pre-flight 批准。
-- Production：无部署授权或真实观察证据（不变）。
+- 887 / 859 / 856：生产部署授权闸（Architecture Deepening 收口条件，不变）。
+- Production rollout / observation：无授权不起（不变）。
