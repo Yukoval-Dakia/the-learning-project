@@ -47,7 +47,6 @@ import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
-
 import {
   type ArtifactHistoryEntryT,
   INTERACTIVE_HTML_MAX_CHARS,
@@ -55,6 +54,7 @@ import {
 } from '@/core/schema/business';
 import { artifact } from '@/db/schema';
 import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
+import { htmlContainsAssessment } from '@/kernel/learning-content';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { emitArtifactLifecycleEvent } from '../artifacts/mutation-events';
 
@@ -110,12 +110,6 @@ function normalizedBindingText(value: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .toLocaleLowerCase();
-}
-
-function htmlContainsAssessment(html: string): boolean {
-  return /(?:data-(?:copilot-question-id|copilot-answer|answer|correct)|\b(?:quiz|question|exercise)\b|题目|练习题|测验|作答|答案)/i.test(
-    html,
-  );
 }
 
 function tagAttribute(tag: string, name: string): string | undefined {

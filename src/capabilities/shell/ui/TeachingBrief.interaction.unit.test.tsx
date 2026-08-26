@@ -5,7 +5,7 @@
 // focus move, and the getByRole heading/region a11y that SSR strings can't assert.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
@@ -403,6 +403,35 @@ describe('TeachingBriefBand — probe_ready reveal (jsdom)', () => {
       expect.objectContaining({ probe_question_id: 'q_probe_01' }),
       expect.objectContaining({ probe_question_id: 'q_probe_02' }),
     ]);
+  });
+
+  it('surfaces a 当前结果 failure state when the probe submit fails (YUK-895 goal lane)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes('/api/conjecture/probe/') && url.endsWith('/answer')) {
+          return new Response(JSON.stringify({ error: 'unsupported_judge_route' }), {
+            status: 422,
+          });
+        }
+        return Response.json({ brief: null });
+      }),
+    );
+    const qc = mkClient();
+    qc.setQueryData(['teaching-brief'], { brief: probeReadyBrief() });
+    const user = userEvent.setup();
+    renderWith(qc);
+
+    await user.click(await screen.findByRole('button', { name: '现在就试做这道题' }));
+    await user.type(screen.getByPlaceholderText(/写下你的解答/), '试答');
+    await user.click(screen.getByRole('button', { name: '提交作答' }));
+
+    // 当前结果 leaves 判别题已备好 and shows the failure state (the answer card's
+    // inline alert carries the same copy — scope to the outcome region).
+    const outcome = within(screen.getByRole('region', { name: '当前结果' }));
+    expect(await outcome.findByText('判题失败，请稍后重试')).toBeTruthy();
+    expect(outcome.queryByText('判别题已备好；完成后再更新这条判断。')).toBeNull();
   });
 });
 

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Db } from '@/db/client';
+import { extractVisibleHtmlText, htmlContainsAssessment } from '@/kernel/learning-content';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   runQuestionContentValidation,
@@ -57,10 +58,12 @@ export function extractCopilotLearningContent(text: string): CopilotLearningCont
   let content: CopilotLearningContent | undefined;
   let sawMarker = false;
   let sawMalformed = false;
+  let markerCount = 0;
   const cleaned = text.replace(
     /<!--copilot_learning_content:([\s\S]*?)-->/g,
     (_match, raw: string) => {
       sawMarker = true;
+      markerCount += 1;
       try {
         const parsed = CopilotLearningContentSchema.safeParse(JSON.parse(raw));
         if (parsed.success) {
@@ -84,7 +87,9 @@ export function extractCopilotLearningContent(text: string): CopilotLearningCont
     sawMalformed = true;
   }
   const trimmed = sawMarker ? visibleText.trimEnd() : visibleText;
-  if (sawMalformed || (sawMarker && !content)) return { text: trimmed, status: 'malformed' };
+  if (sawMalformed || markerCount > 1 || (sawMarker && !content)) {
+    return { text: trimmed, status: 'malformed' };
+  }
   if (content) return { text: trimmed, status: 'valid', content };
   return { text: trimmed, status: 'absent' };
 }
@@ -102,8 +107,17 @@ export function containsLearningQuestion(text: string): boolean {
 }
 
 function containsLearningSolution(text: string): boolean {
-  return /(?:^|\n)\s*(?:解[:：]|答案[:：]|解答[:：]|solution\b|answer\b)|(?:所以|因此|故|therefore)[^\n]{0,300}(?:答案|=)/im.test(
-    text,
+  const explicitSolution =
+    /(?:^|\n)\s*(?:解[:：]|答案[:：]|解答[:：]|solution\b|answer\b)|(?:所以|因此|故|therefore)[^\n]{0,300}(?:答案|=)/im;
+  const arithmeticEquation =
+    /(?:^|\n)\s*(?:\d+(?:\.\d+)?|\d*[a-z](?:\^\d+)?)(?:\s*[+\-×÷*/^]\s*(?:\d+(?:\.\d+)?|\d*[a-z](?:\^\d+)?))+\s*=\s*[-+]?(?:\d+(?:\.\d+)?|\d*[a-z](?:\^\d+)?)(?:\s*[。.;；]|(?=\s*(?:\n|$)))/im;
+  const computationTableHeader =
+    /(?:^|\n)\s*\|[^\n]*(?:step|iteration|迭代|步数|第.?步)[^\n]*\|(?=\n|$)/im;
+  const numericTableRowCount = (text.match(/(?:^|\n)\s*\|[^\n]*\d[^\n]*\|(?=\n|$)/gm) ?? []).length;
+  return (
+    explicitSolution.test(text) ||
+    arithmeticEquation.test(text) ||
+    (computationTableHeader.test(text) && numericTableRowCount >= 2)
   );
 }
 
@@ -156,6 +170,7 @@ function contentMatchesReply(
 export interface CopilotLearningContentValidationDeps {
   db: Db;
   runTaskFn: ValidationRunTaskFn;
+  additionalVisibleText?: string;
 }
 
 export type CopilotLearningContentValidationItem = {
@@ -306,7 +321,15 @@ export async function reviewCopilotLearningContent(
   deps: CopilotLearningContentValidationDeps,
 ): Promise<CopilotLearningContentReviewResult> {
   const extracted = extractCopilotLearningContent(candidateText);
-  const requiresManifest = copilotLearningContentRequiresValidation(candidateText);
+  const validationSurface = deps.additionalVisibleText
+    ? `${extracted.text}\n${extractVisibleHtmlText(deps.additionalVisibleText)}`
+    : extracted.text;
+  const requiresManifest =
+    extracted.status !== 'absent' ||
+    (deps.additionalVisibleText !== undefined &&
+      htmlContainsAssessment(deps.additionalVisibleText)) ||
+    containsLearningQuestion(validationSurface) ||
+    containsLearningSolution(validationSurface);
   if (extracted.status === 'malformed' || (extracted.status === 'absent' && requiresManifest)) {
     console.warn('[copilot-learning-content] marker missing or malformed', {
       task_run_id: taskRunId,
@@ -315,7 +338,7 @@ export async function reviewCopilotLearningContent(
     return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
   }
   if (extracted.status === 'absent') return { replyText: extracted.text, passed: true };
-  if (!contentMatchesReply(extracted.content, extracted.text, contextText)) {
+  if (!contentMatchesReply(extracted.content, validationSurface, contextText)) {
     console.error('[copilot-learning-content] manifest does not match visible content', {
       task_run_id: taskRunId,
     });

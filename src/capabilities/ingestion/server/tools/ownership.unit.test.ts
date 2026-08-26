@@ -28,7 +28,7 @@ const INGESTION_TOOL_NAMES = [
 const OWNED_TOOL_CONTRACT_HASHES = {
   query_records: '2ec1229c7c328364da8790d2867025fc3487472d09955e9a913598d928d5f1af',
   get_record_context: '76586011e17e30dbd31caaf90a6c31d0185bb84e281b240d38cedfb85571f695',
-  get_question_block_structure: 'b89f4ce1782dffd9f1e64198eaebad0426ff1b39b392581cba927e4da1e04d15',
+  get_question_block_structure: 'c5a30af758c31df75b36446f7b4204a6ba2e0c6b80f9f68dd9d0fa5aeb29b75e',
   update_prompt: '91c6e8f9a5bc994fd0f9447110200e6d6176e6dd583d096db3d7137f64e183b8',
   add_option: '6dcd33a2666b1ade9ee5df906384bcbc575ed91a1b9342c1ed9586f175398069',
   set_question_type: 'e65f39d2df45357981dac993c07ed469dcb6a8ee794fa08f52d409b82ee9eba9',
