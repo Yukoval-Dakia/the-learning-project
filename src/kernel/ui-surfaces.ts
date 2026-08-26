@@ -200,7 +200,7 @@ export const UI_SURFACES = [
     title: '笔记',
     activeId: 'notes',
     nav: { section: '整理', order: 45 },
-    search: { label: '笔记', keywords: '笔记 notes' },
+    search: { label: '笔记', keywords: '笔记 notes 文档' },
   },
   {
     id: 'note-detail',

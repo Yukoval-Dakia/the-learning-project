@@ -7,9 +7,12 @@
 import { memo, useMemo, useRef, useState } from 'react';
 
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
+import { Btn } from '@/ui/primitives/Btn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import type { MeshGraphNode } from './ghost-endpoints';
 import type { KnowledgeEdgeRow, KnowledgeTreeNode } from './knowledge-api';
+import { isKnowledgeContainer } from './knowledge-node-kind';
+import { layoutMeshLabel } from './label-layout';
 import { LAYOUT_HEIGHT, LAYOUT_WIDTH, computeLayout } from './layout';
 import { masteryTone } from './mastery-tone';
 import { REL_CUE } from './relation-cue';
@@ -72,6 +75,7 @@ const MeshNode = memo(function MeshNode({
   y,
   isActive,
   isHub,
+  isContainer,
   onPick,
 }: {
   node: MeshGraphNode;
@@ -79,21 +83,23 @@ const MeshNode = memo(function MeshNode({
   y: number;
   isActive: boolean;
   isHub: boolean;
+  isContainer: boolean;
   onPick: (node: KnowledgeTreeNode) => void;
 }) {
-  const m = node.mastery;
+  const m = isContainer ? null : node.mastery;
   const pct = m == null ? null : Math.round(m * 100);
   const tone = masteryTone(m ?? undefined);
   const r = isHub ? 24 : 18;
   const circ = 2 * Math.PI * r;
+  const label = layoutMeshLabel(node.name);
   return (
     <g
       className={`mesh-node${isActive ? ' is-active' : ''}${node.isGhost ? ' is-ghost' : ''}`}
       transform={`translate(${x} ${y})`}
+      aria-label={`${label.fullName}${node.isGhost ? '（其他科目）' : ''}`}
       // biome-ignore lint/a11y/useSemanticElements: SVG <g> 不能是 <button>；role=button + tabIndex 是可聚焦图节点的正确 ARIA（旧 KnowledgeGraph 同例）
       role="button"
       tabIndex={0}
-      aria-label={`${node.name}${node.isGhost ? '（其他科目）' : ''}`}
       style={{ cursor: 'pointer' }}
       onClick={() => onPick(node)}
       onKeyDown={(e) => {
@@ -105,6 +111,7 @@ const MeshNode = memo(function MeshNode({
         }
       }}
     >
+      <title>{label.fullName}</title>
       {/* 三层节点：填充 disc（+shadow）→ 满轨底环 → 掌握度弧。
           S5 (YUK-335): stroke/选中态全交给 CSS——.mesh-node.is-active
           .mesh-disc 的 coral stroke 胜过 .mesh-disc.tone-* 规则。 */}
@@ -129,17 +136,29 @@ const MeshNode = memo(function MeshNode({
         />
       )}
       <text y={4} textAnchor="middle" className="mesh-node-pct mono">
-        {pct == null ? '—' : pct}
+        {isContainer ? '容器' : pct == null ? '—' : pct}
       </text>
+      <rect
+        x={-label.width / 2}
+        y={r + 7}
+        width={label.width}
+        height={label.height}
+        rx={8}
+        className="mesh-node-label-bg"
+      />
       {/* subject-driven: serif-CJK only for genuine yuwen nodes */}
       <text
-        y={r + 18}
+        y={r + 21}
         textAnchor="middle"
         {...subjectContentPropsForDomain(node.effective_domain, {
           className: 'mesh-node-label',
         })}
       >
-        {node.name.length > 8 ? `${node.name.slice(0, 8)}…` : node.name}
+        {label.lines.map((line, index) => (
+          <tspan key={`${line}-${line.length}`} x="0" dy={index === 0 ? 0 : label.lineHeight}>
+            {line}
+          </tspan>
+        ))}
       </text>
     </g>
   );
@@ -150,11 +169,13 @@ export function MeshGraph({
   edges,
   onPick,
   activeId,
+  navigate,
 }: {
   nodes: readonly MeshGraphNode[];
   edges: readonly KnowledgeEdgeRow[];
   onPick: (node: MeshGraphNode) => void;
   activeId?: string | null;
+  navigate?: (to: string) => void;
 }) {
   // LayoutNode/LayoutEdge 字段名与 wire 一致（parent_id / from_knowledge_id），直传。
   const pos = useMemo(() => computeLayout([...nodes], [...edges]), [nodes, edges]);
@@ -228,6 +249,7 @@ export function MeshGraph({
             y={p.y}
             isActive={activeId === n.id}
             isHub={hasChildren.has(n.id)}
+            isContainer={isKnowledgeContainer(n)}
             onPick={onPick}
           />
         );
@@ -236,7 +258,7 @@ export function MeshGraph({
   );
 
   return (
-    <div className="mesh-wrap" aria-label="知识关系图">
+    <div className="mesh-wrap" role="group" aria-label="知识关系图">
       {/* 缩放 controls（screen-knowledge.jsx L62-68）：缩小 / 百分比 / 放大 / 复位。 */}
       <div className="mesh-controls">
         <button
@@ -269,6 +291,24 @@ export function MeshGraph({
           <LoomIcon name="refresh" size={15} />
         </button>
       </div>
+      {edges.length === 0 && (
+        <div className="mesh-empty-state" role="status">
+          <LoomIcon name="link" size={16} />
+          <strong>关系图还没有连接</strong>
+          <span>先从树视图打开一个知识点，或在详情里建立关系。</span>
+          {navigate && (
+            <Btn
+              size="sm"
+              variant="secondary"
+              icon="inbox"
+              iconEnd="arrow"
+              onClick={() => navigate('/inbox')}
+            >
+              查看 AI 关系提议
+            </Btn>
+          )}
+        </div>
+      )}
 
       {/* 点阵底 stage：复用 globals .kg-svg-stage（radial-gradient 点阵 + paper-sunk
           + grab），消除旧 .mesh-canvas 的「纯白双框」。pan/zoom 指针手势挂在内层

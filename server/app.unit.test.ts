@@ -39,6 +39,13 @@ const fakeCapability: CapabilityManifest = {
         responses: { 201: z.object({ ok: z.boolean() }) },
         load: async () => async () => Response.json({ ok: true }),
       },
+      {
+        method: 'GET',
+        path: '/api/fake/throws',
+        load: async () => async () => {
+          throw new Error('provider secret must stay server-side');
+        },
+      },
     ],
   },
 };
@@ -167,6 +174,18 @@ describe('buildHonoApp', () => {
     });
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: 'route_contract_violation' });
+  });
+
+  it('returns a diagnosable JSON 500 without exposing handler details', async () => {
+    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
+    const app = buildHonoApp([fakeCapability]);
+    const response = await app.request('/api/fake/throws', {
+      headers: { 'x-internal-token': 'test-token' },
+    });
+    expect(response.status).toBe(500);
+    const requestId = response.headers.get('x-request-id');
+    expect(requestId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await response.json()).toEqual({ error: 'internal_error', request_id: requestId });
   });
 
   it('passes path params through to the handler (M1 param route)', async () => {

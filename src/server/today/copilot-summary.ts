@@ -74,6 +74,32 @@ export interface CopilotSummary {
 
 const COACH_PLACEHOLDER_FOCUS = '昨晚 Coach 还没出新计划，先按你昨天排的复习队列开始即可。';
 
+const LEARNER_PROPOSAL_SUMMARIES: Readonly<Record<string, string>> = {
+  knowledge_node: '有一项知识点建议待你查看。',
+  knowledge_edge: '有一项知识关系建议待你查看。',
+  knowledge_mutation: '有一项知识内容建议待你查看。',
+  learning_item: '有一项学习安排建议待你查看。',
+  note_update: '有一项笔记更新建议待你查看。',
+  variant_question: '有一项变体题建议待你查看。',
+  record_promotion: '有一项学习记录建议待你查看。',
+  record_links: '有一项学习记录关联建议待你查看。',
+  completion: '有一项完成情况建议待你查看。',
+  relearn: '有一项重学建议待你查看。',
+  goal_scope: '有一项目标范围建议待你查看。',
+  block_merge: '有一项内容整理建议待你查看。',
+  defer: '有一项延后安排建议待你查看。',
+  archive: '有一项归档建议待你查看。',
+  judge_retraction: '有一项判定撤回建议待你查看。',
+  image_candidate: '有一项图题候选建议待你查看。',
+  question_draft: '有一项题目草稿建议待你查看。',
+  question_edit: '有一项题目修订建议待你查看。',
+  conjecture: '有一项诊断判断建议待你查看。',
+};
+
+export function learnerProposalSummary(kind: string): string {
+  return LEARNER_PROPOSAL_SUMMARIES[kind] ?? '有一项学习建议待你查看。';
+}
+
 export interface CopilotSummaryOpts {
   /** How many dreaming-authored items to preview. */
   previewLimit?: number;
@@ -191,7 +217,7 @@ export async function loadCopilotSummary(
   const dreamingPreview: CopilotSummaryDreamingPreview[] = dreamingPage.rows.map((row) => ({
     proposal_id: row.id,
     kind: row.kind,
-    brief: row.payload.reason_md.slice(0, 200),
+    brief: learnerProposalSummary(row.kind),
     proposed_at:
       row.proposed_at instanceof Date ? row.proposed_at.toISOString() : String(row.proposed_at),
   }));

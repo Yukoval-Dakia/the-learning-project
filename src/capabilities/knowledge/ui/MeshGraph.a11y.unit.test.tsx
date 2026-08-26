@@ -8,6 +8,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MeshGraphNode } from './ghost-endpoints';
+import type { KnowledgeEdgeRow, KnowledgeTreeNode } from './knowledge-api';
 import { MeshGraph } from './MeshGraph';
 
 afterEach(cleanup);
@@ -25,6 +26,17 @@ function node(overrides: Partial<MeshGraphNode> = {}): MeshGraphNode {
     low_confidence: false,
     evidence_count: 0,
     ...overrides,
+  };
+}
+
+function edge(): KnowledgeEdgeRow {
+  return {
+    id: 'e1',
+    from_knowledge_id: 'n1',
+    to_knowledge_id: 'n2',
+    relation_type: 'related_to',
+    weight: 1,
+    status: 'active',
   };
 }
 
@@ -53,6 +65,44 @@ describe('MeshGraph node keyboard activation (YUK-718)', () => {
     render(<MeshGraph nodes={[node()]} edges={[]} onPick={onPick} />);
     fireEvent.keyDown(graphNode(), { key: 'Enter' });
     expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ id: 'n1' }));
+  });
+
+  it('wraps long CJK labels while retaining the full accessible name (YUK-897 F1)', () => {
+    const fullName = '复合函数链式法则 E2E canary [B/C] 长文本';
+    render(
+      <MeshGraph nodes={[node({ id: 'long', name: fullName })]} edges={[]} onPick={vi.fn()} />,
+    );
+
+    const graph = graphNode();
+    expect(graph.getAttribute('aria-label')).toBe(fullName);
+    expect(graph.querySelector('title')?.textContent).toBe(fullName);
+    expect(graph.querySelectorAll('tspan').length).toBeGreaterThan(1);
+    const labelBackground = graph.querySelector('.mesh-node-label-bg');
+    expect(Number(labelBackground?.getAttribute('width'))).toBeLessThanOrEqual(176);
+    expect(Number(labelBackground?.getAttribute('height'))).toBeGreaterThan(20);
+  });
+
+  it('offers an accessible inbox action only when the learner graph has zero edges (YUK-897 F2)', () => {
+    const navigate = vi.fn();
+    const { rerender } = render(
+      <MeshGraph nodes={[node()]} edges={[]} onPick={vi.fn()} navigate={navigate} />,
+    );
+
+    const cta = screen.getByRole('button', { name: '查看 AI 关系提议' });
+    expect(cta.tagName).toBe('BUTTON');
+    fireEvent.click(cta);
+    expect(navigate).toHaveBeenCalledWith('/inbox');
+
+    const secondNode = node({ id: 'n2', name: '第二个节点' });
+    rerender(
+      <MeshGraph
+        nodes={[node(), secondNode]}
+        edges={[{ ...edge(), from_knowledge_id: 'n1', to_knowledge_id: 'n2' }]}
+        onPick={vi.fn()}
+        navigate={navigate}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: '查看 AI 关系提议' })).toBeNull();
   });
 
   it('announces a scoped graph crossing legend and styles its ghost endpoint', () => {

@@ -5,6 +5,7 @@ import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 import { listLearningRecords } from '@/kernel/records/queries';
 
 export interface ListMistakeProjectionFilter {
@@ -100,7 +101,7 @@ async function projectMistakeRecords(
         prompt_md: (questionRow?.prompt_md ?? '').slice(0, 200),
         reference_md: questionRow?.reference_md?.slice(0, 200) ?? null,
         wrong_answer_md: (failure.answer_md ?? '').slice(0, 200),
-        knowledge_ids: failure.referenced_knowledge_ids,
+        knowledge_ids: learnerVisibleKnowledgeIds(failure.referenced_knowledge_ids),
         cause,
         correction_state: failure.correction_state,
         created_at: Math.floor(failure.created_at.getTime() / 1000),

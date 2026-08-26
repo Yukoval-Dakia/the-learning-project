@@ -13,12 +13,16 @@ import { KnowledgeIdParamsSchema } from '@/capabilities/knowledge/api/contracts'
 import { loadKnowledgeNodePage } from '@/capabilities/knowledge/server/node-page';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const parsed = KnowledgeIdParamsSchema.safeParse(params);
     if (!parsed.success) {
       throw new ApiError('validation_error', 'knowledge id is required', 400);
+    }
+    if (!isLearnerVisibleKnowledgeId(parsed.data.id)) {
+      throw new ApiError('not_found', 'knowledge node not found', 404);
     }
     const page = await loadKnowledgeNodePage(db, parsed.data.id);
     if (!page) {
