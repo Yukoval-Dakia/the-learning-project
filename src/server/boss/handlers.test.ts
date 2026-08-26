@@ -47,6 +47,30 @@ describe('registerHandlers + registerCapabilityJobs', () => {
     );
   });
 
+  it('registers the four quiz workers through manifests with exact legacy intervals', async () => {
+    const boss = {
+      createQueue: vi.fn(async () => undefined),
+      updateQueue: vi.fn(async () => undefined),
+      work: vi.fn(async () => undefined),
+      schedule: vi.fn(async () => undefined),
+      send: vi.fn(async () => 'job-id'),
+    } as unknown as PgBoss;
+
+    await registerAll(boss);
+
+    for (const name of ['sourcing', 'quiz_gen', 'quiz_verify', 'source_verify']) {
+      expect(boss.work).toHaveBeenCalledWith(
+        name,
+        {
+          pollingIntervalSeconds: 2,
+          batchSize: 1,
+          ...(name === 'quiz_gen' ? { includeMetadata: true } : {}),
+        },
+        expect.any(Function),
+      );
+    }
+  });
+
   it('registers Notes handoff workers and the shared recovery floor exactly once', async () => {
     const boss = {
       createQueue: vi.fn(async () => undefined),

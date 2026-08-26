@@ -2027,6 +2027,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/questions/quiz-gen': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['triggerQuizGen'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/review-sessions': {
     parameters: {
       query?: never;
@@ -26551,6 +26567,161 @@ export interface operations {
       };
       /** @description Internal error */
       500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+    };
+  };
+  triggerQuizGen: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          /** @default 3 */
+          count?: number;
+          /** @enum {string} */
+          generation_method?: 'material_grounded' | 'closed_book';
+          knowledge_id: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Successful response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            count: number;
+            /** @enum {string} */
+            generation_method?: 'material_grounded' | 'closed_book';
+            job_id: string;
+            knowledge_id: string;
+            /** @enum {string} */
+            queue: 'quiz_gen';
+            /** @enum {string} */
+            status: 'enqueued';
+            /** @enum {string} */
+            trigger: 'manual';
+            warning?: string;
+          };
+        };
+      };
+      /** @description Malformed request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Resource not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description State or version conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Semantic validation failed */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Rate limited */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Internal error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            error: string;
+            message?: string;
+          } & {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Internal error */
+      502: {
         headers: {
           [name: string]: unknown;
         };

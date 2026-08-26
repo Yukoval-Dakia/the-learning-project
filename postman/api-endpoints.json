@@ -986,6 +986,23 @@
     ]
   },
   {
+    "path": "/api/questions/quiz-gen",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "owner 手动 quiz_gen 补库触发面：给指定知识点入队 N 道题的生成（YUK-605 ① / YUK-555）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "knowledge_id": "kn_abc123",
+          "count": 5,
+          "generation_method": "closed_book"
+        },
+        "notes": "body = {knowledge_id(必填), count(默认 3；1..15 硬顶——超顶 400；≥6 响应带 warning 但照常受理), generation_method(可选 material_grounded|closed_book；material_grounded 需 TAVILY_API_KEY，未配 → 409)}；knowledge_id 必须命中未归档 knowledge 行，空读 → 404（不入队）；复用 dispatcher 的 kernel enqueue 面入队 quiz_gen 队列（trigger=manual）；202 返回 {status:'enqueued', queue:'quiz_gen', job_id, knowledge_id, count[, generation_method][, warning]}；入队无 job id → 502；需 x-internal-token"
+      }
+    ]
+  },
+  {
     "path": "/api/review/drafts",
     "methods": [
       {

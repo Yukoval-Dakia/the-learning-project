@@ -79,6 +79,10 @@ import {
   UpdateQuestionResponseSchema,
 } from './api/question-solve-contracts';
 import {
+  QuizGenTriggerAcceptedSchema,
+  QuizGenTriggerBodySchema,
+} from './api/quiz-gen-trigger-contracts';
+import {
   FixedAnchorBodySchema,
   FixedAnchorResponseSchema,
   ReviewAdviceBodySchema,
@@ -733,6 +737,25 @@ export const practiceCapability = defineCapability({
         responses: { 200: DeleteQuestionResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/question-detail').then((m) => m.DELETE),
+      },
+      // YUK-605 ① + YUK-555 — owner manual quiz_gen trigger. The consumption entry
+      // three code comments + ADR-0038 referenced but that never existed (the only
+      // enqueue path was the nightly dispatcher). Thin route: real knowledge read
+      // (empty → 404) → enqueue via the dispatcher's kernel path → 202 with job id.
+      // count carries the YUK-555 two-layer guardrail (warn watermark informs; hard
+      // cap 15 rejects — constants live in the db-light contracts module).
+      {
+        method: 'POST',
+        path: '/api/questions/quiz-gen',
+        operationId: 'triggerQuizGen',
+        request: { body: QuizGenTriggerBodySchema },
+        responses: {
+          202: QuizGenTriggerAcceptedSchema,
+          ...API_ERROR_RESPONSES,
+          502: ApiErrorResponseSchema,
+        },
+        successStatus: 202,
+        load: () => import('./api/quiz-gen-trigger').then((m) => m.POST),
       },
       // YUK-453 (cold-start inc-A) — owner FIXED-ANCHOR write face. owner 钦定 ~5-10 道
       // 锚题的难度档（粗分桶）→ item_calibration source='fixed_anchor'。n=1 唯一不违红线
