@@ -441,3 +441,22 @@ assembleCopilotRunInput(db, {
 - SDK session：官方 sessions doc（document-specialist scout）——跨进程 resume cwd-keyed + machine-local，官方劝退，推荐 worker-owns-conversation
 - YUK-458：Linear（6/10/GLM 实验链 + mimo 多步写不收敛 + 根因 endurance 缺口 + ceiling 不得回归收敛坑）
 - durable 桥/SSE/幂等：v1 draft grounding（copilot_run.ts / job-events.ts / registry.ts / queue-config.ts / agent-run-error.ts，全 carry-forward）
+
+## 2026-08-26 — PR2 收口记录（YUK-596 关单盘点）
+
+owner 批准 N4 Dock UI pre-flight 后逐项对账 origin/main `ba0ad0c0`，票面四子项的真实状态：
+
+| 子项 | 状态 | 证据 |
+| --- | --- | --- |
+| N4 Dock consumer | **已落地** | `CopilotDock.tsx:1257` 显式分支 `res.status === 202`：202 读 `Location`/`run_id` 后经 `consumeDurableCopilotRun`（:1316-1328）订阅 job-events SSE 并以 `Last-Event-ID` 续读折叠（subtask-events.ts:407-489）；仅非 202 走 `parseCopilotSseStream`。票面警告的「202 JSON 喂 SSE parser → finalReply=null」场景已不存在。 |
+| flip default | **被逐条分诊取代** | `decideCopilotDispatch`（server/chat.ts:744-804，CopilotDispatchTask）对每条合格 free-form chat 做 inline/durable 模型分诊，fail-open 回 inline；全局二值翻默认不再是正确形态。「durable-by-default」的现代表达 = 分诊策略本身。 |
+| in-loop stop | **已落地** | commit `ae829065`（PR #1152）：per-tool `cancellationControl.beforeTool()` 探针（copilot_run.ts:1026-1031；copilot-run-cancellation.ts:109-121）+ SDK PreToolUse 钩子（:191-200）+ 流后/评审后直接检查（:1225/:1318/:1396）。summarize-continue 保持 deferred（YUK-458 收敛坑红线未破）。 |
+| poll frequency | **机制已就绪，决策待实测** | 注册器现为透传语义：`register-capability-jobs.ts:70` `decl.pollingIntervalSeconds ?? 2`——manifest 声明优先。copilot_run 当前未声明 = 2s 生效；若实测首字节手感不足，改法就是 manifest 一行声明，无需再动注册器。 |
+
+### S6 — batchSize 交错语义（本节即票面要求的文档化）
+
+copilot_run 以 `batchSize:1` + 每-run singletonKey 消费：同一 conversation 的 follow-up 在长 durable run 进行期间入队会**串行排队等待**，最坏可见延迟到 run 的 12-15min ceiling。这不是缺陷而是隔离语义——并发写同一会话历史会造成事件交错污染。UI 侧该状态经 job-events（queued→started→step/delta）可见，Dock 已渲染。
+
+### 遗留
+
+- enqueue→pickup / enqueue→首 delta 的 p50/p95 从未被实测记录（burn-in 文档 2026-08-02 记了 30 case 合同通过/25 正常完成/5 取消，无延迟数字）。下次真实 burn-in 时补测；数据出来前 poll frequency 维持现状。
