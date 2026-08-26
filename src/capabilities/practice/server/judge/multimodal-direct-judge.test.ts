@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '@/db/client';
+import { AgentRunError } from '@/server/ai/agent-run-error';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { parseMultimodalDirectResult, runMultimodalDirectJudge } from './multimodal-direct-judge';
 import type { JudgeQuestionRow } from './question-contract';
@@ -453,6 +454,161 @@ describe('runMultimodalDirectJudge — unsupported / error paths', () => {
     });
     expect(result.coarse_outcome).toBe('unsupported');
     expect(result.feedback_md).toContain('LLM call failed');
+    expect(result.evidence_json.error_kind).toBeUndefined();
+  });
+});
+
+// YUK-893 — provider-lane hard failures must be distinguishable from
+// genuinely-unsupported routes, and a configured lane (VISION_JUDGE_PROVIDER)
+// that hard-fails must fall back to the registry-default lane with recorded
+// degradation evidence. Fail-closed is preserved: no lane → no verdict.
+describe('runMultimodalDirectJudge — provider lane hard-failure semantics (YUK-893)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function provider403(): AgentRunError {
+    return new AgentRunError({
+      kind: 'MultimodalDirectJudgeTask',
+      taskRunId: 'tr-893',
+      subtype: 'api_error_result',
+      apiErrorStatus: 403,
+      errors: ['permission denied: OAuth lane disabled'],
+    });
+  }
+
+  function providerFromRunCtx(ctx: unknown): string | undefined {
+    if (typeof ctx !== 'object' || ctx === null || !('override' in ctx)) return undefined;
+    const override = Reflect.get(ctx, 'override');
+    if (typeof override !== 'object' || override === null || !('provider' in override)) {
+      return undefined;
+    }
+    const provider = Reflect.get(override, 'provider');
+    return typeof provider === 'string' ? provider : undefined;
+  }
+
+  it('(a) provider HTTP-403 hard failure yields error_kind=provider_hard_failure, NOT plain unsupported', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', '');
+    const result = await runMultimodalDirectJudge({
+      db: mockDb,
+      question: makeRow({}),
+      answer_md: '5 N',
+      subjectProfile: physicsProfile,
+      runTaskFn: async () => {
+        throw provider403();
+      },
+      imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
+    });
+    // Fail-closed preserved: still unsupported, score null, confidence 0.
+    expect(result.coarse_outcome).toBe('unsupported');
+    expect(result.score).toBeNull();
+    expect(result.confidence).toBe(0);
+    // NEW honest semantics.
+    expect(result.feedback_md).toContain('provider lane hard-failed');
+    expect(result.evidence_json.error_kind).toBe('provider_hard_failure');
+    expect(result.evidence_json.api_error_status).toBe(403);
+    expect(result.evidence_json.failed_lane).toBe('xiaomi');
+    expect(String(result.evidence_json.error)).toContain('permission denied');
+  });
+
+  it('(b) configured-lane hard failure falls back to the registry default and the judge completes with degradation evidence', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', 'anthropic-sub');
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'tok-123');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'anthropic-sub');
+    const attemptedProviders: Array<string | undefined> = [];
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, ctx: unknown) => {
+      const provider = providerFromRunCtx(ctx);
+      attemptedProviders.push(provider);
+      if (provider === 'anthropic-sub') throw provider403();
+      return llmResponse('correct', 0.9);
+    });
+    const result = await runMultimodalDirectJudge({
+      db: mockDb,
+      question: makeRow({}),
+      answer_md: '5 N',
+      subjectProfile: physicsProfile,
+      runTaskFn,
+      imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
+    });
+    expect(attemptedProviders).toEqual(['anthropic-sub', 'xiaomi']);
+    // The fallback verdict is a REAL judge verdict (not an invented one).
+    expect(result.coarse_outcome).toBe('correct');
+    expect(result.score).toBeGreaterThanOrEqual(0.85);
+    // Degradation evidence: which lane failed, why, that fallback was used.
+    expect(result.evidence_json.lane_degradation).toMatchObject({
+      failed_lane: 'anthropic-sub',
+      api_error_status: 403,
+      fallback_lane: 'xiaomi',
+      error: expect.stringContaining('permission denied'),
+    });
+  });
+
+  it('(c) genuinely-unsupported route (output schema mismatch) still yields the OLD unsupported semantics — no error_kind', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', '');
+    const result = await runMultimodalDirectJudge({
+      db: mockDb,
+      question: makeRow({}),
+      answer_md: '5 N',
+      subjectProfile: physicsProfile,
+      runTaskFn: async () => ({ text: 'no json here' }),
+      imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
+    });
+    expect(result.coarse_outcome).toBe('unsupported');
+    expect(result.feedback_md).toContain('did not match MultimodalDirectLlmOutput schema');
+    expect(result.evidence_json.error_kind).toBeUndefined();
+    expect(result.evidence_json.lane_degradation).toBeUndefined();
+  });
+
+  it('fails closed with honest semantics when BOTH the configured lane and the fallback lane hard-fail', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', 'anthropic-sub');
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'tok-123');
+    let calls = 0;
+    const result = await runMultimodalDirectJudge({
+      db: mockDb,
+      question: makeRow({}),
+      answer_md: '5 N',
+      subjectProfile: physicsProfile,
+      runTaskFn: async () => {
+        calls += 1;
+        throw new AgentRunError({
+          kind: 'MultimodalDirectJudgeTask',
+          taskRunId: `tr-893-${calls}`,
+          subtype: 'api_error_result',
+          apiErrorStatus: calls === 1 ? 403 : 500,
+          errors: [calls === 1 ? 'forbidden' : 'server exploded'],
+        });
+      },
+      imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
+    });
+    expect(calls).toBe(2);
+    expect(result.coarse_outcome).toBe('unsupported');
+    expect(result.score).toBeNull();
+    expect(result.evidence_json.error_kind).toBe('provider_hard_failure');
+    expect(result.evidence_json.failed_lane).toBe('anthropic-sub');
+    expect(result.evidence_json.fallback).toMatchObject({
+      lane: 'xiaomi',
+      api_error_status: 500,
+    });
+  });
+
+  it('does NOT retry on a generic error even when a lane is configured', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', 'anthropic-sub');
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'tok-123');
+    const runTaskFn = vi.fn(async () => {
+      throw new Error('LLM down');
+    });
+    const result = await runMultimodalDirectJudge({
+      db: mockDb,
+      question: makeRow({}),
+      answer_md: '5 N',
+      subjectProfile: physicsProfile,
+      runTaskFn,
+      imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
+    });
+    expect(runTaskFn).toHaveBeenCalledOnce();
+    expect(result.coarse_outcome).toBe('unsupported');
+    expect(result.feedback_md).toContain('LLM call failed');
+    expect(result.evidence_json.error_kind).toBeUndefined();
   });
 });
 
