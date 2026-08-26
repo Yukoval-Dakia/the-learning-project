@@ -1,48 +1,40 @@
 # PLAN — 活看板 (cockpit)
 
 > Linear 是权威 tracker；本文件只镜像 NOW / NEXT / PARKED / BLOCKED-ON。
-> 更新于：2026-08-27 凌晨（三版：mass-ulw 连续推进日终态，main @ 82196ffa）
+> 更新于：2026-08-27 凌晨（终版：mass-ulw 收官 + kind epic 全完，main @ c34fb647）
 
 ## NOW
 
-- **mass-ulw 连续推进日收官**：全天累计 **28 PR 合并 / 31 票 Done + 12 Canceled**，
-  开放 PR = 0。主线纪事（按序）：
-  - 纠偏四连：Buildkite 停止（916/917/918 Canceled）→ 工具链移出 required gate
-    （#1262）→ 产品三连（#1250/1251/1252）→ YUK-898 移除项目级插件声明（#1264，
-    treadmill 终结）+ YUK-846 结案（凭证过期）。
-  - 批准件落地：903 更正 picker（#1267）/ 596 收口盘点（#1268）/ A 包五张
-    （915 #1269 / 919 #1270 / 911 #1276 / 339 #1278 / 913 #1279 / 340 #1284 /
-    784 #1285）。
-  - 工程面：522 PDF abort（#1271）/ 909 Biome ratchet 上线基线 337（#1272）/
-    605+555 quiz_gen 手动端点（#1273）/ 893 judge lane 语义分离（#1274）/
-    739 rating/cause 进 SubjectProfile（#1281）/ 496 calibration genesis（#1280）/
-    plan-then-generate 对齐 ADR-0038（#1282）/ ADR-0038 solve_check 修订（#1277）。
-  - **YUK-839 双轮 burn-in**：工程落地（#1275）→ R1 产品预算 FAIL → R2 owner 授权
-    诊断（1h/leg + thinking cap 16k）**acceptance #6 机械层 PASS**——resume 获真实
-    流量铁证（digest 前缀保持 / accepted 零重提 / 续跑 usage），报告 #1283+#1286，
-    spend $8.08。产品 480s 预算下维持不可达判定。
+- **mass-ulw 连续推进日收官**：全天累计 **31 PR 合并 / 34 票 Done + 12 Canceled**，
+  开放 PR = 0。晚段三连：#1288（YUK-537 边 un-archive 仅 reactivate 清除）、
+  #1289（YUK-390 residual：kind_cleanup_backfill job + 三科 fixture 规范化 +
+  词表收敛地基）、#1290（YUK-391：五+1 处判分镜像收敛到 answer-class 派生谓词，
+  含 9-kind×choices×profile 路由平价矩阵测试）。
+- **kind 两轴正交化 epic（YUK-386）四步全部完成**：Step 3（#446+#1289）·
+  freshness（#503）· Step 4（#1290）· Step 5（#1010，07-20 已落）。验证轴
+  （answer_class 4 值）自派生到判分路由到生成端已是单一事实源。
+- **YUK-839 双轮 burn-in 判定**（报告 #1283/#1286）：R1 产品预算 FAIL →
+  R2 无限预算+thinking cap 16k 下 acceptance #6 机械层 PASS（resume 获真实流量
+  铁证）；产品 480s 预算下 flash 不可达，生产纳入与否待 owner。
 
 ## NEXT
 
-1. **在飞**（mass-ulw wave-7，session 内推进）：YUK-390 residual（脏 kind 清理 +
-   词表收敛，解锁 391/392 链）/ YUK-537 item1（边 un-archive 仅 reactivate 清除）。
-2. **待 owner 五件**：
-   - ① glm-5.3-flash 是否进生产 validator lane（需 ≥25min 预算 vs 产品 480s，
-     YUK-839 留 In Review）；
-   - ② copilot 回复语气基调（YUK-340 唯一停下的分叉）；
-   - ③ YUK-679 二选一：LIGHT（ADR-0046 豁免段成文）vs FULL（port 进 crate，
-     需 Rust 线 owner lane）；
-   - ④ YUK-371 关闭或改写（其「零-LLM 确定判定」验收与 ADR-0038 修订冲突）；
-   - ⑤ 多 provider 方案一重启时点（YUK-921 停放中，开放问题已记录在票）。
-3. **工程池后续**：YUK-391/392（判分镜像收敛/生成端塌缩，依赖 390 residual）。
+**工程池已清零**（已验证：全部 actionable 票落地或转入 owner 闸）。等 owner 六件：
+1. glm-5.3-flash 是否进生产 validator lane（YUK-839 In Review，需 ≥25min 预算）
+2. copilot 回复语气基调（YUK-340 停下的唯一分叉）
+3. YUK-679 二选一：LIGHT（ADR-0046 豁免段）vs FULL（Rust port，需 Rust 线 lane）
+4. YUK-371 关闭或改写（验收与 ADR-0038 修订冲突）
+5. YUK-899 处置（票面截断不可恢复，三选项在票上）
+6. 多 provider 方案一重启时点（YUK-921 停放中）
+
+新工程输入（新票 / 上面六件的裁决）到达后按 mass-ulw 纪律续推。
 
 ## PARKED
 
-- **多 provider 方案一**（YUK-921）：方向已批、实施搁置待 owner 重启；内部耦合
-  地图完成（runner.ts 唯一硬绑点，生命周期/记账/durable 层全中立）；市场调研因
-  agent 循环止损，不作决策依赖。
-- A3 裁决维持：确认关票包 8 张 Canceled、human-gated 除 887/859/856 外先躺、
-  strategic ~40 张不动；记录 `.remember/a3-backlog-triage-2026-08-16.md` 附录。
+- **多 provider 方案一**（YUK-921）：方向已批、实施搁置；耦合地图完成
+  （runner.ts 唯一硬绑点）；重启时先答两个开放问题（codex-sub 用途层级 /
+  grok 接入形态）。
+- A3 裁决维持（8 张 Canceled / human-gated 躺平 / strategic 不动）。
 - 本地 main 脏树残余 = `.codex/config.toml` + 未跟踪工具目录（无害）。
 - YUK-360 blocked-on-upstream（mem0 usage API）；yuk-822 worktree 待 owner。
 
