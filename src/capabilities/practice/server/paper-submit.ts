@@ -120,6 +120,13 @@ export interface PaperSubmitSlotInput {
    * Capture only: never consumed by theta, mastery, SRT credit, or FSRS.
    */
   latencyMs?: number | null;
+  /**
+   * YUK-784 — 学生自述的解题过程文本（组卷面过程框采集）。Optional；absent/blank 时
+   * attempt payload 不带 reasoning_trace 键（byte-identical）。落到
+   * AttemptOnQuestion.payload.reasoning_trace（槽位 YUK-562 先行铺），observe-only：
+   * 不进 θ̂ / FSRS / 判分（同散题路径 submit.ts 的 YUK-562 条件写入）。
+   */
+  reasoningTrace?: string | null;
 }
 
 export interface PaperSubmitSlotResult {
@@ -783,6 +790,11 @@ export async function submitPaperSlot(
         // the read-side AttemptOnQuestion schema (known.ts:37, `duration_ms:
         // z.number().int().optional()`) parses cleanly — a null would fail it.
         ...(typeof input.latencyMs === 'number' ? { duration_ms: input.latencyMs } : {}),
+        // YUK-784 — 过程框采集文本（组卷面）。条件写入镜像散题 submit.ts 的 YUK-562 写法：
+        // 仅在 trim 后非空才带键（挡纯空白噪声），值取原文；缺省/空白 → 键 ABSENT →
+        // 既有卷提交 attempt 事件 byte-identical。槽位在 AttemptOnQuestion.payload 上
+        // （YUK-562 先行铺好），读侧无需改动。
+        ...(input.reasoningTrace?.trim() ? { reasoning_trace: input.reasoningTrace } : {}),
         // Only stamped on the un-judged path; absent (→ undefined) for every
         // normal graded attempt so the read shape is unchanged for them.
         ...(photoOnlyUnsupported ? { unsupported_judge: true } : {}),

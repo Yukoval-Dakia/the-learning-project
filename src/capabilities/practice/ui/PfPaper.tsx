@@ -6,11 +6,16 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 
+// YUK-784 — 采集判据与装配复用 PfSolo 先例（YUK-444 / #1069），不在本面重写判据：
+// shouldOfferProcessBox 决定过程框挂不挂，buildCaptureFields 负责 trim 判空 + 防御性截断
+// +「空值不发字段」。组件→组件引用，同 PfSolo 引 PfStream.PfSrcBadge 的先例。
+import { buildCaptureFields, shouldOfferProcessBox } from './PfSolo';
 import type { PfToast } from './PracticeFacePage';
 import {
   type PaperDetail,
@@ -128,6 +133,11 @@ export function PfPaper({
 
   const [pos, setPos] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  // YUK-784 — 过程框采集：per-slot 过程文本与展开态（组卷面多题连续作答，切换不丢；
+  // 交卷时随该 slot 的提交一并发出）。不进草稿自动保存——answer-draft wire 无此字段，
+  // 中途退出会丢过程文本，这是已知且诚实的取舍（采集是可选 meta，不值得为此扩草稿契约）。
+  const [trace, setTrace] = useState<Record<string, string>>({});
+  const [traceOpen, setTraceOpen] = useState<Record<string, boolean>>({});
   const [confirm, setConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   // Per-slot autosave-failed flags. While any is set the top chip stops claiming
@@ -203,6 +213,8 @@ export function PfPaper({
   // biome-ignore lint/correctness/useExhaustiveDependencies: artifactId is the reset trigger (reset-on-prop-change), not read in the body.
   useEffect(() => {
     setAnswers({});
+    setTrace({});
+    setTraceOpen({});
     setSaveFailed({});
     setRetrying(false);
     setExiting(false);
@@ -644,12 +656,19 @@ export function PfPaper({
       for (const s of slots) {
         const key = slotKey(s);
         if (submittedKeys.has(key) || submittedDuringAttemptsRef.current.has(key)) continue;
+        // YUK-784 — 该 slot 的过程文本随提交发出（空值/纯空白不发字段，截断在
+        // buildCaptureFields；server 侧 conditional-spread 落 AttemptOnQuestion.payload）。
+        const capture = buildCaptureFields({
+          reasoningTrace: trace[key] ?? '',
+          selfConfidence: null,
+        });
         await submitPaperSlot(artifactId, {
           session_id: sid,
           question_id: s.question_id,
           part_ref: s.part_ref,
           answer_md: answers[key] ?? '',
           latency_ms: timingMsRef.current[key] ?? 0,
+          ...(capture.reasoning_trace ? { reasoning_trace: capture.reasoning_trace } : {}),
         });
         submittedDuringAttemptsRef.current.add(key);
       }
@@ -781,6 +800,38 @@ export function PfPaper({
                 aria-label="作答"
               />
             </div>
+          </div>
+        )}
+
+        {/* YUK-784 — 过程框「记下你的思路」扩到组卷面（镜像 PfSolo #1069 先例）：仅开放/文本
+            作答题（shouldOfferProcessBox 复用，不重写判据）、默认折叠 opt-in、零强制——不挡
+            交卷、折叠即跳过、空值不发字段（submitAll 里 buildCaptureFields trim 判空）。与散题
+            不同点：组卷面多题连续作答，采集是 per-slot 状态，换题不丢，交卷时随各自 slot 发出。
+            已提交 slot / 退出 flush 期间不渲染（作答面已冻结，采集无处可挂）。 */}
+        {shouldOfferProcessBox(isChoice) && !submittedKeys.has(curKey) && !exiting && (
+          <div className="pfs-trace">
+            {traceOpen[curKey] ? (
+              <div className="composer pfs-trace-composer">
+                <textarea
+                  rows={2}
+                  value={trace[curKey] ?? ''}
+                  // 硬闸同 PfSolo：maxLength 挡越界输入撞 400 软死锁，buildCaptureFields
+                  // 发送前再防御性截断兜底粘贴/IME 绕过。
+                  maxLength={REASONING_TRACE_MAX_LEN}
+                  placeholder="随手记下你是怎么想的——不评分，也可以留空。"
+                  onChange={(e) => setTrace((t) => ({ ...t, [curKey]: e.target.value }))}
+                  aria-label="解题思路（可选）"
+                />
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="pfs-trace-toggle"
+                onClick={() => setTraceOpen((o) => ({ ...o, [curKey]: true }))}
+              >
+                ＋ 记下你的思路（可选）
+              </button>
+            )}
           </div>
         )}
       </Card>

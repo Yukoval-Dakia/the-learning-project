@@ -525,6 +525,9 @@ type PaperWriteInput = {
   part_ref: string | null;
   answer_md: string;
   latency_ms?: number;
+  // YUK-784 — 卷提交的过程文本（可选，observe-only）。装配与「空值不发」语义复用 PfSolo 的
+  // buildCaptureFields（截断 / trim 判空在那侧），这里只在 body 装配点条件带出。
+  reasoning_trace?: string;
 };
 
 export function buildPaperAnswerDraftBody(artifactId: string, input: PaperWriteInput) {
@@ -543,6 +546,8 @@ export function buildPaperSubmissionBody(artifactId: string, input: PaperWriteIn
     part_ref: input.part_ref,
     answer_md: input.answer_md,
     ...(input.latency_ms === undefined ? {} : { latency_ms: input.latency_ms }),
+    // YUK-784 — 过程框采集字段：缺省不带键 → 既有卷提交 wire 逐字不变（byte-identical）。
+    ...(input.reasoning_trace === undefined ? {} : { reasoning_trace: input.reasoning_trace }),
   };
 }
 
