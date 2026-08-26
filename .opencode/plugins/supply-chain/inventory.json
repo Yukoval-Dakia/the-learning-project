@@ -18,8 +18,8 @@
 		"openCodeCompactionAuto": false
 	},
 	"overrides": {
-		"@posthog/core": "1.48.1",
-		"posthog-node": "5.49.1"
+		"@posthog/core": "1.48.7",
+		"posthog-node": "5.49.3"
 	},
 	"npmPlugins": [
 		{
@@ -29,7 +29,7 @@
 			"specifier": "@cortexkit/opencode-magic-context@0.33.0",
 			"integrity": "sha512-MluR+/kuhb9c4aAfFZ7t+EbLiAwjdwBoTjLvQ5kxf2K7P9Psy0FDJy/gsG1Pviwjzv+ZBwtSP2ZEUwV0dL9sLw==",
 			"runtimePackageCount": 229,
-			"runtimeGraphSha256": "b2e8bae0752ca1165f8fda0b543e35fc70928f00eadbb45de9df63442387ce37",
+			"runtimeGraphSha256": "dd4c9444b960cdb55afd55e943316a28045cccf82e5b164a7d5c1b5564a941be",
 			"license": "MIT",
 			"upstream": "https://github.com/cortexkit/magic-context",
 			"requiredToolIds": ["ctx_expand", "ctx_memory", "ctx_note", "ctx_reduce", "ctx_search"]
@@ -40,8 +40,8 @@
 			"version": "1.2.5",
 			"specifier": "@zenobius/opencode-skillful@1.2.5",
 			"integrity": "sha512-CSl/6FgcXGf2aiJvcFPHE07KkHclVOdvI5ldnFc1Ejy8YGQBG3hjkPIqkrmr4Py1h4q8zqUlhyBP6I9bVSxBgw==",
-			"runtimePackageCount": 22,
-			"runtimeGraphSha256": "367998c169953fdaf4ca2f8aec75cf3fcdf956f0c687c46521387ab8dacf4786",
+			"runtimePackageCount": 21,
+			"runtimeGraphSha256": "5ea6ccbfd5a6ec1f11ce7699644d66210a73e62fc903cb643f53ffd6232aa4cc",
 			"license": "UNDECLARED",
 			"upstream": "https://github.com/zenobi-us/opencode-skillful",
 			"requiredToolIds": ["skill_find", "skill_resource", "skill_use"]
@@ -52,8 +52,8 @@
 			"version": "4.17.0",
 			"specifier": "oh-my-openagent@4.17.0",
 			"integrity": "sha512-hp9UE9FIGgIzXoAFuYcju63B6HGUH0z+mAjL2zf3CzA5wJ42buulEGiyoDMvQaqaJdIrQBIl1/Hq52t9c0+4tw==",
-			"runtimePackageCount": 250,
-			"runtimeGraphSha256": "81c7b60b1415ea3843b464f6041f23d471c53ff533f1fafeca937fb33fa3649f",
+			"runtimePackageCount": 251,
+			"runtimeGraphSha256": "0f50f12836d579c3ab913d9fbba4a548d9390578fdbcd95f6bef9c35a4e57592",
 			"license": "SUL-1.0",
 			"upstream": "https://github.com/code-yeongyu/oh-my-openagent",
 			"requiredToolIds": [
