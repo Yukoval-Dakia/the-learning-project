@@ -96,11 +96,10 @@ const MeshNode = memo(function MeshNode({
     <g
       className={`mesh-node${isActive ? ' is-active' : ''}${node.isGhost ? ' is-ghost' : ''}`}
       transform={`translate(${x} ${y})`}
-      aria-label={label.fullName}
+      aria-label={`${label.fullName}${node.isGhost ? '（其他科目）' : ''}`}
       // biome-ignore lint/a11y/useSemanticElements: SVG <g> 不能是 <button>；role=button + tabIndex 是可聚焦图节点的正确 ARIA（旧 KnowledgeGraph 同例）
       role="button"
       tabIndex={0}
-      aria-label={`${node.name}${node.isGhost ? '（其他科目）' : ''}`}
       style={{ cursor: 'pointer' }}
       onClick={() => onPick(node)}
       onKeyDown={(e) => {
