@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SubjectFilterTabs } from '@/ui/components/SubjectFilterTabs';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { Btn } from '@/ui/primitives/Btn';
@@ -15,13 +15,23 @@ const NOTE_TYPE_LABEL: Record<string, string> = {
 
 export default function NotesPage({ navigate }: { navigate: (to: string) => void }) {
   const [subject, setSubject] = useState('all');
+  const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const { subjects } = useSubjects();
   const subjectQuery = subject === 'all' ? undefined : subject;
+
+  // YUK-919 — 250ms 防抖后随查询重发（同 QuestionsPage 的搜索节奏）。
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
   const notesQ = useQuery({
-    queryKey: ['notes', subjectQuery],
-    queryFn: () => listNotes(subjectQuery),
+    queryKey: ['notes', subjectQuery, debouncedQuery],
+    queryFn: () => listNotes(subjectQuery, debouncedQuery || undefined),
   });
   const rows = notesQ.data?.rows ?? [];
+  const searching = debouncedQuery.length > 0;
 
   return (
     <main className="page wide notes-loom">
@@ -34,6 +44,33 @@ export default function NotesPage({ navigate }: { navigate: (to: string) => void
           </Btn>
         </div>
         <p className="page-lead">按科目查看已关联知识点的笔记；打开后可继续阅读或编辑。</p>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--s-2)',
+            marginTop: 'var(--s-4)',
+          }}
+        >
+          <LoomIcon name="search" size={15} />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索笔记标题或正文…"
+            aria-label="搜索笔记"
+            style={{ flex: 1 }}
+          />
+          {query && (
+            <Btn
+              variant="ghost"
+              size="sm"
+              icon="close"
+              aria-label="清除搜索"
+              onClick={() => setQuery('')}
+            />
+          )}
+        </div>
         <SubjectFilterTabs value={subject} rows={subjects} onChange={setSubject} />
       </header>
 
@@ -49,8 +86,14 @@ export default function NotesPage({ navigate }: { navigate: (to: string) => void
       ) : rows.length === 0 ? (
         <EmptyState
           icon="doc"
-          title="还没有匹配的笔记"
-          text={subject === 'all' ? '关联知识点的笔记会显示在这里。' : '换一个科目筛选试试。'}
+          title={searching ? '没有找到匹配的笔记' : '还没有匹配的笔记'}
+          text={
+            searching
+              ? '换个关键词，或清除搜索看看全部笔记。'
+              : subject === 'all'
+                ? '关联知识点的笔记会显示在这里。'
+                : '换一个科目筛选试试。'
+          }
         />
       ) : (
         <div className="grid" style={{ gap: 'var(--s-3)' }}>

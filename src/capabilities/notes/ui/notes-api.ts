@@ -22,11 +22,18 @@ export type NoteListRow = {
   updated_at: string;
 };
 
-export const listNotes = (subject?: string): Promise<{ rows: NoteListRow[] }> =>
-  apiOperationJson('listNotes', {
-    url: subject ? `/api/notes?subject=${encodeURIComponent(subject)}` : '/api/notes',
+// YUK-919 — query：标题/正文文本搜索（服务端 listNotes 与科目过滤 AND 组合）；
+// 空串/空白不发送，保持既有列表行为。
+export const listNotes = (subject?: string, query?: string): Promise<{ rows: NoteListRow[] }> => {
+  const params = new URLSearchParams();
+  if (subject) params.set('subject', subject);
+  if (query?.trim()) params.set('query', query.trim());
+  const qs = params.toString();
+  return apiOperationJson('listNotes', {
+    url: qs ? `/api/notes?${qs}` : '/api/notes',
     method: 'GET',
   });
+};
 
 // ── body_blocks 块模型（ArtifactBodyBlocks passthrough doc） ────────
 // 已知块型：semanticBlock（文本块，kind ∈ definition/mechanism/example/

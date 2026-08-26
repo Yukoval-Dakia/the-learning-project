@@ -42,6 +42,8 @@ export const ArtifactSearchResponseSchema = z.object({
 
 export const NoteListQuerySchema = z.object({
   subject: z.string().trim().min(1).optional(),
+  // YUK-919 — 笔记文本搜索（标题或正文，大小写不敏感子串）。空串视同缺省。
+  query: z.string().trim().min(1).max(200).optional(),
 });
 
 export const NoteListResponseSchema = z.object({
