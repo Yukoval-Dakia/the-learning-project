@@ -60,7 +60,11 @@ describe('misconception-edges throat', () => {
     expect(all[0].weight).toBeCloseTo(0.9); // weight refreshed
   });
 
-  it('re-create UN-ARCHIVES a previously archived edge (archived_at NULL again)', async () => {
+  // YUK-537 — edge-side mirror of the node-side F1 guard (PR #688): archived_at is
+  // cleared ONLY on an explicit reactivation. A plain re-propose stays an idempotent
+  // UPSERT (same row id, weight refreshed, never a 23505) but PRESERVES the tombstone,
+  // so a single re-accept can no longer resurrect a retired caused_by edge.
+  it('a plain re-propose PRESERVES an archived edge; reactivate:true un-archives it', async () => {
     const db = testDb();
     const id = await createMisconceptionEdge(db, {
       from_id: 'misc_1',
@@ -71,26 +75,41 @@ describe('misconception-edges throat', () => {
     });
     const archived = await archiveMisconceptionEdge(db, id);
     expect(archived).toEqual({ id, archived: true });
-    const afterArchive = await db
-      .select()
-      .from(misconception_edge)
-      .where(eq(misconception_edge.id, id));
-    expect(afterArchive[0].archived_at).not.toBeNull();
 
-    // Re-propose the same edge → un-archive (idempotent re-promote path).
+    // Plain re-propose (default) — conflict-update refreshes weight/updated_at on the
+    // SAME row but must NOT clear archived_at.
     const id2 = await createMisconceptionEdge(db, {
       from_id: 'misc_1',
       to_kind: 'knowledge',
       to_id: 'kn_1',
       relation_type: 'caused_by',
+      weight: 0.9,
       created_by: AI,
     });
     expect(id2).toBe(id);
-    const afterReCreate = await db
+    const afterPlain = await db
       .select()
       .from(misconception_edge)
       .where(eq(misconception_edge.id, id));
-    expect(afterReCreate[0].archived_at).toBeNull();
+    expect(afterPlain).toHaveLength(1);
+    expect(afterPlain[0].archived_at).not.toBeNull(); // tombstone preserved
+    expect(afterPlain[0].weight).toBeCloseTo(0.9); // weight still refreshed
+
+    // An EXPLICIT reactivation un-archives (same idempotent upsert path).
+    const id3 = await createMisconceptionEdge(db, {
+      from_id: 'misc_1',
+      to_kind: 'knowledge',
+      to_id: 'kn_1',
+      relation_type: 'caused_by',
+      created_by: AI,
+      reactivate: true,
+    });
+    expect(id3).toBe(id);
+    const afterReactivate = await db
+      .select()
+      .from(misconception_edge)
+      .where(eq(misconception_edge.id, id));
+    expect(afterReactivate[0].archived_at).toBeNull();
   });
 
   it('topology gate REJECTS caused_by → event (wrong target kind)', async () => {

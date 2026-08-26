@@ -2,7 +2,8 @@
 // promotion writer. Drives promoteConjectureToMisconception directly against real rows to prove
 // the three F1 invariants that become load-bearing once the dark hard track coexists with soft:
 //   ① source is MONOTONE soft→hard — a plain soft re-accept NEVER downgrades a confirmed hard row,
-//   ② archived_at is NOT unconditionally reset — only an explicit reactivate clears it,
+//   ② archived_at is NOT unconditionally reset — only an explicit reactivate clears it
+//      (YUK-537: on BOTH the node and its caused_by edge),
 //   ③ the `misc:<id>` advisory lock serializes concurrent promotes of the same cause×KC.
 // (The flag-gated live accept path is covered in conjecture-accept.db.test.ts.)
 
@@ -77,19 +78,31 @@ describe('promoteConjectureToMisconception — F1 two-track UPSERT guard', () =>
   it('② a plain re-accept does NOT un-archive a soft-archived node; reactivate:true does', async () => {
     const minted = await promote({ source: 'soft' });
     const db = testDb();
-    // Simulate the retire/reconcile ring soft-archiving the node.
+    // Simulate the retire/reconcile ring soft-archiving the node AND its caused_by edge
+    // (archiveSoftMisconceptionForConjecture archives both together).
     await db
       .update(misconception)
       .set({ archived_at: new Date('2026-07-05T00:00:00Z') })
       .where(eq(misconception.id, minted.misconceptionId));
+    await db
+      .update(misconception_edge)
+      .set({ archived_at: new Date('2026-07-05T00:00:00Z') })
+      .where(eq(misconception_edge.id, minted.edgeId));
 
-    // A plain soft re-accept must PRESERVE archived_at (no silent resurrection).
+    // A plain soft re-accept must PRESERVE both archived_at values (no silent
+    // resurrection — YUK-537 aligns the caused_by edge with the node-side guard).
     await promote({ source: 'soft', conjectureId: 'cj_2', now: new Date('2026-07-06T00:00:00Z') });
     let rows = await miscRows();
     expect(rows).toHaveLength(1);
     expect(rows[0].archived_at).not.toBeNull();
+    let edgeRows = await db
+      .select()
+      .from(misconception_edge)
+      .where(eq(misconception_edge.id, minted.edgeId));
+    expect(edgeRows).toHaveLength(1);
+    expect(edgeRows[0].archived_at).not.toBeNull();
 
-    // An EXPLICIT reactivation un-archives immediately (design §Tier1-8).
+    // An EXPLICIT reactivation un-archives BOTH immediately (design §Tier1-8).
     await promote({
       source: 'soft',
       conjectureId: 'cj_3',
@@ -99,6 +112,11 @@ describe('promoteConjectureToMisconception — F1 two-track UPSERT guard', () =>
     rows = await miscRows();
     expect(rows).toHaveLength(1);
     expect(rows[0].archived_at).toBeNull();
+    edgeRows = await db
+      .select()
+      .from(misconception_edge)
+      .where(eq(misconception_edge.id, minted.edgeId));
+    expect(edgeRows[0].archived_at).toBeNull();
   });
 
   it('③ the misc:<id> advisory lock serializes concurrent promotes of the same cause×KC into one consistent row', async () => {
