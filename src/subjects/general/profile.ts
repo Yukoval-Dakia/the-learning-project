@@ -1,3 +1,4 @@
+import { UNIVERSAL_RATING_POLICY } from '@/core/schema/profile-decl';
 import type { SubjectProfile } from '../profile';
 
 // The framework's NEUTRAL DEFAULT subject profile (deprotagonist floor).
@@ -60,25 +61,42 @@ export const generalProfile: SubjectProfile = {
       label: '概念理解',
       description: '对定义、框架或概念边界的理解错误',
       review_priority: 5,
+      // YUK-739 — subject-owned evaluation semantics (moved off cross-subject mirrors).
+      meta_cause_prior: 'flawed_model',
+      rating_lean: 'conceptual',
+      variant_strategy: '同概念不同语境 / 反向考查（验证概念边界）',
     },
     {
       id: 'knowledge_gap',
       label: '知识缺失',
       description: '缺少必要的背景知识',
       review_priority: 4,
+      meta_cause_prior: 'knowledge_gap',
+      variant_strategy: '补充该知识点的典型变体',
     },
-    { id: 'reading', label: '审题偏差', description: '题面信息遗漏或误读', review_priority: 3 },
+    {
+      id: 'reading',
+      label: '审题偏差',
+      description: '题面信息遗漏或误读',
+      review_priority: 3,
+      meta_cause_prior: 'representation_failure',
+      variant_strategy: '改提问方式 + 加干扰信息',
+    },
     {
       id: 'memory',
       label: '记忆混淆',
       description: '已学内容的记忆不牢固或混淆',
       review_priority: 3,
+      meta_cause_prior: 'retrieval_failure',
+      variant_strategy: '不同表述测同一记忆点',
     },
     {
       id: 'expression',
       label: '表达不当',
       description: '理解正确但表述不清或不完整',
       review_priority: 3,
+      meta_cause_prior: 'representation_failure',
+      variant_strategy: '同题重写答案要求（重点检查表达）',
     },
     {
       id: 'method',
@@ -86,6 +104,8 @@ export const generalProfile: SubjectProfile = {
       description: '解题方向或分析方法选择不当',
       review_priority: 3,
       variant_targetable: true,
+      meta_cause_prior: 'rule_misapplication',
+      variant_strategy: '提示备选方法 + 同类型题',
     },
     {
       id: 'carelessness',
@@ -93,9 +113,20 @@ export const generalProfile: SubjectProfile = {
       description: '非知识性的笔误或遗漏',
       review_priority: 2,
       variant_targetable: false,
+      meta_cause_prior: 'execution_slip',
+      rating_lean: 'carelessness',
     },
-    { id: 'other', label: '其它', review_priority: 2, variant_targetable: false },
+    {
+      id: 'other',
+      label: '其它',
+      review_priority: 2,
+      variant_targetable: false,
+      meta_cause_prior: null,
+    },
   ],
+  // YUK-739 — verdict → FSRS rating mapping is profile-owned; the neutral
+  // default subject declares the universal 3-state mapping explicitly.
+  ratingPolicy: UNIVERSAL_RATING_POLICY,
   renderConfig: {
     font_family: 'system',
     notation: null,

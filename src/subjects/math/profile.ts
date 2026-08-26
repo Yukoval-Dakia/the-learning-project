@@ -1,3 +1,4 @@
+import { UNIVERSAL_RATING_POLICY } from '@/core/schema/profile-decl';
 import type { SubjectProfile } from '../profile';
 
 export const mathProfile: SubjectProfile = {
@@ -52,45 +53,75 @@ export const mathProfile: SubjectProfile = {
       label: '概念理解',
       description: '对数学定义、定理、条件的理解错误',
       review_priority: 5,
+      // YUK-739 — subject-owned evaluation semantics (moved off cross-subject mirrors).
+      meta_cause_prior: 'flawed_model',
+      rating_lean: 'conceptual',
+      variant_strategy: '同概念不同语境 / 反向考查（验证概念边界）',
     },
     {
       id: 'knowledge_gap',
       label: '知识缺失',
       description: '缺少解题所需的数学知识',
       review_priority: 4,
+      meta_cause_prior: 'knowledge_gap',
+      variant_strategy: '补充该知识点的典型变体',
     },
     {
       id: 'calculation',
       label: '运算错误',
       description: '代数计算、数值运算失误',
       review_priority: 3,
+      meta_cause_prior: 'execution_slip',
+      variant_strategy: '改数据 + 留同样陷阱（验证计算稳定性）',
     },
     {
       id: 'method',
       label: '方法选择',
       description: '解题方法或策略选择不当',
       review_priority: 4,
+      meta_cause_prior: 'rule_misapplication',
+      variant_strategy: '提示备选方法 + 同类型题',
     },
-    { id: 'reading', label: '审题偏差', description: '题面条件遗漏或误读', review_priority: 3 },
+    {
+      id: 'reading',
+      label: '审题偏差',
+      description: '题面条件遗漏或误读',
+      review_priority: 3,
+      meta_cause_prior: 'representation_failure',
+      variant_strategy: '改提问方式 + 加干扰信息',
+    },
     {
       id: 'memory',
       label: '记忆混淆',
       description: '公式、定理的记忆不准确',
       review_priority: 3,
+      meta_cause_prior: 'retrieval_failure',
+      variant_strategy: '不同表述测同一记忆点',
     },
     {
       id: 'expression',
       label: '表达不规范',
       description: '推导步骤省略或书写不清',
       review_priority: 3,
+      meta_cause_prior: 'representation_failure',
+      variant_strategy: '同题重写答案要求（重点检查表达）',
     },
-    { id: 'unit_error', label: '单位错误', description: '量纲或单位换算错误', review_priority: 2 },
+    {
+      id: 'unit_error',
+      label: '单位错误',
+      description: '量纲或单位换算错误',
+      review_priority: 2,
+      meta_cause_prior: 'execution_slip',
+      variant_strategy: '改变单位、量纲或换算条件，检查单位一致性',
+    },
     {
       id: 'carelessness',
       label: '粗心',
       description: '非知识性的计算笔误或抄写错误',
       review_priority: 2,
       variant_targetable: false,
+      meta_cause_prior: 'execution_slip',
+      rating_lean: 'carelessness',
     },
     {
       id: 'time_pressure',
@@ -98,9 +129,19 @@ export const mathProfile: SubjectProfile = {
       description: '限时条件下步骤选择、节奏或计算稳定性下降',
       review_priority: 2,
       variant_targetable: true,
+      meta_cause_prior: 'execution_slip',
     },
-    { id: 'other', label: '其它', review_priority: 2, variant_targetable: false },
+    {
+      id: 'other',
+      label: '其它',
+      review_priority: 2,
+      variant_targetable: false,
+      meta_cause_prior: null,
+    },
   ],
+  // YUK-739 — verdict → FSRS rating mapping is profile-owned; math declares the
+  // universal 3-state mapping explicitly (FSRS surface is subject-agnostic today).
+  ratingPolicy: UNIVERSAL_RATING_POLICY,
   renderConfig: {
     font_family: 'system',
     notation: 'katex',

@@ -23,6 +23,8 @@
 
 import { describe, expect, it } from 'vitest';
 import type { JudgeResultV2T } from '@/core/schema/capability';
+import { mathProfile } from '@/subjects/math/profile';
+import { physicsProfile } from '@/subjects/physics/profile';
 import { judgeResultToRatingAdvice } from './rating-advisor';
 
 const CAPABILITY_REF = { id: 'steps', version: '1' } as const;
@@ -104,15 +106,22 @@ describe('judgeResultToRatingAdvice — six boundary cases', () => {
   });
 
   it('case 5: score=0.4 partial + carelessness-leaning cause → good', () => {
-    // physics profile uses cause id 'careless'; generic 'carelessness' also accepted.
-    const advice = judgeResultToRatingAdvice(makePartial(0.4), { causeCategory: 'careless' });
+    // YUK-739 — the lean is declared on the subject's own category: physics
+    // declares rating_lean='carelessness' on its 'careless' id.
+    const advice = judgeResultToRatingAdvice(makePartial(0.4), {
+      causeCategory: 'careless',
+      subjectProfile: physicsProfile,
+    });
     expect(advice.rating).toBe('good');
     expect(advice.reason).toMatch(/careless/i);
   });
 
-  it('case 6: score=0.4 partial + conceptual_error cause → again (bias drops two steps)', () => {
-    // physics profile uses cause id 'concept'; generic 'conceptual_error' also accepted.
-    const advice = judgeResultToRatingAdvice(makePartial(0.4), { causeCategory: 'concept' });
+  it('case 6: score=0.4 partial + conceptual cause → again (bias drops two steps)', () => {
+    // physics declares rating_lean='conceptual' on its 'concept' id.
+    const advice = judgeResultToRatingAdvice(makePartial(0.4), {
+      causeCategory: 'concept',
+      subjectProfile: physicsProfile,
+    });
     expect(advice.rating).toBe('again');
     expect(advice.reason).toMatch(/concept/i);
   });
@@ -126,12 +135,23 @@ describe('judgeResultToRatingAdvice — non-boundary smoke', () => {
   });
 
   it('low partial (0.1) + carelessness → good (carelessness-leaning cause)', () => {
-    const advice = judgeResultToRatingAdvice(makePartial(0.1), { causeCategory: 'careless' });
+    const advice = judgeResultToRatingAdvice(makePartial(0.1), {
+      causeCategory: 'carelessness',
+      subjectProfile: mathProfile,
+    });
     expect(advice.rating).toBe('good');
   });
 
   it('low partial (0.1) + conceptual → again', () => {
-    const advice = judgeResultToRatingAdvice(makePartial(0.1), { causeCategory: 'concept' });
+    const advice = judgeResultToRatingAdvice(makePartial(0.1), {
+      causeCategory: 'concept',
+      subjectProfile: mathProfile,
+    });
+    expect(advice.rating).toBe('again');
+  });
+
+  it('YUK-739: without a profile the raw cause id is NOT interpreted (no mirror)', () => {
+    const advice = judgeResultToRatingAdvice(makePartial(0.1), { causeCategory: 'carelessness' });
     expect(advice.rating).toBe('again');
   });
 
@@ -161,6 +181,8 @@ describe('judgeResultToRatingAdvice — non-boundary smoke', () => {
     const adviceNoCause = judgeResultToRatingAdvice(makePartial(0.6));
     const adviceConcept = judgeResultToRatingAdvice(makePartial(0.6), {
       causeCategory: 'concept',
+      // YUK-739 — the conceptual lean is declared on the profile's own category.
+      subjectProfile: physicsProfile,
     });
     expect(adviceConcept.rating).toBe('again');
     expect(adviceNoCause.rating).toBe('hard');

@@ -264,6 +264,12 @@ interface JudgedSubmit {
   suggestedRating: Rating | null;
   finalRating: Rating;
   adviceCauseCategory: Awaited<ReturnType<typeof resolveAdviceCauseForQuestion>>;
+  /**
+   * YUK-739 — the profile the rating-advisory lean/ratingPolicy resolves
+   * through (null when no answer was submitted, matching judgeSubmit's
+   * subjectProfile resolution).
+   */
+  adviceSubjectProfile: SubjectProfile | null;
 }
 
 // YUK-589 (J2, High-sec) — resolve execution provenance for a CLIENT-SUPPLIED judge
@@ -574,6 +580,7 @@ export async function judgeSubmit(
     suggestedRating,
     finalRating,
     adviceCauseCategory,
+    adviceSubjectProfile: subjectProfile,
   };
 }
 
@@ -770,6 +777,7 @@ export async function persistSubmit(
     suggestedRating,
     finalRating,
     adviceCauseCategory,
+    adviceSubjectProfile,
   }: JudgedSubmit,
   opts: PersistSubmitOptions = {},
 ): Promise<PersistedSubmit> {
@@ -1053,6 +1061,9 @@ export async function persistSubmit(
             judge_advice: {
               ...judgeResultToRatingAdvice(judgeResult, {
                 causeCategory: adviceCauseCategory,
+                // YUK-739 — lean/anchors resolve through the subject's own
+                // rating_lean / ratingPolicy declarations.
+                subjectProfile: adviceSubjectProfile,
               }),
             },
           }

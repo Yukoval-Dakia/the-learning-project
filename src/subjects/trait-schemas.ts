@@ -21,8 +21,10 @@
 import { z } from 'zod';
 import {
   CauseCategoryDeclaration,
+  RatingPolicySchema,
   RenderConfig,
   SchedulingHints,
+  UNIVERSAL_RATING_POLICY,
 } from '@/core/schema/profile-decl';
 import { JudgeRouteKindSchema, SubjectQuestionKindSchema } from './profile-schema';
 
@@ -83,6 +85,10 @@ export const JudgePolicyTraitSchema = z
       })
       .strict(),
     judgeCapabilities: z.array(z.string().trim().min(1)),
+    // YUK-739 — rating semantics live with the judge-adjacent trait. Defaulted so
+    // pre-YUK-739 trait rows (no section) hydrate to the universal map — the
+    // exact values those rows' subjects were rated under before the policy existed.
+    ratingPolicy: RatingPolicySchema.default(UNIVERSAL_RATING_POLICY),
   })
   .strict();
 export type JudgePolicyTrait = z.infer<typeof JudgePolicyTraitSchema>;

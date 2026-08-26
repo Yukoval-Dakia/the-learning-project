@@ -32,6 +32,7 @@ import {
   seedTraitId,
 } from '@/subjects/builtin-trait-seeds';
 import { normalizeSubjectKey, subjectProfiles } from '@/subjects/profile';
+import type { SubjectProfile } from '@/subjects/profile-schema';
 import { assembleSubjectProfile } from '@/subjects/trait-compose';
 import {
   SUBJECT_TRAIT_KINDS,
@@ -353,6 +354,12 @@ export interface ValidateSubjectResult {
   valid: boolean;
   errors: string[];
   warnings: string[];
+  /**
+   * YUK-739 — the assembled profile (present on the success path), so audits
+   * can run semantics checks the generic validateProfile cannot express
+   * (builtin fail-closed declarations; see evaluation-semantics-audit.ts).
+   */
+  profile?: SubjectProfile;
 }
 
 /** null = subject 不存在。零落库、零 CAS（只读，无需锁）。 */
@@ -392,7 +399,12 @@ export async function validateSubject(
       payloads: payloads as unknown as SubjectTraitPayloads,
     });
     const result = validateProfile(profile, getDefaultRegistry());
-    return { valid: result.valid, errors: result.errors, warnings: result.warnings };
+    return {
+      valid: result.valid,
+      errors: result.errors,
+      warnings: result.warnings,
+      profile,
+    };
   } catch (err) {
     return {
       valid: false,
