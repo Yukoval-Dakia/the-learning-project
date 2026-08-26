@@ -127,9 +127,14 @@ export function NoteBlockView({
   }
   // check 已在上方分支 return，此处 kind 已收窄为四型。
   const label = kind ? SEMANTIC_KIND_LABEL[kind] : null;
+  // YUK-339：read 态的 kind 标签由 .nrb-h 小节标题（NoteDocBody，设计源
+  // screen-note-reader.jsx:63）承载，块内不再重复渲染 chip——只保留 user_verified
+  // 徽章；edit 态（NoteEditor）保持原 chip 不变。
+  const showTagChip = variant === 'edit' && label;
+  const showVerifiedAlone = variant === 'read' && block.attrs?.user_verified;
   return (
     <div className={`nb-sem nb-sem-${kind ?? 'plain'}`}>
-      {label && (
+      {showTagChip && (
         <span className="nb-sem-tag mono">
           <LoomIcon
             name={(KIND_ICON[kind as Exclude<SemanticKind, 'check'>] ?? 'doc') as never}
@@ -142,6 +147,14 @@ export function NoteBlockView({
               已校验
             </span>
           )}
+        </span>
+      )}
+      {showVerifiedAlone && (
+        <span className="nb-sem-tag mono">
+          <span className="verify-badge verified">
+            <LoomIcon name="check" size={10} />
+            已校验
+          </span>
         </span>
       )}
       <div className="nb-sem-body" style={{ whiteSpace: 'pre-wrap' }}>
