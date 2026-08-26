@@ -4,28 +4,19 @@
 	"type": "module",
 	"packageManager": "bun@1.3.14",
 	"scripts": {
-		"test": "bun test worktree/*.test.ts supply-chain/*.test.ts",
+		"test": "bun test worktree/*.test.ts",
 		"typecheck": "tsc --noEmit",
-		"lint": "biome check .",
-		"verify:supply-chain": "bun run supply-chain/verify.ts && bun run supply-chain/verify-load.ts"
+		"lint": "biome check ."
 	},
 	"dependencies": {
-		"@cortexkit/opencode-magic-context": "0.33.0",
 		"@opencode-ai/plugin": "1.15.13",
 		"@opencode-ai/sdk": "1.15.13",
-		"@zenobius/opencode-skillful": "1.2.5",
 		"jsonc-parser": "3.3.1",
-		"oh-my-openagent": "4.17.0",
 		"zod": "4.3.5"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "1.9.4",
 		"@types/bun": "1.3.11",
-		"opencode-ai": "1.18.10",
 		"typescript": "5.9.3"
-	},
-	"overrides": {
-		"@posthog/core": "1.48.7",
-		"posthog-node": "5.49.3"
 	}
 }
