@@ -1,5 +1,10 @@
 # YUK-839 acceptance #6 burn-in — 2026-08-26（zhipu / glm-5.3-flash）
 
+> **Round 2（同日，owner 授权）已追加**：解除 budget 上限（1h/leg）+ reasoning=high
+> 后，完整 validator 流程与 sealed-checkpoint resume 均跑通。Round 1 的
+> “FAIL/不可达”结论仅适用于产品 durable budget；当前总结论见文末
+> `## Round 2` 节的 verdict。
+
 ## Decision
 
 - **acceptance #6 在 zhipu / glm-5.3-flash 上：FAIL（不可达）。** 两次完整
@@ -138,3 +143,128 @@ comparator 完整跑通"与"中断续跑证明"均无法发生。可选后续（
   probe（27+51 tokens 计费量级）。abort 场景下产品表无法回收 token 数；以
   thinking 字符计（122,891 chars 总计）实际生成量约为数十 K tokens 量级。
 - 与 mandate 授权的 2-4 次 full run 预算一致，未超。
+
+## Round 2 — unlimited budget + reasoning=high（owner-authorized diagnostic）
+
+Owner 2026-08-26 授权的本轮仅作诊断：leg 预算从产品 durable 常量改为
+`referenceMs/comparisonMs = 3_600_000`（1h/leg，事实无限），**偏离产品预算**；
+本轮结论不能直接外推为"glm-5.3-flash 可用于生产 validator"。
+
+### Setup deltas（vs Round 1）
+
+- harness 增加 `BURNIN_REF_MS` / `BURNIN_CMP_MS` / `BURNIN_TAG` env 透传；本轮
+  均 3_600_000。
+- `MAX_THINKING_TOKENS=16384` 在 harness 进程 env 设置（import 前），经
+  `buildAgentEnv` 的 process.env 拷贝进入 Claude CLI 子进程。
+- thinking-budget 预检（单次 API 直连，非 SDK）：zhipu anthropic endpoint 对
+  glm-5.3-flash 接受 `thinking.budget_tokens=16384`（200，end_turn，65 thinking
+  chars，1.9s）。**但经 Agent SDK CLI 路径的实测 thinking chars 未显著下降**
+  （clean 73,518 / 意外全量 112,116 / resume 57,474 / aborted 80,614，vs R1
+  64,916）——env cap 是否真实穿透 CLI 未获证实；按 mandate 只记录、不追加
+  probe。
+- 其余隔离边界与 Round 1 相同（同 worktree / 同容器 PG / 同 fixture 与 seam）。
+- Round 2 新增工件 SHA-256（/tmp/yuk839-burnin，0600，不提交）：
+  - harness 入口：`f0e2a35042e670a504c74f6837a32dfabd150be430fca66ae629c59d20b8d5de`
+  - harness core：`e2d5eb182c4ac92e8e78212dfa94b4c13f3c88cef375dfe3f44248a6791048ed`
+  - thinking probe：`c388f0bfa44c8c1c20a563cc2c477063a3e6a2ed58b3c0a7ecb28c049adcbbc1`
+  - clean results：`aec23133e7357991221d78cb2612ec3380b4be2de8361f30e1166d164b044508`
+  - recovery results：`534dfd725a91ea3104f9d61384ba84be843424fda39fe45813ae34e90fdad221`
+  - clean log：`992b5471b2a9d6b8e70932b5acaf86bc02b21f2fa90c20664a04036ad4272e23`
+  - （意外全量）recovery log：`06ea614a1835e0ab19df7b529e43eca68972c102b2edca4f9e2255c0ee5aa821`
+  - recovery r2b log：`558ad5b3cd32ae35f2b6cdc87205d5beb6af603ac94d5eb9d6d40a8be5c858a4`
+
+### Case a′ — clean run @1h legs（scope `yuk839_burnin_clean_1787760863534`）
+
+**完整跑通 reference + 双 comparator，21.3 min wall。** 三个 paid leg 全部
+success、sealed、provenance-bound（result_digest 非空）：
+
+| leg | task_run_id | 时长 | in/out tokens | thinking chars | cost（reported） |
+|---|---|---:|---|---:|---:|
+| reference | `pychfirysigg8qxtvbag9ydj` | 771.9s | 354,679 / 34,426 | 73,518 | $1.315005 |
+| comparison:original:pass_1 | `ozr6i92ewzd8vgvk47mb1mqx` | 168.9s | 77,360 / 6,765 | 25,374 | $0.397237 |
+| comparison:blind_reference:pass_1 | `d266dj4fuxl9dym6msb43adw` | 339.3s | 306,096 / 15,837 | 47,131 | $0.796869 |
+
+- reference ledger：4 records = 21 evidence points（覆盖 6 request units）+
+  10 not-material calls + safe_reply；一次过，无 contract retry。
+- original comparator 对故意不安全的候选给出 **decided fail**（5/5 reply units
+  `unsupported`）——语义正确的拒判。
+- fallback comparator（盲 safe reply）：34 reply checks = 32 `supported` +
+  2 `explicit_gap`，但 request unit 0 派生 `missing` → decided fail。
+- 终局 `failed_closed`，reason `fallback_comparison_rejected`（代码路径
+  evidence-review.ts:1147-1148：fallback decided 非 pass → fail-closed）。这是
+  设计内的保守终局：候选不合格且盲回复也无法确认通过。**机械层全绿：三次
+  sealed、三次 attempt 审计、三次 digest 绑定。**
+- 与 Round 1 的关键差异确认：480s→1h 后 reference 一次通过，说明 R1 的
+  budget_timeout 是预算-延迟失配，不是 endpoint/工具链缺陷。
+
+### Case b′ — recovery run（scope `yuk839_burnin_recovery_1787763826085`）
+
+注入阈值说明：mandate 原文"≥8 accepted appends"在本模型上结构性不可达——
+模型按 12-point 上限成批提交（clean run 的 reference 只有 4 条 append
+records）。改用等效触发"≥12 accepted evidence points"，在第一条 append（12
+points）落地后即触发 caller-signal abort。abort 后 attempt 1 又跑了 ~9-10 分钟
+才完成 SDK 子进程拆除并落 `failed_permanent`（teardown 延迟本身是一个值得记录
+的运行时观察）。
+
+**Resume 证明（全部来自真实 DB 行）：**
+
+1. **abort 快照**：records=1 / points=12 / revision=1，digest 列表
+   `[430dc01eb5dae94f2dfef4badb523c7e3c7d2036a294d1b2cc74e2899502062f]`；
+   attempt 1 `pt6ka5pooivxnldfvcvachul`（`task_input_sha256=e2f648c5…`）。
+2. **abort 不回滚**：post-abort 行仍 records=1、同一 digest——accepted 状态
+   完整保留。
+3. **attempt 2 携带 resume block**：run-call 记录显示
+   `checkpoint_resume.accepted = {points:12, not_material:[], safe_reply_set:false,
+   evidence_points_by_request_unit:[…]}`；其 `task_input_sha256=933c0c43…` ≠
+   attempt 1 的 `e2f648c5…`（resume 输入内容派生，非 attempt 计数派生）。
+4. **accepted 零重提**：resume 后 reference slot 共 10 次 append，每次
+   offered=1、`duplicates_against_existing=0`、store 计数单调 1→11；预接受的
+   digest `430dc01e…` 从未被再次 offered。
+5. **digest 前缀保持**：final sealed digest 列表（11 项）第一项就是 abort 时的
+   `430dc01e…`——精确前缀保持，后 10 项全为 resume 新增。
+6. **attempt 2 usage 呈续跑形态**：in/out 375,305 / 28,122（vs 全新 clean
+   reference 354,679 / 34,426）：输出只覆盖剩余 ~10 条 records（补点 +
+   not-material + safe_reply），thinking 57,474 < 全量 73,518。不是重启。
+7. **attempt 审计**：`[running→(abort), success]` 两行齐全；reference sealed
+   by `sa0tjd452z91e7buwh62ufrb`。
+
+续跑后双 comparator 正常执行并 sealed；终局同为
+`fallback_comparison_rejected`（fallback 腿模型质量波动，非机械故障）。
+Recovery leg 成本：attempt 1 aborted（usage 不可回收，80,614 thinking chars）+
+attempt 2 $1.020343 + comparators $0.342664 / $1.048259。
+
+### 意外全量 run 披露（harness bug，已修正）
+
+第一次 recovery 尝试（scope `…1787762317016`）因 harness poller 的 SQL 错误
+（postgres.js 模板里写了 `sleep 0.4`，PG 需要 `pg_sleep`）在第一个 tick 即死：
+**abort 从未触发**，该"recovery"退化成第二次完整 clean run（reference $2.012929
++ comparators $0.363401/$0.784224 = $3.160554），终局同样
+`fallback_comparison_rejected`（reference 5 records / 21 points 一次通过，再次
+佐证 clean 路径可复现）。poller 修正为 `pg_sleep` 后 r2b 才是真实 recovery
+样本。该多烧的 ~$3.16 已计入本轮总 spend。
+
+### Round 2 总 spend
+
+- 3 次完整 validator 流程（1 次 intentional clean + 1 次意外全量 + 1 次
+  recovery）+ 1 次 aborted reference attempt：reported 总成本 **$8.080931**
+  （tokens 合计 in 2,744,570 / out 184,011，全部 `cost_basis=reported`——
+  endpoint 在成功完成时返回真实 total_cost_usd，回答了 R1 的 null-cost 问题）。
+- 单 leg 量级：reference $1.0-2.0，pass_1 comparator $0.34-0.40，fallback
+  comparator $0.80-1.05。
+
+### Verdict vs Round 1 三个开放问题
+
+1. **"flash 太慢 vs endpoint 因素"** → 是预算-延迟失配。1h/leg 下完整流程
+   21.3 min 跑通；产品 480s reference 预算约为该模型实际需要（~13 min）的
+   1/3。
+2. **"维持 mimo 默认 / 排除 flash"** → 修正为：glm-5.3-flash **可以**跑通
+   validator 全流程与 sealed-checkpoint resume（机械层验收全绿），但需要
+   ≥25-30 min 量级的总 wall 预算与 ~$2.5/run 的成本，且 fallback comparator
+   腿存在模型质量波动（两次 decided fail 均因 request unit 0 `missing`）。
+   是否纳入生产 validator lane 是预算/质量权衡，归 owner。
+3. **"更大 budget 定位实验"** → 本轮已完成。
+
+**acceptance #6（机械层）在 zhipu / glm-5.3-flash @1h-leg 诊断预算下：PASS。**
+reference + 双 comparator 完整跑通；checkpoint resume 获得真实流量证明
+（digest 前缀保持、accepted 零重提、续跑 usage、attempt 审计齐全）。产品
+durable budget 下的结论维持 Round 1：不可达。
