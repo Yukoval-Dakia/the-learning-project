@@ -424,6 +424,65 @@ describe('CopilotDock accepted durable reconnect', () => {
     });
   });
 
+  it('sends the selected AI reply id as the correction target and clears the selection', async () => {
+    apiJsonMock.mockImplementation(async (input: string) => {
+      if (input.startsWith('/api/copilot/turns')) {
+        return {
+          turns: [
+            {
+              role: 'ai',
+              text: '第一轮把定义域写成了所有实数。',
+              at: '2026-08-16T08:01:00.000Z',
+              event_id: 'copilot_reply_domain_first',
+              session_id: 'copilot-session-test',
+              reply_event_id: 'copilot_reply_domain_first',
+            },
+            {
+              role: 'ai',
+              text: '第二轮又漏掉了分母不能为零。',
+              at: '2026-08-16T08:02:00.000Z',
+              event_id: 'copilot_reply_domain_second',
+              session_id: 'copilot-session-test',
+              reply_event_id: 'copilot_reply_domain_second',
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected apiJson call: ${input}`);
+    });
+    apiFetchMock.mockResolvedValue(
+      new Response(
+        `event: reply\ndata: ${JSON.stringify({
+          reply: '已更正第二轮：定义域需要排除使分母为零的值。',
+          session_id: 'copilot-session-test',
+          reply_event_id: 'copilot_reply_domain_corrected',
+          checkpoint_event_id: 'copilot_ask_domain_corrected',
+        })}\n\n`,
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      ),
+    );
+
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    const correctionButtons = await screen.findAllByRole('button', { name: '更正这轮' });
+    expect(correctionButtons).toHaveLength(2);
+
+    await user.click(correctionButtons[1]);
+    expect(screen.getByText('将更正第 2 轮')).toBeTruthy();
+
+    await user.type(screen.getByTestId('copilot-composer-input'), '请按我刚才指出的问题更正。');
+    await user.click(screen.getByTestId('copilot-composer-send'));
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(1));
+    const request = apiFetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      session_id: 'copilot-session-test',
+      user_message: '请按我刚才指出的问题更正。',
+      correction_target_turn_id: 'copilot_reply_domain_second',
+    });
+    expect(screen.queryByText('将更正第 2 轮')).toBeNull();
+  });
+
   it('keeps a newly created session selected while the session list refetches', async () => {
     apiFetchMock.mockResolvedValue(
       new Response(
