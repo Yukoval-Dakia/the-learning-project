@@ -963,6 +963,59 @@ export const ai_task_runs = pgTable(
   ],
 );
 
+export const copilot_evidence_checkpoint = pgTable(
+  'copilot_evidence_checkpoint',
+  {
+    id: text('id').primaryKey(),
+    task_kind: text('task_kind').notNull(),
+    slot: text('slot').notNull(),
+    protocol_version: integer('protocol_version').notNull(),
+    prompt_fingerprint: text('prompt_fingerprint').notNull(),
+    base_input_sha256: text('base_input_sha256').notNull(),
+    source_catalog_sha256: text('source_catalog_sha256').notNull(),
+    binding_extras: jsonb('binding_extras').$type<JsonObject>().notNull().default({}),
+    status: text('status').notNull().default('open'),
+    revision: integer('revision').notNull().default(0),
+    records_json: jsonb('records_json').$type<JsonObject[]>().notNull().default([]),
+    record_digests_json: jsonb('record_digests_json').$type<string[]>().notNull().default([]),
+    attempts_json: jsonb('attempts_json').$type<JsonObject[]>().notNull().default([]),
+    sealed_output_json: jsonb('sealed_output_json').$type<unknown>(),
+    sealed_digest_sha256: text('sealed_digest_sha256'),
+    sealed_task_run_id: text('sealed_task_run_id'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    expires_at: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('copilot_evidence_checkpoint_expiry_idx').on(t.expires_at),
+    check(
+      'copilot_evidence_checkpoint_task_kind_ck',
+      sql`${t.task_kind} IN ('CopilotEvidenceReviewTask','CopilotEvidenceVerificationTask')`,
+    ),
+    check('copilot_evidence_checkpoint_status_ck', sql`${t.status} IN ('open','sealed','expired')`),
+    check('copilot_evidence_checkpoint_revision_ck', sql`${t.revision} >= 0`),
+    check(
+      'copilot_evidence_checkpoint_seal_ck',
+      sql`(
+        ${t.status} = 'open'
+        AND ${t.sealed_output_json} IS NULL
+        AND ${t.sealed_digest_sha256} IS NULL
+        AND ${t.sealed_task_run_id} IS NULL
+      ) OR (
+        ${t.status} = 'sealed'
+        AND ${t.sealed_output_json} IS NOT NULL
+        AND ${t.sealed_digest_sha256} IS NOT NULL
+        AND ${t.sealed_task_run_id} IS NOT NULL
+      ) OR (
+        ${t.status} = 'expired'
+        AND ${t.sealed_output_json} IS NULL
+        AND ${t.sealed_digest_sha256} IS NULL
+        AND ${t.sealed_task_run_id} IS NULL
+      )`,
+    ),
+  ],
+);
+
 export const provider_attempt = pgTable(
   'provider_attempt',
   {

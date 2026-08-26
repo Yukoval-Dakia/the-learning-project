@@ -18,6 +18,10 @@ import {
   ProviderSessionWallClockBudgetError,
 } from '@/server/ai/agent-run-error';
 import {
+  type CopilotEvidenceCheckpointStore,
+  createInMemoryCopilotEvidenceCheckpointStore,
+} from './evidence-checkpoint';
+import {
   bindCopilotEvidenceComparison,
   bindCopilotEvidenceReference,
   safeValidationErrorDetail,
@@ -28,6 +32,7 @@ import {
   COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
   COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
   COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
+  COPILOT_EVIDENCE_CHECKPOINT_RETRY_MAX_ATTEMPTS,
   COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS,
   COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS,
   COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
@@ -37,10 +42,11 @@ import {
   reviewCopilotEvidenceReply,
 } from './evidence-review';
 import { REALISTIC_EVIDENCE_TRACE } from './evidence-review.actual-fixture';
-import type {
-  ComparisonEvidenceSubmission,
-  CopilotEvidenceModelTraceCall,
-  ReferenceEvidenceSubmission,
+import {
+  type ComparisonEvidenceSubmission,
+  type CopilotEvidenceModelTraceCall,
+  type ReferenceEvidenceSubmission,
+  buildCopilotEvidenceSourceCatalog,
 } from './evidence-submission';
 import { queryEventsTool } from './tools/query-events';
 
@@ -717,23 +723,27 @@ function submitReferenceOutput(
   input: unknown,
   submission: ReferenceEvidenceSubmission | undefined,
   output: unknown,
+  options: { pointStart?: number; pointEnd?: number; finalize?: boolean } = {},
 ): void {
   if (!submission) throw new Error('reference submission seam missing');
   const parsed = CopilotEvidenceReviewOutputSchema.safeParse(output);
   if (!parsed.success) return;
-  const points = parsed.data.evidence_points.map((point) => ({
-    request_unit_indices: point.request_unit_indices,
-    kind: point.kind,
-    statement_md: point.statement_md,
-    sources: point.source_refs.map((source) => ({
-      source_id:
-        taggedSourceId(input, source.call_index, source.side, source.json_pointer) ?? 's999999',
-      role: source.role,
-    })),
-  }));
+  const points = parsed.data.evidence_points
+    .slice(options.pointStart ?? 0, options.pointEnd)
+    .map((point) => ({
+      request_unit_indices: point.request_unit_indices,
+      kind: point.kind,
+      statement_md: point.statement_md,
+      sources: point.source_refs.map((source) => ({
+        source_id:
+          taggedSourceId(input, source.call_index, source.side, source.json_pointer) ?? 's999999',
+        role: source.role,
+      })),
+    }));
   for (const pointsChunk of chunk(points, 12)) {
     submission.appendEvidencePoints({ points: pointsChunk });
   }
+  if (options.finalize === false) return;
   const notMaterial = parsed.data.trace_coverage.flatMap((coverage) =>
     coverage.relevance === 'not_material'
       ? [{ call_index: coverage.call_index, rationale_md: coverage.rationale_md }]
@@ -750,6 +760,7 @@ function submitComparisonOutput(
   input: unknown,
   submission: ComparisonEvidenceSubmission | undefined,
   output: unknown,
+  options: { checkStart?: number; checkEnd?: number; finalize?: boolean } = {},
 ): void {
   if (!submission) throw new Error('comparison submission seam missing');
   const parsed = CopilotEvidenceVerificationOutputSchema.safeParse(output);
@@ -764,26 +775,28 @@ function submitComparisonOutput(
       };
     }
   ).sealed_reference.request_coverage;
-  const checks = parsed.data.reply_checks.map((check) => ({
-    reply_unit_index: check.reply_unit_index,
-    request_unit_indices:
-      check.reason_codes.length === 1 && check.reason_codes[0] === 'non_evidentiary'
-        ? []
-        : sealedCoverage
-            .filter((coverage) =>
-              coverage.evidence_point_indices.some((point) =>
-                check.evidence_point_indices.includes(point),
-              ),
-            )
-            .map((coverage) => coverage.request_unit_index),
-    status: check.status,
-    evidence_point_indices: check.evidence_point_indices,
-    reason_codes: check.reason_codes,
-  }));
+  const checks = parsed.data.reply_checks
+    .slice(options.checkStart ?? 0, options.checkEnd)
+    .map((check) => ({
+      reply_unit_index: check.reply_unit_index,
+      request_unit_indices:
+        check.reason_codes.length === 1 && check.reason_codes[0] === 'non_evidentiary'
+          ? []
+          : sealedCoverage
+              .filter((coverage) =>
+                coverage.evidence_point_indices.some((point) =>
+                  check.evidence_point_indices.includes(point),
+                ),
+              )
+              .map((coverage) => coverage.request_unit_index),
+      status: check.status,
+      evidence_point_indices: check.evidence_point_indices,
+      reason_codes: check.reason_codes,
+    }));
   for (const checksChunk of chunk(checks, 12)) {
     submission.appendReplyChecks({ checks: checksChunk });
   }
-  submission.completeComparison();
+  if (options.finalize !== false) submission.completeComparison();
 }
 
 function submitTaskOutput(
@@ -894,9 +907,200 @@ describe('Copilot FULL evidence review', () => {
     expect(COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS).toBe(
       COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS * COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS +
         COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS *
-          COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS *
-          2,
+          (COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS +
+            COPILOT_EVIDENCE_CHECKPOINT_RETRY_MAX_ATTEMPTS -
+            1 +
+            COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS),
     );
+  });
+
+  it('seals a completed successful checkpoint after a crash window without another paid reference', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const backingStore = createInMemoryCopilotEvidenceCheckpointStore();
+    let rejectFirstSeal = true;
+    const checkpointStore: CopilotEvidenceCheckpointStore = {
+      ...backingStore,
+      markSealed: async (binding, sealed) => {
+        if (rejectFirstSeal) {
+          rejectFirstSeal = false;
+          throw new Error('injected crash window');
+        }
+        return backingStore.markSealed(binding, sealed);
+      },
+    };
+    let referenceCalls = 0;
+    let comparisonOrdinal = 0;
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          referenceCalls += 1;
+          return submitTaskOutput(
+            kind,
+            input,
+            submission,
+            referenceOutput(input),
+            'reference-crash-window',
+          );
+        }
+        comparisonOrdinal += 1;
+        return submitTaskOutput(
+          kind,
+          input,
+          submission,
+          comparisonOutput(input),
+          `comparison-after-crash-${comparisonOrdinal}`,
+        );
+      },
+    );
+    const params = reviewParams({
+      candidateReply: blindSafeReply,
+      runTaskFn,
+      checkpointStore,
+    });
+
+    await expect(reviewCopilotEvidenceReply(params)).resolves.toMatchObject({
+      status: 'failed_closed',
+    });
+    await expect(reviewCopilotEvidenceReply(params)).resolves.toMatchObject({ status: 'pass' });
+    expect(referenceCalls).toBe(1);
+    expect(comparisonOrdinal).toBe(2);
+  });
+
+  it('resumes a 21-read blind reference from the last accepted point after timeout', async () => {
+    const checkpointStore = createInMemoryCopilotEvidenceCheckpointStore();
+    let referenceAttempt = 0;
+    let comparisonPass = 0;
+    const recoveredPointCounts: number[] = [];
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          referenceAttempt += 1;
+          const output = realisticReferenceOutput(input, {
+            observationCount: DURABLE_TIMEOUT_TRACE.length,
+            safeReply: durableTimeoutSafeReply,
+          });
+          const referenceSubmission = submission as ReferenceEvidenceSubmission;
+          recoveredPointCounts.push(referenceSubmission.progress().evidence_point_count);
+          if (referenceAttempt === 1) {
+            submitReferenceOutput(input, referenceSubmission, output, {
+              pointEnd: 1,
+              finalize: false,
+            });
+            throw new AgentRunError({
+              kind,
+              taskRunId: 'reference-timeout-with-one-point',
+              subtype: 'budget_timeout',
+              errors: ['injected after accepted point'],
+            });
+          }
+          submitReferenceOutput(input, referenceSubmission, output, { pointStart: 1 });
+          return { task_run_id: 'reference-resumed-success', text: '' };
+        }
+        comparisonPass += 1;
+        return submitTaskOutput(
+          kind,
+          input,
+          submission,
+          realisticComparisonOutput(input, { unsafe: false }),
+          `reference-resume-comparison-${comparisonPass}`,
+        );
+      },
+    );
+
+    const result = await reviewCopilotEvidenceReply(
+      reviewParams({
+        candidateReply: durableTimeoutSafeReply,
+        toolTrace: DURABLE_TIMEOUT_TRACE,
+        checkpointStore,
+        runTaskFn,
+      }),
+    );
+
+    expect(DURABLE_TIMEOUT_TRACE).toHaveLength(21);
+    expect(buildCopilotEvidenceSourceCatalog(DURABLE_TIMEOUT_TRACE).length).toBeGreaterThanOrEqual(
+      1_500,
+    );
+    expect(recoveredPointCounts).toEqual([0, 1]);
+    expect(runTaskFn.mock.calls[1]?.[1]).toMatchObject({
+      checkpoint_resume: {
+        protocol: 'append_ledger_recovery_v1',
+        accepted: { evidence_point_count: 1 },
+      },
+    });
+    expect(result).toMatchObject({
+      status: 'pass',
+      referenceTaskRunIds: ['reference-timeout-with-one-point', 'reference-resumed-success'],
+    });
+  });
+
+  it('resumes one comparator pass without sharing its checkpoint with the second pass', async () => {
+    const checkpointStore = createInMemoryCopilotEvidenceCheckpointStore();
+    let comparisonAttempt = 0;
+    const recoveredCheckCounts: number[] = [];
+    const runTaskFn = vi.fn<CopilotEvidenceReviewRunTaskFn>(
+      async (kind, input, _ctx, submission) => {
+        if (kind === 'CopilotEvidenceReviewTask') {
+          return submitTaskOutput(
+            kind,
+            input,
+            submission,
+            realisticReferenceOutput(input, {
+              observationCount: DURABLE_TIMEOUT_TRACE.length,
+              safeReply: durableTimeoutSafeReply,
+            }),
+            'comparator-resume-reference',
+          );
+        }
+        comparisonAttempt += 1;
+        const comparisonSubmission = submission as ComparisonEvidenceSubmission;
+        recoveredCheckCounts.push(comparisonSubmission.progress().reply_check_count);
+        const output = realisticComparisonOutput(input, { unsafe: false });
+        if (comparisonAttempt === 1) {
+          submitComparisonOutput(input, comparisonSubmission, output, {
+            checkEnd: 1,
+            finalize: false,
+          });
+          throw new AgentRunError({
+            kind,
+            taskRunId: 'comparison-pass-1-timeout',
+            subtype: 'budget_timeout',
+            errors: ['injected after accepted check'],
+          });
+        }
+        submitComparisonOutput(input, comparisonSubmission, output, {
+          checkStart: comparisonAttempt === 2 ? 1 : 0,
+        });
+        return { task_run_id: `comparison-attempt-${comparisonAttempt}`, text: '' };
+      },
+    );
+
+    const result = await reviewCopilotEvidenceReply(
+      reviewParams({
+        candidateReply: durableTimeoutSafeReply,
+        toolTrace: DURABLE_TIMEOUT_TRACE,
+        checkpointStore,
+        runTaskFn,
+      }),
+    );
+
+    expect(recoveredCheckCounts).toEqual([0, 1, 0]);
+    expect(runTaskFn.mock.calls[2]?.[1]).toMatchObject({
+      confirmation_pass: 1,
+      checkpoint_resume: {
+        protocol: 'append_ledger_recovery_v1',
+        accepted: { reply_check_unit_indices: [0] },
+      },
+    });
+    expect(runTaskFn.mock.calls[3]?.[1]).toMatchObject({ confirmation_pass: 2 });
+    expect(runTaskFn.mock.calls[3]?.[1]).not.toHaveProperty('checkpoint_resume');
+    expect(result).toMatchObject({
+      status: 'pass',
+      comparisonTaskRunIds: [
+        'comparison-pass-1-timeout',
+        'comparison-attempt-2',
+        'comparison-attempt-3',
+      ],
+    });
   });
 
   it('keeps fixed parser and binder diagnostics single-line and bounded without exposing unknown errors', () => {
@@ -1042,8 +1246,9 @@ describe('Copilot FULL evidence review', () => {
       replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
     });
     expect(runTaskFn).toHaveBeenCalledTimes(COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS);
-    const modelTrace = (runTaskFn.mock.calls[0]?.[1] as { evidence_trace: unknown[] })
-      .evidence_trace;
+    const firstCall = runTaskFn.mock.calls[0];
+    if (!firstCall) throw new Error('reference call missing');
+    const modelTrace = (firstCall[1] as { evidence_trace: unknown[] }).evidence_trace;
     expect(modelTrace).toEqual([
       expect.objectContaining({
         call_index: 0,
@@ -1106,7 +1311,8 @@ describe('Copilot FULL evidence review', () => {
       ]),
     });
     expect(runTaskFn.mock.calls[1]?.[1]).not.toHaveProperty('tool_trace');
-    expect(runTaskFn.mock.calls[1]?.[1]).toEqual(runTaskFn.mock.calls[2]?.[1]);
+    expect(runTaskFn.mock.calls[1]?.[1]).toMatchObject({ confirmation_pass: 1 });
+    expect(runTaskFn.mock.calls[2]?.[1]).toMatchObject({ confirmation_pass: 2 });
   });
 
   it('rejects the complex unsafe original and exposes the blind reply only after two fresh passes', async () => {
@@ -1154,7 +1360,8 @@ describe('Copilot FULL evidence review', () => {
       verificationTaskRunId: 'comparison-3',
     });
     expect(runTaskFn).toHaveBeenCalledTimes(4);
-    expect(runTaskFn.mock.calls[2]?.[1]).toEqual(runTaskFn.mock.calls[3]?.[1]);
+    expect(runTaskFn.mock.calls[2]?.[1]).toMatchObject({ confirmation_pass: 1 });
+    expect(runTaskFn.mock.calls[3]?.[1]).toMatchObject({ confirmation_pass: 2 });
     expect(JSON.stringify(runTaskFn.mock.calls[0]?.[1])).not.toContain(unsafeCandidate);
   });
 
@@ -1342,12 +1549,10 @@ describe('Copilot FULL evidence review', () => {
       referenceTaskRunIds: ['reference'],
       comparisonTaskRunIds: ['comparison-invalid', 'comparison-pass'],
     });
-    expect(runTaskFn.mock.calls[2]?.[1]).toMatchObject({
-      contract_feedback: {
-        previous_attempt: 1,
-        rejection: 'reply_checks_incomplete',
-      },
-    });
+    expect(runTaskFn.mock.calls[1]?.[1]).toMatchObject({ confirmation_pass: 1 });
+    expect(runTaskFn.mock.calls[2]?.[1]).toMatchObject({ confirmation_pass: 2 });
+    expect(runTaskFn.mock.calls[2]?.[1]).not.toHaveProperty('checkpoint_resume');
+    expect(runTaskFn.mock.calls[2]?.[1]).not.toHaveProperty('contract_feedback');
   });
 
   it('keeps a failed paid comparator id when a later pass cannot confirm it', async () => {
@@ -1387,7 +1592,8 @@ describe('Copilot FULL evidence review', () => {
       comparisonTaskRunIds: ['comparison-provider-failed', 'comparison-provider-recovered'],
     });
     expect(warnSpy).toHaveBeenCalledWith('[copilot-evidence-review] comparator task failed', {
-      attempt: 1,
+      pass: 1,
+      paid_attempt: 1,
       failure_kind: 'stream_no_terminal',
       progress: {
         reply_check_count: 0,
@@ -1421,13 +1627,21 @@ describe('Copilot FULL evidence review', () => {
       replyText: `${COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION}\n\n${blindSafeReply}`,
       reviewTaskRunId: 'reference',
       referenceTaskRunIds: ['reference'],
-      comparisonTaskRunIds: ['comparison-budget-timeout-2', 'comparison-budget-timeout-3'],
+      comparisonTaskRunIds: [
+        'comparison-budget-timeout-2',
+        'comparison-budget-timeout-3',
+        'comparison-budget-timeout-4',
+      ],
     });
     expect(warnSpy).toHaveBeenCalledWith('[copilot-evidence-review] verification degraded', {
       event: 'copilot_evidence_review_verification_timeout_degraded',
       candidate_task_run_id: 'copilot_task_actual_a01_a03_a04_c01_c04',
       reference_task_run_ids: ['reference'],
-      comparison_task_run_ids: ['comparison-budget-timeout-2', 'comparison-budget-timeout-3'],
+      comparison_task_run_ids: [
+        'comparison-budget-timeout-2',
+        'comparison-budget-timeout-3',
+        'comparison-budget-timeout-4',
+      ],
     });
   });
 
@@ -1699,6 +1913,7 @@ describe('Copilot FULL evidence review', () => {
         'original-fail',
         'fallback-budget-timeout-3',
         'fallback-budget-timeout-4',
+        'fallback-budget-timeout-5',
       ],
     });
   });
@@ -1783,6 +1998,7 @@ describe('Copilot FULL evidence review', () => {
         'original-fail',
         'fallback-budget-timeout-2',
         'fallback-budget-timeout-3',
+        'fallback-budget-timeout-4',
       ],
     });
   });
@@ -1862,7 +2078,7 @@ describe('Copilot FULL evidence review', () => {
     expect(referenceResult).toMatchObject({
       status: 'failed_closed',
       replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
-      referenceTaskRunIds: [],
+      referenceTaskRunIds: [expect.any(String), expect.any(String)],
     });
     expect(referenceRunTaskFn).toHaveBeenCalledTimes(2);
 
@@ -1881,7 +2097,7 @@ describe('Copilot FULL evidence review', () => {
       status: 'failed_closed',
       replyText: COPILOT_EVIDENCE_REVIEW_FAIL_CLOSED_REPLY,
       referenceTaskRunIds: ['reference'],
-      comparisonTaskRunIds: [],
+      comparisonTaskRunIds: [expect.any(String), expect.any(String)],
     });
     expect(comparisonRunTaskFn).toHaveBeenCalledTimes(3);
   });

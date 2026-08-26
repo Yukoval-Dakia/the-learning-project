@@ -150,6 +150,7 @@ const ALL_TABLES = [
   'provider_attempt',
   // YUK-842 — operational provider query-session leases/start-window rows (loose refs).
   'provider_session_admission',
+  'copilot_evidence_checkpoint',
   'placement_starter_cost_component',
   'placement_starter_attempt_question',
   'placement_starter_attempt',

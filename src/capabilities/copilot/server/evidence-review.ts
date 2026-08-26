@@ -1,3 +1,5 @@
+import { createId } from '@paralleldrive/cuid2';
+import { inArray } from 'drizzle-orm';
 import {
   COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS,
   COPILOT_EVIDENCE_MAX_TRACE_CALLS,
@@ -5,8 +7,13 @@ import {
   COPILOT_EVIDENCE_SUBMISSION_SERVER_NAME,
 } from '@/core/copilot-evidence';
 import type { Db } from '@/db/client';
+import { ai_task_runs } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import { AgentRunError, isProviderSessionWallClockBudgetError } from '@/server/ai/agent-run-error';
+import {
+  AgentRunError,
+  isProviderSessionWallClockBudgetError,
+  isTransientAgentFailure,
+} from '@/server/ai/agent-run-error';
 import { type TaskTextResult, taskPromptFingerprint } from '@/server/ai/provenance';
 import { type RunTaskCtx, runTask } from '@/server/ai/runner';
 import {
@@ -14,6 +21,16 @@ import {
   runConfirmedStructuredReview,
 } from '@/server/ai/sealed-validation';
 import type { ToolExecutionResultObservation } from '@/server/ai/tools/mcp-bridge';
+import {
+  type CopilotEvidenceCheckpoint,
+  type CopilotEvidenceCheckpointBinding,
+  type CopilotEvidenceCheckpointStore,
+  comparisonResumeInputBlock,
+  createInMemoryCopilotEvidenceCheckpointStore,
+  referenceResumeInputBlock,
+  rehydrateCopilotEvidenceSubmission,
+} from './evidence-checkpoint';
+import { createPgCopilotEvidenceCheckpointStore } from './evidence-checkpoint-pg';
 import {
   type BoundCopilotEvidenceComparison,
   type BoundCopilotEvidenceReference,
@@ -51,14 +68,17 @@ export const COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS = 480_000;
 export const COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS = 360_000;
 export const COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS = 2;
 export const COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS = 2;
-// Worst case: two blind-reference contract attempts, one failed original
-// comparison, then two fallback confirmations. Keep one extra slot because a
-// contract-invalid original pass attempt still consumes the bounded pair.
+export const COPILOT_EVIDENCE_CHECKPOINT_RETRY_MAX_ATTEMPTS = 2;
+const COPILOT_EVIDENCE_COMPARISON_MAX_PAID_CALLS =
+  COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS + COPILOT_EVIDENCE_CHECKPOINT_RETRY_MAX_ATTEMPTS - 1;
 export const COPILOT_EVIDENCE_REVIEW_MAX_PASSES =
-  COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS + COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS * 2;
+  COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS +
+  COPILOT_EVIDENCE_COMPARISON_MAX_PAID_CALLS +
+  COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS;
 export const COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS =
   COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS * COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS +
-  COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS * COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS * 2;
+  COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS *
+    (COPILOT_EVIDENCE_COMPARISON_MAX_PAID_CALLS + COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS);
 
 const MAX_CANDIDATE_CHARS = 64_000;
 const MAX_SERIALIZED_TRACE_CHARS = 160_000;
@@ -226,8 +246,59 @@ async function beforePaidCall(params: {
   params.signal?.throwIfAborted();
 }
 
+async function attachCheckpoint(
+  store: CopilotEvidenceCheckpointStore,
+  binding: CopilotEvidenceCheckpointBinding,
+  submission: ReferenceEvidenceSubmission | ComparisonEvidenceSubmission,
+) {
+  const checkpoint = await store.load(binding);
+  if (checkpoint) {
+    const rehydrated = rehydrateCopilotEvidenceSubmission(submission, checkpoint.records);
+    if (!rehydrated.ok) throw new Error(`checkpoint_rehydrate_failed:${rehydrated.reason}`);
+  }
+  submission.setAppendListener((record) => store.appendRecords(binding, [record]));
+  return checkpoint;
+}
+
+async function successfulCheckpointTaskRun(
+  db: Db,
+  checkpoint: CopilotEvidenceCheckpoint,
+): Promise<{ taskRunId: string; taskInputSha256: string } | undefined> {
+  const recordedSuccess = checkpoint.attempts.findLast((attempt) => attempt.outcome === 'success');
+  if (recordedSuccess) {
+    return {
+      taskRunId: recordedSuccess.task_run_id,
+      taskInputSha256: recordedSuccess.task_input_sha256,
+    };
+  }
+  const runningAttempts = checkpoint.attempts.filter((attempt) => attempt.outcome === 'running');
+  const runningIds = runningAttempts.map((attempt) => attempt.task_run_id);
+  if (runningIds.length === 0 || typeof (db as { select?: unknown }).select !== 'function') {
+    return undefined;
+  }
+  const rows = await db
+    .select({ id: ai_task_runs.id, status: ai_task_runs.status })
+    .from(ai_task_runs)
+    .where(inArray(ai_task_runs.id, runningIds));
+  const successfulRow = rows.find((row) => row.status === 'success');
+  const successfulAttempt = runningAttempts.find(
+    (attempt) => attempt.task_run_id === successfulRow?.id,
+  );
+  return successfulAttempt
+    ? {
+        taskRunId: successfulAttempt.task_run_id,
+        taskInputSha256: successfulAttempt.task_input_sha256,
+      }
+    : undefined;
+}
+
+function checkpointFailureOutcome(error: unknown): 'failed_retryable' | 'failed_permanent' {
+  return isTransientAgentFailure(error) ? 'failed_retryable' : 'failed_permanent';
+}
+
 async function runBlindReference(params: {
   db: Db;
+  recoveryScopeId: string;
   requestContext: unknown;
   requestUnits: ReturnType<typeof segmentEvidenceRequest>;
   sourceComplete: boolean;
@@ -237,6 +308,7 @@ async function runBlindReference(params: {
   attemptTimeoutMs?: number;
   providerSessionDeadlineAt?: number;
   runTaskFn: CopilotEvidenceReviewRunTaskFn;
+  checkpointStore: CopilotEvidenceCheckpointStore;
 }): Promise<
   | { ok: true; reference: BoundCopilotEvidenceReference; taskRunIds: string[] }
   | { ok: false; reason: string; taskRunIds: string[] }
@@ -261,21 +333,92 @@ async function runBlindReference(params: {
       server_derives: ['point_indices', 'request_coverage', 'trace_coverage', 'json_pointers'],
     },
   };
+  const checkpointBinding: CopilotEvidenceCheckpointBinding = {
+    task_kind: 'CopilotEvidenceReviewTask',
+    slot: 'reference',
+    protocol_version: 1,
+    prompt_fingerprint: taskPromptFingerprint('CopilotEvidenceReviewTask'),
+    base_input_sha256: sha256CanonicalJson(referenceTaskInput),
+    source_catalog_sha256: sourceCatalogSha256,
+    binding_extras: {
+      recovery_scope_id: params.recoveryScopeId,
+      source_complete: String(params.sourceComplete),
+    },
+  };
   ensureSerializableBounded(referenceTaskInput, 'reference_input');
   const taskRunIds: string[] = [];
   let lastDetail = '';
   let contractFeedback: string | undefined;
 
   for (let attempt = 1; attempt <= COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS; attempt += 1) {
-    const taskInput = contractFeedback
-      ? {
-          ...referenceTaskInput,
-          contract_feedback: {
-            previous_attempt: attempt - 1,
-            rejection: contractFeedback,
-          },
+    const submission = createReferenceEvidenceSubmission({
+      requestUnits: params.requestUnits,
+      toolTrace: params.toolTrace,
+      sourceCatalog,
+    });
+    const checkpoint = await attachCheckpoint(
+      params.checkpointStore,
+      checkpointBinding,
+      submission,
+    );
+    const recoveredReference = submission.completedReference();
+    if (checkpoint?.status === 'sealed' && checkpoint.sealed && recoveredReference) {
+      const verified = await params.checkpointStore.verifySealedRun(
+        checkpointBinding,
+        checkpoint.sealed,
+      );
+      if (!verified || checkpoint.sealed.digest_sha256 !== recoveredReference.digest_sha256) {
+        return { ok: false, reason: 'reference_checkpoint_seal_mismatch', taskRunIds };
+      }
+      return {
+        ok: true,
+        reference: recoveredReference,
+        taskRunIds: checkpoint.attempts.map((item) => item.task_run_id),
+      };
+    }
+    if (checkpoint?.status === 'open' && recoveredReference) {
+      const successfulTaskRun = await successfulCheckpointTaskRun(params.db, checkpoint);
+      if (successfulTaskRun) {
+        await bindRunResult({
+          db: params.db,
+          kind: 'CopilotEvidenceReviewTask',
+          taskInputSha256: successfulTaskRun.taskInputSha256,
+          taskRunId: successfulTaskRun.taskRunId,
+          resultDigest: recoveredReference.digest_sha256,
+        });
+        const sealed = {
+          output_json: recoveredReference.output,
+          digest_sha256: recoveredReference.digest_sha256,
+          task_run_id: successfulTaskRun.taskRunId,
+        };
+        const sealResult = await params.checkpointStore.markSealed(checkpointBinding, sealed);
+        if (sealResult.status !== 'ok') {
+          return { ok: false, reason: 'reference_checkpoint_seal_conflict', taskRunIds };
         }
-      : referenceTaskInput;
+        return {
+          ok: true,
+          reference: recoveredReference,
+          taskRunIds: checkpoint.attempts.map((item) => item.task_run_id),
+        };
+      }
+    }
+    const resumeState = submission.resumeState();
+    const taskInput = {
+      ...referenceTaskInput,
+      ...(resumeState.evidence_point_count > 0 ||
+      resumeState.not_material_call_indices.length > 0 ||
+      resumeState.safe_reply_set
+        ? { checkpoint_resume: referenceResumeInputBlock(resumeState) }
+        : {}),
+      ...(contractFeedback
+        ? {
+            contract_feedback: {
+              previous_attempt: attempt - 1,
+              rejection: contractFeedback,
+            },
+          }
+        : {}),
+    };
     ensureSerializableBounded(taskInput, 'reference_input');
     const taskInputSha256 = sha256CanonicalJson(taskInput);
     try {
@@ -288,18 +431,21 @@ async function runBlindReference(params: {
         taskRunIds,
       };
     }
-    let result: CopilotEvidenceReviewRunResult;
-    const submission = createReferenceEvidenceSubmission({
-      requestUnits: params.requestUnits,
-      toolTrace: params.toolTrace,
-      sourceCatalog,
+    const paidTaskRunId = createId();
+    await params.checkpointStore.recordAttempt(checkpointBinding, {
+      outcome: 'running',
+      task_run_id: paidTaskRunId,
+      task_input_sha256: taskInputSha256,
+      started_at: new Date().toISOString(),
     });
+    let result: CopilotEvidenceReviewRunResult;
     try {
       result = await params.runTaskFn(
         'CopilotEvidenceReviewTask',
         taskInput,
         {
           db: params.db,
+          taskRunId: paidTaskRunId,
           ...(params.signal ? { signal: params.signal } : {}),
           ...(params.attemptTimeoutMs !== undefined
             ? { budgetOverride: { timeoutMs: params.attemptTimeoutMs } }
@@ -318,9 +464,18 @@ async function runBlindReference(params: {
       // cancellation. Provider/SDK timeouts may also surface as AbortError;
       // those are paid-attempt failures and must stay inside the FULL gate.
       if (params.signal?.aborted) throw error;
-      if (error instanceof AgentRunError && !taskRunIds.includes(error.taskRunId)) {
-        taskRunIds.push(error.taskRunId);
+      const failedTaskRunId = error instanceof AgentRunError ? error.taskRunId : paidTaskRunId;
+      if (!taskRunIds.includes(failedTaskRunId)) {
+        taskRunIds.push(failedTaskRunId);
       }
+      await submission.flushAppendListener();
+      await params.checkpointStore.recordAttempt(checkpointBinding, {
+        outcome: checkpointFailureOutcome(error),
+        failure_kind: paidTaskFailureKind(error),
+        task_run_id: failedTaskRunId,
+        task_input_sha256: taskInputSha256,
+        finished_at: new Date().toISOString(),
+      });
       const progress = submission.progress();
       const failureKind = paidTaskFailureKind(error);
       lastDetail =
@@ -336,6 +491,7 @@ async function runBlindReference(params: {
       });
       continue;
     }
+    await submission.flushAppendListener();
     if (!result.task_run_id) {
       lastDetail = 'reference_task_run_id_missing';
       continue;
@@ -360,6 +516,13 @@ async function runBlindReference(params: {
           taskRunId: result.task_run_id,
           resultDigest: null,
         });
+        await params.checkpointStore.recordAttempt(checkpointBinding, {
+          outcome: 'success',
+          failure_kind: 'contract_invalid',
+          task_run_id: result.task_run_id,
+          task_input_sha256: taskInputSha256,
+          finished_at: new Date().toISOString(),
+        });
       } catch (bindingError) {
         return {
           ok: false,
@@ -371,6 +534,12 @@ async function runBlindReference(params: {
     }
 
     try {
+      await params.checkpointStore.recordAttempt(checkpointBinding, {
+        outcome: 'success',
+        task_run_id: result.task_run_id,
+        task_input_sha256: taskInputSha256,
+        finished_at: new Date().toISOString(),
+      });
       await bindRunResult({
         db: params.db,
         kind: 'CopilotEvidenceReviewTask',
@@ -378,6 +547,13 @@ async function runBlindReference(params: {
         taskRunId: result.task_run_id,
         resultDigest: reference.digest_sha256,
       });
+      const sealed = {
+        output_json: reference.output,
+        digest_sha256: reference.digest_sha256,
+        task_run_id: result.task_run_id,
+      };
+      const sealResult = await params.checkpointStore.markSealed(checkpointBinding, sealed);
+      if (sealResult.status !== 'ok') throw new Error('reference_checkpoint_seal_conflict');
     } catch (error) {
       return {
         ok: false,
@@ -396,6 +572,7 @@ async function runBlindReference(params: {
 
 async function runConfirmedComparison(params: {
   db: Db;
+  recoveryScopeId: string;
   requestUnits: ReturnType<typeof segmentEvidenceRequest>;
   selectedReply: string;
   selectedTextKind: 'original' | 'blind_reference';
@@ -407,6 +584,8 @@ async function runConfirmedComparison(params: {
   attemptTimeoutMs?: number;
   providerSessionDeadlineAt?: number;
   runTaskFn: CopilotEvidenceReviewRunTaskFn;
+  checkpointStore: CopilotEvidenceCheckpointStore;
+  checkpointRetryBudget: { remaining: number };
 }): Promise<
   | {
       status: 'decided';
@@ -441,147 +620,261 @@ async function runConfirmedComparison(params: {
     },
   };
   ensureSerializableBounded(baseTaskInput, 'comparison_input');
-  let contractFeedback: string | undefined;
+  const sourceCatalogSha256 = sourceCatalogDigest(sourceCatalog);
+  const allTaskRunIds: string[] = [];
+  const allFailureDetails: string[] = [];
 
   const result = await runConfirmedStructuredReview<BoundCopilotEvidenceComparison>({
     maxAttempts: COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS,
-    runAttempt: async (attempt) => {
-      const taskInput = contractFeedback
-        ? {
-            ...baseTaskInput,
-            contract_feedback: {
-              previous_attempt: attempt - 1,
-              rejection: contractFeedback,
-            },
-          }
-        : baseTaskInput;
-      ensureSerializableBounded(taskInput, 'comparison_input');
-      const taskInputSha256 = sha256CanonicalJson(taskInput);
-      try {
-        await beforePaidCall(params);
-      } catch (error) {
-        if (params.signal?.aborted || isAbortError(error)) throw error;
-        return {
-          outcome: 'contract_invalid' as const,
-          detail: `comparison_preflight_failed:${error instanceof Error ? error.name : 'unknown'}`,
-        };
-      }
-      let taskResult: CopilotEvidenceReviewRunResult;
-      const submission = createComparisonEvidenceSubmission({
-        requestUnits: params.requestUnits,
-        replyUnits,
-        selectedReply: params.selectedReply,
-        reference: params.reference,
-        toolTrace: params.toolTrace,
-        sourceComplete: params.sourceComplete,
-      });
-      try {
-        taskResult = await params.runTaskFn(
-          'CopilotEvidenceVerificationTask',
-          taskInput,
-          {
-            db: params.db,
-            ...(params.signal ? { signal: params.signal } : {}),
-            ...(params.attemptTimeoutMs !== undefined
-              ? { budgetOverride: { timeoutMs: params.attemptTimeoutMs } }
-              : {}),
-            ...(params.providerSessionDeadlineAt !== undefined
-              ? { providerSessionDeadlineAt: params.providerSessionDeadlineAt }
-              : {}),
-            mcpServers: { [COPILOT_EVIDENCE_SUBMISSION_SERVER_NAME]: submission.mcpServer },
-            allowedTools: [...COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS],
-            autoLogToolCalls: false,
-          },
+    runAttempt: async (pass) => {
+      const paidAttemptLimit = 1 + params.checkpointRetryBudget.remaining;
+      const checkpointBinding: CopilotEvidenceCheckpointBinding = {
+        task_kind: 'CopilotEvidenceVerificationTask',
+        slot: `comparison:${params.selectedTextKind}:pass_${pass}`,
+        protocol_version: 1,
+        prompt_fingerprint: taskPromptFingerprint('CopilotEvidenceVerificationTask'),
+        base_input_sha256: sha256CanonicalJson(baseTaskInput),
+        source_catalog_sha256: sourceCatalogSha256,
+        binding_extras: {
+          recovery_scope_id: params.recoveryScopeId,
+          reference_digest_sha256: params.reference.digest_sha256,
+          selected_reply_sha256: selectedReplySha256,
+        },
+      };
+      for (let paidAttempt = 1; paidAttempt <= paidAttemptLimit; paidAttempt += 1) {
+        const submission = createComparisonEvidenceSubmission({
+          requestUnits: params.requestUnits,
+          replyUnits,
+          selectedReply: params.selectedReply,
+          reference: params.reference,
+          toolTrace: params.toolTrace,
+          sourceComplete: params.sourceComplete,
+        });
+        const checkpoint = await attachCheckpoint(
+          params.checkpointStore,
+          checkpointBinding,
           submission,
         );
-      } catch (error) {
-        if (params.signal?.aborted) throw error;
-        const progress = submission.progress();
-        const failureKind = paidTaskFailureKind(error);
-        console.warn('[copilot-evidence-review] comparator task failed', {
-          attempt,
-          failure_kind: failureKind,
-          progress,
+        const recoveredComparison = submission.completedComparison();
+        if (checkpoint?.status === 'sealed' && checkpoint.sealed && recoveredComparison) {
+          const verified = await params.checkpointStore.verifySealedRun(
+            checkpointBinding,
+            checkpoint.sealed,
+          );
+          if (!verified || checkpoint.sealed.digest_sha256 !== recoveredComparison.digest_sha256) {
+            return { outcome: 'contract_invalid', detail: 'comparison_checkpoint_seal_mismatch' };
+          }
+          allTaskRunIds.push(checkpoint.sealed.task_run_id);
+          return {
+            outcome: 'valid',
+            task_run_id: checkpoint.sealed.task_run_id,
+            verdict: recoveredComparison.verdict,
+            result: recoveredComparison,
+          };
+        }
+        if (checkpoint?.status === 'open' && recoveredComparison) {
+          const successfulTaskRun = await successfulCheckpointTaskRun(params.db, checkpoint);
+          if (successfulTaskRun) {
+            await bindRunResult({
+              db: params.db,
+              kind: 'CopilotEvidenceVerificationTask',
+              taskInputSha256: successfulTaskRun.taskInputSha256,
+              taskRunId: successfulTaskRun.taskRunId,
+              resultDigest: recoveredComparison.digest_sha256,
+            });
+            const sealed = {
+              output_json: recoveredComparison.output,
+              digest_sha256: recoveredComparison.digest_sha256,
+              task_run_id: successfulTaskRun.taskRunId,
+            };
+            const sealResult = await params.checkpointStore.markSealed(checkpointBinding, sealed);
+            if (sealResult.status !== 'ok') {
+              return { outcome: 'contract_invalid', detail: 'comparison_checkpoint_seal_conflict' };
+            }
+            allTaskRunIds.push(successfulTaskRun.taskRunId);
+            return {
+              outcome: 'valid',
+              task_run_id: successfulTaskRun.taskRunId,
+              verdict: recoveredComparison.verdict,
+              result: recoveredComparison,
+            };
+          }
+        }
+        const resumeState = submission.resumeState();
+        const taskInput = {
+          ...baseTaskInput,
+          confirmation_pass: pass,
+          ...(resumeState.reply_check_unit_indices.length > 0
+            ? { checkpoint_resume: comparisonResumeInputBlock(resumeState) }
+            : {}),
+        };
+        ensureSerializableBounded(taskInput, 'comparison_input');
+        const taskInputSha256 = sha256CanonicalJson(taskInput);
+        try {
+          await beforePaidCall(params);
+        } catch (error) {
+          if (params.signal?.aborted || isAbortError(error)) throw error;
+          return {
+            outcome: 'contract_invalid',
+            detail: `comparison_preflight_failed:${error instanceof Error ? error.name : 'unknown'}`,
+          };
+        }
+        const paidTaskRunId = createId();
+        await params.checkpointStore.recordAttempt(checkpointBinding, {
+          outcome: 'running',
+          task_run_id: paidTaskRunId,
+          task_input_sha256: taskInputSha256,
+          started_at: new Date().toISOString(),
         });
-        return {
-          outcome: 'contract_invalid' as const,
-          ...(error instanceof AgentRunError ? { task_run_id: error.taskRunId } : {}),
-          detail:
+        let taskResult: CopilotEvidenceReviewRunResult;
+        try {
+          taskResult = await params.runTaskFn(
+            'CopilotEvidenceVerificationTask',
+            taskInput,
+            {
+              db: params.db,
+              taskRunId: paidTaskRunId,
+              ...(params.signal ? { signal: params.signal } : {}),
+              ...(params.attemptTimeoutMs !== undefined
+                ? { budgetOverride: { timeoutMs: params.attemptTimeoutMs } }
+                : {}),
+              ...(params.providerSessionDeadlineAt !== undefined
+                ? { providerSessionDeadlineAt: params.providerSessionDeadlineAt }
+                : {}),
+              mcpServers: { [COPILOT_EVIDENCE_SUBMISSION_SERVER_NAME]: submission.mcpServer },
+              allowedTools: [...COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS],
+              autoLogToolCalls: false,
+            },
+            submission,
+          );
+        } catch (error) {
+          if (params.signal?.aborted) throw error;
+          await submission.flushAppendListener();
+          const progress = submission.progress();
+          const failureKind = paidTaskFailureKind(error);
+          const detail =
             `comparison_task_failed:${failureKind}` +
             `:reply_checks=${progress.reply_check_count}` +
-            `:completed=${Number(progress.completed)}`,
-        };
-      }
-      if (!taskResult.task_run_id) {
-        return { outcome: 'contract_invalid' as const, detail: 'comparison_task_run_id_missing' };
-      }
-
-      const comparison = submission.completedComparison();
-      if (!comparison) {
-        const completion = submission.completeComparison();
-        const detail = completion.ok ? 'submission_completion_missing' : completion.reason;
-        contractFeedback = detail.slice(0, 240);
-        console.warn('[copilot-evidence-review] comparator contract rejected', {
-          attempt,
-          issues: detail,
-        });
+            `:completed=${Number(progress.completed)}`;
+          allFailureDetails.push(detail);
+          console.warn('[copilot-evidence-review] comparator task failed', {
+            pass,
+            paid_attempt: paidAttempt,
+            failure_kind: failureKind,
+            progress,
+          });
+          const failedTaskRunId = error instanceof AgentRunError ? error.taskRunId : paidTaskRunId;
+          allTaskRunIds.push(failedTaskRunId);
+          await params.checkpointStore.recordAttempt(checkpointBinding, {
+            outcome: checkpointFailureOutcome(error),
+            failure_kind: failureKind,
+            task_run_id: failedTaskRunId,
+            task_input_sha256: taskInputSha256,
+            finished_at: new Date().toISOString(),
+          });
+          if (
+            failureKind === 'budget_timeout' &&
+            params.checkpointRetryBudget.remaining > 0 &&
+            paidAttempt < paidAttemptLimit
+          ) {
+            params.checkpointRetryBudget.remaining -= 1;
+            continue;
+          }
+          return {
+            outcome: 'contract_invalid',
+            ...(error instanceof AgentRunError ? { task_run_id: error.taskRunId } : {}),
+            detail,
+          };
+        }
+        await submission.flushAppendListener();
+        if (!taskResult.task_run_id) {
+          return { outcome: 'contract_invalid', detail: 'comparison_task_run_id_missing' };
+        }
+        allTaskRunIds.push(taskResult.task_run_id);
+        const comparison = submission.completedComparison();
+        if (!comparison) {
+          const completion = submission.completeComparison();
+          const detail = completion.ok ? 'submission_completion_missing' : completion.reason;
+          allFailureDetails.push(detail);
+          console.warn('[copilot-evidence-review] comparator contract rejected', {
+            pass,
+            paid_attempt: paidAttempt,
+            issues: detail,
+          });
+          try {
+            await bindRunResult({
+              db: params.db,
+              kind: 'CopilotEvidenceVerificationTask',
+              taskInputSha256,
+              taskRunId: taskResult.task_run_id,
+              resultDigest: null,
+            });
+            await params.checkpointStore.recordAttempt(checkpointBinding, {
+              outcome: 'success',
+              failure_kind: 'contract_invalid',
+              task_run_id: taskResult.task_run_id,
+              task_input_sha256: taskInputSha256,
+              finished_at: new Date().toISOString(),
+            });
+          } catch (bindingError) {
+            return {
+              outcome: 'contract_invalid',
+              task_run_id: taskResult.task_run_id,
+              detail: `comparison_binding_failed:${bindingError instanceof Error ? bindingError.name : 'unknown'}`,
+            };
+          }
+          return { outcome: 'contract_invalid', task_run_id: taskResult.task_run_id, detail };
+        }
         try {
+          await params.checkpointStore.recordAttempt(checkpointBinding, {
+            outcome: 'success',
+            task_run_id: taskResult.task_run_id,
+            task_input_sha256: taskInputSha256,
+            finished_at: new Date().toISOString(),
+          });
           await bindRunResult({
             db: params.db,
             kind: 'CopilotEvidenceVerificationTask',
             taskInputSha256,
             taskRunId: taskResult.task_run_id,
-            resultDigest: null,
+            resultDigest: comparison.digest_sha256,
           });
+          const sealed = {
+            output_json: comparison.output,
+            digest_sha256: comparison.digest_sha256,
+            task_run_id: taskResult.task_run_id,
+          };
+          const sealResult = await params.checkpointStore.markSealed(checkpointBinding, sealed);
+          if (sealResult.status !== 'ok') throw new Error('comparison_checkpoint_seal_conflict');
         } catch (bindingError) {
           return {
-            outcome: 'contract_invalid' as const,
+            outcome: 'contract_invalid',
             task_run_id: taskResult.task_run_id,
             detail: `comparison_binding_failed:${bindingError instanceof Error ? bindingError.name : 'unknown'}`,
           };
         }
         return {
-          outcome: 'contract_invalid' as const,
+          outcome: 'valid',
           task_run_id: taskResult.task_run_id,
-          detail,
+          verdict: comparison.verdict,
+          result: comparison,
         };
       }
-
-      try {
-        await bindRunResult({
-          db: params.db,
-          kind: 'CopilotEvidenceVerificationTask',
-          taskInputSha256,
-          taskRunId: taskResult.task_run_id,
-          resultDigest: comparison.digest_sha256,
-        });
-      } catch (bindingError) {
-        return {
-          outcome: 'contract_invalid' as const,
-          task_run_id: taskResult.task_run_id,
-          detail: `comparison_binding_failed:${bindingError instanceof Error ? bindingError.name : 'unknown'}`,
-        };
-      }
-      return {
-        outcome: 'valid' as const,
-        task_run_id: taskResult.task_run_id,
-        verdict: comparison.verdict,
-        result: comparison,
-      };
+      return { outcome: 'contract_invalid', detail: 'comparison_checkpoint_retry_exhausted' };
     },
   });
-  const taskRunIds = result.attempts.flatMap((attempt) =>
-    attempt.task_run_id ? [attempt.task_run_id] : [],
-  );
+  const taskRunIds = Array.from(new Set(allTaskRunIds));
   const invalidAttempts = result.attempts.filter(
     (attempt) => attempt.outcome === 'contract_invalid',
   );
-  const hasNonTimeoutNegativeAttempt = result.attempts.some(
-    (attempt) =>
-      (attempt.outcome === 'contract_invalid' &&
-        !attempt.detail?.startsWith('comparison_task_failed:budget_timeout')) ||
-      (attempt.outcome === 'valid' && attempt.verdict === 'fail'),
-  );
+  const hasNonTimeoutNegativeAttempt =
+    result.attempts.some(
+      (attempt) =>
+        (attempt.outcome === 'contract_invalid' &&
+          !attempt.detail?.startsWith('comparison_task_failed:budget_timeout')) ||
+        (attempt.outcome === 'valid' && attempt.verdict === 'fail'),
+    ) ||
+    allFailureDetails.some((detail) => !detail.startsWith('comparison_task_failed:budget_timeout'));
   if (result.status === 'invalid') {
     const budgetTimedOut =
       invalidAttempts.length > 0 &&
@@ -618,6 +911,7 @@ export async function reviewCopilotEvidenceReply(params: {
   /** One absolute HTTP request budget reused by every inline validation attempt. */
   providerSessionDeadlineAt?: number;
   runTaskFn?: CopilotEvidenceReviewRunTaskFn;
+  checkpointStore?: CopilotEvidenceCheckpointStore;
 }): Promise<CopilotEvidenceReviewDecision> {
   if (!params.toolTrace.some((entry) => entry.effect === 'read')) {
     const repairedReply = proposalContractRepair(params.toolTrace);
@@ -648,6 +942,19 @@ export async function reviewCopilotEvidenceReply(params: {
   }
 
   const run = params.runTaskFn ?? defaultRunTaskFn;
+  const checkpointStore =
+    params.checkpointStore ??
+    (typeof (params.db as { transaction?: unknown }).transaction === 'function'
+      ? createPgCopilotEvidenceCheckpointStore(params.db)
+      : createInMemoryCopilotEvidenceCheckpointStore());
+  try {
+    await checkpointStore.cleanupExpired();
+  } catch (error) {
+    return failClosed(
+      `checkpoint_cleanup_failed:${error instanceof Error ? error.name : 'unknown'}`,
+      params.candidateTaskRunId,
+    );
+  }
   const sourceComplete = params.candidateComplete ?? true;
   let requestUnits: ReturnType<typeof segmentEvidenceRequest>;
   try {
@@ -664,6 +971,7 @@ export async function reviewCopilotEvidenceReply(params: {
   try {
     reference = await runBlindReference({
       db: params.db,
+      recoveryScopeId: params.candidateTaskRunId,
       requestContext: params.requestContext,
       requestUnits,
       sourceComplete,
@@ -677,6 +985,7 @@ export async function reviewCopilotEvidenceReply(params: {
         ? { providerSessionDeadlineAt: params.providerSessionDeadlineAt }
         : {}),
       runTaskFn: run,
+      checkpointStore,
     });
   } catch (error) {
     if (params.signal?.aborted || isAbortError(error)) throw error;
@@ -727,11 +1036,15 @@ export async function reviewCopilotEvidenceReply(params: {
       ...(reviewTaskRunId ? { reviewTaskRunId } : {}),
     };
   };
+  const checkpointRetryBudget = {
+    remaining: COPILOT_EVIDENCE_CHECKPOINT_RETRY_MAX_ATTEMPTS - 1,
+  };
 
   let original: Awaited<ReturnType<typeof runConfirmedComparison>>;
   try {
     original = await runConfirmedComparison({
       db: params.db,
+      recoveryScopeId: params.candidateTaskRunId,
       requestUnits,
       selectedReply: params.candidateReply,
       selectedTextKind: 'original',
@@ -747,6 +1060,8 @@ export async function reviewCopilotEvidenceReply(params: {
         ? { providerSessionDeadlineAt: params.providerSessionDeadlineAt }
         : {}),
       runTaskFn: run,
+      checkpointStore,
+      checkpointRetryBudget,
     });
   } catch (error) {
     if (params.signal?.aborted || isAbortError(error)) throw error;
@@ -789,6 +1104,7 @@ export async function reviewCopilotEvidenceReply(params: {
   try {
     fallback = await runConfirmedComparison({
       db: params.db,
+      recoveryScopeId: params.candidateTaskRunId,
       requestUnits,
       selectedReply: fallbackReply,
       selectedTextKind: 'blind_reference',
@@ -804,6 +1120,8 @@ export async function reviewCopilotEvidenceReply(params: {
         ? { providerSessionDeadlineAt: params.providerSessionDeadlineAt }
         : {}),
       runTaskFn: run,
+      checkpointStore,
+      checkpointRetryBudget,
     });
   } catch (error) {
     if (params.signal?.aborted || isAbortError(error)) throw error;
