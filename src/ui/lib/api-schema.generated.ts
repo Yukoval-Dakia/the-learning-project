@@ -17078,6 +17078,7 @@ export interface operations {
   listNotes: {
     parameters: {
       query?: {
+        query?: string;
         subject?: string;
       };
       header?: never;

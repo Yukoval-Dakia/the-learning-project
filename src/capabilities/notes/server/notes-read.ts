@@ -11,7 +11,7 @@
 // the node id — NOT learning_item ownership. tool_quiz is excluded (it is a quiz
 // artifact, not a note).
 
-import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
@@ -35,6 +35,12 @@ export interface NoteSummary {
 }
 
 const NOTE_TYPE_ORDER = sql`CASE ${artifact.type} WHEN 'note_atomic' THEN 0 WHEN 'note_hub' THEN 1 WHEN 'note_long' THEN 2 ELSE 3 END`;
+
+// YUK-919 — escape ILIKE wildcards so user input is matched literally
+// (same contract as artifacts-search.ts escapeLike).
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
 
 function toNoteSummary(row: {
   id: string;
@@ -98,6 +104,7 @@ export async function notesForKnowledge(
 export async function listNotes(
   db: DbLike,
   subjectKnowledgeIds?: string[],
+  textQuery?: string,
 ): Promise<NoteSummary[]> {
   if (subjectKnowledgeIds?.length === 0) return [];
   const conditions = [inArray(artifact.type, [...NOTE_TYPES]), isNull(artifact.archived_at)];
@@ -108,6 +115,17 @@ export async function listNotes(
       ),
     );
     if (subjectFilter) conditions.push(subjectFilter);
+  }
+  if (textQuery) {
+    // YUK-919 — 标题或正文匹配（title ilike OR body_blocks jsonb 序列化文本
+    // ilike；无迁移、无生成列，直接吃现有列）。body_blocks 为 NULL 时 NULL
+    // ILIKE 不成立 → 仅靠标题命中，符合直觉。与科目过滤 AND 组合。
+    const pattern = `%${escapeLike(textQuery)}%`;
+    const textFilter = or(
+      ilike(artifact.title, pattern),
+      sql`${artifact.body_blocks}::text ilike ${pattern}`,
+    );
+    if (textFilter) conditions.push(textFilter);
   }
   const rows = await db
     .select(NOTE_SUMMARY_COLUMNS)

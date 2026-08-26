@@ -832,17 +832,22 @@
     "methods": [
       {
         "method": "GET",
-        "summary": "列出已关联知识点的笔记，支持 subject 派生轴过滤",
+        "summary": "列出已关联知识点的笔记，支持 subject 派生轴过滤与 query 文本搜索",
         "query": [
           {
             "name": "subject",
             "required": false,
             "example": "math"
+          },
+          {
+            "name": "query",
+            "required": false,
+            "example": "函数"
           }
         ],
         "contentType": null,
         "bodyExample": null,
-        "notes": "subject 经 note knowledge_ids → knowledge effective_domain 派生；仅返回未归档 note_atomic/note_hub/note_long"
+        "notes": "subject 经 note knowledge_ids → knowledge effective_domain 派生；query 为标题/正文大小写不敏感子串匹配（title ILIKE OR body_blocks 序列化文本 ILIKE），与 subject AND 组合；仅返回未归档 note_atomic/note_hub/note_long"
       }
     ]
   },

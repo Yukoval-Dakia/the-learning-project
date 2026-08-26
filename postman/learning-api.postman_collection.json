@@ -1336,10 +1336,16 @@
                   "value": "math",
                   "disabled": true,
                   "description": "optional"
+                },
+                {
+                  "key": "query",
+                  "value": "函数",
+                  "disabled": true,
+                  "description": "optional"
                 }
               ]
             },
-            "description": "列出已关联知识点的笔记，支持 subject 派生轴过滤\n\n**Query:**\n- `subject` (optional) e.g. `math`\n\n**Notes:** subject 经 note knowledge_ids → knowledge effective_domain 派生；仅返回未归档 note_atomic/note_hub/note_long"
+            "description": "列出已关联知识点的笔记，支持 subject 派生轴过滤与 query 文本搜索\n\n**Query:**\n- `subject` (optional) e.g. `math`\n- `query` (optional) e.g. `函数`\n\n**Notes:** subject 经 note knowledge_ids → knowledge effective_domain 派生；query 为标题/正文大小写不敏感子串匹配（title ILIKE OR body_blocks 序列化文本 ILIKE），与 subject AND 组合；仅返回未归档 note_atomic/note_hub/note_long"
           },
           "response": []
         }

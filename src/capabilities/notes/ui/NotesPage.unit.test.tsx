@@ -97,7 +97,61 @@ describe('NotesPage', () => {
     expect(await screen.findByRole('button', { name: /虚词用法/ })).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: '数学' }));
 
-    await waitFor(() => expect(mocks.listNotes).toHaveBeenLastCalledWith('math'));
+    await waitFor(() => expect(mocks.listNotes).toHaveBeenLastCalledWith('math', undefined));
     expect(await screen.findByRole('button', { name: /函数图像/ })).toBeTruthy();
+  });
+
+  it('renders the search input and leaves the unfiltered list when the query is empty', async () => {
+    mocks.listNotes.mockResolvedValue({ rows: [yuwenNote] });
+    renderNotes();
+
+    const input = screen.getByLabelText('搜索笔记');
+    expect((input as HTMLInputElement).placeholder).toBe('搜索笔记标题或正文…');
+
+    expect(await screen.findByRole('button', { name: /虚词用法/ })).toBeTruthy();
+    // 空查询不发 query 参数（现有行为不变）。
+    await waitFor(() => expect(mocks.listNotes).toHaveBeenLastCalledWith(undefined, undefined));
+  });
+
+  it('sends the debounced query to listNotes and renders matched rows', async () => {
+    mocks.listNotes.mockImplementation(async (_subject?: string, query?: string) => ({
+      rows: query === '函数' ? [mathNote] : [yuwenNote],
+    }));
+    renderNotes();
+
+    expect(await screen.findByRole('button', { name: /虚词用法/ })).toBeTruthy();
+    await userEvent.type(screen.getByLabelText('搜索笔记'), '函数');
+
+    await waitFor(() => expect(mocks.listNotes).toHaveBeenLastCalledWith(undefined, '函数'), {
+      timeout: 2000,
+    });
+    expect(await screen.findByRole('button', { name: /函数图像/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /虚词用法/ })).toBeNull();
+  });
+
+  it('composes the query with the selected subject tab', async () => {
+    mocks.listNotes.mockResolvedValue({ rows: [] });
+    renderNotes();
+
+    await userEvent.click(screen.getByRole('button', { name: '数学' }));
+    await waitFor(() => expect(mocks.listNotes).toHaveBeenLastCalledWith('math', undefined));
+
+    await userEvent.type(screen.getByLabelText('搜索笔记'), '导数');
+    await waitFor(() => expect(mocks.listNotes).toHaveBeenLastCalledWith('math', '导数'), {
+      timeout: 2000,
+    });
+  });
+
+  it('shows the no-match empty state while searching', async () => {
+    mocks.listNotes.mockResolvedValue({ rows: [] });
+    renderNotes();
+
+    await userEvent.type(screen.getByLabelText('搜索笔记'), '不存在关键词');
+    await waitFor(
+      () => expect(mocks.listNotes).toHaveBeenLastCalledWith(undefined, '不存在关键词'),
+      { timeout: 2000 },
+    );
+
+    expect(await screen.findByText('没有找到匹配的笔记')).toBeTruthy();
   });
 });
