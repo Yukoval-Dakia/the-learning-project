@@ -1,7 +1,7 @@
 /**
- * task-catalog.ts — central composition root for all 52 TaskDefinition specs.
+ * task-catalog.ts — central composition root for all 53 TaskDefinition specs.
  *
- * YUK-863 / F3.2 — Census and compose 52 owner TaskSpecs.
+ * YUK-863 / F3.2 — Census and compose 53 owner TaskSpecs.
  *
  * Rules (enforced at module load):
  *  - Each spec appears under exactly one owner.
@@ -98,7 +98,7 @@ export function composeTaskCatalog<const OwnerMaps extends readonly OwnerTaskSpe
 }
 
 /**
- * The composed, frozen catalog of all 52 TaskDefinitions.
+ * The composed, frozen catalog of all 53 TaskDefinitions.
  * Indexed by TaskKind string. Runtime may index this by kind.
  */
 export const taskCatalog = composeTaskCatalog(
@@ -110,5 +110,5 @@ export const taskCatalog = composeTaskCatalog(
     { owner: 'agency', specs: agencyTaskSpecs },
     { owner: 'copilot', specs: copilotTaskSpecs },
   ] as const,
-  52,
+  53,
 );

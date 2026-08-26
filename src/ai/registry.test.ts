@@ -51,7 +51,7 @@ describe('copilot task dispatch declarations', () => {
       expect(task.copilot.intentSchema.safeParse).toBeTypeOf('function');
       expect(task.copilot.prepare).toBeTypeOf('function');
     }
-    expect(Object.keys(tasks)).toHaveLength(52);
+    expect(Object.keys(tasks)).toHaveLength(53);
   });
 
   it('is an immutable compatibility projection with only the two dispatch overlays', () => {
@@ -99,7 +99,7 @@ describe('task prompt definitions', () => {
   });
 
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(52);
+    expect(Object.keys(tasks)).toHaveLength(53);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -126,11 +126,11 @@ describe('task prompt definitions', () => {
     }
   });
 
-  it('matches the original 51 prompts byte-for-byte with the exact pre-refactor oracle', () => {
+  it('matches the original prompts byte-for-byte with the exact pre-refactor oracle', () => {
     expect(promptHashOracle.baseCommit).toBe('6b3233b10633c93497a8211956fddcb795ebd2da');
     expect(promptHashOracle.algorithm).toBe('sha256');
-    expect(promptHashOracle.taskCount).toBe(51);
-    expect(Object.keys(promptHashOracle.prompts)).toHaveLength(204);
+    expect(promptHashOracle.taskCount).toBe(52);
+    expect(Object.keys(promptHashOracle.prompts)).toHaveLength(208);
 
     for (const profileId of promptHashOracle.profiles) {
       const profile = resolveSubjectProfile(profileId);

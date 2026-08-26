@@ -6,6 +6,11 @@ import { parseTaskOutput } from './parse-output';
 
 // Search-grounded QuizGen (T-SQ) — QuizGenTask prompt. Tool-calling agent.
 //
+// ADR-0038 决定#2 — this is the GENERATION phase (Phase 2) of plan-then-
+// generate: the handler chains QuizPlanTask (Phase 1, machine-gated plan) ahead
+// of this task and threads the ACCEPTED plan into the input; the prompt below
+// treats plan.items as hard per-question constraints (knowledge point / kind /
+// difficulty / objective answer anchor).
 // docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md
 //   §0  Provenance is NOT recoverable from runner logs (the non-stream path
 //       writes zero tool_call_log rows; remote-Tavily tool_use is not mirrored).
@@ -20,7 +25,9 @@ import { parseTaskOutput } from './parse-output';
 // the tool NAMES are resolved at run time, so this prompt refers to them by
 // capability, not by exact mcp__* identifier.
 function buildQuizGenPrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}出题人，用联网检索来的**素材**写**原创**练习题。输入 { trigger: 'knowledge'|'learning_item'|'manual', ref: { id, name, ... }, knowledge_context, count, few_shot_examples_md?, requested_generation_method?: 'material_grounded'|'closed_book', requested_kind?: string, objective_only?: boolean, kind_required?: boolean } —— ref 是触发出题的知识点 / 学习项，count 是期望题数（默认 3）。few_shot_examples_md（若有）是已入库的优质范例，**仅供参考其结构与设问风格，禁止照抄题面**。requested_generation_method 是上游找题次序**指定**的出题方式：出现时**必须**用该方式（material_grounded=据真实素材出题，必须拉真原文并填顶层 material；closed_book=凭已有知识闭卷出题，不强制检索素材）——不要自作主张换成别的方式；缺省时按下面的规则自行选择。objective_only=true 时 requested_kind 是硬约束（客观题），kind_required=true 时 requested_kind 是硬约束（结构）；任一为 true 时每一道题的 kind 都必须与它一致；否则 requested_kind 只是结构提示：理解它代表的答案类型（受限答案、关键词、开放语义或分步推导）与题面结构，优先据此命题，但素材天然支持更合适的结构时可输出实际结构对应的 kind。下游会对每题独立质检。
+  return `你是${profile.displayName}出题人，用联网检索来的**素材**写**原创**练习题。输入 { trigger: 'knowledge'|'learning_item'|'manual', ref: { id, name, ... }, knowledge_context, count, plan, few_shot_examples_md?, requested_generation_method?: 'material_grounded'|'closed_book', requested_kind?: string, objective_only?: boolean, kind_required?: boolean } —— ref 是触发出题的知识点 / 学习项，count 是期望题数（默认 3）。few_shot_examples_md（若有）是已入库的优质范例，**仅供参考其结构与设问风格，禁止照抄题面**。requested_generation_method 是上游找题次序**指定**的出题方式：出现时**必须**用该方式（material_grounded=据真实素材出题，必须拉真原文并填顶层 material；closed_book=凭已有知识闭卷出题，不强制检索素材）——不要自作主张换成别的方式；缺省时按 plan.generation_method 与下面的规则执行。objective_only=true 时 requested_kind 是硬约束（客观题），kind_required=true 时 requested_kind 是硬约束（结构）；任一为 true 时每一道题的 kind 都必须与它一致。下游会对每题独立质检。
+
+**plan 是已机检通过的出题计划（硬约束）**：plan.items 数组每一项对应你要产出的一道题（顺序一致、数量一致），每项定死该题的 knowledge_id（必须出现在该题 knowledge_ids 里）、kind（该题 kind 必须与它一致，不容改选；理解该 kind 代表的答案类型——受限答案、关键词、开放语义或分步推导——与题面结构）、difficulty（以此为目标难度）；客观题项还带 answer_anchor（标准答案锚点）——该题的正确答案**必须恰好是**这个锚点：choice 的正确选项正文 = answer_anchor，true_false 的正确判断 = answer_anchor，fill_blank 的标准填空答案 = answer_anchor；reference_md 第一行也必须写出这个锚点。偏离 plan 的输出会被整批拒收。
 若已加载本学科的出题规范 skill（quiz-gen-<…>），先读它声明的「结构描述符」段（这类题落在 嵌套 / 排版 / 答案语义 三维的哪个坐标上），再按其题面结构 / 采分点 / 答案格式规范出题。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
@@ -31,15 +38,15 @@ function buildQuizGenPrompt(profile: SubjectProfile): string {
 - 领域读工具：可读用户的错题与知识图谱，判断该出什么难度 / 题型 / 覆盖哪些知识点。
 
 工作流程：
-1. 规划：根据 ref + 领域信号，定 count 道题的知识点 / 难度 / 题型分布。
+1. 读 plan：逐项理解每道题的知识点 / 题型 / 难度 /（客观题）答案锚点；检索与素材选择围绕 plan 展开，**不要另起炉灶改计划**。
 2. 检索素材：用 tavily_search 搜与知识点相关的**事实背景 / 真实例子 / 概念解释**；需要细节时用 tavily_extract 拉全文。**绝不**直接搜「XX 题目 / 练习 / 试卷答案」，更不能照抄检索到的题面。
-3. 出题：基于素材**自己写**全新的、原创的题干与参考答案。题面措辞必须是你自己的话，不得逐句复制任何来源。
+3. 出题：基于素材**自己写**全新的、原创的题干与参考答案，逐项实现 plan.items。题面措辞必须是你自己的话，不得逐句复制任何来源。
 4. 自报来源（**强制**，见 §0）：你用到的每一个 URL 都要写进对应题目的 source_refs，并标 used_for（fact = 支撑了某个事实点 / inspiration = 只启发了选题或角度）、extracted（是否用 tavily_extract 拉过全文）。运行时**无法**从日志恢复你调了哪些检索——只有你写进 source_refs 的来源才被记录。漏报 = 该题不可追溯。
 5. 自评原创性（copy_safety）：对照你的题干与来源 snippet，给一个 self_copy_safety：verdict='original'（措辞充分原创）/ 'too_close'（与某来源太接近，应重写）/ 'unknown'（没法判断）；尽量给 max_overlap（0-1 的粗略重合度估计）；checked_by 固定填 'agent_self'。下游 QuizVerify 会再独立复核。
 
 每题输出形状（QuizGenQuestion）：
 {
-  "kind": "${CANONICAL_QUESTION_KINDS} 之一（按答案类型与题面结构选择）",
+  "kind": "${CANONICAL_QUESTION_KINDS} 之一（与 plan.items 对应项一致）",
   "prompt_md": "原创题面 markdown，可含 LaTeX",
   "reference_md": "参考答案 + 简短解析",
   "choices_md": ["选项 A 的正文（不含 A. 序号）", "选项 B 的正文（不含 B. 序号）", ...] | null,
@@ -63,7 +70,7 @@ source_pack.tool 如实自报：真的用了 tavily 检索才填 "tavily"；clos
 - 不需要真原文锚的常规题用 search_grounded（搜背景素材、自己出题），material 留空或省略。
 
 题目要求：
-- kind 要忠实描述题面结构；先判断答案类型（受限 exact / 关键词 keyword / 开放 semantic / 分步 steps），再从 ${CANONICAL_QUESTION_KINDS} 中选择与该结构一致的值；客观选择结构统一用 "choice"。无论是否偏离 requested_kind，都必须遵循输出的 kind 对应的格式规则。
+- kind 以 plan.items 对应项为准（客观选择结构统一用 "choice"）；无论是否偏离 requested_kind，都必须遵循输出的 kind 对应的格式规则。
 - ${profile.promptFragments.checkQuestionPolicy}
 - choice / true_false：judge_kind_override="exact"，给 3–4 个选项；choices_md 每项只写选项正文，禁止带 A./B./C./D. 等字母序号（渲染层按数组索引添加）；reference_md 第一行是正确选项原文。
 - 最终判分路由为 "exact" 或 "semantic" 时，rubric_json 必填，且 rubric_json.reference_solution 必须同时填写 final_answer 与 answer_equivalents（无额外等价表达时填 []）；expected_signals 至少 1 条。此规则按最终判分路由判断，不只看显式 override：judge_kind_override 省略或为 null 时，choice / true_false → exact，fill_blank 无 keywords → exact（有 keywords → keyword），computation 无 keywords → semantic（有 keywords → keyword），derivation 及 short_answer / reading / translation / essay 等文本题 → semantic。
@@ -84,7 +91,7 @@ export const quizGenTaskSpec = {
   definition: {
     kind: 'QuizGenTask',
     description:
-      'Search-grounded QuizGen (T-SQ, docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1). Tool-calling agent: plans (knowledge/difficulty/types), searches Tavily for SOURCE MATERIAL (not questions), writes ORIGINAL questions grounded in sources, and self-declares every used URL into source_refs (§0: provenance is not recoverable from runner logs, so the agent MUST self-report). The Q3 handler injects the Tavily remote MCP + the in-process domain-tool MCP (read user mistakes + knowledge graph) — allowedTools stays [] here so non-handler callers / tests get no tools.',
+      'Search-grounded QuizGen (T-SQ, docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1). GENERATION phase of ADR-0038 决定#2 plan-then-generate: the Q3 handler chains the machine-gated QuizPlanTask ahead of this task and threads the accepted plan in as structured input. Tool-calling agent: searches Tavily for SOURCE MATERIAL (not questions), writes ORIGINAL questions realizing the plan item-for-item (kind / knowledge_id / objective answer_anchor), and self-declares every used URL into source_refs (§0: provenance is not recoverable from runner logs, so the agent MUST self-report). The Q3 handler injects the Tavily remote MCP + the in-process domain-tool MCP (read user mistakes + knowledge graph) — allowedTools stays [] here so non-handler callers / tests get no tools.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 8, timeout: 120_000 },
