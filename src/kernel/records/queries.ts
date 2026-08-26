@@ -180,6 +180,13 @@ export async function listLearningRecords(
   if (filter.kind && filter.kind.length > 0)
     conditions.push(inArray(learning_record.kind, filter.kind));
   if (filter.question_id) conditions.push(eq(learning_record.question_id, filter.question_id));
+  if (filter.question_ids) {
+    conditions.push(
+      filter.question_ids.length > 0
+        ? inArray(learning_record.question_id, filter.question_ids)
+        : sql`false`,
+    );
+  }
   if (filter.attempt_event_id) {
     conditions.push(eq(learning_record.attempt_event_id, filter.attempt_event_id));
   }

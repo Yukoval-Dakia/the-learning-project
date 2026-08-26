@@ -7,12 +7,12 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { KnowledgeTreeNode } from './knowledge-api';
+import type { MeshGraphNode } from './ghost-endpoints';
 import { MeshGraph } from './MeshGraph';
 
 afterEach(cleanup);
 
-function node(overrides: Partial<KnowledgeTreeNode> = {}): KnowledgeTreeNode {
+function node(overrides: Partial<MeshGraphNode> = {}): MeshGraphNode {
   return {
     id: 'n1',
     name: '判断句',
@@ -53,5 +53,44 @@ describe('MeshGraph node keyboard activation (YUK-718)', () => {
     render(<MeshGraph nodes={[node()]} edges={[]} onPick={onPick} />);
     fireEvent.keyDown(graphNode(), { key: 'Enter' });
     expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ id: 'n1' }));
+  });
+
+  it('announces a scoped graph crossing legend and styles its ghost endpoint', () => {
+    const onPick = vi.fn();
+    render(
+      <MeshGraph
+        nodes={[
+          node(),
+          node({
+            id: 'math-node',
+            name: '函数',
+            domain: 'math',
+            effective_domain: 'math',
+            isGhost: true,
+          }),
+        ]}
+        edges={[
+          {
+            id: 'cross-edge',
+            from_knowledge_id: 'n1',
+            to_knowledge_id: 'math-node',
+            relation_type: 'related_to',
+            weight: 1,
+            status: 'active',
+          },
+        ]}
+        onPick={onPick}
+      />,
+    );
+
+    expect(screen.getByText('跨科连接 1')).toBeTruthy();
+    expect(document.querySelector('.mesh-node.is-ghost')).toBeTruthy();
+    expect(document.querySelector('.mesh-edge2.is-cross')).toBeTruthy();
+  });
+
+  it('does not show a crossing legend for the default all-subject graph', () => {
+    render(<MeshGraph nodes={[node()]} edges={[]} onPick={vi.fn()} />);
+
+    expect(screen.queryByText(/跨科连接/)).toBeNull();
   });
 });

@@ -19,7 +19,7 @@ import { loadAgentNotesPage } from '@/capabilities/agency/ui-public';
 import { CopilotDock } from '@/capabilities/copilot/ui-public';
 import { loadRecordPage } from '@/capabilities/ingestion/ui-public';
 import { loadKnowledgeDetailPage, loadKnowledgePage } from '@/capabilities/knowledge/ui-public';
-import { loadNoteReaderPage } from '@/capabilities/notes/ui-public';
+import { loadNoteReaderPage, loadNotesPage } from '@/capabilities/notes/ui-public';
 import {
   loadAdminConjectureScoresSurface,
   loadAdminCostSurface,
@@ -511,6 +511,14 @@ const knowledgeDetailRoute = createRoute({
   component: KnowledgeDetailRouteC,
 });
 
+const NotesRoute = lazyNavigableRoute(loadNotesPage);
+
+const notesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: surfacePath('notes'),
+  component: NotesRoute,
+});
+
 // M3-T7 (YUK-317) — 笔记阅读器/编辑器。
 const NoteReaderRouteC = lazyRouteComponent(async () => {
   const NoteReaderPage = await loadNoteReaderPage();
@@ -628,6 +636,7 @@ const routeTree = rootRoute.addChildren([
   questionDetailRoute,
   knowledgeRoute,
   knowledgeDetailRoute,
+  notesRoute,
   noteReaderRoute,
   coachRoute,
   adminRunsRoute,

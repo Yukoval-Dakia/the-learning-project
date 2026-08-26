@@ -787,11 +787,35 @@
             "name": "question_id",
             "required": false,
             "example": "qid_abc123"
+          },
+          {
+            "name": "subject",
+            "required": false,
+            "example": "math"
           }
         ],
         "contentType": null,
         "bodyExample": null,
-        "notes": "limit 默认 50 上限 200；since 为 ISO-8601；投影 shape：id/question_id/prompt_md/wrong_answer_md/knowledge_ids/cause/created_at"
+        "notes": "limit 默认 50 上限 200；since 为 ISO-8601；subject 按 question → knowledge → effective_domain 派生；投影 shape：id/question_id/prompt_md/wrong_answer_md/knowledge_ids/cause/created_at"
+      }
+    ]
+  },
+  {
+    "path": "/api/notes",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "列出已关联知识点的笔记，支持 subject 派生轴过滤",
+        "query": [
+          {
+            "name": "subject",
+            "required": false,
+            "example": "math"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "subject 经 note knowledge_ids → knowledge effective_domain 派生；仅返回未归档 note_atomic/note_hub/note_long"
       }
     ]
   },

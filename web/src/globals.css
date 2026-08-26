@@ -10595,6 +10595,30 @@ button.seg-sm {
      基样式由 .badge.tone-* 承载，这里只补「不换行 + 收口」微调。
    tokens-only，无新 hue。 ============================================ */
 
+.subject-filter-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px dashed var(--line);
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+}
+.subject-filter-row .chip {
+  white-space: nowrap;
+}
+.subject-filter-row .filter-row-l {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+  min-width: 32px;
+  padding: 0;
+}
+
 /* summary row（同 shell.css .inbox-loom .inbox-summary-row 偏差③ 补全 flex 三件） */
 .mistakes-loom .inbox-summary-row {
   display: flex;

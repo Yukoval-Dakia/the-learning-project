@@ -14,12 +14,11 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
-import { z } from 'zod';
-
 import { RelationTypeSchema, type RelationTypeSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import { isDirectTreePair } from './topology-gate';
 
 type DbLike = Db | Tx;
@@ -41,6 +40,7 @@ export interface KnowledgeEdgeRow {
 // ---------- List ----------
 
 export interface ListKnowledgeEdgesFilter {
+  subject?: string;
   from?: string;
   to?: string;
   relation_type?: string;
@@ -113,6 +113,17 @@ export async function listKnowledgeEdgesPage(
   if (filter.from) conditions.push(eq(knowledge_edge.from_knowledge_id, filter.from));
   if (filter.to) conditions.push(eq(knowledge_edge.to_knowledge_id, filter.to));
   if (filter.relation_type) conditions.push(eq(knowledge_edge.relation_type, filter.relation_type));
+  if (filter.subject) {
+    const subjectKnowledgeIds = await resolveSubjectKnowledgeIds(db, filter.subject);
+    conditions.push(
+      subjectKnowledgeIds.length > 0
+        ? or(
+            inArray(knowledge_edge.from_knowledge_id, subjectKnowledgeIds),
+            inArray(knowledge_edge.to_knowledge_id, subjectKnowledgeIds),
+          )
+        : sql`false`,
+    );
+  }
   if (!filter.includeArchived) conditions.push(isNull(knowledge_edge.archived_at));
   if (cursor) {
     conditions.push(

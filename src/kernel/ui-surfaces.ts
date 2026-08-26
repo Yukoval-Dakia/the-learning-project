@@ -193,6 +193,16 @@ export const UI_SURFACES = [
     activeId: 'knowledge',
   },
   {
+    id: 'notes',
+    route: '/notes',
+    owner: 'notes',
+    kind: 'page',
+    title: '笔记',
+    activeId: 'notes',
+    nav: { section: '整理', order: 45 },
+    search: { label: '笔记', keywords: '笔记 notes' },
+  },
+  {
     id: 'note-detail',
     route: '/notes/$id',
     owner: 'notes',

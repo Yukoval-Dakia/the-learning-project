@@ -28,14 +28,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getTree } from '@/capabilities/knowledge/ui-public';
 import { resolveKnownSubjectId } from '@/subjects/profile';
+import { SubjectFilterTabs } from '@/ui/components/SubjectFilterTabs';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { apiJson } from '@/ui/lib/api';
-import {
-  type SubjectRowLike,
-  listSubjectChoices,
-  subjectDisplayName,
-  subjectIdentityKey,
-} from '@/ui/lib/subject';
+import { type SubjectRowLike, subjectDisplayName, subjectIdentityKey } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { CauseBadge, type CausePrimary } from '@/ui/primitives/CauseBadge';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -75,7 +71,10 @@ export interface MistakeRow {
 // 200 给余量；rows 触顶时 eyebrow 显「N+」诚实标记可能截断，不把截断计数当真 total 呈现。
 // 真分页 / 无限滚 + 后端 total 是 YUK-456 follow-up（错题本长大后；owner day-one 不触及）。
 const MISTAKES_LIMIT = 200;
-const listMistakes = () => apiJson<{ rows: MistakeRow[] }>(`/api/mistakes?limit=${MISTAKES_LIMIT}`);
+const listMistakes = (subject?: string) =>
+  apiJson<{ rows: MistakeRow[] }>(
+    `/api/mistakes?limit=${MISTAKES_LIMIT}${subject ? `&subject=${encodeURIComponent(subject)}` : ''}`,
+  );
 
 // ── 科目派生（effective_domain → label/tone）；同 QuestionsPage subjMeta 先例。 ──
 // Label 从注册表派生（subjectDisplayName，alias-aware：旧 wenyan → yuwen），不再硬编码；
@@ -181,14 +180,6 @@ function FilterRow({
   );
 }
 
-// YUK-249 → YUK-598：科目 chip 曾是模块级 const（import 期快照冻结）；现由组件内
-// subjectOpts(rows) 行驱动（custom 即时进 chip；断网退化三 builtin）。
-function subjectOpts(rows?: readonly SubjectRowLike[]): [string, string][] {
-  return [
-    ['all', '全部'],
-    ...listSubjectChoices(rows).map((c): [string, string] => [c.id, c.label]),
-  ];
-}
 const STATE_OPTS: [string, string][] = [
   ['all', '全部'],
   ['待重学', '待重学'],
@@ -289,12 +280,14 @@ export interface MistakesPageProps {
 export default function MistakesPage({ navigate }: MistakesPageProps) {
   // YUK-598 — 科目 chip 行驱动（模块级冻结修复；provider selectable 视图）。
   const { subjects: subjectRowsForOpts } = useSubjects();
-  const SUBJECT_OPTS = subjectOpts(subjectRowsForOpts);
   const [subject, setSubject] = useState('all');
   const [state, setState] = useState('all');
   const [attr, setAttr] = useState('all');
 
-  const q = useQuery({ queryKey: ['mistakes'], queryFn: listMistakes });
+  const q = useQuery({
+    queryKey: ['mistakes', subject === 'all' ? undefined : subject],
+    queryFn: () => listMistakes(subject === 'all' ? undefined : subject),
+  });
   const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree });
 
   const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
@@ -428,7 +421,7 @@ export default function MistakesPage({ navigate }: MistakesPageProps) {
             </button>
           )}
         </div>
-        <FilterRow label="科目" options={SUBJECT_OPTS} value={subject} onChange={setSubject} />
+        <SubjectFilterTabs value={subject} rows={subjectRowsForOpts} onChange={setSubject} />
         <FilterRow label="状态" options={STATE_OPTS} value={state} onChange={setState} />
         <FilterRow label="归因" options={ATTR_OPTS} value={attr} onChange={setAttr} />
       </LoomCard>

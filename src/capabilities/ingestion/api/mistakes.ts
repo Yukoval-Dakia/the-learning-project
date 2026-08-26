@@ -8,6 +8,7 @@ import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError, collectionPayload, errorResponse, resourceResponse } from '@/kernel/http';
+import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
@@ -237,11 +238,15 @@ export async function GET(req: Request): Promise<Response> {
     );
     const since = parsed.data.since ? new Date(parsed.data.since) : undefined;
     const questionIds = parsed.data.question_id ? [parsed.data.question_id] : undefined;
+    const subjectKnowledgeIds = parsed.data.subject
+      ? await resolveSubjectKnowledgeIds(db, parsed.data.subject)
+      : undefined;
 
     const page = await listMistakeProjectionPage(db, {
       limit,
       since,
       questionIds,
+      subjectKnowledgeIds,
       cursor: parsed.data.cursor,
     });
 

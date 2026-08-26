@@ -39,6 +39,7 @@ export {
 export type { NoteSummary } from './server/notes-read';
 export {
   interactiveForKnowledge,
+  listNotes,
   notesForKnowledge,
 } from './server/notes-read';
 export type { NoteUpdateAcceptResult } from './server/proposal-accept-applier';
