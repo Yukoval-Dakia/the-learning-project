@@ -1,11 +1,15 @@
 // Search-grounded QuizGen — Q3 handler.
 //
 // docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §3 / §4.
-//
-// Tool-calling agent (QuizGenTask): plans, searches Tavily for SOURCE MATERIAL
-// (not questions), writes ORIGINAL questions grounded in those sources, and
-// self-declares every used URL into source_refs (§0 — provenance is NOT
-// recoverable from runner logs, so the agent MUST self-report).
+// ADR-0038 决定#2 — plan-then-generate: the run is TWO phases. Phase 1
+// (QuizPlanTask) emits a machine-checkable question plan (knowledge point /
+// kind / objective answer anchor); a deterministic gate validates it (schema +
+// real knowledge-point existence + kind/anchor sanity; bounded regeneration,
+// fail-closed). Phase 2 (QuizGenTask) is the tool-calling agent below: it
+// searches Tavily for SOURCE MATERIAL (not questions), writes ORIGINAL
+// questions grounded in those sources FROM THE ACCEPTED PLAN, and self-declares
+// every used URL into source_refs (§0 — provenance is NOT recoverable from
+// runner logs, so the agent MUST self-report).
 //
 // Skeleton follows the standard boss-handler shape (parse → INSERT → writeEvent →
 // catch). MCP mount copies the verbatim chat.ts:298-306 pattern (Tavily remote
@@ -37,6 +41,7 @@ import {
   type QuizGenMetadataT,
   QuizGenOutput,
   type QuizGenOutputT,
+  type QuizGenPlanT,
   type QuizGenQuestionT,
 } from '@/core/schema/quiz_gen';
 import type { Db } from '@/db/client';
@@ -119,6 +124,12 @@ import {
   mergeExactQuestionDuplicateKnowledgeIds,
 } from '../server/quiz/content-fingerprint';
 import { type FewShotExample, renderFewShotBlock } from '../server/quiz/fewshot-retrieve';
+import {
+  QUIZ_PLAN_MAX_ATTEMPTS,
+  checkPlanKnowledgeIds,
+  checkPlanPins,
+  parsePlanOutput,
+} from './quiz_gen_plan';
 
 // §3 / §4 — the trigger surface. 'manual' carries a free-form ref_id (we still
 // try to resolve it as a knowledge node for the subject profile, but never skip
@@ -518,6 +529,9 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   const subjectProfile = resolveSubjectProfile(resolved.knowledgeNode?.domain ?? null);
   const triggerEventId = `quiz_gen_trigger_${createId()}`;
   const toolContextTaskRunId = `quiz_gen_tool_${createId()}`;
+  // ADR-0038 决定#2 — Phase-1 plan call gets its OWN domain-MCP instance so its
+  // tool_call_log rows are attributed to QuizPlanTask, not QuizGenTask.
+  const planToolContextTaskRunId = `quiz_gen_plan_tool_${createId()}`;
 
   // ── MCP mount: copy chat.ts:298-306 verbatim pattern ──────────────────────
   // In-process domain-tool MCP (read user mistakes + knowledge graph) + the
@@ -544,6 +558,24 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     ...QUIZ_GEN_READ_TOOLS.map((name) => toMcpAllowedToolName(name)),
     ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
   ];
+
+  // ADR-0038 决定#2 — Phase 1 (plan) mounts the read-only domain MCP but NO
+  // Tavily: planning picks WHAT to test (knowledge point / kind / objective
+  // answer anchor); fetching material stays in the generation phase.
+  const planMcpServers: Record<string, SdkMcpServer | McpHttpServerConfig> = {
+    [DOMAIN_TOOL_MCP_SERVER_NAME]: buildMcpServer({
+      ctx: {
+        db,
+        taskRunId: planToolContextTaskRunId,
+        callerActor: { kind: 'agent', ref: 'quiz_gen' },
+        causedByEventId: triggerEventId,
+      },
+      serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
+      toolNames: QUIZ_GEN_READ_TOOLS,
+      taskKind: 'QuizPlanTask',
+    }),
+  };
+  const planAllowedTools = QUIZ_GEN_READ_TOOLS.map((name) => toMcpAllowedToolName(name));
 
   // YUK-225 (S2 slice 4) — 规范双轨.
   // 轨 1: whitelist the subject's quiz-gen SKILL.md规范包 so the model loads them
@@ -589,31 +621,121 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     fewShotBlock = renderFewShotBlock(collected.slice(0, FEWSHOT_MAX_TOTAL));
   }
 
-  const input = {
-    trigger,
-    ref: {
-      id: resolved.refId,
-      name: resolved.title,
-      knowledge_node: resolved.knowledgeNode,
-    },
-    knowledge_context: resolved.knowledgeNode ? [resolved.knowledgeNode] : [],
-    count,
-    // 轨 2 — injected exemplars (empty string when no hits / no skill-backed kinds).
-    ...(fewShotBlock ? { few_shot_examples_md: fewShotBlock } : {}),
-    // YUK-226 S2-5b F1 — the 找题次序 pins which tier it asked for. The agent prompt
-    // (buildQuizGenPrompt) instructs honouring requested_generation_method when present;
-    // absent → the agent free-chooses (original behaviour).
-    ...(params.generationMethod ? { requested_generation_method: params.generationMethod } : {}),
-    // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for. Forwarded additively
-    // so the agent can target it; absent → the agent free-targets (original behaviour).
-    ...(params.kind ? { requested_kind: params.kind } : {}),
-    ...(params.objectiveOnly ? { objective_only: true } : {}),
-    ...(params.kindRequired ? { kind_required: true } : {}),
-  };
-
   let taskResult: TaskTextResult | null = null;
-  let failureStage: 'producer' | 'persist' | 'event' | 'dispatch' = 'producer';
+  let failureStage: 'plan' | 'producer' | 'persist' | 'event' | 'dispatch' = 'plan';
+  // ADR-0038 决定#2 — Phase-1 evidence: the accepted plan is echoed into the run
+  // event (in-process artifact; no persistence contract — per ticket no schema
+  // requirement). planRejections feeds the bounded regeneration loop.
+  let planRunResult: TaskTextResult | null = null;
+  const planRejections: string[][] = [];
   try {
+    // ── Phase 1 — plan (ADR-0038 决定#2: plan-then-generate) ──────────────────
+    // A machine-checkable plan artifact FIRST; the deterministic gate (schema +
+    // real knowledge-point existence + kind/anchor sanity) accepts it before the
+    // generation call runs. Rejected plans regenerate bounded (rejection reasons
+    // fed back as previous_rejection), then the run fails closed — a rejected
+    // plan NEVER proceeds to generation.
+    //
+    // Placement note: the claim ledger reserves/settles exactly ONE paid call per
+    // attempt (reservePlacementGenerationCall / recordPlacementAttemptOutput
+    // single-run invariant), so the plan call deliberately runs BEFORE the
+    // reservation window. Its cost stays visible via ai_task_runs (runner run
+    // logging) and the event payload echo below; per-delivery plan spend is
+    // bounded by QUIZ_PLAN_MAX_ATTEMPTS and the placement paid-attempt fence.
+    let acceptedPlan: QuizGenPlanT | null = null;
+    for (let attempt = 1; attempt <= QUIZ_PLAN_MAX_ATTEMPTS; attempt++) {
+      await params.placementHeartbeat?.assertHealthy();
+      const previousRejection = planRejections.at(-1);
+      const planInput = {
+        trigger,
+        ref: {
+          id: resolved.refId,
+          name: resolved.title,
+          knowledge_node: resolved.knowledgeNode,
+        },
+        knowledge_context: resolved.knowledgeNode ? [resolved.knowledgeNode] : [],
+        count,
+        ...(params.generationMethod
+          ? { requested_generation_method: params.generationMethod }
+          : {}),
+        ...(params.kind ? { requested_kind: params.kind } : {}),
+        ...(params.objectiveOnly ? { objective_only: true } : {}),
+        ...(params.kindRequired ? { kind_required: true } : {}),
+        ...(previousRejection ? { previous_rejection: previousRejection } : {}),
+      };
+      planRunResult = await run('QuizPlanTask', planInput, {
+        db,
+        mcpServers: planMcpServers,
+        allowedTools: planAllowedTools,
+        subjectProfile,
+      });
+      const parsedPlan = parsePlanOutput(planRunResult.text);
+      if (!parsedPlan.ok) {
+        planRejections.push(parsedPlan.reasons);
+        continue;
+      }
+      const plannedKnowledgeIds = [
+        ...new Set(parsedPlan.plan.items.map((item) => item.knowledge_id)),
+      ];
+      const livePlanKnowledgeRows = plannedKnowledgeIds.length
+        ? await db
+            .select({ id: knowledge.id })
+            .from(knowledge)
+            .where(and(inArray(knowledge.id, plannedKnowledgeIds), isNull(knowledge.archived_at)))
+        : [];
+      const gateReasons = [
+        ...checkPlanPins(parsedPlan.plan, {
+          kind: params.kind,
+          kindRequired: params.kindRequired,
+          objectiveOnly: params.objectiveOnly,
+          generationMethod: params.generationMethod,
+        }),
+        ...checkPlanKnowledgeIds(
+          parsedPlan.plan,
+          new Set(livePlanKnowledgeRows.map((row) => row.id)),
+        ),
+      ];
+      if (gateReasons.length === 0) {
+        acceptedPlan = parsedPlan.plan;
+        break;
+      }
+      planRejections.push(gateReasons);
+    }
+    if (!acceptedPlan) {
+      throw new Error(
+        `quiz_plan gate rejected the plan after ${QUIZ_PLAN_MAX_ATTEMPTS} attempts (ADR-0038 plan-then-generate): ${planRejections
+          .map((reasons, index) => `attempt ${index + 1}: ${reasons.join('; ')}`)
+          .join(' | ')}`,
+      );
+    }
+    const plan = acceptedPlan;
+    failureStage = 'producer';
+
+    const input = {
+      trigger,
+      ref: {
+        id: resolved.refId,
+        name: resolved.title,
+        knowledge_node: resolved.knowledgeNode,
+      },
+      knowledge_context: resolved.knowledgeNode ? [resolved.knowledgeNode] : [],
+      count,
+      // ADR-0038 决定#2 — the ACCEPTED plan rides into the generation call as
+      // structured input: one question per plan item, in order, honouring each
+      // item's kind / knowledge_id / objective answer_anchor.
+      plan,
+      // 轨 2 — injected exemplars (empty string when no hits / no skill-backed kinds).
+      ...(fewShotBlock ? { few_shot_examples_md: fewShotBlock } : {}),
+      // YUK-226 S2-5b F1 — the 找题次序 pins which tier it asked for. The agent prompt
+      // (buildQuizGenPrompt) instructs honouring requested_generation_method when present;
+      // absent → the agent free-chooses (original behaviour).
+      ...(params.generationMethod ? { requested_generation_method: params.generationMethod } : {}),
+      // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for. Forwarded additively
+      // so the agent can target it; absent → the agent free-targets (original behaviour).
+      ...(params.kind ? { requested_kind: params.kind } : {}),
+      ...(params.objectiveOnly ? { objective_only: true } : {}),
+      ...(params.kindRequired ? { kind_required: true } : {}),
+    };
     if (params.placementAttempt) {
       await params.placementHeartbeat?.assertHealthy();
       await reservePlacementGenerationCall(db, params.placementAttempt);
@@ -657,6 +779,23 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       await assertPlacementAttemptFence(db, params.placementAttempt);
     }
     const { parsed, parseRepaired } = parseOutput(result.text);
+    // ADR-0038 决定#2 — generation must REALIZE the accepted plan (the plan is
+    // the contract; its constraints are the deterministic targets): same number
+    // of questions, index-paired kind conformance. A deviating batch fails the
+    // run (failure event + pg-boss retry) instead of persisting off-plan drafts.
+    if (parsed.questions.length !== plan.items.length) {
+      throw new Error(
+        `quiz_gen produced ${parsed.questions.length} questions but the accepted plan has ${plan.items.length} (ADR-0038 plan-then-generate)`,
+      );
+    }
+    parsed.questions.forEach((q, index) => {
+      const planned = plan.items[index];
+      if (!kindsMatch(q.kind, planned.kind)) {
+        throw new Error(
+          `quiz_gen question ${index + 1} kind '${q.kind}' deviates from planned kind '${planned.kind}' (ADR-0038 plan-then-generate)`,
+        );
+      }
+    });
     if (params.exactCount !== undefined && parsed.questions.length !== params.exactCount) {
       throw new Error(
         `quiz_gen exact_count=${params.exactCount} but agent produced ${parsed.questions.length}`,
@@ -1170,6 +1309,11 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         count: questionIds.length,
         generation_method: parsed.generation_method,
         tool_context_task_run_id: toolContextTaskRunId,
+        // ADR-0038 决定#2 — the accepted plan is echoed into the run evidence
+        // (in-process audit; the plan itself is not persisted).
+        plan,
+        plan_task_run_id: planRunResult?.task_run_id ?? null,
+        plan_cost_micro_usd: costUsdToMicroUsd(planRunResult?.cost_usd),
         stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
         difficulty_evidence: difficultyEvidenceByQuestion,
         exact_duplicate_count: exactDuplicates.length,
@@ -1269,6 +1413,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           error: String((err as Error).message ?? err),
           failure_stage: failureStage,
           tool_context_task_run_id: toolContextTaskRunId,
+          // ADR-0038 — plan-phase failures carry the gate rejections + plan run
+          // evidence (bounded attempts each with its reason list).
+          ...(planRejections.length > 0 ? { plan_rejections: planRejections } : {}),
+          plan_task_run_id: planRunResult?.task_run_id ?? null,
           ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
         },
         caused_by_event_id: null,

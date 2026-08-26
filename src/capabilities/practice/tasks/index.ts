@@ -9,6 +9,7 @@ import {
 } from './judges';
 import { questionAuthorTaskSpec } from './question-author';
 import { quizGenTaskSpec } from './quiz-generation';
+import { quizPlanTaskSpec } from './quiz-planning';
 import { quizVerifyTaskSpec } from './quiz-verify';
 import { selectionOrchestratorTaskSpec } from './selection-orchestrator';
 import { sessionSummaryTaskSpec } from './session-summary';
@@ -32,6 +33,7 @@ export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
   SolutionGenerateTask: solutionGenerateTaskSpec,
   SolutionGenerateVisionTask: solutionGenerateVisionTaskSpec,
   QuizGenTask: quizGenTaskSpec,
+  QuizPlanTask: quizPlanTaskSpec,
   QuizVerifyTask: quizVerifyTaskSpec,
   TeachingQualityTask: teachingQualityTaskSpec,
   QuestionAuthorTask: questionAuthorTaskSpec,

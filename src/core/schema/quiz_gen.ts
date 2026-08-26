@@ -16,6 +16,10 @@ import { AgentRef, QuestionKind, Rubric, RubricReferenceSolution } from './busin
 import { ProducerDifficultyEvidence } from './difficulty-evidence';
 import { defaultJudgeKindForQuestion } from './judge-routing';
 
+// Local derivation (judge-routing.ts keeps its own alias for the same reason):
+// the plan artifact below needs the kind union type without a runtime import.
+type QuestionKindT = z.infer<typeof QuestionKind>;
+
 // ---------- §2 persisted metadata.quiz_gen ----------
 
 // Where a source URL was used in generation. 'fact' = grounded a factual claim
@@ -295,6 +299,58 @@ export const QuizGenOutput = z
     }
   });
 export type QuizGenOutputT = z.infer<typeof QuizGenOutput>;
+
+// ---------- ADR-0038 决定#2 — plan-then-generate Phase-1 plan artifact ----------
+//
+// docs/adr/0038-unified-verify-contract-plan-then-generate.md 决定#2 first bullet:
+// 出题分两段——先产出题计划（要考哪个知识点、什么题型、客观题的标准答案锚点），
+// 再据计划生成题面。The plan is a MACHINE-CHECKABLE artifact (not prompt-internal
+// prose): the Q3 handler validates it deterministically (schema + real
+// knowledge-point existence read + kind/anchor sanity) between the two LLM calls,
+// regenerates it on rejection (bounded), or fails closed — a rejected plan must
+// never proceed to generation. Non-objective kinds still get plans (knowledge
+// point + kind selection); the answer anchor is REQUIRED only where applicable.
+
+// 客观题 set per ADR-0038 决定#2 second bullet: fill_blank / choice / true_false —
+// answers that can be deterministically compared against the material.
+// `translation` is NOT here (judge-routing puts it in PROSE_KINDS — subjective).
+export const QUIZ_PLAN_OBJECTIVE_KINDS: ReadonlySet<QuestionKindT> = new Set([
+  'choice',
+  'true_false',
+  'fill_blank',
+]);
+
+export const QuizGenPlanItem = z
+  .object({
+    // which knowledge point the planned question tests — must be a REAL,
+    // unarchived node (the handler's gate reads the knowledge table).
+    knowledge_id: z.string().min(1),
+    // what kind of question face will be generated (canonical QuestionKind).
+    kind: QuestionKind,
+    difficulty: z.number().int().min(1).max(5),
+    // 客观题标准答案锚点 — the exact intended correct answer. REQUIRED for
+    // objective kinds (deterministic-comparable); optional elsewhere. The
+    // generation phase must realize the question so this anchor grades correct.
+    answer_anchor: z.string().trim().min(1).optional(),
+  })
+  .superRefine((item, ctx) => {
+    if (QUIZ_PLAN_OBJECTIVE_KINDS.has(item.kind) && !item.answer_anchor) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['answer_anchor'],
+        message: `objective kind '${item.kind}' requires an answer_anchor (ADR-0038 决定#2)`,
+      });
+    }
+  });
+export type QuizGenPlanItemT = z.infer<typeof QuizGenPlanItem>;
+
+export const QuizGenPlan = z.object({
+  items: z.array(QuizGenPlanItem).min(1).max(10),
+  // The generation method the plan targets; the generation phase realizes it
+  // (the existing pinned-method assertion still guards the produced output).
+  generation_method: QuizGenGenerationMethod,
+});
+export type QuizGenPlanT = z.infer<typeof QuizGenPlan>;
 
 // ---------- §5 Q5 QuizVerifyTask LLM output ----------
 //

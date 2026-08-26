@@ -47,6 +47,7 @@ import {
   runQuizGen,
   synthesizeMaterialSourceRefs,
 } from './quiz_gen';
+import { QUIZ_PLAN_MAX_ATTEMPTS } from './quiz_gen_plan';
 
 const FAKE_TAVILY_CONFIG = {
   type: 'http' as const,
@@ -60,12 +61,84 @@ type AgentCtx = {
   mcpServers?: Record<string, unknown>;
   allowedTools?: string[];
 };
+
+// ADR-0038 plan-then-generate — the handler chains QuizPlanTask before QuizGenTask,
+// so the mock must answer BOTH kinds. Plan-input slice the synthesized plan needs.
+type PlanInput = {
+  count?: number;
+  knowledge_context?: Array<{ id?: string }>;
+  requested_generation_method?: string;
+};
+
+// Synthesizes a QuizPlanTask answer that MIRRORS the generation fixture: same
+// question kinds in order, the trigger's real KC, the pinned (or fixture's)
+// generation_method — so the deterministic gate accepts the plan and the
+// generation output conforms item-for-item without touching each call site.
+// Unparseable / empty-question fixtures fall back to a generic valid plan so the
+// failure still lands at its ORIGINAL stage (generation parse / exact_count …).
+function planTextFor(output: string, input: PlanInput): string {
+  type FixtureQuestion = {
+    kind?: unknown;
+    difficulty?: unknown;
+    reference_md?: unknown;
+  };
+  let questions: FixtureQuestion[] = [];
+  let outputMethod: unknown;
+  const start = output.indexOf('{');
+  const end = output.lastIndexOf('}');
+  if (start !== -1 && end > start) {
+    try {
+      const parsed: unknown = JSON.parse(output.slice(start, end + 1));
+      if (parsed && typeof parsed === 'object') {
+        const obj = parsed as { questions?: unknown; generation_method?: unknown };
+        if (Array.isArray(obj.questions)) questions = obj.questions as FixtureQuestion[];
+        outputMethod = obj.generation_method;
+      }
+    } catch {
+      // malformed fixture — generic fallback plan below
+    }
+  }
+  const fallbackKnowledgeId = input.knowledge_context?.[0]?.id ?? 'k1';
+  const isObjective = (kind: unknown): boolean =>
+    kind === 'choice' || kind === 'true_false' || kind === 'fill_blank';
+  const itemFor = (q: FixtureQuestion) => ({
+    // Always plan the trigger's real node: the gate re-reads the knowledge table,
+    // so mirroring a fixture's hallucinated id would fail the plan instead of the
+    // persist-time salvage path the fixture exists to test.
+    knowledge_id: fallbackKnowledgeId,
+    kind: typeof q.kind === 'string' ? q.kind : 'short_answer',
+    difficulty: typeof q.difficulty === 'number' ? q.difficulty : 3,
+    ...(isObjective(q.kind)
+      ? {
+          answer_anchor:
+            typeof q.reference_md === 'string' && q.reference_md.trim().length > 0
+              ? q.reference_md.split('\n')[0].trim()
+              : '标准答案',
+        }
+      : {}),
+  });
+  const items =
+    questions.length > 0
+      ? questions.map(itemFor)
+      : Array.from({ length: input.count ?? 3 }, () => ({
+          knowledge_id: fallbackKnowledgeId,
+          kind: 'short_answer',
+          difficulty: 3,
+        }));
+  const method =
+    input.requested_generation_method ??
+    (typeof outputMethod === 'string' ? outputMethod : undefined) ??
+    'closed_book';
+  return JSON.stringify({ items, generation_method: method });
+}
+
 // Typed agent-mock factory: gives mock.calls[0] the [kind, input, ctx] tuple so
 // destructuring the recorded ctx typechecks (the bare vi.fn(async () => …) has
-// no declared params → calls[0] is `[]`).
+// no declared params → calls[0] is `[]`). Dispatches on kind: QuizPlanTask gets
+// the mirrored plan text, everything else gets the fixture output verbatim.
 function agentMock(output: string, taskRunId?: string, costUsd?: number) {
-  return vi.fn(async (_kind: string, _input: unknown, _ctx: AgentCtx) => ({
-    text: output,
+  return vi.fn(async (kind: string, input: unknown, _ctx: AgentCtx) => ({
+    text: kind === 'QuizPlanTask' ? planTextFor(output, input as PlanInput) : output,
     ...(taskRunId === undefined ? {} : { task_run_id: taskRunId }),
     ...(costUsd === undefined ? {} : { cost_usd: costUsd }),
   }));
@@ -1006,7 +1079,17 @@ describe('runQuizGen', () => {
   it('rejects settlement when the placement fence goes stale during the paid call', async () => {
     const now = new Date();
     const attempt = await acquireInvalidOutputPlacementAttempt(now);
-    const runAgentTaskFn = vi.fn(async () => {
+    const runAgentTaskFn = vi.fn(async (kind: string) => {
+      if (kind !== 'QuizGenTask') {
+        // Plan phase: return a valid plan (mirrors CLOSED_BOOK_OUTPUT, anchored to
+        // the trigger's real node) without touching the attempt — the paid
+        // generation call is what goes stale.
+        return {
+          text: planTextFor(CLOSED_BOOK_OUTPUT, {
+            knowledge_context: [{ id: INVALID_OUTPUT_PLACEMENT.knowledgeId }],
+          }),
+        };
+      }
       await testDb()
         .update(placement_starter_attempt)
         .set({ status: 'underfilled' })
@@ -1323,8 +1406,17 @@ describe('runQuizGen', () => {
       buildMcpServerFn,
     });
 
-    expect(runAgentTaskFn).toHaveBeenCalledTimes(1);
-    const [taskKind, , ctx] = runAgentTaskFn.mock.calls[0];
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(2);
+    // ADR-0038 — call 1 is QuizPlanTask (plan phase, NO Tavily mounted), call 2 is
+    // QuizGenTask (generation phase, Tavily + domain MCP).
+    const [planKind] = runAgentTaskFn.mock.calls[0];
+    expect(planKind).toBe('QuizPlanTask');
+    const [, , planCtx] = runAgentTaskFn.mock.calls[0];
+    expect(planCtx.mcpServers).toHaveProperty(DOMAIN_TOOL_MCP_SERVER_NAME);
+    expect(planCtx.mcpServers).not.toHaveProperty(TAVILY_MCP_SERVER_NAME);
+    const genCall = runAgentTaskFn.mock.calls.find(([kind]) => kind === 'QuizGenTask');
+    expect(genCall).toBeDefined();
+    const [taskKind, , ctx] = genCall as [string, unknown, AgentCtx];
     expect(taskKind).toBe('QuizGenTask');
     expect(ctx.mcpServers).toHaveProperty(DOMAIN_TOOL_MCP_SERVER_NAME);
     expect(ctx.mcpServers).toHaveProperty(TAVILY_MCP_SERVER_NAME);
@@ -1776,7 +1868,9 @@ describe('runQuizGen', () => {
         buildTavilyMcpServerFn: vi.fn(() => null),
         buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
       }),
-    ).rejects.toThrow(/required kind='reading'.*'short_answer'/);
+    ).rejects.toThrow(
+      /item 1 plans kind 'short_answer' which does not match required kind 'reading'/,
+    );
     expect(runAgentTaskFn.mock.calls[0][1]).toMatchObject({
       requested_kind: 'reading',
       kind_required: true,
@@ -1800,7 +1894,9 @@ describe('runQuizGen', () => {
         buildTavilyMcpServerFn: vi.fn(() => null),
         buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
       }),
-    ).rejects.toThrow(/objective-only kind='choice'.*'short_answer'/);
+    ).rejects.toThrow(
+      /item 1 plans kind 'short_answer' which does not match objective-only kind 'choice'/,
+    );
     expect(runAgentTaskFn.mock.calls[0][1]).toMatchObject({
       requested_kind: 'choice',
       objective_only: true,
@@ -1946,6 +2042,207 @@ describe('runQuizGen', () => {
     expect(rows).toHaveLength(0);
     expect(enqueueQuizVerify).not.toHaveBeenCalled();
   });
+
+  // ── ADR-0038 决定#2 — plan-then-generate（two-phase QuizGen）──────────────────
+  //
+  // Phase 1 (QuizPlanTask) emits the machine-checkable plan; a deterministic gate
+  // (schema + real KC existence + kind/anchor sanity) must accept it BEFORE the
+  // generation call runs. Rejected plans regenerate bounded (with reasons fed
+  // back) then fail closed — generation must NEVER run off a rejected plan.
+  const PLAN_CHOICE_ANCHOR = '主谓间助词';
+  const VALID_PLAN = JSON.stringify({
+    items: [
+      { knowledge_id: 'k1', kind: 'short_answer', difficulty: 3 },
+      { knowledge_id: 'k1', kind: 'choice', difficulty: 2, answer_anchor: PLAN_CHOICE_ANCHOR },
+    ],
+    generation_method: 'search_grounded',
+  });
+  const INVALID_PLAN_MISSING_ANCHOR = JSON.stringify({
+    items: [{ knowledge_id: 'k1', kind: 'choice', difficulty: 2 }],
+    generation_method: 'search_grounded',
+  });
+  const INVALID_PLAN_UNKNOWN_KC = JSON.stringify({
+    items: [{ knowledge_id: 'ghost_kc', kind: 'short_answer', difficulty: 3 }],
+    generation_method: 'closed_book',
+  });
+
+  function planAwareMock(planOutput: string, generationOutput: string, taskRunId?: string) {
+    return vi.fn(async (kind: string, _input: unknown, _ctx: AgentCtx) => ({
+      text: kind === 'QuizPlanTask' ? planOutput : generationOutput,
+      ...(taskRunId === undefined ? {} : { task_run_id: taskRunId }),
+    }));
+  }
+
+  const planAwareDeps = () => ({
+    enqueueQuizVerify: vi.fn(async () => {}),
+    buildTavilyMcpServerFn: vi.fn(() => null),
+    buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+  });
+
+  it('(a) plan gate rejects an invalid plan (missing anchor / unknown KC) WITHOUT invoking generation', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const deps = planAwareDeps();
+    // Anchor sanity is schema-level (fail-fast): an objective-kind item without
+    // its answer_anchor rejects the WHOLE plan at parse, before any DB read.
+    const invalidPlan = JSON.stringify({
+      items: [{ knowledge_id: 'k1', kind: 'true_false', difficulty: 2 }],
+      generation_method: 'search_grounded',
+    });
+    const runAgentTaskFn = planAwareMock(invalidPlan, VALID_OUTPUT, 'tr_plan_invalid');
+
+    const runPromise = runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      runAgentTaskFn,
+      ...deps,
+    });
+    await expect(runPromise).rejects.toThrow(/requires an answer_anchor/);
+
+    // Generation was NEVER invoked — only QuizPlanTask calls happened.
+    const kinds = runAgentTaskFn.mock.calls.map(([kind]) => kind);
+    expect(kinds).not.toContain('QuizGenTask');
+    expect(
+      await testDb().select().from(question).where(eq(question.source, 'quiz_gen')),
+    ).toHaveLength(0);
+    expect(deps.enqueueQuizVerify).not.toHaveBeenCalled();
+  });
+
+  it('(b) valid plan proceeds and generation consumes it (plan-derived constraints at the seam)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const deps = planAwareDeps();
+    const runAgentTaskFn = planAwareMock(VALID_PLAN, VALID_OUTPUT, 'tr_plan_ok');
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 2,
+      runAgentTaskFn,
+      ...deps,
+    });
+
+    expect(result.status).toBe('ready');
+    const genCall = runAgentTaskFn.mock.calls.find(([kind]) => kind === 'QuizGenTask');
+    expect(genCall).toBeDefined();
+    const input = genCall?.[1] as { plan?: { items?: unknown[]; generation_method?: string } };
+    // The accepted plan is threaded as STRUCTURED input into the generation call.
+    expect(input.plan?.generation_method).toBe('search_grounded');
+    expect(input.plan?.items).toEqual([
+      { knowledge_id: 'k1', kind: 'short_answer', difficulty: 3 },
+      { knowledge_id: 'k1', kind: 'choice', difficulty: 2, answer_anchor: PLAN_CHOICE_ANCHOR },
+    ]);
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    expect(rows).toHaveLength(2);
+  });
+
+  it('(c) bounded regeneration then fail-closed on persistently invalid plans', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const deps = planAwareDeps();
+    const runAgentTaskFn = planAwareMock(
+      INVALID_PLAN_MISSING_ANCHOR,
+      VALID_OUTPUT,
+      'tr_plan_persist_bad',
+    );
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        count: 1,
+        runAgentTaskFn,
+        ...deps,
+      }),
+    ).rejects.toThrow(/quiz_plan gate rejected/i);
+
+    // Exactly QUIZ_PLAN_MAX_ATTEMPTS plan attempts, generation never invoked.
+    const planCalls = runAgentTaskFn.mock.calls.filter(([kind]) => kind === 'QuizPlanTask');
+    expect(planCalls).toHaveLength(QUIZ_PLAN_MAX_ATTEMPTS);
+    expect(runAgentTaskFn.mock.calls.some(([kind]) => kind === 'QuizGenTask')).toBe(false);
+    // The regeneration attempt carries the previous rejection reasons as feedback.
+    const secondInput = planCalls[1]?.[1] as { previous_rejection?: string[] };
+    expect(secondInput?.previous_rejection?.join('\n')).toMatch(/requires an answer_anchor/);
+    expect(
+      await testDb().select().from(question).where(eq(question.source, 'quiz_gen')),
+    ).toHaveLength(0);
+    expect(deps.enqueueQuizVerify).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown-KC plan even when generation would have succeeded (gate fires first)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const deps = planAwareDeps();
+    const runAgentTaskFn = planAwareMock(INVALID_PLAN_UNKNOWN_KC, VALID_OUTPUT, 'tr_plan_ghost');
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        count: 1,
+        runAgentTaskFn,
+        ...deps,
+      }),
+    ).rejects.toThrow(/targets unknown or archived knowledge_id 'ghost_kc'/);
+    expect(runAgentTaskFn.mock.calls.some(([kind]) => kind === 'QuizGenTask')).toBe(false);
+  });
+
+  it('fails the run when generation deviates from the accepted plan (kind conformance)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const deps = planAwareDeps();
+    // Plan says choice; the generation fixture writes short_answer — the plan is
+    // the contract (ADR-0038: 机检约束前置), so the run fails closed.
+    const plan = JSON.stringify({
+      items: [{ knowledge_id: 'k1', kind: 'choice', difficulty: 2, answer_anchor: '对' }],
+      generation_method: 'closed_book',
+    });
+    const runAgentTaskFn = planAwareMock(plan, CLOSED_BOOK_OUTPUT, 'tr_plan_deviate');
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        count: 1,
+        runAgentTaskFn,
+        ...deps,
+      }),
+    ).rejects.toThrow(/deviates from planned kind 'choice'/);
+    expect(
+      await testDb().select().from(question).where(eq(question.source, 'quiz_gen')),
+    ).toHaveLength(0);
+    expect(deps.enqueueQuizVerify).not.toHaveBeenCalled();
+  });
+
+  it('echoes the accepted plan into the run event payload (auditability)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const deps = planAwareDeps();
+    const runAgentTaskFn = planAwareMock(VALID_PLAN, VALID_OUTPUT, 'tr_plan_echo');
+
+    await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 2,
+      runAgentTaskFn,
+      ...deps,
+    });
+
+    const events = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:quiz_gen'));
+    const success = events.find((e) => e.outcome === 'success');
+    expect(success).toBeDefined();
+    const payload = success?.payload as {
+      plan?: { items?: unknown[]; generation_method?: string };
+      plan_task_run_id?: string;
+    };
+    expect(payload.plan?.generation_method).toBe('search_grounded');
+    expect(payload.plan?.items).toHaveLength(2);
+    expect(payload.plan_task_run_id).toBe('tr_plan_echo');
+  });
 });
 
 describe('buildQuizGenHandler', () => {
@@ -1973,7 +2270,8 @@ describe('buildQuizGenHandler', () => {
 
     await handler(jobs);
 
-    expect(runAgentTaskFn).toHaveBeenCalledTimes(2);
+    // 2 jobs × (QuizPlanTask + QuizGenTask) = 4 chained calls.
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(4);
     const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
     // The second job returned byte-identical content, so canonical identity keeps
     // the first batch and skips the duplicate batch without another verify enqueue.
@@ -2010,7 +2308,8 @@ describe('buildQuizGenHandler', () => {
         } as never,
       ]),
     ).resolves.toBeUndefined();
-    expect(runAgentTaskFn).toHaveBeenCalledOnce();
+    // Plan phase ran (no task_run_id needed there) + the paid generation call.
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(2);
 
     const [claim] = await testDb()
       .select()

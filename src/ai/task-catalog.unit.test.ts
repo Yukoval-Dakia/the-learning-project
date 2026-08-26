@@ -1,4 +1,4 @@
-// allow: SIZE_OK — central 52-task catalog contract suite.
+// allow: SIZE_OK — central 53-task catalog contract suite.
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
@@ -65,6 +65,7 @@ import {
 } from '@/capabilities/practice/tasks/judges';
 import { questionAuthorTaskSpec } from '@/capabilities/practice/tasks/question-author';
 import { quizGenTaskSpec } from '@/capabilities/practice/tasks/quiz-generation';
+import { quizPlanTaskSpec } from '@/capabilities/practice/tasks/quiz-planning';
 import { quizVerifyTaskSpec } from '@/capabilities/practice/tasks/quiz-verify';
 import { selectionOrchestratorTaskSpec } from '@/capabilities/practice/tasks/selection-orchestrator';
 import { sessionSummaryTaskSpec } from '@/capabilities/practice/tasks/session-summary';
@@ -132,6 +133,7 @@ const EXPECTED_KINDS = [
   'SolutionGenerateTask',
   'SolutionGenerateVisionTask',
   'QuizGenTask',
+  'QuizPlanTask',
   'QuizVerifyTask',
   'TeachingQualityTask',
   'QuestionAuthorTask',
@@ -160,7 +162,7 @@ const OWNER_MAPS = {
 } as const;
 
 const EXPECTED_OWNER_COUNTS = {
-  practice: 19,
+  practice: 20,
   notes: 3,
   ingestion: 8,
   knowledge: 3,
@@ -179,6 +181,7 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   solutionGenerateTaskSpec,
   solutionGenerateVisionTaskSpec,
   quizGenTaskSpec,
+  quizPlanTaskSpec,
   questionAuthorTaskSpec,
   itemPriorTaskSpec,
   selectionOrchestratorTaskSpec,
@@ -561,7 +564,7 @@ describe('taskCatalog', () => {
     }
   });
 
-  it('retains 52 full owned TaskSpecs with the quarry deleted (YUK-870/YUK-885)', () => {
+  it('retains 53 full owned TaskSpecs with the quarry deleted (YUK-870/YUK-885)', () => {
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
         expect(entry.ownership, kind).toBe('owned');
