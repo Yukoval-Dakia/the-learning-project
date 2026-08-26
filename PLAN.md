@@ -1,7 +1,7 @@
 # PLAN — 活看板 (cockpit)
 
 > Linear 是权威 tracker；本文件只镜像 NOW / NEXT / PARKED / BLOCKED-ON。
-> 更新于：2026-08-26（停止 Buildkite 切换 + mass-ulw 产品批次落地日）
+> 更新于：2026-08-26（二版：YUK-898 落地 + YUK-846 结案）
 
 ## NOW
 
@@ -17,20 +17,23 @@
   capability 债务吸收 copilot→session 5→6 / 总量 461→462（0bd5decb）。
   main @ `6a04523d`，push gate 绿。
 
+- **YUK-898 落地（owner 裁决：移除项目级声明）**：#1264 合并——删
+  `.opencode/opencode.json`、两份 oh-my-openagent.json、supply-chain verifier；
+  插件版本回归用户级单一真相源，registry 漂移 treadmill 彻底终结。
+  **YUK-846 同日结案**：Claude Max 订阅停用、凭证全过期，泄露风险实质解除；
+  anthropic-sub 作为 opt-in lane 保留在代码库（与项目无关）。
+
 ## NEXT
 
-1. **YUK-898 owner 决策**（插件版本线 keep-stable vs follow-beta）：决策材料已齐
-   ——现状 verifier 仅本地手跑、preserve-only 草稿方向 = repo 不拥有第三方插件
-   版本；拍板后处置草稿与 verifier 去留。
-2. owner 门槛项（见 BLOCKED-ON）：846 凭据轮换 wizard 已备；903/596 N4 UI 待批。
+1. owner 门槛项（见 BLOCKED-ON）：903/596 N4 UI 待批。
 3. A3 战略票砍/留清单待 owner 一次拍板（`.remember/a3-backlog-triage-2026-08-16.md`）。
 4. 走查遗留小项随批捎带：YUK-915（QuestionsPage 复用 SubjectFilterTabs）、
    YUK-899（reconciler 结算 P3）/ YUK-900✓已清。
 
 ## PARKED
 
-- preserve-only 草稿仍在本地 main 脏树（删 opencode 配置 + verifier 等），
-  等 YUK-898 落地时统一处置；其 ci-gate/package.json 改动与 #1262 已语义重叠。
+- 本地 main 脏树残余 = `.codex/config.toml` 个人工具配置改动 + 未跟踪工具目录
+  （.cortexkit/.qoder）；其余草稿内容已随 #1264 落地。
 - YUK-360 blocked-on-upstream（等 mem0 官方 usage API），维持 owner 07-23 处置。
 - Production rollout / observation 需独立授权（不变）。
 - yuk-822 worktree 持未合并提交，待 owner 决定。
