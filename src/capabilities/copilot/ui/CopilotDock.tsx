@@ -30,7 +30,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { CopilotSkillContextT } from '@/capabilities/copilot/server/chat';
 import { ApiError, apiFetch, apiJson } from '@/ui/lib/api';
 import {
@@ -47,8 +47,8 @@ import { Button } from '@/ui/primitives/Button';
 import { CopilotDrawer } from '@/ui/primitives/CopilotDrawer';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { ToolUseCard, type ToolUseStatus } from '@/ui/primitives/ToolUseCard';
+import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
+import { ToolUseCard } from '@/ui/primitives/ToolUseCard';
 import { CopilotHeroCard } from './CopilotHeroCard';
 import { type CopilotSessionListItem, CopilotSessionPanel } from './CopilotSessionPanel';
 import {
@@ -254,10 +254,23 @@ function learnerToolLabel(toolName: string): string {
   return LEARNER_TOOL_LABELS[toolName] ?? '学习辅助任务';
 }
 
-function toolCallCardStatus(call: ToolCallRecord): ToolUseStatus {
+type ToolCallCardStatus = 'running' | 'done' | 'failed';
+
+function toolCallCardStatus(call: ToolCallRecord): ToolCallCardStatus {
   if (call.status === 'failed') return 'failed';
   if (call.status === 'running') return 'running';
   return 'done';
+}
+
+/**
+ * YUK-913 — the streaming runner emits raw SDK block names (`mcp__<server>__<tool>`)
+ * on tool_use, while tool_result frames and replay mirrors carry the DOMAIN tool
+ * name. Normalize at the parse boundary so one logical call correlates across
+ * the live + replay lanes (and `LEARNER_TOOL_LABELS` resolves on both).
+ */
+function normalizeToolName(name: string): string {
+  const match = /^mcp__[a-z0-9_-]+__(.+)$/i.exec(name);
+  return match ? match[1] : name;
 }
 
 function parseToolUseSse(data: string): ToolCallRecord | null {
@@ -269,7 +282,7 @@ function parseToolUseSse(data: string): ToolCallRecord | null {
     };
     if (typeof raw.toolName !== 'string') return null;
     return {
-      toolName: raw.toolName,
+      toolName: normalizeToolName(raw.toolName),
       input:
         raw.input !== null && typeof raw.input === 'object' && !Array.isArray(raw.input)
           ? (raw.input as Record<string, unknown>)
@@ -282,13 +295,14 @@ function parseToolUseSse(data: string): ToolCallRecord | null {
   }
 }
 
-function parseToolResultSse(data: string): Omit<ToolCallRecord, 'toolUseId'> | null {
+function parseToolResultSse(data: string): ToolCallRecord | null {
   try {
     const raw = JSON.parse(data) as {
       toolName?: unknown;
       input?: unknown;
       summary?: unknown;
       errorReason?: unknown;
+      toolUseId?: unknown;
     };
     if (typeof raw.toolName !== 'string') return null;
     const summary = typeof raw.summary === 'string' ? raw.summary : undefined;
@@ -297,11 +311,12 @@ function parseToolResultSse(data: string): Omit<ToolCallRecord, 'toolUseId'> | n
         ? raw.errorReason
         : undefined;
     return {
-      toolName: raw.toolName,
+      toolName: normalizeToolName(raw.toolName),
       input:
         raw.input !== null && typeof raw.input === 'object' && !Array.isArray(raw.input)
           ? (raw.input as Record<string, unknown>)
           : {},
+      ...(typeof raw.toolUseId === 'string' ? { toolUseId: raw.toolUseId } : {}),
       ...(summary ? { summary } : {}),
       ...(errorReason ? { errorReason } : {}),
       status: errorReason ? 'failed' : 'done',
@@ -311,12 +326,41 @@ function parseToolResultSse(data: string): Omit<ToolCallRecord, 'toolUseId'> | n
   }
 }
 
-function applyToolResult(
-  calls: ToolCallRecord[],
-  result: Omit<ToolCallRecord, 'toolUseId'>,
-): ToolCallRecord[] {
+/**
+ * YUK-913 — fold a tool_use frame into the call list WITHOUT ever creating a
+ * second card for one logical call: an id-carrying duplicate frame (same
+ * toolUseId) is a no-op; an id-less duplicate while the same tool is already
+ * running is treated as the same call (a second 调用中 card would strand
+ * forever). A genuinely new call — distinct toolUseId, or no running same-name
+ * card — appends.
+ */
+function mergeToolUseEvent(calls: ToolCallRecord[], call: ToolCallRecord): ToolCallRecord[] {
+  if (call.toolUseId !== undefined && calls.some((c) => c.toolUseId === call.toolUseId)) {
+    return calls;
+  }
+  if (
+    call.toolUseId === undefined &&
+    calls.some((c) => c.toolName === call.toolName && c.status === 'running')
+  ) {
+    return calls;
+  }
+  return [...calls, call];
+}
+
+/**
+ * YUK-913 — resolve ONE running call IN PLACE (never append beside it): prefer
+ * the stable toolUseId correlation; an id-less result (the current wire
+ * contract) resolves the OLDEST running call of the same normalized tool name
+ * (serial execution order). With no running match, the result still lands as
+ * its own single terminal card (result-before-call / lost tool_use frame).
+ */
+function applyToolResult(calls: ToolCallRecord[], result: ToolCallRecord): ToolCallRecord[] {
   const idx = calls.findIndex(
-    (call) => call.toolName === result.toolName && call.status === 'running',
+    (call) =>
+      call.status === 'running' &&
+      (result.toolUseId !== undefined
+        ? call.toolUseId === result.toolUseId
+        : call.toolName === result.toolName),
   );
   if (idx === -1) {
     return [...calls, result];
@@ -326,30 +370,87 @@ function applyToolResult(
   return next;
 }
 
+// YUK-913 — one COMPRESSED card per tool call: a single-line row (label +
+// status pill + one-line summary) whose state evolves IN PLACE 谓用中 → 已完成/失败,
+// with the full detail collapsed behind the row itself. Replaces the previous
+// two-band rich card (header band + result band) that read as a large block.
+const TOOL_ROW_PILL: Record<'running' | 'done' | 'failed', string> = {
+  running: '调用中',
+  done: '已完成',
+  failed: '失败',
+};
+
+function toolRowIcon(status: 'running' | 'done' | 'failed'): LoomIconName {
+  if (status === 'running') return 'refresh';
+  if (status === 'failed') return 'alert';
+  return 'check';
+}
+
+function CopilotToolCallRow({ call }: { call: ToolCallRecord }) {
+  const [expanded, setExpanded] = useState(false);
+  const detailId = useId();
+  const status = toolCallCardStatus(call);
+  const label = learnerToolLabel(call.toolName);
+  // Learner-facing one-line copy: done → the tool's summary (when the server
+  // sent one); failed → the fixed retry sentence (internal errorReason never
+  // renders — see the leak test); running → nothing beyond the pill.
+  const lineText =
+    status === 'failed'
+      ? `${label}暂时未完成，请稍后再试。`
+      : status === 'done' && call.summary
+        ? call.summary
+        : undefined;
+  const lineContent = (
+    <>
+      <LoomIcon
+        name={toolRowIcon(status)}
+        size={13}
+        className={status === 'running' ? 'spin' : ''}
+      />
+      <span className="copilot-tool-name">{label}</span>
+      <span className={`tuc-pill is-${status}`} data-testid="copilot-tool-use-status">
+        {TOOL_ROW_PILL[status]}
+      </span>
+      {lineText ? <span className="copilot-tool-summary">{lineText}</span> : null}
+    </>
+  );
+  return (
+    <div
+      className="copilot-tool-row"
+      data-testid="copilot-tool-use-card"
+      data-status={status}
+      aria-live="polite"
+    >
+      {lineText ? (
+        <button
+          type="button"
+          className="copilot-tool-line"
+          data-testid="copilot-tool-use-toggle"
+          aria-expanded={expanded}
+          aria-controls={detailId}
+          aria-label={expanded ? `收起${label}详情` : `展开${label}详情`}
+          onClick={() => setExpanded((open) => !open)}
+        >
+          {lineContent}
+        </button>
+      ) : (
+        <div className="copilot-tool-line is-static">{lineContent}</div>
+      )}
+      {expanded && lineText ? (
+        <div className="copilot-tool-detail" id={detailId} data-testid="copilot-tool-use-detail">
+          {lineText}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function CopilotToolUseList({ calls }: { calls: ToolCallRecord[] }) {
   return (
-    <div className="flex flex-col gap-[6px]" data-testid="copilot-tool-use-list">
-      {calls.map((call, idx) => {
-        const status = toolCallCardStatus(call);
-        const label = learnerToolLabel(call.toolName);
-        return (
-          <div
-            key={call.toolUseId ?? `${call.toolName}-${idx}`}
-            data-testid="copilot-tool-use-card"
-          >
-            <ToolUseCard
-              toolName={label}
-              status={status}
-              actor="学习助手"
-              running={<span>正在调用…</span>}
-              result={status === 'done' ? <span>已完成</span> : undefined}
-              errorView={
-                status === 'failed' ? <span>{label}暂时未完成，请稍后再试。</span> : undefined
-              }
-            />
-          </div>
-        );
-      })}
+    <div className="copilot-tool-list" data-testid="copilot-tool-use-list">
+      {calls.map((call, idx) => (
+        <CopilotToolCallRow key={call.toolUseId ?? `${call.toolName}-${idx}`} call={call} />
+      ))}
     </div>
   );
 }
@@ -426,8 +527,9 @@ export const MessageRow = memo(function MessageRow({
         {m.role === 'tombstone' ? null : (
           <div className="msg-name">{m.role === 'ai' ? 'Loom Copilot' : '我'}</div>
         )}
-        {/* YUK-457 — tool-use cards sit between the user ask and the assistant
-            reply (design stack order). Replay + live SSE both feed tool_calls. */}
+        {/* YUK-457 / YUK-913 — compact tool-call rows sit between the user ask
+            and the assistant reply (design stack order). Replay + live SSE both
+            feed tool_calls; ONE row per logical call, state evolving in place. */}
         {m.role === 'ai' && m.tool_calls && m.tool_calls.length > 0 ? (
           <CopilotToolUseList calls={m.tool_calls} />
         ) : null}
@@ -1280,6 +1382,31 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     let inlineRunView = createCopilotRunView();
     const inlineToolCalls: ToolCallRecord[] = [];
     let dispatchResponseReceived = false;
+    // YUK-913 — one publisher for the folded tool-call list: creates the AI row
+    // on the first frame, then updates it in place so each card's state evolves
+    // 调用中 → 已完成/失败 without ever appending a second card.
+    const publishToolCalls = () => {
+      const snapshot = [...inlineToolCalls];
+      if (!aiCreated) {
+        aiCreated = true;
+        setAwaitingFirstFrame(false);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: aiId,
+            role: 'ai',
+            text: '',
+            streaming: true,
+            subtasks: inlineRunView.subtasks,
+            tool_calls: snapshot,
+          },
+        ]);
+      } else {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === aiId ? { ...m, tool_calls: snapshot } : m)),
+        );
+      }
+    };
     try {
       const res = await apiFetch('/api/copilot/chat', {
         method: 'POST',
@@ -1448,26 +1575,12 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           } else if (evt.event === 'tool_use') {
             const call = parseToolUseSse(evt.data);
             if (call) {
-              inlineToolCalls.push(call);
-              const snapshot = [...inlineToolCalls];
-              if (!aiCreated) {
-                aiCreated = true;
-                setAwaitingFirstFrame(false);
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    id: aiId,
-                    role: 'ai',
-                    text: '',
-                    streaming: true,
-                    subtasks: inlineRunView.subtasks,
-                    tool_calls: snapshot,
-                  },
-                ]);
-              } else {
-                setMessages((prev) =>
-                  prev.map((m) => (m.id === aiId ? { ...m, tool_calls: snapshot } : m)),
-                );
+              // YUK-913 — merge (never blind-append): duplicate frames for one
+              // logical call must not open a second 调用中 card.
+              const merged = mergeToolUseEvent(inlineToolCalls, call);
+              if (merged !== inlineToolCalls) {
+                inlineToolCalls.splice(0, inlineToolCalls.length, ...merged);
+                publishToolCalls();
               }
             }
           } else if (evt.event === 'tool_result') {
@@ -1478,26 +1591,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                 inlineToolCalls.length,
                 ...applyToolResult(inlineToolCalls, result),
               );
-              const snapshot = [...inlineToolCalls];
-              if (!aiCreated) {
-                aiCreated = true;
-                setAwaitingFirstFrame(false);
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    id: aiId,
-                    role: 'ai',
-                    text: '',
-                    streaming: true,
-                    subtasks: inlineRunView.subtasks,
-                    tool_calls: snapshot,
-                  },
-                ]);
-              } else {
-                setMessages((prev) =>
-                  prev.map((m) => (m.id === aiId ? { ...m, tool_calls: snapshot } : m)),
-                );
-              }
+              publishToolCalls();
             }
           } else if (evt.event === 'reply') {
             try {
@@ -1558,14 +1652,13 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         // CopilotChatResult.primary_view). Undefined ⇒ no hero rendered.
         primary_view: res2.primary_view,
         subtasks: inlineRunView.subtasks,
-        // YUK-457 — preserve accumulated tool-use records; mark any still-running
+        // YUK-457 / YUK-913 — preserve accumulated tool-use records; mark any still-running
         // calls done when the terminal reply lands (remote MCP paths may skip tool_result).
+        // No synthetic summary: the compact row's 已完成 pill needs none.
         ...(inlineToolCalls.length > 0
           ? {
               tool_calls: inlineToolCalls.map((call) =>
-                call.status === 'running'
-                  ? { ...call, status: 'done' as const, summary: call.summary ?? '已完成' }
-                  : call,
+                call.status === 'running' ? { ...call, status: 'done' as const } : call,
               ),
             }
           : {}),
