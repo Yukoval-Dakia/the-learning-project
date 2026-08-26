@@ -280,3 +280,10 @@ describe('verify-build-context context', () => {
     expect(codes(record.violations)).toContain('metadata-set-failed');
   });
 });
+
+describe('deliberate RED canary', () => {
+  it('must fail to prove the gate works', () => {
+    const x: number = "not a number";
+    expect(x).toBe(42);
+  });
+});
