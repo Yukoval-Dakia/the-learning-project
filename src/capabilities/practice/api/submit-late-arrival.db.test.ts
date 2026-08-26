@@ -77,6 +77,8 @@ function manualJudged() {
     suggestedRating: null,
     finalRating: 'good' as const,
     adviceCauseCategory: null,
+    // YUK-739 — JudgedSubmit now carries the advice profile (advisor routing).
+    adviceSubjectProfile: null,
   };
 }
 

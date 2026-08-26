@@ -60,6 +60,8 @@ const JUDGED_GOOD = {
   suggestedRating: 'good' as const,
   finalRating: 'good' as const,
   adviceCauseCategory: null,
+  // YUK-739 — JudgedSubmit now carries the advice profile (advisor routing).
+  adviceSubjectProfile: null,
 };
 
 const mockJudge = (async () => ({ ...JUDGED_GOOD })) as JudgeRunDeps['judgeSubmitFn'];

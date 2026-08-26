@@ -65,33 +65,24 @@ export const CauseSchema = z
 export type CauseSchemaT = z.infer<typeof CauseSchema>;
 
 /**
- * Cold-start priors only. Instance-level attribution may override these from
- * behavioral evidence; an explicit `null` means the category is deliberately
- * non-diagnostic (for example `other`).
+ * YUK-739 — the cold-start meta-cause prior moved ONTO each subject's category
+ * declaration (`meta_cause_prior`). The pre-YUK-739 cross-subject
+ * DEFAULT_META_CAUSE_BY_CATEGORY mirror is deleted: the prior is a fact about
+ * the subject's OWN vocabulary (math `calculation` and physics `computation`
+ * both mean execution_slip, but each subject says so itself). Instance-level
+ * attribution may override from behavioral evidence; an explicit `null` means
+ * the category is deliberately non-diagnostic (for example `other`). A missing
+ * declaration (custom / historical profile) yields null — the same neutral
+ * value the legacy table produced for unknown ids.
  */
-export const DEFAULT_META_CAUSE_BY_CATEGORY: Readonly<Record<string, MetaCauseT | null>> = {
-  concept: 'flawed_model',
-  knowledge_gap: 'knowledge_gap',
-  calculation: 'execution_slip',
-  computation: 'execution_slip',
-  method: 'rule_misapplication',
-  reading: 'representation_failure',
-  memory: 'retrieval_failure',
-  expression: 'representation_failure',
-  unit_error: 'execution_slip',
-  unit: 'representation_failure',
-  dimension: 'representation_failure',
-  formula: 'retrieval_failure',
-  grammar: 'rule_misapplication',
-  word_meaning: 'rule_misapplication',
-  carelessness: 'execution_slip',
-  careless: 'execution_slip',
-  time_pressure: 'execution_slip',
-  other: null,
-};
-
-export function getDefaultMetaCause(categoryId: string): MetaCauseT | null | undefined {
-  return DEFAULT_META_CAUSE_BY_CATEGORY[categoryId];
+export function getMetaCausePrior(
+  profile: CauseProfileLike | null | undefined,
+  categoryId: string,
+): MetaCauseT | null {
+  const declared = profile?.causeCategories?.find(
+    (category) => category.id === categoryId,
+  )?.meta_cause_prior;
+  return declared ?? null;
 }
 
 export type CauseProfileLike = {
@@ -101,12 +92,12 @@ export type CauseProfileLike = {
     description?: string;
     review_priority?: 1 | 2 | 3 | 4 | 5;
     variant_targetable?: boolean;
+    // YUK-739 — subject-owned evaluation semantics (see profile-decl.ts).
+    meta_cause_prior?: MetaCauseT | null;
+    rating_lean?: 'carelessness' | 'conceptual' | null;
+    variant_strategy?: string;
   }>;
 };
-
-export function getAllowedCauseIds(profile?: CauseProfileLike | null): Set<string> {
-  return new Set((profile?.causeCategories ?? []).map((category) => category.id));
-}
 
 export function validateCauseAgainstProfile<T extends CauseSchemaT>(
   cause: T,
@@ -130,6 +121,10 @@ export function getCauseLabel(causeId: string, profile?: CauseProfileLike | null
   if (profileCategory?.label) return profileCategory.label;
   const fallbackCategory = profile?.causeCategories?.find((category) => category.id === 'other');
   return fallbackCategory?.label ?? '其它';
+}
+
+export function getAllowedCauseIds(profile?: CauseProfileLike | null): Set<string> {
+  return new Set((profile?.causeCategories ?? []).map((category) => category.id));
 }
 
 export function getCausePriority(

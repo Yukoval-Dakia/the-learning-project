@@ -86,7 +86,12 @@ export async function POST(req: Request): Promise<Response> {
     // recent failure carries any cause; the advisor then keeps the default
     // partial-credit bucket.
     const causeCategory = await resolveAdviceCauseForQuestion(db, questionId);
-    const advice = judgeResultToRatingAdvice(invoked.result, { causeCategory });
+    const advice = judgeResultToRatingAdvice(invoked.result, {
+      causeCategory,
+      // YUK-739 — lean/anchors resolve through the subject's own rating_lean /
+      // ratingPolicy declarations.
+      subjectProfile,
+    });
 
     // YUK-589 — sign with the dedicated server-only secret, never INTERNAL_TOKEN
     // (which every client holds). When the secret is unconfigured we issue no

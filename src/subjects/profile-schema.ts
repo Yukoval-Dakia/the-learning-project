@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import {
   CauseCategoryDeclaration,
+  RatingPolicySchema,
   RenderConfig,
   SchedulingHints,
+  UNIVERSAL_RATING_POLICY,
 } from '@/core/schema/profile-decl';
 
 export type SubjectId = string;
@@ -90,6 +92,11 @@ export const SubjectProfileSchema = z.object({
     rubricGuidance: z.string().default(''),
   }),
   causeCategories: z.array(CauseCategoryDeclaration).min(1),
+  // YUK-739 — rating/cause semantics policy. `ratingPolicy` maps judge coarse
+  // outcomes onto the FSRS rating surface; every profile declares or (via this
+  // default) inherits the universal map, and consumers resolve it through the
+  // profile instead of local inline copies. See profile-decl.ts.
+  ratingPolicy: RatingPolicySchema.default(UNIVERSAL_RATING_POLICY),
   renderConfig: RenderConfig,
   schedulingHints: SchedulingHints,
   judgeCapabilities: z.array(z.string().trim().min(1)),

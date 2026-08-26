@@ -6,6 +6,7 @@
       "!**/node_modules",
       "!**/coverage",
       "!**/drizzle",
+      "!src/ui/lib/api-schema.generated.ts",
       "!**/docs/design/loom-design",
       "!**/docs/design/loom-design-v2",
       "!**/docs/design/loom-design-v2.1",

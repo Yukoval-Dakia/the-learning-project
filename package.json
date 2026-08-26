@@ -39,7 +39,7 @@
     "api:smoke": "tsx scripts/api-smoke.ts",
     "gen:postman": "tsx scripts/gen-postman.ts",
     "gen:openapi": "tsx scripts/generate-openapi.ts",
-    "gen:api-client": "mkdir -p .cache && pnpm gen:openapi > .cache/openapi.generated.json && node tools/api-codegen/generate.mjs .cache/openapi.generated.json src/ui/lib/api-schema.generated.ts && biome format --write src/ui/lib/api-schema.generated.ts",
+    "gen:api-client": "mkdir -p .cache && pnpm gen:openapi > .cache/openapi.generated.json && node tools/api-codegen/generate.mjs .cache/openapi.generated.json src/ui/lib/api-schema.generated.ts",
     "audit:api-client": "pnpm gen:api-client && git diff --exit-code -- src/ui/lib/api-schema.generated.ts",
     "audit:api-client-usage": "tsx scripts/audit-api-client-usage.ts",
     "db:generate": "drizzle-kit generate",

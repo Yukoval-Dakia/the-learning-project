@@ -14,14 +14,13 @@ export {
   CauseCategory,
   CauseCategoryId,
   CauseSchema,
-  DEFAULT_META_CAUSE_BY_CATEGORY,
   MetaCause,
   MetaCauseFields,
   MetacogFlag,
   getAllowedCauseIds,
   getCauseLabel,
   getCausePriority,
-  getDefaultMetaCause,
+  getMetaCausePrior,
   validateCauseAgainstProfile,
 } from './cause';
 

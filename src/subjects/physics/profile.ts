@@ -1,3 +1,4 @@
+import { UNIVERSAL_RATING_POLICY } from '@/core/schema/profile-decl';
 import type { SubjectProfile } from '../profile';
 
 // P0 (2026-05-23): physics SubjectProfile per spec §5, normalized to actual
@@ -61,30 +62,39 @@ export const physicsProfile: SubjectProfile = {
       label: '单位错误',
       description: '单位换算 / 单位丢失 / 单位错配',
       review_priority: 5,
+      // YUK-739 — subject-owned evaluation semantics (moved off cross-subject mirrors).
+      meta_cause_prior: 'representation_failure',
     },
     {
       id: 'dimension',
       label: '量纲错误',
       description: '量纲不平衡 / 物理意义错误',
       review_priority: 5,
+      meta_cause_prior: 'representation_failure',
     },
     {
       id: 'formula',
       label: '公式错误',
       description: '公式记错 / 公式适用条件错',
       review_priority: 4,
+      meta_cause_prior: 'retrieval_failure',
     },
     {
       id: 'concept',
       label: '概念理解',
       description: '对物理定义、定律、原理的理解错误',
       review_priority: 4,
+      meta_cause_prior: 'flawed_model',
+      rating_lean: 'conceptual',
+      // legacy table keyed by id — 'concept' had a strategy line for every subject
+      variant_strategy: '同概念不同语境 / 反向考查（验证概念边界）',
     },
     {
       id: 'computation',
       label: '计算错误',
       description: '数值代入 / 运算 / 进位错',
       review_priority: 2,
+      meta_cause_prior: 'execution_slip',
     },
     {
       id: 'careless',
@@ -92,6 +102,8 @@ export const physicsProfile: SubjectProfile = {
       description: '看错条件、漏抄数据、符号写错',
       review_priority: 1,
       variant_targetable: false,
+      meta_cause_prior: 'execution_slip',
+      rating_lean: 'carelessness',
     },
     {
       id: 'other',
@@ -99,8 +111,12 @@ export const physicsProfile: SubjectProfile = {
       description: '不在上述分类内的错',
       review_priority: 1,
       variant_targetable: false,
+      meta_cause_prior: null,
     },
   ],
+  // YUK-739 — verdict → FSRS rating mapping is profile-owned; physics declares the
+  // universal 3-state mapping explicitly.
+  ratingPolicy: UNIVERSAL_RATING_POLICY,
   renderConfig: {
     font_family: 'system',
     notation: 'katex',
