@@ -689,7 +689,8 @@ describe('acceptConjectureProposal lifecycle', () => {
         .set({ archived_at: new Date('2026-07-26T01:00:00.000Z') })
         .where(eq(misconception.id, node.id));
 
-      // A later plain promotion preserves the tombstone but reactivates caused_by.
+      // A later plain promotion preserves the node tombstone; the still-live caused_by
+      // edge stays live (YUK-537: re-accept no longer un-archives an archived edge either).
       const plainAgain = await writeAiProposal(db, {
         actor_ref: 'research_meeting',
         payload: baseConjecture(),

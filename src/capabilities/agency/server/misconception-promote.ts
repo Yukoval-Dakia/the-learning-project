@@ -219,7 +219,9 @@ export interface PromoteConjectureResult {
  *      'soft'), seen=recurrence_count, evidence=conjecture evidence event ids). The F1 conflict
  *      guard keeps `source` monotone (never hard→soft) and preserves `archived_at` unless the
  *      caller passes reactivate:true.
- *   2. createMisconceptionEdge caused_by (misc → knowledge_id), idempotent / un-archive.
+ *   2. createMisconceptionEdge caused_by (misc → knowledge_id), idempotent; un-archives
+ *      ONLY on the SAME reactivate:true signal (YUK-537 — node and edge reactivation
+ *      are aligned: a plain re-accept preserves both tombstones).
  *
  * The whole hop is serialized per misconception identity by a `misc:<id>` advisory lock (F1).
  */
@@ -308,8 +310,10 @@ export async function promoteConjectureToMisconception(
       },
     });
 
-  // 2) caused_by edge: misc → the KC it corrupts. Idempotent upsert (un-archive on
-  //    re-promote), composes the heterogeneous topology gate inside the throat.
+  // 2) caused_by edge: misc → the KC it corrupts. Idempotent upsert through the throat;
+  //    archived_at is cleared ONLY on the same explicit reactivate signal that governs
+  //    the node above (YUK-537 — aligned un-archive semantics), composes the
+  //    heterogeneous topology gate inside the throat.
   const edgeId = await createMisconceptionEdge(tx, {
     from_id: misconceptionId,
     to_kind: 'knowledge',
@@ -319,6 +323,7 @@ export async function promoteConjectureToMisconception(
     created_by: { by: 'ai' },
     proposed_by_ai: true,
     now: input.now,
+    reactivate,
   });
 
   return { misconceptionId, edgeId };

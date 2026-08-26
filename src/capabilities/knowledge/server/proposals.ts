@@ -662,10 +662,12 @@ async function rewriteGoalScopeOnMerge(
 // YUK-543 review R3 — routed through the misconception-edges.ts single-owner THROAT
 // (archiveMisconceptionEdge + createMisconceptionEdge) instead of a raw UPDATE:
 //   - the throat's create is an idempotent UPSERT keyed on the GLOBAL unique index
-//     (un-archives + refreshes weight on conflict), so a collision with an ARCHIVED tombstone on
-//     the rewritten key REVIVES it rather than dropping the live relationship (the raw
-//     UPDATE + blind-23505-archive path evaporated it), and a collision with a LIVE duplicate
-//     degrades to a weight refresh — never a lost edge, never a 23505;
+//     that un-archives on conflict (reactivate:true — YUK-537: the throat only clears
+//     archived_at on an EXPLICIT reactivation, and this merge rewrite IS one: it moves
+//     a LIVE edge onto the rewritten key, so a collision with an ARCHIVED tombstone
+//     on that key REVIVES it rather than dropping the live relationship (the raw
+//     UPDATE + blind-23505-archive path evaporated it), and a collision with a LIVE
+//     duplicate degrades to a weight refresh — never a lost edge, never a 23505;
 //   - the throat also owns canonical ordering + Zod + the heterogeneous topology gate. For our
 //     rewrites (from_kind='misconception', to_kind='knowledge') the gate cannot reject: caused_by /
 //     confusable_with / experimental:* all admit to_kind='knowledge', and the self-loop check
@@ -709,6 +711,9 @@ async function rewireMisconceptionEdgeTargets(
       created_by: AgentRef.parse(r.created_by),
       proposed_by_ai: r.proposed_by_ai,
       now,
+      // The rewrite re-points a LIVE edge — genuine reactivation, so a colliding
+      // tombstone on the rewritten key is revived (see the R3 note above).
+      reactivate: true,
     });
     handled.push(r.id);
   }
