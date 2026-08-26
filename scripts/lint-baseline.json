@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "channel": "biome check . --reporter=json --max-diagnostics=none (summary totals + per-diagnostic category)",
+  "infoPolicy": "info diagnostics are counted: separate infos ratchet total and per-rule rows, decreasing only like warnings",
+  "totals": {
+    "errors": 0,
+    "warnings": 337,
+    "infos": 1
+  },
+  "byRule": {
+    "lint/a11y/noStaticElementInteractions": {
+      "warning": 3
+    },
+    "lint/a11y/useAriaPropsSupportedByRole": {
+      "warning": 12
+    },
+    "lint/a11y/useSemanticElements": {
+      "warning": 9
+    },
+    "lint/complexity/noImportantStyles": {
+      "warning": 7
+    },
+    "lint/complexity/noUselessStringRaw": {
+      "info": 1
+    },
+    "lint/complexity/useOptionalChain": {
+      "warning": 41
+    },
+    "lint/correctness/noUnsafeOptionalChaining": {
+      "warning": 45
+    },
+    "lint/correctness/noUnusedFunctionParameters": {
+      "warning": 5
+    },
+    "lint/correctness/noUnusedImports": {
+      "warning": 60
+    },
+    "lint/correctness/noUnusedVariables": {
+      "warning": 16
+    },
+    "lint/style/noDescendingSpecificity": {
+      "warning": 53
+    },
+    "lint/suspicious/noArrayIndexKey": {
+      "warning": 2
+    },
+    "lint/suspicious/noDuplicateProperties": {
+      "warning": 1
+    },
+    "lint/suspicious/noTemplateCurlyInString": {
+      "warning": 33
+    },
+    "lint/suspicious/noUnknownAtRules": {
+      "warning": 1
+    },
+    "lint/suspicious/useIterableCallbackReturn": {
+      "warning": 4
+    },
+    "suppressions/unused": {
+      "warning": 45
+    }
+  }
+}

@@ -96,6 +96,14 @@ ratchet（capability→server、server→capability deep、cross-capability valu
 `scripts/capability-boundary-baseline.json`。snapshot 命令只打印，不直接覆盖文件；禁止为了让
 新增依赖通过而上调 baseline。
 
+### Lint warning ratchet（YUK-909）
+
+`pnpm lint:ratchet` 对 `biome check .` 的 warning/info 总数执行只降不升的 ratchet，
+CI static lane 在 Lint 之后运行。基线在 `scripts/lint-baseline.json`：总数 +
+逐 rule 计数（信息诊断单独计数，不静默丢弃；决策已记录在文件内）。落地一个
+修 warning 的 batch 之后用 `pnpm lint:ratchet:update` 重新生成基线；该命令拒绝
+任何上调——基线只可能下降。
+
 Before a PR, run:
 
 First run the scoped tests that match the diff. Then run this local gate:

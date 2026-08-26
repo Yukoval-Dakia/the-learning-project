@@ -79,6 +79,7 @@ API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，�
 ```bash
 pnpm typecheck        # tsc --noEmit
 pnpm lint             # biome check .
+pnpm lint:ratchet     # warning/info 总数 ratchet（基线 scripts/lint-baseline.json，只降不升；修完 warning 后 pnpm lint:ratchet:update 重生基线）
 pnpm test             # CI 全量门禁（含 audit:task-census + unit/db/migration；本机按 AGENTS.md 跑 scoped tests）
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
