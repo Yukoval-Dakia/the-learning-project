@@ -1,7 +1,7 @@
 // Both attempts are pinned, so runner transient retry stays disabled and this
 // helper remains the only cross-lane retry layer.
 
-import { type Provider, type TaskKind, tasks } from '@/ai/registry';
+import { type Provider, tasks } from '@/ai/registry';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import type { RunTaskCtx } from '@/server/ai/runner';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
@@ -55,22 +55,35 @@ type LaneFallbackRunResult<T> =
   | { ok: true; taskResult: T; laneDegradation?: LaneDegradationEvidence }
   | { ok: false; hardFailure: ProviderHardFailure };
 
-function effectiveUnconfiguredLane(kind: TaskKind): string {
+function effectiveUnconfiguredLane(kind: LaneFallbackTaskKind): string {
   return process.env.AI_PROVIDER_OVERRIDE || tasks[kind].defaultProvider;
 }
 
-export async function runTaskWithLaneFallback<T>(args: {
-  kind: TaskKind;
-  input: unknown;
+/**
+ * The judge tasks served by this helper. Narrowing to this literal union lets
+ * the F3.2 task census statically resolve the `runTaskFn(kind, …)` runner calls
+ * (type-level string-literal extraction on the destructured identifier) instead
+ * of flagging them unresolved.
+ */
+export type LaneFallbackTaskKind = 'StepsJudgeTask' | 'MultimodalDirectJudgeTask';
+
+export async function runTaskWithLaneFallback<T>({
+  kind,
+  input,
   /** ctx keys other than `override` (db / subjectProfile / enableTransientRetry / outputFormat). */
+  baseCtx,
+  runTaskFn,
+}: {
+  kind: LaneFallbackTaskKind;
+  input: unknown;
   baseCtx: Omit<RunTaskCtx, 'override'>;
-  runTaskFn: (kind: string, input: unknown, ctx: RunTaskCtx) => Promise<T>;
+  runTaskFn: (kind: LaneFallbackTaskKind, input: unknown, ctx: RunTaskCtx) => Promise<T>;
 }): Promise<LaneFallbackRunResult<T>> {
   const override = visionJudgeProviderOverride();
 
   let first: T;
   try {
-    first = await args.runTaskFn(args.kind, args.input, { ...args.baseCtx, override });
+    first = await runTaskFn(kind, input, { ...baseCtx, override });
     return { ok: true, taskResult: first };
   } catch (err) {
     const hard = classifyProviderHardFailure(err);
@@ -78,19 +91,19 @@ export async function runTaskWithLaneFallback<T>(args: {
     if (!override) {
       return {
         ok: false,
-        hardFailure: { ...hard, failed_lane: effectiveUnconfiguredLane(args.kind) },
+        hardFailure: { ...hard, failed_lane: effectiveUnconfiguredLane(kind) },
       };
     }
     const fallbackOverride = {
-      provider: tasks[args.kind].defaultProvider,
-      model: tasks[args.kind].defaultModel,
+      provider: tasks[kind].defaultProvider,
+      model: tasks[kind].defaultModel,
     };
     console.warn(
       `[judge-lane] provider lane '${override.provider}' hard-failed (HTTP ${hard.api_error_status ?? 'null'}): ${hard.error} — retrying once on registry-default lane '${fallbackOverride.provider}'`,
     );
     try {
-      const second = await args.runTaskFn(args.kind, args.input, {
-        ...args.baseCtx,
+      const second = await runTaskFn(kind, input, {
+        ...baseCtx,
         override: fallbackOverride,
       });
       return {
