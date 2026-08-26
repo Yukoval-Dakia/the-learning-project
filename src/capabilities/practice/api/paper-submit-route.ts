@@ -62,6 +62,9 @@ export async function createPaperSubmission(
         // YUK-448 — cumulative foreground-visible slot time, capture-only. Thread it into
         // attempt payload.duration_ms; do not wire it into theta/mastery/SRT credit.
         latencyMs: body.latency_ms ?? undefined,
+        // YUK-784 — 过程框采集文本（observe-only）：conditional-spread 落 attempt payload，
+        // 不进任何判分链。空值/缺省 → payload 无该键（byte-identical）。
+        reasoningTrace: body.reasoning_trace ?? undefined,
       },
       db,
     );

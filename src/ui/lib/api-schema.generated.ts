@@ -19635,6 +19635,7 @@ export interface operations {
                     latency_ms?: number | null;
                     part_ref?: string | null;
                     question_id: string;
+                    reasoning_trace?: string | null;
                     session_id: string;
                 };
             };
@@ -26180,6 +26181,7 @@ export interface operations {
                     paper_id: string;
                     part_ref?: string | null;
                     question_id: string;
+                    reasoning_trace?: string | null;
                 };
             };
         };
