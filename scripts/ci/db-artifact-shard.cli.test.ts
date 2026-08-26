@@ -12,7 +12,7 @@ import type { DbShardMergedReport } from './db-artifact-shard.mjs';
 
 const HEAD = `1${'a'.repeat(39)}`;
 const TREE = `2${'b'.repeat(39)}`;
-const NOW = new Date('2026-08-25T00:00:00.000Z');
+const NOW = new Date();
 
 const FAKE_AGENT = `#!/usr/bin/env bash
 set -euo pipefail

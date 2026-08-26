@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { downloadPinnedArtifacts } from './supply-acquire.mjs';
 import { consumeArtifact } from './supply-artifact-consume.mjs';
+import { platformKey } from './supply-graph.mjs';
 import {
   buildArtifactDownloadArgs,
   buildSeedReceipt,
@@ -122,17 +123,38 @@ describe('runtime artifact pins validation', () => {
         'utf8',
       ),
     );
-    await expect(
-      consumeArtifact({
-        archivePath: '/nonexistent.tar.gz',
-        loaderPath: '/nonexistent-loader',
-        pinsPath,
-        inventory,
-        bunLockText: '{}',
-        workspaceTemplateDir: '/nonexistent-template',
-        scratchRoot: join(tmpdir(), 'supply-consume-bootstrap'),
+    // Write a bootstrap pins file so the test is platform-independent: the consumer
+    // must reject bootstrap pins before touching the archive, regardless of the host.
+    const tmpRoot = await mkdtemp(join(tmpdir(), 'supply-pins-bootstrap-'));
+    const bootstrapPinsPath = join(tmpRoot, 'pins.json');
+    await writeFile(
+      bootstrapPinsPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        artifactSource: { pipeline: 'the-learning-project-ci-shadow' },
+        approvedRuntimePlugin: {
+          package: '@opencode-ai/plugin',
+          version: '1.18.18',
+          ownerSpecifier: '@cortexkit/opencode-magic-context@0.33.0',
+        },
+        platforms: { [platformKey()]: { seedRequired: true } },
       }),
-    ).rejects.toThrow(/bootstrap state \(seedRequired\)/);
+    );
+    try {
+      await expect(
+        consumeArtifact({
+          archivePath: '/nonexistent.tar.gz',
+          loaderPath: '/nonexistent-loader',
+          pinsPath: bootstrapPinsPath,
+          inventory,
+          bunLockText: '{}',
+          workspaceTemplateDir: '/nonexistent-template',
+          scratchRoot: join(tmpdir(), 'supply-consume-bootstrap'),
+        }),
+      ).rejects.toThrow(/bootstrap state \(seedRequired\)/);
+    } finally {
+      await rm(tmpRoot, { recursive: true, force: true });
+    }
   });
 });
 
