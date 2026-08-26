@@ -151,6 +151,17 @@ type AppendReplyChecksInput = z.infer<typeof AppendReplyChecksSchema>;
 
 type SubmissionResult = ({ ok: true } & Record<string, unknown>) | { ok: false; reason: string };
 
+export const CopilotEvidenceLedgerRecordSchema = z.discriminatedUnion('kind', [
+  AppendEvidencePointsSchema.extend({ kind: z.literal('evidence_points') }),
+  MarkTraceCallsNotMaterialSchema.extend({ kind: z.literal('trace_calls_not_material') }),
+  SetSafeReplySchema.extend({ kind: z.literal('safe_reply') }),
+  AppendReplyChecksSchema.extend({ kind: z.literal('reply_checks') }),
+]);
+
+export type CopilotEvidenceLedgerRecord = z.infer<typeof CopilotEvidenceLedgerRecordSchema>;
+
+export type CopilotEvidenceAppendListener = (record: CopilotEvidenceLedgerRecord) => unknown;
+
 export interface CopilotEvidenceSourceCatalogEntry {
   source_id: string;
   call_index: number;
@@ -406,12 +417,25 @@ export interface ReferenceEvidenceSubmission {
   setSafeReply(input: SetSafeReplyInput): SubmissionResult;
   completeReference(): SubmissionResult;
   completedReference(): BoundCopilotEvidenceReference | undefined;
+  setAppendListener(listener: CopilotEvidenceAppendListener): void;
+  flushAppendListener(): Promise<void>;
+  resumeState(): CopilotEvidenceReferenceResumeState;
   progress(): {
     evidence_point_count: number;
     not_material_call_count: number;
     safe_reply_set: boolean;
     completed: boolean;
   };
+}
+
+export interface CopilotEvidenceReferenceResumeState {
+  readonly evidence_point_count: number;
+  readonly evidence_points_by_request_unit: readonly {
+    readonly request_unit_index: number;
+    readonly point_indices: readonly number[];
+  }[];
+  readonly not_material_call_indices: readonly number[];
+  readonly safe_reply_set: boolean;
 }
 
 export function createReferenceEvidenceSubmission(input: {
@@ -424,9 +448,31 @@ export function createReferenceEvidenceSubmission(input: {
   const notMaterialCalls = new Map<number, string>();
   let safeReply: string | undefined;
   let completed: BoundCopilotEvidenceReference | undefined;
+  let appendListener: CopilotEvidenceAppendListener | undefined;
+  let appendListenerTail = Promise.resolve();
+  let appendListenerAsync = false;
+  const acceptedAppendResults = new Map<string, SubmissionResult>();
 
-  const appendEvidencePoints = (raw: AppendEvidencePointsInput): SubmissionResult =>
-    asSubmissionResult(() => {
+  const notifyAccepted = (record: CopilotEvidenceLedgerRecord): void => {
+    if (!appendListener) return;
+    if (appendListenerAsync) {
+      appendListenerTail = appendListenerTail
+        .then(() => appendListener?.(record))
+        .then(() => undefined);
+      return;
+    }
+    const listenerResult = appendListener(record);
+    if (listenerResult instanceof Promise) {
+      appendListenerAsync = true;
+      appendListenerTail = listenerResult.then(() => undefined);
+    }
+  };
+
+  const appendEvidencePoints = (raw: AppendEvidencePointsInput): SubmissionResult => {
+    const appendDigest = sha256CanonicalJson({ kind: 'evidence_points', ...raw });
+    const cached = acceptedAppendResults.get(appendDigest);
+    if (cached) return cached;
+    const result = asSubmissionResult(() => {
       if (completed) throw new Error('submission_already_completed');
       const parsed = AppendEvidencePointsSchema.parse(raw);
       if (points.length + parsed.points.length > MAX_EVIDENCE_POINTS) {
@@ -475,6 +521,7 @@ export function createReferenceEvidenceSubmission(input: {
         };
       });
       points.push(...pending);
+      notifyAccepted({ kind: 'evidence_points', points: parsed.points });
       return {
         ok: true,
         accepted_point_indices: pending.map((point) => point.point_index),
@@ -482,9 +529,15 @@ export function createReferenceEvidenceSubmission(input: {
         ...tryAutoCompleteReference(),
       };
     });
+    if (result.ok) acceptedAppendResults.set(appendDigest, result);
+    return result;
+  };
 
-  const markTraceCallsNotMaterial = (raw: MarkTraceCallsNotMaterialInput): SubmissionResult =>
-    asSubmissionResult(() => {
+  const markTraceCallsNotMaterial = (raw: MarkTraceCallsNotMaterialInput): SubmissionResult => {
+    const appendDigest = sha256CanonicalJson({ kind: 'trace_calls_not_material', ...raw });
+    const cached = acceptedAppendResults.get(appendDigest);
+    if (cached) return cached;
+    const result = asSubmissionResult(() => {
       if (completed) throw new Error('submission_already_completed');
       const parsed = MarkTraceCallsNotMaterialSchema.parse(raw);
       if (
@@ -511,15 +564,22 @@ export function createReferenceEvidenceSubmission(input: {
       for (const call of parsed.calls) {
         notMaterialCalls.set(call.call_index, call.rationale_md);
       }
+      notifyAccepted({ kind: 'trace_calls_not_material', calls: parsed.calls });
       return {
         ok: true,
         not_material_call_count: notMaterialCalls.size,
         ...tryAutoCompleteReference(),
       };
     });
+    if (result.ok) acceptedAppendResults.set(appendDigest, result);
+    return result;
+  };
 
-  const setSafeReply = (raw: SetSafeReplyInput): SubmissionResult =>
-    asSubmissionResult(() => {
+  const setSafeReply = (raw: SetSafeReplyInput): SubmissionResult => {
+    const appendDigest = sha256CanonicalJson({ kind: 'safe_reply', ...raw });
+    const cached = acceptedAppendResults.get(appendDigest);
+    if (cached) return cached;
+    const result = asSubmissionResult(() => {
       if (completed) throw new Error('submission_already_completed');
       if (safeReply !== undefined) throw new Error('safe_reply_already_set');
       const parsed = SetSafeReplySchema.parse(raw);
@@ -527,8 +587,12 @@ export function createReferenceEvidenceSubmission(input: {
         throw new Error('safe_reply_contains_primary_view_marker');
       }
       safeReply = parsed.safe_reply;
+      notifyAccepted({ kind: 'safe_reply', safe_reply: parsed.safe_reply });
       return { ok: true, ...tryAutoCompleteReference() };
     });
+    if (result.ok) acceptedAppendResults.set(appendDigest, result);
+    return result;
+  };
 
   const completeReference = (): SubmissionResult =>
     asSubmissionResult(() => {
@@ -633,19 +697,31 @@ export function createReferenceEvidenceSubmission(input: {
         COPILOT_EVIDENCE_SUBMISSION_TOOLS.appendEvidencePoints,
         `Append 1-${MAX_POINT_CHUNK} evidence points. The server assigns point indices and resolves short source ids to sealed JSON pointers.`,
         AppendEvidencePointsSchema.shape,
-        async (args) => mcpTextResult(appendEvidencePoints(args)),
+        async (args) => {
+          const result = appendEvidencePoints(args);
+          await appendListenerTail;
+          return mcpTextResult(result);
+        },
       ),
       tool(
         COPILOT_EVIDENCE_SUBMISSION_TOOLS.markTraceCallsNotMaterial,
         `Mark 1-${MAX_TRACE_CHUNK} successful read calls that are not material. Do not mark calls cited by evidence points.`,
         MarkTraceCallsNotMaterialSchema.shape,
-        async (args) => mcpTextResult(markTraceCallsNotMaterial(args)),
+        async (args) => {
+          const result = markTraceCallsNotMaterial(args);
+          await appendListenerTail;
+          return mcpTextResult(result);
+        },
       ),
       tool(
         COPILOT_EVIDENCE_SUBMISSION_TOOLS.setSafeReply,
         'Set the one complete fallback reply after the evidence points are submitted. A complete ledger is sealed by this same call; stop when auto_completed=true.',
         SetSafeReplySchema.shape,
-        async (args) => mcpTextResult(setSafeReply(args)),
+        async (args) => {
+          const result = setSafeReply(args);
+          await appendListenerTail;
+          return mcpTextResult(result);
+        },
       ),
       tool(
         COPILOT_EVIDENCE_SUBMISSION_TOOLS.completeReference,
@@ -663,6 +739,21 @@ export function createReferenceEvidenceSubmission(input: {
     setSafeReply,
     completeReference,
     completedReference: () => completed,
+    setAppendListener: (listener) => {
+      appendListener = listener;
+    },
+    flushAppendListener: () => appendListenerTail,
+    resumeState: () => ({
+      evidence_point_count: points.length,
+      evidence_points_by_request_unit: input.requestUnits.map((unit) => ({
+        request_unit_index: unit.index,
+        point_indices: points
+          .filter((point) => point.request_unit_indices.includes(unit.index))
+          .map((point) => point.point_index),
+      })),
+      not_material_call_indices: [...notMaterialCalls.keys()].sort((left, right) => left - right),
+      safe_reply_set: safeReply !== undefined,
+    }),
     progress: () => ({
       evidence_point_count: points.length,
       not_material_call_count: notMaterialCalls.size,
@@ -677,7 +768,15 @@ export interface ComparisonEvidenceSubmission {
   appendReplyChecks(input: AppendReplyChecksInput): SubmissionResult;
   completeComparison(): SubmissionResult;
   completedComparison(): BoundCopilotEvidenceComparison | undefined;
+  setAppendListener(listener: CopilotEvidenceAppendListener): void;
+  flushAppendListener(): Promise<void>;
+  resumeState(): CopilotEvidenceComparisonResumeState;
   progress(): { reply_check_count: number; completed: boolean };
+}
+
+export interface CopilotEvidenceComparisonResumeState {
+  readonly reply_unit_total: number;
+  readonly reply_check_unit_indices: readonly number[];
 }
 
 const nonFailureReasonCodes = new Set(['supported', 'actual_gap_disclosed', 'non_evidentiary']);
@@ -693,10 +792,32 @@ export function createComparisonEvidenceSubmission(input: {
   type SubmittedCheck = z.infer<typeof AppendReplyChecksSchema>['checks'][number];
   const checks = new Map<number, SubmittedCheck>();
   let completed: BoundCopilotEvidenceComparison | undefined;
+  let appendListener: CopilotEvidenceAppendListener | undefined;
+  let appendListenerTail = Promise.resolve();
+  let appendListenerAsync = false;
+  const acceptedAppendResults = new Map<string, SubmissionResult>();
   const selectedReplySha256 = sha256CanonicalJson({ text: input.selectedReply });
 
-  const appendReplyChecks = (raw: AppendReplyChecksInput): SubmissionResult =>
-    asSubmissionResult(() => {
+  const notifyAccepted = (record: CopilotEvidenceLedgerRecord): void => {
+    if (!appendListener) return;
+    if (appendListenerAsync) {
+      appendListenerTail = appendListenerTail
+        .then(() => appendListener?.(record))
+        .then(() => undefined);
+      return;
+    }
+    const listenerResult = appendListener(record);
+    if (listenerResult instanceof Promise) {
+      appendListenerAsync = true;
+      appendListenerTail = listenerResult.then(() => undefined);
+    }
+  };
+
+  const appendReplyChecks = (raw: AppendReplyChecksInput): SubmissionResult => {
+    const appendDigest = sha256CanonicalJson({ kind: 'reply_checks', ...raw });
+    const cached = acceptedAppendResults.get(appendDigest);
+    if (cached) return cached;
+    const result = asSubmissionResult(() => {
       if (completed) throw new Error('submission_already_completed');
       const parsed = AppendReplyChecksSchema.parse(raw);
       if (
@@ -766,12 +887,16 @@ export function createComparisonEvidenceSubmission(input: {
         }
       }
       for (const check of parsed.checks) checks.set(check.reply_unit_index, check);
+      notifyAccepted({ kind: 'reply_checks', checks: parsed.checks });
       return {
         ok: true,
         reply_check_count: checks.size,
         ...tryAutoCompleteComparison(),
       };
     });
+    if (result.ok) acceptedAppendResults.set(appendDigest, result);
+    return result;
+  };
 
   const completeComparison = (): SubmissionResult =>
     asSubmissionResult(() => {
@@ -874,7 +999,11 @@ export function createComparisonEvidenceSubmission(input: {
         COPILOT_EVIDENCE_SUBMISSION_TOOLS.appendReplyChecks,
         `Append 1-${MAX_REPLY_CHECK_CHUNK} per-reply checks. The server derives request coverage and the verdict; the final complete chunk seals automatically and returns auto_completed=true.`,
         AppendReplyChecksSchema.shape,
-        async (args) => mcpTextResult(appendReplyChecks(args)),
+        async (args) => {
+          const result = appendReplyChecks(args);
+          await appendListenerTail;
+          return mcpTextResult(result);
+        },
       ),
       tool(
         COPILOT_EVIDENCE_SUBMISSION_TOOLS.completeComparison,
@@ -890,6 +1019,14 @@ export function createComparisonEvidenceSubmission(input: {
     appendReplyChecks,
     completeComparison,
     completedComparison: () => completed,
+    setAppendListener: (listener) => {
+      appendListener = listener;
+    },
+    flushAppendListener: () => appendListenerTail,
+    resumeState: () => ({
+      reply_unit_total: input.replyUnits.length,
+      reply_check_unit_indices: [...checks.keys()].sort((left, right) => left - right),
+    }),
     progress: () => ({ reply_check_count: checks.size, completed: completed !== undefined }),
   };
 }

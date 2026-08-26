@@ -260,6 +260,7 @@ describe('export constants', () => {
       // YUK-384: ephemeral editor presence + operational reconciliation cursor,
       // both re-established on restore (see constants.ts rationale).
       'artifact_edit_session',
+      'copilot_evidence_checkpoint',
       // YUK-758: nightly-orchestration DAG scheduling run state (transient; rebuilt each night).
       'dag_orchestration_node',
       'dag_orchestration_run',
@@ -279,6 +280,12 @@ describe('export constants', () => {
     expect(BACKUP_EXCLUDED_TABLES.has('provider_session_admission')).toBe(true);
     expect(RESTORE_WIPE_ONLY_TABLES).toContain('provider_session_admission');
     expect(FK_ORDER as readonly string[]).not.toContain('provider_session_admission');
+  });
+
+  it('wipes YUK-839 validator checkpoints without backing up stale recovery state', () => {
+    expect(BACKUP_EXCLUDED_TABLES.has('copilot_evidence_checkpoint')).toBe(true);
+    expect(RESTORE_WIPE_ONLY_TABLES).toContain('copilot_evidence_checkpoint');
+    expect(FK_ORDER as readonly string[]).not.toContain('copilot_evidence_checkpoint');
   });
 
   it('backs up provider attempts but only wipes provider-attempt admission leases', () => {

@@ -307,6 +307,10 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // Restoring operational rows would resurrect stale claims, family relationships, and rate-window
   // history, so this remains wipe-only even without FKs.
   'provider_session_admission',
+  // YUK-839: accepted validator append ledgers are short-lived recovery state bound to
+  // live task/source hashes. Restoring them without the matching live execution context
+  // would make stale paid-attempt progress reusable, so archive restore must wipe them.
+  'copilot_evidence_checkpoint',
   // YUK-751 durable subscription dispatcher recovery state. All three tables are
   // reconstructed by manifest reconciliation + event-log discovery; restoring stale
   // checkpoints, claims, deliveries, or debounce reservations would be incorrect.
@@ -350,6 +354,7 @@ export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
   // YUK-851: clear pre-restore owners before durable provider_attempt rows are replaced.
   'provider_attempt_admission',
   'provider_session_admission',
+  'copilot_evidence_checkpoint',
   'event_subscription_effect',
   'event_subscription_delivery',
   'event_subscription_checkpoint',
