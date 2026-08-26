@@ -51,7 +51,6 @@ import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { ToolUseCard, type ToolUseStatus } from '@/ui/primitives/ToolUseCard';
 import { CopilotHeroCard } from './CopilotHeroCard';
-import { learnerGlobalBrief } from './learner-global-brief';
 import {
   type PersistedDurableCopilotReconnect,
   type PersistedPendingCopilotTurn,
@@ -64,6 +63,7 @@ import {
   persistDurableCopilotReconnect,
   persistPendingCopilotTurn,
 } from './durable-reconnect-storage';
+import { learnerGlobalBrief } from './learner-global-brief';
 import { nextNudgeSessionAfterTurn, resolveTurnAmbientFocus } from './nudge-focus';
 import { type ReplayPrimaryView, type ReplayTurn, replayToMessages } from './replay';
 import { isOneShotSkill } from './skill-lifecycle';
