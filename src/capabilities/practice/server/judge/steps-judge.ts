@@ -6,9 +6,9 @@ import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
-import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import { defaultStructuredRunTaskFn, parseStructuredTaskOutput } from './judge-output-parse';
+import { type LaneDegradationEvidence, runTaskWithLaneFallback } from './provider-lane-fallback';
 import type { JudgeQuestionRow } from './question-contract';
 
 const CAPABILITY_REF = { id: 'steps', version: '1.0.0' };
@@ -247,36 +247,57 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
 
   const runTaskFn = params.runTaskFn ?? defaultStructuredRunTaskFn;
   let taskResult: { text: string; structured_output?: unknown };
+  // YUK-893 — set when the configured lane hard-failed and the registry-default
+  // retry produced this verdict; merged into the result's evidence_json.
+  let laneDegradation: LaneDegradationEvidence | undefined;
   try {
     // YUK-482 Lane C ③: route the vision judge to a configured provider (e.g.
     // Opus 4.8 via anthropic-sub) when VISION_JUDGE_PROVIDER is set; default
     // unset → undefined → registry mimo default (byte-identical to today). The
-    // override is merged into ctx here (the call site), so an injected test
+    // override is merged into ctx at the call site, so an injected test
     // runTaskFn still receives it and can assert on ctx.override.
     //
     // YUK-576 — enableTransientRetry: true. This judge is a synchronous-route
-    // sensor with NO durable backstop (this catch swallows failures into
-    // 'unsupported', so pg-boss never sees a throw): the sanctioned in-process
-    // transient-retry opt-in (registry StepsJudgeTask budget.transientRetries=1,
-    // runner gates in runner.ts transientRetryEnabled). Set here at the module's
-    // single runTaskFn call site, so ALL sync callers of runStepsJudge are
-    // covered by one flag. When the operator pins routing (VISION_JUDGE_PROVIDER
-    // → ctx.override set), the runner's override gate turns retry off.
+    // sensor with NO durable backstop (failures land in 'unsupported', so
+    // pg-boss never sees a throw): the sanctioned in-process transient-retry
+    // opt-in (registry StepsJudgeTask budget.transientRetries=1, runner gates
+    // in runner.ts transientRetryEnabled). Set here at the module's single
+    // runTaskFn call site, so ALL sync callers of runStepsJudge are covered by
+    // one flag. When the operator pins routing (VISION_JUDGE_PROVIDER →
+    // ctx.override set), the runner's override gate turns retry off.
     // YUK-591 — outputFormat threaded here (built from the registry-declared
     // StepsLlmOutput); symmetric with multimodal-direct-judge.ts. mimo ignores it
     // → structured_output absent → char-scan fallback (zero-loss on the default lane).
-    const result = await runTaskFn(
-      'StepsJudgeTask',
-      { text: llmTextPayload, images },
-      {
+    //
+    // YUK-893 — the lane call goes through runTaskWithLaneFallback: a provider
+    // HARD failure (HTTP 403/5xx/auth/quota) on a configured lane retries once
+    // on the standard resolution chain and records degradation evidence; a hard
+    // failure on every lane fails CLOSED below with error_kind=
+    // 'provider_hard_failure' instead of the anonymous 'LLM call failed' bucket.
+    // Non-provider errors rethrow and keep the byte-identical old semantics.
+    const laneRun = await runTaskWithLaneFallback({
+      kind: 'StepsJudgeTask',
+      input: { text: llmTextPayload, images },
+      baseCtx: {
         db: params.db,
         subjectProfile: params.subjectProfile,
-        override: visionJudgeProviderOverride(),
         enableTransientRetry: true,
         outputFormat: OUTPUT_FORMAT,
       },
-    );
-    taskResult = result;
+      runTaskFn,
+    });
+    if (!laneRun.ok) {
+      // Fail-closed preserved: still coarse_outcome='unsupported' with score
+      // null — the judge does NOT guess a verdict; it just fails honestly.
+      return unsupportedResult('LLM provider lane hard-failed', {
+        ...laneRun.hardFailure,
+        image_refs: studentImageRefs,
+        prompt_image_refs: promptImageRefs,
+        student_image_refs: studentImageRefs,
+      });
+    }
+    taskResult = laneRun.taskResult;
+    laneDegradation = laneRun.laneDegradation;
   } catch (err) {
     return unsupportedResult('LLM call failed', {
       error: err instanceof Error ? err.message : String(err),
@@ -299,6 +320,9 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
         taskResult.structured_output != null
           ? JSON.stringify(taskResult.structured_output).slice(0, 4000)
           : taskResult.text,
+      // YUK-893 — if this output arrived via the fallback lane, the degradation
+      // evidence must not be lost to the parse failure.
+      ...(laneDegradation ? { lane_degradation: laneDegradation } : {}),
     });
   }
 
@@ -314,8 +338,16 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
     });
   }
 
-  return composeJudgeResult(parsed, STEP_WEIGHT_DEFAULT, {
+  const composed = composeJudgeResult(parsed, STEP_WEIGHT_DEFAULT, {
     prompt_image_refs: promptImageRefs,
     student_image_refs: studentImageRefs,
   });
+  // YUK-893 — a verdict produced by the fallback lane carries its degradation
+  // evidence (failed lane, why, fallback used) on the successful result too.
+  return laneDegradation
+    ? {
+        ...composed,
+        evidence_json: { ...composed.evidence_json, lane_degradation: laneDegradation },
+      }
+    : composed;
 }
