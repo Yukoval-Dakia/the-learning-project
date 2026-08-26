@@ -25,10 +25,11 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { Fragment, memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { resolveKnownSubjectId } from '@/subjects/profile';
+import { SubjectFilterTabs } from '@/ui/components/SubjectFilterTabs';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { makeLookup } from '@/ui/lib/makeLookup';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { type SubjectRowLike, listSubjectChoices, subjectDisplayName } from '@/ui/lib/subject';
+import { type SubjectRowLike, subjectDisplayName } from '@/ui/lib/subject';
 import { formatCnDateOnly } from '@/ui/lib/utils';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
@@ -623,27 +624,9 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
 
           {/* filter bar */}
           <div className="qb-filterbar">
-            <div className="qf2">
-              <span className="qf2-l">科目</span>
-              <div className="qb-seg">
-                {[
-                  ['all', '全部'],
-                  // YUK-249 → YUK-598：科目筛选项行驱动（provider selectable 视图，
-                  // custom 科目即时进筛选；断网退化三 builtin）。
-                  ...listSubjectChoices(subjectRowsForFilter).map((c) => [c.id, c.label]),
-                ].map(([s, l]) => (
-                  <button
-                    type="button"
-                    key={s}
-                    className={subject === s ? 'on' : ''}
-                    aria-pressed={subject === s}
-                    onClick={() => setSubject(s)}
-                  >
-                    {l}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* YUK-915 — 科目筛选统一走共享 SubjectFilterTabs（同 Notes/Knowledge 面），
+                旧的本地 chip 实现删除；选中语义不变（'all' → 不带 subject 查询）。 */}
+            <SubjectFilterTabs value={subject} rows={subjectRowsForFilter} onChange={setSubject} />
             <span className="qb-filter-div" />
             <div className="qf2">
               <span className="qf2-l">来源</span>
