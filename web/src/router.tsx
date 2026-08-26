@@ -19,7 +19,7 @@ import { loadAgentNotesPage } from '@/capabilities/agency/ui-public';
 import { CopilotDock } from '@/capabilities/copilot/ui-public';
 import { loadRecordPage } from '@/capabilities/ingestion/ui-public';
 import { loadKnowledgeDetailPage, loadKnowledgePage } from '@/capabilities/knowledge/ui-public';
-import { loadNoteReaderPage, loadNotesIndexPage } from '@/capabilities/notes/ui-public';
+import { loadNoteReaderPage, loadNotesPage } from '@/capabilities/notes/ui-public';
 import {
   loadAdminConjectureScoresSurface,
   loadAdminCostSurface,
@@ -511,6 +511,14 @@ const knowledgeDetailRoute = createRoute({
   component: KnowledgeDetailRouteC,
 });
 
+const NotesRoute = lazyNavigableRoute(loadNotesPage);
+
+const notesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: surfacePath('notes'),
+  component: NotesRoute,
+});
+
 // M3-T7 (YUK-317) — 笔记阅读器/编辑器。
 const NoteReaderRouteC = lazyRouteComponent(async () => {
   const NoteReaderPage = await loadNoteReaderPage();
@@ -528,14 +536,6 @@ const noteReaderRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('note-detail'),
   component: NoteReaderRouteC,
-});
-
-const NotesIndexRoute = lazyNavigableRoute(loadNotesIndexPage);
-
-const notesIndexRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: surfacePath('notes'),
-  component: NotesIndexRoute,
 });
 
 // M5-T4 (YUK-321) — observability 四页 + Coach 周报。
@@ -636,7 +636,7 @@ const routeTree = rootRoute.addChildren([
   questionDetailRoute,
   knowledgeRoute,
   knowledgeDetailRoute,
-  notesIndexRoute,
+  notesRoute,
   noteReaderRoute,
   coachRoute,
   adminRunsRoute,

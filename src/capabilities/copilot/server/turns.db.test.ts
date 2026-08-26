@@ -262,6 +262,30 @@ async function writeReplyWithPrimaryView(
 }
 
 describe('getRecentCopilotTurns', () => {
+  it('replays only the explicitly selected session', async () => {
+    const first = await Conversation.createCopilotConversation(db, {
+      now: new Date('2026-06-04T10:00:00.000Z'),
+    });
+    const second = await Conversation.createCopilotConversation(db, {
+      now: new Date('2026-06-04T11:00:00.000Z'),
+    });
+    touchedSessionIds.push(first.sessionId, second.sessionId);
+    const firstAsk = await writeAsk(
+      '第一段对话',
+      first.sessionId,
+      new Date('2026-06-04T10:01:00.000Z'),
+    );
+    const secondAsk = await writeAsk(
+      '第二段对话',
+      second.sessionId,
+      new Date('2026-06-04T11:01:00.000Z'),
+    );
+
+    const turns = await getRecentCopilotTurns(db, { sessionId: first.sessionId });
+    expect(turns.map((turn) => turn.event_id)).toContain(firstAsk);
+    expect(turns.map((turn) => turn.event_id)).not.toContain(secondAsk);
+  });
+
   it('replaces a fully retracted ask/reply pair with one tombstone', async () => {
     const now = new Date();
     const sessionId = await createLiveCopilotSession(now);

@@ -15,6 +15,7 @@ import {
 
 const richHandle = {
   v: 1 as const,
+  sessionId: 'copilot-session-gradient-transfer',
   runId: 'copilot_user_ask_gradient_transfer_42',
   location: '/api/jobs/copilot_run/copilot_user_ask_gradient_transfer_42/events',
   userMessageId: 'm_2000000_owner',
@@ -29,6 +30,7 @@ const richPendingTurn = {
   userMessage:
     '请交叉核对 42 次含参函数作答、三轮延迟复习和五个未教学探针，再生成三档迁移题并保留 validator 证据。',
   requestBody: {
+    session_id: 'copilot-session-gradient-transfer',
     user_message:
       '请交叉核对 42 次含参函数作答、三轮延迟复习和五个未教学探针，再生成三档迁移题并保留 validator 证据。',
     triggered_by: 'chat' as const,
@@ -112,6 +114,17 @@ describe('durable Copilot reconnect storage', () => {
           user_message: '被篡改成另一道题，不得与原 key 重放。',
         },
       }),
+    );
+
+    expect(loadPersistedPendingCopilotTurn()).toBeNull();
+    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).toBeNull();
+  });
+
+  it('rejects a legacy pending record without a session binding', () => {
+    const { session_id: _sessionId, ...legacyBody } = richPendingTurn.requestBody;
+    window.sessionStorage.setItem(
+      PENDING_COPILOT_TURN_STORAGE_KEY,
+      JSON.stringify({ ...richPendingTurn, requestBody: legacyBody }),
     );
 
     expect(loadPersistedPendingCopilotTurn()).toBeNull();

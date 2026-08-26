@@ -9,5 +9,4 @@ export {
 export const loadNoteReaderPage = () =>
   import('./ui/NoteReaderPage').then((module) => module.default);
 
-export const loadNotesIndexPage = () =>
-  import('./ui/NotesIndexPage').then((module) => module.default);
+export const loadNotesPage = () => import('./ui/NotesPage').then((module) => module.default);

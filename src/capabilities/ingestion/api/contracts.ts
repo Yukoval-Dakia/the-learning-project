@@ -97,6 +97,7 @@ export const MistakeListQuerySchema = z.object({
       message: 'since must be an ISO-8601 timestamp',
     }),
   question_id: z.string().min(1).optional(),
+  subject: z.string().trim().min(1).optional(),
   cursor: z.string().min(1).optional(),
 });
 

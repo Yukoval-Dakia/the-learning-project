@@ -52,6 +52,7 @@ export async function GET(req: Request): Promise<Response> {
       from: parsed.data.from,
       to: parsed.data.to,
       relation_type: parsed.data.relation_type,
+      subject: parsed.data.subject,
       includeArchived: parsed.data.include_archived,
       limit: parsed.data.limit,
       cursor: parsed.data.cursor,

@@ -11,8 +11,8 @@ const KNOWLEDGE_BASE = {
   version: 0,
 };
 
-async function getKnowledge() {
-  return GET();
+async function getKnowledge(query = '') {
+  return GET(new Request(`http://localhost/api/knowledge${query}`));
 }
 
 describe('GET /api/knowledge', () => {
@@ -167,5 +167,46 @@ describe('GET /api/knowledge', () => {
     const body = (await res.json()) as { rows: Array<{ id: string }> };
     expect(body.rows).toHaveLength(1);
     expect(body.rows[0].id).toBe('k1');
+  });
+
+  it('filters by effective subject while retaining the subject container root', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values([
+      {
+        id: 'seed:yuwen:root',
+        name: '语文',
+        domain: 'yuwen',
+        parent_id: null,
+        archived_at: null,
+        ...KNOWLEDGE_BASE,
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        id: 'yuwen-child',
+        name: '虚词',
+        domain: null,
+        parent_id: 'seed:yuwen:root',
+        archived_at: null,
+        ...KNOWLEDGE_BASE,
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        id: 'seed:math:root',
+        name: '数学',
+        domain: 'math',
+        parent_id: null,
+        archived_at: null,
+        ...KNOWLEDGE_BASE,
+        created_at: now,
+        updated_at: now,
+      },
+    ]);
+
+    const res = await getKnowledge('?subject=yuwen');
+    const body = (await res.json()) as { rows: Array<{ id: string }> };
+    expect(body.rows.map((row) => row.id)).toEqual(['seed:yuwen:root', 'yuwen-child']);
   });
 });

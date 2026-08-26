@@ -1,7 +1,9 @@
 import { eq, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_mastery } from '@/db/schema';
+import { matchesSubjectDomain } from '@/kernel/read-models/knowledge-tree';
 import { getMasteryProjection } from '@/server/mastery/state';
+import { normalizeSubjectKey, resolveKnownSubjectId } from '@/subjects/profile';
 
 interface KnowledgeRow {
   id: string;
@@ -61,7 +63,7 @@ export function warnIfTreeSnapshotTruncated(
   return true;
 }
 
-export async function loadTreeSnapshot(db: Db): Promise<KnowledgeNode[]> {
+export async function loadTreeSnapshot(db: Db, subject?: string): Promise<KnowledgeNode[]> {
   // B1 double-truth fix — `mastery` / `evidence_count` / `last_evidence_at` are
   // overlaid below from the SoT mastery_state.theta_hat projection
   // (getMasteryProjection → σ(θ̂)), NOT the deprecated knowledge_mastery view's
@@ -126,7 +128,7 @@ export async function loadTreeSnapshot(db: Db): Promise<KnowledgeNode[]> {
 
   const byId = new Map<string, KnowledgeRow>();
   for (const r of rows) byId.set(r.id, r);
-  return rows.map((r) => {
+  const snapshot = rows.map((r) => {
     let cur: KnowledgeRow | undefined = r;
     let depth = 0;
     while (depth < 32 && cur && cur.domain === null && cur.parent_id !== null) {
@@ -136,5 +138,14 @@ export async function loadTreeSnapshot(db: Db): Promise<KnowledgeNode[]> {
       depth++;
     }
     return { ...r, effective_domain: cur?.domain ?? null };
+  });
+  if (!subject) return snapshot;
+
+  const canonical = resolveKnownSubjectId(subject);
+  const rawKey = normalizeSubjectKey(subject);
+  const syntheticRootId = `seed:${canonical ?? rawKey}:root`;
+  return snapshot.filter((row) => {
+    if (row.id === syntheticRootId) return true;
+    return matchesSubjectDomain(subject, row.effective_domain);
   });
 }

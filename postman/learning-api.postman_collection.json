@@ -817,6 +817,20 @@
           "response": []
         },
         {
+          "name": "GET /api/copilot/sessions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/copilot/sessions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "copilot", "sessions"]
+            },
+            "description": "列出 Copilot 对话 session，最近更新优先\n\n**Notes:** 响应 { sessions: [{ id, status, title, created_at, updated_at }] }。"
+          },
+          "response": []
+        },
+        {
           "name": "GET /api/copilot/turns",
           "request": {
             "method": "GET",
@@ -831,10 +845,16 @@
                   "value": "20",
                   "disabled": true,
                   "description": "optional"
+                },
+                {
+                  "key": "session_id",
+                  "value": "REPLACE_COPILOT_SESSION_ID",
+                  "disabled": true,
+                  "description": "optional"
                 }
               ]
             },
-            "description": "获取最近 N 条 Copilot 对话轮次（ask/chip + reply 对），oldest→newest\n\n**Query:**\n- `limit` (optional) e.g. `20`\n\n**Notes:** limit 正整数，省略用服务端默认；响应 { turns: [...] }"
+            "description": "获取最近 N 条 Copilot 对话轮次（ask/chip + reply 对），oldest→newest\n\n**Query:**\n- `limit` (optional) e.g. `20`\n- `session_id` (optional) e.g. `REPLACE_COPILOT_SESSION_ID`\n\n**Notes:** limit 正整数，省略用服务端默认；session_id 指定要 replay 的 Copilot session，省略时保留兼容的 current reusable session 行为；响应 { turns: [...] }"
           },
           "response": []
         },
@@ -858,10 +878,10 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "copilot", "chat"]
             },
-            "description": "向 Copilot 发送一条用户消息。普通 chat 会自动分流为 200 SSE 或 202 durable JSON；durable:false/true 可显式固定模式\n\n**Notes:** triggered_by 枚举：chat|chip。可选 correction_target_turn_id 必须是 conversation_history 中一个 AI reply 的 event id；它是更正已有回复的唯一显式目标，未提供时服务端不会把“上一轮”自动绑定到任何历史回复。未提供 durable 的普通 chat 先由 bounded classifier 分流：inline 返回 200 text/event-stream（event: delta 逐块，event: reply 终止）；多步/多 artifact 工作返回 202 JSON { run_id, session_id, checkpoint_event_id } 并带 Location，进度经通用 job-events SSE replay。durable:false 强制 inline，durable:true 强制 durable；chip 与 skill_context 保持 inline。Zod 失败时返回普通 JSON 错误。客户端应为每个逻辑 turn 发送稳定 Idempotency-Key（最多 200 字符）：同 key + 同规范化输入在 backlog/rate/classifier 之前重放原 202 handle；同 key + 不同输入返回 409 idempotency_conflict。user ask + QUEUED 原子受理，pg-boss 使用稳定 job id；send 状态无法确认时返回 503 copilot_enqueue_ambiguous，须用同 key 重试，不能生成新 turn。durable 原子受理前检测到断开则返回 499 且事务回滚。需 x-internal-token",
+            "description": "向 Copilot 发送一条用户消息。普通 chat 会自动分流为 200 SSE 或 202 durable JSON；durable:false/true 可显式固定模式\n\n**Notes:** session_id 指定当前 Copilot conversation；省略时保留兼容的 find-or-create 行为。triggered_by 枚举：chat|chip。可选 correction_target_turn_id 必须是 conversation_history 中一个 AI reply 的 event id；它是更正已有回复的唯一显式目标，未提供时服务端不会把“上一轮”自动绑定到任何历史回复。未提供 durable 的普通 chat 先由 bounded classifier 分流：inline 返回 200 text/event-stream（event: delta 逐块，event: reply 终止）；多步/多 artifact 工作返回 202 JSON { run_id, session_id, checkpoint_event_id } 并带 Location，进度经通用 job-events SSE replay。durable:false 强制 inline，durable:true 强制 durable；chip 与 skill_context 保持 inline。Zod 失败时返回普通 JSON 错误。客户端应为每个逻辑 turn 发送稳定 Idempotency-Key（最多 200 字符）：同 key + 同规范化输入在 backlog/rate/classifier 之前重放原 202 handle；同 key + 不同输入返回 409 idempotency_conflict。user ask + QUEUED 原子受理，pg-boss 使用稳定 job id；send 状态无法确认时返回 503 copilot_enqueue_ambiguous，须用同 key 重试，不能生成新 turn。durable 原子受理前检测到断开则返回 499 且事务回滚。需 x-internal-token",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"user_message\": \"帮我讲解之字主谓间用法\",\n  \"triggered_by\": \"chat\",\n  \"ambient_context\": {\n    \"route\": \"/today\",\n    \"focused_entity\": {\n      \"kind\": \"knowledge_node\",\n      \"id\": \"k_abc123\"\n    }\n  }\n}",
+              "raw": "{\n  \"session_id\": \"REPLACE_COPILOT_SESSION_ID\",\n  \"user_message\": \"帮我讲解之字主谓间用法\",\n  \"triggered_by\": \"chat\",\n  \"ambient_context\": {\n    \"route\": \"/today\",\n    \"focused_entity\": {\n      \"kind\": \"knowledge_node\",\n      \"id\": \"k_abc123\"\n    }\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -948,6 +968,20 @@
               ]
             },
             "description": "请求停止一个已受理的 durable Copilot run\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 无 body。首次请求按 execution fence 原子返回 cancelled（尚未开始付费执行）或 cancel_requested（运行中）；重复请求返回 already_requested，已落 outcome/终态返回 already_settled。未知或与 canonical user ask/session 不匹配的 handle 返回 404。运行中 Stop 由 worker 轮询 + SDK PreToolUse + DomainTool gate 协作中止，最终终态仍从 job-events SSE 读取。需 x-internal-token。"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/copilot/sessions",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/copilot/sessions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "copilot", "sessions"]
+            },
+            "description": "创建一个新的 Copilot 对话 session\n\n**Notes:** 不替换或结束旧 session；返回 201 { session }。"
           },
           "response": []
         }
@@ -1241,10 +1275,16 @@
                   "value": "qid_abc123",
                   "disabled": true,
                   "description": "optional"
+                },
+                {
+                  "key": "subject",
+                  "value": "math",
+                  "disabled": true,
+                  "description": "optional"
                 }
               ]
             },
-            "description": "查询错题列表（event-stream 投影），支持时间过滤和 question 过滤\n\n**Query:**\n- `limit` (optional) e.g. `50`\n- `since` (optional) e.g. `2026-01-01T00:00:00Z`\n- `question_id` (optional) e.g. `qid_abc123`\n\n**Notes:** limit 默认 50 上限 200；since 为 ISO-8601；投影 shape：id/question_id/prompt_md/wrong_answer_md/knowledge_ids/cause/created_at"
+            "description": "查询错题列表（event-stream 投影），支持时间过滤和 question 过滤\n\n**Query:**\n- `limit` (optional) e.g. `50`\n- `since` (optional) e.g. `2026-01-01T00:00:00Z`\n- `question_id` (optional) e.g. `qid_abc123`\n- `subject` (optional) e.g. `math`\n\n**Notes:** limit 默认 50 上限 200；since 为 ISO-8601；subject 按 question → knowledge → effective_domain 派生；投影 shape：id/question_id/prompt_md/wrong_answer_md/knowledge_ids/cause/created_at"
           },
           "response": []
         },
@@ -1273,6 +1313,33 @@
                 }
               }
             }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "notes",
+      "item": [
+        {
+          "name": "GET /api/notes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/notes",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "notes"],
+              "query": [
+                {
+                  "key": "subject",
+                  "value": "math",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "列出已关联知识点的笔记，支持 subject 派生轴过滤\n\n**Query:**\n- `subject` (optional) e.g. `math`\n\n**Notes:** subject 经 note knowledge_ids → knowledge effective_domain 派生；仅返回未归档 note_atomic/note_hub/note_long"
           },
           "response": []
         }

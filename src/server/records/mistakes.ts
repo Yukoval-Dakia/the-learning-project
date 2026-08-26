@@ -1,4 +1,4 @@
-import { inArray } from 'drizzle-orm';
+import { inArray, or, sql } from 'drizzle-orm';
 
 import { getFailureAttempts } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
@@ -12,6 +12,7 @@ export interface ListMistakeProjectionFilter {
   limit: number;
   since?: Date;
   questionIds?: string[];
+  subjectKnowledgeIds?: string[];
   cursor?: string;
 }
 
@@ -111,9 +112,31 @@ async function projectMistakeRecords(
 
 export async function listMistakeProjectionPage(db: Db, filter: ListMistakeProjectionFilter) {
   const cursor = filter.cursor ? decodeMistakeCursor(filter.cursor) : null;
+  const subjectQuestionIds =
+    filter.subjectKnowledgeIds === undefined
+      ? undefined
+      : filter.subjectKnowledgeIds.length === 0
+        ? []
+        : (
+            await db
+              .select({ id: question.id })
+              .from(question)
+              .where(
+                or(
+                  ...filter.subjectKnowledgeIds.map(
+                    (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
+                  ),
+                ),
+              )
+          ).map((row) => row.id);
+  const questionIds =
+    filter.questionIds === undefined || subjectQuestionIds === undefined
+      ? (filter.questionIds ?? subjectQuestionIds)
+      : filter.questionIds.filter((id) => subjectQuestionIds.includes(id));
   const fetchedRecords = await listLearningRecords(db, {
     kind: ['mistake'],
-    question_id: filter.questionIds?.[0],
+    question_id: questionIds?.length === 1 ? questionIds[0] : undefined,
+    question_ids: questionIds?.length !== 1 ? questionIds : undefined,
     since: filter.since,
     before_created_at: cursor?.createdAt,
     before_id: cursor?.id,

@@ -92,6 +92,23 @@ export const CopilotTurnsQuerySchema = z.object({
   // Preserve the existing wire behavior: the route applies Number.parseInt and
   // the reader clamps invalid/out-of-range values to its established bounds.
   limit: z.string().optional(),
+  session_id: z.string().min(1).max(160).optional(),
+});
+
+export const CopilotSessionSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  title: z.string().nullable(),
+  created_at: z.string().datetime(),
+  updated_at: z.string().datetime(),
+});
+
+export const CopilotSessionsResponseSchema = z.object({
+  sessions: z.array(CopilotSessionSchema),
+});
+
+export const CopilotCreateSessionResponseSchema = z.object({
+  session: CopilotSessionSchema,
 });
 
 const CopilotStructuredQuestionSchema = z.object({

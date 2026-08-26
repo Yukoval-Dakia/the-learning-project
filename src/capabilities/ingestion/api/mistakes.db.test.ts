@@ -1,5 +1,6 @@
 // POST /api/mistakes writes question + attempt event + learning_record(kind='mistake').
 
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { event, knowledge, learning_record, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -603,6 +604,33 @@ describe('GET /api/mistakes', () => {
     expect(body.rows[0].correction_state.state).toBe('active');
     expect(body.rows[0].correction_state.terminal_state).toBe('active');
     expect(typeof body.rows[0].created_at).toBe('number');
+  });
+
+  it('filters failure attempts by the derived subject query', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'k_math',
+      name: '函数',
+      ...KNOWLEDGE_BASE,
+      domain: 'math',
+      parent_id: null,
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+    });
+    await seedQuestion('q_yuwen', '语文题');
+    await seedQuestion('q_math', '数学题');
+    await db
+      .update(question)
+      .set({ knowledge_ids: ['k_math'] })
+      .where(eq(question.id, 'q_math'));
+    await seedAttempt({ id: 'a_yuwen', question_id: 'q_yuwen', knowledge_ids: ['k1'] });
+    await seedAttempt({ id: 'a_math', question_id: 'q_math', knowledge_ids: ['k_math'] });
+
+    const res = await getMistakes('subject=math');
+    const body = (await res.json()) as { rows: Array<{ id: string }> };
+    expect(body.rows.map((row) => row.id)).toEqual(['a_math']);
   });
 
   it('preserves a missing reference answer as null', async () => {

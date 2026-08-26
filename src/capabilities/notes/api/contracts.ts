@@ -40,6 +40,25 @@ export const ArtifactSearchResponseSchema = z.object({
   ),
 });
 
+export const NoteListQuerySchema = z.object({
+  subject: z.string().trim().min(1).optional(),
+});
+
+export const NoteListResponseSchema = z.object({
+  rows: z.array(
+    z.object({
+      id: z.string(),
+      type: z.string(),
+      title: z.string(),
+      knowledge_ids: z.array(z.string()),
+      generation_status: z.string(),
+      verification_status: z.string(),
+      version: z.number().int(),
+      updated_at: z.string().datetime(),
+    }),
+  ),
+});
+
 const NotePageBacklinkSchema = z.object({
   from_artifact_id: z.string(),
   from_learning_item_id: z.string().nullable(),

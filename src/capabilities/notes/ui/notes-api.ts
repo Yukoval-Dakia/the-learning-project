@@ -11,6 +11,23 @@ import {
   apiOperationJson,
 } from '@/ui/lib/api';
 
+export type NoteListRow = {
+  id: string;
+  type: string;
+  title: string;
+  knowledge_ids: string[];
+  generation_status: string;
+  verification_status: string;
+  version: number;
+  updated_at: string;
+};
+
+export const listNotes = (subject?: string): Promise<{ rows: NoteListRow[] }> =>
+  apiOperationJson('listNotes', {
+    url: subject ? `/api/notes?subject=${encodeURIComponent(subject)}` : '/api/notes',
+    method: 'GET',
+  });
+
 // ── body_blocks 块模型（ArtifactBodyBlocks passthrough doc） ────────
 // 已知块型：semanticBlock（文本块，kind ∈ definition/mechanism/example/
 // pitfall —— check 为 D6 墓碑，只读渲染占位不可插入）、crossLinkBlock

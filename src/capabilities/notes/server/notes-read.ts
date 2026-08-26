@@ -95,6 +95,28 @@ export async function notesForKnowledge(
   return rows.map(toNoteSummary);
 }
 
+export async function listNotes(
+  db: DbLike,
+  subjectKnowledgeIds?: string[],
+): Promise<NoteSummary[]> {
+  if (subjectKnowledgeIds?.length === 0) return [];
+  const conditions = [inArray(artifact.type, [...NOTE_TYPES]), isNull(artifact.archived_at)];
+  if (subjectKnowledgeIds) {
+    const subjectFilter = or(
+      ...subjectKnowledgeIds.map(
+        (id) => sql`${artifact.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
+      ),
+    );
+    if (subjectFilter) conditions.push(subjectFilter);
+  }
+  const rows = await db
+    .select(NOTE_SUMMARY_COLUMNS)
+    .from(artifact)
+    .where(and(...conditions))
+    .orderBy(desc(artifact.updated_at));
+  return rows.map(toNoteSummary);
+}
+
 /**
  * ADR-0033 D5 — non-archived interactive artifacts labeled with `knowledgeId`
  * (newest first), powering the /knowledge/[id] "互动内容" listing. Deliberately a
