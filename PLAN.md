@@ -26,12 +26,14 @@
 ## NEXT
 
 1. owner 门槛项（见 BLOCKED-ON）：903/596 N4 UI 待批。
-3. A3 战略票砍/留清单待 owner 一次拍板（`.remember/a3-backlog-triage-2026-08-16.md`）。
-4. 走查遗留小项随批捎带：YUK-915（QuestionsPage 复用 SubjectFilterTabs）、
+2. 走查遗留小项随批捎带：YUK-915（QuestionsPage 复用 SubjectFilterTabs）、
    YUK-899（reconciler 结算 P3）/ YUK-900✓已清。
 
 ## PARKED
 
+- **A3 已拍板（2026-08-26）**：确认关票包 350/285/536/815/816/320/254/414 全部 Canceled
+  （各票留理由）；human-gated 除 887/859/856（维持生产授权闸）外先躺；strategic 维持。
+  分诊快照与裁决记录：`.remember/a3-backlog-triage-2026-08-16.md` 头部附录。
 - 本地 main 脏树残余 = `.codex/config.toml` 个人工具配置改动 + 未跟踪工具目录
   （.cortexkit/.qoder）；其余草稿内容已随 #1264 落地。
 - YUK-360 blocked-on-upstream（等 mem0 官方 usage API），维持 owner 07-23 处置。
