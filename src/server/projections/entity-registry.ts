@@ -16,6 +16,7 @@ import {
   artifact,
   event,
   goal,
+  item_calibration,
   knowledge,
   knowledge_edge,
   learning_item,
@@ -28,6 +29,7 @@ import {
   edgeRowToSnapshot,
   gatherAndFoldArtifact,
   gatherAndFoldGoal,
+  gatherAndFoldItemCalibration,
   gatherAndFoldKnowledgeEdgeWithMesh,
   gatherAndFoldKnowledgeNode,
   gatherAndFoldLearningItem,
@@ -38,6 +40,7 @@ import {
   prefetchLearningItemMergeEvents,
 } from './gather';
 import { projectGoalGuarded } from './goal';
+import { projectItemCalibrationGuarded } from './item_calibration';
 import { projectKnowledgeNode } from './knowledge';
 import { projectKnowledgeEdge } from './knowledge_edge';
 import { projectLearningItemGuarded } from './learning_item';
@@ -46,6 +49,7 @@ import {
   artifactsWithGenesisAnchor,
   goalLiveRowToSnapshot,
   goalsWithGenesisAnchor,
+  itemCalibrationsWithGenesisAnchor,
   knowledgeEdgesWithGenesisAnchor,
   knowledgeLiveRowToSnapshot,
   knowledgeNodesWithGenesisAnchor,
@@ -57,7 +61,11 @@ import {
 } from './parity';
 import { PROJECTION_FOLDS, type PureFold } from './projection-folds';
 import { projectQuestionBlockGuarded } from './question_block';
-import { artifactRowToSnapshot, questionBlockRowToSnapshot } from './snapshot-mappers';
+import {
+  artifactRowToSnapshot,
+  itemCalibrationRowToSnapshot,
+  questionBlockRowToSnapshot,
+} from './snapshot-mappers';
 import type { ProjectionEntity } from './sot-flag';
 
 type DbLike = Db | Tx;
@@ -110,7 +118,8 @@ export type ProjectionKind =
   | 'mistake_variant'
   | 'learning_item'
   | 'artifact'
-  | 'question_block';
+  | 'question_block'
+  | 'item_calibration';
 
 export const ALL_PROJECTION_KINDS = [
   'knowledge',
@@ -120,6 +129,7 @@ export const ALL_PROJECTION_KINDS = [
   'learning_item',
   'artifact',
   'question_block',
+  'item_calibration',
 ] as const satisfies readonly ProjectionKind[];
 
 /**
@@ -129,7 +139,8 @@ export const ALL_PROJECTION_KINDS = [
  * (verified src/db/schema.ts:1302-1307; learning_item.primary_artifact_id has NO DB FK — ADR-0027
  * dropped it, schema.ts:406-412), so knowledge + knowledge_edge are one cluster (knowledge first)
  * and every other kind is an INDEPENDENT singleton cluster — a single kind's reject never balloons
- * into an all-7 rollback.
+ * into an all-cluster rollback. item_calibration (YUK-496) has NO FK to any projection table —
+ * another independent singleton.
  *
  * EXHAUSTIVENESS (review O12): unlike PROJECTION_ENTITIES (whose Record<ProjectionKind, …> makes a
  * missing kind a compile error), a plain array literal has NO such guarantee — a kind absent here
@@ -144,6 +155,7 @@ export const PROJECTION_FK_CLUSTERS = [
   ['learning_item'],
   ['artifact'],
   ['question_block'],
+  ['item_calibration'],
 ] as const satisfies readonly (readonly ProjectionKind[])[];
 
 // Compile-time: every ProjectionKind must appear in the clusters. If one is missing,
@@ -286,7 +298,8 @@ type ProjectionTable =
   | typeof mistake_variant
   | typeof learning_item
   | typeof artifact
-  | typeof question_block;
+  | typeof question_block
+  | typeof item_calibration;
 
 function liveIdsFrom(table: ProjectionTable): (db: DbLike) => Promise<Set<string>> {
   return async (db) => {
@@ -422,6 +435,28 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
       toSnapshot: (row) => questionBlockRowToSnapshot(row) as Record<string, unknown>,
       makeFoldOne: async (db) => (id) =>
         gatherAndFoldQuestionBlock(db, id) as Promise<Record<string, unknown> | null>,
+    }),
+  },
+  // YUK-496 (方案 A) — anchor-only coverage: the fold reproduces a row from its genesis anchor, the
+  // B1 imperative writers in src/server/mastery/ stay the live row writers, and the per-entity SoT
+  // flag is default OFF with NO flip planned (the future canonical-event 方案 B is the flip
+  // prerequisite). Registered so audit:projection / rebuild / the B3 gate cover the table instead of
+  // leaving it the event-sourcing blind spot ADR-0044 §7 flagged.
+  item_calibration: {
+    kind: 'item_calibration',
+    flagEntity: 'item_calibration',
+    liveIds: liveIdsFrom(item_calibration),
+    // item_calibration does NOT enter materialized_id_index (the question_block §5.3 precedent —
+    // the row id is ALWAYS the genesis event's subject_id) → event-subject-only.
+    eventSubjectIds: (db) => eventSubjectIdSet(db, 'item_calibration', false),
+    project: projectItemCalibrationGuarded,
+    withGenesisAnchor: itemCalibrationsWithGenesisAnchor,
+    fold: PROJECTION_FOLDS.item_calibration,
+    ...defineScan({
+      readLiveRows: (db) => db.select().from(item_calibration),
+      toSnapshot: (row) => itemCalibrationRowToSnapshot(row) as Record<string, unknown>,
+      makeFoldOne: async (db) => (id) =>
+        gatherAndFoldItemCalibration(db, id) as Promise<Record<string, unknown> | null>,
     }),
   },
 };

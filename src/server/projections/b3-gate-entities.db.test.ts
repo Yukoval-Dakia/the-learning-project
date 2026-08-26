@@ -23,13 +23,22 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { newId } from '@/core/ids';
-import { artifact, event, goal, learning_item, mistake_variant, question_block } from '@/db/schema';
+import {
+  artifact,
+  event,
+  goal,
+  item_calibration,
+  learning_item,
+  mistake_variant,
+  question_block,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { ProjectionKind } from '@/server/projections/entity-registry';
 import { runB3Gate } from '../../../scripts/b3-gate';
 import {
   backfillArtifactGenesis,
   backfillGoalGenesis,
+  backfillItemCalibrationGenesis,
   backfillLearningItemGenesis,
   backfillMistakeVariantGenesis,
   backfillQuestionBlockGenesis,
@@ -325,6 +334,97 @@ describe('runB3Gate NO-GO legs (registry-driven) — question_block', () => {
     // grounded N/A, not a "reproduce CLEAN" stand-in (Lens A M7).
     expect(report.survival.deleted).toEqual({});
     expect(report.go).toBe(true);
+  });
+});
+
+describe('runB3Gate NO-GO legs (registry-driven) — item_calibration (YUK-496 方案 A)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  // item_calibration mirrors question_block's shape (NO materialized_id_index — the §5.3
+  // precedent — and NO runtime create event), so the same three legs apply: DRIFT, GHOST, and a
+  // grounded N/A for the index-anchored-but-baseless DELETION vector.
+  async function insertCalibration(id: string): Promise<void> {
+    await testDb()
+      .insert(item_calibration)
+      .values({
+        id,
+        question_id: `q_${id}`,
+        b: -0.5,
+        confidence: 0.4,
+        track: 'hard',
+        source: 'llm_prior',
+        b_anchor: -0.5,
+        b_calib: null,
+        calibration_n: 0,
+        calibration_weight: null,
+        last_calibrated_at: null,
+        irt_a: null,
+        irt_c: null,
+        cdm_json: null,
+        kt_json: null,
+        created_at: T0,
+        updated_at: T0,
+      });
+  }
+
+  it('DRIFT: an out-of-band b mutation on a genesis-anchored row is caught as audit DRIFT', async () => {
+    const db = testDb();
+    await insertCalibration('ic_drift');
+    await backfillItemCalibrationGenesis(db, T0);
+    await db.update(item_calibration).set({ b: 4.2 }).where(eq(item_calibration.id, 'ic_drift'));
+
+    const report = await runB3Gate(db, ['item_calibration'], {}, TGEN);
+
+    expect(report.go).toBe(false);
+    expect(report.audit.clean).toBe(false);
+    expect(report.audit.driftCount).toBe(1); // exactly the one tampered row (hermetic fixture — K14 determinism)
+  });
+
+  it('GHOST: an event-only row (live row dropped) is RESURRECTED by the rebuild — survival.created', async () => {
+    const db = testDb();
+    await insertCalibration('ic_ghost');
+    await backfillItemCalibrationGenesis(db, T0); // genesis event (NO index — the §5.3 precedent)
+    await db.delete(item_calibration).where(eq(item_calibration.id, 'ic_ghost'));
+
+    const report = await runB3Gate(db, ['item_calibration'], {}, TGEN);
+
+    expect(report.go).toBe(false);
+    expect(report.survival.ok).toBe(false);
+    // item_calibration's eventSubjectIds is event-subject-only (no index leg), but the genesis
+    // event's subject_id still puts the row in the rebuild universe → resurrected WITH its b/confidence.
+    expect(report.survival.created.item_calibration).toContain('ic_ghost');
+    expect(report.audit.clean).toBe(true);
+  });
+
+  it('DELETION leg is structurally N/A: with no index anchor, a baseless row is re-anchored by the backfill (never folds null)', async () => {
+    const db = testDb();
+    await insertCalibration('ic_nodel');
+    await backfillItemCalibrationGenesis(db, T0);
+    // Drop the genesis event. UNLIKE the index-having entities, item_calibration has NO index anchor
+    // leg, so itemCalibrationsWithGenesisAnchor now returns FALSE for it...
+    await dropGenesisEvent('item_calibration', 'ic_nodel');
+
+    const report = await runB3Gate(db, ['item_calibration'], {}, TGEN);
+
+    // ...so the gate's SCOPED backfill RE-ANCHORS it (a fresh genesis from the current live row) →
+    // it folds to its live row, NOT null → NOT deleted → GO (mirrors the question_block N/A leg).
+    expect(report.survival.deleted).toEqual({});
+    expect(report.go).toBe(true);
+  });
+
+  it('CLEAN reproduction SMOKE: a coherent backfilled world → GO (rebuild is NOT empty)', async () => {
+    const db = testDb();
+    await insertCalibration('ic_ok');
+    const report = await runB3Gate(db, ['item_calibration'], {}, TGEN);
+    expect(report.go).toBe(true);
+    expect(report.audit.clean).toBe(true);
+    expect(report.survival.ok).toBe(true);
+    // The rebuild reproduced (not emptied) the row: b/confidence survive the full gate flow.
+    const [row] = await db.select().from(item_calibration).where(eq(item_calibration.id, 'ic_ok'));
+    expect(row?.b).toBe(-0.5);
+    expect(row?.confidence).toBe(0.4);
   });
 });
 

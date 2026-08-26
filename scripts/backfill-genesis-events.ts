@@ -69,6 +69,7 @@ import {
   artifact,
   event,
   goal,
+  item_calibration,
   knowledge,
   knowledge_edge,
   learning_item,
@@ -88,6 +89,7 @@ import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-
 import {
   artifactsWithGenesisAnchor,
   goalsWithGenesisAnchor,
+  itemCalibrationsWithGenesisAnchor,
   knowledgeNodesWithGenesisAnchor,
   learningItemsWithGenesisAnchor,
   mistakeVariantsWithGenesisAnchor,
@@ -98,6 +100,7 @@ import {
 // (esp. the question_block extracted_prompt_md strip, design §5.2).
 import {
   artifactRowToSnapshot,
+  itemCalibrationRowToSnapshot,
   knowledgeRowToSnapshot,
   questionBlockRowToSnapshot,
 } from '@/server/projections/snapshot-mappers';
@@ -121,6 +124,7 @@ export interface BackfillCounts {
   artifact: { seeded: number; skipped: number };
   learning_item: { seeded: number; skipped: number };
   question_block: { seeded: number; skipped: number };
+  item_calibration: { seeded: number; skipped: number };
 }
 
 // edgeRowToSnapshot — map a live `knowledge_edge` DB row to KnowledgeEdgeRowSnapshotT. The
@@ -721,13 +725,81 @@ export async function backfillQuestionBlockGenesis(
 }
 
 /**
+ * Seed genesis events for every `item_calibration` row lacking an anchor. (YUK-496 — ADR-0044 §7
+ * item_calibration 例外, 方案 A.) Same shape as backfillQuestionBlockGenesis (outbox opt-out, atomic
+ * per-row tx, idempotent, ZodError fail-loud accumulation) and likewise writes NO
+ * materialized_id_index entry — item_calibration does NOT enter the index (the question_block §5.3
+ * precedent: the row id is always the genesis event's subject_id). Returns { seeded, skipped }.
+ *
+ * SCOPED (mirror every sibling lane): skip rows already anchored (itemCalibrationsWithGenesisAnchor
+ * — the anchor-only fold consumes genesis events exclusively, so an anchored row re-folds from its
+ * own log). The pre-scan DOUBLES as the idempotency check (a previously-backfilled row carries a
+ * genesis event → skipped).
+ *
+ * 方案 A BOUNDARY (documented, ticket-scoped): rows born AFTER this backfill by the untouched B1
+ * writers (`runItemPriorBackfill` → `applyItemPrior`) are event-less until a LATER run of this
+ * script anchors them — between runs, audit:projection reports them as drift (the honest event=truth
+ * signal the owner accepted with 不动 B1 在线写逻辑; a post-anchor kt_json / b_calib write drifts the
+ * same way). Re-running the script on a clone is the documented re-anchor path (gate flow order:
+ * backfill → audit).
+ */
+export async function backfillItemCalibrationGenesis(
+  db: DbLike,
+  now: Date = new Date(),
+): Promise<{ seeded: number; skipped: number }> {
+  const rows = await db.select().from(item_calibration);
+  const eventSourced = await itemCalibrationsWithGenesisAnchor(
+    db,
+    rows.map((r) => r.id),
+  );
+  let seeded = 0;
+  let skipped = 0;
+  // Mirror the W3-C3 fail-loud accumulation: a malformed snapshot is a per-row §9.3 data problem
+  // (report ALL bad ids in one throw); an infra failure re-throws immediately.
+  const failures: BackfillRowFailure[] = [];
+  for (const row of rows) {
+    if (eventSourced.has(row.id)) {
+      skipped += 1;
+      continue;
+    }
+    const genesisEventId = newId();
+    try {
+      // ATOMIC per row: ONLY the genesis event (no index entry — item_calibration is not in the index).
+      await db.transaction(async (tx) => {
+        await writeEvent(tx, {
+          id: genesisEventId,
+          actor_kind: 'system',
+          actor_ref: GENESIS_ACTOR_REF,
+          action: GENESIS_ACTION,
+          subject_kind: 'item_calibration',
+          subject_id: row.id,
+          outcome: 'success',
+          payload: { row: itemCalibrationRowToSnapshot(row) },
+          ingest_at: now,
+        });
+      });
+      seeded += 1;
+    } catch (err) {
+      // ACCUMULATE only the genesis parse-barrier failure (a ZodError from writeEvent → parseEvent on a
+      // malformed snapshot); RE-THROW everything else IMMEDIATELY (mirror the artifact/question_block
+      // lanes — an infra failure must not pass the gate as "N rows to fix").
+      if (!(err instanceof ZodError)) throw err;
+      failures.push({ id: row.id, error: err.message });
+    }
+  }
+  throwIfBackfillFailures('item_calibration', failures, seeded);
+  return { seeded, skipped };
+}
+
+/**
  * Run all backfills in FK order (knowledge → knowledge_edge → goal → mistake_variant → artifact →
- * learning_item → question_block).
+ * learning_item → question_block → item_calibration).
  * mistake_variant softly references question (parent_question_id / variant_question_id) + event
  * (proposal_event_id); learning_item softly references artifact (primary_artifact_id) + event
  * (source_ref), so artifact is backfilled BEFORE learning_item (the order the learning_item docblock
  * anticipates); question_block is independent (mistake_variant references `question`, NOT
- * question_block) so it runs last. The genesis + index writes only ADD event/index rows (no entity
+ * question_block) so it runs last. item_calibration (YUK-496) has NO FK to any projection table —
+ * an independent lane at the end. The genesis + index writes only ADD event/index rows (no entity
  * FK is enforced here — materialized_id_index has no FK to the entity tables), so the order is a
  * stable-output convention, not a hard constraint. Returns counts.
  */
@@ -742,6 +814,7 @@ export async function backfillGenesisEvents(
   const artifactCounts = await backfillArtifactGenesis(db, now);
   const learningItemCounts = await backfillLearningItemGenesis(db, now);
   const questionBlockCounts = await backfillQuestionBlockGenesis(db, now);
+  const itemCalibrationCounts = await backfillItemCalibrationGenesis(db, now);
   return {
     knowledge: knowledgeCounts,
     knowledge_edge: edgeCounts,
@@ -750,6 +823,7 @@ export async function backfillGenesisEvents(
     artifact: artifactCounts,
     learning_item: learningItemCounts,
     question_block: questionBlockCounts,
+    item_calibration: itemCalibrationCounts,
   };
 }
 
@@ -762,6 +836,7 @@ async function main(): Promise<void> {
   console.log('[backfill-genesis] artifact:', JSON.stringify(counts.artifact));
   console.log('[backfill-genesis] learning_item:', JSON.stringify(counts.learning_item));
   console.log('[backfill-genesis] question_block:', JSON.stringify(counts.question_block));
+  console.log('[backfill-genesis] item_calibration:', JSON.stringify(counts.item_calibration));
   const totalSeeded =
     counts.knowledge.seeded +
     counts.knowledge_edge.seeded +
@@ -769,7 +844,8 @@ async function main(): Promise<void> {
     counts.mistake_variant.seeded +
     counts.artifact.seeded +
     counts.learning_item.seeded +
-    counts.question_block.seeded;
+    counts.question_block.seeded +
+    counts.item_calibration.seeded;
   const totalSkipped =
     counts.knowledge.skipped +
     counts.knowledge_edge.skipped +
@@ -777,7 +853,8 @@ async function main(): Promise<void> {
     counts.mistake_variant.skipped +
     counts.artifact.skipped +
     counts.learning_item.skipped +
-    counts.question_block.skipped;
+    counts.question_block.skipped +
+    counts.item_calibration.skipped;
   console.log(
     `[backfill-genesis] done — seeded ${totalSeeded} genesis event(s), skipped ${totalSkipped} already-seeded row(s).`,
   );

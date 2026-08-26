@@ -96,6 +96,7 @@ export const FOLD_OWNED_TABLES = [
   'learning_item',
   'artifact',
   'question_block',
+  'item_calibration',
 ] as const;
 export type FoldOwnedTable = (typeof FOLD_OWNED_TABLES)[number];
 
@@ -474,6 +475,42 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     marker: '.insert(question_block)',
     role: 'off-path-writer',
     note: 'session ingestion inserts/updates blocks (OFF-path sole writer until the question_block flag flips).',
+  },
+  // ---- item_calibration (YUK-496 方案 A — anchor-only coverage, default OFF, no flip planned) ----
+  {
+    table: 'item_calibration',
+    file: 'src/server/projections/item_calibration.ts',
+    marker: '.insert(item_calibration)',
+    role: 'throat',
+    note: 'projection write-through shell — the fold row writer for item_calibration (default OFF; rebuild:projection / B3 gate only, never a live-path writer under 方案 A).',
+  },
+  {
+    table: 'item_calibration',
+    file: 'src/server/mastery/item-calibration.ts',
+    marker: '.insert(item_calibration)',
+    role: 'off-path-writer',
+    note: 'applyItemPrior hard-track INSERT (the B1 cold-start applier the ticket names; OFF-path sole writer — 方案 A keeps it imperative, no flip planned).',
+  },
+  {
+    table: 'item_calibration',
+    file: 'src/server/mastery/fixed-anchor.ts',
+    marker: '.insert(item_calibration)',
+    role: 'off-path-writer',
+    note: 'fixed-anchor upsert (INSERT + onConflictDoUpdate; OFF-path sole writer — 方案 A keeps it imperative).',
+  },
+  {
+    table: 'item_calibration',
+    file: 'src/server/mastery/kt-calibration.ts',
+    marker: '.update(item_calibration)',
+    role: 'off-path-writer',
+    note: 'applyKtEstimate kt_json UPDATE (OFF-path sole writer — post-anchor writes surface as audit drift, the documented 方案 A boundary).',
+  },
+  {
+    table: 'item_calibration',
+    file: 'src/server/mastery/recalibration.ts',
+    marker: '.update(item_calibration)',
+    role: 'off-path-writer',
+    note: 'recalibrateQuestion b_calib firm-up UPDATE (OFF-path sole writer — post-anchor writes surface as audit drift, the documented 方案 A boundary).',
   },
 ];
 

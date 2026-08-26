@@ -335,6 +335,52 @@ export const QuestionBlockRowSnapshot = z
   .strict();
 export type QuestionBlockRowSnapshotT = z.infer<typeof QuestionBlockRowSnapshot>;
 
+// ---------- ItemCalibrationRowSnapshot (YUK-496 — item_calibration genesis backfill, ADR-0044 §7) ----------
+//
+// The projected (fold) shape of an `item_calibration` row (src/db/schema.ts:2214-2275). YUK-496 方案 A
+// (owner 2026-08-26): the table is B-CLASS BACKFILLED, not event-sourced — its rows are born from
+// `runItemPriorBackfill` → `applyItemPrior` direct INSERTs (and mutated by kt-calibration /
+// recalibration UPDATEs) with NO canonical event, so the ONLY event the fold ever sees is the
+// `experimental:genesis` anchor (payload.row = the row's CURRENT values). The fold is therefore
+// ANCHOR-ONLY: fold(latest genesis) == the row snapshot, byte for byte (b / b_anchor / b_calib /
+// confidence / kt_json / … all carried verbatim — every column is fold truth, mirroring the
+// goal / artifact full-row precedent).
+//
+// KNOWN PLAN A BOUNDARY (deliberate, ticket-scoped): a post-anchor imperative write (the nightly
+// KT kt_json sink, a recalibration b_calib firm-up) is invisible to the log, so audit:projection
+// reports that row as DRIFT until it is re-anchored or the future canonical-event route (方案 B /
+// the YUK-405 attempt+fixed_anchor fold) lands. "不动 B1 在线写逻辑" is the owner's explicit
+// trade-off; the drift is the honest event=truth signal, not a false positive to suppress.
+//
+// `.strict()` (mirror the W2/W3 snapshots): no sibling entity carries `question_id` + `track` +
+// `b_anchor`/`b_calib`, and .strict() rejects a wrong/extra-field payload at the genesis parse
+// barrier so a malformed snapshot can never silently seed the projection. Dates are
+// z.coerce.date() (jsonb ISO-string roundtrip — same precedent as the other snapshots). The two
+// soft-placeholder jsonb columns (cdm_json / kt_json) are opaque records — the seed never
+// re-validates a blob the row already persisted.
+export const ItemCalibrationRowSnapshot = z
+  .object({
+    id: z.string().min(1),
+    question_id: z.string().min(1), // notNull; UNIQUE (item_calibration_question_unique) — the entity-distinguishing column
+    b: z.number().nullable(), // hard-track IRT difficulty (logit scale), nullable column
+    confidence: z.number().min(0).max(1).nullable(), // calibration confidence 0-1, nullable column
+    track: z.string(), // 'hard' | 'soft' — free-text column (notNull default 'hard'), NOT a pgEnum
+    source: z.string(), // provenance ('llm_prior' | 'fixed_anchor' | …), notNull set-once
+    b_anchor: z.number().nullable(), // cold-start anchor b (YUK-361 Phase 6), nullable column
+    b_calib: z.number().nullable(), // de-biased b (recalibration firm-up ONLY), nullable column
+    calibration_n: z.number().int().min(0), // labels folded into b_calib (notNull default 0)
+    calibration_weight: z.number().nullable(), // AIPW effective-sample proxy, nullable column
+    last_calibrated_at: z.coerce.date().nullable(), // nullable timestamp
+    irt_a: z.number().nullable(), // soft placeholder (structurally unidentifiable, B1 §6.3)
+    irt_c: z.number().nullable(), // soft placeholder
+    cdm_json: z.record(z.string(), z.unknown()).nullable(), // soft placeholder jsonb — opaque
+    kt_json: z.record(z.string(), z.unknown()).nullable(), // BKT forward sink jsonb — opaque
+    created_at: z.coerce.date(),
+    updated_at: z.coerce.date(),
+  })
+  .strict();
+export type ItemCalibrationRowSnapshotT = z.infer<typeof ItemCalibrationRowSnapshot>;
+
 // ---------- GenesisExperimental ----------
 //
 // Field-level parity with the existing reserved experimental schemas
@@ -379,6 +425,7 @@ const SNAPSHOT_BY_SUBJECT_KIND = {
   learning_item: LearningItemRowSnapshot,
   artifact: ArtifactRowSnapshot,
   question_block: QuestionBlockRowSnapshot,
+  item_calibration: ItemCalibrationRowSnapshot,
 } as const;
 
 // Columns that MUST be present on a row to discriminate it as the named entity, even after a
@@ -401,6 +448,10 @@ const DISCRIMINATING_COLUMNS: Record<string, readonly string[]> = {
   // entity carries either column), so requiring them closes any residual shape-overlap window
   // (design §5.2). Both are notNull on the table, so the key is always present on a faithful row.
   question_block: ['ingestion_session_id', 'page_spans'],
+  // item_calibration is uniquely identified by `question_id` + `track` (no other fold entity carries
+  // either column; question_id is the table's UNIQUE key), so requiring them closes any residual
+  // shape-overlap window (YUK-496). Both are notNull, so the keys are always present on a faithful row.
+  item_calibration: ['question_id', 'track'],
 };
 
 export const GenesisExperimental = z
@@ -416,6 +467,7 @@ export const GenesisExperimental = z
       'learning_item',
       'artifact',
       'question_block',
+      'item_calibration',
     ]),
     subject_id: z.string().min(1), // = the projected row id
     outcome: z.literal('success').nullable().optional(),
@@ -432,6 +484,7 @@ export const GenesisExperimental = z
         LearningItemRowSnapshot,
         ArtifactRowSnapshot,
         QuestionBlockRowSnapshot,
+        ItemCalibrationRowSnapshot,
       ]),
     }),
     // baseOptionalFields parity (mirror the other reserved schemas):
