@@ -7,6 +7,12 @@
 // PURE — no IO, no DB (lives beside auc/ece/replay in the calibration barrel so the unit
 // partition holds; the DB-touching batch writer is src/server/calibration/axis-writer.ts).
 //
+// ADR-0046: this closed-form numeric kernel is TS by explicit ADR-0048 mandate (「纯闭式
+// 模块」, 形态 §1) and is REGISTERED under the ADR-0046 exemption inventory (owner
+// 2026-08-27, YUK-679 LIGHT) — see 「豁免登记」 R2 in
+// docs/adr/0046-rust-numerical-engine-single-source-of-truth.md. Exempt while A11 stays a
+// descriptor-only axis (zero engine contact); port triggers are recorded there.
+//
 // ── n=1 admissibility (YUK-445 / litmus) ────────────────────────────────────────────────
 // (v, a, Ter) are recovered SOLELY from ONE learner's own sufficient statistics:
 //   Pc       = that learner's proportion correct,
