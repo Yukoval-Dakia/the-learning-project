@@ -12,12 +12,20 @@
 // attempt-cost module. localCostUsd() remains the arithmetic primitive for
 // known pricebook entries only.
 //
+// YUK-924 site 5 — WHICH models carry a local pricebook is no longer a
+// module-local model-id set: membership derives from the ModelProfile registry
+// (`execution.localPricebook` on the xiaomi provider binding in providers.ts —
+// today exactly the mimo-v2.5 pair). The RATES stay here and remain the
+// documented placeholder card below.
+//
 // ⚠️ UNIT PRICES ARE PLACEHOLDERS PENDING OWNER CONFIRMATION (phase-deferred per
 // CLAUDE.md "占位代码必须留注释"). mimo is a self-hosted xiaomi endpoint with no
 // public SDK/pricing page; these rates must be replaced with the real contracted
 // per-token price + an 实测 date comment before the cost numbers are trusted for
 // budgeting. The arithmetic SHAPE (per-token-type breakdown) is correct and tested;
 // only the magnitude is provisional. Revisit: YUK-359 follow-up / owner pricing input.
+
+import { resolveModelProfile } from './model-profiles';
 
 /** Per-million-token USD unit prices, split by token type. */
 interface ModelPricing {
@@ -45,15 +53,15 @@ const MIMO_BASE: ModelPricing = {
 export const ATTEMPT_PRICEBOOK_VERSION = '2026-08-02-placeholder-v1';
 export const ANTHROPIC_SUB_CONTRACT_REF = 'contract:claude-max-subscription/2026-08-02';
 
-// Model ids covered by this token pricebook. Subscription allocation is a
-// separate contract in attempt-cost.ts and deliberately does not live here.
-const PRICING_BY_MODEL: Record<string, ModelPricing> = {
-  'mimo-v2.5': MIMO_BASE,
-  'mimo-v2.5-pro': MIMO_BASE,
-};
-
+/**
+ * Does this model carry the local USD token pricebook? Membership is the
+ * xiaomi provider binding's `execution.localPricebook` flag (ModelProfile
+ * registry, YUK-924 site 5) — the pricebook exists precisely for the xiaomi
+ * lane whose endpoint reports no cost; attempt-cost gates on provider ===
+ * 'xiaomi' around it, so the xiaomi scoping loses nothing.
+ */
 export function hasLocalPricing(model: string): boolean {
-  return Object.hasOwn(PRICING_BY_MODEL, model);
+  return resolveModelProfile('xiaomi', model).execution.localPricebook === true;
 }
 
 export interface TokenCounts {
@@ -68,11 +76,13 @@ export interface TokenCounts {
 /**
  * Compute USD cost for a model run from token counts. Unknown model → null.
  * Cache fields default to 0 (mimo may not report them; arithmetic degrades to
- * input+output two-bucket pricing, semantics intact).
+ * input+output two-bucket pricing, semantics intact). Every locally priced
+ * model shares the single placeholder mimo rate card above until the owner
+ * confirms real per-model rates.
  */
 export function localCostUsd(model: string, tokens: TokenCounts): number | null {
-  const p = PRICING_BY_MODEL[model];
-  if (!p) return null;
+  if (!hasLocalPricing(model)) return null;
+  const p = MIMO_BASE;
   const cacheRead = tokens.cacheReadTokens ?? 0;
   const cacheCreation = tokens.cacheCreationTokens ?? 0;
   return (

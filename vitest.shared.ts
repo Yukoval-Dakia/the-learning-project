@@ -136,6 +136,10 @@ export const fastTestInclude = [
   'src/server/ai/json-extract.test.ts',
   // YUK-359 — pure arithmetic cost fallback, no DB/SDK imports.
   'src/server/ai/pricing.test.ts',
+  // YUK-924 — ModelProfile registry (config-over-catalog + capability gate).
+  // Pure no-DB: imports ./model-profiles (→ committed catalog snapshot +
+  // ./providers → @/ai/registry); no @/db / postgres / SDK.
+  'src/server/ai/model-profiles.test.ts',
   'src/server/ai/attempt-cost.test.ts',
   'src/server/ai/provider-attempt-lifecycle.test.ts',
   // YUK-365 — provider resolution (key vs oauth authMode, AI_PROVIDER_OVERRIDE
@@ -144,6 +148,11 @@ export const fastTestInclude = [
   // MUST be listed or the db config's src/**/*.test.ts glob sweeps it into the
   // testcontainer partition (pricing.test.ts lesson).
   'src/server/ai/providers.test.ts',
+  // YUK-482 / YUK-924 — vision-judge lane override reader. Pure no-DB: imports
+  // only ./vision-judge-config (→ ./model-profiles → ./providers →
+  // @/ai/registry + the committed catalog snapshot); no @/db / postgres / SDK.
+  // Previously swept into the db partition by the src/** glob for no DB reason.
+  'src/server/ai/vision-judge-config.test.ts',
   // B1-W1 (ADR-0035) — ItemPriorTask output parse barrier. Pure no-DB: imports
   // only ./item-prior (→ @/core/schema/item_prior, Zod) — no @/db/client /
   // postgres / drizzle / PgBoss. src/server/ai/** has no unit glob, so this MUST

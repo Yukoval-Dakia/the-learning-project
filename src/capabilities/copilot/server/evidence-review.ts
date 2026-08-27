@@ -14,6 +14,7 @@ import {
   isProviderSessionWallClockBudgetError,
   isTransientAgentFailure,
 } from '@/server/ai/agent-run-error';
+import { resolveModelProfileByModel } from '@/server/ai/model-profiles';
 import { type TaskTextResult, taskPromptFingerprint } from '@/server/ai/provenance';
 import { resolveTaskProvider } from '@/server/ai/providers';
 import { type RunTaskCtx, runTask } from '@/server/ai/runner';
@@ -87,7 +88,13 @@ export interface CopilotDurableEvidenceAttemptTimeouts {
   readonly comparisonMs: number;
 }
 
-/** The only model with a non-default durable tier today (zhipu GLM coding-plan lane). */
+/**
+ * The only model with a non-default durable tier today (zhipu GLM coding-plan
+ * lane). Kept as the documented label for the YUK-839 burn-in evidence; the
+ * tier itself is now selected through the ModelProfile registry (YUK-924):
+ * the zhipu provider binding declares `execution.timeoutClass:
+ * 'durable-heavy'` for exactly this model id.
+ */
 export const COPILOT_DURABLE_EVIDENCE_FLASH_MODEL_ID = 'glm-5.3-flash';
 
 /**
@@ -99,7 +106,7 @@ export const COPILOT_DURABLE_EVIDENCE_FLASH_MODEL_ID = 'glm-5.3-flash';
  * comparators 168.9s / 339.3s, full reference + double-comparator flow 21.3min.
  * Flash tier = observed leg max with ~1.5x headroom: reference 1_200_000ms
  * (20min ≈ 1.55 × 771.9s), comparison 600_000ms (10min ≈ 1.77 × 339.3s).
- * mimo/default keeps the constants above EXACTLY (they are sized from mimo
+ * mimo/default keeps the constants below EXACTLY (they are sized from mimo
  * A01 traces — see their own doc comments).
  *
  * Scope: leg budgets only. The outer recovery envelope
@@ -118,13 +125,18 @@ const COPILOT_DURABLE_EVIDENCE_DEFAULT_TIMEOUTS: CopilotDurableEvidenceAttemptTi
     comparisonMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
   });
 
-const COPILOT_DURABLE_EVIDENCE_TIMEOUT_TIERS: Readonly<
-  Record<string, CopilotDurableEvidenceAttemptTimeouts>
-> = Object.freeze({
-  [COPILOT_DURABLE_EVIDENCE_FLASH_MODEL_ID]: Object.freeze({
+const COPILOT_DURABLE_EVIDENCE_FLASH_TIMEOUTS: CopilotDurableEvidenceAttemptTimeouts =
+  Object.freeze({
     referenceMs: 1_200_000,
     comparisonMs: 600_000,
-  }),
+  });
+
+/** ModelProfile timeout class → concrete durable leg budgets (YUK-924 site 1). */
+const COPILOT_DURABLE_EVIDENCE_TIMEOUTS_BY_CLASS: Readonly<
+  Record<'standard' | 'durable-heavy', CopilotDurableEvidenceAttemptTimeouts>
+> = Object.freeze({
+  standard: COPILOT_DURABLE_EVIDENCE_DEFAULT_TIMEOUTS,
+  'durable-heavy': COPILOT_DURABLE_EVIDENCE_FLASH_TIMEOUTS,
 });
 
 /** Unknown/undefined models (every mimo lane included) keep the default tier. */
@@ -132,7 +144,9 @@ export function durableEvidenceTimeoutsFor(
   model: string | undefined,
 ): CopilotDurableEvidenceAttemptTimeouts {
   if (model === undefined) return COPILOT_DURABLE_EVIDENCE_DEFAULT_TIMEOUTS;
-  return COPILOT_DURABLE_EVIDENCE_TIMEOUT_TIERS[model] ?? COPILOT_DURABLE_EVIDENCE_DEFAULT_TIMEOUTS;
+  return COPILOT_DURABLE_EVIDENCE_TIMEOUTS_BY_CLASS[
+    resolveModelProfileByModel(model).execution.timeoutClass
+  ];
 }
 
 /**

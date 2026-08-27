@@ -27,6 +27,7 @@
 // registry.ts only.
 
 import { type Provider, type TaskKind, tasks } from '@/ai/registry';
+import type { ProviderModelBinding } from './model-profiles';
 
 // YUK-608 — re-export the provider union so override consumers (solve-lane, verify-framework)
 // type `override.provider` as `Provider` (matching the runner's RunTaskCallCtx) without each
@@ -57,11 +58,33 @@ interface OauthProviderConfig {
 
 type ProviderConfig = KeyProviderConfig | OauthProviderConfig;
 
-const PROVIDERS: Record<Provider, ProviderConfig> = {
+/**
+ * YUK-924 Layer-2 provider binding surface (the "config" in config-over-catalog).
+ * `modelDefaults` applies to EVERY model id resolved on the provider — including
+ * catalog-miss and future ids — so lane-wide facts (xiaomi's missing
+ * structured-output protocol, anthropic's metered USD) hold byte-identically to
+ * the provider-string checks they replace. `models` holds per-model entries:
+ * a full definition for catalog-miss models or field overrides of a catalog
+ * entry. Explicit field wins; unspecified falls through to the catalog snapshot
+ * (src/server/ai/model-profiles.ts) and then conservative tri-state defaults.
+ */
+interface ProviderModelBindings {
+  modelDefaults?: ProviderModelBinding;
+  models?: Record<string, ProviderModelBinding>;
+}
+
+type BoundProviderConfig = ProviderConfig & ProviderModelBindings;
+
+const PROVIDERS: Record<Provider, BoundProviderConfig> = {
   anthropic: {
     authMode: 'key',
     apiKeyEnv: 'ANTHROPIC_API_KEY',
     description: 'Anthropic direct (pay-as-you-go API)',
+    // YUK-924 site 3 — the ONLY metered pay-as-you-go lane: SDK result USD
+    // totals are contractual and maxBudgetUsd is a real per-run ceiling.
+    // (Was the hard-coded `resolved.provider === 'anthropic'` check in
+    // runner.ts buildQueryOptions.)
+    modelDefaults: { execution: { meteredUsd: true, budgetClass: 'heavy' } },
   },
   xiaomi: {
     authMode: 'key',
@@ -70,6 +93,29 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
     baseUrl: 'https://api.xiaomimimo.com/anthropic',
     apiKeyEnv: 'XIAOMI_API_KEY',
     description: 'Xiaomi Mimo Anthropic-protocol-compat endpoint (mimo-v2.5* models)',
+    // YUK-924 site 2 — Xiaomi's Anthropic-compatible endpoint does not implement
+    // the Agent SDK's native structured-output protocol (passing outputFormat
+    // makes the CLI loop until maxTurns), so EVERY model on this lane has
+    // structuredOutput disabled. (Was the hard-coded
+    // `resolved.provider === 'xiaomi'` check in runner.ts buildQueryOptions.)
+    modelDefaults: { capabilities: { structuredOutput: false } },
+    models: {
+      // Catalog (models.dev) lists mimo-v2.5-pro as text-only, but production
+      // operational knowledge overrides: the multimodal judges and multimodal
+      // ingestion tasks (MultimodalDirectJudgeTask / StepsJudgeTask /
+      // VisionExtractTaskHeavy — "mimo-v2.5 multimodal manual rescue") run image
+      // payloads through this exact lane today. Explicit binding wins over the
+      // stale catalog entry (config-over-catalog).
+      'mimo-v2.5-pro': {
+        capabilities: { vision: true },
+        execution: { localPricebook: true },
+      },
+      // YUK-924 site 5 — local USD token pricebook membership (rates remain the
+      // placeholder card in pricing.ts pending owner confirmation).
+      'mimo-v2.5': {
+        execution: { localPricebook: true },
+      },
+    },
   },
   // Zhipu BigModel GLM coding plan. Anthropic-protocol-compat endpoint (the same
   // one Claude Code points at for GLM). No `/v1` suffix — the SDK appends
@@ -81,6 +127,20 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
     baseUrl: 'https://open.bigmodel.cn/api/anthropic',
     apiKeyEnv: 'ZHIPU_API_KEY',
     description: 'Zhipu BigModel GLM coding plan Anthropic-compat endpoint (glm-5.2 etc.)',
+    models: {
+      // YUK-924 site 1 — flash durable-evidence tier (YUK-839 ruling ①b): the
+      // burn-in R2 measured leg maxima that justify the relaxed durable budgets
+      // (evidence-review.ts maps this class to concrete ms values). glm-5.2 has
+      // no such tier and keeps 'standard'.
+      'glm-5.3-flash': {
+        execution: { timeoutClass: 'durable-heavy', budgetClass: 'cheap' },
+        reasoning: { defaultEffort: 'high' },
+      },
+      'glm-5.2': {
+        execution: { budgetClass: 'heavy' },
+        reasoning: { defaultEffort: 'high' },
+      },
+    },
   },
   openrouter: {
     authMode: 'key',
@@ -106,8 +166,30 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
     authMode: 'oauth',
     oauthTokenEnv: 'CLAUDE_CODE_OAUTH_TOKEN',
     description: 'Anthropic first-party via Claude Max subscription OAuth (Opus 4.8)',
+    // YUK-924 site 3 — the subscription lane serves the same claude models the
+    // catalog describes, but flat quota means maxBudgetUsd would be a
+    // wired-but-inert lie. Explicitly classified (not left to defaults) so the
+    // binding stays the authoritative lane classification.
+    modelDefaults: { execution: { meteredUsd: false, budgetClass: 'heavy' } },
   },
 };
+
+/**
+ * YUK-924 — the model-binding half of the provider registry, derived from the
+ * PROVIDERS entries above (single source of truth: edit the entries, not this
+ * projection). Consumed by src/server/ai/model-profiles.ts as the top layer of
+ * the config-over-catalog merge.
+ */
+export const PROVIDER_MODEL_BINDINGS: Readonly<Record<Provider, ProviderModelBindings>> =
+  Object.fromEntries(
+    Object.entries(PROVIDERS).map(([name, config]) => [
+      name,
+      {
+        ...(config.modelDefaults !== undefined ? { modelDefaults: config.modelDefaults } : {}),
+        ...(config.models !== undefined ? { models: config.models } : {}),
+      },
+    ]),
+  ) as Readonly<Record<Provider, ProviderModelBindings>>;
 
 /**
  * The model id used when the subscription-OAuth lane is selected and no explicit

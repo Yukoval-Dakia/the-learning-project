@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { localCostUsd } from './pricing';
+import { hasLocalPricing, localCostUsd } from './pricing';
 
 function knownCost(model: string, inputTokens: number, outputTokens: number): number {
   const cost = localCostUsd(model, { inputTokens, outputTokens });
@@ -12,6 +12,21 @@ describe('localCostUsd', () => {
     expect(
       localCostUsd('definitely-not-a-real-model', { inputTokens: 1000, outputTokens: 1000 }),
     ).toBeNull();
+  });
+
+  // YUK-924 site 5 — pricebook membership is now the xiaomi provider binding's
+  // execution.localPricebook flag (exactly the mimo-v2.5 pair), not a local
+  // model-id set. Characterization: the membership boundary is byte-identical.
+  it('derives pricebook membership from the model-profile registry (mimo pair only)', () => {
+    expect(hasLocalPricing('mimo-v2.5')).toBe(true);
+    expect(hasLocalPricing('mimo-v2.5-pro')).toBe(true);
+    // Other xiaomi catalog models, other providers' models, unknown ids: no
+    // local pricebook (attempt-cost classifies them as basis 'unknown').
+    expect(hasLocalPricing('mimo-v2-flash')).toBe(false);
+    expect(hasLocalPricing('glm-5.2')).toBe(false);
+    expect(hasLocalPricing('glm-5.3-flash')).toBe(false);
+    expect(hasLocalPricing('claude-opus-4-8')).toBe(false);
+    expect(hasLocalPricing('definitely-not-a-real-model')).toBe(false);
   });
 
   it('scales known mimo input and output buckets independently', () => {

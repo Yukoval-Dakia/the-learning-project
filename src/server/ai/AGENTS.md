@@ -7,7 +7,8 @@
 |------|------|
 | `runner.ts` | 统一把所有 task 送进 Claude Agent SDK `query()`；支持 `mcpServers` / `allowedTools` / `maxTurns`（`runTask`/`runAgentTask`/`streamTask`）|
 | `sdk-terminal.ts` | 把 SDK assistant/result 消息适配为 lifecycle usage、thinking 元数据与终态证据；不持久化原始 CoT |
-| `providers.ts` | Anthropic provider（xiaomi/mimo 兼容端点）|
+| `providers.ts` | Anthropic provider（xiaomi/mimo 兼容端点）+ YUK-924 provider model binding（`models` / `modelDefaults`，config-over-catalog 的 config 层）|
+| `model-profiles.ts` + `model-catalog.snapshot.json` | YUK-924 ModelProfile 注册表：models.dev 裁剪快照（`pnpm gen:model-catalog` 重生成，运行时零网络）+ binding→catalog→保守默认三层合并 + needsToolCall/isMultimodal fail-closed 能力门 |
 | `log.ts` | run / event 留痕 |
 | `provenance.ts` | source / `last_modified_by` 标记 |
 | `judges/` | 判分 capability 实现 |
