@@ -268,3 +268,89 @@ attempt 2 $1.020343 + comparators $0.342664 / $1.048259。
 reference + 双 comparator 完整跑通；checkpoint resume 获得真实流量证明
 （digest 前缀保持、accepted 零重提、续跑 usage、attempt 审计齐全）。产品
 durable budget 下的结论维持 Round 1：不可达。
+
+## Round 3 — effort=high via task-spec (owner-authorized, single-variable)
+
+Owner 2026-08-27 授权 **一次** clean validator run（YUK-925），用于测量
+`reasoningEffort: 'high'` 经生产 Agent SDK seam 传入 `Options.effort` 后，对
+zhipu / glm-5.3-flash 的单变量影响。本轮没有 recovery、abort 或追加 paid probe，
+也没有设置 `MAX_THINKING_TOKENS`。
+
+### Setup deltas（vs Round 2 clean）
+
+- code revision：`354982ae7817a4826b992c8f81942bcffb59fdcf`（branch
+  `codex/yuk-925-r3-burnin`，base `origin/main`）。两项 validator task spec 均声明
+  `reasoningEffort: 'high'`；runner 的 `model_profile_resolved` 三次均记录
+  `reasoning_effort: high`，harness 不写 effort，也不写 thinking env。
+- harness 的 `runTaskFn` 仍只追加
+  `override={provider:'zhipu', model:'glm-5.3-flash'}`；request context、故意不安全的
+  candidate reply、checkpoint append observer 与 Round 2 相同。
+- 预算不再由 burn-in env 覆盖：直接调用生产
+  `durableEvidenceTimeoutsFor('glm-5.3-flash')`，得到 reference 1,200,000ms / comparison
+  600,000ms。三腿均在预算内成功，故该 backstop 没有截断本次测量。
+- 隔离 PG：`wt-925-pg`，`pgvector/pgvector:0.8.2-pg16-bookworm`，
+  `127.0.0.1:5435`；迁移完整。`ZHIPU_API_KEY` 仅从主 repo `.env` 只读加载且未输出。
+- fixture 仍是未改动的 `REALISTIC_EVIDENCE_TRACE + slice(0, 8)`：21 条 successful
+  reads，serialized 58,465 chars。当前 harness 的“所有 primitive/null 均计叶”算法得到
+  1,814 leaves；brief 中的 1,761 未能用该算法复现，但 fixture 源文件相对 Round 2
+  revision 无 diff，因此没有换 fixture 或修改输入来追数。
+
+本轮 paid 流程已经完整结束；随后临时 `run.ts` 的 DB 取证阶段因从 `/tmp` 解析不到
+`drizzle-orm` 而退出。没有重跑 provider；以下结果由已完成 run 的原始 log、
+`ai_task_runs`、`cost_ledger` 与 checkpoint 行无付费地回收。`provider_attempt` 本轮无行，
+token/cost 真相来自上述成功 run 与 ledger（均为 `cost_basis=reported`）。
+
+### Per-leg measurement vs Round 2
+
+scope：`yuk925_burnin_r3_1787809522289`；总 wall 1,445.8s（24.1min），reported
+总成本 $3.313845。它高于授权时的 ~$1–2 估算区间（主要来自 reference 与 blind
+comparator 输出膨胀）；发现时 paid run 已完整结束，随后没有追加任何付费调用。
+
+| leg | R2 wall | R3 wall（Δ） | R2 in / out | R3 in / out（Δ） | R2 thinking | R3 thinking（Δ） | R2 cost | R3 cost（Δ） | accepted append turns |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| reference | 771.9s | 823.2s (+6.6%) | 354,679 / 34,426 | 370,198 / 48,173 (+4.4% / +39.9%) | 73,518 | 103,136 (+40.3%) | $1.315005 | $1.729363 (+31.5%) | 4 |
+| comparison:original:pass_1 | 168.9s | 128.0s (-24.2%) | 77,360 / 6,765 | 79,519 / 6,662 (+2.8% / -1.5%) | 25,374 | 24,880 (-1.9%) | $0.397237 | $0.400273 (+0.8%) | 1 |
+| comparison:blind_reference:pass_1 | 339.3s | 494.6s (+45.8%) | 306,096 / 15,837 | 589,420 / 23,741 (+92.6% / +49.9%) | 47,131 | 73,935 (+56.9%) | $0.796869 | $1.184209 (+48.6%) | 6 |
+
+`accepted append turns` 是 checkpoint-store observer 实际接受的 append 调用数；它不把
+SDK 最后的短文本 completion 计作 append，也不能回推出被 tool schema 拒绝的 assistant
+turn。reference 的 4 条依次为 2×evidence_points、trace_calls_not_material、safe_reply；
+original 为 1×reply_checks；blind comparator 为 6×reply_checks。全部 offered=1、duplicate=0，
+store record 数单调递增。
+
+### Decision / sealed health
+
+- 终局仍为 `failed_closed / fallback_comparison_rejected`：unsafe original 的 5 个 reply
+  units 全部 `unsupported`，6 个 request units 全部 `missing`；blind safe reply 的 54 个
+  reply units 为 47 `supported` + 7 `explicit_gap`，request coverage 为 1 `answered` +
+  5 `explicit_gap`，模型仍判 fail。
+- 三个 checkpoint 全部 `sealed`，revision / records = 4 / 4、1 / 1、6 / 6；每腿
+  `attempts_json` 恰一条 success，sealed task-run ID 非空，且三腿 sealed digest 均与
+  对应 run result digest 精确相等。无 retry、无 duplicate append、无 phantom record，
+  attempt audit 完整。
+
+### Verdict vs YUK-923 expected benefit
+
+**预期收益不成立。** YUK-923 的工作假设是 effort=high 若把 reference thinking 约减半，
+可把 reference 拉回约 7min；实测 reference thinking 不降反升 40.3%（73,518 →
+103,136），wall 也增加 6.6%（12.9 → 13.7min）。original comparator 基本持平且更快，
+但 blind comparator 明显变差；单次样本不能把随机质量波动与 endpoint 对 effort 的真实
+解释完全分开，不过它足以否定“effort=high 在这次 validator 输入上带来 ≥40–50%
+thinking 降幅”的验收主张。runner 已证明 `high` 写入 SDK options；没有 wire capture 能
+进一步证明 zhipu endpoint 如何翻译该字段，因此不声称 endpoint 必然执行了对应档位。
+按 owner 的单次闸停止，不烧第二轮。
+
+### R4 outlook（YUK-926）
+
+R3 没有获得 effort 控制面的成本/延迟收益，下一可归因变量仍应是 YUK-926 的 validator
+not-material 批量提交（目标 append 轮次 12→8、总输入约 -35%）。本轮 blind comparator
+因 6 个 append turns 把累计 input 推到 589,420，进一步说明“减少多轮全上下文重发”比
+继续调 effort 更直接；R4 应保持本轮 task-spec effort、provider/model、fixture 与 profile
+budgets 全部不变，只改 batch shape，并继续只跑一份 clean sample。
+
+### Round 3 artifacts（`/tmp/yuk925-burnin`，全部 mode 0600）
+
+- harness core：`c60492f039be6071ddbe7fb11730979152a27b13dd3e4465221fd01baf9ce5a6`
+- harness entry：`67e4b5704e487ee6eaf25febc6a5c77c304510c0f6a33f0cb22ac5fda3342c90`
+- salvaged results：`1acddd810f3c1a35a282833462f38b7b557d5e40d66f47e009d3ec6e20892c31`
+- clean log：`f8d17b337a758f1bb2d64569d5b983d97694e845aa9291af7d17fbcde880379a`
