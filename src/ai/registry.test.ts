@@ -602,6 +602,23 @@ describe('CopilotTask.systemPrompt — YUK-832 evidence-claim contract', () => {
   });
 });
 
+// YUK-340 — pin the CopilotTask quiet-manuscript tone section (owner 2026-08-27
+// ruling ②a: reply tone = 安静手稿风, distilled from the sample AI replies in
+// docs/design/loom-refresh/project/data.jsx DATA.chat + screen-copilot.jsx).
+describe('CopilotTask.systemPrompt — YUK-340 quiet-manuscript reply tone', () => {
+  it('pins the tone section and its load-bearing rules', () => {
+    const p = getTaskSystemPrompt('CopilotTask');
+    expect(p).toContain('【回复语气】');
+    expect(p).toContain('安静手稿风');
+    // 精确数字 / 行动导向收尾 / 无感叹无填充 / 中文标点「」 — rules grounded in
+    // the design-source samples; none may silently regress.
+    expect(p).toContain('具体数字');
+    expect(p).toContain('可拒绝的行动提议');
+    expect(p).toContain('不用感叹号');
+    expect(p).toContain('「」');
+  });
+});
+
 describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
   it('is a bounded Xiaomi append-only blind-reference task with a server-owned sealed schema', () => {
     const def = tasks.CopilotEvidenceReviewTask;
