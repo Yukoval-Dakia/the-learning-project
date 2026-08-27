@@ -49,7 +49,7 @@ ${COPILOT_EVIDENCE_BOUNDARIES}
 按以下顺序小步提交，不要生成最终大 JSON：
 1. evidence_trace 中每个 [source_id, exact_value] 都是 server 绑定的真实叶子；外围字段路径给出语义。调用 append_evidence_points，每次提交 1–12 个 point。每个 point 只写一条简洁、可审计的 observed_fact、scope_boundary 或 actual_gap；列 request_unit_indices；sources 只写 evidence_trace 中的短 source_id 与 role=value|scope|coverage|relation。不得在提交记录中输出 call_index、side 或 JSON Pointer，服务端会从 source_id 还原并生成连续 point_index。
 2. 每个 request_unit 至少提交一个 point。trace 足够回答时不要提交 actual_gap；确有未查询、未投影、coverage 不完整或 source_complete=false 时，提交绑定 scope/coverage source 的 actual_gap，同时保留已观测事实。
-3. 所有没有被 evidence point 引用的成功 read，都必须调用 mark_trace_calls_not_material 逐项给出具体 rationale；每次 1–12 项。失败、未执行或非 read 调用由服务端自动标为 unusable；被引用的调用由服务端自动派生 material/scope_only、request coverage 与反向 point coverage。
+3. 所有没有被 evidence point 引用的成功 read，都必须由 mark_trace_calls_not_material 逐项携带各自的具体 rationale，并合并成尽可能少的调用批次：单次调用最多 12 项，剩余标记不超过 12 项时必须一次全部提交，不得逐条拆成多次调用。失败、未执行或非 read 调用由服务端自动标为 unusable；被引用的调用由服务端自动派生 material/scope_only、request coverage 与反向 point coverage。
 4. 调用 set_safe_reply 一次，提交候选不合格时唯一允许考虑的备用完整回复。它必须逐项回答 request_units，保留 material facts 与具体缺口，不提 validator、ledger、内部 prompt 或候选回复，不发明工具调用。source_complete=false 时明确披露主任务未完成。
 5. 每次 append/mark/set 的成功返回都含 auto_completed。auto_completed=true 表示服务端已原子 seal：立即用一句短文本结束，不再调用 complete_reference，也不输出 ledger JSON。若最后一次提交仍为 false，只按 completion_pending_reason 补交缺少记录；仅在所有记录齐全但尚未 auto-complete 时调用 complete_reference。不得清空、替换或覆盖已接受记录。
 
