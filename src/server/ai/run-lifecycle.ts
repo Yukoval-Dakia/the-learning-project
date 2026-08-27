@@ -1,5 +1,6 @@
 import { createId } from '@paralleldrive/cuid2';
 import { type TaskKind, tasks } from '@/ai/registry';
+import type { TaskDefinition } from '@/ai/task-spec';
 import type { Db } from '@/db/client';
 import {
   ProviderSessionWallClockBudgetError,
@@ -18,6 +19,11 @@ import {
   writeAiTaskRunStarted,
   writeToolCallLog,
 } from './log';
+import {
+  type ModelProfile,
+  assertModelProfileCapabilityFit,
+  resolveModelProfile,
+} from './model-profiles';
 import type { TokenCounts } from './pricing';
 import {
   ProviderSessionAdmissionError,
@@ -139,6 +145,11 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   readonly resolved: ResolvedProvider;
   readonly taskRunId: string;
   readonly kind: TaskKind;
+  /**
+   * YUK-924 — effective ModelProfile for the resolved (provider, model) lane,
+   * including `source` ('binding' | 'catalog' | 'defaults') for run metadata.
+   */
+  readonly modelProfile: ModelProfile;
 
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly admissionPlan: ProviderSessionAdmissionPlan;
@@ -157,6 +168,18 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     this.taskRunId = config.taskRunId;
     this.kind = config.kind;
     this.resolved = resolveTaskProvider(config.kind, config.override);
+    // YUK-924 P2 — fail-closed capability gate at task resolution: a task that
+    // declares needsToolCall / isMultimodal may only run on a lane whose
+    // ModelProfile CONFIRMS the capability ('unknown' rejects too; the remedy
+    // is an explicit provider-binding entry). Thrown from the constructor —
+    // before any admission row, attempt row, or paid call — exactly like a
+    // missing provider credential, so no retry layer ever sees it.
+    assertModelProfileCapabilityFit(
+      tasks[config.kind],
+      this.resolved.provider,
+      this.resolved.model,
+    );
+    this.modelProfile = resolveModelProfile(this.resolved.provider, this.resolved.model);
     this.admissionPlan = resolveProviderSessionAdmissionPlan(this.resolved.provider);
 
     if (config.signal) {
@@ -382,6 +405,10 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   private async startWithInputHash(inputHash: string): Promise<void> {
+    // The registry map's value type is the union of every spec's inferred
+    // literal shape; read optional declared fields through this interface view
+    // (same pattern as runner.ts buildQueryOptions).
+    const declaredDef: TaskDefinition = tasks[this.kind];
     try {
       await writeAiTaskRunStarted(this.config.db, {
         id: this.taskRunId,
@@ -392,6 +419,21 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         started_at: new Date(),
       });
       this.durableStart = true;
+      // YUK-924 P2 — run lifecycle metadata: record where the effective model
+      // profile came from and which reasoning effort the run wires (the task
+      // spec's YUK-923 declaration, else the profile's operational default).
+      // Emitted as a structured event on the same channel as the lifecycle's
+      // other run events; no schema change.
+      console.info(`[${this.config.logScope}] model_profile_resolved`, {
+        event: 'model_profile_resolved',
+        task_run_id: this.taskRunId,
+        kind: this.kind,
+        provider: this.resolved.provider,
+        model: this.resolved.model,
+        profile_source: this.modelProfile.source,
+        reasoning_effort: declaredDef.reasoningEffort ?? null,
+        profile_effort_default: this.modelProfile.reasoning.defaultEffort ?? null,
+      });
     } catch (error) {
       console.error(`[${this.config.logScope}] writeAiTaskRunStarted failed`, {
         task_run_id: this.taskRunId,

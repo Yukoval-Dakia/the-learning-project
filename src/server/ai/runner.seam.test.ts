@@ -848,3 +848,137 @@ describe('runTask / streamTaskCollecting — caller-owned task run correlation',
     );
   });
 });
+
+// YUK-924 — ModelProfile-driven per-model seams (sites 2 + 3) and the P2
+// capability gate. The xiaomi-disable and anthropic-only-USD behaviours above
+// (YUK-299 / YUK-590 describes) are the pre-existing characterization this
+// migration must keep green; the cases here pin the NEW profile-registry
+// angles: provider-wide binding coverage of unknown model ids, the zhipu lane,
+// runTask-resolution gate rejection, and the model_profile_resolved metadata.
+describe('runTask — YUK-924 model-profile seams', () => {
+  beforeEach(() => {
+    mockSdk.capturedOptions = undefined;
+    mockSdk.messages = [successResult()];
+    logMock.started.mockClear();
+    logMock.finished.mockClear();
+    logMock.cost.mockClear();
+    logMock.tool.mockClear();
+    process.env.XIAOMI_API_KEY = 'sk-test-key';
+    process.env.ZHIPU_API_KEY = 'sk-zhipu-test-key';
+    process.env.ANTHROPIC_API_KEY = 'sk-anthropic-test-key';
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('disables structured output for an UNKNOWN xiaomi model id (provider-wide binding parity)', async () => {
+    await runTask(
+      'InterventionRecommendationTask',
+      { snapshot: 'test' },
+      {
+        db: fakeDb,
+        outputFormat: SAMPLE_OUTPUT_FORMAT,
+        override: { provider: 'xiaomi', model: 'mimo-v3-not-in-catalog' },
+      },
+    );
+
+    const opts = mockSdk.capturedOptions as { outputFormat?: unknown; maxTurns?: number };
+    // Pre-YUK-924 this was `resolved.provider === 'xiaomi'` — model-id agnostic.
+    // The binding modelDefaults keeps exactly that coverage.
+    expect('outputFormat' in opts).toBe(false);
+    expect(opts.maxTurns).toBe(1);
+  });
+
+  it('threads structured output through on the zhipu lane and keeps it unmetered', async () => {
+    await runTask(
+      'InterventionRecommendationTask',
+      { snapshot: 'test' },
+      {
+        db: fakeDb,
+        outputFormat: SAMPLE_OUTPUT_FORMAT,
+        override: { provider: 'zhipu', model: 'glm-5.2' },
+      },
+    );
+
+    const opts = mockSdk.capturedOptions as { outputFormat?: unknown; maxBudgetUsd?: number };
+    expect(opts.outputFormat).toEqual(SAMPLE_OUTPUT_FORMAT);
+    // Coding-plan lane: no per-run USD ceiling.
+    expect('maxBudgetUsd' in opts).toBe(false);
+  });
+
+  it('REJECTS a needsToolCall task on an unknown-tools model before any SDK call (P2 gate)', async () => {
+    await expect(
+      runTask(
+        'CopilotTask',
+        { message: [] },
+        { db: fakeDb, override: { provider: 'xiaomi', model: 'mystery-no-tools-model' } },
+      ),
+    ).rejects.toThrow(
+      /CopilotTask requires tool calling.*mystery-no-tools-model.*has no confirmed/s,
+    );
+    // Fail-closed at resolution: no SDK startup, no durable attempt row.
+    expect(mockSdk.capturedOptions).toBeUndefined();
+    expect(logMock.started).not.toHaveBeenCalled();
+  });
+
+  it('REJECTS a multimodal task on a confirmed text-only model (glm-5.2) before any SDK call', async () => {
+    await expect(
+      runTask(
+        'MultimodalDirectJudgeTask',
+        { answer_md: 'x' },
+        {
+          db: fakeDb,
+          override: { provider: 'zhipu', model: 'glm-5.2' },
+        },
+      ),
+    ).rejects.toThrow(/requires vision input.*glm-5.2.*does not support/s);
+    expect(mockSdk.capturedOptions).toBeUndefined();
+  });
+
+  it('emits model_profile_resolved run metadata with the effective profile source', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+    await runTask(
+      'AttributionTask',
+      { question: 'q', wrong_answer: 'a' },
+      { db: fakeDb, override: { provider: 'xiaomi', model: 'mimo-v2.5-pro' } },
+    );
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      '[runTask] model_profile_resolved',
+      expect.objectContaining({
+        event: 'model_profile_resolved',
+        provider: 'xiaomi',
+        model: 'mimo-v2.5-pro',
+        // binding layer contributed (vision override + localPricebook)
+        profile_source: 'binding',
+        reasoning_effort: null,
+        profile_effort_default: null,
+      }),
+    );
+    infoSpy.mockRestore();
+  });
+
+  it('emits catalog-source metadata and the declared reasoning effort for the flash evidence lane', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+    await runTask(
+      'CopilotEvidenceReviewTask',
+      { units: [] },
+      { db: fakeDb, override: { provider: 'zhipu', model: 'glm-5.3-flash' } },
+    );
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      '[runTask] model_profile_resolved',
+      expect.objectContaining({
+        provider: 'zhipu',
+        model: 'glm-5.3-flash',
+        profile_source: 'binding',
+        reasoning_effort: 'high',
+        profile_effort_default: 'high',
+      }),
+    );
+    infoSpy.mockRestore();
+  });
+});

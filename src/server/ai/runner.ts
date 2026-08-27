@@ -56,6 +56,7 @@ import {
   isApiErrorSuccessResult,
 } from './agent-run-error';
 import { logMissingMcpServersWarning } from './log';
+import { resolveModelProfile } from './model-profiles';
 import { populateIsolatedSkills } from './populate-skills';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission';
 import type { ResolvedProvider } from './providers';
@@ -509,11 +510,20 @@ function buildQueryOptions(
   const allowedTools = ctx.allowedTools ?? def.allowedTools;
   const configuredSkills = ctx.skills ?? [];
   const configuredMaxTurns = (ctx.budgetOverride?.maxIterations ?? def.budget.maxIterations) || 1;
-  // Xiaomi's Anthropic-compatible endpoint does not implement the Agent SDK's
-  // native structured-output protocol. Passing outputFormat makes the CLI loop
-  // until maxTurns, while every migrated caller already owns a Zod-checked
-  // char-scan fallback for the text JSON response.
-  const sdkOutputFormat = resolved.provider === 'xiaomi' ? undefined : ctx.outputFormat;
+  // YUK-924 — per-(provider, model) knowledge now comes from the ModelProfile
+  // registry (config-over-catalog; src/server/ai/model-profiles.ts). The two
+  // hard-coded provider-string special cases below were converged onto profile
+  // fields with byte-identical behaviour:
+  //   - structured-output disable  ← xiaomi binding modelDefaults sets
+  //     capabilities.structuredOutput false for EVERY xiaomi model (site 2);
+  //     'unknown' (no layer confirmed it) still passes the option through,
+  //     exactly like the old non-xiaomi fall-through.
+  //   - maxBudgetUsd               ← anthropic binding modelDefaults sets
+  //     execution.meteredUsd true for EVERY anthropic-lane model (site 3);
+  //     anthropic-sub / compat endpoints stay false.
+  const modelProfile = resolveModelProfile(resolved.provider, resolved.model);
+  const sdkOutputFormat =
+    modelProfile.capabilities.structuredOutput === false ? undefined : ctx.outputFormat;
   const options: Options = {
     model: resolved.model,
     systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile),
@@ -598,10 +608,12 @@ function buildQueryOptions(
   if (declaredDef.reasoningEffort !== undefined) {
     options.effort = declaredDef.reasoningEffort;
   }
-  // YUK-590 — Anthropic direct is the only wired pay-as-you-go lane whose SDK
-  // result reports USD. Mimo has no SDK cost signal and anthropic-sub is flat
-  // subscription quota, so writing maxBudgetUsd there would be a wired-but-inert lie.
-  if (resolved.provider === 'anthropic') {
+  // YUK-590 / YUK-924 site 3 — only metered pay-as-you-go lanes (anthropic
+  // direct via the provider binding) get the per-run USD ceiling. Mimo has no
+  // SDK cost signal, zhipu is a coding plan and anthropic-sub is flat
+  // subscription quota, so writing maxBudgetUsd there would be a wired-but-inert
+  // lie.
+  if (modelProfile.execution.meteredUsd) {
     options.maxBudgetUsd = def.budget.maxCost;
   }
   return options;
