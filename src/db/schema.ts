@@ -1388,6 +1388,124 @@ export const tool_call_log = pgTable('tool_call_log', {
   mirrored_event_id: text('mirrored_event_id'),
 });
 
+export const tool_operation = pgTable(
+  'tool_operation',
+  {
+    id: text('id').primaryKey(),
+    session_id: text('session_id'),
+    task_run_id: text('task_run_id'),
+    tool_name: text('tool_name').notNull(),
+    effect: text('effect').notNull(),
+    status: text('status').notNull().default('running'),
+    process_id: text('process_id').notNull(),
+    input_hash: text('input_hash').notNull(),
+    input_json: jsonb('input_json').$type<JsonObject>().notNull(),
+    result_json: jsonb('result_json').$type<JsonObject>(),
+    error_json: jsonb('error_json').$type<{ code: string; message: string }>(),
+    side_effect_risk: text('side_effect_risk'),
+    cancelled_by: text('cancelled_by'),
+    terminal_tool_call_log_id: text('terminal_tool_call_log_id'),
+    hard_deadline_at: timestamp('hard_deadline_at', { withTimezone: true }),
+    started_at: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    owner_heartbeat_at: timestamp('owner_heartbeat_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lease_expires_at: timestamp('lease_expires_at', { withTimezone: true }).notNull(),
+    settled_at: timestamp('settled_at', { withTimezone: true }),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('tool_operation_running_lease_idx').on(t.status, t.lease_expires_at),
+    index('tool_operation_session_idx').on(t.session_id, t.started_at),
+    check('tool_operation_effect_ck', sql`${t.effect} IN ('read','propose','write')`),
+    check('tool_operation_input_hash_ck', sql`${t.input_hash} ~ '^[0-9a-f]{64}$'`),
+    check(
+      'tool_operation_identity_bounds_ck',
+      sql`char_length(${t.id}) BETWEEN 1 AND 256
+        AND char_length(${t.tool_name}) BETWEEN 1 AND 256
+        AND char_length(${t.process_id}) BETWEEN 1 AND 256
+        AND (${t.session_id} IS NULL OR char_length(${t.session_id}) BETWEEN 1 AND 256)
+        AND (${t.task_run_id} IS NULL OR char_length(${t.task_run_id}) BETWEEN 1 AND 256)
+        AND (${t.terminal_tool_call_log_id} IS NULL
+          OR char_length(${t.terminal_tool_call_log_id}) BETWEEN 1 AND 256)`,
+    ),
+    check(
+      'tool_operation_json_bounds_ck',
+      sql`jsonb_typeof(${t.input_json}) = 'object'
+        AND octet_length(${t.input_json}::text) <= 131072
+        AND (${t.result_json} IS NULL OR (
+          jsonb_typeof(${t.result_json}) = 'object'
+          AND octet_length(${t.result_json}::text) <= 131072
+        ))`,
+    ),
+    check(
+      'tool_operation_error_bounds_ck',
+      sql`${t.error_json} IS NULL OR (
+        jsonb_typeof(${t.error_json}) = 'object'
+        AND ${t.error_json} ? 'code'
+        AND ${t.error_json} ? 'message'
+        AND char_length(${t.error_json}->>'code') BETWEEN 1 AND 100
+        AND char_length(${t.error_json}->>'message') BETWEEN 1 AND 4000
+      )`,
+    ),
+    check(
+      'tool_operation_status_ck',
+      sql`${t.status} IN ('running','succeeded','failed','cancelled','lost')`,
+    ),
+    check(
+      'tool_operation_cancelled_by_ck',
+      sql`${t.cancelled_by} IS NULL OR ${t.cancelled_by} IN ('model','system','user')`,
+    ),
+    check(
+      'tool_operation_terminal_shape_ck',
+      sql`(
+        ${t.status} = 'running'
+        AND ${t.settled_at} IS NULL
+        AND ${t.result_json} IS NULL
+        AND ${t.error_json} IS NULL
+        AND ${t.side_effect_risk} IS NULL
+        AND ${t.cancelled_by} IS NULL
+      ) OR (
+        ${t.status} = 'succeeded'
+        AND ${t.settled_at} IS NOT NULL
+        AND ${t.error_json} IS NULL
+        AND ${t.side_effect_risk} IS NULL
+        AND ${t.cancelled_by} IS NULL
+      ) OR (
+        ${t.status} = 'failed'
+        AND ${t.settled_at} IS NOT NULL
+        AND ${t.result_json} IS NULL
+        AND ${t.error_json} IS NOT NULL
+        AND ${t.side_effect_risk} IS NULL
+        AND ${t.cancelled_by} IS NULL
+      ) OR (
+        ${t.status} = 'cancelled'
+        AND ${t.settled_at} IS NOT NULL
+        AND ${t.result_json} IS NULL
+        AND ${t.error_json} IS NOT NULL
+        AND ${t.side_effect_risk} IS NULL
+        AND ${t.cancelled_by} IS NOT NULL
+      ) OR (
+        ${t.status} = 'lost'
+        AND ${t.settled_at} IS NOT NULL
+        AND ${t.result_json} IS NULL
+        AND ${t.error_json} IS NOT NULL
+        AND ${t.side_effect_risk} IN ('none','possible')
+        AND ${t.cancelled_by} IS NULL
+      )`,
+    ),
+    check(
+      'tool_operation_timeline_ck',
+      sql`${t.settled_at} IS NULL OR ${t.settled_at} >= ${t.started_at}`,
+    ),
+    check(
+      'tool_operation_lease_timeline_ck',
+      sql`${t.owner_heartbeat_at} >= ${t.started_at}
+        AND ${t.lease_expires_at} > ${t.owner_heartbeat_at}`,
+    ),
+  ],
+);
+
 export const cost_ledger = pgTable(
   'cost_ledger',
   {

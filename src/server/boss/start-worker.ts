@@ -8,6 +8,7 @@ import type { PgBoss } from 'pg-boss';
 
 import { capabilities } from '@/capabilities';
 import type { Db } from '@/db/client';
+import { recoverToolOperationsOnBoot } from '@/kernel/tools/tool-operations';
 import { createBoss, isQueueCreateRace, markBossStarted } from '@/server/boss/client';
 import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
@@ -19,6 +20,7 @@ import { registerOrchestrator } from '@/server/orchestration/register';
 import { hydrateSubjectRegistryFromDb, startSubjectRefresh } from '@/server/subjects/hydrate';
 
 export async function startBossWorker(db: Db): Promise<PgBoss> {
+  await recoverToolOperationsOnBoot(db);
   const env = getServerEnv();
   // YUK-599（v2 §4）— worker 首个 job 落地前水合 SubjectRegistry（never-throws：
   // hydrate 内部 WARN + 代码种子地板，绝不挡 worker boot）。

@@ -831,6 +831,84 @@ export const ToolUseQuery = z
   });
 export type ToolUseQueryT = z.infer<typeof ToolUseQuery>;
 
+const TOOL_OPERATION_EVENT_NAME_MAX_CHARS = 256;
+const TOOL_OPERATION_EVENT_ERROR_CODE_MAX_CHARS = 100;
+const TOOL_OPERATION_EVENT_ERROR_MESSAGE_MAX_CHARS = 4_000;
+
+export const ToolOperationYielded = z.object({
+  actor_kind: z.literal('system'),
+  actor_ref: z.literal('tool_operations'),
+  action: z.literal('tool_operation_yielded'),
+  subject_kind: z.literal('tool_operation'),
+  subject_id: z.string(),
+  outcome: z.null(),
+  payload: z.object({
+    tool_name: z.string().min(1).max(TOOL_OPERATION_EVENT_NAME_MAX_CHARS),
+    effect: z.enum(['read', 'propose', 'write']),
+    process_id: z.string().min(1).max(TOOL_OPERATION_EVENT_NAME_MAX_CHARS),
+  }),
+  ...baseOptionalFields,
+});
+export type ToolOperationYieldedT = z.infer<typeof ToolOperationYielded>;
+
+export const ToolOperationSettled = z
+  .object({
+    actor_kind: z.literal('system'),
+    actor_ref: z.literal('tool_operations'),
+    action: z.literal('tool_operation_settled'),
+    subject_kind: z.literal('tool_operation'),
+    subject_id: z.string(),
+    outcome: z.enum(['success', 'failure']),
+    payload: z.object({
+      state: z.enum(['succeeded', 'failed', 'cancelled', 'lost']),
+      side_effect_risk: z.enum(['none', 'possible']).optional(),
+      error: z
+        .object({
+          code: z.string().min(1).max(TOOL_OPERATION_EVENT_ERROR_CODE_MAX_CHARS),
+          message: z.string().min(1).max(TOOL_OPERATION_EVENT_ERROR_MESSAGE_MAX_CHARS),
+        })
+        .optional(),
+      terminal_tool_call_log_id: z
+        .string()
+        .min(1)
+        .max(TOOL_OPERATION_EVENT_NAME_MAX_CHARS)
+        .optional(),
+    }),
+    ...baseOptionalFields,
+  })
+  .superRefine((data, ctx) => {
+    const isSucceeded = data.payload.state === 'succeeded';
+    if ((data.outcome === 'success') !== isSucceeded) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'outcome must match the terminal state',
+        path: ['outcome'],
+      });
+    }
+    if (isSucceeded && (data.payload.error || data.payload.side_effect_risk)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'succeeded operations cannot carry error or side-effect risk',
+        path: ['payload'],
+      });
+    }
+    if (!isSucceeded && !data.payload.error) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'non-success terminal states require an error',
+        path: ['payload', 'error'],
+      });
+    }
+    if ((data.payload.state === 'lost') !== Boolean(data.payload.side_effect_risk)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'side-effect risk is required only for lost operations',
+        path: ['payload', 'side_effect_risk'],
+      });
+    }
+  });
+export type ToolOperationSettledT = z.infer<typeof ToolOperationSettled>;
+
 // 11. RateKnowledgeEdge — actor=user / action='rate' / subject='knowledge_edge'
 //
 // 用户对 propose / generate 的 edge 投票。rating='change_type' 时 new_relation_type 必填、
@@ -906,6 +984,8 @@ export const KnownEvent = z
     AcceptSuggestionChip,
     ExtractSourceDocument,
     ToolUseQuery,
+    ToolOperationYielded,
+    ToolOperationSettled,
   ])
   .superRefine(enforceStableUserActorRef);
 export type KnownEventT = z.infer<typeof KnownEvent>;
