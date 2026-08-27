@@ -1,4 +1,4 @@
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, inArray, lte } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { tool_operation } from '@/db/schema';
@@ -11,6 +11,12 @@ export const TOOL_OPERATION_STATES = [
   'cancelled',
   'lost',
 ] as const;
+export const MAX_TOOL_OPERATION_JSON_BYTES = 60 * 1024;
+export const MAX_TOOL_OPERATION_ERROR_CODE_CHARS = 100;
+export const MAX_TOOL_OPERATION_ERROR_MESSAGE_CHARS = 4_000;
+export const MAX_TOOL_OPERATION_NAME_CHARS = 256;
+export const DEFAULT_TOOL_OPERATION_LEASE_MS = 30_000;
+export const DEFAULT_TOOL_OPERATION_HEARTBEAT_MS = 10_000;
 
 export type ToolOperationState = (typeof TOOL_OPERATION_STATES)[number];
 export type ToolOperationTerminalState = Exclude<ToolOperationState, 'running'>;
@@ -40,6 +46,8 @@ export interface ToolOperationRecord {
   terminalToolCallLogId: string | null;
   hardDeadlineAt: Date | null;
   startedAt: Date;
+  ownerHeartbeatAt: Date;
+  leaseExpiresAt: Date;
   settledAt: Date | null;
   updatedAt: Date;
 }
@@ -59,10 +67,19 @@ export interface ToolOperationExecutionContext {
   signal: AbortSignal;
 }
 
-export interface ToolOperationExecutionResult {
-  result: ToolOperationJson;
-  terminalToolCallLogId?: string | null;
-}
+export type ToolOperationExecutionOutcome =
+  | {
+      status: 'succeeded';
+      result: ToolOperationJson;
+      terminalToolCallLogId?: string | null;
+    }
+  | { status: 'failed'; error: ToolOperationError; terminalToolCallLogId?: string | null }
+  | { status: 'cancelled'; error: ToolOperationError; terminalToolCallLogId?: string | null }
+  | {
+      status: 'lost';
+      error: ToolOperationError;
+      terminalToolCallLogId?: string | null;
+    };
 
 export interface ToolOperationHandle {
   id: string;
@@ -73,7 +90,7 @@ export interface ToolOperationHandle {
 export interface ToolOperations {
   start(
     input: StartToolOperationInput,
-    execute: (context: ToolOperationExecutionContext) => Promise<ToolOperationExecutionResult>,
+    execute: (context: ToolOperationExecutionContext) => Promise<ToolOperationExecutionOutcome>,
   ): Promise<ToolOperationHandle>;
   get(id: string): Promise<ToolOperationRecord>;
   wait(id: string, options: { timeoutMs: number }): Promise<ToolOperationRecord>;
@@ -82,6 +99,27 @@ export interface ToolOperations {
     options: { requestedBy: ToolOperationCancellationOwner },
   ): Promise<ToolOperationRecord>;
   recoverLost(): Promise<ToolOperationRecord[]>;
+}
+
+export interface ToolOperationsOptions {
+  processId: string;
+  pollIntervalMs?: number;
+  now?: () => Date;
+  leaseDurationMs?: number;
+  heartbeatIntervalMs?: number;
+}
+
+export interface ToolOperationSettlement {
+  state: ToolOperationTerminalState;
+  result?: ToolOperationJson | null;
+  error?: ToolOperationError | null;
+  sideEffectRisk?: ToolOperationSideEffectRisk | null;
+  cancelledBy?: ToolOperationCancellationOwner | null;
+  terminalToolCallLogId?: string | null;
+}
+
+export interface ToolOperationDeadlineTimer {
+  cancel(): void;
 }
 
 export class InvalidToolOperationTransitionError extends Error {
@@ -99,6 +137,104 @@ export function transitionToolOperation(
     throw new InvalidToolOperationTransitionError(from, to);
   }
   return to;
+}
+
+function isJsonValue(value: unknown, seen: WeakSet<object>): boolean {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value !== 'object') return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  const valid = Array.isArray(value)
+    ? value.every((entry) => isJsonValue(entry, seen))
+    : Object.getPrototypeOf(value) === Object.prototype &&
+      Object.values(value).every((entry) => isJsonValue(entry, seen));
+  seen.delete(value);
+  return valid;
+}
+
+export function validateToolOperationJson(
+  value: ToolOperationJson,
+  maxBytes = MAX_TOOL_OPERATION_JSON_BYTES,
+  label = 'JSON',
+): void {
+  if (!isJsonValue(value, new WeakSet())) {
+    throw new Error(`${label} must contain only finite JSON values`);
+  }
+  const bytes = Buffer.byteLength(JSON.stringify(value), 'utf8');
+  if (bytes > maxBytes) throw new Error(`${label} exceeds ${maxBytes} UTF-8 bytes`);
+}
+
+function truncateWithMarker(value: string, maxChars: number): string {
+  const marker = '…[truncated]';
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars - marker.length)}${marker}`;
+}
+
+export function summarizeToolOperationError(error: ToolOperationError): ToolOperationError {
+  return {
+    code: truncateWithMarker(
+      error.code || 'invalid_error_code',
+      MAX_TOOL_OPERATION_ERROR_CODE_CHARS,
+    ),
+    message: truncateWithMarker(
+      error.message || 'Executor supplied an empty error summary',
+      MAX_TOOL_OPERATION_ERROR_MESSAGE_CHARS,
+    ),
+  };
+}
+
+function validateBoundedName(value: string | null | undefined, label: string): void {
+  if (value === null || value === undefined) return;
+  if (value.length === 0 || value.length > MAX_TOOL_OPERATION_NAME_CHARS) {
+    throw new Error(`${label} must be 1..${MAX_TOOL_OPERATION_NAME_CHARS} characters`);
+  }
+}
+
+export function toolOperationDeadlineSettlement(
+  effect: ToolOperationEffect,
+): ToolOperationSettlement {
+  const error = {
+    code: 'hard_deadline_exceeded',
+    message: 'Tool operation exceeded its hard deadline',
+  };
+  return effect === 'read'
+    ? { state: 'failed', error, sideEffectRisk: null }
+    : { state: 'lost', error, sideEffectRisk: 'possible' };
+}
+
+export function scheduleToolOperationHardDeadline(options: {
+  effect: ToolOperationEffect;
+  deadlineAt: Date;
+  now: () => Date;
+  onExpire: (settlement: ToolOperationSettlement) => void;
+}): ToolOperationDeadlineTimer {
+  let active = true;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const arm = (): void => {
+    const remainingMs = Math.max(0, options.deadlineAt.getTime() - options.now().getTime());
+    timer = setTimeout(
+      () => {
+        if (!active) return;
+        if (options.now().getTime() < options.deadlineAt.getTime()) {
+          arm();
+          return;
+        }
+        active = false;
+        options.onExpire(toolOperationDeadlineSettlement(options.effect));
+      },
+      Math.min(remainingMs, 2_147_483_647),
+    );
+    timer.unref?.();
+  };
+  arm();
+  return {
+    cancel() {
+      if (!active) return;
+      active = false;
+      if (timer) clearTimeout(timer);
+    },
+  };
 }
 
 type DbLike = Db | Tx;
@@ -121,16 +257,18 @@ function mapRow(row: ToolOperationRow): ToolOperationRecord {
     terminalToolCallLogId: row.terminal_tool_call_log_id,
     hardDeadlineAt: row.hard_deadline_at,
     startedAt: row.started_at,
+    ownerHeartbeatAt: row.owner_heartbeat_at,
+    leaseExpiresAt: row.lease_expires_at,
     settledAt: row.settled_at,
     updatedAt: row.updated_at,
   };
 }
 
-function normalizeError(error: unknown): ToolOperationError {
-  if (error instanceof Error) {
-    return { code: 'execution_failed', message: error.message };
-  }
-  return { code: 'execution_failed', message: String(error) };
+function normalizeThrownError(error: unknown): ToolOperationError {
+  return summarizeToolOperationError({
+    code: 'execution_failed',
+    message: error instanceof Error ? error.message : String(error),
+  });
 }
 
 function settlementOutcome(state: ToolOperationTerminalState): 'success' | 'failure' {
@@ -141,9 +279,8 @@ function settlementPayload(record: ToolOperationRecord): Record<string, unknown>
   const payload: Record<string, unknown> = { state: record.status };
   if (record.sideEffectRisk) payload.side_effect_risk = record.sideEffectRisk;
   if (record.error) payload.error = record.error;
-  if (record.terminalToolCallLogId) {
+  if (record.terminalToolCallLogId)
     payload.terminal_tool_call_log_id = record.terminalToolCallLogId;
-  }
   return payload;
 }
 
@@ -179,29 +316,16 @@ async function writeYieldedEvent(db: DbLike, record: ToolOperationRecord): Promi
     subject_kind: 'tool_operation',
     subject_id: record.id,
     outcome: null,
-    payload: {
-      tool_name: record.toolName,
-      effect: record.effect,
-      process_id: record.processId,
-    },
+    payload: { tool_name: record.toolName, effect: record.effect, process_id: record.processId },
     task_run_id: record.taskRunId,
     ingest_at: new Date(),
   });
 }
 
-interface Settlement {
-  state: ToolOperationTerminalState;
-  result?: ToolOperationJson | null;
-  error?: ToolOperationError | null;
-  sideEffectRisk?: ToolOperationSideEffectRisk | null;
-  cancelledBy?: ToolOperationCancellationOwner | null;
-  terminalToolCallLogId?: string | null;
-}
-
 async function settleOperation(
   db: Db,
   id: string,
-  settlement: Settlement,
+  settlement: ToolOperationSettlement,
   now: () => Date,
 ): Promise<ToolOperationRecord> {
   return db.transaction(async (tx) => {
@@ -213,7 +337,7 @@ async function settleOperation(
       .set({
         status: settlement.state,
         result_json: settlement.result ?? null,
-        error_json: settlement.error ?? null,
+        error_json: settlement.error ? summarizeToolOperationError(settlement.error) : null,
         side_effect_risk: settlement.sideEffectRisk ?? null,
         cancelled_by: settlement.cancelledBy ?? null,
         terminal_tool_call_log_id: settlement.terminalToolCallLogId ?? null,
@@ -232,73 +356,243 @@ async function settleOperation(
   });
 }
 
-export function createToolOperations(
-  db: Db,
-  options: { processId: string; pollIntervalMs?: number; now?: () => Date },
-): ToolOperations {
+function settlementFromOutcome(
+  outcome: ToolOperationExecutionOutcome,
+  effect: ToolOperationEffect,
+  cancelledBy: ToolOperationCancellationOwner | undefined,
+): ToolOperationSettlement {
+  try {
+    validateBoundedName(outcome.terminalToolCallLogId, 'terminalToolCallLogId');
+  } catch (error) {
+    return {
+      state: outcome.status === 'lost' ? 'lost' : 'failed',
+      error: {
+        code: 'executor_outcome_invalid',
+        message: error instanceof Error ? error.message : String(error),
+      },
+      sideEffectRisk: outcome.status === 'lost' ? (effect === 'read' ? 'none' : 'possible') : null,
+    };
+  }
+  if (outcome.status === 'succeeded') {
+    try {
+      validateToolOperationJson(outcome.result, undefined, 'result');
+      return {
+        state: 'succeeded',
+        result: outcome.result,
+        terminalToolCallLogId: outcome.terminalToolCallLogId,
+      };
+    } catch (error) {
+      return {
+        state: 'failed',
+        error: {
+          code:
+            error instanceof Error && error.message.includes('exceeds')
+              ? 'result_too_large'
+              : 'result_contract_invalid',
+          message: error instanceof Error ? error.message : String(error),
+        },
+        terminalToolCallLogId: outcome.terminalToolCallLogId,
+      };
+    }
+  }
+  if (outcome.status === 'lost') {
+    return {
+      state: 'lost',
+      error: outcome.error,
+      sideEffectRisk: effect === 'read' ? 'none' : 'possible',
+      terminalToolCallLogId: outcome.terminalToolCallLogId,
+    };
+  }
+  return {
+    state: outcome.status,
+    error: outcome.error,
+    cancelledBy: outcome.status === 'cancelled' ? (cancelledBy ?? 'system') : null,
+    terminalToolCallLogId: outcome.terminalToolCallLogId,
+  };
+}
+
+export function createToolOperations(db: Db, options: ToolOperationsOptions): ToolOperations {
   const now = options.now ?? (() => new Date());
   const pollIntervalMs = options.pollIntervalMs ?? 25;
+  const leaseDurationMs = options.leaseDurationMs ?? DEFAULT_TOOL_OPERATION_LEASE_MS;
+  const heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_TOOL_OPERATION_HEARTBEAT_MS;
+  if (!Number.isInteger(leaseDurationMs) || leaseDurationMs <= 0) {
+    throw new Error('leaseDurationMs must be a positive integer');
+  }
+  if (
+    !Number.isInteger(heartbeatIntervalMs) ||
+    heartbeatIntervalMs <= 0 ||
+    heartbeatIntervalMs >= leaseDurationMs
+  ) {
+    throw new Error('heartbeatIntervalMs must be positive and shorter than leaseDurationMs');
+  }
+  if (options.processId.length === 0 || options.processId.length > MAX_TOOL_OPERATION_NAME_CHARS) {
+    throw new Error(`processId must be 1..${MAX_TOOL_OPERATION_NAME_CHARS} characters`);
+  }
+
   const controllers = new Map<string, AbortController>();
   const cancellationOwners = new Map<string, ToolOperationCancellationOwner>();
   const localSettlements = new Map<string, Promise<void>>();
+  const localSettlementResolvers = new Map<string, () => void>();
+  const deadlineTimers = new Map<string, ToolOperationDeadlineTimer>();
+  const deadlineExpired = new Set<string>();
+  const activeIds = new Set<string>();
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
-  const settleFromExecution = async (id: string, settlement: Settlement): Promise<void> => {
+  const clearHeartbeatIfIdle = (): void => {
+    if (activeIds.size > 0 || heartbeatTimer === null) return;
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  };
+
+  const heartbeat = async (): Promise<void> => {
+    if (activeIds.size === 0) {
+      clearHeartbeatIfIdle();
+      return;
+    }
+    const heartbeatAt = now();
+    const rows = await db
+      .update(tool_operation)
+      .set({
+        owner_heartbeat_at: heartbeatAt,
+        lease_expires_at: new Date(heartbeatAt.getTime() + leaseDurationMs),
+        updated_at: heartbeatAt,
+      })
+      .where(
+        and(
+          eq(tool_operation.status, 'running'),
+          eq(tool_operation.process_id, options.processId),
+          inArray(tool_operation.id, [...activeIds]),
+        ),
+      )
+      .returning({ id: tool_operation.id });
+    const liveIds = new Set(rows.map((row) => row.id));
+    for (const id of activeIds) {
+      if (!liveIds.has(id)) activeIds.delete(id);
+    }
+    clearHeartbeatIfIdle();
+  };
+
+  const ensureHeartbeat = (): void => {
+    if (heartbeatTimer !== null || activeIds.size === 0) return;
+    heartbeatTimer = setInterval(() => {
+      void heartbeat().catch(() => undefined);
+    }, heartbeatIntervalMs);
+    heartbeatTimer.unref?.();
+  };
+
+  const clearLocalState = (id: string): void => {
+    deadlineTimers.get(id)?.cancel();
+    deadlineTimers.delete(id);
+    deadlineExpired.delete(id);
+    controllers.delete(id);
+    cancellationOwners.delete(id);
+    activeIds.delete(id);
+    localSettlementResolvers.get(id)?.();
+    localSettlementResolvers.delete(id);
+    localSettlements.delete(id);
+    clearHeartbeatIfIdle();
+  };
+
+  const settleFromExecution = async (
+    id: string,
+    settlement: ToolOperationSettlement,
+  ): Promise<void> => {
     try {
       await settleOperation(db, id, settlement, now);
     } catch (error) {
       if (!(error instanceof InvalidToolOperationTransitionError)) throw error;
     } finally {
-      controllers.delete(id);
-      cancellationOwners.delete(id);
+      clearLocalState(id);
     }
+  };
+
+  const scheduleDeadline = (
+    id: string,
+    effect: ToolOperationEffect,
+    deadlineAt: Date | null | undefined,
+    controller: AbortController,
+  ): void => {
+    if (!deadlineAt) return;
+    const timer = scheduleToolOperationHardDeadline({
+      effect,
+      deadlineAt,
+      now,
+      onExpire(settlement) {
+        deadlineExpired.add(id);
+        controller.abort(new Error('Tool operation hard deadline exceeded'));
+        void settleFromExecution(id, settlement).catch(() => undefined);
+      },
+    });
+    deadlineTimers.set(id, timer);
   };
 
   const api: ToolOperations = {
     async start(input, execute) {
+      if (input.toolName.length === 0 || input.toolName.length > MAX_TOOL_OPERATION_NAME_CHARS) {
+        throw new Error(`toolName must be 1..${MAX_TOOL_OPERATION_NAME_CHARS} characters`);
+      }
+      validateToolOperationJson(input.input, undefined, 'input');
       const id = input.id ?? `toolop_${newId()}`;
+      validateBoundedName(id, 'operation id');
+      validateBoundedName(input.sessionId, 'sessionId');
+      validateBoundedName(input.taskRunId, 'taskRunId');
+      if (input.hardDeadlineAt && !Number.isFinite(input.hardDeadlineAt.getTime())) {
+        throw new Error('hardDeadlineAt must be a valid Date');
+      }
       const startedAt = now();
       const controller = new AbortController();
-      await db.transaction(async (tx) => {
-        await tx.insert(tool_operation).values({
-          id,
-          session_id: input.sessionId ?? null,
-          task_run_id: input.taskRunId ?? null,
-          tool_name: input.toolName,
-          effect: input.effect,
-          status: 'running',
-          process_id: options.processId,
-          input_json: input.input,
-          hard_deadline_at: input.hardDeadlineAt ?? null,
-          started_at: startedAt,
-          updated_at: startedAt,
-        });
+      await db.insert(tool_operation).values({
+        id,
+        session_id: input.sessionId ?? null,
+        task_run_id: input.taskRunId ?? null,
+        tool_name: input.toolName,
+        effect: input.effect,
+        status: 'running',
+        process_id: options.processId,
+        input_json: input.input,
+        hard_deadline_at: input.hardDeadlineAt ?? null,
+        started_at: startedAt,
+        owner_heartbeat_at: startedAt,
+        lease_expires_at: new Date(startedAt.getTime() + leaseDurationMs),
+        updated_at: startedAt,
       });
       controllers.set(id, controller);
-      const settlement = Promise.resolve()
+      activeIds.add(id);
+      const localSettlement = new Promise<void>((resolve) => {
+        localSettlementResolvers.set(id, resolve);
+      });
+      localSettlements.set(id, localSettlement);
+      ensureHeartbeat();
+      scheduleDeadline(id, input.effect, input.hardDeadlineAt, controller);
+      void Promise.resolve()
         .then(() => execute({ operationId: id, signal: controller.signal }))
         .then(
-          (executionResult) =>
-            settleFromExecution(id, {
-              state: 'succeeded',
-              result: executionResult.result,
-              terminalToolCallLogId: executionResult.terminalToolCallLogId,
-            }),
+          (outcome) =>
+            settleFromExecution(
+              id,
+              settlementFromOutcome(outcome, input.effect, cancellationOwners.get(id)),
+            ),
           (error) => {
-            const cancelledBy = cancellationOwners.get(id);
-            return cancelledBy
-              ? settleFromExecution(id, {
-                  state: 'cancelled',
-                  error: {
-                    code: 'operation_cancelled',
-                    message: `Cancelled by ${cancelledBy}`,
-                  },
-                  cancelledBy,
-                })
-              : settleFromExecution(id, { state: 'failed', error: normalizeError(error) });
+            if (deadlineExpired.has(id)) {
+              return settleFromExecution(id, toolOperationDeadlineSettlement(input.effect));
+            }
+            return input.effect === 'read'
+              ? settleFromExecution(id, { state: 'failed', error: normalizeThrownError(error) })
+              : settleFromExecution(id, {
+                  state: 'lost',
+                  error: summarizeToolOperationError({
+                    code: 'execution_ambiguous',
+                    message:
+                      error instanceof Error
+                        ? error.message
+                        : 'Remote execution ended without a confirmed outcome',
+                  }),
+                  sideEffectRisk: 'possible',
+                });
           },
-        );
-      localSettlements.set(id, settlement);
-      settlement.finally(() => localSettlements.delete(id)).catch(() => undefined);
+        )
+        .catch(() => undefined);
       return {
         id,
         wait: (waitOptions) => api.wait(id, waitOptions),
@@ -318,7 +612,6 @@ export function createToolOperations(
         await writeYieldedEvent(db, current);
         return current;
       }
-
       const localSettlement = localSettlements.get(id);
       if (localSettlement) {
         await Promise.race([
@@ -329,7 +622,6 @@ export function createToolOperations(
         if (observed.status === 'running') await writeYieldedEvent(db, observed);
         return observed;
       }
-
       const deadline = Date.now() + waitOptions.timeoutMs;
       let observed = current;
       while (observed.status === 'running' && Date.now() < deadline) {
@@ -351,6 +643,7 @@ export function createToolOperations(
     },
 
     async recoverLost() {
+      const recoveryTime = now();
       const recovered = await db.transaction(async (tx) => {
         const rows = await tx
           .select()
@@ -358,12 +651,11 @@ export function createToolOperations(
           .where(
             and(
               eq(tool_operation.status, 'running'),
-              ne(tool_operation.process_id, options.processId),
+              lte(tool_operation.lease_expires_at, recoveryTime),
             ),
           );
         const records: ToolOperationRecord[] = [];
         for (const row of rows) {
-          const settledAt = now();
           const sideEffectRisk: ToolOperationSideEffectRisk =
             row.effect === 'read' ? 'none' : 'possible';
           const [updated] = await tx
@@ -371,14 +663,20 @@ export function createToolOperations(
             .set({
               status: 'lost',
               error_json: {
-                code: 'process_restarted',
-                message: 'Owning process exited before settlement',
+                code: 'owner_lease_expired',
+                message: 'Owning process stopped heartbeating before settlement',
               },
               side_effect_risk: sideEffectRisk,
-              settled_at: settledAt,
-              updated_at: settledAt,
+              settled_at: recoveryTime,
+              updated_at: recoveryTime,
             })
-            .where(and(eq(tool_operation.id, row.id), eq(tool_operation.status, 'running')))
+            .where(
+              and(
+                eq(tool_operation.id, row.id),
+                eq(tool_operation.status, 'running'),
+                lte(tool_operation.lease_expires_at, recoveryTime),
+              ),
+            )
             .returning();
           if (!updated) continue;
           const record = mapRow(updated);

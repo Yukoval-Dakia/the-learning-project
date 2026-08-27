@@ -831,6 +831,10 @@ export const ToolUseQuery = z
   });
 export type ToolUseQueryT = z.infer<typeof ToolUseQuery>;
 
+const TOOL_OPERATION_EVENT_NAME_MAX_CHARS = 256;
+const TOOL_OPERATION_EVENT_ERROR_CODE_MAX_CHARS = 100;
+const TOOL_OPERATION_EVENT_ERROR_MESSAGE_MAX_CHARS = 4_000;
+
 export const ToolOperationYielded = z.object({
   actor_kind: z.literal('system'),
   actor_ref: z.literal('tool_operations'),
@@ -839,9 +843,9 @@ export const ToolOperationYielded = z.object({
   subject_id: z.string(),
   outcome: z.null(),
   payload: z.object({
-    tool_name: z.string(),
+    tool_name: z.string().min(1).max(TOOL_OPERATION_EVENT_NAME_MAX_CHARS),
     effect: z.enum(['read', 'propose', 'write']),
-    process_id: z.string(),
+    process_id: z.string().min(1).max(TOOL_OPERATION_EVENT_NAME_MAX_CHARS),
   }),
   ...baseOptionalFields,
 });
@@ -858,8 +862,17 @@ export const ToolOperationSettled = z
     payload: z.object({
       state: z.enum(['succeeded', 'failed', 'cancelled', 'lost']),
       side_effect_risk: z.enum(['none', 'possible']).optional(),
-      error: z.object({ code: z.string(), message: z.string() }).optional(),
-      terminal_tool_call_log_id: z.string().optional(),
+      error: z
+        .object({
+          code: z.string().min(1).max(TOOL_OPERATION_EVENT_ERROR_CODE_MAX_CHARS),
+          message: z.string().min(1).max(TOOL_OPERATION_EVENT_ERROR_MESSAGE_MAX_CHARS),
+        })
+        .optional(),
+      terminal_tool_call_log_id: z
+        .string()
+        .min(1)
+        .max(TOOL_OPERATION_EVENT_NAME_MAX_CHARS)
+        .optional(),
     }),
     ...baseOptionalFields,
   })
