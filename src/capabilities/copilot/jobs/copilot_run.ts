@@ -60,10 +60,10 @@ import {
 import { resolveCorrectionReply } from '@/capabilities/copilot/server/correction-contract';
 import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
 import {
-  COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
-  COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
   COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
   type CopilotEvidenceReviewDecision,
+  durableEvidenceLaneModel,
+  durableEvidenceTimeoutsFor,
   reviewCopilotEvidenceReply,
 } from '@/capabilities/copilot/server/evidence-review';
 import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
@@ -1263,10 +1263,11 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
             candidateTaskRunId: result.task_run_id,
             toolTrace,
             signal: cancellationControl.signal,
-            attemptTimeouts: {
-              referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
-              comparisonMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
-            },
+            // YUK-839 ruling ①b — scale the durable leg budgets to the lane the paid
+            // validator legs will actually resolve (env switch, else the registry
+            // mimo default): glm-5.3-flash gets the burn-in-sized flash tier, every
+            // other lane keeps the mimo constants byte-identical.
+            attemptTimeouts: durableEvidenceTimeoutsFor(durableEvidenceLaneModel()),
             beforeVerification: async () => {
               await cancellationControl.probe();
               cancellationControl.signal.throwIfAborted();
