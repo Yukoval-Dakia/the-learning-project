@@ -1,4 +1,4 @@
-import { and, eq, inArray, lte } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, lt, lte, or } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { tool_operation } from '@/db/schema';
@@ -329,18 +329,31 @@ async function settleOperation(
   now: () => Date,
 ): Promise<ToolOperationRecord> {
   return db.transaction(async (tx) => {
-    const current = await getOperation(tx, id);
-    transitionToolOperation(current.status, settlement.state);
+    const [currentRow] = await tx
+      .select()
+      .from(tool_operation)
+      .where(eq(tool_operation.id, id))
+      .limit(1)
+      .for('update');
+    if (!currentRow) throw new Error(`tool operation ${id} not found`);
+    const current = mapRow(currentRow);
     const settledAt = now();
+    const effectiveSettlement =
+      current.hardDeadlineAt && settledAt.getTime() >= current.hardDeadlineAt.getTime()
+        ? toolOperationDeadlineSettlement(current.effect)
+        : settlement;
+    transitionToolOperation(current.status, effectiveSettlement.state);
     const [updated] = await tx
       .update(tool_operation)
       .set({
-        status: settlement.state,
-        result_json: settlement.result ?? null,
-        error_json: settlement.error ? summarizeToolOperationError(settlement.error) : null,
-        side_effect_risk: settlement.sideEffectRisk ?? null,
-        cancelled_by: settlement.cancelledBy ?? null,
-        terminal_tool_call_log_id: settlement.terminalToolCallLogId ?? null,
+        status: effectiveSettlement.state,
+        result_json: effectiveSettlement.result ?? null,
+        error_json: effectiveSettlement.error
+          ? summarizeToolOperationError(effectiveSettlement.error)
+          : null,
+        side_effect_risk: effectiveSettlement.sideEffectRisk ?? null,
+        cancelled_by: effectiveSettlement.cancelledBy ?? null,
+        terminal_tool_call_log_id: effectiveSettlement.terminalToolCallLogId ?? null,
         settled_at: settledAt,
         updated_at: settledAt,
       })
@@ -348,7 +361,7 @@ async function settleOperation(
       .returning();
     if (!updated) {
       const latest = await getOperation(tx, id);
-      throw new InvalidToolOperationTransitionError(latest.status, settlement.state);
+      throw new InvalidToolOperationTransitionError(latest.status, effectiveSettlement.state);
     }
     const record = mapRow(updated);
     await writeSettledEvent(tx, record);
@@ -435,7 +448,6 @@ export function createToolOperations(db: Db, options: ToolOperationsOptions): To
   const localSettlements = new Map<string, Promise<void>>();
   const localSettlementResolvers = new Map<string, () => void>();
   const deadlineTimers = new Map<string, ToolOperationDeadlineTimer>();
-  const deadlineExpired = new Set<string>();
   const activeIds = new Set<string>();
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -484,7 +496,6 @@ export function createToolOperations(db: Db, options: ToolOperationsOptions): To
   const clearLocalState = (id: string): void => {
     deadlineTimers.get(id)?.cancel();
     deadlineTimers.delete(id);
-    deadlineExpired.delete(id);
     controllers.delete(id);
     cancellationOwners.delete(id);
     activeIds.delete(id);
@@ -519,7 +530,6 @@ export function createToolOperations(db: Db, options: ToolOperationsOptions): To
       deadlineAt,
       now,
       onExpire(settlement) {
-        deadlineExpired.add(id);
         controller.abort(new Error('Tool operation hard deadline exceeded'));
         void settleFromExecution(id, settlement).catch(() => undefined);
       },
@@ -574,9 +584,6 @@ export function createToolOperations(db: Db, options: ToolOperationsOptions): To
               settlementFromOutcome(outcome, input.effect, cancellationOwners.get(id)),
             ),
           (error) => {
-            if (deadlineExpired.has(id)) {
-              return settleFromExecution(id, toolOperationDeadlineSettlement(input.effect));
-            }
             return input.effect === 'read'
               ? settleFromExecution(id, { state: 'failed', error: normalizeThrownError(error) })
               : settleFromExecution(id, {
@@ -651,22 +658,52 @@ export function createToolOperations(db: Db, options: ToolOperationsOptions): To
           .where(
             and(
               eq(tool_operation.status, 'running'),
-              lte(tool_operation.lease_expires_at, recoveryTime),
+              or(
+                lte(tool_operation.lease_expires_at, recoveryTime),
+                and(
+                  isNotNull(tool_operation.hard_deadline_at),
+                  lte(tool_operation.hard_deadline_at, recoveryTime),
+                ),
+              ),
             ),
           );
         const records: ToolOperationRecord[] = [];
         for (const row of rows) {
-          const sideEffectRisk: ToolOperationSideEffectRisk =
-            row.effect === 'read' ? 'none' : 'possible';
+          const leaseExpiredFirst =
+            row.lease_expires_at.getTime() <= recoveryTime.getTime() &&
+            (row.hard_deadline_at === null ||
+              row.lease_expires_at.getTime() < row.hard_deadline_at.getTime());
+          const settlement: ToolOperationSettlement = leaseExpiredFirst
+            ? {
+                state: 'lost',
+                error: {
+                  code: 'owner_lease_expired',
+                  message: 'Owning process stopped heartbeating before settlement',
+                },
+                sideEffectRisk: row.effect === 'read' ? 'none' : 'possible',
+              }
+            : toolOperationDeadlineSettlement(row.effect as ToolOperationEffect);
+          const recoveryCondition = leaseExpiredFirst
+            ? and(
+                lte(tool_operation.lease_expires_at, recoveryTime),
+                or(
+                  isNull(tool_operation.hard_deadline_at),
+                  lt(tool_operation.lease_expires_at, tool_operation.hard_deadline_at),
+                ),
+              )
+            : and(
+                isNotNull(tool_operation.hard_deadline_at),
+                lte(tool_operation.hard_deadline_at, recoveryTime),
+              );
           const [updated] = await tx
             .update(tool_operation)
             .set({
-              status: 'lost',
-              error_json: {
-                code: 'owner_lease_expired',
-                message: 'Owning process stopped heartbeating before settlement',
-              },
-              side_effect_risk: sideEffectRisk,
+              status: settlement.state,
+              result_json: settlement.result ?? null,
+              error_json: settlement.error ? summarizeToolOperationError(settlement.error) : null,
+              side_effect_risk: settlement.sideEffectRisk ?? null,
+              cancelled_by: settlement.cancelledBy ?? null,
+              terminal_tool_call_log_id: settlement.terminalToolCallLogId ?? null,
               settled_at: recoveryTime,
               updated_at: recoveryTime,
             })
@@ -674,7 +711,7 @@ export function createToolOperations(db: Db, options: ToolOperationsOptions): To
               and(
                 eq(tool_operation.id, row.id),
                 eq(tool_operation.status, 'running'),
-                lte(tool_operation.lease_expires_at, recoveryTime),
+                recoveryCondition,
               ),
             )
             .returning();

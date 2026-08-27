@@ -328,6 +328,117 @@ describe('ToolOperations', () => {
     ]);
   });
 
+  it.each([
+    ['read', 'failed', null],
+    ['write', 'lost', 'possible'],
+  ] as const)(
+    'recovers a %s deadline after restart before its still-live lease expires',
+    async (effect, status, risk) => {
+      let clock = new Date('2026-08-27T12:00:00Z');
+      const owner = createToolOperations(testDb(), {
+        processId: `api_boot_deadline_restart_${effect}`,
+        now: () => clock,
+      });
+      await owner.start(
+        {
+          id: `toolop_deadline_restart_${effect}`,
+          toolName: `remote_${effect}`,
+          effect,
+          input: { request: { dispatched: true } },
+          hardDeadlineAt: new Date(clock.getTime() + 1_000),
+        },
+        async () => new Promise<never>(() => undefined),
+      );
+
+      clock = new Date(clock.getTime() + 1_001);
+      const recovering = createToolOperations(testDb(), {
+        processId: 'api_boot_after_restart',
+        now: () => clock,
+      });
+      await expect(recovering.recoverLost()).resolves.toEqual([
+        expect.objectContaining({
+          id: `toolop_deadline_restart_${effect}`,
+          status,
+          sideEffectRisk: risk,
+          error: expect.objectContaining({ code: 'hard_deadline_exceeded' }),
+        }),
+      ]);
+    },
+  );
+
+  it('keeps owner-lease semantics when the lease expired before the hard deadline', async () => {
+    let clock = new Date('2026-08-27T12:00:00Z');
+    const owner = createToolOperations(testDb(), {
+      processId: 'api_boot_lease_first',
+      now: () => clock,
+      leaseDurationMs: 1_000,
+      heartbeatIntervalMs: 500,
+    });
+    await owner.start(
+      {
+        id: 'toolop_lease_before_deadline',
+        toolName: 'remote_write',
+        effect: 'write',
+        input: { request: { dispatched: true } },
+        hardDeadlineAt: new Date(clock.getTime() + 2_000),
+      },
+      async () => new Promise<never>(() => undefined),
+    );
+
+    clock = new Date(clock.getTime() + 2_001);
+    const recovering = createToolOperations(testDb(), {
+      processId: 'api_boot_after_lease',
+      now: () => clock,
+    });
+    await expect(recovering.recoverLost()).resolves.toEqual([
+      expect.objectContaining({
+        id: 'toolop_lease_before_deadline',
+        status: 'lost',
+        sideEffectRisk: 'possible',
+        error: expect.objectContaining({ code: 'owner_lease_expired' }),
+      }),
+    ]);
+  });
+
+  it.each([
+    ['read', 'failed', null],
+    ['write', 'lost', 'possible'],
+  ] as const)(
+    'coerces a late successful %s executor outcome to its persisted deadline terminal',
+    async (effect, status, risk) => {
+      let clock = new Date('2026-08-27T12:00:00Z');
+      let finish!: (outcome: { status: 'succeeded'; result: { late: boolean } }) => void;
+      const execution = new Promise<{ status: 'succeeded'; result: { late: boolean } }>(
+        (resolve) => {
+          finish = resolve;
+        },
+      );
+      const operations = createToolOperations(testDb(), {
+        processId: `api_boot_late_success_${effect}`,
+        now: () => clock,
+      });
+      const handle = await operations.start(
+        {
+          id: `toolop_late_success_${effect}`,
+          toolName: `remote_${effect}`,
+          effect,
+          input: { request: { dispatched: true } },
+          hardDeadlineAt: new Date(clock.getTime() + 10_000),
+        },
+        async () => execution,
+      );
+
+      clock = new Date(clock.getTime() + 10_000);
+      finish({ status: 'succeeded', result: { late: true } });
+      await expect(handle.wait({ timeoutMs: 250 })).resolves.toMatchObject({
+        status,
+        result: null,
+        sideEffectRisk: risk,
+        error: expect.objectContaining({ code: 'hard_deadline_exceeded' }),
+      });
+    },
+  );
+
   it('renews a live owner lease while a concurrent recovery process observes it', async () => {
     let finish!: (outcome: { status: 'succeeded'; result: { acknowledgement: string } }) => void;
     const execution = new Promise<{
