@@ -1,35 +1,39 @@
-# 当前 handoff — 2026-08-16 ticket 归零 + 可用性打磨 启动
+# 当前 handoff — 2026-08-27 AI Pipeline Modernization F5 启动
 
-## NOW
+## Owner decisions
 
-- main 在 `f51c206b`（YUK-892 tool failure visibility；架构深化经 F4.1 `62e34a72` 收官，
-  F3.2 组合根 #1202 与 YUK-863 #1183 均已合并）。PLAN.md 已按 8-16 现实重写。
-- owner 指令（2026-08-16）：功能定义 OK；推进 Linear ticket 归零（口径：可操作票归零，
-  战略票出砍/留清单拍板）+ 可用性实际打磨。范围：Track 0 清场 + A1 工程票 + Track B 走查。
-- 本 session 已完成：
-  - 主工作树从陈旧 YUK-812 分支（错位：HEAD 在 main 上）恢复到 main@`f51c206b` 干净态；
-    PLAN.md / .remember/now.md 的冲突标记垃圾块已用 HEAD 干净版覆盖。
-  - dependabot 6 清零：#1184 / #1179 / #1091 合并；#1180 / #1096 / #1094 关闭。
-  - #1182（YUK-457）与 #1137（YUK-813）各起 review-work 五 lane 闸（10 个后台 lane），
-    verdict 待收。
-- 陈旧 worktree 注册（4 detached + yuk-825-closeout）本 session 已不在 `git worktree list`
-  中；仅剩 yuk-822（14 个未合并 YUK-792 提交 + 脏文件，保留待 owner 处置）。
+- 1A：read/idempotent remote MCP 超过 45 秒可交出真实 handle；不可安全取消的 write/propose
+  继续阻塞到 turn deadline，未知结算写 `lost` 与 side-effect risk。
+- 2B：background subagent 完成后写 durable mailbox/result event，并以幂等 synthetic parent
+  prompt 自动续跑 foreground root；用户面仍只有 root 一个声音。
+- 3A：model + system drain + user 都可 cancel；取消是 cooperative，不把未知结算说成成功取消。
+- 4B：保留 #1299 batching 文案作为中性能力偏好；删除全部性能收益叙事。YUK-926 已按此
+  改名/重写并保持 Done。
+- UI 已批准；新增要求：drawer 不展示 sequence/async/durable/inline/model-routing/agent
+  architecture 等内部说明，只保留用户需要的状态、结果、错误与动作。
 
-## NEXT
+## Tracker
 
-1. 收 #1182 / #1137 五 lane verdict → 全 PASS 则合并并关票；任一 FAIL 则修复后重审。
-2. A1-批1：YUK-845 收尾（先查 08-15 为何从 In Review 退回 Todo）+ Copilot P1
-   YUK-833/834/835/836 各起隔离 lane。
-3. Track B 本地走查（做题/Copilot/笔记/录入/图谱）+ friction 当场立案；A3 战略票清单。
-4. review worktree /tmp/review-pr1182 与 /tmp/review-pr1137 用毕清理。
+- Parent：YUK-927（In Progress），Project = Architecture Deepening FULL，Milestone = F5。
+- Active：YUK-928 ToolOperations foundation；YUK-929 classifier deletion；YUK-930 UI copy cleanup。
+- Blocked chain：YUK-931 <- 928；YUK-932 <- 928+929；YUK-933 <- 931+932；
+  YUK-934 <- 931+932+933。
+- Existing dedupe：YUK-920 由 YUK-931 消费；YUK-757 只覆盖旧 foreground subtask
+  projection；YUK-572 是夜间教研 agent，不是 Copilot SubagentRuns。
 
-## PARKED
+## Git / worktrees
 
-- YUK-832 HOLD / YUK-842 observe / 生产未部署：不变。
-- yuk-822 worktree 处置待 owner。
+- origin/main = `f64f1389`（PR #1302 merged）；本地 main 仍为脏旧树，落后 45 commits，
+  禁止 reset/clean/overwrite。
+- `/Volumes/YukovalSBak/yukoval-projects/the-learning-project-worktrees/f5-20260827/yuk-928`
+- `/Volumes/YukovalSBak/yukoval-projects/the-learning-project-worktrees/f5-20260827/yuk-929`
+- `/Volumes/YukovalSBak/yukoval-projects/the-learning-project-worktrees/f5-20260827/yuk-930`
+- 本 board sync 在同目录 `yuk-927` worktree。
 
-## BLOCKED-ON
+## Safety / validation
 
-- YUK-846 凭据轮换（Urgent，只能 owner 在控制台人工）+ YUK-571/856/887/859/414/320/838
-  人工闸（清单见 PLAN.md）。
-- Production 部署授权（不变）。
+- 禁止本机完整 `pnpm test`；各 lane scoped unit/DB/migration + Biome，root 串行跑
+  typecheck/lint/audits/build，push 后 exact-head GitHub CI Gate。
+- 系统 Data 卷在启动时只余约 117 MiB；把两个新 worktree 从 `/private/tmp` 以 Git
+  非强制 remove/re-add 迁到外接卷后约 302 MiB。没有删除用户缓存、旧 worktree 或数据。
+- 不部署、不做生产观察，除非另获授权。
