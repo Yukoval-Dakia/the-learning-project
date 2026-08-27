@@ -428,3 +428,94 @@ fail-closed / retry audit 在 pre-generation 429 下按设计工作。
 - results：`d54a85577b8e26107ff3d01d56f67852cee727c1cea881bfe31a47271c001451`
 - clean log：`e1e0383636b24d1b8eaf2cbbc2a3eca48e9754362ee949d7f616f06ca7cdb254`
 - cost ledger：`4c063d9d0a237d0f08fb4e16a00c38360592adc9dab732d3a3b74ade6b0dd7db`
+
+## Round 4b — not-material batching default, effective trial（owner-authorized, single-variable）
+
+R4 在 quota reset（2026-08-27 15:41 CST）后补跑的**一次** effective clean run，用于完成 R4
+未获得的 batching 测量。本轮是 R4 的重试，不是新实验：唯一产品变量仍是 #1299 的
+batching-default prompt / tool-description wording。16:13 CST 已过 reset，单次 run 全程
+零 429，三腿均产生真实 token / thinking / cost。
+
+### Setup parity（vs Round 4 / Round 3）
+
+- code revision：`b451984de0265016218753355fc273061486d16b`（branch
+  `yuk-926-r4b-burnin`，fresh `origin/main`），包含 #1299 `af87ee45`、R3 报告 #1300
+  `dfe41371` 与 R4 报告 #1301 `b451984d`。
+- R4 harness core 行为等价复用（diff 仅标签 / 路径 / 注释，无语义差异）；`runTaskFn`
+  仍只追加 `override={provider:'zhipu', model:'glm-5.3-flash'}`；request context、
+  unsafe candidate、fixture 与 comparators 未改。
+- fixture 第三次复现为 21 successful reads / 1,814 harness-counted leaves / 58,465
+  serialized chars；reference attempt 的 `task_input_sha256` 仍为
+  `e2f648c508fc53cbcc168e5bfaa4fac08ce1553586ab8d8eb86cd226fae8d224`，与 R3 / R4
+  精确相同——输入侧单变量隔离成立。
+- task spec 仍为 `reasoningEffort: 'high'`（三次 `model_profile_resolved` 均记录
+  `reasoning_effort: high`）；未设置 `MAX_THINKING_TOKENS`；budget 仍由生产
+  `durableEvidenceTimeoutsFor('glm-5.3-flash')` 给出 reference 1,200,000ms /
+  comparison 600,000ms，三腿均在预算内成功。
+- fresh PG：`wt-926-r4b-pg`，`pgvector/pgvector:0.8.2-pg16-bookworm`，
+  `127.0.0.1:5437`，完整 migration（66 表）；`ZHIPU_API_KEY` 只从主 repo `.env` 只读
+  加载且未输出。
+
+### Per-leg measurement vs Round 3
+
+scope：`yuk926_burnin_r4b_1787818573380`；总 wall 1,488.8s（24.8min），reported 总成本
+$3.259916（tokens 合计 in 1,488,684 / out 70,640，全部 `cost_basis=reported`）。
+
+| leg | R3 wall | R4b wall（Δ） | R3 in / out | R4b in / out（Δ） | R3 thinking | R4b thinking（Δ） | R3 cost | R4b cost（Δ） | accepted append turns |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| reference | 823.2s | 1,044.3s (+26.9%) | 370,198 / 48,173 | 1,132,035 / 50,382 (+205.7% / +4.6%) | 103,136 | 112,540 (+9.1%) | $1.729363 | $2.176653 (+25.9%) | 4 → 6 |
+| comparison:original:pass_1 | 128.0s | 79.8s (-37.7%) | 79,519 / 6,662 | 68,079 / 3,721 (-14.4% / -44.1%) | 24,880 | 13,987 (-43.8%) | $0.400273 | $0.288844 (-27.8%) | 1 → 1 |
+| comparison:blind_reference:pass_1 | 494.6s | 364.6s (-26.3%) | 589,420 / 23,741 | 288,570 / 16,537 (-51.0% / -30.3%) | 73,935 | 53,188 (-28.1%) | $1.184209 | $0.794419 (-32.9%) | 6 → 3 |
+| 全管线 | 1,445.8s | 1,488.8s (+3.0%) | 1,039,137 / 78,576 | 1,488,684 / 70,640 (+43.3% / -10.1%) | 201,951 | 179,715 (-11.0%) | $3.313845 | $3.259916 (-1.6%) | — |
+
+### Not-material batching measurement（本轮实验变量）
+
+- `mark_trace_calls_not_material` invocation count = **2**，per-invocation batch
+  sizes = **[6, 1]**（共标记 7 个成功 read）；第二次单条 invocation 落在 `safe_reply`
+  之后，覆盖分类在最后一条 append 才补齐并触发 auto-complete seal。
+- reference ledger 全 6 条 record 依次为：evidence_points(7)、evidence_points(8)、
+  evidence_points(1)、trace_calls_not_material(6)、safe_reply、trace_calls_not_material(1)；
+  evidence points 合计 16（R3 为 22，拆分为 10+12）。
+- agent rounds 无法从产品表直接观测（无 wire capture，`tool_call_log` 0 行）；替代证据
+  是 reference 腿 input 累计 3.06×（370,198 → 1,132,035）与 thinkingBlocks 6 → 17：
+  全上下文重发轮次显著**增多**，不是减少。
+- **基线事实更正**：本报告与 #1299 PR body 引用的“R2/R3 baseline 10 one-item calls”
+  与 sealed checkpoint 工件不符——R3 clean 的 reference checkpoint 是 **1 次 invocation
+  携带 11 条 calls**（append 序列 2×evidence_points、trace_calls_not_material、
+  safe_reply，全部 offered=1；R2 clean 报告同为 4 records 含单条 not-material record，
+  10 calls）。即 clean-run 基线上 not-material 本来就已经批量提交；本轮 2 次 [6, 1]
+  反而比 R3 的 1 次 [11] 更碎。#1299 假设的“逐条提交”行为从未在 R2/R3 clean 样本的
+  ledger 中出现。
+
+### Decision / sealed health
+
+- 终局 `failed_closed / fallback_comparison_rejected`，与 R2/R3 相同；无 quota 事件，
+  reference 一次通过、无 contract retry（run_calls 无 `contract_feedback`）。
+- 三个 checkpoint 全部 `sealed`：reference rev 6 / 6 digests、original 1 / 1、
+  blind 3 /3；每腿 `attempts_json` 恰一条 success，三腿 `ai_task_runs.result_digest`
+  均非空（`945252cd…` / `1eb4361b…` / `e3767e3f…`）。无 phantom record、无 duplicate
+  append（全部 dup=0），store 计数单调，attempt audit 完整。`provider_attempt` 本轮
+  无行（与 R3 相同），token/cost 真相来自成功 run 的 usage 与 ledger。
+
+### Verdict vs #1299 target
+
+**#1299 的预期收益未成立。** 目标是 append 轮次 12→8、reference 输入约 -35%、
+reference 提速 2–3 分钟；实测有效样本中 reference 腿全面回归：wall +26.9%、input
++205.7%、cost +25.9%、append turns 4→6、not-material invocations 1→2（[11] → [6, 1]）。
+两个 comparator 均改善（original -37.7% wall / -27.8% cost；blind -26.3% wall /
+-51.0% input），全管线 cost -1.6% 但 wall +3.0%。鉴于 (a) R2→R3 已证明该 lane 存在
+大幅模型质量波动（blind comparator 两次 ±50% 量级摆动），(b) 基线 premise 本身已被
+工件否定（R2/R3 clean 的 not-material 已是单批），单样本不能把 reference 回归归因于
+#1299 文案；但可以确定的是：batching-default wording **没有**带来它声称的轮次 / 输入
+收益，且本轮 batching 形态比无引导的 R3 基线更碎。YUK-926 的性能侧结论：**未获证，
+方向相反**；机械层（seal / dedup / audit / fail-closed）行为不变且全绿。
+
+### Round 4b artifacts（`/tmp/yuk926-r4b-burnin`，全部 mode 0600）
+
+- harness core：`a9ec81d9429418572fb6b53303825befdcda026af3d28a770c4441bdda588d48`
+- harness entry：`d2b81ab79f3d040c02f8cf46b93501cb998aa35419105ae8b165c0ad04c2c3d9`
+- dry pre-flight：`c3934b046809369c26c94e98c5608ca1388862aa690d4edfad397806b4d90ac1`
+- forensics script：`8698f48c48fd5e2e70908d3ddb5e6cd03793e67d34f4a63012098fb5b1d148e0`
+- results：`ce48550260763a514fd98bbfa057d5050b9302b24c0f1e34f405ef6ffef25637`
+- clean log：`ceac32e902bc16a57d832e8d6043080ba61ddd331a5eace390ccd2ec59bfec71`
+- cost ledger：`65260256b7779ad672d683d258a24a28bd2cc32c7d3aa5f4afbd95d17521933c`
