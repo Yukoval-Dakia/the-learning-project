@@ -1,7 +1,21 @@
 # PLAN — 活看板 (cockpit)
 
 > Linear 是权威 tracker；本文件只镜像 NOW / NEXT / PARKED / BLOCKED-ON。
-> 更新于：2026-08-27 凌晨（终版：mass-ulw 收官 + kind epic 全完，main @ c34fb647）
+> 更新于：2026-08-27（终版后：六项裁决全部执行完毕，main @ 7ea7739d）
+
+## NOW
+
+- **owner 六项裁决全部落地（2026-08-27，四 PR 连收 #1292-#1295）**：
+  - ①b flash 预算放宽（#1294：模型感知 durable 预算档，flash tier 20/10min，
+    边界账本 copilot→ai 24/465）→ **YUK-839 Done**；
+  - ②a 手稿语气（#1293：设计源蒸馏四条语气规则进 chat system prompt）；
+  - ③LIGHT 豁免登记（#1292：ADR-0046 四项逐条 + 文件头指向）→ **YUK-679 Done**；
+  - ④⑤ 371/899 Canceled（理由落票）；⑥ 921 维持停放（记录在票）。
+  - 派生新线：**YUK-923**（SDK effort 档位透传，#1295，Done）、
+    **YUK-924**（ModelProfile 模型能力档案，三方调研已备待两问）。
+- **flash 耗时根因调查**（burn-in R1/R2 数据 + SDK 证据）：R1 主因 thinking
+  失控（480s 零 tool_use）、R2 主因多轮全上下文重发（354k input ≈12 轮）；
+  端点健康 ~45tok/s；附带发现 abort 后 SDK teardown 延迟 9-10min。
 
 ## NOW
 
@@ -19,15 +33,11 @@
 
 ## NEXT
 
-**工程池已清零**（已验证：全部 actionable 票落地或转入 owner 闸）。等 owner 六件：
-1. glm-5.3-flash 是否进生产 validator lane（YUK-839 In Review，需 ≥25min 预算）
-2. copilot 回复语气基调（YUK-340 停下的唯一分叉）
-3. YUK-679 二选一：LIGHT（ADR-0046 豁免段）vs FULL（Rust port，需 Rust 线 lane）
-4. YUK-371 关闭或改写（验收与 ADR-0038 修订冲突）
-5. YUK-899 处置（票面截断不可恢复，三选项在票上）
-6. 多 provider 方案一重启时点（YUK-921 停放中）
-
-新工程输入（新票 / 上面六件的裁决）到达后按 mass-ulw 纪律续推。
+1. **YUK-924 两问待拍**（P1+P2 一张票 vs 分期；手写本地 profile vs models.dev
+   远程目录）——拍后开 lane。
+2. 新工程输入（新票 / 裁决）到达后按 mass-ulw 纪律续推。
+3. 可选后续（低优先，未立票）：validator prompt 引导 not-material 批量提交
+   （耗时 L2 杠杆，轮次 12→8）；flash@high 真实 burn-in 验证 thinking 降幅。
 
 ## PARKED
 
