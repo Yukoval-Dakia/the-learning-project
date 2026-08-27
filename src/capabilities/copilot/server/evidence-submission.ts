@@ -705,7 +705,7 @@ export function createReferenceEvidenceSubmission(input: {
       ),
       tool(
         COPILOT_EVIDENCE_SUBMISSION_TOOLS.markTraceCallsNotMaterial,
-        `Mark 1-${MAX_TRACE_CHUNK} successful read calls that are not material. Do not mark calls cited by evidence points.`,
+        `Mark 1-${MAX_TRACE_CHUNK} successful read calls that are not material, batching every remaining not-material call into as few invocations as possible. Do not mark calls cited by evidence points.`,
         MarkTraceCallsNotMaterialSchema.shape,
         async (args) => {
           const result = markTraceCallsNotMaterial(args);

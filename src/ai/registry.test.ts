@@ -751,6 +751,9 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
     expect(p).toContain('完整链、后续动作、review/judge、队列结论');
     expect(p).toContain('append_evidence_points');
     expect(p).toContain('mark_trace_calls_not_material');
+    // YUK-926 — not-material marks must batch by default: the R2 burn-in burned
+    // ~10 full-context rounds on one-per-call submissions despite the 12-item cap.
+    expect(p).toContain('合并成尽可能少的调用批次');
     expect(p).toContain('set_safe_reply');
     expect(p).toContain('complete_reference');
     expect(p).toContain('不要生成最终大 JSON');

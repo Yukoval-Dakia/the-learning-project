@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import type { ToolExecutionResultObservation } from '@/kernel/tools/types';
 import { segmentEvidenceReply, segmentEvidenceRequest } from './evidence-contract';
 import { REALISTIC_EVIDENCE_TRACE } from './evidence-review.actual-fixture';
 import {
+  type CopilotEvidenceLedgerRecord,
   buildCopilotEvidenceSourceCatalog,
   createComparisonEvidenceSubmission,
   createReferenceEvidenceSubmission,
@@ -238,5 +240,112 @@ describe('Copilot evidence incremental submission', () => {
       }),
     ).toEqual({ ok: false, reason: 'unknown_source_id' });
     expect(submission.progress()).toMatchObject({ evidence_point_count: 0 });
+  });
+});
+
+describe('not-material batch submission contract (YUK-926)', () => {
+  const mark = (callIndex: number, rationale = '与本次请求单元不直接相关。') => ({
+    call_index: callIndex,
+    rationale_md: rationale,
+  });
+
+  const setup = (toolTrace?: readonly ToolExecutionResultObservation[]) => {
+    const trace = toolTrace ?? REALISTIC_EVIDENCE_TRACE.slice(0, 6);
+    const submission = createReferenceEvidenceSubmission({
+      requestUnits: segmentEvidenceRequest({ user_message: '核验批量 not-material 提交契约。' }),
+      toolTrace: trace,
+      sourceCatalog: buildCopilotEvidenceSourceCatalog(trace),
+    });
+    const records: CopilotEvidenceLedgerRecord[] = [];
+    submission.setAppendListener((record) => {
+      records.push(record);
+    });
+    return { submission, records };
+  };
+
+  it('accepts one batch of N marks as a single ordered ledger record and counts every call', () => {
+    const { submission, records } = setup();
+    const calls = [mark(4, '重复查询，不承担新事实。'), mark(2, '范围已被 s0 覆盖。'), mark(0)];
+    expect(submission.markTraceCallsNotMaterial({ calls })).toMatchObject({
+      ok: true,
+      not_material_call_count: 3,
+    });
+    // One accepted invocation appends exactly one ledger record carrying the
+    // calls in submission order; per-call state never collapses.
+    expect(records).toEqual([{ kind: 'trace_calls_not_material', calls }]);
+    expect(submission.resumeState().not_material_call_indices).toEqual([0, 2, 4]);
+  });
+
+  it('accepts a single-call batch with identical semantics to one-item invocations', () => {
+    const { submission, records } = setup();
+    expect(submission.markTraceCallsNotMaterial({ calls: [mark(5)] })).toMatchObject({
+      ok: true,
+      not_material_call_count: 1,
+    });
+    expect(records).toEqual([{ kind: 'trace_calls_not_material', calls: [mark(5)] }]);
+    expect(submission.resumeState().not_material_call_indices).toEqual([5]);
+  });
+
+  it('replays identical invocations from the accepted cache and rejects cross-batch repeats atomically', () => {
+    const { submission, records } = setup();
+    const first = submission.markTraceCallsNotMaterial({ calls: [mark(1), mark(3)] });
+    expect(first).toMatchObject({ ok: true, not_material_call_count: 2 });
+    // Same content returns the cached accepted result without a new record.
+    expect(submission.markTraceCallsNotMaterial({ calls: [mark(1), mark(3)] })).toBe(first);
+    // A batch repeating an accepted call is rejected whole; nothing partial lands.
+    expect(submission.markTraceCallsNotMaterial({ calls: [mark(4), mark(3)] })).toEqual({
+      ok: false,
+      reason: 'duplicate_trace_call',
+    });
+    expect(submission.progress().not_material_call_count).toBe(2);
+    expect(records).toHaveLength(1);
+  });
+
+  it('rejects a mixed batch containing one invalid call id atomically', () => {
+    const { submission, records } = setup();
+    // In-trace-schema index that exceeds the actual 6-call trace bounds.
+    expect(submission.markTraceCallsNotMaterial({ calls: [mark(2), mark(40)] })).toEqual({
+      ok: false,
+      reason: 'invalid_trace_call_indices',
+    });
+    // A within-batch duplicate hits the same bounded contract.
+    expect(submission.markTraceCallsNotMaterial({ calls: [mark(2), mark(2)] })).toEqual({
+      ok: false,
+      reason: 'invalid_trace_call_indices',
+    });
+    // An index beyond the schema bound fails validation before trace checks.
+    expect(submission.markTraceCallsNotMaterial({ calls: [mark(2), mark(999)] })).toEqual({
+      ok: false,
+      reason: 'invalid_submission_shape',
+    });
+    expect(submission.progress().not_material_call_count).toBe(0);
+    expect(records).toHaveLength(0);
+  });
+
+  it('rejects an empty calls array with the invalid submission shape contract', () => {
+    const { submission } = setup();
+    expect(submission.markTraceCallsNotMaterial({ calls: [] })).toEqual({
+      ok: false,
+      reason: 'invalid_submission_shape',
+    });
+    expect(submission.progress().not_material_call_count).toBe(0);
+  });
+
+  it('rejects a batch that mixes a valid call with a non-successful read atomically', () => {
+    const failedRead: ToolExecutionResultObservation = {
+      name: 'query_events',
+      effect: 'read',
+      input: { filter: { subject_id: 'subject_missing' } },
+      output: { events: [] },
+      executed: false,
+      error_reason: 'domain_reader_failed',
+    };
+    const { submission, records } = setup([...REALISTIC_EVIDENCE_TRACE.slice(0, 2), failedRead]);
+    expect(submission.markTraceCallsNotMaterial({ calls: [mark(0), mark(2)] })).toEqual({
+      ok: false,
+      reason: 'not_material_requires_successful_read',
+    });
+    expect(submission.progress().not_material_call_count).toBe(0);
+    expect(records).toHaveLength(0);
   });
 });
