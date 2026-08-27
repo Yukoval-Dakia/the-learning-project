@@ -1,6 +1,10 @@
 // ADR-0046: proper-scoring = Rust-first single-source-of-truth. This TS is a PLACEHOLDER
 // stub — bit-exact replacement lands with the Rust calibration kernel
-// (crates/calibration-native). Pure 3-scalar → 4-scalar, no DB / no cohort = structurally
+// (crates/calibration-native). REGISTERED under the ADR-0046 exemption inventory (owner
+// 2026-08-27, YUK-679 LIGHT) — see 「豁免登记」 R1 in
+// docs/adr/0046-rust-numerical-engine-single-source-of-truth.md: the placeholder intent
+// STANDS, now tracked with an explicit port trigger instead of an unowned promise.
+// Pure 3-scalar → 4-scalar, no DB / no cohort = structurally
 // n=1-safe (DROP-7 clean). The window-aggregate "beats baseline" remains Rust-owned
 // + deferred. YUK-795 now consumes the sign of this single-point score in a named
 // two-observation ordinal streak rule for conjecture ranking; it still never moves

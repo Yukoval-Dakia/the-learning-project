@@ -13,6 +13,12 @@
 // θ̂_min 分栏注意（防后人误用）：ADR-0042 的 θ̂_min 是**选题/MFI 聚合语义**
 //   （ex-ante 选哪道题），不是更新语义（ex-post 这道题怎么动 θ̂）。本模块只做
 //   ex-post 在线更新；选题聚合不在本 wave 范围。
+//
+// ADR-0046：本模块的数值 kernel（srtOutcome / continuous 合取 credit / Fisher
+// information 家族）位于 §4 点名的 live θ̂ 迁移窗口（「既有 live TS 触到才迁」），
+// 已逐项登记进 ADR-0046 豁免登记（owner 2026-08-27，YUK-679 LIGHT）——见
+// docs/adr/0046-rust-numerical-engine-single-source-of-truth.md「豁免登记」R3/R4
+// （含各项 PORT TRIGGER 与 frozen-input replay compatibility 条款）。
 
 import { POLY_SIGMOID_ENABLED, polySigmoid } from './poly-exp';
 
