@@ -680,9 +680,7 @@ describe('CopilotDock accepted durable reconnect', () => {
     );
     await user.click(screen.getByTestId('copilot-composer-send'));
 
-    expect(
-      await screen.findByText('这次后台运行没有完成。可以换个更聚焦的问法再试。'),
-    ).toBeTruthy();
+    expect(await screen.findByText('这次请求没有完成。可以换个更聚焦的问法再试。')).toBeTruthy();
     expect(
       screen.queryByText('这件事需要多步处理，我已转到后台；进度会在这里持续更新。'),
     ).toBeNull();
@@ -786,7 +784,7 @@ describe('CopilotDock accepted durable reconnect', () => {
     await user.click(screen.getByTestId('copilot-composer-send'));
 
     expect(await screen.findByRole('button', { name: '重新连接' })).toBeTruthy();
-    expect(screen.getByText('后台进度连接仍未恢复；任务可能仍在运行，可以再次连接。')).toBeTruthy();
+    expect(screen.getByText('进度连接仍未恢复；任务可能仍在运行，可以再次连接。')).toBeTruthy();
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
     expect(apiFetchMock).toHaveBeenCalledWith(
       '/api/copilot/chat',
@@ -855,7 +853,7 @@ describe('CopilotDock accepted durable reconnect', () => {
 
     expect(await screen.findByRole('button', { name: '重新连接' })).toBeTruthy();
     expect(
-      screen.getByText('后台任务还在等待开始，可能正在排队；本次任务已保留，可以稍后重新连接。'),
+      screen.getByText('任务还在等待开始，可能正在排队；本次请求已保留，可以稍后重新连接。'),
     ).toBeTruthy();
     expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
       false,
@@ -917,7 +915,7 @@ describe('CopilotDock accepted durable reconnect', () => {
     await user.click(screen.getByTestId('copilot-composer-send'));
 
     expect(await screen.findByTestId('copilot-stop-run')).toBeTruthy();
-    expect(screen.getByTestId('copilot-run-stage-footer').textContent).toContain('调度中…');
+    expect(screen.getByTestId('copilot-run-stage-footer').textContent).toContain('准备中…');
     await user.click(screen.getByTestId('copilot-stop-run'));
 
     await waitFor(() => {
@@ -1009,7 +1007,7 @@ describe('CopilotDock accepted durable reconnect', () => {
     await user.click(screen.getByTestId('copilot-composer-send'));
 
     expect(
-      await screen.findByText('后台任务已受理，但没有返回进度地址；请用原请求恢复进度。'),
+      await screen.findByText('请求已受理，但暂时无法显示进度；请用原请求恢复。'),
     ).toBeTruthy();
     expect(screen.getByRole('button', { name: '恢复' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '不再恢复' })).toBeTruthy();

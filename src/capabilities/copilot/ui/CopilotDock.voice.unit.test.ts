@@ -28,13 +28,16 @@ describe('CopilotDock conversation voice (YUK-340)', () => {
     expect(drawerMount).toContain('title="编排者"');
   });
 
-  it('opens an empty thread with the design cop-blank copy verbatim (copilot.jsx L135-141)', () => {
+  it('opens an empty thread without exposing execution architecture', () => {
     const emptyMarker = source.indexOf('className="chat-empty"');
     const emptyBlock = source.slice(emptyMarker - 200, emptyMarker + 700).replace(/\s+/g, ' ');
     expect(emptyBlock).toContain('我是你的编排者');
     expect(emptyBlock).toContain(
-      '前台和昨夜后台的我是同一个 —— 我能引用它为你备的东西。问我今天该学什么、为什么这么排，或让我改动；每一句话我都给你一份可留可撤的改动。',
+      '问我今天该学什么、为什么这么排，或让我改动；每一句话我都给你一份可留可撤的改动。',
     );
+    expect(emptyBlock).not.toMatch(/前台|后台|sequence|async|durable|inline|agent|模型路由/i);
+    expect(source).not.toContain('这件事需要多步处理，我已转到后台；进度会在这里持续更新。');
+    expect(source).not.toContain('我正在协调这些子任务，完成后会在这里统一收口。');
     // The drifted third-person IM line is gone.
     expect(source).not.toContain('它会读你的错题、知识图谱与今日计划来回答');
   });
