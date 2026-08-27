@@ -66,7 +66,38 @@ describe('CopilotDock inline subtask cards', () => {
     expect(screen.getByText('运行中')).toBeTruthy();
     expect(screen.getByText('完成')).toBeTruthy();
     expect(screen.getByText('失败')).toBeTruthy();
+    expect(screen.getAllByText('处理步骤')).toHaveLength(3);
+    expect(screen.queryByText('后台子任务')).toBeNull();
     expect(screen.getAllByText('编排者')).toHaveLength(1);
     expect(screen.queryByText(/subagent|子 agent|reasoning|transcript/i)).toBeNull();
+  });
+
+  it('turns the generic internal failure label into user-facing copy', () => {
+    render(
+      <MessageRow
+        message={{
+          id: 'failed-generic',
+          role: 'ai',
+          text: '这次请求没有完成。',
+          subtasks: [
+            {
+              id: 'failed-step',
+              label: '核对迁移练习',
+              status: 'failed',
+              error: '子任务未完成',
+              lastEventId: 3,
+            },
+          ],
+        }}
+        navigate={noopNavigate}
+        onAcceptCorrective={noopAccept}
+        chipPending={false}
+        chipAcked={false}
+        revertPending={false}
+      />,
+    );
+
+    expect(screen.getByText('这一步未完成')).toBeTruthy();
+    expect(screen.queryByText('子任务未完成')).toBeNull();
   });
 });

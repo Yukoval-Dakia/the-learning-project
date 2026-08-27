@@ -101,8 +101,8 @@ interface CopilotSummary {
 
 function durableReconnectErrorMessage(error: unknown): string {
   return error instanceof DurablePickupStalledError
-    ? '后台任务还在等待开始，可能正在排队；本次任务已保留，可以稍后重新连接。'
-    : '后台进度连接仍未恢复；任务可能仍在运行，可以再次连接。';
+    ? '任务还在等待开始，可能正在排队；本次请求已保留，可以稍后重新连接。'
+    : '进度连接仍未恢复；任务可能仍在运行，可以再次连接。';
 }
 
 // AF S4 / YUK-203 U6 — UI-side mirror of the server CopilotSkillTurn carrier
@@ -155,7 +155,7 @@ interface DurableCopilotReconnect extends PersistedDurableCopilotReconnect {
 type CopilotProgressStage = 'dispatch' | 'generation' | 'evidence-review';
 
 const COPILOT_PROGRESS_LABELS: Record<CopilotProgressStage, string> = {
-  dispatch: '调度中…',
+  dispatch: '准备中…',
   generation: '生成中…',
   'evidence-review': '证据审阅中…',
 };
@@ -252,6 +252,11 @@ const LEARNER_TOOL_LABELS: Readonly<Record<string, string>> = {
 
 function learnerToolLabel(toolName: string): string {
   return LEARNER_TOOL_LABELS[toolName] ?? '学习辅助任务';
+}
+
+function subtaskErrorMessage(error: string | undefined): string {
+  if (!error) return '这一步未能完成。';
+  return error.replaceAll('子任务', '这一步');
 }
 
 type ToolCallCardStatus = 'running' | 'done' | 'failed';
@@ -628,7 +633,7 @@ export const MessageRow = memo(function MessageRow({
             {m.subtasks.map((subtask) => (
               <div key={subtask.id} data-testid="copilot-subtask-card">
                 <ToolUseCard
-                  toolName="后台子任务"
+                  toolName="处理步骤"
                   summary={subtask.label}
                   actor={null}
                   status={
@@ -640,7 +645,7 @@ export const MessageRow = memo(function MessageRow({
                   }
                   running={<span>正在处理…</span>}
                   result={subtask.summary ? <span>{subtask.summary}</span> : <span>已完成</span>}
-                  errorView={<span>{subtask.error ?? '这项子任务未能完成。'}</span>}
+                  errorView={<span>{subtaskErrorMessage(subtask.error)}</span>}
                 />
               </div>
             ))}
@@ -704,7 +709,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           {
             id: restoredDurableHandle.aiMessageId,
             role: 'ai',
-            text: '正在重新连接这次已受理的后台任务；不会重复提交。',
+            text: '正在恢复这次请求；不会重复提交。',
             streaming: true,
           },
         ]
@@ -1160,11 +1165,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           signal: abortController.signal,
           onUpdate: (view) => {
             handle.view = view;
-            applyRunViewToMessage(
-              handle.aiMessageId,
-              view,
-              '正在重新连接这次后台任务；不会重复提交。',
-            );
+            applyRunViewToMessage(handle.aiMessageId, view, '正在恢复这次请求；不会重复提交。');
           },
         });
         handle.view = durable;
@@ -1176,14 +1177,14 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           applyRunViewToMessage(
             handle.aiMessageId,
             durable,
-            '这次后台运行没有完成。可以换个更聚焦的问法再试。',
+            '这次请求没有完成。可以换个更聚焦的问法再试。',
           );
           if (durable.failureReason === 'ambiguous_execution') {
             // The live copy asks the owner to inspect potentially committed
             // effects first. Do not pair it with a blind one-click redispatch.
             lastUserTurnRef.current = null;
           }
-          reportSendError('后台运行未完成');
+          reportSendError('请求未完成');
         }
       } catch (error) {
         if (stoppingRunRef.current === handle.runId) {
@@ -1446,17 +1447,13 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           }
         }
         aiCreated = true;
-        applyRunViewToMessage(
-          aiId,
-          inlineRunView,
-          '这件事需要多步处理，我已转到后台；进度会在这里持续更新。',
-        );
+        applyRunViewToMessage(aiId, inlineRunView, '正在处理你的请求，结果会在这里显示。');
         if (!location || !runId) {
           // Acceptance is known, but the stable reconnect handle is not. Keep
           // lastUserTurnRef + sessionStorage intact: the only safe redispatch is
           // an explicit replay of this exact key and normalized body.
           durableHandleMissing = true;
-          throw new Error('后台任务已受理，但没有返回进度地址；请用原请求恢复进度。');
+          throw new Error('请求已受理，但暂时无法显示进度；请用原请求恢复。');
         }
         durableHandle = {
           v: 1,
@@ -1484,19 +1481,15 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           signal: turnAbortController.signal,
           onUpdate: (view) => {
             if (durableHandle) durableHandle.view = view;
-            applyRunViewToMessage(
-              aiId,
-              view,
-              '这件事需要多步处理，我已转到后台；进度会在这里持续更新。',
-            );
+            applyRunViewToMessage(aiId, view, '正在处理你的请求，结果会在这里显示。');
           },
         });
         if (durable.phase === 'failed') {
-          applyRunViewToMessage(aiId, durable, '这次后台运行没有完成。可以换个更聚焦的问法再试。');
+          applyRunViewToMessage(aiId, durable, '这次请求没有完成。可以换个更聚焦的问法再试。');
           if (durable.failureReason === 'ambiguous_execution') {
             lastUserTurnRef.current = null;
           }
-          reportSendError('后台运行未完成');
+          reportSendError('请求未完成');
         }
         if (durableReconnectRef.current?.runId === durableHandle.runId) {
           durableReconnectRef.current = null;
@@ -1567,11 +1560,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
               aiCreated = true;
               setAwaitingFirstFrame(false);
             }
-            applyRunViewToMessage(
-              aiId,
-              inlineRunView,
-              '我正在协调这些子任务，完成后会在这里统一收口。',
-            );
+            applyRunViewToMessage(aiId, inlineRunView, '正在处理你的请求，结果会在这里显示。');
           } else if (evt.event === 'tool_use') {
             const call = parseToolUseSse(evt.data);
             if (call) {
@@ -1704,7 +1693,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             (!(err instanceof ApiError) || err.code === 'copilot_enqueue_ambiguous')),
       );
       if (durableHandleMissing) {
-        message = '后台任务已受理，但没有返回进度地址；请用原请求恢复进度。';
+        message = '请求已受理，但暂时无法显示进度；请用原请求恢复。';
       } else if (durableAccepted) {
         message = durableReconnectErrorMessage(err);
       } else if (err instanceof ApiError) {
@@ -2141,8 +2130,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
               <>
                 <p className="chat-empty">我是你的编排者</p>
                 <p className="chat-empty">
-                  前台和昨夜后台的我是同一个 ——
-                  我能引用它为你备的东西。问我今天该学什么、为什么这么排，或让我改动；每一句话我都给你一份可留可撤的改动。
+                  问我今天该学什么、为什么这么排，或让我改动；每一句话我都给你一份可留可撤的改动。
                 </p>
               </>
             ) : null}
