@@ -4,6 +4,8 @@ import {
   InvalidToolOperationTransitionError,
   MAX_TOOL_OPERATION_ERROR_MESSAGE_CHARS,
   MAX_TOOL_OPERATION_JSON_BYTES,
+  getToolOperationProcessId,
+  recoverToolOperationsOnBoot,
   scheduleToolOperationHardDeadline,
   summarizeToolOperationError,
   toolOperationDeadlineSettlement,
@@ -12,6 +14,29 @@ import {
 } from './tool-operations';
 
 describe('ToolOperations lifecycle contract', () => {
+  it('keeps one bounded process tag across module reloads', async () => {
+    const first = getToolOperationProcessId();
+    vi.resetModules();
+    const reloaded = await import('./tool-operations');
+
+    expect(reloaded.getToolOperationProcessId()).toBe(first);
+    expect(first).toMatch(/^toolops_[0-9]+_[0-9a-f-]{36}$/);
+    expect(first.length).toBeLessThanOrEqual(256);
+  });
+
+  it('logs boot recovery failure honestly without failing startup', async () => {
+    const failure = new Error('database unavailable during boot sweep');
+    const db = { transaction: vi.fn(async () => Promise.reject(failure)) } as never;
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(recoverToolOperationsOnBoot(db)).resolves.toEqual([]);
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[tool-operations] boot recovery failed (non-fatal)',
+      failure,
+    );
+    errorSpy.mockRestore();
+  });
+
   it.each(['succeeded', 'failed', 'cancelled', 'lost'] as const)(
     'allows running -> %s exactly once',
     (terminalState) => {

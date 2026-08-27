@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { event, tool_operation } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { createToolOperations } from './tool-operations';
+import { createToolOperations, recoverToolOperationsOnBoot } from './tool-operations';
 
 async function expectConstraintViolation(
   promise: Promise<unknown>,
@@ -12,8 +12,13 @@ async function expectConstraintViolation(
     await promise;
     throw new Error(`expected ${constraintName} to reject the write`);
   } catch (error) {
-    const cause = (error as { cause?: { constraint_name?: string } }).cause;
-    expect(cause?.constraint_name).toBe(constraintName);
+    const databaseError = error as {
+      constraint_name?: string;
+      cause?: { constraint_name?: string };
+    };
+    expect(databaseError.constraint_name ?? databaseError.cause?.constraint_name).toBe(
+      constraintName,
+    );
   }
 }
 
@@ -78,6 +83,42 @@ describe('ToolOperations', () => {
       { action: 'tool_operation_yielded', subjectId: handle.id },
       { action: 'tool_operation_settled', subjectId: handle.id },
     ]);
+  });
+
+  it('persists a canonical input digest independent of object key order', async () => {
+    const operations = createToolOperations(testDb(), { processId: 'api_boot_digest' });
+    const inputs = [
+      {
+        query: 'derive the quadratic formula',
+        filters: { subjects: ['math', 'physics'], includeArchived: false },
+      },
+      {
+        filters: { includeArchived: false, subjects: ['math', 'physics'] },
+        query: 'derive the quadratic formula',
+      },
+      {
+        query: 'derive the quadratic formula',
+        filters: { subjects: ['physics', 'math'], includeArchived: false },
+      },
+    ];
+    for (const [index, input] of inputs.entries()) {
+      await operations.start(
+        {
+          id: `toolop_digest_${index}`,
+          toolName: 'search_notes',
+          effect: 'read',
+          input,
+        },
+        async () => new Promise<never>(() => undefined),
+      );
+    }
+
+    const [first, equivalent, altered] = await Promise.all(
+      [0, 1, 2].map((index) => operations.get(`toolop_digest_${index}`)),
+    );
+    expect(first.inputHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(equivalent.inputHash).toBe(first.inputHash);
+    expect(altered.inputHash).not.toBe(first.inputHash);
   });
 
   it('bounds a positive wait without changing the running operation', async () => {
@@ -513,6 +554,7 @@ describe('ToolOperations', () => {
           effect: 'read',
           status: 'running',
           process_id: 'api_boot_direct',
+          input_hash: '0'.repeat(64),
           input_json: { body: 'x'.repeat(140_000) },
           started_at: now,
           owner_heartbeat_at: now,
@@ -530,6 +572,7 @@ describe('ToolOperations', () => {
           effect: 'read',
           status: 'failed',
           process_id: 'api_boot_direct',
+          input_hash: '0'.repeat(64),
           input_json: {},
           error_json: { code: 'direct_failure', message: 'x'.repeat(4_001) },
           started_at: now,
@@ -540,6 +583,50 @@ describe('ToolOperations', () => {
         }),
       'tool_operation_error_bounds_ck',
     );
+    await expectConstraintViolation(
+      testDb()
+        .insert(tool_operation)
+        .values({
+          id: 'toolop_direct_invalid_digest',
+          tool_name: 'direct_writer',
+          effect: 'read',
+          status: 'running',
+          process_id: 'api_boot_direct',
+          input_hash: 'NOT-A-SHA256',
+          input_json: {},
+          started_at: now,
+          owner_heartbeat_at: now,
+          lease_expires_at: new Date(now.getTime() + 30_000),
+          updated_at: now,
+        }),
+      'tool_operation_input_hash_ck',
+    );
+  });
+
+  it('recovers expired operations through the real boot sweep seam', async () => {
+    const oldOperations = createToolOperations(testDb(), {
+      processId: 'api_boot_before_restart',
+      now: () => new Date('2020-01-01T00:00:00Z'),
+      leaseDurationMs: 1_000,
+      heartbeatIntervalMs: 500,
+    });
+    await oldOperations.start(
+      {
+        id: 'toolop_boot_sweep_expired',
+        toolName: 'remote_write',
+        effect: 'write',
+        input: { mutation: { title: 'may have reached the remote system' } },
+      },
+      async () => new Promise<never>(() => undefined),
+    );
+
+    await expect(recoverToolOperationsOnBoot(testDb())).resolves.toEqual([
+      expect.objectContaining({
+        id: 'toolop_boot_sweep_expired',
+        status: 'lost',
+        sideEffectRisk: 'possible',
+      }),
+    ]);
   });
 
   it('marks previous-process reads lost with no risk and writes lost with possible risk', async () => {

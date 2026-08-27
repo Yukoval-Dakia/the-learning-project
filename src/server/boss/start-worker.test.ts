@@ -9,8 +9,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+let onBossStart: (() => void) | undefined;
+
 class MockPgBoss {
-  start = vi.fn(async () => undefined);
+  start = vi.fn(async () => onBossStart?.());
   on = vi.fn();
   once = vi.fn();
   work = vi.fn(async () => undefined);
@@ -24,6 +26,9 @@ class MockPgBoss {
 
 vi.mock('pg-boss', () => ({ PgBoss: MockPgBoss, default: MockPgBoss }));
 vi.mock('@/capabilities', () => ({ capabilities: [] }));
+vi.mock('@/kernel/tools/tool-operations', () => ({
+  recoverToolOperationsOnBoot: vi.fn(async () => []),
+}));
 vi.mock('@/server/boss/handlers', () => ({ registerHandlers: vi.fn(async () => undefined) }));
 vi.mock('@/server/boss/handlers/ai_task_run_reconcile', () => ({
   reconcileStuckAiTaskRuns: vi.fn(async () => undefined),
@@ -43,6 +48,7 @@ describe('startBossWorker marks the running boss (YUK-384 wake activation)', () 
   });
 
   afterEach(() => {
+    onBossStart = undefined;
     vi.unstubAllEnvs();
     vi.resetModules();
   });
@@ -59,6 +65,27 @@ describe('startBossWorker marks the running boss (YUK-384 wake activation)', () 
     // null in the worker → the mutation-wake/continuation peek always no-op'd.
     expect(getRunningBoss()).toBe(boss);
     expect(getRunningBoss()).not.toBeNull();
+  });
+
+  it('runs ToolOperations recovery before pg-boss starts accepting work', async () => {
+    const order: string[] = [];
+    const { recoverToolOperationsOnBoot } = await import('@/kernel/tools/tool-operations');
+    vi.mocked(recoverToolOperationsOnBoot).mockClear();
+    vi.mocked(recoverToolOperationsOnBoot).mockImplementation(async () => {
+      order.push('tool-operations-recovered');
+      return [];
+    });
+    onBossStart = () => {
+      order.push('boss-started');
+    };
+    const { startBossWorker } = await import('./start-worker');
+    const { _resetBossForTests } = await import('./client');
+    _resetBossForTests();
+
+    await startBossWorker({} as never);
+
+    expect(order).toEqual(['tool-operations-recovered', 'boss-started']);
+    expect(recoverToolOperationsOnBoot).toHaveBeenCalledTimes(1);
   });
 
   it('X4: after markBossStarted, getStartedBoss() returns the running boss WITHOUT a second start()', async () => {

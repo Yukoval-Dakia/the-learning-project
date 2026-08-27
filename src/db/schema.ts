@@ -1398,6 +1398,7 @@ export const tool_operation = pgTable(
     effect: text('effect').notNull(),
     status: text('status').notNull().default('running'),
     process_id: text('process_id').notNull(),
+    input_hash: text('input_hash').notNull(),
     input_json: jsonb('input_json').$type<JsonObject>().notNull(),
     result_json: jsonb('result_json').$type<JsonObject>(),
     error_json: jsonb('error_json').$type<{ code: string; message: string }>(),
@@ -1417,6 +1418,7 @@ export const tool_operation = pgTable(
     index('tool_operation_running_lease_idx').on(t.status, t.lease_expires_at),
     index('tool_operation_session_idx').on(t.session_id, t.started_at),
     check('tool_operation_effect_ck', sql`${t.effect} IN ('read','propose','write')`),
+    check('tool_operation_input_hash_ck', sql`${t.input_hash} ~ '^[0-9a-f]{64}$'`),
     check(
       'tool_operation_identity_bounds_ck',
       sql`char_length(${t.id}) BETWEEN 1 AND 256

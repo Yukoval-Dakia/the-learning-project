@@ -6,6 +6,7 @@ CREATE TABLE "tool_operation" (
 	"effect" text NOT NULL,
 	"status" text DEFAULT 'running' NOT NULL,
 	"process_id" text NOT NULL,
+	"input_hash" text NOT NULL,
 	"input_json" jsonb NOT NULL,
 	"result_json" jsonb,
 	"error_json" jsonb,
@@ -17,6 +18,7 @@ CREATE TABLE "tool_operation" (
 	"settled_at" timestamp with time zone,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "tool_operation_effect_ck" CHECK ("tool_operation"."effect" IN ('read','propose','write')),
+	CONSTRAINT "tool_operation_input_hash_ck" CHECK ("tool_operation"."input_hash" ~ '^[0-9a-f]{64}$'),
 	CONSTRAINT "tool_operation_status_ck" CHECK ("tool_operation"."status" IN ('running','succeeded','failed','cancelled','lost')),
 	CONSTRAINT "tool_operation_cancelled_by_ck" CHECK ("tool_operation"."cancelled_by" IS NULL OR "tool_operation"."cancelled_by" IN ('model','system','user')),
 	CONSTRAINT "tool_operation_terminal_shape_ck" CHECK ((

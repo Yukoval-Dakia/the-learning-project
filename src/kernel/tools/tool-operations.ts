@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, isNotNull, isNull, lt, lte, or } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { tool_operation } from '@/db/schema';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { writeEvent } from '@/kernel/events';
 
 export const TOOL_OPERATION_STATES = [
@@ -38,6 +40,7 @@ export interface ToolOperationRecord {
   effect: ToolOperationEffect;
   status: ToolOperationState;
   processId: string;
+  inputHash: string;
   input: ToolOperationJson;
   result: ToolOperationJson | null;
   error: ToolOperationError | null;
@@ -240,6 +243,15 @@ export function scheduleToolOperationHardDeadline(options: {
 type DbLike = Db | Tx;
 type ToolOperationRow = typeof tool_operation.$inferSelect;
 
+const globalForToolOperations = globalThis as typeof globalThis & {
+  __loomToolOperationProcessId?: string;
+};
+
+export function getToolOperationProcessId(): string {
+  globalForToolOperations.__loomToolOperationProcessId ??= `toolops_${process.pid}_${randomUUID()}`;
+  return globalForToolOperations.__loomToolOperationProcessId;
+}
+
 function mapRow(row: ToolOperationRow): ToolOperationRecord {
   return {
     id: row.id,
@@ -249,6 +261,7 @@ function mapRow(row: ToolOperationRow): ToolOperationRecord {
     effect: row.effect as ToolOperationEffect,
     status: row.status as ToolOperationState,
     processId: row.process_id,
+    inputHash: row.input_hash,
     input: row.input_json,
     result: row.result_json,
     error: row.error_json,
@@ -560,6 +573,7 @@ export function createToolOperations(db: Db, options: ToolOperationsOptions): To
         effect: input.effect,
         status: 'running',
         process_id: options.processId,
+        input_hash: sha256CanonicalJson(input.input),
         input_json: input.input,
         hard_deadline_at: input.hardDeadlineAt ?? null,
         started_at: startedAt,
@@ -727,4 +741,15 @@ export function createToolOperations(db: Db, options: ToolOperationsOptions): To
   };
 
   return api;
+}
+
+export async function recoverToolOperationsOnBoot(db: Db): Promise<ToolOperationRecord[]> {
+  try {
+    return await createToolOperations(db, {
+      processId: getToolOperationProcessId(),
+    }).recoverLost();
+  } catch (error) {
+    console.error('[tool-operations] boot recovery failed (non-fatal)', error);
+    return [];
+  }
 }

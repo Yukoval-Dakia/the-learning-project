@@ -9536,6 +9536,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "input_hash": {
+          "name": "input_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "input_json": {
           "name": "input_json",
           "type": "jsonb",
@@ -9664,6 +9670,10 @@
         "tool_operation_effect_ck": {
           "name": "tool_operation_effect_ck",
           "value": "\"tool_operation\".\"effect\" IN ('read','propose','write')"
+        },
+        "tool_operation_input_hash_ck": {
+          "name": "tool_operation_input_hash_ck",
+          "value": "\"tool_operation\".\"input_hash\" ~ '^[0-9a-f]{64}$'"
         },
         "tool_operation_identity_bounds_ck": {
           "name": "tool_operation_identity_bounds_ck",

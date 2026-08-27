@@ -65,6 +65,14 @@ async function registerToolsBeforeServe(): Promise<void> {
   console.log('[rw:api] capability tools registered');
 }
 
+async function recoverToolOperationsBeforeServe(): Promise<void> {
+  const [{ db }, { recoverToolOperationsOnBoot }] = await Promise.all([
+    import('@/db/client'),
+    import('@/kernel/tools/tool-operations'),
+  ]);
+  await recoverToolOperationsOnBoot(db);
+}
+
 async function startInProcessWorker(): Promise<void> {
   // db client / boss 在 loadEnv() 之后才能 import（模块顶层读 DATABASE_URL），
   // 所以走动态 import，不进文件头 import 区。
@@ -85,6 +93,7 @@ async function startInProcessWorker(): Promise<void> {
 void (async () => {
   await hydrateSubjectsBeforeServe();
   await registerToolsBeforeServe();
+  await recoverToolOperationsBeforeServe();
   serve({ fetch: app.fetch, port }, (info) => {
     const mounted = capabilities.flatMap((c) =>
       (c.api?.routes ?? []).filter((r) => r.load).map((r) => `${r.method} ${r.path}`),
