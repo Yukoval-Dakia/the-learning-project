@@ -124,13 +124,11 @@ import { Conversation } from '@/server/session';
 // 散文兜底). Only the free-form CopilotTask token loop loads it; the behavior-pack
 // (teaching/solve/quiz) service-call paths do NOT.
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
-import { type CopilotDispatchDecision, CopilotDispatchDecisionSchema } from '../contracts';
 
-import {
-  CopilotChatRequest,
-  type CopilotChatRequestT,
-  type CopilotChatTriggerKind,
-  type CopilotSkillContextT,
+import type {
+  CopilotChatRequestT,
+  CopilotChatTriggerKind,
+  CopilotSkillContextT,
 } from './chat-contracts';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
@@ -683,26 +681,6 @@ function observeCopilotSpawnBudget(observation: SpawnBudgetObservation): void {
   });
 }
 
-export type CopilotDispatchResult =
-  | (CopilotDispatchDecision & {
-      source: 'model_triage';
-      task_run_id: string;
-    })
-  | {
-      mode: 'inline';
-      reason: 'classifier_unavailable';
-      source: 'fallback';
-      task_run_id: string;
-    };
-
-export interface DecideCopilotDispatchDeps {
-  runAgentTaskFn?: RunAgentTaskFn;
-  createTaskRunId?: () => string;
-  signal?: AbortSignal;
-  providerSessionDeadlineAt?: number;
-}
-
-const COPILOT_DISPATCH_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(CopilotDispatchDecisionSchema);
 const COPILOT_CORRECTION_INTENT_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(
   CopilotImplicitCorrectionIntentSchema,
 );
@@ -738,69 +716,6 @@ async function resolveImplicitCorrectionIntent(
       error_name: error instanceof Error ? error.name : 'UnknownError',
     });
     return undefined;
-  }
-}
-
-/**
- * Bounded model judgment that must finish before the route commits 200 SSE or
- * 202 JSON. It never reads tools/history and fails open to the retained inline
- * path; the durable-by-default flip remains owned by YUK-596.
- */
-export async function decideCopilotDispatch(
-  db: Db,
-  input: Pick<CopilotChatRequestT, 'user_message' | 'ambient_context'>,
-  deps: DecideCopilotDispatchDeps = {},
-): Promise<CopilotDispatchResult> {
-  const run = deps.runAgentTaskFn ?? runAgentTask;
-  const taskRunId = deps.createTaskRunId?.() ?? `copilot_dispatch_${createId()}`;
-
-  try {
-    const result = await run(
-      'CopilotDispatchTask',
-      {
-        user_message: input.user_message,
-        ...(input.ambient_context ? { ambient_context: input.ambient_context } : {}),
-      },
-      {
-        db,
-        taskRunId,
-        signal: deps.signal,
-        ...(deps.providerSessionDeadlineAt !== undefined
-          ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
-          : {}),
-        outputFormat: COPILOT_DISPATCH_OUTPUT_FORMAT,
-      },
-    );
-
-    let decision: CopilotDispatchDecision;
-    if (result.structured_output !== undefined && result.structured_output !== null) {
-      // Native structured output is authoritative. Never repair or fall back to
-      // contradictory prose when this product channel is present but invalid.
-      decision = CopilotDispatchDecisionSchema.parse(result.structured_output);
-    } else {
-      const extracted = parseJsonObjectLoose(result.text, 'copilot dispatch decision', {
-        riskyRepair: 'reject',
-      });
-      if (!extracted || extracted.repaired !== false) {
-        throw new Error('dispatch decision was not strict JSON');
-      }
-      decision = CopilotDispatchDecisionSchema.parse(extracted.json);
-    }
-
-    return { ...decision, source: 'model_triage', task_run_id: taskRunId };
-  } catch (error) {
-    // Do not log the user message, model text, reasoning, or provider error body.
-    console.warn('[copilot] dispatch classifier unavailable; falling back inline', {
-      event: 'copilot_dispatch_fallback',
-      task_run_id: taskRunId,
-      error_name: error instanceof Error ? error.name : 'UnknownError',
-    });
-    return {
-      mode: 'inline',
-      reason: 'classifier_unavailable',
-      source: 'fallback',
-      task_run_id: taskRunId,
-    };
   }
 }
 

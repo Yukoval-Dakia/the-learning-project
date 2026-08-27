@@ -1,30 +1,6 @@
 import { z } from 'zod';
 import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 
-// YUK-878 — Copilot capability contracts. These schemas previously lived in the
-// the since-deleted central quarry (legacy-task-definitions.ts, removed by
-// YUK-885) and were re-exported by
-// src/ai/registry.ts; they moved here with the CopilotDispatch/evidence task
-// ownership migration. Byte-identical move — prompt-hash and schema-parse pins
-// in src/ai/registry.test.ts stay green without oracle churn.
-
-export const CopilotDispatchDecisionSchema = z.discriminatedUnion('mode', [
-  z
-    .object({
-      mode: z.literal('inline'),
-      reason: z.enum(['bounded_answer', 'needs_clarification', 'needs_user_decision']),
-    })
-    .strict(),
-  z
-    .object({
-      mode: z.literal('durable'),
-      reason: z.enum(['multi_step_research', 'multi_artifact_work', 'broad_batch_work']),
-    })
-    .strict(),
-]);
-
-export type CopilotDispatchDecision = z.infer<typeof CopilotDispatchDecisionSchema>;
-
 export const CopilotEvidenceSourceRefSchema = z
   .object({
     call_index: z

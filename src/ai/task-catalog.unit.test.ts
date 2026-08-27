@@ -1,4 +1,4 @@
-// allow: SIZE_OK — central 53-task catalog contract suite.
+// allow: SIZE_OK — central 52-task catalog contract suite.
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
@@ -24,7 +24,6 @@ import { memoryBriefTaskSpec } from '@/capabilities/agency/tasks/memory-brief';
 import { researchMeetingDirectorTaskSpec } from '@/capabilities/agency/tasks/research-meeting-director';
 import { copilotTaskSpec } from '@/capabilities/copilot/tasks/agent';
 import { copilotCorrectionIntentTaskSpec } from '@/capabilities/copilot/tasks/correction-intent';
-import { copilotDispatchTaskSpec } from '@/capabilities/copilot/tasks/dispatch';
 import {
   copilotEvidenceReviewTaskSpec,
   copilotEvidenceVerificationTaskSpec,
@@ -112,7 +111,6 @@ const EXPECTED_KINDS = [
   'ProfileCriticTask',
   'DreamingTask',
   'CoachTask',
-  'CopilotDispatchTask',
   'CopilotCorrectionIntentTask',
   'CopilotEvidenceReviewTask',
   'CopilotEvidenceVerificationTask',
@@ -167,7 +165,7 @@ const EXPECTED_OWNER_COUNTS = {
   ingestion: 8,
   knowledge: 3,
   agency: 13,
-  copilot: 6,
+  copilot: 5,
 } as const;
 
 const OWNED_SPECS: ReadonlySet<object> = new Set([
@@ -187,7 +185,6 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   selectionOrchestratorTaskSpec,
   sessionSummaryTaskSpec,
   sourcingTaskSpec,
-  copilotDispatchTaskSpec,
   copilotCorrectionIntentTaskSpec,
   copilotEvidenceReviewTaskSpec,
   copilotEvidenceVerificationTaskSpec,
@@ -259,7 +256,7 @@ function invokeEntryValidation(entry: object): void {
 }
 
 describe('taskCatalog', () => {
-  it('has the exact closed 52-kind compile-time and runtime census', () => {
+  it('has the exact closed 51-kind compile-time and runtime census', () => {
     expect(TASK_KIND_IS_CLOSED).toBe(true);
     expect(Object.keys(taskCatalog).sort()).toEqual([...EXPECTED_KINDS].sort());
   });
@@ -540,10 +537,9 @@ describe('taskCatalog', () => {
     }
   });
 
-  it('owns the six Copilot TaskSpecs without central quarry definitions', () => {
+  it('owns the five Copilot TaskSpecs without central quarry definitions', () => {
     const expected = {
       CopilotCorrectionIntentTask: copilotCorrectionIntentTaskSpec,
-      CopilotDispatchTask: copilotDispatchTaskSpec,
       CopilotEvidenceReviewTask: copilotEvidenceReviewTaskSpec,
       CopilotEvidenceVerificationTask: copilotEvidenceVerificationTaskSpec,
       CopilotTask: copilotTaskSpec,
@@ -564,7 +560,7 @@ describe('taskCatalog', () => {
     }
   });
 
-  it('retains 53 full owned TaskSpecs with the quarry deleted (YUK-870/YUK-885)', () => {
+  it('retains 52 full owned TaskSpecs with the quarry deleted (YUK-870/YUK-885)', () => {
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
         expect(entry.ownership, kind).toBe('owned');
@@ -865,15 +861,15 @@ describe('composeTaskCatalog', () => {
     ).toThrow('key "WrongKey" does not match spec.kind "RightKind"');
   });
 
-  it.each([51, 53])('rejects an expected 52-kind catalog with %i entries', (count) => {
+  it.each([50, 52])('rejects an expected 51-kind catalog with %i entries', (count) => {
     const entries = Object.fromEntries(
       Array.from({ length: count }, (_, index) => {
         const spec = makeOwnedSpec(`Task${index}`);
         return [spec.definition.kind, spec];
       }),
     );
-    expect(() => composeTaskCatalog([{ owner: 'practice', specs: entries }], 52)).toThrow(
-      `expected 52 definitions, received ${count}`,
+    expect(() => composeTaskCatalog([{ owner: 'practice', specs: entries }], 51)).toThrow(
+      `expected 51 definitions, received ${count}`,
     );
   });
 });

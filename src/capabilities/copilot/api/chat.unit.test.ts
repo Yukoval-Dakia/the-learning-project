@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 const runMock = vi.hoisted(() => vi.fn());
-const dispatchMock = vi.hoisted(() => vi.fn());
 const writeUserAskMock = vi.hoisted(() => vi.fn());
 const writeReplyMock = vi.hoisted(() => vi.fn());
 const bossSendMock = vi.hoisted(() => vi.fn());
@@ -43,7 +42,6 @@ vi.mock('@/capabilities/copilot/server/chat', () => ({
       })
       .optional(),
   }),
-  decideCopilotDispatch: dispatchMock,
   runCopilotChatStreaming: runMock,
   writeCopilotUserAsk: writeUserAskMock,
   writeCopilotReply: writeReplyMock,
@@ -138,12 +136,6 @@ beforeEach(() => {
   getStartedBossMock.mockReset().mockResolvedValue({
     send: bossSendMock,
     getJobById: bossGetJobByIdMock,
-  });
-  dispatchMock.mockReset().mockResolvedValue({
-    mode: 'inline',
-    reason: 'bounded_answer',
-    source: 'model_triage',
-    task_run_id: 'copilot_dispatch_default_inline',
   });
 });
 
@@ -267,7 +259,7 @@ describe('POST /api/copilot/chat — SSE via SSEStreamingApi', () => {
 
 // YUK-364 — durable 分流。
 describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
-  it('YUK-757 — lost-202 replay returns the original handle before backlog, rate, or classifier gates', async () => {
+  it('YUK-757 — lost-202 replay returns the original handle before backlog or rate gates', async () => {
     vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
     shouldEnqueueMock.mockReturnValue(true);
     dbExecuteMock.mockResolvedValue([{ count: 5 }]);
@@ -289,7 +281,6 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
       bossJobId: '22222222-2222-5222-8222-222222222222',
     });
     bossGetJobByIdMock.mockResolvedValue({ state: 'active' });
-    dispatchMock.mockClear();
     runMock.mockClear();
     bossSendMock.mockClear();
     dbExecuteMock.mockClear();
@@ -306,7 +297,6 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
       checkpoint_event_id: 'copilot_user_ask_recovered_lost_202',
     });
     expect(dbExecuteMock).not.toHaveBeenCalled();
-    expect(dispatchMock).not.toHaveBeenCalled();
     expect(runMock).not.toHaveBeenCalled();
     expect(bossSendMock).not.toHaveBeenCalled();
   });
@@ -341,7 +331,6 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
       'turn-key-lost-202-lookup-recovery',
     );
     expect(reserveAcceptanceMock).not.toHaveBeenCalled();
-    expect(dispatchMock).not.toHaveBeenCalled();
     expect(bossSendMock).not.toHaveBeenCalled();
   });
 
@@ -364,7 +353,6 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(response.headers.get('Retry-After')).toBe('1');
     await expect(response.json()).resolves.toMatchObject({ error: 'copilot_enqueue_ambiguous' });
     expect(reserveAcceptanceMock).not.toHaveBeenCalled();
-    expect(dispatchMock).not.toHaveBeenCalled();
     expect(bossSendMock).not.toHaveBeenCalled();
   });
 
@@ -615,96 +603,6 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(bossSendMock).not.toHaveBeenCalled();
   });
 
-  it('YUK-757 — full durable backlog rejects automatic turns before paid triage', async () => {
-    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
-    shouldEnqueueMock.mockReturnValue(true);
-    dbExecuteMock.mockResolvedValue([{ count: 5 }]);
-    dispatchMock.mockClear();
-    runMock.mockClear();
-    findOrCreateMock.mockClear();
-    writeUserAskMock.mockClear();
-    writeJobEventMock.mockClear();
-    bossSendMock.mockClear();
-
-    const res = await post({
-      user_message:
-        '读取近 30 天 12 次电磁感应错题，按四类聚类并找重复证据；再生成 8 道新题并逐题跑 validator。',
-      triggered_by: 'chat',
-    });
-
-    expect(res.status).toBe(429);
-    expect(res.headers.get('Retry-After')).toBe('30');
-    expect(dispatchMock).not.toHaveBeenCalled();
-    expect(runMock).not.toHaveBeenCalled();
-    expect(findOrCreateMock).not.toHaveBeenCalled();
-    expect(writeUserAskMock).not.toHaveBeenCalled();
-    expect(writeJobEventMock).not.toHaveBeenCalled();
-    expect(bossSendMock).not.toHaveBeenCalled();
-
-    // Backlog refusal happened before any paid work, so it must not consume the
-    // one available AI-funnel slot. A recovered backlog can use it immediately.
-    dbExecuteMock.mockResolvedValue([{ count: 0 }]);
-    runMock.mockReset().mockResolvedValue({
-      session_id: 's_after_backlog_recovery',
-      reply_event_id: 'e_after_backlog_recovery',
-    });
-    const recovered = await post({
-      user_message: '解释为什么含参分式方程要先固定定义域。',
-      triggered_by: 'chat',
-    });
-    expect(recovered.status).toBe(200);
-    await readAll(recovered);
-    expect(dispatchMock).toHaveBeenCalledTimes(1);
-    expect(runMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('YUK-757 — an in-flight classifier reserves the final durable backlog slot', async () => {
-    shouldEnqueueMock.mockReturnValue(true);
-    dbExecuteMock.mockResolvedValue([{ count: 4 }]);
-    runMock.mockReset().mockResolvedValue({
-      session_id: 's_reserved_classifier',
-      reply_event_id: 'e_reserved_classifier',
-    });
-    let releaseDecision:
-      | ((decision: {
-          mode: 'inline';
-          reason: 'bounded_answer';
-          source: 'model_triage';
-          task_run_id: string;
-        }) => void)
-      | undefined;
-    dispatchMock.mockImplementationOnce(
-      async () =>
-        await new Promise((resolve) => {
-          releaseDecision = resolve;
-        }),
-    );
-
-    const first = post({
-      user_message: '核对最近两轮延迟复习里定义域遗漏是否属于同一错因，再决定是否需要后台处理。',
-      triggered_by: 'chat',
-    });
-    await vi.waitFor(() => expect(dispatchMock).toHaveBeenCalledTimes(1));
-
-    const second = await post({
-      user_message: '同时再核对另一组 24 道含参迁移题。',
-      triggered_by: 'chat',
-    });
-    expect(second.status).toBe(429);
-    expect(dispatchMock).toHaveBeenCalledTimes(1);
-
-    releaseDecision?.({
-      mode: 'inline',
-      reason: 'bounded_answer',
-      source: 'model_triage',
-      task_run_id: 'copilot_dispatch_reserved_classifier',
-    });
-    const firstResponse = await first;
-    expect(firstResponse.status).toBe(200);
-    await readAll(firstResponse);
-    expect(runMock).toHaveBeenCalledTimes(1);
-  });
-
   it('durable:true + chat + enqueue-enabled → 202 JSON { run_id }，boss.send(copilot_run)，不开 SSE 流', async () => {
     shouldEnqueueMock.mockReturnValue(true);
     // mockReset 清掉调用记录，让 invocationCallOrder happen-before 断言只看本用例。
@@ -754,7 +652,6 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     );
     // 同步 streaming 路径不被走。
     expect(runMock).not.toHaveBeenCalled();
-    expect(dispatchMock).not.toHaveBeenCalled();
 
     // YUK-364 (F5) — happen-before 顺序：user_ask（commit run handle）→ QUEUED 进度
     // 事件 → boss.send 投递。防未来重排成 boss.send 先于 user_ask 写入的 race
@@ -854,7 +751,6 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
     expect(bossSendMock).not.toHaveBeenCalled();
     expect(runMock).toHaveBeenCalled();
-    expect(dispatchMock).not.toHaveBeenCalled();
   });
 
   it('durable:true 但 triggered_by=chip → 降级回 inline（chip 不入 durable 面）', async () => {
@@ -867,10 +763,9 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
     expect(bossSendMock).not.toHaveBeenCalled();
     expect(runMock).toHaveBeenCalled();
-    expect(dispatchMock).not.toHaveBeenCalled();
   });
 
-  it('durable absent + model inline decision → 同步 SSE framing byte-identical', async () => {
+  it('ordinary chat returns the foreground SSE framing byte-identically', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const requestStartedAt = Date.now();
     shouldEnqueueMock.mockReturnValue(true);
@@ -882,14 +777,6 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
     expect(bossSendMock).not.toHaveBeenCalled();
     expect(runMock).toHaveBeenCalled();
-    expect(dispatchMock).toHaveBeenCalledWith(
-      expect.objectContaining({ execute: dbExecuteMock }),
-      { user_message: 'hi' },
-      expect.objectContaining({
-        signal: expect.any(AbortSignal),
-        providerSessionDeadlineAt: requestStartedAt + COPILOT_INLINE_PROVIDER_SESSION_BUDGET_MS,
-      }),
-    );
     expect(runMock.mock.calls[0]?.[3]).toEqual(
       expect.objectContaining({
         providerSessionDeadlineAt: requestStartedAt + COPILOT_INLINE_PROVIDER_SESSION_BUDGET_MS,
@@ -897,11 +784,10 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     );
   });
 
-  it('YUK-757 — AI funnel rejects an automatic turn before invoking paid dispatch triage', async () => {
+  it('YUK-757 — AI funnel rejects an ordinary turn before it starts', async () => {
     vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
     shouldEnqueueMock.mockReturnValue(true);
     checkRateLimit();
-    dispatchMock.mockClear();
     runMock.mockClear();
     writeUserAskMock.mockClear();
     writeJobEventMock.mockClear();
@@ -914,22 +800,15 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     });
 
     expect(res.status).toBe(429);
-    expect(dispatchMock).not.toHaveBeenCalled();
     expect(runMock).not.toHaveBeenCalled();
     expect(writeUserAskMock).not.toHaveBeenCalled();
     expect(writeJobEventMock).not.toHaveBeenCalled();
     expect(bossSendMock).not.toHaveBeenCalled();
   });
 
-  it('YUK-757 — one automatic inline turn consumes one shared classifier/run slot', async () => {
+  it('YUK-757 — one ordinary foreground turn consumes one shared AI-funnel slot', async () => {
     vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
     shouldEnqueueMock.mockReturnValue(true);
-    dispatchMock.mockResolvedValue({
-      mode: 'inline',
-      reason: 'bounded_answer',
-      source: 'model_triage',
-      task_run_id: 'copilot_dispatch_single_slot_inline',
-    });
     runMock.mockResolvedValue({ session_id: 's_rate_limited_inline', reply_event_id: 'e_inline' });
 
     const first = await post({
@@ -944,157 +823,11 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
       triggered_by: 'chat',
     });
     expect(second.status).toBe(429);
-    expect(dispatchMock).toHaveBeenCalledTimes(1);
     expect(runMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('YUK-757 — absent + model durable decision returns 202 and stamps bounded dispatch provenance', async () => {
-    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
-    shouldEnqueueMock.mockReturnValue(true);
-    dispatchMock.mockResolvedValue({
-      mode: 'durable',
-      reason: 'multi_artifact_work',
-      source: 'model_triage',
-      task_run_id: 'copilot_dispatch_physics_batch',
-    });
-    findOrCreateMock.mockReset().mockResolvedValue({
-      sessionId: 'sess_auto_durable',
-      created: true,
-    });
-    writeUserAskMock.mockReset().mockResolvedValue('copilot_user_ask_AUTO');
-    writeJobEventMock.mockReset().mockResolvedValue(1);
-    getStartedBossMock
-      .mockReset()
-      .mockResolvedValue({ send: bossSendMock, getJobById: bossGetJobByIdMock });
-    bossSendMock.mockReset().mockResolvedValue('job_auto');
-    runMock.mockClear();
-
-    const userMessage =
-      '读取近 30 天 12 次电磁感应错题，按四类聚类并找重复证据；再生成 8 道新题，逐题核验唯一解、单位和退化条件，最后只 propose 调整计划。';
-    const res = await post({
-      user_message: userMessage,
-      triggered_by: 'chat',
-      ambient_context: {
-        route: '/subjects/physics/mistakes',
-        focused_entity: { kind: 'knowledge', id: 'kc_electromagnetic_induction' },
-      },
-    });
-
-    expect(res.status).toBe(202);
-    expect(res.headers.get('Location')).toBe('/api/jobs/copilot_run/copilot_user_ask_AUTO/events');
-    expect(dispatchMock).toHaveBeenCalledWith(
-      expect.objectContaining({ execute: dbExecuteMock }),
-      {
-        user_message: userMessage,
-        ambient_context: {
-          route: '/subjects/physics/mistakes',
-          focused_entity: { kind: 'knowledge', id: 'kc_electromagnetic_induction' },
-        },
-      },
-      expect.objectContaining({
-        signal: expect.any(AbortSignal),
-        providerSessionDeadlineAt: expect.any(Number),
-      }),
-    );
-    expect(writeJobEventMock).toHaveBeenCalledWith(
-      expect.objectContaining({ execute: dbExecuteMock }),
-      expect.objectContaining({
-        event_type: 'copilot_run.queued',
-        payload: expect.objectContaining({
-          dispatch: {
-            source: 'model_triage',
-            reason_code: 'multi_artifact_work',
-            task_run_id: 'copilot_dispatch_physics_batch',
-          },
-        }),
-      }),
-    );
-    expect(bossSendMock).toHaveBeenCalledWith(
-      'copilot_run',
-      expect.objectContaining({
-        user_message: userMessage,
-        ambient: {
-          route: '/subjects/physics/mistakes',
-          focused_entity: { kind: 'knowledge', id: 'kc_electromagnetic_induction' },
-        },
-      }),
-      { id: '11111111-1111-5111-8111-111111111111' },
-    );
-    expect(runMock).not.toHaveBeenCalled();
-  });
-
-  it('YUK-757 — abort during model triage stops before any durable acceptance side effect', async () => {
-    shouldEnqueueMock.mockReturnValue(true);
-    findOrCreateMock.mockClear();
-    writeUserAskMock.mockClear();
-    writeJobEventMock.mockClear();
-    bossSendMock.mockClear();
-    getStartedBossMock.mockClear();
-    runMock.mockClear();
-    let releaseDecision:
-      | ((decision: {
-          mode: 'durable';
-          reason: 'multi_artifact_work';
-          source: 'model_triage';
-          task_run_id: string;
-        }) => void)
-      | undefined;
-    dispatchMock.mockImplementationOnce(
-      async () =>
-        await new Promise((resolve) => {
-          releaseDecision = resolve;
-        }),
-    );
-    const controller = new AbortController();
-    const request = new Request('http://test/api/copilot/chat', {
-      method: 'POST',
-      signal: controller.signal,
-      body: JSON.stringify({
-        user_message:
-          '读取近 60 天 48 道电磁感应与含参函数错题，交叉核验证据、生成 12 道迁移题并逐题跑 validator。',
-        triggered_by: 'chat',
-        ambient_context: {
-          route: '/subjects/physics/mistakes',
-          focused_entity: { kind: 'knowledge', id: 'kc_electromagnetic_induction' },
-        },
-      }),
-    });
-
-    const pending = POST(request, {});
-    await vi.waitFor(() => expect(dispatchMock).toHaveBeenCalledTimes(1));
-    const classifierSignal = dispatchMock.mock.calls[0]?.[2]?.signal as AbortSignal;
-    expect(classifierSignal.aborted).toBe(false);
-    controller.abort();
-    expect(classifierSignal.aborted).toBe(true);
-    releaseDecision?.({
-      mode: 'durable',
-      reason: 'multi_artifact_work',
-      source: 'model_triage',
-      task_run_id: 'copilot_dispatch_aborted_before_acceptance',
-    });
-    const response = await pending;
-
-    expect(response.status).toBe(499);
-    expect(await response.json()).toEqual({
-      error: 'request_aborted',
-      message: 'request aborted before acceptance',
-    });
-    expect(findOrCreateMock).not.toHaveBeenCalled();
-    expect(writeUserAskMock).not.toHaveBeenCalled();
-    expect(writeJobEventMock).not.toHaveBeenCalled();
-    expect(getStartedBossMock).not.toHaveBeenCalled();
-    expect(bossSendMock).not.toHaveBeenCalled();
-    expect(runMock).not.toHaveBeenCalled();
   });
 
   it('YUK-757 — abort during the atomic durable ask reservation never enqueuees or compensates', async () => {
     shouldEnqueueMock.mockReturnValue(true);
-    dispatchMock.mockResolvedValue({
-      mode: 'durable',
-      reason: 'multi_artifact_work',
-      source: 'model_triage',
-      task_run_id: 'copilot_dispatch_abort_during_ask_commit',
-    });
     findOrCreateMock.mockReset().mockResolvedValue({
       sessionId: 'sess_abort_during_ask_commit',
       created: true,
@@ -1119,6 +852,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
           user_message:
             '读取 48 道含参方程、两轮延迟复习与四个未教学探针，并逐题保留 validator 证据。',
           triggered_by: 'chat',
+          durable: true,
         }),
       }),
       {},
@@ -1141,12 +875,6 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
 
   it('YUK-757 — abort before atomic acceptance returns does not send or append FAILED', async () => {
     shouldEnqueueMock.mockReturnValue(true);
-    dispatchMock.mockResolvedValue({
-      mode: 'durable',
-      reason: 'multi_artifact_work',
-      source: 'model_triage',
-      task_run_id: 'copilot_dispatch_abort_during_queued_commit',
-    });
     findOrCreateMock.mockReset().mockResolvedValue({
       sessionId: 'sess_abort_during_queued_commit',
       created: true,
@@ -1173,6 +901,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
         body: JSON.stringify({
           user_message: '后台核对 36 道跨章节练习、三轮延迟复习与四个迁移探针，再生成三档梯度。',
           triggered_by: 'chat',
+          durable: true,
         }),
       }),
       {},
@@ -1207,9 +936,27 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     });
 
     expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
-    expect(dispatchMock).not.toHaveBeenCalled();
     expect(bossSendMock).not.toHaveBeenCalled();
     expect(runMock).toHaveBeenCalled();
+  });
+
+  it('YUK-929 — ordinary chat remains foreground even when durable execution is available', async () => {
+    shouldEnqueueMock.mockReturnValue(true);
+    runMock.mockReset().mockResolvedValue({
+      session_id: 's_foreground_root',
+      reply_event_id: 'e_foreground_root',
+    });
+    bossSendMock.mockClear();
+
+    const res = await post({
+      user_message:
+        '请帮我把这道含参函数的定义域、退化条件和三个常见错因讲清楚，并给一个可以自己检查的步骤。',
+      triggered_by: 'chat',
+    });
+
+    expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
+    expect(bossSendMock).not.toHaveBeenCalled();
+    expect(runMock).toHaveBeenCalledOnce();
   });
 
   it('YUK-757 — durable:false cannot bypass the shared Copilot AI-funnel limit', async () => {
@@ -1225,7 +972,6 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     });
 
     expect(res.status).toBe(429);
-    expect(dispatchMock).not.toHaveBeenCalled();
     expect(runMock).not.toHaveBeenCalled();
   });
 
@@ -1245,6 +991,5 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
     expect(bossSendMock).not.toHaveBeenCalled();
     expect(runMock).toHaveBeenCalled();
-    expect(dispatchMock).not.toHaveBeenCalled();
   });
 });

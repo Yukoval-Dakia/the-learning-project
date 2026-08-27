@@ -17,7 +17,6 @@ import {
 import { PICKUP_TIMEOUT_MS } from '@/capabilities/copilot/durable-pickup';
 import {
   CopilotChatRequest,
-  decideCopilotDispatch,
   runCopilotChatStreaming,
   writeCopilotReply,
 } from '@/capabilities/copilot/server/chat';
@@ -235,8 +234,6 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
   const durableInputHash = hashCopilotDurableInput(parsed);
 
   // Replay accepted durable work before backlog/rate-limit/model triage. A
-  // client that lost the 202 must recover the original handle, not buy another
-  // classifier call or be rejected by capacity consumed by its own run.
   if (idempotencyKey) {
     let accepted: CopilotDurableAcceptance | null = null;
     try {
@@ -278,28 +275,19 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
   }
 
   const backgroundJobsEnabled = shouldEnqueueBackgroundJobs();
-  const shouldClassifyDispatch =
-    parsed.durable === undefined &&
-    parsed.triggered_by === 'chat' &&
-    !parsed.skill_context &&
-    backgroundJobsEnabled;
   const shouldReserveDurableCapacity =
     parsed.triggered_by === 'chat' &&
     !parsed.skill_context &&
     backgroundJobsEnabled &&
-    (parsed.durable === true || shouldClassifyDispatch);
+    parsed.durable === true;
   let preAcceptanceReservation = false;
   const releasePreAcceptanceReservation = () => {
     if (!preAcceptanceReservation) return;
     durableDispatchReservations--;
     preAcceptanceReservation = false;
   };
-  let dispatchDecision: Awaited<ReturnType<typeof decideCopilotDispatch>> | undefined;
   try {
     if (shouldReserveDurableCapacity) {
-      // A turn that may become durable reserves backlog capacity before any
-      // paid model work. Automatic inline/error/abort releases it; automatic
-      // durable transfers this exact reservation into acceptance.
       assertRequestActive(req.signal);
       const outstanding = await countOutstandingDurableRuns(db);
       assertRequestActive(req.signal);
@@ -314,39 +302,18 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       durableDispatchReservations++;
       preAcceptanceReservation = true;
     }
-    // Every schema-valid Copilot POST owns exactly one AI-funnel slot, including
-    // force-inline/chip/skill turns. For automatic chat, that one slot covers
-    // both the bounded classifier and the selected main run.
     checkRateLimit();
-    if (shouldClassifyDispatch) {
-      dispatchDecision = await decideCopilotDispatch(
-        db,
-        {
-          user_message: parsed.user_message,
-          ...(parsed.ambient_context ? { ambient_context: parsed.ambient_context } : {}),
-        },
-        { signal: req.signal, providerSessionDeadlineAt },
-      );
-    }
   } catch (err) {
     releasePreAcceptanceReservation();
     return errorResponse(err);
   }
-  // The model judgment happens before the 200/202 acceptance boundary. If the
-  // client disconnected while it was in flight, do not turn its now-ambiguous
-  // failed POST into a paid durable run that a retry could duplicate.
   if (req.signal.aborted) {
     releasePreAcceptanceReservation();
     return errorResponse(requestAbortedError());
   }
-  const durableRequested = parsed.durable === true || dispatchDecision?.mode === 'durable';
+  const durableRequested = parsed.durable === true;
   if (!durableRequested) releasePreAcceptanceReservation();
 
-  // YUK-364/YUK-757 — durable 分流。显式 durable:true 仍直接受理；未显式选择的
-  // eligible free-form turn 先由 no-tool CopilotDispatchTask 做一次 bounded judgment。
-  // durable:false 是 force-inline。这里只让 chat surface 入 durable 面；chip 与
-  // skill_context 继续走确定性 inline 路径。
-  //
   // YUK-575 (MF-C 诚实措辞) — shouldEnqueueBackgroundJobs()（runtime-env.ts）**只挡
   // 测试环境**（NODE_ENV==='test'||VITEST），**零 worker-liveness 检测**；生产恒 true，
   // 且 boss.send 只 INSERT job 行、无论有无 worker 消费都成功。故它 NOT 一个「worker
@@ -413,14 +380,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
             session_id: conv.sessionId,
             triggered_by: parsed.triggered_by,
             pickup_deadline_ms: Date.now() + PICKUP_TIMEOUT_MS,
-            dispatch:
-              dispatchDecision?.mode === 'durable'
-                ? {
-                    source: dispatchDecision.source,
-                    reason_code: dispatchDecision.reason,
-                    task_run_id: dispatchDecision.task_run_id,
-                  }
-                : { source: 'request_flag' },
+            dispatch: { source: 'request_flag' },
           },
           assertActive: () => assertRequestActive(req.signal),
         });
