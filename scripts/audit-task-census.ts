@@ -94,8 +94,8 @@ export function auditTaskCensus(options: AuditTaskCensusOptions): AuditResult {
     (item) => item.registration === 'legacy-handler',
   );
   const errors = [
-    ...(validateInfrastructure && catalogSet.size !== 53
-      ? [`Task catalog must contain exactly 53 kinds, received ${catalogSet.size}`]
+    ...(validateInfrastructure && catalogSet.size !== 52
+      ? [`Task catalog must contain exactly 52 kinds, received ${catalogSet.size}`]
       : []),
     ...unresolvedCallers.map(
       (caller) =>

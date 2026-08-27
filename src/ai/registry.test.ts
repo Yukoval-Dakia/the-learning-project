@@ -14,7 +14,6 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  CopilotDispatchDecisionSchema,
   CopilotEvidenceReviewOutputSchema,
   CopilotEvidenceVerificationOutputSchema,
 } from '@/capabilities/copilot/contracts';
@@ -51,7 +50,7 @@ describe('copilot task dispatch declarations', () => {
       expect(task.copilot.intentSchema.safeParse).toBeTypeOf('function');
       expect(task.copilot.prepare).toBeTypeOf('function');
     }
-    expect(Object.keys(tasks)).toHaveLength(53);
+    expect(Object.keys(tasks)).toHaveLength(52);
   });
 
   it('is an immutable compatibility projection with only the two dispatch overlays', () => {
@@ -99,7 +98,7 @@ describe('task prompt definitions', () => {
   });
 
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(53);
+    expect(Object.keys(tasks)).toHaveLength(52);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -129,8 +128,8 @@ describe('task prompt definitions', () => {
   it('matches the original prompts byte-for-byte with the exact pre-refactor oracle', () => {
     expect(promptHashOracle.baseCommit).toBe('6b3233b10633c93497a8211956fddcb795ebd2da');
     expect(promptHashOracle.algorithm).toBe('sha256');
-    expect(promptHashOracle.taskCount).toBe(52);
-    expect(Object.keys(promptHashOracle.prompts)).toHaveLength(208);
+    expect(promptHashOracle.taskCount).toBe(51);
+    expect(Object.keys(promptHashOracle.prompts)).toHaveLength(204);
 
     for (const profileId of promptHashOracle.profiles) {
       const profile = resolveSubjectProfile(profileId);
@@ -789,48 +788,6 @@ describe('CopilotTask.systemPrompt — YUK-757 backstage spawn envelope', () => 
     expect(p).toContain('不得传 model 或 isolation');
     expect(p).toContain('前台始终只有 Copilot 一个声音');
     expect(p).toContain('subagent 只回结论');
-  });
-});
-
-describe('CopilotDispatchTask — YUK-757 bounded execution-mode judgment', () => {
-  it('is a fast no-tool MiMo classifier with a strict closed decision schema', () => {
-    const def = tasks.CopilotDispatchTask;
-    expect(def.defaultProvider).toBe('xiaomi');
-    expect(def.defaultModel).toBe('mimo-v2.5');
-    expect(def.needsToolCall).toBe(false);
-    expect(def.allowedTools).toEqual([]);
-    expect(def.budget.maxIterations).toBe(1);
-    expect(def.budget.timeout).toBe(10_000);
-    expect(def.structuredOutputSchema).toBeDefined();
-    expect(
-      def.structuredOutputSchema?.safeParse({
-        mode: 'durable',
-        reason: 'multi_artifact_work',
-      }).success,
-    ).toBe(true);
-    expect(
-      def.structuredOutputSchema?.safeParse({
-        mode: 'durable',
-        reason: 'multi_artifact_work',
-        rationale: 'do not admit free-form router prose',
-      }).success,
-    ).toBe(false);
-    expect(
-      CopilotDispatchDecisionSchema.safeParse({
-        mode: 'inline',
-        reason: 'multi_artifact_work',
-      }).success,
-    ).toBe(false);
-  });
-
-  it('pins model judgment, human-in-loop fallback, and the absence of brittle heuristics', () => {
-    const p = getTaskSystemPrompt('CopilotDispatchTask');
-    expect(p).toContain('多份 artifact');
-    expect(p).toContain('短但重');
-    expect(p).toContain('长文本的单次摘要');
-    expect(p).toContain('needs_user_decision');
-    expect(p).toContain('human-in-the-loop');
-    expect(p).toContain('不要根据字数、关键词或编号数量机械判断');
   });
 });
 

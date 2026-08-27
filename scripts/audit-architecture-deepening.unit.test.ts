@@ -170,8 +170,8 @@ describe('scanTaskSpecOwnership', () => {
 
 describe('scanTaskCensusConformance', () => {
   const clean = {
-    catalogCount: 53,
-    expectedCount: 53,
+    catalogCount: 52,
+    expectedCount: 52,
     errors: [],
     profileCriticCallerPresent: true,
     forbiddenPatternViolations: [],
@@ -181,9 +181,9 @@ describe('scanTaskCensusConformance', () => {
     expect(scanTaskCensusConformance(clean)).toEqual([]);
   });
 
-  it('fails the 52/53 census count drift', () => {
-    const violations = scanTaskCensusConformance({ ...clean, catalogCount: 52 });
-    expect(violations.some((violation) => violation.reason.includes('expected exactly 53'))).toBe(
+  it('fails the 51/52 census count drift', () => {
+    const violations = scanTaskCensusConformance({ ...clean, catalogCount: 51 });
+    expect(violations.some((violation) => violation.reason.includes('expected exactly 52'))).toBe(
       true,
     );
   });
