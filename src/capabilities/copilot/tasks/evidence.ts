@@ -78,6 +78,10 @@ export const copilotEvidenceReviewTaskSpec = {
       'YUK-832 — blind append-only reference leg for the shared FULL validator. It never sees candidate prose; small internal tool submissions are canonicalized by the server into request/trace coverage and exact DomainTool JSON pointers.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
+    // YUK-923 — pin the validator's reasoning tier explicitly: the endpoint
+    // default overshot the product wall-clock budget in R2 burn-in (73.5k
+    // thinking chars, 12.9min reference leg vs the 480s budget).
+    reasoningEffort: 'high',
     // Auto-sealed accepted records need at most 15 turns. Actual A01 previously
     // reached the explicit-complete tail, so retain nine correction turns
     // turns; the per-call wall clock remains the authoritative paid backstop.
@@ -103,6 +107,8 @@ export const copilotEvidenceVerificationTaskSpec = {
       'YUK-832 — append-only sealed comparator for one selected reply. It submits small per-reply observations; the server derives dense request coverage and the verdict, then requires two valid passes.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
+    // YUK-923 — same explicit tier pin as the blind leg (see above).
+    reasoningEffort: 'high',
     // Auto-sealed accepted records need at most 17 turns. Share the blind leg's
     // 24-turn correction ceiling; the per-call wall clock remains the paid backstop.
     budget: { ...DEFAULT_BUDGET, maxIterations: 24, timeout: 120_000 },

@@ -8,6 +8,8 @@ type OwnedTaskSpec = TaskSpec<never, unknown>;
 // every owner entry is a full TaskSpec (definition + parseText + outputSchema).
 export type TaskOwnerEntry = OwnedTaskSpec;
 
+const EFFORT_LEVELS = new Set<string>(['low', 'medium', 'high', 'xhigh', 'max']);
+
 const PROVIDERS = new Set<string>([
   'anthropic',
   'xiaomi',
@@ -88,6 +90,9 @@ function validateDefinition(owner: TaskOwner, key: string, definition: TaskDefin
   }
   if (!definition.needsToolCall && definition.allowedTools.length > 0) {
     throw new Error(`defineOwnedTaskSpecs(${owner}): "${key}" has tools without tool calls`);
+  }
+  if (definition.reasoningEffort !== undefined && !EFFORT_LEVELS.has(definition.reasoningEffort)) {
+    throw new Error(`defineOwnedTaskSpecs(${owner}): "${key}" invalid reasoningEffort`);
   }
   if (
     definition.invocation !== undefined &&
