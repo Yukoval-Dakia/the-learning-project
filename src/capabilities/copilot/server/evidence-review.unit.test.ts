@@ -39,6 +39,8 @@ import {
   COPILOT_EVIDENCE_REVIEW_LOW_CONFIDENCE_ANNOTATION,
   COPILOT_EVIDENCE_REVIEW_TIMEOUT_MS,
   type CopilotEvidenceReviewRunTaskFn,
+  durableEvidenceLaneModel,
+  durableEvidenceTimeoutsFor,
   reviewCopilotEvidenceReply,
 } from './evidence-review';
 import { REALISTIC_EVIDENCE_TRACE } from './evidence-review.actual-fixture';
@@ -2900,5 +2902,56 @@ describe('sealed evidence contract', () => {
     expect(() =>
       segmentEvidenceReply(Array.from({ length: 193 }, () => 'claim').join('\n')),
     ).toThrow('192');
+  });
+});
+
+describe('model-aware durable evidence budgets — flash tier (YUK-839 owner ruling ①b)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('keeps the mimo/default tier byte-identical to the durable constants', () => {
+    const defaultTier = {
+      referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+      comparisonMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
+    };
+    expect(durableEvidenceTimeoutsFor('mimo-v2.5-pro')).toEqual(defaultTier);
+    expect(durableEvidenceTimeoutsFor('claude-opus-4-8')).toEqual(defaultTier);
+    expect(durableEvidenceTimeoutsFor(undefined)).toEqual(defaultTier);
+  });
+
+  it('grants glm-5.3-flash the burn-in-sized flash tier (reference ≥20min, comparison ≥10min)', () => {
+    expect(durableEvidenceTimeoutsFor('glm-5.3-flash')).toEqual({
+      referenceMs: 1_200_000,
+      comparisonMs: 600_000,
+    });
+  });
+
+  it('reads the lane model through the same env>registry precedence the paid legs use', () => {
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'zhipu');
+    vi.stubEnv('AI_PROVIDER_MODEL', 'glm-5.3-flash');
+    vi.stubEnv('ZHIPU_API_KEY', 'test-key-present');
+    expect(durableEvidenceLaneModel()).toBe('glm-5.3-flash');
+    expect(durableEvidenceTimeoutsFor(durableEvidenceLaneModel())).toEqual({
+      referenceMs: 1_200_000,
+      comparisonMs: 600_000,
+    });
+  });
+
+  it('resolves the registry mimo default when no override is set and credentials exist', () => {
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
+    vi.stubEnv('AI_PROVIDER_MODEL', '');
+    vi.stubEnv('XIAOMI_API_KEY', 'test-key-present');
+    expect(durableEvidenceLaneModel()).toBe('mimo-v2.5-pro');
+  });
+
+  it('degrades to the default tier when provider resolution fails (missing credentials)', () => {
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
+    vi.stubEnv('XIAOMI_API_KEY', '');
+    expect(durableEvidenceLaneModel()).toBeUndefined();
+    expect(durableEvidenceTimeoutsFor(durableEvidenceLaneModel())).toEqual({
+      referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+      comparisonMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
+    });
   });
 });

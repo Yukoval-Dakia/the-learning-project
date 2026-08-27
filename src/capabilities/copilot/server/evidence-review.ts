@@ -15,6 +15,7 @@ import {
   isTransientAgentFailure,
 } from '@/server/ai/agent-run-error';
 import { type TaskTextResult, taskPromptFingerprint } from '@/server/ai/provenance';
+import { resolveTaskProvider } from '@/server/ai/providers';
 import { type RunTaskCtx, runTask } from '@/server/ai/runner';
 import {
   persistValidatorRunBinding,
@@ -79,6 +80,79 @@ export const COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS =
   COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS * COPILOT_EVIDENCE_REFERENCE_MAX_ATTEMPTS +
   COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS *
     (COPILOT_EVIDENCE_COMPARISON_MAX_PAID_CALLS + COPILOT_EVIDENCE_COMPARISON_MAX_ATTEMPTS);
+
+/** Per-model durable leg budgets handed to `attemptTimeouts` (YUK-839 ruling ①b). */
+export interface CopilotDurableEvidenceAttemptTimeouts {
+  readonly referenceMs: number;
+  readonly comparisonMs: number;
+}
+
+/** The only model with a non-default durable tier today (zhipu GLM coding-plan lane). */
+export const COPILOT_DURABLE_EVIDENCE_FLASH_MODEL_ID = 'glm-5.3-flash';
+
+/**
+ * YUK-839 owner ruling ①b (2026-08-27) — relax the durable budgets FOR THAT MODEL.
+ * Burn-in R2 (docs/planning/2026-08-26-yuk-839-burnin-glm53flash.md) measured
+ * zhipu/glm-5.3-flash on the A01-equivalent 77KB fixture: reference leg 771.9s
+ * (~13min; Round 1 lost 4/4 attempts to the 480s budget with zero accepted
+ * appends — a pure budget/latency mismatch, not an endpoint or tooling defect),
+ * comparators 168.9s / 339.3s, full reference + double-comparator flow 21.3min.
+ * Flash tier = observed leg max with ~1.5x headroom: reference 1_200_000ms
+ * (20min ≈ 1.55 × 771.9s), comparison 600_000ms (10min ≈ 1.77 × 339.3s).
+ * mimo/default keeps the constants above EXACTLY (they are sized from mimo
+ * A01 traces — see their own doc comments).
+ *
+ * Scope: leg budgets only. The outer recovery envelope
+ * (COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS →
+ * DURABLE_OWNER_SETTLEMENT_BUDGET_MS, which must stay < the 1h
+ * STUCK_RUN_THRESHOLD_MS sweeper fence) deliberately keeps its mimo sizing:
+ * the observed 21.3min flash flow fits inside it, and scaling the worst-case
+ * attempt sum (2×1200s + 5×600s = 90min) past 1h would require re-fencing the
+ * stuck-run sweeper — a cross-cutting recovery change outside this ruling. A
+ * flash run that legitimately exceeds the envelope degrades along the
+ * pre-existing ambiguous-terminal path and never duplicates paid work.
+ */
+const COPILOT_DURABLE_EVIDENCE_DEFAULT_TIMEOUTS: CopilotDurableEvidenceAttemptTimeouts =
+  Object.freeze({
+    referenceMs: COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
+    comparisonMs: COPILOT_DURABLE_EVIDENCE_COMPARISON_TIMEOUT_MS,
+  });
+
+const COPILOT_DURABLE_EVIDENCE_TIMEOUT_TIERS: Readonly<
+  Record<string, CopilotDurableEvidenceAttemptTimeouts>
+> = Object.freeze({
+  [COPILOT_DURABLE_EVIDENCE_FLASH_MODEL_ID]: Object.freeze({
+    referenceMs: 1_200_000,
+    comparisonMs: 600_000,
+  }),
+});
+
+/** Unknown/undefined models (every mimo lane included) keep the default tier. */
+export function durableEvidenceTimeoutsFor(
+  model: string | undefined,
+): CopilotDurableEvidenceAttemptTimeouts {
+  if (model === undefined) return COPILOT_DURABLE_EVIDENCE_DEFAULT_TIMEOUTS;
+  return COPILOT_DURABLE_EVIDENCE_TIMEOUT_TIERS[model] ?? COPILOT_DURABLE_EVIDENCE_DEFAULT_TIMEOUTS;
+}
+
+/**
+ * Best-effort model the durable validator legs will run on. The paid legs go
+ * through runTask with no ctx.override, so their lane is exactly
+ * `resolveTaskProvider(<evidence kind>)`: the AI_PROVIDER_OVERRIDE /
+ * AI_PROVIDER_MODEL env switch, else the registry default
+ * (xiaomi/mimo-v2.5-pro — both evidence task kinds share it, so resolving the
+ * reference kind yields every leg's model). Resolution failures (missing
+ * provider credentials, invalid env override) degrade to undefined → default
+ * tier: the identical failure surfaces at paid-call time inside the FULL gate's
+ * fail-closed handling, so budget selection must never throw here.
+ */
+export function durableEvidenceLaneModel(): string | undefined {
+  try {
+    return resolveTaskProvider('CopilotEvidenceReviewTask').model;
+  } catch {
+    return undefined;
+  }
+}
 
 const MAX_CANDIDATE_CHARS = 64_000;
 const MAX_SERIALIZED_TRACE_CHARS = 160_000;

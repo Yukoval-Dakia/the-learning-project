@@ -580,6 +580,72 @@ describe('runCopilotRun', () => {
     expect(replies[0]?.payload).not.toHaveProperty('primary_view');
   });
 
+  it('YUK-839 — flash lane durable budgets: glm-5.3-flash evidence legs receive the burn-in-sized tier', async () => {
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'zhipu');
+    vi.stubEnv('AI_PROVIDER_MODEL', 'glm-5.3-flash');
+    vi.stubEnv('ZHIPU_API_KEY', 'test-key-present');
+    const runId = 'copilot_user_ask_yuk839_flash_budget';
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
+    });
+    const run = vi.fn(
+      async (_kind: string, _input: unknown, _ctx: AgentCtx, _onDelta: (text: string) => void) => {
+        await mcpOptions?.onResult?.({
+          name: 'query_events',
+          effect: 'read',
+          input: { subject_id: 'diagnostic_subject_yuk839', limit: 10 },
+          output: { events: [], has_more: false },
+          error_reason: null,
+          executed: true,
+        });
+        return {
+          text: 'C04 的 queue_assertion=null，无法裁决队列是否归零。',
+          task_run_id: 'tr_yuk839_flash_candidate',
+          finishReason: 'end_turn',
+          usage: { inputTokens: 9_000, outputTokens: 200 },
+        };
+      },
+    );
+    let capturedAttemptTimeouts: { referenceMs?: number; comparisonMs?: number } | undefined;
+    const reviewEvidenceReplyFn = vi.fn(async (input) => {
+      capturedAttemptTimeouts = input.attemptTimeouts;
+      return {
+        status: 'pass' as const,
+        replyText: input.candidateReply,
+        reviewTaskRunId: 'tr_yuk839_flash_reference',
+        comparisonTaskRunIds: ['tr_yuk839_flash_comparison'],
+      };
+    });
+
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: 'sess_yuk839_flash_budget',
+        user_message: '检查 C04 due queue 是否归零。',
+      },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn,
+      buildTavilyMcpServerFn: () => null,
+      reviewEvidenceReplyFn,
+    });
+
+    expect(result).toEqual({
+      status: 'done',
+      reply: 'C04 的 queue_assertion=null，无法裁决队列是否归零。',
+      task_run_id: 'tr_yuk839_flash_candidate',
+    });
+    expect(reviewEvidenceReplyFn).toHaveBeenCalledTimes(1);
+    expect(capturedAttemptTimeouts).toEqual({
+      referenceMs: 1_200_000,
+      comparisonMs: 600_000,
+    });
+  });
+
   it('blocks unverified learning content introduced by a durable degraded blind reply', async () => {
     const runId = 'copilot_user_ask_durable_degraded_learning';
     const sessionId = 'sess_durable_degraded_learning';
