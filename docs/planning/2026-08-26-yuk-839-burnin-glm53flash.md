@@ -354,3 +354,77 @@ budgets 全部不变，只改 batch shape，并继续只跑一份 clean sample�
 - harness entry：`67e4b5704e487ee6eaf25febc6a5c77c304510c0f6a33f0cb22ac5fda3342c90`
 - salvaged results：`1acddd810f3c1a35a282833462f38b7b557d5e40d66f47e009d3ec6e20892c31`
 - clean log：`f8d17b337a758f1bb2d64569d5b983d97694e845aa9291af7d17fbcde880379a`
+
+## Round 4 — not-material batching default（owner-authorized, single-variable）
+
+Owner 2026-08-27 授权 YUK-926 **一次** clean validator run，用来隔离测量 #1299 的
+batching-default prompt / tool-description wording。唯一一次 run 在 reference 首次 provider
+接触时命中 zhipu 五小时 coding-plan quota；生产 durable retry 随即执行的第二个 reference
+attempt 也同样返回 HTTP 429。两次均在生成任何 token、thinking 或 append 前被拒绝，故本轮
+**没有获得 batching 或性能样本**。按“一次 run、不得重跑”的 owner 闸停止，没有等待 quota
+reset 后再发第二个 validator run。
+
+### Setup parity（vs Round 3）
+
+- code revision：`dfe413713fa1ce80bbc2eaece0494a4d900b1654`（branch
+  `codex/yuk-926-r4-burnin`，fresh `origin/main`），明确包含 #1299
+  `af87ee452114ddb47768801dae1686de6bb18328` 与 Round 3 report #1300
+  `dfe413713fa1ce80bbc2eaece0494a4d900b1654`。
+- R3 harness core 行为等价复用；仅改 worktree/artifact/port 标签、forensic 注释与格式。
+  `runTaskFn` 仍只追加 `override={provider:'zhipu', model:'glm-5.3-flash'}`；request
+  context、unsafe candidate、`REALISTIC_EVIDENCE_TRACE + slice(0, 8)`、comparators 与
+  append observer 未改。
+- fixture 再次为 21 successful reads / 1,814 harness-counted leaves / 58,465 serialized chars；
+  两个 reference attempt 的 `task_input_sha256` 均为
+  `e2f648c508fc53cbcc168e5bfaa4fac08ce1553586ab8d8eb86cd226fae8d224`，与 Round 3
+  reference 精确相同。
+- 两项 validator task spec 仍为 `reasoningEffort: 'high'`；两次
+  `model_profile_resolved` 均记录 `reasoning_effort: high`。未设置
+  `MAX_THINKING_TOKENS`。
+- budget 仍由生产 `durableEvidenceTimeoutsFor('glm-5.3-flash')` 给出 reference
+  1,200,000ms / comparison 600,000ms。
+- fresh PG：`wt-926-pg`，`pgvector/pgvector:0.8.2-pg16-bookworm`，
+  `127.0.0.1:5436`，完整 migration；key 仍只从主 repo `.env` 只读加载且未输出。
+- #1299 本身只改 prompt hash、prompt wording、tool description 与测试；
+  checkpoint / seal / dedup / ledger record granularity 均未改。
+
+### Sole-run observation（quota-blocked）
+
+scope：`yuk926_burnin_r4_1787813987812`；outer wall 15.239s。
+
+| attempt | task_run_id | run-call wall | provider result | in / out | thinking | reported cost | accepted appends |
+|---|---|---:|---|---:|---:|---:|---:|
+| reference 1 | `i0v2unglnlvrib9l03sl49hy` | 10.736s | HTTP 429 / code 1308 / five-hour quota | 0 / 0 | 0 | null / unknown | 0 |
+| reference 2（production durable retry） | `fjtsc606bg03f04088pt4u9z` | 4.212s | HTTP 429 / code 1308 / five-hour quota | 0 / 0 | 0 | null / unknown | 0 |
+
+- batching measurement：`mark_trace_calls_not_material` invocations = 0；batch sizes = `[]`；
+  accepted not-material calls = 0；agent rounds不可观察。模型未到首个 submission，不能拿
+  “0 calls”当 batching 成功或失败。
+- comparator measurement：未进入 original 或 blind-reference comparator；whole-pipeline
+  token / thinking / cost 与成功 wall 不存在。表中的 0/0 与 null 只描述 quota rejection，
+  不能与 Round 3 的 370,198/48,173 reference、103,136 thinking、$1.729363 或总
+  1,445.8s / $3.313845 做性能 delta。
+- decision：`failed_closed`，reason
+  `reference_task_failed:api_error_result:points=0:not_material=0:safe_reply=0:completed=0`。
+- checkpoint：仅 reference 一行，`status=open`、revision=0、records=0、digests=0；
+  attempts audit 有两条 `failed_retryable / api_error_result`，input hash 相同；无 phantom
+  record。`cost_ledger` 对两个真实 attempt 各有一行，均 tokens 0/0、cost=null/unknown；
+  因为未产生成功结果，**没有 seal 或 digest binding 可验**。
+
+### Verdict vs R3 / R2
+
+**INCONCLUSIVE / provider quota blocked before the experimental variable was exercised.**
+本轮既不能确认 R2/R3 的 10 个 one-item not-material calls 是否收敛成批量，也不能测
+reference / pipeline 的 wall、token、thinking 或 cost delta。因此 #1299 的目标
+（约 12→8 rounds、input -35%、reference -2–3min）在真实流量上仍未获证，也未被反证。
+Round 3 的 effort@high 负结论维持不变；Round 2/R3 的成功样本仍是性能基线。本轮唯一新增
+事实是 2026-08-27 15:00 CST 时 zhipu coding-plan 五小时 quota 已耗尽，且 production
+fail-closed / retry audit 在 pre-generation 429 下按设计工作。
+
+### Round 4 artifacts（`/tmp/yuk926-burnin`，全部普通文件 mode 0600）
+
+- harness core：`ed6b718473af70c043b94119718aaf2449e98d4995f08e23d342911edf8ffaf3`
+- harness entry：`910e1629e7943288a5f2e417dcffbd9a6d92c23becaa09092868afeb0a4a96fd`
+- results：`d54a85577b8e26107ff3d01d56f67852cee727c1cea881bfe31a47271c001451`
+- clean log：`e1e0383636b24d1b8eaf2cbbc2a3eca48e9754362ee949d7f616f06ca7cdb254`
+- cost ledger：`4c063d9d0a237d0f08fb4e16a00c38360592adc9dab732d3a3b74ade6b0dd7db`
