@@ -93,6 +93,7 @@ vi.mock('@/server/ai/log', () => ({
 
 import type { JsonSchemaOutputFormat } from '@anthropic-ai/claude-agent-sdk';
 import { tasks } from '@/ai/registry';
+import type { TaskDefinition } from '@/ai/task-spec';
 import { runTask, streamTask, streamTaskCollecting } from './runner';
 
 // Minimal db stub — never dereferenced because every ai/log writer is mocked.
@@ -506,6 +507,52 @@ describe('runTask — YUK-572 agents/hooks/canUseTool seam', () => {
     const opts = mockSdk.capturedOptions as { hooks?: unknown; canUseTool?: unknown };
     expect(opts.hooks).toBe(hooks);
     expect(opts.canUseTool).toBe(canUseTool);
+  });
+});
+
+// YUK-923 — runner reasoning-effort seam. Same zero-regression contract as the
+// seams above: a TaskDefinition that does NOT declare `reasoningEffort` ⇒ the
+// `effort` key is never written onto Options (byte-identical to pre-seam; the
+// endpoint default applies — the mimo path must stay untouched); a declaration
+// ⇒ threaded 1:1 to the SDK-native effort tier. The control surface is the SDK
+// `effort` option, NOT thinking on/off and NOT MAX_THINKING_TOKENS (R2 proved
+// the env var does not penetrate the CLI).
+describe('runTask — YUK-923 reasoning effort seam', () => {
+  beforeEach(() => {
+    mockSdk.capturedOptions = undefined;
+    mockSdk.messages = [successResult()];
+    logMock.started.mockClear();
+    logMock.finished.mockClear();
+    logMock.cost.mockClear();
+    logMock.tool.mockClear();
+    process.env.XIAOMI_API_KEY = 'sk-test-key';
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('does NOT write effort when the task spec declares no reasoningEffort (zero regression)', async () => {
+    await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
+
+    const opts = mockSdk.capturedOptions as Record<string, unknown>;
+    expect('effort' in opts).toBe(false);
+  });
+
+  it("threads a declared reasoningEffort through to Options.effort (validator 'high')", async () => {
+    await runTask('CopilotEvidenceReviewTask', { units: [] }, { db: fakeDb });
+
+    const opts = mockSdk.capturedOptions as { effort?: unknown };
+    expect(opts.effort).toBe('high');
+  });
+
+  it('pins both evidence validator specs at high while undeclared tasks stay undefined', () => {
+    expect(tasks.CopilotEvidenceReviewTask.reasoningEffort).toBe('high');
+    expect(tasks.CopilotEvidenceVerificationTask.reasoningEffort).toBe('high');
+    // Baseline: absent declaration must remain absent (not a leaked default).
+    // Read through the declared interface — the registry's inferred literal for
+    // an undeclaring task has no reasoningEffort key at the type level.
+    const undeclared: TaskDefinition = tasks[UNMIGRATED_KIND];
+    expect(undeclared.reasoningEffort).toBeUndefined();
   });
 });
 

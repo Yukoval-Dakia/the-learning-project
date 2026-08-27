@@ -44,6 +44,7 @@ import {
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import { type TaskKind, tasks } from '@/ai/registry';
 import { getTaskSystemPrompt } from '@/ai/task-prompts';
+import type { TaskDefinition } from '@/ai/task-spec';
 import type { Db } from '@/db/client';
 import type { SubjectProfile } from '@/subjects/profile';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
@@ -499,7 +500,12 @@ function buildQueryOptions(
   // per attempt keeps the retry loop's env/model provably per-attempt-consistent.
   resolved: ResolvedProvider,
 ): Options {
+  // The registry map's value type is the union of every spec's inferred literal
+  // shape. Optional fields (reasoningEffort) only exist on declaring members, so
+  // they are read through this declared-interface view; the literal union stays
+  // the source for mutable-array fields like allowedTools (SDK wants string[]).
   const def = tasks[kind];
+  const declaredDef: TaskDefinition = def;
   const allowedTools = ctx.allowedTools ?? def.allowedTools;
   const configuredSkills = ctx.skills ?? [];
   const configuredMaxTurns = (ctx.budgetOverride?.maxIterations ?? def.budget.maxIterations) || 1;
@@ -582,6 +588,15 @@ function buildQueryOptions(
   }
   if (ctx.canUseTool !== undefined) {
     options.canUseTool = ctx.canUseTool;
+  }
+  // YUK-923 seam: SDK-native reasoning effort tier. Same undefined-guard as the
+  // seams above — a task spec that does not declare `reasoningEffort` leaves the
+  // key unwritten, so Options stays byte-identical (zero regression) and the
+  // endpoint default applies. Effort is orthogonal to thinking on/off; it is a
+  // per-task-kind declaration, so there is no ctx.override mirror (override is a
+  // provider/model routing escape consumed at provider resolution).
+  if (declaredDef.reasoningEffort !== undefined) {
+    options.effort = declaredDef.reasoningEffort;
   }
   // YUK-590 — Anthropic direct is the only wired pay-as-you-go lane whose SDK
   // result reports USD. Mimo has no SDK cost signal and anthropic-sub is flat
