@@ -311,6 +311,8 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // live task/source hashes. Restoring them without the matching live execution context
   // would make stale paid-attempt progress reusable, so archive restore must wipe them.
   'copilot_evidence_checkpoint',
+  // YUK-928: process-owned tool runtime; restoring it would resurrect stale handles and owners.
+  'tool_operation',
   // YUK-751 durable subscription dispatcher recovery state. All three tables are
   // reconstructed by manifest reconciliation + event-log discovery; restoring stale
   // checkpoints, claims, deliveries, or debounce reservations would be incorrect.
@@ -355,6 +357,7 @@ export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
   'provider_attempt_admission',
   'provider_session_admission',
   'copilot_evidence_checkpoint',
+  'tool_operation',
   'event_subscription_effect',
   'event_subscription_delivery',
   'event_subscription_checkpoint',

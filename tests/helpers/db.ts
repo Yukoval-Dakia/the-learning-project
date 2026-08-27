@@ -223,6 +223,7 @@ const ALL_TABLES = [
   'source_asset',
   'knowledge',
   'ai_task_runs',
+  'tool_operation',
   'tool_call_log',
   'cost_ledger',
   // YUK-599 (v3 trait 合同 §2.2) — subject 控制面六表。loose text-ref 无 FK，

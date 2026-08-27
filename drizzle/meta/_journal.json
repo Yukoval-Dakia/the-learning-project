@@ -666,6 +666,13 @@
       "when": 1787738349226,
       "tag": "0094_yuk839_copilot_evidence_checkpoint",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1787835128163,
+      "tag": "0095_yuk928_tool_operations",
+      "breakpoints": true
     }
   ]
 }

@@ -273,7 +273,14 @@ describe('export constants', () => {
       'job_events',
       'provider_attempt_admission',
       'provider_session_admission',
+      'tool_operation',
     ]);
+  });
+
+  it('wipes ToolOperations runtime state without backing it up', () => {
+    expect(BACKUP_EXCLUDED_TABLES.has('tool_operation')).toBe(true);
+    expect(RESTORE_WIPE_ONLY_TABLES).toContain('tool_operation');
+    expect(FK_ORDER as readonly string[]).not.toContain('tool_operation');
   });
 
   it('wipes YUK-842 operational admission state without backing it up', () => {

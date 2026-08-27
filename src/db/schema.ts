@@ -1388,6 +1388,84 @@ export const tool_call_log = pgTable('tool_call_log', {
   mirrored_event_id: text('mirrored_event_id'),
 });
 
+export const tool_operation = pgTable(
+  'tool_operation',
+  {
+    id: text('id').primaryKey(),
+    session_id: text('session_id'),
+    task_run_id: text('task_run_id'),
+    tool_name: text('tool_name').notNull(),
+    effect: text('effect').notNull(),
+    status: text('status').notNull().default('running'),
+    process_id: text('process_id').notNull(),
+    input_json: jsonb('input_json').$type<JsonObject>().notNull(),
+    result_json: jsonb('result_json').$type<JsonObject>(),
+    error_json: jsonb('error_json').$type<{ code: string; message: string }>(),
+    side_effect_risk: text('side_effect_risk'),
+    cancelled_by: text('cancelled_by'),
+    terminal_tool_call_log_id: text('terminal_tool_call_log_id'),
+    hard_deadline_at: timestamp('hard_deadline_at', { withTimezone: true }),
+    started_at: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    settled_at: timestamp('settled_at', { withTimezone: true }),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('tool_operation_running_process_idx').on(t.status, t.process_id),
+    index('tool_operation_session_idx').on(t.session_id, t.started_at),
+    check('tool_operation_effect_ck', sql`${t.effect} IN ('read','propose','write')`),
+    check(
+      'tool_operation_status_ck',
+      sql`${t.status} IN ('running','succeeded','failed','cancelled','lost')`,
+    ),
+    check(
+      'tool_operation_cancelled_by_ck',
+      sql`${t.cancelled_by} IS NULL OR ${t.cancelled_by} IN ('model','system','user')`,
+    ),
+    check(
+      'tool_operation_terminal_shape_ck',
+      sql`(
+        ${t.status} = 'running'
+        AND ${t.settled_at} IS NULL
+        AND ${t.result_json} IS NULL
+        AND ${t.error_json} IS NULL
+        AND ${t.side_effect_risk} IS NULL
+        AND ${t.cancelled_by} IS NULL
+      ) OR (
+        ${t.status} = 'succeeded'
+        AND ${t.settled_at} IS NOT NULL
+        AND ${t.error_json} IS NULL
+        AND ${t.side_effect_risk} IS NULL
+        AND ${t.cancelled_by} IS NULL
+      ) OR (
+        ${t.status} = 'failed'
+        AND ${t.settled_at} IS NOT NULL
+        AND ${t.result_json} IS NULL
+        AND ${t.error_json} IS NOT NULL
+        AND ${t.side_effect_risk} IS NULL
+        AND ${t.cancelled_by} IS NULL
+      ) OR (
+        ${t.status} = 'cancelled'
+        AND ${t.settled_at} IS NOT NULL
+        AND ${t.result_json} IS NULL
+        AND ${t.error_json} IS NOT NULL
+        AND ${t.side_effect_risk} IS NULL
+        AND ${t.cancelled_by} IS NOT NULL
+      ) OR (
+        ${t.status} = 'lost'
+        AND ${t.settled_at} IS NOT NULL
+        AND ${t.result_json} IS NULL
+        AND ${t.error_json} IS NOT NULL
+        AND ${t.side_effect_risk} IN ('none','possible')
+        AND ${t.cancelled_by} IS NULL
+      )`,
+    ),
+    check(
+      'tool_operation_timeline_ck',
+      sql`${t.settled_at} IS NULL OR ${t.settled_at} >= ${t.started_at}`,
+    ),
+  ],
+);
+
 export const cost_ledger = pgTable(
   'cost_ledger',
   {
