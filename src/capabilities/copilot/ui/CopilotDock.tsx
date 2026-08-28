@@ -1086,7 +1086,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     // `map(m => m.id === aiId ? finalized : m)` would silently no-op — the reply vanishes. Skip the
     // replace while a send is in flight (mirrors the prefill's prev.length===0 guard). The revert
     // already landed server-side; the tombstone shows on the next refresh (YUK-497 wave-2, major).
-    if (sendingRef.current || currentSessionIdRef.current !== sessionId) return false;
+    if (sendingRef.current) return false;
+    if (currentSessionIdRef.current !== sessionId) return false;
     if (JSON.stringify(messagesRef.current) === JSON.stringify(replayed)) return true;
     setMessages(replayed);
     // A revert may have removed the turn that owned the active teaching skill / focused
