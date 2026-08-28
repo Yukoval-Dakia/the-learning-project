@@ -29,6 +29,7 @@ import {
   copilotEvidenceVerificationTaskSpec,
 } from '@/capabilities/copilot/tasks/evidence';
 import { copilotTaskSpecs } from '@/capabilities/copilot/tasks/index';
+import { copilotResearchTaskSpec } from '@/capabilities/copilot/tasks/research';
 import { teachingTurnTaskSpec } from '@/capabilities/copilot/tasks/teaching-turn';
 import { blockAssemblyTaskSpec } from '@/capabilities/ingestion/tasks/block-assembly';
 import { coldStartPlacementBridgeTaskSpec } from '@/capabilities/ingestion/tasks/cold-start-bridge';
@@ -115,6 +116,7 @@ const EXPECTED_KINDS = [
   'CopilotEvidenceReviewTask',
   'CopilotEvidenceVerificationTask',
   'CopilotTask',
+  'CopilotResearchTask',
   'KnowledgeReviewTask',
   'GoalScopeTask',
   'MindModelInductionTask',
@@ -165,7 +167,7 @@ const EXPECTED_OWNER_COUNTS = {
   ingestion: 8,
   knowledge: 3,
   agency: 13,
-  copilot: 5,
+  copilot: 6,
 } as const;
 
 const OWNED_SPECS: ReadonlySet<object> = new Set([
@@ -189,6 +191,7 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   copilotEvidenceReviewTaskSpec,
   copilotEvidenceVerificationTaskSpec,
   copilotTaskSpec,
+  copilotResearchTaskSpec,
   teachingTurnTaskSpec,
   noteGenerateTaskSpec,
   noteRefineTaskSpec,
@@ -256,7 +259,7 @@ function invokeEntryValidation(entry: object): void {
 }
 
 describe('taskCatalog', () => {
-  it('has the exact closed 51-kind compile-time and runtime census', () => {
+  it('has the exact closed 53-kind compile-time and runtime census', () => {
     expect(TASK_KIND_IS_CLOSED).toBe(true);
     expect(Object.keys(taskCatalog).sort()).toEqual([...EXPECTED_KINDS].sort());
   });
@@ -537,12 +540,13 @@ describe('taskCatalog', () => {
     }
   });
 
-  it('owns the five Copilot TaskSpecs without central quarry definitions', () => {
+  it('owns the six Copilot TaskSpecs without central quarry definitions', () => {
     const expected = {
       CopilotCorrectionIntentTask: copilotCorrectionIntentTaskSpec,
       CopilotEvidenceReviewTask: copilotEvidenceReviewTaskSpec,
       CopilotEvidenceVerificationTask: copilotEvidenceVerificationTaskSpec,
       CopilotTask: copilotTaskSpec,
+      CopilotResearchTask: copilotResearchTaskSpec,
       TeachingTurnTask: teachingTurnTaskSpec,
     } as const;
 
@@ -560,7 +564,7 @@ describe('taskCatalog', () => {
     }
   });
 
-  it('retains 52 full owned TaskSpecs with the quarry deleted (YUK-870/YUK-885)', () => {
+  it('retains 53 full owned TaskSpecs with the quarry deleted (YUK-870/YUK-885)', () => {
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
         expect(entry.ownership, kind).toBe('owned');

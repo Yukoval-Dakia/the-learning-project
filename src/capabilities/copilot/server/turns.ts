@@ -534,7 +534,7 @@ export async function getCopilotTurnsBeforeAnchor(
   if (!anchor) {
     throw new CopilotHistoryAnchorError('missing_anchor', opts.anchorEventId);
   }
-  if (anchor.action !== USER_ASK_ACTION) {
+  if (!USER_ACTIONS.includes(anchor.action as (typeof USER_ACTIONS)[number])) {
     throw new CopilotHistoryAnchorError('invalid_anchor_action', opts.anchorEventId);
   }
   if (anchor.session_id !== opts.sessionId) {
@@ -603,4 +603,75 @@ export async function getCopilotTurnsBeforeAnchor(
     .limit(limit * 2);
 
   return projectCopilotTurnRows(dbArg, opts.sessionId, rows, limit);
+}
+
+export async function getCopilotContinuationHistory(
+  dbArg: DbLike,
+  opts: {
+    sessionId: string;
+    parentTurnEventId: string;
+    resultEventId: string;
+    limit?: number;
+  },
+): Promise<CopilotTurn[]> {
+  const [result] = await dbArg
+    .select({
+      action: event.action,
+      session_id: event.session_id,
+      caused_by_event_id: event.caused_by_event_id,
+    })
+    .from(event)
+    .where(eq(event.id, opts.resultEventId))
+    .limit(1);
+  if (!result || result.action !== 'experimental:subagent_run_settled') {
+    throw new CopilotHistoryAnchorError('invalid_anchor_action', opts.resultEventId);
+  }
+  if (result.session_id !== opts.sessionId || !result.caused_by_event_id) {
+    throw new CopilotHistoryAnchorError('session_mismatch', opts.resultEventId);
+  }
+  const [started] = await dbArg
+    .select({ caused_by_event_id: event.caused_by_event_id })
+    .from(event)
+    .where(
+      and(
+        eq(event.id, result.caused_by_event_id),
+        eq(event.action, 'experimental:subagent_run_started'),
+        eq(event.session_id, opts.sessionId),
+      ),
+    )
+    .limit(1);
+  if (started?.caused_by_event_id !== opts.parentTurnEventId) {
+    throw new CopilotHistoryAnchorError('missing_anchor', opts.parentTurnEventId);
+  }
+  const before = await getCopilotTurnsBeforeAnchor(dbArg, {
+    sessionId: opts.sessionId,
+    anchorEventId: opts.parentTurnEventId,
+    limit: opts.limit,
+  });
+  const parentRows = await dbArg
+    .select({
+      id: event.id,
+      action: event.action,
+      payload: event.payload,
+      created_at: event.created_at,
+      caused_by_event_id: event.caused_by_event_id,
+    })
+    .from(event)
+    .where(
+      and(
+        eq(event.session_id, opts.sessionId),
+        or(
+          eq(event.id, opts.parentTurnEventId),
+          and(eq(event.action, REPLY_ACTION), eq(event.caused_by_event_id, opts.parentTurnEventId)),
+        ),
+      ),
+    )
+    .orderBy(asc(event.dispatch_seq));
+  const parent = await projectCopilotTurnRows(
+    dbArg,
+    opts.sessionId,
+    parentRows,
+    clampLimit(opts.limit),
+  );
+  return [...before, ...parent].slice(-clampLimit(opts.limit));
 }

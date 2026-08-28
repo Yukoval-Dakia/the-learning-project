@@ -34,6 +34,7 @@ import {
   ReprojectDeferredExperimental,
   StateSnapshotExperimental,
 } from './state-snapshot';
+import { SubagentRunSettledExperimental, SubagentRunStartedExperimental } from './subagent-events';
 
 export * from './artifact-events';
 export * from './blocks';
@@ -48,6 +49,7 @@ export * from './mistake-variant-events';
 export * from './nudge-events';
 export * from './question-block-events';
 export * from './state-snapshot';
+export * from './subagent-events';
 
 // ====================================================================
 // Event — 顶层 union
@@ -126,6 +128,8 @@ export const Event = z.union([
   QuestionBlockLifecycleExperimental,
   NudgeExperimental,
   JudgePendingAttemptExperimental,
+  SubagentRunStartedExperimental,
+  SubagentRunSettledExperimental,
   ExperimentalEvent,
 ]);
 export type EventT = z.infer<typeof Event>;

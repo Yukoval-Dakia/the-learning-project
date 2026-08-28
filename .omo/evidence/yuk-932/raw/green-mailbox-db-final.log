@@ -1,0 +1,57 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./tests/db-fork-constants" without a file extension (vitest.db.config.ts:2:31). Add the file extension
+  - import "./vitest.shared" without a file extension (vitest.db.config.ts:10:8). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.10 /Volumes/YukovalSBak/yukoval-projects/the-learning-project-worktrees/f5-20260827/yuk-932
+
+Scope: all 2 workspace projects
+? The modules directories will be removed and reinstalled from scratch. Proceed?
+ (Y/n)
+[ERR_PNPM_ABORTED_REMOVE_MODULES_DIR] Aborted removal of modules directory
+$ drizzle-kit migrate
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/Volumes/YukovalSBak/yukoval-projects/the-learning-project-worktrees/f5-20260827/yuk-932/drizzle.config.ts'
+◇ injected env (0) from .env.local // tip: ⌘ suppress logs { quiet: true }
+Using 'pg' driver for database querying
+[⣷] applying migrations...[⣯] applying migrations...[⣟] applying migrations...[⡿] applying migrations...[⢿] applying migrations...[⣻] applying migrations...[⣽] applying migrations...[✓] migrations applied successfully!{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '00000',
+  message: 'database "test_fork_1" does not exist, skipping',
+  file: 'dbcommands.c',
+  line: '1620',
+  routine: 'dropdb'
+}
+{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '00000',
+  message: 'database "test_fork_2" does not exist, skipping',
+  file: 'dbcommands.c',
+  line: '1620',
+  routine: 'dropdb'
+}
+{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '00000',
+  message: 'database "test_fork_3" does not exist, skipping',
+  file: 'dbcommands.c',
+  line: '1620',
+  routine: 'dropdb'
+}
+{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '00000',
+  message: 'database "test_fork_4" does not exist, skipping',
+  file: 'dbcommands.c',
+  line: '1620',
+  routine: 'dropdb'
+}
+
+ Test Files  3 passed (3)
+      Tests  36 passed (36)
+   Start at  13:18:22
+   Duration  22.37s (transform 6.24s, setup 64ms, import 17.66s, tests 12.39s, environment 0ms)

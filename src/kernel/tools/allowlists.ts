@@ -26,6 +26,9 @@ export const READ_TOOLS = [
   'search_memory_facts',
   'get_tool_operation',
   'wait_tool_operation',
+  'launch_researcher',
+  'get_subagent',
+  'wait_subagent',
   // ADR-0032 D9 / YUK-304 (lane B) — 题池查询 (wraps the YUK-280 listQuestions
   // reader; drafts included by default for duplicate-avoidance). Granted to the
   // copilot surfaces ONLY for now — widening maintenance is A2 territory, so the
@@ -91,6 +94,7 @@ export const PROPOSE_WRITE_TOOLS = [
   // not an inbox proposal). Surface grants remain narrow below.
   'write_agent_note',
   'cancel_tool_operation',
+  'cancel_subagent',
 ] as const;
 
 export type ReadDomainToolName = (typeof READ_TOOLS)[number];
@@ -173,6 +177,10 @@ export const COPILOT_TOOLS = [
   'get_tool_operation',
   'wait_tool_operation',
   'cancel_tool_operation',
+  'launch_researcher',
+  'get_subagent',
+  'wait_subagent',
+  'cancel_subagent',
   // ADR-0031 决定1/D5 + ADR-0032 D9 (YUK-304 lane B) — the quiz C→A reverse-U6
   // grant: the copilot IS the quiz orchestrator now (the C-form detectQuizIntent
   // / resolveQuizIntent / quiz-skill pre-dispatch is retired), so it carries the

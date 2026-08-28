@@ -96,17 +96,8 @@ import {
   buildTavilyMcpServer,
 } from '@/server/ai/mcp/tavily';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
-import {
-  type StreamCollectResult,
-  type TaskEventMessage,
-  runAgentTask,
-  streamTaskCollecting,
-} from '@/server/ai/runner';
-import {
-  SPAWN_TOOL_NAME,
-  type SpawnBudgetObservation,
-  createSpawnContract,
-} from '@/server/ai/spawn-contract';
+import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
+import type { SpawnBudgetObservation } from '@/server/ai/spawn-contract';
 import {
   type SdkMcpServer,
   type ToolExecutionResultObservation,
@@ -133,12 +124,7 @@ import type {
 } from './chat-contracts';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
-import {
-  type CopilotSubtaskEvent,
-  buildCopilotSubagents,
-  createCopilotSubtaskProjector,
-  isCopilotSubagentEnabled,
-} from './subagents';
+import type { CopilotSubtaskEvent } from './subagents';
 
 export * from './chat-contracts';
 
@@ -672,16 +658,6 @@ function selectActorRef(triggeredBy: CopilotChatTriggerKind): string {
   return triggeredBy === 'chip' ? 'agent:copilot_chip' : 'agent:copilot';
 }
 
-function observeCopilotSpawnBudget(observation: SpawnBudgetObservation): void {
-  console.info('[copilot] spawn_budget_observation', {
-    event: 'copilot_spawn_budget_observation',
-    mode: observation.mode,
-    tool_use_id: observation.toolUseId,
-    ordinal: observation.ordinal,
-    decision: observation.decision,
-  });
-}
-
 const COPILOT_CORRECTION_INTENT_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(
   CopilotImplicitCorrectionIntentSchema,
 );
@@ -1181,24 +1157,8 @@ async function runCopilotChatImpl(
     ...resolveMcpAllowedTools(surface),
     ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
   ];
-  const subagentEnabled = deps.copilotSubagentEnabled ?? isCopilotSubagentEnabled(process.env);
-  const allowedTools = [...baseAllowedTools, ...(subagentEnabled ? [SPAWN_TOOL_NAME] : [])];
-  const spawnContract = subagentEnabled
-    ? createSpawnContract({
-        enabled: true,
-        agents: buildCopilotSubagents({ parentAllowedTools: allowedTools }),
-        onBudgetObservation: deps.onSpawnBudgetObservation ?? observeCopilotSpawnBudget,
-      })
-    : undefined;
-  const sdkHooks = toolUseCorrelation.prepend(spawnContract?.hooks);
-  const projectSubtaskEvent = createCopilotSubtaskProjector();
-  const onTaskEvent =
-    subagentEnabled && deps.onSubtaskEvent
-      ? async (event: TaskEventMessage) => {
-          const projected = projectSubtaskEvent(event);
-          if (projected) await deps.onSubtaskEvent?.(projected);
-        }
-      : undefined;
+  const allowedTools = baseAllowedTools;
+  const sdkHooks = toolUseCorrelation.prepend();
 
   // YUK-575 (A1) — the free-form run input assembled by the shared assembler above
   // (before the ask write, read-before-write). When `freeFormRunInput` is undefined
@@ -1282,13 +1242,6 @@ async function runCopilotChatImpl(
         ...(deps.providerSessionDeadlineAt !== undefined
           ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
           : {}),
-        ...(spawnContract
-          ? {
-              agents: spawnContract.agents,
-              canUseTool: spawnContract.canUseTool,
-            }
-          : {}),
-        ...(onTaskEvent ? { onTaskEvent } : {}),
         ...(deps.onToolUseEvent
           ? {
               // YUK-457 — the runner emits raw SDK block names (mcp__loom__*)
@@ -1342,12 +1295,6 @@ async function runCopilotChatImpl(
         ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
         : {}),
       hooks: sdkHooks,
-      ...(spawnContract
-        ? {
-            agents: spawnContract.agents,
-            canUseTool: spawnContract.canUseTool,
-          }
-        : {}),
       // YUK-284 (C2) — see streaming branch above (spread-when-present).
       ...(copilotSkills ? { skills: copilotSkills } : {}),
     });

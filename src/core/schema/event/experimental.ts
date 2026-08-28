@@ -247,6 +247,8 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   // no way to recover it, so it must fail loud at the barrier, never degrade to the
   // loose generic.
   'experimental:judge_pending_attempt',
+  'experimental:subagent_run_started',
+  'experimental:subagent_run_settled',
 ]);
 
 // ====================================================================

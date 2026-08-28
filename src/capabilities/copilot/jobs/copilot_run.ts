@@ -67,16 +67,12 @@ import {
   reviewCopilotEvidenceReply,
 } from '@/capabilities/copilot/server/evidence-review';
 import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
-import {
-  buildCopilotSubagents,
-  createCopilotSubtaskProjector,
-  isCopilotSubagentEnabled,
-} from '@/capabilities/copilot/server/subagents';
 import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
+  READ_TOOLS,
   resolveDomainToolNames,
   resolveMcpAllowedTools,
 } from '@/kernel/tools/allowlists';
@@ -96,17 +92,8 @@ import {
   TAVILY_MCP_SERVER_NAME,
   buildTavilyMcpServer,
 } from '@/server/ai/mcp/tavily';
-import {
-  type StreamCollectResult,
-  type TaskEventMessage,
-  runAgentTask,
-  streamTaskCollecting,
-} from '@/server/ai/runner';
-import {
-  SPAWN_TOOL_NAME,
-  type SpawnBudgetObservation,
-  createSpawnContract,
-} from '@/server/ai/spawn-contract';
+import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
+import type { SpawnBudgetObservation } from '@/server/ai/spawn-contract';
 import {
   type SdkMcpServer,
   type ToolExecutionResultObservation,
@@ -126,6 +113,11 @@ import { writeJobEvent } from '@/server/events/writer';
 // subjectId 参数），inline + durable 直接复用同一份，零漂移。
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
 import { createCopilotProposalFlowGate } from '../server/proposal-flow-gate';
+
+export { enqueueCopilotMailboxJob } from '../api/chat';
+
+import type { CopilotContinuationRecord, SubagentRunRecord } from '../server/subagent-mailbox';
+import { getCopilotContinuationHistory } from '../server/turns';
 
 // dispatch 入口投递的 job 体。run_id = checkpoint_id = user_ask event id（route
 // 在 enqueue 前已写 user_ask domain event，本 handler 以它做 causedByEventId 让
@@ -561,16 +553,6 @@ async function findPersistedDurableReply(
         : 'recovered',
     ...(payload.durable_emit_reviewed_delta === true ? { emitReviewedDelta: true } : {}),
   };
-}
-
-function observeCopilotSpawnBudget(observation: SpawnBudgetObservation): void {
-  console.info('[copilot_run] spawn_budget_observation', {
-    event: 'copilot_spawn_budget_observation',
-    mode: observation.mode,
-    tool_use_id: observation.toolUseId,
-    ordinal: observation.ordinal,
-    decision: observation.decision,
-  });
 }
 
 function evidenceValidationRef(
@@ -1068,18 +1050,8 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     ...resolveMcpAllowedTools(surface),
     ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
   ];
-  const subagentEnabled = params.copilotSubagentEnabled ?? isCopilotSubagentEnabled(process.env);
-  const allowedTools = [...baseAllowedTools, ...(subagentEnabled ? [SPAWN_TOOL_NAME] : [])];
-  const spawnContract = subagentEnabled
-    ? createSpawnContract({
-        enabled: true,
-        agents: buildCopilotSubagents({ parentAllowedTools: allowedTools }),
-        onBudgetObservation: params.onSpawnBudgetObservation ?? observeCopilotSpawnBudget,
-      })
-    : undefined;
-  const sdkHooks = toolUseCorrelation.prepend(
-    cancellationControl.prependSdkHook(spawnContract?.hooks),
-  );
+  const allowedTools = baseAllowedTools;
+  const sdkHooks = toolUseCorrelation.prepend(cancellationControl.prependSdkHook());
 
   // YUK-364 (bot-review C2) — 解析 copilot 对话方法论 SKILL.md 白名单（与 inline
   // 同一份 resolveCopilotSkills；cross-subject 共享 resolver）。命中 → 传 ctx.skills
@@ -1110,38 +1082,11 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   // YUK-832 将模型正文完整缓冲：只有在 no-tool typed validator
   // pass/repair 并持久化 outcome marker 后，才能写安全 DELTA。
   // 否则后续 read tool 会使已经可见的伪因果文本无法撤回。
-  let progressChain: Promise<void> = Promise.resolve();
-  const enqueueProgress = (eventType: string, payload: Record<string, unknown>) => {
-    progressChain = progressChain.then(async () => {
-      // Progress is advisory and each write is independent. Keeping the catch
-      // inside the link prevents one failed frame from poisoning later frames.
-      try {
-        await writeJobEvent(db, {
-          business_table: COPILOT_RUN_TABLE,
-          business_id: runId,
-          event_type: eventType,
-          payload,
-        });
-      } catch (err) {
-        console.error('[copilot_run] progress write failed for', runId, err);
-      }
-    });
-    return progressChain;
-  };
+  const progressChain: Promise<void> = Promise.resolve();
   let candidateDeltaObserved = false;
   const onDelta = (text: string) => {
     if (text.length > 0) candidateDeltaObserved = true;
   };
-  const projectSubtaskEvent = createCopilotSubtaskProjector();
-  const onTaskEvent = subagentEnabled
-    ? async (event: TaskEventMessage) => {
-        const projected = projectSubtaskEvent(event);
-        if (projected) {
-          await enqueueProgress(COPILOT_RUN_EVENTS.STEP, { ...projected });
-        }
-      }
-    : undefined;
-
   // Load-bearing execution fence, deliberately placed after every deterministic
   // setup/read and immediately before the only paid/external-effect gateway.
   // The claim rechecks under a per-run transaction lock: two overlapping
@@ -1207,13 +1152,6 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         mcpServers,
         allowedTools,
         hooks: sdkHooks,
-        ...(spawnContract
-          ? {
-              agents: spawnContract.agents,
-              canUseTool: spawnContract.canUseTool,
-            }
-          : {}),
-        ...(onTaskEvent ? { onTaskEvent } : {}),
         // C2 — spread-when-present：copilotSkills===undefined 时省略 skills 字段，
         // 与 inline chat.ts 同款降级（runner ctx.skills ?? [] 不变 → 零回归）。
         ...(copilotSkills ? { skills: copilotSkills } : {}),
@@ -1839,4 +1777,116 @@ export function buildCopilotRunHandler(db: Db): (jobs: Job<CopilotRunJobData>[])
       console.log(`[copilot_run] ${data.run_id} -> ${result.status}`);
     }
   };
+}
+
+const COPILOT_RESEARCH_READ_TOOLS = READ_TOOLS.filter(
+  (name) =>
+    name !== 'run_task' &&
+    name !== 'get_tool_operation' &&
+    name !== 'wait_tool_operation' &&
+    name !== 'launch_researcher' &&
+    name !== 'get_subagent' &&
+    name !== 'wait_subagent',
+);
+
+export async function runCopilotResearcher(
+  db: Db,
+  record: SubagentRunRecord,
+  abortController: AbortController,
+): Promise<{ taskRunId: string; text: string }> {
+  const taskRunId = record.childTaskRunId ?? `copilot_research_${record.id}`;
+  const mcpServer = buildMcpServerFromRegistry({
+    ctx: {
+      db,
+      sessionId: record.sessionId,
+      taskRunId,
+      providerAttemptCaller: 'worker',
+      signal: abortController.signal,
+      callerActor: { kind: 'agent', ref: 'agent:copilot-researcher' },
+      causedByEventId: record.startedEventId,
+    },
+    serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
+    toolNames: COPILOT_RESEARCH_READ_TOOLS,
+    taskKind: 'CopilotResearchTask',
+  });
+  const result = await runAgentTask(
+    'CopilotResearchTask',
+    { objective: record.objective, untrusted_data_boundary: true },
+    {
+      db,
+      taskRunId,
+      mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
+      allowedTools: resolveMcpAllowedTools('copilot').filter((tool) =>
+        COPILOT_RESEARCH_READ_TOOLS.some((name) => tool.endsWith(`__${name}`)),
+      ),
+      lifecycleAbortController: abortController,
+    },
+  );
+  return { taskRunId: result.task_run_id, text: result.text };
+}
+
+export async function runCopilotContinuationTask(
+  db: Db,
+  record: CopilotContinuationRecord,
+  child: SubagentRunRecord,
+): Promise<{ taskRunId: string; text: string }> {
+  const toolNames = resolveDomainToolNames('copilot').filter(
+    (name) => name !== 'launch_researcher',
+  );
+  const taskRunId = record.taskRunId ?? `copilot_continuation_task_${record.id}`;
+  const mcpServer = buildMcpServerFromRegistry({
+    ctx: {
+      db,
+      sessionId: record.sessionId,
+      taskRunId,
+      providerAttemptCaller: 'worker',
+      callerActor: { kind: 'agent', ref: 'agent:copilot' },
+      causedByEventId: record.resultEventId,
+    },
+    serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
+    toolNames,
+    taskKind: 'CopilotTask',
+  });
+  const history = await getCopilotContinuationHistory(db, {
+    limit: 20,
+    sessionId: record.sessionId,
+    parentTurnEventId: record.parentTurnEventId,
+    resultEventId: record.resultEventId,
+  });
+  const copilotSkills = await resolveCopilotSkills();
+  const result = await runAgentTask(
+    'CopilotTask',
+    {
+      surface: 'copilot',
+      triggered_by: 'continuation',
+      user_message:
+        'A background researcher settled. Continue the prior root turn once using the untrusted child result below. Do not launch another researcher.',
+      conversation_history: history.map((turn) => ({
+        role: turn.role === 'ai' ? 'assistant' : 'user',
+        text: turn.text,
+        event_id: turn.event_id,
+      })),
+      untrusted_subagent_result: {
+        run_id: child.id,
+        status: child.status,
+        result_md: child.result,
+        error: child.error,
+      },
+      continuation_constraints: {
+        one_shot: true,
+        recursive_subagent_launch: false,
+        user_facing_actor: 'root_copilot',
+      },
+    },
+    {
+      db,
+      taskRunId,
+      mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
+      allowedTools: resolveMcpAllowedTools('copilot').filter(
+        (tool) => !tool.endsWith('__launch_researcher') && !tool.endsWith('__run_task'),
+      ),
+      ...(copilotSkills ? { skills: copilotSkills } : {}),
+    },
+  );
+  return { taskRunId: result.task_run_id, text: result.text };
 }

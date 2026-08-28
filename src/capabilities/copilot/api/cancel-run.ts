@@ -13,7 +13,7 @@ import {
   withCopilotDurableDispatchLock,
 } from '@/capabilities/copilot/server/durable-dispatch';
 import { db } from '@/db/client';
-import { event, job_events, tool_operation } from '@/db/schema';
+import { event, job_events, subagent_run, tool_operation } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { writeJobEvent } from '@/server/events/writer';
 import { CopilotRunParamsSchema } from './contracts';
@@ -139,6 +139,23 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
         event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
         payload: { requested_by: 'user', requested_at: new Date().toISOString() },
       });
+      await tx
+        .update(subagent_run)
+        .set({
+          cancel_requested_by: 'user',
+          cancel_requested_at: new Date(),
+          updated_at: new Date(),
+        })
+        .where(
+          and(
+            eq(subagent_run.session_id, acceptance.sessionId),
+            or(
+              eq(subagent_run.parent_task_run_id, toolTaskRunId),
+              sql`left(${subagent_run.parent_task_run_id}, char_length(${toolTaskRunId})) = ${toolTaskRunId}`,
+            ),
+            inArray(subagent_run.status, ['queued', 'running']),
+          ),
+        );
 
       if (executionStarted || hasRunningOwnedOperation) return 'cancel_requested' as const;
 
