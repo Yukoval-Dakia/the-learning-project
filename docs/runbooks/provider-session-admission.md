@@ -50,7 +50,7 @@ fails closed in enforce; observe fails open immediately while a bounded backgrou
 maintenance. The Hono composition root gives every authenticated API request one shared 90s absolute
 deadline; all central runner calls in that request automatically use the earlier of that scope and
 any explicit caller deadline. Copilot also creates an explicit fallback from the same shared 90s
-budget and carries it through classifier, teaching/free-form main work, and nested central tasks;
+budget and carries it through teaching/free-form main work and nested central tasks;
 production runners still prefer the earlier request-scope deadline. The lifecycle rechecks lease,
 abort and the absolute deadline after SDK completion, so a late success cannot cross the fence.
 Durable worker calls have no HTTP scope and omit that edge-only bound.

@@ -41,7 +41,7 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 - capability manifests 经 `src/server/ai/tools/register-capability-tools.ts` 在 API/worker 启动期注册完整 DomainTools；`mcp-bridge.ts` 能把任意 allowlist 包成 in-process MCP server，并写 `tool_call_log` / `tool_use` mirror（ADR-0011 §1.1 promote 自 `experimental:tool_use`）。
 - Concrete DomainTools live with their owning capabilities（knowledge / agency / ingestion / practice / copilot 包内 `tools`）；`src/server/ai/tools/` 只保留共享基础设施（registry、mcp-bridge、types、allowlists、budgets、context-throttle）。YUK-885 过渡期仍居中央的 7 个工具文件（proposal-tools / context-readers / get-attempt-context / query-mistakes / query-questions / write-quiz / tool-quiz-core）由 `audit-architecture-ownership` 的 transitional allowlist 显式登记，新增中央工具会被审计拒绝。
 - generic `/api/ai/[task]` 已整体退场；不要为新 task 建通用 dispatch 入口。
-- 尚未实现：公共/standalone MCP server、外部 MCP 消费、Copilot drawer / Dreaming / Coach 具体 runtime 接入。
+- 已实现：Copilot drawer 的 operation/subagent lifecycle projection。尚未实现：公共/standalone MCP server、外部 MCP 消费，以及 Dreaming / Coach 的具体 runtime 接入。
 
 核心原则：
 

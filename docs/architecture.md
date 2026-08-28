@@ -108,8 +108,9 @@ Question (统一题库，single source of truth)
 > 拥有；Notes 也已拥有 NoteGenerate/NoteVerify 的 parser + output schema；Ingestion 已拥有
 > Vision/Structure/MistakeEnroll/Tagging/ColdStart/BlockAssembly/ProfileCritic 八个 TaskSpec；Knowledge
 > 已拥有 KnowledgeEdgePropose/FrontierPrerequisite/KnowledgeReview 三个 TaskSpec。
-> owner maps 现在保存全部 51 个完整 TaskSpec（YUK-870 收编了最后一个 `SessionSummaryTask`），
-> registry 只做静态 compatibility projection；YUK-885 已删除中央 semantic quarry
+> owner maps 现在保存全部 53 个完整 TaskSpec（20 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
+> + 13 Agency + 6 Copilot；Copilot 的第六项为 `CopilotResearchTask`）。YUK-870 收编了
+> `SessionSummaryTask`；registry 只做静态 compatibility projection；YUK-885 已删除中央 semantic quarry
 > （`legacy-task-definitions.ts`）与 transitional 机制（`defineTransitionalTask`），
 > 由 `scripts/audit-architecture-ownership.ts` 守住。
 > 实现附录见 `docs/superpowers/plans/2026-08-08-practice-failure-learning-implementation.md`。
@@ -126,11 +127,11 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 ### 5.1 Task 注册
 
 > **Canonical source**: `src/ai/task-catalog.ts` 的 `taskCatalog`。六个 capability owner maps
-> 保存 staged semantic ownership：51 个完整 owned TaskSpec（19 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
-> + 13 Agency + 5 Copilot）与 0 个 identity-backed transitional entry（YUK-870 后中央 semantic
+> 保存 staged semantic ownership：53 个完整 owned TaskSpec（20 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
+> + 13 Agency + 6 Copilot；其中 `CopilotResearchTask` 是第六个 Copilot task）与 0 个 identity-backed transitional entry（YUK-870 后中央 semantic
 > quarry 为空）；composer 把每个 entry 的精确 `definition` 投影为冻结的
 > runtime map。`src/ai/registry.ts` 仅是带 Copilot dispatch overlay 的 compatibility projection。
-> 当前恰有 **51 个 registered/runnable kinds、50 个静态 production invocation kinds、1 个显式
+> 当前恰有 **53 个 registered/runnable kinds、52 个静态 production invocation kinds、1 个显式
 > compatibility kind**：`AttributionTask` 为持久历史/registry 兼容而保留，现行 Failure Learning
 > 在 deterministic retrieval 后调用 `AttributionRerankTask`，不伪造 `AttributionTask` caller。
 > `pnpm audit:task-census` 同时验证 capability manifest/job 与 legacy handler 注册可达性，以及
@@ -184,6 +185,7 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 | `CopilotEvidenceReviewTask` | mimo-v2.5-pro | Copilot free-form turn 使用 DomainTool read 后、回复持久化/可见前（YUK-832） | 否 | — | FULL validator 的盲证据腿：不看 candidate，把 server 切好的 request units 绑定到精确 typed tool call + RFC6901 pointer，密封 facts/gaps，并产一份仍需完整认证的唯一 fallback |
 | `CopilotEvidenceVerificationTask` | mimo-v2.5-pro | 盲 evidence ledger 建成后、任何 persistence / public delta 前（YUK-832） | 否 | — | 密封 comparator：逐 reply/request unit 输出 indexed observations，不提供权威 verdict 或第三版；服务端校验 dense indices/pointers/coverage 并派生 pass，pass 必须由两次 valid comparison 确认 |
 | `CopilotTask` | mimo-v2.5-pro | `/api/chat` inline + pg-boss `copilot_run`（AF S4 / YUK-203 / YUK-757） | 是 | — | 唯一面向用户的对话式学习助手；普通 chat 始终前台执行，只有显式 `durable:true` 才受理为 `copilot_run` 并返回 202；默认可在后台派只读 `copilot-researcher`（共享 depth=1/report-only contract，显式 kill switch），只把结构化进度卡与最终结论带回同一 Copilot 声音，不暴露子任务 transcript / reasoning |
+| `CopilotResearchTask` | mimo-v2.5-pro | `copilot_run` 内的 durable depth-1 read-only research objective | 是 | — | `copilot-researcher` 的受限只读研究任务；只把结构化进度与结论交回同一 Copilot 声音 |
 | `QuestionAuthorTask` | mimo-v2.5-pro | `author_question` DomainTool knowledge\|material seed（ADR-0031 / YUK-304） | 否 | — | 单道原创 draft 题（StructuredQuestion 树）+ `question_draft` proposal（单次 structured output，无工具循环；取代 YUK-275 的 `QuizIntentParseTask` C 形态解析器）|
 | `ItemPriorTask` | mimo-v2.5-pro | pg-boss `item_prior_backfill`（B1-W1 / ADR-0035 慢热阶段①） | 否 | — | 给新题估冷启先验难度 b（logit 尺度，抽教学特征路线）+ confidence → `item_calibration`（source=`llm_prior`）|
 | `SelectionOrchestratorTask` | mimo-v2.5 | `composeSoftmaxStream` 选题编排（YUK-361 Phase 3 / ADR-0042 编排档2） | 否 | — | 档2 L2 选题主脑：对每个非到期候选出 weight/role/arrangement/reason（单次 structured output）→ 薄 tempered-softmax sampler 抽样落题 + 记 π_i；不碰到期项/recall 项 |
