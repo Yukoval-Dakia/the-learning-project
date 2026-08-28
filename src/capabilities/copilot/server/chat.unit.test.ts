@@ -1,5 +1,5 @@
+import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-
 import { resolveDomainToolNames, resolveMcpAllowedTools } from '@/kernel/tools/allowlists';
 import { COPILOT_HISTORY_BUDGET } from '@/kernel/tools/budgets';
 import { TAVILY_MCP_ALLOWED_TOOLS, buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
@@ -293,14 +293,41 @@ describe('runCopilotChat (two-surface routing)', () => {
       }),
     );
 
-    const mcpCtx = (buildMcpServerFn.mock.calls[0] as unknown as [BuildMcpServerOptions])[0].ctx;
+    const mcpOptions = (buildMcpServerFn.mock.calls[0] as unknown as [BuildMcpServerOptions])[0];
+    const mcpCtx = mcpOptions.ctx;
     const runnerCtx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
       taskRunId?: string;
       lifecycleAbortController?: AbortController;
+      hooks?: Options['hooks'];
     };
     expect(runnerCtx?.taskRunId).toBe(mcpCtx?.taskRunId);
     expect(runnerCtx.lifecycleAbortController).toBeInstanceOf(AbortController);
     expect(mcpCtx.signal).toBe(runnerCtx.lifecycleAbortController?.signal);
+    expect(mcpCtx.sessionId).toBe('ls_unit');
+    expect(mcpOptions.cancellationSignals).toEqual([
+      { signal: runnerCtx.lifecycleAbortController?.signal, requestedBy: 'system' },
+    ]);
+    const correlationHook = runnerCtx.hooks?.PreToolUse?.[0]?.hooks[0] as HookCallback;
+    await correlationHook(
+      {
+        hook_event_name: 'PreToolUse',
+        session_id: 'sdk_session',
+        transcript_path: '/tmp/transcript',
+        cwd: '/tmp',
+        permission_mode: 'default',
+        tool_name: 'mcp__loom__search_memory_facts',
+        tool_input: { query: 'correlated production call', topK: 7 },
+        tool_use_id: 'toolu_inline_real_7',
+      },
+      'toolu_inline_real_7',
+      { signal: new AbortController().signal },
+    );
+    expect(
+      mcpOptions.claimToolUseId?.('search_memory_facts', {
+        topK: 7,
+        query: 'correlated production call',
+      }),
+    ).toBe('toolu_inline_real_7');
   });
 
   // AF S3a / YUK-203 U3 — the conversation envelope is resolved once per turn;
@@ -1520,6 +1547,8 @@ describe('YUK-757 Copilot backstage subagents', () => {
     expect(researcher.tools?.every((tool) => parentTools.includes(tool))).toBe(true);
     expect(researcher.tools).not.toContain('Task');
     expect(researcher.tools).not.toContain('mcp__loom__run_task');
+    expect(researcher.tools).not.toContain('mcp__loom__get_tool_operation');
+    expect(researcher.tools).not.toContain('mcp__loom__wait_tool_operation');
     expect(researcher.tools).not.toContain('mcp__loom__author_question');
     expect(researcher.tools).not.toContain('mcp__loom__author_artifact');
   });
@@ -1544,7 +1573,7 @@ describe('YUK-757 Copilot backstage subagents', () => {
 
     expect(capturedCtx?.allowedTools).not.toContain('Task');
     expect(capturedCtx).not.toHaveProperty('agents');
-    expect(capturedCtx).not.toHaveProperty('hooks');
+    expect(capturedCtx?.hooks).toMatchObject({ PreToolUse: expect.any(Array) });
     expect(capturedCtx).not.toHaveProperty('canUseTool');
   });
 

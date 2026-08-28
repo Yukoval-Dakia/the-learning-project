@@ -125,6 +125,7 @@ export function buildSearchMemoryFactsTool(
     outputSchema: SearchMemoryFactsOutputSchema,
     // Embedding API hit (OpenAI) on every search — memory map bullet 4.
     costClass: 'cheap_llm',
+    safeHandoff: { transport: 'remote', idempotent: true },
     execute,
     summarize(input, output) {
       return `memory facts · "${input.query.slice(0, 24)}" · ${output.count} hits`;

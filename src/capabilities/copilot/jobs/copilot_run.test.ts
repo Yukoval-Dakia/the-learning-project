@@ -9,6 +9,7 @@
 //   YUK-575/YUK-832: N2 reviewed full-delta settlement（S3）/ N3+S4 ambient 装配往返 / N5+MF-A budget /
 //            MF1/MF2 transient·exhausted 分诊 + 幂等守卫 / S6 static 约束。
 
+import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeCopilotReply } from '@/capabilities/copilot/server/chat';
@@ -1078,6 +1079,11 @@ describe('runCopilotRun', () => {
 
   it('YUK-757 — durable run mounts the same depth-1 researcher and persists interleaved safe subtask steps in order', async () => {
     const runId = 'copilot_user_ask_subtask_lifecycle';
+    let mcpOptions: BuildMcpServerOptions | undefined;
+    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
+      mcpOptions = options;
+      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
+    });
     const run = vi.fn(
       async (_kind: string, _input: unknown, ctx: AgentCtx, onDelta: (text: string) => void) => {
         await ctx.onTaskEvent?.({
@@ -1154,7 +1160,7 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: 'sess_durable_subtasks' },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
+      buildMcpServerFn,
       buildTavilyMcpServerFn: () => null,
       resolveCopilotSkillsFn: async () => ['copilot'],
     });
@@ -1163,13 +1169,38 @@ describe('runCopilotRun', () => {
     const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
     expect(ctx.allowedTools).toEqual(expect.arrayContaining(['Task']));
     expect(ctx.agents).toHaveProperty(COPILOT_SUBAGENT_NAME);
-    expect(ctx.hooks?.PreToolUse).toHaveLength(2);
+    expect(ctx.hooks?.PreToolUse).toHaveLength(3);
     expect(ctx.signal).toBeInstanceOf(AbortSignal);
     expect(ctx.canUseTool).toEqual(expect.any(Function));
+    expect(mcpOptions?.ctx.sessionId).toBe('sess_durable_subtasks');
+    expect(mcpOptions?.cancellationSignals).toHaveLength(2);
+    const correlationHook = ctx.hooks?.PreToolUse?.[0]?.hooks[0] as HookCallback;
+    await correlationHook(
+      {
+        hook_event_name: 'PreToolUse',
+        session_id: 'sdk-durable-session',
+        transcript_path: '/tmp/transcript',
+        cwd: '/tmp',
+        permission_mode: 'default',
+        tool_name: 'mcp__loom__search_memory_facts',
+        tool_input: { query: 'durable correlation', topK: 9 },
+        tool_use_id: 'toolu_durable_real_9',
+      },
+      'toolu_durable_real_9',
+      { signal: new AbortController().signal },
+    );
+    expect(
+      mcpOptions?.claimToolUseId?.('search_memory_facts', {
+        topK: 9,
+        query: 'durable correlation',
+      }),
+    ).toBe('toolu_durable_real_9');
     const researcher = ctx.agents?.[COPILOT_SUBAGENT_NAME];
     expect(researcher?.tools?.every((tool) => ctx.allowedTools?.includes(tool))).toBe(true);
     expect(researcher?.tools).not.toContain('Task');
     expect(researcher?.tools).not.toContain('mcp__loom__run_task');
+    expect(researcher?.tools).not.toContain('mcp__loom__get_tool_operation');
+    expect(researcher?.tools).not.toContain('mcp__loom__wait_tool_operation');
     expect(researcher?.tools).not.toContain('mcp__loom__author_question');
 
     const events = await replay(runId);
@@ -1235,7 +1266,7 @@ describe('runCopilotRun', () => {
     const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
     expect(ctx.allowedTools).not.toContain('Task');
     expect(ctx).not.toHaveProperty('agents');
-    expect(ctx.hooks?.PreToolUse).toHaveLength(1);
+    expect(ctx.hooks?.PreToolUse).toHaveLength(2);
     expect(ctx.signal).toBeInstanceOf(AbortSignal);
     expect(ctx).not.toHaveProperty('canUseTool');
     expect(ctx).not.toHaveProperty('onTaskEvent');

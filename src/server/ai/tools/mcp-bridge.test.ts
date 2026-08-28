@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { capabilities } from '@/capabilities';
+import type { ToolOperationRecord, ToolOperations } from '@/kernel/tools/tool-operations';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, registerTool } from './registry';
@@ -87,6 +88,67 @@ const ctx: ToolContext = {
   callerActor: { kind: 'agent', ref: 'agent:test:bridge' },
 };
 
+function toolOperationRecord(overrides: Partial<ToolOperationRecord> = {}): ToolOperationRecord {
+  const now = new Date('2026-08-27T12:00:00.000Z');
+  return {
+    id: 'toolop_bridge_safe',
+    sessionId: 'session_bridge',
+    taskRunId: 'tr_test',
+    toolName: 'remote_reader',
+    effect: 'read',
+    status: 'running',
+    processId: 'process_bridge',
+    inputHash: 'a'.repeat(64),
+    input: { args: { query: 'nested evidence' }, tool_use_id: 'toolu_bridge_4' },
+    result: null,
+    error: null,
+    sideEffectRisk: null,
+    cancelledBy: null,
+    terminalToolCallLogId: null,
+    hardDeadlineAt: new Date('2026-08-27T12:05:00.000Z'),
+    startedAt: now,
+    ownerHeartbeatAt: now,
+    leaseExpiresAt: new Date('2026-08-27T12:00:30.000Z'),
+    settledAt: null,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function fakeToolOperations(options: {
+  waited: ToolOperationRecord;
+  terminal?: ToolOperationRecord;
+  order?: string[];
+}): ToolOperations {
+  return {
+    start: vi.fn(async (_input, execute) => {
+      void execute({
+        operationId: options.waited.id,
+        signal: new AbortController().signal,
+      });
+      return {
+        id: options.waited.id,
+        wait: vi.fn(async () => options.waited),
+        cancel: vi.fn(async () => options.waited),
+      };
+    }),
+    get: vi.fn(async () => {
+      options.order?.push('settlement-observed');
+      return options.terminal ?? options.waited;
+    }),
+    wait: vi.fn(async () => options.waited),
+    cancel: vi.fn(async () => options.waited),
+    linkTerminalToolCallLog: vi.fn(async (_id, terminalToolCallLogId) => {
+      options.order?.push('terminal-linked');
+      return toolOperationRecord({
+        ...(options.terminal ?? options.waited),
+        terminalToolCallLogId,
+      });
+    }),
+    recoverLost: vi.fn(async () => []),
+  };
+}
+
 describe('buildMcpServerFromRegistry', () => {
   beforeEach(() => {
     __resetRegistryForTests();
@@ -122,6 +184,137 @@ describe('buildMcpServerFromRegistry', () => {
     expect(mockAgentSdk.toolDefs.map((t) => t.name)).toEqual(['demo_a', 'demo_b']);
     // Raw shape, not a ZodObject — SDK contract.
     expect((mockAgentSdk.toolDefs[0].schema as Record<string, unknown>).q).toBeDefined();
+  });
+
+  it('keeps undeclared tools blocking and never creates a ToolOperations identity', async () => {
+    const toolOperations = fakeToolOperations({ waited: toolOperationRecord() });
+    registerTool(
+      makeReadTool<{ query: string }, { count: number }>(
+        'local_reader',
+        { query: z.string() },
+        () => ({ count: 3 }),
+        () => 'local reader · 3',
+      ),
+    );
+    buildMcpServerFromRegistry({
+      ctx: { ...ctx, sessionId: 'session_bridge' },
+      serverName: 'loom',
+      toolNames: ['local_reader'],
+      toolOperations,
+    });
+
+    const response = (await mockAgentSdk.toolDefs[0]?.handler({ query: 'local facts' })) as {
+      content: Array<{ text: string }>;
+    };
+
+    expect(JSON.parse(response.content[0]?.text ?? '')).toMatchObject({
+      output: { count: 3 },
+    });
+    expect(toolOperations.start).not.toHaveBeenCalled();
+  });
+
+  it('returns the final output without yielded semantics when a safe remote read settles first', async () => {
+    const settled = toolOperationRecord({
+      status: 'succeeded',
+      result: { facts: [{ id: 'fact_fast', score: 0.91 }], count: 1 },
+      settledAt: new Date('2026-08-27T12:00:04.000Z'),
+    });
+    const toolOperations = fakeToolOperations({ waited: settled });
+    registerTool({
+      ...makeReadTool<{ query: string }, { facts: unknown[]; count: number }>(
+        'remote_reader',
+        { query: z.string() },
+        () => ({ facts: [], count: 0 }),
+        (_input, result) => `remote reader · ${result.count}`,
+      ),
+      safeHandoff: { transport: 'remote', idempotent: true },
+    });
+    buildMcpServerFromRegistry({
+      ctx: { ...ctx, sessionId: 'session_bridge' },
+      serverName: 'loom',
+      toolNames: ['remote_reader'],
+      toolOperations,
+      claimToolUseId: () => 'toolu_fast_1',
+    });
+
+    const response = (await mockAgentSdk.toolDefs[0]?.handler({ query: 'fast facts' })) as {
+      content: Array<{ text: string }>;
+    };
+    const body = JSON.parse(response.content[0]?.text ?? '') as Record<string, unknown>;
+
+    expect(body).toMatchObject({ output: { facts: [{ id: 'fact_fast' }], count: 1 } });
+    expect(JSON.stringify(body)).not.toContain('tool_operation');
+    expect(toolOperations.start).toHaveBeenCalledTimes(1);
+    expect(toolOperations.linkTerminalToolCallLog).toHaveBeenCalledTimes(1);
+  });
+
+  it('yields one correlated handle then observes terminal log/link before releasing execution', async () => {
+    const order: string[] = [];
+    const running = toolOperationRecord();
+    const terminal = toolOperationRecord({
+      status: 'succeeded',
+      result: { facts: [{ id: 'fact_late', memory: 'late result' }], count: 1 },
+      settledAt: new Date('2026-08-27T12:00:52.000Z'),
+    });
+    const toolOperations = fakeToolOperations({ waited: running, terminal, order });
+    registerTool({
+      ...makeReadTool<{ query: string }, { facts: unknown[]; count: number }>(
+        'remote_reader',
+        { query: z.string() },
+        () => ({ facts: [], count: 0 }),
+        (_input, result) => `remote reader · ${result.count}`,
+      ),
+      safeHandoff: { transport: 'remote', idempotent: true },
+      mirrorEvent: 'always',
+    });
+    buildMcpServerFromRegistry({
+      ctx: { ...ctx, sessionId: 'session_bridge' },
+      serverName: 'loom',
+      toolNames: ['remote_reader'],
+      toolOperations,
+      safeHandoffYieldMs: 45_000,
+      claimToolUseId: () => 'toolu_bridge_4',
+      onExecuteSettled: () => {
+        order.push('execution-released');
+      },
+    });
+
+    const response = (await mockAgentSdk.toolDefs[0]?.handler({ query: 'nested evidence' })) as {
+      content: Array<{ text: string }>;
+    };
+    expect(JSON.parse(response.content[0]?.text ?? '')).toMatchObject({
+      output: {
+        tool_operation: {
+          id: 'toolop_bridge_safe',
+          status: 'running',
+          tool_use_id: 'toolu_bridge_4',
+        },
+      },
+    });
+    expect(toolOperations.start).toHaveBeenCalledTimes(1);
+    expect(toolOperations.wait).toHaveBeenCalledWith('toolop_bridge_safe', {
+      timeoutMs: 45_000,
+    });
+    await vi.waitFor(() => {
+      expect(captured.toolCallLogs).toHaveLength(2);
+      expect(toolOperations.linkTerminalToolCallLog).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(['settlement-observed', 'terminal-linked', 'execution-released']);
+    });
+    expect(captured.events).toHaveLength(1);
+  });
+
+  it('never hands run_task to ToolOperations even if a malformed declaration opts in', async () => {
+    expect(() =>
+      registerTool({
+        ...makeReadTool<{ intent: string }, { accepted: true }>(
+          'run_task',
+          { intent: z.string() },
+          () => ({ accepted: true }),
+          () => 'run task accepted',
+        ),
+        safeHandoff: { transport: 'remote', idempotent: true },
+      }),
+    ).toThrow("DomainTool 'run_task' safeHandoff requires an explicitly idempotent remote read");
   });
 
   it('constructs the production MCP server with run_task and query_events included', async () => {

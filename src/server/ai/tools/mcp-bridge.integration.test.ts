@@ -7,7 +7,7 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { capabilities } from '@/capabilities';
-import { event, memory_brief_note, tool_call_log } from '@/db/schema';
+import { event, memory_brief_note, tool_call_log, tool_operation } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -133,6 +133,217 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
     expect(tcl).toHaveLength(1);
     expect(tcl[0].mirrored_event_id).toBeNull();
   });
+
+  it('persists one yielded handle then settles, mirrors, logs, and links the terminal call', async () => {
+    const safeTool: DomainTool<{ query: string }, { hits: Array<{ id: string; score: number }> }> =
+      {
+        name: 'bridge_test_safe_remote',
+        description: 'test-only idempotent remote read',
+        effect: 'read',
+        inputSchema: z.object({ query: z.string() }),
+        outputSchema: z.object({ hits: z.array(z.object({ id: z.string(), score: z.number() })) }),
+        costClass: 'cheap_llm',
+        safeHandoff: { transport: 'remote', idempotent: true },
+        async execute(_ctx, input) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 30));
+          return { hits: [{ id: `${input.query}_result`, score: 0.87 }] };
+        },
+        summarize(_input, result) {
+          return `safe remote · ${result.hits.length} hit`;
+        },
+        mirrorEvent: 'always',
+      };
+    registerTool(safeTool);
+    buildMcpServerFromRegistry({
+      ctx: { ...ctx(), sessionId: 'session_safe_bridge' },
+      serverName: 'loom',
+      toolNames: [safeTool.name],
+      safeHandoffYieldMs: 5,
+      claimToolUseId: () => 'toolu_safe_bridge_e2e',
+    });
+
+    const response = (await mockSdk.toolDefs
+      .find((definition) => definition.name === safeTool.name)
+      ?.handler({ query: 'deep_nested' })) as { content: Array<{ text: string }> };
+    const responseBody = JSON.parse(response.content[0]?.text ?? '') as {
+      output: { tool_operation: { id: string; status: string; tool_use_id: string } };
+    };
+    expect(responseBody.output.tool_operation).toMatchObject({
+      status: 'running',
+      tool_use_id: 'toolu_safe_bridge_e2e',
+    });
+
+    const operationId = responseBody.output.tool_operation.id;
+    await vi.waitFor(
+      async () => {
+        const [operation] = await testDb()
+          .select()
+          .from(tool_operation)
+          .where(eq(tool_operation.id, operationId));
+        expect(operation).toMatchObject({
+          status: 'succeeded',
+          input_json: {
+            args: { query: 'deep_nested' },
+            tool_use_id: 'toolu_safe_bridge_e2e',
+          },
+        });
+        expect(operation.terminal_tool_call_log_id).toEqual(expect.any(String));
+
+        const logs = await testDb()
+          .select()
+          .from(tool_call_log)
+          .where(eq(tool_call_log.tool_name, safeTool.name));
+        expect(logs).toHaveLength(2);
+        const terminalLog = logs.find((log) => log.id === operation.terminal_tool_call_log_id);
+        expect(terminalLog?.output_json).toEqual({
+          hits: [{ id: 'deep_nested_result', score: 0.87 }],
+        });
+        expect(terminalLog?.mirrored_event_id).toEqual(expect.any(String));
+
+        const events = await testDb().select().from(event).where(eq(event.subject_id, operationId));
+        expect(events.map((row) => row.action)).toEqual([
+          'tool_operation_yielded',
+          'tool_operation_settled',
+        ]);
+        const [terminalMirror] = await testDb()
+          .select()
+          .from(event)
+          .where(eq(event.id, terminalLog?.mirrored_event_id ?? 'missing'));
+        expect(terminalMirror).toMatchObject({ action: 'tool_use', outcome: 'success' });
+      },
+      { timeout: 2_000, interval: 20 },
+    );
+  });
+
+  it('lets the model cancel through the shared control tool but rejects another session', async () => {
+    const safeTool: DomainTool<{ query: string }, { hits: string[] }> = {
+      name: 'bridge_test_model_cancel',
+      description: 'test-only cancellable remote read',
+      effect: 'read',
+      inputSchema: z.object({ query: z.string() }),
+      outputSchema: z.object({ hits: z.array(z.string()) }),
+      costClass: 'cheap_llm',
+      safeHandoff: { transport: 'remote', idempotent: true },
+      async execute(toolCtx) {
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => resolve({ hits: ['late'] }), 500);
+          toolCtx.signal?.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer);
+              reject(new Error('cancel observed'));
+            },
+            { once: true },
+          );
+        });
+      },
+      summarize(_input, result) {
+        return `cancellable remote · ${result.hits.length}`;
+      },
+      mirrorEvent: 'never',
+    };
+    registerTool(safeTool);
+    buildMcpServerFromRegistry({
+      ctx: { ...ctx(), sessionId: 'session_model_owner' },
+      serverName: 'loom',
+      toolNames: [safeTool.name, 'cancel_tool_operation'],
+      safeHandoffYieldMs: 5,
+      claimToolUseId: () => 'toolu_model_cancel',
+    });
+    const startResponse = (await mockSdk.toolDefs
+      .find((definition) => definition.name === safeTool.name)
+      ?.handler({ query: 'cancel me' })) as { content: Array<{ text: string }> };
+    const operationId = (
+      JSON.parse(startResponse.content[0]?.text ?? '') as {
+        output: { tool_operation: { id: string } };
+      }
+    ).output.tool_operation.id;
+
+    buildMcpServerFromRegistry({
+      ctx: { ...ctx(), sessionId: 'session_intruder' },
+      serverName: 'loom_intruder',
+      toolNames: ['cancel_tool_operation'],
+    });
+    const intruderCancel = mockSdk.toolDefs
+      .filter((definition) => definition.name === 'cancel_tool_operation')
+      .at(-1);
+    const denied = (await intruderCancel?.handler({ operation_id: operationId })) as {
+      content: Array<{ text: string }>;
+    };
+    expect(JSON.parse(denied.content[0]?.text ?? '')).toMatchObject({
+      error: 'tool operation not found',
+    });
+
+    const ownerCancel = mockSdk.toolDefs.find(
+      (definition) => definition.name === 'cancel_tool_operation',
+    );
+    await ownerCancel?.handler({ operation_id: operationId });
+    await vi.waitFor(async () => {
+      const [operation] = await testDb()
+        .select()
+        .from(tool_operation)
+        .where(eq(tool_operation.id, operationId));
+      expect(operation).toMatchObject({ status: 'cancelled', cancelled_by: 'model' });
+    });
+  });
+
+  it.each(['system', 'user'] as const)(
+    'routes %s parent cancellation through the same owned ToolOperations seam',
+    async (requestedBy) => {
+      const controller = new AbortController();
+      const safeTool: DomainTool<{ query: string }, { hits: string[] }> = {
+        name: `bridge_test_${requestedBy}_cancel`,
+        description: 'test-only parent-cancellable remote read',
+        effect: 'read',
+        inputSchema: z.object({ query: z.string() }),
+        outputSchema: z.object({ hits: z.array(z.string()) }),
+        costClass: 'cheap_llm',
+        safeHandoff: { transport: 'remote', idempotent: true },
+        async execute(toolCtx) {
+          return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => resolve({ hits: ['late'] }), 500);
+            toolCtx.signal?.addEventListener(
+              'abort',
+              () => {
+                clearTimeout(timer);
+                reject(new Error('parent cancel observed'));
+              },
+              { once: true },
+            );
+          });
+        },
+        summarize(_input, result) {
+          return `parent cancellable · ${result.hits.length}`;
+        },
+        mirrorEvent: 'never',
+      };
+      registerTool(safeTool);
+      buildMcpServerFromRegistry({
+        ctx: { ...ctx(), sessionId: `session_${requestedBy}_owner` },
+        serverName: 'loom',
+        toolNames: [safeTool.name],
+        safeHandoffYieldMs: 5,
+        cancellationSignals: [{ signal: controller.signal, requestedBy }],
+      });
+      const response = (await mockSdk.toolDefs
+        .find((definition) => definition.name === safeTool.name)
+        ?.handler({ query: 'cancel from parent' })) as { content: Array<{ text: string }> };
+      const operationId = (
+        JSON.parse(response.content[0]?.text ?? '') as {
+          output: { tool_operation: { id: string } };
+        }
+      ).output.tool_operation.id;
+
+      controller.abort();
+      await vi.waitFor(async () => {
+        const [operation] = await testDb()
+          .select()
+          .from(tool_operation)
+          .where(eq(tool_operation.id, operationId));
+        expect(operation).toMatchObject({ status: 'cancelled', cancelled_by: requestedBy });
+      });
+    },
+  );
 
   // YUK-862 / F3.1 — output schema enforcement DB-level tests
   it('output_schema_invalid lands in tool_call_log with failure mirror when policy fires', async () => {

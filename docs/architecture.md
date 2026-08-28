@@ -227,6 +227,7 @@ interface DomainTool<Input, Output> {
   effect: ToolEffect;
   inputSchema: z.ZodType<Input>;
   outputSchema: z.ZodType<Output>;
+  safeHandoff?: { transport: 'remote'; idempotent: true };
   execute(ctx: ToolContext, input: Input): Promise<Output>;
   summarize(input: Input, output: Output): string;
   mirrorEvent: 'never' | 'when_user_visible' | 'when_causal' | 'always';
@@ -235,6 +236,13 @@ interface DomainTool<Input, Output> {
 
 `src/server/ai/tools/registry.ts` 静态装配 capability manifests；MCP bridge 把选中的 DomainTool
 包成 in-process server。独立远程 MCP server 仍推后，不作为当前产品内 tool 架构核心。
+
+工具默认阻塞。只有显式声明 `safeHandoff` 的 remote read/idempotent DomainTool，才会在执行前
+写入独立 `tool_operation`，并在持续 45 秒后把同一个 durable handle 交回模型；45 秒内完成仍直接
+返回原结果。Copilot 可在同一 conversation owner 下 get/wait/cancel，SDK `toolUseId` 通过
+PreToolUse hook 与持久化 input 关联。system drain、用户取消与模型取消共用相同 ownership seam；
+owner 中断导致 settlement 不确认时由 ToolOperations 保留 `lost` 与 side-effect risk。`run_task`、所有
+propose/write 以及未证明可安全 detached 的 Tavily/手写 MCP 继续阻塞，且不会被 pg-boss 重投。
 
 **循环控制现状**：
 

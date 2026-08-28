@@ -112,6 +112,7 @@ import {
   type ToolExecutionResultObservation,
   buildMcpServerFromRegistry,
 } from '@/server/ai/tools/mcp-bridge';
+import { createToolUseCorrelation } from '@/server/ai/tools/safe-tool-handoff';
 import {
   type BossJobObservation,
   type BossJobObserver,
@@ -1007,9 +1008,11 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   // 因果链（quiz_gen triggerEventId 同款）。
   const toolNames = resolveDomainToolNames(surface);
   const proposalFlowGate = createCopilotProposalFlowGate();
+  const toolUseCorrelation = createToolUseCorrelation(DOMAIN_TOOL_MCP_SERVER_NAME);
   const mcpServer = buildMcpServer({
     ctx: {
       db,
+      sessionId: data.session_id,
       signal: lifecycleAbortController.signal,
       taskRunId,
       providerAttemptCaller: 'worker',
@@ -1021,6 +1024,11 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
     toolNames,
     taskKind: 'CopilotTask',
+    claimToolUseId: toolUseCorrelation.claim,
+    cancellationSignals: [
+      { signal: lifecycleAbortController.signal, requestedBy: 'system' },
+      { signal: cancellationControl.signal, requestedBy: 'user' },
+    ],
     // C4 — tool-call hard ceiling（anti-runaway）。interceptInput 仅回传
     // warning 状态，不执行 capInput，故仍无 per-message row cap。
     beforeExecute: async (tool) =>
@@ -1066,7 +1074,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         onBudgetObservation: params.onSpawnBudgetObservation ?? observeCopilotSpawnBudget,
       })
     : undefined;
-  const sdkHooks = cancellationControl.prependSdkHook(spawnContract?.hooks);
+  const sdkHooks = toolUseCorrelation.prepend(
+    cancellationControl.prependSdkHook(spawnContract?.hooks),
+  );
 
   // YUK-364 (bot-review C2) — 解析 copilot 对话方法论 SKILL.md 白名单（与 inline
   // 同一份 resolveCopilotSkills；cross-subject 共享 resolver）。命中 → 传 ctx.skills

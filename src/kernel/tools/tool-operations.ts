@@ -101,6 +101,7 @@ export interface ToolOperations {
     id: string,
     options: { requestedBy: ToolOperationCancellationOwner },
   ): Promise<ToolOperationRecord>;
+  linkTerminalToolCallLog(id: string, terminalToolCallLogId: string): Promise<ToolOperationRecord>;
   recoverLost(): Promise<ToolOperationRecord[]>;
 }
 
@@ -123,6 +124,12 @@ export interface ToolOperationSettlement {
 
 export interface ToolOperationDeadlineTimer {
   cancel(): void;
+}
+
+function cancellationOwnerPriority(owner: ToolOperationCancellationOwner): number {
+  if (owner === 'user') return 3;
+  if (owner === 'model') return 2;
+  return 1;
 }
 
 export class InvalidToolOperationTransitionError extends Error {
@@ -658,9 +665,40 @@ export function createToolOperations(db: Db, options: ToolOperationsOptions): To
     async cancel(id, cancelOptions) {
       const record = await getOperation(db, id);
       transitionToolOperation(record.status, 'cancelled');
-      cancellationOwners.set(id, cancelOptions.requestedBy);
+      const currentOwner = cancellationOwners.get(id);
+      if (
+        currentOwner === undefined ||
+        cancellationOwnerPriority(cancelOptions.requestedBy) >=
+          cancellationOwnerPriority(currentOwner)
+      ) {
+        cancellationOwners.set(id, cancelOptions.requestedBy);
+      }
       controllers.get(id)?.abort(new Error(`Cancelled by ${cancelOptions.requestedBy}`));
       return record;
+    },
+
+    async linkTerminalToolCallLog(id, terminalToolCallLogId) {
+      validateBoundedName(terminalToolCallLogId, 'terminalToolCallLogId');
+      const [updated] = await db
+        .update(tool_operation)
+        .set({ terminal_tool_call_log_id: terminalToolCallLogId, updated_at: now() })
+        .where(
+          and(
+            eq(tool_operation.id, id),
+            inArray(tool_operation.status, ['succeeded', 'failed', 'cancelled', 'lost']),
+            isNull(tool_operation.terminal_tool_call_log_id),
+          ),
+        )
+        .returning();
+      if (updated) return mapRow(updated);
+      const current = await getOperation(db, id);
+      if (current.status === 'running') {
+        throw new Error(`tool operation ${id} has not settled`);
+      }
+      if (current.terminalToolCallLogId !== terminalToolCallLogId) {
+        throw new Error(`tool operation ${id} already links another terminal tool call log`);
+      }
+      return current;
     },
 
     async recoverLost() {
@@ -741,6 +779,16 @@ export function createToolOperations(db: Db, options: ToolOperationsOptions): To
   };
 
   return api;
+}
+
+const processToolOperations = new WeakMap<Db, ToolOperations>();
+
+export function getProcessToolOperations(db: Db): ToolOperations {
+  const existing = processToolOperations.get(db);
+  if (existing) return existing;
+  const created = createToolOperations(db, { processId: getToolOperationProcessId() });
+  processToolOperations.set(db, created);
+  return created;
 }
 
 export async function recoverToolOperationsOnBoot(db: Db): Promise<ToolOperationRecord[]> {

@@ -121,6 +121,49 @@ describe('ToolOperations', () => {
     expect(altered.inputHash).not.toBe(first.inputHash);
   });
 
+  it('links one terminal tool-call log only after durable settlement', async () => {
+    let resolveExecution!: (value: {
+      status: 'succeeded';
+      result: Record<string, unknown>;
+    }) => void;
+    const execution = new Promise<{
+      status: 'succeeded';
+      result: Record<string, unknown>;
+    }>((resolve) => {
+      resolveExecution = resolve;
+    });
+    const operations = createToolOperations(testDb(), { processId: 'api_boot_terminal_link' });
+    const handle = await operations.start(
+      {
+        id: 'toolop_terminal_link',
+        sessionId: 'session_terminal_link',
+        taskRunId: 'task_terminal_link',
+        toolName: 'remote_lookup',
+        effect: 'read',
+        input: { query: 'nested lookup', filters: { includeArchived: false } },
+      },
+      async () => execution,
+    );
+
+    await expect(
+      operations.linkTerminalToolCallLog(handle.id, 'tool_log_before_settlement'),
+    ).rejects.toThrow('has not settled');
+    resolveExecution({ status: 'succeeded', result: { records: [{ id: 'record_1' }] } });
+    await expect(handle.wait({ timeoutMs: 250 })).resolves.toMatchObject({
+      status: 'succeeded',
+      terminalToolCallLogId: null,
+    });
+    await expect(
+      operations.linkTerminalToolCallLog(handle.id, 'tool_log_after_settlement'),
+    ).resolves.toMatchObject({
+      status: 'succeeded',
+      terminalToolCallLogId: 'tool_log_after_settlement',
+    });
+    await expect(
+      operations.linkTerminalToolCallLog(handle.id, 'tool_log_conflict'),
+    ).rejects.toThrow('already links another terminal tool call log');
+  });
+
   it('bounds a positive wait without changing the running operation', async () => {
     const operations = createToolOperations(testDb(), {
       processId: 'api_boot_wait',
