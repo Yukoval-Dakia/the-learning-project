@@ -14,14 +14,15 @@
 - #1310 YUK-934 `2e815cd5b3879095a2474d85b2e66e2980bab901` 已合并；exact-head `CI Gate` run `33158219176`
   在 head `a8759ebe1bf42d0c7beb4fc2115113f66b329e54` 通过 aggregate/static/unit/DB/migration/build/usability。
 - 独立 review 已完成，P1 修复验证后无剩余 P0/P1；task census 最终为 53 registered / 52 statically invoked /
-  1 compatibility。此处是 parent YUK-927 的 board closeout，不声称 parent Linear issue 已经 Done。
+  1 compatibility。最终 board sync #1311 已合并为 `0ec6fe27d497da36cc3884ca7b100b6161dd9ca3`；Linear
+  YUK-927 与 YUK-934 均为 Done，当前开放 PR 为 0。
 
 ## YUK-934 result
 
 - task census 真实值为 53 registered / 52 statically invoked / 1 compatibility（`AttributionTask`）；architecture audit 输出从 `auditTaskCensus()` 的结果派生，不再写死旧的 50/1 值。
 - 保留 correction-intent、retry 与 job-yield classifier；清除的只是 ordinary chat 的预测性 classifier / auto dual-track 叙述。没有 runtime-promotion consumer 或残留需要删除。
 - 没有真实 consumer 声明需要新增 pg-boss job kind、child-process 或 code-cell handle，因此 YUK-934 未新增这些机制。
-- Postman source 是 `postman/api-endpoints.json`；修改后必须运行 `pnpm gen:postman` 同步 collection，并用 `jq` 校验两份 JSON。
+- Postman source `postman/api-endpoints.json` 与生成的 collection 已同步，两份 JSON 均通过 `jq` 校验。
 
 ## 收口边界
 
