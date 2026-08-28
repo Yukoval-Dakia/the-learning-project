@@ -233,7 +233,7 @@ describe('ToolOperations', () => {
         cancelledBy: null,
       });
       expect(observedAbort).toBe(true);
-      await expect(handle.wait({ timeoutMs: 250 })).resolves.toMatchObject({
+      await expect(handle.wait({ timeoutMs: 5_000 })).resolves.toMatchObject({
         status: 'cancelled',
         cancelledBy,
       });

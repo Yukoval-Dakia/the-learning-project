@@ -44,6 +44,7 @@ describe('DomainTool allowlist policy', () => {
       // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit.
       'propose_question_edit',
       'write_agent_note',
+      'cancel_tool_operation',
     ]);
   });
 
@@ -142,6 +143,9 @@ describe('DomainTool allowlist policy', () => {
       // ADR-0032 D8 — unified author_question front door on copilot base.
       'author_question',
       'search_memory_facts',
+      'get_tool_operation',
+      'wait_tool_operation',
+      'cancel_tool_operation',
       // ADR-0031 决定1/D5 + ADR-0032 D9 (YUK-304 lane B) — quiz C→A: the copilot
       // orchestrates 出题/组卷 itself, so it reads the 题池 and writes the paper.
       'query_questions',
@@ -183,7 +187,9 @@ describe('DomainTool allowlist policy', () => {
           name !== 'query_questions' &&
           name !== 'get_question_block_structure' &&
           name !== 'run_task' &&
-          name !== 'read_agent_notes',
+          name !== 'read_agent_notes' &&
+          name !== 'get_tool_operation' &&
+          name !== 'wait_tool_operation',
       ),
       'propose_knowledge_edge',
       'propose_knowledge_mutation',
