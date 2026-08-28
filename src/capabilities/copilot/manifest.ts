@@ -230,7 +230,7 @@ export const copilotCapability = defineCapability({
       {
         name: 'copilot_subagent_reconcile',
         schedule: {
-          cron: '* * * * *',
+          cron: '*/1 * * * *',
           tz: 'Asia/Shanghai',
           singletonKey: 'copilot_subagent_reconcile-sweep',
           singletonSeconds: 60,

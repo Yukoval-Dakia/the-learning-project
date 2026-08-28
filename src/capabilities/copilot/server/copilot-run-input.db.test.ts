@@ -622,9 +622,10 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
       priorAsk,
       new Date(t0.getTime() + 2_000),
     );
-    const invalidAnchor = await writeChip(
-      'chip 不是 durable user_ask anchor',
+    const invalidAnchor = await writeReply(
+      '回复事件不能作为 durable history anchor',
       sessionId,
+      priorAsk,
       new Date(t0.getTime() + 3_000),
     );
     const header = '## 固定学习者状态\n锚点损坏时只保留这份确定性上下文。';

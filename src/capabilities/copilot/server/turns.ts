@@ -666,7 +666,7 @@ export async function getCopilotContinuationHistory(
         ),
       ),
     )
-    .orderBy(asc(event.dispatch_seq));
+    .orderBy(desc(event.dispatch_seq));
   const parent = await projectCopilotTurnRows(
     dbArg,
     opts.sessionId,

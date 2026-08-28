@@ -273,6 +273,8 @@ describe('export constants', () => {
       'job_events',
       'provider_attempt_admission',
       'provider_session_admission',
+      'copilot_continuation',
+      'subagent_run',
       'tool_operation',
     ]);
   });
@@ -281,6 +283,14 @@ describe('export constants', () => {
     expect(BACKUP_EXCLUDED_TABLES.has('tool_operation')).toBe(true);
     expect(RESTORE_WIPE_ONLY_TABLES).toContain('tool_operation');
     expect(FK_ORDER as readonly string[]).not.toContain('tool_operation');
+  });
+
+  it('wipes YUK-932 mailbox runtime state without backing it up', () => {
+    for (const table of ['subagent_run', 'copilot_continuation']) {
+      expect(BACKUP_EXCLUDED_TABLES.has(table)).toBe(true);
+      expect(RESTORE_WIPE_ONLY_TABLES).toContain(table);
+      expect(FK_ORDER as readonly string[]).not.toContain(table);
+    }
   });
 
   it('wipes YUK-842 operational admission state without backing it up', () => {

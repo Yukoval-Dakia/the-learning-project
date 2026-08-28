@@ -1495,11 +1495,10 @@ describe('YUK-832 inline final evidence review', () => {
     const cancellationTx = {
       select: vi.fn(() => ({ from: () => ({ where: async () => [] }) })),
     };
-    const db = {
-      transaction: vi.fn(async (callback: (tx: typeof cancellationTx) => Promise<unknown>) =>
-        callback(cancellationTx),
-      ),
-    } as never;
+    const transaction = vi.fn(async (callback: (tx: typeof cancellationTx) => Promise<unknown>) =>
+      callback(cancellationTx),
+    );
+    const db = { transaction } as never;
     let markReviewStarted: (() => void) | undefined;
     const reviewStarted = new Promise<void>((resolve) => {
       markReviewStarted = resolve;
@@ -1532,7 +1531,7 @@ describe('YUK-832 inline final evidence review', () => {
     );
     await reviewStarted;
     controller.abort(new DOMException('client disconnected', 'AbortError'));
-    await vi.waitFor(() => expect(db.transaction).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(transaction).toHaveBeenCalledTimes(1));
     expect(releaseReview).toBeTypeOf('function');
     releaseReview?.({ status: 'skipped', replyText: '主模型已返回，等待证据审阅。' });
     await expect(run).rejects.toMatchObject({ name: 'AbortError' });

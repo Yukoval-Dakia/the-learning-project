@@ -26,7 +26,6 @@ import {
   COPILOT_DURABLE_EVIDENCE_REFERENCE_TIMEOUT_MS,
   COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
 } from '@/capabilities/copilot/server/evidence-review';
-import { COPILOT_SUBAGENT_NAME } from '@/capabilities/copilot/server/subagents';
 import type { Db } from '@/db/client';
 import { ai_task_runs, event, job_events, provider_session_admission } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -1077,7 +1076,7 @@ describe('runCopilotRun', () => {
     warnSpy.mockRestore();
   });
 
-  it('YUK-757 — durable run mounts the same depth-1 researcher and persists interleaved safe subtask steps in order', async () => {
+  it('YUK-932 — durable root exposes mailbox controls without native Task or public subtask steps', async () => {
     const runId = 'copilot_user_ask_subtask_lifecycle';
     let mcpOptions: BuildMcpServerOptions | undefined;
     const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
@@ -1085,67 +1084,8 @@ describe('runCopilotRun', () => {
       return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
     });
     const run = vi.fn(
-      async (_kind: string, _input: unknown, ctx: AgentCtx, onDelta: (text: string) => void) => {
-        await ctx.onTaskEvent?.({
-          type: 'system',
-          subtype: 'task_started',
-          task_id: 'durable-local-workflow-hidden',
-          description: 'DO NOT LEAK hidden durable local workflow',
-          subagent_type: COPILOT_SUBAGENT_NAME,
-          task_type: 'local_workflow',
-          workflow_name: 'spec',
-          skip_transcript: true,
-          uuid: '00000000-0000-4000-8000-000000000030',
-          session_id: 'sdk-durable-session',
-        });
-        await ctx.onTaskEvent?.({
-          type: 'system',
-          subtype: 'task_started',
-          task_id: 'task-cross-artifacts-77',
-          tool_use_id: 'toolu-cross-artifacts-77',
-          description: '交叉核对函数讲义、四次历史作答与知识图谱先修边',
-          subagent_type: COPILOT_SUBAGENT_NAME,
-          prompt: 'DO NOT LEAK durable raw learner text or hidden reasoning',
-          uuid: '00000000-0000-4000-8000-000000000031',
-          session_id: 'sdk-durable-session',
-        });
-        onDelta('我先核对证据，再给你一个统一解释。');
-        await ctx.onTaskEvent?.({
-          type: 'system',
-          subtype: 'task_started',
-          task_id: 'task-question-preview-31',
-          tool_use_id: 'toolu-question-preview-31',
-          description: '预览参数函数辨析题，覆盖 a=0 与判别式为零两种退化情形',
-          subagent_type: COPILOT_SUBAGENT_NAME,
-          prompt: 'DO NOT LEAK private chain of thought',
-          uuid: '00000000-0000-4000-8000-000000000032',
-          session_id: 'sdk-durable-session',
-        });
-        await ctx.onTaskEvent?.({
-          type: 'system',
-          subtype: 'task_notification',
-          task_id: 'task-cross-artifacts-77',
-          tool_use_id: 'toolu-cross-artifacts-77',
-          status: 'completed',
-          output_file: '/private/tmp/never-expose.txt',
-          summary: 'DO NOT LEAK subagent transcript',
-          usage: { total_tokens: 3010, tool_uses: 9, duration_ms: 28_500 },
-          uuid: '00000000-0000-4000-8000-000000000033',
-          session_id: 'sdk-durable-session',
-        });
+      async (_kind: string, _input: unknown, _ctx: AgentCtx, onDelta: (text: string) => void) => {
         onDelta('结论：你把“导数为零”误当成了“导数必变号”。');
-        await ctx.onTaskEvent?.({
-          type: 'system',
-          subtype: 'task_updated',
-          task_id: 'task-question-preview-31',
-          patch: {
-            status: 'failed',
-            description: '预览参数函数辨析题，覆盖 a=0 与判别式为零两种退化情形',
-            error: 'DO NOT LEAK provider stack/raw prompt',
-          },
-          uuid: '00000000-0000-4000-8000-000000000034',
-          session_id: 'sdk-durable-session',
-        });
         return {
           text: '结论：你把“导数为零”误当成了“导数必变号”。',
           task_run_id: 'tr_durable_subtasks',
@@ -1167,11 +1107,20 @@ describe('runCopilotRun', () => {
     expect(result.status).toBe('done');
 
     const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
-    expect(ctx.allowedTools).toEqual(expect.arrayContaining(['Task']));
-    expect(ctx.agents).toHaveProperty(COPILOT_SUBAGENT_NAME);
-    expect(ctx.hooks?.PreToolUse).toHaveLength(3);
+    expect(ctx.allowedTools).toEqual(
+      expect.arrayContaining([
+        'mcp__loom__launch_researcher',
+        'mcp__loom__get_subagent',
+        'mcp__loom__wait_subagent',
+        'mcp__loom__cancel_subagent',
+      ]),
+    );
+    expect(ctx.allowedTools).not.toContain('Task');
+    expect(ctx).not.toHaveProperty('agents');
+    expect(ctx).not.toHaveProperty('canUseTool');
+    expect(ctx).not.toHaveProperty('onTaskEvent');
+    expect(ctx.hooks?.PreToolUse).toHaveLength(2);
     expect(ctx.signal).toBeInstanceOf(AbortSignal);
-    expect(ctx.canUseTool).toEqual(expect.any(Function));
     expect(mcpOptions?.ctx.sessionId).toBe('sess_durable_subtasks');
     expect(mcpOptions?.cancellationSignals).toHaveLength(2);
     const probeYieldedOperationCancellation = mcpOptions?.onSafeOperationRunning;
@@ -1199,57 +1148,15 @@ describe('runCopilotRun', () => {
         query: 'durable correlation',
       }),
     ).toBe('toolu_durable_real_9');
-    const researcher = ctx.agents?.[COPILOT_SUBAGENT_NAME];
-    expect(researcher?.tools?.every((tool) => ctx.allowedTools?.includes(tool))).toBe(true);
-    expect(researcher?.tools).not.toContain('Task');
-    expect(researcher?.tools).not.toContain('mcp__loom__run_task');
-    expect(researcher?.tools).not.toContain('mcp__loom__get_tool_operation');
-    expect(researcher?.tools).not.toContain('mcp__loom__wait_tool_operation');
-    expect(researcher?.tools).not.toContain('mcp__loom__author_question');
-
     const events = await replay(runId);
     expect(events.map((event) => event.event_type)).toEqual([
       COPILOT_RUN_EVENTS.STARTED,
       COPILOT_RUN_EVENTS.EXECUTION_STARTED,
-      COPILOT_RUN_EVENTS.STEP,
-      COPILOT_RUN_EVENTS.STEP,
-      COPILOT_RUN_EVENTS.STEP,
-      COPILOT_RUN_EVENTS.STEP,
       COPILOT_RUN_EVENTS.DELTA,
       COPILOT_RUN_EVENTS.REPLY,
       COPILOT_RUN_EVENTS.DONE,
     ]);
-    expect(
-      events.filter((event) => event.event_type === COPILOT_RUN_EVENTS.STEP).map((e) => e.payload),
-    ).toEqual([
-      {
-        step_kind: 'subtask',
-        subtask_id: 'task-cross-artifacts-77',
-        label: '正在深入核对证据',
-        status: 'running',
-      },
-      {
-        step_kind: 'subtask',
-        subtask_id: 'task-question-preview-31',
-        label: '正在深入核对证据',
-        status: 'running',
-      },
-      {
-        step_kind: 'subtask',
-        subtask_id: 'task-cross-artifacts-77',
-        label: '子任务已完成',
-        status: 'completed',
-      },
-      {
-        step_kind: 'subtask',
-        subtask_id: 'task-question-preview-31',
-        label: '子任务未完成',
-        status: 'failed',
-        error: '子任务未完成',
-      },
-    ]);
-    expect(JSON.stringify(events)).not.toContain('DO NOT LEAK');
-    expect(JSON.stringify(events)).not.toContain('/private/tmp/never-expose.txt');
+    expect(events.some((event) => event.event_type === COPILOT_RUN_EVENTS.STEP)).toBe(false);
   });
 
   it('YUK-757 — durable kill switch removes Task and spawn-only runner options', async () => {
