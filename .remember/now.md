@@ -1,39 +1,27 @@
-# 当前 handoff — 2026-08-27 AI Pipeline Modernization F5 启动
+# 当前 handoff — 2026-08-28 AI Pipeline Modernization F5 最终收口
 
-## Owner decisions
+## 已落地边界
 
-- 1A：read/idempotent remote MCP 超过 45 秒可交出真实 handle；不可安全取消的 write/propose
-  继续阻塞到 turn deadline，未知结算写 `lost` 与 side-effect risk。
-- 2B：background subagent 完成后写 durable mailbox/result event，并以幂等 synthetic parent
-  prompt 自动续跑 foreground root；用户面仍只有 root 一个声音。
-- 3A：model + system drain + user 都可 cancel；取消是 cooperative，不把未知结算说成成功取消。
-- 4B：保留 #1299 batching 文案作为中性能力偏好；删除全部性能收益叙事。YUK-926 已按此
-  改名/重写并保持 Done。
-- UI 已批准；新增要求：drawer 不展示 sequence/async/durable/inline/model-routing/agent
-  architecture 等内部说明，只保留用户需要的状态、结果、错误与动作。
+- 根 Copilot 是前台交互；默认请求返回前台 SSE，只有 `durable:true` 显式创建 durable run。
+- `ToolOperations` 只承载已声明 `safeHandoff` 的 remote read/idempotent tool；超过 45 秒时交出可 wait/poll/cancel 的 handle。write/propose、`run_task`、未拥有 MCP 与未证明安全的 tool 继续阻塞。
+- `SubagentRuns` 有独立 durable mailbox、身份和 cancellation；完成后仅以幂等 one-shot continuation 恢复同一根请求，用户面没有第二个 agent 声音。
+- Copilot drawer 的 operation/subagent 投影展示处理状态、结果、错误与停止动作；已清除 sequence、async、routing、durable/inline、subagent 协调等内部执行叙述。
 
-## Tracker
+## 合并记录
 
-- Parent：YUK-927（In Progress），Project = Architecture Deepening FULL，Milestone = F5。
-- Active：YUK-928 ToolOperations foundation；YUK-929 classifier deletion；YUK-930 UI copy cleanup。
-- Blocked chain：YUK-931 <- 928；YUK-932 <- 928+929；YUK-933 <- 931+932；
-  YUK-934 <- 931+932+933。
-- Existing dedupe：YUK-920 由 YUK-931 消费；YUK-757 只覆盖旧 foreground subtask
-  projection；YUK-572 是夜间教研 agent，不是 Copilot SubagentRuns。
+- #1302 YUK-926 `f64f1389`；#1303 YUK-927 `c8f90778`；#1304 YUK-930 `4c223bf5`；#1305 YUK-929 `e4e87b08`。
+- #1306 YUK-928 `ad45e3e1`；#1307 YUK-931 `d28061d0341432417a97edd9d57750a7fd93c773`；#1308 YUK-932 `1cf06f575763fb72b558b6c8a2f064405a8a06bb`；#1309 YUK-933 `82eddbdfcfec66b7c11fa2269ebe0886bc405a45`。
+- 当前 `origin/main` 是 #1309 的 `82eddbdf`。YUK-934 是最后的文档、audit 和 Postman 收口 lane，尚未合并。
 
-## Git / worktrees
+## YUK-934 closeout
 
-- origin/main = `f64f1389`（PR #1302 merged）；本地 main 仍为脏旧树，落后 45 commits，
-  禁止 reset/clean/overwrite。
-- `/Volumes/YukovalSBak/yukoval-projects/the-learning-project-worktrees/f5-20260827/yuk-928`
-- `/Volumes/YukovalSBak/yukoval-projects/the-learning-project-worktrees/f5-20260827/yuk-929`
-- `/Volumes/YukovalSBak/yukoval-projects/the-learning-project-worktrees/f5-20260827/yuk-930`
-- 本 board sync 在同目录 `yuk-927` worktree。
+- 工作树：`/Volumes/YukovalSBak/yukoval-projects/the-learning-project-worktrees/f5-20260827/yuk-934`，branch `yuk-934-finalize-durable-modernization`。
+- task census 真实值为 53 registered / 52 statically invoked / 1 compatibility（`AttributionTask`）；architecture audit 输出必须从 `auditTaskCensus()` 的结果派生，不能再写死旧的 50/1 值。
+- 保留 correction-intent、retry 与 job-yield classifier；清除的只是 ordinary chat 的预测性 classifier / auto dual-track 叙述。没有 runtime-promotion consumer 或残留需要删除。
+- Postman source 是 `postman/api-endpoints.json`；修改后必须运行 `pnpm gen:postman` 同步 collection，并用 `jq` 校验两份 JSON。
 
-## Safety / validation
+## 收口边界
 
-- 禁止本机完整 `pnpm test`；各 lane scoped unit/DB/migration + Biome，root 串行跑
-  typecheck/lint/audits/build，push 后 exact-head GitHub CI Gate。
-- 系统 Data 卷在启动时只余约 117 MiB；把两个新 worktree 从 `/private/tmp` 以 Git
-  非强制 remove/re-add 迁到外接卷后约 302 MiB。没有删除用户缓存、旧 worktree 或数据。
-- 不部署、不做生产观察，除非另获授权。
+- 不运行本机完整 `pnpm test` 或本地 gate；本机只可运行 scoped audit/unit/format 检查。push 后由 exact-head GitHub `CI Gate` 决定完整测试。
+- 不部署、不做生产观察，也不清理主工作树或重装依赖。
+- 合并前执行独立 review；合并后同步 Linear YUK-934 与 parent YUK-927，并做 closeout capture gate。
