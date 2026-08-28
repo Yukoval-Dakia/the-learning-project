@@ -1,4 +1,4 @@
-// allow: SIZE_OK — central 52-task catalog contract suite.
+// allow: SIZE_OK — central 53-task catalog contract suite.
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
@@ -865,15 +865,15 @@ describe('composeTaskCatalog', () => {
     ).toThrow('key "WrongKey" does not match spec.kind "RightKind"');
   });
 
-  it.each([50, 52])('rejects an expected 51-kind catalog with %i entries', (count) => {
+  it.each([51, 52])('rejects an expected 53-kind catalog with %i entries', (count) => {
     const entries = Object.fromEntries(
       Array.from({ length: count }, (_, index) => {
         const spec = makeOwnedSpec(`Task${index}`);
         return [spec.definition.kind, spec];
       }),
     );
-    expect(() => composeTaskCatalog([{ owner: 'practice', specs: entries }], 51)).toThrow(
-      `expected 51 definitions, received ${count}`,
+    expect(() => composeTaskCatalog([{ owner: 'practice', specs: entries }], 53)).toThrow(
+      `expected 53 definitions, received ${count}`,
     );
   });
 });

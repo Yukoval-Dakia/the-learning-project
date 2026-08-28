@@ -108,8 +108,9 @@ Question (统一题库，single source of truth)
 > 拥有；Notes 也已拥有 NoteGenerate/NoteVerify 的 parser + output schema；Ingestion 已拥有
 > Vision/Structure/MistakeEnroll/Tagging/ColdStart/BlockAssembly/ProfileCritic 八个 TaskSpec；Knowledge
 > 已拥有 KnowledgeEdgePropose/FrontierPrerequisite/KnowledgeReview 三个 TaskSpec。
-> owner maps 现在保存全部 51 个完整 TaskSpec（YUK-870 收编了最后一个 `SessionSummaryTask`），
-> registry 只做静态 compatibility projection；YUK-885 已删除中央 semantic quarry
+> owner maps 现在保存全部 53 个完整 TaskSpec（20 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
+> + 13 Agency + 6 Copilot；Copilot 的第六项为 `CopilotResearchTask`）。YUK-870 收编了
+> `SessionSummaryTask`；registry 只做静态 compatibility projection；YUK-885 已删除中央 semantic quarry
 > （`legacy-task-definitions.ts`）与 transitional 机制（`defineTransitionalTask`），
 > 由 `scripts/audit-architecture-ownership.ts` 守住。
 > 实现附录见 `docs/superpowers/plans/2026-08-08-practice-failure-learning-implementation.md`。
@@ -126,11 +127,11 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 ### 5.1 Task 注册
 
 > **Canonical source**: `src/ai/task-catalog.ts` 的 `taskCatalog`。六个 capability owner maps
-> 保存 staged semantic ownership：51 个完整 owned TaskSpec（19 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
-> + 13 Agency + 5 Copilot）与 0 个 identity-backed transitional entry（YUK-870 后中央 semantic
+> 保存 staged semantic ownership：53 个完整 owned TaskSpec（20 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
+> + 13 Agency + 6 Copilot；其中 `CopilotResearchTask` 是第六个 Copilot task）与 0 个 identity-backed transitional entry（YUK-870 后中央 semantic
 > quarry 为空）；composer 把每个 entry 的精确 `definition` 投影为冻结的
 > runtime map。`src/ai/registry.ts` 仅是带 Copilot dispatch overlay 的 compatibility projection。
-> 当前恰有 **51 个 registered/runnable kinds、50 个静态 production invocation kinds、1 个显式
+> 当前恰有 **53 个 registered/runnable kinds、52 个静态 production invocation kinds、1 个显式
 > compatibility kind**：`AttributionTask` 为持久历史/registry 兼容而保留，现行 Failure Learning
 > 在 deterministic retrieval 后调用 `AttributionRerankTask`，不伪造 `AttributionTask` caller。
 > `pnpm audit:task-census` 同时验证 capability manifest/job 与 legacy handler 注册可达性，以及
@@ -184,6 +185,7 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 | `CopilotEvidenceReviewTask` | mimo-v2.5-pro | Copilot free-form turn 使用 DomainTool read 后、回复持久化/可见前（YUK-832） | 否 | — | FULL validator 的盲证据腿：不看 candidate，把 server 切好的 request units 绑定到精确 typed tool call + RFC6901 pointer，密封 facts/gaps，并产一份仍需完整认证的唯一 fallback |
 | `CopilotEvidenceVerificationTask` | mimo-v2.5-pro | 盲 evidence ledger 建成后、任何 persistence / public delta 前（YUK-832） | 否 | — | 密封 comparator：逐 reply/request unit 输出 indexed observations，不提供权威 verdict 或第三版；服务端校验 dense indices/pointers/coverage 并派生 pass，pass 必须由两次 valid comparison 确认 |
 | `CopilotTask` | mimo-v2.5-pro | `/api/chat` inline + pg-boss `copilot_run`（AF S4 / YUK-203 / YUK-757） | 是 | — | 唯一面向用户的对话式学习助手；普通 chat 始终前台执行，只有显式 `durable:true` 才受理为 `copilot_run` 并返回 202；默认可在后台派只读 `copilot-researcher`（共享 depth=1/report-only contract，显式 kill switch），只把结构化进度卡与最终结论带回同一 Copilot 声音，不暴露子任务 transcript / reasoning |
+| `CopilotResearchTask` | mimo-v2.5-pro | `copilot_run` 内的 durable depth-1 read-only research objective | 是 | — | `copilot-researcher` 的受限只读研究任务；只把结构化进度与结论交回同一 Copilot 声音 |
 | `QuestionAuthorTask` | mimo-v2.5-pro | `author_question` DomainTool knowledge\|material seed（ADR-0031 / YUK-304） | 否 | — | 单道原创 draft 题（StructuredQuestion 树）+ `question_draft` proposal（单次 structured output，无工具循环；取代 YUK-275 的 `QuizIntentParseTask` C 形态解析器）|
 | `ItemPriorTask` | mimo-v2.5-pro | pg-boss `item_prior_backfill`（B1-W1 / ADR-0035 慢热阶段①） | 否 | — | 给新题估冷启先验难度 b（logit 尺度，抽教学特征路线）+ confidence → `item_calibration`（source=`llm_prior`）|
 | `SelectionOrchestratorTask` | mimo-v2.5 | `composeSoftmaxStream` 选题编排（YUK-361 Phase 3 / ADR-0042 编排档2） | 否 | — | 档2 L2 选题主脑：对每个非到期候选出 weight/role/arrangement/reason（单次 structured output）→ 薄 tempered-softmax sampler 抽样落题 + 记 π_i；不碰到期项/recall 项 |
@@ -246,7 +248,7 @@ propose/write 以及未证明可安全 detached 的 Tavily/手写 MCP 继续阻�
 
 **循环控制现状**：
 
-`TaskBudget.maxIterations` 映射到 Claude Agent SDK `maxTurns`，`timeout` 由 runner 的 `AbortController` 执行（cooperative abort）。`TaskBudget.maxCost` 仅在 Anthropic direct 这条会回报 USD 的 pay-as-you-go lane 映射到 SDK `maxBudgetUsd`；mimo（不回 SDK cost）与 subscription OAuth（flat quota）明确不挂伪美元闸。`TaskBudget.transientRetries` 控制 runner 对**同一已解析目标**的进程内瞬时重试（仅两个 vision judge opt-in，六道门控：ctx opt-in / 无 override 钉死 / 无全局 env 钉死 / 白名单瞬时分类 / 次数封顶 / elapsed 墙钟门）。durable job 的 transient 层是 pg-boss 队列显式重投（`queue-config.ts` retryLimit=2 + 30s 退避），二者互斥不叠加。YUK-590 另把 Claude Code 内部 API retry 默认从 10 收窄到 2（运维可用 `CLAUDE_CODE_MAX_RETRIES` 覆盖），让 5xx 终态在任务预算内回到 loom 分类层。YUK-842 在 resolved provider 后，用 Postgres 短事务为完整 Agent SDK session 做跨 app/worker 的 active session-family/parallel-branch 与 start-reservation admission：本地 prompt/options 先物化，随后在 admission slot 内以 45s initial lease 调用 `startup()` 完成不发送 prompt 的 CLI initialize；startup 成功后先以 claim-token CAS 显式切换到 15s steady lease，才创建 `ai_task_runs`、启动剩余 model timeout 并调用一次 `WarmQuery.query()`。lease protocol v2 进入 policy fingerprint；只有 steady heartbeat 以 15s horizon 单调续租、不缩短已确认 expiry。排队和 CLI startup 不计 model timeout，也不制造未调用模型的 unknown-cost attempt；`hard_reclaim_at` 显式包含 startup budget + model timeout + abort grace。Hono 组合根为每个已鉴权 `/api/*` 请求创建同一个 90s absolute provider-session deadline，request 内所有 central runner 的串行、并行与嵌套调用都自动取该 deadline 与显式 caller deadline 的较早者；SDK initialize 与 model timer 只能消费剩余预算，SDK 返回后还会重新栅栏 lease、abort 与 absolute deadline，不能把迟到 success 记成成功。Copilot 另用同一个 kernel 常量生成显式 fallback deadline 并传给 classifier、teaching/free-form 主调用与 nested central task，以覆盖直接 handler 测试及可能脱离 handler 的工作；生产 runner 仍以更早的 request scope 为准。durable worker 没有 HTTP request scope，保留 task 的完整执行预算。同 lane tool 内嵌 task 的一条 descendant chain 借父 family 槽以避免自锁，parallel sibling 必须排队或占另一 root 槽，且每个 child 仍独立记录 start reservation；父先结束时仍运行的 child 接管该 family 槽。短 lease 丢失会 abort，外部 provider 无真实 fencing，故 active family 在 `hard_reclaim_at` 前继续隔离。
+`TaskBudget.maxIterations` 映射到 Claude Agent SDK `maxTurns`，`timeout` 由 runner 的 `AbortController` 执行（cooperative abort）。`TaskBudget.maxCost` 仅在 Anthropic direct 这条会回报 USD 的 pay-as-you-go lane 映射到 SDK `maxBudgetUsd`；mimo（不回 SDK cost）与 subscription OAuth（flat quota）明确不挂伪美元闸。`TaskBudget.transientRetries` 控制 runner 对**同一已解析目标**的进程内瞬时重试（仅两个 vision judge opt-in，六道门控：ctx opt-in / 无 override 钉死 / 无全局 env 钉死 / 白名单瞬时分类 / 次数封顶 / elapsed 墙钟门）。durable job 的 transient 层是 pg-boss 队列显式重投（`queue-config.ts` retryLimit=2 + 30s 退避），二者互斥不叠加。YUK-590 另把 Claude Code 内部 API retry 默认从 10 收窄到 2（运维可用 `CLAUDE_CODE_MAX_RETRIES` 覆盖），让 5xx 终态在任务预算内回到 loom 分类层。YUK-842 在 resolved provider 后，用 Postgres 短事务为完整 Agent SDK session 做跨 app/worker 的 active session-family/parallel-branch 与 start-reservation admission：本地 prompt/options 先物化，随后在 admission slot 内以 45s initial lease 调用 `startup()` 完成不发送 prompt 的 CLI initialize；startup 成功后先以 claim-token CAS 显式切换到 15s steady lease，才创建 `ai_task_runs`、启动剩余 model timeout 并调用一次 `WarmQuery.query()`。lease protocol v2 进入 policy fingerprint；只有 steady heartbeat 以 15s horizon 单调续租、不缩短已确认 expiry。排队和 CLI startup 不计 model timeout，也不制造未调用模型的 unknown-cost attempt；`hard_reclaim_at` 显式包含 startup budget + model timeout + abort grace。Hono 组合根为每个已鉴权 `/api/*` 请求创建同一个 90s absolute provider-session deadline，request 内所有 central runner 的串行、并行与嵌套调用都自动取该 deadline 与显式 caller deadline 的较早者；SDK initialize 与 model timer 只能消费剩余预算，SDK 返回后还会重新栅栏 lease、abort 与 absolute deadline，不能把迟到 success 记成成功。Copilot 另用同一个 kernel 常量生成显式 fallback deadline 并传给 teaching/free-form 主调用与 nested central task，以覆盖直接 handler 测试及可能脱离 handler 的工作；生产 runner 仍以更早的 request scope 为准。durable worker 没有 HTTP request scope，保留 task 的完整执行预算。同 lane tool 内嵌 task 的一条 descendant chain 借父 family 槽以避免自锁，parallel sibling 必须排队或占另一 root 槽，且每个 child 仍独立记录 start reservation；父先结束时仍运行的 child 接管该 family 槽。短 lease 丢失会 abort，外部 provider 无真实 fencing，故 active family 在 `hard_reclaim_at` 前继续隔离。
 
 ### 5.3 成本控制
 

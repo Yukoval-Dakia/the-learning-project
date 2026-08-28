@@ -1456,7 +1456,7 @@ async function runCli(): Promise<void> {
   }
 
   console.log(
-    `Architecture deepening audit passed: ${result.counts.taskSpecs} owned TaskSpecs (census ${census.catalogCount}/50 invoked/1 compatibility); ${result.counts.domainTools} owned DomainTools; ${result.counts.manifestQueues} manifest queues + 0 central semantic registrations; ${result.counts.proposalKinds} owned proposal kinds + 0 central kind switches; 0 central semantic definitions; 0 central concrete tools; SCC [${result.sccs
+    `Architecture deepening audit passed: ${result.counts.taskSpecs} owned TaskSpecs (census ${census.catalogCount}/${census.discoveredKinds.length} invoked/${Object.keys(census.nonLiveClassifications).length} compatibility); ${result.counts.domainTools} owned DomainTools; ${result.counts.manifestQueues} manifest queues + 0 central semantic registrations; ${result.counts.proposalKinds} owned proposal kinds + 0 central kind switches; 0 central semantic definitions; 0 central concrete tools; SCC [${result.sccs
       .map((component) => component.join('/'))
       .join(
         '; ',
