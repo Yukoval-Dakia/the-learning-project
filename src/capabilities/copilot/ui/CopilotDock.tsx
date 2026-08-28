@@ -66,7 +66,13 @@ import {
 } from './durable-reconnect-storage';
 import { learnerGlobalBrief } from './learner-global-brief';
 import { nextNudgeSessionAfterTurn, resolveTurnAmbientFocus } from './nudge-focus';
-import { type ReplayPrimaryView, type ReplayTurn, replayToMessages } from './replay';
+import {
+  type ReplayPrimaryView,
+  type ReplaySubagentRun,
+  type ReplayToolOperation,
+  type ReplayTurn,
+  replayToMessages,
+} from './replay';
 import { isOneShotSkill } from './skill-lifecycle';
 import {
   type CopilotRunView,
@@ -232,6 +238,8 @@ export interface ChatMessage {
   // Appended on `tool_use`, enriched on `tool_result`, preserved on the terminal
   // `reply` event so the full call log stays on the AI turn after finalize.
   tool_calls?: ToolCallRecord[];
+  tool_operations?: ReplayToolOperation[];
+  subagent_runs?: ReplaySubagentRun[];
 }
 
 /** YUK-457 — a single tool-use record (live stream or replay). */
@@ -257,6 +265,19 @@ function learnerToolLabel(toolName: string): string {
 function subtaskErrorMessage(error: string | undefined): string {
   if (!error) return '这一步未能完成。';
   return error.replaceAll('子任务', '这一步');
+}
+
+type LifecycleStatus = ReplayToolOperation['status'] | ReplaySubagentRun['status'];
+
+function lifecycleCardStatus(status: LifecycleStatus): 'running' | 'done' | 'failed' {
+  if (status === 'running') return 'running';
+  return status === 'succeeded' ? 'done' : 'failed';
+}
+
+function lifecycleErrorMessage(status: LifecycleStatus): string {
+  if (status === 'cancelled') return '已取消。';
+  if (status === 'lost') return '结果暂时无法确认，请查看回复后再试。';
+  return '这一步未完成，请稍后再试。';
 }
 
 type ToolCallCardStatus = 'running' | 'done' | 'failed';
@@ -460,6 +481,20 @@ function CopilotToolUseList({ calls }: { calls: ToolCallRecord[] }) {
   );
 }
 
+function CopilotLifecycleCard({ toolName, status }: { toolName: string; status: LifecycleStatus }) {
+  const cardStatus = lifecycleCardStatus(status);
+  return (
+    <ToolUseCard
+      toolName={toolName}
+      actor={null}
+      status={cardStatus}
+      running={<span>正在处理…</span>}
+      result={<span>已完成，结果已整理到回复中。</span>}
+      errorView={<span>{lifecycleErrorMessage(status)}</span>}
+    />
+  );
+}
+
 // Quick-chips are user-readable prompts; they send via triggered_by:'chat'
 // (the 'chip' surface is a different mistake-action allowlist — see chat.ts
 // COPILOT_CHAT_TRIGGER_KINDS — and is NOT what these prefilled prompts mean).
@@ -651,6 +686,27 @@ export const MessageRow = memo(function MessageRow({
             ))}
           </div>
         ) : null}
+        {m.role === 'ai' && m.tool_operations && m.tool_operations.length > 0 ? (
+          <div className="flex flex-col gap-[6px]" data-testid="copilot-tool-operation-list">
+            {m.tool_operations.map((operation) => (
+              <div key={operation.id} data-testid="copilot-tool-operation-card">
+                <CopilotLifecycleCard
+                  toolName={learnerToolLabel(operation.tool_name)}
+                  status={operation.status}
+                />
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {m.role === 'ai' && m.subagent_runs && m.subagent_runs.length > 0 ? (
+          <div className="flex flex-col gap-[6px]" data-testid="copilot-subagent-run-list">
+            {m.subagent_runs.map((run) => (
+              <div key={run.id} data-testid="copilot-subagent-run-card">
+                <CopilotLifecycleCard toolName="处理步骤" status={run.status} />
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -715,6 +771,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         ]
       : [],
   );
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(
     restoredDurableHandle?.sessionId ?? restoredPendingTurn?.requestBody.session_id ?? null,
   );
@@ -1017,8 +1075,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // (YUK-497 wave-3).
   const refetchTurns = useCallback(async (): Promise<boolean> => {
     if (!currentSessionId) return false;
+    const sessionId = currentSessionId;
     const res = await apiJson<CopilotTurnsResponse>(
-      `/api/copilot/turns?limit=${REPLAY_LIMIT}&session_id=${encodeURIComponent(currentSessionId)}`,
+      `/api/copilot/turns?limit=${REPLAY_LIMIT}&session_id=${encodeURIComponent(sessionId)}`,
     );
     const replayed = replayToMessages(res.turns ?? []);
     // Don't clobber a live exchange. The revert button on a PRIOR AI message is clickable even
@@ -1028,6 +1087,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     // replace while a send is in flight (mirrors the prefill's prev.length===0 guard). The revert
     // already landed server-side; the tombstone shows on the next refresh (YUK-497 wave-2, major).
     if (sendingRef.current) return false;
+    if (currentSessionIdRef.current !== sessionId) return false;
+    if (JSON.stringify(messagesRef.current) === JSON.stringify(replayed)) return true;
     setMessages(replayed);
     // A revert may have removed the turn that owned the active teaching skill / focused
     // knowledge — reset both, then recompute from the refreshed list (the same scan the
@@ -1037,6 +1098,14 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     restoreSkillStateFromReplay(replayed);
     return true;
   }, [currentSessionId, restoreSkillStateFromReplay]);
+
+  useEffect(() => {
+    if (!open || !currentSessionId || pendingAcceptanceUnknown) return;
+    const interval = window.setInterval(() => {
+      void refetchTurns().catch(() => undefined);
+    }, 5_000);
+    return () => window.clearInterval(interval);
+  }, [currentSessionId, open, pendingAcceptanceUnknown, refetchTurns]);
 
   const revertCheckpoint = useCallback(
     async (checkpointEventId: string) => {

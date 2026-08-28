@@ -100,4 +100,43 @@ describe('CopilotDock inline subtask cards', () => {
     expect(screen.getByText('这一步未完成')).toBeTruthy();
     expect(screen.queryByText('子任务未完成')).toBeNull();
   });
+
+  it('renders replayed operation and researcher lifecycle cards without a second voice or private data', () => {
+    render(
+      <MessageRow
+        message={{
+          id: 'replayed-lifecycle',
+          role: 'ai',
+          text: '我会把确认后的结果直接告诉你。',
+          tool_operations: [
+            { id: 'op-running', tool_name: 'query_mistakes', status: 'running' },
+            { id: 'op-done', tool_name: 'get_review_due', status: 'succeeded' },
+            { id: 'op-lost', tool_name: 'query_mistakes', status: 'lost' },
+          ],
+          subagent_runs: [
+            { id: 'research-cancelled', status: 'cancelled' },
+            { id: 'research-failed', status: 'failed' },
+          ],
+        }}
+        navigate={noopNavigate}
+        onAcceptCorrective={noopAccept}
+        chipPending={false}
+        chipAcked={false}
+        revertPending={false}
+      />,
+    );
+
+    expect(screen.getAllByTestId('copilot-tool-operation-card')).toHaveLength(3);
+    expect(screen.getAllByTestId('copilot-subagent-run-card')).toHaveLength(2);
+    expect(screen.getAllByText('错题整理')).toHaveLength(2);
+    expect(screen.getByText('复习安排')).toBeTruthy();
+    expect(screen.getAllByText('处理步骤')).toHaveLength(2);
+    expect(screen.getByText('正在处理…')).toBeTruthy();
+    expect(screen.getByText('已完成，结果已整理到回复中。')).toBeTruthy();
+    expect(screen.getAllByText('已取消。')).toHaveLength(1);
+    expect(screen.getAllByText('这一步未完成，请稍后再试。')).toHaveLength(1);
+    expect(screen.getByText('结果暂时无法确认，请查看回复后再试。')).toBeTruthy();
+    expect(screen.getAllByText('编排者')).toHaveLength(1);
+    expect(screen.queryByText(/process_id|objective|result_md|subagent|provider/i)).toBeNull();
+  });
 });

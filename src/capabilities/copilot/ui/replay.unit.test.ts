@@ -194,4 +194,24 @@ describe('replayToMessages', () => {
       },
     ]);
   });
+
+  it('forwards bounded operation and subagent lifecycle cards without private payloads', () => {
+    const lifecycleTurn = turn({
+      role: 'ai',
+      text: '我已核对完这组错题。',
+      event_id: 'reply_lifecycle',
+      tool_operations: [{ id: 'op_read_1', tool_name: 'query_mistakes', status: 'succeeded' }],
+      subagent_runs: [{ id: 'research_1', status: 'failed' as const }],
+    });
+
+    const [message] = replayToMessages([lifecycleTurn, lifecycleTurn]);
+
+    expect(message).toMatchObject({
+      tool_operations: [{ id: 'op_read_1', tool_name: 'query_mistakes', status: 'succeeded' }],
+      subagent_runs: [{ id: 'research_1', status: 'failed' }],
+    });
+    expect(JSON.stringify(message)).not.toContain('objective');
+    expect(JSON.stringify(message)).not.toContain('process_id');
+    expect(JSON.stringify(message)).not.toContain('result_md');
+  });
 });

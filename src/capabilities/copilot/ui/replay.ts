@@ -78,6 +78,8 @@ export interface ReplayTurn {
   primary_view?: ReplayPrimaryView;
   // YUK-457 — present on AI turns whose parent emitted tool_use mirror events.
   tool_calls?: ReplayToolCall[];
+  tool_operations?: ReplayToolOperation[];
+  subagent_runs?: ReplaySubagentRun[];
 }
 
 export interface ReplayChatMessage {
@@ -98,6 +100,8 @@ export interface ReplayChatMessage {
   primary_view?: ReplayPrimaryView;
   // YUK-457 — forwarded so tool-use cards survive drawer reopen / page refresh.
   tool_calls?: ReplayToolCall[];
+  tool_operations?: ReplayToolOperation[];
+  subagent_runs?: ReplaySubagentRun[];
 }
 
 /** YUK-457 — replay projection of a persisted tool_use mirror. */
@@ -107,6 +111,17 @@ export interface ReplayToolCall {
   summary?: string;
   errorReason?: string;
   status: 'done' | 'failed';
+}
+
+export interface ReplayToolOperation {
+  id: string;
+  tool_name: string;
+  status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'lost';
+}
+
+export interface ReplaySubagentRun {
+  id: string;
+  status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'lost';
 }
 
 /**
@@ -159,6 +174,8 @@ export function replayToMessages(turns: ReplayTurn[]): ReplayChatMessage[] {
       // backend files. NOT a rendering change.
       primary_view: t.primary_view,
       tool_calls: t.tool_calls,
+      tool_operations: t.tool_operations,
+      subagent_runs: t.subagent_runs,
     });
   }
   return out;
