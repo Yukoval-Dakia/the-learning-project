@@ -48,3 +48,21 @@ Base: `origin/main@1cf06f575763fb72b558b6c8a2f064405a8a06bb`
 `pnpm` attempted dependency reconciliation for this lane's intentionally symlinked `node_modules`
 and stopped in non-interactive mode before any removal. No dependency install, local full test gate,
 or deployment was run; every successful local check above used the existing direct binaries.
+
+## Stop-hook re-verification
+
+Executed after the completion-evidence hook requested direct re-verification.
+
+- `./node_modules/.bin/tsc --noEmit` exited 0.
+- Scoped Biome over all six changed TypeScript/TSX files reported `Checked 6 files` and no errors.
+- The six scoped unit files exited 0 with `Test Files 6 passed (6)` and `Tests 59 passed (59)`.
+- The direct Vite/esbuild equivalent of the four build scripts exited 0. Its terminal artifacts were
+  `dist/server.cjs` (24.0mb), `dist/worker.cjs` (24.1mb), and `dist/migrate.cjs` (3.0mb); Vite also
+  completed successfully. The bundle-size messages were warnings, not failures.
+- `git diff --check HEAD^ HEAD` exited 0 and `git status --short --branch` showed only
+  `## yuk-933-operation-subagent-cards...origin/yuk-933-operation-subagent-cards`.
+- The scoped DB invocation exited 1 before collection: Vitest reported `No test files found` for the
+  DB filter and global setup then reported `Could not find a working container runtime strategy`.
+  This is a local `BLOCKED_ENV`, not a passing DB result; exact-head CI owns that containerized case.
+- `gh pr view 1309` confirmed open PR head `6a236f55413272d665c7fcf1d35df7fdc664d1be` against
+  `main`, with CI Gate jobs running at verification time.
