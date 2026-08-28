@@ -13,6 +13,8 @@ and exits when the turn is finished. HTTP is a client.
 TLP Copilot does the opposite. `POST /api/copilot/chat` mints a cold `CopilotTask` every time
 (`src/capabilities/copilot/server/chat.ts` then `streamTaskCollecting`). `src/server/ai/runner.ts`
 `buildQueryOptions` hardcodes `persistSession: false` for every task kind and never passes `resume`.
+`docs/audit/2026-06-05-agent-sdk-alignment.md` still treats that as a red line. This ADR is the
+Copilot-foreground supersede of that red line for ordinary inline chat only.
 Continuity is a Postgres `learning_session` plus a bounded `{role,text}` fold
 (`assembleConversationHistory`, 8 turns × 800 chars, 4000 total) stuffed into
 `JSON.stringify(CopilotRunInput)`. The Agent SDK session id is discarded.
@@ -33,14 +35,23 @@ SDK resume onto the durable worker is physically impossible and is not this tick
 
 ### 1. Foreground consecutive POSTs resume one Agent SDK session
 
-Ordinary `triggered_by: chat` inline SSE turns on the same product `learning_session` resume the
-previous Agent SDK session when a session id exists. They do not mint a cold CopilotTask whose only
-memory is the `{role,text}` fold.
+Foreground inline SSE turns on the same product `learning_session` resume the previous Agent SDK
+session when a session id exists. That includes ordinary chat and chip-trigger on the same
+`learning_session`. They do not mint a cold CopilotTask whose only memory is the `{role,text}` fold.
 
-Implementation shape (capability-local, Copilot only):
+Implementation shape (capability-local, foreground inline Copilot only):
 
-- Override `persistSession: true` for Copilot only. `buildQueryOptions` sets `persistSession: false`
-  runner-global today. Do not silently persist Attribution, NoteGenerate, or other task kinds.
+- Enable `persistSession: true` and store or resume the SDK id only for **foreground inline** Copilot
+  chat on the app process (ordinary `/api/copilot/chat` SSE, not a 202 worker job).
+- Do **not** key the override on `kind === 'CopilotTask'`. Durable/Mission 202 uses the same kind with
+  `budgetOverride`. A kind-only override would persist on the worker tmpdir and write that SDK id onto
+  `learning_session`, poisoning app resume.
+- `buildQueryOptions` sets `persistSession: false` runner-global today. Do not silently persist
+  Attribution, NoteGenerate, or other task kinds.
+- Durable `durable:true` / Mission 202 stays `persistSession: false`. No SDK session id written from
+  the worker onto `learning_session`.
+- `CopilotCorrectionIntentTask` stays `persistSession: false`.
+- Teaching `skill_context` still bypasses CopilotTask.
 - After a successful query, keep the SDK session id on the existing product conversation
   (`learning_session`), not on a new table.
 - The next inline POST for that conversation passes `resume: <sdk_session_id>`.
@@ -77,15 +88,15 @@ concurrent unpaid family sitting on top of a still-live parent. Explicit admissi
 - Do not call `sdkQuery()` twice for one POST.
 - Durable `durable:true` / Mission 202 stays its own worker CopilotTask family. No SDK `resume` onto
   the worker. Job-events reconnect is unchanged.
-- Teaching `skill_context` still bypasses CopilotTask.
 
 This is the explicit YUK-842 design the ticket asked for. Resume is admitted and paid as one new session
 start. It does not fork a second family for the same turn.
 
 ### 3. Product history fold remains the restart fallback, not the happy path
 
-`assembleConversationHistory` stays. Use it when `resume` is missing, SDK files are gone, or `resume`
-fails. Do not delete event-sourced turns.
+`assembleConversationHistory` stays. On a resume **hit**, omit it from `CopilotRunInput`. Passing
+`resume` plus the 8×800 fold double-stuffs the model. Use the fold only on miss, fail, or restart (no
+stored id, SDK files gone, or `resume` throws). Do not delete event-sourced turns.
 
 ### 4. Non-goals (hard)
 
@@ -125,8 +136,13 @@ fails. Do not delete event-sourced turns.
 ## Implementation notes (Backend, after this ADR)
 
 - One cloud agent. `/poteto-mode`. Exact-head Gate on a re-verified main SHA.
-- Tests: two consecutive inline `/api/copilot/chat` POSTs on one `learning_session`; second query options
-  include `resume` and `persistSession: true`; one admission family per POST; fold fallback when resume
-  is absent.
-- Copilot-only override of `persistSession` in `buildQueryOptions`. Other task kinds stay `false`
-  unless a later ticket says otherwise.
+- Gate `persistSession: true` on foreground inline `/api/copilot/chat` on the app process. Do not key
+  on `kind === 'CopilotTask'`. Durable/202 and `CopilotCorrectionIntentTask` stay `false`.
+- Conversation mutex: YUK-842 slots are provider-concurrency, not per-`learning_session`. "Never start a
+  resumed query while the previous Copilot query for that conversation is still acquired" needs a
+  conversation-level mutex, not just admission slots.
+- Resume-fail: clear the stored SDK id and mint a new session. Do not retry a dead id.
+- Tests: two consecutive inline `/api/copilot/chat` POSTs on one `learning_session`; second POST on
+  resume hit must have `resume` and `persistSession: true` and must **not** include the fold in
+  `CopilotRunInput`; one admission family per POST; fold fallback when resume is absent. Durable/202
+  and correction-intent kinds must stay `persistSession: false`.
