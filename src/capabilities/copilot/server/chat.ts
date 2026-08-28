@@ -111,6 +111,7 @@ import {
   type SdkMcpServer,
   type ToolExecutionResultObservation,
   buildMcpServerFromRegistry,
+  createToolUseCorrelation,
   shouldEmitToolUseForCaller,
 } from '@/server/ai/tools/mcp-bridge';
 // AF S3a / YUK-203 U3 — durable conversation envelope. runCopilotChat now
@@ -1085,6 +1086,7 @@ async function runCopilotChatImpl(
   // YUK-457 — one actor for the bridge ctx, the persisted mirrors, AND the
   // live tool_use gate below: all three must resolve the same mirror policy.
   const callerActor = { kind: 'agent' as const, ref: actorRef };
+  const toolUseCorrelation = createToolUseCorrelation(DOMAIN_TOOL_MCP_SERVER_NAME);
   const validationTaskContext = (
     callCtx: Parameters<Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']>[2],
   ) => ({
@@ -1122,6 +1124,7 @@ async function runCopilotChatImpl(
   const mcpServer = buildMcpServer({
     ctx: {
       db,
+      sessionId,
       taskRunId,
       providerAttemptCaller: 'api',
       signal: lifecycleAbortController.signal,
@@ -1135,6 +1138,11 @@ async function runCopilotChatImpl(
     serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
     toolNames: resolveDomainToolNames(surface),
     taskKind: 'CopilotTask',
+    claimToolUseId: toolUseCorrelation.claim,
+    cancellationSignals: [
+      { signal: lifecycleAbortController.signal, requestedBy: 'system' },
+      ...(streaming?.signal ? [{ signal: streaming.signal, requestedBy: 'user' as const }] : []),
+    ],
     // Tool-call ceiling: soft-stop only at the YUK-290 hard watermark (same
     // mechanism as Dreaming/Coach's proposal cap; the model reads + stops).
     beforeExecute: (tool) =>
@@ -1182,6 +1190,7 @@ async function runCopilotChatImpl(
         onBudgetObservation: deps.onSpawnBudgetObservation ?? observeCopilotSpawnBudget,
       })
     : undefined;
+  const sdkHooks = toolUseCorrelation.prepend(spawnContract?.hooks);
   const projectSubtaskEvent = createCopilotSubtaskProjector();
   const onTaskEvent =
     subagentEnabled && deps.onSubtaskEvent
@@ -1269,13 +1278,13 @@ async function runCopilotChatImpl(
         taskRunId,
         signal: streaming.signal,
         lifecycleAbortController,
+        hooks: sdkHooks,
         ...(deps.providerSessionDeadlineAt !== undefined
           ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
           : {}),
         ...(spawnContract
           ? {
               agents: spawnContract.agents,
-              hooks: spawnContract.hooks,
               canUseTool: spawnContract.canUseTool,
             }
           : {}),
@@ -1332,10 +1341,10 @@ async function runCopilotChatImpl(
       ...(deps.providerSessionDeadlineAt !== undefined
         ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
         : {}),
+      hooks: sdkHooks,
       ...(spawnContract
         ? {
             agents: spawnContract.agents,
-            hooks: spawnContract.hooks,
             canUseTool: spawnContract.canUseTool,
           }
         : {}),

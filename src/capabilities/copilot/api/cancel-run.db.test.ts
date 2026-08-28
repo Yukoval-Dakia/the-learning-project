@@ -10,7 +10,7 @@ import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
 } from '@/capabilities/copilot/server/copilot-run-status';
-import { event, job_events } from '@/db/schema';
+import { event, job_events, tool_operation } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeJobEvent } from '@/server/events/writer';
 
@@ -228,6 +228,69 @@ describe('POST /api/copilot/runs/:id/cancel', () => {
         (item) => item.event_type === COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
       ),
     ).toBe(false);
+  });
+
+  it('requests cancellation for only this terminal run when its owned operation is still running', async () => {
+    const accepted = await seedAcceptedRun();
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: accepted.runId,
+      event_type: COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      payload: { execution_fence: 'at_most_once' },
+    });
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: accepted.runId,
+      event_type: COPILOT_RUN_EVENTS.DONE,
+      payload: { task_run_id: `copilot_run_tool_${accepted.runId}` },
+    });
+    const now = new Date();
+    const operationRows = [
+      {
+        id: 'toolop_terminal_parent_owner',
+        session_id: accepted.sessionId,
+        task_run_id: `copilot_run_tool_${accepted.runId}_retry_2`,
+      },
+      {
+        id: 'toolop_terminal_parent_other_run',
+        session_id: accepted.sessionId,
+        task_run_id: `copilot_run_tool_${accepted.runId}_other`,
+      },
+      {
+        id: 'toolop_terminal_parent_other_session',
+        session_id: `${accepted.sessionId}_other`,
+        task_run_id: `copilot_run_tool_${accepted.runId}`,
+      },
+    ].map((row) => ({
+      ...row,
+      tool_name: 'search_memory_facts',
+      effect: 'read',
+      status: 'running',
+      process_id: 'cancel_endpoint_db_test',
+      input_hash: 'a'.repeat(64),
+      input_json: { args: { query: 'terminal parent cancellation' } },
+      started_at: now,
+      owner_heartbeat_at: now,
+      lease_expires_at: new Date(now.getTime() + 60_000),
+      updated_at: now,
+    }));
+    await testDb().insert(tool_operation).values(operationRows);
+
+    const first = await POST(request(accepted.runId), { id: accepted.runId });
+    expect(await first.json()).toMatchObject({ status: 'cancel_requested' });
+    const second = await POST(request(accepted.runId), { id: accepted.runId });
+    expect(await second.json()).toMatchObject({ status: 'already_requested' });
+    expect(
+      (await runEvents(accepted.runId)).filter(
+        (item) => item.event_type === COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+      ),
+    ).toHaveLength(1);
+    const operations = await testDb()
+      .select({ id: tool_operation.id, status: tool_operation.status })
+      .from(tool_operation);
+    expect(operations).toEqual(
+      expect.arrayContaining(operationRows.map((row) => ({ id: row.id, status: 'running' }))),
+    );
   });
 
   it('rejects unknown handles and QUEUED rows that do not bind to the canonical ask session', async () => {

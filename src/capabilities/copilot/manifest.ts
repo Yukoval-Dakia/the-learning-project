@@ -236,6 +236,21 @@ export const copilotCapability = defineCapability({
         load: () =>
           import('./server/tools/search-memory-facts').then((m) => m.searchMemoryFactsTool),
       },
+      {
+        name: 'get_tool_operation',
+        load: () =>
+          import('./server/tools/tool-operation-controls').then((m) => m.getToolOperationTool),
+      },
+      {
+        name: 'wait_tool_operation',
+        load: () =>
+          import('./server/tools/tool-operation-controls').then((m) => m.waitToolOperationTool),
+      },
+      {
+        name: 'cancel_tool_operation',
+        load: () =>
+          import('./server/tools/tool-operation-controls').then((m) => m.cancelToolOperationTool),
+      },
     ],
   },
 });

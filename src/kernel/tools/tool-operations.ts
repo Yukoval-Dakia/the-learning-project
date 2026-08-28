@@ -19,6 +19,8 @@ export const MAX_TOOL_OPERATION_ERROR_MESSAGE_CHARS = 4_000;
 export const MAX_TOOL_OPERATION_NAME_CHARS = 256;
 export const DEFAULT_TOOL_OPERATION_LEASE_MS = 30_000;
 export const DEFAULT_TOOL_OPERATION_HEARTBEAT_MS = 10_000;
+export const SAFE_TOOL_OPERATION_YIELD_MS = 45_000;
+export const SAFE_TOOL_OPERATION_WAIT_MAX_MS = 5_000;
 
 export type ToolOperationState = (typeof TOOL_OPERATION_STATES)[number];
 export type ToolOperationTerminalState = Exclude<ToolOperationState, 'running'>;
@@ -101,7 +103,153 @@ export interface ToolOperations {
     id: string,
     options: { requestedBy: ToolOperationCancellationOwner },
   ): Promise<ToolOperationRecord>;
+  linkTerminalToolCallLog(id: string, terminalToolCallLogId: string): Promise<ToolOperationRecord>;
   recoverLost(): Promise<ToolOperationRecord[]>;
+}
+
+export type SafeToolOperationExecution =
+  | { kind: 'settled'; record: ToolOperationRecord }
+  | {
+      kind: 'yielded';
+      operation: { id: string; status: 'running'; tool_use_id?: string };
+    };
+
+export type OwnedToolOperationControl = {
+  action: 'get' | 'wait' | 'cancel';
+  operationId: string;
+  sessionId: string;
+  taskRunId: string;
+  requestedBy: ToolOperationCancellationOwner;
+  timeoutMs?: number;
+};
+
+export async function controlOwnedToolOperation(
+  toolOperations: ToolOperations,
+  control: OwnedToolOperationControl,
+): Promise<ToolOperationRecord> {
+  const owned = await toolOperations.get(control.operationId);
+  if (owned.sessionId !== control.sessionId) {
+    throw new Error('tool operation not found');
+  }
+  if (control.action === 'get') return owned;
+  if (control.action === 'wait') {
+    const timeoutMs = control.timeoutMs ?? 0;
+    if (
+      !Number.isInteger(timeoutMs) ||
+      timeoutMs < 0 ||
+      timeoutMs > SAFE_TOOL_OPERATION_WAIT_MAX_MS
+    ) {
+      throw new Error(
+        `timeoutMs must be an integer between 0 and ${SAFE_TOOL_OPERATION_WAIT_MAX_MS}`,
+      );
+    }
+    return toolOperations.wait(control.operationId, { timeoutMs });
+  }
+  return toolOperations.cancel(control.operationId, { requestedBy: control.requestedBy });
+}
+
+export async function executeSafeToolOperation(options: {
+  toolOperations: ToolOperations;
+  sessionId: string;
+  taskRunId: string;
+  toolName: string;
+  toolUseId?: string;
+  input: ToolOperationJson;
+  hardDeadlineAt?: Date;
+  yieldAfterMs?: number;
+  cancellationSignals?: ReadonlyArray<{
+    signal: AbortSignal;
+    requestedBy: ToolOperationCancellationOwner;
+  }>;
+  execute(signal: AbortSignal): Promise<unknown>;
+}): Promise<SafeToolOperationExecution> {
+  const handle = await options.toolOperations.start(
+    {
+      sessionId: options.sessionId,
+      taskRunId: options.taskRunId,
+      toolName: options.toolName,
+      effect: 'read',
+      input: {
+        args: options.input,
+        ...(options.toolUseId ? { tool_use_id: options.toolUseId } : {}),
+      },
+      hardDeadlineAt: options.hardDeadlineAt,
+    },
+    async ({ signal }) => {
+      try {
+        const output = await options.execute(signal);
+        if (signal.aborted) {
+          return {
+            status: 'cancelled',
+            error: { code: 'cancelled', message: 'Remote read cancelled by its owner' },
+          };
+        }
+        if (output === null || typeof output !== 'object' || Array.isArray(output)) {
+          return {
+            status: 'failed',
+            error: {
+              code: 'result_contract_invalid',
+              message: 'Safe remote tool result must be a JSON object',
+            },
+          };
+        }
+        return { status: 'succeeded', result: output as ToolOperationJson };
+      } catch (error) {
+        if (signal.aborted) {
+          return {
+            status: 'cancelled',
+            error: { code: 'cancelled', message: 'Remote read cancelled by its owner' },
+          };
+        }
+        return {
+          status: 'failed',
+          error: {
+            code: 'execution_failed',
+            message: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+    },
+  );
+  const cancellationSignals = options.cancellationSignals ?? [];
+  let cancellationScheduled = false;
+  const scheduleCancellation = () => {
+    if (cancellationScheduled) return;
+    cancellationScheduled = true;
+    queueMicrotask(() => {
+      const requestedBy = cancellationSignals
+        .filter((cancellation) => cancellation.signal.aborted)
+        .map((cancellation) => cancellation.requestedBy)
+        .sort((left, right) => {
+          const rank = { system: 1, model: 2, user: 3 } as const;
+          return rank[right] - rank[left];
+        })[0];
+      if (!requestedBy) return;
+      void controlOwnedToolOperation(options.toolOperations, {
+        action: 'cancel',
+        operationId: handle.id,
+        sessionId: options.sessionId,
+        taskRunId: options.taskRunId,
+        requestedBy,
+      }).catch(() => undefined);
+    });
+  };
+  for (const cancellation of cancellationSignals) {
+    if (cancellation.signal.aborted) scheduleCancellation();
+    else cancellation.signal.addEventListener('abort', scheduleCancellation, { once: true });
+  }
+  const record = await options.toolOperations.wait(handle.id, {
+    timeoutMs: options.yieldAfterMs ?? SAFE_TOOL_OPERATION_YIELD_MS,
+  });
+  if (record.status !== 'running') return { kind: 'settled', record };
+  return {
+    kind: 'yielded',
+    operation: {
+      id: record.id,
+      status: 'running',
+      ...(options.toolUseId ? { tool_use_id: options.toolUseId } : {}),
+    },
+  };
 }
 
 export interface ToolOperationsOptions {
@@ -123,6 +271,12 @@ export interface ToolOperationSettlement {
 
 export interface ToolOperationDeadlineTimer {
   cancel(): void;
+}
+
+function cancellationOwnerPriority(owner: ToolOperationCancellationOwner): number {
+  if (owner === 'user') return 3;
+  if (owner === 'model') return 2;
+  return 1;
 }
 
 export class InvalidToolOperationTransitionError extends Error {
@@ -658,9 +812,40 @@ export function createToolOperations(db: Db, options: ToolOperationsOptions): To
     async cancel(id, cancelOptions) {
       const record = await getOperation(db, id);
       transitionToolOperation(record.status, 'cancelled');
-      cancellationOwners.set(id, cancelOptions.requestedBy);
+      const currentOwner = cancellationOwners.get(id);
+      if (
+        currentOwner === undefined ||
+        cancellationOwnerPriority(cancelOptions.requestedBy) >=
+          cancellationOwnerPriority(currentOwner)
+      ) {
+        cancellationOwners.set(id, cancelOptions.requestedBy);
+      }
       controllers.get(id)?.abort(new Error(`Cancelled by ${cancelOptions.requestedBy}`));
       return record;
+    },
+
+    async linkTerminalToolCallLog(id, terminalToolCallLogId) {
+      validateBoundedName(terminalToolCallLogId, 'terminalToolCallLogId');
+      const [updated] = await db
+        .update(tool_operation)
+        .set({ terminal_tool_call_log_id: terminalToolCallLogId, updated_at: now() })
+        .where(
+          and(
+            eq(tool_operation.id, id),
+            inArray(tool_operation.status, ['succeeded', 'failed', 'cancelled', 'lost']),
+            isNull(tool_operation.terminal_tool_call_log_id),
+          ),
+        )
+        .returning();
+      if (updated) return mapRow(updated);
+      const current = await getOperation(db, id);
+      if (current.status === 'running') {
+        throw new Error(`tool operation ${id} has not settled`);
+      }
+      if (current.terminalToolCallLogId !== terminalToolCallLogId) {
+        throw new Error(`tool operation ${id} already links another terminal tool call log`);
+      }
+      return current;
     },
 
     async recoverLost() {
@@ -741,6 +926,16 @@ export function createToolOperations(db: Db, options: ToolOperationsOptions): To
   };
 
   return api;
+}
+
+const processToolOperations = new WeakMap<Db, ToolOperations>();
+
+export function getProcessToolOperations(db: Db): ToolOperations {
+  const existing = processToolOperations.get(db);
+  if (existing) return existing;
+  const created = createToolOperations(db, { processId: getToolOperationProcessId() });
+  processToolOperations.set(db, created);
+  return created;
 }
 
 export async function recoverToolOperationsOnBoot(db: Db): Promise<ToolOperationRecord[]> {

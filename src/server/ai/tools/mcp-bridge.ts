@@ -21,10 +21,22 @@
 //   5. return an MCP-shaped { content: [{ type: 'text', text: <json> }] }
 //      result the LLM can read.
 
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import {
+  type HookCallback,
+  type Options,
+  createSdkMcpServer,
+  tool,
+} from '@anthropic-ai/claude-agent-sdk';
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { writeEvent } from '@/kernel/events';
+import {
+  type ToolOperationRecord,
+  type ToolOperations,
+  executeSafeToolOperation,
+  getProcessToolOperations,
+} from '@/kernel/tools/tool-operations';
 import type {
   ProposalEffectContract,
   ToolCallerActor,
@@ -36,6 +48,45 @@ import type {
 } from '@/kernel/tools/types';
 import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
 import { getTool } from './registry';
+
+export interface ToolUseCorrelation {
+  hooks: NonNullable<Options['hooks']>;
+  claim(toolName: string, input: unknown): string | undefined;
+  prepend(existing?: Options['hooks']): NonNullable<Options['hooks']>;
+}
+
+export function createToolUseCorrelation(serverName: string): ToolUseCorrelation {
+  const pending = new Map<string, string[]>();
+  const prefix = `mcp__${serverName}__`;
+  const hook: HookCallback = async (input) => {
+    if (input.hook_event_name !== 'PreToolUse' || !input.tool_name.startsWith(prefix)) {
+      return { continue: true };
+    }
+    const toolName = input.tool_name.slice(prefix.length);
+    if (toolName === 'run_task') return { continue: true };
+    const key = `${toolName}:${sha256CanonicalJson(input.tool_input)}`;
+    pending.set(key, [...(pending.get(key) ?? []), input.tool_use_id]);
+    return { continue: true };
+  };
+  const hooks: NonNullable<Options['hooks']> = { PreToolUse: [{ hooks: [hook] }] };
+  return {
+    hooks,
+    claim(toolName, input) {
+      if (toolName === 'run_task') return undefined;
+      const key = `${toolName}:${sha256CanonicalJson(input)}`;
+      const ids = pending.get(key);
+      const claimed = ids?.shift();
+      if (ids?.length === 0) pending.delete(key);
+      return claimed;
+    },
+    prepend(existing) {
+      return {
+        ...(existing ?? {}),
+        PreToolUse: [{ hooks: [hook] }, ...(existing?.PreToolUse ?? [])],
+      };
+    },
+  };
+}
 
 /**
  * Decide whether a tool invocation should mirror to the `event` table.
@@ -103,6 +154,100 @@ export function shouldEmitToolUseForCaller(
 export type SdkMcpServer = ReturnType<typeof createSdkMcpServer>;
 
 export type { ToolExecutionGateInput, ToolExecutionResultObservation } from '@/kernel/tools/types';
+
+function formatToolOperationFailure(record: ToolOperationRecord): string {
+  const risk = record.sideEffectRisk ? `; side_effect_risk:${record.sideEffectRisk}` : '';
+  return `${record.error?.code ?? record.status}: ${record.error?.message ?? 'operation did not succeed'}${risk}`;
+}
+
+async function observeSafeToolOperationTerminal(options: {
+  toolOperations: ReturnType<typeof getProcessToolOperations>;
+  operationId: string;
+  ctx: ToolContext;
+  taskKind: string;
+  toolName: string;
+  effect: ToolEffect;
+  input: Record<string, unknown>;
+  mirrorEvent: boolean;
+  summarize(record: ToolOperationRecord): string;
+  onOperationRunning?: () => Promise<void> | void;
+  onExecutionSettled?: () => Promise<void> | void;
+}): Promise<void> {
+  try {
+    let record = await options.toolOperations.get(options.operationId);
+    while (record.status === 'running') {
+      try {
+        await options.onOperationRunning?.();
+      } catch (error) {
+        console.error('[mcp-bridge] safe ToolOperations running observation failed', {
+          operation_id: options.operationId,
+          task_run_id: options.ctx.taskRunId,
+          err: error,
+        });
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 250));
+      record = await options.toolOperations.get(options.operationId);
+    }
+    const errorReason =
+      record.status === 'succeeded' ? undefined : formatToolOperationFailure(record);
+    const toolCallLogId = await writeToolCallLog(options.ctx.db, {
+      task_run_id: options.ctx.taskRunId,
+      task_kind: options.taskKind,
+      tool_name: options.toolName,
+      effect: options.effect,
+      input_json: options.input,
+      output_json: errorReason ? { error: errorReason } : record.result,
+      error_reason: errorReason,
+      iteration: 0,
+      latency_ms: Math.max(
+        0,
+        (record.settledAt ?? new Date()).getTime() - record.startedAt.getTime(),
+      ),
+      cost: 0,
+    });
+    if (options.mirrorEvent) {
+      const summary = options.summarize(record);
+      const mirrorId = `tool_use_${createId()}`;
+      await writeEvent(options.ctx.db, {
+        id: mirrorId,
+        session_id: options.ctx.sessionId ?? null,
+        actor_kind: 'agent',
+        actor_ref: options.ctx.callerActor.ref,
+        action: 'tool_use',
+        subject_kind: 'query',
+        subject_id: mirrorId,
+        outcome: errorReason ? 'failure' : 'success',
+        payload: {
+          tool_name: options.toolName,
+          args: options.input,
+          result_summary: summary,
+          ...(errorReason ? { error_reason: errorReason } : {}),
+        },
+        caused_by_event_id: options.ctx.causedByEventId ?? null,
+        task_run_id: options.ctx.taskRunId,
+        cost_micro_usd: 0,
+      });
+      await setToolCallLogMirroredEventId(options.ctx.db, toolCallLogId, mirrorId);
+    }
+    await options.toolOperations.linkTerminalToolCallLog(record.id, toolCallLogId);
+  } catch (error) {
+    console.error('[mcp-bridge] safe ToolOperations terminal observation failed', {
+      operation_id: options.operationId,
+      task_run_id: options.ctx.taskRunId,
+      err: error,
+    });
+  } finally {
+    try {
+      await options.onExecutionSettled?.();
+    } catch (error) {
+      console.error('[mcp-bridge] deferred onExecuteSettled failed', {
+        operation_id: options.operationId,
+        task_run_id: options.ctx.taskRunId,
+        err: error,
+      });
+    }
+  }
+}
 
 function proposalEffectContract(
   name: string,
@@ -191,6 +336,14 @@ export interface BuildMcpServerOptions {
   toolNames: readonly string[];
   /** `task_kind` recorded on each tool_call_log row (defaults to ctx.callerActor.ref). */
   taskKind?: string;
+  claimToolUseId?: (toolName: string, input: unknown) => string | undefined;
+  toolOperations?: ToolOperations;
+  safeHandoffYieldMs?: number;
+  cancellationSignals?: ReadonlyArray<{
+    signal: AbortSignal;
+    requestedBy: 'system' | 'user';
+  }>;
+  onSafeOperationRunning?: () => Promise<void> | void;
   /** Optional per-call runtime gate. Return a reason string to block execution. */
   beforeExecute?: (
     tool: ToolExecutionGateInput,
@@ -263,12 +416,24 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       let execInput: unknown = rawArgs;
       let truncationNote: object | null = null;
       let executionStarted = false;
+      let deferredExecutionSettled = false;
+      let safeOperation: ToolOperationRecord | undefined;
+      let safeToolOperations: ToolOperations | undefined;
+      let correlatedToolUseId: string | undefined;
       const gateInput = { name: dt.name, effect: dt.effect };
+      const safeHandoffEnabled =
+        dt.safeHandoff &&
+        dt.effect === 'read' &&
+        dt.name !== 'run_task' &&
+        ctx.sessionId !== undefined;
       let effectContract = proposalEffectContract(dt.name, dt.effect);
 
       try {
         parsedInput = dt.inputSchema.parse(rawArgs);
         execInput = parsedInput;
+        correlatedToolUseId = safeHandoffEnabled
+          ? opts.claimToolUseId?.(dt.name, rawArgs)
+          : undefined;
       } catch (err) {
         errorReason = err instanceof Error ? err.message : String(err);
       }
@@ -307,20 +472,81 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
         try {
           await opts.onExecuteStart?.(gateInput);
           executionStarted = true;
-          const rawOutput = await dt.execute(ctx, execInput as never);
-          // YUK-862 / F3.1 — global output schema enforcement. Runs immediately
-          // after execute, before context-budget decoration, onResult, summarize,
-          // logging, mirroring, or SDK return.
-          const parseResult = dt.outputSchema.safeParse(rawOutput);
-          if (parseResult.success) {
-            output = parseResult.data;
-            effectContract = proposalEffectContract(dt.name, dt.effect, output);
+          const toolOperations = safeHandoffEnabled
+            ? (opts.toolOperations ?? getProcessToolOperations(ctx.db))
+            : undefined;
+          safeToolOperations = toolOperations;
+          const safeExecution = toolOperations
+            ? await executeSafeToolOperation({
+                toolOperations,
+                sessionId: ctx.sessionId as string,
+                taskRunId: ctx.taskRunId,
+                toolName: dt.name,
+                toolUseId: correlatedToolUseId,
+                input: execInput as Record<string, unknown>,
+                ...(ctx.providerSessionDeadlineAt !== undefined
+                  ? { hardDeadlineAt: new Date(ctx.providerSessionDeadlineAt) }
+                  : {}),
+                cancellationSignals: opts.cancellationSignals,
+                yieldAfterMs: opts.safeHandoffYieldMs,
+                execute: async (signal) => {
+                  const remoteOutput = await dt.execute({ ...ctx, signal }, execInput as never);
+                  const parsed = dt.outputSchema.safeParse(remoteOutput);
+                  if (parsed.success) return parsed.data;
+                  const paths = parsed.error.issues
+                    .map((issue) => issue.path.join('.') || '(root)')
+                    .join(', ');
+                  throw new Error(`output_schema_invalid: ${paths}`);
+                },
+              })
+            : undefined;
+          if (safeExecution?.kind === 'yielded') {
+            if (!toolOperations) throw new Error('safe ToolOperations owner is unavailable');
+            output = { tool_operation: safeExecution.operation };
+            deferredExecutionSettled = true;
+            void observeSafeToolOperationTerminal({
+              toolOperations,
+              operationId: safeExecution.operation.id,
+              ctx,
+              taskKind,
+              toolName: dt.name,
+              effect: dt.effect,
+              input: parsedInput as Record<string, unknown>,
+              mirrorEvent: __resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect),
+              summarize: (record) =>
+                record.status === 'succeeded'
+                  ? dt.summarize(parsedInput as never, record.result as never)
+                  : `error: ${formatToolOperationFailure(record)}`,
+              onOperationRunning: opts.onSafeOperationRunning,
+              onExecutionSettled: opts.onExecuteSettled
+                ? () => opts.onExecuteSettled?.(gateInput)
+                : undefined,
+            });
           } else {
-            // Redact actual values; only emit field paths for machine readability.
-            const paths = parseResult.error.issues
-              .map((iss) => iss.path.join('.') || '(root)')
-              .join(', ');
-            errorReason = `output_schema_invalid: ${paths}`;
+            safeOperation = safeExecution?.record;
+            const rawOutput = safeOperation
+              ? safeOperation.status === 'succeeded'
+                ? safeOperation.result
+                : null
+              : await dt.execute(ctx, execInput as never);
+            if (safeOperation && safeOperation.status !== 'succeeded') {
+              errorReason = formatToolOperationFailure(safeOperation);
+            }
+            if (errorReason !== undefined) throw new Error(errorReason);
+            // YUK-862 / F3.1 — global output schema enforcement. Runs immediately
+            // after execute, before context-budget decoration, onResult, summarize,
+            // logging, mirroring, or SDK return.
+            const parseResult = dt.outputSchema.safeParse(rawOutput);
+            if (parseResult.success) {
+              output = parseResult.data;
+              effectContract = proposalEffectContract(dt.name, dt.effect, output);
+            } else {
+              // Redact actual values; only emit field paths for machine readability.
+              const paths = parseResult.error.issues
+                .map((iss) => iss.path.join('.') || '(root)')
+                .join(', ');
+              errorReason = `output_schema_invalid: ${paths}`;
+            }
           }
         } catch (err) {
           errorReason = err instanceof Error ? err.message : String(err);
@@ -363,7 +589,9 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
 
       if (errorReason === undefined) {
         try {
-          summary = dt.summarize(parsedInput as never, output as never);
+          summary = deferredExecutionSettled
+            ? 'remote read still running'
+            : dt.summarize(parsedInput as never, output as never);
         } catch (err) {
           const summaryError = err instanceof Error ? err.message : String(err);
           summary = `summary unavailable: ${summaryError}`;
@@ -380,6 +608,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       // YUK-457 — same resolution as the persisted mirror below: a call that
       // will not mirror must not emit a live done-state card either.
       if (
+        !deferredExecutionSettled &&
         opts.onToolComplete &&
         __resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)
       ) {
@@ -420,11 +649,26 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
         });
       }
 
+      if (toolCallLogId && safeOperation && safeOperation.status !== 'running') {
+        try {
+          await safeToolOperations?.linkTerminalToolCallLog(safeOperation.id, toolCallLogId);
+        } catch (linkErr) {
+          console.error('[mcp-bridge] terminal ToolOperations log link failed', {
+            operation_id: safeOperation.id,
+            tcl_id: toolCallLogId,
+            err: linkErr,
+          });
+        }
+      }
+
       // YUK-82 + ADR-0011 §1.1 (T-D7 / YUK-126): tool_use KnownEvent mirror
       // per mirrorEvent policy. Schema (`ToolUseQuery`) requires
       // actor_kind='agent', so user-fired calls never mirror regardless of
       // the tool's policy.
-      if (__resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)) {
+      if (
+        !deferredExecutionSettled &&
+        __resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)
+      ) {
         const mirrorPayload: Record<string, unknown> = {
           tool_name: dt.name,
           args: (parsedInput ?? {}) as Record<string, unknown>,
@@ -470,7 +714,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
         }
       }
 
-      if (executionStarted) {
+      if (executionStarted && !deferredExecutionSettled) {
         try {
           await opts.onExecuteSettled?.(gateInput);
         } catch (settleErr) {

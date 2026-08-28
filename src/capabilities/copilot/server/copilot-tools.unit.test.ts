@@ -16,12 +16,22 @@ import {
 import type { DomainTool } from '@/kernel/tools/types';
 import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
 
-const COPILOT_OWNED_TOOL_NAMES = ['run_task', 'query_events', 'search_memory_facts'] as const;
+const COPILOT_OWNED_TOOL_NAMES = [
+  'run_task',
+  'query_events',
+  'search_memory_facts',
+  'get_tool_operation',
+  'wait_tool_operation',
+  'cancel_tool_operation',
+] as const;
 
 const OWNED_TOOL_CONTRACT_HASHES = {
   run_task: '45ead7c822776b00fa3051859f556870cc4525359471928c5fa0e47fd84827ed',
   query_events: 'f3098863057a3ca16c3180c594c634e2f09bde171af1884ed125740359429587',
-  search_memory_facts: '44cc3f998658c5568711443e9e17c44135055493a39ac9971e0353dd51d9f929',
+  search_memory_facts: '0dd940b4f50b8e8af1e7e2802a6e3931777d88fd01ca92794a9cf5a7c7393a14',
+  get_tool_operation: '3d2496a0f7e30169532176e32e62b3624a4e08ec8233915f0cc804f28c1701f1',
+  wait_tool_operation: '2e010f4b08dae36fcfc3d36c38194f2ce3e8aedbb565516840af6357d33f5782',
+  cancel_tool_operation: '6480486a4e1a9ca480a697d42c7ecf0222872e576e159fe22a7ec11a915dc4bc',
 } as const;
 
 const OWNED_TOOL_EXPOSURES = {
@@ -35,6 +45,9 @@ const OWNED_TOOL_EXPOSURES = {
     'ingestion_block_edit',
   ],
   search_memory_facts: ['copilot', 'copilot_user_suggested_mistake_action', 'dreaming', 'coach'],
+  get_tool_operation: ['copilot', 'copilot_user_suggested_mistake_action'],
+  wait_tool_operation: ['copilot', 'copilot_user_suggested_mistake_action'],
+  cancel_tool_operation: ['copilot', 'copilot_user_suggested_mistake_action'],
 } as const;
 
 const OWNED_READER_PATHS = [
@@ -53,6 +66,7 @@ function contractFingerprint(tool: DomainTool<unknown, unknown>): string {
     effect: tool.effect,
     costClass: tool.costClass,
     mirrorEvent: tool.mirrorEvent,
+    safeHandoff: tool.safeHandoff,
     inputSchema: zodToJsonSchemaCompat(tool.inputSchema, {
       target: 'draft-07',
       io: 'input',
@@ -75,7 +89,7 @@ describe('copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账', () => {
     const fullInventory = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS];
     expect(new Set(declared)).toEqual(new Set(fullInventory));
     expect(declared).toHaveLength(fullInventory.length);
-    expect(fullInventory).toHaveLength(40);
+    expect(fullInventory).toHaveLength(43);
   });
 
   it('浏览器共享的 Copilot 字面 allowlist 是 manifest 完整 inventory 的精确子集', () => {
@@ -84,7 +98,7 @@ describe('copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账', () => {
     );
     expect(COPILOT_TOOLS.every((name) => declared.has(name))).toBe(true);
     expect(new Set(COPILOT_TOOLS).size).toBe(COPILOT_TOOLS.length);
-    expect(COPILOT_TOOLS).toHaveLength(29);
+    expect(COPILOT_TOOLS).toHaveLength(32);
     expect(COPILOT_TOOLS).toContain('author_question');
     expect(COPILOT_TOOLS).toContain('run_task');
 

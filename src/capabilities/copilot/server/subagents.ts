@@ -21,7 +21,10 @@ export const COPILOT_SUBAGENT_MAX_TURNS = 10;
 const TASK_TOOL_NAME = 'Task';
 const RUN_TASK_TOOL_NAME = toMcpAllowedToolName('run_task');
 const SAFE_LOOM_READ_TOOLS = new Set<string>(
-  READ_TOOLS.filter((name) => name !== 'run_task').map((name) => toMcpAllowedToolName(name)),
+  READ_TOOLS.filter(
+    (name) =>
+      name !== 'run_task' && name !== 'get_tool_operation' && name !== 'wait_tool_operation',
+  ).map((name) => toMcpAllowedToolName(name)),
 );
 const SAFE_TAVILY_TOOLS = new Set<string>(TAVILY_MCP_ALLOWED_TOOLS);
 

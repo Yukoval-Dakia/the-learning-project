@@ -4,7 +4,7 @@
   "infoPolicy": "info diagnostics are counted: separate infos ratchet total and per-rule rows, decreasing only like warnings",
   "totals": {
     "errors": 0,
-    "warnings": 337,
+    "warnings": 335,
     "infos": 1
   },
   "byRule": {
@@ -24,10 +24,10 @@
       "info": 1
     },
     "lint/complexity/useOptionalChain": {
-      "warning": 41
+      "warning": 40
     },
     "lint/correctness/noUnsafeOptionalChaining": {
-      "warning": 45
+      "warning": 44
     },
     "lint/correctness/noUnusedFunctionParameters": {
       "warning": 5
