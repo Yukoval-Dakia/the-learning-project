@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, copilot_continuation, event, subagent_run } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
@@ -62,6 +62,16 @@ export interface CopilotContinuationRecord {
 
 type DbLike = Db | Tx;
 type RunRow = typeof subagent_run.$inferSelect;
+
+function matchesParentTaskRunId(parentTaskRunId: string) {
+  return or(
+    eq(subagent_run.parent_task_run_id, parentTaskRunId),
+    and(
+      sql`left(${subagent_run.parent_task_run_id}, char_length(${parentTaskRunId})) = ${parentTaskRunId}`,
+      sql`substring(${subagent_run.parent_task_run_id} from char_length(${parentTaskRunId}) + 1) ~ '^_retry_[1-9][0-9]*$'`,
+    ),
+  );
+}
 
 function truncate(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max - 12)}…[truncated]`;
@@ -296,14 +306,11 @@ export async function heartbeatSubagentRun(
   db: DbLike,
   runId: string,
   claimToken: string,
-): Promise<boolean> {
+): Promise<'renewed' | 'deadline_reached' | 'not_owned'> {
   const now = new Date();
-  const rows = await db
-    .update(subagent_run)
-    .set({
-      lease_expires_at: new Date(now.getTime() + SUBAGENT_LEASE_MS),
-      updated_at: now,
-    })
+  const [owned] = await db
+    .select({ hardDeadlineAt: subagent_run.hard_deadline_at })
+    .from(subagent_run)
     .where(
       and(
         eq(subagent_run.id, runId),
@@ -311,8 +318,33 @@ export async function heartbeatSubagentRun(
         eq(subagent_run.claim_token, claimToken),
       ),
     )
+    .limit(1);
+  if (!owned) return 'not_owned';
+  if (owned.hardDeadlineAt && owned.hardDeadlineAt.getTime() <= now.getTime()) {
+    return 'deadline_reached';
+  }
+  const leaseExpiresAt = new Date(
+    Math.min(
+      now.getTime() + SUBAGENT_LEASE_MS,
+      owned.hardDeadlineAt?.getTime() ?? now.getTime() + SUBAGENT_LEASE_MS,
+    ),
+  );
+  const rows = await db
+    .update(subagent_run)
+    .set({
+      lease_expires_at: leaseExpiresAt,
+      updated_at: now,
+    })
+    .where(
+      and(
+        eq(subagent_run.id, runId),
+        eq(subagent_run.status, 'running'),
+        eq(subagent_run.claim_token, claimToken),
+        or(isNull(subagent_run.hard_deadline_at), gt(subagent_run.hard_deadline_at, now)),
+      ),
+    )
     .returning({ id: subagent_run.id });
-  return rows.length === 1;
+  return rows.length === 1 ? 'renewed' : 'deadline_reached';
 }
 
 async function settleSubagentRunTx(
@@ -411,31 +443,63 @@ export async function cancelSubagentRun(
   requestedBy: CancellationOwner,
 ): Promise<SubagentRunRecord> {
   return db.transaction(async (tx) => {
-    const [row] = await tx
-      .select()
-      .from(subagent_run)
-      .where(eq(subagent_run.id, runId))
-      .for('update');
-    if (!row || row.session_id !== sessionId) throw new Error('subagent run not found');
-    if (!['queued', 'running'].includes(row.status)) return mapRun(row);
-    const now = new Date();
-    const [marked] = await tx
-      .update(subagent_run)
-      .set({ cancel_requested_by: requestedBy, cancel_requested_at: now, updated_at: now })
-      .where(eq(subagent_run.id, runId))
-      .returning();
-    if (!marked) throw new Error('subagent cancellation failed');
-    if (row.status === 'queued') {
-      return settleSubagentRunTx(tx, marked, {
-        status: 'cancelled',
-        error: {
-          code: 'cancelled_before_start',
-          message: 'Subagent cancelled before provider execution',
-        },
-      });
-    }
-    return mapRun(marked);
+    return cancelSubagentRunTx(tx, runId, sessionId, requestedBy);
   });
+}
+
+async function cancelSubagentRunTx(
+  tx: Tx,
+  runId: string,
+  sessionId: string,
+  requestedBy: CancellationOwner,
+): Promise<SubagentRunRecord> {
+  const [row] = await tx
+    .select()
+    .from(subagent_run)
+    .where(eq(subagent_run.id, runId))
+    .for('update');
+  if (!row || row.session_id !== sessionId) throw new Error('subagent run not found');
+  if (!['queued', 'running'].includes(row.status)) return mapRun(row);
+  const now = new Date();
+  const [marked] = await tx
+    .update(subagent_run)
+    .set({ cancel_requested_by: requestedBy, cancel_requested_at: now, updated_at: now })
+    .where(eq(subagent_run.id, runId))
+    .returning();
+  if (!marked) throw new Error('subagent cancellation failed');
+  if (row.status === 'queued') {
+    return settleSubagentRunTx(tx, marked, {
+      status: 'cancelled',
+      error: {
+        code: 'cancelled_before_start',
+        message: 'Subagent cancelled before provider execution',
+      },
+    });
+  }
+  return mapRun(marked);
+}
+
+export async function cancelSubagentsForParentTx(
+  tx: Tx,
+  sessionId: string,
+  parentTaskRunId: string,
+  requestedBy: CancellationOwner,
+): Promise<SubagentRunRecord[]> {
+  const rows = await tx
+    .select({ id: subagent_run.id })
+    .from(subagent_run)
+    .where(
+      and(
+        eq(subagent_run.session_id, sessionId),
+        matchesParentTaskRunId(parentTaskRunId),
+        inArray(subagent_run.status, ['queued', 'running']),
+      ),
+    );
+  const cancelled: SubagentRunRecord[] = [];
+  for (const row of rows) {
+    cancelled.push(await cancelSubagentRunTx(tx, row.id, sessionId, requestedBy));
+  }
+  return cancelled;
 }
 
 export async function cancelSubagentsForParent(
@@ -444,20 +508,59 @@ export async function cancelSubagentsForParent(
   parentTaskRunId: string,
   requestedBy: CancellationOwner,
 ): Promise<SubagentRunRecord[]> {
-  const rows = await db
-    .select({ id: subagent_run.id })
-    .from(subagent_run)
-    .where(
-      and(
-        eq(subagent_run.session_id, sessionId),
-        eq(subagent_run.parent_task_run_id, parentTaskRunId),
-        inArray(subagent_run.status, ['queued', 'running']),
-      ),
-    );
-  return Promise.all(rows.map((row) => cancelSubagentRun(db, row.id, sessionId, requestedBy)));
+  return db.transaction((tx) =>
+    cancelSubagentsForParentTx(tx, sessionId, parentTaskRunId, requestedBy),
+  );
 }
 
-export async function recoverSubagentMailbox(db: Db): Promise<{
+export function bindSubagentParentCancellation(
+  db: Db,
+  input: {
+    sessionId: string;
+    parentTaskRunId: string;
+    signals: ReadonlyArray<{
+      signal: AbortSignal;
+      requestedBy: Exclude<CancellationOwner, 'model'>;
+    }>;
+  },
+): () => Promise<void> {
+  let disposed = false;
+  let cancellation: Promise<void> | undefined;
+  const listeners = input.signals.map(({ signal, requestedBy }) => {
+    const cancel = () => {
+      if (disposed || cancellation) return;
+      cancellation = cancelSubagentsForParent(
+        db,
+        input.sessionId,
+        input.parentTaskRunId,
+        requestedBy,
+      ).then(
+        () => undefined,
+        (error) => {
+          console.error('[copilot_subagent] parent cancellation failed', {
+            parentTaskRunId: input.parentTaskRunId,
+            error,
+          });
+        },
+      );
+    };
+    if (signal.aborted) cancel();
+    else signal.addEventListener('abort', cancel, { once: true });
+    return { signal, cancel };
+  });
+  return async () => {
+    disposed = true;
+    for (const { signal, cancel } of listeners) signal.removeEventListener('abort', cancel);
+    await cancellation;
+  };
+}
+
+export async function recoverSubagentMailbox(
+  db: Db,
+  options: {
+    beforeRecoverExpiredRun?: (record: SubagentRunRecord) => Promise<void>;
+  } = {},
+): Promise<{
   queuedRunIds: string[];
   lostRunIds: string[];
   pendingContinuationIds: string[];
@@ -477,16 +580,31 @@ export async function recoverSubagentMailbox(db: Db): Promise<{
   for (const row of rows) {
     if (row.status === 'queued') queuedRunIds.push(row.id);
     else {
-      await db.transaction((tx) =>
-        settleSubagentRunTx(tx, row, {
+      await options.beforeRecoverExpiredRun?.(mapRun(row));
+      const lost = await db.transaction(async (tx) => {
+        const [current] = await tx
+          .select()
+          .from(subagent_run)
+          .where(eq(subagent_run.id, row.id))
+          .for('update');
+        if (
+          current?.status !== 'running' ||
+          current.claim_token !== row.claim_token ||
+          !current.lease_expires_at ||
+          current.lease_expires_at.getTime() >= now.getTime()
+        ) {
+          return false;
+        }
+        await settleSubagentRunTx(tx, current, {
           status: 'lost',
           error: {
             code: 'lease_expired_after_provider_fence',
             message: 'Subagent ownership expired after provider execution began',
           },
-        }),
-      );
-      lostRunIds.push(row.id);
+        });
+        return true;
+      });
+      if (lost) lostRunIds.push(row.id);
     }
   }
   const pending = await db
@@ -559,6 +677,7 @@ export async function claimCopilotContinuation(
       .select()
       .from(subagent_run)
       .where(eq(subagent_run.id, row.subagent_run_id))
+      .for('update')
       .limit(1);
     if (!childRow) throw new Error('continuation child not found');
     if (childRow.status === 'cancelled') {

@@ -124,6 +124,7 @@ import type {
 } from './chat-contracts';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
+import { bindSubagentParentCancellation } from './subagent-mailbox';
 import type { CopilotSubtaskEvent } from './subagents';
 
 export * from './chat-contracts';
@@ -1227,240 +1228,253 @@ async function runCopilotChatImpl(
   let replyRunId: string;
   let streamError: string | undefined;
   let candidateComplete = true;
-  if (streaming) {
-    const streamResult = await streamRun(
-      'CopilotTask',
-      runInput,
-      {
+  const disposeSubagentCancellation = bindSubagentParentCancellation(db, {
+    sessionId,
+    parentTaskRunId: taskRunId,
+    signals: [
+      { signal: lifecycleAbortController.signal, requestedBy: 'system' },
+      ...(streaming?.signal ? [{ signal: streaming.signal, requestedBy: 'user' as const }] : []),
+    ],
+  });
+  try {
+    if (streaming) {
+      const streamResult = await streamRun(
+        'CopilotTask',
+        runInput,
+        {
+          db,
+          mcpServers,
+          allowedTools: agentAllowedTools,
+          taskRunId,
+          signal: streaming.signal,
+          lifecycleAbortController,
+          hooks: sdkHooks,
+          ...(deps.providerSessionDeadlineAt !== undefined
+            ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+            : {}),
+          ...(deps.onToolUseEvent
+            ? {
+                // YUK-457 — the runner emits raw SDK block names (mcp__loom__*)
+                // before execution; gate the live card on the SAME mirror-policy
+                // resolution that backs the persisted mirror + done-state card, so
+                // a 'never'-mirror tool (search_memory_facts) opens no card that
+                // would vanish on refresh.
+                onToolUse: (call: {
+                  toolName: string;
+                  input: Record<string, unknown>;
+                  toolUseId?: string;
+                }) => {
+                  if (
+                    !shouldEmitToolUseForCaller(
+                      call.toolName,
+                      DOMAIN_TOOL_MCP_SERVER_NAME,
+                      callerActor,
+                    )
+                  )
+                    return;
+                  deps.onToolUseEvent?.(call);
+                },
+              }
+            : {}),
+          // YUK-284 (C2) — spread-when-present: when the copilot SKILL.md is absent
+          // (copilotSkills === undefined) the ctx omits `skills` entirely, byte-for-byte
+          // the pre-C2 shape (runner ctx.skills ?? [] unchanged → no regression).
+          ...(copilotSkills ? { skills: copilotSkills } : {}),
+        },
+        // YUK-832 — a candidate that used evidence readers is not trustworthy
+        // until the no-tool typed validator passes or repairs it. Buffer every
+        // candidate delta here so a later read tool cannot make already-emitted
+        // prose impossible to retract. The reviewed, marker-cleaned reply is
+        // emitted once only after durable conversation persistence succeeds.
+        () => {},
+      );
+      replyText = streamResult.text;
+      replyRunId = streamResult.task_run_id;
+      if (streamResult.partial) {
+        candidateComplete = false;
+        streamError = streamResult.error;
+      }
+    } else {
+      const result = await run('CopilotTask', runInput, {
         db,
         mcpServers,
         allowedTools: agentAllowedTools,
         taskRunId,
-        signal: streaming.signal,
         lifecycleAbortController,
-        hooks: sdkHooks,
         ...(deps.providerSessionDeadlineAt !== undefined
           ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
           : {}),
-        ...(deps.onToolUseEvent
-          ? {
-              // YUK-457 — the runner emits raw SDK block names (mcp__loom__*)
-              // before execution; gate the live card on the SAME mirror-policy
-              // resolution that backs the persisted mirror + done-state card, so
-              // a 'never'-mirror tool (search_memory_facts) opens no card that
-              // would vanish on refresh.
-              onToolUse: (call: {
-                toolName: string;
-                input: Record<string, unknown>;
-                toolUseId?: string;
-              }) => {
-                if (
-                  !shouldEmitToolUseForCaller(
-                    call.toolName,
-                    DOMAIN_TOOL_MCP_SERVER_NAME,
-                    callerActor,
-                  )
-                )
-                  return;
-                deps.onToolUseEvent?.(call);
-              },
-            }
-          : {}),
-        // YUK-284 (C2) — spread-when-present: when the copilot SKILL.md is absent
-        // (copilotSkills === undefined) the ctx omits `skills` entirely, byte-for-byte
-        // the pre-C2 shape (runner ctx.skills ?? [] unchanged → no regression).
+        hooks: sdkHooks,
+        // YUK-284 (C2) — see streaming branch above (spread-when-present).
         ...(copilotSkills ? { skills: copilotSkills } : {}),
-      },
-      // YUK-832 — a candidate that used evidence readers is not trustworthy
-      // until the no-tool typed validator passes or repairs it. Buffer every
-      // candidate delta here so a later read tool cannot make already-emitted
-      // prose impossible to retract. The reviewed, marker-cleaned reply is
-      // emitted once only after durable conversation persistence succeeds.
-      () => {},
-    );
-    replyText = streamResult.text;
-    replyRunId = streamResult.task_run_id;
-    if (streamResult.partial) {
-      candidateComplete = false;
-      streamError = streamResult.error;
-    }
-  } else {
-    const result = await run('CopilotTask', runInput, {
-      db,
-      mcpServers,
-      allowedTools: agentAllowedTools,
-      taskRunId,
-      lifecycleAbortController,
-      ...(deps.providerSessionDeadlineAt !== undefined
-        ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
-        : {}),
-      hooks: sdkHooks,
-      // YUK-284 (C2) — see streaming branch above (spread-when-present).
-      ...(copilotSkills ? { skills: copilotSkills } : {}),
-    });
-    replyText = result.text;
-    replyRunId = result.task_run_id;
-  }
-
-  // Strip presentation-only metadata before the sealed review. The validator,
-  // persisted domain event, terminal envelope and delayed public DELTA must all
-  // see exactly these bytes; a dangling marker may truncate only here, never
-  // after a raw suffix was certified.
-  const correctionResolution = implicitCorrectionClarification
-    ? { kind: 'clarify' as const, reply: implicitCorrectionClarification }
-    : resolveCorrectionReply(replyText, runInput.correction_contract);
-  const preparedCandidate = extractPrimaryView(correctionResolution.reply, {
-    taskRunId: replyRunId,
-  });
-  const learningReview = await reviewCopilotLearningContent(
-    preparedCandidate.text,
-    [req.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join('\n'),
-    replyRunId,
-    {
-      db,
-      runTaskFn: runValidationTask,
-      ...(preparedCandidate.primaryView?.source === 'ephemeral_html'
-        ? { additionalVisibleText: preparedCandidate.primaryView.ref }
-        : {}),
-    },
-  );
-  const evidenceReview =
-    correctionResolution.kind === 'clarify'
-      ? { status: 'skipped' as const, replyText: learningReview.replyText }
-      : await reviewEvidenceReply({
-          db,
-          requestContext: {
-            user_message: req.user_message,
-            surface,
-            triggered_by: req.triggered_by,
-            ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
-            ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
-          },
-          candidateReply: learningReview.replyText,
-          candidateTaskRunId: replyRunId,
-          candidateComplete,
-          toolTrace,
-          ...(streaming?.signal ? { signal: streaming.signal } : {}),
-          ...(deps.providerSessionDeadlineAt !== undefined
-            ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
-            : {}),
-        });
-  streaming?.signal?.throwIfAborted();
-  // Both evidence repair and timeout-degraded blind replies are replacement
-  // prose. Re-apply the correction binding so replacement text cannot drop
-  // the targeted prior-turn envelope (YUK-836 contract), then re-run the
-  // learning-content gate so neither path can introduce an unverified
-  // question or solution (YUK-833/835).
-  const correctionReviewedReply =
-    evidenceReview.status === 'repair' || evidenceReview.status === 'degraded'
-      ? resolveCorrectionReply(evidenceReview.replyText, runInput.correction_contract).reply
-      : evidenceReview.replyText;
-  const replacementLearningReview =
-    evidenceReview.status === 'repair' || evidenceReview.status === 'degraded'
-      ? await reviewCopilotLearningContent(
-          correctionReviewedReply,
-          [req.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join('\n'),
-          replyRunId,
-          { db, runTaskFn: runValidationTask },
-        )
-      : undefined;
-  replyText = replacementLearningReview?.replyText ?? correctionReviewedReply;
-  // primary_view is a second user-visible channel (ephemeral_html can contain
-  // substantive prose). The sealed comparator reviews reply text only, so a
-  // read-bearing turn must drop this unreviewed metadata even when text passes.
-  // No-read/skipped turns retain the established presentation behavior.
-  const selectedPrimaryView =
-    evidenceReview.status === 'skipped' && learningReview.passed
-      ? preparedCandidate.primaryView
-      : undefined;
-
-  // YUK-307 — single convergence point for BOTH the JSON and streaming paths:
-  // parse + strip the primary_view marker ONCE from the collected reply, then
-  // persist the reply turn. From here on, ONLY cleanedReply is used (persisted
-  // reply_md / returned reply / — via persistence — any future replayed history),
-  // so the marker text never survives the turn (YUK-267 text-channel guarantee).
-  //
-  // AF S3a / YUK-203 U3 — persist the reply turn so the drawer can replay-last-N.
-  // The reply chains to the user ask/chip event (causedByEventId) so the turn
-  // pair is reconstructable. actor = the running agent (matches the chat run's
-  // actorRef). Payload free-form per ExperimentalEvent (zero schema).
-  //
-  // YUK-364 — 经共享 writeCopilotReply（与 durable worker handler 成功路径同一份
-  // 写入逻辑，防 copilot_reply domain event 形态分叉）。extractPrimaryView 剥 marker
-  // + created_at=now+1ms offset + payload/顶层字段形态 byte-identical（writeFn 透传
-  // deps.writeEventFn ?? writeEvent 保持既有可注入语义）。
-  const { replyEventId, cleanedReply, primaryView } = await writeCopilotReply(db, {
-    sessionId,
-    userAskEventId: causedByEventId,
-    replyText,
-    preparedReply: {
-      text: replyText,
-      ...(selectedPrimaryView ? { primaryView: selectedPrimaryView } : {}),
-    },
-    actorRef,
-    taskRunId: replyRunId,
-    ...(evidenceReview.status === 'skipped'
-      ? {}
-      : {
-          evidenceValidation: {
-            status: evidenceReview.status,
-            reference_task_run_ids: evidenceReview.referenceTaskRunIds ?? [],
-            comparison_task_run_ids: evidenceReview.comparisonTaskRunIds ?? [],
-          },
-        }),
-    now,
-    writeFn: write,
-  });
-
-  // Publish the exact reviewed/persisted bytes once, after the domain write.
-  // Replaying raw candidate chunks could retain whitespace removed with a tail
-  // marker and make the public stream differ from the sealed hash.
-  if (streaming && cleanedReply.length > 0) streaming.onDelta(cleanedReply);
-
-  // YUK-497 wave-4 — suppress the revert anchor when this turn called a MATERIALIZING tool (writes a
-  // question/artifact row outside the event chain that cascade-revert can't compensate). Keyed on the
-  // persisted tool_use mirrors under this ask (same rows the replay path reads) so live and replay
-  // can't diverge. See materializing-tools.ts for the invariant. The DB-less routing unit tests pass a
-  // {}-stub db (every real db op is injected + stubbed), so the probe is guarded on db being queryable
-  // (typeof db.select === 'function') — they need no new stub; production and the DB tests always carry
-  // a real client (mirrors the "stub tx has no .select" seam above).
-  let turnMaterialized: boolean;
-  if (userAskEventId === undefined || typeof (db as { select?: unknown }).select !== 'function') {
-    // No ask id, or the DB-less routing-unit stub → nothing to probe; expose the anchor as before.
-    turnMaterialized = false;
-  } else {
-    try {
-      turnMaterialized = (await selectAsksWithMaterializingToolCall(db, [userAskEventId])).has(
-        userAskEventId,
-      );
-    } catch (err) {
-      // F1 (TdYwg) — this probe runs AFTER the reply is persisted (additive read). If it throws,
-      // degrade gracefully: log + SUPPRESS the anchor (a missing revert button is safe; a lying one
-      // that 409s / orphans a row is not). Never crash the turn over a post-reply read.
-      console.error('[copilot] materializing-tool probe failed; suppressing revert anchor', {
-        userAskEventId,
-        error: err,
       });
-      turnMaterialized = true;
+      replyText = result.text;
+      replyRunId = result.task_run_id;
     }
-  }
+    // Strip presentation-only metadata before the sealed review. The validator,
+    // persisted domain event, terminal envelope and delayed public DELTA must all
+    // see exactly these bytes; a dangling marker may truncate only here, never
+    // after a raw suffix was certified.
+    const correctionResolution = implicitCorrectionClarification
+      ? { kind: 'clarify' as const, reply: implicitCorrectionClarification }
+      : resolveCorrectionReply(replyText, runInput.correction_contract);
+    const preparedCandidate = extractPrimaryView(correctionResolution.reply, {
+      taskRunId: replyRunId,
+    });
+    const learningReview = await reviewCopilotLearningContent(
+      preparedCandidate.text,
+      [req.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join('\n'),
+      replyRunId,
+      {
+        db,
+        runTaskFn: runValidationTask,
+        ...(preparedCandidate.primaryView?.source === 'ephemeral_html'
+          ? { additionalVisibleText: preparedCandidate.primaryView.ref }
+          : {}),
+      },
+    );
+    const evidenceReview =
+      correctionResolution.kind === 'clarify'
+        ? { status: 'skipped' as const, replyText: learningReview.replyText }
+        : await reviewEvidenceReply({
+            db,
+            requestContext: {
+              user_message: req.user_message,
+              surface,
+              triggered_by: req.triggered_by,
+              ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
+              ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
+            },
+            candidateReply: learningReview.replyText,
+            candidateTaskRunId: replyRunId,
+            candidateComplete,
+            toolTrace,
+            ...(streaming?.signal ? { signal: streaming.signal } : {}),
+            ...(deps.providerSessionDeadlineAt !== undefined
+              ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+              : {}),
+          });
+    streaming?.signal?.throwIfAborted();
+    // Both evidence repair and timeout-degraded blind replies are replacement
+    // prose. Re-apply the correction binding so replacement text cannot drop
+    // the targeted prior-turn envelope (YUK-836 contract), then re-run the
+    // learning-content gate so neither path can introduce an unverified
+    // question or solution (YUK-833/835).
+    const correctionReviewedReply =
+      evidenceReview.status === 'repair' || evidenceReview.status === 'degraded'
+        ? resolveCorrectionReply(evidenceReview.replyText, runInput.correction_contract).reply
+        : evidenceReview.replyText;
+    const replacementLearningReview =
+      evidenceReview.status === 'repair' || evidenceReview.status === 'degraded'
+        ? await reviewCopilotLearningContent(
+            correctionReviewedReply,
+            [req.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join(
+              '\n',
+            ),
+            replyRunId,
+            { db, runTaskFn: runValidationTask },
+          )
+        : undefined;
+    replyText = replacementLearningReview?.replyText ?? correctionReviewedReply;
+    // primary_view is a second user-visible channel (ephemeral_html can contain
+    // substantive prose). The sealed comparator reviews reply text only, so a
+    // read-bearing turn must drop this unreviewed metadata even when text passes.
+    // No-read/skipped turns retain the established presentation behavior.
+    const selectedPrimaryView =
+      evidenceReview.status === 'skipped' && learningReview.passed
+        ? preparedCandidate.primaryView
+        : undefined;
 
-  return {
-    task_run_id: replyRunId,
-    reply: cleanedReply,
-    surface,
-    triggered_by: req.triggered_by,
-    session_id: sessionId,
-    reply_event_id: replyEventId,
-    ...buildAskFields(userAskEventId, turnMaterialized),
-    // YUK-266 (C1) — surface the partial-degrade note only when the stream errored
-    // mid-flight (additive optional; absent on the non-stream + clean-stream paths).
-    ...(streamError ? { error: streamError } : {}),
-    // YUK-307 — additive optional hero nomination (see CopilotChatResult). The
-    // route's terminal `reply` SSE event passes the whole result through, so the
-    // streaming mode carries it with zero route changes.
-    ...(primaryView ? { primary_view: primaryView } : {}),
-  };
+    // YUK-307 — single convergence point for BOTH the JSON and streaming paths:
+    // parse + strip the primary_view marker ONCE from the collected reply, then
+    // persist the reply turn. From here on, ONLY cleanedReply is used (persisted
+    // reply_md / returned reply / — via persistence — any future replayed history),
+    // so the marker text never survives the turn (YUK-267 text-channel guarantee).
+    //
+    // AF S3a / YUK-203 U3 — persist the reply turn so the drawer can replay-last-N.
+    // The reply chains to the user ask/chip event (causedByEventId) so the turn
+    // pair is reconstructable. actor = the running agent (matches the chat run's
+    // actorRef). Payload free-form per ExperimentalEvent (zero schema).
+    //
+    // YUK-364 — 经共享 writeCopilotReply（与 durable worker handler 成功路径同一份
+    // 写入逻辑，防 copilot_reply domain event 形态分叉）。extractPrimaryView 剥 marker
+    // + created_at=now+1ms offset + payload/顶层字段形态 byte-identical（writeFn 透传
+    // deps.writeEventFn ?? writeEvent 保持既有可注入语义）。
+    const { replyEventId, cleanedReply, primaryView } = await writeCopilotReply(db, {
+      sessionId,
+      userAskEventId: causedByEventId,
+      replyText,
+      preparedReply: {
+        text: replyText,
+        ...(selectedPrimaryView ? { primaryView: selectedPrimaryView } : {}),
+      },
+      actorRef,
+      taskRunId: replyRunId,
+      ...(evidenceReview.status === 'skipped'
+        ? {}
+        : {
+            evidenceValidation: {
+              status: evidenceReview.status,
+              reference_task_run_ids: evidenceReview.referenceTaskRunIds ?? [],
+              comparison_task_run_ids: evidenceReview.comparisonTaskRunIds ?? [],
+            },
+          }),
+      now,
+      writeFn: write,
+    });
+
+    // Publish the exact reviewed/persisted bytes once, after the domain write.
+    // Replaying raw candidate chunks could retain whitespace removed with a tail
+    // marker and make the public stream differ from the sealed hash.
+    if (streaming && cleanedReply.length > 0) streaming.onDelta(cleanedReply);
+
+    // YUK-497 wave-4 — suppress the revert anchor when this turn called a MATERIALIZING tool (writes a
+    // question/artifact row outside the event chain that cascade-revert can't compensate). Keyed on the
+    // persisted tool_use mirrors under this ask (same rows the replay path reads) so live and replay
+    // can't diverge. See materializing-tools.ts for the invariant. The DB-less routing unit tests pass a
+    // {}-stub db (every real db op is injected + stubbed), so the probe is guarded on db being queryable
+    // (typeof db.select === 'function') — they need no new stub; production and the DB tests always carry
+    // a real client (mirrors the "stub tx has no .select" seam above).
+    let turnMaterialized: boolean;
+    if (userAskEventId === undefined || typeof (db as { select?: unknown }).select !== 'function') {
+      // No ask id, or the DB-less routing-unit stub → nothing to probe; expose the anchor as before.
+      turnMaterialized = false;
+    } else {
+      try {
+        turnMaterialized = (await selectAsksWithMaterializingToolCall(db, [userAskEventId])).has(
+          userAskEventId,
+        );
+      } catch (err) {
+        // F1 (TdYwg) — this probe runs AFTER the reply is persisted (additive read). If it throws,
+        // degrade gracefully: log + SUPPRESS the anchor (a missing revert button is safe; a lying one
+        // that 409s / orphans a row is not). Never crash the turn over a post-reply read.
+        console.error('[copilot] materializing-tool probe failed; suppressing revert anchor', {
+          userAskEventId,
+          error: err,
+        });
+        turnMaterialized = true;
+      }
+    }
+
+    return {
+      task_run_id: replyRunId,
+      reply: cleanedReply,
+      surface,
+      triggered_by: req.triggered_by,
+      session_id: sessionId,
+      reply_event_id: replyEventId,
+      ...buildAskFields(userAskEventId, turnMaterialized),
+      // YUK-266 (C1) — surface the partial-degrade note only when the stream errored
+      // mid-flight (additive optional; absent on the non-stream + clean-stream paths).
+      ...(streamError ? { error: streamError } : {}),
+      // YUK-307 — additive optional hero nomination (see CopilotChatResult). The
+      // route's terminal `reply` SSE event passes the whole result through, so the
+      // streaming mode carries it with zero route changes.
+      ...(primaryView ? { primary_view: primaryView } : {}),
+    };
+  } finally {
+    await disposeSubagentCancellation();
+  }
 }
 
 // Non-streaming entrypoint — unchanged public contract. Existing unit tests + any

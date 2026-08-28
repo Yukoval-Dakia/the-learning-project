@@ -28,9 +28,15 @@ export function buildCopilotSubagentRunHandler(db: Db) {
       }
       const { record, claimToken } = claimed;
       const abortController = new AbortController();
+      let hardDeadlineExceeded = false;
       const poll = setInterval(() => {
         void (async () => {
-          await heartbeatSubagentRun(db, record.id, claimToken);
+          const heartbeat = await heartbeatSubagentRun(db, record.id, claimToken);
+          if (heartbeat === 'deadline_reached') {
+            hardDeadlineExceeded = true;
+            abortController.abort(new Error('subagent hard deadline reached'));
+            return;
+          }
           const current = await import('../server/subagent-mailbox').then((module) =>
             module.getSubagentRun(db, record.id),
           );
@@ -43,25 +49,35 @@ export function buildCopilotSubagentRunHandler(db: Db) {
         | { status: 'failed' | 'cancelled' | 'lost'; error: { code: string; message: string } };
       try {
         const result = await runCopilotResearcher(db, record, abortController);
-        outcome = abortController.signal.aborted
+        outcome = hardDeadlineExceeded
           ? {
-              status: 'cancelled',
-              error: { code: 'cancelled', message: 'Subagent cancellation was confirmed' },
+              status: 'lost',
+              error: { code: 'hard_deadline_exceeded', message: 'Subagent hard deadline elapsed' },
             }
-          : { status: 'succeeded', result: result.text };
+          : abortController.signal.aborted
+            ? {
+                status: 'cancelled',
+                error: { code: 'cancelled', message: 'Subagent cancellation was confirmed' },
+              }
+            : { status: 'succeeded', result: result.text };
       } catch (error) {
-        outcome = abortController.signal.aborted
+        outcome = hardDeadlineExceeded
           ? {
-              status: 'cancelled',
-              error: { code: 'cancelled', message: 'Subagent cancellation was confirmed' },
+              status: 'lost',
+              error: { code: 'hard_deadline_exceeded', message: 'Subagent hard deadline elapsed' },
             }
-          : {
-              status: 'failed',
-              error: {
-                code: 'research_failed',
-                message: error instanceof Error ? error.message : String(error),
-              },
-            };
+          : abortController.signal.aborted
+            ? {
+                status: 'cancelled',
+                error: { code: 'cancelled', message: 'Subagent cancellation was confirmed' },
+              }
+            : {
+                status: 'failed',
+                error: {
+                  code: 'research_failed',
+                  message: error instanceof Error ? error.message : String(error),
+                },
+              };
       } finally {
         clearInterval(poll);
       }

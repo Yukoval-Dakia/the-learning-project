@@ -116,7 +116,11 @@ import { createCopilotProposalFlowGate } from '../server/proposal-flow-gate';
 
 export { enqueueCopilotMailboxJob } from '../api/chat';
 
-import type { CopilotContinuationRecord, SubagentRunRecord } from '../server/subagent-mailbox';
+import {
+  type CopilotContinuationRecord,
+  type SubagentRunRecord,
+  bindSubagentParentCancellation,
+} from '../server/subagent-mailbox';
 import { getCopilotContinuationHistory } from '../server/turns';
 
 // dispatch 入口投递的 job 体。run_id = checkpoint_id = user_ask event id（route
@@ -1137,6 +1141,14 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       writeCopilotReplyFn: persistReply,
     });
   };
+  const disposeSubagentCancellation = bindSubagentParentCancellation(db, {
+    sessionId: data.session_id,
+    parentTaskRunId: taskRunId,
+    signals: [
+      { signal: lifecycleAbortController.signal, requestedBy: 'system' },
+      { signal: cancellationControl.signal, requestedBy: 'user' },
+    ],
+  });
   try {
     const result: StreamCollectResult = await streamRun(
       'CopilotTask',
@@ -1359,6 +1371,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       createCancelledMarker: cancellationMarker(),
     });
   } finally {
+    await disposeSubagentCancellation();
     cancellationControl.dispose();
   }
 }

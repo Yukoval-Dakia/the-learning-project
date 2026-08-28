@@ -137,6 +137,78 @@ describe('Copilot subagent mailbox', () => {
     expect(row?.cancel_requested_at).toBeInstanceOf(Date);
   });
 
+  it('cancels only the exact root owner and its numbered retry task runs', async () => {
+    await seedParent({ id: 'ask_parent_cancel', sessionId: 'session_parent_cancel' });
+    const parentTaskRunId = 'copilot_run_tool_parent_cancel';
+    const direct = await mailbox.launchSubagentRun(testDb(), {
+      sessionId: 'session_parent_cancel',
+      parentTurnEventId: 'ask_parent_cancel',
+      parentTaskRunId,
+      launchKey: 'direct-owner',
+      objective: 'Cancel this queued direct child through its root owner.',
+    });
+    const retry = await mailbox.launchSubagentRun(testDb(), {
+      sessionId: 'session_parent_cancel',
+      parentTurnEventId: 'ask_parent_cancel',
+      parentTaskRunId: `${parentTaskRunId}_retry_2`,
+      launchKey: 'retry-owner',
+      objective: 'Cancel this running retry child through its root owner.',
+    });
+    const foreign = await mailbox.launchSubagentRun(testDb(), {
+      sessionId: 'session_parent_cancel',
+      parentTurnEventId: 'ask_parent_cancel',
+      parentTaskRunId: `${parentTaskRunId}_retry_2_unrelated`,
+      launchKey: 'foreign-prefix',
+      objective: 'This prefix collision must remain owned by a different task run.',
+    });
+    await mailbox.claimSubagentRun(testDb(), retry.record.id);
+
+    const cancelled = await mailbox.cancelSubagentsForParent(
+      testDb(),
+      'session_parent_cancel',
+      parentTaskRunId,
+      'system',
+    );
+
+    expect(cancelled).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: direct.record.id, status: 'cancelled' }),
+        expect.objectContaining({
+          id: retry.record.id,
+          status: 'running',
+          cancelRequestedBy: 'system',
+        }),
+      ]),
+    );
+    await expect(mailbox.getSubagentRun(testDb(), foreign.record.id)).resolves.toMatchObject({
+      status: 'queued',
+    });
+  });
+
+  it('never renews a lease beyond the hard deadline', async () => {
+    await seedParent({ id: 'ask_hard_deadline', sessionId: 'session_hard_deadline' });
+    const launched = await mailbox.launchSubagentRun(testDb(), {
+      sessionId: 'session_hard_deadline',
+      parentTurnEventId: 'ask_hard_deadline',
+      parentTaskRunId: 'root_hard_deadline',
+      launchKey: 'hard-deadline',
+      objective: 'This provider-fenced child must stop at its hard deadline.',
+    });
+    const claimed = await mailbox.claimSubagentRun(testDb(), launched.record.id);
+    if (!claimed || 'lost' in claimed) throw new Error('expected running claim');
+    await testDb()
+      .update(subagent_run)
+      .set({ hard_deadline_at: new Date(Date.now() - 1) })
+      .where(eq(subagent_run.id, launched.record.id));
+
+    await expect(
+      mailbox.heartbeatSubagentRun(testDb(), launched.record.id, claimed.claimToken),
+    ).resolves.toBe('deadline_reached');
+    await expect(mailbox.getSubagentRun(testDb(), launched.record.id)).resolves.toMatchObject({
+      status: 'running',
+    });
+  });
+
   it('waits for the parent reply and serializes continuation claims per session', async () => {
     await seedParent({ id: 'ask_continue_one', sessionId: 'session_continue' });
     await seedParent({ id: 'ask_continue_two', sessionId: 'session_continue' });
@@ -270,6 +342,37 @@ describe('Copilot subagent mailbox', () => {
       .from(copilot_continuation)
       .where(eq(copilot_continuation.subagent_run_id, running.record.id));
     expect(continuations).toHaveLength(1);
+  });
+
+  it('lets a heartbeat renewal win when it lands after the recovery scan', async () => {
+    await seedParent({ id: 'ask_recovery_race', sessionId: 'session_recovery_race' });
+    const launched = await mailbox.launchSubagentRun(testDb(), {
+      sessionId: 'session_recovery_race',
+      parentTurnEventId: 'ask_recovery_race',
+      parentTaskRunId: 'root_recovery_race',
+      launchKey: 'recovery-heartbeat-race',
+      objective: 'Renew the live lease after recovery has observed the old expiration.',
+    });
+    const claimed = await mailbox.claimSubagentRun(testDb(), launched.record.id);
+    if (!claimed || 'lost' in claimed) throw new Error('expected running claim');
+    await testDb()
+      .update(subagent_run)
+      .set({ lease_expires_at: new Date(Date.now() - 1_000) })
+      .where(eq(subagent_run.id, launched.record.id));
+
+    const recovered = await mailbox.recoverSubagentMailbox(testDb(), {
+      beforeRecoverExpiredRun: async (record) => {
+        expect(record.id).toBe(launched.record.id);
+        await expect(
+          mailbox.heartbeatSubagentRun(testDb(), record.id, claimed.claimToken),
+        ).resolves.toBe('renewed');
+      },
+    });
+
+    expect(recovered.lostRunIds).toEqual([]);
+    await expect(mailbox.getSubagentRun(testDb(), launched.record.id)).resolves.toMatchObject({
+      status: 'running',
+    });
   });
 
   it('anchors continuation history to its ask/chip parent and excludes later session turns', async () => {
