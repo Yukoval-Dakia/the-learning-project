@@ -18,6 +18,8 @@
   `a8759ebe1bf42d0c7beb4fc2115113f66b329e54` 通过 aggregate/static/unit/DB/migration/build/usability；
   独立 review 已完成，P1 修复验证后无剩余 P0/P1。task census 最终为 53 registered / 52 statically invoked /
   1 compatibility。
+- 最终 board sync #1311 已合并为 `0ec6fe27d497da36cc3884ca7b100b6161dd9ca3`；Linear
+  YUK-927 与 YUK-934 均为 Done，当前开放 PR 为 0。
 - 真实持久化边界：`copilot_run` / reconcile、`ToolOperations` 与 `SubagentRuns` 各自拥有生命周期；
   mailbox 的 one-shot continuation 只恢复同一根请求，用户面保持一个声音。drawer 只展示状态、结果、错误
   与操作，不展示执行架构术语。
@@ -25,8 +27,7 @@
 ## NEXT
 
 1. 不自动继续、不部署；仅在取得单独授权后进行生产观察。
-2. 其余工作仅限 owner 重新开启的 parked roadmap；本板同步即 parent YUK-927 closeout，不声称 parent
-   Linear issue 已经 Done。
+2. 其余工作仅限 owner 重新开启的 parked roadmap；closeout capture gate 未发现需要新增的可执行 issue。
 
 ## PARKED
 
