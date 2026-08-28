@@ -1,0 +1,35 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.shared" without a file extension (vitest.unit.config.ts:2:74). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.10 /Volumes/YukovalSBak/yukoval-projects/the-learning-project-worktrees/f5-20260827/yuk-932
+
+ ❯ src/capabilities/copilot/server/copilot-tools.unit.test.ts (6 tests | 1 failed) 1983ms
+     × 五包声明聚合覆盖完整 DomainTool inventory 且无重复 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/capabilities/copilot/server/copilot-tools.unit.test.ts > copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账 > 五包声明聚合覆盖完整 DomainTool inventory 且无重复
+AssertionError: expected [ 'query_mistakes', …(46) ] to have a length of 43 but got 47
+
+- Expected
++ Received
+
+- 43
++ 47
+
+ ❯ src/capabilities/copilot/server/copilot-tools.unit.test.ts:92:27
+     90|     expect(new Set(declared)).toEqual(new Set(fullInventory));
+     91|     expect(declared).toHaveLength(fullInventory.length);
+     92|     expect(fullInventory).toHaveLength(43);
+       |                           ^
+     93|   });
+     94|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 3 passed (4)
+      Tests  1 failed | 61 passed (62)
+   Start at  13:22:56
+   Duration  3.08s (transform 1.12s, setup 0ms, import 2.52s, tests 2.00s, environment 0ms)

@@ -1,0 +1,24 @@
+test partition audit (file-level)
+
+  unit:       608 files
+  db:         432 files
+  migration:  1 file(s)
+  unmatched:  2 files
+
+P0 ERROR (unit + unmocked DB import):  (none)
+P1 WARN  (db + no file-level DB import):  8
+  - src/capabilities/copilot/server/copilot-tools.db.test.ts
+  - src/capabilities/practice/jobs/variant_verify.parse.test.ts
+  - src/kernel/tools/allowlists.test.ts
+  - src/kernel/tools/budgets.test.ts
+  - src/kernel/tools/context-throttle.test.ts
+  - src/server/ai/provenance.test.ts
+  - src/server/ai/provider-attempt-admission-config.test.ts
+  - src/server/revert/cascade-revert.unit.test.ts
+
+UNMATCHED (not picked up by any vitest config):  2
+  - .opencode/plugins/worktree/delete.test.ts
+  - .opencode/plugins/worktree/permissions.test.ts
+
+Note: file-level detection only. transitive imports may still be DB-tainted.
+For full coverage see docs/design/2026-05-21-test-partition-audit.md (方案 B).

@@ -38,6 +38,8 @@ export const copilotCapability = defineCapability({
       'experimental:copilot_user_ask',
       'experimental:copilot_chip_trigger',
       'experimental:copilot_reply',
+      'experimental:subagent_run_started',
+      'experimental:subagent_run_settled',
       'accept_suggestion',
       // YUK-577 — 主动开口触发线：触发留痕（RESERVED+typed，nudge-events.ts）+ dismiss/opened
       // 处置留痕（通用 hatch）。KPI 分离：dismiss_rate = dismissed/(opened+dismissed)，不碰 accept_suggestion。
@@ -211,6 +213,34 @@ export const copilotCapability = defineCapability({
         load: () =>
           import('./jobs/copilot_run_reconcile').then((m) => m.buildCopilotRunReconcileHandler),
       },
+      {
+        name: 'copilot_subagent_run',
+        queue: 'agent',
+        heartbeatSeconds: 30,
+        load: () =>
+          import('./jobs/copilot_subagent_run').then((m) => m.buildCopilotSubagentRunHandler),
+      },
+      {
+        name: 'copilot_continuation',
+        queue: 'agent',
+        heartbeatSeconds: 30,
+        load: () =>
+          import('./jobs/copilot_continuation').then((m) => m.buildCopilotContinuationHandler),
+      },
+      {
+        name: 'copilot_subagent_reconcile',
+        schedule: {
+          cron: '*/1 * * * *',
+          tz: 'Asia/Shanghai',
+          singletonKey: 'copilot_subagent_reconcile-sweep',
+          singletonSeconds: 60,
+        },
+        queue: 'fast',
+        load: () =>
+          import('./jobs/copilot_subagent_reconcile').then(
+            (m) => m.buildCopilotSubagentReconcileHandler,
+          ),
+      },
     ],
   },
   // M5-T3 (YUK-321) — copilot 自有工具（事件流读 + 记忆面读）。
@@ -250,6 +280,22 @@ export const copilotCapability = defineCapability({
         name: 'cancel_tool_operation',
         load: () =>
           import('./server/tools/tool-operation-controls').then((m) => m.cancelToolOperationTool),
+      },
+      {
+        name: 'launch_researcher',
+        load: () => import('./server/tools/subagent-controls').then((m) => m.launchResearcherTool),
+      },
+      {
+        name: 'get_subagent',
+        load: () => import('./server/tools/subagent-controls').then((m) => m.getSubagentTool),
+      },
+      {
+        name: 'wait_subagent',
+        load: () => import('./server/tools/subagent-controls').then((m) => m.waitSubagentTool),
+      },
+      {
+        name: 'cancel_subagent',
+        load: () => import('./server/tools/subagent-controls').then((m) => m.cancelSubagentTool),
       },
     ],
   },

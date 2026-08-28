@@ -12,6 +12,7 @@ import {
   readCopilotDurableAcceptanceByRunId,
   withCopilotDurableDispatchLock,
 } from '@/capabilities/copilot/server/durable-dispatch';
+import { cancelSubagentsForParentTx } from '@/capabilities/copilot/server/subagent-mailbox';
 import { db } from '@/db/client';
 import { event, job_events, tool_operation } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
@@ -139,6 +140,7 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
         event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
         payload: { requested_by: 'user', requested_at: new Date().toISOString() },
       });
+      await cancelSubagentsForParentTx(tx, acceptance.sessionId, toolTaskRunId, 'user');
 
       if (executionStarted || hasRunningOwnedOperation) return 'cancel_requested' as const;
 

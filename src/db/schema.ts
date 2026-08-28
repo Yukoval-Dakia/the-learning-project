@@ -1506,6 +1506,92 @@ export const tool_operation = pgTable(
   ],
 );
 
+export const subagent_run = pgTable(
+  'subagent_run',
+  {
+    id: text('id').primaryKey(),
+    session_id: text('session_id').notNull(),
+    parent_turn_event_id: text('parent_turn_event_id').notNull(),
+    launch_key: text('launch_key').notNull(),
+    parent_task_run_id: text('parent_task_run_id'),
+    objective_hash: text('objective_hash').notNull(),
+    objective: text('objective').notNull(),
+    status: text('status').notNull().default('queued'),
+    cancel_requested_by: text('cancel_requested_by'),
+    cancel_requested_at: timestamp('cancel_requested_at', { withTimezone: true }),
+    claim_token: text('claim_token'),
+    lease_expires_at: timestamp('lease_expires_at', { withTimezone: true }),
+    hard_deadline_at: timestamp('hard_deadline_at', { withTimezone: true }),
+    child_task_run_id: text('child_task_run_id'),
+    started_event_id: text('started_event_id').notNull(),
+    settled_event_id: text('settled_event_id'),
+    pg_boss_job_id: text('pg_boss_job_id'),
+    result_md: text('result_md'),
+    error_code: text('error_code'),
+    error_message: text('error_message'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    started_at: timestamp('started_at', { withTimezone: true }),
+    settled_at: timestamp('settled_at', { withTimezone: true }),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('subagent_run_parent_launch_uq').on(
+      t.session_id,
+      t.parent_turn_event_id,
+      t.launch_key,
+    ),
+    index('subagent_run_recovery_idx').on(t.status, t.lease_expires_at),
+    check('subagent_run_objective_hash_ck', sql`${t.objective_hash} ~ '^[0-9a-f]{64}$'`),
+    check(
+      'subagent_run_status_ck',
+      sql`${t.status} IN ('queued','running','succeeded','failed','cancelled','lost')`,
+    ),
+    check(
+      'subagent_run_cancel_owner_ck',
+      sql`${t.cancel_requested_by} IS NULL OR ${t.cancel_requested_by} IN ('model','system','user')`,
+    ),
+    check(
+      'subagent_run_bounds_ck',
+      sql`char_length(${t.objective}) BETWEEN 1 AND 12000 AND char_length(${t.launch_key}) BETWEEN 1 AND 120`,
+    ),
+  ],
+);
+
+export const copilot_continuation = pgTable(
+  'copilot_continuation',
+  {
+    id: text('id').primaryKey(),
+    subagent_run_id: text('subagent_run_id').notNull(),
+    session_id: text('session_id').notNull(),
+    parent_turn_event_id: text('parent_turn_event_id').notNull(),
+    result_event_id: text('result_event_id').notNull(),
+    status: text('status').notNull().default('pending'),
+    claim_token: text('claim_token'),
+    lease_expires_at: timestamp('lease_expires_at', { withTimezone: true }),
+    task_run_id: text('task_run_id'),
+    reply_event_id: text('reply_event_id'),
+    pg_boss_job_id: text('pg_boss_job_id'),
+    error_code: text('error_code'),
+    error_message: text('error_message'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    started_at: timestamp('started_at', { withTimezone: true }),
+    settled_at: timestamp('settled_at', { withTimezone: true }),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('copilot_continuation_subagent_uq').on(t.subagent_run_id),
+    uniqueIndex('copilot_continuation_result_event_uq').on(t.result_event_id),
+    uniqueIndex('copilot_continuation_one_running_per_session_uq')
+      .on(t.session_id)
+      .where(sql`${t.status} = 'running'`),
+    index('copilot_continuation_recovery_idx').on(t.status, t.lease_expires_at),
+    check(
+      'copilot_continuation_status_ck',
+      sql`${t.status} IN ('pending','running','succeeded','failed','cancelled','lost','skipped')`,
+    ),
+  ],
+);
+
 export const cost_ledger = pgTable(
   'cost_ledger',
   {

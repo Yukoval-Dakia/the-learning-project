@@ -325,6 +325,19 @@ Dreaming 和 Maintenance lane 当前跑在 self-hosted Node worker + pg-boss 上
 
 ---
 
+### 5.7 Copilot durable researcher mailbox
+
+Copilot remains the only user-facing agent. A foreground root may call the owner-local
+`launch_researcher` DomainTool, which creates a durable `subagent_run` keyed by the conversation session,
+the ask/chip event, and a stable launch key. The fixed child is read-only, owns an independent task run and
+provider lease, and never inherits the parent HTTP deadline or task-run admission.
+
+The causal chain is parent ask/chip → `experimental:subagent_run_started` →
+`experimental:subagent_run_settled` → `experimental:copilot_reply`. Child settlement atomically creates
+one `copilot_continuation`; the continuation waits for the foreground reply and serializes per session
+before starting a new root Copilot turn. The synthetic result is untrusted input and automatic
+continuations cannot launch another researcher. See ADR-0053.
+
 ## 六、技术栈
 
 | 层 | 选型 | 理由 |

@@ -313,6 +313,9 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   'copilot_evidence_checkpoint',
   // YUK-928: process-owned tool runtime; restoring it would resurrect stale handles and owners.
   'tool_operation',
+  // YUK-932: live mailbox ownership and one-shot continuation claims are operational fences.
+  'subagent_run',
+  'copilot_continuation',
   // YUK-751 durable subscription dispatcher recovery state. All three tables are
   // reconstructed by manifest reconciliation + event-log discovery; restoring stale
   // checkpoints, claims, deliveries, or debounce reservations would be incorrect.
@@ -358,6 +361,8 @@ export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
   'provider_session_admission',
   'copilot_evidence_checkpoint',
   'tool_operation',
+  'copilot_continuation',
+  'subagent_run',
   'event_subscription_effect',
   'event_subscription_delivery',
   'event_subscription_checkpoint',

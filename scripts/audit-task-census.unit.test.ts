@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { taskCatalog } from '../src/ai/task-catalog';
+import { copilotTaskSpecs } from '../src/capabilities/copilot/tasks';
 import { auditTaskCensus } from './audit-task-census';
 import { scanForbiddenTaskCatalogPatterns } from './lib/task-census-guards';
 import {
@@ -360,7 +361,7 @@ describe('registered infrastructure evidence', () => {
 
 describe('live taskCatalog census', () => {
   it('derives the catalog census from the frozen live composition root', () => {
-    expect(Object.keys(taskCatalog)).toHaveLength(52);
+    expect(Object.keys(taskCatalog)).toHaveLength(53);
     expect(Object.isFrozen(taskCatalog)).toBe(true);
   });
 
@@ -375,7 +376,21 @@ describe('live taskCatalog census', () => {
     });
 
     expect(result.ok, result.errors.join('\n')).toBe(true);
-    expect(result.discoveredKinds).toHaveLength(51);
+    expect(result.discoveredKinds).toHaveLength(52);
+    expect(Object.keys(copilotTaskSpecs).sort()).toEqual([
+      'CopilotCorrectionIntentTask',
+      'CopilotEvidenceReviewTask',
+      'CopilotEvidenceVerificationTask',
+      'CopilotResearchTask',
+      'CopilotTask',
+      'TeachingTurnTask',
+    ]);
+    expect(result.callersByKind.CopilotResearchTask).toEqual([
+      expect.objectContaining({
+        file: 'src/capabilities/copilot/jobs/copilot_run.ts',
+        callee: 'runAgentTask',
+      }),
+    ]);
     expect(result.registrationEvidence.some((item) => item.registration === 'manifest-job')).toBe(
       true,
     );

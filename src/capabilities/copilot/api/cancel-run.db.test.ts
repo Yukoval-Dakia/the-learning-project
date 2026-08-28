@@ -10,7 +10,7 @@ import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
 } from '@/capabilities/copilot/server/copilot-run-status';
-import { event, job_events, tool_operation } from '@/db/schema';
+import { copilot_continuation, event, job_events, subagent_run, tool_operation } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeJobEvent } from '@/server/events/writer';
 
@@ -20,6 +20,7 @@ import {
   hashCopilotDurableInput,
   reserveCopilotDurableAcceptance,
 } from '../server/durable-dispatch';
+import * as mailbox from '../server/subagent-mailbox';
 import { getCopilotTurnsBeforeAnchor } from '../server/turns';
 import { POST } from './cancel-run';
 import { CopilotCancelRunResponseSchema } from './contracts';
@@ -177,6 +178,58 @@ describe('POST /api/copilot/runs/:id/cancel', () => {
       events.filter((event) => event.event_type === COPILOT_RUN_EVENTS.CANCEL_REQUESTED),
     ).toHaveLength(1);
     expect(events.some((event) => event.event_type === COPILOT_RUN_EVENTS.FAILED)).toBe(false);
+  });
+
+  it('settles queued children and cooperatively cancels only this root retry lineage', async () => {
+    const accepted = await seedAcceptedRun();
+    const parentTaskRunId = `copilot_run_tool_${accepted.runId}`;
+    const queued = await mailbox.launchSubagentRun(testDb(), {
+      sessionId: accepted.sessionId,
+      parentTurnEventId: accepted.runId,
+      parentTaskRunId: `${parentTaskRunId}_retry_1`,
+      launchKey: 'queued-user-stop',
+      objective: 'This queued research must settle before the root cancellation returns.',
+    });
+    const running = await mailbox.launchSubagentRun(testDb(), {
+      sessionId: accepted.sessionId,
+      parentTurnEventId: accepted.runId,
+      parentTaskRunId,
+      launchKey: 'running-user-stop',
+      objective: 'This provider-fenced research must drain cooperatively after user stop.',
+    });
+    const foreign = await mailbox.launchSubagentRun(testDb(), {
+      sessionId: accepted.sessionId,
+      parentTurnEventId: accepted.runId,
+      parentTaskRunId: `${parentTaskRunId}_retry_1_unrelated`,
+      launchKey: 'foreign-user-stop',
+      objective: 'This near-prefix child belongs to a different root task and must not stop.',
+    });
+    await mailbox.claimSubagentRun(testDb(), running.record.id);
+
+    const response = await POST(request(accepted.runId), { id: accepted.runId });
+
+    expect(await response.json()).toMatchObject({ status: 'cancelled' });
+    await expect(mailbox.getSubagentRun(testDb(), queued.record.id)).resolves.toMatchObject({
+      status: 'cancelled',
+      cancelRequestedBy: 'user',
+    });
+    await expect(mailbox.getSubagentRun(testDb(), running.record.id)).resolves.toMatchObject({
+      status: 'running',
+      cancelRequestedBy: 'user',
+    });
+    await expect(mailbox.getSubagentRun(testDb(), foreign.record.id)).resolves.toMatchObject({
+      status: 'queued',
+    });
+    const continuations = await testDb()
+      .select({ subagentRunId: copilot_continuation.subagent_run_id })
+      .from(copilot_continuation)
+      .where(eq(copilot_continuation.subagent_run_id, queued.record.id));
+    expect(continuations).toHaveLength(1);
+    const runningRows = await testDb()
+      .select({ id: subagent_run.id, requestedBy: subagent_run.cancel_requested_by })
+      .from(subagent_run)
+      .where(eq(subagent_run.id, running.record.id));
+    expect(runningRows).toEqual([{ id: running.record.id, requestedBy: 'user' }]);
   });
 
   it('treats retryable FAILED(reason=error) as active but a deliberate terminal as settled', async () => {

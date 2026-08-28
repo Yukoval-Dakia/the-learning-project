@@ -1,0 +1,11 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.shared" without a file extension (vitest.migration.config.ts:2:69). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.10 /Volumes/YukovalSBak/yukoval-projects/the-learning-project-worktrees/f5-20260827/yuk-932
+
+
+ Test Files  1 passed (1)
+      Tests  64 passed (64)
+   Start at  13:23:52
+   Duration  114.03s (transform 104ms, setup 0ms, import 735ms, tests 113.20s, environment 0ms)

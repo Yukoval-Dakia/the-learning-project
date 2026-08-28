@@ -3,8 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveDomainToolNames, resolveMcpAllowedTools } from '@/kernel/tools/allowlists';
 import { COPILOT_HISTORY_BUDGET } from '@/kernel/tools/budgets';
 import { TAVILY_MCP_ALLOWED_TOOLS, buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
-import type { TaskEventMessage } from '@/server/ai/runner';
-import { SPAWN_TOOL_NAME } from '@/server/ai/spawn-contract';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import {
   CopilotChatRequest,
@@ -13,7 +11,6 @@ import {
   runCopilotChatStreaming,
 } from './chat';
 import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from './content-validation';
-import { COPILOT_SUBAGENT_NAME } from './subagents';
 
 describe('runCopilotChat (two-surface routing)', () => {
   it('replaces a question-bearing direct reply when the validation marker is missing', async () => {
@@ -288,7 +285,7 @@ describe('runCopilotChat (two-surface routing)', () => {
         user_message: '现在有哪些错题可以推荐',
       }),
       expect.objectContaining({
-        allowedTools: [...resolveMcpAllowedTools('copilot'), SPAWN_TOOL_NAME],
+        allowedTools: resolveMcpAllowedTools('copilot'),
         taskRunId: expect.stringMatching(/^copilot_task_/),
       }),
     );
@@ -556,10 +553,7 @@ describe('runCopilotChat (two-surface routing)', () => {
         chip_kind: 'out_3_variants',
       }),
       expect.objectContaining({
-        allowedTools: [
-          ...resolveMcpAllowedTools('copilot_user_suggested_mistake_action'),
-          SPAWN_TOOL_NAME,
-        ],
+        allowedTools: resolveMcpAllowedTools('copilot_user_suggested_mistake_action'),
       }),
     );
   });
@@ -926,8 +920,7 @@ describe('runCopilotChat (two-surface routing)', () => {
       for (const tool of TAVILY_MCP_ALLOWED_TOOLS) {
         expect(ctx.allowedTools).not.toContain(tool);
       }
-      // Domain allowlist plus the explicitly contracted depth-1 spawn tool.
-      expect(ctx.allowedTools).toEqual([...resolveMcpAllowedTools('copilot'), SPAWN_TOOL_NAME]);
+      expect(ctx.allowedTools).toEqual(resolveMcpAllowedTools('copilot'));
     });
 
     it('defaults to the env-gated builder: TAVILY_API_KEY present → tavily wired', async () => {
@@ -1496,9 +1489,56 @@ describe('YUK-832 inline final evidence review', () => {
       writeEventFn.mock.calls.some((call) => call[1].action === 'experimental:copilot_reply'),
     ).toBe(false);
   });
+
+  it('keeps parent mailbox cancellation bound while post-model evidence review is pending', async () => {
+    const controller = new AbortController();
+    const cancellationTx = {
+      select: vi.fn(() => ({ from: () => ({ where: async () => [] }) })),
+    };
+    const transaction = vi.fn(async (callback: (tx: typeof cancellationTx) => Promise<unknown>) =>
+      callback(cancellationTx),
+    );
+    const db = { transaction } as never;
+    let markReviewStarted: (() => void) | undefined;
+    const reviewStarted = new Promise<void>((resolve) => {
+      markReviewStarted = resolve;
+    });
+    let releaseReview: ((value: { status: 'skipped'; replyText: string }) => void) | undefined;
+    const reviewEvidenceReplyFn = vi.fn(
+      () =>
+        new Promise<{ status: 'skipped'; replyText: string }>((resolve) => {
+          releaseReview = resolve;
+          markReviewStarted?.();
+        }),
+    );
+    const run = runCopilotChatStreaming(
+      db,
+      request,
+      () => undefined,
+      {
+        ...baseEvidenceDeps(),
+        writeEventFn: vi.fn(async (_db, input) => input.id),
+        buildMcpServerFn: () => ({ name: 'fake-mailbox-lifetime' }) as never,
+        streamAgentTaskFn: vi.fn(async () => ({
+          text: '主模型已返回，等待证据审阅。',
+          task_run_id: 'copilot_task_mailbox_lifetime',
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 300, outputTokens: 40 },
+        })),
+        reviewEvidenceReplyFn,
+      },
+      controller.signal,
+    );
+    await reviewStarted;
+    controller.abort(new DOMException('client disconnected', 'AbortError'));
+    await vi.waitFor(() => expect(transaction).toHaveBeenCalledTimes(1));
+    expect(releaseReview).toBeTypeOf('function');
+    releaseReview?.({ status: 'skipped', replyText: '主模型已返回，等待证据审阅。' });
+    await expect(run).rejects.toMatchObject({ name: 'AbortError' });
+  });
 });
 
-describe('YUK-757 Copilot backstage subagents', () => {
+describe('YUK-932 Copilot durable researchers', () => {
   function baseSubagentDeps() {
     return {
       buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
@@ -1512,7 +1552,7 @@ describe('YUK-757 Copilot backstage subagents', () => {
     };
   }
 
-  it('adds only the named depth-1 researcher to the default free-form runner surface', async () => {
+  it('exposes the four mailbox DomainTools without mounting native SDK Task', async () => {
     let capturedCtx: Record<string, unknown> | undefined;
     const runAgentTaskFn = vi.fn(async (_kind, _input, ctx) => {
       capturedCtx = ctx as Record<string, unknown>;
@@ -1534,26 +1574,22 @@ describe('YUK-757 Copilot backstage subagents', () => {
       { ...baseSubagentDeps(), runAgentTaskFn },
     );
 
-    expect(capturedCtx?.allowedTools).toEqual(expect.arrayContaining(['Task']));
-    expect(capturedCtx?.agents).toHaveProperty(COPILOT_SUBAGENT_NAME);
+    expect(capturedCtx?.allowedTools).toEqual(
+      expect.arrayContaining([
+        'mcp__loom__launch_researcher',
+        'mcp__loom__get_subagent',
+        'mcp__loom__wait_subagent',
+        'mcp__loom__cancel_subagent',
+      ]),
+    );
+    expect(capturedCtx?.allowedTools).not.toContain('Task');
     expect(capturedCtx?.hooks).toHaveProperty('PreToolUse');
-    expect(capturedCtx?.canUseTool).toEqual(expect.any(Function));
-
-    const researcher = (capturedCtx?.agents as Record<string, { tools?: string[] }>)[
-      COPILOT_SUBAGENT_NAME
-    ];
-    const parentTools = capturedCtx?.allowedTools as string[];
-    expect(researcher.tools?.length).toBeGreaterThan(5);
-    expect(researcher.tools?.every((tool) => parentTools.includes(tool))).toBe(true);
-    expect(researcher.tools).not.toContain('Task');
-    expect(researcher.tools).not.toContain('mcp__loom__run_task');
-    expect(researcher.tools).not.toContain('mcp__loom__get_tool_operation');
-    expect(researcher.tools).not.toContain('mcp__loom__wait_tool_operation');
-    expect(researcher.tools).not.toContain('mcp__loom__author_question');
-    expect(researcher.tools).not.toContain('mcp__loom__author_artifact');
+    expect(capturedCtx).not.toHaveProperty('agents');
+    expect(capturedCtx).not.toHaveProperty('canUseTool');
+    expect(capturedCtx).not.toHaveProperty('onTaskEvent');
   });
 
-  it('removes Task and all spawn options when the Copilot kill switch is off', async () => {
+  it('does not let the legacy kill-switch input re-enable native Task', async () => {
     let capturedCtx: Record<string, unknown> | undefined;
     const runAgentTaskFn = vi.fn(async (_kind, _input, ctx) => {
       capturedCtx = ctx as Record<string, unknown>;
@@ -1568,97 +1604,30 @@ describe('YUK-757 Copilot backstage subagents', () => {
     await runCopilotChat(
       {} as never,
       { user_message: '深入检查这份学习记录', triggered_by: 'chat' },
-      { ...baseSubagentDeps(), runAgentTaskFn, copilotSubagentEnabled: false },
+      { ...baseSubagentDeps(), runAgentTaskFn, copilotSubagentEnabled: true },
     );
 
     expect(capturedCtx?.allowedTools).not.toContain('Task');
     expect(capturedCtx).not.toHaveProperty('agents');
     expect(capturedCtx?.hooks).toMatchObject({ PreToolUse: expect.any(Array) });
     expect(capturedCtx).not.toHaveProperty('canUseTool');
+    expect(capturedCtx).not.toHaveProperty('onTaskEvent');
   });
 
-  it('projects interleaved SDK task events to safe single-voice subtask cards while main deltas stay separate', async () => {
+  it('does not project native SDK task lifecycle as public subtask UI', async () => {
     const onSubtaskEvent = vi.fn();
     const deltas: string[] = [];
     const streamAgentTaskFn = vi.fn(
       async (
         _kind: string,
         _input: unknown,
-        ctx: {
-          onTaskEvent?: (event: TaskEventMessage) => void | Promise<void>;
-        },
+        ctx: Record<string, unknown>,
         onDelta: (text: string) => void,
       ) => {
-        await ctx.onTaskEvent?.({
-          type: 'system',
-          subtype: 'task_started',
-          task_id: 'local-workflow-hidden-1',
-          description: 'DO NOT LEAK: hidden local workflow planning',
-          subagent_type: COPILOT_SUBAGENT_NAME,
-          task_type: 'local_workflow',
-          workflow_name: 'spec',
-          skip_transcript: true,
-          uuid: '00000000-0000-4000-8000-000000000010',
-          session_id: 'sdk-session',
-        });
-        await ctx.onTaskEvent?.({
-          type: 'system',
-          subtype: 'task_notification',
-          task_id: 'local-workflow-hidden-1',
-          status: 'completed',
-          output_file: '/private/tmp/hidden-workflow.txt',
-          summary: 'DO NOT LEAK: hidden workflow transcript',
-          skip_transcript: true,
-          uuid: '00000000-0000-4000-8000-000000000015',
-          session_id: 'sdk-session',
-        });
-        await ctx.onTaskEvent?.({
-          type: 'system',
-          subtype: 'task_started',
-          task_id: 'task-diagnostic-17',
-          tool_use_id: 'toolu-diagnostic-17',
-          description: '核对两次导数判号、三道历史错题与知识节点关系',
-          subagent_type: COPILOT_SUBAGENT_NAME,
-          prompt: 'DO NOT LEAK: raw learner text and complete reasoning transcript',
-          uuid: '00000000-0000-4000-8000-000000000011',
-          session_id: 'sdk-session',
-        });
+        expect(ctx).not.toHaveProperty('onTaskEvent');
+        expect(ctx).not.toHaveProperty('agents');
+        expect(ctx).not.toHaveProperty('canUseTool');
         onDelta('我正在把证据收拢成一个解释。');
-        await ctx.onTaskEvent?.({
-          type: 'system',
-          subtype: 'task_started',
-          task_id: 'task-question-preview-8',
-          tool_use_id: 'toolu-question-preview-8',
-          description: '预览含参数三次函数题，并检查 a=0 的退化分支',
-          subagent_type: COPILOT_SUBAGENT_NAME,
-          prompt: 'DO NOT LEAK: chain of thought for the preview',
-          uuid: '00000000-0000-4000-8000-000000000012',
-          session_id: 'sdk-session',
-        });
-        await ctx.onTaskEvent?.({
-          type: 'system',
-          subtype: 'task_notification',
-          task_id: 'task-diagnostic-17',
-          tool_use_id: 'toolu-diagnostic-17',
-          status: 'completed',
-          output_file: '/private/tmp/subagent-output.txt',
-          summary: 'DO NOT LEAK: full subagent conclusion is private to parent',
-          usage: { total_tokens: 2630, tool_uses: 7, duration_ms: 21_800 },
-          uuid: '00000000-0000-4000-8000-000000000013',
-          session_id: 'sdk-session',
-        });
-        await ctx.onTaskEvent?.({
-          type: 'system',
-          subtype: 'task_updated',
-          task_id: 'task-question-preview-8',
-          patch: {
-            status: 'failed',
-            description: '预览含参数三次函数题，并检查 a=0 的退化分支',
-            error: 'DO NOT LEAK: provider stack and raw prompt',
-          },
-          uuid: '00000000-0000-4000-8000-000000000014',
-          session_id: 'sdk-session',
-        });
         onDelta('结论：你漏掉的是导数为零后仍需检查变号。');
         return {
           task_run_id: 'task_copilot_stream_subtasks',
@@ -1682,34 +1651,7 @@ describe('YUK-757 Copilot backstage subagents', () => {
     expect(deltas).toEqual([
       '我正在把证据收拢成一个解释。结论：你漏掉的是导数为零后仍需检查变号。',
     ]);
-    expect(onSubtaskEvent.mock.calls.map(([event]) => event)).toEqual([
-      {
-        step_kind: 'subtask',
-        subtask_id: 'task-diagnostic-17',
-        label: '正在深入核对证据',
-        status: 'running',
-      },
-      {
-        step_kind: 'subtask',
-        subtask_id: 'task-question-preview-8',
-        label: '正在深入核对证据',
-        status: 'running',
-      },
-      {
-        step_kind: 'subtask',
-        subtask_id: 'task-diagnostic-17',
-        label: '子任务已完成',
-        status: 'completed',
-      },
-      {
-        step_kind: 'subtask',
-        subtask_id: 'task-question-preview-8',
-        label: '子任务未完成',
-        status: 'failed',
-        error: '子任务未完成',
-      },
-    ]);
-    expect(JSON.stringify(onSubtaskEvent.mock.calls)).not.toContain('DO NOT LEAK');
+    expect(onSubtaskEvent).not.toHaveBeenCalled();
   });
 });
 

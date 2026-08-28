@@ -324,8 +324,10 @@ describe('Foundation D M2 read tools', () => {
       'get_question_context',
       'get_record_context',
       'get_review_due',
+      'get_subagent',
       'get_subject_graph_overview',
       'get_tool_operation',
+      'launch_researcher',
       'query_events',
       'query_knowledge',
       'query_memory_brief',
@@ -337,6 +339,7 @@ describe('Foundation D M2 read tools', () => {
       // YUK-756 — generation-only registry dispatcher is a read-effect DomainTool.
       'run_task',
       'search_memory_facts',
+      'wait_subagent',
       'wait_tool_operation',
     ]);
   });

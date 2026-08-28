@@ -36,6 +36,17 @@ import { type TaskDef, type TaskKind, tasks } from './registry';
 import { taskCatalog } from './task-catalog';
 import { getTaskSystemPrompt } from './task-prompts';
 
+const YUK932_PROMPT_HASHES = {
+  'general:CopilotTask': '45d6d0026c8b8274f53cba0519b644a05ccd0bc13e01c342d6886f24fa7184eb',
+  'general:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
+  'math:CopilotTask': '45d6d0026c8b8274f53cba0519b644a05ccd0bc13e01c342d6886f24fa7184eb',
+  'math:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
+  'physics:CopilotTask': '45d6d0026c8b8274f53cba0519b644a05ccd0bc13e01c342d6886f24fa7184eb',
+  'physics:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
+  'yuwen:CopilotTask': '45d6d0026c8b8274f53cba0519b644a05ccd0bc13e01c342d6886f24fa7184eb',
+  'yuwen:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
+} as const;
+
 describe('copilot task dispatch declarations', () => {
   it('is deny-by-default and exposes exactly two fully-declared tasks', () => {
     const invocable = Object.values(tasks).filter(
@@ -50,7 +61,7 @@ describe('copilot task dispatch declarations', () => {
       expect(task.copilot.intentSchema.safeParse).toBeTypeOf('function');
       expect(task.copilot.prepare).toBeTypeOf('function');
     }
-    expect(Object.keys(tasks)).toHaveLength(52);
+    expect(Object.keys(tasks)).toHaveLength(53);
   });
 
   it('is an immutable compatibility projection with only the two dispatch overlays', () => {
@@ -98,7 +109,7 @@ describe('task prompt definitions', () => {
   });
 
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(52);
+    expect(Object.keys(tasks)).toHaveLength(53);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -125,7 +136,7 @@ describe('task prompt definitions', () => {
     }
   });
 
-  it('matches the original prompts byte-for-byte with the exact pre-refactor oracle', () => {
+  it('matches the unchanged prompts byte-for-byte with the exact pre-refactor oracle', () => {
     expect(promptHashOracle.baseCommit).toBe('6b3233b10633c93497a8211956fddcb795ebd2da');
     expect(promptHashOracle.algorithm).toBe('sha256');
     expect(promptHashOracle.taskCount).toBe(51);
@@ -134,13 +145,32 @@ describe('task prompt definitions', () => {
     for (const profileId of promptHashOracle.profiles) {
       const profile = resolveSubjectProfile(profileId);
       for (const task of Object.keys(tasks) as Array<keyof typeof tasks>) {
-        if (task === 'CopilotCorrectionIntentTask') continue;
+        if (
+          task === 'CopilotCorrectionIntentTask' ||
+          task === 'CopilotTask' ||
+          task === 'CopilotResearchTask'
+        ) {
+          continue;
+        }
         const key = `${profileId}:${task}` as keyof typeof promptHashOracle.prompts;
         const actualHash = createHash('sha256')
           .update(getTaskSystemPrompt(task, profile), 'utf8')
           .digest('hex');
         expect(actualHash, key).toBe(promptHashOracle.prompts[key]);
       }
+    }
+  });
+
+  it('pins the YUK-932 root and read-only researcher prompts byte-for-byte', () => {
+    for (const [key, expectedHash] of Object.entries(YUK932_PROMPT_HASHES)) {
+      const [profileId, task] = key.split(':') as [
+        'general' | 'math' | 'physics' | 'yuwen',
+        'CopilotTask' | 'CopilotResearchTask',
+      ];
+      const actualHash = createHash('sha256')
+        .update(getTaskSystemPrompt(task, resolveSubjectProfile(profileId)), 'utf8')
+        .digest('hex');
+      expect(actualHash, key).toBe(expectedHash);
     }
   });
 
@@ -779,15 +809,22 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
   });
 });
 
-describe('CopilotTask.systemPrompt — YUK-757 backstage spawn envelope', () => {
-  it('pins one named depth-1 researcher, synchronous conclusion return, and the single Copilot voice', () => {
+describe('CopilotTask.systemPrompt — YUK-932 durable mailbox', () => {
+  it('pins mailbox controls, one Copilot voice, and non-recursive continuation', () => {
     const p = getTaskSystemPrompt('CopilotTask');
-    expect(p).toContain('copilot-researcher');
-    expect(p).toContain('subagent_type');
-    expect(p).toContain('run_in_background:false');
-    expect(p).toContain('不得传 model 或 isolation');
-    expect(p).toContain('前台始终只有 Copilot 一个声音');
-    expect(p).toContain('subagent 只回结论');
+    expect(p).toContain('launch_researcher({launch_key,objective})');
+    expect(p).toContain('get_subagent / wait_subagent / cancel_subagent');
+    expect(p).toContain('只回结论，不暴露 transcript / reasoning');
+    expect(p).toContain('由 Copilot 统一向用户叙述');
+    expect(p).toContain('自动 continuation 中不得再次 launch_researcher');
+    expect(p).not.toContain('subagent_type');
+    expect(p).not.toContain('run_in_background');
+    expect(p).not.toContain('不得传 model 或 isolation');
+
+    const researcher = getTaskSystemPrompt('CopilotResearchTask');
+    expect(researcher).toContain('只读研究员');
+    expect(researcher).toContain('不得调用 Task、run_task、launch_researcher');
+    expect(researcher).toContain('不得输出 transcript、隐藏推理或过程日志');
   });
 });
 

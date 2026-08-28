@@ -45,6 +45,7 @@ describe('DomainTool allowlist policy', () => {
       'propose_question_edit',
       'write_agent_note',
       'cancel_tool_operation',
+      'cancel_subagent',
     ]);
   });
 
@@ -146,6 +147,10 @@ describe('DomainTool allowlist policy', () => {
       'get_tool_operation',
       'wait_tool_operation',
       'cancel_tool_operation',
+      'launch_researcher',
+      'get_subagent',
+      'wait_subagent',
+      'cancel_subagent',
       // ADR-0031 决定1/D5 + ADR-0032 D9 (YUK-304 lane B) — quiz C→A: the copilot
       // orchestrates 出题/组卷 itself, so it reads the 题池 and writes the paper.
       'query_questions',
