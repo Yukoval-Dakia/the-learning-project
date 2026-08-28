@@ -2,7 +2,7 @@
  * shared parse/import-closure model and one violation vocabulary; every check family
  * below is a section of the same report, not a reusable subsystem. */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { relative, resolve, sep } from 'node:path';
+import { dirname, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse } from '@babel/parser';
 import type { DependencySnapshot } from './audit-capability-boundaries';
@@ -699,6 +699,49 @@ export interface DomainToolShape {
   readonly outputSchema?: { safeParse?: unknown } | null;
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function staticDomainToolShape(
+  projectRoot: string,
+  declaration: Pick<DomainToolDeclarationShape, 'owner' | 'name'>,
+): DomainToolShape {
+  const manifestPath = resolve(projectRoot, 'src/capabilities', declaration.owner, 'manifest.ts');
+  const manifestSource = readFileSync(manifestPath, 'utf8');
+  const declarationPattern = new RegExp(
+    `name:\\s*'${escapeRegex(declaration.name)}'[\\s\\S]{0,1000}?load:\\s*\\(\\)\\s*=>\\s*import\\('([^']+)'\\)\\.then\\(\\(m\\)\\s*=>\\s*m\\.([A-Za-z_$][\\w$]*)\\)`,
+  );
+  const declarationMatch = declarationPattern.exec(manifestSource);
+  if (!declarationMatch) return { name: declaration.name };
+
+  const [, moduleSpecifier, exportName] = declarationMatch;
+  const toolSource = readFileSync(resolve(dirname(manifestPath), `${moduleSpecifier}.ts`), 'utf8');
+  const exportStart = toolSource.indexOf(`export const ${exportName}`);
+  if (exportStart < 0) return { name: declaration.name };
+
+  const nextExport = toolSource.indexOf('\nexport ', exportStart + 1);
+  let exportSource = toolSource.slice(exportStart, nextExport < 0 ? undefined : nextExport);
+  const factoryName = /=\s*([A-Za-z_$][\w$]*)\(\);/.exec(exportSource)?.[1];
+  if (factoryName) {
+    const factoryStart = toolSource.indexOf(`function ${factoryName}`);
+    if (factoryStart >= 0) {
+      const factoryEnd = toolSource.indexOf('\nexport ', factoryStart + 1);
+      exportSource += toolSource.slice(factoryStart, factoryEnd < 0 ? undefined : factoryEnd);
+    }
+  }
+
+  return {
+    name: declaration.name,
+    ...(/\binputSchema\s*:/.test(exportSource)
+      ? { inputSchema: { safeParse: () => undefined } }
+      : {}),
+    ...(/\boutputSchema\s*:/.test(exportSource)
+      ? { outputSchema: { safeParse: () => undefined } }
+      : {}),
+  };
+}
+
 export interface DomainToolOwnershipInput {
   readonly declarations: readonly DomainToolDeclarationShape[];
   readonly loadedTools: readonly DomainToolShape[];
@@ -1319,18 +1362,9 @@ async function runCli(): Promise<void> {
       hasLoad: Boolean(tool.load),
     })),
   );
-  const loadedTools: DomainToolShape[] = [];
-  for (const capability of capabilities) {
-    for (const decl of capability.copilotTools?.tools ?? []) {
-      if (!decl.load) continue;
-      const tool = (await decl.load()) as DomainToolShape;
-      loadedTools.push({
-        name: tool.name,
-        inputSchema: tool.inputSchema as { safeParse?: unknown } | null | undefined,
-        outputSchema: tool.outputSchema as { safeParse?: unknown } | null | undefined,
-      });
-    }
-  }
+  const loadedTools = toolDeclarations.map((declaration) =>
+    staticDomainToolShape(projectRoot, declaration),
+  );
   const bridgeSource = readFileSync(
     resolve(projectRoot, 'src/server/ai/tools/mcp-bridge.ts'),
     'utf8',

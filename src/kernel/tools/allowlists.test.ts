@@ -44,8 +44,8 @@ describe('DomainTool allowlist policy', () => {
       // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit.
       'propose_question_edit',
       'write_agent_note',
-      'cancel_subagent',
       'cancel_tool_operation',
+      'cancel_subagent',
     ]);
   });
 
