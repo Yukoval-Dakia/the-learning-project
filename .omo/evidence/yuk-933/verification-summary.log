@@ -1,0 +1,8 @@
+stop-hook re-verification
+typecheck-final.log command: ./node_modules/.bin/tsc --noEmit
+typecheck-final.log exit: 0
+biome-final.log exit: 0
+scoped-unit-final.log exit: 0 (6 files, 59 tests)
+build-final.log exit: 0
+git-final.log exit: 0
+db-blocked-final.log exit: 1 (BLOCKED_ENV: no Testcontainers runtime)

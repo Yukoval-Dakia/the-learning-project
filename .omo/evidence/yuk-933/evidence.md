@@ -66,3 +66,13 @@ Executed after the completion-evidence hook requested direct re-verification.
   This is a local `BLOCKED_ENV`, not a passing DB result; exact-head CI owns that containerized case.
 - `gh pr view 1309` confirmed open PR head `6a236f55413272d665c7fcf1d35df7fdc664d1be` against
   `main`, with CI Gate jobs running at verification time.
+
+## Raw stop-hook artifacts
+
+The direct command output is retained beside this file:
+
+- `typecheck-final.log` (the successful compiler command produced no stdout/stderr), with its
+  exit status recorded in `verification-summary.log`.
+- `biome-final.log`, `scoped-unit-final.log`, `build-final.log`, and `git-final.log` record the
+  successful scoped checks.
+- `db-blocked-final.log` records the non-zero DB invocation and the Testcontainers runtime error.
