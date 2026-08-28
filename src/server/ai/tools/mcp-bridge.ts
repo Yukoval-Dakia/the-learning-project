@@ -34,6 +34,7 @@ import { writeEvent } from '@/kernel/events';
 import {
   type ToolOperationRecord,
   type ToolOperations,
+  executeSafeToolOperation,
   getProcessToolOperations,
 } from '@/kernel/tools/tool-operations';
 import type {
@@ -47,7 +48,6 @@ import type {
 } from '@/kernel/tools/types';
 import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
 import { getTool } from './registry';
-import { executeSafeToolOperation } from './safe-tool-handoff';
 
 export interface ToolUseCorrelation {
   hooks: NonNullable<Options['hooks']>;

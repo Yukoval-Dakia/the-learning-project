@@ -4,9 +4,9 @@ import {
   type ToolOperationRecord,
   type ToolOperations,
   controlOwnedToolOperation,
+  executeSafeToolOperation,
 } from '@/kernel/tools/tool-operations';
 import { createToolUseCorrelation } from '@/server/ai/tools/mcp-bridge';
-import { executeSafeToolOperation } from '@/server/ai/tools/safe-tool-handoff';
 
 function record(overrides: Partial<ToolOperationRecord> = {}): ToolOperationRecord {
   const now = new Date('2026-08-27T12:00:00.000Z');
