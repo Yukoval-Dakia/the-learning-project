@@ -107,3 +107,12 @@ artifacts are present and non-empty.
 - Observable: all three are present and non-empty (12, 106, and 37 lines respectively). They
   preserve the successful 6-file/60-test scoped run and build result, plus the explicitly
   non-passing local Testcontainers `BLOCKED_ENV` result.
+
+## Final scoped-unit re-run
+
+Executed in response to the second completion-evidence hook on the pushed branch at
+`3be86f03c6549b13570c2c5ecb677ba35760ba1a`.
+
+- Invocation: `./node_modules/.bin/vitest run --config vitest.unit.config.ts src/capabilities/copilot/ui/CopilotDock.durable-retry.unit.test.tsx src/capabilities/copilot/ui/replay.unit.test.ts src/capabilities/copilot/ui/CopilotDock.subtasks.unit.test.tsx src/capabilities/copilot/ui/CopilotDock.tool-use.unit.test.tsx src/capabilities/copilot/ui/durable-reconnect-storage.unit.test.ts src/capabilities/copilot/ui/subtask-events.unit.test.ts`.
+- Observable: exit 0; `Test Files 6 passed (6)`, `Tests 60 passed (60)`, duration 3.26s.
+  Vitest emitted only its pre-existing Vite native-config migration warning, not a test failure.
