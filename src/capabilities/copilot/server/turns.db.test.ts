@@ -86,6 +86,7 @@ async function writeReply(
   sessionId: string,
   inReplyTo: string,
   at: Date,
+  taskRunId = 'task_x',
 ): Promise<string> {
   const id = `copilot_reply_${createId()}`;
   writtenEventIds.push(id);
@@ -102,11 +103,11 @@ async function writeReply(
       surface: 'copilot',
       session_id: sessionId,
       reply_md: text,
-      task_run_id: 'task_x',
+      task_run_id: taskRunId,
       in_reply_to_event_id: inReplyTo,
     },
     caused_by_event_id: inReplyTo,
-    task_run_id: 'task_x',
+    task_run_id: taskRunId,
     created_at: at,
   });
   return id;
@@ -857,6 +858,109 @@ describe('getRecentCopilotTurns', () => {
       },
     ]);
     expect(turns.find((t) => t.event_id === askId)?.tool_calls).toBeUndefined();
+  });
+
+  it('replays session-owned operations and causal subagent runs on the single root reply', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    const startedAt = new Date(now.getTime() - 4_000);
+    const askId = await writeAsk('核对这组错题并给我结论。', sessionId, startedAt);
+    const operationId = `tool_operation_${createId()}`;
+    const subagentId = `subagent_run_${createId()}`;
+    const subagentStartedId = `subagent_started_${createId()}`;
+    const operationYieldedId = `tool_operation_yielded_${createId()}`;
+    const operationSettledId = `tool_operation_settled_${createId()}`;
+    const subagentSettledId = `subagent_settled_${createId()}`;
+    writtenEventIds.push(
+      operationYieldedId,
+      operationSettledId,
+      subagentStartedId,
+      subagentSettledId,
+    );
+    await writeEvent(db, {
+      id: operationYieldedId,
+      session_id: sessionId,
+      actor_kind: 'system',
+      actor_ref: 'tool_operations',
+      action: 'tool_operation_yielded',
+      subject_kind: 'tool_operation',
+      subject_id: operationId,
+      outcome: null,
+      payload: {
+        tool_name: 'query_mistakes',
+        effect: 'read',
+        process_id: 'private-process-id',
+      },
+      task_run_id: 'task_x',
+      created_at: new Date(now.getTime() - 3_500),
+    });
+    await writeEvent(db, {
+      id: operationSettledId,
+      session_id: sessionId,
+      actor_kind: 'system',
+      actor_ref: 'tool_operations',
+      action: 'tool_operation_settled',
+      subject_kind: 'tool_operation',
+      subject_id: operationId,
+      outcome: 'success',
+      payload: { state: 'succeeded' },
+      task_run_id: 'task_x',
+      created_at: new Date(now.getTime() - 3_000),
+    });
+    await writeEvent(db, {
+      id: subagentStartedId,
+      session_id: sessionId,
+      actor_kind: 'agent',
+      actor_ref: 'agent:copilot',
+      action: 'experimental:subagent_run_started',
+      subject_kind: 'subagent_run',
+      subject_id: subagentId,
+      outcome: null,
+      payload: {
+        run_id: subagentId,
+        launch_key: 'mistake-check',
+        objective: 'private objective must never enter the replay card',
+      },
+      caused_by_event_id: askId,
+      task_run_id: 'task_x',
+      created_at: new Date(now.getTime() - 2_500),
+    });
+    await writeEvent(db, {
+      id: subagentSettledId,
+      session_id: sessionId,
+      actor_kind: 'agent',
+      actor_ref: 'agent:copilot-researcher',
+      action: 'experimental:subagent_run_settled',
+      subject_kind: 'subagent_run',
+      subject_id: subagentId,
+      outcome: 'success',
+      payload: {
+        run_id: subagentId,
+        status: 'succeeded',
+        result_md: 'private child result must be delivered only through the root reply',
+      },
+      caused_by_event_id: subagentStartedId,
+      task_run_id: 'task_x',
+      created_at: new Date(now.getTime() - 2_000),
+    });
+    const replyId = await writeReply(
+      '我已核对完这组错题，结论如下。',
+      sessionId,
+      askId,
+      new Date(now.getTime() - 1_000),
+    );
+
+    const aiTurn = (await getRecentCopilotTurns(db, { now })).find(
+      (turn) => turn.event_id === replyId,
+    );
+
+    expect(aiTurn).toMatchObject({
+      tool_operations: [{ id: operationId, tool_name: 'query_mistakes', status: 'succeeded' }],
+      subagent_runs: [{ id: subagentId, status: 'succeeded' }],
+    });
+    expect(JSON.stringify(aiTurn)).not.toContain('private-process-id');
+    expect(JSON.stringify(aiTurn)).not.toContain('private objective');
+    expect(JSON.stringify(aiTurn)).not.toContain('private child result');
   });
 
   // YUK-457 — failure-outcome mirrors surface as failed cards with errorReason.

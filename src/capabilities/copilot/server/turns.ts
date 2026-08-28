@@ -94,6 +94,8 @@ export interface CopilotTurn {
   primary_view?: CopilotPrimaryView;
   /** YUK-457 — per-call tool-use mirrors chained to this turn's ask/chip parent. */
   tool_calls?: CopilotTurnToolCall[];
+  tool_operations?: CopilotTurnToolOperation[];
+  subagent_runs?: CopilotTurnSubagentRun[];
 }
 
 /** YUK-457 — replay projection of a persisted tool_use mirror event. */
@@ -103,6 +105,17 @@ export interface CopilotTurnToolCall {
   summary?: string;
   errorReason?: string;
   status: 'done' | 'failed';
+}
+
+export interface CopilotTurnToolOperation {
+  id: string;
+  tool_name: string;
+  status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'lost';
+}
+
+export interface CopilotTurnSubagentRun {
+  id: string;
+  status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'lost';
 }
 
 // The ONLY revert root the endpoint accepts (owner-locked). A copilot_chip_trigger is a
@@ -278,9 +291,128 @@ async function selectToolCallsForReplay(
   return byParent;
 }
 
+function operationStatus(
+  payload: Record<string, unknown>,
+): CopilotTurnToolOperation['status'] | null {
+  const status = payload.state;
+  return status === 'succeeded' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'lost'
+    ? status
+    : null;
+}
+
+async function selectToolOperationsForReplay(
+  dbArg: DbLike,
+  sessionId: string,
+  taskRunIds: readonly string[],
+): Promise<Map<string, CopilotTurnToolOperation[]>> {
+  if (taskRunIds.length === 0) return new Map();
+  const rows = await dbArg
+    .select({
+      action: event.action,
+      subject_id: event.subject_id,
+      payload: event.payload,
+      task_run_id: event.task_run_id,
+      created_at: event.created_at,
+      id: event.id,
+    })
+    .from(event)
+    .where(
+      and(
+        eq(event.session_id, sessionId),
+        inArray(event.task_run_id, [...taskRunIds]),
+        inArray(event.action, ['tool_operation_yielded', 'tool_operation_settled']),
+      ),
+    )
+    .orderBy(asc(event.created_at), asc(event.id));
+
+  const byTaskRun = new Map<string, Map<string, CopilotTurnToolOperation>>();
+  for (const row of rows) {
+    if (!row.task_run_id) continue;
+    const payload = (row.payload ?? {}) as Record<string, unknown>;
+    const current = byTaskRun.get(row.task_run_id) ?? new Map<string, CopilotTurnToolOperation>();
+    if (row.action === 'tool_operation_yielded') {
+      const toolName = typeof payload.tool_name === 'string' ? payload.tool_name : null;
+      if (toolName)
+        current.set(row.subject_id, { id: row.subject_id, tool_name: toolName, status: 'running' });
+    } else {
+      const status = operationStatus(payload);
+      const prior = current.get(row.subject_id);
+      if (status && prior) current.set(row.subject_id, { ...prior, status });
+    }
+    byTaskRun.set(row.task_run_id, current);
+  }
+
+  return new Map(
+    [...byTaskRun.entries()].map(([taskRunId, operations]) => [
+      taskRunId,
+      [...operations.values()],
+    ]),
+  );
+}
+
+async function selectSubagentRunsForReplay(
+  dbArg: DbLike,
+  sessionId: string,
+  parentEventIds: readonly string[],
+): Promise<Map<string, CopilotTurnSubagentRun[]>> {
+  if (parentEventIds.length === 0) return new Map();
+  const starts = await dbArg
+    .select({ id: event.id, subject_id: event.subject_id, caused_by: event.caused_by_event_id })
+    .from(event)
+    .where(
+      and(
+        eq(event.session_id, sessionId),
+        eq(event.action, 'experimental:subagent_run_started'),
+        inArray(event.caused_by_event_id, [...parentEventIds]),
+      ),
+    );
+  if (starts.length === 0) return new Map();
+
+  const runsByParent = new Map<string, Map<string, CopilotTurnSubagentRun>>();
+  const startedParent = new Map<string, string>();
+  for (const start of starts) {
+    if (!start.caused_by) continue;
+    startedParent.set(start.id, start.caused_by);
+    const runs = runsByParent.get(start.caused_by) ?? new Map<string, CopilotTurnSubagentRun>();
+    runs.set(start.subject_id, { id: start.subject_id, status: 'running' });
+    runsByParent.set(start.caused_by, runs);
+  }
+  if (startedParent.size === 0) return new Map();
+
+  const settled = await dbArg
+    .select({
+      subject_id: event.subject_id,
+      caused_by: event.caused_by_event_id,
+      payload: event.payload,
+    })
+    .from(event)
+    .where(
+      and(
+        eq(event.session_id, sessionId),
+        eq(event.action, 'experimental:subagent_run_settled'),
+        inArray(event.caused_by_event_id, [...startedParent.keys()]),
+      ),
+    );
+  for (const row of settled) {
+    if (!row.caused_by) continue;
+    const parentId = startedParent.get(row.caused_by);
+    const runs = parentId ? runsByParent.get(parentId) : undefined;
+    const status = operationStatus((row.payload ?? {}) as Record<string, unknown>);
+    const prior = runs?.get(row.subject_id);
+    if (runs && prior && status) runs.set(row.subject_id, { ...prior, status });
+  }
+
+  return new Map(
+    [...runsByParent.entries()].map(([parentId, runs]) => [parentId, [...runs.values()]]),
+  );
+}
+
 type CopilotTurnRow = Pick<
   typeof event.$inferSelect,
-  'id' | 'action' | 'payload' | 'created_at' | 'caused_by_event_id'
+  'id' | 'action' | 'payload' | 'created_at' | 'caused_by_event_id' | 'task_run_id'
 >;
 
 /**
@@ -307,14 +439,30 @@ async function projectCopilotTurnRows(
   // user_ask OR a chip_trigger; only the former (and in-window) may surface a checkpoint_event_id.
   const askIds = new Set(rows.filter((row) => row.action === USER_ASK_ACTION).map((row) => row.id));
   const toolCallParentIds = [...new Set([...askIds, ...replyParentIds])];
+  const taskRunIds = [
+    ...new Set(
+      rows
+        .filter((row) => row.action === REPLY_ACTION)
+        .map((row) => row.task_run_id)
+        .filter((taskRunId): taskRunId is string => taskRunId !== null),
+    ),
+  ];
   // TchmW — these reads are independent (correction statuses over the window vs the materializing
   // tool_use scan over the ask ids vs replay tool-call mirrors); run them concurrently.
-  const [statuses, asksWithMaterializingTool, toolCallsByParent] = await Promise.all([
+  const [
+    statuses,
+    asksWithMaterializingTool,
+    toolCallsByParent,
+    toolOperationsByTaskRun,
+    subagentRunsByParent,
+  ] = await Promise.all([
     getCorrectionStatuses(dbArg, [...new Set([...rows.map((row) => row.id), ...replyParentIds])]),
     // YUK-497 wave-4 — asks whose turn called a MATERIALIZING tool (author_question / author_artifact
     // / update_artifact / write_quiz) wrote a domain row cascade-revert can't compensate.
     selectAsksWithMaterializingToolCall(dbArg, [...askIds]),
     selectToolCallsForReplay(dbArg, toolCallParentIds),
+    selectToolOperationsForReplay(dbArg, sessionId, taskRunIds),
+    selectSubagentRunsForReplay(dbArg, sessionId, toolCallParentIds),
   ]);
   // Retracted roots include out-of-window parents: a reply under such a parent is skipped (its parent
   // row isn't loaded, so it renders as a hidden skip, not a tombstone) rather than shown stale.
@@ -411,7 +559,13 @@ async function projectCopilotTurnRows(
       if (parentId) {
         const toolCalls = toolCallsByParent.get(parentId);
         if (toolCalls && toolCalls.length > 0) turn.tool_calls = toolCalls;
+        const subagentRuns = subagentRunsByParent.get(parentId);
+        if (subagentRuns && subagentRuns.length > 0) turn.subagent_runs = subagentRuns;
       }
+      const toolOperations = row.task_run_id
+        ? toolOperationsByTaskRun.get(row.task_run_id)
+        : undefined;
+      if (toolOperations && toolOperations.length > 0) turn.tool_operations = toolOperations;
       turns.push(turn);
     } else {
       const text = userText(payload);
@@ -471,6 +625,7 @@ export async function getRecentCopilotTurns(
       payload: event.payload,
       created_at: event.created_at,
       caused_by_event_id: event.caused_by_event_id,
+      task_run_id: event.task_run_id,
     })
     .from(event)
     .where(
@@ -566,6 +721,7 @@ export async function getCopilotTurnsBeforeAnchor(
       payload: event.payload,
       created_at: event.created_at,
       caused_by_event_id: event.caused_by_event_id,
+      task_run_id: event.task_run_id,
     })
     .from(event)
     .innerJoin(historyAnchor, eq(historyAnchor.id, opts.anchorEventId))
@@ -623,7 +779,7 @@ export async function getCopilotContinuationHistory(
     .from(event)
     .where(eq(event.id, opts.resultEventId))
     .limit(1);
-  if (!result || result.action !== 'experimental:subagent_run_settled') {
+  if (result?.action !== 'experimental:subagent_run_settled') {
     throw new CopilotHistoryAnchorError('invalid_anchor_action', opts.resultEventId);
   }
   if (result.session_id !== opts.sessionId || !result.caused_by_event_id) {
@@ -655,6 +811,7 @@ export async function getCopilotContinuationHistory(
       payload: event.payload,
       created_at: event.created_at,
       caused_by_event_id: event.caused_by_event_id,
+      task_run_id: event.task_run_id,
     })
     .from(event)
     .where(
