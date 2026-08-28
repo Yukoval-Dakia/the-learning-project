@@ -111,8 +111,8 @@ import {
   type SdkMcpServer,
   type ToolExecutionResultObservation,
   buildMcpServerFromRegistry,
+  createToolUseCorrelation,
 } from '@/server/ai/tools/mcp-bridge';
-import { createToolUseCorrelation } from '@/server/ai/tools/safe-tool-handoff';
 import {
   type BossJobObservation,
   type BossJobObserver,

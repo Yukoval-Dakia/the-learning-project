@@ -19,6 +19,7 @@ export const MAX_TOOL_OPERATION_ERROR_MESSAGE_CHARS = 4_000;
 export const MAX_TOOL_OPERATION_NAME_CHARS = 256;
 export const DEFAULT_TOOL_OPERATION_LEASE_MS = 30_000;
 export const DEFAULT_TOOL_OPERATION_HEARTBEAT_MS = 10_000;
+export const SAFE_TOOL_OPERATION_WAIT_MAX_MS = 5_000;
 
 export type ToolOperationState = (typeof TOOL_OPERATION_STATES)[number];
 export type ToolOperationTerminalState = Exclude<ToolOperationState, 'running'>;
@@ -103,6 +104,40 @@ export interface ToolOperations {
   ): Promise<ToolOperationRecord>;
   linkTerminalToolCallLog(id: string, terminalToolCallLogId: string): Promise<ToolOperationRecord>;
   recoverLost(): Promise<ToolOperationRecord[]>;
+}
+
+export type OwnedToolOperationControl = {
+  action: 'get' | 'wait' | 'cancel';
+  operationId: string;
+  sessionId: string;
+  taskRunId: string;
+  requestedBy: ToolOperationCancellationOwner;
+  timeoutMs?: number;
+};
+
+export async function controlOwnedToolOperation(
+  toolOperations: ToolOperations,
+  control: OwnedToolOperationControl,
+): Promise<ToolOperationRecord> {
+  const owned = await toolOperations.get(control.operationId);
+  if (owned.sessionId !== control.sessionId) {
+    throw new Error('tool operation not found');
+  }
+  if (control.action === 'get') return owned;
+  if (control.action === 'wait') {
+    const timeoutMs = control.timeoutMs ?? 0;
+    if (
+      !Number.isInteger(timeoutMs) ||
+      timeoutMs < 0 ||
+      timeoutMs > SAFE_TOOL_OPERATION_WAIT_MAX_MS
+    ) {
+      throw new Error(
+        `timeoutMs must be an integer between 0 and ${SAFE_TOOL_OPERATION_WAIT_MAX_MS}`,
+      );
+    }
+    return toolOperations.wait(control.operationId, { timeoutMs });
+  }
+  return toolOperations.cancel(control.operationId, { requestedBy: control.requestedBy });
 }
 
 export interface ToolOperationsOptions {

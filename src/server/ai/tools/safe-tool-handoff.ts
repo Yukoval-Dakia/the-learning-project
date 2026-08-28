@@ -1,14 +1,12 @@
-import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
-import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import type {
-  ToolOperationCancellationOwner,
-  ToolOperationJson,
-  ToolOperationRecord,
-  ToolOperations,
+import {
+  type ToolOperationCancellationOwner,
+  type ToolOperationJson,
+  type ToolOperationRecord,
+  type ToolOperations,
+  controlOwnedToolOperation,
 } from '@/kernel/tools/tool-operations';
 
 export const SAFE_TOOL_OPERATION_YIELD_MS = 45_000;
-export const SAFE_TOOL_OPERATION_WAIT_MAX_MS = 5_000;
 
 export type SafeToolOperationExecution =
   | { kind: 'settled'; record: ToolOperationRecord }
@@ -117,79 +115,6 @@ export async function executeSafeToolOperation(options: {
       id: record.id,
       status: 'running',
       ...(options.toolUseId ? { tool_use_id: options.toolUseId } : {}),
-    },
-  };
-}
-
-export type OwnedToolOperationControl = {
-  action: 'get' | 'wait' | 'cancel';
-  operationId: string;
-  sessionId: string;
-  taskRunId: string;
-  requestedBy: ToolOperationCancellationOwner;
-  timeoutMs?: number;
-};
-
-export async function controlOwnedToolOperation(
-  toolOperations: ToolOperations,
-  control: OwnedToolOperationControl,
-): Promise<ToolOperationRecord> {
-  const owned = await toolOperations.get(control.operationId);
-  if (owned.sessionId !== control.sessionId) {
-    throw new Error('tool operation not found');
-  }
-  if (control.action === 'get') return owned;
-  if (control.action === 'wait') {
-    const timeoutMs = control.timeoutMs ?? 0;
-    if (
-      !Number.isInteger(timeoutMs) ||
-      timeoutMs < 0 ||
-      timeoutMs > SAFE_TOOL_OPERATION_WAIT_MAX_MS
-    ) {
-      throw new Error(
-        `timeoutMs must be an integer between 0 and ${SAFE_TOOL_OPERATION_WAIT_MAX_MS}`,
-      );
-    }
-    return toolOperations.wait(control.operationId, { timeoutMs });
-  }
-  return toolOperations.cancel(control.operationId, { requestedBy: control.requestedBy });
-}
-
-export interface ToolUseCorrelation {
-  hooks: NonNullable<Options['hooks']>;
-  claim(toolName: string, input: unknown): string | undefined;
-  prepend(existing?: Options['hooks']): NonNullable<Options['hooks']>;
-}
-
-export function createToolUseCorrelation(serverName: string): ToolUseCorrelation {
-  const pending = new Map<string, string[]>();
-  const prefix = `mcp__${serverName}__`;
-  const hook: HookCallback = async (input) => {
-    if (input.hook_event_name !== 'PreToolUse' || !input.tool_name.startsWith(prefix)) {
-      return { continue: true };
-    }
-    const toolName = input.tool_name.slice(prefix.length);
-    if (toolName === 'run_task') return { continue: true };
-    const key = `${toolName}:${sha256CanonicalJson(input.tool_input)}`;
-    pending.set(key, [...(pending.get(key) ?? []), input.tool_use_id]);
-    return { continue: true };
-  };
-  const hooks: NonNullable<Options['hooks']> = { PreToolUse: [{ hooks: [hook] }] };
-  return {
-    hooks,
-    claim(toolName, input) {
-      if (toolName === 'run_task') return undefined;
-      const key = `${toolName}:${sha256CanonicalJson(input)}`;
-      const ids = pending.get(key);
-      const claimed = ids?.shift();
-      if (ids?.length === 0) pending.delete(key);
-      return claimed;
-    },
-    prepend(existing) {
-      return {
-        ...(existing ?? {}),
-        PreToolUse: [{ hooks: [hook] }, ...(existing?.PreToolUse ?? [])],
-      };
     },
   };
 }

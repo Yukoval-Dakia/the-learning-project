@@ -1,10 +1,11 @@
 import { z } from 'zod';
-import { type ToolOperationRecord, getProcessToolOperations } from '@/kernel/tools/tool-operations';
-import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
   SAFE_TOOL_OPERATION_WAIT_MAX_MS,
+  type ToolOperationRecord,
   controlOwnedToolOperation,
-} from '@/server/ai/tools/safe-tool-handoff';
+  getProcessToolOperations,
+} from '@/kernel/tools/tool-operations';
+import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
 const ToolOperationControlOutputSchema = z.object({
   operation_id: z.string(),

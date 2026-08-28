@@ -21,9 +21,15 @@
 //   5. return an MCP-shaped { content: [{ type: 'text', text: <json> }] }
 //      result the LLM can read.
 
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import {
+  type HookCallback,
+  type Options,
+  createSdkMcpServer,
+  tool,
+} from '@anthropic-ai/claude-agent-sdk';
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { writeEvent } from '@/kernel/events';
 import {
   type ToolOperationRecord,
@@ -42,6 +48,45 @@ import type {
 import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
 import { getTool } from './registry';
 import { executeSafeToolOperation } from './safe-tool-handoff';
+
+export interface ToolUseCorrelation {
+  hooks: NonNullable<Options['hooks']>;
+  claim(toolName: string, input: unknown): string | undefined;
+  prepend(existing?: Options['hooks']): NonNullable<Options['hooks']>;
+}
+
+export function createToolUseCorrelation(serverName: string): ToolUseCorrelation {
+  const pending = new Map<string, string[]>();
+  const prefix = `mcp__${serverName}__`;
+  const hook: HookCallback = async (input) => {
+    if (input.hook_event_name !== 'PreToolUse' || !input.tool_name.startsWith(prefix)) {
+      return { continue: true };
+    }
+    const toolName = input.tool_name.slice(prefix.length);
+    if (toolName === 'run_task') return { continue: true };
+    const key = `${toolName}:${sha256CanonicalJson(input.tool_input)}`;
+    pending.set(key, [...(pending.get(key) ?? []), input.tool_use_id]);
+    return { continue: true };
+  };
+  const hooks: NonNullable<Options['hooks']> = { PreToolUse: [{ hooks: [hook] }] };
+  return {
+    hooks,
+    claim(toolName, input) {
+      if (toolName === 'run_task') return undefined;
+      const key = `${toolName}:${sha256CanonicalJson(input)}`;
+      const ids = pending.get(key);
+      const claimed = ids?.shift();
+      if (ids?.length === 0) pending.delete(key);
+      return claimed;
+    },
+    prepend(existing) {
+      return {
+        ...(existing ?? {}),
+        PreToolUse: [{ hooks: [hook] }, ...(existing?.PreToolUse ?? [])],
+      };
+    },
+  };
+}
 
 /**
  * Decide whether a tool invocation should mirror to the `event` table.

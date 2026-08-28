@@ -111,9 +111,9 @@ import {
   type SdkMcpServer,
   type ToolExecutionResultObservation,
   buildMcpServerFromRegistry,
+  createToolUseCorrelation,
   shouldEmitToolUseForCaller,
 } from '@/server/ai/tools/mcp-bridge';
-import { createToolUseCorrelation } from '@/server/ai/tools/safe-tool-handoff';
 // AF S3a / YUK-203 U3 — durable conversation envelope. runCopilotChat now
 // find-or-creates a learning_session(type='conversation') so turns persist and
 // the drawer can replay-last-N (AF spec §1.5 + §7 S3a). Session ownership stays

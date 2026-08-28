@@ -1,11 +1,12 @@
 import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
-import type { ToolOperationRecord, ToolOperations } from '@/kernel/tools/tool-operations';
 import {
+  type ToolOperationRecord,
+  type ToolOperations,
   controlOwnedToolOperation,
-  createToolUseCorrelation,
-  executeSafeToolOperation,
-} from '@/server/ai/tools/safe-tool-handoff';
+} from '@/kernel/tools/tool-operations';
+import { createToolUseCorrelation } from '@/server/ai/tools/mcp-bridge';
+import { executeSafeToolOperation } from '@/server/ai/tools/safe-tool-handoff';
 
 function record(overrides: Partial<ToolOperationRecord> = {}): ToolOperationRecord {
   const now = new Date('2026-08-27T12:00:00.000Z');
